@@ -52,6 +52,66 @@ export function getBufferedOutput(ptyId: string): string {
   return chunks ? chunks.join("") : "";
 }
 
+/** Strip ANSI escape sequences and control chars so search snippets are
+ *  readable. Keeps newlines so line context survives. */
+function stripAnsi(s: string): string {
+  return s
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b\][^\x07]*\x07/g, "")
+    .replace(/\x1b[PX^_].*?\x1b\\/g, "")
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+}
+
+export interface BufferSearchHit {
+  ptyId: string;
+  /** Cleaned snippet around the first occurrence (~80 chars total). */
+  snippet: string;
+  /** Position of the match within the cleaned snippet, for highlighting. */
+  matchStart: number;
+  matchLength: number;
+  /** Approximate number of additional occurrences beyond the first. */
+  more: number;
+}
+
+/** Case-insensitive search across all live PTY buffers. Returns at most
+ *  one hit per pty (the first match), with a short snippet. */
+export function searchPtyOutputs(query: string): BufferSearchHit[] {
+  if (!query || query.length < 1) return [];
+  const needle = query.toLowerCase();
+  const hits: BufferSearchHit[] = [];
+  for (const [ptyId, chunks] of outputBuffers) {
+    const cleaned = stripAnsi(chunks.join(""));
+    const lower = cleaned.toLowerCase();
+    const idx = lower.indexOf(needle);
+    if (idx < 0) continue;
+    const start = Math.max(0, idx - 30);
+    const end = Math.min(cleaned.length, idx + needle.length + 50);
+    let snippet = cleaned.slice(start, end);
+    // Collapse whitespace inside the snippet so the result reads as a
+    // single line.
+    snippet = snippet.replace(/\s+/g, " ").trim();
+    const matchStartInSnippet = Math.max(0, snippet.toLowerCase().indexOf(needle));
+    // Count additional matches by scanning the rest of the buffer.
+    let more = 0;
+    let from = idx + needle.length;
+    while (from < lower.length) {
+      const next = lower.indexOf(needle, from);
+      if (next < 0) break;
+      more += 1;
+      from = next + needle.length;
+      if (more > 99) break; // cap, this is just a hint
+    }
+    hits.push({
+      ptyId,
+      snippet,
+      matchStart: matchStartInSnippet,
+      matchLength: query.length,
+      more,
+    });
+  }
+  return hits;
+}
+
 function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }

@@ -22,3 +22,4 @@ export const PROJECTS_DIR = path.join(AYA_HOME, "projects");
 export const PRESETS_FILE = path.join(AYA_HOME, "presets.json");
 export const THEMES_FILE = path.join(AYA_HOME, "themes.json");
 export const WINDOW_STATE_FILE = path.join(AYA_HOME, "window-state.json");
+export const PROJECTS_ORDER_FILE = path.join(AYA_HOME, "projects-order.json");

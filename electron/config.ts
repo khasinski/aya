@@ -4,7 +4,7 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
-import { PROJECTS_DIR } from "./paths";
+import { PROJECTS_DIR, PROJECTS_ORDER_FILE } from "./paths";
 import type { ProjectConfig } from "./types";
 
 const RESERVED_SLUGS = new Set(["aya-sentinel-new"]);
@@ -40,40 +40,75 @@ export function normalizeTab(
   return { id: r.id, presetId, name };
 }
 
-export async function listProjects(): Promise<ProjectConfig[]> {
+async function loadProjectOrder(): Promise<string[]> {
   try {
-    const entries = await fs.readdir(PROJECTS_DIR);
-    const out: ProjectConfig[] = [];
-    for (const file of entries.sort()) {
-      if (!file.endsWith(".json")) continue;
-      const slug = file.slice(0, -5);
-      try {
-        const raw = await fs.readFile(path.join(PROJECTS_DIR, file), "utf-8");
-        const data = JSON.parse(raw);
-        if (typeof data.name !== "string" || typeof data.directory !== "string") {
-          continue;
-        }
-        const rawTabs: unknown[] = Array.isArray(data.tabs) ? data.tabs : [];
-        const tabs = rawTabs
-          .map((t: unknown) => normalizeTab(t))
-          .filter(
-            (t): t is NonNullable<ReturnType<typeof normalizeTab>> => t !== null,
-          );
-        out.push({
-          slug,
-          name: data.name,
-          directory: data.directory,
-          tabs,
-        });
-      } catch {
-        // Skip invalid JSON; don't crash the app.
-      }
+    const raw = await fs.readFile(PROJECTS_ORDER_FILE, "utf-8");
+    const data = JSON.parse(raw);
+    if (Array.isArray(data) && data.every((s) => typeof s === "string")) {
+      return data;
     }
-    return out;
+  } catch {
+    // ENOENT or malformed — fall back to no order.
+  }
+  return [];
+}
+
+export async function saveProjectOrder(slugs: string[]): Promise<void> {
+  await writeFileAtomic(
+    PROJECTS_ORDER_FILE,
+    JSON.stringify(slugs, null, 2) + "\n",
+  );
+}
+
+export async function listProjects(): Promise<ProjectConfig[]> {
+  let entries: string[];
+  try {
+    entries = await fs.readdir(PROJECTS_DIR);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw err;
   }
+  const out: ProjectConfig[] = [];
+  for (const file of entries.sort()) {
+    if (!file.endsWith(".json")) continue;
+    const slug = file.slice(0, -5);
+    try {
+      const raw = await fs.readFile(path.join(PROJECTS_DIR, file), "utf-8");
+      const data = JSON.parse(raw);
+      if (typeof data.name !== "string" || typeof data.directory !== "string") {
+        continue;
+      }
+      const rawTabs: unknown[] = Array.isArray(data.tabs) ? data.tabs : [];
+      const tabs = rawTabs
+        .map((t: unknown) => normalizeTab(t))
+        .filter(
+          (t): t is NonNullable<ReturnType<typeof normalizeTab>> => t !== null,
+        );
+      out.push({
+        slug,
+        name: data.name,
+        directory: data.directory,
+        tabs,
+      });
+    } catch {
+      // Skip invalid JSON; don't crash the app.
+    }
+  }
+  // Apply user's custom order if any. Unknown slugs (e.g. new projects since
+  // the last reorder) go to the end in their alphabetical order.
+  const order = await loadProjectOrder();
+  if (order.length === 0) return out;
+  const indexBySlug = new Map<string, number>();
+  order.forEach((s, i) => indexBySlug.set(s, i));
+  out.sort((a, b) => {
+    const ia = indexBySlug.get(a.slug);
+    const ib = indexBySlug.get(b.slug);
+    if (ia === undefined && ib === undefined) return a.slug.localeCompare(b.slug);
+    if (ia === undefined) return 1;
+    if (ib === undefined) return -1;
+    return ia - ib;
+  });
+  return out;
 }
 
 export async function createProject(

@@ -13,6 +13,7 @@ const api: AyaApi = {
   ptyResize: (ptyId, cols, rows) =>
     ipcRenderer.invoke("pty:resize", ptyId, cols, rows),
   ptyKill: (ptyId) => ipcRenderer.invoke("pty:kill", ptyId),
+  ptySearch: (query) => ipcRenderer.invoke("pty:search", query),
   onPtyEvent: (handler) => {
     const listener = (_e: unknown, event: PtyEvent) => handler(event);
     ipcRenderer.on("pty:event", listener);
@@ -24,6 +25,8 @@ const api: AyaApi = {
     ipcRenderer.invoke("projects:create", name, directory),
   updateProject: (project) => ipcRenderer.invoke("projects:update", project),
   deleteProject: (slug) => ipcRenderer.invoke("projects:delete", slug),
+  saveProjectOrder: (slugs) =>
+    ipcRenderer.invoke("projects:save-order", slugs),
 
   listPresets: () => ipcRenderer.invoke("presets:list"),
   savePresets: (presets) => ipcRenderer.invoke("presets:save", presets),
@@ -41,6 +44,7 @@ const api: AyaApi = {
   createDir: (p) => ipcRenderer.invoke("env:create-dir", p),
 
   isFullScreen: () => ipcRenderer.invoke("app:is-fullscreen"),
+  setDockBadge: (text) => ipcRenderer.invoke("app:set-dock-badge", text),
   onFullScreenChange: (handler) => {
     const listener = (_e: unknown, isFullScreen: boolean) =>
       handler(isFullScreen);

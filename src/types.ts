@@ -77,6 +77,14 @@ export type PtyEvent =
   | { type: "data"; ptyId: string; chunk: string }
   | { type: "exit"; ptyId: string; exitCode: number };
 
+export interface BufferSearchHit {
+  ptyId: string;
+  snippet: string;
+  matchStart: number;
+  matchLength: number;
+  more: number;
+}
+
 export interface AyaApi {
   /** True under `npm run dev` (AYA_DEV=1). */
   isDev: boolean;
@@ -85,12 +93,14 @@ export interface AyaApi {
   ptyWrite(ptyId: string, data: string): Promise<void>;
   ptyResize(ptyId: string, cols: number, rows: number): Promise<void>;
   ptyKill(ptyId: string): Promise<void>;
+  ptySearch(query: string): Promise<BufferSearchHit[]>;
   onPtyEvent(handler: (event: PtyEvent) => void): () => void;
 
   listProjects(): Promise<ProjectConfig[]>;
   createProject(name: string, directory: string): Promise<ProjectConfig>;
   updateProject(project: ProjectConfig): Promise<void>;
   deleteProject(slug: string): Promise<void>;
+  saveProjectOrder(slugs: string[]): Promise<void>;
 
   listPresets(): Promise<Preset[]>;
   savePresets(presets: Preset[]): Promise<void>;
@@ -108,6 +118,7 @@ export interface AyaApi {
   createDir(path: string): Promise<void>;
 
   isFullScreen(): Promise<boolean>;
+  setDockBadge(text: string): Promise<void>;
   onFullScreenChange(handler: (isFullScreen: boolean) => void): () => void;
 
   onShortcut(handler: (action: string) => void): () => void;

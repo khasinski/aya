@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type DragEvent } from "react";
 import type { ProjectConfig } from "../types";
 
 interface Props {
@@ -16,6 +16,7 @@ interface Props {
    *  file — on restart, the project reopens. */
   onCloseProject: (slug: string) => void;
   onRenameProject: (slug: string, newName: string) => void;
+  onReorderProjects: (orderedSlugs: string[]) => void;
   onOpenSettings: () => void;
   projectBadges?: Record<string, number>;
 }
@@ -38,12 +39,72 @@ export function TopBar({
   onNewProject,
   onCloseProject,
   onRenameProject,
+  onReorderProjects,
   onOpenSettings,
   projectBadges = {},
 }: Props) {
   const [renamingSlug, setRenamingSlug] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Drag-and-drop state for project tab reordering.
+  const [dragSlug, setDragSlug] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{
+    slug: string;
+    before: boolean;
+  } | null>(null);
+
+  const handleDragStart = (
+    e: DragEvent<HTMLDivElement>,
+    slug: string,
+  ) => {
+    setDragSlug(slug);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", slug);
+  };
+  const handleDragOver = (
+    e: DragEvent<HTMLDivElement>,
+    slug: string,
+  ) => {
+    if (!dragSlug || dragSlug === slug) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const before = e.clientX < rect.left + rect.width / 2;
+    setDropTarget((prev) =>
+      prev && prev.slug === slug && prev.before === before
+        ? prev
+        : { slug, before },
+    );
+  };
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (!dragSlug || !dropTarget) {
+      setDragSlug(null);
+      setDropTarget(null);
+      return;
+    }
+    const fromIdx = projects.findIndex((p) => p.slug === dragSlug);
+    const targetIdx = projects.findIndex((p) => p.slug === dropTarget.slug);
+    if (fromIdx < 0 || targetIdx < 0) {
+      setDragSlug(null);
+      setDropTarget(null);
+      return;
+    }
+    const order = projects.map((p) => p.slug);
+    order.splice(fromIdx, 1);
+    let insertIdx = targetIdx;
+    if (fromIdx < targetIdx) insertIdx -= 1;
+    if (!dropTarget.before) insertIdx += 1;
+    order.splice(insertIdx, 0, dragSlug);
+    onReorderProjects(order);
+    setDragSlug(null);
+    setDropTarget(null);
+  };
+  const handleDragEnd = () => {
+    setDragSlug(null);
+    setDropTarget(null);
+  };
 
   const startRename = (project: ProjectConfig) => {
     setRenamingSlug(project.slug);
@@ -82,15 +143,29 @@ export function TopBar({
               onCloseProject(p.slug);
             }
           };
+          const isDragging = dragSlug === p.slug;
+          const isDropTarget = dropTarget?.slug === p.slug;
+          const dropClass = isDropTarget
+            ? dropTarget.before
+              ? "aya-tab--drop-before"
+              : "aya-tab--drop-after"
+            : "";
           return (
             <div
               key={p.slug}
-              className={`aya-tab ${isActive ? "aya-tab--active" : ""}`}
+              className={`aya-tab ${isActive ? "aya-tab--active" : ""} ${
+                isDragging ? "aya-tab--dragging" : ""
+              } ${dropClass}`}
+              draggable={!isRenaming}
+              onDragStart={(e) => handleDragStart(e, p.slug)}
+              onDragOver={(e) => handleDragOver(e, p.slug)}
+              onDrop={handleDrop}
+              onDragEnd={handleDragEnd}
               onClick={() => !isRenaming && onSelectProject(p.slug)}
               title={
                 isRenaming
                   ? undefined
-                  : `${p.name} — ${p.directory} · double-click to rename`
+                  : `${p.name} — ${p.directory} · double-click to rename · drag to reorder`
               }
             >
               {isRenaming ? (
@@ -124,7 +199,12 @@ export function TopBar({
                 </span>
               )}
               <span className="aya-tab-path">{compactDir(p.directory, homeDir)}</span>
-              {badge > 0 && <span className="aya-tab-badge">{badge}</span>}
+              {badge > 0 && (
+                <span
+                  className="aya-tab-bell"
+                  title={`${badge} terminal${badge > 1 ? "s" : ""} waiting for input`}
+                />
+              )}
               <span
                 className="aya-tab-close"
                 onClick={(e) => {

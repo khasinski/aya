@@ -51,6 +51,173 @@
   background: transparent;
 }
 
+/* Search-everything modal (double-Shift). */
+.aya-modal--search {
+  width: min(640px, 90vw);
+  max-height: 70vh;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.aya-search-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 14px 16px;
+  font-size: 15px;
+  font-family: var(--font-sans);
+  color: var(--fg-primary);
+  outline: none;
+}
+.aya-search-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+  min-height: 0;
+}
+.aya-search-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--fg-tertiary);
+  font-size: 13px;
+}
+.aya-search-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.aya-search-row--selected {
+  background: var(--bg-tertiary);
+}
+.aya-search-icon {
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--fg-tertiary);
+}
+.aya-search-text {
+  flex: 1;
+  min-width: 0;
+}
+.aya-search-label {
+  color: var(--fg-primary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.aya-search-secondary {
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.aya-search-snippet {
+  font-family: var(--font-mono);
+}
+.aya-search-snippet mark {
+  background: color-mix(in oklab, var(--accent) 30%, transparent);
+  color: var(--fg-primary);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.aya-search-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+.aya-search-secondary-right {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.aya-search-footer {
+  display: flex;
+  gap: 14px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--fg-tertiary);
+  background: var(--bg-secondary);
+}
+.aya-search-footer kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin: 0 2px;
+  color: var(--fg-secondary);
+}
+
+/* Drag-and-drop visuals. The dragged item fades; the drop target gets a
+   thick accent line on the leading or trailing edge to show where the
+   item will land if released now. !important is needed on the sidebar
+   row because the active state already sets box-shadow. */
+.aya-tab[draggable="true"] {
+  cursor: grab;
+}
+.aya-tab--dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+.aya-tab--drop-before {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.aya-tab--drop-after {
+  box-shadow: inset -3px 0 0 var(--accent);
+}
+.aya-sidebar-row[draggable="true"] {
+  cursor: grab;
+}
+.aya-sidebar-row--dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+.aya-sidebar-row--drop-before {
+  box-shadow: inset 0 3px 0 var(--accent) !important;
+}
+.aya-sidebar-row--drop-after {
+  box-shadow: inset 0 -3px 0 var(--accent) !important;
+}
+
+/* "Waiting for input" indicator. Same shape everywhere (sidebar row,
+   project tab, dock badge in spirit) so the user reads them as one signal.
+   Red because that's what notification badges look like across macOS apps. */
+.aya-bell--alert {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f85149;
+  box-shadow: 0 0 0 2px color-mix(in oklab, #f85149 30%, transparent);
+}
+.aya-tab-bell {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f85149;
+  box-shadow: 0 0 0 2px color-mix(in oklab, #f85149 35%, transparent);
+  margin-left: 2px;
+}
+
 /* Inline rename input that replaces the project tab name on double-click.
    Mirrors the sidebar's terminal rename input — accent border + soft glow
    so it reads as "editing this in place". */

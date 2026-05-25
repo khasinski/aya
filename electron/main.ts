@@ -10,12 +10,20 @@ import {
   deleteProject,
   expandPath,
   listProjects,
+  saveProjectOrder,
   updateProject,
 } from "./config";
 import { getGitInfo } from "./git";
 import { IS_DEV } from "./paths";
 import { listPresets, savePresets } from "./presets";
-import { killAll, killPty, resizePty, spawnPty, writePty } from "./pty";
+import {
+  killAll,
+  killPty,
+  resizePty,
+  searchPtyOutputs,
+  spawnPty,
+  writePty,
+} from "./pty";
 import { loadThemes, parseTheme, saveThemes } from "./themes";
 import type { Preset, ProjectConfig, SpawnRequest, ThemesFile } from "./types";
 import { loadWindowState, trackWindowState } from "./window-state";
@@ -225,6 +233,9 @@ function registerIpc(win: BrowserWindow): void {
       resizePty(ptyId, cols, rows),
   );
   ipcMain.handle("pty:kill", async (_e, ptyId: string) => killPty(ptyId));
+  ipcMain.handle("pty:search", async (_e, query: string) =>
+    searchPtyOutputs(query),
+  );
 
   ipcMain.handle("projects:list", async () => listProjects());
   ipcMain.handle("projects:create", async (_e, name: string, dir: string) =>
@@ -235,6 +246,9 @@ function registerIpc(win: BrowserWindow): void {
   );
   ipcMain.handle("projects:delete", async (_e, slug: string) =>
     deleteProject(slug),
+  );
+  ipcMain.handle("projects:save-order", async (_e, slugs: string[]) =>
+    saveProjectOrder(slugs),
   );
 
   ipcMain.handle("presets:list", async () => listPresets());
@@ -293,6 +307,18 @@ function registerIpc(win: BrowserWindow): void {
     await fs.mkdir(expandPath(p), { recursive: true });
   });
   ipcMain.handle("app:is-fullscreen", async () => win.isFullScreen());
+  // Dock badge for unattended notifications (waiting terminals). Empty
+  // string clears. macOS only; no-op on Linux/Windows for now since their
+  // taskbar badge stories differ.
+  ipcMain.handle("app:set-dock-badge", async (_e, text: string) => {
+    if (process.platform === "darwin" && app.dock) {
+      try {
+        app.dock.setBadge(text || "");
+      } catch {
+        // best effort
+      }
+    }
+  });
 }
 
 // Holds the active window reference so second-instance / app:open-file

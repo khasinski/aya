@@ -3,9 +3,10 @@
 // from both sides without runtime side-effects.
 
 import type { Preset } from "./presets";
+import type { BufferSearchHit } from "./pty";
 import type { Theme, ThemesFile } from "./themes";
 
-export type { Preset, Theme, ThemesFile };
+export type { BufferSearchHit, Preset, Theme, ThemesFile };
 
 export interface WorkingTab {
   id: string;
@@ -52,6 +53,10 @@ export interface AyaApi {
   ptyWrite(ptyId: string, data: string): Promise<void>;
   ptyResize(ptyId: string, cols: number, rows: number): Promise<void>;
   ptyKill(ptyId: string): Promise<void>;
+  /** Case-insensitive substring search across every live PTY's recent
+   *  output buffer. Returns one hit per matching pty (the first match plus
+   *  an extra-occurrences count). */
+  ptySearch(query: string): Promise<BufferSearchHit[]>;
   onPtyEvent(handler: (event: PtyEvent) => void): () => void;
 
   // Project config
@@ -59,6 +64,8 @@ export interface AyaApi {
   createProject(name: string, directory: string): Promise<ProjectConfig>;
   updateProject(project: ProjectConfig): Promise<void>;
   deleteProject(slug: string): Promise<void>;
+  /** Persist the project tab order. Array of slugs in display order. */
+  saveProjectOrder(slugs: string[]): Promise<void>;
 
   // Presets (terminal launchers)
   listPresets(): Promise<Preset[]>;
@@ -85,6 +92,8 @@ export interface AyaApi {
   // Window state
   isFullScreen(): Promise<boolean>;
   onFullScreenChange(handler: (isFullScreen: boolean) => void): () => void;
+  /** Sets the macOS dock badge text. Empty string clears. No-op elsewhere. */
+  setDockBadge(text: string): Promise<void>;
 
   /** Subscribe to keyboard shortcuts dispatched by the main process. Returns
    *  an unsubscribe function. Action strings: "new-shell", "close-tab",

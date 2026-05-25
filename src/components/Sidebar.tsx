@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import { getPreset, type Preset, type TerminalState } from "../types";
 
 interface Props {
   terminals: TerminalState[];
   activeId: string | null;
   sidebarWidth: number;
-  bellStyle?: "dot" | "icon" | "animated";
   presets: Preset[];
   // Set of terminal ids whose PTY emitted output in the last few seconds.
   // The status dot only pulses while in this set; otherwise it sits steady.
@@ -15,20 +14,21 @@ interface Props {
   onRename: (id: string, name: string) => void;
   onLaunch: (preset: Preset) => void;
   onResize: (width: number) => void;
+  /** Called with the new id order after a successful drag-drop. Only fires
+   *  when the order actually changed. */
+  onReorder: (orderedIds: string[]) => void;
 }
 
-function BellIcon({ style }: { style: "dot" | "icon" | "animated" }) {
-  if (style === "dot") return <span className="aya-bell aya-bell--dot" />;
-  if (style === "animated")
-    return <span className="aya-bell aya-bell--animated">notifications</span>;
-  return <span className="aya-bell aya-bell--icon">notifications</span>;
+/** "Agent is waiting for input" indicator — small red dot, the same shape
+ *  used on project tabs and the dock badge. */
+function BellIcon() {
+  return <span className="aya-bell aya-bell--alert" />;
 }
 
 export function Sidebar({
   terminals,
   activeId,
   sidebarWidth,
-  bellStyle = "icon",
   presets,
   recentlyActiveIds,
   onSelect,
@@ -36,10 +36,70 @@ export function Sidebar({
   onRename,
   onLaunch,
   onResize,
+  onReorder,
 }: Props) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Vertical drag-and-drop state for reordering terminal rows.
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{
+    id: string;
+    before: boolean;
+  } | null>(null);
+
+  const handleRowDragStart = (
+    e: DragEvent<HTMLDivElement>,
+    id: string,
+  ) => {
+    setDragId(id);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", id);
+  };
+  const handleRowDragOver = (
+    e: DragEvent<HTMLDivElement>,
+    id: string,
+  ) => {
+    if (!dragId || dragId === id) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    setDropTarget((prev) =>
+      prev && prev.id === id && prev.before === before
+        ? prev
+        : { id, before },
+    );
+  };
+  const handleRowDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (!dragId || !dropTarget) {
+      setDragId(null);
+      setDropTarget(null);
+      return;
+    }
+    const order = terminals.map((t) => t.id);
+    const fromIdx = order.indexOf(dragId);
+    const targetIdx = order.indexOf(dropTarget.id);
+    if (fromIdx < 0 || targetIdx < 0) {
+      setDragId(null);
+      setDropTarget(null);
+      return;
+    }
+    order.splice(fromIdx, 1);
+    let insertIdx = targetIdx;
+    if (fromIdx < targetIdx) insertIdx -= 1;
+    if (!dropTarget.before) insertIdx += 1;
+    order.splice(insertIdx, 0, dragId);
+    onReorder(order);
+    setDragId(null);
+    setDropTarget(null);
+  };
+  const handleRowDragEnd = () => {
+    setDragId(null);
+    setDropTarget(null);
+  };
 
   const startRename = (t: TerminalState) => {
     setRenamingId(t.id);
@@ -84,10 +144,25 @@ export function Sidebar({
         {terminals.map((t) => {
           const isActive = t.id === activeId;
           const preset = getPreset(presets, t.presetId);
+          const isDragging = dragId === t.id;
+          const isDropTarget = dropTarget?.id === t.id;
+          const dropClass = isDropTarget
+            ? dropTarget.before
+              ? "aya-sidebar-row--drop-before"
+              : "aya-sidebar-row--drop-after"
+            : "";
+          const isRenamingRow = renamingId === t.id;
           return (
             <div
               key={t.id}
-              className={`aya-sidebar-row ${isActive ? "aya-sidebar-row--active" : ""}`}
+              className={`aya-sidebar-row ${isActive ? "aya-sidebar-row--active" : ""} ${
+                isDragging ? "aya-sidebar-row--dragging" : ""
+              } ${dropClass}`}
+              draggable={!isRenamingRow}
+              onDragStart={(e) => handleRowDragStart(e, t.id)}
+              onDragOver={(e) => handleRowDragOver(e, t.id)}
+              onDrop={handleRowDrop}
+              onDragEnd={handleRowDragEnd}
               onClick={() => onSelect(t.id)}
               title={`${t.name} — ${t.cwd}`}
             >
@@ -135,7 +210,7 @@ export function Sidebar({
                   {t.name}
                 </span>
               )}
-              {t.bell && <BellIcon style={bellStyle} />}
+              {t.bell && <BellIcon />}
               <span
                 className="aya-sidebar-close"
                 onClick={(e) => {

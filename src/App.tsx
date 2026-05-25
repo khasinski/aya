@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MissingDirModal } from "./components/MissingDirModal";
 import { NewProjectModal } from "./components/NewProjectModal";
+import { SearchModal } from "./components/SearchModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
@@ -108,6 +109,7 @@ export function App() {
   >({});
   const [homeDir, setHomeDir] = useState<string>("");
   const [showSettings, setShowSettings] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(240);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const fontSize = 13;
@@ -129,6 +131,15 @@ export function App() {
     nextTab: () => {},
     selectProject: () => {},
   });
+
+  // macOS dock badge: count of terminals waiting for user attention across
+  // all projects. Empty string clears. Updates on every state change that
+  // affects `terminals` — cheap because setDockBadge is a no-op on Linux/
+  // Windows and same-string updates on macOS are idempotent at the OS level.
+  useEffect(() => {
+    const waitingCount = Object.values(terminals).filter((t) => t.bell).length;
+    void window.aya.setDockBadge(waitingCount > 0 ? String(waitingCount) : "");
+  }, [terminals]);
 
   // Status-bar branch / dirty count goes stale once you `git checkout` in a
   // shell or commit something — there's no inotify watch, just a small poll
@@ -154,6 +165,44 @@ export function App() {
       clearInterval(id);
     };
   }, [activeProjectId]);
+
+  // Double-Shift opens the search-everything modal. Listening for keyup on
+  // window: any non-Shift keydown in between aborts the chain so Shift+key
+  // combos (Shift+Enter etc.) don't accidentally trigger it. 300ms window.
+  useEffect(() => {
+    let lastShiftUp = 0;
+    let chainActive = false;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Shift") chainActive = false;
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key !== "Shift") return;
+      // No other modifiers — exclude Shift+Cmd, Shift+Ctrl, etc.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const now = Date.now();
+      if (chainActive && now - lastShiftUp < 300) {
+        chainActive = false;
+        // Don't open over a blocking modal — would stack confusingly.
+        if (!currentMissingDirRef.current && !newProjectModalRef.current) {
+          setShowSearch((s) => !s);
+        }
+        return;
+      }
+      lastShiftUp = now;
+      chainActive = true;
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+    };
+  }, []);
+
+  // Refs of modal state so the double-shift effect (subscribed once) can
+  // see the current value without resubscribing on every change.
+  const currentMissingDirRef = useRef<unknown>(null);
+  const newProjectModalRef = useRef<unknown>(null);
 
   // Handle "open this directory" requests from main — fired by `aya <dir>`
   // CLI invocations and the initial argv. Subscribed once; uses a ref to
@@ -526,6 +575,51 @@ export function App() {
     });
   }, []);
 
+  /** Reorder project tabs. Persists the new slug order to disk so a
+   *  restart preserves the user's choice. */
+  const reorderProjects = useCallback(async (orderedSlugs: string[]) => {
+    setProjects((prev) => {
+      const bySlug = new Map(prev.map((p) => [p.slug, p]));
+      const out: ProjectConfig[] = [];
+      // Reordered ones first in their new order
+      for (const slug of orderedSlugs) {
+        const p = bySlug.get(slug);
+        if (p) out.push(p);
+      }
+      // Then anything not mentioned (shouldn't happen normally) goes after
+      for (const p of prev) {
+        if (!orderedSlugs.includes(p.slug)) out.push(p);
+      }
+      return out;
+    });
+    try {
+      await window.aya.saveProjectOrder(orderedSlugs);
+    } catch (err) {
+      console.error("saveProjectOrder failed:", err);
+    }
+  }, []);
+
+  /** Reorder a project's terminal tabs. Walks the terminals map and
+   *  rebuilds it with the new key order — `project.tabs` is derived from
+   *  this map's filter+map so persistence comes along for free. */
+  const reorderTerminalsInProject = useCallback(
+    (slug: string, orderedIds: string[]) => {
+      setTerminals((prev) => {
+        const next: Record<string, TerminalState> = {};
+        for (const id of orderedIds) {
+          const t = prev[id];
+          if (t && t.projectSlug === slug) next[id] = t;
+        }
+        for (const [id, t] of Object.entries(prev)) {
+          if (!(id in next)) next[id] = t;
+        }
+        persistProject(slug, next);
+        return next;
+      });
+    },
+    [persistProject],
+  );
+
   /** Rename a project — updates the JSON's `name` field. The slug (file
    *  identity) stays the same so existing references aren't broken. */
   const renameProject = useCallback(
@@ -766,6 +860,8 @@ export function App() {
   }
 
   const currentMissingDir = missingDirQueue[0] ?? null;
+  currentMissingDirRef.current = currentMissingDir;
+  newProjectModalRef.current = newProjectModal;
 
   const activeTheme = themes.find((t) => t.id === activeThemeId) ?? themes[0];
   const activeThemeColors: ThemeColors =
@@ -841,6 +937,7 @@ export function App() {
         }}
         onCloseProject={closeProject}
         onRenameProject={renameProject}
+        onReorderProjects={reorderProjects}
         onOpenSettings={() => setShowSettings(true)}
         projectBadges={projectBadges}
       />
@@ -859,6 +956,11 @@ export function App() {
           onRename={renameTerminal}
           onLaunch={launchTerminal}
           onResize={setSidebarWidth}
+          onReorder={(orderedIds) => {
+            if (activeProjectId) {
+              reorderTerminalsInProject(activeProjectId, orderedIds);
+            }
+          }}
         />
         <div className="aya-panes">
           {Object.values(terminals).map((t) => {
@@ -927,6 +1029,20 @@ export function App() {
             }
             setNewProjectModal(null);
           }}
+        />
+      )}
+      {showSearch && (
+        <SearchModal
+          projects={projects}
+          terminals={terminals}
+          presets={presets}
+          lastActivity={lastActivityRef.current}
+          onSelectProject={(slug) => setActiveProjectId(slug)}
+          onSelectTerminal={(slug, terminalId) => {
+            setActiveProjectId(slug);
+            setActiveTabByProject((prev) => ({ ...prev, [slug]: terminalId }));
+          }}
+          onClose={() => setShowSearch(false)}
         />
       )}
       {showSettings && (
