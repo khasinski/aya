@@ -9,7 +9,7 @@
 // configuration, not something we control.
 
 import { promises as fs } from "node:fs";
-import * as path from "node:path";
+import { writeFileAtomic } from "./atomic-write";
 import { PRESETS_FILE } from "./paths";
 
 export interface Preset {
@@ -105,11 +105,10 @@ export async function listPresets(): Promise<Preset[]> {
 }
 
 export async function savePresets(presets: Preset[]): Promise<void> {
-  await fs.mkdir(path.dirname(PRESETS_FILE), { recursive: true });
   // Drop anything that doesn't look like a preset rather than silently
   // saving garbage.
   const sanitized = presets.filter(isPreset);
-  await fs.writeFile(
+  await writeFileAtomic(
     PRESETS_FILE,
     JSON.stringify({ presets: sanitized }, null, 2) + "\n",
   );

@@ -47,6 +47,18 @@ const api: AyaApi = {
     ipcRenderer.on("app:fullscreen", listener);
     return () => ipcRenderer.removeListener("app:fullscreen", listener);
   },
+
+  onShortcut: (handler) => {
+    const listener = (_e: unknown, action: string) => handler(action);
+    ipcRenderer.on("shortcut", listener);
+    return () => ipcRenderer.removeListener("shortcut", listener);
+  },
+
+  onOpenProject: (handler) => {
+    const listener = (_e: unknown, directory: string) => handler(directory);
+    ipcRenderer.on("open-project", listener);
+    return () => ipcRenderer.removeListener("open-project", listener);
+  },
 };
 
 contextBridge.exposeInMainWorld("aya", api);

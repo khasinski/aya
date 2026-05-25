@@ -2,7 +2,7 @@
 // host and the project config layer.
 
 import { app, BrowserWindow, dialog, ipcMain, nativeImage } from "electron";
-import { promises as fs } from "node:fs";
+import { promises as fs, statSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -25,6 +25,15 @@ const WINDOW_TITLE = IS_DEV ? "Aya Dev" : "Aya";
 // Sets the dock label on macOS. Must happen before the BrowserWindow is created.
 if (IS_DEV) {
   app.setName("Aya Dev");
+}
+
+// Only one Aya instance per config dir. A second launch (e.g. `open -a Aya
+// /path/to/project` or the `aya` CLI shim) sends its argv to the first
+// instance via the `second-instance` event, which the renderer turns into
+// a project switch / open.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
 }
 
 // DevTools probes a few CDP domains that Electron doesn't implement
@@ -70,6 +79,47 @@ function devIconPath(): string {
   return path.join(__dirname, "..", "build", "icon.png");
 }
 
+/** Walk argv (which includes electron's own args in dev) and return the
+ *  first positional value that resolves to an existing directory. Used to
+ *  honor `aya /path/to/project` invocations. */
+function findDirInArgv(argv: readonly string[]): string | null {
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a || a.startsWith("-")) continue;
+    // Skip arguments that obviously aren't user-supplied paths.
+    if (a.endsWith("main.js") || a.includes("node_modules/electron")) continue;
+    if (a === ".") {
+      // Relative-to-cwd. We get a sensible cwd from `second-instance`'s
+      // workingDirectory arg; the initial argv case handles "." via
+      // process.cwd().
+      try {
+        return path.resolve(process.cwd());
+      } catch {
+        continue;
+      }
+    }
+    try {
+      const resolved = path.resolve(a);
+      if (statSync(resolved).isDirectory()) return resolved;
+    } catch {
+      // Not a real directory — keep searching.
+      continue;
+    }
+  }
+  return null;
+}
+
+/** Forward an "open this project" request from another process (or our own
+ *  initial argv) to the renderer. The renderer figures out whether to switch
+ *  to an existing project, create a new one, or no-op. */
+function dispatchOpenProject(
+  win: BrowserWindow | null,
+  dir: string | null,
+): void {
+  if (!win || win.isDestroyed() || !dir) return;
+  win.webContents.send("open-project", dir);
+}
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
@@ -89,6 +139,11 @@ function createWindow(): BrowserWindow {
   });
 
   win.once("ready-to-show", () => win.show());
+  win.on("closed", () => {
+    // Keep the module-level ref in sync so second-instance handlers don't
+    // try to focus a destroyed window.
+    if (mainWindow === win) mainWindow = null;
+  });
 
   // Notify the renderer when fullscreen state changes so the topbar can drop
   // its left padding (which is there to clear the traffic-light buttons —
@@ -101,6 +156,33 @@ function createWindow(): BrowserWindow {
   // Initial broadcast once the renderer is ready (also useful if a future
   // restart preserves fullscreen state).
   win.webContents.once("did-finish-load", () => sendFullScreen(win.isFullScreen()));
+
+  // Intercept keyboard shortcuts at the BrowserWindow level so they fire
+  // even while xterm.js has focus (otherwise xterm would forward them to the
+  // PTY). Calling event.preventDefault() prevents both the page and the
+  // default menu from receiving the keystroke.
+  win.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown") return;
+    const isMac = process.platform === "darwin";
+    const mod = isMac ? input.meta : input.control;
+    if (!mod) return;
+    // Don't trigger our shortcuts if extra modifiers we don't bind are held —
+    // e.g. Cmd+Shift+T should NOT fire our Cmd+T action.
+    if (input.shift || input.alt) return;
+    const key = input.key.toLowerCase();
+    let action: string | null = null;
+    if (key === "t") action = "new-shell";
+    else if (key === "w") action = "close-tab";
+    else if (key === ",") action = "open-settings";
+    else if (key === "[") action = "prev-tab";
+    else if (key === "]") action = "next-tab";
+    else if (key.length === 1 && key >= "1" && key <= "9") {
+      action = `project-${key}`;
+    }
+    if (!action) return;
+    event.preventDefault();
+    if (!win.isDestroyed()) win.webContents.send("shortcut", action);
+  });
 
   if (process.env.AYA_DEV === "1") {
     win.loadURL(DEV_SERVER_URL);
@@ -195,6 +277,38 @@ function registerIpc(win: BrowserWindow): void {
   ipcMain.handle("app:is-fullscreen", async () => win.isFullScreen());
 }
 
+// Holds the active window reference so second-instance / app:open-file
+// handlers can talk to the renderer.
+let mainWindow: BrowserWindow | null = null;
+
+// Triggered when a second `Aya` launch happens while we're already running
+// (the single-instance lock above redirects argv here). Focus the window and
+// forward any directory argument to the renderer.
+app.on("second-instance", (_e, argv, workingDir) => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+  const dir = findDirInArgv(argv) ?? workingDir ?? null;
+  dispatchOpenProject(mainWindow, dir);
+});
+
+// macOS sends open-file for `open -a Aya /path` (when invoked without --args).
+app.on("open-file", (event, filePath) => {
+  event.preventDefault();
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+  try {
+    if (statSync(filePath).isDirectory()) {
+      dispatchOpenProject(mainWindow, filePath);
+    }
+  } catch {
+    // ignore
+  }
+});
+
 app.whenReady().then(() => {
   // In dev, replace Electron's default dock icon with ours so the running
   // instance is visually distinguishable. In packaged builds the bundle's
@@ -208,11 +322,22 @@ app.whenReady().then(() => {
     }
   }
 
-  const win = createWindow();
-  registerIpc(win);
+  mainWindow = createWindow();
+  registerIpc(mainWindow);
+
+  // Honor an initial directory argument on first launch — the renderer
+  // applies the same switch-or-create logic as for second-instance.
+  const initialDir = findDirInArgv(process.argv);
+  if (initialDir && mainWindow) {
+    mainWindow.webContents.once("did-finish-load", () => {
+      dispatchOpenProject(mainWindow, initialDir);
+    });
+  }
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      mainWindow = createWindow();
+    }
   });
 });
 

@@ -109,6 +109,9 @@ export interface AyaApi {
 
   isFullScreen(): Promise<boolean>;
   onFullScreenChange(handler: (isFullScreen: boolean) => void): () => void;
+
+  onShortcut(handler: (action: string) => void): () => void;
+  onOpenProject(handler: (directory: string) => void): () => void;
 }
 
 declare global {
@@ -140,8 +143,24 @@ export const MISSING_PRESET: Preset = {
   command: "$SHELL",
 };
 
+// Always-available shell preset. Used when the user has explicitly removed
+// their own "shell" preset but the Cmd+T shortcut still needs to open a
+// shell terminal. Same shape as the shipped default; not persisted.
+export const BUILTIN_SHELL: Preset = {
+  id: "shell",
+  name: "Shell",
+  icon: "$",
+  color: "",
+  command: "$SHELL",
+};
+
 export function getPreset(presets: Preset[], id: string): Preset {
-  return presets.find((p) => p.id === id) ?? MISSING_PRESET;
+  const found = presets.find((p) => p.id === id);
+  if (found) return found;
+  // Special-case "shell" so terminals created via Cmd+T always render with a
+  // sensible icon/name even if the user deleted their shell preset.
+  if (id === "shell") return BUILTIN_SHELL;
+  return MISSING_PRESET;
 }
 
 /** Slugify a name into a preset id. */

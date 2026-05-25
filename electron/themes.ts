@@ -10,8 +10,8 @@
 // the user's active theme selection.
 
 import { promises as fs } from "node:fs";
-import * as path from "node:path";
 import * as plist from "plist";
+import { writeFileAtomic } from "./atomic-write";
 import { THEMES_FILE } from "./paths";
 
 export interface ThemeColors {
@@ -215,12 +215,11 @@ export async function loadThemes(): Promise<ThemesFile> {
 }
 
 export async function saveThemes(file: ThemesFile): Promise<void> {
-  await fs.mkdir(path.dirname(THEMES_FILE), { recursive: true });
   const sanitized: ThemesFile = {
     themes: file.themes.filter(isTheme),
     activeId: file.activeId,
   };
-  await fs.writeFile(
+  await writeFileAtomic(
     THEMES_FILE,
     JSON.stringify(sanitized, null, 2) + "\n",
   );

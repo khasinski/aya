@@ -22,6 +22,16 @@ const ptys = new Map<string, pty.IPty>();
 const OUTPUT_BUFFER_MAX = 200_000; // ~200kb of recent bytes per terminal
 const outputBuffers = new Map<string, string[]>();
 
+// Spawn/kill race guard: if killPty arrives before the corresponding
+// spawnPty's IPC has finished (renderer remounted/closed quickly), the kill
+// finds no IPty in the map and is a no-op. The pending spawn then runs and
+// the resulting PTY is orphaned. We remember which ptyIds got an early kill
+// and bail out of subsequent spawn for them.
+const pendingKills = new Set<string>();
+// Auto-evict pending-kill markers so stale ids don't linger forever (defense
+// in depth — usually the spawn either runs within milliseconds or never).
+const PENDING_KILL_TTL_MS = 5_000;
+
 function appendToOutputBuffer(ptyId: string, chunk: string): void {
   let chunks = outputBuffers.get(ptyId);
   if (!chunks) {
@@ -81,6 +91,13 @@ function safeEnv(): { [key: string]: string } {
 }
 
 export function spawnPty(req: SpawnRequest, wc: WebContents): void {
+  if (pendingKills.has(req.ptyId)) {
+    // killPty arrived before this spawn (the renderer closed the tab between
+    // mounting and the IPC round-trip). Drop the spawn so we don't orphan a
+    // process the user already asked to discard.
+    pendingKills.delete(req.ptyId);
+    return;
+  }
   if (ptys.has(req.ptyId)) {
     // Already running — this is a re-mount (Vite HMR or a React double-mount).
     // Don't spawn again; replay the buffered output so the freshly-created
@@ -186,9 +203,16 @@ export function resizePty(ptyId: string, cols: number, rows: number): void {
 }
 
 export function killPty(ptyId: string): void {
-  const p = ptys.get(ptyId);
   outputBuffers.delete(ptyId);
-  if (!p) return;
+  const p = ptys.get(ptyId);
+  if (!p) {
+    // No PTY for this id yet — either it never existed, or the spawn IPC is
+    // still in flight. Mark it so a late-arriving spawnPty bails out. The
+    // TTL evicts the marker if nothing comes (cleaner than leaking ids).
+    pendingKills.add(ptyId);
+    setTimeout(() => pendingKills.delete(ptyId), PENDING_KILL_TTL_MS);
+    return;
+  }
   try {
     p.kill();
   } catch {
@@ -207,4 +231,5 @@ export function killAll(): void {
   }
   ptys.clear();
   outputBuffers.clear();
+  pendingKills.clear();
 }

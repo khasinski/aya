@@ -1,0 +1,55 @@
+#!/bin/sh
+# aya — open a directory as a project in the running Aya.app
+#
+# Usage:
+#   aya              # opens the current directory
+#   aya path/to/dir  # opens that directory
+#
+# Behaviour:
+#   • If Aya is already running and the directory matches an existing
+#     project, the window comes to the front and switches to it.
+#   • If the directory isn't a known project, Aya silently creates one
+#     using the directory's basename as the name.
+#   • If we're already on that project, the window just gets focused.
+#
+# Installation:
+#   ln -s "$PWD/bin/aya" /usr/local/bin/aya
+# (or copy this file somewhere in your $PATH)
+
+set -e
+
+# Resolve the target directory to an absolute path so it survives whatever
+# cwd `open` runs the app in.
+target="${1:-.}"
+if [ -d "$target" ]; then
+  abs=$(cd "$target" && pwd -P)
+else
+  printf "aya: '%s' is not a directory\n" "$target" >&2
+  exit 1
+fi
+
+case "$(uname -s)" in
+  Darwin)
+    # `open -a "Aya" --args <path>` launches if not running, or fires
+    # `second-instance` with the argv in the existing instance.
+    if [ -d "/Applications/Aya.app" ]; then
+      open -a "Aya" --args "$abs"
+    else
+      printf "aya: /Applications/Aya.app not found — run 'npm run package' and install the DMG\n" >&2
+      exit 1
+    fi
+    ;;
+  Linux)
+    # Find the aya binary on PATH or in a likely install dir.
+    if command -v aya-app >/dev/null 2>&1; then
+      aya-app "$abs" >/dev/null 2>&1 &
+    else
+      printf "aya: install the Aya AppImage / linux binary as 'aya-app' on PATH\n" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    printf "aya: unsupported platform '%s'\n" "$(uname -s)" >&2
+    exit 1
+    ;;
+esac

@@ -85,6 +85,15 @@ export interface AyaApi {
   // Window state
   isFullScreen(): Promise<boolean>;
   onFullScreenChange(handler: (isFullScreen: boolean) => void): () => void;
+
+  /** Subscribe to keyboard shortcuts dispatched by the main process. Returns
+   *  an unsubscribe function. Action strings: "new-shell", "close-tab",
+   *  "open-settings", "prev-tab", "next-tab", "project-1".."project-9". */
+  onShortcut(handler: (action: string) => void): () => void;
+
+  /** Subscribe to "open this project directory" requests from main — fired
+   *  on first launch with argv and on every second-instance invocation. */
+  onOpenProject(handler: (directory: string) => void): () => void;
 }
 
 declare global {

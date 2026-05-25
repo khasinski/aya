@@ -8,8 +8,10 @@ import { TerminalView } from "./components/TerminalView";
 import { TopBar } from "./components/TopBar";
 import { detectApproval, looksBusy } from "./bell";
 import {
+  BUILTIN_SHELL,
   getPreset,
   type Preset,
+  presetSlug,
   type ProjectConfig,
   type TerminalState,
   type Theme,
@@ -107,6 +109,72 @@ export function App() {
   const [sidebarWidth, setSidebarWidth] = useState(240);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const fontSize = 13;
+
+  // Shortcut dispatch table. Stored in a ref so the subscribe-once effect
+  // below always sees the freshest handlers without resubscribing.
+  const shortcutActionsRef = useRef<{
+    newShell: () => void;
+    closeCurrentTab: () => void;
+    openSettings: () => void;
+    prevTab: () => void;
+    nextTab: () => void;
+    selectProject: (oneBasedIndex: number) => void;
+  }>({
+    newShell: () => {},
+    closeCurrentTab: () => {},
+    openSettings: () => {},
+    prevTab: () => {},
+    nextTab: () => {},
+    selectProject: () => {},
+  });
+
+  // Status-bar branch / dirty count goes stale once you `git checkout` in a
+  // shell or commit something — there's no inotify watch, just a small poll
+  // for the active project. ~50ms subprocess, 3s cadence; cancelled on
+  // project switch.
+  useEffect(() => {
+    if (!activeProjectId) return;
+    let cancelled = false;
+    const refresh = () => {
+      const project = projectsRef.current.find(
+        (p) => p.slug === activeProjectId,
+      );
+      if (!project || cancelled) return;
+      void window.aya.getGitInfo(project.directory).then((info) => {
+        if (cancelled) return;
+        setGit((g) => ({ ...g, [project.slug]: info }));
+      });
+    };
+    refresh();
+    const id = setInterval(refresh, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [activeProjectId]);
+
+  // Handle "open this directory" requests from main — fired by `aya <dir>`
+  // CLI invocations and the initial argv. Subscribed once; uses a ref to
+  // always see the latest projects + handlers without resubscribing.
+  const openProjectRef = useRef<(dir: string) => void>(() => {});
+  useEffect(() => {
+    return window.aya.onOpenProject((dir) => openProjectRef.current(dir));
+  }, []);
+
+  useEffect(() => {
+    return window.aya.onShortcut((action) => {
+      const a = shortcutActionsRef.current;
+      if (action === "new-shell") a.newShell();
+      else if (action === "close-tab") a.closeCurrentTab();
+      else if (action === "open-settings") a.openSettings();
+      else if (action === "prev-tab") a.prevTab();
+      else if (action === "next-tab") a.nextTab();
+      else if (action.startsWith("project-")) {
+        const idx = parseInt(action.slice("project-".length), 10);
+        if (Number.isFinite(idx)) a.selectProject(idx);
+      }
+    });
+  }, []);
 
   // Track fullscreen state so the topbar can drop its left padding (the slot
   // for macOS traffic-light buttons, which hide in fullscreen).
@@ -515,6 +583,32 @@ export function App() {
     setPresets(next);
   }, []);
 
+  /** Open a shell terminal in the active project. Used by Cmd/Ctrl+T. Falls
+   *  back to BUILTIN_SHELL if the user has deleted their shell preset so the
+   *  shortcut always works. */
+  const openShellTab = useCallback(() => {
+    const slug = activeProjectIdRef.current;
+    if (!slug) return;
+    const shellPreset =
+      presetsRef.current.find((p) => p.id === "shell") ?? BUILTIN_SHELL;
+    launchTerminal(shellPreset);
+  }, [launchTerminal]);
+
+  /** Cycle through the active project's terminal tabs in display order. */
+  const cycleActiveProjectTab = useCallback((delta: number) => {
+    const slug = activeProjectIdRef.current;
+    if (!slug) return;
+    const tabs = Object.values(terminalsRef.current).filter(
+      (t) => t.projectSlug === slug,
+    );
+    if (tabs.length < 2) return;
+    const currentId = activeTabByProject[slug];
+    const idx = tabs.findIndex((t) => t.id === currentId);
+    if (idx < 0) return;
+    const next = (idx + delta + tabs.length) % tabs.length;
+    setActiveTabByProject((p) => ({ ...p, [slug]: tabs[next].id }));
+  }, [activeTabByProject]);
+
   const onSaveThemes = useCallback(
     async (nextThemes: Theme[], nextActiveId: string) => {
       const activeId = nextThemes.some((t) => t.id === nextActiveId)
@@ -588,6 +682,51 @@ export function App() {
   const activeTheme = themes.find((t) => t.id === activeThemeId) ?? themes[0];
   const activeThemeColors: ThemeColors =
     activeTheme?.colors ?? FALLBACK_THEME_COLORS;
+
+  // Refresh the open-project handler so it sees the latest projects + state.
+  openProjectRef.current = async (rawDir: string) => {
+    const absDir = await window.aya.expandPath(rawDir);
+    // 1. Exact directory match: just switch (no-op if already active).
+    const existing = projectsRef.current.find((p) => p.directory === absDir);
+    if (existing) {
+      if (activeProjectIdRef.current !== existing.slug) {
+        setActiveProjectId(existing.slug);
+      }
+      return;
+    }
+    // 2. Auto-create silently from basename. If the slug would collide with
+    //    an existing project pointing at a different directory, open the
+    //    name prompt instead so the user can pick something distinct.
+    const name = basename(absDir);
+    const slug = presetSlug(name);
+    const slugCollides = projectsRef.current.some((p) => p.slug === slug);
+    if (slugCollides) {
+      setNewProjectModal({
+        defaults: { name, directory: absDir },
+        lockDirectory: true,
+        title: "Name this project",
+        hint: absDir,
+      });
+      return;
+    }
+    await onCreateProject(name, absDir);
+  };
+
+  // Refresh shortcut handlers on every render so the subscribe-once effect
+  // always sees the latest closures (no stale state).
+  shortcutActionsRef.current = {
+    newShell: openShellTab,
+    closeCurrentTab: () => {
+      if (activeTabId) closeTerminal(activeTabId);
+    },
+    openSettings: () => setShowSettings(true),
+    prevTab: () => cycleActiveProjectTab(-1),
+    nextTab: () => cycleActiveProjectTab(1),
+    selectProject: (oneBasedIndex) => {
+      const target = projects[oneBasedIndex - 1];
+      if (target) setActiveProjectId(target.slug);
+    },
+  };
 
   return (
     <div

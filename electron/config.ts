@@ -3,6 +3,7 @@
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { writeFileAtomic } from "./atomic-write";
 import { PROJECTS_DIR } from "./paths";
 import type { ProjectConfig } from "./types";
 
@@ -98,14 +99,14 @@ export async function createProject(
     directory: absDir,
     tabs: [],
   };
-  await fs.writeFile(filePath, JSON.stringify(toDisk(project), null, 2) + "\n");
+  await writeFileAtomic(filePath, JSON.stringify(toDisk(project), null, 2) + "\n");
   return project;
 }
 
 export async function updateProject(project: ProjectConfig): Promise<void> {
   await ensureDir();
   const filePath = path.join(PROJECTS_DIR, `${project.slug}.json`);
-  await fs.writeFile(filePath, JSON.stringify(toDisk(project), null, 2) + "\n");
+  await writeFileAtomic(filePath, JSON.stringify(toDisk(project), null, 2) + "\n");
 }
 
 export async function deleteProject(slug: string): Promise<void> {
