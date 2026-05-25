@@ -170,23 +170,38 @@ export function SearchModal({
   onSelectTerminal,
   onClose,
 }: Props) {
+  // Input value drives the field; query is the debounced version used for
+  // ranking + content RPC. Both updating off the same keystroke would
+  // re-render the result list per character, which feels like flicker.
+  const [inputValue, setInputValue] = useState("");
   const [query, setQuery] = useState("");
   const [contentHits, setContentHits] = useState<BufferSearchHit[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Debounced content-search RPC.
+  // Debounce inputValue → query. 100ms strikes a balance: fast enough that
+  // it feels live, slow enough that single keystrokes don't trigger a
+  // full re-rank + RPC round-trip.
+  useEffect(() => {
+    const id = setTimeout(() => setQuery(inputValue), 100);
+    return () => clearTimeout(id);
+  }, [inputValue]);
+
+  // Content-search RPC piggybacks on the same debounced query.
   useEffect(() => {
     const q = query.trim();
     if (q.length < 1) {
       setContentHits([]);
       return;
     }
-    const id = setTimeout(() => {
-      void window.aya.ptySearch(q).then(setContentHits);
-    }, 80);
-    return () => clearTimeout(id);
+    let cancelled = false;
+    void window.aya.ptySearch(q).then((hits) => {
+      if (!cancelled) setContentHits(hits);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [query]);
 
   const results = useMemo(
@@ -258,9 +273,9 @@ export function SearchModal({
         <input
           ref={inputRef}
           className="aya-search-input"
-          value={query}
+          value={inputValue}
           onChange={(e) => {
-            setQuery(e.target.value);
+            setInputValue(e.target.value);
             setSelectedIndex(0);
           }}
           onKeyDown={onKeyDown}

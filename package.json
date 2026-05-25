@@ -20,6 +20,7 @@
   "dependencies": {
     "@types/plist": "^3.0.5",
     "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-search": "^0.16.0",
     "@xterm/xterm": "^5.5.0",
     "node-pty": "^1.0.0",
     "plist": "^3.1.1",

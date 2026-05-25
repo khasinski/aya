@@ -51,6 +51,92 @@
   background: transparent;
 }
 
+/* Right-click context menu on sidebar rows. position:fixed so it can
+   escape the sidebar's overflow:auto without clipping. */
+.aya-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 180px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-card);
+  padding: 4px;
+  font-family: var(--font-sans);
+}
+.aya-context-menu-item {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--fg-primary);
+  cursor: pointer;
+  font-family: inherit;
+}
+.aya-context-menu-item:hover {
+  background: var(--bg-tertiary);
+}
+.aya-context-menu-item--danger {
+  color: var(--rich-red);
+}
+.aya-context-menu-item--danger:hover {
+  background: rgba(192, 28, 40, 0.12);
+  color: var(--rich-red);
+}
+
+/* In-pane "find" bar (Cmd+F) — floats top-right inside the terminal pane.
+   Compact so it doesn't obscure too much of the running terminal. */
+.aya-findbar {
+  position: absolute;
+  top: 44px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: var(--shadow-card);
+  z-index: 10;
+}
+.aya-findbar-input {
+  width: 200px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 7px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--fg-primary);
+  outline: none;
+}
+.aya-findbar-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 20%, transparent);
+}
+.aya-findbar-btn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--font-sans);
+}
+.aya-findbar-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+}
+
 /* Search-everything modal (double-Shift). Fixed height so the dialog
    doesn't grow/shrink/flicker as the result list changes — the inner
    list scrolls instead. Capped to viewport on small windows. */
@@ -391,17 +477,29 @@
   flex-basis: auto;
 }
 
-/* The tab strip itself scrolls horizontally instead of clipping. We hide
-   the native scrollbar — the wheel/trackpad handler in TopBar does the
-   actual scrolling, and the visible bar in a 40px topbar competes for
-   space with the tab content. */
+/* The tab strip scrolls horizontally instead of clipping. Critically, we
+   un-set the topbar's -webkit-app-region:drag here — without `no-drag`,
+   macOS treats trackpad gestures over the strip as window-drag intent
+   instead of scroll, and the wheel/swipe never reaches the overflow. */
 .aya-tabs {
+  -webkit-app-region: no-drag;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
+/* Visible thin scrollbar so the user has both wheel/swipe AND direct
+   manipulation. 4px so it doesn't eat the 40px topbar's vertical budget. */
 .aya-tabs::-webkit-scrollbar {
-  display: none;
+  height: 4px;
+  background: transparent;
+}
+.aya-tabs::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 2px;
+}
+.aya-tabs::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-tertiary);
 }
 
 /* The "+ New project" sentinel never shrinks, and neither does the topbar's

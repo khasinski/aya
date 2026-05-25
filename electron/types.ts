@@ -94,6 +94,8 @@ export interface AyaApi {
   onFullScreenChange(handler: (isFullScreen: boolean) => void): () => void;
   /** Sets the macOS dock badge text. Empty string clears. No-op elsewhere. */
   setDockBadge(text: string): Promise<void>;
+  /** Brings the aya window to the foreground (restore if minimized). */
+  focusWindow(): Promise<void>;
 
   /** Subscribe to keyboard shortcuts dispatched by the main process. Returns
    *  an unsubscribe function. Action strings: "new-shell", "close-tab",

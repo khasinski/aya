@@ -119,6 +119,7 @@ export interface AyaApi {
 
   isFullScreen(): Promise<boolean>;
   setDockBadge(text: string): Promise<void>;
+  focusWindow(): Promise<void>;
   onFullScreenChange(handler: (isFullScreen: boolean) => void): () => void;
 
   onShortcut(handler: (action: string) => void): () => void;

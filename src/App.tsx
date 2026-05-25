@@ -110,6 +110,7 @@ export function App() {
   const [homeDir, setHomeDir] = useState<string>("");
   const [showSettings, setShowSettings] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  const [findInPaneFor, setFindInPaneFor] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(240);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const fontSize = 13;
@@ -123,6 +124,7 @@ export function App() {
     prevTab: () => void;
     nextTab: () => void;
     selectProject: (oneBasedIndex: number) => void;
+    findInPane: () => void;
   }>({
     newShell: () => {},
     closeCurrentTab: () => {},
@@ -130,6 +132,7 @@ export function App() {
     prevTab: () => {},
     nextTab: () => {},
     selectProject: () => {},
+    findInPane: () => {},
   });
 
   // macOS dock badge: count of terminals waiting for user attention across
@@ -139,6 +142,36 @@ export function App() {
   useEffect(() => {
     const waitingCount = Object.values(terminals).filter((t) => t.bell).length;
     void window.aya.setDockBadge(waitingCount > 0 ? String(waitingCount) : "");
+  }, [terminals]);
+
+  // System notifications: fire when a terminal transitions to bell=true and
+  // the aya window isn't focused. Clicking the notification brings aya to
+  // the foreground and switches to the responsible terminal.
+  const prevBellRef = useRef<Record<string, boolean>>({});
+  useEffect(() => {
+    const prev = prevBellRef.current;
+    const current: Record<string, boolean> = {};
+    for (const [id, t] of Object.entries(terminals)) {
+      current[id] = t.bell;
+      const becameBell = t.bell && !prev[id];
+      if (!becameBell) continue;
+      if (typeof document !== "undefined" && document.hasFocus()) continue;
+      const project = projectsRef.current.find((p) => p.slug === t.projectSlug);
+      try {
+        const n = new Notification("Aya — waiting for input", {
+          body: project ? `${t.name} in ${project.name}` : t.name,
+          silent: false,
+        });
+        n.onclick = () => {
+          void window.aya.focusWindow();
+          setActiveProjectId(t.projectSlug);
+          setActiveTabByProject((p) => ({ ...p, [t.projectSlug]: id }));
+        };
+      } catch {
+        // Notification API may be unavailable in headless / test contexts.
+      }
+    }
+    prevBellRef.current = current;
   }, [terminals]);
 
   // Status-bar branch / dirty count goes stale once you `git checkout` in a
@@ -234,6 +267,7 @@ export function App() {
       else if (action === "open-settings") a.openSettings();
       else if (action === "prev-tab") a.prevTab();
       else if (action === "next-tab") a.nextTab();
+      else if (action === "find-in-pane") a.findInPane();
       else if (action.startsWith("project-")) {
         const idx = parseInt(action.slice("project-".length), 10);
         if (Number.isFinite(idx)) a.selectProject(idx);
@@ -744,6 +778,38 @@ export function App() {
     delete lastActivityRef.current[id];
   }, []);
 
+  // Per-terminal counter — bumped each time we forcibly restart (right-click
+  // → Restart). TerminalView watches the prop and triggers a fresh ptySpawn
+  // on change, reusing the existing xterm instance + scrollback.
+  const [restartTriggers, setRestartTriggers] = useState<Record<string, number>>(
+    {},
+  );
+
+  /** Right-click → "Restart" handler. Kills the existing PTY (alive or
+   *  not) and asks TerminalView to spawn a fresh one. */
+  const forceRestartTerminal = useCallback(async (id: string) => {
+    const t = terminalsRef.current[id];
+    if (!t) return;
+    // Await the kill so the main-side ptys map is empty by the time the
+    // new spawn IPC arrives — otherwise spawnPty treats it as a re-mount
+    // and replays the old buffer instead of starting fresh.
+    try {
+      await window.aya.ptyKill(id);
+    } catch {
+      /* ignore — best effort */
+    }
+    setTerminals((prev) => {
+      const cur = prev[id];
+      if (!cur) return prev;
+      return {
+        ...prev,
+        [id]: { ...cur, exitCode: null, status: "running", bell: false },
+      };
+    });
+    delete lastActivityRef.current[id];
+    setRestartTriggers((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
+  }, []);
+
   /** Open a shell terminal in the active project. Used by Cmd/Ctrl+T. Falls
    *  back to BUILTIN_SHELL if the user has deleted their shell preset so the
    *  shortcut always works. */
@@ -910,6 +976,9 @@ export function App() {
       const target = projects[oneBasedIndex - 1];
       if (target) setActiveProjectId(target.slug);
     },
+    findInPane: () => {
+      if (activeTabId) setFindInPaneFor(activeTabId);
+    },
   };
 
   return (
@@ -961,6 +1030,7 @@ export function App() {
               reorderTerminalsInProject(activeProjectId, orderedIds);
             }
           }}
+          onRestart={forceRestartTerminal}
         />
         <div className="aya-panes">
           {Object.values(terminals).map((t) => {
@@ -983,7 +1053,10 @@ export function App() {
                 cwd={t.cwd}
                 fontSize={fontSize}
                 themeColors={colorsForTerminal}
+                findOpen={findInPaneFor === t.id}
+                onCloseFind={() => setFindInPaneFor(null)}
                 onRequestRestart={() => restartTerminal(t.id)}
+                restartTrigger={restartTriggers[t.id] ?? 0}
               />
             );
           })}

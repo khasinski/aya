@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal as XTerm, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
 import type { Preset, TerminalState, ThemeColors } from "../types";
 
 interface Props {
@@ -11,11 +12,18 @@ interface Props {
   cwd: string;
   fontSize: number;
   themeColors: ThemeColors;
+  /** When true, render the in-pane search bar (Cmd+F target). */
+  findOpen: boolean;
+  /** Called when the user closes the search bar (Esc / ✕). */
+  onCloseFind: () => void;
   onPtyData?: (chunk: string) => void;
   /** Called when the user requests a restart of an exited PTY via the
    *  Shift+Enter hint. The host resets the terminal's exitCode/status so the
    *  PTY event loop can flow again. */
   onRequestRestart?: () => void;
+  /** Bumped by App when the user right-clicks → Restart on this terminal.
+   *  The component reuses its xterm instance and spawns a fresh PTY. */
+  restartTrigger: number;
 }
 
 /** Our internal ThemeColors shape is a superset of xterm.js's ITheme. This
@@ -32,13 +40,18 @@ export function TerminalView({
   cwd,
   fontSize,
   themeColors,
+  findOpen,
+  onCloseFind,
   onPtyData,
   onRequestRestart,
+  restartTrigger,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const searchRef = useRef<SearchAddon | null>(null);
   const spawnedRef = useRef(false);
+  const [findQuery, setFindQuery] = useState("");
   // Current foreground-process title, fed by OSC 0/2 from the inner shell.
   // macOS zsh's default config emits this in preexec/precmd, so we get the
   // running command for free in shell tabs. Claude/Codex don't emit titles,
@@ -68,7 +81,9 @@ export function TerminalView({
       scrollback: 10000,
     });
     const fit = new FitAddon();
+    const search = new SearchAddon();
     term.loadAddon(fit);
+    term.loadAddon(search);
     term.open(containerRef.current);
 
     requestAnimationFrame(() => {
@@ -81,6 +96,7 @@ export function TerminalView({
 
     xtermRef.current = term;
     fitRef.current = fit;
+    searchRef.current = search;
 
     const unsubscribe = window.aya.onPtyEvent((event) => {
       if (event.ptyId !== terminal.id) return;
@@ -172,6 +188,7 @@ export function TerminalView({
       }
       xtermRef.current = null;
       fitRef.current = null;
+      searchRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminal.id]);
@@ -210,6 +227,36 @@ export function TerminalView({
       /* ignore */
     }
   }, [fontSize]);
+
+  // Clear highlights when the find bar closes so stale "match outline"
+  // doesn't linger on the canvas while the user types in the PTY.
+  useEffect(() => {
+    if (findOpen) return;
+    try {
+      searchRef.current?.clearDecorations();
+    } catch {
+      /* ignore */
+    }
+  }, [findOpen]);
+
+  // Forced-restart trigger from the host. Starts as 0; any subsequent
+  // change means "spawn a fresh PTY against the same id". The old PTY has
+  // already been killed by App.forceRestartTerminal before this fires.
+  const lastRestartTriggerRef = useRef(restartTrigger);
+  useEffect(() => {
+    if (restartTrigger === lastRestartTriggerRef.current) return;
+    lastRestartTriggerRef.current = restartTrigger;
+    const term = xtermRef.current;
+    if (!term) return;
+    term.writeln("\x1b[2m[restarting…]\x1b[0m");
+    void window.aya.ptySpawn({
+      ptyId: terminal.id,
+      command: commandRef.current,
+      cwd: cwdRef.current,
+      cols: Math.max(term.cols, 80),
+      rows: Math.max(term.rows, 24),
+    });
+  }, [restartTrigger, terminal.id]);
 
   // Hot-swap theme when the active selection changes. xterm.js stashes the
   // new palette into `options.theme` but does NOT repaint the visible grid by
@@ -253,6 +300,118 @@ export function TerminalView({
         </div>
       </div>
       <div className="aya-xterm-host" ref={containerRef} />
+      {findOpen && (
+        <FindBar
+          value={findQuery}
+          onChange={(v) => {
+            setFindQuery(v);
+            if (!v) {
+              try {
+                searchRef.current?.clearDecorations();
+              } catch {
+                /* ignore */
+              }
+              return;
+            }
+            try {
+              searchRef.current?.findNext(v, {
+                regex: false,
+                wholeWord: false,
+                caseSensitive: false,
+                incremental: true,
+              });
+            } catch {
+              /* ignore */
+            }
+          }}
+          onNext={() => {
+            if (findQuery) {
+              try {
+                searchRef.current?.findNext(findQuery);
+              } catch {
+                /* ignore */
+              }
+            }
+          }}
+          onPrev={() => {
+            if (findQuery) {
+              try {
+                searchRef.current?.findPrevious(findQuery);
+              } catch {
+                /* ignore */
+              }
+            }
+          }}
+          onClose={onCloseFind}
+        />
+      )}
+    </div>
+  );
+}
+
+interface FindBarProps {
+  value: string;
+  onChange: (v: string) => void;
+  onNext: () => void;
+  onPrev: () => void;
+  onClose: () => void;
+}
+
+function FindBar({
+  value,
+  onChange,
+  onNext,
+  onPrev,
+  onClose,
+}: FindBarProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    // Focus + select-all on mount so opening the bar twice in a row lets
+    // the user replace the query directly.
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+  return (
+    <div className="aya-findbar">
+      <input
+        ref={inputRef}
+        className="aya-findbar-input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onClose();
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            if (e.shiftKey) onPrev();
+            else onNext();
+          }
+        }}
+        placeholder="Find in terminal…"
+        spellCheck={false}
+      />
+      <button
+        className="aya-findbar-btn"
+        onClick={onPrev}
+        title="Previous match (Shift+Enter)"
+      >
+        ↑
+      </button>
+      <button
+        className="aya-findbar-btn"
+        onClick={onNext}
+        title="Next match (Enter)"
+      >
+        ↓
+      </button>
+      <button
+        className="aya-findbar-btn"
+        onClick={onClose}
+        title="Close (Esc)"
+      >
+        ✕
+      </button>
     </div>
   );
 }

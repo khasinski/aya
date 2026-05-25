@@ -202,6 +202,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     else if (key === ",") action = "open-settings";
     else if (key === "[") action = "prev-tab";
     else if (key === "]") action = "next-tab";
+    else if (key === "f") action = "find-in-pane";
     else if (key.length === 1 && key >= "1" && key <= "9") {
       action = `project-${key}`;
     }
@@ -310,6 +311,11 @@ function registerIpc(win: BrowserWindow): void {
   // Dock badge for unattended notifications (waiting terminals). Empty
   // string clears. macOS only; no-op on Linux/Windows for now since their
   // taskbar badge stories differ.
+  ipcMain.handle("app:focus-window", () => {
+    if (win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  });
   ipcMain.handle("app:set-dock-badge", async (_e, text: string) => {
     if (process.platform === "darwin" && app.dock) {
       try {

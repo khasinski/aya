@@ -17,6 +17,8 @@ interface Props {
   /** Called with the new id order after a successful drag-drop. Only fires
    *  when the order actually changed. */
   onReorder: (orderedIds: string[]) => void;
+  /** Kill + re-spawn the PTY for this terminal (right-click → Restart). */
+  onRestart: (id: string) => void;
 }
 
 /** "Agent is waiting for input" indicator — small red dot, the same shape
@@ -37,7 +39,29 @@ export function Sidebar({
   onLaunch,
   onResize,
   onReorder,
+  onRestart,
 }: Props) {
+  // Right-click context menu state. Positioned at the cursor; closes on
+  // outside click, Esc, or after the user picks an item.
+  const [menu, setMenu] = useState<{
+    x: number;
+    y: number;
+    terminalId: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenu(null);
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [menu]);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -164,6 +188,10 @@ export function Sidebar({
               onDrop={handleRowDrop}
               onDragEnd={handleRowDragEnd}
               onClick={() => onSelect(t.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setMenu({ x: e.clientX, y: e.clientY, terminalId: t.id });
+              }}
               title={`${t.name} — ${t.cwd}`}
             >
               <span
@@ -260,6 +288,32 @@ export function Sidebar({
           document.body.style.cursor = "col-resize";
         }}
       />
+      {menu && (
+        <div
+          className="aya-context-menu"
+          style={{ left: menu.x, top: menu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            className="aya-context-menu-item"
+            onClick={() => {
+              onRestart(menu.terminalId);
+              setMenu(null);
+            }}
+          >
+            Restart terminal
+          </button>
+          <button
+            className="aya-context-menu-item aya-context-menu-item--danger"
+            onClick={() => {
+              onClose(menu.terminalId);
+              setMenu(null);
+            }}
+          >
+            Close terminal
+          </button>
+        </div>
+      )}
     </aside>
   );
 }

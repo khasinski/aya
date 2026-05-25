@@ -45,6 +45,7 @@ const api: AyaApi = {
 
   isFullScreen: () => ipcRenderer.invoke("app:is-fullscreen"),
   setDockBadge: (text) => ipcRenderer.invoke("app:set-dock-badge", text),
+  focusWindow: () => ipcRenderer.invoke("app:focus-window"),
   onFullScreenChange: (handler) => {
     const listener = (_e: unknown, isFullScreen: boolean) =>
       handler(isFullScreen);
