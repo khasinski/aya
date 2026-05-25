@@ -12,6 +12,10 @@ interface Props {
   fontSize: number;
   themeColors: ThemeColors;
   onPtyData?: (chunk: string) => void;
+  /** Called when the user requests a restart of an exited PTY via the
+   *  Shift+Enter hint. The host resets the terminal's exitCode/status so the
+   *  PTY event loop can flow again. */
+  onRequestRestart?: () => void;
 }
 
 /** Our internal ThemeColors shape is a superset of xterm.js's ITheme. This
@@ -29,11 +33,22 @@ export function TerminalView({
   fontSize,
   themeColors,
   onPtyData,
+  onRequestRestart,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const spawnedRef = useRef(false);
+  // Tracks whether the PTY has exited cleanly (code 0). When true, the
+  // custom key handler honors Shift+Enter as "restart this terminal".
+  // Stored in a ref so the long-lived xterm key handler always reads the
+  // current value without re-attaching on every render.
+  const canRestartRef = useRef(false);
+  canRestartRef.current = terminal.exitCode === 0;
+  const commandRef = useRef(command);
+  commandRef.current = command;
+  const cwdRef = useRef(cwd);
+  cwdRef.current = cwd;
 
   // Create the xterm instance + spawn the PTY once.
   useEffect(() => {
@@ -68,10 +83,49 @@ export function TerminalView({
         term.write(event.chunk);
         if (onPtyData) onPtyData(event.chunk);
       } else if (event.type === "exit") {
+        const restartHint =
+          event.exitCode === 0
+            ? " — press Shift+Enter to restart"
+            : "";
         term.write(
-          `\r\n\x1b[2m[process exited with code ${event.exitCode}]\x1b[0m\r\n`,
+          `\r\n\x1b[2m[process exited with code ${event.exitCode}${restartHint}]\x1b[0m\r\n`,
         );
       }
+    });
+
+    // Intercept Shift+Enter when the PTY is dead-but-cleanly-exited and
+    // turn it into a restart. Returning false from this handler stops
+    // xterm from forwarding the key to the (now-defunct) PTY.
+    term.attachCustomKeyEventHandler((ev) => {
+      if (
+        ev.type === "keydown" &&
+        ev.key === "Enter" &&
+        ev.shiftKey &&
+        !ev.metaKey &&
+        !ev.ctrlKey &&
+        !ev.altKey &&
+        canRestartRef.current
+      ) {
+        ev.preventDefault();
+        const t = xtermRef.current;
+        if (!t) return false;
+        t.writeln("\x1b[2m[restarting...]\x1b[0m");
+        // Let the host clear exit state first, then ask main for a fresh
+        // PTY against the same id. ptySpawn is idempotent against existing
+        // ids; the previous PTY was removed on exit, so this spawns anew.
+        onRequestRestart?.();
+        void window.aya.ptySpawn({
+          ptyId: terminal.id,
+          command: commandRef.current,
+          cwd: cwdRef.current,
+          cols: Math.max(t.cols, 80),
+          rows: Math.max(t.rows, 24),
+        });
+        // Mark as live so a follow-up keypress doesn't re-trigger restart.
+        canRestartRef.current = false;
+        return false;
+      }
+      return true;
     });
 
     const onDataDisposable = term.onData((data) => {

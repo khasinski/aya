@@ -583,6 +583,23 @@ export function App() {
     setPresets(next);
   }, []);
 
+  /** Called by TerminalView when the user presses Shift+Enter in a
+   *  cleanly-exited terminal. Clears the exit state so the PTY event router
+   *  can resume updating status when the new PTY emits data. */
+  const restartTerminal = useCallback((id: string) => {
+    setTerminals((prev) => {
+      const t = prev[id];
+      if (!t) return prev;
+      return {
+        ...prev,
+        [id]: { ...t, exitCode: null, status: "running", bell: false },
+      };
+    });
+    // Also clear the activity timestamp so the dot doesn't claim "recently
+    // active" until the new PTY actually writes something.
+    delete lastActivityRef.current[id];
+  }, []);
+
   /** Open a shell terminal in the active project. Used by Cmd/Ctrl+T. Falls
    *  back to BUILTIN_SHELL if the user has deleted their shell preset so the
    *  shortcut always works. */
@@ -791,6 +808,7 @@ export function App() {
                 cwd={t.cwd}
                 fontSize={fontSize}
                 themeColors={colorsForTerminal}
+                onRequestRestart={() => restartTerminal(t.id)}
               />
             );
           })}
