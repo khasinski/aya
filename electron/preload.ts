@@ -30,6 +30,7 @@ const api: AyaApi = {
 
   listPresets: () => ipcRenderer.invoke("presets:list"),
   savePresets: (presets) => ipcRenderer.invoke("presets:save", presets),
+  scanHarnesses: () => ipcRenderer.invoke("presets:scan-harnesses"),
 
   listThemes: () => ipcRenderer.invoke("themes:list"),
   saveThemes: (file) => ipcRenderer.invoke("themes:save", file),

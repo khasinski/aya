@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  type HarnessDef,
   type Preset,
   type Theme,
   looksNonInteractive,
@@ -64,6 +65,30 @@ export function SettingsModal({
   const [importError, setImportError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
+  // PATH-scan result cached once per modal open. Derived `suggested` below
+  // is the not-yet-added subset; recomputed each render against the live
+  // draft so a row added via the suggestions immediately drops from the
+  // list without waiting for Save.
+  const [allHarnesses, setAllHarnesses] = useState<HarnessDef[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void window.aya.scanHarnesses().then((all) => {
+      if (!cancelled) setAllHarnesses(all);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const existingCmds = new Set(
+    draft.map((p) => p.command.trim().toLowerCase()),
+  );
+  const existingIds = new Set(draft.map((p) => p.id));
+  const suggested = allHarnesses.filter(
+    (h) =>
+      !existingCmds.has(h.command.trim().toLowerCase()) &&
+      !existingIds.has(h.id),
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -115,6 +140,17 @@ export function SettingsModal({
       icon: "✻",
       color: "#d97757",
       command: "claude --dangerously-skip-permissions",
+      themeId: undefined,
+    });
+
+  /** Add a harness suggestion as a new preset row. */
+  const addSuggestion = (h: HarnessDef) =>
+    addPrefilled({
+      id: h.id,
+      name: h.name,
+      icon: h.icon,
+      color: h.color,
+      command: h.command,
       themeId: undefined,
     });
 
@@ -378,6 +414,33 @@ export function SettingsModal({
               ＋ Codex YOLO
             </button>
           </div>
+
+          {suggested.length > 0 && (
+            <div className="aya-settings-suggested">
+              <div className="aya-settings-section-title">
+                Suggested (found on your PATH)
+              </div>
+              <div className="aya-settings-suggested-row">
+                {suggested.map((h) => (
+                  <button
+                    key={h.id}
+                    className="aya-settings-suggested-btn"
+                    onClick={() => addSuggestion(h)}
+                    title={h.command}
+                    style={h.color ? { borderColor: h.color } : undefined}
+                  >
+                    <span
+                      className="aya-settings-suggested-icon"
+                      style={h.color ? { color: h.color } : undefined}
+                    >
+                      {h.icon}
+                    </span>
+                    <span>＋ {h.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {errors.length > 0 && (

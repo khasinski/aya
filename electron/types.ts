@@ -2,11 +2,12 @@
 // context bridge. Keep this file pure type definitions so it can be imported
 // from both sides without runtime side-effects.
 
+import type { HarnessDef } from "./harnesses";
 import type { Preset } from "./presets";
 import type { BufferSearchHit } from "./pty";
 import type { Theme, ThemesFile } from "./themes";
 
-export type { BufferSearchHit, Preset, Theme, ThemesFile };
+export type { BufferSearchHit, HarnessDef, Preset, Theme, ThemesFile };
 
 export interface WorkingTab {
   id: string;
@@ -70,6 +71,9 @@ export interface AyaApi {
   // Presets (terminal launchers)
   listPresets(): Promise<Preset[]>;
   savePresets(presets: Preset[]): Promise<void>;
+  /** Async PATH probe for known agent harnesses. Used to seed first-
+   *  launch defaults and to surface "Suggested presets" in Settings. */
+  scanHarnesses(): Promise<HarnessDef[]>;
 
   // Themes (terminal color schemes — xterm.js ITheme shape internally)
   listThemes(): Promise<ThemesFile>;

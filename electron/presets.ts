@@ -10,6 +10,7 @@
 
 import { promises as fs } from "node:fs";
 import { writeFileAtomic } from "./atomic-write";
+import { scanHarnesses } from "./harnesses";
 import { PRESETS_FILE } from "./paths";
 
 export interface Preset {
@@ -87,6 +88,17 @@ export function normalizePreset(raw: unknown): Preset | null {
   };
 }
 
+/** Always-present shell preset. Added on first launch alongside any
+ *  detected harnesses, and recoverable via BUILTIN_SHELL in the renderer
+ *  if the user deletes it later. */
+const SHELL_PRESET: Preset = {
+  id: "shell",
+  name: "Shell",
+  icon: "$",
+  color: "",
+  command: "$SHELL",
+};
+
 export async function listPresets(): Promise<Preset[]> {
   try {
     const raw = await fs.readFile(PRESETS_FILE, "utf-8");
@@ -96,9 +108,22 @@ export async function listPresets(): Promise<Preset[]> {
     return ok.length > 0 ? ok : [...DEFAULT_PRESETS];
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      // First launch — seed with defaults so the user has something to edit.
-      await savePresets([...DEFAULT_PRESETS]);
-      return [...DEFAULT_PRESETS];
+      // First launch — scan PATH for installed harnesses and seed only
+      // those, plus the shell fallback. User can add more later in
+      // Settings via the "Suggested" section.
+      const found = await scanHarnesses();
+      const seeded: Preset[] = [
+        ...found.map((h) => ({
+          id: h.id,
+          name: h.name,
+          icon: h.icon,
+          color: h.color,
+          command: h.command,
+        })),
+        SHELL_PRESET,
+      ];
+      await savePresets(seeded);
+      return seeded;
     }
     throw err;
   }

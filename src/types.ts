@@ -12,6 +12,15 @@ export interface Preset {
   themeId?: string;
 }
 
+export interface HarnessDef {
+  id: string;
+  binary: string;
+  name: string;
+  icon: string;
+  color: string;
+  command: string;
+}
+
 export interface ThemeColors {
   background: string;
   foreground: string;
@@ -104,6 +113,7 @@ export interface AyaApi {
 
   listPresets(): Promise<Preset[]>;
   savePresets(presets: Preset[]): Promise<void>;
+  scanHarnesses(): Promise<HarnessDef[]>;
 
   listThemes(): Promise<ThemesFile>;
   saveThemes(file: ThemesFile): Promise<void>;

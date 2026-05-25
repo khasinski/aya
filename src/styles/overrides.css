@@ -626,6 +626,52 @@ select.aya-modal-input {
   background: rgba(240, 173, 78, 0.08);
   color: #f0ad4e;
 }
+
+/* Suggested presets — agent CLIs found on the user's PATH but not yet
+   added. Rendered as a row of compact one-click chips under the
+   preset-list action buttons. */
+.aya-settings-suggested {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.aya-settings-section-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-tertiary);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.aya-settings-suggested-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.aya-settings-suggested-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
+.aya-settings-suggested-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+}
+.aya-settings-suggested-icon {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  width: 12px;
+  text-align: center;
+}
+
 .aya-settings-errors {
   background: rgba(248, 81, 73, 0.08);
   border: 1px solid rgba(248, 81, 73, 0.4);

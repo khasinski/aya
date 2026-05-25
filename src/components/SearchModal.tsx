@@ -37,19 +37,53 @@ export interface SearchResult {
   moreOccurrences?: number;
 }
 
-function projectScore(name: string, query: string): number {
+/** Per-token score against a project name. Returns 0 if the token doesn't
+ *  match anywhere — caller treats that as "this token disqualifies the
+ *  whole item" in AND-matching. */
+function scoreTokenAgainstProject(name: string, tok: string): number {
   const n = name.toLowerCase();
-  if (n === query) return 1000;
-  if (n.startsWith(query)) return 500;
-  if (n.includes(query)) return 200;
+  if (n === tok) return 1000;
+  if (n.startsWith(tok)) return 500;
+  if (n.includes(tok)) return 200;
   return 0;
 }
-function terminalScore(name: string, query: string): number {
+/** Per-token score against a terminal name. */
+function scoreTokenAgainstTerminal(name: string, tok: string): number {
   const n = name.toLowerCase();
-  if (n === query) return 500;
-  if (n.startsWith(query)) return 250;
-  if (n.includes(query)) return 100;
+  if (n === tok) return 500;
+  if (n.startsWith(tok)) return 250;
+  if (n.includes(tok)) return 100;
   return 0;
+}
+
+/** All tokens must score > 0 against the project name. Returns sum or 0. */
+function projectAllTokens(name: string, tokens: string[]): number {
+  let total = 0;
+  for (const tok of tokens) {
+    const s = scoreTokenAgainstProject(name, tok);
+    if (s === 0) return 0;
+    total += s;
+  }
+  return total;
+}
+
+/** A terminal "matches" if every token matches either its own name or its
+ *  project's name (the user thinks of terminals as "claude in ruby", so
+ *  the project name is part of the terminal's identity in search). */
+function terminalAllTokens(
+  terminalName: string,
+  projectName: string,
+  tokens: string[],
+): number {
+  let total = 0;
+  for (const tok of tokens) {
+    const t = scoreTokenAgainstTerminal(terminalName, tok);
+    const p = scoreTokenAgainstProject(projectName, tok);
+    const best = Math.max(t, p);
+    if (best === 0) return 0;
+    total += best;
+  }
+  return total;
 }
 
 function buildResults(
@@ -97,9 +131,15 @@ function buildResults(
     return out;
   }
 
-  // Project name matches.
+  // Split the query into whitespace-delimited tokens. Every token must
+  // match somewhere on an item for it to qualify (AND semantics) —
+  // "ruby codex" finds a "codex" terminal inside a "ruby" project even
+  // though no single substring contains both words.
+  const tokens = q.split(/\s+/).filter((t) => t.length > 0);
+
+  // Project name matches: every token must match the project name.
   for (const p of projects) {
-    const s = projectScore(p.name, q);
+    const s = projectAllTokens(p.name, tokens);
     if (s > 0) {
       out.push({
         kind: "project",
@@ -112,12 +152,13 @@ function buildResults(
     }
   }
 
-  // Terminal name matches.
+  // Terminal matches: every token must match either the terminal's own
+  // name or its project's name.
   const tnMatched = new Set<string>();
   for (const t of Object.values(terminals)) {
-    const s = terminalScore(t.name, q);
+    const project = projects.find((p) => p.slug === t.projectSlug);
+    const s = terminalAllTokens(t.name, project?.name ?? "", tokens);
     if (s > 0) {
-      const project = projects.find((p) => p.slug === t.projectSlug);
       const preset = getPreset(presets, t.presetId);
       tnMatched.add(t.id);
       out.push({

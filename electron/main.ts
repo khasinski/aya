@@ -15,6 +15,7 @@ import {
 } from "./config";
 import { getGitInfo } from "./git";
 import { IS_DEV } from "./paths";
+import { scanHarnesses } from "./harnesses";
 import { listPresets, savePresets } from "./presets";
 import {
   killAll,
@@ -256,6 +257,7 @@ function registerIpc(win: BrowserWindow): void {
   ipcMain.handle("presets:save", async (_e, presets: Preset[]) =>
     savePresets(presets),
   );
+  ipcMain.handle("presets:scan-harnesses", async () => scanHarnesses());
 
   ipcMain.handle("themes:list", async () => loadThemes());
   ipcMain.handle("themes:save", async (_e, file: ThemesFile) =>

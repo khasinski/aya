@@ -73,40 +73,65 @@ export interface BufferSearchHit {
   more: number;
 }
 
-/** Case-insensitive search across all live PTY buffers. Returns at most
- *  one hit per pty (the first match), with a short snippet. */
+/** Case-insensitive AND-search across all live PTY buffers. The query is
+ *  split into whitespace-delimited tokens; every token must appear in the
+ *  buffer for that buffer to count as a hit. Snippet is built around the
+ *  first-occurring token (so user sees relevant context for whichever
+ *  word matched earliest). */
 export function searchPtyOutputs(query: string): BufferSearchHit[] {
-  if (!query || query.length < 1) return [];
-  const needle = query.toLowerCase();
+  const tokens = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+  if (tokens.length === 0) return [];
   const hits: BufferSearchHit[] = [];
   for (const [ptyId, chunks] of outputBuffers) {
     const cleaned = stripAnsi(chunks.join(""));
     const lower = cleaned.toLowerCase();
-    const idx = lower.indexOf(needle);
-    if (idx < 0) continue;
-    const start = Math.max(0, idx - 30);
-    const end = Math.min(cleaned.length, idx + needle.length + 50);
-    let snippet = cleaned.slice(start, end);
-    // Collapse whitespace inside the snippet so the result reads as a
-    // single line.
-    snippet = snippet.replace(/\s+/g, " ").trim();
-    const matchStartInSnippet = Math.max(0, snippet.toLowerCase().indexOf(needle));
-    // Count additional matches by scanning the rest of the buffer.
-    let more = 0;
-    let from = idx + needle.length;
-    while (from < lower.length) {
-      const next = lower.indexOf(needle, from);
-      if (next < 0) break;
-      more += 1;
-      from = next + needle.length;
-      if (more > 99) break; // cap, this is just a hint
+    // Every token must be present somewhere.
+    const tokenIdxs: Array<{ idx: number; len: number }> = [];
+    let allFound = true;
+    for (const tok of tokens) {
+      const idx = lower.indexOf(tok);
+      if (idx < 0) {
+        allFound = false;
+        break;
+      }
+      tokenIdxs.push({ idx, len: tok.length });
+    }
+    if (!allFound) continue;
+    // Snippet centered on the earliest-occurring token so the user sees
+    // useful context regardless of which word in their query matched first.
+    const earliest = tokenIdxs.reduce(
+      (best, t) => (t.idx < best.idx ? t : best),
+      tokenIdxs[0],
+    );
+    const start = Math.max(0, earliest.idx - 30);
+    const end = Math.min(cleaned.length, earliest.idx + earliest.len + 50);
+    const snippet = cleaned.slice(start, end).replace(/\s+/g, " ").trim();
+    const matchStartInSnippet = Math.max(
+      0,
+      snippet.toLowerCase().indexOf(tokens[tokenIdxs.indexOf(earliest)]),
+    );
+    // Count additional occurrences of any token across the buffer.
+    let more = -1; // we'll add 1 for the highlighted match below
+    for (const tok of tokens) {
+      let from = 0;
+      while (from < lower.length) {
+        const next = lower.indexOf(tok, from);
+        if (next < 0) break;
+        more += 1;
+        from = next + tok.length;
+        if (more > 99) break;
+      }
+      if (more > 99) break;
     }
     hits.push({
       ptyId,
       snippet,
       matchStart: matchStartInSnippet,
-      matchLength: query.length,
-      more,
+      matchLength: earliest.len,
+      more: Math.max(0, more),
     });
   }
   return hits;
