@@ -80,8 +80,10 @@ function basename(p: string): string {
   return parts[parts.length - 1] || "project";
 }
 
-function firstPresetId(presets: Preset[]): string {
-  return presets[0]?.id ?? "shell";
+/** Default display name for a freshly-created tab. Uses the preset's name
+ *  so renaming a preset in Settings shows up on the next launch. */
+function defaultTabName(preset: Preset): string {
+  return preset.name.trim() || preset.id || "terminal";
 }
 
 export function App() {
@@ -156,9 +158,23 @@ export function App() {
   // Handle "open this directory" requests from main — fired by `aya <dir>`
   // CLI invocations and the initial argv. Subscribed once; uses a ref to
   // always see the latest projects + handlers without resubscribing.
+  //
+  // The IPC can arrive on `did-finish-load`, which is BEFORE the bootstrap
+  // useEffect has populated projects state. If we processed it then, the
+  // "find by directory" check sees an empty list and falls through to
+  // auto-create — producing a duplicate next to whatever bootstrap loads.
+  // So we buffer requests until bootstrap signals ready, then drain.
   const openProjectRef = useRef<(dir: string) => void>(() => {});
+  const bootReadyRef = useRef(false);
+  const pendingOpenRef = useRef<string[]>([]);
   useEffect(() => {
-    return window.aya.onOpenProject((dir) => openProjectRef.current(dir));
+    return window.aya.onOpenProject((dir) => {
+      if (!bootReadyRef.current) {
+        pendingOpenRef.current.push(dir);
+        return;
+      }
+      openProjectRef.current(dir);
+    });
   }, []);
 
   useEffect(() => {
@@ -266,7 +282,7 @@ export function App() {
       setThemes(loadedThemes.themes);
       setActiveThemeId(loadedThemes.activeId);
 
-      const fallbackPresetId = firstPresetId(loadedPresets);
+      const fallbackPreset = loadedPresets[0] ?? BUILTIN_SHELL;
 
       // Auto-add a shell tab to projects that have none (and persist).
       const seededProjects: ProjectConfig[] = [];
@@ -274,8 +290,8 @@ export function App() {
         if (project.tabs.length === 0) {
           const shellTab: WorkingTab = {
             id: uuid(),
-            presetId: fallbackPresetId,
-            name: fallbackPresetId,
+            presetId: fallbackPreset.id,
+            name: defaultTabName(fallbackPreset),
           };
           const updated = { ...project, tabs: [shellTab] };
           seededProjects.push(updated);
@@ -340,6 +356,16 @@ export function App() {
           });
         }
       }
+
+      // Bootstrap fully resolved — open-project IPCs queued by the open
+      // handler can run now that projectsRef is populated. A small timeout
+      // lets the latest setProjects commit before the queue drains.
+      setTimeout(() => {
+        bootReadyRef.current = true;
+        const queued = pendingOpenRef.current;
+        pendingOpenRef.current = [];
+        for (const dir of queued) openProjectRef.current(dir);
+      }, 0);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -425,11 +451,13 @@ export function App() {
       const project = findProject(projectsRef.current, slug);
       if (!project) return;
       const id = uuid();
+      // Default the new tab's display name to the preset's current name (not
+      // its id, which stays the same when the user renames a preset).
       const term: TerminalState = {
         id,
         projectSlug: slug,
         presetId: preset.id,
-        name: preset.id,
+        name: defaultTabName(preset),
         cwd: effectiveCwd(project),
         status: "running",
         bell: false,
@@ -498,6 +526,27 @@ export function App() {
     });
   }, []);
 
+  /** Rename a project — updates the JSON's `name` field. The slug (file
+   *  identity) stays the same so existing references aren't broken. */
+  const renameProject = useCallback(
+    async (slug: string, newName: string) => {
+      const trimmed = newName.trim();
+      if (!trimmed) return;
+      const project = projectsRef.current.find((p) => p.slug === slug);
+      if (!project || project.name === trimmed) return;
+      const updated = { ...project, name: trimmed };
+      setProjects((prev) =>
+        prev.map((p) => (p.slug === slug ? updated : p)),
+      );
+      try {
+        await window.aya.updateProject(updated);
+      } catch (err) {
+        console.error("renameProject failed:", err);
+      }
+    },
+    [],
+  );
+
   /** Close the project in this session only. The JSON file on disk is NOT
    *  touched — on next launch, the project reopens. To permanently delete,
    *  the user can `rm ~/.aya/projects/<slug>.json`. */
@@ -540,10 +589,11 @@ export function App() {
     async (name: string, directory: string) => {
       try {
         const project = await window.aya.createProject(name, directory);
+        const fallbackPreset = presetsRef.current[0] ?? BUILTIN_SHELL;
         const shellTab: WorkingTab = {
           id: uuid(),
-          presetId: firstPresetId(presetsRef.current),
-          name: firstPresetId(presetsRef.current),
+          presetId: fallbackPreset.id,
+          name: defaultTabName(fallbackPreset),
         };
         const withTabs: ProjectConfig = { ...project, tabs: [shellTab] };
         void window.aya.updateProject(withTabs);
@@ -634,6 +684,27 @@ export function App() {
       await window.aya.saveThemes({ themes: nextThemes, activeId });
       setThemes(nextThemes);
       setActiveThemeId(activeId);
+
+      // Sweep presets for themeId references that point at themes no longer
+      // in the list — otherwise presets.json keeps dangling pointers and the
+      // Settings UI shows "Default" for them (because resolution falls back)
+      // but the data on disk lies.
+      const liveIds = new Set(nextThemes.map((t) => t.id));
+      const currentPresets = presetsRef.current;
+      let dirty = false;
+      const swept = currentPresets.map((p) => {
+        if (p.themeId && !liveIds.has(p.themeId)) {
+          dirty = true;
+          const { themeId: _drop, ...rest } = p;
+          void _drop;
+          return rest;
+        }
+        return p;
+      });
+      if (dirty) {
+        await window.aya.savePresets(swept);
+        setPresets(swept);
+      }
     },
     [],
   );
@@ -756,6 +827,7 @@ export function App() {
         activeProjectId={activeProjectId}
         homeDir={homeDir}
         isDev={window.aya.isDev}
+        blockChrome={!!currentMissingDir || !!newProjectModal}
         onSelectProject={setActiveProjectId}
         onNewProject={async () => {
           const dir = await window.aya.pickDirectory();
@@ -768,6 +840,7 @@ export function App() {
           });
         }}
         onCloseProject={closeProject}
+        onRenameProject={renameProject}
         onOpenSettings={() => setShowSettings(true)}
         projectBadges={projectBadges}
       />

@@ -18,6 +18,7 @@ import { listPresets, savePresets } from "./presets";
 import { killAll, killPty, resizePty, spawnPty, writePty } from "./pty";
 import { loadThemes, parseTheme, saveThemes } from "./themes";
 import type { Preset, ProjectConfig, SpawnRequest, ThemesFile } from "./types";
+import { loadWindowState, trackWindowState } from "./window-state";
 
 const DEV_SERVER_URL = "http://localhost:5183";
 const WINDOW_TITLE = IS_DEV ? "Aya Dev" : "Aya";
@@ -120,10 +121,21 @@ function dispatchOpenProject(
   win.webContents.send("open-project", dir);
 }
 
-function createWindow(): BrowserWindow {
+interface WindowGeometry {
+  x?: number;
+  y?: number;
+  width: number;
+  height: number;
+  isFullScreen: boolean;
+  isMaximized: boolean;
+}
+
+function createWindow(initial: WindowGeometry): BrowserWindow {
   const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    x: initial.x,
+    y: initial.y,
+    width: initial.width,
+    height: initial.height,
     minWidth: 800,
     minHeight: 500,
     title: WINDOW_TITLE,
@@ -137,6 +149,12 @@ function createWindow(): BrowserWindow {
       sandbox: false, // node-pty needs the preload to have node access
     },
   });
+
+  if (initial.isMaximized) win.maximize();
+  if (initial.isFullScreen) win.setFullScreen(true);
+
+  // Persist geometry changes; the helper handles debouncing + final flush.
+  trackWindowState(win);
 
   win.once("ready-to-show", () => win.show());
   win.on("closed", () => {
@@ -309,7 +327,7 @@ app.on("open-file", (event, filePath) => {
   }
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // In dev, replace Electron's default dock icon with ours so the running
   // instance is visually distinguishable. In packaged builds the bundle's
   // icon handles this, so we skip.
@@ -322,7 +340,8 @@ app.whenReady().then(() => {
     }
   }
 
-  mainWindow = createWindow();
+  const savedState = await loadWindowState();
+  mainWindow = createWindow(savedState);
   registerIpc(mainWindow);
 
   // Honor an initial directory argument on first launch — the renderer
@@ -334,9 +353,10 @@ app.whenReady().then(() => {
     });
   }
 
-  app.on("activate", () => {
+  app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      mainWindow = createWindow();
+      const state = await loadWindowState();
+      mainWindow = createWindow(state);
     }
   });
 });

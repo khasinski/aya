@@ -23,6 +23,21 @@ export function StatusBar({ project, git, terminal }: Props) {
           {project.directory}
         </span>
       )}
+      {terminal && waiting && (
+        <span className="aya-statusbar-item aya-statusbar-item--warn">
+          <span
+            style={{
+              fontFamily: "Material Symbols Outlined",
+              fontSize: 13,
+              fontVariationSettings: '"FILL" 1',
+            }}
+          >
+            notifications_active
+          </span>
+          {terminal.name} is waiting for your approval
+        </span>
+      )}
+      <div className="aya-statusbar-spacer" />
       {git?.branch && (
         <span className="aya-statusbar-item">
           <span style={{ fontFamily: "Material Symbols Outlined", fontSize: 13 }}>
@@ -49,22 +64,6 @@ export function StatusBar({ project, git, terminal }: Props) {
           clean
         </span>
       ) : null}
-      <div className="aya-statusbar-spacer" />
-      {terminal && waiting && (
-        <span className="aya-statusbar-item aya-statusbar-item--warn">
-          <span
-            style={{
-              fontFamily: "Material Symbols Outlined",
-              fontSize: 13,
-              fontVariationSettings: '"FILL" 1',
-            }}
-          >
-            notifications_active
-          </span>
-          {terminal.name} is waiting for your approval
-        </span>
-      )}
-      <span className="aya-statusbar-item">UTF-8</span>
     </footer>
   );
 }

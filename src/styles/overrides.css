@@ -40,6 +40,55 @@
    the handle confined to the sidebar's vertical extent. */
 .aya-sidebar { position: relative; }
 
+/* Disabled state for the "+ New project" sentinel when a blocking modal
+   is open. Visual reduction of opacity + cursor change communicates that
+   clicking won't do anything. */
+.aya-tab-new--disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.aya-tab-new--disabled:hover {
+  background: transparent;
+}
+
+/* Inline rename input that replaces the project tab name on double-click.
+   Mirrors the sidebar's terminal rename input — accent border + soft glow
+   so it reads as "editing this in place". */
+.aya-tab-rename {
+  -webkit-app-region: no-drag;
+  flex-shrink: 0;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin: -2px 0;
+  font: inherit;
+  font-weight: 500;
+  color: var(--fg-primary);
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 20%, transparent);
+  min-width: 80px;
+  max-width: 160px;
+}
+
+/* Foreground-process indicator in the pane header. Shows whatever the
+   running shell emits via OSC 0/2 (zsh's default preexec hook on macOS
+   sends the current command). Truncates if the title is long. */
+.aya-pane-header-sep {
+  color: #4a525c;
+  flex-shrink: 0;
+}
+.aya-pane-header-process {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #8b949e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 360px;
+}
+
 /* Modal (NewProjectModal). The design doesn't include modal styling; this is
    tuned to match the rest of the surface (border tokens, panel background). */
 .aya-modal-backdrop {
@@ -165,6 +214,39 @@
 }
 .aya-tab {
   max-width: 320px;
+  /* Don't compress tabs into invisible slivers when there are many — let
+     them keep their readable width and overflow into the scrollbar. */
+  flex-shrink: 0;
+  min-width: 120px;
+}
+
+/* The tab strip itself needs to scroll horizontally instead of clipping
+   so the user can reach tabs that would otherwise push the topbar-right
+   (settings gear) off-screen. */
+.aya-tabs {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.aya-tabs::-webkit-scrollbar {
+  height: 6px;
+}
+.aya-tabs::-webkit-scrollbar-track {
+  background: transparent;
+}
+.aya-tabs::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+.aya-tabs::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-tertiary);
+}
+
+/* The "+ New project" sentinel and individual tabs shouldn't shrink with
+   the row — both have flex-shrink:0 so they keep their natural size. */
+.aya-tab-new {
+  flex-shrink: 0;
 }
 
 /* Settings modal — wider so the command column is usable. */

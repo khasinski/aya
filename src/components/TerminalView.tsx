@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal as XTerm, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import type { Preset, TerminalState, ThemeColors } from "../types";
@@ -39,6 +39,11 @@ export function TerminalView({
   const xtermRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const spawnedRef = useRef(false);
+  // Current foreground-process title, fed by OSC 0/2 from the inner shell.
+  // macOS zsh's default config emits this in preexec/precmd, so we get the
+  // running command for free in shell tabs. Claude/Codex don't emit titles,
+  // so the value stays whatever the shell last set (usually empty there).
+  const [processTitle, setProcessTitle] = useState("");
   // Tracks whether the PTY has exited cleanly (code 0). When true, the
   // custom key handler honors Shift+Enter as "restart this terminal".
   // Stored in a ref so the long-lived xterm key handler always reads the
@@ -136,6 +141,13 @@ export function TerminalView({
       void window.aya.ptyResize(terminal.id, cols, rows);
     });
 
+    // Track the current foreground process via OSC 0/2 title sequences.
+    // macOS zsh's default config emits these via preexec/precmd hooks, so
+    // running `git log` in a shell tab updates the title to "git log".
+    const onTitleDisposable = term.onTitleChange((title) => {
+      setProcessTitle(title);
+    });
+
     if (!spawnedRef.current) {
       spawnedRef.current = true;
       const { cols, rows } = term;
@@ -152,6 +164,7 @@ export function TerminalView({
       unsubscribe();
       onDataDisposable.dispose();
       onResizeDisposable.dispose();
+      onTitleDisposable.dispose();
       try {
         term.dispose();
       } catch {
@@ -227,6 +240,14 @@ export function TerminalView({
           {preset.icon}
         </span>
         <span className="aya-pane-header-title">{terminal.name}</span>
+        {processTitle && (
+          <>
+            <span className="aya-pane-header-sep">·</span>
+            <span className="aya-pane-header-process" title={processTitle}>
+              {processTitle}
+            </span>
+          </>
+        )}
         <div className="aya-pane-header-meta">
           <span className="dim">{cwd}</span>
         </div>
