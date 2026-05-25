@@ -51,10 +51,12 @@
   background: transparent;
 }
 
-/* Search-everything modal (double-Shift). */
+/* Search-everything modal (double-Shift). Fixed height so the dialog
+   doesn't grow/shrink/flicker as the result list changes — the inner
+   list scrolls instead. Capped to viewport on small windows. */
 .aya-modal--search {
   width: min(640px, 90vw);
-  max-height: 70vh;
+  height: min(480px, 80vh);
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -381,38 +383,34 @@
 }
 .aya-tab {
   max-width: 320px;
-  /* Don't compress tabs into invisible slivers when there are many — let
-     them keep their readable width and overflow into the scrollbar. */
-  flex-shrink: 0;
+  /* Shrink first (to a still-readable 120px), THEN overflow into the
+     scrollbar. Without flex-shrink the layout jumps straight from "all
+     visible at natural width" to "scrollbar" with no intermediate step. */
+  flex-shrink: 1;
   min-width: 120px;
+  flex-basis: auto;
 }
 
-/* The tab strip itself needs to scroll horizontally instead of clipping
-   so the user can reach tabs that would otherwise push the topbar-right
-   (settings gear) off-screen. */
+/* The tab strip itself scrolls horizontally instead of clipping. We hide
+   the native scrollbar — the wheel/trackpad handler in TopBar does the
+   actual scrolling, and the visible bar in a 40px topbar competes for
+   space with the tab content. */
 .aya-tabs {
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
+  scrollbar-width: none;
 }
 .aya-tabs::-webkit-scrollbar {
-  height: 6px;
-}
-.aya-tabs::-webkit-scrollbar-track {
-  background: transparent;
-}
-.aya-tabs::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: 3px;
-}
-.aya-tabs::-webkit-scrollbar-thumb:hover {
-  background: var(--fg-tertiary);
+  display: none;
 }
 
-/* The "+ New project" sentinel and individual tabs shouldn't shrink with
-   the row — both have flex-shrink:0 so they keep their natural size. */
+/* The "+ New project" sentinel never shrinks, and neither does the topbar's
+   right side (settings gear) — it must stay reachable no matter how many
+   project tabs there are. */
 .aya-tab-new {
+  flex-shrink: 0;
+}
+.aya-topbar-right {
   flex-shrink: 0;
 }
 

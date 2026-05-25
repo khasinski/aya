@@ -1,4 +1,4 @@
-import { useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import type { ProjectConfig } from "../types";
 
 interface Props {
@@ -46,6 +46,26 @@ export function TopBar({
   const [renamingSlug, setRenamingSlug] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const tabsRef = useRef<HTMLDivElement>(null);
+
+  // Regular (non-trackpad) mice only emit deltaY. Translate that into
+  // horizontal scrolling on the tab strip so users can reach hidden tabs
+  // without having to grab the (now hidden) scrollbar.
+  useEffect(() => {
+    const el = tabsRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth) return;
+      // Trackpads emit deltaX for horizontal gestures — let the browser
+      // handle those natively. Only intercept vertical-wheel intent.
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        e.preventDefault();
+        el.scrollLeft += e.deltaY;
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   // Drag-and-drop state for project tab reordering.
   const [dragSlug, setDragSlug] = useState<string | null>(null);
@@ -129,7 +149,7 @@ export function TopBar({
         />
         <span>{isDev ? "aya dev" : "aya"}</span>
       </div>
-      <div className="aya-tabs">
+      <div className="aya-tabs" ref={tabsRef}>
         {projects.map((p) => {
           const isActive = p.slug === activeProjectId;
           const badge = projectBadges[p.slug] ?? 0;
