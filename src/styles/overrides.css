@@ -254,14 +254,11 @@
 
 /* Drag-and-drop visuals. The dragged item fades; the drop target gets a
    thick accent line on the leading or trailing edge to show where the
-   item will land if released now. !important is needed on the sidebar
-   row because the active state already sets box-shadow. */
-.aya-tab[draggable="true"] {
-  cursor: grab;
-}
+   item will land if released now. We deliberately do NOT change cursor to
+   grab/grabbing — the user reported that the hand icon read as a hint
+   that nothing else was clickable, which is the opposite of true. */
 .aya-tab--dragging {
   opacity: 0.4;
-  cursor: grabbing;
 }
 .aya-tab--drop-before {
   box-shadow: inset 3px 0 0 var(--accent);
@@ -269,12 +266,8 @@
 .aya-tab--drop-after {
   box-shadow: inset -3px 0 0 var(--accent);
 }
-.aya-sidebar-row[draggable="true"] {
-  cursor: grab;
-}
 .aya-sidebar-row--dragging {
   opacity: 0.4;
-  cursor: grabbing;
 }
 .aya-sidebar-row--drop-before {
   box-shadow: inset 0 3px 0 var(--accent) !important;
@@ -477,14 +470,21 @@
   flex-basis: auto;
 }
 
-/* The tab strip scrolls horizontally instead of clipping. Critically, we
-   un-set the topbar's -webkit-app-region:drag here — without `no-drag`,
-   macOS treats trackpad gestures over the strip as window-drag intent
-   instead of scroll, and the wheel/swipe never reaches the overflow. */
+/* The tab strip scrolls horizontally. Electron's `-webkit-app-region: drag`
+   on the topbar swallows trackpad gestures (you can't scroll a drag
+   region), so we explicitly mark the entire topbar no-drag and only re-
+   enable drag on the brand chip. !important because the design's app.css
+   sets overflow: hidden on .aya-tabs and we need to be sure our auto wins. */
+.aya-topbar {
+  -webkit-app-region: no-drag !important;
+}
+.aya-brand {
+  -webkit-app-region: drag !important;
+}
 .aya-tabs {
-  -webkit-app-region: no-drag;
-  overflow-x: auto;
-  overflow-y: hidden;
+  -webkit-app-region: no-drag !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
