@@ -460,14 +460,17 @@
   flex: 1 1 auto;
   min-width: 0;
 }
-.aya-tab {
-  max-width: 320px;
-  /* Shrink first (to a still-readable 120px), THEN overflow into the
-     scrollbar. Without flex-shrink the layout jumps straight from "all
-     visible at natural width" to "scrollbar" with no intermediate step. */
-  flex-shrink: 1;
-  min-width: 120px;
-  flex-basis: auto;
+/* Higher-specificity selector + !important because the previous form was
+   apparently being overridden somewhere in the cascade — user reported
+   tabs squashed below 120px (scrollWidth == clientWidth) which means
+   neither min-width nor flex-shrink behavior was taking effect. */
+.aya-topbar .aya-tabs .aya-tab {
+  /* Base 240px (the design's natural width). Don't grow into empty space
+     (flex-grow:0). DO shrink (flex-shrink:1) but only down to min-width.
+     Anything beyond min triggers genuine overflow → scrollWidth > clientWidth. */
+  flex: 0 1 240px !important;
+  min-width: 120px !important;
+  max-width: 320px !important;
 }
 
 /* The tab strip scrolls horizontally. Electron's `-webkit-app-region: drag`
