@@ -1,0 +1,346 @@
+/* Aya-specific additions on top of the design CSS. Kept separate so the
+   ported armillary.css / app.css can stay pristine and diffable against the
+   handoff bundle. */
+
+/* xterm.js host — fills the pane body. The design uses simulated React divs;
+   we replace that with the real terminal canvas. */
+.aya-xterm-host {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  padding: 8px 0 0 12px;
+  background: #0d1117;
+}
+.aya-xterm-host .xterm,
+.aya-xterm-host .xterm .xterm-viewport,
+.aya-xterm-host .xterm .xterm-screen {
+  background: transparent !important;
+  height: 100% !important;
+}
+.aya-xterm-host .xterm-viewport::-webkit-scrollbar { width: 10px; }
+.aya-xterm-host .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(110, 119, 129, 0.4);
+  border-radius: 5px;
+  border: 2px solid #0d1117;
+  background-clip: padding-box;
+}
+
+/* Make room for the (hidden) draggable titlebar inset on macOS. The
+   padding-left clears the traffic-light buttons (close/minimize/maximize)
+   that sit at the top-left of the window in windowed mode. In fullscreen
+   the buttons are hidden, so we drop the padding and let the brand sit
+   flush against the left edge. */
+.aya-app { padding-top: env(safe-area-inset-top, 0); }
+.aya-topbar { padding-left: 78px; transition: padding-left 120ms ease-out; }
+.aya-app--fullscreen .aya-topbar { padding-left: 0; }
+
+/* The sidebar's drag-to-resize handle is positioned absolutely with
+   top:0/bottom:0. Without a positioned ancestor it anchors to the viewport
+   and overlaps the top tab bar. Anchoring it to the sidebar itself keeps
+   the handle confined to the sidebar's vertical extent. */
+.aya-sidebar { position: relative; }
+
+/* Modal (NewProjectModal). The design doesn't include modal styling; this is
+   tuned to match the rest of the surface (border tokens, panel background). */
+.aya-modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+}
+.aya-modal {
+  width: 440px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-card);
+  padding: 20px;
+  font-family: var(--font-sans);
+}
+.aya-modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fg-primary);
+  margin-bottom: 4px;
+}
+.aya-modal-hint {
+  font-size: 13px;
+  color: var(--fg-tertiary);
+  margin-bottom: 14px;
+}
+.aya-modal-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-tertiary);
+  font-weight: 600;
+  margin: 10px 0 4px;
+}
+.aya-modal-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  color: var(--fg-primary);
+  outline: none;
+}
+.aya-modal-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 20%, transparent);
+}
+.aya-modal-input:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+.aya-modal-actions {
+  display: flex; justify-content: flex-end; gap: 8px;
+  margin-top: 18px;
+}
+.aya-modal-btn {
+  padding: 6px 14px;
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+}
+.aya-modal-btn:hover { background: var(--bg); border-color: var(--border-strong); }
+.aya-modal-btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0d1117;
+  font-weight: 600;
+}
+.aya-modal-btn--primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* `.aya-pane-active` is rendered always but only the active pane should show
+   the top accent bar in single-pane mode. We hide it unless inside a split. */
+.aya-panes:not(.aya-panes--split) .aya-pane-active { display: none; }
+
+/* The design's `--running` dot has a forever-pulse animation. We only want it
+   to pulse while output is actively streaming, otherwise it's restless noise.
+   App.tsx adds `--blinking` to terminals that produced output in the last few
+   seconds; everything else gets a static dot. */
+.aya-sidebar-statusdot--running:not(.aya-sidebar-statusdot--blinking) {
+  animation: none;
+  box-shadow: none;
+}
+
+/* Close ✕ on project tabs — mirrors the sidebar row close button: invisible
+   by default, shows on tab hover. Hover on the ✕ itself dims a chip behind
+   it so the click target reads. */
+.aya-tab-close {
+  opacity: 0;
+  width: 16px; height: 16px;
+  margin-left: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 3px;
+  color: var(--fg-tertiary);
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+.aya-tab:hover .aya-tab-close { opacity: 1; }
+.aya-tab-close:hover { background: var(--border-strong); color: var(--fg-primary); }
+
+/* Tab layout: keep the project name fully visible (it's how the user
+   identifies the tab). The path takes the remaining flex space and is the
+   thing that shrinks/ellipsizes when the tab is narrow. */
+.aya-tab-name {
+  flex-shrink: 0;
+}
+.aya-tab-path {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.aya-tab {
+  max-width: 320px;
+}
+
+/* Settings modal — wider so the command column is usable. */
+.aya-modal--settings {
+  width: min(820px, 92vw);
+}
+.aya-settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 50vh;
+  overflow-y: auto;
+  margin: 4px 0 8px;
+}
+.aya-settings-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.aya-settings-row--head {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--fg-tertiary);
+  padding: 4px 4px 0;
+}
+.aya-settings-row--head span { padding-left: 2px; }
+.aya-settings-icon-input {
+  text-align: center;
+  font-family: var(--font-mono);
+}
+/* Match select to other inputs in the settings rows. */
+select.aya-modal-input {
+  cursor: pointer;
+  appearance: none;
+  background: var(--bg);
+  padding-right: 18px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--fg-tertiary) 50%),
+                    linear-gradient(135deg, var(--fg-tertiary) 50%, transparent 50%);
+  background-position: calc(100% - 9px) 50%, calc(100% - 5px) 50%;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+}
+.aya-settings-row-close {
+  width: 28px; height: 28px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--fg-tertiary);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+.aya-settings-row-close:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--border-strong);
+  color: var(--fg-primary);
+}
+.aya-settings-warn {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: #f0ad4e;
+}
+.aya-settings-add {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  border-radius: 4px;
+  padding: 6px 14px;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  margin-top: 4px;
+}
+.aya-settings-add:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+}
+.aya-settings-add-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: stretch;
+  margin-top: 4px;
+}
+/* Inside the row the parent controls vertical alignment. Strip the
+   align-self / margin that the standalone variant sets, otherwise the
+   first button sits 2px above the YOLO ones. */
+.aya-settings-add-row .aya-settings-add {
+  align-self: auto;
+  margin-top: 0;
+}
+/* YOLO quick-adds get an amber dashed border so they read as "spicy" without
+   being alarming — they still spawn interactive sessions, just with auto-
+   approval of tool calls. */
+.aya-settings-add--yolo {
+  border-color: #f0ad4e;
+  color: #f0ad4e;
+}
+.aya-settings-add--yolo:hover {
+  background: rgba(240, 173, 78, 0.08);
+  color: #f0ad4e;
+}
+.aya-settings-errors {
+  background: rgba(248, 81, 73, 0.08);
+  border: 1px solid rgba(248, 81, 73, 0.4);
+  border-radius: 4px;
+  padding: 8px 12px;
+  color: #f85149;
+  font-size: 12px;
+  margin: 8px 0;
+}
+.aya-settings-actions {
+  align-items: center;
+}
+
+/* Theme picker rows inside the settings modal. */
+.aya-theme-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 12px;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+.aya-theme-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.aya-theme-row:hover {
+  background: var(--bg-tertiary);
+}
+.aya-theme-row input[type="radio"] {
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+.aya-theme-name {
+  flex: 1;
+  font-size: 13px;
+  color: var(--fg-primary);
+}
+.aya-theme-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.aya-theme-swatch > span {
+  width: 10px;
+  height: 10px;
+  margin: 0 1px;
+  border-radius: 2px;
+}
+.aya-settings-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 16px 0 12px;
+}
+
+/* Path hint inside the new-project modal — monospace so it reads as a path. */
+.aya-modal-hint--path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  color: var(--fg-secondary);
+  word-break: break-all;
+}

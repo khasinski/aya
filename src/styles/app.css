@@ -1,0 +1,583 @@
+/* ============================================================
+   aya — agentic terminal manager
+   ============================================================ */
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  font-family: var(--font-sans);
+  color: var(--fg-primary);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+/* ---- accent overrides driven by Tweaks ---- */
+[data-accent="green"] { --accent: #40c463; --accent-hover: #34a853; }
+[data-accent="purple"] { --accent: #a371f7; --accent-hover: #8957e5; }
+[data-accent="amber"]  { --accent: #f0ad4e; --accent-hover: #d49434; }
+
+/* terminal-tinted accent text colors */
+[data-accent="green"]  { --accent-soft: #56d364; }
+[data-accent="purple"] { --accent-soft: #d2a8ff; }
+[data-accent="amber"]  { --accent-soft: #e3b341; }
+
+/* ============================================================
+   APP SHELL
+   ============================================================ */
+.aya-app {
+  display: grid;
+  grid-template-rows: 40px 1fr 26px;
+  height: 100vh;
+  background: var(--bg);
+}
+
+/* ---- top bar: project tabs ---- */
+.aya-topbar {
+  display: flex;
+  align-items: stretch;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  -webkit-app-region: drag;
+}
+.aya-brand {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 14px 0 16px;
+  font-size: 13px; font-weight: 600;
+  color: var(--fg-primary);
+  letter-spacing: -0.01em;
+  border-right: 1px solid var(--border);
+}
+.aya-brand-dot {
+  width: 10px; height: 10px; border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 25%, transparent);
+}
+.aya-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.aya-tab {
+  -webkit-app-region: no-drag;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 14px;
+  font-size: 13px;
+  color: var(--fg-secondary);
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  min-width: 0;
+  max-width: 240px;
+  position: relative;
+}
+.aya-tab:hover { background: var(--bg-tertiary); color: var(--fg-primary); }
+.aya-tab--active {
+  background: var(--bg);
+  color: var(--fg-primary);
+}
+.aya-tab--active::after {
+  content: "";
+  position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+  background: var(--accent);
+}
+.aya-tab-name {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-weight: 500;
+}
+.aya-tab-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-tertiary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.aya-tab-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: white;
+  font-size: 10px; font-weight: 700;
+  font-family: var(--font-sans);
+}
+.aya-tab-new {
+  -webkit-app-region: no-drag;
+  display: flex; align-items: center; justify-content: center;
+  width: 36px;
+  color: var(--fg-tertiary);
+  font-size: 16px;
+  cursor: pointer;
+  border-right: 1px solid var(--border);
+}
+.aya-tab-new:hover { background: var(--bg-tertiary); color: var(--fg-primary); }
+.aya-topbar-right {
+  -webkit-app-region: no-drag;
+  display: flex; align-items: center; padding: 0 10px; gap: 6px;
+}
+.aya-iconbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px;
+  border-radius: 4px;
+  color: var(--fg-tertiary);
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  font-family: 'Material Symbols Outlined';
+  font-size: 18px;
+  line-height: 1;
+}
+.aya-iconbtn:hover { background: var(--bg-tertiary); color: var(--fg-primary); }
+.aya-iconbtn--active { color: var(--accent); background: color-mix(in oklab, var(--accent) 15%, transparent); }
+
+/* ---- project switcher dropdown ---- */
+.aya-switcher {
+  -webkit-app-region: no-drag;
+  position: relative;
+}
+.aya-switcher-menu {
+  position: absolute;
+  top: 38px;
+  left: 0;
+  width: 320px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-card);
+  z-index: 100;
+  padding: 4px;
+}
+.aya-switcher-section {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-tertiary);
+  padding: 8px 10px 4px;
+  font-weight: 600;
+}
+.aya-switcher-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.aya-switcher-row:hover { background: var(--bg-secondary); }
+.aya-switcher-name { color: var(--fg-primary); font-weight: 500; }
+.aya-switcher-path { font-family: var(--font-mono); font-size: 11px; color: var(--fg-tertiary); margin-left: auto; }
+
+/* ============================================================
+   MAIN AREA
+   ============================================================ */
+.aya-main {
+  display: grid;
+  grid-template-columns: var(--sidebar-width, 240px) 1fr;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ---- sidebar ---- */
+.aya-sidebar {
+  display: flex; flex-direction: column;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  min-height: 0;
+}
+.aya-sidebar-header {
+  padding: 12px 14px 8px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-tertiary);
+  font-weight: 600;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.aya-sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 6px;
+}
+.aya-sidebar-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--fg-secondary);
+  position: relative;
+  margin-bottom: 1px;
+}
+.aya-sidebar-row:hover { background: var(--bg-tertiary); color: var(--fg-primary); }
+.aya-sidebar-row--active {
+  background: var(--bg);
+  color: var(--fg-primary);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.aya-sidebar-row--secondary {
+  background: color-mix(in oklab, var(--accent) 8%, transparent);
+  color: var(--fg-primary);
+  box-shadow: inset 2px 0 0 color-mix(in oklab, var(--accent) 60%, transparent);
+}
+.aya-sidebar-icon {
+  flex-shrink: 0;
+  width: 14px; height: 14px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--fg-tertiary);
+}
+.aya-sidebar-icon--claude { color: #d97757; }
+.aya-sidebar-icon--codex { color: #10a37f; }
+.aya-sidebar-icon--aider { color: #f0ad4e; }
+.aya-sidebar-icon--shell { color: var(--fg-secondary); }
+
+.aya-sidebar-statusdot {
+  flex-shrink: 0;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--fg-tertiary);
+}
+.aya-sidebar-statusdot--running { background: var(--accent); animation: aya-pulse 1.6s ease-in-out infinite; }
+.aya-sidebar-statusdot--idle    { background: var(--fg-tertiary); opacity: 0.5; }
+.aya-sidebar-statusdot--waiting { background: #f0ad4e; }
+.aya-sidebar-statusdot--error   { background: #c01c28; }
+
+@keyframes aya-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 60%, transparent); }
+  50% { opacity: 0.5; box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 0%, transparent); }
+}
+
+.aya-sidebar-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-weight: 500;
+}
+.aya-sidebar-rename {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin: -2px 0;
+  font: inherit;
+  font-weight: 500;
+  color: var(--fg-primary);
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 20%, transparent);
+}
+.aya-sidebar-close {
+  flex-shrink: 0;
+  opacity: 0;
+  width: 16px; height: 16px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 3px;
+  color: var(--fg-tertiary);
+  font-size: 14px;
+  line-height: 1;
+}
+.aya-sidebar-row:hover .aya-sidebar-close { opacity: 1; }
+.aya-sidebar-close:hover { background: var(--border-strong); color: var(--fg-primary); }
+
+/* bell */
+.aya-bell {
+  flex-shrink: 0;
+  width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  font-family: 'Material Symbols Outlined';
+  font-size: 14px;
+  color: var(--fg-tertiary);
+}
+.aya-bell--dot {
+  font-size: 0;
+  width: 8px; height: 8px;
+  background: #f0ad4e;
+  box-shadow: 0 0 0 2px color-mix(in oklab, #f0ad4e 30%, transparent);
+}
+.aya-bell--icon {
+  color: #f0ad4e;
+  font-variation-settings: 'FILL' 1;
+}
+.aya-bell--animated {
+  color: #f0ad4e;
+  font-variation-settings: 'FILL' 1;
+  animation: aya-bell-ring 1.4s ease-in-out infinite;
+  transform-origin: 50% 20%;
+}
+@keyframes aya-bell-ring {
+  0%, 50%, 100% { transform: rotate(0); }
+  10% { transform: rotate(14deg); }
+  20% { transform: rotate(-12deg); }
+  30% { transform: rotate(8deg); }
+  40% { transform: rotate(-6deg); }
+}
+
+/* ---- preset launcher ---- */
+.aya-launcher {
+  border-top: 1px solid var(--border);
+  padding: 10px 10px 12px;
+}
+.aya-launcher-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-tertiary);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.aya-launcher-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+.aya-launcher-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  text-align: left;
+  min-width: 0;
+}
+.aya-launcher-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+  border-color: var(--border-strong);
+}
+.aya-launcher-btn-icon {
+  flex-shrink: 0;
+  width: 12px; height: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-weight: 700; font-size: 11px;
+}
+.aya-launcher-btn-name {
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* sidebar resize handle */
+.aya-sidebar-resize {
+  width: 4px;
+  margin-right: -4px;
+  cursor: col-resize;
+  z-index: 5;
+  background: transparent;
+}
+.aya-sidebar-resize:hover { background: var(--accent); opacity: 0.4; }
+
+/* ============================================================
+   TERMINAL PANE
+   ============================================================ */
+.aya-panes {
+  display: grid;
+  grid-template-columns: 1fr;
+  min-width: 0;
+  min-height: 0;
+}
+.aya-panes--split { grid-template-columns: 1fr 1fr; }
+.aya-pane {
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0;
+  background: #0d1117;
+  position: relative;
+}
+.aya-pane + .aya-pane { border-left: 1px solid var(--border); }
+.aya-pane-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 14px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  font-size: 12px;
+  color: #8b949e;
+  flex-shrink: 0;
+}
+.aya-pane-header-title {
+  font-family: var(--font-mono);
+  color: #c9d1d9;
+  font-weight: 500;
+}
+.aya-pane-header-meta {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 12px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+.aya-pane-header-meta .dim { color: #6e7781; }
+.aya-pane-header-btn {
+  font-family: 'Material Symbols Outlined';
+  font-size: 16px;
+  color: #6e7781;
+  cursor: pointer;
+  background: none; border: none;
+  padding: 2px;
+}
+.aya-pane-header-btn:hover { color: #c9d1d9; }
+.aya-pane-header-btn--active { color: var(--accent-soft, var(--accent)); }
+
+.aya-pane-active {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--accent);
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* terminal body */
+.aya-term {
+  flex: 1;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: var(--term-font-size, 13px);
+  line-height: 1.55;
+  color: #c9d1d9;
+  padding: 16px 20px 100px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.aya-term-line {
+  min-height: 1.55em;
+}
+.aya-term-cursor {
+  display: inline-block;
+  width: 0.5em; height: 1em;
+  background: #c9d1d9;
+  vertical-align: middle;
+  animation: aya-blink 1.1s steps(1) infinite;
+}
+@keyframes aya-blink { 50% { opacity: 0; } }
+
+/* claude code welcome box */
+.aya-cc-welcome {
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  color: #c9d1d9;
+  background: #0d1117;
+}
+.aya-cc-input {
+  position: sticky;
+  bottom: 16px;
+  margin: 20px 0 0;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: rgba(13,17,23,0.95);
+  backdrop-filter: blur(6px);
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--term-font-size, 13px);
+  color: #c9d1d9;
+}
+.aya-cc-input-prompt { color: var(--accent-soft, #79c0ff); font-weight: 600; }
+.aya-cc-input-placeholder { color: #6e7781; flex: 1; }
+.aya-cc-input-shortcut {
+  font-size: 10px; color: #6e7781;
+  font-family: var(--font-sans);
+}
+
+/* approval box */
+.aya-approval {
+  border: 1px solid #f0ad4e;
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin: 6px 0;
+  background: rgba(240,173,78,0.06);
+}
+.aya-approval-title {
+  color: #f0ad4e;
+  font-weight: 600;
+  margin-bottom: 6px;
+  display: flex; align-items: center; gap: 6px;
+}
+.aya-approval-opt {
+  padding: 1px 0;
+  color: #c9d1d9;
+}
+.aya-approval-opt--selected {
+  color: #f0ad4e;
+  font-weight: 600;
+}
+
+/* diff blocks */
+.aya-diff {
+  background: #0a0c10;
+  border: 1px solid #21262d;
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin: 4px 0;
+  font-size: 12px;
+}
+.aya-diff-line { padding: 0 4px; }
+.aya-diff-add { background: rgba(64,196,99,0.12); color: #56d364; }
+.aya-diff-del { background: rgba(248,81,73,0.12); color: #f85149; }
+.aya-diff-ctx { color: #8b949e; }
+
+/* ============================================================
+   STATUS BAR
+   ============================================================ */
+.aya-statusbar {
+  display: flex; align-items: center;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  padding: 0 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-tertiary);
+  gap: 16px;
+  user-select: none;
+  flex-shrink: 0;
+}
+.aya-statusbar-item {
+  display: flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+}
+.aya-statusbar-item .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--fg-tertiary);
+}
+.aya-statusbar-item--accent { color: var(--accent); }
+.aya-statusbar-item--warn   { color: #f0ad4e; }
+.aya-statusbar-spacer { flex: 1; }
+
+/* ============================================================
+   COLORS used inside terminal output
+   ============================================================ */
+.t-dim   { color: #6e7781; }
+.t-sub   { color: #8b949e; }
+.t-fg    { color: #c9d1d9; }
+.t-strong{ color: #f0f6fc; font-weight: 600; }
+.t-green { color: #56d364; }
+.t-yellow{ color: #e3b341; }
+.t-red   { color: #f85149; }
+.t-blue  { color: #79c0ff; }
+.t-purple{ color: #d2a8ff; }
+.t-pink  { color: #ff7b72; }
+.t-orange{ color: #ffa657; }
+.t-claude{ color: #d97757; }
+.t-codex { color: #10a37f; }
+
+/* faint scrollbars */
+.aya-sidebar-list::-webkit-scrollbar,
+.aya-term::-webkit-scrollbar { width: 10px; }
+.aya-sidebar-list::-webkit-scrollbar-thumb,
+.aya-term::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--fg-tertiary) 30%, transparent);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.aya-term::-webkit-scrollbar-thumb { background: rgba(110,119,129,0.4); border: 2px solid #0d1117; background-clip: padding-box; }
+
+/* ============================================================
+   tweaks panel positioning
+   ============================================================ */
+.aya-tweaks { font-family: var(--font-sans); }

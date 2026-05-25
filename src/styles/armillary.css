@@ -1,0 +1,341 @@
+/* =========================================================================
+   armillary — Colors & Type Tokens
+   =========================================================================
+   armillary is a Python CLI + Streamlit dashboard + MCP server for tracking
+   dozens of side projects. Its look is defined less by brand chrome and more
+   by three inherited systems:
+
+     1. GitHub's contributions heatmap palette (used verbatim in the
+        heatmap_service export card).
+     2. Streamlit's default light/dark themes (the dashboard ships with
+        whatever Streamlit renders).
+     3. Rich's terminal color semantics (cyan=info, green=ok, yellow=warn,
+        red=error, magenta=path, dim=secondary) — every CLI command.
+
+   There is no marketing site, no custom typeface, no illustration library.
+   The aesthetic is "Unix tool with a web dashboard" — terminal-native,
+   developer-familiar, conspicuously un-branded.
+   ========================================================================= */
+
+
+/* -------------------------------------------------------------------------
+   1. FOUNDATION — shared across light/dark
+   ------------------------------------------------------------------------- */
+:root {
+  /* ---- Brand --------------------------------------------------------- */
+  --brand-name:              "armillary";     /* always lowercased */
+  --brand-hue:               142;              /* GitHub green — used for
+                                                  momentum/active/success */
+
+  /* ---- Status semantic colors --------------------------------------- */
+  /* These map 1:1 to the Status enum in models.py:
+     ACTIVE / STALLED / DORMANT / IDEA / IN_PROGRESS / ARCHIVED */
+  --status-active:           #40c463;  /* GitHub green L3 — "recent commit" */
+  --status-active-fg:        #216e39;  /* GitHub green L4 — text on light */
+  --status-stalled:          #f0ad4e;  /* amber — "dirty tree, no commits" */
+  --status-stalled-fg:       #8a5a00;
+  --status-dormant:          #666666;  /* neutral gray — "nothing's happened" */
+  --status-dormant-fg:       #333333;
+  --status-idea:             #a371f7;  /* GitHub purple — "loose notes" */
+  --status-idea-fg:          #6639ba;
+  --status-archived:         #8b949e;  /* GitHub muted — "consciously done" */
+  --status-archived-fg:      #57606a;
+
+  /* ---- Heatmap scale (GitHub contributions — verbatim) --------------- */
+  --heat-0:                  #ebedf0;  /* empty day */
+  --heat-1:                  #9be9a8;
+  --heat-2:                  #40c463;
+  --heat-3:                  #30a14e;
+  --heat-4:                  #216e39;
+
+  /* ---- Rich terminal palette (CLI) ---------------------------------- */
+  /* Mapped from armillary's actual usage:
+       typer.secho fg.CYAN    → info / header
+       typer.secho fg.GREEN   → success
+       typer.secho fg.YELLOW  → warning
+       typer.secho fg.RED     → error
+       rich [magenta]         → file paths, hashes
+       rich [dim]             → metadata, timestamps */
+  --rich-cyan:               #2aa0a0;
+  --rich-green:              #26a269;
+  --rich-yellow:              #c18401;
+  --rich-red:                #c01c28;
+  --rich-magenta:            #a347ba;
+  --rich-blue:               #1c71d8;
+  --rich-dim:                #6e7781;
+
+  /* ---- Category icons (emoji, used in CLI + dashboard) -------------- */
+  /* These are EMOJI, not swatches — documented here because they carry
+     the same semantic weight as the status colors. */
+  --icon-momentum:           "🔥";
+  --icon-zombie:             "⚠️";
+  --icon-forgotten-gold:     "💀";
+  --icon-archive-candidate:  "📦";
+
+  /* ---- Type scale (dashboard) --------------------------------------- */
+  /* armillary has no custom webfont. Streamlit renders in its default
+     "Source Sans Pro" stack; terminal output uses SF Mono / system mono.
+     We specify both so design artifacts can match either surface. */
+  --font-sans:               "Source Sans 3", "Source Sans Pro",
+                             -apple-system, BlinkMacSystemFont, "Segoe UI",
+                             Roboto, sans-serif;
+  --font-mono:               "SF Mono", ui-monospace, Menlo, Consolas,
+                             "Liberation Mono", monospace;
+  --font-mono-terminal:      "SF Mono", "Menlo", "Consolas", monospace;
+
+  /* Base size in the dashboard is 16px; Streamlit's own scale. */
+  --fs-display:              32px;    /* st.title */
+  --fs-h1:                   24px;    /* st.header */
+  --fs-h2:                   20px;    /* st.subheader */
+  --fs-body:                 16px;
+  --fs-caption:              14px;    /* st.caption */
+  --fs-mono-sm:              13px;    /* inline `code` */
+  --fs-mono-xs:              12px;    /* dim timestamps */
+
+  --fw-regular:              400;
+  --fw-medium:               500;
+  --fw-bold:                 700;
+
+  --lh-tight:                1.15;
+  --lh-default:              1.5;
+  --lh-relaxed:              1.65;
+
+  /* ---- Spacing scale (Streamlit-aligned, 4px base) ------------------ */
+  --space-1:                 4px;
+  --space-2:                 8px;
+  --space-3:                 12px;
+  --space-4:                 16px;   /* default gutter */
+  --space-5:                 24px;   /* section gap */
+  --space-6:                 32px;
+  --space-7:                 48px;
+  --space-8:                 64px;
+
+  /* ---- Radii (minimal — Streamlit defaults are flat) ---------------- */
+  --radius-sm:               2px;    /* heatmap cells */
+  --radius-md:               4px;
+  --radius-lg:               6px;    /* buttons, pills */
+  --radius-xl:               8px;    /* panels */
+
+  /* ---- Borders ------------------------------------------------------ */
+  --border-hair:             1px solid;
+
+  /* ---- Elevation (near-none — dashboard is flat) -------------------- */
+  --shadow-none:             none;
+  --shadow-subtle:           0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-card:             0 1px 3px rgba(0, 0, 0, 0.08),
+                             0 1px 2px rgba(0, 0, 0, 0.04);
+
+  /* ---- Motion (dashboard has effectively none) ---------------------- */
+  --motion-instant:          0ms;
+  --motion-fast:             120ms ease-out;     /* hover fades */
+  --motion-medium:           200ms ease-out;     /* Streamlit default */
+}
+
+
+/* -------------------------------------------------------------------------
+   2. LIGHT THEME (Streamlit default — dashboard in the browser)
+   ------------------------------------------------------------------------- */
+:root,
+[data-theme="light"] {
+  --bg:                      #ffffff;
+  --bg-secondary:            #f0f2f6;    /* Streamlit sidebar bg */
+  --bg-tertiary:             #fafafa;
+  --bg-code:                 #f6f8fa;    /* inline `code` bg */
+
+  --fg-primary:              #31333f;    /* Streamlit body text */
+  --fg-secondary:            #555867;
+  --fg-tertiary:              #83889e;   /* st.caption */
+  --fg-inverse:              #ffffff;
+
+  --border:                  #e6e9ef;
+  --border-strong:           #d0d4e0;
+  --border-focus:            #ff4b4b;    /* Streamlit focus ring */
+
+  --accent:                  #ff4b4b;    /* Streamlit primary red */
+  --accent-hover:            #e03131;
+
+  /* Callout backgrounds — match Streamlit st.info/warning/success/error */
+  --callout-info-bg:         #e7f5ff;
+  --callout-info-fg:         #0b5394;
+  --callout-warning-bg:      #fff4e6;
+  --callout-warning-fg:      #8a5a00;
+  --callout-success-bg:      #ebfbee;
+  --callout-success-fg:      #2b8a3e;
+  --callout-error-bg:        #fff5f5;
+  --callout-error-fg:        #c92a2a;
+}
+
+
+/* -------------------------------------------------------------------------
+   3. DARK THEME (GitHub-dark — used by heatmap_service export card)
+   ------------------------------------------------------------------------- */
+[data-theme="dark"] {
+  --bg:                      #0d1117;   /* heatmap card bg — verbatim */
+  --bg-secondary:            #161b22;
+  --bg-tertiary:             #1c2128;
+  --bg-code:                 #161b22;
+
+  --fg-primary:              #c9d1d9;   /* heatmap card fg — verbatim */
+  --fg-secondary:            #b1bac4;
+  --fg-tertiary:              #8b949e;   /* heatmap .sub */
+  --fg-inverse:              #0d1117;
+
+  --border:                  #30363d;
+  --border-strong:           #484f58;
+  --border-focus:            #58a6ff;
+
+  --accent:                  #58a6ff;
+  --accent-hover:            #79b8ff;
+
+  /* Invert the heatmap empty cell for dark backgrounds */
+  --heat-0:                  #161b22;
+
+  --callout-info-bg:         #0c2d6b;
+  --callout-info-fg:         #58a6ff;
+  --callout-warning-bg:      #3a2d04;
+  --callout-warning-fg:      #e3b341;
+  --callout-success-bg:      #0e2818;
+  --callout-success-fg:      #3fb950;
+  --callout-error-bg:        #3a0e0e;
+  --callout-error-fg:        #f85149;
+}
+
+/* Honor OS preference when no explicit [data-theme] attr is set. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:                    #0d1117;
+    --bg-secondary:          #161b22;
+    --bg-tertiary:           #1c2128;
+    --bg-code:               #161b22;
+    --fg-primary:            #c9d1d9;
+    --fg-secondary:          #b1bac4;
+    --fg-tertiary:            #8b949e;
+    --fg-inverse:            #0d1117;
+    --border:                #30363d;
+    --border-strong:         #484f58;
+    --border-focus:          #58a6ff;
+    --accent:                #58a6ff;
+    --accent-hover:          #79b8ff;
+    --heat-0:                #161b22;
+  }
+}
+
+
+/* -------------------------------------------------------------------------
+   4. SEMANTIC TYPE STYLES
+   -------------------------------------------------------------------------
+   Mirrors how Streamlit renders st.title / st.header / st.subheader /
+   st.caption / st.code, plus the terminal-style mono used in the
+   heatmap card and CLI output.
+   ------------------------------------------------------------------------- */
+html {
+  font-family: var(--font-sans);
+  font-size:   var(--fs-body);
+  line-height: var(--lh-default);
+  color:       var(--fg-primary);
+  background:  var(--bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* st.title → page-level heading (one per view) */
+.arm-display,
+h1 {
+  font-size:     var(--fs-display);
+  font-weight:   var(--fw-bold);
+  line-height:   var(--lh-tight);
+  letter-spacing: -0.01em;
+  margin:        0 0 var(--space-4);
+}
+
+/* st.header */
+.arm-h1,
+h2 {
+  font-size:   var(--fs-h1);
+  font-weight: var(--fw-bold);
+  line-height: var(--lh-tight);
+  margin:      0 0 var(--space-3);
+}
+
+/* st.subheader — uses anchor=False pattern */
+.arm-h2,
+h3 {
+  font-size:   var(--fs-h2);
+  font-weight: var(--fw-bold);
+  line-height: var(--lh-tight);
+  margin:      0 0 var(--space-3);
+}
+
+.arm-body,
+p {
+  font-size:   var(--fs-body);
+  line-height: var(--lh-relaxed);
+  margin:      0 0 var(--space-3);
+}
+
+/* st.caption — ubiquitous for timestamps, metadata, hints */
+.arm-caption {
+  font-size:  var(--fs-caption);
+  color:      var(--fg-tertiary);
+  line-height: var(--lh-default);
+}
+
+/* Inline code — paths, branch names, SHAs */
+.arm-code,
+code {
+  font-family: var(--font-mono);
+  font-size:   var(--fs-mono-sm);
+  background:  var(--bg-code);
+  border-radius: var(--radius-sm);
+  padding:     1px 4px;
+  color:       var(--fg-primary);
+}
+
+/* Block code — used for dirty file lists, tweet bodies */
+pre,
+.arm-pre {
+  font-family: var(--font-mono);
+  font-size:   var(--fs-mono-sm);
+  line-height: var(--lh-default);
+  background:  var(--bg-code);
+  border-radius: var(--radius-md);
+  padding:     var(--space-3) var(--space-4);
+  overflow:    auto;
+}
+
+/* Sparkline glyphs — inline unicode block chars */
+.arm-sparkline {
+  font-family: var(--font-mono);
+  font-size:   var(--fs-body);
+  letter-spacing: 0;
+  color:       var(--fg-secondary);
+}
+
+/* Terminal output — matches Rich's look (the CLI is a first-class surface) */
+.arm-terminal {
+  font-family: var(--font-mono-terminal);
+  font-size:   var(--fs-mono-sm);
+  line-height: var(--lh-default);
+  background:  #0d1117;
+  color:       #c9d1d9;
+  border-radius: var(--radius-lg);
+  padding:     var(--space-4) var(--space-5);
+}
+
+/* Strong / bold inside body copy */
+strong, b {
+  font-weight: var(--fw-bold);
+}
+
+/* Italic — used heavily for *purposes* and README excerpts */
+em, i {
+  font-style: italic;
+  color:      var(--fg-secondary);
+}
+
+/* Horizontal rule — Streamlit st.markdown("---") */
+hr {
+  border: none;
+  border-top: var(--border-hair) var(--border);
+  margin: var(--space-5) 0;
+}

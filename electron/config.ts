@@ -1,0 +1,133 @@
+// Project config persistence — JSON-per-project under ~/.aya/projects/.
+
+import { promises as fs } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { PROJECTS_DIR } from "./paths";
+import type { ProjectConfig } from "./types";
+
+const RESERVED_SLUGS = new Set(["aya-sentinel-new"]);
+
+function slugify(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "project";
+}
+
+async function ensureDir(): Promise<void> {
+  await fs.mkdir(PROJECTS_DIR, { recursive: true });
+}
+
+/** Normalize a raw tab object from disk: drop bad shapes, backfill name, and
+ *  migrate the old `kind` field to the new `presetId`. */
+export function normalizeTab(
+  raw: unknown,
+): { id: string; presetId: string; name: string } | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.id !== "string" || !r.id) return null;
+  // Pre-presets format used `kind: "claude" | "codex" | "shell"`. Migrate.
+  let presetId: string | null = null;
+  if (typeof r.presetId === "string" && r.presetId) presetId = r.presetId;
+  else if (typeof r.kind === "string" && r.kind) presetId = r.kind;
+  if (!presetId) return null;
+  const name =
+    typeof r.name === "string" && r.name.trim() ? r.name : presetId;
+  return { id: r.id, presetId, name };
+}
+
+export async function listProjects(): Promise<ProjectConfig[]> {
+  try {
+    const entries = await fs.readdir(PROJECTS_DIR);
+    const out: ProjectConfig[] = [];
+    for (const file of entries.sort()) {
+      if (!file.endsWith(".json")) continue;
+      const slug = file.slice(0, -5);
+      try {
+        const raw = await fs.readFile(path.join(PROJECTS_DIR, file), "utf-8");
+        const data = JSON.parse(raw);
+        if (typeof data.name !== "string" || typeof data.directory !== "string") {
+          continue;
+        }
+        const rawTabs: unknown[] = Array.isArray(data.tabs) ? data.tabs : [];
+        const tabs = rawTabs
+          .map((t: unknown) => normalizeTab(t))
+          .filter(
+            (t): t is NonNullable<ReturnType<typeof normalizeTab>> => t !== null,
+          );
+        out.push({
+          slug,
+          name: data.name,
+          directory: data.directory,
+          tabs,
+        });
+      } catch {
+        // Skip invalid JSON; don't crash the app.
+      }
+    }
+    return out;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+}
+
+export async function createProject(
+  name: string,
+  directory: string,
+): Promise<ProjectConfig> {
+  await ensureDir();
+  const slug = slugify(name);
+  if (RESERVED_SLUGS.has(slug)) {
+    throw new Error(`Project name "${name}" produces a reserved slug.`);
+  }
+  const filePath = path.join(PROJECTS_DIR, `${slug}.json`);
+  try {
+    await fs.access(filePath);
+    throw new Error(`Project "${slug}" already exists.`);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  const absDir = path.resolve(directory.replace(/^~/, os.homedir()));
+  const project: ProjectConfig = {
+    slug,
+    name,
+    directory: absDir,
+    tabs: [],
+  };
+  await fs.writeFile(filePath, JSON.stringify(toDisk(project), null, 2) + "\n");
+  return project;
+}
+
+export async function updateProject(project: ProjectConfig): Promise<void> {
+  await ensureDir();
+  const filePath = path.join(PROJECTS_DIR, `${project.slug}.json`);
+  await fs.writeFile(filePath, JSON.stringify(toDisk(project), null, 2) + "\n");
+}
+
+export async function deleteProject(slug: string): Promise<void> {
+  const filePath = path.join(PROJECTS_DIR, `${slug}.json`);
+  try {
+    await fs.unlink(filePath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+}
+
+function toDisk(project: ProjectConfig): unknown {
+  return {
+    name: project.name,
+    directory: project.directory,
+    tabs: project.tabs,
+  };
+}
+
+export function expandPath(p: string): string {
+  if (!p) return p;
+  if (p === "~") return os.homedir();
+  if (p.startsWith("~/")) return path.join(os.homedir(), p.slice(2));
+  return path.resolve(p);
+}
