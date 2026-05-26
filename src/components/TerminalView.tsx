@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal as XTerm, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
+import { WebglAddon } from "@xterm/addon-webgl";
 import type { Preset, TerminalState, ThemeColors } from "../types";
 
 interface Props {
@@ -51,6 +52,7 @@ export function TerminalView({
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const spawnedRef = useRef(false);
+  const fitFrameRef = useRef<number | null>(null);
   const [findQuery, setFindQuery] = useState("");
   // Current foreground-process title, fed by OSC 0/2 from the inner shell.
   // macOS zsh's default config emits this in preexec/precmd, so we get the
@@ -67,6 +69,27 @@ export function TerminalView({
   commandRef.current = command;
   const cwdRef = useRef(cwd);
   cwdRef.current = cwd;
+
+  const fitTerminal = useCallback((shouldFocus = false) => {
+    if (fitFrameRef.current !== null) {
+      cancelAnimationFrame(fitFrameRef.current);
+    }
+    fitFrameRef.current = requestAnimationFrame(() => {
+      fitFrameRef.current = null;
+      const host = containerRef.current;
+      const term = xtermRef.current;
+      const fit = fitRef.current;
+      if (!host || !term || !fit) return;
+      if (host.clientWidth <= 0 || host.clientHeight <= 0) return;
+      try {
+        fit.fit();
+        term.refresh(0, Math.max(term.rows - 1, 0));
+        if (shouldFocus) term.focus();
+      } catch {
+        /* ignore — xterm may be mid-dispose or still measuring fonts */
+      }
+    });
+  }, []);
 
   // Create the xterm instance + spawn the PTY once.
   useEffect(() => {
@@ -86,17 +109,38 @@ export function TerminalView({
     term.loadAddon(search);
     term.open(containerRef.current);
 
-    requestAnimationFrame(() => {
-      try {
-        fit.fit();
-      } catch {
-        /* ignore */
-      }
-    });
+    // GPU-accelerated renderer — eliminates the column-drift you get with
+    // the default DOM renderer when fonts (especially JetBrains Mono with
+    // ligatures, or unicode box-drawing chars that fall back to a non-
+    // monospace family) don't render at exact integer cell widths. WebGL
+    // renders into a fixed-cell texture grid, so even slightly variable
+    // glyph widths can't accumulate drift across a wide table.
+    //
+    // The addon can throw on contexts without a usable WebGL2 (rare on
+    // Electron, but possible if the user disabled hardware acceleration).
+    // We catch and fall through to the DOM renderer in that case.
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => {
+        // Browser dropped the WebGL context (tab backgrounded for too long
+        // on low-memory machines). Dispose the addon — xterm will fall
+        // back to DOM rendering automatically and the user keeps a
+        // working terminal at the cost of the drift fix.
+        try {
+          webgl.dispose();
+        } catch {
+          /* ignore */
+        }
+      });
+      term.loadAddon(webgl);
+    } catch {
+      // WebGL unavailable; DOM renderer is fine, just drifty.
+    }
 
     xtermRef.current = term;
     fitRef.current = fit;
     searchRef.current = search;
+    fitTerminal();
 
     const unsubscribe = window.aya.onPtyEvent((event) => {
       if (event.ptyId !== terminal.id) return;
@@ -189,44 +233,47 @@ export function TerminalView({
       xtermRef.current = null;
       fitRef.current = null;
       searchRef.current = null;
+      if (fitFrameRef.current !== null) {
+        cancelAnimationFrame(fitFrameRef.current);
+        fitFrameRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminal.id]);
 
   useEffect(() => {
     if (!isVisible) return;
-    const t = setTimeout(() => {
-      try {
-        fitRef.current?.fit();
-      } catch {
-        /* ignore */
-      }
-      xtermRef.current?.focus();
-    }, 0);
-    return () => clearTimeout(t);
-  }, [isVisible]);
+    fitTerminal(true);
+    const frame = requestAnimationFrame(() => fitTerminal(true));
+    const timer = setTimeout(() => fitTerminal(true), 80);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, [fitTerminal, isVisible]);
 
   useEffect(() => {
-    const onResize = () => {
-      try {
-        fitRef.current?.fit();
-      } catch {
-        /* ignore */
-      }
-    };
+    const onResize = () => fitTerminal();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, []);
+  }, [fitTerminal]);
+
+  useEffect(() => {
+    const host = containerRef.current;
+    if (!host) return;
+    const observer = new ResizeObserver(() => {
+      if (isVisible) fitTerminal();
+    });
+    observer.observe(host);
+    if (host.parentElement) observer.observe(host.parentElement);
+    return () => observer.disconnect();
+  }, [fitTerminal, isVisible]);
 
   useEffect(() => {
     if (!xtermRef.current) return;
     xtermRef.current.options.fontSize = fontSize;
-    try {
-      fitRef.current?.fit();
-    } catch {
-      /* ignore */
-    }
-  }, [fontSize]);
+    fitTerminal();
+  }, [fitTerminal, fontSize]);
 
   // Clear highlights when the find bar closes so stale "match outline"
   // doesn't linger on the canvas while the user types in the PTY.

@@ -17,6 +17,17 @@
   background: transparent !important;
   height: 100% !important;
 }
+/* Disable programming ligatures (==, =>, !=, ...) inside the terminal.
+   JetBrains Mono enables them by default; in the DOM renderer they shift
+   columns and break ASCII tables. The WebGL renderer ignores font-feature
+   settings (it rasterises glyphs into a fixed grid), so this is a belt-
+   and-suspenders fallback for environments where WebGL isn't available. */
+.aya-xterm-host .xterm,
+.aya-xterm-host .xterm-rows,
+.aya-xterm-host .xterm-rows * {
+  font-feature-settings: "liga" 0, "calt" 0, "clig" 0 !important;
+  font-variant-ligatures: none !important;
+}
 .aya-xterm-host .xterm-viewport::-webkit-scrollbar { width: 10px; }
 .aya-xterm-host .xterm-viewport::-webkit-scrollbar-thumb {
   background: rgba(110, 119, 129, 0.4);
@@ -218,6 +229,60 @@
   border-radius: 2px;
   padding: 0 1px;
 }
+
+/* First-run empty state. This is the app's actual work surface when no
+   projects exist yet, so keep it direct and action-oriented. */
+.aya-empty {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  text-align: center;
+  background: var(--bg);
+}
+.aya-empty-mark {
+  width: 84px;
+  height: 84px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 18px;
+  background: var(--bg-secondary);
+}
+.aya-empty-mark span {
+  width: 42px;
+  height: 42px;
+  border: 4px solid var(--accent);
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 0 10px var(--bg),
+    0 -18px 0 -16px #f85149;
+}
+.aya-empty h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  color: var(--fg-primary);
+}
+.aya-empty p {
+  width: min(420px, 100%);
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-tertiary);
+}
+.aya-empty-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 22px;
+}
 .aya-search-count {
   flex-shrink: 0;
   font-size: 11px;
@@ -393,6 +458,14 @@
   opacity: 0.65;
   cursor: not-allowed;
 }
+.aya-modal-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.aya-modal-input-row .aya-modal-input {
+  min-width: 0;
+}
 .aya-modal-actions {
   display: flex; justify-content: flex-end; gap: 8px;
   margin-top: 18px;
@@ -408,6 +481,14 @@
   cursor: pointer;
 }
 .aya-modal-btn:hover { background: var(--bg); border-color: var(--border-strong); }
+.aya-modal-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.aya-modal-btn:disabled:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--border);
+}
 .aya-modal-btn--primary {
   background: var(--accent);
   border-color: var(--accent);
