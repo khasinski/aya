@@ -30,10 +30,14 @@ fi
 
 case "$(uname -s)" in
   Darwin)
-    # `open -a "Aya" --args <path>` launches if not running, or fires
-    # `second-instance` with the argv in the existing instance.
+    # `open -n -a "Aya" --args <path>` forces a fresh process so that argv
+    # is actually delivered. Without -n, macOS just activates the running
+    # app via Apple Events and silently DROPS --args — which is why
+    # `aya .` appeared to do nothing once Aya was already open. The fresh
+    # process immediately exits via Electron's single-instance-lock after
+    # handing its argv to the primary instance through `second-instance`.
     if [ -d "/Applications/Aya.app" ]; then
-      open -a "Aya" --args "$abs"
+      open -n -a "Aya" --args "$abs"
     else
       printf "aya: /Applications/Aya.app not found — run 'npm run package' and install the DMG\n" >&2
       exit 1

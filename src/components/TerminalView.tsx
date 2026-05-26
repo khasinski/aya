@@ -194,6 +194,34 @@ export function TerminalView({
         return false;
       }
 
+      // Option+Arrow / Option+Backspace word navigation. xterm.js's default
+      // encoding for these is CSI with an Alt modifier (`\x1b[1;3D` etc.),
+      // which is NOT bound in vanilla zsh and which some shell configs
+      // misinterpret as a delete command (user-visible symptom: text
+      // disappears instead of cursor moving). Send the iTerm2-style
+      // ESC-prefixed sequences instead — those are what readline, zsh's
+      // default zle, claude, and codex all expect for word ops on macOS.
+      if (
+        ev.altKey &&
+        !ev.metaKey &&
+        !ev.ctrlKey &&
+        (ev.key === "ArrowLeft" ||
+          ev.key === "ArrowRight" ||
+          ev.key === "Backspace" ||
+          ev.key === "Delete")
+      ) {
+        let seq: string | null = null;
+        if (ev.key === "ArrowLeft") seq = "\x1bb";
+        else if (ev.key === "ArrowRight") seq = "\x1bf";
+        else if (ev.key === "Backspace") seq = "\x1b\x7f";
+        else if (ev.key === "Delete") seq = "\x1bd";
+        if (seq) {
+          ev.preventDefault();
+          void window.aya.ptyWrite(terminal.id, seq);
+          return false;
+        }
+      }
+
       // Bare control + letter combos (no Cmd/Shift/Alt) are shell-level
       // control characters. Chromium intercepts several of them at the
       // WebContents level — Ctrl+R as page-reload is the headline one,
