@@ -17,6 +17,10 @@
 
 Aya is a desktop app that runs real interactive PTYs (no `claude -p` headless mode — your subscription still works) and groups them by project. Each project is a directory; each project has its own set of tabs (Claude / Codex / shell / whatever you configure). The window stays a window — agents and shells stay running across project switches.
 
+## Claude Code subscription compatibility
+
+Aya does not bypass, multiplex, scrape, or automate around Claude Code's subscription model. It launches the official `claude` CLI inside a normal interactive PTY, the same way you would run it in Terminal.app or iTerm2, and the shipped Claude preset deliberately avoids `-p`, `--print`, or other headless/non-interactive flags. Your Claude Code login, plan limits, and Anthropic's terms still apply exactly as they do outside Aya.
+
 ## Features
 
 - **Real PTYs via `node-pty`** — every tab is `bash -lc 'cd <project-dir> && exec <command>'`. Login-shell PATH (mise, asdf, brew) flows through. The shipped defaults never include `-p` / `--print` / headless flags; a unit test fails the build if they do.
