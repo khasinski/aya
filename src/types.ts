@@ -86,6 +86,17 @@ export type PtyEvent =
   | { type: "data"; ptyId: string; chunk: string }
   | { type: "exit"; ptyId: string; exitCode: number };
 
+export interface WaitingNotificationRequest {
+  projectSlug: string;
+  terminalId: string;
+  body: string;
+}
+
+export interface TerminalNotificationSelection {
+  projectSlug: string;
+  terminalId: string;
+}
+
 export interface BufferSearchHit {
   ptyId: string;
   snippet: string;
@@ -122,6 +133,7 @@ export interface AyaApi {
   getCwd(): Promise<string>;
   getHomeDir(): Promise<string>;
   expandPath(path: string): Promise<string>;
+  completePath(pathPrefix: string): Promise<string[]>;
   getGitInfo(directory: string): Promise<ProjectGitInfo>;
   pickDirectory(): Promise<string | null>;
   dirExists(path: string): Promise<boolean>;
@@ -130,8 +142,14 @@ export interface AyaApi {
   isFullScreen(): Promise<boolean>;
   setDockBadge(text: string): Promise<void>;
   focusWindow(): Promise<void>;
+  showWaitingNotification(req: WaitingNotificationRequest): Promise<void>;
+  onTerminalNotificationSelect(
+    handler: (selection: TerminalNotificationSelection) => void,
+  ): () => void;
   onFullScreenChange(handler: (isFullScreen: boolean) => void): () => void;
 
+  /** Action strings include "new-shell", "close-tab", "search",
+   *  "open-settings", "prev-tab", "next-tab", and "project-1".."project-9". */
   onShortcut(handler: (action: string) => void): () => void;
   onOpenProject(handler: (directory: string) => void): () => void;
 }

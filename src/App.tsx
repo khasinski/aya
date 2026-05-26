@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { EmptyState } from "./components/EmptyState";
 import { MissingDirModal } from "./components/MissingDirModal";
 import { NewProjectModal } from "./components/NewProjectModal";
 import { SearchModal } from "./components/SearchModal";
@@ -7,7 +8,14 @@ import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
 import { TerminalView } from "./components/TerminalView";
 import { TopBar } from "./components/TopBar";
-import { detectApproval, looksBusy } from "./bell";
+import { useAppShortcuts } from "./hooks/useAppShortcuts";
+import { useDoubleShiftSearch } from "./hooks/useDoubleShiftSearch";
+import { usePtyEventRouter } from "./hooks/usePtyEventRouter";
+import {
+  useDockBadge,
+  useRecentTerminalActivity,
+  useTerminalNotifications,
+} from "./hooks/useTerminalSignals";
 import {
   BUILTIN_SHELL,
   getPreset,
@@ -56,7 +64,7 @@ interface NewProjectModalState {
   lockDirectory?: boolean;
   title?: string;
   hint?: string;
-  cancelExits?: boolean;
+  pathHint?: string;
 }
 
 interface MissingDirEntry {
@@ -79,6 +87,19 @@ function findProject(
 function basename(p: string): string {
   const parts = p.replace(/\/+$/, "").split("/");
   return parts[parts.length - 1] || "project";
+}
+
+function uniqueProjectName(projects: ProjectConfig[], directory: string): string {
+  const base = basename(directory);
+  const used = new Set(projects.map((p) => p.slug));
+  const root = base || "project";
+  let name = root;
+  let idx = 2;
+  while (used.has(presetSlug(name))) {
+    name = `${root} ${idx}`;
+    idx += 1;
+  }
+  return name;
 }
 
 /** Default display name for a freshly-created tab. Uses the preset's name
@@ -113,66 +134,8 @@ export function App() {
   const [findInPaneFor, setFindInPaneFor] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(240);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [didBootstrap, setDidBootstrap] = useState(false);
   const fontSize = 13;
-
-  // Shortcut dispatch table. Stored in a ref so the subscribe-once effect
-  // below always sees the freshest handlers without resubscribing.
-  const shortcutActionsRef = useRef<{
-    newShell: () => void;
-    closeCurrentTab: () => void;
-    openSettings: () => void;
-    prevTab: () => void;
-    nextTab: () => void;
-    selectProject: (oneBasedIndex: number) => void;
-    findInPane: () => void;
-  }>({
-    newShell: () => {},
-    closeCurrentTab: () => {},
-    openSettings: () => {},
-    prevTab: () => {},
-    nextTab: () => {},
-    selectProject: () => {},
-    findInPane: () => {},
-  });
-
-  // macOS dock badge: count of terminals waiting for user attention across
-  // all projects. Empty string clears. Updates on every state change that
-  // affects `terminals` — cheap because setDockBadge is a no-op on Linux/
-  // Windows and same-string updates on macOS are idempotent at the OS level.
-  useEffect(() => {
-    const waitingCount = Object.values(terminals).filter((t) => t.bell).length;
-    void window.aya.setDockBadge(waitingCount > 0 ? String(waitingCount) : "");
-  }, [terminals]);
-
-  // System notifications: fire when a terminal transitions to bell=true and
-  // the aya window isn't focused. Clicking the notification brings aya to
-  // the foreground and switches to the responsible terminal.
-  const prevBellRef = useRef<Record<string, boolean>>({});
-  useEffect(() => {
-    const prev = prevBellRef.current;
-    const current: Record<string, boolean> = {};
-    for (const [id, t] of Object.entries(terminals)) {
-      current[id] = t.bell;
-      const becameBell = t.bell && !prev[id];
-      if (!becameBell) continue;
-      if (typeof document !== "undefined" && document.hasFocus()) continue;
-      const project = projectsRef.current.find((p) => p.slug === t.projectSlug);
-      try {
-        const n = new Notification("Aya — waiting for input", {
-          body: project ? `${t.name} in ${project.name}` : t.name,
-          silent: false,
-        });
-        n.onclick = () => {
-          void window.aya.focusWindow();
-          setActiveProjectId(t.projectSlug);
-          setActiveTabByProject((p) => ({ ...p, [t.projectSlug]: id }));
-        };
-      } catch {
-        // Notification API may be unavailable in headless / test contexts.
-      }
-    }
-    prevBellRef.current = current;
-  }, [terminals]);
 
   // Status-bar branch / dirty count goes stale once you `git checkout` in a
   // shell or commit something — there's no inotify watch, just a small poll
@@ -199,44 +162,6 @@ export function App() {
     };
   }, [activeProjectId]);
 
-  // Double-Shift opens the search-everything modal. Listening for keyup on
-  // window: any non-Shift keydown in between aborts the chain so Shift+key
-  // combos (Shift+Enter etc.) don't accidentally trigger it. 300ms window.
-  useEffect(() => {
-    let lastShiftUp = 0;
-    let chainActive = false;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Shift") chainActive = false;
-    };
-    const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key !== "Shift") return;
-      // No other modifiers — exclude Shift+Cmd, Shift+Ctrl, etc.
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const now = Date.now();
-      if (chainActive && now - lastShiftUp < 300) {
-        chainActive = false;
-        // Don't open over a blocking modal — would stack confusingly.
-        if (!currentMissingDirRef.current && !newProjectModalRef.current) {
-          setShowSearch((s) => !s);
-        }
-        return;
-      }
-      lastShiftUp = now;
-      chainActive = true;
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    window.addEventListener("keyup", onKeyUp, true);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown, true);
-      window.removeEventListener("keyup", onKeyUp, true);
-    };
-  }, []);
-
-  // Refs of modal state so the double-shift effect (subscribed once) can
-  // see the current value without resubscribing on every change.
-  const currentMissingDirRef = useRef<unknown>(null);
-  const newProjectModalRef = useRef<unknown>(null);
-
   // Handle "open this directory" requests from main — fired by `aya <dir>`
   // CLI invocations and the initial argv. Subscribed once; uses a ref to
   // always see the latest projects + handlers without resubscribing.
@@ -259,21 +184,18 @@ export function App() {
     });
   }, []);
 
+  // Drain the open-project queue once bootstrap commits. Running this in a
+  // useEffect (not inline after setDidBootstrap) guarantees React has flushed
+  // setProjects → projectsRef.current before the handler tries to match by
+  // directory. Without this gate the drain raced the commit and "aya <known
+  // project path>" auto-created a duplicate, hitting the slug-collision error.
   useEffect(() => {
-    return window.aya.onShortcut((action) => {
-      const a = shortcutActionsRef.current;
-      if (action === "new-shell") a.newShell();
-      else if (action === "close-tab") a.closeCurrentTab();
-      else if (action === "open-settings") a.openSettings();
-      else if (action === "prev-tab") a.prevTab();
-      else if (action === "next-tab") a.nextTab();
-      else if (action === "find-in-pane") a.findInPane();
-      else if (action.startsWith("project-")) {
-        const idx = parseInt(action.slice("project-".length), 10);
-        if (Number.isFinite(idx)) a.selectProject(idx);
-      }
-    });
-  }, []);
+    if (!didBootstrap) return;
+    bootReadyRef.current = true;
+    const queued = pendingOpenRef.current;
+    pendingOpenRef.current = [];
+    for (const dir of queued) openProjectRef.current(dir);
+  }, [didBootstrap]);
 
   // Track fullscreen state so the topbar can drop its left padding (the slot
   // for macOS traffic-light buttons, which hide in fullscreen).
@@ -300,20 +222,14 @@ export function App() {
   const presetsRef = useRef(presets);
   presetsRef.current = presets;
 
-  // Activity tracking for blinking dot.
-  const lastActivityRef = useRef<Record<string, number>>({});
-  const [activityTick, setActivityTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setActivityTick((t) => t + 1), 800);
-    return () => clearInterval(id);
-  }, []);
-  const ACTIVITY_WINDOW_MS = 3000;
-  const now = Date.now();
-  const recentlyActiveIds = new Set<string>();
-  for (const [tid, ts] of Object.entries(lastActivityRef.current)) {
-    if (now - ts < ACTIVITY_WINDOW_MS) recentlyActiveIds.add(tid);
-  }
-  void activityTick;
+  const { lastActivityRef, recentlyActiveIds } = useRecentTerminalActivity();
+  useDockBadge(terminals);
+  useTerminalNotifications({
+    projects,
+    terminals,
+    setActiveProjectId,
+    setActiveTabByProject,
+  });
 
   // ---------------------------------------------------------------------------
   // Hydration helper — instantiates TerminalStates for a project's saved tabs.
@@ -411,25 +327,8 @@ export function App() {
         setActiveProjectId(cwdProject.slug);
       } else if (seededProjects.length > 0) {
         setActiveProjectId(seededProjects[0].slug);
-        // Only suggest adding cwd as a project when we don't already have one
-        // matching it AND no missing-dir modals are queued (otherwise the
-        // user has to dismiss several modals in a row).
-        if (queue.length === 0) {
-          setNewProjectModal({
-            defaults: { name: basename(cwd), directory: cwd },
-            lockDirectory: true,
-            title: "Start a project here?",
-            hint: "This directory isn't a known project. Open it as one?",
-          });
-        }
       } else {
-        setNewProjectModal({
-          defaults: { name: basename(cwd), directory: cwd },
-          lockDirectory: true,
-          title: "Welcome to Aya",
-          hint: "Create your first project to get started.",
-          cancelExits: true,
-        });
+        setActiveProjectId(null);
       }
 
       for (const p of seededProjects) {
@@ -440,66 +339,18 @@ export function App() {
         }
       }
 
-      // Bootstrap fully resolved — open-project IPCs queued by the open
-      // handler can run now that projectsRef is populated. A small timeout
-      // lets the latest setProjects commit before the queue drains.
-      setTimeout(() => {
-        bootReadyRef.current = true;
-        const queued = pendingOpenRef.current;
-        pendingOpenRef.current = [];
-        for (const dir of queued) openProjectRef.current(dir);
-      }, 0);
+      // Bootstrap fully resolved — flip didBootstrap. The drain runs in a
+      // separate useEffect keyed on didBootstrap, which fires AFTER React
+      // commits the setProjects above and updates projectsRef.current. A
+      // setTimeout(0) here would race with that commit and find an empty
+      // projectsRef, causing `aya <existingProjectPath>` to fall through to
+      // create-new with a colliding slug ("Project 'agent' already exists").
+      setDidBootstrap(true);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---------------------------------------------------------------------------
-  // PTY event router
-  // ---------------------------------------------------------------------------
-  useEffect(() => {
-    return window.aya.onPtyEvent((event) => {
-      if (event.type === "exit") {
-        setTerminals((prev) => {
-          const t = prev[event.ptyId];
-          if (!t) return prev;
-          const status = event.exitCode === 0 ? "idle" : "error";
-          return {
-            ...prev,
-            [event.ptyId]: {
-              ...t,
-              status,
-              bell: false,
-              exitCode: event.exitCode,
-            },
-          };
-        });
-        return;
-      }
-      const chunk = event.chunk;
-      lastActivityRef.current[event.ptyId] = Date.now();
-      const isApproval = detectApproval(chunk);
-      const busy = looksBusy(chunk);
-      setTerminals((prev) => {
-        const t = prev[event.ptyId];
-        if (!t) return prev;
-        if (t.exitCode !== null) return prev;
-        let status = t.status;
-        let bell = t.bell;
-        if (isApproval) {
-          status = "waiting";
-          bell = true;
-        } else if (busy && t.status === "waiting") {
-          status = "running";
-          bell = false;
-        } else if (t.status !== "waiting") {
-          status = "running";
-        }
-        if (status === t.status && bell === t.bell) return prev;
-        return { ...prev, [event.ptyId]: { ...t, status, bell } };
-      });
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  usePtyEventRouter({ lastActivityRef, setTerminals });
 
   // ---------------------------------------------------------------------------
   // Actions
@@ -926,12 +777,43 @@ export function App() {
   }
 
   const currentMissingDir = missingDirQueue[0] ?? null;
-  currentMissingDirRef.current = currentMissingDir;
-  newProjectModalRef.current = newProjectModal;
+  const chromeBlocked = !!currentMissingDir || !!newProjectModal;
 
   const activeTheme = themes.find((t) => t.id === activeThemeId) ?? themes[0];
   const activeThemeColors: ThemeColors =
     activeTheme?.colors ?? FALLBACK_THEME_COLORS;
+  const isEmpty =
+    didBootstrap && projects.length === 0 && missingDirQueue.length === 0;
+
+  const showNewProjectModal = useCallback(() => {
+    setNewProjectModal({
+      defaults: { name: "", directory: "~/" },
+      lockDirectory: false,
+      title: "Open project",
+      hint: "Type a project directory. Press Tab to complete paths.",
+    });
+  }, []);
+
+  const submitProjectFromModal = useCallback(
+    async (name: string, directory: string) => {
+      const exists = await window.aya.dirExists(directory);
+      if (!exists) {
+        throw new Error("Directory does not exist.");
+      }
+      const absDir = await window.aya.expandPath(directory);
+      const existing = projectsRef.current.find((p) => p.directory === absDir);
+      if (existing) {
+        setActiveProjectId(existing.slug);
+        setNewProjectModal(null);
+        return;
+      }
+      await onCreateProject(
+        name || uniqueProjectName(projectsRef.current, absDir),
+        absDir,
+      );
+    },
+    [onCreateProject],
+  );
 
   // Refresh the open-project handler so it sees the latest projects + state.
   openProjectRef.current = async (rawDir: string) => {
@@ -945,29 +827,19 @@ export function App() {
       return;
     }
     // 2. Auto-create silently from basename. If the slug would collide with
-    //    an existing project pointing at a different directory, open the
-    //    name prompt instead so the user can pick something distinct.
-    const name = basename(absDir);
-    const slug = presetSlug(name);
-    const slugCollides = projectsRef.current.some((p) => p.slug === slug);
-    if (slugCollides) {
-      setNewProjectModal({
-        defaults: { name, directory: absDir },
-        lockDirectory: true,
-        title: "Name this project",
-        hint: absDir,
-      });
-      return;
-    }
+    //    another project, append a numeric suffix. The top tab can be renamed
+    //    later, so no modal is needed for the common path.
+    const name = uniqueProjectName(projectsRef.current, absDir);
     await onCreateProject(name, absDir);
   };
 
-  // Refresh shortcut handlers on every render so the subscribe-once effect
-  // always sees the latest closures (no stale state).
-  shortcutActionsRef.current = {
+  useAppShortcuts({
     newShell: openShellTab,
     closeCurrentTab: () => {
       if (activeTabId) closeTerminal(activeTabId);
+    },
+    search: () => {
+      if (!chromeBlocked) setShowSearch(true);
     },
     openSettings: () => setShowSettings(true),
     prevTab: () => cycleActiveProjectTab(-1),
@@ -979,7 +851,12 @@ export function App() {
     findInPane: () => {
       if (activeTabId) setFindInPaneFor(activeTabId);
     },
-  };
+  });
+
+  useDoubleShiftSearch({
+    enabled: !chromeBlocked,
+    onToggle: () => setShowSearch((s) => !s),
+  });
 
   return (
     <div
@@ -992,85 +869,91 @@ export function App() {
         activeProjectId={activeProjectId}
         homeDir={homeDir}
         isDev={window.aya.isDev}
-        blockChrome={!!currentMissingDir || !!newProjectModal}
+        blockChrome={chromeBlocked}
         onSelectProject={setActiveProjectId}
-        onNewProject={async () => {
-          const dir = await window.aya.pickDirectory();
-          if (!dir) return;
-          setNewProjectModal({
-            defaults: { name: basename(dir), directory: dir },
-            lockDirectory: true,
-            title: "Name this project",
-            hint: dir,
-          });
-        }}
+        onNewProject={showNewProjectModal}
         onCloseProject={closeProject}
         onRenameProject={renameProject}
         onReorderProjects={reorderProjects}
+        onOpenSearch={() => setShowSearch(true)}
         onOpenSettings={() => setShowSettings(true)}
         projectBadges={projectBadges}
       />
-      <div
-        className="aya-main"
-        style={{ gridTemplateColumns: `${sidebarWidth}px 1fr` }}
-      >
-        <Sidebar
-          terminals={projectTerminals}
-          activeId={activeTabId}
-          sidebarWidth={sidebarWidth}
-          presets={presets}
-          recentlyActiveIds={recentlyActiveIds}
-          onSelect={selectTerminal}
-          onClose={closeTerminal}
-          onRename={renameTerminal}
-          onLaunch={launchTerminal}
-          onResize={setSidebarWidth}
-          onReorder={(orderedIds) => {
-            if (activeProjectId) {
-              reorderTerminalsInProject(activeProjectId, orderedIds);
-            }
-          }}
-          onRestart={forceRestartTerminal}
+      {!didBootstrap ? (
+        <main className="aya-empty aya-empty--loading" aria-busy="true">
+          <div className="aya-empty-mark" aria-hidden="true">
+            <span />
+          </div>
+          <h1>Opening Aya...</h1>
+        </main>
+      ) : isEmpty ? (
+        <EmptyState
+          onOpenProject={showNewProjectModal}
+          onOpenSettings={() => setShowSettings(true)}
         />
-        <div className="aya-panes">
-          {Object.values(terminals).map((t) => {
-            const preset = getPreset(presets, t.presetId);
-            // Per-preset theme override (set in Settings) wins over the
-            // global active theme. Missing override → fall back to the
-            // default the user picked. Missing theme entirely → fallback.
-            const overrideTheme = preset.themeId
-              ? themes.find((th) => th.id === preset.themeId)
-              : null;
-            const colorsForTerminal: ThemeColors =
-              overrideTheme?.colors ?? activeThemeColors;
-            return (
-              <TerminalView
-                key={t.id}
-                terminal={t}
-                preset={preset}
-                command={preset.command}
-                isVisible={t.id === activeTabId}
-                cwd={t.cwd}
-                fontSize={fontSize}
-                themeColors={colorsForTerminal}
-                findOpen={findInPaneFor === t.id}
-                onCloseFind={() => setFindInPaneFor(null)}
-                onRequestRestart={() => restartTerminal(t.id)}
-                restartTrigger={restartTriggers[t.id] ?? 0}
-              />
-            );
-          })}
-          {projectTerminals.length === 0 && activeProject && (
-            <div className="aya-pane">
-              <div className="aya-pane-header">
-                <span className="aya-pane-header-title">
-                  No terminals — pick one from the sidebar.
-                </span>
+      ) : (
+        <div
+          className="aya-main"
+          style={{ gridTemplateColumns: `${sidebarWidth}px 1fr` }}
+        >
+          <Sidebar
+            terminals={projectTerminals}
+            activeId={activeTabId}
+            sidebarWidth={sidebarWidth}
+            presets={presets}
+            recentlyActiveIds={recentlyActiveIds}
+            onSelect={selectTerminal}
+            onClose={closeTerminal}
+            onRename={renameTerminal}
+            onLaunch={launchTerminal}
+            onResize={setSidebarWidth}
+            onReorder={(orderedIds) => {
+              if (activeProjectId) {
+                reorderTerminalsInProject(activeProjectId, orderedIds);
+              }
+            }}
+            onRestart={forceRestartTerminal}
+          />
+          <div className="aya-panes">
+            {Object.values(terminals).map((t) => {
+              const preset = getPreset(presets, t.presetId);
+              // Per-preset theme override (set in Settings) wins over the
+              // global active theme. Missing override → fall back to the
+              // default the user picked. Missing theme entirely → fallback.
+              const overrideTheme = preset.themeId
+                ? themes.find((th) => th.id === preset.themeId)
+                : null;
+              const colorsForTerminal: ThemeColors =
+                overrideTheme?.colors ?? activeThemeColors;
+              return (
+                <TerminalView
+                  key={t.id}
+                  terminal={t}
+                  preset={preset}
+                  command={preset.command}
+                  isVisible={t.id === activeTabId}
+                  cwd={t.cwd}
+                  fontSize={fontSize}
+                  themeColors={colorsForTerminal}
+                  findOpen={findInPaneFor === t.id}
+                  onCloseFind={() => setFindInPaneFor(null)}
+                  onRequestRestart={() => restartTerminal(t.id)}
+                  restartTrigger={restartTriggers[t.id] ?? 0}
+                />
+              );
+            })}
+            {projectTerminals.length === 0 && activeProject && (
+              <div className="aya-pane">
+                <div className="aya-pane-header">
+                  <span className="aya-pane-header-title">
+                    No terminals — pick one from the sidebar.
+                  </span>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </div>
+      )}
       <StatusBar
         project={activeProject}
         git={activeGit}
@@ -1094,12 +977,11 @@ export function App() {
           lockDirectory={newProjectModal.lockDirectory}
           title={newProjectModal.title}
           hint={newProjectModal.hint}
-          onSubmit={onCreateProject}
+          pathHint={newProjectModal.pathHint}
+          onPickDirectory={window.aya.pickDirectory}
+          onCompletePath={window.aya.completePath}
+          onSubmit={submitProjectFromModal}
           onCancel={() => {
-            if (newProjectModal.cancelExits) {
-              window.close();
-              return;
-            }
             setNewProjectModal(null);
           }}
         />
@@ -1107,6 +989,7 @@ export function App() {
       {showSearch && (
         <SearchModal
           projects={projects}
+          activeProject={activeProject}
           terminals={terminals}
           presets={presets}
           lastActivity={lastActivityRef.current}
@@ -1114,6 +997,10 @@ export function App() {
           onSelectTerminal={(slug, terminalId) => {
             setActiveProjectId(slug);
             setActiveTabByProject((prev) => ({ ...prev, [slug]: terminalId }));
+          }}
+          onRunPreset={(presetId) => {
+            const preset = presets.find((p) => p.id === presetId);
+            if (preset) launchTerminal(preset);
           }}
           onClose={() => setShowSearch(false)}
         />

@@ -8,6 +8,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import os from "node:os";
 import { DEFAULT_PRESETS } from "../dist-electron/presets.js";
 import { shellArgv } from "../dist-electron/pty.js";
 
@@ -39,27 +40,28 @@ test("default claude/codex use bare commands (no flags)", () => {
   }
 });
 
-test("shellArgv wraps the user command in $SHELL -lc + cd + exec", () => {
+test("shellArgv wraps the user command in $SHELL -l -c + cd + exec", () => {
   // Force a known SHELL so the assertion is deterministic in CI.
   const before = process.env.SHELL;
   process.env.SHELL = "/bin/zsh";
   try {
     const argv = shellArgv("claude", "/tmp/aya-test");
     assert.equal(argv[0], "/bin/zsh");
-    assert.equal(argv[1], "-lc");
-    assert.match(argv[2], /^cd '\/tmp\/aya-test' && exec claude$/);
+    assert.equal(argv[1], "-l");
+    assert.equal(argv[2], "-c");
+    assert.match(argv[3], /^cd '\/tmp\/aya-test' && exec claude$/);
   } finally {
     if (before === undefined) delete process.env.SHELL;
     else process.env.SHELL = before;
   }
 });
 
-test("shellArgv falls back to /bin/bash when SHELL is unset", () => {
+test("shellArgv falls back to the account login shell when SHELL is unset", () => {
   const before = process.env.SHELL;
   delete process.env.SHELL;
   try {
     const argv = shellArgv("claude", "/tmp/aya-test");
-    assert.equal(argv[0], "/bin/bash");
+    assert.equal(argv[0], os.userInfo().shell || "/bin/bash");
   } finally {
     if (before !== undefined) process.env.SHELL = before;
   }
@@ -67,16 +69,16 @@ test("shellArgv falls back to /bin/bash when SHELL is unset", () => {
 
 test("shellArgv shell-quotes the cwd so spaces and quotes don't break", () => {
   const argv = shellArgv("claude", "/tmp/with 'tricky' name");
-  assert.match(argv[2], /cd '\/tmp\/with '\\''tricky'\\'' name'/);
+  assert.match(argv[3], /cd '\/tmp\/with '\\''tricky'\\'' name'/);
 });
 
 test("shellArgv passes the command verbatim so $VARS expand", () => {
   // The shell preset uses literal $SHELL; we count on the wrapping shell's
-  // -lc to expand it. Therefore the command must NOT be single-quoted by
+  // -l -c to expand it. Therefore the command must NOT be single-quoted by
   // shellArgv.
   const argv = shellArgv("$SHELL", "/tmp");
   assert.ok(
-    argv[2].endsWith("exec $SHELL"),
-    `expected unquoted $SHELL in argv: ${argv[2]}`,
+    argv[3].endsWith("exec $SHELL"),
+    `expected unquoted $SHELL in argv: ${argv[3]}`,
   );
 });

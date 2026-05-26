@@ -5,7 +5,12 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getBufferedOutput } from "../dist-electron/pty.js";
+import {
+  __testAppendToOutputBuffer,
+  __testClearOutputBuffers,
+  getBufferedOutput,
+  searchPtyOutputs,
+} from "../dist-electron/pty.js";
 
 // The buffer is private to pty.ts. To exercise it we expose getBufferedOutput
 // and rely on the public spawnPty path elsewhere. For unit testing the trim,
@@ -38,6 +43,38 @@ test("empty buffer reads as empty", () => {
 
 test("getBufferedOutput returns empty for unknown ptyId", () => {
   assert.equal(getBufferedOutput("nonexistent-pty"), "");
+});
+
+test("searchPtyOutputs finds tokens across ANSI-decorated PTY output", () => {
+  __testClearOutputBuffers();
+  __testAppendToOutputBuffer(
+    "pty-1",
+    "\x1b[32mClaude\x1b[0m finished the ruby migration\nNeed approval",
+  );
+  __testAppendToOutputBuffer("pty-2", "codex is working on docs");
+
+  const hits = searchPtyOutputs("ruby approval");
+
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].ptyId, "pty-1");
+  assert.match(hits[0].snippet, /ruby migration Need approval/);
+  assert.equal(hits[0].matchLength, "ruby".length);
+
+  __testClearOutputBuffers();
+});
+
+test("searchPtyOutputs uses AND semantics across query tokens", () => {
+  __testClearOutputBuffers();
+  __testAppendToOutputBuffer("pty-1", "ruby migration complete");
+  __testAppendToOutputBuffer("pty-2", "ruby tests running");
+
+  assert.deepEqual(
+    searchPtyOutputs("ruby complete").map((hit) => hit.ptyId),
+    ["pty-1"],
+  );
+  assert.deepEqual(searchPtyOutputs("ruby missing"), []);
+
+  __testClearOutputBuffers();
 });
 
 test("buffer keeps small writes intact", () => {

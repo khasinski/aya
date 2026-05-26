@@ -1,8 +1,17 @@
 // Electron main process. Creates the window, wires IPC handlers to the PTY
 // host and the project config layer.
 
-import { app, BrowserWindow, dialog, ipcMain, nativeImage } from "electron";
-import { promises as fs, statSync } from "node:fs";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  Notification,
+  type MenuItemConstructorOptions,
+} from "electron";
+import { promises as fs, readFileSync, statSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -25,17 +34,34 @@ import {
   spawnPty,
   writePty,
 } from "./pty";
-import { loadThemes, parseTheme, saveThemes } from "./themes";
-import type { Preset, ProjectConfig, SpawnRequest, ThemesFile } from "./types";
+import {
+  requirePositiveInt,
+  requireString,
+  requireStringArray,
+  validatePresetArray,
+  validateProjectConfig,
+  validateSpawnRequest,
+  validateThemesFile,
+} from "./validation";
 import { loadWindowState, trackWindowState } from "./window-state";
 
 const DEV_SERVER_URL = "http://localhost:5183";
 const WINDOW_TITLE = IS_DEV ? "Aya Dev" : "Aya";
 
-// Sets the dock label on macOS. Must happen before the BrowserWindow is created.
-if (IS_DEV) {
-  app.setName("Aya Dev");
+function configureAppIdentity(): void {
+  // Keep macOS menu/about/notification surfaces aligned. Dev runs inside
+  // Electron.app, so some OS chrome can still reflect the host bundle, but
+  // setting the app identity both before and after ready gives Electron every
+  // chance to expose Aya instead.
+  app.setName(WINDOW_TITLE);
+  process.title = WINDOW_TITLE;
+  app.setAboutPanelOptions({
+    applicationName: WINDOW_TITLE,
+    applicationVersion: app.getVersion(),
+  });
 }
+
+configureAppIdentity();
 
 // Only one Aya instance per config dir. A second launch (e.g. `open -a Aya
 // /path/to/project` or the `aya` CLI shim) sends its argv to the first
@@ -89,6 +115,10 @@ function devIconPath(): string {
   return path.join(__dirname, "..", "build", "icon.png");
 }
 
+function devAboutIconPath(): string {
+  return devIconPath();
+}
+
 /** Walk argv (which includes electron's own args in dev) and return the
  *  first positional value that resolves to an existing directory. Used to
  *  honor `aya /path/to/project` invocations. */
@@ -119,6 +149,35 @@ function findDirInArgv(argv: readonly string[]): string | null {
   return null;
 }
 
+async function completeDirectoryPath(rawPrefix: string): Promise<string[]> {
+  const raw = rawPrefix || "~/";
+  const normalizedRaw = raw === "~" ? "~/" : raw;
+  const endsWithSlash = normalizedRaw.endsWith("/");
+  const expanded = expandPath(normalizedRaw);
+  const lookupDir = endsWithSlash ? expanded : path.dirname(expanded);
+  const namePrefix = endsWithSlash ? "" : path.basename(expanded);
+  const rawDirPrefix = endsWithSlash
+    ? normalizedRaw
+    : normalizedRaw.slice(0, normalizedRaw.length - namePrefix.length);
+
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(lookupDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  return entries
+    .filter((entry) => entry.isDirectory())
+    .filter((entry) => {
+      if (!namePrefix && entry.name.startsWith(".")) return false;
+      return entry.name.startsWith(namePrefix);
+    })
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, 100)
+    .map((entry) => `${rawDirPrefix}${entry.name}/`);
+}
+
 /** Forward an "open this project" request from another process (or our own
  *  initial argv) to the renderer. The renderer figures out whether to switch
  *  to an existing project, create a new one, or no-op. */
@@ -128,6 +187,245 @@ function dispatchOpenProject(
 ): void {
   if (!win || win.isDestroyed() || !dir) return;
   win.webContents.send("open-project", dir);
+}
+
+function dispatchShortcut(action: string): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("shortcut", action);
+}
+
+function showAyaAboutPanel(): void {
+  if (!IS_DEV && process.platform === "darwin") {
+    app.showAboutPanel();
+    return;
+  }
+  const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  const about = new BrowserWindow({
+    width: 360,
+    height: 360,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    parent,
+    modal: !!parent,
+    title: `About ${WINDOW_TITLE}`,
+    backgroundColor: "#0d1117",
+    show: false,
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  about.setMenu(null);
+  let iconUrl = "";
+  try {
+    const png = readFileSync(devAboutIconPath());
+    iconUrl = `data:image/png;base64,${png.toString("base64")}`;
+  } catch {
+    // Empty src keeps the dialog usable even if the icon asset is missing.
+  }
+  const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <style>
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+        color: #f0f6fc;
+        background: #0d1117;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      main {
+        width: 100%;
+        padding: 28px 28px 24px;
+        text-align: center;
+      }
+      img {
+        display: block;
+        width: 128px;
+        height: 128px;
+        margin: 0 auto 18px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 650;
+        letter-spacing: 0;
+      }
+      p {
+        margin: 7px 0 0;
+        font-size: 13px;
+        color: #8b949e;
+      }
+      button {
+        margin-top: 24px;
+        min-width: 78px;
+        height: 30px;
+        border: 1px solid #30363d;
+        border-radius: 6px;
+        color: #f0f6fc;
+        background: #161b22;
+        font: inherit;
+        font-size: 13px;
+      }
+      button:hover { background: #21262d; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img src="${iconUrl}" alt="">
+      <h1>${WINDOW_TITLE}</h1>
+      <p>Version ${app.getVersion()}</p>
+      <button autofocus onclick="window.close()">OK</button>
+    </main>
+  </body>
+</html>`;
+  about.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  about.once("ready-to-show", () => about.show());
+}
+
+function installApplicationMenu(): void {
+  configureAppIdentity();
+  const appMenu: MenuItemConstructorOptions = {
+    label: WINDOW_TITLE,
+    submenu: [
+      {
+        label: `About ${WINDOW_TITLE}`,
+        click: showAyaAboutPanel,
+      },
+      { type: "separator" },
+      {
+        label: "Settings...",
+        accelerator: "CmdOrCtrl+,",
+        click: () => dispatchShortcut("open-settings"),
+      },
+      { type: "separator" },
+      { role: "services" },
+      { type: "separator" },
+      { role: "hide" },
+      { role: "hideOthers" },
+      { role: "unhide" },
+      { type: "separator" },
+      { role: "quit" },
+    ],
+  };
+
+  const template: MenuItemConstructorOptions[] = [
+    ...(process.platform === "darwin" ? [appMenu] : []),
+    {
+      label: "File",
+      submenu: [
+        {
+          label: "New Shell",
+          accelerator: "CmdOrCtrl+T",
+          click: () => dispatchShortcut("new-shell"),
+        },
+        {
+          label: "Close Terminal",
+          accelerator: "CmdOrCtrl+W",
+          click: () => dispatchShortcut("close-tab"),
+        },
+      ],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "pasteAndMatchStyle" },
+        { role: "delete" },
+        { role: "selectAll" },
+      ],
+    },
+    {
+      label: "View",
+      submenu: [
+        {
+          label: "Search",
+          accelerator: "CmdOrCtrl+K",
+          click: () => dispatchShortcut("search"),
+        },
+        {
+          label: "Find in Terminal",
+          accelerator: "CmdOrCtrl+F",
+          click: () => dispatchShortcut("find-in-pane"),
+        },
+        { type: "separator" },
+        {
+          label: "Previous Terminal",
+          accelerator: "CmdOrCtrl+[",
+          click: () => dispatchShortcut("prev-tab"),
+        },
+        {
+          label: "Next Terminal",
+          accelerator: "CmdOrCtrl+]",
+          click: () => dispatchShortcut("next-tab"),
+        },
+        { type: "separator" },
+        { role: "reload" },
+        { role: "forceReload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    {
+      label: "Project",
+      submenu: Array.from({ length: 9 }, (_, i) => ({
+        label: `Select Project ${i + 1}`,
+        accelerator: `CmdOrCtrl+${i + 1}`,
+        click: () => dispatchShortcut(`project-${i + 1}`),
+      })),
+    },
+    {
+      label: "Window",
+      submenu: [
+        { role: "minimize" },
+        { role: "zoom" },
+        ...(process.platform === "darwin"
+          ? [
+              { type: "separator" as const },
+              { role: "front" as const },
+              { type: "separator" as const },
+              { role: "window" as const },
+            ]
+          : [{ role: "close" as const }]),
+      ],
+    },
+  ];
+
+  if (process.platform !== "darwin") {
+    template.push({
+      label: "Help",
+      submenu: [
+        {
+          label: `About ${WINDOW_TITLE}`,
+          click: showAyaAboutPanel,
+        },
+      ],
+    });
+  }
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 interface WindowGeometry {
@@ -204,6 +502,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     else if (key === "[") action = "prev-tab";
     else if (key === "]") action = "next-tab";
     else if (key === "f") action = "find-in-pane";
+    else if (key === "k") action = "search";
     else if (key.length === 1 && key >= "1" && key <= "9") {
       action = `project-${key}`;
     }
@@ -223,47 +522,64 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
 }
 
 function registerIpc(win: BrowserWindow): void {
-  ipcMain.handle("pty:spawn", async (_e, req: SpawnRequest) => {
-    spawnPty(req, win.webContents);
+  ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
+    spawnPty(validateSpawnRequest(req), win.webContents);
   });
-  ipcMain.handle("pty:write", async (_e, ptyId: string, data: string) =>
-    writePty(ptyId, data),
+  ipcMain.handle("pty:write", async (_e, ptyId: unknown, data: unknown) =>
+    writePty(
+      requireString(ptyId, "pty:write.ptyId"),
+      requireString(data, "pty:write.data"),
+    ),
   );
   ipcMain.handle(
     "pty:resize",
-    async (_e, ptyId: string, cols: number, rows: number) =>
-      resizePty(ptyId, cols, rows),
+    async (_e, ptyId: unknown, cols: unknown, rows: unknown) =>
+      resizePty(
+        requireString(ptyId, "pty:resize.ptyId"),
+        requirePositiveInt(cols, "pty:resize.cols"),
+        requirePositiveInt(rows, "pty:resize.rows"),
+      ),
   );
-  ipcMain.handle("pty:kill", async (_e, ptyId: string) => killPty(ptyId));
-  ipcMain.handle("pty:search", async (_e, query: string) =>
-    searchPtyOutputs(query),
+  ipcMain.handle("pty:kill", async (_e, ptyId: unknown) =>
+    killPty(requireString(ptyId, "pty:kill.ptyId")),
+  );
+  ipcMain.handle("pty:search", async (_e, query: unknown) =>
+    searchPtyOutputs(requireString(query, "pty:search.query")),
   );
 
   ipcMain.handle("projects:list", async () => listProjects());
-  ipcMain.handle("projects:create", async (_e, name: string, dir: string) =>
-    createProject(name, dir),
+  ipcMain.handle("projects:create", async (_e, name: unknown, dir: unknown) =>
+    createProject(
+      requireString(name, "projects:create.name"),
+      requireString(dir, "projects:create.dir"),
+    ),
   );
-  ipcMain.handle("projects:update", async (_e, project: ProjectConfig) =>
-    updateProject(project),
+  ipcMain.handle("projects:update", async (_e, project: unknown) =>
+    updateProject(validateProjectConfig(project)),
   );
-  ipcMain.handle("projects:delete", async (_e, slug: string) =>
-    deleteProject(slug),
+  ipcMain.handle("projects:delete", async (_e, slug: unknown) =>
+    deleteProject(requireString(slug, "projects:delete.slug")),
   );
-  ipcMain.handle("projects:save-order", async (_e, slugs: string[]) =>
-    saveProjectOrder(slugs),
+  ipcMain.handle("projects:save-order", async (_e, slugs: unknown) =>
+    saveProjectOrder(requireStringArray(slugs, "projects:save-order.slugs")),
   );
 
   ipcMain.handle("presets:list", async () => listPresets());
-  ipcMain.handle("presets:save", async (_e, presets: Preset[]) =>
-    savePresets(presets),
+  ipcMain.handle("presets:save", async (_e, presets: unknown) =>
+    savePresets(validatePresetArray(presets)),
   );
   ipcMain.handle("presets:scan-harnesses", async () => scanHarnesses());
 
-  ipcMain.handle("themes:list", async () => loadThemes());
-  ipcMain.handle("themes:save", async (_e, file: ThemesFile) =>
-    saveThemes(file),
-  );
+  ipcMain.handle("themes:list", async () => {
+    const { loadThemes } = await import("./themes");
+    return loadThemes();
+  });
+  ipcMain.handle("themes:save", async (_e, file: unknown) => {
+    const { saveThemes } = await import("./themes");
+    return saveThemes(validateThemesFile(file));
+  });
   ipcMain.handle("themes:import", async () => {
+    const { parseTheme } = await import("./themes");
     const result = await dialog.showOpenDialog(win, {
       title: "Import terminal theme",
       properties: ["openFile"],
@@ -286,9 +602,14 @@ function registerIpc(win: BrowserWindow): void {
 
   ipcMain.handle("env:cwd", async () => process.cwd());
   ipcMain.handle("env:home", async () => os.homedir());
-  ipcMain.handle("env:expand", async (_e, p: string) => expandPath(p));
-  ipcMain.handle("env:git", async (_e, directory: string) =>
-    getGitInfo(directory),
+  ipcMain.handle("env:expand", async (_e, p: unknown) =>
+    expandPath(requireString(p, "env:expand.path")),
+  );
+  ipcMain.handle("env:complete-path", async (_e, p: unknown) =>
+    completeDirectoryPath(requireString(p, "env:complete-path.path")),
+  );
+  ipcMain.handle("env:git", async (_e, directory: unknown) =>
+    getGitInfo(requireString(directory, "env:git.directory")),
   );
   ipcMain.handle("env:pick-dir", async () => {
     const result = await dialog.showOpenDialog(win, {
@@ -298,16 +619,20 @@ function registerIpc(win: BrowserWindow): void {
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
   });
-  ipcMain.handle("env:dir-exists", async (_e, p: string) => {
+  ipcMain.handle("env:dir-exists", async (_e, p: unknown) => {
     try {
-      const stat = await fs.stat(expandPath(p));
+      const stat = await fs.stat(
+        expandPath(requireString(p, "env:dir-exists.path")),
+      );
       return stat.isDirectory();
     } catch {
       return false;
     }
   });
-  ipcMain.handle("env:create-dir", async (_e, p: string) => {
-    await fs.mkdir(expandPath(p), { recursive: true });
+  ipcMain.handle("env:create-dir", async (_e, p: unknown) => {
+    await fs.mkdir(expandPath(requireString(p, "env:create-dir.path")), {
+      recursive: true,
+    });
   });
   ipcMain.handle("app:is-fullscreen", async () => win.isFullScreen());
   // Dock badge for unattended notifications (waiting terminals). Empty
@@ -318,10 +643,41 @@ function registerIpc(win: BrowserWindow): void {
     if (win.isMinimized()) win.restore();
     win.focus();
   });
-  ipcMain.handle("app:set-dock-badge", async (_e, text: string) => {
+  ipcMain.handle("app:notify-waiting", async (_e, req: unknown) => {
+    if (!Notification.isSupported()) return;
+    const projectSlug = requireString(
+      (req as Record<string, unknown> | null)?.projectSlug,
+      "app:notify-waiting.projectSlug",
+    );
+    const terminalId = requireString(
+      (req as Record<string, unknown> | null)?.terminalId,
+      "app:notify-waiting.terminalId",
+    );
+    const body = requireString(
+      (req as Record<string, unknown> | null)?.body,
+      "app:notify-waiting.body",
+    );
+    const notification = new Notification({
+      title: "Aya - waiting for input",
+      body,
+      silent: false,
+    });
+    notification.on("click", () => {
+      if (win.isDestroyed()) return;
+      if (win.isMinimized()) win.restore();
+      win.focus();
+      win.webContents.send("notification:select-terminal", {
+        projectSlug,
+        terminalId,
+      });
+    });
+    notification.show();
+  });
+  ipcMain.handle("app:set-dock-badge", async (_e, text: unknown) => {
+    const badge = requireString(text, "app:set-dock-badge.text");
     if (process.platform === "darwin" && app.dock) {
       try {
-        app.dock.setBadge(text || "");
+        app.dock.setBadge(badge || "");
       } catch {
         // best effort
       }
@@ -362,6 +718,8 @@ app.on("open-file", (event, filePath) => {
 });
 
 app.whenReady().then(async () => {
+  configureAppIdentity();
+
   // In dev, replace Electron's default dock icon with ours so the running
   // instance is visually distinguishable. In packaged builds the bundle's
   // icon handles this, so we skip.
@@ -377,6 +735,7 @@ app.whenReady().then(async () => {
   const savedState = await loadWindowState();
   mainWindow = createWindow(savedState);
   registerIpc(mainWindow);
+  installApplicationMenu();
 
   // Honor an initial directory argument on first launch — the renderer
   // applies the same switch-or-create logic as for second-instance.

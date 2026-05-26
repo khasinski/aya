@@ -302,8 +302,8 @@ export function SettingsModal({
         {/* === Presets section === */}
         <div className="aya-modal-title">Terminal presets</div>
         <div className="aya-modal-hint">
-          Each preset is a launcher button in the sidebar. The command runs
-          inside <code>bash -lc</code> in the project directory.
+          Each preset is a launcher button in the sidebar. The command runs in
+          your shell in the project directory.
         </div>
 
         <div className="aya-settings-list">

@@ -9,6 +9,7 @@ import {
 
 interface Props {
   projects: ProjectConfig[];
+  activeProject: ProjectConfig | null;
   terminals: Record<string, TerminalState>;
   presets: Preset[];
   /** Map of terminalId → ms timestamp of last PTY data, for ranking the
@@ -16,13 +17,15 @@ interface Props {
   lastActivity: Record<string, number>;
   onSelectProject: (slug: string) => void;
   onSelectTerminal: (slug: string, terminalId: string) => void;
+  onRunPreset: (presetId: string) => void;
   onClose: () => void;
 }
 
 export interface SearchResult {
-  kind: "project" | "terminal";
+  kind: "project" | "terminal" | "launcher";
   projectSlug: string;
   terminalId?: string;
+  presetId?: string;
   label: string;
   secondary: string;
   icon: string;
@@ -86,9 +89,31 @@ function terminalAllTokens(
   return total;
 }
 
+function launcherAllTokens(preset: Preset, tokens: string[]): number {
+  let total = 0;
+  const haystacks = [
+    { value: "run", exact: 800, prefix: 400, contains: 120 },
+    { value: preset.name, exact: 700, prefix: 350, contains: 100 },
+    { value: preset.command, exact: 500, prefix: 250, contains: 80 },
+  ];
+  for (const tok of tokens) {
+    let best = 0;
+    for (const h of haystacks) {
+      const value = h.value.toLowerCase();
+      if (value === tok) best = Math.max(best, h.exact);
+      else if (value.startsWith(tok)) best = Math.max(best, h.prefix);
+      else if (value.includes(tok)) best = Math.max(best, h.contains);
+    }
+    if (best === 0) return 0;
+    total += best;
+  }
+  return total;
+}
+
 function buildResults(
   query: string,
   projects: ProjectConfig[],
+  activeProject: ProjectConfig | null,
   terminals: Record<string, TerminalState>,
   presets: Preset[],
   lastActivity: Record<string, number>,
@@ -136,6 +161,24 @@ function buildResults(
   // "ruby codex" finds a "codex" terminal inside a "ruby" project even
   // though no single substring contains both words.
   const tokens = q.split(/\s+/).filter((t) => t.length > 0);
+
+  if (activeProject) {
+    for (const preset of presets) {
+      const s = launcherAllTokens(preset, tokens);
+      if (s > 0) {
+        out.push({
+          kind: "launcher",
+          projectSlug: activeProject.slug,
+          presetId: preset.id,
+          label: `Run ${preset.name}`,
+          secondary: `New terminal in ${activeProject.name}`,
+          icon: preset.icon,
+          iconColor: preset.color || undefined,
+          score: s + 25,
+        });
+      }
+    }
+  }
 
   // Project name matches: every token must match the project name.
   for (const p of projects) {
@@ -204,11 +247,13 @@ function buildResults(
 
 export function SearchModal({
   projects,
+  activeProject,
   terminals,
   presets,
   lastActivity,
   onSelectProject,
   onSelectTerminal,
+  onRunPreset,
   onClose,
 }: Props) {
   // Input value drives the field; query is the debounced version used for
@@ -250,12 +295,21 @@ export function SearchModal({
       buildResults(
         query,
         projects,
+        activeProject,
         terminals,
         presets,
         lastActivity,
         contentHits,
       ),
-    [query, projects, terminals, presets, lastActivity, contentHits],
+    [
+      query,
+      projects,
+      activeProject,
+      terminals,
+      presets,
+      lastActivity,
+      contentHits,
+    ],
   );
 
   // Clamp the selection when the result list shrinks.
@@ -278,7 +332,9 @@ export function SearchModal({
   }, []);
 
   const select = (r: SearchResult) => {
-    if (r.kind === "terminal" && r.terminalId) {
+    if (r.kind === "launcher" && r.presetId) {
+      onRunPreset(r.presetId);
+    } else if (r.kind === "terminal" && r.terminalId) {
       onSelectTerminal(r.projectSlug, r.terminalId);
     } else {
       onSelectProject(r.projectSlug);
@@ -329,7 +385,7 @@ export function SearchModal({
           ) : (
             results.map((r, i) => (
               <ResultRow
-                key={`${r.kind}-${r.projectSlug}-${r.terminalId ?? "_"}-${i}`}
+                key={`${r.kind}-${r.projectSlug}-${r.terminalId ?? r.presetId ?? "_"}-${i}`}
                 result={r}
                 selected={i === selectedIndex}
                 index={i}
@@ -405,7 +461,11 @@ function ResultRow({
         </span>
       ) : (
         <span className="aya-search-secondary-right">
-          {result.kind === "project" ? "project" : ""}
+          {result.kind === "project"
+            ? "project"
+            : result.kind === "launcher"
+              ? "run"
+              : ""}
         </span>
       )}
     </div>

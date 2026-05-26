@@ -47,7 +47,7 @@ export const DEFAULT_PRESETS: readonly Preset[] = [
     name: "Shell",
     icon: "$",
     color: "",
-    // The literal $SHELL — bash -lc expands this to the user's login shell.
+    // The literal $SHELL — the PTY wrapper expands this to the user's shell.
     command: "$SHELL",
   },
 ];

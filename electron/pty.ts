@@ -1,7 +1,7 @@
 // PTY host. One IPty per ptyId, all events forwarded to the renderer.
 //
 // We accept a literal `command` string from the renderer and wrap it in
-// `$SHELL -lc 'cd CWD && exec COMMAND'`. Using the user's login shell —
+// `$SHELL -l -c 'cd CWD && exec COMMAND'`. Using the user's login shell —
 // not a hard-coded bash — means PATH additions from zsh's .zshrc /
 // .zprofile (mise, asdf, oh-my-zsh plugins, brew) work; otherwise users
 // on zsh would see "command not found: claude" because bash doesn't read
@@ -10,11 +10,20 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import * as pty from "node-pty";
+import type * as PtyModule from "node-pty";
 import type { WebContents } from "electron";
 import type { SpawnRequest } from "./types";
 
-const ptys = new Map<string, pty.IPty>();
+let nodePty: typeof PtyModule | null = null;
+
+function loadNodePty(): typeof PtyModule {
+  if (!nodePty) {
+    nodePty = require("node-pty") as typeof PtyModule;
+  }
+  return nodePty;
+}
+
+const ptys = new Map<string, PtyModule.IPty>();
 
 // Per-PTY rolling buffer of recent output, used to repaint xterm.js when the
 // renderer remounts (Vite HMR, React strict-mode double-mount, etc.). The PTY
@@ -47,6 +56,14 @@ function appendToOutputBuffer(ptyId: string, chunk: string): void {
     const removed = chunks.shift();
     if (removed) total -= removed.length;
   }
+}
+
+export function __testAppendToOutputBuffer(ptyId: string, chunk: string): void {
+  appendToOutputBuffer(ptyId, chunk);
+}
+
+export function __testClearOutputBuffers(): void {
+  outputBuffers.clear();
 }
 
 export function getBufferedOutput(ptyId: string): string {
@@ -143,14 +160,14 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
-/** Resolve the user's login shell, falling back to /bin/bash when SHELL
- *  isn't set (rare, but happens in some sandboxes). bash is the safe
- *  fallback because it definitely exists on every supported platform and
- *  accepts the -l + -c flags we need. */
+/** Resolve the user's login shell. GUI-launched macOS apps often don't get
+ *  SHELL in their launchd environment, so fall back to the shell from the
+ *  OS user database before using /bin/bash as the last resort. */
 function userShell(): string {
-  return process.env.SHELL && process.env.SHELL.trim()
-    ? process.env.SHELL
-    : "/bin/bash";
+  const envShell = process.env.SHELL?.trim();
+  if (envShell) return envShell;
+  const accountShell = os.userInfo().shell;
+  return accountShell && accountShell.trim() ? accountShell : "/bin/bash";
 }
 
 /** Build the shell argv for a given command + cwd. Uses the user's login
@@ -162,7 +179,7 @@ export function shellArgv(command: string, cwd: string): string[] {
   // The user's command is embedded verbatim so $VARS / quoting / pipes work.
   // It must NOT be shell-quoted, or the shell would treat the whole thing
   // as one literal token.
-  return [userShell(), "-lc", `cd ${cwdQuoted} && exec ${command}`];
+  return [userShell(), "-l", "-c", `cd ${cwdQuoted} && exec ${command}`];
 }
 
 /** @deprecated Kept as an alias so existing tests / callers compile while
@@ -256,9 +273,9 @@ export function spawnPty(req: SpawnRequest, wc: WebContents): void {
   const file = argv[0];
   const args = argv.slice(1);
 
-  let child: pty.IPty;
+  let child: PtyModule.IPty;
   try {
-    child = pty.spawn(file, args, {
+    child = loadNodePty().spawn(file, args, {
       name: "xterm-256color",
       cols: Math.max(req.cols, 4),
       rows: Math.max(req.rows, 2),

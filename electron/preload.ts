@@ -39,6 +39,7 @@ const api: AyaApi = {
   getCwd: () => ipcRenderer.invoke("env:cwd"),
   getHomeDir: () => ipcRenderer.invoke("env:home"),
   expandPath: (p) => ipcRenderer.invoke("env:expand", p),
+  completePath: (p) => ipcRenderer.invoke("env:complete-path", p),
   getGitInfo: (directory) => ipcRenderer.invoke("env:git", directory),
   pickDirectory: () => ipcRenderer.invoke("env:pick-dir"),
   dirExists: (p) => ipcRenderer.invoke("env:dir-exists", p),
@@ -47,6 +48,17 @@ const api: AyaApi = {
   isFullScreen: () => ipcRenderer.invoke("app:is-fullscreen"),
   setDockBadge: (text) => ipcRenderer.invoke("app:set-dock-badge", text),
   focusWindow: () => ipcRenderer.invoke("app:focus-window"),
+  showWaitingNotification: (req) =>
+    ipcRenderer.invoke("app:notify-waiting", req),
+  onTerminalNotificationSelect: (handler) => {
+    const listener = (
+      _e: unknown,
+      selection: { projectSlug: string; terminalId: string },
+    ) => handler(selection);
+    ipcRenderer.on("notification:select-terminal", listener);
+    return () =>
+      ipcRenderer.removeListener("notification:select-terminal", listener);
+  },
   onFullScreenChange: (handler) => {
     const listener = (_e: unknown, isFullScreen: boolean) =>
       handler(isFullScreen);

@@ -6,26 +6,49 @@ interface Props {
   lockDirectory?: boolean;
   title?: string;
   hint?: string;
-  onSubmit: (name: string, directory: string) => void;
+  pathHint?: string;
+  onPickDirectory?: () => Promise<string | null>;
+  onCompletePath?: (pathPrefix: string) => Promise<string[]>;
+  onSubmit: (name: string, directory: string) => Promise<void> | void;
   onCancel: () => void;
+}
+
+function dirBasename(p: string): string {
+  if (!p) return "";
+  const parts = p.replace(/\/+$/, "").split("/");
+  const last = parts[parts.length - 1] ?? "";
+  return last === "~" ? "" : last;
 }
 
 export function NewProjectModal({
   defaultName = "",
-  defaultDirectory = "",
+  defaultDirectory = "~/",
   lockDirectory = false,
-  title = "New project",
-  hint,
+  title = "Open project",
+  hint = "Type a project directory, or browse for one.",
+  pathHint,
+  onPickDirectory,
+  onCompletePath,
   onSubmit,
   onCancel,
 }: Props) {
-  const [name, setName] = useState(defaultName);
-  const [directory, setDirectory] = useState(defaultDirectory);
-  const nameRef = useRef<HTMLInputElement>(null);
+  const [directory, setDirectory] = useState(defaultDirectory || "~/");
+  const [name, setName] = useState(() => defaultName || "");
+  const [nameTouched, setNameTouched] = useState(Boolean(defaultName));
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const directoryRef = useRef<HTMLInputElement>(null);
+  const completionRef = useRef<{
+    source: string;
+    matches: string[];
+    index: number;
+    applied: string;
+  } | null>(null);
 
   useEffect(() => {
-    nameRef.current?.focus();
-    nameRef.current?.select();
+    const input = directoryRef.current;
+    input?.focus();
+    input?.setSelectionRange(input.value.length, input.value.length);
   }, []);
 
   useEffect(() => {
@@ -36,55 +59,135 @@ export function NewProjectModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onCancel]);
 
-  const submit = () => {
-    const n = name.trim();
+  const setDirectoryAndMaybeName = (next: string) => {
+    setDirectory(next);
+    setError(null);
+    completionRef.current = null;
+    if (!nameTouched) setName(dirBasename(next));
+  };
+
+  const pickDirectory = async () => {
+    if (!onPickDirectory || submitting) return;
+    const picked = await onPickDirectory();
+    if (!picked) return;
+    setDirectoryAndMaybeName(picked);
+  };
+
+  const completeDirectory = async () => {
+    if (!onCompletePath || submitting) return;
+    const current = directory.trim() || "~/";
+    const previous = completionRef.current;
+    const isCycling = previous && previous.applied === current;
+    const source = isCycling ? previous.source : current;
+    const matches = isCycling
+      ? previous.matches
+      : await onCompletePath(source);
+    if (matches.length === 0) {
+      setError("No matching directories.");
+      completionRef.current = null;
+      return;
+    }
+    const index = isCycling ? (previous.index + 1) % matches.length : 0;
+    const applied = matches[index];
+    completionRef.current = { source, matches, index, applied };
+    setDirectory(applied);
+    setError(null);
+    if (!nameTouched) setName(dirBasename(applied));
+  };
+
+  const submit = async () => {
+    if (submitting) return;
     const d = directory.trim();
-    if (!n || !d) return;
-    onSubmit(n, d);
+    const n = name.trim() || dirBasename(d);
+    if (!d || !n) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onSubmit(n, d);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
-    <div className="aya-modal-backdrop" onClick={onCancel}>
+    <div
+      className="aya-modal-backdrop"
+      onClick={submitting ? undefined : onCancel}
+    >
       <div className="aya-modal" onClick={(e) => e.stopPropagation()}>
         <div className="aya-modal-title">{title}</div>
-        {hint && <div className="aya-modal-hint aya-modal-hint--path">{hint}</div>}
-        <label className="aya-modal-label">Name</label>
-        <input
-          ref={nameRef}
-          className="aya-modal-input"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") submit();
-          }}
-          placeholder="project name"
-        />
-        {/* The directory field only renders when not locked. The two-step flow
-            (pick dir, then name it) keeps the dialog focused and avoids users
-            typing paths by hand. */}
+        {hint && <div className="aya-modal-hint">{hint}</div>}
+        {pathHint && (
+          <div className="aya-modal-hint aya-modal-hint--path">{pathHint}</div>
+        )}
+
         {!lockDirectory && (
           <>
             <label className="aya-modal-label">Directory</label>
-            <input
-              className="aya-modal-input"
-              value={directory}
-              onChange={(e) => setDirectory(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") submit();
-              }}
-              placeholder="/path/to/project"
-            />
+            <div className="aya-modal-input-row">
+              <input
+                ref={directoryRef}
+                className="aya-modal-input"
+                value={directory}
+                onChange={(e) => setDirectoryAndMaybeName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    submit();
+                  } else if (e.key === "Tab") {
+                    e.preventDefault();
+                    void completeDirectory();
+                  }
+                }}
+                placeholder="~/code/project"
+                disabled={submitting}
+                spellCheck={false}
+              />
+              {onPickDirectory && (
+                <button
+                  className="aya-modal-btn"
+                  onClick={pickDirectory}
+                  disabled={submitting}
+                >
+                  Browse
+                </button>
+              )}
+            </div>
           </>
         )}
+
+        <label className="aya-modal-label">Name</label>
+        <input
+          className="aya-modal-input"
+          value={name}
+          onChange={(e) => {
+            setNameTouched(true);
+            setName(e.target.value);
+          }}
+          disabled={submitting}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+          }}
+          placeholder={dirBasename(directory) || "project name"}
+        />
+
+        {error && <div className="aya-modal-error">{error}</div>}
+
         <div className="aya-modal-actions">
-          <button className="aya-modal-btn" onClick={onCancel}>
+          <button
+            className="aya-modal-btn"
+            onClick={onCancel}
+            disabled={submitting}
+          >
             Cancel
           </button>
           <button
             className="aya-modal-btn aya-modal-btn--primary"
             onClick={submit}
+            disabled={submitting || !directory.trim()}
           >
-            Create
+            {submitting ? "Opening..." : "Open"}
           </button>
         </div>
       </div>

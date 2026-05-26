@@ -20,26 +20,26 @@
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
+    "node-pty": "^1.0.0",
+    "plist": "^3.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
     "@types/plist": "^3.0.5",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
-    "node-pty": "^1.0.0",
-    "plist": "^3.1.1",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6"
-  },
-  "devDependencies": {
-    "@types/node": "^25.9.1",
-    "@types/react": "^19.2.15",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.2",
     "concurrently": "^9.0.1",
     "cross-env": "^10.1.0",
     "electron": "^42.2.0",
     "electron-builder": "^26.8.1",
     "electronmon": "^2.0.4",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "typescript": "^5.6.3",
     "vite": "^8.0.14",
     "wait-on": "^9.0.10"
@@ -51,6 +51,7 @@
       "buildResources": "build",
       "output": "release"
     },
+    "afterPack": "scripts/after-pack-prune.cjs",
     "files": [
       "dist/**",
       "dist-electron/**",

@@ -2,8 +2,8 @@
   <img src="build/icon.png" width="120" alt="Aya">
   <h1>Aya</h1>
   <p>
-    <strong>Tabbed terminal manager for coding agents.</strong><br>
-    Claude Code, Codex, shells, whatever else you launch — one window, organised by project.
+    <strong>A project workspace for coding agents.</strong><br>
+    Keep Claude Code, Codex, shells, and other CLI tools running in one focused desktop app.
   </p>
 </div>
 
@@ -15,19 +15,32 @@
 
 ## What it is
 
-Aya is a desktop app that runs real interactive PTYs (no `claude -p` headless mode — your subscription still works) and groups them by project. Each project is a directory; each project has its own set of tabs (Claude / Codex / shell / whatever you configure). The window stays a window — agents and shells stay running across project switches.
+Aya is a desktop app for people who work with several coding agents and project shells at once. Each project is a directory. Inside each project you can run Claude Code, Codex, a plain shell, or any custom CLI preset you configure.
 
-## Claude Code subscription compatibility
+The important part: Aya uses real interactive terminals. Sessions stay alive when you switch projects, terminal output is searchable, and each project keeps its own set of tabs instead of scattering agent sessions across a pile of windows.
 
-Aya does not bypass, multiplex, scrape, or automate around Claude Code's subscription model. It launches the official `claude` CLI inside a normal interactive PTY, the same way you would run it in Terminal.app or iTerm2, and the shipped Claude preset deliberately avoids `-p`, `--print`, or other headless/non-interactive flags. Your Claude Code login, plan limits, and Anthropic's terms still apply exactly as they do outside Aya.
+## Why use it
+
+- Keep long-running agent sessions attached to the project they belong to.
+- Jump between projects without hunting through terminal windows.
+- Search across project names, terminal names, and recent output from one place.
+- Get notified when an agent is waiting for approval.
+- Use the same CLI tools and auth you already have installed.
+
+## Claude Code subscriptions
+
+Aya launches the official `claude` CLI in a normal interactive PTY, the same way you would run it in Terminal.app or iTerm2. It is not a proxy, scraper, shared-account layer, or headless Claude wrapper.
+
+The built-in Claude Code preset is just `claude`. Aya deliberately does not ship `-p`, `--print`, `--headless`, or other non-interactive Claude flags, and the test suite fails if those flags appear in shipped defaults. Your Claude Code login, plan limits, and Anthropic's terms still apply exactly as they do in any other terminal.
 
 ## Features
 
-- **Real PTYs via `node-pty`** — every tab is `bash -lc 'cd <project-dir> && exec <command>'`. Login-shell PATH (mise, asdf, brew) flows through. The shipped defaults never include `-p` / `--print` / headless flags; a unit test fails the build if they do.
+- **Real interactive terminals** — every tab runs through `node-pty` as `$SHELL -l -c 'cd <project-dir> && exec <command>'`, with `/bin/bash` as a fallback. Your normal shell setup, PATH, mise/asdf/brew shims, and interactive CLI auth keep working.
+- **Project-first organization** — top tabs are projects; the sidebar holds that project's running terminals. Switch projects without killing agents or losing scrollback.
 - **Configurable presets** — Claude Code, Codex, Aider, Gemini, OpenCode, Amp, Crush, Qwen Code, Kilo Code, Pi all auto-detected on first launch if installed. Add your own (icon + name + shell command + optional per-preset theme override) in Settings.
-- **Themes** — import iTerm2 `.itermcolors` or Windows Terminal JSON; internal storage uses xterm.js's native `ITheme` shape. Switch live, no restart.
-- **Search-everything (`⇧⇧` or `⌘K`)** — tokenised query matches project name, terminal name, and PTY scrollback content in parallel. AND semantics across tokens, so `ruby codex` finds the Codex terminal in your Ruby project.
+- **Fast search (`⇧⇧` or `⌘K`)** — search project names, terminal names, and recent PTY output together. AND semantics across tokens, so `ruby codex` finds the Codex terminal in your Ruby project.
 - **In-pane find (`⌘F`)** — xterm.js's search addon, highlights matches inside the active terminal.
+- **Themes** — import iTerm2 `.itermcolors` or Windows Terminal JSON; internal storage uses xterm.js's native `ITheme` shape. Switch live, no restart.
 - **Drag-and-drop reorder** — project tabs and terminal rows; order is persisted.
 - **Notifications** — when Claude or Codex is waiting for your approval, the sidebar shows a red dot, the project tab shows a red dot, the macOS dock badge counts, and an OS notification fires if the window isn't focused.
 - **Branch + dirty count in status bar** — polled every 3s for the active project.
@@ -96,9 +109,9 @@ ln -s "$PWD/bin/aya" /usr/local/bin/aya
 
 Then `aya` (opens cwd as a project) or `aya ~/code/foo` (opens that path) from anywhere — including from a terminal inside aya itself.
 
-## Architecture
+## How it works
 
-- **Renderer** — React 18 + TypeScript + Vite. xterm.js renders each PTY; the terminal grid is a `ContentSwitcher`-style hidden-mount layout so PTYs survive project switches.
+- **Renderer** — React 18 + TypeScript + Vite. xterm.js renders each PTY; inactive terminals stay mounted but hidden, so PTYs survive project switches.
 - **Main** — Electron 33. PTYs spawned via `node-pty`. Per-PTY rolling buffer (~200kb) replays on renderer remount so HMR doesn't blank terminals.
 - **IPC** — typed contracts in `electron/types.ts`, validated at the boundary in `electron/validation.ts`.
 - **Bell heuristic** — strips ANSI escapes from PTY output and matches against known approval-prompt patterns (`Do you want to`, `❯ 1. Yes`, etc.). Imperfect but correct for the common case.

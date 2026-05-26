@@ -466,6 +466,11 @@
 .aya-modal-input-row .aya-modal-input {
   min-width: 0;
 }
+.aya-modal-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--rich-red);
+}
 .aya-modal-actions {
   display: flex; justify-content: flex-end; gap: 8px;
   margin-top: 18px;

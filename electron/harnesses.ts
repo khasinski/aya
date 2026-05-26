@@ -2,11 +2,12 @@
 // preset list contains only what's actually usable, and so Settings can
 // suggest harnesses the user hasn't added yet.
 //
-// All probes run through `/bin/bash -lc 'command -v <bin>'` so login-shell
+// All probes run through `$SHELL -l -c 'command -v <bin>'` so login-shell
 // PATH (mise, asdf, brew, etc.) is respected — otherwise we'd miss
 // binaries installed via version managers.
 
 import { execFile } from "node:child_process";
+import * as os from "node:os";
 
 export interface HarnessDef {
   /** Canonical id; used as the preset id when seeded. */
@@ -112,12 +113,19 @@ export function isSafeBinaryName(s: string): boolean {
   return /^[a-zA-Z0-9_.-]+$/.test(s);
 }
 
+function userShell(): string {
+  const envShell = process.env.SHELL?.trim();
+  if (envShell) return envShell;
+  const accountShell = os.userInfo().shell;
+  return accountShell && accountShell.trim() ? accountShell : "/bin/bash";
+}
+
 async function commandExists(binary: string): Promise<boolean> {
   if (!isSafeBinaryName(binary)) return false;
   return new Promise((resolve) => {
     execFile(
-      "/bin/bash",
-      ["-lc", `command -v -- ${binary} >/dev/null 2>&1`],
+      userShell(),
+      ["-l", "-c", `command -v -- ${binary} >/dev/null 2>&1`],
       { timeout: 2500, windowsHide: true },
       (err) => resolve(err === null),
     );

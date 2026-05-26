@@ -26,7 +26,7 @@ export interface SpawnRequest {
   ptyId: string;
   // The user-resolved command (e.g. "claude", "$SHELL", "aider --dark"). The
   // renderer picks this from the active preset and the main process embeds it
-  // verbatim into `bash -lc 'cd … && exec <command>'`. NEVER -p / --print.
+  // verbatim into `$SHELL -l -c 'cd … && exec <command>'`. NEVER -p / --print.
   command: string;
   cwd: string;
   cols: number;
@@ -41,6 +41,17 @@ export interface ProjectGitInfo {
 export type PtyEvent =
   | { type: "data"; ptyId: string; chunk: string }
   | { type: "exit"; ptyId: string; exitCode: number };
+
+export interface WaitingNotificationRequest {
+  projectSlug: string;
+  terminalId: string;
+  body: string;
+}
+
+export interface TerminalNotificationSelection {
+  projectSlug: string;
+  terminalId: string;
+}
 
 // What the preload exposes to window.aya:
 export interface AyaApi {
@@ -86,6 +97,7 @@ export interface AyaApi {
   getCwd(): Promise<string>;
   getHomeDir(): Promise<string>;
   expandPath(path: string): Promise<string>;
+  completePath(pathPrefix: string): Promise<string[]>;
   getGitInfo(directory: string): Promise<ProjectGitInfo>;
   pickDirectory(): Promise<string | null>;
   /** True if the path exists and is a directory. */
@@ -100,10 +112,17 @@ export interface AyaApi {
   setDockBadge(text: string): Promise<void>;
   /** Brings the aya window to the foreground (restore if minimized). */
   focusWindow(): Promise<void>;
+  /** Shows a native app notification for a waiting terminal. */
+  showWaitingNotification(req: WaitingNotificationRequest): Promise<void>;
+  /** Fired when the user clicks a waiting-terminal notification. */
+  onTerminalNotificationSelect(
+    handler: (selection: TerminalNotificationSelection) => void,
+  ): () => void;
 
   /** Subscribe to keyboard shortcuts dispatched by the main process. Returns
    *  an unsubscribe function. Action strings: "new-shell", "close-tab",
-   *  "open-settings", "prev-tab", "next-tab", "project-1".."project-9". */
+   *  "search", "open-settings", "prev-tab", "next-tab",
+   *  "project-1".."project-9". */
   onShortcut(handler: (action: string) => void): () => void;
 
   /** Subscribe to "open this project directory" requests from main — fired

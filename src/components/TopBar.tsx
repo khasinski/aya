@@ -17,6 +17,7 @@ interface Props {
   onCloseProject: (slug: string) => void;
   onRenameProject: (slug: string, newName: string) => void;
   onReorderProjects: (orderedSlugs: string[]) => void;
+  onOpenSearch: () => void;
   onOpenSettings: () => void;
   projectBadges?: Record<string, number>;
 }
@@ -40,6 +41,7 @@ export function TopBar({
   onCloseProject,
   onRenameProject,
   onReorderProjects,
+  onOpenSearch,
   onOpenSettings,
   projectBadges = {},
 }: Props) {
@@ -255,6 +257,18 @@ export function TopBar({
         </div>
       </div>
       <div className="aya-topbar-right">
+        <button
+          className="aya-iconbtn"
+          title={
+            blockChrome
+              ? "Search (close the open dialog first)"
+              : "Search (Cmd/Ctrl+K or Shift Shift)"
+          }
+          onClick={onOpenSearch}
+          disabled={blockChrome}
+        >
+          <span style={{ fontFamily: "Material Symbols Outlined" }}>search</span>
+        </button>
         <button
           className="aya-iconbtn"
           title={blockChrome ? "Settings (close the open dialog first)" : "Settings"}
