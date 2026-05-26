@@ -102,6 +102,12 @@ export function TerminalView({
       cursorBlink: true,
       allowProposedApi: true,
       scrollback: 10000,
+      // Option-as-Meta so Option+B / Option+F / Option+Backspace send the
+      // ESC-prefixed sequences readline (zsh, bash, claude, codex) expects
+      // for backward-word / forward-word / delete-word. Without this, macOS
+      // intercepts Option+letter and emits Unicode (Option+e → "´"), which
+      // is what produced the "aeaer ;3D" garbage on backspace-word.
+      macOptionIsMeta: true,
     });
     const fit = new FitAddon();
     const search = new SearchAddon();
