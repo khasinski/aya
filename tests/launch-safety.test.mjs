@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_PRESETS } from "../dist-electron/presets.js";
-import { bashArgv } from "../dist-electron/pty.js";
+import { shellArgv } from "../dist-electron/pty.js";
 
 const FORBIDDEN = [
   /(?<!\w)-p(?!\w)/,
@@ -39,22 +39,42 @@ test("default claude/codex use bare commands (no flags)", () => {
   }
 });
 
-test("bashArgv wraps the user command in /bin/bash -lc + cd + exec", () => {
-  const argv = bashArgv("claude", "/tmp/aya-test");
-  assert.equal(argv[0], "/bin/bash");
-  assert.equal(argv[1], "-lc");
-  assert.match(argv[2], /^cd '\/tmp\/aya-test' && exec claude$/);
+test("shellArgv wraps the user command in $SHELL -lc + cd + exec", () => {
+  // Force a known SHELL so the assertion is deterministic in CI.
+  const before = process.env.SHELL;
+  process.env.SHELL = "/bin/zsh";
+  try {
+    const argv = shellArgv("claude", "/tmp/aya-test");
+    assert.equal(argv[0], "/bin/zsh");
+    assert.equal(argv[1], "-lc");
+    assert.match(argv[2], /^cd '\/tmp\/aya-test' && exec claude$/);
+  } finally {
+    if (before === undefined) delete process.env.SHELL;
+    else process.env.SHELL = before;
+  }
 });
 
-test("bashArgv shell-quotes the cwd so spaces and quotes don't break", () => {
-  const argv = bashArgv("claude", "/tmp/with 'tricky' name");
+test("shellArgv falls back to /bin/bash when SHELL is unset", () => {
+  const before = process.env.SHELL;
+  delete process.env.SHELL;
+  try {
+    const argv = shellArgv("claude", "/tmp/aya-test");
+    assert.equal(argv[0], "/bin/bash");
+  } finally {
+    if (before !== undefined) process.env.SHELL = before;
+  }
+});
+
+test("shellArgv shell-quotes the cwd so spaces and quotes don't break", () => {
+  const argv = shellArgv("claude", "/tmp/with 'tricky' name");
   assert.match(argv[2], /cd '\/tmp\/with '\\''tricky'\\'' name'/);
 });
 
-test("bashArgv passes the command verbatim so $VARS expand", () => {
-  // The shell preset uses literal $SHELL; we count on bash -lc to expand it.
-  // Therefore the command must NOT be single-quoted by bashArgv.
-  const argv = bashArgv("$SHELL", "/tmp");
+test("shellArgv passes the command verbatim so $VARS expand", () => {
+  // The shell preset uses literal $SHELL; we count on the wrapping shell's
+  // -lc to expand it. Therefore the command must NOT be single-quoted by
+  // shellArgv.
+  const argv = shellArgv("$SHELL", "/tmp");
   assert.ok(
     argv[2].endsWith("exec $SHELL"),
     `expected unquoted $SHELL in argv: ${argv[2]}`,

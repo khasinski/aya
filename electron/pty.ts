@@ -1,9 +1,11 @@
 // PTY host. One IPty per ptyId, all events forwarded to the renderer.
 //
 // We accept a literal `command` string from the renderer and wrap it in
-// /bin/bash -lc 'cd CWD && exec COMMAND'. Bash handles variable expansion
-// ($SHELL, $HOME, etc.) and PATH lookup. The renderer decides what command to
-// send based on the active preset.
+// `$SHELL -lc 'cd CWD && exec COMMAND'`. Using the user's login shell —
+// not a hard-coded bash — means PATH additions from zsh's .zshrc /
+// .zprofile (mise, asdf, oh-my-zsh plugins, brew) work; otherwise users
+// on zsh would see "command not found: claude" because bash doesn't read
+// their rc files.
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -141,14 +143,31 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
-/** Build the bash argv for a given command + cwd. */
-export function bashArgv(command: string, cwd: string): string[] {
+/** Resolve the user's login shell, falling back to /bin/bash when SHELL
+ *  isn't set (rare, but happens in some sandboxes). bash is the safe
+ *  fallback because it definitely exists on every supported platform and
+ *  accepts the -l + -c flags we need. */
+function userShell(): string {
+  return process.env.SHELL && process.env.SHELL.trim()
+    ? process.env.SHELL
+    : "/bin/bash";
+}
+
+/** Build the shell argv for a given command + cwd. Uses the user's login
+ *  shell so PATH/env from their rc files (zsh, fish, etc.) flows through.
+ *  zsh, bash, and fish all accept `-l -c "cmd"`; anything more exotic
+ *  needs a custom preset command. */
+export function shellArgv(command: string, cwd: string): string[] {
   const cwdQuoted = shellQuote(cwd);
   // The user's command is embedded verbatim so $VARS / quoting / pipes work.
-  // It must NOT be shell-quoted, or bash would treat the whole thing as one
-  // literal token.
-  return ["/bin/bash", "-lc", `cd ${cwdQuoted} && exec ${command}`];
+  // It must NOT be shell-quoted, or the shell would treat the whole thing
+  // as one literal token.
+  return [userShell(), "-lc", `cd ${cwdQuoted} && exec ${command}`];
 }
+
+/** @deprecated Kept as an alias so existing tests / callers compile while
+ *  in-flight branches converge. New code should call shellArgv. */
+export const bashArgv = shellArgv;
 
 /** Friendly error reporter — writes a red banner into the terminal and emits
  *  a synthetic exit so the host knows the spawn never happened. */
@@ -233,7 +252,7 @@ export function spawnPty(req: SpawnRequest, wc: WebContents): void {
     return;
   }
 
-  const argv = bashArgv(req.command, cwd);
+  const argv = shellArgv(req.command, cwd);
   const file = argv[0];
   const args = argv.slice(1);
 
