@@ -158,12 +158,13 @@ export function TerminalView({
       }
     });
 
-    // Intercept Shift+Enter when the PTY is dead-but-cleanly-exited and
-    // turn it into a restart. Returning false from this handler stops
-    // xterm from forwarding the key to the (now-defunct) PTY.
     term.attachCustomKeyEventHandler((ev) => {
+      if (ev.type !== "keydown") return true;
+
+      // Shift+Enter on a cleanly-exited terminal: restart in the same pane.
+      // Returning false from this handler stops xterm from forwarding the
+      // key to the (now-defunct) PTY.
       if (
-        ev.type === "keydown" &&
         ev.key === "Enter" &&
         ev.shiftKey &&
         !ev.metaKey &&
@@ -175,9 +176,6 @@ export function TerminalView({
         const t = xtermRef.current;
         if (!t) return false;
         t.writeln("\x1b[2m[restarting...]\x1b[0m");
-        // Let the host clear exit state first, then ask main for a fresh
-        // PTY against the same id. ptySpawn is idempotent against existing
-        // ids; the previous PTY was removed on exit, so this spawns anew.
         onRequestRestart?.();
         void window.aya.ptySpawn({
           ptyId: terminal.id,
@@ -186,10 +184,35 @@ export function TerminalView({
           cols: Math.max(t.cols, 80),
           rows: Math.max(t.rows, 24),
         });
-        // Mark as live so a follow-up keypress doesn't re-trigger restart.
         canRestartRef.current = false;
         return false;
       }
+
+      // Bare control + letter combos (no Cmd/Shift/Alt) are shell-level
+      // control characters. Chromium intercepts several of them at the
+      // WebContents level — Ctrl+R as page-reload is the headline one,
+      // and that's what stops reverse-i-search from working in shells
+      // running inside aya. Forward the control byte to the PTY ourselves
+      // and preventDefault so Chromium's reload doesn't fire. Limited to
+      // letter keys so we don't intercept Ctrl+[, Ctrl+], Ctrl+0..9 or
+      // other already-bound combinations.
+      if (
+        ev.ctrlKey &&
+        !ev.metaKey &&
+        !ev.shiftKey &&
+        !ev.altKey &&
+        ev.key.length === 1
+      ) {
+        const code = ev.key.toLowerCase().charCodeAt(0);
+        if (code >= 97 && code <= 122) {
+          // a–z → control byte 0x01–0x1A
+          ev.preventDefault();
+          const ctrlByte = String.fromCharCode(code - 96);
+          void window.aya.ptyWrite(terminal.id, ctrlByte);
+          return false;
+        }
+      }
+
       return true;
     });
 
