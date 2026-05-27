@@ -69,6 +69,10 @@ export interface ProjectConfig {
   tabs: WorkingTab[];
 }
 
+export interface RepoProjectConfig {
+  presets: Preset[];
+}
+
 export interface ProjectCollectionState {
   version: 1;
   order: string[];
@@ -164,6 +168,7 @@ export interface AyaApi {
   createProject(name: string, directory: string): Promise<ProjectConfig>;
   updateProject(project: ProjectConfig): Promise<void>;
   deleteProject(slug: string): Promise<void>;
+  readRepoProjectConfig(directory: string): Promise<RepoProjectConfig | null>;
 
   listPresets(): Promise<Preset[]>;
   savePresets(presets: Preset[]): Promise<void>;
@@ -229,6 +234,18 @@ export interface TerminalState {
     text: string;
     updatedAt: number;
   };
+}
+
+export type ProjectEventLevel = "info" | "active" | "waiting" | "done" | "error";
+
+export interface ProjectEvent {
+  id: string;
+  projectSlug: string;
+  terminalId?: string;
+  level: ProjectEventLevel;
+  title: string;
+  detail?: string;
+  createdAt: number;
 }
 
 // Fallback used in the sidebar/pane header when a tab references a preset

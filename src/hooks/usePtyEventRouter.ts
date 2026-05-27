@@ -1,18 +1,21 @@
 import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { detectApproval, looksBusy } from "../bell";
-import type { TerminalState } from "../types";
+import type { PtyEvent, TerminalState } from "../types";
 
 interface Options {
   lastActivityRef: MutableRefObject<Record<string, number>>;
   setTerminals: Dispatch<SetStateAction<Record<string, TerminalState>>>;
+  onPtyEvent?: (event: PtyEvent) => void;
 }
 
 export function usePtyEventRouter({
   lastActivityRef,
   setTerminals,
+  onPtyEvent,
 }: Options): void {
   useEffect(() => {
     return window.aya.onPtyEvent((event) => {
+      onPtyEvent?.(event);
       if (event.type === "spawn-failed") {
         setTerminals((prev) => {
           const t = prev[event.ptyId];
@@ -80,5 +83,5 @@ export function usePtyEventRouter({
         };
       });
     });
-  }, [lastActivityRef, setTerminals]);
+  }, [lastActivityRef, onPtyEvent, setTerminals]);
 }

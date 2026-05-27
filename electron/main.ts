@@ -35,6 +35,7 @@ import { getGitInfo } from "./git";
 import { IS_DEV } from "./paths";
 import { scanHarnesses } from "./harnesses";
 import { listPresets, savePresets } from "./presets";
+import { readRepoProjectConfig } from "./project-local";
 import {
   killAll,
   killPty,
@@ -651,6 +652,9 @@ function registerIpc(win: BrowserWindow): void {
   );
   ipcMain.handle("projects:delete", async (_e, slug: unknown) =>
     deleteProject(requireString(slug, "projects:delete.slug")),
+  );
+  ipcMain.handle("projects:read-repo-config", async (_e, dir: unknown) =>
+    readRepoProjectConfig(requireString(dir, "projects:read-repo-config.dir")),
   );
 
   ipcMain.handle("presets:list", async () => listPresets());

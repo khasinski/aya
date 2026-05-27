@@ -22,6 +22,10 @@ export interface ProjectConfig {
   tabs: WorkingTab[];
 }
 
+export interface RepoProjectConfig {
+  presets: Preset[];
+}
+
 export interface ProjectCollectionState {
   version: 1;
   order: string[];
@@ -120,6 +124,7 @@ export interface AyaApi {
   createProject(name: string, directory: string): Promise<ProjectConfig>;
   updateProject(project: ProjectConfig): Promise<void>;
   deleteProject(slug: string): Promise<void>;
+  readRepoProjectConfig(directory: string): Promise<RepoProjectConfig | null>;
 
   // Presets (terminal launchers)
   listPresets(): Promise<Preset[]>;

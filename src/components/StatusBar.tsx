@@ -9,14 +9,18 @@ interface Props {
   project: ProjectConfig | null;
   git: GitInfo | null;
   terminal: TerminalState | null;
+  attentionCount: number;
   onOpenProjectDirectory: (directory: string) => void;
+  onOpenAttentionCenter: () => void;
 }
 
 export function StatusBar({
   project,
   git,
   terminal,
+  attentionCount,
   onOpenProjectDirectory,
+  onOpenAttentionCenter,
 }: Props) {
   const waiting = terminal?.status === "waiting";
   const externalStatus = terminal?.externalStatus;
@@ -61,6 +65,19 @@ export function StatusBar({
         </span>
       )}
       <div className="aya-statusbar-spacer" />
+      <button
+        className={`aya-statusbar-item aya-statusbar-button ${
+          attentionCount > 0 ? "aya-statusbar-item--warn" : ""
+        }`}
+        type="button"
+        title="Open attention center"
+        onClick={onOpenAttentionCenter}
+      >
+        <span style={{ fontFamily: "Material Symbols Outlined", fontSize: 13 }}>
+          notifications_active
+        </span>
+        {attentionCount > 0 ? `${attentionCount} attention` : "activity"}
+      </button>
       {git?.branch && (
         <span className="aya-statusbar-item">
           <span style={{ fontFamily: "Material Symbols Outlined", fontSize: 13 }}>

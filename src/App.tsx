@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { detectApproval } from "./bell";
+import { AttentionCenter } from "./components/AttentionCenter";
 import { EmptyState } from "./components/EmptyState";
 import { MissingDirModal } from "./components/MissingDirModal";
 import { NewProjectModal } from "./components/NewProjectModal";
+import { ProjectPresetImportModal } from "./components/ProjectPresetImportModal";
 import { SearchModal } from "./components/SearchModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
@@ -19,7 +22,9 @@ import {
 import {
   BUILTIN_SHELL,
   getPreset,
+  type ProjectEvent,
   type Preset,
+  type PtyEvent,
   presetSlug,
   type ProjectCollectionState,
   type ProjectConfig,
@@ -85,6 +90,11 @@ interface MissingDirEntry {
   directory: string;
 }
 
+interface PendingRepoImport {
+  project: ProjectConfig;
+  presets: Preset[];
+}
+
 function uuid(): string {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -114,6 +124,18 @@ function uniqueProjectName(projects: ProjectConfig[], directory: string): string
   return name;
 }
 
+function uniquePresetId(existing: Preset[], project: ProjectConfig, preset: Preset): string {
+  const used = new Set(existing.map((p) => p.id));
+  const root = presetSlug(`${project.slug}-${preset.id || preset.name}`);
+  let candidate = root;
+  let idx = 2;
+  while (used.has(candidate)) {
+    candidate = `${root}-${idx}`;
+    idx += 1;
+  }
+  return candidate;
+}
+
 /** Default display name for a freshly-created tab. Uses the preset's name
  *  so renaming a preset in Settings shows up on the next launch. */
 function defaultTabName(preset: Preset): string {
@@ -135,6 +157,7 @@ export function App() {
   const [activeThemeId, setActiveThemeId] = useState<string>("");
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [terminals, setTerminals] = useState<Record<string, TerminalState>>({});
+  const [projectEvents, setProjectEvents] = useState<ProjectEvent[]>([]);
   const [activeTabByProject, setActiveTabByProject] = useState<
     Record<string, string | null>
   >({});
@@ -150,6 +173,9 @@ export function App() {
   const [homeDir, setHomeDir] = useState<string>("");
   const [showSettings, setShowSettings] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  const [showAttentionCenter, setShowAttentionCenter] = useState(false);
+  const [pendingRepoImport, setPendingRepoImport] =
+    useState<PendingRepoImport | null>(null);
   const [findInPaneFor, setFindInPaneFor] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(240);
   const [isFullScreen, setIsFullScreen] = useState(false);
@@ -261,6 +287,60 @@ export function App() {
   activeProjectIdRef.current = activeProjectId;
   const presetsRef = useRef(presets);
   presetsRef.current = presets;
+
+  const appendProjectEvent = useCallback(
+    (event: Omit<ProjectEvent, "id" | "createdAt"> & { createdAt?: number }) => {
+      setProjectEvents((prev) => [
+        {
+          ...event,
+          id: uuid(),
+          createdAt: event.createdAt ?? Date.now(),
+        },
+        ...prev,
+      ].slice(0, 200));
+    },
+    [],
+  );
+
+  const handlePtyTimelineEvent = useCallback(
+    (event: PtyEvent) => {
+      const terminal = terminalsRef.current[event.ptyId];
+      if (!terminal) return;
+      if (event.type === "spawn-failed") {
+        appendProjectEvent({
+          projectSlug: terminal.projectSlug,
+          terminalId: terminal.id,
+          level: "error",
+          title: `${terminal.name} failed to launch`,
+          detail: event.detail,
+        });
+        return;
+      }
+      if (event.type === "exit") {
+        appendProjectEvent({
+          projectSlug: terminal.projectSlug,
+          terminalId: terminal.id,
+          level: event.exitCode === 0 ? "done" : "error",
+          title:
+            event.exitCode === 0
+              ? `${terminal.name} exited`
+              : `${terminal.name} exited with error`,
+          detail: `exit ${event.exitCode}`,
+        });
+        return;
+      }
+      if (detectApproval(event.chunk)) {
+        appendProjectEvent({
+          projectSlug: terminal.projectSlug,
+          terminalId: terminal.id,
+          level: "waiting",
+          title: `${terminal.name} is waiting`,
+          detail: "Approval or input needed",
+        });
+      }
+    },
+    [appendProjectEvent],
+  );
 
   const { lastActivityRef, recentlyActiveIds } = useRecentTerminalActivity();
   useDockBadge(terminals);
@@ -434,7 +514,11 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  usePtyEventRouter({ lastActivityRef, setTerminals });
+  usePtyEventRouter({
+    lastActivityRef,
+    setTerminals,
+    onPtyEvent: handlePtyTimelineEvent,
+  });
 
   useEffect(() => {
     return window.aya.onControlStatus((update) => {
@@ -471,6 +555,21 @@ export function App() {
               : update.level === "error"
                 ? "error"
                 : "running";
+        appendProjectEvent({
+          projectSlug: terminal.projectSlug,
+          terminalId: terminal.id,
+          level: update.level === "active" ? "active" : update.level,
+          title:
+            update.level === "waiting"
+              ? `${terminal.name} is waiting`
+              : update.level === "done"
+                ? `${terminal.name} finished`
+                : update.level === "error"
+                  ? `${terminal.name} reported an error`
+                  : `${terminal.name} updated status`,
+          detail: text,
+          createdAt: update.updatedAt,
+        });
         return {
           ...prev,
           [id]: {
@@ -486,7 +585,38 @@ export function App() {
         };
       });
     });
-  }, []);
+  }, [appendProjectEvent]);
+
+  useEffect(() => {
+    if (!didBootstrap || !activeProjectId) return;
+    const project = projectsRef.current.find((p) => p.slug === activeProjectId);
+    if (!project) return;
+    const ignoredKey = `aya:repo-config-ignored:${project.directory}`;
+    if (localStorage.getItem(ignoredKey) === "1") return;
+    let cancelled = false;
+    void window.aya.readRepoProjectConfig(project.directory).then((config) => {
+      if (cancelled || !config || config.presets.length === 0) return;
+      const existingCommands = new Set(
+        presetsRef.current.map((preset) => preset.command.trim()),
+      );
+      const existingNames = new Set(
+        presetsRef.current.map((preset) => preset.name.trim().toLowerCase()),
+      );
+      const suggestions = config.presets.filter((preset) => {
+        const command = preset.command.trim();
+        const name = preset.name.trim().toLowerCase();
+        return command && !existingCommands.has(command) && !existingNames.has(name);
+      });
+      if (suggestions.length === 0) {
+        localStorage.setItem(ignoredKey, "1");
+        return;
+      }
+      setPendingRepoImport({ project, presets: suggestions.slice(0, 8) });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectId, didBootstrap]);
 
   // ---------------------------------------------------------------------------
   // Actions
@@ -540,16 +670,29 @@ export function App() {
         return next;
       });
       setActiveTabByProject((prev) => ({ ...prev, [slug]: id }));
+      appendProjectEvent({
+        projectSlug: slug,
+        terminalId: id,
+        level: "active",
+        title: `${term.name} started`,
+        detail: preset.command,
+      });
     },
-    [persistProject, effectiveCwd],
+    [appendProjectEvent, persistProject, effectiveCwd],
   );
 
   const closeTerminal = useCallback(
     (id: string) => {
       const t = terminalsRef.current[id];
       if (!t) return;
-      void window.aya.ptyKill(id);
-      setTerminals((prev) => {
+    void window.aya.ptyKill(id);
+    appendProjectEvent({
+      projectSlug: t.projectSlug,
+      terminalId: t.id,
+      level: "info",
+      title: `${t.name} closed`,
+    });
+    setTerminals((prev) => {
         const next = { ...prev };
         delete next[id];
         persistProject(t.projectSlug, next);
@@ -570,7 +713,7 @@ export function App() {
         return next;
       });
     },
-    [persistProject],
+    [appendProjectEvent, persistProject],
   );
 
   const renameTerminal = useCallback(
@@ -812,6 +955,7 @@ export function App() {
    *  cleanly-exited terminal. Clears the exit state so the PTY event router
    *  can resume updating status when the new PTY emits data. */
   const restartTerminal = useCallback((id: string) => {
+    const terminal = terminalsRef.current[id];
     setTerminals((prev) => {
       const t = prev[id];
       if (!t) return prev;
@@ -829,7 +973,15 @@ export function App() {
     // Also clear the activity timestamp so the dot doesn't claim "recently
     // active" until the new PTY actually writes something.
     delete lastActivityRef.current[id];
-  }, []);
+    if (terminal) {
+      appendProjectEvent({
+        projectSlug: terminal.projectSlug,
+        terminalId: terminal.id,
+        level: "active",
+        title: `${terminal.name} restarted`,
+      });
+    }
+  }, [appendProjectEvent]);
 
   // Per-terminal counter — bumped each time we forcibly restart (right-click
   // → Restart). TerminalView watches the prop and triggers a fresh ptySpawn
@@ -866,8 +1018,14 @@ export function App() {
       };
     });
     delete lastActivityRef.current[id];
+    appendProjectEvent({
+      projectSlug: t.projectSlug,
+      terminalId: t.id,
+      level: "active",
+      title: `${t.name} restarted`,
+    });
     setRestartTriggers((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
-  }, []);
+  }, [appendProjectEvent]);
 
   /** Open a shell terminal in the active project. Used by Cmd/Ctrl+T. Falls
    *  back to BUILTIN_SHELL if the user has deleted their shell preset so the
@@ -1018,6 +1176,26 @@ export function App() {
           : current.level,
     };
   }
+  const attentionCount = Object.values(projectBadges).reduce(
+    (sum, badge) => sum + badge.count,
+    0,
+  );
+
+  const focusTerminal = useCallback((slug: string, terminalId: string) => {
+    setActiveProjectId(slug);
+    setActiveTabByProject((prev) => ({ ...prev, [slug]: terminalId }));
+    setTerminals((prev) => {
+      const terminal = prev[terminalId];
+      if (!terminal || !terminal.bell) return prev;
+      return {
+        ...prev,
+        [terminalId]: {
+          ...terminal,
+          bell: false,
+        },
+      };
+    });
+  }, []);
 
   const currentMissingDir = missingDirQueue[0] ?? null;
   const chromeBlocked = !!currentMissingDir || !!newProjectModal;
@@ -1216,6 +1394,8 @@ export function App() {
         project={activeProject}
         git={activeGit}
         terminal={activeTerminal}
+        attentionCount={attentionCount}
+        onOpenAttentionCenter={() => setShowAttentionCenter(true)}
         onOpenProjectDirectory={(directory) => {
           void window.aya.openPath(directory);
         }}
@@ -1267,6 +1447,55 @@ export function App() {
             if (preset) launchTerminal(preset);
           }}
           onClose={() => setShowSearch(false)}
+        />
+      )}
+      {showAttentionCenter && (
+        <AttentionCenter
+          projects={projects}
+          terminals={terminals}
+          events={projectEvents}
+          onSelectTerminal={focusTerminal}
+          onClose={() => setShowAttentionCenter(false)}
+        />
+      )}
+      {pendingRepoImport && !chromeBlocked && (
+        <ProjectPresetImportModal
+          project={pendingRepoImport.project}
+          presets={pendingRepoImport.presets}
+          onIgnore={() => {
+            localStorage.setItem(
+              `aya:repo-config-ignored:${pendingRepoImport.project.directory}`,
+              "1",
+            );
+            setPendingRepoImport(null);
+          }}
+          onImport={() => {
+            const project = pendingRepoImport.project;
+            const base = [...presetsRef.current];
+            const imported = pendingRepoImport.presets.map((preset) => {
+              const nextPreset = {
+                ...preset,
+                id: uniquePresetId(base, project, preset),
+              };
+              base.push(nextPreset);
+              return nextPreset;
+            });
+            const next = base;
+            void window.aya.savePresets(next).then(() => {
+              setPresets(next);
+              localStorage.setItem(
+                `aya:repo-config-ignored:${project.directory}`,
+                "1",
+              );
+              appendProjectEvent({
+                projectSlug: project.slug,
+                level: "info",
+                title: "Project launchers imported",
+                detail: `${imported.length} launcher${imported.length === 1 ? "" : "s"}`,
+              });
+              setPendingRepoImport(null);
+            });
+          }}
         />
       )}
       {showSettings && (

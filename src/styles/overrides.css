@@ -570,11 +570,200 @@
   padding: 20px;
   font-family: var(--font-sans);
 }
+
+.aya-attention-modal {
+  width: min(820px, calc(100vw - 48px));
+  max-height: min(720px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-card);
+  font-family: var(--font-sans);
+  overflow: hidden;
+}
+.aya-attention-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.aya-attention-eyebrow {
+  margin: 0 0 4px;
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.aya-attention-header h2 {
+  margin: 0;
+  color: var(--fg-primary);
+  font-size: 17px;
+  line-height: 1.2;
+}
+.aya-attention-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1px;
+  min-height: 0;
+  background: var(--border);
+  overflow: auto;
+}
+.aya-attention-section {
+  min-width: 0;
+  padding: 14px;
+  background: var(--bg-secondary);
+}
+.aya-attention-section h3 {
+  margin: 0 0 10px;
+  color: var(--fg-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+.aya-attention-empty {
+  margin: 0;
+  color: var(--fg-tertiary);
+  font-size: 13px;
+}
+.aya-attention-list,
+.aya-timeline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.aya-attention-row,
+.aya-timeline-row {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-secondary);
+  text-align: left;
+}
+.aya-attention-row:hover,
+.aya-timeline-row:not(:disabled):hover {
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+}
+.aya-attention-row:disabled,
+.aya-timeline-row:disabled {
+  cursor: default;
+}
+.aya-attention-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--fg-tertiary);
+}
+.aya-attention-row--waiting .aya-attention-dot { background: #f0ad4e; }
+.aya-attention-row--error .aya-attention-dot { background: #f85149; }
+.aya-attention-row--done .aya-attention-dot { background: var(--status-active); }
+.aya-attention-row-main,
+.aya-timeline-main {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+.aya-attention-row-main strong,
+.aya-timeline-main strong {
+  overflow: hidden;
+  color: var(--fg-primary);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-attention-row-main span,
+.aya-timeline-main span {
+  overflow: hidden;
+  color: var(--fg-tertiary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-attention-row-action,
+.aya-timeline-time {
+  flex-shrink: 0;
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.aya-timeline-row--waiting .aya-timeline-time { color: #f0ad4e; }
+.aya-timeline-row--error .aya-timeline-time { color: #f85149; }
+.aya-timeline-row--done .aya-timeline-time { color: var(--status-active); }
+.aya-timeline-row--active .aya-timeline-time { color: var(--accent); }
+
+@media (max-width: 760px) {
+  .aya-attention-content {
+    grid-template-columns: 1fr;
+  }
+}
 .aya-modal-title {
   font-size: 16px;
   font-weight: 600;
   color: var(--fg-primary);
   margin-bottom: 4px;
+}
+.aya-project-import-modal {
+  width: 520px;
+}
+.aya-project-import-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  margin: 12px 0 16px;
+  overflow: auto;
+}
+.aya-project-import-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+}
+.aya-project-import-icon {
+  width: 18px;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+.aya-project-import-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.aya-project-import-main strong {
+  overflow: hidden;
+  color: var(--fg-primary);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-project-import-main code {
+  overflow: hidden;
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .aya-modal-hint {
   font-size: 13px;

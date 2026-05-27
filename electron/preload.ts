@@ -28,6 +28,8 @@ const api: AyaApi = {
     ipcRenderer.invoke("projects:create", name, directory),
   updateProject: (project) => ipcRenderer.invoke("projects:update", project),
   deleteProject: (slug) => ipcRenderer.invoke("projects:delete", slug),
+  readRepoProjectConfig: (directory) =>
+    ipcRenderer.invoke("projects:read-repo-config", directory),
 
   listPresets: () => ipcRenderer.invoke("presets:list"),
   savePresets: (presets) => ipcRenderer.invoke("presets:save", presets),
