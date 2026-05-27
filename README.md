@@ -29,7 +29,7 @@ That is the whole product idea. The rest is mechanics.
 
 Most coding-agent desktop tools right now solve a different problem: spawn N agents in parallel git worktrees and compare their answers. That is a real workflow and tools like Conductor, Crystal/Nimbalyst, Emdash, and CodeAgentSwarm are built for it.
 
-Aya is for the other workflow:
+Aya is free, open source, and built for the other workflow:
 
 - You work on several real projects across a day or a week, not several variants of the same task in an hour.
 - Each project has one branch you care about, and the agents and shells in that project share it.
@@ -38,7 +38,7 @@ Aya is for the other workflow:
 That shapes the design:
 
 - **Project-first, not session-first.** Top tabs are projects, sidebar is that project's terminals. The unit of organization is "which repo am I in", not "which task am I parallelizing".
-- **No git worktree management.** Aya does not create, switch, or merge worktrees. One project, one checkout, one branch at a time. If you want worktree-per-task isolation, use a tool built for that.
+- **No forced worktree model.** Aya does not create, switch, or merge worktrees for you. Open a normal checkout, or open each worktree as its own project if that is how you work.
 - **PTYs stay alive across project switches.** Inactive terminals are hidden, not killed. A 4-hour Claude session survives switching to another project, hopping to email, and switching back.
 - **Agent-agnostic from day one.** Claude Code, Codex, Aider, Gemini, OpenCode, Amp, Crush, Qwen Code, Kilo Code, and Pi are auto-detected if installed. Any other CLI is one Settings dialog away. Aya treats every harness as a peer.
 - **Search across what is actually on screen.** `⇧⇧` or `⌘K` searches project names, terminal names, recent PTY output across every project, and `Run ...` shortcuts. AND semantics, so `ruby codex` finds the Codex terminal in your Ruby project.
@@ -50,6 +50,7 @@ Day to day:
 
 - Type `aya` in any shell to open or switch to a project.
 - Open a `claude` tab in one project, a `codex` tab in another, leave both running.
+- Split a project into panes when you want Claude Code, Codex, and a shell visible at the same time.
 - Press `⇧⇧` to jump to either by typing a few characters of the project name or what is on screen.
 - See a red dot on the sidebar tab and a macOS dock badge count when an agent is waiting on you. Get an OS notification if the window is not focused.
 - See the active project's branch and dirty-file count in the status bar.
@@ -194,7 +195,7 @@ aya status error "Tests failed"
 aya status clear
 ```
 
-Terminals launched by Aya receive `AYA_SOCKET`, `AYA_TERMINAL_ID`, `AYA_PROJECT_SLUG`, `AYA_PROJECT_DIR`, and `AYA_PRESET_ID` so these status commands attach to the right pane. The companion skill lives in `skills/aya-control/SKILL.md`.
+Terminals launched by Aya receive `AYA_SOCKET`, `AYA_TERMINAL_ID`, `AYA_PROJECT_SLUG`, `AYA_PROJECT_DIR`, and `AYA_PRESET_ID` so these status commands attach to the right pane. The companion skill lives in `skills/aya-control/SKILL.md` and only uses this public CLI side channel; Claude Code, Codex, and other harnesses still run as normal interactive TUIs.
 
 On macOS the helper expects Aya at `/Applications/Aya.app`. On Linux it expects an `aya-app` command on PATH; the DEB installs the binary at `/opt/Aya/aya`, so add an alias if you want the helper workflow:
 
