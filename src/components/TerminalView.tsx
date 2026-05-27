@@ -188,6 +188,12 @@ export function TerminalView({
       cursorBlink: true,
       allowProposedApi: true,
       scrollback: 10000,
+      // Animate between row positions on wheel scroll instead of snapping
+      // one row at a time per tick. Terminal grids are inherently row-
+      // quantized, but the snap is what reads as "choppy" when you flick
+      // the trackpad. 125ms is about 8 frames at 60Hz: noticeable easing
+      // without feeling sluggish.
+      smoothScrollDuration: 125,
       // Option-as-Meta so Option+B / Option+F / Option+Backspace send the
       // ESC-prefixed sequences readline (zsh, bash, claude, codex) expects
       // for backward-word / forward-word / delete-word. Without this, macOS
