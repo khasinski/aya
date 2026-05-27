@@ -7,6 +7,7 @@ import {
   requireString,
   requireStringArray,
   validatePresetArray,
+  validateProjectCollectionState,
   validateProjectConfig,
   validateSpawnRequest,
   validateThemesFile,
@@ -17,6 +18,8 @@ test("validateSpawnRequest accepts the pty spawn shape", () => {
   assert.deepEqual(
     validateSpawnRequest({
       ptyId: "abc",
+      projectSlug: "aya",
+      presetId: "codex",
       command: "claude",
       cwd: "/tmp",
       cols: 80,
@@ -24,6 +27,8 @@ test("validateSpawnRequest accepts the pty spawn shape", () => {
     }),
     {
       ptyId: "abc",
+      projectSlug: "aya",
+      presetId: "codex",
       command: "claude",
       cwd: "/tmp",
       cols: 80,
@@ -65,6 +70,33 @@ test("validateProjectConfig accepts project tabs and rejects bad tab shapes", ()
         tabs: [{ id: "t1", presetId: "shell" }],
       }),
     /tabs\[0\]\.name/,
+  );
+});
+
+test("validateProjectCollectionState accepts order/open/recent arrays", () => {
+  assert.deepEqual(
+    validateProjectCollectionState({
+      version: 1,
+      order: ["a", "b"],
+      open: ["a"],
+      recent: ["b", "a"],
+    }),
+    {
+      version: 1,
+      order: ["a", "b"],
+      open: ["a"],
+      recent: ["b", "a"],
+    },
+  );
+  assert.throws(
+    () =>
+      validateProjectCollectionState({
+        version: 1,
+        order: ["a"],
+        open: [42],
+        recent: [],
+      }),
+    /projects:save-state\.open/,
   );
 });
 

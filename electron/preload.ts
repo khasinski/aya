@@ -2,7 +2,7 @@
 // contextBridge. The renderer has no direct Node access.
 
 import { contextBridge, ipcRenderer } from "electron";
-import type { AyaApi, PtyEvent } from "./types";
+import type { AyaApi, ControlStatusUpdate, PtyEvent } from "./types";
 
 const isDev = process.env.AYA_DEV === "1";
 
@@ -21,12 +21,13 @@ const api: AyaApi = {
   },
 
   listProjects: () => ipcRenderer.invoke("projects:list"),
+  listProjectState: () => ipcRenderer.invoke("projects:state"),
+  saveProjectState: (state) =>
+    ipcRenderer.invoke("projects:save-state", state),
   createProject: (name, directory) =>
     ipcRenderer.invoke("projects:create", name, directory),
   updateProject: (project) => ipcRenderer.invoke("projects:update", project),
   deleteProject: (slug) => ipcRenderer.invoke("projects:delete", slug),
-  saveProjectOrder: (slugs) =>
-    ipcRenderer.invoke("projects:save-order", slugs),
 
   listPresets: () => ipcRenderer.invoke("presets:list"),
   savePresets: (presets) => ipcRenderer.invoke("presets:save", presets),
@@ -44,12 +45,18 @@ const api: AyaApi = {
   pickDirectory: () => ipcRenderer.invoke("env:pick-dir"),
   dirExists: (p) => ipcRenderer.invoke("env:dir-exists", p),
   createDir: (p) => ipcRenderer.invoke("env:create-dir", p),
+  openPath: (p) => ipcRenderer.invoke("env:open-path", p),
+  openUrl: (url) => ipcRenderer.invoke("env:open-url", url),
 
   isFullScreen: () => ipcRenderer.invoke("app:is-fullscreen"),
   setDockBadge: (text) => ipcRenderer.invoke("app:set-dock-badge", text),
   focusWindow: () => ipcRenderer.invoke("app:focus-window"),
   showWaitingNotification: (req) =>
     ipcRenderer.invoke("app:notify-waiting", req),
+  cliStatus: () => ipcRenderer.invoke("app:cli-status"),
+  installCli: () => ipcRenderer.invoke("app:install-cli"),
+  openNotificationSettings: () =>
+    ipcRenderer.invoke("app:open-notification-settings"),
   onTerminalNotificationSelect: (handler) => {
     const listener = (
       _e: unknown,
@@ -58,6 +65,12 @@ const api: AyaApi = {
     ipcRenderer.on("notification:select-terminal", listener);
     return () =>
       ipcRenderer.removeListener("notification:select-terminal", listener);
+  },
+  onControlStatus: (handler) => {
+    const listener = (_e: unknown, update: ControlStatusUpdate) =>
+      handler(update);
+    ipcRenderer.on("control:status", listener);
+    return () => ipcRenderer.removeListener("control:status", listener);
   },
   onFullScreenChange: (handler) => {
     const listener = (_e: unknown, isFullScreen: boolean) =>

@@ -1,59 +1,197 @@
 #!/bin/sh
-# aya — open a directory as a project in the running Aya.app
-#
-# Usage:
-#   aya              # opens the current directory
-#   aya path/to/dir  # opens that directory
-#
-# Behaviour:
-#   • If Aya is already running and the directory matches an existing
-#     project, the window comes to the front and switches to it.
-#   • If the directory isn't a known project, Aya silently creates one
-#     using the directory's basename as the name.
-#   • If we're already on that project, the window just gets focused.
-#
-# Installation:
-#   ln -s "$PWD/bin/aya" /usr/local/bin/aya
-# (or copy this file somewhere in your $PATH)
+# aya — open projects and control the running Aya.app
 
 set -e
 
-# Resolve the target directory to an absolute path so it survives whatever
-# cwd `open` runs the app in.
-target="${1:-.}"
-if [ -d "$target" ]; then
-  abs=$(cd "$target" && pwd -P)
-else
-  printf "aya: '%s' is not a directory\n" "$target" >&2
-  exit 1
-fi
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  aya [path]                         Open a project directory
+  aya open [path]                    Open a project directory
+  aya focus                          Focus the Aya window
+  aya notify [--title title] body    Show an Aya notification
+  aya status set text                Show agent status for this terminal
+  aya status waiting text            Mark this terminal as waiting
+  aya status done text               Mark this terminal as done
+  aya status error text              Mark this terminal as errored
+  aya status clear                   Clear agent status
+EOF
+}
 
-case "$(uname -s)" in
-  Darwin)
-    # `open -n -a "Aya" --args <path>` forces a fresh process so that argv
-    # is actually delivered. Without -n, macOS just activates the running
-    # app via Apple Events and silently DROPS --args — which is why
-    # `aya .` appeared to do nothing once Aya was already open. The fresh
-    # process immediately exits via Electron's single-instance-lock after
-    # handing its argv to the primary instance through `second-instance`.
-    if [ -d "/Applications/Aya.app" ]; then
-      open -n -a "Aya" --args "$abs"
-    else
-      printf "aya: /Applications/Aya.app not found — run 'npm run package' and install the DMG\n" >&2
+socket_path() {
+  if [ -n "${AYA_SOCKET:-}" ]; then
+    printf '%s\n' "$AYA_SOCKET"
+  elif [ -n "${AYA_HOME:-}" ]; then
+    printf '%s\n' "$AYA_HOME/aya.sock"
+  else
+    printf '%s\n' "$HOME/.aya/aya.sock"
+  fi
+}
+
+send_control() {
+  socket=$(socket_path)
+  if [ ! -S "$socket" ]; then
+    printf "aya: control socket not found at %s\n" "$socket" >&2
+    printf "aya: start Aya first, or use 'aya open <path>' to launch it.\n" >&2
+    exit 1
+  fi
+
+  node - "$socket" "$@" <<'NODE'
+const net = require("node:net");
+const socketPath = process.argv[2];
+const kind = process.argv[3];
+
+function optionalEnv(name) {
+  const value = process.env[name];
+  return value && value.trim() ? value : undefined;
+}
+
+function requestFromArgs() {
+  if (kind === "focus") return { type: "focus" };
+  if (kind === "open") return { type: "open", path: process.argv[4] };
+  if (kind === "notify") {
+    return {
+      type: "notify",
+      title: process.argv[4] || undefined,
+      body: process.argv[5],
+      terminalId: optionalEnv("AYA_TERMINAL_ID"),
+      projectSlug: optionalEnv("AYA_PROJECT_SLUG"),
+    };
+  }
+  if (kind === "status") {
+    return {
+      type: "status",
+      level: process.argv[4],
+      text: process.argv[5] || undefined,
+      terminalId: optionalEnv("AYA_TERMINAL_ID"),
+      projectSlug: optionalEnv("AYA_PROJECT_SLUG"),
+      cwd: optionalEnv("AYA_PROJECT_DIR") || process.cwd(),
+    };
+  }
+  throw new Error(`unknown command: ${kind}`);
+}
+
+const request = requestFromArgs();
+const client = net.createConnection(socketPath);
+let response = "";
+
+client.setEncoding("utf8");
+client.on("connect", () => {
+  client.write(`${JSON.stringify(request)}\n`);
+});
+client.on("data", (chunk) => {
+  response += chunk;
+});
+client.on("error", (err) => {
+  console.error(`aya: ${err.message}`);
+  process.exitCode = 1;
+});
+client.on("end", () => {
+  if (!response.trim()) return;
+  const parsed = JSON.parse(response);
+  if (!parsed.ok) {
+    console.error(`aya: ${parsed.error || "command failed"}`);
+    process.exitCode = 1;
+  }
+});
+NODE
+}
+
+open_project() {
+  target="${1:-.}"
+  if [ -d "$target" ]; then
+    abs=$(cd "$target" && pwd -P)
+  else
+    printf "aya: '%s' is not a directory\n" "$target" >&2
+    exit 1
+  fi
+
+  socket=$(socket_path)
+  if [ -S "$socket" ]; then
+    send_control open "$abs"
+    return
+  fi
+
+  case "$(uname -s)" in
+    Darwin)
+      if [ -d "/Applications/Aya.app" ]; then
+        open -n -a "Aya" --args "$abs"
+      else
+        printf "aya: /Applications/Aya.app not found — run 'npm run package' and install the DMG\n" >&2
+        exit 1
+      fi
+      ;;
+    Linux)
+      if command -v aya-app >/dev/null 2>&1; then
+        aya-app "$abs" >/dev/null 2>&1 &
+      else
+        printf "aya: install the Aya AppImage / linux binary as 'aya-app' on PATH\n" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      printf "aya: unsupported platform '%s'\n" "$(uname -s)" >&2
       exit 1
-    fi
+      ;;
+  esac
+}
+
+command="${1:-open}"
+case "$command" in
+  -h|--help|help)
+    usage
     ;;
-  Linux)
-    # Find the aya binary on PATH or in a likely install dir.
-    if command -v aya-app >/dev/null 2>&1; then
-      aya-app "$abs" >/dev/null 2>&1 &
-    else
-      printf "aya: install the Aya AppImage / linux binary as 'aya-app' on PATH\n" >&2
+  open)
+    shift || true
+    open_project "${1:-.}"
+    ;;
+  project)
+    shift || true
+    if [ "${1:-}" != "open" ]; then
+      usage
       exit 1
     fi
+    shift || true
+    open_project "${1:-.}"
+    ;;
+  focus)
+    send_control focus
+    ;;
+  notify)
+    shift || true
+    title=""
+    if [ "${1:-}" = "--title" ]; then
+      shift || true
+      title="${1:-}"
+      shift || true
+    fi
+    body="$*"
+    if [ -z "$body" ]; then
+      usage
+      exit 1
+    fi
+    send_control notify "$title" "$body"
+    ;;
+  status)
+    shift || true
+    level="${1:-}"
+    shift || true
+    case "$level" in
+      set|active) level="active" ;;
+      waiting|done|error|clear) ;;
+      *)
+        usage
+        exit 1
+        ;;
+    esac
+    text="$*"
+    if [ "$level" != "clear" ] && [ -z "$text" ]; then
+      usage
+      exit 1
+    fi
+    send_control status "$level" "$text"
     ;;
   *)
-    printf "aya: unsupported platform '%s'\n" "$(uname -s)" >&2
-    exit 1
+    open_project "$command"
     ;;
 esac

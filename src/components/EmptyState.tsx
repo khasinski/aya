@@ -1,9 +1,16 @@
 interface Props {
+  showNoHarnessHint: boolean;
   onOpenProject: () => void;
   onOpenSettings: () => void;
+  onDismissNoHarnessHint: () => void;
 }
 
-export function EmptyState({ onOpenProject, onOpenSettings }: Props) {
+export function EmptyState({
+  showNoHarnessHint,
+  onOpenProject,
+  onOpenSettings,
+  onDismissNoHarnessHint,
+}: Props) {
   return (
     <main className="aya-empty">
       <div className="aya-empty-mark" aria-hidden="true">
@@ -25,6 +32,17 @@ export function EmptyState({ onOpenProject, onOpenSettings }: Props) {
           Settings
         </button>
       </div>
+      {showNoHarnessHint && (
+        <div className="aya-empty-hint">
+          <div>
+            <strong>No agent CLI found yet.</strong>
+            <span>Aya can still open shells. Add Claude, Codex, or another CLI later from Settings.</span>
+          </div>
+          <button className="aya-empty-hint-dismiss" onClick={onDismissNoHarnessHint}>
+            Dismiss
+          </button>
+        </div>
+      )}
     </main>
   );
 }

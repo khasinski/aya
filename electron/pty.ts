@@ -10,9 +10,11 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { execFile } from "node:child_process";
 import type * as PtyModule from "node-pty";
 import type { WebContents } from "electron";
-import type { SpawnRequest } from "./types";
+import type { SpawnFailureReason, SpawnRequest } from "./types";
+import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 
 let nodePty: typeof PtyModule | null = null;
 
@@ -191,15 +193,41 @@ export const bashArgv = shellArgv;
 function reportSpawnFailure(
   wc: WebContents,
   ptyId: string,
+  reason: SpawnFailureReason,
   message: string,
 ): void {
   if (wc.isDestroyed()) return;
   const banner = `\r\n\x1b[1;31maya: \x1b[0m\x1b[31m${message}\x1b[0m\r\n\r\n`;
+  wc.send("pty:event", { type: "spawn-failed", ptyId, reason, detail: message });
   wc.send("pty:event", { type: "data", ptyId, chunk: banner });
   wc.send("pty:event", { type: "exit", ptyId, exitCode: 127 });
 }
 
-function safeEnv(): { [key: string]: string } {
+function preflightBinary(command: string): string | null {
+  const trimmed = command.trim();
+  if (!trimmed) return null;
+  if (
+    /(^|\s)[A-Za-z_][A-Za-z0-9_]*=/.test(trimmed) ||
+    /[|&;<>(){}[\]*?~$`"'\\]/.test(trimmed)
+  ) {
+    return null;
+  }
+  const [binary] = trimmed.split(/\s+/);
+  return /^[a-zA-Z0-9_.-]+$/.test(binary) ? binary : null;
+}
+
+function commandExists(binary: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile(
+      userShell(),
+      ["-l", "-c", `command -v -- ${binary} >/dev/null 2>&1`],
+      { timeout: 2500, windowsHide: true },
+      (err) => resolve(err === null),
+    );
+  });
+}
+
+function safeEnv(req: SpawnRequest, cwd: string): { [key: string]: string } {
   const out: { [key: string]: string } = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (typeof v === "string") out[k] = v;
@@ -208,10 +236,16 @@ function safeEnv(): { [key: string]: string } {
   out.COLORTERM = "truecolor";
   if (!out.LANG) out.LANG = "en_US.UTF-8";
   if (!out.LC_ALL) out.LC_ALL = out.LANG;
+  out.AYA_HOME = AYA_HOME;
+  out.AYA_SOCKET = CONTROL_SOCKET_PATH;
+  out.AYA_TERMINAL_ID = req.ptyId;
+  out.AYA_PROJECT_DIR = cwd;
+  if (req.projectSlug) out.AYA_PROJECT_SLUG = req.projectSlug;
+  if (req.presetId) out.AYA_PRESET_ID = req.presetId;
   return out;
 }
 
-export function spawnPty(req: SpawnRequest, wc: WebContents): void {
+export async function spawnPty(req: SpawnRequest, wc: WebContents): Promise<void> {
   if (pendingKills.has(req.ptyId)) {
     // killPty arrived before this spawn (the renderer closed the tab between
     // mounting and the IPC round-trip). Drop the spawn so we don't orphan a
@@ -242,6 +276,7 @@ export function spawnPty(req: SpawnRequest, wc: WebContents): void {
       reportSpawnFailure(
         wc,
         req.ptyId,
+        "cwd-not-directory",
         `not a directory: ${cwd}\nEdit the project to fix this, or close it.`,
       );
       return;
@@ -252,11 +287,17 @@ export function spawnPty(req: SpawnRequest, wc: WebContents): void {
       reportSpawnFailure(
         wc,
         req.ptyId,
+        "cwd-missing",
         `directory does not exist: ${cwd}\nClose the project (top-bar ✕) to clean up.`,
       );
       return;
     }
-    reportSpawnFailure(wc, req.ptyId, `cannot read ${cwd}: ${String(err)}`);
+    reportSpawnFailure(
+      wc,
+      req.ptyId,
+      "cwd-unreadable",
+      `cannot read ${cwd}: ${String(err)}`,
+    );
     return;
   }
 
@@ -264,7 +305,19 @@ export function spawnPty(req: SpawnRequest, wc: WebContents): void {
     reportSpawnFailure(
       wc,
       req.ptyId,
+      "preset-empty-command",
       `preset has no command — edit it in Settings.`,
+    );
+    return;
+  }
+
+  const binary = preflightBinary(req.command);
+  if (binary && !(await commandExists(binary))) {
+    reportSpawnFailure(
+      wc,
+      req.ptyId,
+      "command-not-found",
+      `command not found: ${binary}\nEdit the preset, install the CLI, or re-scan installed CLIs.`,
     );
     return;
   }
@@ -280,12 +333,13 @@ export function spawnPty(req: SpawnRequest, wc: WebContents): void {
       cols: Math.max(req.cols, 4),
       rows: Math.max(req.rows, 2),
       cwd,
-      env: safeEnv(),
+      env: safeEnv(req, cwd),
     });
   } catch (err) {
     reportSpawnFailure(
       wc,
       req.ptyId,
+      "node-pty-spawn-error",
       `failed to spawn: ${err instanceof Error ? err.message : String(err)}`,
     );
     return;

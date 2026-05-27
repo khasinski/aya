@@ -1,7 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { Terminal as XTerm, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { Preset, TerminalState, ThemeColors } from "../types";
 
@@ -11,12 +18,15 @@ interface Props {
   command: string;
   isVisible: boolean;
   cwd: string;
+  lastActivity?: number;
   fontSize: number;
   themeColors: ThemeColors;
   /** When true, render the in-pane search bar (Cmd+F target). */
   findOpen: boolean;
   /** Called when the user closes the search bar (Esc / ✕). */
   onCloseFind: () => void;
+  onOpenSettings: () => void;
+  onCloseProject: (slug: string) => void;
   onPtyData?: (chunk: string) => void;
   /** Called when the user requests a restart of an exited PTY via the
    *  Shift+Enter hint. The host resets the terminal's exitCode/status so the
@@ -33,27 +43,74 @@ function toXtermTheme(c: ThemeColors): ITheme {
   return c;
 }
 
+function formatLastActivity(timestamp: number): string | null {
+  const elapsedMs = Math.max(0, Date.now() - timestamp);
+  const minuteMs = 60 * 1000;
+  const hourMs = 60 * minuteMs;
+  const dayMs = 24 * hourMs;
+  const monthMs = 30 * dayMs;
+
+  if (elapsedMs < minuteMs) return null;
+  if (elapsedMs < hourMs) {
+    const minutes = Math.floor(elapsedMs / minuteMs);
+    return `${minutes} min ago`;
+  }
+  if (elapsedMs < dayMs) {
+    const hours = Math.floor(elapsedMs / hourMs);
+    return `${hours} ${hours === 1 ? "hour" : "hours"} ago`;
+  }
+  if (elapsedMs < monthMs) {
+    const days = Math.floor(elapsedMs / dayMs);
+    return `${days} ${days === 1 ? "day" : "days"} ago`;
+  }
+  const months = Math.floor(elapsedMs / monthMs);
+  return `${months} ${months === 1 ? "month" : "months"} ago`;
+}
+
+function recoveryTitle(
+  reason: NonNullable<TerminalState["spawnFailure"]>["reason"],
+): string {
+  if (reason === "command-not-found") return "Command not found";
+  if (reason === "preset-empty-command") return "Preset command is empty";
+  if (reason === "cwd-missing") return "Project folder is missing";
+  if (reason === "cwd-not-directory") return "Project path is not a folder";
+  if (reason === "cwd-unreadable") return "Project folder is not readable";
+  return "Terminal failed to start";
+}
+
 export function TerminalView({
   terminal,
   preset,
   command,
   isVisible,
   cwd,
+  lastActivity,
   fontSize,
   themeColors,
   findOpen,
   onCloseFind,
+  onOpenSettings,
+  onCloseProject,
   onPtyData,
   onRequestRestart,
   restartTrigger,
 }: Props) {
+  const lastActivityLabel = lastActivity ? formatLastActivity(lastActivity) : null;
+  const headerStatusText = terminal.externalStatus?.text ?? lastActivityLabel;
+  const headerStatusTitle = terminal.externalStatus
+    ? new Date(terminal.externalStatus.updatedAt).toLocaleString()
+    : lastActivity
+      ? new Date(lastActivity).toLocaleString()
+      : undefined;
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
+  const webglRef = useRef<WebglAddon | null>(null);
   const spawnedRef = useRef(false);
   const fitFrameRef = useRef<number | null>(null);
   const [findQuery, setFindQuery] = useState("");
+  const [isScrollbarHidden, setIsScrollbarHidden] = useState(false);
   // Current foreground-process title, fed by OSC 0/2 from the inner shell.
   // macOS zsh's default config emits this in preexec/precmd, so we get the
   // running command for free in shell tabs. Claude/Codex don't emit titles,
@@ -91,6 +148,29 @@ export function TerminalView({
     });
   }, []);
 
+  const repairTerminalRender = useCallback(
+    (shouldFocus = false) => {
+      const refresh = () => {
+        const term = xtermRef.current;
+        if (!term) return;
+        try {
+          webglRef.current?.clearTextureAtlas();
+          term.refresh(0, Math.max(term.rows - 1, 0));
+        } catch {
+          /* ignore — renderer may be recreating after sleep/wake */
+        }
+      };
+      refresh();
+      fitTerminal(shouldFocus);
+      requestAnimationFrame(refresh);
+      window.setTimeout(() => {
+        refresh();
+        fitTerminal(shouldFocus);
+      }, 80);
+    },
+    [fitTerminal],
+  );
+
   // Create the xterm instance + spawn the PTY once.
   useEffect(() => {
     if (!containerRef.current || xtermRef.current) return;
@@ -111,8 +191,12 @@ export function TerminalView({
     });
     const fit = new FitAddon();
     const search = new SearchAddon();
+    const webLinks = new WebLinksAddon((_e, uri) => {
+      void window.aya.openUrl(uri);
+    });
     term.loadAddon(fit);
     term.loadAddon(search);
+    term.loadAddon(webLinks);
     term.open(containerRef.current);
 
     // GPU-accelerated renderer — eliminates the column-drift you get with
@@ -137,8 +221,10 @@ export function TerminalView({
         } catch {
           /* ignore */
         }
+        if (webglRef.current === webgl) webglRef.current = null;
       });
       term.loadAddon(webgl);
+      webglRef.current = webgl;
     } catch {
       // WebGL unavailable; DOM renderer is fine, just drifty.
     }
@@ -184,9 +270,11 @@ export function TerminalView({
         t.writeln("\x1b[2m[restarting...]\x1b[0m");
         onRequestRestart?.();
         void window.aya.ptySpawn({
-          ptyId: terminal.id,
-          command: commandRef.current,
-          cwd: cwdRef.current,
+        ptyId: terminal.id,
+        projectSlug: terminal.projectSlug,
+        presetId: terminal.presetId,
+        command: commandRef.current,
+        cwd: cwdRef.current,
           cols: Math.max(t.cols, 80),
           rows: Math.max(t.rows, 24),
         });
@@ -251,6 +339,7 @@ export function TerminalView({
     });
 
     const onDataDisposable = term.onData((data) => {
+      if (data.length > 0) setIsScrollbarHidden(true);
       void window.aya.ptyWrite(terminal.id, data);
     });
 
@@ -270,6 +359,8 @@ export function TerminalView({
       const { cols, rows } = term;
       void window.aya.ptySpawn({
         ptyId: terminal.id,
+        projectSlug: terminal.projectSlug,
+        presetId: terminal.presetId,
         command,
         cwd,
         cols: Math.max(cols, 80),
@@ -290,6 +381,7 @@ export function TerminalView({
       xtermRef.current = null;
       fitRef.current = null;
       searchRef.current = null;
+      webglRef.current = null;
       if (fitFrameRef.current !== null) {
         cancelAnimationFrame(fitFrameRef.current);
         fitFrameRef.current = null;
@@ -300,14 +392,30 @@ export function TerminalView({
 
   useEffect(() => {
     if (!isVisible) return;
-    fitTerminal(true);
-    const frame = requestAnimationFrame(() => fitTerminal(true));
-    const timer = setTimeout(() => fitTerminal(true), 80);
+    repairTerminalRender(true);
+    const frame = requestAnimationFrame(() => repairTerminalRender(true));
+    const timer = setTimeout(() => repairTerminalRender(true), 80);
     return () => {
       cancelAnimationFrame(frame);
       clearTimeout(timer);
     };
-  }, [fitTerminal, isVisible]);
+  }, [isVisible, repairTerminalRender]);
+
+  useEffect(() => {
+    if (!isVisible) return;
+    const onResumeRender = () => repairTerminalRender(false);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") onResumeRender();
+    };
+    window.addEventListener("focus", onResumeRender);
+    window.addEventListener("pageshow", onResumeRender);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", onResumeRender);
+      window.removeEventListener("pageshow", onResumeRender);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [isVisible, repairTerminalRender]);
 
   useEffect(() => {
     const onResize = () => fitTerminal();
@@ -355,6 +463,8 @@ export function TerminalView({
     term.writeln("\x1b[2m[restarting…]\x1b[0m");
     void window.aya.ptySpawn({
       ptyId: terminal.id,
+      projectSlug: terminal.projectSlug,
+      presetId: terminal.presetId,
       command: commandRef.current,
       cwd: cwdRef.current,
       cols: Math.max(term.cols, 80),
@@ -379,7 +489,9 @@ export function TerminalView({
 
   return (
     <div
-      className="aya-pane"
+      className={
+        isScrollbarHidden ? "aya-pane aya-pane--scrollbar-hidden" : "aya-pane"
+      }
       style={{ display: isVisible ? "flex" : "none" }}
     >
       <div className="aya-pane-active" />
@@ -399,11 +511,62 @@ export function TerminalView({
             </span>
           </>
         )}
-        <div className="aya-pane-header-meta">
-          <span className="dim">{cwd}</span>
-        </div>
+        {headerStatusText && (
+          <div className="aya-pane-header-meta">
+            <span
+              className={`aya-pane-header-activity ${
+                terminal.externalStatus
+                  ? `aya-pane-header-activity--${terminal.externalStatus.level}`
+                  : ""
+              }`}
+              title={headerStatusTitle}
+            >
+              {headerStatusText}
+            </span>
+          </div>
+        )}
       </div>
-      <div className="aya-xterm-host" ref={containerRef} />
+      {terminal.spawnFailure && (
+        <div className="aya-pane-recovery">
+          <div className="aya-pane-recovery-text">
+            <strong>{recoveryTitle(terminal.spawnFailure.reason)}</strong>
+            <span>{terminal.spawnFailure.detail.split("\n")[0]}</span>
+          </div>
+          <div className="aya-pane-recovery-actions">
+            {terminal.spawnFailure.reason.startsWith("cwd-") && (
+              <button
+                className="aya-pane-recovery-btn"
+                onClick={() => onCloseProject(terminal.projectSlug)}
+              >
+                Close project
+              </button>
+            )}
+            <button className="aya-pane-recovery-btn" onClick={onOpenSettings}>
+              Open Settings
+            </button>
+            <button
+              className="aya-pane-recovery-btn aya-pane-recovery-btn--primary"
+              onClick={onRequestRestart}
+            >
+              Restart
+            </button>
+          </div>
+        </div>
+      )}
+      <div
+        className="aya-xterm-host"
+        // CSS variable consumed by overrides.css so the padding strip around
+        // the xterm canvas (the "frame" around the terminal) tracks the
+        // active theme's background instead of staying GitHub-dark.
+        style={
+          themeColors.background
+            ? ({ "--aya-term-bg": themeColors.background } as CSSProperties)
+            : undefined
+        }
+        onWheelCapture={() => setIsScrollbarHidden(false)}
+      >
+        <div className="aya-xterm-frame" ref={containerRef} />
+      </div>
       {findOpen && (
         <FindBar
           value={findQuery}

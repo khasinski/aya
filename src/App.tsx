@@ -21,6 +21,7 @@ import {
   getPreset,
   type Preset,
   presetSlug,
+  type ProjectCollectionState,
   type ProjectConfig,
   type TerminalState,
   type Theme,
@@ -54,13 +55,24 @@ const FALLBACK_THEME_COLORS: ThemeColors = {
   brightWhite: "#f0f6fc",
 };
 
+function dedupeSlugs(slugs: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const slug of slugs) {
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    out.push(slug);
+  }
+  return out;
+}
+
 interface GitInfo {
   branch: string | null;
   dirty: number;
 }
 
 interface NewProjectModalState {
-  defaults?: { name?: string; directory?: string };
+  defaults?: { directory?: string };
   lockDirectory?: boolean;
   title?: string;
   hint?: string;
@@ -109,7 +121,14 @@ function defaultTabName(preset: Preset): string {
 }
 
 export function App() {
+  const [allProjects, setAllProjects] = useState<ProjectConfig[]>([]);
   const [projects, setProjects] = useState<ProjectConfig[]>([]);
+  const [projectState, setProjectState] = useState<ProjectCollectionState>({
+    version: 1,
+    order: [],
+    open: [],
+    recent: [],
+  });
   const [presets, setPresets] = useState<Preset[]>([]);
   const [defaultPresets, setDefaultPresets] = useState<Preset[]>([]);
   const [themes, setThemes] = useState<Theme[]>([]);
@@ -135,6 +154,11 @@ export function App() {
   const [sidebarWidth, setSidebarWidth] = useState(240);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [didBootstrap, setDidBootstrap] = useState(false);
+  const [harnessScanDone, setHarnessScanDone] = useState(false);
+  const [foundHarnessCount, setFoundHarnessCount] = useState(0);
+  const [hideNoHarnessHint, setHideNoHarnessHint] = useState(
+    () => localStorage.getItem("aya:no-harness-hint-dismissed") === "1",
+  );
   const fontSize = 13;
 
   // Status-bar branch / dirty count goes stale once you `git checkout` in a
@@ -184,6 +208,18 @@ export function App() {
     });
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void window.aya.scanHarnesses().then((found) => {
+      if (cancelled) return;
+      setFoundHarnessCount(found.length);
+      setHarnessScanDone(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Drain the open-project queue once bootstrap commits. Running this in a
   // useEffect (not inline after setDidBootstrap) guarantees React has flushed
   // setProjects → projectsRef.current before the handler tries to match by
@@ -215,8 +251,12 @@ export function App() {
 
   const terminalsRef = useRef(terminals);
   terminalsRef.current = terminals;
+  const allProjectsRef = useRef(allProjects);
+  allProjectsRef.current = allProjects;
   const projectsRef = useRef(projects);
   projectsRef.current = projects;
+  const projectStateRef = useRef(projectState);
+  projectStateRef.current = projectState;
   const activeProjectIdRef = useRef(activeProjectId);
   activeProjectIdRef.current = activeProjectId;
   const presetsRef = useRef(presets);
@@ -230,6 +270,20 @@ export function App() {
     setActiveProjectId,
     setActiveTabByProject,
   });
+
+  const saveProjectCollectionState = useCallback(
+    (next: ProjectCollectionState) => {
+      const normalized: ProjectCollectionState = {
+        version: 1,
+        order: dedupeSlugs(next.order),
+        open: dedupeSlugs(next.open),
+        recent: dedupeSlugs(next.recent),
+      };
+      setProjectState(normalized);
+      void window.aya.saveProjectState(normalized);
+    },
+    [],
+  );
 
   // ---------------------------------------------------------------------------
   // Hydration helper — instantiates TerminalStates for a project's saved tabs.
@@ -267,10 +321,18 @@ export function App() {
   // ---------------------------------------------------------------------------
   useEffect(() => {
     (async () => {
-      const [cwd, loadedProjects, loadedPresets, home, loadedThemes] =
+      const [
+        cwd,
+        loadedProjects,
+        loadedProjectState,
+        loadedPresets,
+        home,
+        loadedThemes,
+      ] =
         await Promise.all([
           window.aya.getCwd(),
           window.aya.listProjects(),
+          window.aya.listProjectState(),
           window.aya.listPresets(),
           window.aya.getHomeDir(),
           window.aya.listThemes(),
@@ -299,15 +361,37 @@ export function App() {
           seededProjects.push(project);
         }
       }
-      setProjects(seededProjects);
+      setAllProjects(seededProjects);
+      const seededSlugs = new Set(seededProjects.map((p) => p.slug));
+      const order =
+        loadedProjectState.order.length > 0
+          ? loadedProjectState.order
+          : seededProjects.map((p) => p.slug);
+      const open =
+        loadedProjectState.open.length > 0
+          ? loadedProjectState.open
+          : seededProjects.map((p) => p.slug);
+      const recent =
+        loadedProjectState.recent.length > 0 ? loadedProjectState.recent : order;
+      const normalizedState: ProjectCollectionState = {
+        version: 1,
+        order: dedupeSlugs(order).filter((slug) => seededSlugs.has(slug)),
+        open: dedupeSlugs(open).filter((slug) => seededSlugs.has(slug)),
+        recent: dedupeSlugs(recent).filter((slug) => seededSlugs.has(slug)),
+      };
+      setProjectState(normalizedState);
+      void window.aya.saveProjectState(normalizedState);
+      const openSlugSet = new Set(normalizedState.open);
+      const openProjects = seededProjects.filter((p) => openSlugSet.has(p.slug));
+      setProjects(openProjects);
 
       // Validate each project's directory in parallel.
       const dirChecks = await Promise.all(
-        seededProjects.map((p) => window.aya.dirExists(p.directory)),
+        openProjects.map((p) => window.aya.dirExists(p.directory)),
       );
       const queue: MissingDirEntry[] = [];
-      for (let i = 0; i < seededProjects.length; i++) {
-        const project = seededProjects[i];
+      for (let i = 0; i < openProjects.length; i++) {
+        const project = openProjects[i];
         if (dirChecks[i]) {
           // Dir exists — hydrate terminals normally.
           hydrateProjectTerminals(project, project.directory);
@@ -322,17 +406,17 @@ export function App() {
       }
       setMissingDirQueue(queue);
 
-      const cwdProject = seededProjects.find((p) => p.directory === cwd);
+      const cwdProject = openProjects.find((p) => p.directory === cwd);
       if (cwdProject) {
         setActiveProjectId(cwdProject.slug);
-      } else if (seededProjects.length > 0) {
-        setActiveProjectId(seededProjects[0].slug);
+      } else if (openProjects.length > 0) {
+        setActiveProjectId(openProjects[0].slug);
       } else {
         setActiveProjectId(null);
       }
 
-      for (const p of seededProjects) {
-        if (dirChecks[seededProjects.indexOf(p)]) {
+      for (const p of openProjects) {
+        if (dirChecks[openProjects.indexOf(p)]) {
           void window.aya.getGitInfo(p.directory).then((info) => {
             setGit((g) => ({ ...g, [p.slug]: info }));
           });
@@ -352,6 +436,58 @@ export function App() {
 
   usePtyEventRouter({ lastActivityRef, setTerminals });
 
+  useEffect(() => {
+    return window.aya.onControlStatus((update) => {
+      setTerminals((prev) => {
+        const entry = Object.entries(prev).find(([, terminal]) => {
+          if (update.terminalId && terminal.id === update.terminalId) return true;
+          if (update.projectSlug && terminal.projectSlug === update.projectSlug) {
+            return true;
+          }
+          if (update.cwd && terminal.cwd === update.cwd) return true;
+          return false;
+        });
+        if (!entry) return prev;
+        const [id, terminal] = entry;
+        if (update.level === "clear") {
+          const { externalStatus, ...rest } = terminal;
+          return {
+            ...prev,
+            [id]: {
+              ...rest,
+              status:
+                externalStatus?.level === "waiting" ? "running" : terminal.status,
+              bell: externalStatus?.level === "waiting" ? false : terminal.bell,
+            },
+          };
+        }
+        const text = update.text?.trim();
+        if (!text) return prev;
+        const nextStatus =
+          update.level === "waiting"
+            ? "waiting"
+            : update.level === "done"
+              ? "idle"
+              : update.level === "error"
+                ? "error"
+                : "running";
+        return {
+          ...prev,
+          [id]: {
+            ...terminal,
+            status: nextStatus,
+            bell: update.level === "waiting",
+            externalStatus: {
+              level: update.level,
+              text,
+              updatedAt: update.updatedAt,
+            },
+          },
+        };
+      });
+    });
+  }, []);
+
   // ---------------------------------------------------------------------------
   // Actions
   // ---------------------------------------------------------------------------
@@ -363,6 +499,7 @@ export function App() {
         .filter((t) => t.projectSlug === slug)
         .map((t) => ({ id: t.id, presetId: t.presetId, name: t.name }));
       const updated: ProjectConfig = { ...project, tabs };
+      setAllProjects((ps) => ps.map((p) => (p.slug === slug ? updated : p)));
       setProjects((ps) => ps.map((p) => (p.slug === slug ? updated : p)));
       void window.aya.updateProject(updated);
     },
@@ -463,6 +600,12 @@ export function App() {
   /** Reorder project tabs. Persists the new slug order to disk so a
    *  restart preserves the user's choice. */
   const reorderProjects = useCallback(async (orderedSlugs: string[]) => {
+    const nextOrder = dedupeSlugs([
+      ...orderedSlugs,
+      ...projectStateRef.current.order.filter(
+        (slug) => !orderedSlugs.includes(slug),
+      ),
+    ]);
     setProjects((prev) => {
       const bySlug = new Map(prev.map((p) => [p.slug, p]));
       const out: ProjectConfig[] = [];
@@ -477,12 +620,11 @@ export function App() {
       }
       return out;
     });
-    try {
-      await window.aya.saveProjectOrder(orderedSlugs);
-    } catch (err) {
-      console.error("saveProjectOrder failed:", err);
-    }
-  }, []);
+    saveProjectCollectionState({
+      ...projectStateRef.current,
+      order: nextOrder,
+    });
+  }, [saveProjectCollectionState]);
 
   /** Reorder a project's terminal tabs. Walks the terminals map and
    *  rebuilds it with the new key order — `project.tabs` is derived from
@@ -514,6 +656,9 @@ export function App() {
       const project = projectsRef.current.find((p) => p.slug === slug);
       if (!project || project.name === trimmed) return;
       const updated = { ...project, name: trimmed };
+      setAllProjects((prev) =>
+        prev.map((p) => (p.slug === slug ? updated : p)),
+      );
       setProjects((prev) =>
         prev.map((p) => (p.slug === slug ? updated : p)),
       );
@@ -526,9 +671,8 @@ export function App() {
     [],
   );
 
-  /** Close the project in this session only. The JSON file on disk is NOT
-   *  touched — on next launch, the project reopens. To permanently delete,
-   *  the user can `rm ~/.aya/projects/<slug>.json`. */
+  /** Close the project tab without deleting its JSON config. Closed projects
+   *  stay available from search / recent projects but do not auto-reopen. */
   const closeProject = useCallback(async (slug: string) => {
     const owned = Object.values(terminalsRef.current).filter(
       (t) => t.projectSlug === slug,
@@ -546,10 +690,15 @@ export function App() {
       delete next[slug];
       return next;
     });
-    setProjects((prev) => prev.filter((p) => p.slug !== slug));
+    const remaining = projectsRef.current.filter((p) => p.slug !== slug);
+    setProjects(remaining);
+    saveProjectCollectionState({
+      ...projectStateRef.current,
+      open: remaining.map((p) => p.slug),
+      recent: dedupeSlugs([slug, ...projectStateRef.current.recent]),
+    });
     setActiveProjectId((cur) => {
       if (cur !== slug) return cur;
-      const remaining = projectsRef.current.filter((p) => p.slug !== slug);
       return remaining[0]?.slug ?? null;
     });
     setGit((prev) => {
@@ -564,6 +713,45 @@ export function App() {
     });
   }, []);
 
+  const openKnownProject = useCallback(
+    async (project: ProjectConfig) => {
+      const alreadyOpen = projectsRef.current.find(
+        (p) => p.slug === project.slug,
+      );
+      if (alreadyOpen) {
+        setActiveProjectId(alreadyOpen.slug);
+        return;
+      }
+      const nextProjects = [...projectsRef.current, project];
+      setProjects(nextProjects);
+      setActiveProjectId(project.slug);
+      saveProjectCollectionState({
+        ...projectStateRef.current,
+        order: dedupeSlugs([...projectStateRef.current.order, project.slug]),
+        open: nextProjects.map((p) => p.slug),
+        recent: dedupeSlugs([project.slug, ...projectStateRef.current.recent]),
+      });
+
+      const exists = await window.aya.dirExists(project.directory);
+      if (exists) {
+        hydrateProjectTerminals(project, project.directory);
+        void window.aya.getGitInfo(project.directory).then((info) => {
+          setGit((g) => ({ ...g, [project.slug]: info }));
+        });
+      } else {
+        setMissingDirQueue((prev) => [
+          ...prev,
+          {
+            slug: project.slug,
+            name: project.name,
+            directory: project.directory,
+          },
+        ]);
+      }
+    },
+    [hydrateProjectTerminals, saveProjectCollectionState],
+  );
+
   const onCreateProject = useCallback(
     async (name: string, directory: string) => {
       try {
@@ -576,7 +764,15 @@ export function App() {
         };
         const withTabs: ProjectConfig = { ...project, tabs: [shellTab] };
         void window.aya.updateProject(withTabs);
-        setProjects((prev) => [...prev, withTabs]);
+        setAllProjects((prev) => [...prev, withTabs]);
+        const nextProjects = [...projectsRef.current, withTabs];
+        setProjects(nextProjects);
+        saveProjectCollectionState({
+          ...projectStateRef.current,
+          order: dedupeSlugs([...projectStateRef.current.order, withTabs.slug]),
+          open: nextProjects.map((p) => p.slug),
+          recent: dedupeSlugs([withTabs.slug, ...projectStateRef.current.recent]),
+        });
         setTerminals((prev) => ({
           ...prev,
           [shellTab.id]: {
@@ -604,7 +800,7 @@ export function App() {
         alert(err instanceof Error ? err.message : String(err));
       }
     },
-    [],
+    [saveProjectCollectionState],
   );
 
   const onSavePresets = useCallback(async (next: Preset[]) => {
@@ -621,7 +817,13 @@ export function App() {
       if (!t) return prev;
       return {
         ...prev,
-        [id]: { ...t, exitCode: null, status: "running", bell: false },
+        [id]: {
+          ...t,
+          exitCode: null,
+          status: "running",
+          bell: false,
+          spawnFailure: undefined,
+        },
       };
     });
     // Also clear the activity timestamp so the dot doesn't claim "recently
@@ -654,7 +856,13 @@ export function App() {
       if (!cur) return prev;
       return {
         ...prev,
-        [id]: { ...cur, exitCode: null, status: "running", bell: false },
+        [id]: {
+          ...cur,
+          exitCode: null,
+          status: "running",
+          bell: false,
+          spawnFailure: undefined,
+        },
       };
     });
     delete lastActivityRef.current[id];
@@ -762,6 +970,10 @@ export function App() {
   const activeProject = activeProjectId
     ? findProject(projects, activeProjectId)
     : null;
+  const openProjectSlugs = new Set(projects.map((p) => p.slug));
+  const closedProjects = allProjects.filter(
+    (p) => !openProjectSlugs.has(p.slug),
+  );
   const projectTerminals: TerminalState[] = Object.values(terminals).filter(
     (t) => activeProjectId && t.projectSlug === activeProjectId,
   );
@@ -771,9 +983,40 @@ export function App() {
   const activeTerminal = activeTabId ? (terminals[activeTabId] ?? null) : null;
   const activeGit = activeProjectId ? (git[activeProjectId] ?? null) : null;
 
-  const projectBadges: Record<string, number> = {};
+  const projectBadges: Record<
+    string,
+    { count: number; level: "done" | "waiting" | "error" }
+  > = {};
+  const severityRank = { done: 1, waiting: 2, error: 3 } as const;
   for (const t of Object.values(terminals)) {
-    if (t.bell) projectBadges[t.projectSlug] = (projectBadges[t.projectSlug] ?? 0) + 1;
+    let level: "done" | "waiting" | "error" | null = null;
+    if (
+      t.status === "error" ||
+      t.externalStatus?.level === "error" ||
+      t.spawnFailure
+    ) {
+      level = "error";
+    } else if (
+      t.bell ||
+      t.status === "waiting" ||
+      t.externalStatus?.level === "waiting"
+    ) {
+      level = "waiting";
+    } else if (
+      t.externalStatus?.level === "done" ||
+      (t.status === "idle" && t.exitCode === 0 && t.presetId !== "shell")
+    ) {
+      level = "done";
+    }
+    if (!level) continue;
+    const current = projectBadges[t.projectSlug];
+    projectBadges[t.projectSlug] = {
+      count: (current?.count ?? 0) + 1,
+      level:
+        !current || severityRank[level] > severityRank[current.level]
+          ? level
+          : current.level,
+    };
   }
 
   const currentMissingDir = missingDirQueue[0] ?? null;
@@ -787,7 +1030,7 @@ export function App() {
 
   const showNewProjectModal = useCallback(() => {
     setNewProjectModal({
-      defaults: { name: "", directory: "~/" },
+      defaults: { directory: "~/" },
       lockDirectory: false,
       title: "Open project",
       hint: "Type a project directory. Press Tab to complete paths.",
@@ -795,41 +1038,41 @@ export function App() {
   }, []);
 
   const submitProjectFromModal = useCallback(
-    async (name: string, directory: string) => {
+    async (directory: string) => {
       const exists = await window.aya.dirExists(directory);
       if (!exists) {
         throw new Error("Directory does not exist.");
       }
       const absDir = await window.aya.expandPath(directory);
-      const existing = projectsRef.current.find((p) => p.directory === absDir);
+      const existing = allProjectsRef.current.find(
+        (p) => p.directory === absDir,
+      );
       if (existing) {
-        setActiveProjectId(existing.slug);
+        await openKnownProject(existing);
         setNewProjectModal(null);
         return;
       }
       await onCreateProject(
-        name || uniqueProjectName(projectsRef.current, absDir),
+        uniqueProjectName(allProjectsRef.current, absDir),
         absDir,
       );
     },
-    [onCreateProject],
+    [onCreateProject, openKnownProject],
   );
 
   // Refresh the open-project handler so it sees the latest projects + state.
   openProjectRef.current = async (rawDir: string) => {
     const absDir = await window.aya.expandPath(rawDir);
     // 1. Exact directory match: just switch (no-op if already active).
-    const existing = projectsRef.current.find((p) => p.directory === absDir);
+    const existing = allProjectsRef.current.find((p) => p.directory === absDir);
     if (existing) {
-      if (activeProjectIdRef.current !== existing.slug) {
-        setActiveProjectId(existing.slug);
-      }
+      await openKnownProject(existing);
       return;
     }
     // 2. Auto-create silently from basename. If the slug would collide with
     //    another project, append a numeric suffix. The top tab can be renamed
     //    later, so no modal is needed for the common path.
-    const name = uniqueProjectName(projectsRef.current, absDir);
+    const name = uniqueProjectName(allProjectsRef.current, absDir);
     await onCreateProject(name, absDir);
   };
 
@@ -870,7 +1113,12 @@ export function App() {
         homeDir={homeDir}
         isDev={window.aya.isDev}
         blockChrome={chromeBlocked}
+        closedProjects={closedProjects}
         onSelectProject={setActiveProjectId}
+        onOpenProject={(slug) => {
+          const project = allProjects.find((p) => p.slug === slug);
+          if (project) void openKnownProject(project);
+        }}
         onNewProject={showNewProjectModal}
         onCloseProject={closeProject}
         onRenameProject={renameProject}
@@ -888,8 +1136,15 @@ export function App() {
         </main>
       ) : isEmpty ? (
         <EmptyState
+          showNoHarnessHint={
+            harnessScanDone && foundHarnessCount === 0 && !hideNoHarnessHint
+          }
           onOpenProject={showNewProjectModal}
           onOpenSettings={() => setShowSettings(true)}
+          onDismissNoHarnessHint={() => {
+            localStorage.setItem("aya:no-harness-hint-dismissed", "1");
+            setHideNoHarnessHint(true);
+          }}
         />
       ) : (
         <div
@@ -933,10 +1188,13 @@ export function App() {
                   command={preset.command}
                   isVisible={t.id === activeTabId}
                   cwd={t.cwd}
+                  lastActivity={lastActivityRef.current[t.id]}
                   fontSize={fontSize}
                   themeColors={colorsForTerminal}
                   findOpen={findInPaneFor === t.id}
                   onCloseFind={() => setFindInPaneFor(null)}
+                  onOpenSettings={() => setShowSettings(true)}
+                  onCloseProject={closeProject}
                   onRequestRestart={() => restartTerminal(t.id)}
                   restartTrigger={restartTriggers[t.id] ?? 0}
                 />
@@ -958,6 +1216,9 @@ export function App() {
         project={activeProject}
         git={activeGit}
         terminal={activeTerminal}
+        onOpenProjectDirectory={(directory) => {
+          void window.aya.openPath(directory);
+        }}
       />
       {currentMissingDir && (
         <MissingDirModal
@@ -972,7 +1233,6 @@ export function App() {
       )}
       {newProjectModal && !currentMissingDir && (
         <NewProjectModal
-          defaultName={newProjectModal.defaults?.name}
           defaultDirectory={newProjectModal.defaults?.directory}
           lockDirectory={newProjectModal.lockDirectory}
           title={newProjectModal.title}
@@ -989,11 +1249,15 @@ export function App() {
       {showSearch && (
         <SearchModal
           projects={projects}
+          allProjects={allProjects}
           activeProject={activeProject}
           terminals={terminals}
           presets={presets}
           lastActivity={lastActivityRef.current}
-          onSelectProject={(slug) => setActiveProjectId(slug)}
+          onSelectProject={(slug) => {
+            const project = allProjects.find((p) => p.slug === slug);
+            if (project) void openKnownProject(project);
+          }}
           onSelectTerminal={(slug, terminalId) => {
             setActiveProjectId(slug);
             setActiveTabByProject((prev) => ({ ...prev, [slug]: terminalId }));

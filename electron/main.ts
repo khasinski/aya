@@ -9,9 +9,16 @@ import {
   Menu,
   nativeImage,
   Notification,
+  shell,
   type MenuItemConstructorOptions,
 } from "electron";
-import { promises as fs, readFileSync, statSync } from "node:fs";
+import {
+  accessSync,
+  constants as fsConstants,
+  promises as fs,
+  readFileSync,
+  statSync,
+} from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -19,9 +26,11 @@ import {
   deleteProject,
   expandPath,
   listProjects,
-  saveProjectOrder,
+  listProjectState,
+  saveProjectState,
   updateProject,
 } from "./config";
+import { startControlServer } from "./control";
 import { getGitInfo } from "./git";
 import { IS_DEV } from "./paths";
 import { scanHarnesses } from "./harnesses";
@@ -37,16 +46,95 @@ import {
 import {
   requirePositiveInt,
   requireString,
-  requireStringArray,
   validatePresetArray,
+  validateProjectCollectionState,
   validateProjectConfig,
   validateSpawnRequest,
   validateThemesFile,
 } from "./validation";
 import { loadWindowState, trackWindowState } from "./window-state";
+import type { CliStatus } from "./types";
 
 const DEV_SERVER_URL = "http://localhost:5183";
 const WINDOW_TITLE = IS_DEV ? "Aya Dev" : "Aya";
+
+function pathEntries(): string[] {
+  return (process.env.PATH ?? "")
+    .split(path.delimiter)
+    .filter((entry) => entry.trim().length > 0);
+}
+
+function findExecutableOnPath(name: string): string | null {
+  for (const entry of pathEntries()) {
+    const candidate = path.join(entry, name);
+    try {
+      accessSync(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch {
+      // keep looking
+    }
+  }
+  return null;
+}
+
+function writableDirOnPath(): string | null {
+  for (const entry of pathEntries()) {
+    try {
+      const stat = statSync(entry);
+      if (!stat.isDirectory()) continue;
+      accessSync(entry, fsConstants.W_OK);
+      return entry;
+    } catch {
+      // keep looking
+    }
+  }
+  return null;
+}
+
+function bundledAyaCliPath(): string {
+  return path.join(__dirname, "..", "bin", "aya");
+}
+
+async function cliStatus(): Promise<CliStatus> {
+  const installed = findExecutableOnPath("aya");
+  const installDir =
+    writableDirOnPath() ?? path.join(os.homedir(), ".local", "bin");
+  return {
+    installed: installed !== null,
+    path: installed,
+    installDir,
+    installable: true,
+    ...(installed
+      ? {}
+      : { message: `Install to ${path.join(installDir, "aya")}` }),
+  };
+}
+
+async function installCli(): Promise<CliStatus> {
+  const status = await cliStatus();
+  const installDir = status.installDir;
+  if (!installDir) {
+    return {
+      installed: false,
+      path: null,
+      installDir: null,
+      installable: false,
+      message: "No install directory available.",
+    };
+  }
+  await fs.mkdir(installDir, { recursive: true });
+  const source = bundledAyaCliPath();
+  const target = path.join(installDir, "aya");
+  const script = `#!/bin/sh\nexec ${JSON.stringify(source)} "$@"\n`;
+  await fs.writeFile(target, script, { mode: 0o755 });
+  await fs.chmod(target, 0o755);
+  return {
+    ...(await cliStatus()),
+    path: target,
+    installed: true,
+    message: `Installed at ${target}`,
+  };
+}
 
 function configureAppIdentity(): void {
   // Keep macOS menu/about/notification surfaces aligned. Dev runs inside
@@ -523,7 +611,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
 
 function registerIpc(win: BrowserWindow): void {
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
-    spawnPty(validateSpawnRequest(req), win.webContents);
+    await spawnPty(validateSpawnRequest(req), win.webContents);
   });
   ipcMain.handle("pty:write", async (_e, ptyId: unknown, data: unknown) =>
     writePty(
@@ -548,6 +636,10 @@ function registerIpc(win: BrowserWindow): void {
   );
 
   ipcMain.handle("projects:list", async () => listProjects());
+  ipcMain.handle("projects:state", async () => listProjectState());
+  ipcMain.handle("projects:save-state", async (_e, state: unknown) =>
+    saveProjectState(validateProjectCollectionState(state)),
+  );
   ipcMain.handle("projects:create", async (_e, name: unknown, dir: unknown) =>
     createProject(
       requireString(name, "projects:create.name"),
@@ -559,9 +651,6 @@ function registerIpc(win: BrowserWindow): void {
   );
   ipcMain.handle("projects:delete", async (_e, slug: unknown) =>
     deleteProject(requireString(slug, "projects:delete.slug")),
-  );
-  ipcMain.handle("projects:save-order", async (_e, slugs: unknown) =>
-    saveProjectOrder(requireStringArray(slugs, "projects:save-order.slugs")),
   );
 
   ipcMain.handle("presets:list", async () => listPresets());
@@ -634,6 +723,19 @@ function registerIpc(win: BrowserWindow): void {
       recursive: true,
     });
   });
+  ipcMain.handle("env:open-path", async (_e, p: unknown) => {
+    const expanded = expandPath(requireString(p, "env:open-path.path"));
+    const error = await shell.openPath(expanded);
+    if (error) throw new Error(error);
+  });
+  ipcMain.handle("env:open-url", async (_e, value: unknown) => {
+    const url = requireString(value, "env:open-url.url");
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("Only HTTP and HTTPS URLs can be opened.");
+    }
+    await shell.openExternal(parsed.toString());
+  });
   ipcMain.handle("app:is-fullscreen", async () => win.isFullScreen());
   // Dock badge for unattended notifications (waiting terminals). Empty
   // string clears. macOS only; no-op on Linux/Windows for now since their
@@ -672,6 +774,15 @@ function registerIpc(win: BrowserWindow): void {
       });
     });
     notification.show();
+  });
+  ipcMain.handle("app:cli-status", async () => cliStatus());
+  ipcMain.handle("app:install-cli", async () => installCli());
+  ipcMain.handle("app:open-notification-settings", async () => {
+    if (process.platform === "darwin") {
+      await shell.openExternal(
+        "x-apple.systempreferences:com.apple.Notifications-Settings.extension",
+      );
+    }
   });
   ipcMain.handle("app:set-dock-badge", async (_e, text: unknown) => {
     const badge = requireString(text, "app:set-dock-badge.text");
@@ -735,6 +846,16 @@ app.whenReady().then(async () => {
   const savedState = await loadWindowState();
   mainWindow = createWindow(savedState);
   registerIpc(mainWindow);
+  startControlServer({
+    getWindow: () => mainWindow,
+    openProject: (directory) => {
+      if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+      }
+      dispatchOpenProject(mainWindow, directory);
+    },
+  });
   installApplicationMenu();
 
   // Honor an initial directory argument on first launch — the renderer

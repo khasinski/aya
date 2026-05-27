@@ -1,0 +1,7 @@
+interface:
+  display_name: "Aya Control"
+  short_description: "Update Aya terminal status from agents"
+  default_prompt: "Use $aya-control to report visible progress in Aya while you work."
+
+policy:
+  allow_implicit_invocation: true

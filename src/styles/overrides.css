@@ -8,40 +8,74 @@
   flex: 1;
   min-height: 0;
   min-width: 0;
-  padding: 8px 0 0 12px;
-  background: #0d1117;
+  overflow: hidden;
+  padding: 8px 0 8px 12px;
+  /* Background is set inline from the active theme so the padding strip
+     around the xterm canvas (the "frame") doesn't stay GitHub-dark when
+     the user picks a light or differently-tinted theme. Fallback color
+     matches the original default for the rare case the inline style is
+     missing. */
+  background: var(--aya-term-bg, #0d1117);
 }
-.aya-xterm-host .xterm,
-.aya-xterm-host .xterm .xterm-viewport,
-.aya-xterm-host .xterm .xterm-screen {
+.aya-xterm-frame {
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+}
+.aya-xterm-frame .xterm {
   background: transparent !important;
   height: 100% !important;
+}
+.aya-xterm-frame .xterm .xterm-viewport,
+.aya-xterm-frame .xterm .xterm-screen {
+  background: transparent !important;
 }
 /* Disable programming ligatures (==, =>, !=, ...) inside the terminal.
    JetBrains Mono enables them by default; in the DOM renderer they shift
    columns and break ASCII tables. The WebGL renderer ignores font-feature
    settings (it rasterises glyphs into a fixed grid), so this is a belt-
    and-suspenders fallback for environments where WebGL isn't available. */
-.aya-xterm-host .xterm,
-.aya-xterm-host .xterm-rows,
-.aya-xterm-host .xterm-rows * {
+.aya-xterm-frame .xterm,
+.aya-xterm-frame .xterm-rows,
+.aya-xterm-frame .xterm-rows * {
   font-feature-settings: "liga" 0, "calt" 0, "clig" 0 !important;
   font-variant-ligatures: none !important;
 }
-.aya-xterm-host .xterm-viewport::-webkit-scrollbar { width: 10px; }
-.aya-xterm-host .xterm-viewport::-webkit-scrollbar-thumb {
+.aya-xterm-frame .xterm-viewport::-webkit-scrollbar { width: 10px; }
+.aya-xterm-frame .xterm-viewport::-webkit-scrollbar-thumb {
   background: rgba(110, 119, 129, 0.4);
   border-radius: 5px;
-  border: 2px solid #0d1117;
+  border: 2px solid var(--aya-term-bg, #0d1117);
   background-clip: padding-box;
+}
+.aya-pane--scrollbar-hidden
+  .aya-xterm-frame
+  .xterm-viewport::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-color: transparent;
 }
 
 /* Make room for the (hidden) draggable titlebar inset on macOS. The
    padding-left clears the traffic-light buttons (close/minimize/maximize)
    that sit at the top-left of the window in windowed mode. In fullscreen
    the buttons are hidden, so we drop the padding and let the brand sit
-   flush against the left edge. */
-.aya-app { padding-top: env(safe-area-inset-top, 0); }
+   flush against the left edge.
+
+   Native macOS fullscreen reveals the system bar over the top edge when the
+   pointer hits the screen edge. Keep our project tabs below that overlay so
+   they do not disappear under it. */
+.aya-app {
+  --aya-fullscreen-chrome-inset: 28px;
+  padding-top: env(safe-area-inset-top, 0);
+}
+.aya-app--fullscreen {
+  padding-top: max(
+    env(safe-area-inset-top, 0px),
+    var(--aya-fullscreen-chrome-inset)
+  );
+}
 .aya-topbar { padding-left: 78px; transition: padding-left 120ms ease-out; }
 .aya-app--fullscreen .aya-topbar { padding-left: 0; }
 
@@ -283,6 +317,47 @@
   gap: 8px;
   margin-top: 22px;
 }
+.aya-empty-hint {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: min(520px, 100%);
+  margin-top: 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--fg-secondary);
+  text-align: left;
+}
+.aya-empty-hint div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.aya-empty-hint strong {
+  color: var(--fg-primary);
+  font-size: 12px;
+}
+.aya-empty-hint span {
+  font-size: 12px;
+  line-height: 1.4;
+}
+.aya-empty-hint-dismiss {
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-secondary);
+  padding: 5px 9px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.aya-empty-hint-dismiss:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+}
 .aya-search-count {
   flex-shrink: 0;
   font-size: 11px;
@@ -359,9 +434,21 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
+  background: #f0ad4e;
+  box-shadow: 0 0 0 2px color-mix(in oklab, #f0ad4e 35%, transparent);
+  margin-left: 2px;
+}
+.aya-tab-bell--done {
+  background: var(--status-active);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--status-active) 35%, transparent);
+}
+.aya-tab-bell--waiting {
+  background: #f0ad4e;
+  box-shadow: 0 0 0 2px color-mix(in oklab, #f0ad4e 35%, transparent);
+}
+.aya-tab-bell--error {
   background: #f85149;
   box-shadow: 0 0 0 2px color-mix(in oklab, #f85149 35%, transparent);
-  margin-left: 2px;
 }
 
 /* Inline rename input that replaces the project tab name on double-click.
@@ -400,6 +487,70 @@
   text-overflow: ellipsis;
   min-width: 0;
   max-width: 360px;
+}
+.aya-pane-header-activity {
+  color: #6e7781;
+  white-space: nowrap;
+}
+.aya-pane-header-activity--active {
+  color: var(--fg-secondary);
+}
+.aya-pane-header-activity--waiting {
+  color: #f0ad4e;
+}
+.aya-pane-header-activity--done {
+  color: var(--status-active);
+}
+.aya-pane-header-activity--error {
+  color: #f85149;
+}
+.aya-pane-recovery {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(248, 81, 73, 0.35);
+  background: rgba(248, 81, 73, 0.08);
+}
+.aya-pane-recovery-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--fg-secondary);
+  font-size: 12px;
+}
+.aya-pane-recovery-text strong {
+  color: #ffa198;
+  font-size: 12px;
+}
+.aya-pane-recovery-text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-pane-recovery-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.aya-pane-recovery-btn {
+  border: 1px solid rgba(248, 81, 73, 0.45);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-secondary);
+  padding: 5px 9px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.aya-pane-recovery-btn:hover {
+  background: rgba(248, 81, 73, 0.12);
+  color: var(--fg-primary);
+}
+.aya-pane-recovery-btn--primary {
+  border-color: #f85149;
+  color: #ffa198;
 }
 
 /* Modal (NewProjectModal). The design doesn't include modal styling; this is
@@ -556,22 +707,21 @@
   max-width: 320px !important;
 }
 
-/* The tab strip scrolls horizontally. Electron's `-webkit-app-region: drag`
-   on the topbar swallows trackpad gestures (you can't scroll a drag
-   region), so we explicitly mark the entire topbar no-drag and only re-
-   enable drag on the brand chip. !important because the design's app.css
+/* The tab strip scrolls horizontally, but unused strip space should still
+   drag the macOS window. Keep the strip itself draggable and mark only the
+   interactive controls as no-drag. !important because the design's app.css
    sets overflow: hidden on .aya-tabs and we need to be sure our auto wins. */
 .aya-topbar {
-  -webkit-app-region: no-drag !important;
+  -webkit-app-region: drag !important;
   min-width: 0;
 }
 .aya-brand {
   -webkit-app-region: drag !important;
-  flex: 0 0 92px;
+  flex: 0 0 104px;
   white-space: nowrap;
 }
 .aya-tabs {
-  -webkit-app-region: no-drag !important;
+  -webkit-app-region: drag !important;
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
@@ -585,6 +735,12 @@
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
+.aya-tab,
+.aya-tab-new,
+.aya-topbar-right,
+.aya-recent-menu {
+  -webkit-app-region: no-drag !important;
+}
 /* Visible thin scrollbar so the user has both wheel/swipe AND direct
    manipulation. 4px so it doesn't eat the 40px topbar's vertical budget. */
 .aya-tabs::-webkit-scrollbar {
@@ -597,6 +753,71 @@
 }
 .aya-tabs::-webkit-scrollbar-thumb:hover {
   background: var(--fg-tertiary);
+}
+
+.aya-recent-projects {
+  position: relative;
+  display: inline-flex;
+}
+.aya-recent-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 280px;
+  max-height: min(360px, calc(100vh - 56px));
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-card);
+  z-index: 1200;
+}
+.aya-recent-menu-title {
+  padding: 6px 8px 8px;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.aya-recent-menu-empty {
+  padding: 10px 8px;
+  color: var(--fg-tertiary);
+  font-size: 12px;
+}
+.aya-recent-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.aya-recent-menu-item:hover {
+  background: var(--bg-tertiary);
+}
+.aya-recent-menu-name,
+.aya-recent-menu-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-recent-menu-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+.aya-recent-menu-path {
+  margin-top: 2px;
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 /* The "+ New project" sentinel never shrinks, and neither does the topbar's
@@ -620,6 +841,28 @@
   max-height: 50vh;
   overflow-y: auto;
   margin: 4px 0 8px;
+}
+.aya-settings-general {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+.aya-settings-general-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+.aya-settings-general-title {
+  color: var(--fg-primary);
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 2px;
 }
 .aya-settings-row {
   display: flex;

@@ -22,8 +22,17 @@ export interface ProjectConfig {
   tabs: WorkingTab[];
 }
 
+export interface ProjectCollectionState {
+  version: 1;
+  order: string[];
+  open: string[];
+  recent: string[];
+}
+
 export interface SpawnRequest {
   ptyId: string;
+  projectSlug?: string;
+  presetId?: string;
   // The user-resolved command (e.g. "claude", "$SHELL", "aider --dark"). The
   // renderer picks this from the active preset and the main process embeds it
   // verbatim into `$SHELL -l -c 'cd … && exec <command>'`. NEVER -p / --print.
@@ -38,9 +47,23 @@ export interface ProjectGitInfo {
   dirty: number;
 }
 
+export type SpawnFailureReason =
+  | "cwd-missing"
+  | "cwd-not-directory"
+  | "cwd-unreadable"
+  | "preset-empty-command"
+  | "command-not-found"
+  | "node-pty-spawn-error";
+
 export type PtyEvent =
   | { type: "data"; ptyId: string; chunk: string }
-  | { type: "exit"; ptyId: string; exitCode: number };
+  | { type: "exit"; ptyId: string; exitCode: number }
+  | {
+      type: "spawn-failed";
+      ptyId: string;
+      reason: SpawnFailureReason;
+      detail: string;
+    };
 
 export interface WaitingNotificationRequest {
   projectSlug: string;
@@ -51,6 +74,25 @@ export interface WaitingNotificationRequest {
 export interface TerminalNotificationSelection {
   projectSlug: string;
   terminalId: string;
+}
+
+export interface CliStatus {
+  installed: boolean;
+  path: string | null;
+  installDir: string | null;
+  installable: boolean;
+  message?: string;
+}
+
+export type ControlStatusLevel = "active" | "waiting" | "done" | "error";
+
+export interface ControlStatusUpdate {
+  terminalId?: string;
+  projectSlug?: string;
+  cwd?: string;
+  level: ControlStatusLevel | "clear";
+  text?: string;
+  updatedAt: number;
 }
 
 // What the preload exposes to window.aya:
@@ -73,11 +115,11 @@ export interface AyaApi {
 
   // Project config
   listProjects(): Promise<ProjectConfig[]>;
+  listProjectState(): Promise<ProjectCollectionState>;
+  saveProjectState(state: ProjectCollectionState): Promise<void>;
   createProject(name: string, directory: string): Promise<ProjectConfig>;
   updateProject(project: ProjectConfig): Promise<void>;
   deleteProject(slug: string): Promise<void>;
-  /** Persist the project tab order. Array of slugs in display order. */
-  saveProjectOrder(slugs: string[]): Promise<void>;
 
   // Presets (terminal launchers)
   listPresets(): Promise<Preset[]>;
@@ -104,6 +146,10 @@ export interface AyaApi {
   dirExists(path: string): Promise<boolean>;
   /** `mkdir -p` semantics. Throws if the path can't be created. */
   createDir(path: string): Promise<void>;
+  /** Opens a path in the OS file browser. */
+  openPath(path: string): Promise<void>;
+  /** Opens an http/https URL in the OS default browser. */
+  openUrl(url: string): Promise<void>;
 
   // Window state
   isFullScreen(): Promise<boolean>;
@@ -114,10 +160,14 @@ export interface AyaApi {
   focusWindow(): Promise<void>;
   /** Shows a native app notification for a waiting terminal. */
   showWaitingNotification(req: WaitingNotificationRequest): Promise<void>;
+  cliStatus(): Promise<CliStatus>;
+  installCli(): Promise<CliStatus>;
+  openNotificationSettings(): Promise<void>;
   /** Fired when the user clicks a waiting-terminal notification. */
   onTerminalNotificationSelect(
     handler: (selection: TerminalNotificationSelection) => void,
   ): () => void;
+  onControlStatus(handler: (update: ControlStatusUpdate) => void): () => void;
 
   /** Subscribe to keyboard shortcuts dispatched by the main process. Returns
    *  an unsubscribe function. Action strings: "new-shell", "close-tab",

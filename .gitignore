@@ -34,3 +34,6 @@ tui-prototype/__pycache__/
 tui-prototype/**/__pycache__/
 tui-prototype/.pytest_cache/
 *.pyc
+
+# Scratchpad design docs that live alongside the codebase but aren't shipped
+docs/onboarding.md

@@ -1,4 +1,5 @@
 import type {
+  ProjectCollectionState,
   ProjectConfig,
   SpawnRequest,
   Theme,
@@ -40,6 +41,12 @@ export function validateSpawnRequest(value: unknown): SpawnRequest {
   if (!isRecord(value)) fail("pty:spawn", "SpawnRequest object");
   return {
     ptyId: requireString(value.ptyId, "pty:spawn.ptyId"),
+    ...(optionalString(value.projectSlug, "pty:spawn.projectSlug")
+      ? { projectSlug: value.projectSlug as string }
+      : {}),
+    ...(optionalString(value.presetId, "pty:spawn.presetId")
+      ? { presetId: value.presetId as string }
+      : {}),
     command: requireString(value.command, "pty:spawn.command"),
     cwd: requireString(value.cwd, "pty:spawn.cwd"),
     cols: requirePositiveInt(value.cols, "pty:spawn.cols"),
@@ -66,6 +73,20 @@ export function validateProjectConfig(value: unknown): ProjectConfig {
     tabs: value.tabs.map((tab, idx) =>
       validateWorkingTab(tab, `projects:update.tabs[${idx}]`),
     ),
+  };
+}
+
+export function validateProjectCollectionState(
+  value: unknown,
+): ProjectCollectionState {
+  if (!isRecord(value)) {
+    fail("projects:save-state", "ProjectCollectionState object");
+  }
+  return {
+    version: 1,
+    order: requireStringArray(value.order, "projects:save-state.order"),
+    open: requireStringArray(value.open, "projects:save-state.open"),
+    recent: requireStringArray(value.recent, "projects:save-state.recent"),
   };
 }
 

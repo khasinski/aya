@@ -9,6 +9,7 @@ import {
 
 interface Props {
   projects: ProjectConfig[];
+  allProjects: ProjectConfig[];
   activeProject: ProjectConfig | null;
   terminals: Record<string, TerminalState>;
   presets: Preset[];
@@ -26,6 +27,7 @@ export interface SearchResult {
   projectSlug: string;
   terminalId?: string;
   presetId?: string;
+  isOpen?: boolean;
   label: string;
   secondary: string;
   icon: string;
@@ -113,6 +115,7 @@ function launcherAllTokens(preset: Preset, tokens: string[]): number {
 function buildResults(
   query: string,
   projects: ProjectConfig[],
+  allProjects: ProjectConfig[],
   activeProject: ProjectConfig | null,
   terminals: Record<string, TerminalState>,
   presets: Preset[],
@@ -121,6 +124,7 @@ function buildResults(
 ): SearchResult[] {
   const q = query.trim().toLowerCase();
   const out: SearchResult[] = [];
+  const openProjectSlugs = new Set(projects.map((p) => p.slug));
 
   if (!q) {
     // Default: all terminals sorted by recent activity, then projects.
@@ -147,10 +151,23 @@ function buildResults(
       out.push({
         kind: "project",
         projectSlug: p.slug,
+        isOpen: true,
         label: p.name,
         secondary: p.directory,
         icon: "📁",
         score: -1,
+      });
+    }
+    for (const p of allProjects) {
+      if (openProjectSlugs.has(p.slug)) continue;
+      out.push({
+        kind: "project",
+        projectSlug: p.slug,
+        isOpen: false,
+        label: p.name,
+        secondary: `Closed · ${p.directory}`,
+        icon: "📁",
+        score: -2,
       });
     }
     return out;
@@ -181,16 +198,18 @@ function buildResults(
   }
 
   // Project name matches: every token must match the project name.
-  for (const p of projects) {
+  for (const p of allProjects) {
     const s = projectAllTokens(p.name, tokens);
     if (s > 0) {
+      const isOpen = openProjectSlugs.has(p.slug);
       out.push({
         kind: "project",
         projectSlug: p.slug,
+        isOpen,
         label: p.name,
-        secondary: p.directory,
+        secondary: isOpen ? p.directory : `Closed · ${p.directory}`,
         icon: "📁",
-        score: s,
+        score: s + (isOpen ? 0 : -25),
       });
     }
   }
@@ -247,6 +266,7 @@ function buildResults(
 
 export function SearchModal({
   projects,
+  allProjects,
   activeProject,
   terminals,
   presets,
@@ -295,6 +315,7 @@ export function SearchModal({
       buildResults(
         query,
         projects,
+        allProjects,
         activeProject,
         terminals,
         presets,
@@ -304,6 +325,7 @@ export function SearchModal({
     [
       query,
       projects,
+      allProjects,
       activeProject,
       terminals,
       presets,
@@ -462,7 +484,9 @@ function ResultRow({
       ) : (
         <span className="aya-search-secondary-right">
           {result.kind === "project"
-            ? "project"
+            ? result.isOpen === false
+              ? "open"
+              : "project"
             : result.kind === "launcher"
               ? "run"
               : ""}

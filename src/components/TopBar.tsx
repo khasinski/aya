@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import type { ProjectConfig } from "../types";
 
+interface ProjectAttention {
+  count: number;
+  level: "done" | "waiting" | "error";
+}
+
 interface Props {
   projects: ProjectConfig[];
+  closedProjects: ProjectConfig[];
   activeProjectId: string | null;
   homeDir: string;
   isDev: boolean;
@@ -11,15 +17,15 @@ interface Props {
    *  so the user can't stack Settings on top of it. */
   blockChrome: boolean;
   onSelectProject: (slug: string) => void;
+  onOpenProject: (slug: string) => void;
   onNewProject: () => void;
-  /** Closes the project in the current session. Does NOT delete the JSON
-   *  file — on restart, the project reopens. */
+  /** Closes the project tab without deleting the project config. */
   onCloseProject: (slug: string) => void;
   onRenameProject: (slug: string, newName: string) => void;
   onReorderProjects: (orderedSlugs: string[]) => void;
   onOpenSearch: () => void;
   onOpenSettings: () => void;
-  projectBadges?: Record<string, number>;
+  projectBadges?: Record<string, ProjectAttention>;
 }
 
 function compactDir(directory: string, home: string): string {
@@ -32,11 +38,13 @@ function compactDir(directory: string, home: string): string {
 
 export function TopBar({
   projects,
+  closedProjects,
   activeProjectId,
   homeDir,
   isDev,
   blockChrome,
   onSelectProject,
+  onOpenProject,
   onNewProject,
   onCloseProject,
   onRenameProject,
@@ -49,6 +57,17 @@ export function TopBar({
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
+  const recentRef = useRef<HTMLDivElement>(null);
+  const [showRecent, setShowRecent] = useState(false);
+
+  useEffect(() => {
+    if (!showRecent) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!recentRef.current?.contains(e.target as Node)) setShowRecent(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, [showRecent]);
 
   // Route ANY wheel/trackpad delta over the tab strip into horizontal
   // scroll. macOS trackpad horizontal swipes default to history navigation
@@ -149,22 +168,13 @@ export function TopBar({
           className="aya-brand-dot"
           style={isDev ? { background: "#a371f7" } : undefined}
         />
-        <span>{isDev ? "aya dev" : "aya"}</span>
+        <span>{isDev ? "Aya Dev" : "Aya"}</span>
       </div>
       <div className="aya-tabs" ref={tabsRef}>
         {projects.map((p) => {
           const isActive = p.slug === activeProjectId;
-          const badge = projectBadges[p.slug] ?? 0;
+          const badge = projectBadges[p.slug];
           const isRenaming = renamingSlug === p.slug;
-          const confirmAndRemove = () => {
-            if (
-              confirm(
-                `Close project "${p.name}" in this session?\n\nThe config file (~/.aya/projects/${p.slug}.json) stays on disk and the project reopens on next launch.`,
-              )
-            ) {
-              onCloseProject(p.slug);
-            }
-          };
           const isDragging = dragSlug === p.slug;
           const isDropTarget = dropTarget?.slug === p.slug;
           const dropClass = isDropTarget
@@ -228,17 +238,17 @@ export function TopBar({
                 </span>
               )}
               <span className="aya-tab-path">{compactDir(p.directory, homeDir)}</span>
-              {badge > 0 && (
+              {badge && (
                 <span
-                  className="aya-tab-bell"
-                  title={`${badge} terminal${badge > 1 ? "s" : ""} waiting for input`}
+                  className={`aya-tab-bell aya-tab-bell--${badge.level}`}
+                  title={`${badge.count} terminal${badge.count > 1 ? "s" : ""} need attention`}
                 />
               )}
               <span
                 className="aya-tab-close"
                 onClick={(e) => {
                   e.stopPropagation();
-                  confirmAndRemove();
+                  onCloseProject(p.slug);
                 }}
                 title="Close project"
               >
@@ -257,6 +267,49 @@ export function TopBar({
         </div>
       </div>
       <div className="aya-topbar-right">
+        <div className="aya-recent-projects" ref={recentRef}>
+          <button
+            className="aya-iconbtn"
+            title={
+              blockChrome
+                ? "Recent projects (close the open dialog first)"
+                : "Recent projects"
+            }
+            onClick={() => setShowRecent((v) => !v)}
+            disabled={blockChrome}
+            aria-haspopup="menu"
+            aria-expanded={showRecent}
+          >
+            <span style={{ fontFamily: "Material Symbols Outlined" }}>
+              folder_open
+            </span>
+          </button>
+          {showRecent && (
+            <div className="aya-recent-menu" role="menu">
+              <div className="aya-recent-menu-title">Recent projects</div>
+              {closedProjects.length === 0 ? (
+                <div className="aya-recent-menu-empty">No closed projects</div>
+              ) : (
+                closedProjects.map((p) => (
+                  <button
+                    key={p.slug}
+                    className="aya-recent-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setShowRecent(false);
+                      onOpenProject(p.slug);
+                    }}
+                  >
+                    <span className="aya-recent-menu-name">{p.name}</span>
+                    <span className="aya-recent-menu-path">
+                      {compactDir(p.directory, homeDir)}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
         <button
           className="aya-iconbtn"
           title={

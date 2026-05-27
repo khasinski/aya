@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  type CliStatus,
   type HarnessDef,
   type Preset,
   type Theme,
@@ -65,6 +66,12 @@ export function SettingsModal({
   const [importError, setImportError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
+  const [cliStatus, setCliStatus] = useState<CliStatus | null>(null);
+  const [cliInstalling, setCliInstalling] = useState(false);
+  const [notificationPermission, setNotificationPermission] =
+    useState<NotificationPermission>(() =>
+      typeof Notification === "undefined" ? "default" : Notification.permission,
+    );
   // PATH-scan result cached once per modal open. Derived `suggested` below
   // is the not-yet-added subset; recomputed each render against the live
   // draft so a row added via the suggestions immediately drops from the
@@ -75,10 +82,32 @@ export function SettingsModal({
     void window.aya.scanHarnesses().then((all) => {
       if (!cancelled) setAllHarnesses(all);
     });
+    void window.aya.cliStatus().then((status) => {
+      if (!cancelled) setCliStatus(status);
+    });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const installCli = async () => {
+    setCliInstalling(true);
+    try {
+      setCliStatus(await window.aya.installCli());
+    } finally {
+      setCliInstalling(false);
+    }
+  };
+
+  const refreshNotificationPermission = async () => {
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission === "default") {
+      await Notification.requestPermission();
+    } else if (Notification.permission === "denied") {
+      await window.aya.openNotificationSettings();
+    }
+    setNotificationPermission(Notification.permission);
+  };
 
   const existingCmds = new Set(
     draft.map((p) => p.command.trim().toLowerCase()),
@@ -295,6 +324,54 @@ export function SettingsModal({
               Import failed: {importError}
             </div>
           )}
+        </div>
+
+        <hr className="aya-settings-divider" />
+
+        {/* === General section === */}
+        <div className="aya-modal-title">General</div>
+        <div className="aya-settings-general">
+          <div className="aya-settings-general-row">
+            <div>
+              <div className="aya-settings-general-title">
+                aya command-line tool
+              </div>
+              <div className="aya-modal-hint">
+                {cliStatus?.installed
+                  ? `Installed at ${cliStatus.path}`
+                  : cliStatus?.message ?? "Not installed"}
+              </div>
+            </div>
+            <button
+              className="aya-modal-btn"
+              onClick={installCli}
+              disabled={cliInstalling}
+            >
+              {cliInstalling
+                ? "Installing..."
+                : cliStatus?.installed
+                  ? "Reinstall"
+                  : "Install"}
+            </button>
+          </div>
+          <div className="aya-settings-general-row">
+            <div>
+              <div className="aya-settings-general-title">Notifications</div>
+              <div className="aya-modal-hint">
+                macOS permission: {notificationPermission}
+              </div>
+            </div>
+            <button
+              className="aya-modal-btn"
+              onClick={refreshNotificationPermission}
+            >
+              {notificationPermission === "denied"
+                ? "Open System Settings"
+                : notificationPermission === "default"
+                  ? "Enable"
+                  : "Enabled"}
+            </button>
+          </div>
         </div>
 
         <hr className="aya-settings-divider" />

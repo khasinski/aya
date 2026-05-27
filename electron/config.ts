@@ -4,8 +4,13 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
-import { PROJECTS_DIR, PROJECTS_ORDER_FILE } from "./paths";
-import type { ProjectConfig } from "./types";
+import {
+  OPEN_PROJECTS_FILE,
+  PROJECTS_DIR,
+  PROJECTS_ORDER_FILE,
+  PROJECTS_STATE_FILE,
+} from "./paths";
+import type { ProjectCollectionState, ProjectConfig } from "./types";
 
 const RESERVED_SLUGS = new Set(["aya-sentinel-new"]);
 
@@ -40,23 +45,64 @@ export function normalizeTab(
   return { id: r.id, presetId, name };
 }
 
-async function loadProjectOrder(): Promise<string[]> {
-  try {
-    const raw = await fs.readFile(PROJECTS_ORDER_FILE, "utf-8");
-    const data = JSON.parse(raw);
-    if (Array.isArray(data) && data.every((s) => typeof s === "string")) {
-      return data;
-    }
-  } catch {
-    // ENOENT or malformed — fall back to no order.
-  }
-  return [];
+function stringArray(value: unknown): string[] | null {
+  return Array.isArray(value) && value.every((s) => typeof s === "string")
+    ? value
+    : null;
 }
 
-export async function saveProjectOrder(slugs: string[]): Promise<void> {
+async function loadStringArrayFile(filePath: string): Promise<string[] | null> {
+  try {
+    const raw = await fs.readFile(filePath, "utf-8");
+    const data = JSON.parse(raw);
+    return stringArray(data);
+  } catch {
+    // ENOENT or malformed — caller decides the fallback.
+    return null;
+  }
+}
+
+function normalizeProjectState(raw: unknown): ProjectCollectionState | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const order = stringArray(r.order);
+  const open = stringArray(r.open);
+  const recent = stringArray(r.recent);
+  if (!order || !open || !recent) return null;
+  return { version: 1, order, open, recent };
+}
+
+export async function listProjectState(): Promise<ProjectCollectionState> {
+  try {
+    const raw = await fs.readFile(PROJECTS_STATE_FILE, "utf-8");
+    const parsed = normalizeProjectState(JSON.parse(raw));
+    if (parsed) return parsed;
+  } catch {
+    // Missing or malformed new state falls back to legacy files.
+  }
+
+  const order = (await loadStringArrayFile(PROJECTS_ORDER_FILE)) ?? [];
+  const open = (await loadStringArrayFile(OPEN_PROJECTS_FILE)) ?? order;
+  const recent = order.length > 0 ? order : open;
+  const migrated: ProjectCollectionState = { version: 1, order, open, recent };
+  if (order.length > 0 || open.length > 0) {
+    await saveProjectState(migrated);
+  }
+  return migrated;
+}
+
+export async function saveProjectState(
+  state: ProjectCollectionState,
+): Promise<void> {
+  const normalized: ProjectCollectionState = {
+    version: 1,
+    order: state.order,
+    open: state.open,
+    recent: state.recent,
+  };
   await writeFileAtomic(
-    PROJECTS_ORDER_FILE,
-    JSON.stringify(slugs, null, 2) + "\n",
+    PROJECTS_STATE_FILE,
+    JSON.stringify(normalized, null, 2) + "\n",
   );
 }
 
@@ -96,7 +142,7 @@ export async function listProjects(): Promise<ProjectConfig[]> {
   }
   // Apply user's custom order if any. Unknown slugs (e.g. new projects since
   // the last reorder) go to the end in their alphabetical order.
-  const order = await loadProjectOrder();
+  const { order } = await listProjectState();
   if (order.length === 0) return out;
   const indexBySlug = new Map<string, number>();
   order.forEach((s, i) => indexBySlug.set(s, i));

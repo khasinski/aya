@@ -13,6 +13,26 @@ export function usePtyEventRouter({
 }: Options): void {
   useEffect(() => {
     return window.aya.onPtyEvent((event) => {
+      if (event.type === "spawn-failed") {
+        setTerminals((prev) => {
+          const t = prev[event.ptyId];
+          if (!t) return prev;
+          return {
+            ...prev,
+            [event.ptyId]: {
+              ...t,
+              status: "error",
+              bell: false,
+              spawnFailure: {
+                reason: event.reason,
+                detail: event.detail,
+              },
+            },
+          };
+        });
+        return;
+      }
+
       if (event.type === "exit") {
         setTerminals((prev) => {
           const t = prev[event.ptyId];
@@ -50,7 +70,14 @@ export function usePtyEventRouter({
           status = "running";
         }
         if (status === t.status && bell === t.bell) return prev;
-        return { ...prev, [event.ptyId]: { ...t, status, bell } };
+        return {
+          ...prev,
+          [event.ptyId]: {
+            ...t,
+            status,
+            bell,
+          },
+        };
       });
     });
   }, [lastActivityRef, setTerminals]);

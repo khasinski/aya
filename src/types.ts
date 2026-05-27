@@ -69,13 +69,30 @@ export interface ProjectConfig {
   tabs: WorkingTab[];
 }
 
+export interface ProjectCollectionState {
+  version: 1;
+  order: string[];
+  open: string[];
+  recent: string[];
+}
+
 export interface ProjectGitInfo {
   branch: string | null;
   dirty: number;
 }
 
+export type SpawnFailureReason =
+  | "cwd-missing"
+  | "cwd-not-directory"
+  | "cwd-unreadable"
+  | "preset-empty-command"
+  | "command-not-found"
+  | "node-pty-spawn-error";
+
 export interface SpawnRequest {
   ptyId: string;
+  projectSlug?: string;
+  presetId?: string;
   command: string;
   cwd: string;
   cols: number;
@@ -84,7 +101,13 @@ export interface SpawnRequest {
 
 export type PtyEvent =
   | { type: "data"; ptyId: string; chunk: string }
-  | { type: "exit"; ptyId: string; exitCode: number };
+  | { type: "exit"; ptyId: string; exitCode: number }
+  | {
+      type: "spawn-failed";
+      ptyId: string;
+      reason: SpawnFailureReason;
+      detail: string;
+    };
 
 export interface WaitingNotificationRequest {
   projectSlug: string;
@@ -95,6 +118,25 @@ export interface WaitingNotificationRequest {
 export interface TerminalNotificationSelection {
   projectSlug: string;
   terminalId: string;
+}
+
+export interface CliStatus {
+  installed: boolean;
+  path: string | null;
+  installDir: string | null;
+  installable: boolean;
+  message?: string;
+}
+
+export type ControlStatusLevel = "active" | "waiting" | "done" | "error";
+
+export interface ControlStatusUpdate {
+  terminalId?: string;
+  projectSlug?: string;
+  cwd?: string;
+  level: ControlStatusLevel | "clear";
+  text?: string;
+  updatedAt: number;
 }
 
 export interface BufferSearchHit {
@@ -117,10 +159,11 @@ export interface AyaApi {
   onPtyEvent(handler: (event: PtyEvent) => void): () => void;
 
   listProjects(): Promise<ProjectConfig[]>;
+  listProjectState(): Promise<ProjectCollectionState>;
+  saveProjectState(state: ProjectCollectionState): Promise<void>;
   createProject(name: string, directory: string): Promise<ProjectConfig>;
   updateProject(project: ProjectConfig): Promise<void>;
   deleteProject(slug: string): Promise<void>;
-  saveProjectOrder(slugs: string[]): Promise<void>;
 
   listPresets(): Promise<Preset[]>;
   savePresets(presets: Preset[]): Promise<void>;
@@ -138,14 +181,20 @@ export interface AyaApi {
   pickDirectory(): Promise<string | null>;
   dirExists(path: string): Promise<boolean>;
   createDir(path: string): Promise<void>;
+  openPath(path: string): Promise<void>;
+  openUrl(url: string): Promise<void>;
 
   isFullScreen(): Promise<boolean>;
   setDockBadge(text: string): Promise<void>;
   focusWindow(): Promise<void>;
   showWaitingNotification(req: WaitingNotificationRequest): Promise<void>;
+  cliStatus(): Promise<CliStatus>;
+  installCli(): Promise<CliStatus>;
+  openNotificationSettings(): Promise<void>;
   onTerminalNotificationSelect(
     handler: (selection: TerminalNotificationSelection) => void,
   ): () => void;
+  onControlStatus(handler: (update: ControlStatusUpdate) => void): () => void;
   onFullScreenChange(handler: (isFullScreen: boolean) => void): () => void;
 
   /** Action strings include "new-shell", "close-tab", "search",
@@ -171,6 +220,15 @@ export interface TerminalState {
   status: TerminalStatus;
   bell: boolean;
   exitCode: number | null;
+  spawnFailure?: {
+    reason: SpawnFailureReason;
+    detail: string;
+  };
+  externalStatus?: {
+    level: ControlStatusLevel;
+    text: string;
+    updatedAt: number;
+  };
 }
 
 // Fallback used in the sidebar/pane header when a tab references a preset

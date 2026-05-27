@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
 interface Props {
-  defaultName?: string;
   defaultDirectory?: string;
   lockDirectory?: boolean;
   title?: string;
@@ -9,19 +8,11 @@ interface Props {
   pathHint?: string;
   onPickDirectory?: () => Promise<string | null>;
   onCompletePath?: (pathPrefix: string) => Promise<string[]>;
-  onSubmit: (name: string, directory: string) => Promise<void> | void;
+  onSubmit: (directory: string) => Promise<void> | void;
   onCancel: () => void;
 }
 
-function dirBasename(p: string): string {
-  if (!p) return "";
-  const parts = p.replace(/\/+$/, "").split("/");
-  const last = parts[parts.length - 1] ?? "";
-  return last === "~" ? "" : last;
-}
-
 export function NewProjectModal({
-  defaultName = "",
   defaultDirectory = "~/",
   lockDirectory = false,
   title = "Open project",
@@ -33,8 +24,6 @@ export function NewProjectModal({
   onCancel,
 }: Props) {
   const [directory, setDirectory] = useState(defaultDirectory || "~/");
-  const [name, setName] = useState(() => defaultName || "");
-  const [nameTouched, setNameTouched] = useState(Boolean(defaultName));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const directoryRef = useRef<HTMLInputElement>(null);
@@ -63,7 +52,6 @@ export function NewProjectModal({
     setDirectory(next);
     setError(null);
     completionRef.current = null;
-    if (!nameTouched) setName(dirBasename(next));
   };
 
   const pickDirectory = async () => {
@@ -92,18 +80,16 @@ export function NewProjectModal({
     completionRef.current = { source, matches, index, applied };
     setDirectory(applied);
     setError(null);
-    if (!nameTouched) setName(dirBasename(applied));
   };
 
   const submit = async () => {
     if (submitting) return;
     const d = directory.trim();
-    const n = name.trim() || dirBasename(d);
-    if (!d || !n) return;
+    if (!d) return;
     setSubmitting(true);
     setError(null);
     try {
-      await onSubmit(n, d);
+      await onSubmit(d);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -156,21 +142,6 @@ export function NewProjectModal({
             </div>
           </>
         )}
-
-        <label className="aya-modal-label">Name</label>
-        <input
-          className="aya-modal-input"
-          value={name}
-          onChange={(e) => {
-            setNameTouched(true);
-            setName(e.target.value);
-          }}
-          disabled={submitting}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") submit();
-          }}
-          placeholder={dirBasename(directory) || "project name"}
-        />
 
         {error && <div className="aya-modal-error">{error}</div>}
 

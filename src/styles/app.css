@@ -540,12 +540,27 @@ body {
   display: flex; align-items: center; gap: 6px;
   white-space: nowrap;
 }
+.aya-statusbar-button {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.aya-statusbar-button:hover {
+  color: var(--fg-primary);
+}
 .aya-statusbar-item .dot {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--fg-tertiary);
 }
 .aya-statusbar-item--accent { color: var(--accent); }
 .aya-statusbar-item--warn   { color: #f0ad4e; }
+.aya-statusbar-item--agent-active { color: var(--fg-secondary); }
+.aya-statusbar-item--agent-done { color: var(--status-active); }
+.aya-statusbar-item--agent-error { color: #f85149; }
 .aya-statusbar-spacer { flex: 1; }
 
 /* ============================================================
