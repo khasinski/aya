@@ -25,10 +25,13 @@ Use Aya's CLI for user-visible coordination while working in an Aya terminal.
 - Use `done` or `error` when a long-running task completes and the user may not be watching.
 - Use `clear` when the status is no longer relevant.
 - Keep status text short: 2-6 words is ideal.
+- Do not set status for every ordinary command. Prefer meaningful phase changes.
+- If `AYA_TERMINAL_ID`, `AYA_PROJECT_SLUG`, and `AYA_SOCKET` are present, commands automatically attach to the current Aya pane.
 
 ## Guardrails
 
 - Only use the public `aya` CLI. Do not inspect Claude, Codex, or provider auth files, quota files, hidden logs, or internal process state.
 - Do not automate Claude/Codex through hidden or non-interactive subscription surfaces.
+- Claude Code and Codex should still run as normal interactive TUIs; Aya status commands are only side-channel UI hints.
 - Do not spam notifications. Notify only when user attention is genuinely useful.
 - If `aya` fails or is not installed, continue the task normally and mention the failure only if it matters.

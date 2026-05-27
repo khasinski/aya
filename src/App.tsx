@@ -1151,6 +1151,65 @@ export function App() {
     [updateProjectSplitLayout],
   );
 
+  const focusSplitPane = useCallback(
+    (direction: "left" | "right" | "up" | "down") => {
+      if (!activeProjectId) return;
+      const project = projectsRef.current.find((p) => p.slug === activeProjectId);
+      if (!project?.splitLayout) return;
+      const layout = normalizeSplitLayoutForTabs(
+        project.splitLayout,
+        project.tabs,
+        activeTabByProject[project.slug] ?? project.tabs[0]?.id ?? null,
+      );
+      const row = Math.floor(layout.activeCell / layout.cols);
+      const col = layout.activeCell % layout.cols;
+      const nextRow =
+        direction === "up" ? row - 1 : direction === "down" ? row + 1 : row;
+      const nextCol =
+        direction === "left" ? col - 1 : direction === "right" ? col + 1 : col;
+      if (
+        nextRow < 0 ||
+        nextRow >= layout.rows ||
+        nextCol < 0 ||
+        nextCol >= layout.cols
+      ) {
+        return;
+      }
+      const nextCell = nextRow * layout.cols + nextCol;
+      const terminalId = layout.cells[nextCell];
+      setSingleViewByProject((prev) => ({ ...prev, [project.slug]: null }));
+      updateProjectSplitLayout(project.slug, (current) => ({
+        ...current,
+        activeCell: nextCell,
+      }));
+      if (terminalId) {
+        setActiveTabByProject((prev) => ({ ...prev, [project.slug]: terminalId }));
+      }
+    },
+    [activeProjectId, activeTabByProject, updateProjectSplitLayout],
+  );
+
+  const splitActivePane = useCallback(
+    (direction: "right" | "below") => {
+      if (!activeProjectId) return;
+      const project = projectsRef.current.find((p) => p.slug === activeProjectId);
+      if (!project) return;
+      const layout = normalizeSplitLayoutForTabs(
+        project.splitLayout,
+        project.tabs,
+        activeTabByProject[project.slug] ?? project.tabs[0]?.id ?? null,
+      );
+      const terminalId =
+        singleViewByProject[project.slug] ??
+        layout.cells[layout.activeCell] ??
+        activeTabByProject[project.slug] ??
+        project.tabs[0]?.id ??
+        null;
+      if (terminalId) addTerminalSplit(terminalId, direction);
+    },
+    [activeProjectId, activeTabByProject, addTerminalSplit, singleViewByProject],
+  );
+
   /** Reorder project tabs. Persists the new slug order to disk so a
    *  restart preserves the user's choice. */
   const reorderProjects = useCallback(async (orderedSlugs: string[]) => {
@@ -1586,6 +1645,13 @@ export function App() {
       if (terminalId) splitAssignments[terminalId] = index;
     });
   }
+  const splitActionLayout = savedSplitLayout ?? splitLayout;
+  const canSplitRight = splitActionLayout
+    ? splitActionLayout.cols < MAX_SPLIT_COLS
+    : false;
+  const canSplitBelow = splitActionLayout
+    ? splitActionLayout.rows < MAX_SPLIT_ROWS
+    : false;
   const visibleTerminalIds = splitLayout
     ? splitLayout.cells.filter((id): id is string => !!id && !!terminals[id])
     : activeTabId
@@ -1730,6 +1796,9 @@ export function App() {
     findInPane: () => {
       if (activeTabId) setFindInPaneFor(activeTabId);
     },
+    focusPane: focusSplitPane,
+    splitPaneRight: () => splitActivePane("right"),
+    splitPaneBelow: () => splitActivePane("below"),
   });
 
   useDoubleShiftSearch({
@@ -1805,6 +1874,8 @@ export function App() {
               }
             }}
             onRestart={forceRestartTerminal}
+            canSplitRight={canSplitRight}
+            canSplitBelow={canSplitBelow}
             onAssignToSplit={assignTerminalToActiveSplitCell}
             onSplitRight={(id) => addTerminalSplit(id, "right")}
             onSplitBelow={(id) => addTerminalSplit(id, "below")}

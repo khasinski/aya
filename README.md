@@ -163,6 +163,9 @@ Launches Vite + `tsc -w` + electronmon. State lives at `~/.aya-dev/` so producti
 | `⌘K` or `⇧⇧` | Search projects / terminals / output |
 | `⌘F` / `Ctrl+F` | Find inside the active terminal |
 | `⌘[` / `⌘]` | Previous / next terminal in current project |
+| `⌘⌥←/→/↑/↓` / `Ctrl+Alt+←/→/↑/↓` | Focus adjacent split pane |
+| <code>⌘⌥\\</code> / <code>Ctrl+Alt+\\</code> | Split active pane right |
+| `⌘⌥-` / `Ctrl+Alt+-` | Split active pane below |
 | `⌘1..9` | Switch to project N |
 | `⌘,` / `Ctrl+,` | Settings |
 | `Shift+Enter` | Restart a cleanly-exited terminal (in the same pane) |

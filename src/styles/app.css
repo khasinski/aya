@@ -398,7 +398,7 @@ body {
 }
 .aya-panes--split {
   gap: 1px;
-  background: color-mix(in oklab, var(--border) 70%, var(--bg) 30%);
+  background: color-mix(in oklab, var(--border) 36%, var(--bg) 64%);
 }
 .aya-pane {
   display: flex; flex-direction: column;
@@ -414,7 +414,7 @@ body {
   content: "";
   position: absolute;
   inset: 0;
-  border-top: 2px solid color-mix(in oklab, var(--accent) 58%, transparent);
+  border-top: 2px solid color-mix(in oklab, var(--accent) 42%, transparent);
   pointer-events: none;
   z-index: 3;
 }
@@ -486,7 +486,7 @@ body {
   cursor: row-resize;
 }
 .aya-split-resize:hover {
-  background: color-mix(in oklab, var(--accent) 34%, transparent);
+  background: color-mix(in oklab, var(--accent) 22%, transparent);
 }
 .aya-pane-header {
   display: flex; align-items: center; gap: 10px;

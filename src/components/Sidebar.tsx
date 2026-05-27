@@ -20,6 +20,8 @@ interface Props {
   /** Kill + re-spawn the PTY for this terminal (right-click → Restart). */
   onRestart: (id: string) => void;
   splitAssignments?: Record<string, number>;
+  canSplitRight: boolean;
+  canSplitBelow: boolean;
   onAssignToSplit: (id: string) => void;
   onSplitRight: (id: string) => void;
   onSplitBelow: (id: string) => void;
@@ -46,6 +48,8 @@ export function Sidebar({
   onReorder,
   onRestart,
   splitAssignments = {},
+  canSplitRight,
+  canSplitBelow,
   onAssignToSplit,
   onSplitRight,
   onSplitBelow,
@@ -327,24 +331,28 @@ export function Sidebar({
           >
             Show in active pane
           </button>
-          <button
-            className="aya-context-menu-item"
-            onClick={() => {
-              onSplitRight(menu.terminalId);
-              setMenu(null);
-            }}
-          >
-            Split right
-          </button>
-          <button
-            className="aya-context-menu-item"
-            onClick={() => {
-              onSplitBelow(menu.terminalId);
-              setMenu(null);
-            }}
-          >
-            Split below
-          </button>
+          {canSplitRight && (
+            <button
+              className="aya-context-menu-item"
+              onClick={() => {
+                onSplitRight(menu.terminalId);
+                setMenu(null);
+              }}
+            >
+              Split right
+            </button>
+          )}
+          {canSplitBelow && (
+            <button
+              className="aya-context-menu-item"
+              onClick={() => {
+                onSplitBelow(menu.terminalId);
+                setMenu(null);
+              }}
+            >
+              Split below
+            </button>
+          )}
           {splitAssignments[menu.terminalId] !== undefined && (
             <button
               className="aya-context-menu-item"

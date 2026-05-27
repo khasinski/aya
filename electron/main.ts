@@ -466,6 +466,37 @@ function installApplicationMenu(): void {
           click: () => dispatchShortcut("next-tab"),
         },
         { type: "separator" },
+        {
+          label: "Focus Pane Left",
+          accelerator: "CmdOrCtrl+Alt+Left",
+          click: () => dispatchShortcut("focus-pane-left"),
+        },
+        {
+          label: "Focus Pane Right",
+          accelerator: "CmdOrCtrl+Alt+Right",
+          click: () => dispatchShortcut("focus-pane-right"),
+        },
+        {
+          label: "Focus Pane Up",
+          accelerator: "CmdOrCtrl+Alt+Up",
+          click: () => dispatchShortcut("focus-pane-up"),
+        },
+        {
+          label: "Focus Pane Down",
+          accelerator: "CmdOrCtrl+Alt+Down",
+          click: () => dispatchShortcut("focus-pane-down"),
+        },
+        {
+          label: "Split Pane Right",
+          accelerator: "CmdOrCtrl+Alt+\\",
+          click: () => dispatchShortcut("split-pane-right"),
+        },
+        {
+          label: "Split Pane Below",
+          accelerator: "CmdOrCtrl+Alt+-",
+          click: () => dispatchShortcut("split-pane-below"),
+        },
+        { type: "separator" },
         { role: "reload" },
         { role: "forceReload" },
         { role: "toggleDevTools" },
@@ -580,6 +611,22 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     const isMac = process.platform === "darwin";
     const mod = isMac ? input.meta : input.control;
     if (!mod) return;
+    if (input.alt && !input.shift) {
+      let action: string | null = null;
+      if (input.key === "ArrowLeft") action = "focus-pane-left";
+      else if (input.key === "ArrowRight") action = "focus-pane-right";
+      else if (input.key === "ArrowUp") action = "focus-pane-up";
+      else if (input.key === "ArrowDown") action = "focus-pane-down";
+      else if (input.key === "\\" || input.code === "Backslash") {
+        action = "split-pane-right";
+      } else if (input.key === "-") {
+        action = "split-pane-below";
+      }
+      if (!action) return;
+      event.preventDefault();
+      if (!win.isDestroyed()) win.webContents.send("shortcut", action);
+      return;
+    }
     // Don't trigger our shortcuts if extra modifiers we don't bind are held —
     // e.g. Cmd+Shift+T should NOT fire our Cmd+T action.
     if (input.shift || input.alt) return;

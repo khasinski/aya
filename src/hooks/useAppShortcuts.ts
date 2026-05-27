@@ -9,6 +9,9 @@ export interface ShortcutActions {
   nextTab: () => void;
   selectProject: (oneBasedIndex: number) => void;
   findInPane: () => void;
+  focusPane: (direction: "left" | "right" | "up" | "down") => void;
+  splitPaneRight: () => void;
+  splitPaneBelow: () => void;
 }
 
 export function useAppShortcuts(actions: ShortcutActions): void {
@@ -25,6 +28,14 @@ export function useAppShortcuts(actions: ShortcutActions): void {
       else if (action === "prev-tab") a.prevTab();
       else if (action === "next-tab") a.nextTab();
       else if (action === "find-in-pane") a.findInPane();
+      else if (action === "split-pane-right") a.splitPaneRight();
+      else if (action === "split-pane-below") a.splitPaneBelow();
+      else if (action.startsWith("focus-pane-")) {
+        const dir = action.slice("focus-pane-".length);
+        if (dir === "left" || dir === "right" || dir === "up" || dir === "down") {
+          a.focusPane(dir);
+        }
+      }
       else if (action.startsWith("project-")) {
         const idx = parseInt(action.slice("project-".length), 10);
         if (Number.isFinite(idx)) a.selectProject(idx);
