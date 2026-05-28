@@ -1,4 +1,10 @@
 import { useEffect, useRef } from "react";
+import {
+  handleKeyDown,
+  handleKeyUp,
+  initialDoubleShiftState,
+  type DoubleShiftState,
+} from "../double-shift";
 
 interface Options {
   enabled: boolean;
@@ -12,23 +18,14 @@ export function useDoubleShiftSearch({ enabled, onToggle }: Options): void {
   onToggleRef.current = onToggle;
 
   useEffect(() => {
-    let lastShiftUp = 0;
-    let chainActive = false;
+    let state: DoubleShiftState = { ...initialDoubleShiftState };
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Shift") chainActive = false;
+      state = handleKeyDown(state, e);
     };
     const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key !== "Shift") return;
-      // No other modifiers — exclude Shift+Cmd, Shift+Ctrl, etc.
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const now = Date.now();
-      if (chainActive && now - lastShiftUp < 300) {
-        chainActive = false;
-        if (enabledRef.current) onToggleRef.current();
-        return;
-      }
-      lastShiftUp = now;
-      chainActive = true;
+      const result = handleKeyUp(state, e, Date.now());
+      state = result.state;
+      if (result.triggered && enabledRef.current) onToggleRef.current();
     };
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);

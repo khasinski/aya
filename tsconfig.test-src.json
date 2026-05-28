@@ -12,5 +12,10 @@
     "outDir": "dist-test",
     "rootDir": "src"
   },
-  "include": ["src/bell.ts"]
+  "include": [
+    "src/bell.ts",
+    "src/double-shift.ts",
+    "src/pty-event-reducer.ts",
+    "src/types.ts"
+  ]
 }
