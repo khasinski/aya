@@ -7,74 +7,32 @@
 // Saves are debounced — `resize` and `move` fire on every pixel of drag —
 // so we don't hammer the disk. The atomic write helper guards against
 // truncation if the app crashes mid-save.
+//
+// Pure helpers (validation, display-disconnect fallback) live in
+// window-state-pure.ts so they can be unit-tested without Electron.
 
 import { promises as fs } from "node:fs";
-import type { BrowserWindow, Rectangle } from "electron";
+import type { BrowserWindow } from "electron";
 import { screen } from "electron";
 import { writeFileAtomic } from "./atomic-write";
 import { WINDOW_STATE_FILE } from "./paths";
+import {
+  DEFAULT_WINDOW_STATE,
+  resolveLoadedWindowState,
+  type WindowState,
+} from "./window-state-pure";
 
-interface WindowState {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  isFullScreen: boolean;
-  isMaximized: boolean;
-}
-
-const DEFAULTS: WindowState = {
-  x: 0,
-  y: 0,
-  width: 1280,
-  height: 800,
-  isFullScreen: false,
-  isMaximized: false,
-};
+export type { WindowState } from "./window-state-pure";
 
 const SAVE_DEBOUNCE_MS = 400;
-
-function isWindowState(x: unknown): x is WindowState {
-  if (typeof x !== "object" || x === null) return false;
-  const r = x as Record<string, unknown>;
-  return (
-    typeof r.x === "number" &&
-    typeof r.y === "number" &&
-    typeof r.width === "number" &&
-    typeof r.height === "number" &&
-    typeof r.isFullScreen === "boolean" &&
-    typeof r.isMaximized === "boolean"
-  );
-}
-
-/** True if the rect overlaps any connected display by at least 100×100
- *  pixels. Saved positions become invalid if the user disconnects the
- *  display they were on, so we fall back to defaults in that case. */
-function isVisibleOnAnyDisplay(rect: Rectangle): boolean {
-  for (const display of screen.getAllDisplays()) {
-    const a = display.workArea;
-    const ix = Math.max(rect.x, a.x);
-    const iy = Math.max(rect.y, a.y);
-    const ax = Math.min(rect.x + rect.width, a.x + a.width);
-    const ay = Math.min(rect.y + rect.height, a.y + a.height);
-    if (ax - ix >= 100 && ay - iy >= 100) return true;
-  }
-  return false;
-}
 
 export async function loadWindowState(): Promise<WindowState> {
   try {
     const raw = await fs.readFile(WINDOW_STATE_FILE, "utf-8");
     const parsed = JSON.parse(raw);
-    if (!isWindowState(parsed)) return { ...DEFAULTS };
-    if (!isVisibleOnAnyDisplay(parsed)) {
-      // Saved on a now-disconnected monitor — start centered with the
-      // remembered size.
-      return { ...DEFAULTS, width: parsed.width, height: parsed.height };
-    }
-    return parsed;
+    return resolveLoadedWindowState(parsed, screen.getAllDisplays());
   } catch {
-    return { ...DEFAULTS };
+    return { ...DEFAULT_WINDOW_STATE };
   }
 }
 
