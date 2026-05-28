@@ -19,8 +19,9 @@
     "typecheck:renderer": "tsc -p tsconfig.json --noEmit",
     "build:renderer": "vite build",
     "build:electron": "tsc -p electron",
+    "build:test-src": "tsc -p tsconfig.test-src.json",
     "build": "npm run build:renderer && npm run build:electron",
-    "test": "npm run typecheck:renderer && npm run build:electron && node --test \"tests/**/*.test.mjs\"",
+    "test": "npm run typecheck:renderer && npm run build:electron && npm run build:test-src && node --test \"tests/**/*.test.mjs\"",
     "package": "npm run build && electron-builder",
     "postinstall": "electron-builder install-app-deps"
   },
