@@ -44,6 +44,7 @@ import {
   spawnPty,
   writePty,
 } from "./pty";
+import { initSearch, shutdownSearch } from "./search";
 import {
   requirePositiveInt,
   requireString,
@@ -882,6 +883,15 @@ app.on("open-file", (event, filePath) => {
 app.whenReady().then(async () => {
   configureAppIdentity();
 
+  // Open the search store before any PTY spawns so the indexer is ready to
+  // receive the first chunk. Failures here are logged but non-fatal: the
+  // fallback live-buffer search keeps the command palette working.
+  try {
+    initSearch();
+  } catch (err) {
+    console.error("[aya] search init failed:", err);
+  }
+
   // In dev, replace Electron's default dock icon with ours so the running
   // instance is visually distinguishable. In packaged builds the bundle's
   // icon handles this, so we skip.
@@ -928,7 +938,13 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   killAll();
-  if (process.platform !== "darwin") app.quit();
+  if (process.platform !== "darwin") {
+    shutdownSearch();
+    app.quit();
+  }
 });
 
-app.on("before-quit", () => killAll());
+app.on("before-quit", () => {
+  killAll();
+  shutdownSearch();
+});

@@ -7,6 +7,7 @@
 // on zsh would see "command not found: claude" because bash doesn't read
 // their rc files.
 
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -15,6 +16,8 @@ import type * as PtyModule from "node-pty";
 import type { WebContents } from "electron";
 import type { SpawnFailureReason, SpawnRequest } from "./types";
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
+import { getIndexer, getSearchDb } from "./search";
+import { searchTerminalLines } from "./search/query";
 
 let nodePty: typeof PtyModule | null = null;
 
@@ -26,6 +29,11 @@ function loadNodePty(): typeof PtyModule {
 }
 
 const ptys = new Map<string, PtyModule.IPty>();
+
+// One search session id per live PTY. A new spawn (after restart) gets a new
+// session id, so search history naturally segments by PTY lifetime. The
+// indexer flushes and closes the session when we delete the entry here.
+const sessionIds = new Map<string, string>();
 
 // Per-PTY rolling buffer of recent output, used to repaint xterm.js when the
 // renderer remounts (Vite HMR, React strict-mode double-mount, etc.). The PTY
@@ -94,12 +102,11 @@ export interface BufferSearchHit {
   more: number;
 }
 
-/** Case-insensitive AND-search across all live PTY buffers. The query is
- *  split into whitespace-delimited tokens; every token must appear in the
- *  buffer for that buffer to count as a hit. Snippet is built around the
- *  first-occurring token (so user sees relevant context for whichever
- *  word matched earliest). */
-export function searchPtyOutputs(query: string): BufferSearchHit[] {
+/** Case-insensitive AND-search across all live PTY buffers. The legacy
+ *  implementation: used as a fallback when the SQLite search store isn't
+ *  initialised (tests, very early startup) so the IPC contract stays valid.
+ *  Production code paths go through searchPtyOutputs which prefers SQLite. */
+function searchPtyOutputsLive(query: string): BufferSearchHit[] {
   const tokens = query
     .toLowerCase()
     .split(/\s+/)
@@ -156,6 +163,68 @@ export function searchPtyOutputs(query: string): BufferSearchHit[] {
     });
   }
   return hits;
+}
+
+/** Project SQLite search hits into the legacy BufferSearchHit shape so the
+ *  renderer's command palette keeps working unchanged. One BufferSearchHit
+ *  per terminal: pick the best-ranked line for that terminal, surface a
+ *  ~80 char snippet centered on the earliest-matching query token, and
+ *  count how many other lines in that terminal also matched. */
+function projectToBufferHits(
+  query: string,
+  hits: Array<{ terminalId: string; text: string; rank: number }>,
+): BufferSearchHit[] {
+  const tokens = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+  if (tokens.length === 0) return [];
+
+  // Group hits by terminal, preserving rank order.
+  const groups = new Map<string, typeof hits>();
+  for (const h of hits) {
+    const arr = groups.get(h.terminalId);
+    if (arr) arr.push(h);
+    else groups.set(h.terminalId, [h]);
+  }
+
+  const result: BufferSearchHit[] = [];
+  for (const [terminalId, group] of groups) {
+    const top = group[0];
+    const text = top.text;
+    const lower = text.toLowerCase();
+    // Find the earliest token in this line so the snippet centers on it.
+    let earliest: { idx: number; len: number } | null = null;
+    for (const tok of tokens) {
+      const idx = lower.indexOf(tok);
+      if (idx >= 0 && (!earliest || idx < earliest.idx)) {
+        earliest = { idx, len: tok.length };
+      }
+    }
+    if (!earliest) continue;
+    const start = Math.max(0, earliest.idx - 30);
+    const end = Math.min(text.length, earliest.idx + earliest.len + 50);
+    const snippet = text.slice(start, end).replace(/\s+/g, " ").trim();
+    const matchStartInSnippet = Math.max(0, snippet.toLowerCase().indexOf(tokens[0]));
+    result.push({
+      ptyId: terminalId,
+      snippet,
+      matchStart: matchStartInSnippet,
+      matchLength: earliest.len,
+      more: Math.max(0, group.length - 1),
+    });
+  }
+  return result;
+}
+
+/** Public search entry point used by the renderer's command palette IPC.
+ *  Prefers the durable SQLite + FTS5 store; falls back to live in-memory
+ *  rolling buffers if the store hasn't been initialised yet. */
+export function searchPtyOutputs(query: string): BufferSearchHit[] {
+  const db = getSearchDb();
+  if (!db) return searchPtyOutputsLive(query);
+  const hits = searchTerminalLines(db, { text: query, limit: 200 });
+  return projectToBufferHits(query, hits);
 }
 
 function shellQuote(s: string): string {
@@ -347,8 +416,23 @@ export async function spawnPty(req: SpawnRequest, wc: WebContents): Promise<void
 
   ptys.set(req.ptyId, child);
 
+  // Open a search session for this PTY lifetime. If init hasn't run yet
+  // (test harness, very early startup), indexer is null and the calls
+  // become no-ops.
+  const sessionId = crypto.randomUUID();
+  sessionIds.set(req.ptyId, sessionId);
+  getIndexer()?.startSession({
+    id: sessionId,
+    terminalId: req.ptyId,
+    projectSlug: req.projectSlug ?? "",
+    presetId: req.presetId ?? "",
+    cwd,
+  });
+
   child.onData((chunk) => {
     appendToOutputBuffer(req.ptyId, chunk);
+    const sid = sessionIds.get(req.ptyId);
+    if (sid) getIndexer()?.ingestOutput(sid, chunk);
     if (wc.isDestroyed()) return;
     wc.send("pty:event", { type: "data", ptyId: req.ptyId, chunk });
   });
@@ -356,6 +440,11 @@ export async function spawnPty(req: SpawnRequest, wc: WebContents): Promise<void
   child.onExit(({ exitCode }) => {
     ptys.delete(req.ptyId);
     outputBuffers.delete(req.ptyId);
+    const sid = sessionIds.get(req.ptyId);
+    if (sid) {
+      getIndexer()?.endSession(sid);
+      sessionIds.delete(req.ptyId);
+    }
     if (wc.isDestroyed()) return;
     wc.send("pty:event", { type: "exit", ptyId: req.ptyId, exitCode });
   });
@@ -379,6 +468,11 @@ export function resizePty(ptyId: string, cols: number, rows: number): void {
 
 export function killPty(ptyId: string): void {
   outputBuffers.delete(ptyId);
+  const sid = sessionIds.get(ptyId);
+  if (sid) {
+    getIndexer()?.endSession(sid);
+    sessionIds.delete(ptyId);
+  }
   const p = ptys.get(ptyId);
   if (!p) {
     // No PTY for this id yet — either it never existed, or the spawn IPC is
@@ -397,6 +491,7 @@ export function killPty(ptyId: string): void {
 }
 
 export function killAll(): void {
+  const indexer = getIndexer();
   for (const [, p] of ptys) {
     try {
       p.kill();
@@ -404,6 +499,10 @@ export function killAll(): void {
       // ignore
     }
   }
+  for (const sid of sessionIds.values()) {
+    indexer?.endSession(sid);
+  }
+  sessionIds.clear();
   ptys.clear();
   outputBuffers.clear();
   pendingKills.clear();
