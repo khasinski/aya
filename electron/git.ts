@@ -3,12 +3,14 @@
 // isn't installed or the dir isn't a repo, return nulls.
 
 import { exec } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { ProjectGitInfo } from "./types";
 
 const execAsync = promisify(exec);
 
 const OPTS = { timeout: 1500, windowsHide: true } as const;
+const DIFF_OPTS = { timeout: 3000, maxBuffer: 5_000_000, windowsHide: true } as const;
 
 export async function getGitInfo(directory: string): Promise<ProjectGitInfo> {
   try {
@@ -20,5 +22,78 @@ export async function getGitInfo(directory: string): Promise<ProjectGitInfo> {
     return { branch: branch.trim() || null, dirty };
   } catch {
     return { branch: null, dirty: 0 };
+  }
+}
+
+export interface GitChangedFile {
+  status: string;
+  path: string;
+}
+
+export function parseGitPorcelain(status: string): GitChangedFile[] {
+  return status
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => ({
+      status: line.slice(0, 2).trim() || "??",
+      path: line.slice(3).trim(),
+    }));
+}
+
+export async function getGitChangedFiles(directory: string): Promise<GitChangedFile[]> {
+  try {
+    const { stdout } = await execAsync("git status --porcelain", {
+      cwd: directory,
+      ...OPTS,
+    });
+    return parseGitPorcelain(stdout);
+  } catch {
+    return [];
+  }
+}
+
+function quotePathForDiff(path: string): string {
+  return path.replace(/\t/g, " ").replace(/\r?\n/g, " ");
+}
+
+function syntheticNewFileDiff(file: GitChangedFile, content: string): string {
+  const filePath = quotePathForDiff(file.path);
+  const lines = content.split(/\r?\n/);
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  return [
+    `diff --git a/${filePath} b/${filePath}`,
+    "new file mode 100644",
+    "index 0000000..0000000",
+    "--- /dev/null",
+    `+++ b/${filePath}`,
+    `@@ -0,0 +1,${lines.length} @@`,
+    ...lines.map((line) => `+${line}`),
+  ].join("\n");
+}
+
+export async function getGitDiff(directory: string): Promise<string> {
+  try {
+    const [{ stdout: diff }, files] = await Promise.all([
+      execAsync("git diff --no-ext-diff --no-color HEAD --", {
+        cwd: directory,
+        ...DIFF_OPTS,
+      }),
+      getGitChangedFiles(directory),
+    ]);
+    const untracked = files.filter((file) => file.status === "??");
+    const synthetic = await Promise.all(
+      untracked.map(async (file) => {
+        try {
+          const content = await readFile(`${directory}/${file.path}`, "utf8");
+          if (content.includes("\0")) return "";
+          return syntheticNewFileDiff(file, content);
+        } catch {
+          return "";
+        }
+      }),
+    );
+    return [diff.trimEnd(), ...synthetic.filter(Boolean)].filter(Boolean).join("\n");
+  } catch {
+    return "";
   }
 }

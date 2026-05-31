@@ -905,6 +905,10 @@ export function App() {
         return next;
       });
       setActiveTabByProject((prev) => ({ ...prev, [slug]: id }));
+      setSingleViewByProject((prev) => ({
+        ...prev,
+        [slug]: project.splitLayout && prev[slug] ? id : null,
+      }));
       appendProjectEvent({
         projectSlug: slug,
         terminalId: id,
@@ -1808,7 +1812,11 @@ export function App() {
 
   return (
     <div
-      className={`aya-app ${isFullScreen ? "aya-app--fullscreen" : ""}`}
+      className={[
+        "aya-app",
+        window.aya.platform === "darwin" ? "aya-app--macos" : "",
+        isFullScreen ? "aya-app--fullscreen" : "",
+      ].filter(Boolean).join(" ")}
       data-theme="dark"
       data-accent="green"
     >
@@ -2084,6 +2092,7 @@ export function App() {
           allProjects={allProjects}
           activeProject={activeProject}
           terminals={terminals}
+          events={projectEvents}
           presets={presets}
           lastActivity={lastActivityRef.current}
           onSelectProject={(slug) => {

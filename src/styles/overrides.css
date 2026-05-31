@@ -9,6 +9,7 @@
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  position: relative;
   padding: 8px 0 8px 12px;
   /* Background is set inline from the active theme so the padding strip
      around the xterm canvas (the "frame") doesn't stay GitHub-dark when
@@ -31,6 +32,29 @@
 .aya-xterm-frame .xterm .xterm-viewport,
 .aya-xterm-frame .xterm .xterm-screen {
   background: transparent !important;
+}
+.aya-terminal-restoring {
+  position: absolute;
+  inset: 8px 0 8px 12px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--aya-term-bg, #0d1117);
+  color: color-mix(in oklab, var(--fg-secondary) 88%, var(--accent) 12%);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  pointer-events: none;
+}
+.aya-terminal-restoring-icon {
+  color: var(--accent);
+  font-size: 16px;
+  animation: aya-restore-spin 900ms linear infinite;
+}
+@keyframes aya-restore-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 /* Disable programming ligatures (==, =>, !=, ...) inside the terminal.
    JetBrains Mono enables them by default; in the DOM renderer they shift
@@ -76,7 +100,8 @@
     var(--aya-fullscreen-chrome-inset)
   );
 }
-.aya-topbar { padding-left: 78px; transition: padding-left 120ms ease-out; }
+.aya-topbar { transition: padding-left 120ms ease-out; }
+.aya-app--macos .aya-topbar { padding-left: 78px; }
 .aya-app--fullscreen .aya-topbar { padding-left: 0; }
 
 /* The sidebar's drag-to-resize handle is positioned absolutely with

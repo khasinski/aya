@@ -8,6 +8,7 @@ const isDev = process.env.AYA_DEV === "1";
 
 const api: AyaApi = {
   isDev,
+  platform: process.platform,
   ptySpawn: (req) => ipcRenderer.invoke("pty:spawn", req),
   ptyWrite: (ptyId, data) => ipcRenderer.invoke("pty:write", ptyId, data),
   ptyResize: (ptyId, cols, rows) =>
@@ -44,6 +45,9 @@ const api: AyaApi = {
   expandPath: (p) => ipcRenderer.invoke("env:expand", p),
   completePath: (p) => ipcRenderer.invoke("env:complete-path", p),
   getGitInfo: (directory) => ipcRenderer.invoke("env:git", directory),
+  getGitChangedFiles: (directory) =>
+    ipcRenderer.invoke("env:git-changed-files", directory),
+  getGitDiff: (directory) => ipcRenderer.invoke("env:git-diff", directory),
   pickDirectory: () => ipcRenderer.invoke("env:pick-dir"),
   dirExists: (p) => ipcRenderer.invoke("env:dir-exists", p),
   createDir: (p) => ipcRenderer.invoke("env:create-dir", p),

@@ -117,6 +117,7 @@ export function TerminalView({
   const fitFrameRef = useRef<number | null>(null);
   const [findQuery, setFindQuery] = useState("");
   const [isScrollbarHidden, setIsScrollbarHidden] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(true);
   // Current foreground-process title, fed by OSC 0/2 from the inner shell.
   // macOS zsh's default config emits this in preexec/precmd, so we get the
   // running command for free in shell tabs. Claude/Codex don't emit titles,
@@ -249,6 +250,7 @@ export function TerminalView({
 
     const unsubscribe = window.aya.onPtyEvent((event) => {
       if (event.ptyId !== terminal.id) return;
+      setIsRestoring(false);
       if (event.type === "data") {
         term.write(event.chunk);
         if (onPtyData) onPtyData(event.chunk);
@@ -484,6 +486,7 @@ export function TerminalView({
     lastRestartTriggerRef.current = restartTrigger;
     const term = xtermRef.current;
     if (!term) return;
+    setIsRestoring(true);
     term.writeln("\x1b[2m[restarting…]\x1b[0m");
     void window.aya.ptySpawn({
       ptyId: terminal.id,
@@ -495,6 +498,12 @@ export function TerminalView({
       rows: Math.max(term.rows, 24),
     });
   }, [restartTrigger, terminal.id]);
+
+  useEffect(() => {
+    setIsRestoring(true);
+    const id = window.setTimeout(() => setIsRestoring(false), 2500);
+    return () => window.clearTimeout(id);
+  }, [terminal.id]);
 
   // Hot-swap theme when the active selection changes. xterm.js stashes the
   // new palette into `options.theme` but does NOT repaint the visible grid by
@@ -593,6 +602,17 @@ export function TerminalView({
         onWheelCapture={() => setIsScrollbarHidden(false)}
       >
         <div className="aya-xterm-frame" ref={containerRef} />
+        {isRestoring && (
+          <div className="aya-terminal-restoring" aria-live="polite">
+            <span
+              className="aya-terminal-restoring-icon"
+              style={{ fontFamily: "Material Symbols Outlined" }}
+            >
+              sync
+            </span>
+            <span>Restoring sessions...</span>
+          </div>
+        )}
       </div>
       {findOpen && (
         <FindBar

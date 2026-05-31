@@ -9,7 +9,12 @@ import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { getGitInfo } from "../dist-electron/git.js";
+import {
+  getGitChangedFiles,
+  getGitDiff,
+  getGitInfo,
+  parseGitPorcelain,
+} from "../dist-electron/git.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -91,6 +96,53 @@ test("staged + unstaged + untracked all count (no dedup needed for status bar)",
     await writeFile(path.join(dir, "c.txt"), "c\n");
     const info = await getGitInfo(dir);
     assert.equal(info.dirty, 3);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("getGitChangedFiles returns porcelain statuses and paths", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "aya-git-"));
+  try {
+    await initRepo(dir);
+    await writeFile(path.join(dir, "a.txt"), "a\n");
+    await writeFile(path.join(dir, "b.txt"), "b\n");
+    await commitAll(dir, "initial");
+    await writeFile(path.join(dir, "a.txt"), "A\n");
+    await execFileAsync("git", ["add", "a.txt"], { cwd: dir });
+    await writeFile(path.join(dir, "b.txt"), "B\n");
+    await writeFile(path.join(dir, "c.txt"), "c\n");
+    const files = await getGitChangedFiles(dir);
+    assert.deepEqual(files, [
+      { status: "M", path: "a.txt" },
+      { status: "M", path: "b.txt" },
+      { status: "??", path: "c.txt" },
+    ]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("parseGitPorcelain keeps rename paths readable", () => {
+  assert.deepEqual(parseGitPorcelain("R  old.txt -> new.txt\n"), [
+    { status: "R", path: "old.txt -> new.txt" },
+  ]);
+});
+
+test("getGitDiff includes tracked changes and untracked files", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "aya-git-"));
+  try {
+    await initRepo(dir);
+    await writeFile(path.join(dir, "tracked.ts"), "const value = 1;\n");
+    await commitAll(dir, "initial");
+    await writeFile(path.join(dir, "tracked.ts"), "const value = 2;\n");
+    await writeFile(path.join(dir, "new.ts"), "export const created = true;\n");
+    const diff = await getGitDiff(dir);
+    assert.match(diff, /diff --git a\/tracked\.ts b\/tracked\.ts/);
+    assert.match(diff, /-const value = 1;/);
+    assert.match(diff, /\+const value = 2;/);
+    assert.match(diff, /diff --git a\/new\.ts b\/new\.ts/);
+    assert.match(diff, /\+export const created = true;/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

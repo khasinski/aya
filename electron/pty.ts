@@ -12,8 +12,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { execFile } from "node:child_process";
 import type * as PtyModule from "node-pty";
-import type { WebContents } from "electron";
-import type { SpawnFailureReason, SpawnRequest } from "./types";
+import type { PtyEvent, SpawnFailureReason, SpawnRequest } from "./types";
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 
 let nodePty: typeof PtyModule | null = null;
@@ -44,6 +43,11 @@ const pendingKills = new Set<string>();
 // Auto-evict pending-kill markers so stale ids don't linger forever (defense
 // in depth — usually the spawn either runs within milliseconds or never).
 const PENDING_KILL_TTL_MS = 5_000;
+
+export interface PtyEventSink {
+  isDestroyed(): boolean;
+  sendPtyEvent(event: PtyEvent): void;
+}
 
 function appendToOutputBuffer(ptyId: string, chunk: string): void {
   let chunks = outputBuffers.get(ptyId);
@@ -191,16 +195,16 @@ export const bashArgv = shellArgv;
 /** Friendly error reporter — writes a red banner into the terminal and emits
  *  a synthetic exit so the host knows the spawn never happened. */
 function reportSpawnFailure(
-  wc: WebContents,
+  sink: PtyEventSink,
   ptyId: string,
   reason: SpawnFailureReason,
   message: string,
 ): void {
-  if (wc.isDestroyed()) return;
+  if (sink.isDestroyed()) return;
   const banner = `\r\n\x1b[1;31maya: \x1b[0m\x1b[31m${message}\x1b[0m\r\n\r\n`;
-  wc.send("pty:event", { type: "spawn-failed", ptyId, reason, detail: message });
-  wc.send("pty:event", { type: "data", ptyId, chunk: banner });
-  wc.send("pty:event", { type: "exit", ptyId, exitCode: 127 });
+  sink.sendPtyEvent({ type: "spawn-failed", ptyId, reason, detail: message });
+  sink.sendPtyEvent({ type: "data", ptyId, chunk: banner });
+  sink.sendPtyEvent({ type: "exit", ptyId, exitCode: 127 });
 }
 
 function preflightBinary(command: string): string | null {
@@ -245,7 +249,7 @@ function safeEnv(req: SpawnRequest, cwd: string): { [key: string]: string } {
   return out;
 }
 
-export async function spawnPty(req: SpawnRequest, wc: WebContents): Promise<void> {
+export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<void> {
   if (pendingKills.has(req.ptyId)) {
     // killPty arrived before this spawn (the renderer closed the tab between
     // mounting and the IPC round-trip). Drop the spawn so we don't orphan a
@@ -259,8 +263,8 @@ export async function spawnPty(req: SpawnRequest, wc: WebContents): Promise<void
     // xterm.js can repaint the existing scrollback. The PTY's own onData
     // continues to deliver new bytes to the renderer.
     const buffered = getBufferedOutput(req.ptyId);
-    if (buffered && !wc.isDestroyed()) {
-      wc.send("pty:event", {
+    if (buffered && !sink.isDestroyed()) {
+      sink.sendPtyEvent({
         type: "data",
         ptyId: req.ptyId,
         chunk: buffered,
@@ -274,7 +278,7 @@ export async function spawnPty(req: SpawnRequest, wc: WebContents): Promise<void
     const stat = fs.statSync(cwd);
     if (!stat.isDirectory()) {
       reportSpawnFailure(
-        wc,
+        sink,
         req.ptyId,
         "cwd-not-directory",
         `not a directory: ${cwd}\nEdit the project to fix this, or close it.`,
@@ -285,7 +289,7 @@ export async function spawnPty(req: SpawnRequest, wc: WebContents): Promise<void
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "ENOENT") {
       reportSpawnFailure(
-        wc,
+        sink,
         req.ptyId,
         "cwd-missing",
         `directory does not exist: ${cwd}\nClose the project (top-bar ✕) to clean up.`,
@@ -293,7 +297,7 @@ export async function spawnPty(req: SpawnRequest, wc: WebContents): Promise<void
       return;
     }
     reportSpawnFailure(
-      wc,
+      sink,
       req.ptyId,
       "cwd-unreadable",
       `cannot read ${cwd}: ${String(err)}`,
@@ -303,7 +307,7 @@ export async function spawnPty(req: SpawnRequest, wc: WebContents): Promise<void
 
   if (!req.command || !req.command.trim()) {
     reportSpawnFailure(
-      wc,
+      sink,
       req.ptyId,
       "preset-empty-command",
       `preset has no command — edit it in Settings.`,
@@ -314,7 +318,7 @@ export async function spawnPty(req: SpawnRequest, wc: WebContents): Promise<void
   const binary = preflightBinary(req.command);
   if (binary && !(await commandExists(binary))) {
     reportSpawnFailure(
-      wc,
+      sink,
       req.ptyId,
       "command-not-found",
       `command not found: ${binary}\nEdit the preset, install the CLI, or re-scan installed CLIs.`,
@@ -337,7 +341,7 @@ export async function spawnPty(req: SpawnRequest, wc: WebContents): Promise<void
     });
   } catch (err) {
     reportSpawnFailure(
-      wc,
+      sink,
       req.ptyId,
       "node-pty-spawn-error",
       `failed to spawn: ${err instanceof Error ? err.message : String(err)}`,
@@ -349,15 +353,15 @@ export async function spawnPty(req: SpawnRequest, wc: WebContents): Promise<void
 
   child.onData((chunk) => {
     appendToOutputBuffer(req.ptyId, chunk);
-    if (wc.isDestroyed()) return;
-    wc.send("pty:event", { type: "data", ptyId: req.ptyId, chunk });
+    if (sink.isDestroyed()) return;
+    sink.sendPtyEvent({ type: "data", ptyId: req.ptyId, chunk });
   });
 
   child.onExit(({ exitCode }) => {
     ptys.delete(req.ptyId);
     outputBuffers.delete(req.ptyId);
-    if (wc.isDestroyed()) return;
-    wc.send("pty:event", { type: "exit", ptyId: req.ptyId, exitCode });
+    if (sink.isDestroyed()) return;
+    sink.sendPtyEvent({ type: "exit", ptyId: req.ptyId, exitCode });
   });
 }
 
@@ -407,4 +411,8 @@ export function killAll(): void {
   ptys.clear();
   outputBuffers.clear();
   pendingKills.clear();
+}
+
+export function activePtyCount(): number {
+  return ptys.size;
 }

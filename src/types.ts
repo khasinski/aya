@@ -95,6 +95,11 @@ export interface ProjectGitInfo {
   dirty: number;
 }
 
+export interface GitChangedFile {
+  status: string;
+  path: string;
+}
+
 export type SpawnFailureReason =
   | "cwd-missing"
   | "cwd-not-directory"
@@ -164,6 +169,7 @@ export interface BufferSearchHit {
 export interface AyaApi {
   /** True under `npm run dev` (AYA_DEV=1). */
   isDev: boolean;
+  platform: NodeJS.Platform;
 
   ptySpawn(req: SpawnRequest): Promise<void>;
   ptyWrite(ptyId: string, data: string): Promise<void>;
@@ -193,6 +199,8 @@ export interface AyaApi {
   expandPath(path: string): Promise<string>;
   completePath(pathPrefix: string): Promise<string[]>;
   getGitInfo(directory: string): Promise<ProjectGitInfo>;
+  getGitChangedFiles(directory: string): Promise<GitChangedFile[]>;
+  getGitDiff(directory: string): Promise<string>;
   pickDirectory(): Promise<string | null>;
   dirExists(path: string): Promise<boolean>;
   createDir(path: string): Promise<void>;

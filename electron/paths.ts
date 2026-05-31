@@ -29,3 +29,4 @@ export const PROJECTS_STATE_FILE = path.join(AYA_HOME, "projects-state.json");
 export const PROJECTS_ORDER_FILE = path.join(AYA_HOME, "projects-order.json");
 export const OPEN_PROJECTS_FILE = path.join(AYA_HOME, "open-projects.json");
 export const CONTROL_SOCKET_PATH = path.join(AYA_HOME, "aya.sock");
+export const PTY_HOST_SOCKET_PATH = path.join(AYA_HOME, "pty-host.sock");

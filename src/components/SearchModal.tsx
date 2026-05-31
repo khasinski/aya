@@ -4,6 +4,7 @@ import {
   getPreset,
   type Preset,
   type ProjectConfig,
+  type ProjectEvent,
   type TerminalState,
 } from "../types";
 
@@ -12,6 +13,7 @@ interface Props {
   allProjects: ProjectConfig[];
   activeProject: ProjectConfig | null;
   terminals: Record<string, TerminalState>;
+  events: ProjectEvent[];
   presets: Preset[];
   /** Map of terminalId → ms timestamp of last PTY data, for ranking the
    *  default (empty-query) list by recency. */
@@ -23,10 +25,11 @@ interface Props {
 }
 
 export interface SearchResult {
-  kind: "project" | "terminal" | "launcher";
+  kind: "project" | "terminal" | "launcher" | "event";
   projectSlug: string;
   terminalId?: string;
   presetId?: string;
+  eventId?: string;
   isOpen?: boolean;
   label: string;
   secondary: string;
@@ -112,12 +115,48 @@ function launcherAllTokens(preset: Preset, tokens: string[]): number {
   return total;
 }
 
+function eventAllTokens(
+  event: ProjectEvent,
+  projectName: string,
+  terminalName: string,
+  tokens: string[],
+): number {
+  let total = 0;
+  const haystacks = [
+    { value: event.title, exact: 650, prefix: 325, contains: 120 },
+    { value: event.detail ?? "", exact: 450, prefix: 225, contains: 90 },
+    { value: projectName, exact: 350, prefix: 175, contains: 70 },
+    { value: terminalName, exact: 300, prefix: 150, contains: 60 },
+    { value: event.level, exact: 500, prefix: 250, contains: 100 },
+  ];
+  for (const tok of tokens) {
+    let best = 0;
+    for (const h of haystacks) {
+      const value = h.value.toLowerCase();
+      if (value === tok) best = Math.max(best, h.exact);
+      else if (value.startsWith(tok)) best = Math.max(best, h.prefix);
+      else if (value.includes(tok)) best = Math.max(best, h.contains);
+    }
+    if (best === 0) return 0;
+    total += best;
+  }
+  return total;
+}
+
+function formatEventSearchTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function buildResults(
   query: string,
   projects: ProjectConfig[],
   allProjects: ProjectConfig[],
   activeProject: ProjectConfig | null,
   terminals: Record<string, TerminalState>,
+  events: ProjectEvent[],
   presets: Preset[],
   lastActivity: Record<string, number>,
   contentHits: BufferSearchHit[],
@@ -260,6 +299,27 @@ function buildResults(
     });
   }
 
+  for (const event of events) {
+    const project = allProjects.find((p) => p.slug === event.projectSlug);
+    const terminal = event.terminalId ? terminals[event.terminalId] : undefined;
+    const s = eventAllTokens(event, project?.name ?? "", terminal?.name ?? "", tokens);
+    if (s <= 0) continue;
+    out.push({
+      kind: "event",
+      projectSlug: event.projectSlug,
+      terminalId: event.terminalId,
+      eventId: event.id,
+      label: event.title,
+      secondary: [
+        formatEventSearchTime(event.createdAt),
+        project?.name ?? event.projectSlug,
+        event.detail,
+      ].filter(Boolean).join(" · "),
+      icon: event.level === "error" ? "!" : event.level === "waiting" ? "?" : "i",
+      score: s + 15,
+    });
+  }
+
   out.sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
   return out.slice(0, 50);
 }
@@ -269,6 +329,7 @@ export function SearchModal({
   allProjects,
   activeProject,
   terminals,
+  events,
   presets,
   lastActivity,
   onSelectProject,
@@ -318,6 +379,7 @@ export function SearchModal({
         allProjects,
         activeProject,
         terminals,
+        events,
         presets,
         lastActivity,
         contentHits,
@@ -328,6 +390,7 @@ export function SearchModal({
       allProjects,
       activeProject,
       terminals,
+      events,
       presets,
       lastActivity,
       contentHits,
@@ -356,7 +419,7 @@ export function SearchModal({
   const select = (r: SearchResult) => {
     if (r.kind === "launcher" && r.presetId) {
       onRunPreset(r.presetId);
-    } else if (r.kind === "terminal" && r.terminalId) {
+    } else if ((r.kind === "terminal" || r.kind === "event") && r.terminalId) {
       onSelectTerminal(r.projectSlug, r.terminalId);
     } else {
       onSelectProject(r.projectSlug);
@@ -407,7 +470,7 @@ export function SearchModal({
           ) : (
             results.map((r, i) => (
               <ResultRow
-                key={`${r.kind}-${r.projectSlug}-${r.terminalId ?? r.presetId ?? "_"}-${i}`}
+                key={`${r.kind}-${r.projectSlug}-${r.terminalId ?? r.presetId ?? r.eventId ?? "_"}-${i}`}
                 result={r}
                 selected={i === selectedIndex}
                 index={i}
@@ -489,7 +552,9 @@ function ResultRow({
               : "project"
             : result.kind === "launcher"
               ? "run"
-              : ""}
+              : result.kind === "event"
+                ? "event"
+                : ""}
         </span>
       )}
     </div>

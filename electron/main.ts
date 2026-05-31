@@ -31,19 +31,12 @@ import {
   updateProject,
 } from "./config";
 import { startControlServer } from "./control";
-import { getGitInfo } from "./git";
+import { getGitChangedFiles, getGitDiff, getGitInfo } from "./git";
 import { IS_DEV } from "./paths";
 import { scanHarnesses } from "./harnesses";
 import { listPresets, savePresets } from "./presets";
 import { readRepoProjectConfig } from "./project-local";
-import {
-  killAll,
-  killPty,
-  resizePty,
-  searchPtyOutputs,
-  spawnPty,
-  writePty,
-} from "./pty";
+import { PtyHostClient } from "./pty-host-client";
 import {
   requirePositiveInt,
   requireString,
@@ -58,6 +51,7 @@ import type { CliStatus } from "./types";
 
 const DEV_SERVER_URL = "http://localhost:5183";
 const WINDOW_TITLE = IS_DEV ? "Aya Dev" : "Aya";
+const ptyHost = new PtyHostClient(path.join(__dirname, "pty-host.js"));
 
 function pathEntries(): string[] {
   return (process.env.PATH ?? "")
@@ -386,6 +380,13 @@ function showAyaAboutPanel(): void {
 
 function installApplicationMenu(): void {
   configureAppIdentity();
+  const restartItem: MenuItemConstructorOptions = {
+    label: `Restart ${WINDOW_TITLE}`,
+    click: () => {
+      app.relaunch();
+      app.quit();
+    },
+  };
   const appMenu: MenuItemConstructorOptions = {
     label: WINDOW_TITLE,
     submenu: [
@@ -399,6 +400,7 @@ function installApplicationMenu(): void {
         accelerator: "CmdOrCtrl+,",
         click: () => dispatchShortcut("open-settings"),
       },
+      restartItem,
       { type: "separator" },
       { role: "services" },
       { type: "separator" },
@@ -425,6 +427,12 @@ function installApplicationMenu(): void {
           accelerator: "CmdOrCtrl+W",
           click: () => dispatchShortcut("close-tab"),
         },
+        ...(process.platform === "darwin"
+          ? []
+          : [
+              { type: "separator" as const },
+              restartItem,
+            ]),
       ],
     },
     {
@@ -497,8 +505,6 @@ function installApplicationMenu(): void {
           click: () => dispatchShortcut("split-pane-below"),
         },
         { type: "separator" },
-        { role: "reload" },
-        { role: "forceReload" },
         { role: "toggleDevTools" },
         { type: "separator" },
         { role: "resetZoom" },
@@ -582,6 +588,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
 
   // Persist geometry changes; the helper handles debouncing + final flush.
   trackWindowState(win);
+  ptyHost.setWebContents(win.webContents);
 
   win.once("ready-to-show", () => win.show());
   win.on("closed", () => {
@@ -631,6 +638,10 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     // e.g. Cmd+Shift+T should NOT fire our Cmd+T action.
     if (input.shift || input.alt) return;
     const key = input.key.toLowerCase();
+    if (key === "r") {
+      event.preventDefault();
+      return;
+    }
     let action: string | null = null;
     if (key === "t") action = "new-shell";
     else if (key === "w") action = "close-tab";
@@ -658,11 +669,12 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
 }
 
 function registerIpc(win: BrowserWindow): void {
+  ptyHost.setWebContents(win.webContents);
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
-    await spawnPty(validateSpawnRequest(req), win.webContents);
+    await ptyHost.spawn(validateSpawnRequest(req));
   });
   ipcMain.handle("pty:write", async (_e, ptyId: unknown, data: unknown) =>
-    writePty(
+    ptyHost.write(
       requireString(ptyId, "pty:write.ptyId"),
       requireString(data, "pty:write.data"),
     ),
@@ -670,17 +682,17 @@ function registerIpc(win: BrowserWindow): void {
   ipcMain.handle(
     "pty:resize",
     async (_e, ptyId: unknown, cols: unknown, rows: unknown) =>
-      resizePty(
+      ptyHost.resize(
         requireString(ptyId, "pty:resize.ptyId"),
         requirePositiveInt(cols, "pty:resize.cols"),
         requirePositiveInt(rows, "pty:resize.rows"),
       ),
   );
   ipcMain.handle("pty:kill", async (_e, ptyId: unknown) =>
-    killPty(requireString(ptyId, "pty:kill.ptyId")),
+    ptyHost.kill(requireString(ptyId, "pty:kill.ptyId")),
   );
   ipcMain.handle("pty:search", async (_e, query: unknown) =>
-    searchPtyOutputs(requireString(query, "pty:search.query")),
+    ptyHost.search(requireString(query, "pty:search.query")),
   );
 
   ipcMain.handle("projects:list", async () => listProjects());
@@ -750,6 +762,12 @@ function registerIpc(win: BrowserWindow): void {
   );
   ipcMain.handle("env:git", async (_e, directory: unknown) =>
     getGitInfo(requireString(directory, "env:git.directory")),
+  );
+  ipcMain.handle("env:git-changed-files", async (_e, directory: unknown) =>
+    getGitChangedFiles(requireString(directory, "env:git-changed-files.directory")),
+  );
+  ipcMain.handle("env:git-diff", async (_e, directory: unknown) =>
+    getGitDiff(requireString(directory, "env:git-diff.directory")),
   );
   ipcMain.handle("env:pick-dir", async () => {
     const result = await dialog.showOpenDialog(win, {
@@ -927,8 +945,5 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  killAll();
   if (process.platform !== "darwin") app.quit();
 });
-
-app.on("before-quit", () => killAll());
