@@ -31,7 +31,7 @@ const ptys = new Map<string, PtyModule.IPty>();
 // keeps running across these events but the new xterm.js instance has no
 // scrollback — we replay the buffered bytes so the user sees the existing
 // terminal state instead of an empty pane.
-const OUTPUT_BUFFER_MAX = 200_000; // ~200kb of recent bytes per terminal
+export const OUTPUT_BUFFER_MAX = 1_000_000; // ~1MB of recent bytes per terminal
 const outputBuffers = new Map<string, string[]>();
 
 // Spawn/kill race guard: if killPty arrives before the corresponding
@@ -268,6 +268,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
         type: "data",
         ptyId: req.ptyId,
         chunk: buffered,
+        replay: true,
       });
     }
     return;

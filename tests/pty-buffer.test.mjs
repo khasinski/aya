@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import {
   __testAppendToOutputBuffer,
   __testClearOutputBuffers,
+  OUTPUT_BUFFER_MAX,
   getBufferedOutput,
   searchPtyOutputs,
 } from "../dist-electron/pty.js";
@@ -15,8 +16,6 @@ import {
 // The buffer is private to pty.ts. To exercise it we expose getBufferedOutput
 // and rely on the public spawnPty path elsewhere. For unit testing the trim,
 // we drive a stub via a local reimplementation matching the production code.
-
-const OUTPUT_BUFFER_MAX = 200_000;
 
 function makeBuffer() {
   const chunks = [];
@@ -86,9 +85,9 @@ test("buffer keeps small writes intact", () => {
 
 test("buffer trims oldest chunks once total exceeds limit", () => {
   const b = makeBuffer();
-  // Push 10 × 30kb chunks = 300kb total, limit is 200kb.
+  // Push enough chunks to exceed the production rolling-buffer limit.
   // Expect the oldest chunks to be dropped.
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 40; i++) {
     const tag = String.fromCharCode(97 + i); // "a", "b", "c", ...
     b.append(tag.repeat(30_000));
   }
@@ -96,8 +95,8 @@ test("buffer trims oldest chunks once total exceeds limit", () => {
   assert.ok(result.length <= OUTPUT_BUFFER_MAX);
   // The first chunk(s) should be gone. "a" is definitely gone.
   assert.equal(result.includes("a"), false);
-  // The last chunk ("j") must be present in full.
-  assert.ok(result.includes("j".repeat(30_000)));
+  // The last chunk must be present in full.
+  assert.ok(result.includes(String.fromCharCode(97 + 39).repeat(30_000)));
 });
 
 test("buffer keeps at least one chunk even if it exceeds the limit", () => {

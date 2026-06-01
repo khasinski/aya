@@ -2008,7 +2008,7 @@ export function App() {
                   onCloseProject={closeProject}
                   onRequestRestart={() => restartTerminal(t.id)}
                   restartTrigger={restartTriggers[t.id] ?? 0}
-                  enableWebgl={!isSplit}
+                  enableWebgl={false}
                 />
               );
             })}

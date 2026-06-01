@@ -75,7 +75,7 @@ export type SpawnFailureReason =
   | "node-pty-spawn-error";
 
 export type PtyEvent =
-  | { type: "data"; ptyId: string; chunk: string }
+  | { type: "data"; ptyId: string; chunk: string; replay?: boolean }
   | { type: "exit"; ptyId: string; exitCode: number }
   | {
       type: "spawn-failed";

@@ -115,6 +115,7 @@ export function TerminalView({
   const webglRef = useRef<WebglAddon | null>(null);
   const spawnedRef = useRef(false);
   const fitFrameRef = useRef<number | null>(null);
+  const replayingOutputRef = useRef(0);
   const [findQuery, setFindQuery] = useState("");
   const [isScrollbarHidden, setIsScrollbarHidden] = useState(false);
   const [isRestoring, setIsRestoring] = useState(true);
@@ -178,6 +179,30 @@ export function TerminalView({
     [fitTerminal],
   );
 
+  const attachWebgl = useCallback(
+    (term: XTerm) => {
+      if (!enableWebgl || webglRef.current) return;
+      try {
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => {
+          try {
+            webgl.dispose();
+          } catch {
+            /* ignore */
+          }
+          if (webglRef.current === webgl) webglRef.current = null;
+          repairTerminalRender(false);
+        });
+        term.loadAddon(webgl);
+        webglRef.current = webgl;
+        repairTerminalRender(false);
+      } catch {
+        // WebGL unavailable; DOM renderer is fine, just drifty.
+      }
+    },
+    [enableWebgl, repairTerminalRender],
+  );
+
   // Create the xterm instance + spawn the PTY once.
   useEffect(() => {
     if (!containerRef.current || xtermRef.current) return;
@@ -222,26 +247,7 @@ export function TerminalView({
     // The addon can throw on contexts without a usable WebGL2 (rare on
     // Electron, but possible if the user disabled hardware acceleration).
     // We catch and fall through to the DOM renderer in that case.
-    try {
-      if (!enableWebgl) throw new Error("WebGL disabled for split panes");
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => {
-        // Browser dropped the WebGL context (tab backgrounded for too long
-        // on low-memory machines). Dispose the addon — xterm will fall
-        // back to DOM rendering automatically and the user keeps a
-        // working terminal at the cost of the drift fix.
-        try {
-          webgl.dispose();
-        } catch {
-          /* ignore */
-        }
-        if (webglRef.current === webgl) webglRef.current = null;
-      });
-      term.loadAddon(webgl);
-      webglRef.current = webgl;
-    } catch {
-      // WebGL unavailable; DOM renderer is fine, just drifty.
-    }
+    attachWebgl(term);
 
     xtermRef.current = term;
     fitRef.current = fit;
@@ -252,7 +258,14 @@ export function TerminalView({
       if (event.ptyId !== terminal.id) return;
       setIsRestoring(false);
       if (event.type === "data") {
-        term.write(event.chunk);
+        if (event.replay) {
+          replayingOutputRef.current += 1;
+          term.write(event.chunk, () => {
+            replayingOutputRef.current = Math.max(0, replayingOutputRef.current - 1);
+          });
+        } else {
+          term.write(event.chunk);
+        }
         if (onPtyData) onPtyData(event.chunk);
       } else if (event.type === "exit") {
         const restartHint =
@@ -354,6 +367,7 @@ export function TerminalView({
     });
 
     const onDataDisposable = term.onData((data) => {
+      if (replayingOutputRef.current > 0) return;
       if (data.length > 0) setIsScrollbarHidden(true);
       void window.aya.ptyWrite(terminal.id, data);
     });
@@ -406,15 +420,23 @@ export function TerminalView({
   }, [terminal.id]);
 
   useEffect(() => {
-    if (enableWebgl || !webglRef.current) return;
-    try {
-      webglRef.current.dispose();
-    } catch {
-      /* ignore */
+    const term = xtermRef.current;
+    if (!term) return;
+    if (enableWebgl) {
+      attachWebgl(term);
+      repairTerminalRender(false);
+      return;
     }
-    webglRef.current = null;
+    if (webglRef.current) {
+      try {
+        webglRef.current.dispose();
+      } catch {
+        /* ignore */
+      }
+      webglRef.current = null;
+    }
     repairTerminalRender(false);
-  }, [enableWebgl, repairTerminalRender]);
+  }, [attachWebgl, enableWebgl, repairTerminalRender]);
 
   useEffect(() => {
     if (!isVisible) return;
