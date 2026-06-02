@@ -58,9 +58,12 @@ jobs:
       # re-extract and fail loudly if path.txt is still missing.
       - name: Ensure Electron binary
         run: |
-          rm -f node_modules/electron/path.txt
-          rm -rf node_modules/electron/dist
-          node node_modules/electron/install.js
+          rm -rf node_modules/electron/dist node_modules/electron/path.txt
+          # force_no_cache makes @electron/get re-download instead of reusing a
+          # cache entry that install-app-deps may have left in a form electron's
+          # own installer won't extract.
+          force_no_cache=true node node_modules/electron/install.js
+          ls -la node_modules/electron/
           test -f node_modules/electron/path.txt
           echo "electron path.txt -> $(cat node_modules/electron/path.txt)"
 
