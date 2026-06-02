@@ -51,11 +51,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Ensure the Electron binary + node_modules/electron/path.txt exist.
-      # npm ci does not reliably run electron's download postinstall here, and
-      # Playwright's electron.launch reads path.txt to find the binary.
+      # Ensure node_modules/electron/path.txt exists (Playwright's
+      # electron.launch reads it to find the binary). install-app-deps fills the
+      # ~/.cache/electron download cache during npm ci, which makes electron's
+      # own postinstall skip extraction and never write path.txt. Force a clean
+      # re-extract and fail loudly if path.txt is still missing.
       - name: Ensure Electron binary
-        run: node node_modules/electron/install.js
+        run: |
+          rm -f node_modules/electron/path.txt
+          rm -rf node_modules/electron/dist
+          node node_modules/electron/install.js
+          test -f node_modules/electron/path.txt
+          echo "electron path.txt -> $(cat node_modules/electron/path.txt)"
 
       # Electron on Linux CI needs the Chromium system libraries plus a virtual
       # X server. install-deps pulls the shared libs; xvfb-run provides the display.
