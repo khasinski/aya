@@ -16,6 +16,23 @@ import { enterKeyAction, META_ENTER } from "../terminal-keys";
 import { snippetPtyPayload } from "../snippet-payload";
 import { SnippetBar } from "./SnippetBar";
 
+// Terminal sizing + timing constants. The fallback cols/rows are the standard
+// 80x24 a PTY gets before xterm has measured the pane (used at every spawn).
+const TERMINAL_FALLBACK_COLS = 80;
+const TERMINAL_FALLBACK_ROWS = 24;
+// Lines of scrollback xterm keeps in memory per terminal.
+const SCROLLBACK_LINES = 10_000;
+// Wheel-scroll easing: ~8 frames at 60Hz — smooth without feeling sluggish.
+const SMOOTH_SCROLL_DURATION_MS = 125;
+// Delay before re-fitting/repainting a freshly-shown terminal, giving xterm a
+// beat to finish measuring after a visibility/layout change.
+const RENDER_REPAIR_DELAY_MS = 80;
+// Retry delay for focusing the active terminal once it's done measuring.
+const FOCUS_RETRY_DELAY_MS = 60;
+// How long to keep showing "Restoring sessions…" before assuming the replay
+// arrived (or there was nothing to replay).
+const RESTORE_FALLBACK_MS = 2_500;
+
 interface Props {
   terminal: TerminalState;
   preset: Preset;
@@ -225,7 +242,7 @@ export function TerminalView({
       window.setTimeout(() => {
         refresh();
         fitTerminal(shouldFocus);
-      }, 80);
+      }, RENDER_REPAIR_DELAY_MS);
     },
     [fitTerminal],
   );
@@ -264,13 +281,13 @@ export function TerminalView({
       fontSize,
       cursorBlink: true,
       allowProposedApi: true,
-      scrollback: 10000,
+      scrollback: SCROLLBACK_LINES,
       // Animate between row positions on wheel scroll instead of snapping
       // one row at a time per tick. Terminal grids are inherently row-
       // quantized, but the snap is what reads as "choppy" when you flick
       // the trackpad. 125ms is about 8 frames at 60Hz: noticeable easing
       // without feeling sluggish.
-      smoothScrollDuration: 125,
+      smoothScrollDuration: SMOOTH_SCROLL_DURATION_MS,
       // Option-as-Meta so Option+B / Option+F / Option+Backspace send the
       // ESC-prefixed sequences readline (zsh, bash, claude, codex) expects
       // for backward-word / forward-word / delete-word. Without this, macOS
@@ -364,8 +381,8 @@ export function TerminalView({
             presetId: terminal.presetId,
             command: commandRef.current,
             cwd: cwdRef.current,
-            cols: Math.max(t.cols, 80),
-            rows: Math.max(t.rows, 24),
+            cols: Math.max(t.cols, TERMINAL_FALLBACK_COLS),
+            rows: Math.max(t.rows, TERMINAL_FALLBACK_ROWS),
           });
           canRestartRef.current = false;
           return false;
@@ -467,8 +484,8 @@ export function TerminalView({
         presetId: terminal.presetId,
         command,
         cwd,
-        cols: Math.max(cols, 80),
-        rows: Math.max(rows, 24),
+        cols: Math.max(cols, TERMINAL_FALLBACK_COLS),
+        rows: Math.max(rows, TERMINAL_FALLBACK_ROWS),
       });
     }
 
@@ -520,7 +537,7 @@ export function TerminalView({
     // fit can't swallow it.
     repairTerminalRender(false);
     const frame = requestAnimationFrame(() => repairTerminalRender(false));
-    const timer = setTimeout(() => repairTerminalRender(false), 80);
+    const timer = setTimeout(() => repairTerminalRender(false), RENDER_REPAIR_DELAY_MS);
     return () => {
       cancelAnimationFrame(frame);
       clearTimeout(timer);
@@ -550,7 +567,7 @@ export function TerminalView({
     // measuring right after a visibility/layout change.
     focusNow();
     const raf = requestAnimationFrame(focusNow);
-    const timer = setTimeout(focusNow, 60);
+    const timer = setTimeout(focusNow, FOCUS_RETRY_DELAY_MS);
     return () => {
       cancelAnimationFrame(raf);
       clearTimeout(timer);
@@ -624,14 +641,14 @@ export function TerminalView({
       presetId: terminal.presetId,
       command: commandRef.current,
       cwd: cwdRef.current,
-      cols: Math.max(term.cols, 80),
-      rows: Math.max(term.rows, 24),
+      cols: Math.max(term.cols, TERMINAL_FALLBACK_COLS),
+      rows: Math.max(term.rows, TERMINAL_FALLBACK_ROWS),
     });
   }, [restartTrigger, terminal.id]);
 
   useEffect(() => {
     setIsRestoring(true);
-    const id = window.setTimeout(() => setIsRestoring(false), 2500);
+    const id = window.setTimeout(() => setIsRestoring(false), RESTORE_FALLBACK_MS);
     return () => window.clearTimeout(id);
   }, [terminal.id]);
 
