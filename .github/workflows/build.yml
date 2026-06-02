@@ -62,13 +62,20 @@ jobs:
       # download + extract dist/. Write path.txt if the installer still omits it
       # (Linux job -> binary is dist/electron), then validate require('electron')
       # resolves to a real file. Diagnostics print on the way for fast triage.
+      # @electron/get downloads the zip fine on this runner, but electron's own
+      # extraction leaves dist/ without the binary. So force the download, then
+      # extract the cached zip ourselves with unzip (Linux x64 job), and point
+      # path.txt at it. Validate that require('electron') resolves to a real file.
       - name: Ensure Electron binary
         run: |
-          rm -rf node_modules/electron/dist node_modules/electron/path.txt ~/.cache/electron
-          DEBUG='@electron/get:*' force_no_cache=true node node_modules/electron/install.js 2>&1 | tail -60 || echo "INSTALL EXIT $?"
-          echo "=== dist contents ==="
-          ls -laR node_modules/electron/dist 2>/dev/null | head -40 || echo "NO DIST"
-          [ -f node_modules/electron/path.txt ] || printf 'electron' > node_modules/electron/path.txt
+          rm -rf node_modules/electron/dist node_modules/electron/path.txt
+          force_no_cache=true node node_modules/electron/install.js || true
+          zip="$(find "$HOME/.cache/electron" -name 'electron-v*-linux-x64.zip' | head -1)"
+          echo "cached electron zip: $zip"
+          test -f "$zip"
+          mkdir -p node_modules/electron/dist
+          unzip -o -q "$zip" -d node_modules/electron/dist
+          printf 'electron' > node_modules/electron/path.txt
           node -e "const fs=require('fs'); const e=require('electron'); if (typeof e!=='string' || !fs.existsSync(e)) throw new Error('electron binary missing: '+e); console.log('electron ->', e)"
 
       # Electron on Linux CI needs the Chromium system libraries plus a virtual
