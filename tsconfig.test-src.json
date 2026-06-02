@@ -16,6 +16,7 @@
     "src/bell.ts",
     "src/double-shift.ts",
     "src/pty-event-reducer.ts",
+    "src/snippet-payload.ts",
     "src/types.ts"
   ]
 }

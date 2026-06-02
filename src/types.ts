@@ -21,6 +21,17 @@ export interface HarnessDef {
   command: string;
 }
 
+/** A reusable text snippet the user injects into the active terminal (à la
+ *  iTerm2 Snippets). Lives in Aya (editor side), not in an agent's prompt — so
+ *  it doesn't sit in the agent's context until actually sent. `autoRun`
+ *  appends Enter to execute. */
+export interface Snippet {
+  id: string;
+  name: string;
+  text: string;
+  autoRun: boolean;
+}
+
 export interface ThemeColors {
   background: string;
   foreground: string;
@@ -189,6 +200,9 @@ export interface AyaApi {
   listPresets(): Promise<Preset[]>;
   savePresets(presets: Preset[]): Promise<void>;
   scanHarnesses(): Promise<HarnessDef[]>;
+
+  listSnippets(): Promise<Snippet[]>;
+  saveSnippets(snippets: Snippet[]): Promise<void>;
 
   listThemes(): Promise<ThemesFile>;
   saveThemes(file: ThemesFile): Promise<void>;

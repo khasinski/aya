@@ -3,6 +3,7 @@ import {
   type CliStatus,
   type HarnessDef,
   type Preset,
+  type Snippet,
   type Theme,
   looksNonInteractive,
   presetSlug,
@@ -11,10 +12,12 @@ import {
 interface Props {
   presets: Preset[];
   defaults: Preset[];
+  snippets: Snippet[];
   themes: Theme[];
   activeThemeId: string;
   onClose: () => void;
   onSave: (presets: Preset[]) => Promise<void> | void;
+  onSaveSnippets: (snippets: Snippet[]) => Promise<void> | void;
   onSaveThemes: (
     themes: Theme[],
     activeThemeId: string,
@@ -47,17 +50,39 @@ function fromDraft(p: DraftPreset): Preset {
   };
 }
 
+interface DraftSnippet extends Snippet {
+  __key: string;
+}
+
+function snippetToDraft(c: Snippet): DraftSnippet {
+  return { ...c, __key: uuid() };
+}
+
+function snippetFromDraft(c: DraftSnippet): Snippet {
+  return {
+    id: c.id.trim() || presetSlug(c.name || c.text),
+    name: c.name,
+    text: c.text,
+    autoRun: c.autoRun,
+  };
+}
+
 export function SettingsModal({
   presets,
   defaults,
+  snippets,
   themes: initialThemes,
   activeThemeId: initialActiveThemeId,
   onClose,
   onSave,
+  onSaveSnippets,
   onSaveThemes,
   onImportTheme,
 }: Props) {
   const [draft, setDraft] = useState<DraftPreset[]>(() => presets.map(toDraft));
+  const [snippetDraft, setSnippetDraft] = useState<DraftSnippet[]>(() =>
+    snippets.map(snippetToDraft),
+  );
   const [themes, setThemes] = useState<Theme[]>(initialThemes);
   const [activeThemeId, setActiveThemeId] = useState<string>(
     initialActiveThemeId,
@@ -193,6 +218,30 @@ export function SettingsModal({
       themeId: undefined,
     });
 
+  // --- Snippets editor -----------------------------------------------------
+
+  const updateSnippetRow = (key: string, patch: Partial<Snippet>) => {
+    setSnippetDraft((prev) =>
+      prev.map((c) => (c.__key === key ? { ...c, ...patch } : c)),
+    );
+  };
+
+  const removeSnippetRow = (key: string) => {
+    const row = snippetDraft.find((c) => c.__key === key);
+    if (!row) return;
+    if (!confirm(`Remove snippet "${row.name || row.text || "(unnamed)"}"?`)) {
+      return;
+    }
+    setSnippetDraft((prev) => prev.filter((c) => c.__key !== key));
+  };
+
+  const addSnippetRow = () => {
+    setSnippetDraft((prev) => [
+      ...prev,
+      { __key: uuid(), id: "", name: "", text: "", autoRun: false },
+    ]);
+  };
+
   const resetPresetsToDefaults = () => {
     if (
       !confirm(
@@ -267,12 +316,29 @@ export function SettingsModal({
 
   // --- Save ---------------------------------------------------------------
 
+  /** Snippets are lenient: rows with no text are dropped silently (an empty
+   *  row is just an in-progress edit, not an error). IDs are de-duplicated. */
+  const collectSnippets = (): Snippet[] => {
+    const seen = new Set<string>();
+    const out: Snippet[] = [];
+    for (const row of snippetDraft) {
+      const cleaned = snippetFromDraft(row);
+      if (!cleaned.text.trim()) continue;
+      let id = cleaned.id;
+      while (seen.has(id)) id = `${id}-2`;
+      seen.add(id);
+      out.push({ ...cleaned, id });
+    }
+    return out;
+  };
+
   const handleSave = async () => {
     const cleaned = validatePresets();
     if (!cleaned) return;
     setSaving(true);
     try {
       await onSave(cleaned);
+      await onSaveSnippets(collectSnippets());
       if (themesDirty) {
         await onSaveThemes(themes, activeThemeId);
       }
@@ -527,6 +593,81 @@ export function SettingsModal({
             ))}
           </div>
         )}
+
+        <hr className="aya-settings-divider" />
+
+        {/* === Snippets section === */}
+        <div className="aya-modal-title">Snippets</div>
+        <div className="aya-modal-hint">
+          Saved text you can inject into the active terminal from its snippet
+          drawer (the <strong>snippets</strong> button in a pane header). Toggle{" "}
+          <span className="aya-snippet-inline-ico" style={{ color: "#56d364" }}>
+            ▶
+          </span>{" "}
+          to run on send (adds Enter), or{" "}
+          <span className="aya-snippet-inline-ico" style={{ color: "#e3b341" }}>
+            ⏸
+          </span>{" "}
+          to only type it (you press Enter). Lives in Aya, not in an agent's
+          context.
+        </div>
+
+        <div className="aya-settings-list">
+          {snippetDraft.map((row) => (
+            <div className="aya-settings-snippet-row" key={row.__key}>
+              <button
+                type="button"
+                className={`aya-snippet-runtoggle aya-snippet-runtoggle--${
+                  row.autoRun ? "run" : "hold"
+                }`}
+                onClick={() =>
+                  updateSnippetRow(row.__key, { autoRun: !row.autoRun })
+                }
+                title={
+                  row.autoRun
+                    ? "Runs on send (Enter appended) — click to switch to type-only"
+                    : "Types only (you press Enter) — click to switch to run-on-send"
+                }
+              >
+                <span style={{ fontFamily: "Material Symbols Outlined" }}>
+                  {row.autoRun ? "play_arrow" : "pause"}
+                </span>
+              </button>
+              <div className="aya-settings-snippet-fields">
+                <input
+                  className="aya-modal-input aya-settings-snippet-name"
+                  value={row.name}
+                  onChange={(e) =>
+                    updateSnippetRow(row.__key, { name: e.target.value })
+                  }
+                  placeholder="Label (e.g. npm test)"
+                />
+                <textarea
+                  className="aya-modal-input aya-settings-snippet-text"
+                  value={row.text}
+                  rows={Math.min(6, Math.max(1, row.text.split("\n").length))}
+                  onChange={(e) =>
+                    updateSnippetRow(row.__key, { text: e.target.value })
+                  }
+                  placeholder="Text sent to the terminal (shell command or agent prompt)"
+                  spellCheck={false}
+                />
+              </div>
+              <button
+                className="aya-settings-row-close"
+                onClick={() => removeSnippetRow(row.__key)}
+                title="Remove snippet"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <div className="aya-settings-add-row">
+            <button className="aya-settings-add" onClick={addSnippetRow}>
+              ＋ Add snippet
+            </button>
+          </div>
+        </div>
 
         <div className="aya-modal-actions aya-settings-actions">
           <button className="aya-modal-btn" onClick={resetPresetsToDefaults}>

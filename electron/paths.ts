@@ -23,6 +23,7 @@ export const AYA_HOME =
 
 export const PROJECTS_DIR = path.join(AYA_HOME, "projects");
 export const PRESETS_FILE = path.join(AYA_HOME, "presets.json");
+export const SNIPPETS_FILE = path.join(AYA_HOME, "snippets.json");
 export const THEMES_FILE = path.join(AYA_HOME, "themes.json");
 export const WINDOW_STATE_FILE = path.join(AYA_HOME, "window-state.json");
 export const PROJECTS_STATE_FILE = path.join(AYA_HOME, "projects-state.json");

@@ -21,6 +21,7 @@ import {
 } from "./hooks/useTerminalSignals";
 import {
   BUILTIN_SHELL,
+  type Snippet,
   getPreset,
   type ProjectEvent,
   type Preset,
@@ -321,6 +322,7 @@ export function App() {
   });
   const [presets, setPresets] = useState<Preset[]>([]);
   const [defaultPresets, setDefaultPresets] = useState<Preset[]>([]);
+  const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [themes, setThemes] = useState<Theme[]>([]);
   const [activeThemeId, setActiveThemeId] = useState<string>("");
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
@@ -579,6 +581,7 @@ export function App() {
         loadedPresets,
         home,
         loadedThemes,
+        loadedSnippets,
       ] =
         await Promise.all([
           window.aya.getCwd(),
@@ -587,9 +590,11 @@ export function App() {
           window.aya.listPresets(),
           window.aya.getHomeDir(),
           window.aya.listThemes(),
+          window.aya.listSnippets(),
         ]);
       setPresets(loadedPresets);
       setDefaultPresets(loadedPresets);
+      setSnippets(loadedSnippets);
       setHomeDir(home);
       setThemes(loadedThemes.themes);
       setActiveThemeId(loadedThemes.activeId);
@@ -1430,6 +1435,13 @@ export function App() {
     setPresets(next);
   }, []);
 
+  const onSaveSnippets = useCallback(async (next: Snippet[]) => {
+    await window.aya.saveSnippets(next);
+    // Reflect exactly what was persisted (normalized: capped, deduped) rather
+    // than the raw draft, so the in-memory list can't drift from disk.
+    setSnippets(await window.aya.listSnippets());
+  }, []);
+
   /** Called by TerminalView when the user presses Shift+Enter in a
    *  cleanly-exited terminal. Clears the exit state so the PTY event router
    *  can resume updating status when the new PTY emits data. */
@@ -1965,6 +1977,7 @@ export function App() {
                   terminal={terminal}
                   preset={preset}
                   command={preset.command}
+                  snippets={snippets}
                   isVisible
                   cwd={terminal.cwd}
                   lastActivity={lastActivityRef.current[terminal.id]}
@@ -1997,6 +2010,7 @@ export function App() {
                   terminal={t}
                   preset={preset}
                   command={preset.command}
+                  snippets={snippets}
                   isVisible={false}
                   cwd={t.cwd}
                   lastActivity={lastActivityRef.current[t.id]}
@@ -2163,10 +2177,12 @@ export function App() {
         <SettingsModal
           presets={presets}
           defaults={defaultPresets}
+          snippets={snippets}
           themes={themes}
           activeThemeId={activeThemeId}
           onClose={() => setShowSettings(false)}
           onSave={onSavePresets}
+          onSaveSnippets={onSaveSnippets}
           onSaveThemes={onSaveThemes}
           onImportTheme={onImportTheme}
         />

@@ -8,8 +8,15 @@ import type {
   WorkingTab,
 } from "./types";
 import type { Preset } from "./presets";
+import type { Snippet } from "./snippets";
 import type { ThemeColors } from "./themes";
 import { isPreset } from "./presets";
+import { isSnippet, SNIPPET_TEXT_MAX } from "./snippets";
+
+/** Hard IPC ceiling on the number of snippets accepted in one save. Well above
+ *  the 200 persistence cap so normal saves pass; rejects only clearly hostile
+ *  payloads before any per-item work happens. */
+const SNIPPETS_IPC_MAX = 1_000;
 
 function fail(name: string, expected: string): never {
   throw new Error(`Invalid IPC payload for ${name}: expected ${expected}.`);
@@ -137,6 +144,20 @@ export function validatePresetArray(value: unknown): Preset[] {
   if (!Array.isArray(value)) fail("presets:save", "Preset[]");
   value.forEach((preset, idx) => {
     if (!isPreset(preset)) fail(`presets:save[${idx}]`, "Preset");
+  });
+  return value;
+}
+
+export function validateSnippetArray(value: unknown): Snippet[] {
+  if (!Array.isArray(value)) fail("snippets:save", "Snippet[]");
+  if (value.length > SNIPPETS_IPC_MAX) {
+    fail("snippets:save", `at most ${SNIPPETS_IPC_MAX} snippets`);
+  }
+  value.forEach((snippet, idx) => {
+    if (!isSnippet(snippet)) fail(`snippets:save[${idx}]`, "Snippet");
+    if ((snippet as Snippet).text.length > SNIPPET_TEXT_MAX) {
+      fail(`snippets:save[${idx}].text`, `text <= ${SNIPPET_TEXT_MAX} chars`);
+    }
   });
   return value;
 }

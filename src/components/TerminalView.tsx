@@ -10,12 +10,16 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import type { Preset, TerminalState, ThemeColors } from "../types";
+import type { Preset, Snippet, TerminalState, ThemeColors } from "../types";
+import { snippetPtyPayload } from "../snippet-payload";
+import { SnippetBar } from "./SnippetBar";
 
 interface Props {
   terminal: TerminalState;
   preset: Preset;
   command: string;
+  /** Saved snippets the user can inject into this terminal via the drawer. */
+  snippets: Snippet[];
   isVisible: boolean;
   cwd: string;
   lastActivity?: number;
@@ -85,6 +89,7 @@ export function TerminalView({
   terminal,
   preset,
   command,
+  snippets,
   isVisible,
   cwd,
   lastActivity,
@@ -119,6 +124,42 @@ export function TerminalView({
   const [findQuery, setFindQuery] = useState("");
   const [isScrollbarHidden, setIsScrollbarHidden] = useState(false);
   const [isRestoring, setIsRestoring] = useState(true);
+  const [snippetsOpen, setSnippetsOpen] = useState(false);
+
+  // Write a saved snippet's text into this terminal's PTY. autoRun appends a
+  // carriage return so it executes immediately; otherwise we only type the
+  // text and leave the cursor for the user to edit/extend. Either way we
+  // return focus to the terminal so the user can keep working.
+  const sendSnippet = useCallback(
+    (snippet: Snippet) => {
+      // A dead PTY (exited / spawn-failed) silently swallows ptyWrite, so the
+      // snippet would vanish with no feedback. Tell the user in the terminal
+      // itself and skip the no-op write. exitCode is non-null once the PTY has
+      // exited; restarting (Shift+Enter) clears it back to null.
+      if (terminal.exitCode !== null) {
+        try {
+          xtermRef.current?.write(
+            "\r\n\x1b[2maya: terminal has exited — press Shift+Enter to restart, then send the snippet again\x1b[0m\r\n",
+          );
+        } catch {
+          /* ignore — terminal may be mid-dispose */
+        }
+        setSnippetsOpen(false);
+        return;
+      }
+      void window.aya.ptyWrite(terminal.id, snippetPtyPayload(snippet));
+      // Collapse the drawer so the result (and the typed text) is visible —
+      // an open drawer covers the bottom of the terminal — and return focus
+      // so the user can keep typing / press Enter on a held snippet.
+      setSnippetsOpen(false);
+      try {
+        xtermRef.current?.focus();
+      } catch {
+        /* ignore — terminal may be mid-dispose */
+      }
+    },
+    [terminal.id, terminal.exitCode],
+  );
   // Current foreground-process title, fed by OSC 0/2 from the inner shell.
   // macOS zsh's default config emits this in preexec/precmd, so we get the
   // running command for free in shell tabs. Claude/Codex don't emit titles,
@@ -583,6 +624,23 @@ export function TerminalView({
             </span>
           </div>
         )}
+        <button
+          className={`aya-pane-snippettoggle ${
+            snippetsOpen ? "aya-pane-snippettoggle--on" : ""
+          }`}
+          type="button"
+          title="Saved snippets"
+          onClick={(e) => {
+            e.stopPropagation();
+            setSnippetsOpen((v) => !v);
+          }}
+        >
+          <span style={{ fontFamily: "Material Symbols Outlined" }}>bolt</span>
+          <span className="aya-pane-snippettoggle-label">snippets</span>
+          <span style={{ fontFamily: "Material Symbols Outlined" }}>
+            {snippetsOpen ? "expand_more" : "expand_less"}
+          </span>
+        </button>
       </div>
       {terminal.spawnFailure && (
         <div className="aya-pane-recovery">
@@ -636,6 +694,13 @@ export function TerminalView({
           </div>
         )}
       </div>
+      <SnippetBar
+        snippets={snippets}
+        open={snippetsOpen}
+        onClose={() => setSnippetsOpen(false)}
+        onSend={sendSnippet}
+        onOpenSettings={onOpenSettings}
+      />
       {findOpen && (
         <FindBar
           value={findQuery}

@@ -35,11 +35,13 @@ import { getGitChangedFiles, getGitDiff, getGitInfo } from "./git";
 import { IS_DEV } from "./paths";
 import { scanHarnesses } from "./harnesses";
 import { listPresets, savePresets } from "./presets";
+import { listSnippets, saveSnippets } from "./snippets";
 import { readRepoProjectConfig } from "./project-local";
 import { PtyHostClient } from "./pty-host-client";
 import {
   requirePositiveInt,
   requireString,
+  validateSnippetArray,
   validatePresetArray,
   validateProjectCollectionState,
   validateProjectConfig,
@@ -721,6 +723,11 @@ function registerIpc(win: BrowserWindow): void {
     savePresets(validatePresetArray(presets)),
   );
   ipcMain.handle("presets:scan-harnesses", async () => scanHarnesses());
+
+  ipcMain.handle("snippets:list", async () => listSnippets());
+  ipcMain.handle("snippets:save", async (_e, snippets: unknown) =>
+    saveSnippets(validateSnippetArray(snippets)),
+  );
 
   ipcMain.handle("themes:list", async () => {
     const { loadThemes } = await import("./themes");
