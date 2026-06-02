@@ -4,6 +4,7 @@ import {
   type ElectronApplication,
   type Page,
 } from "@playwright/test";
+import { execSync } from "node:child_process";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { seedEnv, type SeededEnv } from "./helpers/seed";
@@ -52,17 +53,23 @@ export const test = base.extend<{
 
     const app = await electron.launch({ args: launchArgs, cwd: APP_ROOT, env });
     await use(app);
-    // With --disable-gpu (CI) the graceful close resolves; locally it always
-    // has. Guard with a hard SIGKILL fallback if it ever stalls so the worker
-    // can still exit.
-    await Promise.race([
-      app.close().catch(() => {}),
-      new Promise((resolve) => setTimeout(resolve, 8000)),
-    ]);
     try {
       app.process().kill("SIGKILL");
     } catch {
       /* already gone */
+    }
+    if (process.env.CI) {
+      // Aya spawns a detached pty-host (its "PTYs survive restart" design) that
+      // outlives the window; on the isolated CI runner that leftover process
+      // keeps Playwright's worker from exiting (45s teardown timeout). Reap it.
+      // CI-only: locally this would also kill a developer's running Aya.
+      try {
+        execSync("pkill -9 -f pty-host.js", { stdio: "ignore" });
+      } catch {
+        /* nothing to kill */
+      }
+    } else {
+      await app.close().catch(() => {});
     }
   },
 
