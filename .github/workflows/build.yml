@@ -56,17 +56,19 @@ jobs:
       # ~/.cache/electron download cache during npm ci, which makes electron's
       # own postinstall skip extraction and never write path.txt. Force a clean
       # re-extract and fail loudly if path.txt is still missing.
-      # install.js extracts dist/ on the runner but does not reliably write
-      # node_modules/electron/path.txt (the pointer Playwright's electron.launch
-      # reads). Run it to extract, then write path.txt ourselves - on Linux the
-      # binary lives at dist/electron, so the file's content is just "electron".
+      # On this runner electron's install.js needs force_no_cache to actually
+      # extract dist/, and even then it does not write node_modules/electron/
+      # path.txt - the pointer Playwright's electron.launch reads via
+      # require('electron'). So: force the extract, then write path.txt ourselves
+      # if still missing (Linux-only job -> the binary is dist/electron), and
+      # validate that require('electron') resolves to an existing file. No
+      # `|| true`: a real installer failure must surface, not be masked.
       - name: Ensure Electron binary
         run: |
           rm -rf node_modules/electron/dist node_modules/electron/path.txt
-          node node_modules/electron/install.js || true
+          force_no_cache=true node node_modules/electron/install.js
           [ -f node_modules/electron/path.txt ] || printf 'electron' > node_modules/electron/path.txt
-          test -x node_modules/electron/dist/electron
-          echo "electron binary OK; path.txt -> $(cat node_modules/electron/path.txt)"
+          node -e "const fs=require('fs'); const e=require('electron'); if (typeof e!=='string' || !fs.existsSync(e)) throw new Error('electron binary missing: '+e); console.log('electron ->', e)"
 
       # Electron on Linux CI needs the Chromium system libraries plus a virtual
       # X server. install-deps pulls the shared libs; xvfb-run provides the display.
@@ -89,7 +91,7 @@ jobs:
   package-linux:
     name: Package Linux x64
     runs-on: ubuntu-24.04
-    needs: test
+    needs: [test, e2e]
     if: github.event_name != 'pull_request'
     steps:
       - name: Check out repository
