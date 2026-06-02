@@ -327,9 +327,6 @@ export function TerminalView({
       if (event.ptyId !== terminal.id) return;
       setIsRestoring(false);
       if (event.type === "data") {
-        // TEMP PROBE — log keyboard-protocol negotiation from the raw PTY
-        // stream (Kitty `CSI <>=? … u` and modifyOtherKeys `CSI > … m`), plus a
-        // one-time preview so we can tell if the program started at all.
         // Track whether a full-screen / rich TUI (claude, codex, vim…) is
         // running via focus-reporting mode (DECSET 1004). It gates Shift+Enter:
         // soft newline inside the TUI, plain Enter (submit) at the shell prompt.
