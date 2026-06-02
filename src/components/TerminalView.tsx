@@ -11,6 +11,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { Preset, Snippet, TerminalState, ThemeColors } from "../types";
+import { focusReportingState } from "../focus-reporting";
 import { snippetPtyPayload } from "../snippet-payload";
 import { SnippetBar } from "./SnippetBar";
 
@@ -124,6 +125,9 @@ export function TerminalView({
   const searchRef = useRef<SearchAddon | null>(null);
   const webglRef = useRef<WebglAddon | null>(null);
   const spawnedRef = useRef(false);
+  // True while a full-screen/rich TUI (claude, codex, vim…) is running, detected
+  // via focus-reporting mode (DECSET 1004). Gates the Shift+Enter soft newline.
+  const richInputRef = useRef(false);
   const fitFrameRef = useRef<number | null>(null);
   const replayingOutputRef = useRef(0);
   const [findQuery, setFindQuery] = useState("");
@@ -298,12 +302,20 @@ export function TerminalView({
     xtermRef.current = term;
     fitRef.current = fit;
     searchRef.current = search;
+
     fitTerminal();
 
     const unsubscribe = window.aya.onPtyEvent((event) => {
       if (event.ptyId !== terminal.id) return;
       setIsRestoring(false);
       if (event.type === "data") {
+        // TEMP PROBE — log keyboard-protocol negotiation from the raw PTY
+        // stream (Kitty `CSI <>=? … u` and modifyOtherKeys `CSI > … m`), plus a
+        // one-time preview so we can tell if the program started at all.
+        // Track whether a full-screen / rich TUI (claude, codex, vim…) is
+        // running via focus-reporting mode (DECSET 1004). It gates Shift+Enter:
+        // soft newline inside the TUI, plain Enter (submit) at the shell prompt.
+        richInputRef.current = focusReportingState(event.chunk, richInputRef.current);
         if (event.replay) {
           replayingOutputRef.current += 1;
           term.write(event.chunk, () => {
@@ -353,6 +365,26 @@ export function TerminalView({
           rows: Math.max(t.rows, 24),
         });
         canRestartRef.current = false;
+        return false;
+      }
+
+      // Shift+Enter inside a running rich TUI (claude, codex…): soft newline,
+      // don't submit. xterm sends a plain CR for Enter regardless of Shift, so
+      // the prompt would execute. Send meta-Enter (ESC + CR) — what claude/codex
+      // and zsh's zle treat as "insert a newline" — but ONLY when a rich TUI is
+      // active (focus-reporting on). At a plain shell prompt Shift+Enter stays a
+      // normal Enter, so the shell is unaffected. This is what iTerm2 gets from
+      // `claude /terminal-setup`, driven here by the signal claude itself emits.
+      if (
+        ev.key === "Enter" &&
+        ev.shiftKey &&
+        !ev.metaKey &&
+        !ev.ctrlKey &&
+        !ev.altKey &&
+        richInputRef.current
+      ) {
+        ev.preventDefault();
+        void window.aya.ptyWrite(terminal.id, "\x1b\r");
         return false;
       }
 
