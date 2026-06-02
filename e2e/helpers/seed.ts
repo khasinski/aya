@@ -15,11 +15,19 @@ export interface SeededEnv {
   tabIds: { left: string; right: string };
 }
 
+export interface SeedOptions {
+  /** When false, the project has no split layout, so only the active tab is
+   *  visible and switching happens via the sidebar (one terminal at a time).
+   *  Defaults to true (1x2 split, both panes visible). */
+  split?: boolean;
+}
+
 /** Build a throwaway, deterministic environment for one Electron launch:
- *  a project with two shell terminals in a 1x2 split, a single shell preset
- *  (so no PATH harness scan pulls in claude/codex), and an empty snippet store
- *  that the app seeds with its defaults on boot. */
-export function seedEnv(): SeededEnv {
+ *  a project with two shell terminals (in a 1x2 split by default), a single
+ *  shell preset (so no PATH harness scan pulls in claude/codex), and an empty
+ *  snippet store that the app seeds with its defaults on boot. */
+export function seedEnv(opts: SeedOptions = {}): SeededEnv {
+  const split = opts.split !== false;
   const root = mkdtempSync(join(tmpdir(), "aya-e2e-"));
   const ayaHome = join(root, "aya-home");
   const userDataDir = join(root, "electron-data");
@@ -49,14 +57,18 @@ export function seedEnv(): SeededEnv {
           { id: left, presetId: "shell", name: "shell 1" },
           { id: right, presetId: "shell", name: "shell 2" },
         ],
-        splitLayout: {
-          rows: 1,
-          cols: 2,
-          rowFr: [1],
-          colFr: [1, 1],
-          cells: [left, right],
-          activeCell: 0,
-        },
+        ...(split
+          ? {
+              splitLayout: {
+                rows: 1,
+                cols: 2,
+                rowFr: [1],
+                colFr: [1, 1],
+                cells: [left, right],
+                activeCell: 0,
+              },
+            }
+          : {}),
       },
       null,
       2,

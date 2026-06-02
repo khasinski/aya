@@ -40,6 +40,10 @@ interface Props {
    *  The component reuses its xterm instance and spawns a fresh PTY. */
   restartTrigger: number;
   isActivePane?: boolean;
+  /** True when this is THE terminal the user is interacting with right now:
+   *  active project + active tab + active split cell, and no overlay/modal is
+   *  open. Drives deterministic keyboard focus (see the focus effect below). */
+  isActive?: boolean;
   onActivatePane?: () => void;
   enableWebgl?: boolean;
 }
@@ -103,6 +107,7 @@ export function TerminalView({
   onRequestRestart,
   restartTrigger,
   isActivePane = false,
+  isActive = false,
   onActivatePane,
   enableWebgl = true,
 }: Props) {
@@ -481,14 +486,47 @@ export function TerminalView({
 
   useEffect(() => {
     if (!isVisible) return;
-    repairTerminalRender(true);
-    const frame = requestAnimationFrame(() => repairTerminalRender(true));
-    const timer = setTimeout(() => repairTerminalRender(true), 80);
+    // Repaint the freshly-shown terminal (webgl atlas, scrollback). Focus is
+    // NOT done here — it's owned by the isActive effect below, so a concurrent
+    // fit can't swallow it.
+    repairTerminalRender(false);
+    const frame = requestAnimationFrame(() => repairTerminalRender(false));
+    const timer = setTimeout(() => repairTerminalRender(false), 80);
     return () => {
       cancelAnimationFrame(frame);
       clearTimeout(timer);
     };
   }, [isVisible, repairTerminalRender]);
+
+  // Single source of truth for keyboard focus: whenever this becomes THE active
+  // terminal (tab switch, split-pane navigation, or an overlay/modal closing),
+  // focus its xterm. Deliberately decoupled from fitTerminal's shared,
+  // cancellable rAF so a stray fit can't drop the focus. The find bar wants the
+  // focus while it's open, so defer to it.
+  const wantsFocus = isActive && !findOpen;
+  useEffect(() => {
+    if (!wantsFocus) return;
+    const focusNow = () => {
+      try {
+        const term = xtermRef.current;
+        const host = containerRef.current;
+        if (term && host && host.clientWidth > 0 && host.clientHeight > 0) {
+          term.focus();
+        }
+      } catch {
+        /* ignore — xterm may be mid-dispose */
+      }
+    };
+    // Focus now, and retry across a couple of frames because xterm may still be
+    // measuring right after a visibility/layout change.
+    focusNow();
+    const raf = requestAnimationFrame(focusNow);
+    const timer = setTimeout(focusNow, 60);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+    };
+  }, [wantsFocus]);
 
   useEffect(() => {
     if (!isVisible) return;

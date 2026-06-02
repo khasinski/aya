@@ -1739,6 +1739,15 @@ export function App() {
 
   const currentMissingDir = missingDirQueue[0] ?? null;
   const chromeBlocked = !!currentMissingDir || !!newProjectModal;
+  // Any overlay that should hold focus instead of the terminal. While one is
+  // open, no terminal is "active" for focus purposes; closing the last one
+  // hands focus back to the active terminal (via TerminalView's isActive effect).
+  const anyOverlayOpen =
+    chromeBlocked ||
+    showSettings ||
+    showSearch ||
+    showAttentionCenter ||
+    !!pendingRepoImport;
 
   const activeTheme = themes.find((t) => t.id === activeThemeId) ?? themes[0];
   const activeThemeColors: ThemeColors =
@@ -1990,6 +1999,10 @@ export function App() {
                   onRequestRestart={() => restartTerminal(terminal.id)}
                   restartTrigger={restartTriggers[terminal.id] ?? 0}
                   isActivePane={isSplit && splitLayout.activeCell === cellIndex}
+                  isActive={
+                    (isSplit ? splitLayout.activeCell === cellIndex : true) &&
+                    !anyOverlayOpen
+                  }
                   onActivatePane={() =>
                     activeProjectId && setActiveSplitCell(activeProjectId, cellIndex)
                   }

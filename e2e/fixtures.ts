@@ -7,19 +7,23 @@ import {
 import { execSync } from "node:child_process";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { seedEnv, type SeededEnv } from "./helpers/seed";
+import { seedEnv, type SeededEnv, type SeedOptions } from "./helpers/seed";
 
 const APP_ROOT = join(__dirname, "..");
 
 /** Fixtures that launch the built Aya app once per test against an isolated,
  *  seeded environment and tear it down afterward. */
 export const test = base.extend<{
+  /** Per-test seed options. Override with `test.use({ seedOptions: {...} })`. */
+  seedOptions: SeedOptions;
   seeded: SeededEnv;
   app: ElectronApplication;
   window: Page;
 }>({
-  seeded: async ({}, use) => {
-    const s = seedEnv();
+  seedOptions: [{}, { option: true }],
+
+  seeded: async ({ seedOptions }, use) => {
+    const s = seedEnv(seedOptions);
     await use(s);
     rmSync(s.root, { recursive: true, force: true });
   },
