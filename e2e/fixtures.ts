@@ -43,21 +43,27 @@ export const test = base.extend<{
       join(APP_ROOT, "dist-electron", "main.js"),
       `--user-data-dir=${seeded.userDataDir}`,
     ];
-    // CI runners can't use the Chromium SUID sandbox; disable it there only.
-    if (process.env.CI) launchArgs.push("--no-sandbox");
+    // CI runners can't use the Chromium SUID sandbox, and the GPU process under
+    // xvfb keeps app.close() from ever resolving (leaving the worker hung). Both
+    // flags are CI-only.
+    if (process.env.CI) {
+      launchArgs.push("--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage");
+    }
 
     const app = await electron.launch({ args: launchArgs, cwd: APP_ROOT, env });
     await use(app);
-    // Under CI/xvfb a graceful app.close() hangs (Aya's detached pty-host keeps
-    // Electron from exiting). SIGKILL the process FIRST so it's already dead,
-    // THEN await close() - which now resolves immediately and still tears down
-    // Playwright's CDP transport so the worker can exit cleanly.
+    // With --disable-gpu (CI) the graceful close resolves; locally it always
+    // has. Guard with a hard SIGKILL fallback if it ever stalls so the worker
+    // can still exit.
+    await Promise.race([
+      app.close().catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 8000)),
+    ]);
     try {
       app.process().kill("SIGKILL");
     } catch {
       /* already gone */
     }
-    await app.close().catch(() => {});
   },
 
   window: async ({ app }, use) => {
