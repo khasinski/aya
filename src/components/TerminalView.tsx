@@ -12,6 +12,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { Preset, Snippet, TerminalState, ThemeColors } from "../types";
 import { focusReportingState } from "../focus-reporting";
+import { enterKeyAction, META_ENTER } from "../terminal-keys";
 import { snippetPtyPayload } from "../snippet-payload";
 import { SnippetBar } from "./SnippetBar";
 
@@ -339,53 +340,49 @@ export function TerminalView({
     term.attachCustomKeyEventHandler((ev) => {
       if (ev.type !== "keydown") return true;
 
-      // Shift+Enter on a cleanly-exited terminal: restart in the same pane.
-      // Returning false from this handler stops xterm from forwarding the
-      // key to the (now-defunct) PTY.
-      if (
-        ev.key === "Enter" &&
-        ev.shiftKey &&
-        !ev.metaKey &&
-        !ev.ctrlKey &&
-        !ev.altKey &&
-        canRestartRef.current
-      ) {
-        ev.preventDefault();
-        const t = xtermRef.current;
-        if (!t) return false;
-        t.writeln("\x1b[2m[restarting...]\x1b[0m");
-        onRequestRestart?.();
-        void window.aya.ptySpawn({
-        ptyId: terminal.id,
-        projectSlug: terminal.projectSlug,
-        presetId: terminal.presetId,
-        command: commandRef.current,
-        cwd: cwdRef.current,
-          cols: Math.max(t.cols, 80),
-          rows: Math.max(t.rows, 24),
+      // Enter handling (restart / soft newline / submit) — see enterKeyAction.
+      // Returning false stops xterm from also forwarding its default CR.
+      if (ev.key === "Enter") {
+        const action = enterKeyAction({
+          shift: ev.shiftKey,
+          meta: ev.metaKey,
+          ctrl: ev.ctrlKey,
+          alt: ev.altKey,
+          canRestart: canRestartRef.current,
+          richInput: richInputRef.current,
         });
-        canRestartRef.current = false;
-        return false;
-      }
-
-      // Shift+Enter inside a running rich TUI (claude, codex…): soft newline,
-      // don't submit. xterm sends a plain CR for Enter regardless of Shift, so
-      // the prompt would execute. Send meta-Enter (ESC + CR) — what claude/codex
-      // and zsh's zle treat as "insert a newline" — but ONLY when a rich TUI is
-      // active (focus-reporting on). At a plain shell prompt Shift+Enter stays a
-      // normal Enter, so the shell is unaffected. This is what iTerm2 gets from
-      // `claude /terminal-setup`, driven here by the signal claude itself emits.
-      if (
-        ev.key === "Enter" &&
-        ev.shiftKey &&
-        !ev.metaKey &&
-        !ev.ctrlKey &&
-        !ev.altKey &&
-        richInputRef.current
-      ) {
-        ev.preventDefault();
-        void window.aya.ptyWrite(terminal.id, "\x1b\r");
-        return false;
+        if (action === "restart") {
+          // Shift+Enter on a cleanly-exited terminal: restart in the same pane.
+          ev.preventDefault();
+          const t = xtermRef.current;
+          if (!t) return false;
+          t.writeln("\x1b[2m[restarting...]\x1b[0m");
+          onRequestRestart?.();
+          void window.aya.ptySpawn({
+            ptyId: terminal.id,
+            projectSlug: terminal.projectSlug,
+            presetId: terminal.presetId,
+            command: commandRef.current,
+            cwd: cwdRef.current,
+            cols: Math.max(t.cols, 80),
+            rows: Math.max(t.rows, 24),
+          });
+          canRestartRef.current = false;
+          return false;
+        }
+        if (action === "soft-newline" || action === "submit") {
+          // Shift/Option+Enter: a newline inside a running rich TUI (focus-
+          // reporting on), a plain submit at the shell — xterm's default is
+          // wrong for both (it submits Shift+Enter; macOptionIsMeta turns
+          // Option+Enter into a zsh multiline edit).
+          ev.preventDefault();
+          void window.aya.ptyWrite(
+            terminal.id,
+            action === "soft-newline" ? META_ENTER : "\r",
+          );
+          return false;
+        }
+        // "default" → fall through to xterm's normal Enter.
       }
 
       // Option+Arrow / Option+Backspace word navigation. xterm.js's default

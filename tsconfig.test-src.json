@@ -17,6 +17,7 @@
     "src/double-shift.ts",
     "src/focus-reporting.ts",
     "src/pty-event-reducer.ts",
+    "src/terminal-keys.ts",
     "src/snippet-payload.ts",
     "src/types.ts"
   ]
