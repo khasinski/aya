@@ -48,14 +48,16 @@ export const test = base.extend<{
 
     const app = await electron.launch({ args: launchArgs, cwd: APP_ROOT, env });
     await use(app);
-    // Aya spawns a detached pty-host (its "PTYs survive restart" design), so
-    // app.close() can hang under CI/xvfb and a dangling close() promise keeps
-    // Playwright's worker from exiting. SIGKILL the Electron process directly.
+    // Under CI/xvfb a graceful app.close() hangs (Aya's detached pty-host keeps
+    // Electron from exiting). SIGKILL the process FIRST so it's already dead,
+    // THEN await close() - which now resolves immediately and still tears down
+    // Playwright's CDP transport so the worker can exit cleanly.
     try {
       app.process().kill("SIGKILL");
     } catch {
       /* already gone */
     }
+    await app.close().catch(() => {});
   },
 
   window: async ({ app }, use) => {
