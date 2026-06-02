@@ -48,14 +48,9 @@ export const test = base.extend<{
 
     const app = await electron.launch({ args: launchArgs, cwd: APP_ROOT, env });
     await use(app);
-    // Aya spawns a detached pty-host (its "PTYs survive restart" design), which
-    // can keep app.close() from resolving under CI/xvfb. Race a graceful close
-    // against a short timeout, then hard-kill the Electron process so teardown
-    // never eats the whole test timeout.
-    await Promise.race([
-      app.close().catch(() => {}),
-      new Promise((resolve) => setTimeout(resolve, 5000)),
-    ]);
+    // Aya spawns a detached pty-host (its "PTYs survive restart" design), so
+    // app.close() can hang under CI/xvfb and a dangling close() promise keeps
+    // Playwright's worker from exiting. SIGKILL the Electron process directly.
     try {
       app.process().kill("SIGKILL");
     } catch {
