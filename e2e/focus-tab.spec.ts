@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
+import { fireShortcut } from "./helpers/shortcut";
 
 // Reproduces the reported "focus doesn't switch / have to click twice" glitch.
 // Aya hides inactive terminals with display:none and never re-focuses the
@@ -53,6 +54,35 @@ test("switching terminals via the sidebar moves keyboard focus to the new termin
           );
         }),
       { message: "focus should land inside the newly-shown terminal" },
+    )
+    .toBe(true);
+});
+
+test("the next-tab keyboard shortcut moves focus to the next terminal", async ({
+  window,
+  app,
+}) => {
+  await window.locator(".aya-pane:visible .aya-xterm-host").click();
+  await expect.poll(() => visiblePaneTitle(window)).toBe("shell 1");
+
+  await fireShortcut(app, "next-tab");
+  await expect.poll(() => visiblePaneTitle(window)).toBe("shell 2");
+
+  await expect
+    .poll(() =>
+      window.evaluate(() => {
+        const pane = Array.from(document.querySelectorAll(".aya-pane")).find(
+          (p) => getComputedStyle(p as HTMLElement).display !== "none",
+        );
+        const active = document.activeElement;
+        return !!(
+          pane &&
+          active &&
+          pane.contains(active) &&
+          active.tagName.toLowerCase() === "textarea"
+        );
+      }),
+      { message: "focus should follow the keyboard tab switch" },
     )
     .toBe(true);
 });

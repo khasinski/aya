@@ -5,18 +5,7 @@ import type { Page } from "@playwright/test";
 // asserts the behavior a user expects ("I can type without an extra click"); a
 // red test = a reproduced bug. Uses the default 1x2 split seed.
 
-// Aya intercepts app shortcuts via webContents before-input-event, which
-// Playwright's synthetic keyboard does NOT trigger. So fire the shortcut the
-// way main.ts ultimately does: send the "shortcut" action straight to the
-// renderer from the main process. This tests the App's shortcut HANDLING (and
-// whether focus follows), not the OS keybinding.
-import type { ElectronApplication } from "@playwright/test";
-async function fireShortcut(app: ElectronApplication, action: string) {
-  await app.evaluate(({ BrowserWindow }, act) => {
-    const win = BrowserWindow.getAllWindows()[0];
-    win?.webContents.send("shortcut", act);
-  }, action);
-}
+import { fireShortcut } from "./helpers/shortcut";
 
 function focusInfo(window: Page) {
   return window.evaluate(() => {
@@ -87,6 +76,42 @@ test("closing Settings returns focus to the terminal", async ({ window, app }) =
   await expect
     .poll(async () => (await focusInfo(window)).inAnyTerminal, {
       message: "focus should return to the terminal after the modal closes",
+    })
+    .toBe(true);
+});
+
+test("closing Search returns focus to the terminal", async ({ window, app }) => {
+  await window.locator(".aya-pane").first().locator(".aya-xterm-host").click();
+
+  await fireShortcut(app, "search");
+  await expect(window.locator(".aya-modal--search")).toBeVisible();
+  // The search input holds focus, so Escape reaches the modal (not xterm).
+  await window.keyboard.press("Escape");
+  await expect(window.locator(".aya-modal--search")).toHaveCount(0);
+
+  await expect
+    .poll(async () => (await focusInfo(window)).inAnyTerminal, {
+      message: "focus should return to the terminal after Search closes",
+    })
+    .toBe(true);
+});
+
+test("the find bar holds focus while open and returns it to the terminal on close", async ({
+  window,
+  app,
+}) => {
+  await window.locator(".aya-pane").first().locator(".aya-xterm-host").click();
+
+  // Open the in-pane find bar; its input — not the terminal — must take focus.
+  await fireShortcut(app, "find-in-pane");
+  await expect(window.locator(".aya-findbar-input")).toBeFocused();
+
+  // Close the find bar (the ✕ button); focus must return to the terminal.
+  await window.locator('.aya-findbar-btn[title^="Close"]').click();
+  await expect(window.locator(".aya-findbar")).toHaveCount(0);
+  await expect
+    .poll(async () => (await focusInfo(window)).inAnyTerminal, {
+      message: "focus should return to the terminal after the find bar closes",
     })
     .toBe(true);
 });
