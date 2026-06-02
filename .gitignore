@@ -38,3 +38,9 @@ tui-prototype/.pytest_cache/
 
 # Scratchpad design docs that live alongside the codebase but aren't shipped
 docs/onboarding.md
+
+# Playwright E2E artifacts
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
