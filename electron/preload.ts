@@ -44,6 +44,11 @@ const api: AyaApi = {
   listSnippets: () => ipcRenderer.invoke("snippets:list"),
   saveSnippets: (snippets) => ipcRenderer.invoke("snippets:save", snippets),
 
+  getUsage: () => ipcRenderer.invoke("usage:get"),
+  usageHookStatus: () => ipcRenderer.invoke("usage-hook:status"),
+  installUsageHook: () => ipcRenderer.invoke("usage-hook:install"),
+  uninstallUsageHook: () => ipcRenderer.invoke("usage-hook:uninstall"),
+
   listThemes: () => ipcRenderer.invoke("themes:list"),
   saveThemes: (file) => ipcRenderer.invoke("themes:save", file),
   importTheme: () => ipcRenderer.invoke("themes:import"),

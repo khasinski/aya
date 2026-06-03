@@ -24,6 +24,9 @@ export const AYA_HOME =
 export const PROJECTS_DIR = path.join(AYA_HOME, "projects");
 export const PRESETS_FILE = path.join(AYA_HOME, "presets.json");
 export const SNIPPETS_FILE = path.join(AYA_HOME, "snippets.json");
+// Account-wide Claude/Codex usage snapshot, written by a user-configured hook
+// (see docs). Aya only reads it — it never fetches anything or touches a token.
+export const USAGE_FILE = path.join(AYA_HOME, "usage.json");
 export const THEMES_FILE = path.join(AYA_HOME, "themes.json");
 export const WINDOW_STATE_FILE = path.join(AYA_HOME, "window-state.json");
 export const PROJECTS_STATE_FILE = path.join(AYA_HOME, "projects-state.json");

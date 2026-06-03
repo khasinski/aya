@@ -5,6 +5,7 @@ import {
   type Preset,
   type Snippet,
   type Theme,
+  type UsageHookStatus,
   looksNonInteractive,
   presetSlug,
 } from "../types";
@@ -103,6 +104,9 @@ export function SettingsModal({
   const [errors, setErrors] = useState<string[]>([]);
   const [cliStatus, setCliStatus] = useState<CliStatus | null>(null);
   const [cliInstalling, setCliInstalling] = useState(false);
+  const [usageHook, setUsageHook] = useState<UsageHookStatus | null>(null);
+  const [usageHookBusy, setUsageHookBusy] = useState(false);
+  const [showUsageConsent, setShowUsageConsent] = useState(false);
   const [notificationPermission, setNotificationPermission] =
     useState<NotificationPermission>(() =>
       typeof Notification === "undefined" ? "default" : Notification.permission,
@@ -120,6 +124,9 @@ export function SettingsModal({
     void window.aya.cliStatus().then((status) => {
       if (!cancelled) setCliStatus(status);
     });
+    void window.aya.usageHookStatus().then((status) => {
+      if (!cancelled) setUsageHook(status);
+    });
     return () => {
       cancelled = true;
     };
@@ -131,6 +138,28 @@ export function SettingsModal({
       setCliStatus(await window.aya.installCli());
     } finally {
       setCliInstalling(false);
+    }
+  };
+
+  // Enabling writes a hook + script into ~/.claude (after the consent dialog);
+  // disabling removes both. The Aya process itself never reads a token or hits
+  // the endpoint — that only happens later in the script, run by Claude Code.
+  const enableUsageHook = async () => {
+    setShowUsageConsent(false);
+    setUsageHookBusy(true);
+    try {
+      setUsageHook(await window.aya.installUsageHook());
+    } finally {
+      setUsageHookBusy(false);
+    }
+  };
+
+  const disableUsageHook = async () => {
+    setUsageHookBusy(true);
+    try {
+      setUsageHook(await window.aya.uninstallUsageHook());
+    } finally {
+      setUsageHookBusy(false);
     }
   };
 
@@ -402,6 +431,58 @@ export function SettingsModal({
         className="aya-modal aya-modal--settings"
         onClick={(e) => e.stopPropagation()}
       >
+        {showUsageConsent && (
+          <div
+            className="aya-modal-backdrop"
+            style={{ zIndex: 10 }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowUsageConsent(false);
+            }}
+          >
+            <div
+              className="aya-modal"
+              style={{ maxWidth: 460 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="aya-modal-title">Enable the usage chip?</div>
+              <div className="aya-modal-hint" style={{ lineHeight: 1.6 }}>
+                This writes a small script and a <code>Stop</code> hook into{" "}
+                <code>~/.claude/settings.json</code>. After each Claude Code
+                response (throttled to every 5&nbsp;min) the hook queries
+                Anthropic&apos;s <strong>undocumented</strong> usage endpoint with
+                your own token and saves the result locally for the chip.
+                <br />
+                <br />
+                It is <strong>unsupported</strong> and may change without notice.
+                Aya itself never reads your token and never makes the call — that
+                happens only in the hook, run by Claude Code. Nothing is sent
+                anywhere else. You can turn it off here anytime (it removes both).
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  justifyContent: "flex-end",
+                  marginTop: 16,
+                }}
+              >
+                <button
+                  className="aya-modal-btn"
+                  onClick={() => setShowUsageConsent(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="aya-modal-btn aya-modal-btn--primary"
+                  onClick={enableUsageHook}
+                >
+                  Enable
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {/* === Theme section === */}
         <div className="aya-modal-title">Terminal theme</div>
         <div className="aya-modal-hint">
@@ -466,6 +547,33 @@ export function SettingsModal({
                 : cliStatus?.installed
                   ? "Reinstall"
                   : "Install"}
+            </button>
+          </div>
+          <div className="aya-settings-general-row">
+            <div>
+              <div className="aya-settings-general-title">
+                Claude usage chip
+              </div>
+              <div className="aya-modal-hint">
+                {usageHook?.installed
+                  ? "On — a Claude Code hook updates the account-wide usage chip."
+                  : "Off — shows your account-wide Claude limit (5h + weekly) in the title bar."}
+              </div>
+            </div>
+            <button
+              className="aya-modal-btn"
+              onClick={
+                usageHook?.installed
+                  ? disableUsageHook
+                  : () => setShowUsageConsent(true)
+              }
+              disabled={usageHookBusy || !usageHook}
+            >
+              {usageHookBusy
+                ? "Working..."
+                : usageHook?.installed
+                  ? "Disable"
+                  : "Enable"}
             </button>
           </div>
           <div className="aya-settings-general-row">

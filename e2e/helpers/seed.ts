@@ -20,6 +20,9 @@ export interface SeedOptions {
    *  visible and switching happens via the sidebar (one terminal at a time).
    *  Defaults to true (1x2 split, both panes visible). */
   split?: boolean;
+  /** When set, write ayaHome/usage.json so the account-wide usage chip renders
+   *  (the file a user hook would normally produce). */
+  usage?: Record<string, unknown>;
 }
 
 /** Build a throwaway, deterministic environment for one Electron launch:
@@ -78,6 +81,10 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     join(ayaHome, "projects-state.json"),
     JSON.stringify({ version: 1, order: ["e2e-proj"], open: ["e2e-proj"], recent: ["e2e-proj"] }, null, 2),
   );
+
+  if (opts.usage) {
+    writeFileSync(join(ayaHome, "usage.json"), JSON.stringify(opts.usage, null, 2));
+  }
 
   return { root, ayaHome, userDataDir, projectDir, tabIds: { left, right } };
 }

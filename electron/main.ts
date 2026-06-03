@@ -37,6 +37,12 @@ import { IS_DEV } from "./paths";
 import { scanHarnesses } from "./harnesses";
 import { listPresets, savePresets } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
+import { readUsage } from "./usage";
+import {
+  usageHookStatus,
+  installUsageHook,
+  uninstallUsageHook,
+} from "./usage-hook";
 import { readRepoProjectConfig } from "./project-local";
 import { PtyHostClient } from "./pty-host-client";
 import {
@@ -752,6 +758,14 @@ function registerIpc(win: BrowserWindow): void {
   ipcMain.handle("snippets:save", async (_e, snippets: unknown) =>
     saveSnippets(validateSnippetArray(snippets)),
   );
+  // Read-only: the account-wide usage snapshot a user hook writes (no fetch).
+  ipcMain.handle("usage:get", async () => readUsage());
+  // Optional, user-enabled usage hook installer (writes ~/.claude/settings.json
+  // + a fetch script). The Aya process never reads a token or calls the
+  // endpoint — that happens later in the script, run by Claude Code.
+  ipcMain.handle("usage-hook:status", async () => usageHookStatus());
+  ipcMain.handle("usage-hook:install", async () => installUsageHook());
+  ipcMain.handle("usage-hook:uninstall", async () => uninstallUsageHook());
 
   ipcMain.handle("themes:list", async () => {
     const { loadThemes } = await import("./themes");

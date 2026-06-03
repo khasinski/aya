@@ -33,11 +33,14 @@ import {
   type TerminalState,
   type Theme,
   type ThemeColors,
+  type UsageData,
   type WorkingTab,
 } from "./types";
 
 // Cadence for polling the active project's git branch/dirty count (no inotify watch).
 const GIT_STATUS_POLL_INTERVAL_MS = 3000;
+// Cadence for re-reading the account-wide usage snapshot a user hook writes.
+const USAGE_POLL_INTERVAL_MS = 30_000;
 // Cap on retained entries in the project event timeline.
 const MAX_PROJECT_EVENTS = 200;
 // Cap on preset suggestions offered during repo preset import.
@@ -350,6 +353,7 @@ export function App() {
     Record<string, string | null>
   >({});
   const [git, setGit] = useState<Record<string, GitInfo>>({});
+  const [usage, setUsage] = useState<UsageData | null>(null);
   const [newProjectModal, setNewProjectModal] =
     useState<NewProjectModalState | null>(null);
   const [missingDirQueue, setMissingDirQueue] = useState<MissingDirEntry[]>([]);
@@ -399,6 +403,23 @@ export function App() {
       clearInterval(id);
     };
   }, [activeProjectId]);
+
+  // Re-read the account-wide usage snapshot a user hook writes (~/.aya/usage.json).
+  // Aya only reads the file — it never fetches usage or touches any token.
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      void window.aya.getUsage().then((u) => {
+        if (!cancelled) setUsage(u);
+      });
+    };
+    refresh();
+    const id = setInterval(refresh, USAGE_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   // Handle "open this directory" requests from main — fired by `aya <dir>`
   // CLI invocations and the initial argv. Subscribed once; uses a ref to
@@ -1921,6 +1942,7 @@ export function App() {
         onOpenSearch={() => setShowSearch(true)}
         onOpenSettings={() => setShowSettings(true)}
         projectBadges={projectBadges}
+        usage={usage}
       />
       {!didBootstrap ? (
         <main className="aya-empty aya-empty--loading" aria-busy="true">
