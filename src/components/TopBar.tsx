@@ -295,6 +295,11 @@ export function TopBar({
                 ? "Recent projects (close the open dialog first)"
                 : "Recent projects"
             }
+            aria-label="Recent projects"
+            // Inline dropdown, not a modal — keep terminal focus (same reason
+            // as the usage chips); without this the folder toggle forces a
+            // re-click to resume typing.
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => setShowRecent((v) => !v)}
             disabled={blockChrome}
             aria-haspopup="menu"

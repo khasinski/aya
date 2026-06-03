@@ -711,6 +711,9 @@ export function TerminalView({
           }`}
           type="button"
           title="Saved snippets"
+          // Keep terminal focus when toggling the drawer (same as the top-bar
+          // dropdowns) — opening snippets shouldn't force a re-click to type.
+          onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
             e.stopPropagation();
             setSnippetsOpen((v) => !v);

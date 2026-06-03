@@ -59,6 +59,8 @@ export function SnippetBar({
           className="aya-snippetbar-headbtn"
           type="button"
           title="Close"
+          // Keep terminal focus when closing the drawer (same as the toggle).
+          onMouseDown={(e) => e.preventDefault()}
           onClick={onClose}
         >
           <MaterialIcon name="close" />

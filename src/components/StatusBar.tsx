@@ -145,6 +145,8 @@ export function StatusBar({
             className="aya-statusbar-item aya-statusbar-button aya-statusbar-item--warn"
             type="button"
             title="Show changed files"
+            // Inline dropdown — keep terminal focus (same as the top-bar ones).
+            onMouseDown={(e) => e.preventDefault()}
             onClick={toggleDirtyFiles}
           >
             <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>

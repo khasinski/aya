@@ -35,6 +35,19 @@ test("the active terminal is focused on launch (no click needed to type)", async
     .toBe(true);
 });
 
+test("opening the recent-projects menu keeps terminal focus", async ({
+  window,
+}) => {
+  // Inline top-bar dropdowns (recent projects, usage chips) must not steal
+  // keyboard focus the way a modal does — peeking shouldn't force a re-click.
+  await window.locator(".aya-pane").first().locator(".aya-xterm-host").click();
+  await expect.poll(async () => (await focusInfo(window)).inAnyTerminal).toBe(true);
+
+  await window.getByRole("button", { name: "Recent projects" }).click();
+  await expect(window.locator(".aya-recent-menu")).toBeVisible();
+  expect((await focusInfo(window)).inAnyTerminal).toBe(true);
+});
+
 test("focus-pane-right shortcut moves focus to the next split pane", async ({
   window,
   app,
