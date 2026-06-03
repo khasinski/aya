@@ -27,6 +27,13 @@ const CLAUDE_SETTINGS_FILE =
 // by absolute path from the hook entry.
 export const HOOK_SCRIPT_FILE = path.join(AYA_HOME, "aya-usage-hook.sh");
 
+// Generated-script tuning: skip a fetch if the file was written within the
+// throttle window, and bound the network call so a hung endpoint can't stall.
+const HOOK_THROTTLE_SECONDS = 300;
+const HOOK_FETCH_TIMEOUT_SECONDS = 10;
+// Executable mode for the generated fetch script (rwxr-xr-x).
+const HOOK_SCRIPT_MODE = 0o755;
+
 export interface UsageHookStatus {
   installed: boolean;
   /** Absolute path to the generated script (whether or not it exists yet). */
@@ -107,7 +114,7 @@ command -v curl >/dev/null 2>&1 || exit 0
 if [ -f "$OUT" ]; then
   now=$(date +%s)
   mod=$(stat -f %m "$OUT" 2>/dev/null || stat -c %Y "$OUT" 2>/dev/null || echo 0)
-  [ $((now - mod)) -lt 300 ] && exit 0
+  [ $((now - mod)) -lt ${HOOK_THROTTLE_SECONDS} ] && exit 0
 fi
 # Claude Code OAuth token: macOS Keychain, else Linux credentials file.
 if RAW=$(security find-generic-password -s 'Claude Code-credentials' -w 2>/dev/null); then
@@ -119,7 +126,7 @@ else
 fi
 TOKEN=$(printf '%s' "$RAW" | jq -r '.claudeAiOauth.accessToken // empty')
 [ -n "$TOKEN" ] || exit 0
-RESP=$(curl -sS -m 10 -H "Authorization: Bearer $TOKEN" \\
+RESP=$(curl -sS -m ${HOOK_FETCH_TIMEOUT_SECONDS} -H "Authorization: Bearer $TOKEN" \\
   https://api.anthropic.com/api/oauth/usage) || exit 0
 mkdir -p "$(dirname "$OUT")"
 printf '%s' "$RESP" | jq \\
@@ -172,7 +179,7 @@ export async function installUsageHook(): Promise<UsageHookStatus> {
   const next = withStopHook(settings, HOOK_SCRIPT_FILE);
   await writeFileAtomic(CLAUDE_SETTINGS_FILE, JSON.stringify(next, null, 2) + "\n");
   await writeFileAtomic(HOOK_SCRIPT_FILE, hookScriptSource(USAGE_FILE));
-  await fs.chmod(HOOK_SCRIPT_FILE, 0o755);
+  await fs.chmod(HOOK_SCRIPT_FILE, HOOK_SCRIPT_MODE);
   return usageHookStatus();
 }
 

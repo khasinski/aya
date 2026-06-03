@@ -8,6 +8,7 @@ import {
   hasStopHook,
   withStopHook,
   withoutStopHook,
+  hookScriptSource,
 } from "../dist-electron/usage-hook.js";
 
 const CMD = "/Users/x/.aya/aya-usage-hook.sh";
@@ -83,4 +84,12 @@ test("withoutStopHook is a no-op when our hook isn't present", () => {
   const after = withoutStopHook(s, CMD);
   assert.equal(after.hooks.Stop.length, 1);
   assert.equal(after.hooks.Stop[0].hooks[0].command, "/keep.sh");
+});
+
+test("hookScriptSource bakes the out path, throttle, and curl timeout in", () => {
+  const s = hookScriptSource("/tmp/aya/usage.json");
+  assert.match(s, /OUT="\/tmp\/aya\/usage\.json"/); // writes the file Aya reads
+  assert.match(s, /-lt 300\b/); // 5-min throttle from HOOK_THROTTLE_SECONDS
+  assert.match(s, /-m 10\b/); // curl timeout from HOOK_FETCH_TIMEOUT_SECONDS
+  assert.match(s, /oauth\/usage/); // queries the usage endpoint
 });
