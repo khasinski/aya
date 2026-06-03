@@ -55,6 +55,14 @@ test("Shift+Option+Enter is not a restart (Option present), falls to TUI/shell r
   assert.equal(ev({ shift: true, alt: true, canRestart: true, richInput: true }), "soft-newline");
 });
 
+test("Cmd/Ctrl+Shift+Enter does NOT restart on an exited terminal (meta/ctrl wins)", () => {
+  // The meta/ctrl guard runs before the restart guard: a Cmd- or Ctrl-modified
+  // Enter is always left to xterm, even on a cleanly-exited terminal. Pins that
+  // precedence so reordering the guards (restart-before-meta) is caught.
+  assert.equal(ev({ shift: true, meta: true, canRestart: true }), "default");
+  assert.equal(ev({ shift: true, ctrl: true, canRestart: true }), "default");
+});
+
 test("META_ENTER is ESC + CR", () => {
   assert.equal(META_ENTER, "\x1b\r");
 });

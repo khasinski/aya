@@ -28,6 +28,14 @@ test("last transition in a chunk wins", () => {
   assert.equal(focusReportingState("\x1b[?1004l\x1b[?1004h", true), true);
 });
 
+test("ignores a longer mode number that merely starts with 1004 (e.g. ?10049h)", () => {
+  // The trailing h/l must come immediately after 1004; a longer param like
+  // 10049 is a different mode and must not toggle focus reporting. Pins the
+  // (h|l) anchor so loosening the regex to /\x1b\[\?1004/ is caught.
+  assert.equal(focusReportingState("\x1b[?10049h", false), false);
+  assert.equal(focusReportingState("\x1b[?10049l", true), true);
+});
+
 test("recognizes 1004 alongside the modes claude actually emits", () => {
   // From the real capture: claude turns on cursor-hide, paste, focus, theme.
   const chunk = "\x1b[?25l\x1b[?2004h\x1b[?1004h\x1b[?2031h";
