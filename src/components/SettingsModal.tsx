@@ -97,6 +97,8 @@ export function SettingsModal({
     initialActiveThemeId,
   );
   const [themesDirty, setThemesDirty] = useState(false);
+  const [presetsDirty, setPresetsDirty] = useState(false);
+  const [snippetsDirty, setSnippetsDirty] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
@@ -189,10 +191,42 @@ export function SettingsModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // Small wrappers that also mark a slice as dirty whenever the user edits its
+  // draft, the same way the theme setters call setThemesDirty(true). The dirty
+  // flag decides what gets written on Save, and stops an outside edit reloaded
+  // from disk from overwriting an edit the user is still working on.
+  const editPresets: typeof setDraft = (next) => {
+    setDraft(next);
+    setPresetsDirty(true);
+  };
+  const editSnippets: typeof setSnippetDraft = (next) => {
+    setSnippetDraft(next);
+    setSnippetsDirty(true);
+  };
+
+  // When the config watcher reloads a file that was edited by hand while
+  // Settings is open, the props change but the drafts we seeded from them
+  // don't. Re-sync each slice from props only while the user hasn't touched it,
+  // so an outside edit shows up in the modal instead of being overwritten on
+  // Save, while a slice the user is editing keeps their draft. These use the
+  // plain setters (not the marking wrappers) so the re-sync doesn't mark dirty.
+  useEffect(() => {
+    if (!presetsDirty) setDraft(presets.map(toDraft));
+  }, [presets, presetsDirty]);
+  useEffect(() => {
+    if (!snippetsDirty) setSnippetDraft(snippets.map(snippetToDraft));
+  }, [snippets, snippetsDirty]);
+  useEffect(() => {
+    if (!themesDirty) {
+      setThemes(initialThemes);
+      setActiveThemeId(initialActiveThemeId);
+    }
+  }, [initialThemes, initialActiveThemeId, themesDirty]);
+
   // --- Presets editor ------------------------------------------------------
 
   const updateRow = (key: string, patch: Partial<Preset>) => {
-    setDraft((prev) =>
+    editPresets((prev) =>
       prev.map((p) => (p.__key === key ? { ...p, ...patch } : p)),
     );
   };
@@ -201,11 +235,11 @@ export function SettingsModal({
     const row = draft.find((p) => p.__key === key);
     if (!row) return;
     if (!confirm(`Remove preset "${row.name || row.id || "(unnamed)"}"?`)) return;
-    setDraft((prev) => prev.filter((p) => p.__key !== key));
+    editPresets((prev) => prev.filter((p) => p.__key !== key));
   };
 
   const addRow = () => {
-    setDraft((prev) => [
+    editPresets((prev) => [
       ...prev,
       {
         __key: uuid(),
@@ -221,7 +255,7 @@ export function SettingsModal({
 
   /** Append a pre-filled preset. Used by the YOLO quick-add buttons. */
   const addPrefilled = (preset: Omit<DraftPreset, "__key">) => {
-    setDraft((prev) => [...prev, { __key: uuid(), ...preset }]);
+    editPresets((prev) => [...prev, { __key: uuid(), ...preset }]);
   };
 
   const addClaudeYolo = () =>
@@ -258,7 +292,7 @@ export function SettingsModal({
   // --- Snippets editor -----------------------------------------------------
 
   const updateSnippetRow = (key: string, patch: Partial<Snippet>) => {
-    setSnippetDraft((prev) =>
+    editSnippets((prev) =>
       prev.map((c) => (c.__key === key ? { ...c, ...patch } : c)),
     );
   };
@@ -269,11 +303,11 @@ export function SettingsModal({
     if (!confirm(`Remove snippet "${row.name || row.text || "(unnamed)"}"?`)) {
       return;
     }
-    setSnippetDraft((prev) => prev.filter((c) => c.__key !== key));
+    editSnippets((prev) => prev.filter((c) => c.__key !== key));
   };
 
   const addSnippetRow = () => {
-    setSnippetDraft((prev) => [
+    editSnippets((prev) => [
       ...prev,
       { __key: uuid(), id: "", name: "", text: "", autoRun: false },
     ]);
@@ -287,7 +321,7 @@ export function SettingsModal({
     ) {
       return;
     }
-    setDraft(defaults.map(toDraft));
+    editPresets(defaults.map(toDraft));
   };
 
   const validatePresets = (): Preset[] | null => {
@@ -374,8 +408,14 @@ export function SettingsModal({
     if (!cleaned) return;
     setSaving(true);
     try {
-      await onSave(cleaned);
-      await onSaveSnippets(collectSnippets());
+      // Only write the slices the user actually changed, so an untouched slice
+      // that was reloaded from disk is left as-is instead of being rewritten.
+      if (presetsDirty) {
+        await onSave(cleaned);
+      }
+      if (snippetsDirty) {
+        await onSaveSnippets(collectSnippets());
+      }
       if (themesDirty) {
         await onSaveThemes(themes, activeThemeId);
       }

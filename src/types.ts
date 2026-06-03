@@ -197,6 +197,14 @@ export interface BufferSearchHit {
   more: number;
 }
 
+/** A config file the user can edit, which the renderer reloads when it changes
+ *  on disk under ~/.aya/. */
+export type ConfigSlice = "snippets" | "presets" | "themes";
+
+export interface ConfigChange {
+  slice: ConfigSlice;
+}
+
 export interface AyaApi {
   /** True under `npm run dev` (AYA_DEV=1). */
   isDev: boolean;
@@ -267,6 +275,11 @@ export interface AyaApi {
    *  "open-settings", "prev-tab", "next-tab", and "project-1".."project-9". */
   onShortcut(handler: (action: string) => void): () => void;
   onOpenProject(handler: (directory: string) => void): () => void;
+
+  /** Fired when something outside the app edits one of the watched config files
+   *  under ~/.aya/, so the renderer can reload that slice instead of
+   *  overwriting the edit on the next save in the app. */
+  onConfigChange(handler: (change: ConfigChange) => void): () => void;
 }
 
 declare global {

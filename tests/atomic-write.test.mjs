@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { writeFileAtomic } from "../dist-electron/atomic-write.js";
+import { isEcho } from "../dist-electron/config-echo.js";
 
 // Per-writer payload length (chars) in the concurrent-write race test.
 const RACE_TEST_PAYLOAD_SIZE = 2000;
@@ -32,6 +33,9 @@ test("writes the target file with the given contents", async () => {
     await writeFileAtomic(target, '{"hello":"world"}');
     const contents = await readFile(target, "utf8");
     assert.equal(contents, '{"hello":"world"}');
+    // A successful write must record the hash so the config watcher can tell
+    // this save apart from an edit made outside the app (see config-echo.ts).
+    assert.equal(isEcho(target, '{"hello":"world"}'), true);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -81,6 +85,9 @@ test("cleans up the .tmp file when rename fails", async () => {
     // Nothing .tmp left around.
     const leaked = (await readdir(dir)).filter((f) => f.endsWith(".tmp"));
     assert.deepEqual(leaked, [], `tmp file leaked: ${leaked.join(", ")}`);
+    // A failed write records nothing: recordWrite runs only after the rename
+    // succeeds, so the watcher would treat a later edit here as an outside one.
+    assert.equal(isEcho(target, "data"), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
