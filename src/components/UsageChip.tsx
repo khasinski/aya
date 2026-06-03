@@ -114,13 +114,22 @@ export function UsageChip({
         className="aya-iconbtn"
         title={`${label} usage — account-wide (all sessions, not this project)`}
         aria-label={`${label} usage, account-wide`}
+        // Don't steal keyboard focus from the active terminal: peeking at usage
+        // shouldn't force a re-click to resume typing (the old Settings-focus
+        // bug). preventDefault on mousedown keeps focus where it was; the click
+        // still toggles the popover.
+        onMouseDown={(e) => e.preventDefault()}
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
         style={{ width: "auto", gap: 6, padding: "0 8px", opacity: stale ? 0.5 : 1 }}
       >
-        <span style={{ fontFamily: "Material Symbols Outlined" }}>speed</span>
-        <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 12 }}>
+        <span style={{ fontFamily: "Material Symbols Outlined", color: accent }}>
+          speed
+        </span>
+        <span
+          style={{ fontVariantNumeric: "tabular-nums", fontSize: 12, color: accent }}
+        >
           {Math.round(usage.sevenDay.pct)}%
         </span>
       </button>
