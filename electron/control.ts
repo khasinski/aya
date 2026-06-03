@@ -6,6 +6,11 @@ import { parseControlRequest, type ControlRequest } from "./control-protocol";
 import { CONTROL_SOCKET_PATH } from "./paths";
 import type { ControlStatusUpdate } from "./types";
 
+// Max control-socket message size before rejecting the request (bytes).
+const CONTROL_REQUEST_MAX_SIZE_BYTES = 64_000;
+// rw------- permissions for the control socket file.
+const SOCKET_FILE_PERMISSIONS = 0o600;
+
 interface ControlServerOptions {
   getWindow: () => BrowserWindow | null;
   openProject: (directory: string) => void;
@@ -85,7 +90,7 @@ export function startControlServer(options: ControlServerOptions): () => void {
     socket.setEncoding("utf8");
     socket.on("data", (chunk) => {
       buffer += chunk;
-      if (buffer.length > 64_000) {
+      if (buffer.length > CONTROL_REQUEST_MAX_SIZE_BYTES) {
         sendJson(socket, { ok: false, error: "request too large" });
         socket.end();
         return;
@@ -110,7 +115,7 @@ export function startControlServer(options: ControlServerOptions): () => void {
 
   server.listen(CONTROL_SOCKET_PATH, () => {
     try {
-      fs.chmodSync(CONTROL_SOCKET_PATH, 0o600);
+      fs.chmodSync(CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS);
     } catch {
       // best effort
     }

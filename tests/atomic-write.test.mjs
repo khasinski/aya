@@ -16,6 +16,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { writeFileAtomic } from "../dist-electron/atomic-write.js";
 
+// Per-writer payload length (chars) in the concurrent-write race test.
+const RACE_TEST_PAYLOAD_SIZE = 2000;
+// Large-payload stress size (bytes) for the atomic-write durability test.
+const ATOMIC_WRITE_LARGE_PAYLOAD_BYTES = 200000;
+
 async function makeTmpDir() {
   return mkdtemp(path.join(tmpdir(), "aya-atomic-"));
 }
@@ -89,8 +94,10 @@ test("concurrent writes to the same path don't truncate the result", async () =>
   const dir = await makeTmpDir();
   try {
     const target = path.join(dir, "race.json");
-    const A = '{"writer":"A","payload":"' + "A".repeat(2000) + '"}';
-    const B = '{"writer":"B","payload":"' + "B".repeat(2000) + '"}';
+    const A =
+      '{"writer":"A","payload":"' + "A".repeat(RACE_TEST_PAYLOAD_SIZE) + '"}';
+    const B =
+      '{"writer":"B","payload":"' + "B".repeat(RACE_TEST_PAYLOAD_SIZE) + '"}';
     await Promise.all([writeFileAtomic(target, A), writeFileAtomic(target, B)]);
     const contents = await readFile(target, "utf8");
     assert.ok(
@@ -108,11 +115,11 @@ test("survives writing a large payload (~200KB)", async () => {
   const dir = await makeTmpDir();
   try {
     const target = path.join(dir, "big.json");
-    const big = '"' + "x".repeat(200_000) + '"';
+    const big = '"' + "x".repeat(ATOMIC_WRITE_LARGE_PAYLOAD_BYTES) + '"';
     await writeFileAtomic(target, big);
     const stats = await stat(target);
     // The +2 accounts for the surrounding quotes.
-    assert.equal(stats.size, 200_002);
+    assert.equal(stats.size, ATOMIC_WRITE_LARGE_PAYLOAD_BYTES + 2);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -21,6 +21,9 @@ export interface HarnessDef {
   command: string;
 }
 
+// Timeout for the login-shell PATH probe used to detect a harness binary.
+const COMMAND_PROBE_TIMEOUT_MS = 2500;
+
 /** Known agent harnesses + interactive AI CLIs we'll probe for. Add new
  *  ones here as the ecosystem grows. */
 export const KNOWN_HARNESSES: readonly HarnessDef[] = [
@@ -126,7 +129,7 @@ async function commandExists(binary: string): Promise<boolean> {
     execFile(
       userShell(),
       ["-l", "-c", `command -v -- ${binary} >/dev/null 2>&1`],
-      { timeout: 2500, windowsHide: true },
+      { timeout: COMMAND_PROBE_TIMEOUT_MS, windowsHide: true },
       (err) => resolve(err === null),
     );
   });

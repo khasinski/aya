@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import type { ProjectConfig } from "../types";
 
+// Project tab width bounds (px): tabs shrink to min, then overflow the strip.
+const TAB_MIN_WIDTH_PX = 120;
+const TAB_MAX_WIDTH_PX = 320;
+
 interface ProjectAttention {
   count: number;
   level: "done" | "waiting" | "error";
@@ -192,8 +196,8 @@ export function TopBar({
               // fill spare room, shrink to 120px, then overflow the strip.
               style={{
                 flex: "1 1 240px",
-                minWidth: 120,
-                maxWidth: 320,
+                minWidth: TAB_MIN_WIDTH_PX,
+                maxWidth: TAB_MAX_WIDTH_PX,
               }}
               draggable={!isRenaming}
               onDragStart={(e) => handleDragStart(e, p.slug)}

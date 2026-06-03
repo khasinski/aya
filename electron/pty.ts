@@ -15,6 +15,17 @@ import type * as PtyModule from "node-pty";
 import type { PtyEvent, SpawnFailureReason, SpawnRequest } from "./types";
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 
+// Timeout for the shell `command -v` existence check during spawn preflight.
+const COMMAND_CHECK_TIMEOUT_MS = 2500;
+// Minimum PTY dimensions clamped before spawn/resize (node-pty needs >0).
+const MIN_PTY_COLS = 4; // minimum PTY columns
+const MIN_PTY_ROWS = 2; // minimum PTY rows
+// Search-snippet context window around a match (chars).
+const SEARCH_SNIPPET_CONTEXT_BEFORE = 30; // chars before the match
+const SEARCH_SNIPPET_CONTEXT_AFTER = 50; // chars after the match
+// Stop counting occurrences past this many (snippet "more" cap).
+const SEARCH_MAX_COUNT_DISPLAY = 99;
+
 let nodePty: typeof PtyModule | null = null;
 
 function loadNodePty(): typeof PtyModule {
@@ -131,8 +142,11 @@ export function searchPtyOutputs(query: string): BufferSearchHit[] {
       (best, t) => (t.idx < best.idx ? t : best),
       tokenIdxs[0],
     );
-    const start = Math.max(0, earliest.idx - 30);
-    const end = Math.min(cleaned.length, earliest.idx + earliest.len + 50);
+    const start = Math.max(0, earliest.idx - SEARCH_SNIPPET_CONTEXT_BEFORE);
+    const end = Math.min(
+      cleaned.length,
+      earliest.idx + earliest.len + SEARCH_SNIPPET_CONTEXT_AFTER,
+    );
     const snippet = cleaned.slice(start, end).replace(/\s+/g, " ").trim();
     const matchStartInSnippet = Math.max(
       0,
@@ -147,9 +161,9 @@ export function searchPtyOutputs(query: string): BufferSearchHit[] {
         if (next < 0) break;
         more += 1;
         from = next + tok.length;
-        if (more > 99) break;
+        if (more > SEARCH_MAX_COUNT_DISPLAY) break;
       }
-      if (more > 99) break;
+      if (more > SEARCH_MAX_COUNT_DISPLAY) break;
     }
     hits.push({
       ptyId,
@@ -225,7 +239,7 @@ function commandExists(binary: string): Promise<boolean> {
     execFile(
       userShell(),
       ["-l", "-c", `command -v -- ${binary} >/dev/null 2>&1`],
-      { timeout: 2500, windowsHide: true },
+      { timeout: COMMAND_CHECK_TIMEOUT_MS, windowsHide: true },
       (err) => resolve(err === null),
     );
   });
@@ -335,8 +349,8 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
   try {
     child = loadNodePty().spawn(file, args, {
       name: "xterm-256color",
-      cols: Math.max(req.cols, 4),
-      rows: Math.max(req.rows, 2),
+      cols: Math.max(req.cols, MIN_PTY_COLS),
+      rows: Math.max(req.rows, MIN_PTY_ROWS),
       cwd,
       env: safeEnv(req, cwd),
     });
@@ -376,7 +390,7 @@ export function resizePty(ptyId: string, cols: number, rows: number): void {
   const p = ptys.get(ptyId);
   if (!p) return;
   try {
-    p.resize(Math.max(cols, 4), Math.max(rows, 2));
+    p.resize(Math.max(cols, MIN_PTY_COLS), Math.max(rows, MIN_PTY_ROWS));
   } catch {
     // ignore — pty may have just exited
   }

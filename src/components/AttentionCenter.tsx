@@ -1,5 +1,8 @@
 import type { ProjectConfig, ProjectEvent, TerminalState } from "../types";
 
+// Max number of recent events shown in the attention center.
+const VISIBLE_EVENTS_LIMIT = 18;
+
 interface Props {
   projects: ProjectConfig[];
   terminals: Record<string, TerminalState>;
@@ -91,7 +94,7 @@ export function AttentionCenter({
       const rank = { error: 3, waiting: 2, done: 1 };
       return rank[b.level] - rank[a.level] || a.project.name.localeCompare(b.project.name);
     });
-  const visibleEvents = events.slice(0, 18);
+  const visibleEvents = events.slice(0, VISIBLE_EVENTS_LIMIT);
 
   return (
     <div className="aya-modal-backdrop" role="presentation" onMouseDown={onClose}>

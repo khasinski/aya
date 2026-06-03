@@ -53,6 +53,24 @@ import type { CliStatus } from "./types";
 
 const DEV_SERVER_URL = "http://localhost:5183";
 const WINDOW_TITLE = IS_DEV ? "Aya Dev" : "Aya";
+
+// Filesystem mode for the installed CLI executable (rwxr-xr-x)
+const CLI_EXECUTABLE_MODE = 0o755;
+// Maximum number of entries returned by path completion
+const MAX_PATH_COMPLETION_ENTRIES = 100;
+// Maximum number of keyboard-navigable projects (Cmd/Ctrl+1..9)
+const MAX_KEYBOARD_PROJECTS = 9;
+// Minimum dimensions of the main application window (px)
+const WINDOW_MIN_WIDTH = 800;
+const WINDOW_MIN_HEIGHT = 500;
+// Theme colors shared between About-dialog CSS and BrowserWindow chrome
+const COLOR_DARK_BG = "#0d1117";
+const COLOR_LIGHT_TEXT = "#f0f6fc";
+// About dialog window dimensions (square, px)
+const ABOUT_DIALOG_SIZE = 360;
+// About dialog icon dimensions (square, px)
+const ABOUT_ICON_SIZE = 128;
+
 const ptyHost = new PtyHostClient(path.join(__dirname, "pty-host.js"));
 
 function pathEntries(): string[] {
@@ -123,8 +141,8 @@ async function installCli(): Promise<CliStatus> {
   const source = bundledAyaCliPath();
   const target = path.join(installDir, "aya");
   const script = `#!/bin/sh\nexec ${JSON.stringify(source)} "$@"\n`;
-  await fs.writeFile(target, script, { mode: 0o755 });
-  await fs.chmod(target, 0o755);
+  await fs.writeFile(target, script, { mode: CLI_EXECUTABLE_MODE });
+  await fs.chmod(target, CLI_EXECUTABLE_MODE);
   return {
     ...(await cliStatus()),
     path: target,
@@ -259,7 +277,7 @@ async function completeDirectoryPath(rawPrefix: string): Promise<string[]> {
       return entry.name.startsWith(namePrefix);
     })
     .sort((a, b) => a.name.localeCompare(b.name))
-    .slice(0, 100)
+    .slice(0, MAX_PATH_COMPLETION_ENTRIES)
     .map((entry) => `${rawDirPrefix}${entry.name}/`);
 }
 
@@ -286,8 +304,8 @@ function showAyaAboutPanel(): void {
   }
   const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
   const about = new BrowserWindow({
-    width: 360,
-    height: 360,
+    width: ABOUT_DIALOG_SIZE,
+    height: ABOUT_DIALOG_SIZE,
     resizable: false,
     minimizable: false,
     maximizable: false,
@@ -295,7 +313,7 @@ function showAyaAboutPanel(): void {
     parent,
     modal: !!parent,
     title: `About ${WINDOW_TITLE}`,
-    backgroundColor: "#0d1117",
+    backgroundColor: COLOR_DARK_BG,
     show: false,
     webPreferences: {
       sandbox: true,
@@ -323,8 +341,8 @@ function showAyaAboutPanel(): void {
         height: 100%;
         overflow: hidden;
         font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-        color: #f0f6fc;
-        background: #0d1117;
+        color: ${COLOR_LIGHT_TEXT};
+        background: ${COLOR_DARK_BG};
       }
       body {
         display: flex;
@@ -338,8 +356,8 @@ function showAyaAboutPanel(): void {
       }
       img {
         display: block;
-        width: 128px;
-        height: 128px;
+        width: ${ABOUT_ICON_SIZE}px;
+        height: ${ABOUT_ICON_SIZE}px;
         margin: 0 auto 18px;
       }
       h1 {
@@ -359,7 +377,7 @@ function showAyaAboutPanel(): void {
         height: 30px;
         border: 1px solid #30363d;
         border-radius: 6px;
-        color: #f0f6fc;
+        color: ${COLOR_LIGHT_TEXT};
         background: #161b22;
         font: inherit;
         font-size: 13px;
@@ -518,7 +536,7 @@ function installApplicationMenu(): void {
     },
     {
       label: "Project",
-      submenu: Array.from({ length: 9 }, (_, i) => ({
+      submenu: Array.from({ length: MAX_KEYBOARD_PROJECTS }, (_, i) => ({
         label: `Select Project ${i + 1}`,
         accelerator: `CmdOrCtrl+${i + 1}`,
         click: () => dispatchShortcut(`project-${i + 1}`),
@@ -571,11 +589,11 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     y: initial.y,
     width: initial.width,
     height: initial.height,
-    minWidth: 800,
-    minHeight: 500,
+    minWidth: WINDOW_MIN_WIDTH,
+    minHeight: WINDOW_MIN_HEIGHT,
     title: WINDOW_TITLE,
     titleBarStyle: "hiddenInset",
-    backgroundColor: "#0d1117",
+    backgroundColor: COLOR_DARK_BG,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -652,7 +670,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     else if (key === "]") action = "next-tab";
     else if (key === "f") action = "find-in-pane";
     else if (key === "k") action = "search";
-    else if (key.length === 1 && key >= "1" && key <= "9") {
+    else if (key.length === 1 && key >= "1" && key <= String(MAX_KEYBOARD_PROJECTS)) {
       action = `project-${key}`;
     }
     if (!action) return;

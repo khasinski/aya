@@ -9,8 +9,19 @@ import type { ProjectGitInfo } from "./types";
 
 const execAsync = promisify(exec);
 
-const OPTS = { timeout: 1500, windowsHide: true } as const;
-const DIFF_OPTS = { timeout: 3000, maxBuffer: 5_000_000, windowsHide: true } as const;
+// Timeout for quick git info commands (branch / status).
+const GIT_COMMAND_TIMEOUT_MS = 1500;
+// Timeout for the (potentially larger) git diff command.
+const GIT_DIFF_TIMEOUT_MS = 3000;
+// Ceiling on git diff output buffered into memory (5MB).
+const GIT_DIFF_MAX_BUFFER_BYTES = 5_000_000;
+
+const OPTS = { timeout: GIT_COMMAND_TIMEOUT_MS, windowsHide: true } as const;
+const DIFF_OPTS = {
+  timeout: GIT_DIFF_TIMEOUT_MS,
+  maxBuffer: GIT_DIFF_MAX_BUFFER_BYTES,
+  windowsHide: true,
+} as const;
 
 export async function getGitInfo(directory: string): Promise<ProjectGitInfo> {
   try {

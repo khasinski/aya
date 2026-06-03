@@ -11,6 +11,7 @@ import {
   PROJECTS_STATE_FILE,
 } from "./paths";
 import type { ProjectCollectionState, ProjectConfig, SplitLayout } from "./types";
+import { MAX_SPLIT_COLS, MAX_SPLIT_ROWS } from "./validation";
 
 const RESERVED_SLUGS = new Set(["aya-sentinel-new"]);
 
@@ -68,11 +69,11 @@ export function normalizeSplitLayout(
   const r = raw as Record<string, unknown>;
   const rows =
     typeof r.rows === "number" && Number.isInteger(r.rows)
-      ? Math.max(1, Math.min(5, r.rows))
+      ? Math.max(1, Math.min(MAX_SPLIT_ROWS, r.rows))
       : 1;
   const cols =
     typeof r.cols === "number" && Number.isInteger(r.cols)
-      ? Math.max(1, Math.min(5, r.cols))
+      ? Math.max(1, Math.min(MAX_SPLIT_COLS, r.cols))
       : 1;
   const size = rows * cols;
   const rowFr = (numberArray(r.rowFr) ?? []).slice(0, rows);
