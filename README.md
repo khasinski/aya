@@ -51,10 +51,11 @@ Day to day:
 - Type `aya` in any shell to open or switch to a project.
 - Open a `claude` tab in one project, a `codex` tab in another, leave both running.
 - Split a project into panes when you want Claude Code, Codex, and a shell visible at the same time.
+- Keep reusable text snippets (prompts, commands) in a drawer and inject them into the active terminal with one click. They live editor-side in `~/.aya/snippets.json`, not in any agent's context, so they never eat conversation tokens.
 - Press `⇧⇧` to jump to either by typing a few characters of the project name or what is on screen.
 - See a red dot on the sidebar tab and a macOS dock badge count when an agent is waiting on you. Get an OS notification if the window is not focused.
 - See the active project's branch and dirty-file count in the status bar.
-- `⌘F` to find inside the active terminal. `Shift+Enter` to restart a cleanly-exited PTY in the same pane.
+- `⌘F` to find inside the active terminal. `Shift+Enter` or `⌥Enter` inserts a newline inside a running rich TUI (claude/codex) instead of submitting; on a cleanly-exited terminal, `Shift+Enter` restarts the PTY in the same pane.
 - Import iTerm2 `.itermcolors` or Windows Terminal JSON themes. Per-preset theme overrides if you want Claude green and Codex orange.
 
 ## Claude Code, plainly
@@ -169,6 +170,7 @@ Launches Vite + `tsc -w` + electronmon. State lives at `~/.aya-dev/` so producti
 | `⌘⌥-` / `Ctrl+Alt+-` | Split active pane below |
 | `⌘1..9` | Switch to project N |
 | `⌘,` / `Ctrl+,` | Settings |
+| `Shift+Enter` / `⌥Enter` | Newline inside a running rich TUI (claude/codex) without submitting |
 | `Shift+Enter` | Restart a cleanly-exited terminal (in the same pane) |
 
 Right-click a terminal in the sidebar for Restart / Close. Right-click or `×` on a project tab to close it (the JSON stays on disk; restart restores it).
@@ -212,6 +214,7 @@ Everything lives in `~/.aya/` (or `~/.aya-dev/` in dev):
   projects/<slug>.json       # one per project, hand-editable
   projects-state.json        # top-tab order, open projects, recent projects
   presets.json               # launcher buttons in the sidebar
+  snippets.json              # saved text snippets for the injector drawer
   themes.json                # color schemes, xterm.js ITheme shape
   window-state.json          # position, size, fullscreen / maximized
 ```
