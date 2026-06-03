@@ -5,6 +5,9 @@
 // approval-prompt strings. Imperfect but correct for the common case where the
 // agent literally renders the approval box on screen.
 
+// Min stripped char-count for a chunk to be treated as "busy output".
+const BUSY_OUTPUT_MIN_LENGTH = 64;
+
 const APPROVAL_PATTERNS: RegExp[] = [
   /Do you want to/i,
   /Do you want me to/i,
@@ -37,5 +40,5 @@ export function detectApproval(chunk: string): boolean {
 // signal that the agent is busy working, not waiting. Use length as a cheap
 // proxy after stripping ANSI.
 export function looksBusy(chunk: string): boolean {
-  return stripAnsi(chunk).trim().length > 64;
+  return stripAnsi(chunk).trim().length > BUSY_OUTPUT_MIN_LENGTH;
 }

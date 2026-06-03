@@ -18,6 +18,12 @@ import { isSnippet, SNIPPET_TEXT_MAX } from "./snippets";
  *  payloads before any per-item work happens. */
 const SNIPPETS_IPC_MAX = 1_000;
 
+/** Maximum split-grid dimensions (rows x cols). Single source of truth for the
+ *  split-layout limit — imported by config.ts so the clamp and this validator
+ *  enforce the same rule. */
+export const MAX_SPLIT_ROWS = 5;
+export const MAX_SPLIT_COLS = 5;
+
 function fail(name: string, expected: string): never {
   throw new Error(`Invalid IPC payload for ${name}: expected ${expected}.`);
 }
@@ -86,8 +92,10 @@ function validateSplitLayout(value: unknown): SplitLayout {
   if (!isRecord(value)) fail("projects:update.splitLayout", "SplitLayout object");
   const rows = requirePositiveInt(value.rows, "projects:update.splitLayout.rows");
   const cols = requirePositiveInt(value.cols, "projects:update.splitLayout.cols");
-  if (rows > 5) fail("projects:update.splitLayout.rows", "integer <= 5");
-  if (cols > 5) fail("projects:update.splitLayout.cols", "integer <= 5");
+  if (rows > MAX_SPLIT_ROWS)
+    fail("projects:update.splitLayout.rows", `integer <= ${MAX_SPLIT_ROWS}`);
+  if (cols > MAX_SPLIT_COLS)
+    fail("projects:update.splitLayout.cols", `integer <= ${MAX_SPLIT_COLS}`);
   const size = rows * cols;
   const cellsValue = value.cells;
   if (

@@ -36,6 +36,21 @@ import {
   type WorkingTab,
 } from "./types";
 
+// Cadence for polling the active project's git branch/dirty count (no inotify watch).
+const GIT_STATUS_POLL_INTERVAL_MS = 3000;
+// Cap on retained entries in the project event timeline.
+const MAX_PROJECT_EVENTS = 200;
+// Cap on preset suggestions offered during repo preset import.
+const MAX_SUGGESTED_PRESETS = 8;
+// Minimum fractional size of a split pane; drives the drag clamp.
+const MIN_SPLIT_PANE_FRACTION = 0.18;
+// Default sidebar width in pixels.
+const DEFAULT_SIDEBAR_WIDTH_PX = 240;
+// Default terminal font size in pixels.
+const TERMINAL_FONT_SIZE_PX = 13;
+// Persisted schema version for ProjectCollectionState.
+const PROJECT_STATE_VERSION = 1;
+
 // Hard fallback used only if the themes file is somehow empty before boot
 // resolves — matches AYA_DARK in electron/themes.ts.
 const FALLBACK_THEME_COLORS: ThemeColors = {
@@ -315,7 +330,7 @@ export function App() {
   const [allProjects, setAllProjects] = useState<ProjectConfig[]>([]);
   const [projects, setProjects] = useState<ProjectConfig[]>([]);
   const [projectState, setProjectState] = useState<ProjectCollectionState>({
-    version: 1,
+    version: PROJECT_STATE_VERSION,
     order: [],
     open: [],
     recent: [],
@@ -350,7 +365,7 @@ export function App() {
   const [pendingRepoImport, setPendingRepoImport] =
     useState<PendingRepoImport | null>(null);
   const [findInPaneFor, setFindInPaneFor] = useState<string | null>(null);
-  const [sidebarWidth, setSidebarWidth] = useState(240);
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH_PX);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [didBootstrap, setDidBootstrap] = useState(false);
   const [harnessScanDone, setHarnessScanDone] = useState(false);
@@ -358,7 +373,7 @@ export function App() {
   const [hideNoHarnessHint, setHideNoHarnessHint] = useState(
     () => localStorage.getItem("aya:no-harness-hint-dismissed") === "1",
   );
-  const fontSize = 13;
+  const fontSize = TERMINAL_FONT_SIZE_PX;
 
   // Status-bar branch / dirty count goes stale once you `git checkout` in a
   // shell or commit something — there's no inotify watch, just a small poll
@@ -378,7 +393,7 @@ export function App() {
       });
     };
     refresh();
-    const id = setInterval(refresh, 3000);
+    const id = setInterval(refresh, GIT_STATUS_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       clearInterval(id);
@@ -470,7 +485,7 @@ export function App() {
           createdAt: event.createdAt ?? Date.now(),
         },
         ...prev,
-      ].slice(0, 200));
+      ].slice(0, MAX_PROJECT_EVENTS));
     },
     [],
   );
@@ -527,7 +542,7 @@ export function App() {
   const saveProjectCollectionState = useCallback(
     (next: ProjectCollectionState) => {
       const normalized: ProjectCollectionState = {
-        version: 1,
+        version: PROJECT_STATE_VERSION,
         order: dedupeSlugs(next.order),
         open: dedupeSlugs(next.open),
         recent: dedupeSlugs(next.recent),
@@ -630,7 +645,7 @@ export function App() {
       const recent =
         loadedProjectState.recent.length > 0 ? loadedProjectState.recent : order;
       const normalizedState: ProjectCollectionState = {
-        version: 1,
+        version: PROJECT_STATE_VERSION,
         order: dedupeSlugs(order).filter((slug) => seededSlugs.has(slug)),
         open: dedupeSlugs(open).filter((slug) => seededSlugs.has(slug)),
         recent: dedupeSlugs(recent).filter((slug) => seededSlugs.has(slug)),
@@ -787,7 +802,7 @@ export function App() {
         localStorage.setItem(ignoredKey, "1");
         return;
       }
-      setPendingRepoImport({ project, presets: suggestions.slice(0, 8) });
+      setPendingRepoImport({ project, presets: suggestions.slice(0, MAX_SUGGESTED_PRESETS) });
     });
     return () => {
       cancelled = true;
@@ -1147,7 +1162,7 @@ export function App() {
         if (index < 0 || index >= values.length - 1 || totalPx <= 0) return layout;
         const totalFr = values.reduce((sum, value) => sum + value, 0);
         const deltaFr = (deltaPx / totalPx) * totalFr;
-        const min = 0.18;
+        const min = MIN_SPLIT_PANE_FRACTION;
         const left = Math.max(min, values[index] + deltaFr);
         const right = Math.max(min, values[index + 1] - deltaFr);
         values[index] = left;

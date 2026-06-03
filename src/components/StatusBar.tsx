@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import hljs from "highlight.js/lib/common";
 import type { GitChangedFile, ProjectConfig, TerminalState } from "../types";
 
+// Material Symbols small icon size (px) used for status-bar glyphs
+const ICON_SIZE_SM_PX = 13;
+
 interface GitInfo {
   branch: string | null;
   dirty: number;
@@ -83,7 +86,7 @@ export function StatusBar({
           title="Open project directory"
           onClick={() => onOpenProjectDirectory(project.directory)}
         >
-          <span style={{ fontFamily: "Material Symbols Outlined", fontSize: 13 }}>
+          <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
             folder
           </span>
           {project.directory}
@@ -94,7 +97,7 @@ export function StatusBar({
           <span
             style={{
               fontFamily: "Material Symbols Outlined",
-              fontSize: 13,
+              fontSize: ICON_SIZE_SM_PX,
               fontVariationSettings: '"FILL" 1',
             }}
           >
@@ -108,7 +111,7 @@ export function StatusBar({
           className={`aya-statusbar-item aya-statusbar-item--agent aya-statusbar-item--agent-${externalStatus.level}`}
           title={new Date(externalStatus.updatedAt).toLocaleString()}
         >
-          <span style={{ fontFamily: "Material Symbols Outlined", fontSize: 13 }}>
+          <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
             smart_toy
           </span>
           {externalStatus.text}
@@ -123,14 +126,14 @@ export function StatusBar({
         title="Open attention center"
         onClick={onOpenAttentionCenter}
       >
-        <span style={{ fontFamily: "Material Symbols Outlined", fontSize: 13 }}>
+        <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
           notifications_active
         </span>
         {attentionCount > 0 ? `${attentionCount} attention` : "activity"}
       </button>
       {git?.branch && (
         <span className="aya-statusbar-item">
-          <span style={{ fontFamily: "Material Symbols Outlined", fontSize: 13 }}>
+          <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
             fork_right
           </span>
           {git.branch}
@@ -144,7 +147,7 @@ export function StatusBar({
             title="Show changed files"
             onClick={toggleDirtyFiles}
           >
-            <span style={{ fontFamily: "Material Symbols Outlined", fontSize: 13 }}>
+            <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
               edit_note
             </span>
             {git.dirty} dirty
@@ -216,7 +219,7 @@ export function StatusBar({
           className="aya-statusbar-item"
           style={{ color: "var(--status-active)" }}
         >
-          <span style={{ fontFamily: "Material Symbols Outlined", fontSize: 13 }}>
+          <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
             check_circle
           </span>
           clean

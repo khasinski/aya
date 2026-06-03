@@ -8,6 +8,9 @@ import {
 } from "react";
 import type { ProjectConfig, TerminalState } from "../types";
 
+// Poll interval (ms) for ticking recent-activity recomputation.
+const ACTIVITY_TICK_INTERVAL_MS = 800;
+
 export function useDockBadge(
   terminals: Record<string, TerminalState>,
 ): void {
@@ -70,7 +73,10 @@ export function useRecentTerminalActivity(): RecentActivity {
   const [activityTick, setActivityTick] = useState(0);
 
   useEffect(() => {
-    const id = setInterval(() => setActivityTick((t) => t + 1), 800);
+    const id = setInterval(
+      () => setActivityTick((t) => t + 1),
+      ACTIVITY_TICK_INTERVAL_MS,
+    );
     return () => clearInterval(id);
   }, []);
 

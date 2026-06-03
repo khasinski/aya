@@ -136,6 +136,63 @@ test("validateProjectConfig rejects invalid split layout payloads", () => {
   );
 });
 
+test("validateProjectConfig accepts a max 5x5 split but rejects one beyond max", () => {
+  const base = {
+    slug: "aya",
+    name: "Aya",
+    directory: "/tmp/aya",
+    tabs: [{ id: "t1", presetId: "shell", name: "Shell" }],
+  };
+  // A layout at the split-grid maximum (5 rows x 5 cols) validates OK.
+  const atMax = validateProjectConfig({
+    ...base,
+    splitLayout: {
+      rows: 5,
+      cols: 5,
+      rowFr: [1, 1, 1, 1, 1],
+      colFr: [1, 1, 1, 1, 1],
+      cells: ["t1"],
+      activeCell: 0,
+    },
+  });
+  assert.equal(atMax.splitLayout?.rows, 5);
+  assert.equal(atMax.splitLayout?.cols, 5);
+
+  // One row beyond the maximum is rejected.
+  assert.throws(
+    () =>
+      validateProjectConfig({
+        ...base,
+        splitLayout: {
+          rows: 6,
+          cols: 5,
+          rowFr: [1],
+          colFr: [1],
+          cells: ["t1"],
+          activeCell: 0,
+        },
+      }),
+    /splitLayout\.rows/,
+  );
+
+  // One col beyond the maximum is rejected.
+  assert.throws(
+    () =>
+      validateProjectConfig({
+        ...base,
+        splitLayout: {
+          rows: 5,
+          cols: 6,
+          rowFr: [1],
+          colFr: [1],
+          cells: ["t1"],
+          activeCell: 0,
+        },
+      }),
+    /splitLayout\.cols/,
+  );
+});
+
 test("validateProjectCollectionState accepts order/open/recent arrays", () => {
   assert.deepEqual(
     validateProjectCollectionState({

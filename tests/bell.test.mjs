@@ -81,6 +81,14 @@ test("looksBusy returns false for short output (likely a prompt cursor or quiet 
   assert.equal(looksBusy(""), false);
 });
 
+test("looksBusy pins the length boundary (just-under is quiet, at/over is busy)", () => {
+  // The heuristic clears once a chunk's stripped length crosses the threshold.
+  const justUnder = "x".repeat(64);
+  const over = "x".repeat(65);
+  assert.equal(looksBusy(justUnder), false);
+  assert.equal(looksBusy(over), true);
+});
+
 test("looksBusy ignores ANSI noise when judging length", () => {
   // 100+ chars of ANSI but only a tiny stripped body.
   const ansiHeavy = "\x1b[1;31m\x1b[2J\x1b[H\x1b[0m\x1b[1;34m\x1b[K\x1b[0m" +

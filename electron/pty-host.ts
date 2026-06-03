@@ -19,6 +19,11 @@ import {
 } from "./pty";
 import type { PtyEvent } from "./types";
 
+// Wait before shutting down the idle pty host with no clients or ptys (ms).
+const IDLE_SHUTDOWN_TIMEOUT_MS = 30_000;
+// rw------- permissions for the pty-host socket file.
+const SOCKET_FILE_PERMISSIONS = 0o600;
+
 const clients = new Set<net.Socket>();
 let idleTimer: NodeJS.Timeout | null = null;
 
@@ -70,7 +75,7 @@ function scheduleIdleShutdown(): void {
   if (clients.size > 0 || activePtyCount() > 0 || idleTimer) return;
   idleTimer = setTimeout(() => {
     if (clients.size === 0 && activePtyCount() === 0) process.exit(0);
-  }, 30_000);
+  }, IDLE_SHUTDOWN_TIMEOUT_MS);
 }
 
 function start(): void {
@@ -121,7 +126,7 @@ function start(): void {
 
   server.listen(PTY_HOST_SOCKET_PATH, () => {
     try {
-      fs.chmodSync(PTY_HOST_SOCKET_PATH, 0o600);
+      fs.chmodSync(PTY_HOST_SOCKET_PATH, SOCKET_FILE_PERMISSIONS);
     } catch {
       // best effort
     }

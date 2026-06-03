@@ -13,6 +13,11 @@ import {
 import type { BufferSearchHit } from "./pty";
 import type { SpawnRequest } from "./types";
 
+// Deadline waiting for the pty host to create its socket (ms).
+const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
+// Interval between socket-existence polls while waiting (ms).
+const PTY_HOST_SOCKET_POLL_INTERVAL_MS = 50;
+
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
@@ -124,10 +129,10 @@ export class PtyHostClient {
   }
 
   private async waitForSocket(): Promise<void> {
-    const deadline = Date.now() + 5_000;
+    const deadline = Date.now() + PTY_HOST_SOCKET_WAIT_TIMEOUT_MS;
     while (Date.now() < deadline) {
       if (fs.existsSync(PTY_HOST_SOCKET_PATH)) return;
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, PTY_HOST_SOCKET_POLL_INTERVAL_MS));
     }
     throw new Error(`PTY host did not create ${path.basename(PTY_HOST_SOCKET_PATH)}`);
   }

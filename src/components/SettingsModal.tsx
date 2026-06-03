@@ -25,6 +25,14 @@ interface Props {
   onImportTheme: () => Promise<Theme | null>;
 }
 
+// Claude brand color (used for the Claude YOLO preset and as the color placeholder)
+const CLAUDE_BRAND_COLOR = "#d97757";
+// Preset table column widths (px) kept in sync between header row and body rows
+const PRESET_ROW_ICON_WIDTH = 36;
+const PRESET_ROW_NAME_WIDTH = 130;
+const PRESET_ROW_THEME_WIDTH = 130;
+const PRESET_ROW_COLOR_WIDTH = 70;
+
 function uuid(): string {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -192,7 +200,7 @@ export function SettingsModal({
       id: "claude-yolo",
       name: "Claude YOLO",
       icon: "✻",
-      color: "#d97757",
+      color: CLAUDE_BRAND_COLOR,
       command: "claude --dangerously-skip-permissions",
       themeId: undefined,
     });
@@ -451,11 +459,11 @@ export function SettingsModal({
 
         <div className="aya-settings-list">
           <div className="aya-settings-row aya-settings-row--head">
-            <span style={{ width: 36 }}>Icon</span>
-            <span style={{ width: 130 }}>Name</span>
+            <span style={{ width: PRESET_ROW_ICON_WIDTH }}>Icon</span>
+            <span style={{ width: PRESET_ROW_NAME_WIDTH }}>Name</span>
             <span style={{ flex: 1 }}>Command</span>
-            <span style={{ width: 130 }}>Theme</span>
-            <span style={{ width: 70 }}>Color</span>
+            <span style={{ width: PRESET_ROW_THEME_WIDTH }}>Theme</span>
+            <span style={{ width: PRESET_ROW_COLOR_WIDTH }}>Color</span>
             <span style={{ width: 28 }} />
           </div>
           {draft.map((row) => {
@@ -464,14 +472,14 @@ export function SettingsModal({
               <div className="aya-settings-row" key={row.__key}>
                 <input
                   className="aya-modal-input aya-settings-icon-input"
-                  style={{ width: 36 }}
+                  style={{ width: PRESET_ROW_ICON_WIDTH }}
                   value={row.icon}
                   maxLength={3}
                   onChange={(e) => updateRow(row.__key, { icon: e.target.value })}
                 />
                 <input
                   className="aya-modal-input"
-                  style={{ width: 130 }}
+                  style={{ width: PRESET_ROW_NAME_WIDTH }}
                   value={row.name}
                   onChange={(e) => updateRow(row.__key, { name: e.target.value })}
                   placeholder="Display name"
@@ -502,7 +510,7 @@ export function SettingsModal({
                 </div>
                 <select
                   className="aya-modal-input"
-                  style={{ width: 130 }}
+                  style={{ width: PRESET_ROW_THEME_WIDTH }}
                   value={row.themeId ?? ""}
                   onChange={(e) =>
                     updateRow(row.__key, {
@@ -520,12 +528,12 @@ export function SettingsModal({
                 </select>
                 <input
                   className="aya-modal-input"
-                  style={{ width: 70 }}
+                  style={{ width: PRESET_ROW_COLOR_WIDTH }}
                   value={row.color}
                   onChange={(e) =>
                     updateRow(row.__key, { color: e.target.value })
                   }
-                  placeholder="#d97757"
+                  placeholder={CLAUDE_BRAND_COLOR}
                   spellCheck={false}
                 />
                 <button

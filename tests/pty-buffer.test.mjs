@@ -13,6 +13,9 @@ import {
   searchPtyOutputs,
 } from "../dist-electron/pty.js";
 
+// Per-chunk size (bytes) used to overflow the rolling buffer in the trim test.
+const BUFFER_TEST_CHUNK_SIZE_BYTES = 30000;
+
 // The buffer is private to pty.ts. To exercise it we expose getBufferedOutput
 // and rely on the public spawnPty path elsewhere. For unit testing the trim,
 // we drive a stub via a local reimplementation matching the production code.
@@ -89,14 +92,18 @@ test("buffer trims oldest chunks once total exceeds limit", () => {
   // Expect the oldest chunks to be dropped.
   for (let i = 0; i < 40; i++) {
     const tag = String.fromCharCode(97 + i); // "a", "b", "c", ...
-    b.append(tag.repeat(30_000));
+    b.append(tag.repeat(BUFFER_TEST_CHUNK_SIZE_BYTES));
   }
   const result = b.read();
   assert.ok(result.length <= OUTPUT_BUFFER_MAX);
   // The first chunk(s) should be gone. "a" is definitely gone.
   assert.equal(result.includes("a"), false);
   // The last chunk must be present in full.
-  assert.ok(result.includes(String.fromCharCode(97 + 39).repeat(30_000)));
+  assert.ok(
+    result.includes(
+      String.fromCharCode(97 + 39).repeat(BUFFER_TEST_CHUNK_SIZE_BYTES),
+    ),
+  );
 });
 
 test("buffer keeps at least one chunk even if it exceeds the limit", () => {

@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { getPreset, type Preset, type TerminalState } from "../types";
 
+// Clamp bounds for drag-resizing the sidebar (px).
+const SIDEBAR_MIN_WIDTH_PX = 180;
+const SIDEBAR_MAX_WIDTH_PX = 380;
+
 interface Props {
   terminals: TerminalState[];
   activeId: string | null;
@@ -158,7 +162,7 @@ export function Sidebar({
   useEffect(() => {
     const move = (e: MouseEvent) => {
       if (!resizing.current) return;
-      const w = Math.max(180, Math.min(380, e.clientX));
+      const w = Math.max(SIDEBAR_MIN_WIDTH_PX, Math.min(SIDEBAR_MAX_WIDTH_PX, e.clientX));
       onResize(w);
     };
     const up = () => {

@@ -8,6 +8,11 @@ import {
   type TerminalState,
 } from "../types";
 
+// Debounce delay (ms) applied to the search input before it becomes the active query.
+const SEARCH_DEBOUNCE_MS = 100;
+// Maximum number of ranked search results returned from a query.
+const SEARCH_MAX_RESULTS = 50;
+
 interface Props {
   projects: ProjectConfig[];
   allProjects: ProjectConfig[];
@@ -321,7 +326,7 @@ function buildResults(
   }
 
   out.sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
-  return out.slice(0, 50);
+  return out.slice(0, SEARCH_MAX_RESULTS);
 }
 
 export function SearchModal({
@@ -351,7 +356,7 @@ export function SearchModal({
   // it feels live, slow enough that single keystrokes don't trigger a
   // full re-rank + RPC round-trip.
   useEffect(() => {
-    const id = setTimeout(() => setQuery(inputValue), 100);
+    const id = setTimeout(() => setQuery(inputValue), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(id);
   }, [inputValue]);
 
