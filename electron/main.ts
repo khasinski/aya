@@ -30,6 +30,7 @@ import {
   saveProjectState,
   updateProject,
 } from "./config";
+import { startConfigWatcher } from "./config-watcher";
 import { startControlServer } from "./control";
 import { getGitChangedFiles, getGitDiff, getGitInfo } from "./git";
 import { IS_DEV } from "./paths";
@@ -610,8 +611,13 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   trackWindowState(win);
   ptyHost.setWebContents(win.webContents);
 
+  // Watch ~/.aya/ for external edits to snippets/presets/themes and reload
+  // that slice in the renderer. Stopped when the window closes.
+  const stopConfigWatcher = startConfigWatcher(win);
+
   win.once("ready-to-show", () => win.show());
   win.on("closed", () => {
+    stopConfigWatcher();
     // Keep the module-level ref in sync so second-instance handlers don't
     // try to focus a destroyed window.
     if (mainWindow === win) mainWindow = null;

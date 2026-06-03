@@ -115,6 +115,14 @@ export interface ControlStatusUpdate {
   updatedAt: number;
 }
 
+/** A user-editable config file the renderer hot-reloads when it changes on
+ *  disk under ~/.aya/. */
+export type ConfigSlice = "snippets" | "presets" | "themes";
+
+export interface ConfigChange {
+  slice: ConfigSlice;
+}
+
 // What the preload exposes to window.aya:
 export interface AyaApi {
   /** True when running under `npm run dev` (AYA_DEV=1). False in the packaged
@@ -206,6 +214,11 @@ export interface AyaApi {
   /** Subscribe to "open this project directory" requests from main — fired
    *  on first launch with argv and on every second-instance invocation. */
   onOpenProject(handler: (directory: string) => void): () => void;
+
+  /** Fired when an external process edits one of the watched config files
+   *  (snippets/presets/themes) under ~/.aya/. The renderer reloads that slice
+   *  so a hand-edit isn't clobbered by the next in-app save. */
+  onConfigChange(handler: (change: ConfigChange) => void): () => void;
 }
 
 declare global {

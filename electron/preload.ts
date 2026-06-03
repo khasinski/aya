@@ -2,7 +2,12 @@
 // contextBridge. The renderer has no direct Node access.
 
 import { contextBridge, ipcRenderer } from "electron";
-import type { AyaApi, ControlStatusUpdate, PtyEvent } from "./types";
+import type {
+  AyaApi,
+  ConfigChange,
+  ControlStatusUpdate,
+  PtyEvent,
+} from "./types";
 
 const isDev = process.env.AYA_DEV === "1";
 
@@ -86,6 +91,11 @@ const api: AyaApi = {
       handler(isFullScreen);
     ipcRenderer.on("app:fullscreen", listener);
     return () => ipcRenderer.removeListener("app:fullscreen", listener);
+  },
+  onConfigChange: (handler) => {
+    const listener = (_e: unknown, change: ConfigChange) => handler(change);
+    ipcRenderer.on("config:changed", listener);
+    return () => ipcRenderer.removeListener("config:changed", listener);
   },
 
   onShortcut: (handler) => {

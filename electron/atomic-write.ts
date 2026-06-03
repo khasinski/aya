@@ -7,6 +7,7 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { recordWrite } from "./config-echo";
 
 export async function writeFileAtomic(
   filePath: string,
@@ -22,6 +23,9 @@ export async function writeFileAtomic(
   try {
     await fs.writeFile(tmpPath, data);
     await fs.rename(tmpPath, filePath);
+    // Record what we just wrote so the config watcher can tell this echo of
+    // our own save apart from a genuine external edit (see config-echo.ts).
+    recordWrite(filePath, data);
   } catch (err) {
     // Best effort: clean up the tmp file if the rename never happened.
     try {

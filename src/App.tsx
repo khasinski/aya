@@ -463,6 +463,52 @@ export function App() {
     };
   }, []);
 
+  // Hot-reload config when an external process edits one of the user-editable
+  // files under ~/.aya/ while Aya is running. Without this, a hand-edit to
+  // snippets/presets/themes.json is silently clobbered by the next in-app save.
+  // We reload the normalized persisted form - same as we already do
+  // after our own snippet save - so in-memory state can't drift from disk.
+  useEffect(() => {
+    return window.aya.onConfigChange(({ slice }) => {
+      // A hand-edit is often momentarily invalid JSON, so the main-side
+      // loader rejects; keep current in-memory state until the file parses.
+      if (slice === "snippets") {
+        void window.aya
+          .listSnippets()
+          .then(setSnippets)
+          .catch((e) =>
+            console.warn(
+              "config hot-reload (snippets) failed; keeping current state",
+              e,
+            ),
+          );
+      } else if (slice === "presets") {
+        void window.aya
+          .listPresets()
+          .then(setPresets)
+          .catch((e) =>
+            console.warn(
+              "config hot-reload (presets) failed; keeping current state",
+              e,
+            ),
+          );
+      } else if (slice === "themes") {
+        void window.aya
+          .listThemes()
+          .then((file) => {
+            setThemes(file.themes);
+            setActiveThemeId(file.activeId);
+          })
+          .catch((e) =>
+            console.warn(
+              "config hot-reload (themes) failed; keeping current state",
+              e,
+            ),
+          );
+      }
+    });
+  }, []);
+
   const terminalsRef = useRef(terminals);
   terminalsRef.current = terminals;
   const allProjectsRef = useRef(allProjects);
