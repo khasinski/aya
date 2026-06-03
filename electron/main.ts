@@ -36,6 +36,7 @@ import { IS_DEV } from "./paths";
 import { scanHarnesses } from "./harnesses";
 import { listPresets, savePresets } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
+import { readUsage } from "./usage";
 import { readRepoProjectConfig } from "./project-local";
 import { PtyHostClient } from "./pty-host-client";
 import {
@@ -746,6 +747,8 @@ function registerIpc(win: BrowserWindow): void {
   ipcMain.handle("snippets:save", async (_e, snippets: unknown) =>
     saveSnippets(validateSnippetArray(snippets)),
   );
+  // Read-only: the account-wide usage snapshot a user hook writes (no fetch).
+  ipcMain.handle("usage:get", async () => readUsage());
 
   ipcMain.handle("themes:list", async () => {
     const { loadThemes } = await import("./themes");

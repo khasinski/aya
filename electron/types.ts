@@ -7,8 +7,17 @@ import type { HarnessDef } from "./harnesses";
 import type { Preset } from "./presets";
 import type { BufferSearchHit } from "./pty";
 import type { Theme, ThemesFile } from "./themes";
+import type { UsageData } from "./usage";
 
-export type { BufferSearchHit, Snippet, HarnessDef, Preset, Theme, ThemesFile };
+export type {
+  BufferSearchHit,
+  Snippet,
+  HarnessDef,
+  Preset,
+  Theme,
+  ThemesFile,
+  UsageData,
+};
 
 export interface WorkingTab {
   id: string;
@@ -153,6 +162,10 @@ export interface AyaApi {
   // Saved snippets (text injected into the active terminal on demand)
   listSnippets(): Promise<Snippet[]>;
   saveSnippets(snippets: Snippet[]): Promise<void>;
+
+  /** Read-only account-wide usage snapshot a user hook writes (null if none).
+   *  Aya never fetches it — see electron/usage.ts. */
+  getUsage(): Promise<UsageData | null>;
 
   // Themes (terminal color schemes — xterm.js ITheme shape internally)
   listThemes(): Promise<ThemesFile>;

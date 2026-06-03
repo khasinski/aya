@@ -1,9 +1,78 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
-import type { ProjectConfig } from "../types";
+import type { ProjectConfig, UsageData, UsageWindow } from "../types";
 
 // Project tab width bounds (px): tabs shrink to min, then overflow the strip.
 const TAB_MIN_WIDTH_PX = 120;
 const TAB_MAX_WIDTH_PX = 320;
+// A usage snapshot older than this means the hook stopped writing — dim it.
+const USAGE_STALE_AFTER_MS = 15 * 60 * 1000;
+
+function isUsageStale(u: UsageData): boolean {
+  const t = Date.parse(u.updatedAt);
+  return !Number.isFinite(t) || Date.now() - t > USAGE_STALE_AFTER_MS;
+}
+
+function fmtClock(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "?";
+  return new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function fmtReset(iso?: string): string {
+  if (!iso) return "";
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  return new Date(t).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** One limit window in the usage popover: label, percent, bar, reset time. */
+function UsageRow({ label, win }: { label: string; win: UsageWindow }) {
+  const filled = Math.max(0, Math.min(100, win.pct));
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+        }}
+      >
+        <span style={{ color: "#8b949e" }}>{label}</span>
+        <span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+          {Math.round(win.pct)}%
+        </span>
+      </div>
+      <div
+        style={{
+          height: 5,
+          borderRadius: 3,
+          background: "#30363d",
+          overflow: "hidden",
+          marginTop: 3,
+        }}
+      >
+        <div
+          style={{
+            height: "100%",
+            width: `${filled}%`,
+            background: "#d97757",
+            borderRadius: 3,
+          }}
+        />
+      </div>
+      {win.resetsAt && (
+        <div style={{ color: "#8b949e", fontSize: 11, marginTop: 2 }}>
+          resets {fmtReset(win.resetsAt)}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface ProjectAttention {
   count: number;
@@ -30,6 +99,8 @@ interface Props {
   onOpenSearch: () => void;
   onOpenSettings: () => void;
   projectBadges?: Record<string, ProjectAttention>;
+  /** Account-wide Claude usage snapshot (null hides the chip). Read-only. */
+  usage?: UsageData | null;
 }
 
 function compactDir(directory: string, home: string): string {
@@ -56,6 +127,7 @@ export function TopBar({
   onOpenSearch,
   onOpenSettings,
   projectBadges = {},
+  usage = null,
 }: Props) {
   const [renamingSlug, setRenamingSlug] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -63,6 +135,8 @@ export function TopBar({
   const tabsRef = useRef<HTMLDivElement>(null);
   const recentRef = useRef<HTMLDivElement>(null);
   const [showRecent, setShowRecent] = useState(false);
+  const usageRef = useRef<HTMLDivElement>(null);
+  const [showUsage, setShowUsage] = useState(false);
 
   useEffect(() => {
     if (!showRecent) return;
@@ -72,6 +146,15 @@ export function TopBar({
     window.addEventListener("pointerdown", onPointerDown, true);
     return () => window.removeEventListener("pointerdown", onPointerDown, true);
   }, [showRecent]);
+
+  useEffect(() => {
+    if (!showUsage) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!usageRef.current?.contains(e.target as Node)) setShowUsage(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, [showUsage]);
 
   // Route ANY wheel/trackpad delta over the tab strip into horizontal
   // scroll. macOS trackpad horizontal swipes default to history navigation
@@ -271,6 +354,59 @@ export function TopBar({
         </div>
       </div>
       <div className="aya-topbar-right">
+        {usage && (
+          <div className="aya-recent-projects" ref={usageRef}>
+            <button
+              className="aya-iconbtn"
+              title="Claude usage — account-wide (all sessions, not this project)"
+              aria-label="Claude usage, account-wide"
+              onClick={() => setShowUsage((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={showUsage}
+              style={{
+                width: "auto",
+                gap: 6,
+                padding: "0 8px",
+                opacity: isUsageStale(usage) ? 0.5 : 1,
+              }}
+            >
+              <span style={{ fontFamily: "Material Symbols Outlined" }}>
+                speed
+              </span>
+              <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 12 }}>
+                {Math.round(usage.sevenDay.pct)}%
+              </span>
+            </button>
+            {showUsage && (
+              <div
+                className="aya-recent-menu"
+                role="menu"
+                style={{ width: 240, padding: 12 }}
+              >
+                <div className="aya-recent-menu-title">Claude — account-wide</div>
+                <div
+                  style={{ color: "#8b949e", fontSize: 12, marginBottom: 10 }}
+                >
+                  all sessions, not this project
+                </div>
+                <UsageRow label="5h" win={usage.fiveHour} />
+                <UsageRow label="week" win={usage.sevenDay} />
+                <div
+                  style={{
+                    color: "#8b949e",
+                    fontSize: 11,
+                    marginTop: 10,
+                    borderTop: "1px solid #30363d",
+                    paddingTop: 8,
+                  }}
+                >
+                  {isUsageStale(usage) ? "stale · " : ""}updated{" "}
+                  {fmtClock(usage.updatedAt)}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         <div className="aya-recent-projects" ref={recentRef}>
           <button
             className="aya-iconbtn"

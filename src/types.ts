@@ -32,6 +32,19 @@ export interface Snippet {
   autoRun: boolean;
 }
 
+/** Account-wide Claude/Codex usage snapshot (mirrors electron/usage.ts).
+ *  Written by a user hook, read-only in Aya. Numbers are account-global —
+ *  all sessions share the 5h + weekly limits, never per-project. */
+export interface UsageWindow {
+  pct: number;
+  resetsAt?: string;
+}
+export interface UsageData {
+  fiveHour: UsageWindow;
+  sevenDay: UsageWindow;
+  updatedAt: string;
+}
+
 export interface ThemeColors {
   background: string;
   foreground: string;
@@ -203,6 +216,9 @@ export interface AyaApi {
 
   listSnippets(): Promise<Snippet[]>;
   saveSnippets(snippets: Snippet[]): Promise<void>;
+
+  /** Read-only account-wide usage snapshot (null when no hook has written it). */
+  getUsage(): Promise<UsageData | null>;
 
   listThemes(): Promise<ThemesFile>;
   saveThemes(file: ThemesFile): Promise<void>;
