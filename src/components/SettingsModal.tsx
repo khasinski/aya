@@ -9,7 +9,6 @@ import {
   looksNonInteractive,
   presetSlug,
 } from "../types";
-import { CLAUDE_BRAND_COLOR } from "../theme";
 
 interface Props {
   presets: Preset[];
@@ -28,6 +27,7 @@ interface Props {
 }
 
 // Claude brand color (used for the Claude YOLO preset and as the color placeholder)
+const CLAUDE_BRAND_COLOR = "#d97757";
 // Preset table column widths (px) kept in sync between header row and body rows
 const PRESET_ROW_ICON_WIDTH = 36;
 const PRESET_ROW_NAME_WIDTH = 130;

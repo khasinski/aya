@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import type { ProjectConfig, UsageData, UsageWindow } from "../types";
-import { CLAUDE_BRAND_COLOR } from "../theme";
 
 // Project tab width bounds (px): tabs shrink to min, then overflow the strip.
 const TAB_MIN_WIDTH_PX = 120;
 const TAB_MAX_WIDTH_PX = 320;
 // A usage snapshot older than this means the hook stopped writing — dim it.
 const USAGE_STALE_AFTER_MS = 15 * 60 * 1000;
-// Usage-chip palette: Aya's muted text and panel border (Claude brand accent
-// comes from the shared theme). One-off; not worth a shared module.
+// Usage-chip palette: Aya's muted text and panel border (each used a few times
+// in the chip below). The single Claude-brand accent is inlined at its one use.
 const CHIP_MUTED_COLOR = "#8b949e";
 const CHIP_BORDER_COLOR = "#30363d";
 
@@ -65,7 +64,7 @@ function UsageRow({ label, win }: { label: string; win: UsageWindow }) {
           style={{
             height: "100%",
             width: `${filled}%`,
-            background: CLAUDE_BRAND_COLOR,
+            background: "#d97757", // Claude brand accent (single use)
             borderRadius: 3,
           }}
         />
