@@ -197,8 +197,8 @@ export interface BufferSearchHit {
   more: number;
 }
 
-/** A user-editable config file the renderer hot-reloads when it changes on
- *  disk under ~/.aya/. */
+/** A config file the user can edit, which the renderer reloads when it changes
+ *  on disk under ~/.aya/. */
 export type ConfigSlice = "snippets" | "presets" | "themes";
 
 export interface ConfigChange {
@@ -274,9 +274,9 @@ export interface AyaApi {
   onShortcut(handler: (action: string) => void): () => void;
   onOpenProject(handler: (directory: string) => void): () => void;
 
-  /** Fired when an external process edits one of the watched config files
+  /** Fired when something outside the app edits one of the watched config files
    *  under ~/.aya/, so the renderer can reload that slice instead of
-   *  clobbering the edit on the next in-app save. */
+   *  overwriting the edit on the next save in the app. */
   onConfigChange(handler: (change: ConfigChange) => void): () => void;
 }
 

@@ -1,7 +1,7 @@
-// Echo suppression for the config watcher. The contract: a watch
-// event is an "echo" only if the file's content is byte-identical to the last
-// thing Aya wrote to that path. Anything else — a never-written path, changed
-// content, superseded content — is treated as an external edit.
+// Tests for the echo check the config watcher uses. The rule: a file change
+// counts as an "echo" (our own save) only if the content is exactly what we
+// last wrote to that path. Anything else (a path we never wrote, or content
+// that changed or was replaced) counts as an edit made outside the app.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -19,7 +19,7 @@ test("isEcho is true only for the exact content last written to that path", () =
   const p = "/tmp/aya-echo-test/snippets.json";
   recordWrite(p, '{"snippets":[]}');
   assert.equal(isEcho(p, '{"snippets":[]}'), true); // our own write
-  assert.equal(isEcho(p, '{"snippets":[{"id":"x"}]}'), false); // external edit
+  assert.equal(isEcho(p, '{"snippets":[{"id":"x"}]}'), false); // edit from outside
 });
 
 test("isEcho is false for a path we never wrote", () => {
@@ -30,7 +30,7 @@ test("a later write supersedes the recorded hash", () => {
   const p = "/tmp/aya-echo-test/presets.json";
   recordWrite(p, "v1");
   recordWrite(p, "v2");
-  assert.equal(isEcho(p, "v1"), false); // old content now reads as external
+  assert.equal(isEcho(p, "v1"), false); // old content now looks like an outside edit
   assert.equal(isEcho(p, "v2"), true);
 });
 
@@ -45,9 +45,9 @@ test("hashConfig is stable and content-sensitive", () => {
   assert.notEqual(hashConfig("abc"), hashConfig("abd"));
 });
 
-// The in-memory cases above hand the SAME string to recordWrite and isEcho, so
-// they never prove the bytes Aya writes equal the bytes the watcher reads back.
-// These go through the real disk round-trip (writeFileAtomic -> read).
+// The cases above pass the SAME string to recordWrite and isEcho, so they never
+// prove that what Aya writes to disk matches what the watcher reads back. These
+// go through a real write-then-read on disk (writeFileAtomic -> read).
 
 test("a real writeFileAtomic round-trip reads back as an echo", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "aya-echo-"));
@@ -71,7 +71,7 @@ test("an out-of-band edit after our write is not an echo", async () => {
   try {
     const target = path.join(dir, "presets.json");
     await writeFileAtomic(target, '{"presets":[]}'); // our own save, recorded
-    await writeFile(target, '{"presets":[{"id":"hand-edited"}]}'); // external edit
+    await writeFile(target, '{"presets":[{"id":"hand-edited"}]}'); // edit from outside
     assert.equal(isEcho(target, await readFile(target, "utf8")), false);
   } finally {
     await rm(dir, { recursive: true, force: true });

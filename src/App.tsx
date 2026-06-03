@@ -484,15 +484,15 @@ export function App() {
     };
   }, []);
 
-  // Hot-reload config when an external process edits one of the user-editable
-  // files under ~/.aya/ while Aya is running. Without this, a hand-edit to
-  // snippets/presets/themes.json is silently clobbered by the next in-app save.
-  // We reload the normalized persisted form - same as we already do
-  // after our own snippet save - so in-memory state can't drift from disk.
+  // Reload config when something outside the app edits one of the user-editable
+  // files under ~/.aya/ while Aya is running. Without this, an edit made by hand
+  // to snippets/presets/themes.json would be overwritten by the next save in the
+  // app. We reload the same cleaned-up form we'd get after our own save, so the
+  // state in memory can't drift away from what's on disk.
   useEffect(() => {
     return window.aya.onConfigChange(({ slice }) => {
-      // A hand-edit is often momentarily invalid JSON, so the main-side
-      // loader rejects; keep current in-memory state until the file parses.
+      // A file being edited by hand is often invalid JSON for a moment, so the
+      // loader rejects it; keep the current state until the file parses again.
       if (slice === "snippets") {
         void window.aya
           .listSnippets()

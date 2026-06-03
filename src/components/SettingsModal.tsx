@@ -191,10 +191,10 @@ export function SettingsModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // Marking wrappers: every user edit to a slice's draft also flags it dirty,
-  // mirroring how the theme setters pair with setThemesDirty(true). The dirty
-  // flag both gates the Save write below and stops disk hot-reload from
-  // overwriting an in-progress edit.
+  // Small wrappers that also mark a slice as dirty whenever the user edits its
+  // draft, the same way the theme setters call setThemesDirty(true). The dirty
+  // flag decides what gets written on Save, and stops an outside edit reloaded
+  // from disk from overwriting an edit the user is still working on.
   const editPresets: typeof setDraft = (next) => {
     setDraft(next);
     setPresetsDirty(true);
@@ -204,12 +204,12 @@ export function SettingsModal({
     setSnippetsDirty(true);
   };
 
-  // Hot-reload from disk (issue #4): when the config-file watcher reloads a
-  // hand-edited file while Settings is open, the props change but the seeded
-  // drafts don't. Re-sync each slice from props ONLY while it's untouched, so
-  // an external edit updates the modal instead of being clobbered on Save,
-  // while a slice the user is editing keeps the user's draft. These use the
-  // RAW setters (never the marking wrappers) so re-sync doesn't flip dirty.
+  // When the config watcher reloads a file that was edited by hand while
+  // Settings is open, the props change but the drafts we seeded from them
+  // don't. Re-sync each slice from props only while the user hasn't touched it,
+  // so an outside edit shows up in the modal instead of being overwritten on
+  // Save, while a slice the user is editing keeps their draft. These use the
+  // plain setters (not the marking wrappers) so the re-sync doesn't mark dirty.
   useEffect(() => {
     if (!presetsDirty) setDraft(presets.map(toDraft));
   }, [presets, presetsDirty]);
@@ -408,8 +408,8 @@ export function SettingsModal({
     if (!cleaned) return;
     setSaving(true);
     try {
-      // Only write slices the user actually touched, so an untouched slice that
-      // was hot-reloaded from disk (issue #4) is left alone rather than rewritten.
+      // Only write the slices the user actually changed, so an untouched slice
+      // that was reloaded from disk is left as-is instead of being rewritten.
       if (presetsDirty) {
         await onSave(cleaned);
       }

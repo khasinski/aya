@@ -23,8 +23,8 @@ export async function writeFileAtomic(
   try {
     await fs.writeFile(tmpPath, data);
     await fs.rename(tmpPath, filePath);
-    // Record what we just wrote so the config watcher can tell this echo of
-    // our own save apart from a genuine external edit (see config-echo.ts).
+    // Remember what we just wrote so the config watcher can tell our own
+    // saves apart from edits made outside the app (see config-echo.ts).
     recordWrite(filePath, data);
   } catch (err) {
     // Best effort: clean up the tmp file if the rename never happened.

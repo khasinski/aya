@@ -1,32 +1,30 @@
-// Pure mapping from a changed filename to the config "slice" the renderer
-// should reload — extracted from config-watcher so it can be unit-tested
-// without fs.watch or Electron (mirrors window-state-pure.ts).
+// Maps a changed filename to the config "slice" the renderer should reload.
+// Kept separate from config-watcher so it can be unit-tested on its own,
+// without fs.watch or Electron (same idea as window-state-pure.ts).
 //
-// Minimal scope (first cut): only the user-editable, safely
-// hot-reloadable files live here — snippets, presets, themes. projects/*.json
-// and projects-state.json are deliberately excluded: they back live terminals
-// and are rewritten by the app constantly, so hot-reloading them needs a
-// separate, more careful policy.
+// For now only the files the user is meant to edit by hand live here:
+// snippets, presets and themes. projects/*.json and projects-state.json are
+// left out on purpose: they hold live terminal state and the app rewrites them
+// all the time, so reloading those safely would need more care.
 
 import type { ConfigSlice } from "./types";
 
-/** Basename → slice for the files we watch and hot-reload. The keys are exact
- *  basenames, so the `<file>.<pid>.<rand>.tmp` scratch files written by
- *  writeFileAtomic never match and are ignored for free. */
+/** Filename to slice, for the files we watch and reload. The keys are exact
+ *  filenames, so the temporary `<file>.<pid>.<rand>.tmp` files that atomic
+ *  writes create never match and are skipped automatically. */
 export const WATCHED_CONFIG_FILES: Readonly<Record<string, ConfigSlice>> = {
   "snippets.json": "snippets",
   "presets.json": "presets",
   "themes.json": "themes",
 };
 
-/** The slice to reload for a changed filename, or null if the file isn't one we
- *  hot-reload (a .tmp scratch file, projects-state, window-state, an unrelated
- *  name, etc.). */
+/** The slice to reload for a changed filename, or null if it's not a file we
+ *  reload (a .tmp file, projects-state, window-state, anything unrelated). */
 export function sliceForFilename(filename: string): ConfigSlice | null {
-  // Own-property check: a bare lookup would resolve inherited Object.prototype
-  // keys ("constructor", "hasOwnProperty", "toString"), returning a truthy
-  // function that `?? null` and the caller's `if (!slice)` both wave through —
-  // and a function can't cross IPC (DataCloneError).
+  // Use hasOwn instead of a plain lookup: a plain lookup would also find
+  // built-in keys like "constructor" or "toString" and return a function.
+  // That function is truthy, so the `?? null` and the caller's `if (!slice)`
+  // checks would let it through, and functions can't be sent over IPC anyway.
   return Object.hasOwn(WATCHED_CONFIG_FILES, filename)
     ? WATCHED_CONFIG_FILES[filename]
     : null;

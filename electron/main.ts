@@ -617,8 +617,8 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   trackWindowState(win);
   ptyHost.setWebContents(win.webContents);
 
-  // Watch ~/.aya/ for external edits to snippets/presets/themes and reload
-  // that slice in the renderer. Stopped when the window closes.
+  // Watch ~/.aya/ for edits to snippets/presets/themes made outside the app
+  // and reload that slice in the renderer. Stopped when the window closes.
   const stopConfigWatcher = startConfigWatcher(win);
 
   win.once("ready-to-show", () => win.show());

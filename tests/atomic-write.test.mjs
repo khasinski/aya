@@ -33,8 +33,8 @@ test("writes the target file with the given contents", async () => {
     await writeFileAtomic(target, '{"hello":"world"}');
     const contents = await readFile(target, "utf8");
     assert.equal(contents, '{"hello":"world"}');
-    // A successful write must record the echo so the config watcher can tell
-    // this save apart from a genuine external edit (see config-echo.ts).
+    // A successful write must record the hash so the config watcher can tell
+    // this save apart from an edit made outside the app (see config-echo.ts).
     assert.equal(isEcho(target, '{"hello":"world"}'), true);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -85,8 +85,8 @@ test("cleans up the .tmp file when rename fails", async () => {
     // Nothing .tmp left around.
     const leaked = (await readdir(dir)).filter((f) => f.endsWith(".tmp"));
     assert.deepEqual(leaked, [], `tmp file leaked: ${leaked.join(", ")}`);
-    // A failed write records no echo: recordWrite runs only after the rename
-    // succeeds, so the watcher would treat a later edit here as external.
+    // A failed write records nothing: recordWrite runs only after the rename
+    // succeeds, so the watcher would treat a later edit here as an outside one.
     assert.equal(isEcho(target, "data"), false);
   } finally {
     await rm(dir, { recursive: true, force: true });

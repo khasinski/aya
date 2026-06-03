@@ -1,7 +1,7 @@
-// Pure filename → slice mapping for the config watcher. The contract
-// that matters: known config files map to their slice, and EVERYTHING else —
-// especially the `.tmp` scratch files writeFileAtomic creates and the
-// out-of-scope project files — maps to null so we never spuriously reload.
+// The filename -> slice mapping the config watcher uses. What matters here:
+// known config files map to their slice, and EVERYTHING else maps to null so we
+// never reload by mistake. That "everything else" especially covers the `.tmp`
+// files writeFileAtomic creates and the project files we don't reload.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -24,8 +24,8 @@ test("ignores the .tmp scratch files written by atomic-write", () => {
 });
 
 test("ignores files outside the minimal hot-reload scope", () => {
-  // projects-state + window-state live in AYA_HOME but are not hot-reloaded;
-  // a projects/*.json basename is out of scope entirely.
+  // projects-state and window-state live in AYA_HOME but we don't reload them;
+  // a projects/*.json filename isn't one we handle at all.
   assert.equal(sliceForFilename("projects-state.json"), null);
   assert.equal(sliceForFilename("projects-order.json"), null);
   assert.equal(sliceForFilename("open-projects.json"), null);
