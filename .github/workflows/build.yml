@@ -82,6 +82,16 @@ jobs:
       # X server. install-deps pulls the shared libs; xvfb-run provides the display.
       - name: Install Electron system dependencies
         run: |
+          # Runner-added third-party apt sources (Google Chrome, Microsoft, VSCode)
+          # intermittently fail `apt-get update` mid mirror-sync ("File has
+          # unexpected size ... Mirror sync in progress?"), reddening the E2E job.
+          # None are needed for Electron's Chromium libs or xvfb, so drop them
+          # first. Globs cover both .list and deb822 .sources naming; rm -f is a
+          # no-op if a given runner image doesn't have them.
+          sudo rm -f /etc/apt/sources.list.d/*google* \
+            /etc/apt/sources.list.d/*chrome* \
+            /etc/apt/sources.list.d/*microsoft* \
+            /etc/apt/sources.list.d/*vscode*
           npx playwright install-deps
           sudo apt-get install -y xvfb
 
