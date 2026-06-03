@@ -1,6 +1,14 @@
 # Screenshots
 
-`main.png` is referenced from the project README. To regenerate it with
+`hero.png` is the image referenced from the project README. It is a
+side-by-side composite of `main.png` (the workspace) and
+`snippets-drawer.png` (the snippets drawer open), built with:
+
+```sh
+magick main.png snippets-drawer.png -background "#0d1117" -gravity north +append hero.png
+```
+
+To regenerate the source shots `main.png` / `snippets-drawer.png` with
 mocked data (no real project names or paths from your machine):
 
 ```sh
