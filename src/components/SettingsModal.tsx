@@ -16,6 +16,8 @@ interface Props {
   snippets: Snippet[];
   themes: Theme[];
   activeThemeId: string;
+  appThemePreference: "system" | "light" | "dark";
+  onAppThemePreferenceChange: (theme: "system" | "light" | "dark") => void;
   onClose: () => void;
   onSave: (presets: Preset[]) => Promise<void> | void;
   onSaveSnippets: (snippets: Snippet[]) => Promise<void> | void;
@@ -82,6 +84,8 @@ export function SettingsModal({
   snippets,
   themes: initialThemes,
   activeThemeId: initialActiveThemeId,
+  appThemePreference,
+  onAppThemePreferenceChange,
   onClose,
   onSave,
   onSaveSnippets,
@@ -526,6 +530,34 @@ export function SettingsModal({
         {/* === General section === */}
         <div className="aya-modal-title">General</div>
         <div className="aya-settings-general">
+          <div className="aya-settings-general-row">
+            <div>
+              <div className="aya-settings-general-title">Appearance</div>
+              <div className="aya-modal-hint">
+                Follow macOS automatically, or pin Aya to light or dark mode.
+              </div>
+            </div>
+            <div className="aya-settings-segmented" aria-label="Appearance">
+              {(["system", "light", "dark"] as const).map((theme) => (
+                <button
+                  key={theme}
+                  type="button"
+                  className={`aya-settings-segment ${
+                    appThemePreference === theme
+                      ? "aya-settings-segment--active"
+                      : ""
+                  }`}
+                  onClick={() => onAppThemePreferenceChange(theme)}
+                >
+                  {theme === "system"
+                    ? "System"
+                    : theme === "light"
+                      ? "Light"
+                      : "Dark"}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="aya-settings-general-row">
             <div>
               <div className="aya-settings-general-title">

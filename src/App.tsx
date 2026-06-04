@@ -53,6 +53,20 @@ const DEFAULT_SIDEBAR_WIDTH_PX = 240;
 const TERMINAL_FONT_SIZE_PX = 13;
 // Persisted schema version for ProjectCollectionState.
 const PROJECT_STATE_VERSION = 1;
+const APP_THEME_STORAGE_KEY = "aya:app-theme";
+
+type AppThemePreference = "system" | "light" | "dark";
+
+function readAppThemePreference(): AppThemePreference {
+  try {
+    const value = localStorage.getItem(APP_THEME_STORAGE_KEY);
+    return value === "light" || value === "dark" || value === "system"
+      ? value
+      : "system";
+  } catch {
+    return "system";
+  }
+}
 
 // Hard fallback used only if the themes file is somehow empty before boot
 // resolves — matches AYA_DARK in electron/themes.ts.
@@ -376,6 +390,8 @@ export function App() {
   >({});
   const [homeDir, setHomeDir] = useState<string>("");
   const [showSettings, setShowSettings] = useState(false);
+  const [appThemePreference, setAppThemePreference] =
+    useState<AppThemePreference>(readAppThemePreference);
   const [showSearch, setShowSearch] = useState(false);
   const [showAttentionCenter, setShowAttentionCenter] = useState(false);
   const [pendingRepoImport, setPendingRepoImport] =
@@ -1609,6 +1625,24 @@ export function App() {
     setSnippets(await window.aya.listSnippets());
   }, []);
 
+  const updateAppThemePreference = useCallback((next: AppThemePreference) => {
+    setAppThemePreference(next);
+    try {
+      localStorage.setItem(APP_THEME_STORAGE_KEY, next);
+    } catch {
+      /* ignore — localStorage can be unavailable in odd embedded contexts */
+    }
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (appThemePreference === "system") {
+      root.removeAttribute("data-theme");
+    } else {
+      root.dataset.theme = appThemePreference;
+    }
+  }, [appThemePreference]);
+
   /** Called by TerminalView when the user presses Shift+Enter in a
    *  cleanly-exited terminal. Clears the exit state so the PTY event router
    *  can resume updating status when the new PTY emits data. */
@@ -2005,6 +2039,9 @@ export function App() {
         window.aya.platform === "darwin" ? "aya-app--macos" : "",
         isFullScreen ? "aya-app--fullscreen" : "",
       ].filter(Boolean).join(" ")}
+      data-theme={
+        appThemePreference === "system" ? undefined : appThemePreference
+      }
       data-accent="green"
     >
       <TopBar
@@ -2361,6 +2398,8 @@ export function App() {
           snippets={snippets}
           themes={themes}
           activeThemeId={activeThemeId}
+          appThemePreference={appThemePreference}
+          onAppThemePreferenceChange={updateAppThemePreference}
           onClose={() => setShowSettings(false)}
           onSave={onSavePresets}
           onSaveSnippets={onSaveSnippets}

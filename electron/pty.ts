@@ -373,6 +373,9 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
   });
 
   child.onExit(({ exitCode }) => {
+    if (ptys.get(req.ptyId) !== child) {
+      return;
+    }
     ptys.delete(req.ptyId);
     outputBuffers.delete(req.ptyId);
     if (sink.isDestroyed()) return;
