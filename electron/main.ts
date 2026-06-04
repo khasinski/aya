@@ -61,6 +61,7 @@ import type { CliStatus } from "./types";
 
 const DEV_SERVER_URL = "http://localhost:5183";
 const WINDOW_TITLE = IS_DEV ? "Aya Dev" : "Aya";
+const E2E_HEADLESS = process.env.AYA_E2E_HEADLESS === "1";
 
 // Filesystem mode for the installed CLI executable (rwxr-xr-x)
 const CLI_EXECUTABLE_MODE = 0o755;
@@ -622,7 +623,9 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   // and reload that slice in the renderer. Stopped when the window closes.
   const stopConfigWatcher = startConfigWatcher(win);
 
-  win.once("ready-to-show", () => win.show());
+  win.once("ready-to-show", () => {
+    if (!E2E_HEADLESS) win.show();
+  });
   win.on("closed", () => {
     stopConfigWatcher();
     // Keep the module-level ref in sync so second-instance handlers don't

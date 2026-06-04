@@ -28,8 +28,8 @@
     "build:test-src": "tsc -p tsconfig.test-src.json",
     "build": "npm run build:renderer && npm run build:electron",
     "test": "npm run typecheck:renderer && npm run build:electron && npm run build:test-src && node --test \"tests/**/*.test.mjs\"",
-    "test:e2e": "npm run build && playwright test",
-    "test:e2e:headed": "npm run build && playwright test --headed",
+    "test:e2e": "npm run build && cross-env AYA_E2E_HEADLESS=1 playwright test",
+    "test:e2e:headed": "npm run build && cross-env AYA_E2E_HEADLESS=0 playwright test --headed",
     "package": "npm run build && electron-builder",
     "postinstall": "electron-builder install-app-deps"
   },

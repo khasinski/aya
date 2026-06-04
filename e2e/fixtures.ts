@@ -39,6 +39,7 @@ export const test = base.extend<{
       }
     }
     env.AYA_HOME = seeded.ayaHome;
+    env.AYA_E2E_HEADLESS = process.env.AYA_E2E_HEADLESS ?? "1";
     // Isolate Codex usage too: point CODEX_HOME at an empty dir so the Codex
     // chip never picks up the real machine's ~/.codex rollout logs.
     env.CODEX_HOME = join(seeded.root, "codex-home");
