@@ -13,6 +13,7 @@ const APP_ROOT = join(__dirname, "..");
 const REMOVE_RETRY_COUNT = 5;
 const REMOVE_RETRY_DELAY_MS = 100;
 const PTY_HOST_SHUTDOWN_TIMEOUT_MS = 1_000;
+const APP_GRACEFUL_CLOSE_TIMEOUT_MS = 1_000;
 const APP_PROCESS_EXIT_TIMEOUT_MS = 2_000;
 
 function delay(ms: number): Promise<void> {
@@ -52,11 +53,13 @@ async function shutdownPtyHost(ayaHome: string): Promise<void> {
   ]);
 }
 
-async function killAndWait(app: ElectronApplication): Promise<void> {
+async function closeAndWait(app: ElectronApplication): Promise<void> {
   const proc = app.process();
   const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
+  const closed = app.close().catch(() => undefined);
+  await Promise.race([closed, delay(APP_GRACEFUL_CLOSE_TIMEOUT_MS)]);
   if (!proc.killed) proc.kill("SIGKILL");
-  await Promise.race([exited, delay(APP_PROCESS_EXIT_TIMEOUT_MS)]);
+  await Promise.race([closed, exited, delay(APP_PROCESS_EXIT_TIMEOUT_MS)]);
 }
 
 /** Fixtures that launch the built Aya app once per test against an isolated,
@@ -112,8 +115,8 @@ export const test = base.extend<{
 
     const app = await electron.launch({ args: launchArgs, cwd: APP_ROOT, env });
     await use(app);
+    await closeAndWait(app);
     await shutdownPtyHost(seeded.ayaHome);
-    await killAndWait(app);
   },
 
   window: async ({ app }, use) => {
