@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aya - agentic terminal manager</title>
+    <meta
+      name="description"
+      content="Aya is a free, open-source desktop workspace for long-lived Claude Code, Codex, Aider, and shell sessions organized by project."
+    />
+    <meta property="og:title" content="Aya - agentic terminal manager" />
+    <meta
+      property="og:description"
+      content="A project-first workspace for coding agents you keep around."
+    />
+    <meta property="og:image" content="assets/aya-main.png" />
+    <meta name="theme-color" content="#0b1012" />
+    <link rel="icon" href="assets/aya-icon.png" />
+    <link rel="apple-touch-icon" href="assets/aya-icon.png" />
+    <style>
+      :root {
+        --bg: #070a0b;
+        --panel: #101619;
+        --panel-2: #151b1f;
+        --line: #263138;
+        --line-soft: rgba(229, 224, 206, 0.16);
+        --cream: #ebe4d2;
+        --cream-muted: #b7b2a5;
+        --green: #7bdc96;
+        --green-strong: #63cf84;
+        --green-soft: rgba(123, 220, 150, 0.16);
+        --red: #ff4f55;
+        --amber: #d3ae47;
+        --shadow: rgba(0, 0, 0, 0.44);
+        color-scheme: dark;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        background:
+          linear-gradient(180deg, rgba(123, 220, 150, 0.08), transparent 28rem),
+          radial-gradient(circle at 50% 0%, rgba(235, 228, 210, 0.09), transparent 34rem),
+          var(--bg);
+        color: var(--cream);
+        line-height: 1.5;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      img {
+        display: block;
+        max-width: 100%;
+      }
+
+      .page-shell {
+        overflow: hidden;
+      }
+
+      .site-header {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        border-bottom: 1px solid rgba(229, 224, 210, 0.1);
+        background: rgba(7, 10, 11, 0.86);
+        backdrop-filter: blur(18px);
+      }
+
+      .nav {
+        width: min(1160px, calc(100% - 32px));
+        margin: 0 auto;
+        min-height: 68px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+
+      .brand img {
+        width: 36px;
+        height: 36px;
+        border-radius: 9px;
+      }
+
+      .nav-links {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        color: var(--cream-muted);
+        font-size: 0.94rem;
+      }
+
+      .nav-links a:hover {
+        color: var(--cream);
+      }
+
+      .nav-cta {
+        min-height: 38px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid rgba(123, 220, 150, 0.42);
+        border-radius: 8px;
+        padding: 0 14px;
+        color: var(--green);
+        background: rgba(123, 220, 150, 0.08);
+        white-space: nowrap;
+      }
+
+      main {
+        display: grid;
+        gap: 88px;
+        padding-bottom: 76px;
+      }
+
+      .hero {
+        min-height: min(760px, calc(100svh - 68px));
+        display: grid;
+        align-items: center;
+        padding: 64px 0 36px;
+      }
+
+      .hero-inner,
+      .section-inner,
+      .footer-inner {
+        width: min(1160px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 0.88fr) minmax(420px, 1.12fr);
+        align-items: center;
+        gap: 54px;
+      }
+
+      .hero-copy {
+        max-width: 580px;
+      }
+
+      .signal {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--green);
+        font-size: 0.86rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .signal::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 99px;
+        background: var(--red);
+        box-shadow: 0 0 18px rgba(255, 79, 85, 0.78);
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        margin-top: 22px;
+        max-width: 10ch;
+        color: var(--cream);
+        font-size: clamp(4.4rem, 12vw, 8.8rem);
+        line-height: 0.88;
+        font-weight: 760;
+        letter-spacing: 0;
+      }
+
+      .hero-lede {
+        margin-top: 28px;
+        max-width: 34rem;
+        color: var(--cream-muted);
+        font-size: clamp(1.08rem, 2vw, 1.34rem);
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 34px;
+      }
+
+      .button {
+        min-height: 48px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        padding: 0 18px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .button.primary {
+        color: #07100a;
+        background: var(--green);
+        box-shadow: 0 0 28px rgba(123, 220, 150, 0.2);
+      }
+
+      .button.secondary {
+        color: var(--cream);
+        border-color: var(--line-soft);
+        background: rgba(229, 224, 206, 0.06);
+      }
+
+      .hero-stats {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 36px;
+        max-width: 520px;
+      }
+
+      .stat {
+        border-top: 1px solid var(--line-soft);
+        padding-top: 13px;
+      }
+
+      .stat strong {
+        display: block;
+        color: var(--cream);
+        font-size: 1.25rem;
+      }
+
+      .stat span {
+        display: block;
+        margin-top: 4px;
+        color: var(--cream-muted);
+        font-size: 0.88rem;
+      }
+
+      .hero-art {
+        position: relative;
+        min-width: 0;
+      }
+
+      .logo-mark {
+        position: absolute;
+        top: -32px;
+        right: 18px;
+        z-index: 2;
+        width: clamp(92px, 14vw, 148px);
+        border-radius: 28px;
+        box-shadow:
+          0 0 0 1px rgba(229, 224, 210, 0.18),
+          0 24px 62px var(--shadow);
+      }
+
+      .screenshot-frame {
+        position: relative;
+        border: 1px solid rgba(229, 224, 210, 0.13);
+        border-radius: 8px;
+        background: var(--panel);
+        box-shadow: 0 36px 90px var(--shadow);
+        overflow: hidden;
+        transform: rotate(-1deg);
+      }
+
+      .screenshot-frame::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        pointer-events: none;
+        box-shadow: inset 0 0 0 1px rgba(123, 220, 150, 0.1);
+      }
+
+      .screenshot-frame img {
+        width: 100%;
+        aspect-ratio: 2784 / 1824;
+        object-fit: cover;
+      }
+
+      .strip {
+        border-block: 1px solid rgba(229, 224, 210, 0.1);
+        background: rgba(16, 22, 25, 0.62);
+      }
+
+      .strip .section-inner {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 1px;
+        background: rgba(229, 224, 210, 0.08);
+      }
+
+      .strip-item {
+        min-height: 136px;
+        padding: 24px;
+        background: #0d1214;
+      }
+
+      .strip-item b {
+        display: block;
+        color: var(--green);
+        font-size: 0.88rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .strip-item span {
+        display: block;
+        margin-top: 12px;
+        color: var(--cream);
+        font-size: 1.05rem;
+        font-weight: 650;
+        line-height: 1.35;
+      }
+
+      .section-heading {
+        max-width: 720px;
+      }
+
+      .section-heading h2 {
+        color: var(--cream);
+        font-size: clamp(2rem, 4vw, 3.2rem);
+        line-height: 1.02;
+        letter-spacing: 0;
+      }
+
+      .section-heading p {
+        margin-top: 18px;
+        color: var(--cream-muted);
+        font-size: 1.05rem;
+      }
+
+      .workflow-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+        margin-top: 34px;
+      }
+
+      .workflow-card {
+        border: 1px solid rgba(229, 224, 210, 0.12);
+        border-radius: 8px;
+        padding: 24px;
+        background:
+          linear-gradient(180deg, rgba(123, 220, 150, 0.08), transparent),
+          var(--panel);
+      }
+
+      .workflow-card h3 {
+        color: var(--cream);
+        font-size: 1.1rem;
+      }
+
+      .workflow-card p {
+        margin-top: 12px;
+        color: var(--cream-muted);
+      }
+
+      .workflow-card .rule {
+        width: 54px;
+        height: 3px;
+        margin-bottom: 18px;
+        border-radius: 99px;
+        background: var(--green);
+      }
+
+      .workflow-card:nth-child(2) .rule {
+        width: 38px;
+        background: var(--cream);
+      }
+
+      .workflow-card:nth-child(3) .rule {
+        width: 12px;
+        background: var(--red);
+      }
+
+      .terminal-section {
+        display: grid;
+        grid-template-columns: minmax(0, 0.8fr) minmax(420px, 1.2fr);
+        gap: 28px;
+        align-items: stretch;
+      }
+
+      .terminal-section > *,
+      .install .section-inner > * {
+        min-width: 0;
+      }
+
+      .terminal-copy {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-width: 0;
+      }
+
+      .terminal-copy p {
+        margin-top: 18px;
+        color: var(--cream-muted);
+      }
+
+      .terminal-window {
+        min-width: 0;
+        border: 1px solid rgba(229, 224, 210, 0.13);
+        border-radius: 8px;
+        overflow: hidden;
+        background: #0b0f11;
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.32);
+      }
+
+      .terminal-bar {
+        min-height: 42px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border-bottom: 1px solid rgba(229, 224, 210, 0.1);
+        padding: 0 16px;
+        background: #151b1f;
+      }
+
+      .dot {
+        width: 11px;
+        height: 11px;
+        border-radius: 99px;
+      }
+
+      .dot.red {
+        background: var(--red);
+      }
+
+      .dot.amber {
+        background: var(--amber);
+      }
+
+      .dot.green {
+        background: var(--green);
+      }
+
+      .terminal-title {
+        margin-left: 8px;
+        color: var(--cream-muted);
+        font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+        font-size: 0.82rem;
+      }
+
+      pre {
+        margin: 0;
+        padding: 22px;
+        overflow-x: auto;
+        color: #c8d0cc;
+        font-size: 0.9rem;
+        line-height: 1.65;
+      }
+
+      code {
+        font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      }
+
+      .green {
+        color: var(--green);
+      }
+
+      .cream {
+        color: var(--cream);
+      }
+
+      .install {
+        border-block: 1px solid rgba(229, 224, 210, 0.1);
+        background:
+          linear-gradient(90deg, rgba(123, 220, 150, 0.11), transparent 34%),
+          #0d1214;
+      }
+
+      .install .section-inner {
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(360px, 1.1fr);
+        gap: 32px;
+        align-items: center;
+        padding-block: 42px;
+      }
+
+      .install h2 {
+        font-size: clamp(1.8rem, 3vw, 2.6rem);
+        line-height: 1.08;
+      }
+
+      .install p {
+        margin-top: 14px;
+        color: var(--cream-muted);
+      }
+
+      .command {
+        border: 1px solid rgba(229, 224, 210, 0.12);
+        border-radius: 8px;
+        background: #070a0b;
+      }
+
+      .site-footer {
+        border-top: 1px solid rgba(229, 224, 210, 0.1);
+        padding: 28px 0;
+        color: var(--cream-muted);
+      }
+
+      .footer-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        font-size: 0.94rem;
+      }
+
+      .footer-links {
+        display: flex;
+        gap: 18px;
+      }
+
+      @media (max-width: 940px) {
+        main {
+          gap: 68px;
+        }
+
+        .hero {
+          min-height: auto;
+          padding-top: 52px;
+        }
+
+        .hero-grid,
+        .terminal-section,
+        .install .section-inner {
+          grid-template-columns: 1fr;
+        }
+
+        .hero-copy {
+          max-width: 720px;
+        }
+
+        h1 {
+          max-width: none;
+        }
+
+        .logo-mark {
+          top: -22px;
+          right: 12px;
+        }
+
+        .strip .section-inner,
+        .workflow-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 640px) {
+        .nav {
+          min-height: 62px;
+        }
+
+        .nav-links a:not(.nav-cta) {
+          display: none;
+        }
+
+        .hero {
+          padding-top: 36px;
+        }
+
+        .hero-stats,
+        .strip .section-inner,
+        .workflow-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .hero-actions {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .button {
+          width: 100%;
+        }
+
+        .screenshot-frame {
+          transform: none;
+        }
+
+        .strip-item {
+          min-height: 112px;
+        }
+
+        .workflow-card,
+        .strip-item {
+          padding: 20px;
+        }
+
+        pre {
+          padding: 18px;
+          font-size: 0.78rem;
+          white-space: pre-wrap;
+          overflow-wrap: anywhere;
+        }
+
+        code {
+          overflow-wrap: anywhere;
+        }
+
+        .footer-inner {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="site-header">
+        <nav class="nav" aria-label="Primary navigation">
+          <a class="brand" href="#">
+            <img src="assets/aya-icon.png" alt="" />
+            <span>Aya</span>
+          </a>
+          <div class="nav-links">
+            <a href="#workflow">Workflow</a>
+            <a href="#install">Install</a>
+            <a class="nav-cta" href="https://github.com/khasinski/aya">GitHub</a>
+          </div>
+        </nav>
+      </header>
+
+      <main>
+        <section class="hero" aria-labelledby="hero-title">
+          <div class="hero-inner">
+            <div class="hero-grid">
+              <div class="hero-copy">
+                <span class="signal">Project-first terminal workspace</span>
+                <h1 id="hero-title">Aya</h1>
+                <p class="hero-lede">
+                  A free, open-source desktop app for long-lived Claude Code,
+                  Codex, Aider, and shell sessions organized by project.
+                </p>
+                <div class="hero-actions" aria-label="Primary actions">
+                  <a class="button primary" href="#install">Build locally</a>
+                  <a class="button secondary" href="https://github.com/khasinski/aya"
+                    >View source</a
+                  >
+                </div>
+                <div class="hero-stats" aria-label="Aya highlights">
+                  <div class="stat">
+                    <strong>Projects</strong>
+                    <span>Switch repos without killing terminals.</span>
+                  </div>
+                  <div class="stat">
+                    <strong>Agents</strong>
+                    <span>Claude, Codex, Aider, Gemini, shell.</span>
+                  </div>
+                  <div class="stat">
+                    <strong>Local</strong>
+                    <span>Real interactive PTYs, no proxy layer.</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="hero-art" aria-label="Aya application preview">
+                <img class="logo-mark" src="assets/aya-icon.png" alt="Aya logo" />
+                <div class="screenshot-frame">
+                  <img
+                    src="assets/aya-main.png"
+                    alt="Aya desktop app showing terminal sessions organized by project"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="strip" aria-label="Core product shape">
+          <div class="section-inner">
+            <div class="strip-item">
+              <b>01</b>
+              <span>Open each repo as a project workspace.</span>
+            </div>
+            <div class="strip-item">
+              <b>02</b>
+              <span>Keep terminals alive while you move around.</span>
+            </div>
+            <div class="strip-item">
+              <b>03</b>
+              <span>Jump back through project, terminal, and output search.</span>
+            </div>
+            <div class="strip-item">
+              <b>04</b>
+              <span>Let agents signal status through a small local CLI.</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="section-inner" id="workflow" aria-labelledby="workflow-title">
+          <div class="section-heading">
+            <h2 id="workflow-title">Built for agents you keep around.</h2>
+            <p>
+              Aya is for the workflow where a session from Monday still matters
+              on Wednesday. Projects are the top-level unit; terminals and
+              agents live inside them.
+            </p>
+          </div>
+
+          <div class="workflow-grid">
+            <article class="workflow-card">
+              <div class="rule"></div>
+              <h3>Project-first</h3>
+              <p>
+                Top tabs are real project directories. Each project has its own
+                shells, agent sessions, branch status, and recent output.
+              </p>
+            </article>
+            <article class="workflow-card">
+              <div class="rule"></div>
+              <h3>Agent-agnostic</h3>
+              <p>
+                Aya launches official CLIs in normal interactive terminals, so
+                Claude Code, Codex, Aider, and custom presets behave as expected.
+              </p>
+            </article>
+            <article class="workflow-card">
+              <div class="rule"></div>
+              <h3>No forced worktrees</h3>
+              <p>
+                Use a normal checkout, or open each worktree as another project
+                when that is the shape of the work.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section-inner terminal-section" aria-labelledby="terminal-title">
+          <div class="terminal-copy">
+            <div class="section-heading">
+              <h2 id="terminal-title">Terminal-native from every side.</h2>
+              <p>
+                The <code>aya</code> helper opens the current directory in the
+                desktop app, focuses known projects, and gives harnesses a local
+                way to report status without scraping provider state.
+              </p>
+            </div>
+          </div>
+
+          <div class="terminal-window" aria-label="Aya CLI example">
+            <div class="terminal-bar">
+              <span class="dot red"></span>
+              <span class="dot amber"></span>
+              <span class="dot green"></span>
+              <span class="terminal-title">~/Projects/aya</span>
+            </div>
+            <pre><code><span class="green">$</span> aya .
+<span class="cream">opens this repo as a project</span>
+
+<span class="green">$</span> aya status waiting "Needs approval"
+<span class="cream">marks the active agent as waiting</span>
+
+<span class="green">$</span> aya notify --title "Aya" "Tests passed"
+<span class="cream">sends a desktop notification from the current pane</span></code></pre>
+          </div>
+        </section>
+
+        <section class="install" id="install" aria-labelledby="install-title">
+          <div class="section-inner">
+            <div>
+              <h2 id="install-title">Build Aya locally.</h2>
+              <p>
+                The current development flow produces a macOS app, DMG, and zip.
+                Signed and notarized builds are supported through electron-builder.
+              </p>
+            </div>
+            <div class="command">
+              <pre><code>git clone https://github.com/khasinski/aya.git
+cd aya
+npm install
+npm run package</code></pre>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <div class="footer-inner">
+          <span>Aya is free and open source.</span>
+          <div class="footer-links">
+            <a href="https://github.com/khasinski/aya">GitHub</a>
+            <a href="https://github.com/khasinski/aya/blob/main/README.md">README</a>
+          </div>
+        </div>
+      </footer>
+    </div>
+  </body>
+</html>
