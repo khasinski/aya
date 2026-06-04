@@ -2005,7 +2005,6 @@ export function App() {
         window.aya.platform === "darwin" ? "aya-app--macos" : "",
         isFullScreen ? "aya-app--fullscreen" : "",
       ].filter(Boolean).join(" ")}
-      data-theme="dark"
       data-accent="green"
     >
       <TopBar

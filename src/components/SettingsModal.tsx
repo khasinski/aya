@@ -757,11 +757,17 @@ export function SettingsModal({
         <div className="aya-modal-hint">
           Saved text you can inject into the active terminal from its snippet
           drawer (the <strong>snippets</strong> button in a pane header). Toggle{" "}
-          <span className="aya-snippet-inline-ico" style={{ color: "#56d364" }}>
+          <span
+            className="aya-snippet-inline-ico"
+            style={{ color: "var(--aya-term-green)" }}
+          >
             ▶
           </span>{" "}
           to run on send (adds Enter), or{" "}
-          <span className="aya-snippet-inline-ico" style={{ color: "#e3b341" }}>
+          <span
+            className="aya-snippet-inline-ico"
+            style={{ color: "var(--aya-term-yellow)" }}
+          >
             ⏸
           </span>{" "}
           to only type it (you press Enter). Lives in Aya, not in an agent's

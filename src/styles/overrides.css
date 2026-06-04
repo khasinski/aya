@@ -1320,7 +1320,7 @@ select.aya-modal-input {
   gap: 5px;
   font: inherit;
   font-size: 11px;
-  color: #8b949e;
+  color: var(--aya-snippetbar-muted);
   background: none;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -1329,9 +1329,9 @@ select.aya-modal-input {
 }
 .aya-pane-snippettoggle span[style] { font-size: 15px; }
 .aya-pane-snippettoggle:hover {
-  color: #c9d1d9;
-  background: #1c2230;
-  border-color: #30363d;
+  color: var(--aya-snippetbar-fg);
+  background: var(--aya-snippet-toggle-hover-bg);
+  border-color: var(--aya-snippetbar-border);
 }
 .aya-pane-snippettoggle--on {
   color: var(--accent);
@@ -1349,9 +1349,9 @@ select.aya-modal-input {
   display: flex;
   flex-direction: column;
   max-height: 62%;
-  background: linear-gradient(180deg, #161b22 0%, #12161d 100%);
-  border-top: 1px solid #30363d;
-  box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.5);
+  background: var(--aya-snippetbar-bg);
+  border-top: 1px solid var(--aya-snippetbar-border);
+  box-shadow: var(--aya-snippetbar-shadow);
   transform: translateY(101%);
   /* When closed the drawer is translated below the pane, but `.aya-pane` does
    *  not clip overflow — so without these it would stay hit-testable and
@@ -1378,30 +1378,30 @@ select.aya-modal-input {
   align-items: center;
   gap: 8px;
   padding: 7px 12px;
-  border-bottom: 1px solid #21262d;
+  border-bottom: 1px solid var(--aya-snippetbar-divider);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.07em;
   font-weight: 600;
-  color: #8b949e;
+  color: var(--aya-snippetbar-muted);
 }
 .aya-snippetbar-head-icon { font-size: 15px; color: var(--accent); }
 .aya-snippetbar-spacer { flex: 1; }
 .aya-snippetbar-headbtn {
   background: none;
   border: none;
-  color: #6e7681;
+  color: var(--aya-snippetbar-subtle);
   cursor: pointer;
   padding: 2px;
   display: inline-flex;
 }
-.aya-snippetbar-headbtn:hover { color: #c9d1d9; }
+.aya-snippetbar-headbtn:hover { color: var(--aya-snippetbar-fg); }
 .aya-snippetbar-headbtn .material-symbols { font-size: 16px; }
 
 .aya-snippetbar-empty {
   padding: 16px 14px;
   font-size: 12px;
-  color: #8b949e;
+  color: var(--aya-snippetbar-muted);
   line-height: 1.5;
 }
 .aya-snippetbar-empty-link {
@@ -1428,16 +1428,19 @@ select.aya-modal-input {
   gap: 10px;
   align-items: start;
   text-align: left;
-  background: #0d1117;
-  border: 1px solid #21262d;
+  background: var(--aya-snippet-row-bg);
+  border: 1px solid var(--aya-snippetbar-divider);
   border-radius: 8px;
   padding: 9px 11px;
   cursor: pointer;
   font: inherit;
-  color: #c9d1d9;
+  color: var(--aya-snippetbar-fg);
   transition: border-color 0.12s, background 0.12s;
 }
-.aya-snippet:hover { border-color: #30363d; background: #11151c; }
+.aya-snippet:hover {
+  border-color: var(--aya-snippetbar-border);
+  background: var(--aya-snippet-row-hover-bg);
+}
 .aya-snippet:hover .aya-snippet-send { opacity: 1; }
 
 .aya-snippet-ico {
@@ -1449,14 +1452,20 @@ select.aya-modal-input {
   margin-top: 1px;
 }
 .aya-snippet-ico .material-symbols { font-size: 17px; }
-.aya-snippet-ico--run { color: #56d364; background: color-mix(in oklab, #56d364 14%, transparent); }
-.aya-snippet-ico--hold { color: #e3b341; background: color-mix(in oklab, #e3b341 13%, transparent); }
+.aya-snippet-ico--run {
+  color: var(--aya-term-green);
+  background: color-mix(in oklab, var(--aya-term-green) 14%, transparent);
+}
+.aya-snippet-ico--hold {
+  color: var(--aya-term-yellow);
+  background: color-mix(in oklab, var(--aya-term-yellow) 13%, transparent);
+}
 
 .aya-snippet-body { min-width: 0; }
 .aya-snippet-name {
   font-size: 13px;
   font-weight: 600;
-  color: #f0f6fc;
+  color: var(--aya-pane-strong);
   margin-bottom: 3px;
   display: flex;
   align-items: center;
@@ -1470,14 +1479,20 @@ select.aya-modal-input {
   padding: 1px 6px;
   border-radius: 999px;
 }
-.aya-snippet-tag--run { color: #56d364; background: color-mix(in oklab, #56d364 15%, transparent); }
-.aya-snippet-tag--hold { color: #e3b341; background: color-mix(in oklab, #e3b341 14%, transparent); }
+.aya-snippet-tag--run {
+  color: var(--aya-term-green);
+  background: color-mix(in oklab, var(--aya-term-green) 15%, transparent);
+}
+.aya-snippet-tag--hold {
+  color: var(--aya-term-yellow);
+  background: color-mix(in oklab, var(--aya-term-yellow) 14%, transparent);
+}
 
 .aya-snippet-text {
   font-family: var(--font-mono);
   font-size: 11.5px;
   line-height: 1.5;
-  color: #8b949e;
+  color: var(--aya-snippetbar-muted);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1490,11 +1505,11 @@ select.aya-modal-input {
   align-items: center;
   gap: 5px;
   font-size: 12px;
-  color: #f0f6fc;
-  border: 1px solid #30363d;
+  color: var(--aya-pane-strong);
+  border: 1px solid var(--aya-snippetbar-border);
   border-radius: 6px;
   padding: 5px 11px;
-  background: #1c2230;
+  background: var(--aya-snippet-action-bg);
   white-space: nowrap;
 }
 .aya-snippet-send .material-symbols { font-size: 15px; }
@@ -1514,19 +1529,19 @@ select.aya-modal-input {
   display: grid;
   place-items: center;
   cursor: pointer;
-  border: 1px solid #30363d;
-  background: #161b22;
+  border: 1px solid var(--aya-snippetbar-border);
+  background: var(--aya-pane-header-bg);
 }
 .aya-snippet-runtoggle span[style] { font-size: 19px; }
 .aya-snippet-runtoggle--run {
-  color: #56d364;
-  background: color-mix(in oklab, #56d364 13%, transparent);
-  border-color: color-mix(in oklab, #56d364 40%, transparent);
+  color: var(--aya-term-green);
+  background: color-mix(in oklab, var(--aya-term-green) 13%, transparent);
+  border-color: color-mix(in oklab, var(--aya-term-green) 40%, transparent);
 }
 .aya-snippet-runtoggle--hold {
-  color: #e3b341;
-  background: color-mix(in oklab, #e3b341 12%, transparent);
-  border-color: color-mix(in oklab, #e3b341 38%, transparent);
+  color: var(--aya-term-yellow);
+  background: color-mix(in oklab, var(--aya-term-yellow) 12%, transparent);
+  border-color: color-mix(in oklab, var(--aya-term-yellow) 38%, transparent);
 }
 .aya-settings-snippet-fields {
   flex: 1;

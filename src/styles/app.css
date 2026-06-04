@@ -21,6 +21,171 @@ body {
 [data-accent="purple"] { --accent-soft: #d2a8ff; }
 [data-accent="amber"]  { --accent-soft: #e3b341; }
 
+/* App-specific theme tokens. The base is light; the media query below
+   mirrors armillary.css so the shell follows the OS when no explicit theme
+   attribute is set. */
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  --aya-pane-bg: #ffffff;
+  --aya-pane-header-bg: #f6f8fa;
+  --aya-pane-header-border: #d0d7de;
+  --aya-pane-fg: #24292f;
+  --aya-pane-strong: #0b0d12;
+  --aya-pane-muted: #57606a;
+  --aya-pane-subtle: #6e7781;
+  --aya-pane-border: #d0d7de;
+  --aya-cc-input-bg: rgba(255,255,255,0.95);
+  --aya-diff-bg: #f6f8fa;
+  --aya-diff-border: #d0d7de;
+  --aya-diff-hunk-bg: rgba(9, 105, 218, 0.10);
+  --aya-diff-hunk-fg: #0969da;
+  --aya-diff-add-bg: rgba(26, 127, 55, 0.10);
+  --aya-diff-add-fg: #1a7f37;
+  --aya-diff-del-bg: rgba(207, 34, 46, 0.10);
+  --aya-diff-del-fg: #cf222e;
+  --aya-mark-bg: rgba(154, 103, 0, 0.28);
+
+  --aya-syntax-keyword: #cf222e;
+  --aya-syntax-string: #0a3069;
+  --aya-syntax-number: #0969da;
+  --aya-syntax-comment: #6e7781;
+  --aya-syntax-purple: #8250df;
+
+  --aya-term-dim: #6e7781;
+  --aya-term-sub: #57606a;
+  --aya-term-fg: #24292f;
+  --aya-term-strong: #0b0d12;
+  --aya-term-green: #1a7f37;
+  --aya-term-yellow: #9a6700;
+  --aya-term-red: #cf222e;
+  --aya-term-blue: #0969da;
+  --aya-term-purple: #8250df;
+  --aya-term-pink: #cf222e;
+  --aya-term-orange: #bc4c00;
+
+  --aya-snippetbar-bg: linear-gradient(180deg, #ffffff 0%, #f6f8fa 100%);
+  --aya-snippetbar-border: #d0d7de;
+  --aya-snippetbar-divider: #d8dee4;
+  --aya-snippetbar-shadow: 0 -12px 32px rgba(31, 35, 40, 0.16);
+  --aya-snippetbar-fg: #24292f;
+  --aya-snippetbar-muted: #57606a;
+  --aya-snippetbar-subtle: #6e7781;
+  --aya-snippet-row-bg: #ffffff;
+  --aya-snippet-row-hover-bg: #f6f8fa;
+  --aya-snippet-action-bg: #f6f8fa;
+  --aya-snippet-toggle-hover-bg: #f6f8fa;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --aya-pane-bg: #0d1117;
+  --aya-pane-header-bg: #161b22;
+  --aya-pane-header-border: #30363d;
+  --aya-pane-fg: #c9d1d9;
+  --aya-pane-strong: #f0f6fc;
+  --aya-pane-muted: #6e7781;
+  --aya-pane-subtle: #8b949e;
+  --aya-pane-border: #30363d;
+  --aya-cc-input-bg: rgba(13,17,23,0.95);
+  --aya-diff-bg: #0a0c10;
+  --aya-diff-border: #21262d;
+  --aya-diff-hunk-bg: rgba(88, 166, 255, 0.12);
+  --aya-diff-hunk-fg: #79c0ff;
+  --aya-diff-add-bg: rgba(64,196,99,0.12);
+  --aya-diff-add-fg: #56d364;
+  --aya-diff-del-bg: rgba(248,81,73,0.12);
+  --aya-diff-del-fg: #f85149;
+  --aya-mark-bg: rgba(210, 153, 34, 0.45);
+
+  --aya-syntax-keyword: #ff7b72;
+  --aya-syntax-string: #a5d6ff;
+  --aya-syntax-number: #79c0ff;
+  --aya-syntax-comment: #8b949e;
+  --aya-syntax-purple: #d2a8ff;
+
+  --aya-term-dim: #6e7781;
+  --aya-term-sub: #8b949e;
+  --aya-term-fg: #c9d1d9;
+  --aya-term-strong: #f0f6fc;
+  --aya-term-green: #56d364;
+  --aya-term-yellow: #e3b341;
+  --aya-term-red: #f85149;
+  --aya-term-blue: #79c0ff;
+  --aya-term-purple: #d2a8ff;
+  --aya-term-pink: #ff7b72;
+  --aya-term-orange: #ffa657;
+
+  --aya-snippetbar-bg: linear-gradient(180deg, #161b22 0%, #12161d 100%);
+  --aya-snippetbar-border: #30363d;
+  --aya-snippetbar-divider: #21262d;
+  --aya-snippetbar-shadow: 0 -12px 32px rgba(0, 0, 0, 0.5);
+  --aya-snippetbar-fg: #c9d1d9;
+  --aya-snippetbar-muted: #8b949e;
+  --aya-snippetbar-subtle: #6e7681;
+  --aya-snippet-row-bg: #0d1117;
+  --aya-snippet-row-hover-bg: #11151c;
+  --aya-snippet-action-bg: #1c2230;
+  --aya-snippet-toggle-hover-bg: #1c2230;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --aya-pane-bg: #0d1117;
+    --aya-pane-header-bg: #161b22;
+    --aya-pane-header-border: #30363d;
+    --aya-pane-fg: #c9d1d9;
+    --aya-pane-strong: #f0f6fc;
+    --aya-pane-muted: #6e7781;
+    --aya-pane-subtle: #8b949e;
+    --aya-pane-border: #30363d;
+    --aya-cc-input-bg: rgba(13,17,23,0.95);
+    --aya-diff-bg: #0a0c10;
+    --aya-diff-border: #21262d;
+    --aya-diff-hunk-bg: rgba(88, 166, 255, 0.12);
+    --aya-diff-hunk-fg: #79c0ff;
+    --aya-diff-add-bg: rgba(64,196,99,0.12);
+    --aya-diff-add-fg: #56d364;
+    --aya-diff-del-bg: rgba(248,81,73,0.12);
+    --aya-diff-del-fg: #f85149;
+    --aya-mark-bg: rgba(210, 153, 34, 0.45);
+
+    --aya-syntax-keyword: #ff7b72;
+    --aya-syntax-string: #a5d6ff;
+    --aya-syntax-number: #79c0ff;
+    --aya-syntax-comment: #8b949e;
+    --aya-syntax-purple: #d2a8ff;
+
+    --aya-term-dim: #6e7781;
+    --aya-term-sub: #8b949e;
+    --aya-term-fg: #c9d1d9;
+    --aya-term-strong: #f0f6fc;
+    --aya-term-green: #56d364;
+    --aya-term-yellow: #e3b341;
+    --aya-term-red: #f85149;
+    --aya-term-blue: #79c0ff;
+    --aya-term-purple: #d2a8ff;
+    --aya-term-pink: #ff7b72;
+    --aya-term-orange: #ffa657;
+
+    --aya-snippetbar-bg: linear-gradient(180deg, #161b22 0%, #12161d 100%);
+    --aya-snippetbar-border: #30363d;
+    --aya-snippetbar-divider: #21262d;
+    --aya-snippetbar-shadow: 0 -12px 32px rgba(0, 0, 0, 0.5);
+    --aya-snippetbar-fg: #c9d1d9;
+    --aya-snippetbar-muted: #8b949e;
+    --aya-snippetbar-subtle: #6e7681;
+    --aya-snippet-row-bg: #0d1117;
+    --aya-snippet-row-hover-bg: #11151c;
+    --aya-snippet-action-bg: #1c2230;
+    --aya-snippet-toggle-hover-bg: #1c2230;
+  }
+}
+
 /* ============================================================
    APP SHELL
    ============================================================ */
@@ -403,7 +568,7 @@ body {
 .aya-pane {
   display: flex; flex-direction: column;
   min-width: 0; min-height: 0;
-  background: #0d1117;
+  background: var(--aya-pane-bg);
   position: relative;
 }
 .aya-panes:not(.aya-panes--split) .aya-pane + .aya-pane {
@@ -491,15 +656,15 @@ body {
 .aya-pane-header {
   display: flex; align-items: center; gap: 10px;
   padding: 7px 14px;
-  background: #161b22;
-  border-bottom: 1px solid #30363d;
+  background: var(--aya-pane-header-bg);
+  border-bottom: 1px solid var(--aya-pane-header-border);
   font-size: 12px;
-  color: #8b949e;
+  color: var(--aya-pane-subtle);
   flex-shrink: 0;
 }
 .aya-pane-header-title {
   font-family: var(--font-mono);
-  color: #c9d1d9;
+  color: var(--aya-pane-fg);
   font-weight: 500;
 }
 .aya-pane-header-meta {
@@ -508,16 +673,16 @@ body {
   font-size: 11px;
   font-family: var(--font-mono);
 }
-.aya-pane-header-meta .dim { color: #6e7781; }
+.aya-pane-header-meta .dim { color: var(--aya-pane-muted); }
 .aya-pane-header-btn {
   font-family: 'Material Symbols Outlined';
   font-size: 16px;
-  color: #6e7781;
+  color: var(--aya-pane-muted);
   cursor: pointer;
   background: none; border: none;
   padding: 2px;
 }
-.aya-pane-header-btn:hover { color: #c9d1d9; }
+.aya-pane-header-btn:hover { color: var(--aya-pane-fg); }
 .aya-pane-header-btn--active { color: var(--accent-soft, var(--accent)); }
 
 .aya-pane-active {
@@ -536,7 +701,7 @@ body {
   font-family: var(--font-mono);
   font-size: var(--term-font-size, 13px);
   line-height: 1.55;
-  color: #c9d1d9;
+  color: var(--aya-pane-fg);
   padding: 16px 20px 100px;
   white-space: pre-wrap;
   word-break: break-word;
@@ -547,7 +712,7 @@ body {
 .aya-term-cursor {
   display: inline-block;
   width: 0.5em; height: 1em;
-  background: #c9d1d9;
+  background: var(--aya-pane-fg);
   vertical-align: middle;
   animation: aya-blink 1.1s steps(1) infinite;
 }
@@ -555,31 +720,31 @@ body {
 
 /* claude code welcome box */
 .aya-cc-welcome {
-  border: 1px solid #30363d;
+  border: 1px solid var(--aya-pane-border);
   border-radius: 8px;
   padding: 12px 16px;
   margin-bottom: 12px;
-  color: #c9d1d9;
-  background: #0d1117;
+  color: var(--aya-pane-fg);
+  background: var(--aya-pane-bg);
 }
 .aya-cc-input {
   position: sticky;
   bottom: 16px;
   margin: 20px 0 0;
-  border: 1px solid #30363d;
+  border: 1px solid var(--aya-pane-border);
   border-radius: 8px;
   padding: 10px 14px;
-  background: rgba(13,17,23,0.95);
+  background: var(--aya-cc-input-bg);
   backdrop-filter: blur(6px);
   display: flex; align-items: center; gap: 8px;
   font-family: var(--font-mono);
   font-size: var(--term-font-size, 13px);
-  color: #c9d1d9;
+  color: var(--aya-pane-fg);
 }
 .aya-cc-input-prompt { color: var(--accent-soft, #79c0ff); font-weight: 600; }
-.aya-cc-input-placeholder { color: #6e7781; flex: 1; }
+.aya-cc-input-placeholder { color: var(--aya-pane-muted); flex: 1; }
 .aya-cc-input-shortcut {
-  font-size: 10px; color: #6e7781;
+  font-size: 10px; color: var(--aya-pane-muted);
   font-family: var(--font-sans);
 }
 
@@ -599,7 +764,7 @@ body {
 }
 .aya-approval-opt {
   padding: 1px 0;
-  color: #c9d1d9;
+  color: var(--aya-pane-fg);
 }
 .aya-approval-opt--selected {
   color: #f0ad4e;
@@ -608,17 +773,17 @@ body {
 
 /* diff blocks */
 .aya-diff {
-  background: #0a0c10;
-  border: 1px solid #21262d;
+  background: var(--aya-diff-bg);
+  border: 1px solid var(--aya-diff-border);
   border-radius: 4px;
   padding: 6px 10px;
   margin: 4px 0;
   font-size: 12px;
 }
 .aya-diff-line { padding: 0 4px; }
-.aya-diff-add { background: rgba(64,196,99,0.12); color: #56d364; }
-.aya-diff-del { background: rgba(248,81,73,0.12); color: #f85149; }
-.aya-diff-ctx { color: #8b949e; }
+.aya-diff-add { background: var(--aya-diff-add-bg); color: var(--aya-diff-add-fg); }
+.aya-diff-del { background: var(--aya-diff-del-bg); color: var(--aya-diff-del-fg); }
+.aya-diff-ctx { color: var(--aya-pane-subtle); }
 
 /* ============================================================
    STATUS BAR
@@ -802,14 +967,14 @@ body {
   font-weight: 700;
 }
 .aya-diff-view-line--hunk {
-  background: rgba(88, 166, 255, 0.12);
-  color: #79c0ff;
+  background: var(--aya-diff-hunk-bg);
+  color: var(--aya-diff-hunk-fg);
 }
 .aya-diff-view-line--add {
-  background: rgba(64, 196, 99, 0.10);
+  background: var(--aya-diff-add-bg);
 }
 .aya-diff-view-line--del {
-  background: rgba(248, 81, 73, 0.10);
+  background: var(--aya-diff-del-bg);
 }
 .aya-diff-view-line--meta {
   color: var(--fg-tertiary);
@@ -832,14 +997,14 @@ body {
   width: 12px;
   color: var(--fg-tertiary);
 }
-.aya-diff-view-line--add .aya-diff-prefix { color: #56d364; }
-.aya-diff-view-line--del .aya-diff-prefix { color: #f85149; }
+.aya-diff-view-line--add .aya-diff-prefix { color: var(--aya-diff-add-fg); }
+.aya-diff-view-line--del .aya-diff-prefix { color: var(--aya-diff-del-fg); }
 .aya-diff-view .hljs-keyword,
 .aya-diff-view .hljs-selector-tag,
 .aya-diff-view .hljs-built_in,
 .aya-diff-view .hljs-name,
 .aya-diff-view .hljs-tag {
-  color: #ff7b72;
+  color: var(--aya-syntax-keyword);
 }
 .aya-diff-view .hljs-string,
 .aya-diff-view .hljs-title,
@@ -850,7 +1015,7 @@ body {
 .aya-diff-view .hljs-template-variable,
 .aya-diff-view .hljs-type,
 .aya-diff-view .hljs-addition {
-  color: #a5d6ff;
+  color: var(--aya-syntax-string);
 }
 .aya-diff-view .hljs-number,
 .aya-diff-view .hljs-symbol,
@@ -859,41 +1024,41 @@ body {
 .aya-diff-view .hljs-params,
 .aya-diff-view .hljs-meta,
 .aya-diff-view .hljs-link {
-  color: #79c0ff;
+  color: var(--aya-syntax-number);
 }
 .aya-diff-view .hljs-comment,
 .aya-diff-view .hljs-quote,
 .aya-diff-view .hljs-deletion {
-  color: #8b949e;
+  color: var(--aya-syntax-comment);
   font-style: italic;
 }
 .aya-diff-view .hljs-regexp,
 .aya-diff-view .hljs-selector-id,
 .aya-diff-view .hljs-selector-class {
-  color: #d2a8ff;
+  color: var(--aya-syntax-purple);
 }
 .aya-diff-view .hljs-emphasis { font-style: italic; }
 .aya-diff-view .hljs-strong { font-weight: 700; }
 .aya-diff-view mark {
   border-radius: 2px;
-  background: rgba(210, 153, 34, 0.45);
+  background: var(--aya-mark-bg);
   color: var(--fg-primary);
 }
 
 /* ============================================================
    COLORS used inside terminal output
    ============================================================ */
-.t-dim   { color: #6e7781; }
-.t-sub   { color: #8b949e; }
-.t-fg    { color: #c9d1d9; }
-.t-strong{ color: #f0f6fc; font-weight: 600; }
-.t-green { color: #56d364; }
-.t-yellow{ color: #e3b341; }
-.t-red   { color: #f85149; }
-.t-blue  { color: #79c0ff; }
-.t-purple{ color: #d2a8ff; }
-.t-pink  { color: #ff7b72; }
-.t-orange{ color: #ffa657; }
+.t-dim   { color: var(--aya-term-dim); }
+.t-sub   { color: var(--aya-term-sub); }
+.t-fg    { color: var(--aya-term-fg); }
+.t-strong{ color: var(--aya-term-strong); font-weight: 600; }
+.t-green { color: var(--aya-term-green); }
+.t-yellow{ color: var(--aya-term-yellow); }
+.t-red   { color: var(--aya-term-red); }
+.t-blue  { color: var(--aya-term-blue); }
+.t-purple{ color: var(--aya-term-purple); }
+.t-pink  { color: var(--aya-term-pink); }
+.t-orange{ color: var(--aya-term-orange); }
 .t-claude{ color: #d97757; }
 .t-codex { color: #10a37f; }
 
@@ -907,7 +1072,11 @@ body {
   border: 2px solid transparent;
   background-clip: padding-box;
 }
-.aya-term::-webkit-scrollbar-thumb { background: rgba(110,119,129,0.4); border: 2px solid #0d1117; background-clip: padding-box; }
+.aya-term::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--aya-pane-muted) 54%, transparent);
+  border: 2px solid var(--aya-pane-bg);
+  background-clip: padding-box;
+}
 
 /* ============================================================
    tweaks panel positioning
