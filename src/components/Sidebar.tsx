@@ -197,6 +197,9 @@ export function Sidebar({
           return (
             <div
               key={t.id}
+              data-testid="sidebar-terminal"
+              data-terminal-id={t.id}
+              data-terminal-name={t.name}
               className={`aya-sidebar-row ${isActive ? "aya-sidebar-row--active" : ""} ${
                 isDragging ? "aya-sidebar-row--dragging" : ""
               } ${dropClass}`}

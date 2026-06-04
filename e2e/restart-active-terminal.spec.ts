@@ -6,6 +6,7 @@ import {
 } from "@playwright/test";
 import { join } from "node:path";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import * as net from "node:net";
 import { seedEnv } from "./helpers/seed";
 
 // Reproduces: after restart the FIRST terminal is selected, not the one that
@@ -35,6 +36,7 @@ function launch(
     }
   }
   env.AYA_HOME = ayaHome;
+  env.AYA_E2E_PTY_SHUTDOWN = "1";
   if (!process.env.CI) {
     env.AYA_E2E_HEADLESS = "1";
   }
@@ -80,6 +82,18 @@ async function killAndWait(app: ElectronApplication): Promise<void> {
   await new Promise<void>((resolve) => proc.once("exit", () => resolve()));
 }
 
+async function shutdownPtyHost(ayaHome: string): Promise<void> {
+  const socketPath = join(ayaHome, "pty-host.sock");
+  await new Promise<void>((resolve) => {
+    const socket = net.createConnection(socketPath);
+    socket.once("connect", () => {
+      socket.end(`${JSON.stringify({ id: 1, type: "shutdown" })}\n`);
+    });
+    socket.once("close", resolve);
+    socket.once("error", resolve);
+  });
+}
+
 // Regression guard for #18: the active terminal per project is now persisted
 // (ProjectCollectionState.activeTab), so it survives a restart instead of
 // resetting to the first one.
@@ -106,6 +120,7 @@ test("the last-active terminal stays active across a restart (#18)", async () =>
     await expect(win.locator(".aya-sidebar-row--active")).toHaveText(/shell 2/);
     await killAndWait(app);
   } finally {
+    await shutdownPtyHost(s.ayaHome);
     rmSync(s.root, { recursive: true, force: true });
   }
 });
@@ -143,6 +158,7 @@ test("a dangling persisted activeTab falls back to the first terminal", async ()
     ).toBeVisible();
     await killAndWait(app);
   } finally {
+    await shutdownPtyHost(s.ayaHome);
     rmSync(s.root, { recursive: true, force: true });
   }
 });
@@ -186,6 +202,7 @@ test("the last-active project is restored across a restart (#18)", async () => {
     await expect(win.locator(".aya-sidebar-row--active")).toHaveText(/bravo 1/);
     await killAndWait(app);
   } finally {
+    await shutdownPtyHost(s.ayaHome);
     rmSync(s.root, { recursive: true, force: true });
   }
 });

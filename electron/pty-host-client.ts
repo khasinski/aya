@@ -53,6 +53,12 @@ export class PtyHostClient {
     await this.request({ id: 0, type: "kill", ptyId });
   }
 
+  async shutdown(): Promise<void> {
+    await this.request({ id: 0, type: "shutdown" });
+    this.socket?.destroy();
+    this.socket = null;
+  }
+
   async search(query: string): Promise<BufferSearchHit[]> {
     return asSearchResult(await this.request({ id: 0, type: "search", query }));
   }

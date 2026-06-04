@@ -10,6 +10,7 @@ import {
   presetSlug,
 } from "../types";
 import type { SettingsTab } from "../settings-tabs";
+import type { MacOptionKeyMode } from "../terminal-option-key";
 
 interface Props {
   presets: Preset[];
@@ -19,6 +20,8 @@ interface Props {
   activeThemeId: string;
   appThemePreference: "system" | "light" | "dark";
   onAppThemePreferenceChange: (theme: "system" | "light" | "dark") => void;
+  macOptionKeyMode: MacOptionKeyMode;
+  onMacOptionKeyModeChange: (mode: MacOptionKeyMode) => void;
   onClose: () => void;
   onSave: (presets: Preset[]) => Promise<void> | void;
   onSaveSnippets: (snippets: Snippet[]) => Promise<void> | void;
@@ -88,6 +91,8 @@ export function SettingsModal({
   activeThemeId: initialActiveThemeId,
   appThemePreference,
   onAppThemePreferenceChange,
+  macOptionKeyMode,
+  onMacOptionKeyModeChange,
   onClose,
   onSave,
   onSaveSnippets,
@@ -512,6 +517,7 @@ export function SettingsModal({
             {tabItems.map((item) => (
               <button
                 key={item.id}
+                data-testid="settings-tab"
                 type="button"
                 role="tab"
                 aria-selected={activeTab === item.id}
@@ -592,6 +598,7 @@ export function SettingsModal({
               {(["system", "light", "dark"] as const).map((theme) => (
                 <button
                   key={theme}
+                  data-testid="appearance-segment"
                   type="button"
                   className={`aya-settings-segment ${
                     appThemePreference === theme
@@ -605,6 +612,35 @@ export function SettingsModal({
                     : theme === "light"
                       ? "Light"
                       : "Dark"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="aya-settings-general-row">
+            <div>
+              <div className="aya-settings-general-title">Mac Option key</div>
+              <div className="aya-modal-hint">
+                Use iTerm-style left Option for Meta while right Option composes
+                accented characters, or make every Option key act as Meta.
+              </div>
+            </div>
+            <div className="aya-settings-segmented" aria-label="Mac Option key">
+              {([
+                ["right-option-compose", "Right Option composes"],
+                ["option-as-meta", "All Option = Meta"],
+              ] as const).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  data-testid="mac-option-segment"
+                  type="button"
+                  className={`aya-settings-segment ${
+                    macOptionKeyMode === mode
+                      ? "aya-settings-segment--active"
+                      : ""
+                  }`}
+                  onClick={() => onMacOptionKeyModeChange(mode)}
+                >
+                  {label}
                 </button>
               ))}
             </div>

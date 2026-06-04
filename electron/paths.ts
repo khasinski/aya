@@ -13,6 +13,7 @@ import * as path from "node:path";
 
 export const IS_DEV = process.env.AYA_DEV === "1";
 export const IS_E2E_HEADLESS = process.env.AYA_E2E_HEADLESS === "1";
+export const IS_E2E_PTY_SHUTDOWN = process.env.AYA_E2E_PTY_SHUTDOWN === "1";
 
 // AYA_HOME env var lets you point a single launch at an arbitrary config
 // directory (e.g. /tmp/aya-demo for screenshots, or a per-task scratch dir).

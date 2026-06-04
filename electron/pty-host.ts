@@ -11,6 +11,7 @@ import {
 import {
   activePtyCount,
   killPty,
+  killAll,
   resizePty,
   searchPtyOutputs,
   spawnPty,
@@ -63,6 +64,11 @@ async function handle(request: PtyHostRequest): Promise<unknown> {
   }
   if (request.type === "kill") {
     killPty(request.ptyId);
+    return null;
+  }
+  if (request.type === "shutdown") {
+    killAll();
+    setTimeout(() => process.exit(0), 0);
     return null;
   }
   if (request.type === "search") {

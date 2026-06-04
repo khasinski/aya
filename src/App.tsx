@@ -11,6 +11,11 @@ import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
 import { TerminalView } from "./components/TerminalView";
 import { TopBar } from "./components/TopBar";
+import {
+  DEFAULT_MAC_OPTION_KEY_MODE,
+  isMacOptionKeyMode,
+  type MacOptionKeyMode,
+} from "./terminal-option-key";
 import { useAppShortcuts } from "./hooks/useAppShortcuts";
 import { useDoubleShiftSearch } from "./hooks/useDoubleShiftSearch";
 import { usePtyEventRouter } from "./hooks/usePtyEventRouter";
@@ -55,6 +60,7 @@ const TERMINAL_FONT_SIZE_PX = 13;
 // Persisted schema version for ProjectCollectionState.
 const PROJECT_STATE_VERSION = 1;
 const APP_THEME_STORAGE_KEY = "aya:app-theme";
+const MAC_OPTION_KEY_STORAGE_KEY = "aya:mac-option-key";
 
 type AppThemePreference = "system" | "light" | "dark";
 
@@ -66,6 +72,15 @@ function readAppThemePreference(): AppThemePreference {
       : "system";
   } catch {
     return "system";
+  }
+}
+
+function readMacOptionKeyMode(): MacOptionKeyMode {
+  try {
+    const value = localStorage.getItem(MAC_OPTION_KEY_STORAGE_KEY);
+    return isMacOptionKeyMode(value) ? value : DEFAULT_MAC_OPTION_KEY_MODE;
+  } catch {
+    return DEFAULT_MAC_OPTION_KEY_MODE;
   }
 }
 
@@ -393,6 +408,8 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [appThemePreference, setAppThemePreference] =
     useState<AppThemePreference>(readAppThemePreference);
+  const [macOptionKeyMode, setMacOptionKeyMode] =
+    useState<MacOptionKeyMode>(readMacOptionKeyMode);
   const [settingsInitialTab, setSettingsInitialTab] =
     useState<SettingsTab>("general");
   const [showSearch, setShowSearch] = useState(false);
@@ -1641,6 +1658,15 @@ export function App() {
     }
   }, []);
 
+  const updateMacOptionKeyMode = useCallback((next: MacOptionKeyMode) => {
+    setMacOptionKeyMode(next);
+    try {
+      localStorage.setItem(MAC_OPTION_KEY_STORAGE_KEY, next);
+    } catch {
+      /* ignore — localStorage can be unavailable in odd embedded contexts */
+    }
+  }, []);
+
   useEffect(() => {
     const root = document.documentElement;
     if (appThemePreference === "system") {
@@ -2210,6 +2236,7 @@ export function App() {
                   onCloseProject={closeProject}
                   onRequestRestart={() => restartTerminal(terminal.id)}
                   restartTrigger={restartTriggers[terminal.id] ?? 0}
+                  macOptionKeyMode={macOptionKeyMode}
                   isActivePane={isSplit && splitLayout.activeCell === cellIndex}
                   isActive={
                     (isSplit ? splitLayout.activeCell === cellIndex : true) &&
@@ -2247,6 +2274,7 @@ export function App() {
                   onCloseProject={closeProject}
                   onRequestRestart={() => restartTerminal(t.id)}
                   restartTrigger={restartTriggers[t.id] ?? 0}
+                  macOptionKeyMode={macOptionKeyMode}
                   enableWebgl={false}
                 />
               );
@@ -2407,6 +2435,8 @@ export function App() {
           activeThemeId={activeThemeId}
           appThemePreference={appThemePreference}
           onAppThemePreferenceChange={updateAppThemePreference}
+          macOptionKeyMode={macOptionKeyMode}
+          onMacOptionKeyModeChange={updateMacOptionKeyMode}
           initialTab={settingsInitialTab}
           onClose={() => setShowSettings(false)}
           onSave={onSavePresets}

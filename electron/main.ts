@@ -33,7 +33,7 @@ import {
 import { startConfigWatcher } from "./config-watcher";
 import { startControlServer } from "./control";
 import { getGitChangedFiles, getGitDiff, getGitInfo } from "./git";
-import { IS_DEV, IS_E2E_HEADLESS } from "./paths";
+import { IS_DEV, IS_E2E_HEADLESS, IS_E2E_PTY_SHUTDOWN } from "./paths";
 import { scanHarnesses } from "./harnesses";
 import { isInternalNavigationUrl, parseHttpUrl } from "./navigation";
 import { listPresets, savePresets } from "./presets";
@@ -1015,4 +1015,11 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("before-quit", () => {
+  if (!IS_E2E_PTY_SHUTDOWN) return;
+  void ptyHost.shutdown().catch(() => {
+    // Test-only cleanup. Normal app runs intentionally keep PTYs alive.
+  });
 });

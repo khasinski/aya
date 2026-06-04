@@ -9,22 +9,22 @@ test("snippet drawer opens, shows the seeded default, and collapses after sendin
 }) => {
   // The fresh AYA_HOME has no snippets file, so the app seeds DEFAULT_SNIPPETS
   // on boot. Open the first pane's drawer.
-  await window.locator(".aya-pane-snippettoggle").first().click();
+  await window.getByTestId("snippet-toggle").first().click();
 
-  const drawer = window.locator(".aya-snippetbar--open").first();
+  const drawer = window.getByTestId("snippet-drawer").first();
   await expect(drawer).toBeVisible();
 
   // Seeded default renders with its name AND its full text (the point of the
   // drawer: verify a prompt before sending).
   await expect(
-    drawer.locator(".aya-snippet-name", { hasText: "magic numbers audit" }),
+    drawer.getByTestId("snippet-name").filter({ hasText: "magic numbers audit" }),
   ).toBeVisible();
-  await expect(drawer.locator(".aya-snippet-text").first()).toContainText(
+  await expect(drawer.getByTestId("snippet-text").first()).toContainText(
     "Run a full magic-numbers audit",
   );
 
   // Sending collapses the drawer (no open drawer remains anywhere).
-  await drawer.locator(".aya-snippet").first().click();
+  await drawer.getByTestId("snippet-item").first().click();
   await expect(window.locator(".aya-snippetbar--open")).toHaveCount(0);
 });
 
@@ -34,7 +34,7 @@ test("closed snippet drawer is inert (cannot be tab-focused or clicked)", async 
   // Regression guard for the F14 ghost-drawer fix: while closed, the drawer's
   // buttons must be removed from the a11y/tab tree (inert), so they can't steal
   // focus or clicks over the status bar.
-  const closedDrawer = window.locator(".aya-snippetbar").first();
+  const closedDrawer = window.getByTestId("snippet-drawer").first();
   await expect(closedDrawer).not.toHaveClass(/aya-snippetbar--open/);
   await expect(closedDrawer).toHaveAttribute("inert", "");
 });
@@ -42,15 +42,15 @@ test("closed snippet drawer is inert (cannot be tab-focused or clicked)", async 
 test("snippet drawer settings button opens the Snippets settings tab", async ({
   window,
 }) => {
-  await window.locator(".aya-pane-snippettoggle").first().click();
+  await window.getByTestId("snippet-toggle").first().click();
 
-  const drawer = window.locator(".aya-snippetbar--open").first();
-  await drawer.locator("button[title='Edit snippets in Settings']").click();
+  const drawer = window.getByTestId("snippet-drawer").first();
+  await drawer.getByTestId("snippet-settings-button").click();
 
   const settings = window.locator(".aya-modal--settings");
   await expect(settings).toBeVisible();
   await expect(
-    settings.locator(".aya-settings-tab--active", { hasText: "Snippets" }),
+    settings.getByTestId("settings-tab").filter({ hasText: "Snippets" }),
   ).toBeVisible();
   await expect(settings.locator(".aya-modal-title", { hasText: "Snippets" })).toBeVisible();
 });

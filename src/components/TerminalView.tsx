@@ -15,6 +15,13 @@ import type { SettingsTab } from "../settings-tabs";
 import { focusReportingState } from "../focus-reporting";
 import { enterKeyAction, META_ENTER } from "../terminal-keys";
 import {
+  leftOptionMetaSequence,
+  optionSideFromCode,
+  shouldUseXtermOptionAsMeta,
+  type MacOptionKeyMode,
+  type OptionSide,
+} from "../terminal-option-key";
+import {
   shouldPreserveTerminalScrollback,
   shouldUseTerminalWebgl,
   stripScrollbackErase,
@@ -58,6 +65,7 @@ interface Props {
   onOpenSettings: (tab?: SettingsTab) => void;
   onCloseProject: (slug: string) => void;
   onPtyData?: (chunk: string) => void;
+  macOptionKeyMode: MacOptionKeyMode;
   /** Called when the user requests a restart of an exited PTY via the
    *  Shift+Enter hint. The host resets the terminal's exitCode/status so the
    *  PTY event loop can flow again. */
@@ -148,6 +156,7 @@ export function TerminalView({
   isActive = false,
   onActivatePane,
   enableWebgl = true,
+  macOptionKeyMode,
 }: Props) {
   const shouldUseWebgl =
     shouldUseTerminalWebgl(enableWebgl, preset.id);
@@ -171,6 +180,9 @@ export function TerminalView({
   const richInputRef = useRef(false);
   const fitFrameRef = useRef<number | null>(null);
   const replayingOutputRef = useRef(0);
+  const optionSideRef = useRef<OptionSide>("unknown");
+  const macOptionKeyModeRef = useRef(macOptionKeyMode);
+  macOptionKeyModeRef.current = macOptionKeyMode;
   const [findQuery, setFindQuery] = useState("");
   const [isScrollbarHidden, setIsScrollbarHidden] = useState(false);
   const [isRestoring, setIsRestoring] = useState(true);
@@ -312,12 +324,11 @@ export function TerminalView({
       // without feeling sluggish.
       smoothScrollDuration: SMOOTH_SCROLL_DURATION_MS,
       scrollOnEraseInDisplay: true,
-      // Option-as-Meta so Option+B / Option+F / Option+Backspace send the
-      // ESC-prefixed sequences readline (zsh, bash, claude, codex) expects
-      // for backward-word / forward-word / delete-word. Without this, macOS
-      // intercepts Option+letter and emits Unicode (Option+e → "´"), which
-      // is what produced the "aeaer ;3D" garbage on backspace-word.
-      macOptionIsMeta: true,
+      // In iTerm-style mode, xterm must not globally convert Option+letter to
+      // Meta: right Option needs to remain available for macOS compose/dead-key
+      // input (Polish characters, accents). TerminalView reimplements left
+      // Option+letter as Meta below.
+      macOptionIsMeta: shouldUseXtermOptionAsMeta(macOptionKeyModeRef.current),
     });
     const fit = new FitAddon();
     const search = new SearchAddon();
@@ -379,6 +390,11 @@ export function TerminalView({
     });
 
     term.attachCustomKeyEventHandler((ev) => {
+      if (ev.key === "Alt") {
+        optionSideRef.current =
+          ev.type === "keydown" ? optionSideFromCode(ev.code) : "unknown";
+        return true;
+      }
       if (ev.type !== "keydown") return true;
 
       // Enter handling (restart / soft newline / submit) — see enterKeyAction.
@@ -424,6 +440,19 @@ export function TerminalView({
           return false;
         }
         // "default" → fall through to xterm's normal Enter.
+      }
+
+      const leftOptionSeq = leftOptionMetaSequence(
+        ev.key,
+        ev.code,
+        ev.shiftKey,
+        optionSideRef.current,
+        macOptionKeyModeRef.current,
+      );
+      if (leftOptionSeq && ev.altKey && !ev.metaKey && !ev.ctrlKey) {
+        ev.preventDefault();
+        void window.aya.ptyWrite(terminal.id, leftOptionSeq);
+        return false;
       }
 
       // Option+Arrow / Option+Backspace word navigation. xterm.js's default
@@ -539,6 +568,12 @@ export function TerminalView({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminal.id]);
+
+  useEffect(() => {
+    const term = xtermRef.current;
+    if (!term) return;
+    term.options.macOptionIsMeta = shouldUseXtermOptionAsMeta(macOptionKeyMode);
+  }, [macOptionKeyMode]);
 
   useEffect(() => {
     const term = xtermRef.current;
@@ -698,6 +733,9 @@ export function TerminalView({
 
   return (
     <div
+      data-testid="terminal-pane"
+      data-terminal-id={terminal.id}
+      data-terminal-name={terminal.name}
       className={
         `aya-pane ${isScrollbarHidden ? "aya-pane--scrollbar-hidden" : ""} ${
           isActivePane ? "aya-pane--active-split" : ""
@@ -738,6 +776,7 @@ export function TerminalView({
           </div>
         )}
         <button
+          data-testid="snippet-toggle"
           className={`aya-pane-snippettoggle ${
             snippetsOpen ? "aya-pane-snippettoggle--on" : ""
           }`}
@@ -786,6 +825,7 @@ export function TerminalView({
         </div>
       )}
       <div
+        data-testid="xterm-host"
         className="aya-xterm-host"
         // CSS variable consumed by overrides.css so the padding strip around
         // the xterm canvas (the "frame" around the terminal) tracks the
@@ -797,7 +837,7 @@ export function TerminalView({
         }
         onWheelCapture={() => setIsScrollbarHidden(false)}
       >
-        <div className="aya-xterm-frame" ref={containerRef} />
+        <div data-testid="xterm-frame" className="aya-xterm-frame" ref={containerRef} />
         {isRestoring && (
           <div className="aya-terminal-restoring" aria-live="polite">
             <span

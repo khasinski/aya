@@ -4,7 +4,6 @@ import {
   type ElectronApplication,
   type Page,
 } from "@playwright/test";
-import { execSync } from "node:child_process";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { seedEnv, type SeededEnv, type SeedOptions } from "./helpers/seed";
@@ -63,6 +62,7 @@ export const test = base.extend<{
       }
     }
     env.AYA_HOME = seeded.ayaHome;
+    env.AYA_E2E_PTY_SHUTDOWN = "1";
     if (!process.env.CI) {
       env.AYA_E2E_HEADLESS = "1";
     }
@@ -92,19 +92,7 @@ export const test = base.extend<{
     } catch {
       /* already gone */
     }
-    if (process.env.CI) {
-      // Aya spawns a detached pty-host (its "PTYs survive restart" design) that
-      // outlives the window; on the isolated CI runner that leftover process
-      // keeps Playwright's worker from exiting (45s teardown timeout). Reap it.
-      // CI-only: locally this would also kill a developer's running Aya.
-      try {
-        execSync("pkill -9 -f pty-host.js", { stdio: "ignore" });
-      } catch {
-        /* nothing to kill */
-      }
-    } else {
-      await app.close().catch(() => {});
-    }
+    await app.close().catch(() => {});
   },
 
   window: async ({ app }, use) => {
