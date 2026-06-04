@@ -27,6 +27,14 @@ export interface Preset {
 
 export const DEFAULT_PRESETS: readonly Preset[] = [
   {
+    id: "shell",
+    name: "Shell",
+    icon: "$",
+    color: "",
+    // The literal $SHELL — the PTY wrapper expands this to the user's shell.
+    command: "$SHELL",
+  },
+  {
     id: "claude",
     name: "Claude Code",
     icon: "✻",
@@ -41,14 +49,6 @@ export const DEFAULT_PRESETS: readonly Preset[] = [
     icon: "◆",
     color: "#10a37f",
     command: "codex",
-  },
-  {
-    id: "shell",
-    name: "Shell",
-    icon: "$",
-    color: "",
-    // The literal $SHELL — the PTY wrapper expands this to the user's shell.
-    command: "$SHELL",
   },
 ];
 
