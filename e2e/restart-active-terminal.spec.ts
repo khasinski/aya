@@ -137,3 +137,49 @@ test("a dangling persisted activeTab falls back to the first terminal", async ()
     rmSync(s.root, { recursive: true, force: true });
   }
 });
+
+// The persisted activeProject (which project tab is selected) must also be
+// restored — not just the active terminal within a project. With two open
+// projects, the saved active one (here the SECOND, non-default) has to win over
+// "fall back to the first open project". Guards the bootstrap branch at
+// App.tsx setActiveProjectId(savedActiveProject) (#18).
+test("the last-active project is restored across a restart (#18)", async () => {
+  const s = seedEnv({ split: false }); // gives project "e2e" (slug e2e-proj)
+  try {
+    // Add a SECOND project ("Bravo") sharing the same (existing) directory, then
+    // mark it as the active project. e2e-proj is first in `order`, so without
+    // restore the app would default to it — the test only passes if the saved
+    // activeProject (proj-b) is honoured.
+    writeFileSync(
+      join(s.ayaHome, "projects", "proj-b.json"),
+      JSON.stringify({
+        name: "Bravo",
+        directory: s.projectDir,
+        tabs: [{ id: "tab-bravo", presetId: "shell", name: "bravo 1" }],
+      }),
+    );
+    writeFileSync(
+      join(s.ayaHome, "projects-state.json"),
+      JSON.stringify({
+        version: 1,
+        order: ["e2e-proj", "proj-b"],
+        open: ["e2e-proj", "proj-b"],
+        recent: ["proj-b", "e2e-proj"],
+        activeProject: "proj-b",
+      }),
+    );
+    const app = await launch(s.ayaHome, s.userDataDir, s.root);
+    const win = await app.firstWindow();
+    await win.waitForLoadState("domcontentloaded");
+    // The active project tab is Bravo (the saved one), not the first/default e2e.
+    await expect(
+      win.locator(".aya-tab--active .aya-tab-name"),
+    ).toHaveText(/Bravo/);
+    // And its terminal is the one shown in the sidebar (proves we switched the
+    // whole active context, not just the tab label).
+    await expect(win.locator(".aya-sidebar-row--active")).toHaveText(/bravo 1/);
+    await killAndWait(app);
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+  }
+});
