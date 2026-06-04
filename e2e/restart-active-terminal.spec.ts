@@ -35,7 +35,9 @@ function launch(
     }
   }
   env.AYA_HOME = ayaHome;
-  env.AYA_E2E_HEADLESS = "1";
+  if (!process.env.CI) {
+    env.AYA_E2E_HEADLESS = "1";
+  }
   env.CODEX_HOME = join(root, "codex-home");
   const args = [
     join(APP_ROOT, "dist-electron", "main.js"),
