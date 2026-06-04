@@ -5,7 +5,7 @@ import {
   type ElectronApplication,
 } from "@playwright/test";
 import { join } from "node:path";
-import { rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { seedEnv } from "./helpers/seed";
 
 // Reproduces: after restart the FIRST terminal is selected, not the one that
@@ -37,6 +37,37 @@ function launch(
   return electron.launch({ args, cwd: APP_ROOT, env });
 }
 
+/** Poll projects-state.json until the persisted active terminal for a project
+ *  matches the expected id — deterministic replacement for a fixed sleep, so we
+ *  kill the app only once the debounced IPC write has actually landed on disk. */
+async function waitForPersistedActiveTab(
+  ayaHome: string,
+  slug: string,
+  tabId: string,
+): Promise<void> {
+  const file = join(ayaHome, "projects-state.json");
+  await expect
+    .poll(
+      () => {
+        try {
+          return JSON.parse(readFileSync(file, "utf8")).activeTab?.[slug] ?? null;
+        } catch {
+          return null;
+        }
+      },
+      { timeout: 5000 },
+    )
+    .toBe(tabId);
+}
+
+/** SIGKILL the app and wait for the OS to actually reap it before relaunching
+ *  the same AYA_HOME — deterministic replacement for a fixed settle sleep. */
+async function killAndWait(app: ElectronApplication): Promise<void> {
+  const proc = app.process();
+  proc.kill("SIGKILL");
+  await new Promise<void>((resolve) => proc.once("exit", () => resolve()));
+}
+
 // Regression guard for #18: the active terminal per project is now persisted
 // (ProjectCollectionState.activeTab), so it survives a restart instead of
 // resetting to the first one.
@@ -50,11 +81,10 @@ test("the last-active terminal stays active across a restart (#18)", async () =>
     await win.waitForLoadState("domcontentloaded");
     await win.locator(".aya-sidebar-row", { hasText: "shell 2" }).click();
     await expect(win.locator(".aya-sidebar-row--active")).toHaveText(/shell 2/);
-    // Let the async state save (IPC -> atomic write) flush before we kill it,
-    // otherwise the SIGKILL can interrupt the write and nothing was persisted.
-    await win.waitForTimeout(800);
-    app.process().kill("SIGKILL");
-    await new Promise((r) => setTimeout(r, 1500)); // let the pty-host / state settle
+    // Wait for the debounced IPC write to actually land on disk before killing —
+    // a fixed sleep here would race the write under load and persist nothing.
+    await waitForPersistedActiveTab(s.ayaHome, "e2e-proj", "tab-right");
+    await killAndWait(app);
 
     // Relaunch the same home. The terminal that was active should still be
     // active — not reset to the first one.
@@ -62,7 +92,7 @@ test("the last-active terminal stays active across a restart (#18)", async () =>
     win = await app.firstWindow();
     await win.waitForLoadState("domcontentloaded");
     await expect(win.locator(".aya-sidebar-row--active")).toHaveText(/shell 2/);
-    app.process().kill("SIGKILL");
+    await killAndWait(app);
   } finally {
     rmSync(s.root, { recursive: true, force: true });
   }
@@ -93,11 +123,16 @@ test("a dangling persisted activeTab falls back to the first terminal", async ()
     const app = await launch(s.ayaHome, s.userDataDir, s.root);
     const win = await app.firstWindow();
     await win.waitForLoadState("domcontentloaded");
-    // Falls back to the first tab (shell 1) and actually renders a terminal
-    // (a dangling pointer would leave the active pane blank).
+    // Falls back to the first tab (shell 1) and actually renders THAT terminal:
+    // the visible pane header reads "shell 1". A dangling pointer would instead
+    // leave the active pane showing the "Empty pane" placeholder (no terminal
+    // for the ghost id), so this pins which terminal renders, not just that one
+    // does.
     await expect(win.locator(".aya-sidebar-row--active")).toHaveText(/shell 1/);
-    await expect(win.locator(".xterm").first()).toBeVisible();
-    app.process().kill("SIGKILL");
+    await expect(
+      win.locator(".aya-pane-header-title").filter({ hasText: /shell 1/ }),
+    ).toBeVisible();
+    await killAndWait(app);
   } finally {
     rmSync(s.root, { recursive: true, force: true });
   }
