@@ -200,14 +200,25 @@ test("migrates project order/open files into projects-state.json", async () => {
       { cwd: process.cwd(), env: { ...process.env, AYA_HOME: dir } },
     );
     const { state, persisted } = JSON.parse(stdout);
-    const expected = {
+    // The in-memory migrated value carries only the legacy fields.
+    assert.deepEqual(state, {
       version: 1,
       order: ["a", "b"],
       open: ["b"],
       recent: ["a", "b"],
-    };
-    assert.deepEqual(state, expected);
-    assert.deepEqual(persisted, expected);
+    });
+    // On disk it is round-tripped through the normalizer, so it always carries
+    // the full schema (active fields default to empty) — single source of truth
+    // for read and write (#18).
+    assert.deepEqual(persisted, {
+      version: 1,
+      order: ["a", "b"],
+      open: ["b"],
+      recent: ["a", "b"],
+      activeProject: null,
+      activeTab: {},
+      singleView: {},
+    });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -243,6 +254,9 @@ test("projects-state.json wins over legacy order/open files", async () => {
       order: ["new"],
       open: [],
       recent: ["new"],
+      activeProject: null,
+      activeTab: {},
+      singleView: {},
     });
   } finally {
     await rm(dir, { recursive: true, force: true });

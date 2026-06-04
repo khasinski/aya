@@ -111,14 +111,36 @@ async function loadStringArrayFile(filePath: string): Promise<string[] | null> {
   }
 }
 
-function normalizeProjectState(raw: unknown): ProjectCollectionState | null {
+/** A plain string->string map, dropping any non-string values. Used for the
+ *  optional activeTab / singleView selections (back-compat: absent => {}). */
+function stringRecord(x: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (typeof x === "object" && x !== null && !Array.isArray(x)) {
+    for (const [k, v] of Object.entries(x)) {
+      if (typeof v === "string") out[k] = v;
+    }
+  }
+  return out;
+}
+
+export function normalizeProjectState(
+  raw: unknown,
+): ProjectCollectionState | null {
   if (typeof raw !== "object" || raw === null) return null;
   const r = raw as Record<string, unknown>;
   const order = stringArray(r.order);
   const open = stringArray(r.open);
   const recent = stringArray(r.recent);
   if (!order || !open || !recent) return null;
-  return { version: 1, order, open, recent };
+  return {
+    version: 1,
+    order,
+    open,
+    recent,
+    activeProject: typeof r.activeProject === "string" ? r.activeProject : null,
+    activeTab: stringRecord(r.activeTab),
+    singleView: stringRecord(r.singleView),
+  };
 }
 
 export async function listProjectState(): Promise<ProjectCollectionState> {
@@ -143,11 +165,19 @@ export async function listProjectState(): Promise<ProjectCollectionState> {
 export async function saveProjectState(
   state: ProjectCollectionState,
 ): Promise<void> {
-  const normalized: ProjectCollectionState = {
-    version: 1,
-    order: state.order,
-    open: state.open,
-    recent: state.recent,
+  // Persist through the SAME normalizer the loader uses, so read and write can
+  // never diverge: every field the schema knows about is round-tripped, and no
+  // future field can be silently dropped by a hand-maintained pick list (that
+  // bug — a dropped activeTab/activeProject — is exactly what reset the active
+  // selection on restart, #18).
+  const normalized = normalizeProjectState(state) ?? {
+    version: 1 as const,
+    order: [],
+    open: [],
+    recent: [],
+    activeProject: null,
+    activeTab: {},
+    singleView: {},
   };
   await writeFileAtomic(
     PROJECTS_STATE_FILE,

@@ -91,6 +91,17 @@ function dedupeSlugs(slugs: string[]): string[] {
   return out;
 }
 
+/** Drop null/undefined values so the persisted selection map only has live ids. */
+function compactRecord(
+  record: Record<string, string | null>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (value) out[key] = value;
+  }
+  return out;
+}
+
 interface GitInfo {
   branch: string | null;
   dirty: number;
@@ -606,19 +617,52 @@ export function App() {
     setActiveTabByProject,
   });
 
-  const saveProjectCollectionState = useCallback(
+  // Update the order/open/recent collection state. Persistence is centralised in
+  // the single writer effect below, so this only updates in-memory state — it
+  // never writes to disk itself (no scattered saves that can race or drop
+  // fields). The active project / terminal / view live in their own state and
+  // are persisted by the same writer.
+  const updateProjectCollection = useCallback(
     (next: ProjectCollectionState) => {
-      const normalized: ProjectCollectionState = {
+      setProjectState({
         version: PROJECT_STATE_VERSION,
         order: dedupeSlugs(next.order),
         open: dedupeSlugs(next.open),
         recent: dedupeSlugs(next.recent),
-      };
-      setProjectState(normalized);
-      void window.aya.saveProjectState(normalized);
+      });
     },
     [],
   );
+
+  // === Single persistence owner for projects-state.json ===
+  // Everything that can change the persisted UI state — order/open/recent AND
+  // the active project / terminal / view — flows through here and nowhere else.
+  // Before this, the file was written from several places (bootstrap, the
+  // collection setter, per-feature handlers); they raced, and because each
+  // hand-built the payload, the active selections were dropped — that's the
+  // root of #18. One debounced writer, keyed on all the inputs, makes the disk
+  // a pure function of state and removes the race by construction.
+  useEffect(() => {
+    if (!didBootstrap) return;
+    const handle = window.setTimeout(() => {
+      void window.aya.saveProjectState({
+        version: PROJECT_STATE_VERSION,
+        order: projectState.order,
+        open: projectState.open,
+        recent: projectState.recent,
+        activeProject: activeProjectId,
+        activeTab: compactRecord(activeTabByProject),
+        singleView: compactRecord(singleViewByProject),
+      });
+    }, 150);
+    return () => window.clearTimeout(handle);
+  }, [
+    didBootstrap,
+    projectState,
+    activeProjectId,
+    activeTabByProject,
+    singleViewByProject,
+  ]);
 
   // ---------------------------------------------------------------------------
   // Hydration helper — instantiates TerminalStates for a project's saved tabs.
@@ -643,10 +687,19 @@ export function App() {
         }
         return next;
       });
-      setActiveTabByProject((prev) => ({
-        ...prev,
-        [project.slug]: project.tabs[0]?.id ?? null,
-      }));
+      // Default the active tab to the first one ONLY when this project has no
+      // valid active tab yet. A restored selection (set from the persisted
+      // activeTab on boot) must survive hydration — clobbering it here is what
+      // reset the active terminal to the first tab on restart (#18).
+      setActiveTabByProject((prev) => {
+        const existing = prev[project.slug];
+        const stillValid =
+          !!existing && project.tabs.some((t) => t.id === existing);
+        return {
+          ...prev,
+          [project.slug]: stillValid ? existing : (project.tabs[0]?.id ?? null),
+        };
+      });
     },
     [],
   );
@@ -711,14 +764,43 @@ export function App() {
           : seededProjects.map((p) => p.slug);
       const recent =
         loadedProjectState.recent.length > 0 ? loadedProjectState.recent : order;
+      // Restore the persisted active selections, but validate them against the
+      // projects/terminals that actually exist now — a deleted project or tab
+      // must not leave the active pointer dangling (it would fall through to a
+      // stale id instead of the first tab).
+      const savedActiveTab = loadedProjectState.activeTab ?? {};
+      const savedSingleView = loadedProjectState.singleView ?? {};
+      const validActiveTab: Record<string, string> = {};
+      const validSingleView: Record<string, string> = {};
+      for (const p of seededProjects) {
+        const tabIds = new Set(p.tabs.map((t) => t.id));
+        if (tabIds.has(savedActiveTab[p.slug])) {
+          validActiveTab[p.slug] = savedActiveTab[p.slug];
+        }
+        if (tabIds.has(savedSingleView[p.slug])) {
+          validSingleView[p.slug] = savedSingleView[p.slug];
+        }
+      }
+      const savedActiveProject =
+        loadedProjectState.activeProject &&
+        seededSlugs.has(loadedProjectState.activeProject)
+          ? loadedProjectState.activeProject
+          : null;
+
       const normalizedState: ProjectCollectionState = {
         version: PROJECT_STATE_VERSION,
         order: dedupeSlugs(order).filter((slug) => seededSlugs.has(slug)),
         open: dedupeSlugs(open).filter((slug) => seededSlugs.has(slug)),
         recent: dedupeSlugs(recent).filter((slug) => seededSlugs.has(slug)),
+        activeProject: savedActiveProject,
+        activeTab: validActiveTab,
+        singleView: validSingleView,
       };
+      // Seed in-memory state; the single writer effect persists it once
+      // didBootstrap flips (no direct save here — that used to race the writer).
       setProjectState(normalizedState);
-      void window.aya.saveProjectState(normalizedState);
+      setActiveTabByProject(validActiveTab);
+      setSingleViewByProject(validSingleView);
       const openSlugSet = new Set(normalizedState.open);
       const openProjects = seededProjects.filter((p) => openSlugSet.has(p.slug));
       setProjects(openProjects);
@@ -746,7 +828,10 @@ export function App() {
 
       const cwdProject = openProjects.find((p) => p.directory === cwd);
       if (cwdProject) {
+        // An explicit `aya <dir>` launch still wins over the saved selection.
         setActiveProjectId(cwdProject.slug);
+      } else if (savedActiveProject && openSlugSet.has(savedActiveProject)) {
+        setActiveProjectId(savedActiveProject);
       } else if (openProjects.length > 0) {
         setActiveProjectId(openProjects[0].slug);
       } else {
@@ -1324,11 +1409,11 @@ export function App() {
       }
       return out;
     });
-    saveProjectCollectionState({
+    updateProjectCollection({
       ...projectStateRef.current,
       order: nextOrder,
     });
-  }, [saveProjectCollectionState]);
+  }, [updateProjectCollection]);
 
   /** Reorder a project's terminal tabs. Walks the terminals map and
    *  rebuilds it with the new key order — `project.tabs` is derived from
@@ -1401,7 +1486,7 @@ export function App() {
     });
     const remaining = projectsRef.current.filter((p) => p.slug !== slug);
     setProjects(remaining);
-    saveProjectCollectionState({
+    updateProjectCollection({
       ...projectStateRef.current,
       open: remaining.map((p) => p.slug),
       recent: dedupeSlugs([slug, ...projectStateRef.current.recent]),
@@ -1434,7 +1519,7 @@ export function App() {
       const nextProjects = [...projectsRef.current, project];
       setProjects(nextProjects);
       setActiveProjectId(project.slug);
-      saveProjectCollectionState({
+      updateProjectCollection({
         ...projectStateRef.current,
         order: dedupeSlugs([...projectStateRef.current.order, project.slug]),
         open: nextProjects.map((p) => p.slug),
@@ -1458,7 +1543,7 @@ export function App() {
         ]);
       }
     },
-    [hydrateProjectTerminals, saveProjectCollectionState],
+    [hydrateProjectTerminals, updateProjectCollection],
   );
 
   const onCreateProject = useCallback(
@@ -1476,7 +1561,7 @@ export function App() {
         setAllProjects((prev) => [...prev, withTabs]);
         const nextProjects = [...projectsRef.current, withTabs];
         setProjects(nextProjects);
-        saveProjectCollectionState({
+        updateProjectCollection({
           ...projectStateRef.current,
           order: dedupeSlugs([...projectStateRef.current.order, withTabs.slug]),
           open: nextProjects.map((p) => p.slug),
@@ -1509,7 +1594,7 @@ export function App() {
         alert(err instanceof Error ? err.message : String(err));
       }
     },
-    [saveProjectCollectionState],
+    [updateProjectCollection],
   );
 
   const onSavePresets = useCallback(async (next: Preset[]) => {

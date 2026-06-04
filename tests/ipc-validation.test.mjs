@@ -194,6 +194,8 @@ test("validateProjectConfig accepts a max 5x5 split but rejects one beyond max",
 });
 
 test("validateProjectCollectionState accepts order/open/recent arrays", () => {
+  // Active-selection fields are optional; when absent they default to empty so
+  // the IPC boundary always emits the full schema (back-compat with old files).
   assert.deepEqual(
     validateProjectCollectionState({
       version: 1,
@@ -206,6 +208,9 @@ test("validateProjectCollectionState accepts order/open/recent arrays", () => {
       order: ["a", "b"],
       open: ["a"],
       recent: ["b", "a"],
+      activeProject: null,
+      activeTab: {},
+      singleView: {},
     },
   );
   assert.throws(
@@ -217,6 +222,57 @@ test("validateProjectCollectionState accepts order/open/recent arrays", () => {
         recent: [],
       }),
     /projects:save-state\.open/,
+  );
+});
+
+test("validateProjectCollectionState passes active selections through (not dropped)", () => {
+  // Regression guard for #18: the IPC validator used to hand-build a
+  // {version,order,open,recent} subset, silently dropping the active terminal /
+  // project / view — so the renderer's restored selection never reached disk.
+  assert.deepEqual(
+    validateProjectCollectionState({
+      version: 1,
+      order: ["a"],
+      open: ["a"],
+      recent: ["a"],
+      activeProject: "a",
+      activeTab: { a: "tab-2" },
+      singleView: { a: "tab-2" },
+    }),
+    {
+      version: 1,
+      order: ["a"],
+      open: ["a"],
+      recent: ["a"],
+      activeProject: "a",
+      activeTab: { a: "tab-2" },
+      singleView: { a: "tab-2" },
+    },
+  );
+});
+
+test("validateProjectCollectionState sanitizes malformed active fields leniently", () => {
+  // A malformed active entry must never block a save — it is coerced, not
+  // rejected (the renderer owns these fields and re-derives them on boot).
+  assert.deepEqual(
+    validateProjectCollectionState({
+      version: 1,
+      order: ["a"],
+      open: ["a"],
+      recent: ["a"],
+      activeProject: 42,
+      activeTab: { a: "tab-1", b: 99, c: null },
+      singleView: "not-an-object",
+    }),
+    {
+      version: 1,
+      order: ["a"],
+      open: ["a"],
+      recent: ["a"],
+      activeProject: null,
+      activeTab: { a: "tab-1" },
+      singleView: {},
+    },
   );
 });
 

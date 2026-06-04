@@ -37,10 +37,10 @@ function launch(
   return electron.launch({ args, cwd: APP_ROOT, env });
 }
 
-// Known bug #18: the active terminal is not persisted, so it resets to the
-// first one on restart. Marked fixme so CI stays green until the fix lands —
-// flip `test.fixme` back to `test` then and it becomes the regression guard.
-test.fixme("the last-active terminal stays active across a restart (#18)", async () => {
+// Regression guard for #18: the active terminal per project is now persisted
+// (ProjectCollectionState.activeTab), so it survives a restart instead of
+// resetting to the first one.
+test("the last-active terminal stays active across a restart (#18)", async () => {
   const s = seedEnv({ split: false }); // sidebar switching, one terminal shown
   try {
     // First launch: the project opens on its first tab ("shell 1"). Switch to
@@ -50,6 +50,9 @@ test.fixme("the last-active terminal stays active across a restart (#18)", async
     await win.waitForLoadState("domcontentloaded");
     await win.locator(".aya-sidebar-row", { hasText: "shell 2" }).click();
     await expect(win.locator(".aya-sidebar-row--active")).toHaveText(/shell 2/);
+    // Let the async state save (IPC -> atomic write) flush before we kill it,
+    // otherwise the SIGKILL can interrupt the write and nothing was persisted.
+    await win.waitForTimeout(800);
     app.process().kill("SIGKILL");
     await new Promise((r) => setTimeout(r, 1500)); // let the pty-host / state settle
 

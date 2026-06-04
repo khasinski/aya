@@ -119,6 +119,12 @@ export interface ProjectCollectionState {
   order: string[];
   open: string[];
   recent: string[];
+  /** Last active project (slug), restored on boot. Optional for back-compat. */
+  activeProject?: string | null;
+  /** Active terminal id per project slug, so the selection survives a restart. */
+  activeTab?: Record<string, string>;
+  /** Per-project single-terminal view: the shown terminal id (absent = all/split). */
+  singleView?: Record<string, string>;
 }
 
 export interface ProjectGitInfo {
