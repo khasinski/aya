@@ -1,4 +1,5 @@
 import type { Snippet } from "../types";
+import type { SettingsTab } from "../settings-tabs";
 
 interface Props {
   snippets: Snippet[];
@@ -8,7 +9,7 @@ interface Props {
    *  (appending a carriage return for autoRun) and returns focus to the
    *  terminal. */
   onSend: (snippet: Snippet) => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (tab?: SettingsTab) => void;
 }
 
 function MaterialIcon({ name, className }: { name: string; className?: string }) {
@@ -51,7 +52,7 @@ export function SnippetBar({
           className="aya-snippetbar-headbtn"
           type="button"
           title="Edit snippets in Settings"
-          onClick={onOpenSettings}
+          onClick={() => onOpenSettings("snippets")}
         >
           <MaterialIcon name="settings" />
         </button>
@@ -73,7 +74,7 @@ export function SnippetBar({
           <button
             type="button"
             className="aya-snippetbar-empty-link"
-            onClick={onOpenSettings}
+            onClick={() => onOpenSettings("snippets")}
           >
             Add some in Settings
           </button>{" "}

@@ -9,6 +9,7 @@ import {
   looksNonInteractive,
   presetSlug,
 } from "../types";
+import type { SettingsTab } from "../settings-tabs";
 
 interface Props {
   presets: Preset[];
@@ -26,6 +27,7 @@ interface Props {
     activeThemeId: string,
   ) => Promise<void> | void;
   onImportTheme: () => Promise<Theme | null>;
+  initialTab?: SettingsTab;
 }
 
 // Claude brand color (used for the Claude YOLO preset and as the color placeholder)
@@ -91,7 +93,9 @@ export function SettingsModal({
   onSaveSnippets,
   onSaveThemes,
   onImportTheme,
+  initialTab = "general",
 }: Props) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [draft, setDraft] = useState<DraftPreset[]>(() => presets.map(toDraft));
   const [snippetDraft, setSnippetDraft] = useState<DraftSnippet[]>(() =>
     snippets.map(snippetToDraft),
@@ -120,6 +124,10 @@ export function SettingsModal({
   // draft so a row added via the suggestions immediately drops from the
   // list without waiting for Save.
   const [allHarnesses, setAllHarnesses] = useState<HarnessDef[]>([]);
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
+
   useEffect(() => {
     let cancelled = false;
     void window.aya.scanHarnesses().then((all) => {
@@ -429,6 +437,18 @@ export function SettingsModal({
     }
   };
 
+  const tabItems: Array<{
+    id: SettingsTab;
+    label: string;
+    icon: string;
+    dirty: boolean;
+  }> = [
+    { id: "general", label: "General", icon: "tune", dirty: false },
+    { id: "themes", label: "Themes", icon: "palette", dirty: themesDirty },
+    { id: "presets", label: "Presets", icon: "terminal", dirty: presetsDirty },
+    { id: "snippets", label: "Snippets", icon: "bolt", dirty: snippetsDirty },
+  ];
+
   return (
     <div className="aya-modal-backdrop" onClick={onClose}>
       <div
@@ -487,49 +507,80 @@ export function SettingsModal({
             </div>
           </div>
         )}
-        {/* === Theme section === */}
-        <div className="aya-modal-title">Terminal theme</div>
-        <div className="aya-modal-hint">
-          Color scheme for all terminals. Import iTerm2 <code>.itermcolors</code>{" "}
-          or Windows Terminal JSON files — both are converted to xterm.js's
-          native format internally.
-        </div>
-
-        <div className="aya-theme-list">
-          {themes.map((t) => (
-            <label key={t.id} className="aya-theme-row">
-              <input
-                type="radio"
-                name="active-theme"
-                checked={t.id === activeThemeId}
-                onChange={() => setActiveTheme(t.id)}
-              />
-              <ThemeSwatch theme={t} />
-              <span className="aya-theme-name">{t.name}</span>
+        <div className="aya-settings-chrome">
+          <div className="aya-settings-toolbar" role="tablist" aria-label="Settings">
+            {tabItems.map((item) => (
               <button
-                className="aya-settings-row-close"
-                onClick={() => deleteTheme(t.id)}
-                title="Delete this theme"
+                key={item.id}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === item.id}
+                className={`aya-settings-tab ${
+                  activeTab === item.id ? "aya-settings-tab--active" : ""
+                }`}
+                onClick={() => setActiveTab(item.id)}
               >
-                ×
+                <span
+                  className="aya-settings-tab-icon"
+                  style={{ fontFamily: "Material Symbols Outlined" }}
+                  aria-hidden="true"
+                >
+                  {item.icon}
+                </span>
+                <span>{item.label}</span>
+                {item.dirty && <span className="aya-settings-tab-dirty" />}
               </button>
-            </label>
-          ))}
-          <button className="aya-settings-add" onClick={importTheme}>
-            ＋ Import theme (.itermcolors / .json)
-          </button>
-          {importError && (
-            <div className="aya-settings-errors" style={{ marginTop: 8 }}>
-              Import failed: {importError}
-            </div>
-          )}
-        </div>
+            ))}
+          </div>
 
-        <hr className="aya-settings-divider" />
+          <div className="aya-settings-pane-shell">
+            {activeTab === "themes" && (
+              <section className="aya-settings-pane">
+                {/* === Theme section === */}
+                <div className="aya-modal-title">Terminal theme</div>
+                <div className="aya-modal-hint">
+                  Color scheme for all terminals. Import iTerm2 <code>.itermcolors</code>{" "}
+                  or Windows Terminal JSON files — both are converted to xterm.js's
+                  native format internally.
+                </div>
 
-        {/* === General section === */}
-        <div className="aya-modal-title">General</div>
-        <div className="aya-settings-general">
+                <div className="aya-theme-list">
+                  {themes.map((t) => (
+                    <label key={t.id} className="aya-theme-row">
+                      <input
+                        type="radio"
+                        name="active-theme"
+                        checked={t.id === activeThemeId}
+                        onChange={() => setActiveTheme(t.id)}
+                      />
+                      <ThemeSwatch theme={t} />
+                      <span className="aya-theme-name">{t.name}</span>
+                      <button
+                        className="aya-settings-row-close"
+                        onClick={() => deleteTheme(t.id)}
+                        title="Delete this theme"
+                      >
+                        ×
+                      </button>
+                    </label>
+                  ))}
+                  <button className="aya-settings-add" onClick={importTheme}>
+                    ＋ Import theme (.itermcolors / .json)
+                  </button>
+                  {importError && (
+                    <div className="aya-settings-errors" style={{ marginTop: 8 }}>
+                      Import failed: {importError}
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {activeTab === "general" && (
+              <section className="aya-settings-pane">
+                {/* === General section === */}
+                <div className="aya-modal-title">General</div>
+                <div className="aya-settings-general">
           <div className="aya-settings-general-row">
             <div>
               <div className="aya-settings-general-title">Appearance</div>
@@ -626,18 +677,20 @@ export function SettingsModal({
                   : "Enabled"}
             </button>
           </div>
-        </div>
+                </div>
+              </section>
+            )}
 
-        <hr className="aya-settings-divider" />
+            {activeTab === "presets" && (
+              <section className="aya-settings-pane">
+                {/* === Presets section === */}
+                <div className="aya-modal-title">Terminal presets</div>
+                <div className="aya-modal-hint">
+                  Each preset is a launcher button in the sidebar. The command runs in
+                  your shell in the project directory.
+                </div>
 
-        {/* === Presets section === */}
-        <div className="aya-modal-title">Terminal presets</div>
-        <div className="aya-modal-hint">
-          Each preset is a launcher button in the sidebar. The command runs in
-          your shell in the project directory.
-        </div>
-
-        <div className="aya-settings-list">
+                <div className="aya-settings-list">
           <div className="aya-settings-row aya-settings-row--head">
             <span style={{ width: PRESET_ROW_ICON_WIDTH }}>Icon</span>
             <span style={{ width: PRESET_ROW_NAME_WIDTH }}>Name</span>
@@ -772,21 +825,24 @@ export function SettingsModal({
               </div>
             </div>
           )}
-        </div>
+                </div>
 
-        {errors.length > 0 && (
-          <div className="aya-settings-errors">
-            {errors.map((e, i) => (
-              <div key={i}>• {e}</div>
-            ))}
-          </div>
-        )}
+                {errors.length > 0 && (
+                  <div className="aya-settings-errors">
+                    {errors.map((e, i) => (
+                      <div key={i}>• {e}</div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
 
-        <hr className="aya-settings-divider" />
+            {activeTab === "snippets" && (
+              <section className="aya-settings-pane">
 
-        {/* === Snippets section === */}
-        <div className="aya-modal-title">Snippets</div>
-        <div className="aya-modal-hint">
+                {/* === Snippets section === */}
+                <div className="aya-modal-title">Snippets</div>
+                <div className="aya-modal-hint">
           Saved text you can inject into the active terminal from its snippet
           drawer (the <strong>snippets</strong> button in a pane header). Toggle{" "}
           <span
@@ -804,9 +860,9 @@ export function SettingsModal({
           </span>{" "}
           to only type it (you press Enter). Lives in Aya, not in an agent's
           context.
-        </div>
+                </div>
 
-        <div className="aya-settings-list">
+                <div className="aya-settings-list">
           {snippetDraft.map((row) => (
             <div className="aya-settings-snippet-row" key={row.__key}>
               <button
@@ -861,12 +917,20 @@ export function SettingsModal({
               ＋ Add snippet
             </button>
           </div>
+                </div>
+              </section>
+            )}
+          </div>
         </div>
 
         <div className="aya-modal-actions aya-settings-actions">
-          <button className="aya-modal-btn" onClick={resetPresetsToDefaults}>
-            Reset presets to defaults
-          </button>
+          {activeTab === "presets" ? (
+            <button className="aya-modal-btn" onClick={resetPresetsToDefaults}>
+              Reset presets to defaults
+            </button>
+          ) : (
+            <div />
+          )}
           <div style={{ flex: 1 }} />
           <button className="aya-modal-btn" onClick={onClose}>
             Cancel

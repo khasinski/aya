@@ -1,7 +1,9 @@
+import type { SettingsTab } from "../settings-tabs";
+
 interface Props {
   showNoHarnessHint: boolean;
   onOpenProject: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (tab?: SettingsTab) => void;
   onDismissNoHarnessHint: () => void;
 }
 
@@ -28,7 +30,7 @@ export function EmptyState({
         >
           Open directory
         </button>
-        <button className="aya-modal-btn" onClick={onOpenSettings}>
+        <button className="aya-modal-btn" onClick={() => onOpenSettings()}>
           Settings
         </button>
       </div>

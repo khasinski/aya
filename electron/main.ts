@@ -33,8 +33,9 @@ import {
 import { startConfigWatcher } from "./config-watcher";
 import { startControlServer } from "./control";
 import { getGitChangedFiles, getGitDiff, getGitInfo } from "./git";
-import { IS_DEV } from "./paths";
+import { IS_DEV, IS_E2E_HEADLESS } from "./paths";
 import { scanHarnesses } from "./harnesses";
+import { isInternalNavigationUrl, parseHttpUrl } from "./navigation";
 import { listPresets, savePresets } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
 import { readUsage } from "./usage";
@@ -228,6 +229,12 @@ function devIconPath(): string {
 
 function devAboutIconPath(): string {
   return devIconPath();
+}
+
+async function openExternalHttpUrl(raw: string): Promise<void> {
+  const parsed = parseHttpUrl(raw);
+  if (!parsed) throw new Error("Only HTTP and HTTPS URLs can be opened.");
+  await shell.openExternal(parsed.toString());
 }
 
 /** Walk argv (which includes electron's own args in dev) and return the
@@ -622,7 +629,9 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   // and reload that slice in the renderer. Stopped when the window closes.
   const stopConfigWatcher = startConfigWatcher(win);
 
-  win.once("ready-to-show", () => win.show());
+  win.once("ready-to-show", () => {
+    if (!IS_E2E_HEADLESS) win.show();
+  });
   win.on("closed", () => {
     stopConfigWatcher();
     // Keep the module-level ref in sync so second-instance handlers don't
@@ -641,6 +650,22 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   // Initial broadcast once the renderer is ready (also useful if a future
   // restart preserves fullscreen state).
   win.webContents.once("did-finish-load", () => sendFullScreen(win.isFullScreen()));
+
+  // External links must never navigate Aya's BrowserWindow. xterm's web-links
+  // addon normally calls our IPC handler, but Chromium/Electron can still see
+  // window.open or direct navigation paths depending on timing and modifier
+  // keys. Catch both centrally and hand http(s) URLs to the OS browser.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (parseHttpUrl(url)) void openExternalHttpUrl(url);
+    return { action: "deny" };
+  });
+  win.webContents.on("will-navigate", (event, url) => {
+    if (isInternalNavigationUrl(url, { isDev: IS_DEV, devServerUrl: DEV_SERVER_URL })) return;
+    if (parseHttpUrl(url)) {
+      event.preventDefault();
+      void openExternalHttpUrl(url);
+    }
+  });
 
   // Intercept keyboard shortcuts at the BrowserWindow level so they fire
   // even while xterm.js has focus (otherwise xterm would forward them to the
@@ -847,12 +872,7 @@ function registerIpc(win: BrowserWindow): void {
     if (error) throw new Error(error);
   });
   ipcMain.handle("env:open-url", async (_e, value: unknown) => {
-    const url = requireString(value, "env:open-url.url");
-    const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      throw new Error("Only HTTP and HTTPS URLs can be opened.");
-    }
-    await shell.openExternal(parsed.toString());
+    await openExternalHttpUrl(requireString(value, "env:open-url.url"));
   });
   ipcMain.handle("app:is-fullscreen", async () => win.isFullScreen());
   // Dock badge for unattended notifications (waiting terminals). Empty

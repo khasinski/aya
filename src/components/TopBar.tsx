@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import type { ProjectConfig, UsageData } from "../types";
+import type { SettingsTab } from "../settings-tabs";
 import { UsageChip } from "./UsageChip";
 
 // Project tab width bounds (px): tabs shrink to min, then overflow the strip.
@@ -32,7 +33,7 @@ interface Props {
   onRenameProject: (slug: string, newName: string) => void;
   onReorderProjects: (orderedSlugs: string[]) => void;
   onOpenSearch: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (tab?: SettingsTab) => void;
   projectBadges?: Record<string, ProjectAttention>;
   /** Account-wide Claude usage snapshot (null hides its chip). Read-only. */
   usage?: UsageData | null;
@@ -350,7 +351,7 @@ export function TopBar({
         <button
           className="aya-iconbtn"
           title={blockChrome ? "Settings (close the open dialog first)" : "Settings"}
-          onClick={onOpenSettings}
+          onClick={() => onOpenSettings()}
           disabled={blockChrome}
         >
           <span style={{ fontFamily: "Material Symbols Outlined" }}>settings</span>

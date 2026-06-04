@@ -14,6 +14,7 @@ import { TopBar } from "./components/TopBar";
 import { useAppShortcuts } from "./hooks/useAppShortcuts";
 import { useDoubleShiftSearch } from "./hooks/useDoubleShiftSearch";
 import { usePtyEventRouter } from "./hooks/usePtyEventRouter";
+import type { SettingsTab } from "./settings-tabs";
 import {
   useDockBadge,
   useRecentTerminalActivity,
@@ -392,6 +393,8 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [appThemePreference, setAppThemePreference] =
     useState<AppThemePreference>(readAppThemePreference);
+  const [settingsInitialTab, setSettingsInitialTab] =
+    useState<SettingsTab>("general");
   const [showSearch, setShowSearch] = useState(false);
   const [showAttentionCenter, setShowAttentionCenter] = useState(false);
   const [pendingRepoImport, setPendingRepoImport] =
@@ -406,6 +409,10 @@ export function App() {
     () => localStorage.getItem("aya:no-harness-hint-dismissed") === "1",
   );
   const fontSize = TERMINAL_FONT_SIZE_PX;
+  const openSettings = useCallback((tab: SettingsTab = "general") => {
+    setSettingsInitialTab(tab);
+    setShowSettings(true);
+  }, []);
 
   // Status-bar branch / dirty count goes stale once you `git checkout` in a
   // shell or commit something — there's no inotify watch, just a small poll
@@ -2012,7 +2019,7 @@ export function App() {
     search: () => {
       if (!chromeBlocked) setShowSearch(true);
     },
-    openSettings: () => setShowSettings(true),
+    openSettings: () => openSettings(),
     prevTab: () => cycleActiveProjectTab(-1),
     nextTab: () => cycleActiveProjectTab(1),
     selectProject: (oneBasedIndex) => {
@@ -2061,7 +2068,7 @@ export function App() {
         onRenameProject={renameProject}
         onReorderProjects={reorderProjects}
         onOpenSearch={() => setShowSearch(true)}
-        onOpenSettings={() => setShowSettings(true)}
+        onOpenSettings={openSettings}
         projectBadges={projectBadges}
         usage={usage}
         codexUsage={codexUsage}
@@ -2079,7 +2086,7 @@ export function App() {
             harnessScanDone && foundHarnessCount === 0 && !hideNoHarnessHint
           }
           onOpenProject={showNewProjectModal}
-          onOpenSettings={() => setShowSettings(true)}
+          onOpenSettings={openSettings}
           onDismissNoHarnessHint={() => {
             localStorage.setItem("aya:no-harness-hint-dismissed", "1");
             setHideNoHarnessHint(true);
@@ -2199,7 +2206,7 @@ export function App() {
                   themeColors={colorsForTerminal}
                   findOpen={findInPaneFor === terminal.id}
                   onCloseFind={() => setFindInPaneFor(null)}
-                  onOpenSettings={() => setShowSettings(true)}
+                  onOpenSettings={openSettings}
                   onCloseProject={closeProject}
                   onRequestRestart={() => restartTerminal(terminal.id)}
                   restartTrigger={restartTriggers[terminal.id] ?? 0}
@@ -2236,7 +2243,7 @@ export function App() {
                   themeColors={colorsForTerminal}
                   findOpen={false}
                   onCloseFind={() => setFindInPaneFor(null)}
-                  onOpenSettings={() => setShowSettings(true)}
+                  onOpenSettings={openSettings}
                   onCloseProject={closeProject}
                   onRequestRestart={() => restartTerminal(t.id)}
                   restartTrigger={restartTriggers[t.id] ?? 0}
@@ -2400,6 +2407,7 @@ export function App() {
           activeThemeId={activeThemeId}
           appThemePreference={appThemePreference}
           onAppThemePreferenceChange={updateAppThemePreference}
+          initialTab={settingsInitialTab}
           onClose={() => setShowSettings(false)}
           onSave={onSavePresets}
           onSaveSnippets={onSaveSnippets}

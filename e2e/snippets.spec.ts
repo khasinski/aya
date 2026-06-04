@@ -38,3 +38,19 @@ test("closed snippet drawer is inert (cannot be tab-focused or clicked)", async 
   await expect(closedDrawer).not.toHaveClass(/aya-snippetbar--open/);
   await expect(closedDrawer).toHaveAttribute("inert", "");
 });
+
+test("snippet drawer settings button opens the Snippets settings tab", async ({
+  window,
+}) => {
+  await window.locator(".aya-pane-snippettoggle").first().click();
+
+  const drawer = window.locator(".aya-snippetbar--open").first();
+  await drawer.locator("button[title='Edit snippets in Settings']").click();
+
+  const settings = window.locator(".aya-modal--settings");
+  await expect(settings).toBeVisible();
+  await expect(
+    settings.locator(".aya-settings-tab--active", { hasText: "Snippets" }),
+  ).toBeVisible();
+  await expect(settings.locator(".aya-modal-title", { hasText: "Snippets" })).toBeVisible();
+});

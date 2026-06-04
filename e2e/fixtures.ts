@@ -10,6 +10,30 @@ import { join } from "node:path";
 import { seedEnv, type SeededEnv, type SeedOptions } from "./helpers/seed";
 
 const APP_ROOT = join(__dirname, "..");
+const REMOVE_RETRY_COUNT = 5;
+const REMOVE_RETRY_DELAY_MS = 100;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function removeSeededRoot(root: string): Promise<void> {
+  for (let attempt = 0; attempt < REMOVE_RETRY_COUNT; attempt += 1) {
+    try {
+      rmSync(root, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (
+        attempt === REMOVE_RETRY_COUNT - 1 ||
+        (code !== "ENOTEMPTY" && code !== "EBUSY" && code !== "EPERM")
+      ) {
+        throw error;
+      }
+      await delay(REMOVE_RETRY_DELAY_MS);
+    }
+  }
+}
 
 /** Fixtures that launch the built Aya app once per test against an isolated,
  *  seeded environment and tear it down afterward. */
@@ -25,7 +49,7 @@ export const test = base.extend<{
   seeded: async ({ seedOptions }, use) => {
     const s = seedEnv(seedOptions);
     await use(s);
-    rmSync(s.root, { recursive: true, force: true });
+    await removeSeededRoot(s.root);
   },
 
   app: async ({ seeded }, use) => {
@@ -39,6 +63,7 @@ export const test = base.extend<{
       }
     }
     env.AYA_HOME = seeded.ayaHome;
+    env.AYA_E2E_HEADLESS = "1";
     // Isolate Codex usage too: point CODEX_HOME at an empty dir so the Codex
     // chip never picks up the real machine's ~/.codex rollout logs.
     env.CODEX_HOME = join(seeded.root, "codex-home");

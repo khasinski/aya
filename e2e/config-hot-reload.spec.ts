@@ -74,6 +74,7 @@ test("an external snippets.json edit is not clobbered when Settings is open and 
   // rewrite snippets.json from an old draft: the fix skips the untouched snippets
   // write (snippetsDirty === false) and re-syncs the draft to the marker, while
   // the old code always wrote the stale default back out.
+  await window.locator(".aya-settings-tab", { hasText: "Themes" }).click();
   await window
     .locator(".aya-theme-row", { hasText: "Tokyo Night" })
     .locator("input[type=radio]")

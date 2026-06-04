@@ -6,6 +6,7 @@ dist/
 dist-electron/
 dist-test/
 release/
+ci-linux*/
 !build/icon.png
 
 # Vite cache

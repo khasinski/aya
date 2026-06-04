@@ -11,6 +11,23 @@ import type { Page } from "@playwright/test";
 // readable from .xterm-rows. The sendSnippet guard is identical in single-view.
 
 const firstPaneRows = ".aya-pane:first-child .xterm-rows";
+const firstPaneScreen = ".aya-pane:first-child .xterm-screen";
+
+async function focusFirstPane(window: Page) {
+  await window.locator(firstPaneScreen).click();
+  await expect
+    .poll(() =>
+      window.evaluate(() => {
+        const firstPane = document.querySelector(".aya-pane:first-child");
+        return (
+          !!firstPane &&
+          firstPane.contains(document.activeElement) &&
+          document.activeElement?.tagName.toLowerCase() === "textarea"
+        );
+      }),
+    )
+    .toBe(true);
+}
 
 async function clickFirstSnippet(window: Page) {
   await window.locator(".aya-pane-snippettoggle").first().click();
@@ -57,11 +74,14 @@ test("snippet on a restarted (alive) terminal is not blocked as 'exited'", async
     .locator(".aya-context-menu-item", { hasText: "Restart terminal" })
     .click();
 
+  await expect(window.locator(firstPaneRows)).toContainText(/project\s*[%$#]/, {
+    timeout: 10000,
+  });
+
   // Prove the terminal is ALIVE after the restart: the fresh shell echoes a
   // typed marker back (a dead PTY would show nothing).
-  const pane = window.locator(".aya-pane").first();
-  await pane.locator(".xterm-screen").click();
-  await window.keyboard.type("echo ALIVE_AFTER_RESTART");
+  await focusFirstPane(window);
+  await window.keyboard.insertText("echo ALIVE_AFTER_RESTART");
   await window.keyboard.press("Enter");
   await expect(window.locator(firstPaneRows)).toContainText(
     /ALIVE_AFTER_RESTART/,

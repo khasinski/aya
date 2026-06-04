@@ -1045,24 +1045,97 @@
   flex-shrink: 0;
 }
 
-/* Settings modal — wider so the command column is usable. */
+/* Settings modal — Safari-style icon toolbar with one settings pane visible. */
 .aya-modal--settings {
-  width: min(820px, 92vw);
-  /* Four stacked sections (themes, general, presets, commands) overflow the
-   *  viewport — let the whole modal scroll so every section and the Save bar
-   *  stay reachable. */
+  width: min(880px, 92vw);
   max-height: calc(100vh - 40px);
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--bg-tertiary) 72%, transparent), transparent 92px),
+    var(--bg-secondary);
+}
+.aya-settings-chrome {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.aya-settings-toolbar {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 4px;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--border);
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--bg-tertiary) 86%, transparent), color-mix(in oklab, var(--bg-secondary) 94%, transparent));
+}
+.aya-settings-tab {
+  position: relative;
+  width: 92px;
+  height: 64px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-secondary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  cursor: pointer;
+}
+.aya-settings-tab:hover {
+  background: color-mix(in oklab, var(--bg) 58%, transparent);
+  color: var(--fg-primary);
+}
+.aya-settings-tab--active {
+  background: color-mix(in oklab, var(--bg) 88%, transparent);
+  border-color: var(--border-strong);
+  color: var(--fg-primary);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+.aya-settings-tab-icon {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--accent) 13%, transparent);
+  color: var(--accent);
+  font-size: 21px;
+  line-height: 1;
+}
+.aya-settings-tab-dirty {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg-secondary);
+}
+.aya-settings-pane-shell {
+  min-height: 430px;
+  max-height: min(620px, calc(100vh - 188px));
   overflow-y: auto;
+  padding: 22px 24px 18px;
+}
+.aya-settings-pane {
+  min-height: 390px;
 }
 .aya-settings-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  /* Capped so one long list can't dominate; the modal itself scrolls for the
-   *  rest. Smaller than before now that there are two such lists in the
-   *  modal (presets + commands). */
-  max-height: 38vh;
-  overflow-y: auto;
+  max-height: none;
+  overflow: visible;
   margin: 4px 0 8px;
 }
 .aya-settings-general {
@@ -1080,6 +1153,9 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-secondary);
+}
+.aya-settings-general-row .aya-modal-hint {
+  margin-bottom: 0;
 }
 .aya-settings-general-title {
   color: var(--fg-primary);
@@ -1264,16 +1340,8 @@ select.aya-modal-input {
 }
 .aya-settings-actions {
   align-items: center;
-  /* Pin the Save/Cancel bar to the bottom of the scrolling modal so it stays
-   *  reachable no matter how far the content scrolls. The negative offset +
-   *  padding cancel the modal's own 20px padding so the bar spans full width
-   *  and the backdrop doesn't show through above it. */
-  position: sticky;
-  bottom: -20px;
-  margin-top: 18px;
-  margin-left: -20px;
-  margin-right: -20px;
-  padding: 12px 20px;
+  margin-top: 0;
+  padding: 12px 18px;
   background: var(--bg-secondary);
   border-top: 1px solid var(--border);
 }
@@ -1284,8 +1352,8 @@ select.aya-modal-input {
   flex-direction: column;
   gap: 2px;
   margin: 4px 0 12px;
-  max-height: 30vh;
-  overflow-y: auto;
+  max-height: none;
+  overflow: visible;
 }
 .aya-theme-row {
   display: flex;

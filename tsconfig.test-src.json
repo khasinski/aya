@@ -18,6 +18,7 @@
     "src/focus-reporting.ts",
     "src/pty-event-reducer.ts",
     "src/terminal-keys.ts",
+    "src/terminal-rendering.ts",
     "src/snippet-payload.ts",
     "src/types.ts"
   ]

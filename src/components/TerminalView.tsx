@@ -11,8 +11,14 @@ import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { Preset, Snippet, TerminalState, ThemeColors } from "../types";
+import type { SettingsTab } from "../settings-tabs";
 import { focusReportingState } from "../focus-reporting";
 import { enterKeyAction, META_ENTER } from "../terminal-keys";
+import {
+  shouldPreserveTerminalScrollback,
+  shouldUseTerminalWebgl,
+  stripScrollbackErase,
+} from "../terminal-rendering";
 import { snippetPtyPayload } from "../snippet-payload";
 import { SnippetBar } from "./SnippetBar";
 
@@ -32,6 +38,7 @@ const FOCUS_RETRY_DELAY_MS = 60;
 // How long to keep showing "Restoring sessions…" before assuming the replay
 // arrived (or there was nothing to replay).
 const RESTORE_FALLBACK_MS = 2_500;
+const INPUT_LOG_MAX_CHARS = 240;
 
 interface Props {
   terminal: TerminalState;
@@ -48,7 +55,7 @@ interface Props {
   findOpen: boolean;
   /** Called when the user closes the search bar (Esc / ✕). */
   onCloseFind: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (tab?: SettingsTab) => void;
   onCloseProject: (slug: string) => void;
   onPtyData?: (chunk: string) => void;
   /** Called when the user requests a restart of an exited PTY via the
@@ -108,6 +115,18 @@ function recoveryTitle(
   return "Terminal failed to start";
 }
 
+function printableControlData(data: string): string {
+  return data
+    .replace(/\x1b/g, "\\x1b")
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n")
+    .replace(/\t/g, "\\t")
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, (ch) => {
+      return `\\x${ch.charCodeAt(0).toString(16).padStart(2, "0")}`;
+    })
+    .slice(0, INPUT_LOG_MAX_CHARS);
+}
+
 export function TerminalView({
   terminal,
   preset,
@@ -130,6 +149,10 @@ export function TerminalView({
   onActivatePane,
   enableWebgl = true,
 }: Props) {
+  const shouldUseWebgl =
+    shouldUseTerminalWebgl(enableWebgl, preset.id);
+  const shouldPreserveScrollback =
+    shouldPreserveTerminalScrollback(preset.id);
   const lastActivityLabel = lastActivity ? formatLastActivity(lastActivity) : null;
   const headerStatusText = terminal.externalStatus?.text ?? lastActivityLabel;
   const headerStatusTitle = terminal.externalStatus
@@ -249,7 +272,7 @@ export function TerminalView({
 
   const attachWebgl = useCallback(
     (term: XTerm) => {
-      if (!enableWebgl || webglRef.current) return;
+      if (!shouldUseWebgl || webglRef.current) return;
       try {
         const webgl = new WebglAddon();
         webgl.onContextLoss(() => {
@@ -268,7 +291,7 @@ export function TerminalView({
         // WebGL unavailable; DOM renderer is fine, just drifty.
       }
     },
-    [enableWebgl, repairTerminalRender],
+    [repairTerminalRender, shouldUseWebgl],
   );
 
   // Create the xterm instance + spawn the PTY once.
@@ -288,6 +311,7 @@ export function TerminalView({
       // the trackpad. 125ms is about 8 frames at 60Hz: noticeable easing
       // without feeling sluggish.
       smoothScrollDuration: SMOOTH_SCROLL_DURATION_MS,
+      scrollOnEraseInDisplay: true,
       // Option-as-Meta so Option+B / Option+F / Option+Backspace send the
       // ESC-prefixed sequences readline (zsh, bash, claude, codex) expects
       // for backward-word / forward-word / delete-word. Without this, macOS
@@ -331,13 +355,16 @@ export function TerminalView({
         // running via focus-reporting mode (DECSET 1004). It gates Shift+Enter:
         // soft newline inside the TUI, plain Enter (submit) at the shell prompt.
         richInputRef.current = focusReportingState(event.chunk, richInputRef.current);
+        const displayChunk = shouldPreserveScrollback
+          ? stripScrollbackErase(event.chunk)
+          : event.chunk;
         if (event.replay) {
           replayingOutputRef.current += 1;
-          term.write(event.chunk, () => {
+          term.write(displayChunk, () => {
             replayingOutputRef.current = Math.max(0, replayingOutputRef.current - 1);
           });
         } else {
-          term.write(event.chunk);
+          term.write(displayChunk);
         }
         if (onPtyData) onPtyData(event.chunk);
       } else if (event.type === "exit") {
@@ -458,6 +485,11 @@ export function TerminalView({
     const onDataDisposable = term.onData((data) => {
       if (replayingOutputRef.current > 0) return;
       if (data.length > 0) setIsScrollbarHidden(true);
+      if (localStorage.getItem("aya:debug-terminal-input") === "1") {
+        console.debug(
+          `[aya terminal input] ${terminal.id} ${preset.id}: ${printableControlData(data)}`,
+        );
+      }
       void window.aya.ptyWrite(terminal.id, data);
     });
 
@@ -511,7 +543,7 @@ export function TerminalView({
   useEffect(() => {
     const term = xtermRef.current;
     if (!term) return;
-    if (enableWebgl) {
+    if (shouldUseWebgl) {
       attachWebgl(term);
       repairTerminalRender(false);
       return;
@@ -525,7 +557,7 @@ export function TerminalView({
       webglRef.current = null;
     }
     repairTerminalRender(false);
-  }, [attachWebgl, enableWebgl, repairTerminalRender]);
+  }, [attachWebgl, repairTerminalRender, shouldUseWebgl]);
 
   useEffect(() => {
     if (!isVisible) return;
@@ -741,7 +773,7 @@ export function TerminalView({
                 Close project
               </button>
             )}
-            <button className="aya-pane-recovery-btn" onClick={onOpenSettings}>
+            <button className="aya-pane-recovery-btn" onClick={() => onOpenSettings()}>
               Open Settings
             </button>
             <button
