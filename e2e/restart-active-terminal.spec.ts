@@ -13,6 +13,15 @@ import { seedEnv } from "./helpers/seed";
 // second terminal, quit, relaunch, and check which terminal is shown.
 
 const APP_ROOT = join(__dirname, "..");
+const ACTIVE_TAB_PERSISTENCE_TIMEOUT_MS = 5_000;
+
+function projectStatePath(ayaHome: string): string {
+  return join(ayaHome, "projects-state.json");
+}
+
+function writeProjectState(ayaHome: string, state: unknown): void {
+  writeFileSync(projectStatePath(ayaHome), JSON.stringify(state));
+}
 
 function launch(
   ayaHome: string,
@@ -45,7 +54,7 @@ async function waitForPersistedActiveTab(
   slug: string,
   tabId: string,
 ): Promise<void> {
-  const file = join(ayaHome, "projects-state.json");
+  const file = projectStatePath(ayaHome);
   await expect
     .poll(
       () => {
@@ -55,7 +64,7 @@ async function waitForPersistedActiveTab(
           return null;
         }
       },
-      { timeout: 5000 },
+      { timeout: ACTIVE_TAB_PERSISTENCE_TIMEOUT_MS },
     )
     .toBe(tabId);
 }
@@ -108,18 +117,15 @@ test("a dangling persisted activeTab falls back to the first terminal", async ()
   try {
     // Overwrite the seeded state so the active terminal points at an id that is
     // not one of the project's tabs (tab-left / tab-right).
-    writeFileSync(
-      join(s.ayaHome, "projects-state.json"),
-      JSON.stringify({
-        version: 1,
-        order: ["e2e-proj"],
-        open: ["e2e-proj"],
-        recent: ["e2e-proj"],
-        activeProject: "e2e-proj",
-        activeTab: { "e2e-proj": "tab-deleted" },
-        singleView: { "e2e-proj": "tab-deleted" },
-      }),
-    );
+    writeProjectState(s.ayaHome, {
+      version: 1,
+      order: ["e2e-proj"],
+      open: ["e2e-proj"],
+      recent: ["e2e-proj"],
+      activeProject: "e2e-proj",
+      activeTab: { "e2e-proj": "tab-deleted" },
+      singleView: { "e2e-proj": "tab-deleted" },
+    });
     const app = await launch(s.ayaHome, s.userDataDir, s.root);
     const win = await app.firstWindow();
     await win.waitForLoadState("domcontentloaded");
@@ -158,16 +164,13 @@ test("the last-active project is restored across a restart (#18)", async () => {
         tabs: [{ id: "tab-bravo", presetId: "shell", name: "bravo 1" }],
       }),
     );
-    writeFileSync(
-      join(s.ayaHome, "projects-state.json"),
-      JSON.stringify({
-        version: 1,
-        order: ["e2e-proj", "proj-b"],
-        open: ["e2e-proj", "proj-b"],
-        recent: ["proj-b", "e2e-proj"],
-        activeProject: "proj-b",
-      }),
-    );
+    writeProjectState(s.ayaHome, {
+      version: 1,
+      order: ["e2e-proj", "proj-b"],
+      open: ["e2e-proj", "proj-b"],
+      recent: ["proj-b", "e2e-proj"],
+      activeProject: "proj-b",
+    });
     const app = await launch(s.ayaHome, s.userDataDir, s.root);
     const win = await app.firstWindow();
     await win.waitForLoadState("domcontentloaded");
