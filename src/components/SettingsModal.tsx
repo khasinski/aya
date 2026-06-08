@@ -20,6 +20,8 @@ interface Props {
   activeThemeId: string;
   appThemePreference: "system" | "light" | "dark";
   onAppThemePreferenceChange: (theme: "system" | "light" | "dark") => void;
+  terminalFontFamily: string;
+  onTerminalFontFamilyChange: (fontFamily: string) => void;
   macOptionKeyMode: MacOptionKeyMode;
   onMacOptionKeyModeChange: (mode: MacOptionKeyMode) => void;
   onClose: () => void;
@@ -152,6 +154,8 @@ export function SettingsModal({
   activeThemeId: initialActiveThemeId,
   appThemePreference,
   onAppThemePreferenceChange,
+  terminalFontFamily,
+  onTerminalFontFamilyChange,
   macOptionKeyMode,
   onMacOptionKeyModeChange,
   onClose,
@@ -669,6 +673,22 @@ export function SettingsModal({
             )}
           >
             Follow system appearance or pin Aya.
+          </SettingsRow>
+          <SettingsRow
+            icon="text_fields"
+            title="Terminal font"
+            control={(
+              <input
+                className="aya-modal-input"
+                style={{ width: 320 }}
+                value={terminalFontFamily}
+                onChange={(e) => onTerminalFontFamilyChange(e.target.value)}
+                placeholder={'"Berkeley Mono", monospace'}
+                spellCheck={false}
+              />
+            )}
+          >
+            Leave empty to use Aya's default terminal font.
           </SettingsRow>
           <SettingsRow
             icon="keyboard_option_key"
