@@ -89,7 +89,10 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": true
+      "notarize": true,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Aya lets command-line tools you run in the terminal (such as a voice or dictation plugin) record from the microphone. Aya itself never records — the microphone is used only by the command you launch, and you can revoke this in System Settings > Privacy & Security > Microphone."
+      }
     },
     "extraMetadata": {
       "main": "dist-electron/main.js"

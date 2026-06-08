@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   type CliStatus,
   type HarnessDef,
+  type MicPermissionStatus,
   type Preset,
   type Snippet,
   type Theme,
@@ -189,6 +190,8 @@ export function SettingsModal({
     useState<NotificationPermission>(() =>
       typeof Notification === "undefined" ? "default" : Notification.permission,
     );
+  const [micStatus, setMicStatus] = useState<MicPermissionStatus | null>(null);
+  const [micBusy, setMicBusy] = useState(false);
   // PATH-scan result cached once per modal open. Derived `suggested` below
   // is the not-yet-added subset; recomputed each render against the live
   // draft so a row added via the suggestions immediately drops from the
@@ -208,6 +211,9 @@ export function SettingsModal({
     });
     void window.aya.usageHookStatus().then((status) => {
       if (!cancelled) setUsageHook(status);
+    });
+    void window.aya.micStatus().then((status) => {
+      if (!cancelled) setMicStatus(status);
     });
     return () => {
       cancelled = true;
@@ -253,6 +259,24 @@ export function SettingsModal({
       await window.aya.openNotificationSettings();
     }
     setNotificationPermission(Notification.permission);
+  };
+
+  // Aya never records; CLI tools the user runs (e.g. a /voice plugin) may. macOS
+  // owns the grant: when undecided we trigger its prompt, otherwise we deep-link
+  // to System Settings where the user can grant or revoke. We only re-read the
+  // status — we never claim to toggle it ourselves.
+  const handleMicAction = async () => {
+    setMicBusy(true);
+    try {
+      if (micStatus === "not-determined") {
+        await window.aya.requestMicAccess();
+      } else {
+        await window.aya.openMicrophoneSettings();
+      }
+      setMicStatus(await window.aya.micStatus());
+    } finally {
+      setMicBusy(false);
+    }
   };
 
   const existingCmds = new Set(
@@ -782,6 +806,30 @@ export function SettingsModal({
           >
             macOS permission: {notificationPermission}
           </SettingsRow>
+          {micStatus && micStatus !== "unsupported" && (
+            <SettingsRow
+              icon="mic"
+              title="Microphone"
+              control={(
+                <button
+                  className="aya-modal-btn"
+                  onClick={handleMicAction}
+                  disabled={micBusy}
+                >
+                  {micBusy
+                    ? "Working..."
+                    : micStatus === "not-determined"
+                      ? "Allow…"
+                      : micStatus === "granted"
+                        ? "Manage"
+                        : "Open System Settings"}
+                </button>
+              )}
+            >
+              Aya never records. Used only by terminal tools you run (e.g. a
+              /voice plugin). macOS permission: {micStatus}
+            </SettingsRow>
+          )}
                 </div>
               </section>
             )}

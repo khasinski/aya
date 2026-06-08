@@ -79,6 +79,9 @@ const api: AyaApi = {
   installCli: () => ipcRenderer.invoke("app:install-cli"),
   openNotificationSettings: () =>
     ipcRenderer.invoke("app:open-notification-settings"),
+  micStatus: () => ipcRenderer.invoke("mic:status"),
+  requestMicAccess: () => ipcRenderer.invoke("mic:request"),
+  openMicrophoneSettings: () => ipcRenderer.invoke("mic:open-settings"),
   onTerminalNotificationSelect: (handler) => {
     const listener = (
       _e: unknown,

@@ -10,5 +10,14 @@
   <true/>
   <key>com.apple.security.cs.allow-dyld-environment-variables</key>
   <true/>
+  <!-- Audio Input (Hardened Runtime). Without this, the hardened runtime blocks
+       microphone access for Aya AND every process it spawns, so terminal tools
+       the user runs (e.g. a /voice dictation plugin) fail with "no permissions".
+       The entitlement only PERMITS access — macOS still shows its own consent
+       prompt the first time something records, and the user can revoke it any
+       time in System Settings > Privacy & Security > Microphone. No audio is
+       captured until a command the user launched actually records. -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
 </dict>
 </plist>
