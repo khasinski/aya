@@ -61,6 +61,7 @@ const TERMINAL_FONT_SIZE_PX = 13;
 const PROJECT_STATE_VERSION = 1;
 const APP_THEME_STORAGE_KEY = "aya:app-theme";
 const MAC_OPTION_KEY_STORAGE_KEY = "aya:mac-option-key";
+const TERMINAL_FONT_FAMILY_STORAGE_KEY = "aya:terminal-font-family";
 
 type AppThemePreference = "system" | "light" | "dark";
 
@@ -82,6 +83,10 @@ function readMacOptionKeyMode(): MacOptionKeyMode {
   } catch {
     return DEFAULT_MAC_OPTION_KEY_MODE;
   }
+}
+
+function readTerminalFontFamily(): string {
+  return localStorage.getItem(TERMINAL_FONT_FAMILY_STORAGE_KEY) ?? "";
 }
 
 // Hard fallback used only if the themes file is somehow empty before boot
@@ -410,6 +415,9 @@ export function App() {
     useState<AppThemePreference>(readAppThemePreference);
   const [macOptionKeyMode, setMacOptionKeyMode] =
     useState<MacOptionKeyMode>(readMacOptionKeyMode);
+  const [terminalFontFamily, setTerminalFontFamily] =
+    useState(readTerminalFontFamily);
+  const effectiveTerminalFontFamily = terminalFontFamily.trim() || undefined;
   const [settingsInitialTab, setSettingsInitialTab] =
     useState<SettingsTab>("general");
   const [showSearch, setShowSearch] = useState(false);
@@ -1667,6 +1675,15 @@ export function App() {
     }
   }, []);
 
+  const updateTerminalFontFamily = useCallback((next: string) => {
+    setTerminalFontFamily(next);
+    if (next.trim()) {
+      localStorage.setItem(TERMINAL_FONT_FAMILY_STORAGE_KEY, next);
+    } else {
+      localStorage.removeItem(TERMINAL_FONT_FAMILY_STORAGE_KEY);
+    }
+  }, []);
+
   useEffect(() => {
     const root = document.documentElement;
     if (appThemePreference === "system") {
@@ -2228,6 +2245,7 @@ export function App() {
                   isVisible
                   cwd={terminal.cwd}
                   lastActivity={lastActivityRef.current[terminal.id]}
+                  fontFamily={effectiveTerminalFontFamily}
                   fontSize={fontSize}
                   themeColors={colorsForTerminal}
                   findOpen={findInPaneFor === terminal.id}
@@ -2266,6 +2284,7 @@ export function App() {
                   isVisible={false}
                   cwd={t.cwd}
                   lastActivity={lastActivityRef.current[t.id]}
+                  fontFamily={effectiveTerminalFontFamily}
                   fontSize={fontSize}
                   themeColors={colorsForTerminal}
                   findOpen={false}
@@ -2435,6 +2454,8 @@ export function App() {
           activeThemeId={activeThemeId}
           appThemePreference={appThemePreference}
           onAppThemePreferenceChange={updateAppThemePreference}
+          terminalFontFamily={terminalFontFamily}
+          onTerminalFontFamilyChange={updateTerminalFontFamily}
           macOptionKeyMode={macOptionKeyMode}
           onMacOptionKeyModeChange={updateMacOptionKeyMode}
           initialTab={settingsInitialTab}

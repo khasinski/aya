@@ -34,6 +34,8 @@ import { SnippetBar } from "./SnippetBar";
 // 80x24 a PTY gets before xterm has measured the pane (used at every spawn).
 const TERMINAL_FALLBACK_COLS = 80;
 const TERMINAL_FALLBACK_ROWS = 24;
+const DEFAULT_TERMINAL_FONT_FAMILY =
+  '"JetBrains Mono", "SF Mono", Menlo, Consolas, monospace';
 // Lines of scrollback xterm keeps in memory per terminal.
 const SCROLLBACK_LINES = 10_000;
 // Wheel-scroll easing: ~8 frames at 60Hz — smooth without feeling sluggish.
@@ -69,6 +71,7 @@ interface Props {
   isVisible: boolean;
   cwd: string;
   lastActivity?: number;
+  fontFamily?: string;
   fontSize: number;
   themeColors: ThemeColors;
   /** When true, render the in-pane search bar (Cmd+F target). */
@@ -162,6 +165,7 @@ export function TerminalView({
   isVisible,
   cwd,
   lastActivity,
+  fontFamily,
   fontSize,
   themeColors,
   findOpen,
@@ -333,9 +337,8 @@ export function TerminalView({
     if (!containerRef.current || xtermRef.current) return;
     const term = new XTerm({
       theme: toXtermTheme(themeColors),
-      fontFamily:
-        '"JetBrains Mono", "SF Mono", Menlo, Consolas, monospace',
       fontSize,
+      fontFamily: fontFamily ?? DEFAULT_TERMINAL_FONT_FAMILY,
       cursorBlink: true,
       allowProposedApi: true,
       scrollback: SCROLLBACK_LINES,
@@ -697,9 +700,11 @@ export function TerminalView({
 
   useEffect(() => {
     if (!xtermRef.current) return;
+    xtermRef.current.options.fontFamily =
+      fontFamily ?? DEFAULT_TERMINAL_FONT_FAMILY;
     xtermRef.current.options.fontSize = fontSize;
     fitTerminal();
-  }, [fitTerminal, fontSize]);
+  }, [fitTerminal, fontFamily, fontSize]);
 
   // Clear highlights when the find bar closes so stale "match outline"
   // doesn't linger on the canvas while the user types in the PTY.
