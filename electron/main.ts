@@ -11,6 +11,7 @@ import {
   nativeImage,
   Notification,
   shell,
+  systemPreferences,
   type MenuItemConstructorOptions,
 } from "electron";
 import {
@@ -924,6 +925,27 @@ function registerIpc(win: BrowserWindow): void {
     if (process.platform === "darwin") {
       await shell.openExternal(
         "x-apple.systempreferences:com.apple.Notifications-Settings.extension",
+      );
+    }
+  });
+  // Microphone access surfaced read-only in Settings: Aya never records, but
+  // CLI tools the user runs (e.g. a /voice plugin) may. macOS owns the actual
+  // grant/revoke; these just report status, trigger the system prompt, and
+  // deep-link to the real toggle. See build/entitlements.mac.plist (audio-input).
+  ipcMain.handle("mic:status", async () => {
+    if (process.platform !== "darwin") return "unsupported";
+    return systemPreferences.getMediaAccessStatus("microphone");
+  });
+  ipcMain.handle("mic:request", async () => {
+    if (process.platform !== "darwin") return true;
+    // No-op (returns immediately) if already granted/denied; only prompts when
+    // status is not-determined.
+    return systemPreferences.askForMediaAccess("microphone");
+  });
+  ipcMain.handle("mic:open-settings", async () => {
+    if (process.platform === "darwin") {
+      await shell.openExternal(
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
       );
     }
   });

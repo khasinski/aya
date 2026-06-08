@@ -184,6 +184,16 @@ export interface CliStatus {
   message?: string;
 }
 
+/** macOS microphone authorization, surfaced read-only in Settings. Maps the
+ *  Electron getMediaAccessStatus values; "unsupported" on non-macOS. */
+export type MicPermissionStatus =
+  | "not-determined"
+  | "granted"
+  | "denied"
+  | "restricted"
+  | "unknown"
+  | "unsupported";
+
 export type ControlStatusLevel = "active" | "waiting" | "done" | "error";
 
 export interface ControlStatusUpdate {
@@ -273,6 +283,13 @@ export interface AyaApi {
   cliStatus(): Promise<CliStatus>;
   installCli(): Promise<CliStatus>;
   openNotificationSettings(): Promise<void>;
+  /** Current macOS microphone authorization (read-only; "unsupported" off-mac). */
+  micStatus(): Promise<MicPermissionStatus>;
+  /** Triggers the system mic prompt when status is not-determined; resolves to
+   *  whether access is granted. No-op (returns current grant) otherwise. */
+  requestMicAccess(): Promise<boolean>;
+  /** Opens System Settings > Privacy & Security > Microphone (the real toggle). */
+  openMicrophoneSettings(): Promise<void>;
   onTerminalNotificationSelect(
     handler: (selection: TerminalNotificationSelection) => void,
   ): () => void;
