@@ -89,12 +89,22 @@ export function getBufferedOutput(ptyId: string): string {
 }
 
 /** Strip ANSI escape sequences and control chars so search snippets are
- *  readable. Keeps newlines so line context survives. */
-function stripAnsi(s: string): string {
+ *  readable. Keeps newlines so line context survives. Exported for unit tests.
+ *
+ *  DUPLICATE: a near-identical copy lives in src/bell.ts (renderer process,
+ *  which can't import this main-process module). Keep the escape-sequence rules
+ *  in sync — the only intended difference is the trailing control-char strip,
+ *  which bell.ts omits. (The ST-OSC leak this fixes had to be patched in both;
+ *  one was nearly missed.) */
+export function stripAnsi(s: string): string {
   return s
     .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
-    .replace(/\x1b\][^\x07]*\x07/g, "")
-    .replace(/\x1b[PX^_].*?\x1b\\/g, "")
+    // DCS / PM / APC / SOS (ESC P/X/^/_ … ST) BEFORE OSC, so the OSC rule below
+    // can't steal a DCS string's ST terminator and orphan its introducer.
+    .replace(/\x1b[PX^_][\s\S]*?\x1b\\/g, "")
+    // OSC: terminated by BEL or ST (ESC \). Matching only BEL leaked the title
+    // payload of ST-terminated sequences into search snippets.
+    .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "")
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
 }
 

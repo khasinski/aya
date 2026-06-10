@@ -23,12 +23,16 @@ const APPROVAL_PATTERNS: RegExp[] = [
 // the same approval box with different cursor positions.
 
 function stripAnsi(s: string): string {
-  // Drop CSI / OSC escape sequences and the standalone ESC codes the screen
-  // repaint cycle emits.
+  // Drop CSI / OSC / DCS escape sequences the screen repaint cycle emits.
+  // DUPLICATE: a near-identical copy lives in electron/pty.ts (main process).
+  // Keep the escape-sequence rules in sync — the only intended difference is
+  // that pty.ts also strips stray control chars (for readable search snippets).
   return s
     .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
-    .replace(/\x1b\][^\x07]*\x07/g, "")
-    .replace(/\x1b[PX^_].*?\x1b\\/g, "");
+    // DCS / PM / APC / SOS before OSC (so OSC can't steal a DCS string's ST);
+    // OSC terminated by BEL or ST (matching only BEL leaked ST-OSC payloads).
+    .replace(/\x1b[PX^_][\s\S]*?\x1b\\/g, "")
+    .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "");
 }
 
 export function detectApproval(chunk: string): boolean {
