@@ -89,7 +89,13 @@ export function getBufferedOutput(ptyId: string): string {
 }
 
 /** Strip ANSI escape sequences and control chars so search snippets are
- *  readable. Keeps newlines so line context survives. Exported for unit tests. */
+ *  readable. Keeps newlines so line context survives. Exported for unit tests.
+ *
+ *  DUPLICATE: a near-identical copy lives in src/bell.ts (renderer process,
+ *  which can't import this main-process module). Keep the escape-sequence rules
+ *  in sync — the only intended difference is the trailing control-char strip,
+ *  which bell.ts omits. (The ST-OSC leak this fixes had to be patched in both;
+ *  one was nearly missed.) */
 export function stripAnsi(s: string): string {
   return s
     .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
