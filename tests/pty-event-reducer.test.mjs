@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   applyPtyEvent,
+  deriveLifecycleStatus,
   eventTouchesActivity,
 } from "../dist-test/pty-event-reducer.js";
 
@@ -228,5 +229,43 @@ test("eventTouchesActivity: exit and spawn-failed don't count as activity", () =
       detail: "claude",
     }),
     false,
+  );
+});
+
+// --- deriveLifecycleStatus ----------------------------------------------
+// Shared truth for "what colour is a terminal from its process alone",
+// reused by the control-status "clear" handler so clearing the agent overlay
+// falls back to the same lifecycle rules the reducer uses (#34).
+
+test("deriveLifecycleStatus: a live process (exitCode null) is idle", () => {
+  assert.equal(deriveLifecycleStatus({ exitCode: null }), "idle");
+});
+
+test("deriveLifecycleStatus: a clean exit (code 0) is idle", () => {
+  assert.equal(deriveLifecycleStatus({ exitCode: 0 }), "idle");
+});
+
+test("deriveLifecycleStatus: a non-zero exit is error", () => {
+  assert.equal(deriveLifecycleStatus({ exitCode: 1 }), "error");
+  assert.equal(deriveLifecycleStatus({ exitCode: 137 }), "error");
+});
+
+test("deriveLifecycleStatus: a spawn failure is error even before exit", () => {
+  assert.equal(
+    deriveLifecycleStatus({
+      exitCode: null,
+      spawnFailure: { reason: "command-not-found", detail: "claude" },
+    }),
+    "error",
+  );
+});
+
+test("deriveLifecycleStatus: spawn failure wins over an otherwise-clean exit", () => {
+  assert.equal(
+    deriveLifecycleStatus({
+      exitCode: 0,
+      spawnFailure: { reason: "node-pty-spawn-error", detail: "boom" },
+    }),
+    "error",
   );
 });

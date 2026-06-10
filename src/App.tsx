@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { detectApproval } from "./bell";
+import { deriveLifecycleStatus } from "./pty-event-reducer";
 import { AttentionCenter } from "./components/AttentionCenter";
 import { EmptyState } from "./components/EmptyState";
 import { MissingDirModal } from "./components/MissingDirModal";
@@ -930,8 +931,10 @@ export function App() {
             ...prev,
             [id]: {
               ...rest,
-              status:
-                externalStatus?.level === "waiting" ? "running" : terminal.status,
+              // Fall back to PTY-lifecycle truth, not the stale agent status.
+              // Keeping `terminal.status` left an agent-set "error" stuck
+              // forever, so `aya status clear` could never clear a red dot (#34).
+              status: deriveLifecycleStatus(rest),
               bell: externalStatus?.level === "waiting" ? false : terminal.bell,
             },
           };
