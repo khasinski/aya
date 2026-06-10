@@ -89,11 +89,13 @@ export function getBufferedOutput(ptyId: string): string {
 }
 
 /** Strip ANSI escape sequences and control chars so search snippets are
- *  readable. Keeps newlines so line context survives. */
-function stripAnsi(s: string): string {
+ *  readable. Keeps newlines so line context survives. Exported for unit tests. */
+export function stripAnsi(s: string): string {
   return s
     .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
-    .replace(/\x1b\][^\x07]*\x07/g, "")
+    // OSC: terminated by BEL or ST (ESC \). Matching only BEL leaked the title
+    // payload of ST-terminated sequences into search snippets.
+    .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "")
     .replace(/\x1b[PX^_].*?\x1b\\/g, "")
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
 }
