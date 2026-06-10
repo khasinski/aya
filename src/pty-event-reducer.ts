@@ -23,6 +23,20 @@ export function deriveLifecycleStatus(t: {
   return t.exitCode === null || t.exitCode === 0 ? "idle" : "error";
 }
 
+/** Drop the agent-reported status overlay and fall back to PTY-lifecycle truth.
+ *  Shared by the control-socket `clear` and by the user clicking the status dot
+ *  to dismiss a stuck status (#34). A real PTY condition (spawn failure /
+ *  non-zero exit) is preserved by deriveLifecycleStatus, so it cannot be
+ *  dismissed this way - only an agent overlay can. */
+export function clearedTerminalStatus(terminal: TerminalState): TerminalState {
+  const { externalStatus, ...rest } = terminal;
+  return {
+    ...rest,
+    status: deriveLifecycleStatus(rest),
+    bell: externalStatus?.level === "waiting" ? false : terminal.bell,
+  };
+}
+
 export function applyPtyEvent(
   prev: Record<string, TerminalState>,
   event: PtyEvent,

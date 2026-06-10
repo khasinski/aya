@@ -98,3 +98,72 @@ test("aya status clear keeps a red dot for a genuinely failed terminal (#34)", a
   await window.waitForTimeout(1000);
   await expect(dot).toHaveClass(/aya-sidebar-statusdot--error/);
 });
+
+// Part 1 of #34: focusing a terminal acknowledges its stuck agent status -
+// there is no separate dismiss control. Reported on the NON-active terminal
+// (shell 2) so selecting it is a real focus transition.
+test("focusing a terminal clears its stuck agent error (#34, Part 1)", async ({
+  window,
+  seeded,
+}) => {
+  const dot = window
+    .locator(".aya-sidebar-row", { hasText: "shell 2" })
+    .locator(".aya-sidebar-statusdot");
+
+  // Drain startup output (see the first test for why) then report an error on
+  // the non-active terminal.
+  await window.waitForTimeout(2000);
+  await sendControl(seeded.ayaHome, {
+    type: "status",
+    level: "error",
+    text: "boom",
+    terminalId: seeded.tabIds.right,
+  });
+  await expect(dot).toHaveClass(/aya-sidebar-statusdot--error/);
+  // Stable (PTY quiet) - not masked by the output race.
+  await window.waitForTimeout(1500);
+  await expect(dot).toHaveClass(/aya-sidebar-statusdot--error/);
+
+  // Visit the terminal -> the overlay is acknowledged and the dot clears.
+  await window.locator(".aya-sidebar-row", { hasText: "shell 2" }).click();
+  await expect(dot).not.toHaveClass(/aya-sidebar-statusdot--error/);
+});
+
+// The project-tab badge is a pure aggregate: it stays red while ANY terminal in
+// the project is flagged, and only clears once every flagged terminal has been
+// visited. The badge reads externalStatus, so it is immune to the PTY-output
+// race (no drain needed).
+test("project badge persists until every flagged terminal is visited (#34, Part 1)", async ({
+  window,
+  seeded,
+}) => {
+  const badge = window.locator(".aya-tab-bell");
+
+  // Let bootstrap settle so the active-tab is stable; otherwise the late
+  // activation would fire clear-on-focus and wipe the flag we set on the
+  // active terminal before we can assert on it.
+  await window.waitForTimeout(2000);
+
+  // Flag BOTH terminals (shell 1 is the active one, shell 2 is not).
+  await sendControl(seeded.ayaHome, {
+    type: "status",
+    level: "error",
+    text: "boom 1",
+    terminalId: seeded.tabIds.left,
+  });
+  await sendControl(seeded.ayaHome, {
+    type: "status",
+    level: "error",
+    text: "boom 2",
+    terminalId: seeded.tabIds.right,
+  });
+  await expect(badge).toHaveClass(/aya-tab-bell--error/);
+
+  // Visit shell 2 -> its flag clears, but shell 1 still holds the badge red.
+  await window.locator(".aya-sidebar-row", { hasText: "shell 2" }).click();
+  await expect(badge).toHaveClass(/aya-tab-bell--error/);
+
+  // Visit shell 1 -> the last flag clears, so the aggregate badge disappears.
+  await window.locator(".aya-sidebar-row", { hasText: "shell 1" }).click();
+  await expect(badge).toHaveCount(0);
+});
