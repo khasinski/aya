@@ -93,10 +93,12 @@ export function getBufferedOutput(ptyId: string): string {
 export function stripAnsi(s: string): string {
   return s
     .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    // DCS / PM / APC / SOS (ESC P/X/^/_ … ST) BEFORE OSC, so the OSC rule below
+    // can't steal a DCS string's ST terminator and orphan its introducer.
+    .replace(/\x1b[PX^_][\s\S]*?\x1b\\/g, "")
     // OSC: terminated by BEL or ST (ESC \). Matching only BEL leaked the title
     // payload of ST-terminated sequences into search snippets.
     .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "")
-    .replace(/\x1b[PX^_].*?\x1b\\/g, "")
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
 }
 

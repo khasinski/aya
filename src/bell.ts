@@ -27,8 +27,10 @@ function stripAnsi(s: string): string {
   // repaint cycle emits.
   return s
     .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
-    .replace(/\x1b\][^\x07]*\x07/g, "")
-    .replace(/\x1b[PX^_].*?\x1b\\/g, "");
+    // DCS / PM / APC / SOS before OSC (so OSC can't steal a DCS string's ST);
+    // OSC terminated by BEL or ST (matching only BEL leaked ST-OSC payloads).
+    .replace(/\x1b[PX^_][\s\S]*?\x1b\\/g, "")
+    .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "");
 }
 
 export function detectApproval(chunk: string): boolean {

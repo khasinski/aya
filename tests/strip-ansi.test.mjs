@@ -24,3 +24,17 @@ test("strips an ST-terminated OSC title sequence completely (no payload leak)", 
   const out = stripAnsi(`before${ESC}]0;my title${ST}after`);
   assert.equal(out, "beforeafter");
 });
+
+// Regression guard (grok review): a DCS string whose payload contains an OSC
+// start must be stripped whole. With OSC handled before DCS, the OSC rule stole
+// the DCS string's ST terminator and orphaned its introducer ("Pdcsdata after").
+// DCS is now stripped first.
+test("strips a DCS string whose payload contains an OSC start (no orphaned introducer)", () => {
+  const out = stripAnsi(`${ESC}Pdcsdata ${ESC}]0;t${ST}after`);
+  assert.equal(out, "after");
+});
+
+test("strips a multi-line OSC payload (clipboard-style) across newlines", () => {
+  const out = stripAnsi(`a${ESC}]52;c;line1\nline2${BEL}b`);
+  assert.equal(out, "ab");
+});
