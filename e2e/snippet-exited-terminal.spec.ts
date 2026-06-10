@@ -74,7 +74,12 @@ test("snippet on a restarted (alive) terminal is not blocked as 'exited'", async
     .locator(".aya-context-menu-item", { hasText: "Restart terminal" })
     .click();
 
-  await expect(window.locator(firstPaneRows)).toContainText(/project\s*[%$#]/, {
+  // Wait for the restart to begin — but don't assume a particular prompt shape.
+  // Dev shells use arrow / powerline prompts (e.g. "➜  project") with no $/%/#
+  // suffix, so matching /project\s*[%$#]/ gave a false failure on those machines.
+  // The PTY buffers the marker typed below until the fresh shell reads it, and
+  // the alive assertion auto-retries, so no prompt-shape match is needed.
+  await expect(window.locator(firstPaneRows)).toContainText(/restarting/i, {
     timeout: 10000,
   });
 
