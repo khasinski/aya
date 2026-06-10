@@ -23,6 +23,8 @@ interface Props {
   onReorder: (orderedIds: string[]) => void;
   /** Kill + re-spawn the PTY for this terminal (right-click → Restart). */
   onRestart: (id: string) => void;
+  /** Dismiss a stuck agent-reported status (click the status dot). */
+  onClearStatus: (id: string) => void;
   splitAssignments?: Record<string, number>;
   canSplitRight: boolean;
   canSplitBelow: boolean;
@@ -51,6 +53,7 @@ export function Sidebar({
   onResize,
   onReorder,
   onRestart,
+  onClearStatus,
   splitAssignments = {},
   canSplitRight,
   canSplitBelow,
@@ -221,12 +224,46 @@ export function Sidebar({
               >
                 {preset.icon}
               </span>
+              {/* Clickable only while an agent overlay is present, so the dot
+                  becomes a recovery affordance for a stuck status (#34, Part 1)
+                  without hijacking row-select for ordinary lifecycle dots. */}
               <span
                 className={`aya-sidebar-statusdot aya-sidebar-statusdot--${t.status} ${
                   recentlyActiveIds.has(t.id)
                     ? "aya-sidebar-statusdot--blinking"
                     : ""
-                }`}
+                } ${t.externalStatus ? "aya-sidebar-statusdot--clearable" : ""}`}
+                role={t.externalStatus ? "button" : undefined}
+                tabIndex={t.externalStatus ? 0 : undefined}
+                aria-label={
+                  t.externalStatus
+                    ? `Clear status: ${t.externalStatus.text}`
+                    : undefined
+                }
+                title={
+                  t.externalStatus
+                    ? `Click to clear: ${t.externalStatus.text}`
+                    : undefined
+                }
+                onClick={
+                  t.externalStatus
+                    ? (e) => {
+                        e.stopPropagation();
+                        onClearStatus(t.id);
+                      }
+                    : undefined
+                }
+                onKeyDown={
+                  t.externalStatus
+                    ? (e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onClearStatus(t.id);
+                        }
+                      }
+                    : undefined
+                }
               />
               {renamingId === t.id ? (
                 <input

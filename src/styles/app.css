@@ -407,6 +407,13 @@ body {
 .aya-sidebar-statusdot--idle    { background: var(--fg-tertiary); opacity: 0.5; }
 .aya-sidebar-statusdot--waiting { background: #f0ad4e; }
 .aya-sidebar-statusdot--error   { background: #c01c28; }
+/* A dot carrying an agent overlay is dismissable: invite the click (#34). */
+.aya-sidebar-statusdot--clearable { cursor: pointer; transition: transform 0.1s ease; }
+.aya-sidebar-statusdot--clearable:hover { transform: scale(1.5); }
+.aya-sidebar-statusdot--clearable:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
 
 @keyframes aya-pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 60%, transparent); }

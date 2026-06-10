@@ -98,3 +98,37 @@ test("aya status clear keeps a red dot for a genuinely failed terminal (#34)", a
   await window.waitForTimeout(1000);
   await expect(dot).toHaveClass(/aya-sidebar-statusdot--error/);
 });
+
+// Part 1 of #34: a user can dismiss a stuck agent status by clicking the dot.
+// The dot is only interactive while an agent overlay is present, and clicking
+// it must clear both the red colour and the clickable affordance.
+test("clicking the status dot clears a stuck agent error (#34, Part 1)", async ({
+  window,
+  seeded,
+}) => {
+  const dot = window
+    .locator(".aya-sidebar-row", { hasText: "shell 1" })
+    .locator(".aya-sidebar-statusdot");
+
+  // No agent overlay yet -> the dot is not interactive.
+  await expect(dot).toBeVisible();
+  await expect(dot).not.toHaveClass(/aya-sidebar-statusdot--clearable/);
+
+  // Drain startup output (see the first test for why) then report an error.
+  await window.waitForTimeout(2000);
+  await sendControl(seeded.ayaHome, {
+    type: "status",
+    level: "error",
+    text: "boom",
+    terminalId: seeded.tabIds.left,
+  });
+  await expect(dot).toHaveClass(/aya-sidebar-statusdot--error/);
+  await expect(dot).toHaveClass(/aya-sidebar-statusdot--clearable/);
+  await window.waitForTimeout(1500);
+  await expect(dot).toHaveClass(/aya-sidebar-statusdot--error/);
+
+  // Click the dot -> the overlay is dropped: no longer red, no longer clickable.
+  await dot.click();
+  await expect(dot).not.toHaveClass(/aya-sidebar-statusdot--error/);
+  await expect(dot).not.toHaveClass(/aya-sidebar-statusdot--clearable/);
+});

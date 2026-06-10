@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { detectApproval } from "./bell";
-import { deriveLifecycleStatus } from "./pty-event-reducer";
+import { clearedTerminalStatus } from "./pty-event-reducer";
 import { AttentionCenter } from "./components/AttentionCenter";
 import { EmptyState } from "./components/EmptyState";
 import { MissingDirModal } from "./components/MissingDirModal";
@@ -926,18 +926,10 @@ export function App() {
         if (!entry) return prev;
         const [id, terminal] = entry;
         if (update.level === "clear") {
-          const { externalStatus, ...rest } = terminal;
-          return {
-            ...prev,
-            [id]: {
-              ...rest,
-              // Fall back to PTY-lifecycle truth, not the stale agent status.
-              // Keeping `terminal.status` left an agent-set "error" stuck
-              // forever, so `aya status clear` could never clear a red dot (#34).
-              status: deriveLifecycleStatus(rest),
-              bell: externalStatus?.level === "waiting" ? false : terminal.bell,
-            },
-          };
+          // Fall back to PTY-lifecycle truth, not the stale agent status.
+          // Keeping `terminal.status` left an agent-set "error" stuck forever,
+          // so `aya status clear` could never clear a red dot (#34).
+          return { ...prev, [id]: clearedTerminalStatus(terminal) };
         }
         const text = update.text?.trim();
         if (!text) return prev;
@@ -1177,6 +1169,18 @@ export function App() {
     },
     [appendProjectEvent, persistProject],
   );
+
+  // User dismisses a stuck agent status by clicking the sidebar dot (#34,
+  // Part 1). Same fall-back-to-PTY-truth as the control-socket `clear`; a real
+  // exit/spawn error has no overlay and stays untouched. Returns `prev` when
+  // there is nothing to clear so React can skip the re-render.
+  const clearTerminalStatus = useCallback((id: string) => {
+    setTerminals((prev) => {
+      const t = prev[id];
+      if (!t || !t.externalStatus) return prev;
+      return { ...prev, [id]: clearedTerminalStatus(t) };
+    });
+  }, []);
 
   const renameTerminal = useCallback(
     (id: string, name: string) => {
@@ -2161,6 +2165,7 @@ export function App() {
               }
             }}
             onRestart={forceRestartTerminal}
+            onClearStatus={clearTerminalStatus}
             canSplitRight={canSplitRight}
             canSplitBelow={canSplitBelow}
             onAssignToSplit={assignTerminalToActiveSplitCell}
