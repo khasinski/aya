@@ -15,6 +15,7 @@
   "include": [
     "src/bell.ts",
     "src/colors.ts",
+    "src/control-status-target.ts",
     "src/double-shift.ts",
     "src/focus-reporting.ts",
     "src/project-reload.ts",
