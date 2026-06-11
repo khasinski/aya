@@ -12,9 +12,9 @@ import { seedEnv, type SeededEnv, type SeedOptions } from "./helpers/seed";
 const APP_ROOT = join(__dirname, "..");
 const REMOVE_RETRY_COUNT = 5;
 const REMOVE_RETRY_DELAY_MS = 100;
-const PTY_HOST_SHUTDOWN_TIMEOUT_MS = 1_000;
-const APP_GRACEFUL_CLOSE_TIMEOUT_MS = 1_000;
-const APP_PROCESS_EXIT_TIMEOUT_MS = 2_000;
+export const PTY_HOST_SHUTDOWN_TIMEOUT_MS = 1_000;
+export const APP_GRACEFUL_CLOSE_TIMEOUT_MS = 1_000;
+export const APP_PROCESS_EXIT_TIMEOUT_MS = 2_000;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

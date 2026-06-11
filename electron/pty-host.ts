@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
-import { PTY_HOST_SOCKET_PATH } from "./paths";
+import { PTY_HOST_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
 import {
   type PtyHostEventMessage,
   type PtyHostRequest,
@@ -22,8 +22,6 @@ import type { PtyEvent } from "./types";
 
 // Wait before shutting down the idle pty host with no clients or ptys (ms).
 const IDLE_SHUTDOWN_TIMEOUT_MS = 30_000;
-// rw------- permissions for the pty-host socket file.
-const SOCKET_FILE_PERMISSIONS = 0o600;
 
 const clients = new Set<net.Socket>();
 let idleTimer: NodeJS.Timeout | null = null;

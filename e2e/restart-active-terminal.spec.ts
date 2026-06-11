@@ -8,6 +8,11 @@ import { join } from "node:path";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import * as net from "node:net";
 import { seedEnv } from "./helpers/seed";
+import {
+  APP_GRACEFUL_CLOSE_TIMEOUT_MS,
+  APP_PROCESS_EXIT_TIMEOUT_MS,
+  PTY_HOST_SHUTDOWN_TIMEOUT_MS,
+} from "./fixtures";
 
 // Reproduces: after restart the FIRST terminal is selected, not the one that
 // was active last. Two launches against the same AYA_HOME — switch to the
@@ -15,9 +20,6 @@ import { seedEnv } from "./helpers/seed";
 
 const APP_ROOT = join(__dirname, "..");
 const ACTIVE_TAB_PERSISTENCE_TIMEOUT_MS = 5_000;
-const PTY_HOST_SHUTDOWN_TIMEOUT_MS = 1_000;
-const APP_HANDLE_CLOSE_TIMEOUT_MS = 1_000;
-const APP_PROCESS_EXIT_TIMEOUT_MS = 2_000;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -88,7 +90,7 @@ async function killAndWait(app: ElectronApplication): Promise<void> {
   const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
   if (!proc.killed) proc.kill("SIGKILL");
   await Promise.race([exited, delay(APP_PROCESS_EXIT_TIMEOUT_MS)]);
-  await Promise.race([app.close().catch(() => undefined), delay(APP_HANDLE_CLOSE_TIMEOUT_MS)]);
+  await Promise.race([app.close().catch(() => undefined), delay(APP_GRACEFUL_CLOSE_TIMEOUT_MS)]);
 }
 
 async function shutdownPtyHost(ayaHome: string): Promise<void> {
