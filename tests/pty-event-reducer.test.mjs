@@ -6,6 +6,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   applyPtyEvent,
+  clearedTerminalStatus,
+  deriveLifecycleStatus,
   eventTouchesActivity,
 } from "../dist-test/pty-event-reducer.js";
 
@@ -229,4 +231,78 @@ test("eventTouchesActivity: exit and spawn-failed don't count as activity", () =
     }),
     false,
   );
+});
+
+// --- deriveLifecycleStatus ----------------------------------------------
+// Shared truth for "what colour is a terminal from its process alone",
+// reused by the control-status "clear" handler so clearing the agent overlay
+// falls back to the same lifecycle rules the reducer uses (#34).
+
+test("deriveLifecycleStatus: a live process (exitCode null) is idle", () => {
+  assert.equal(deriveLifecycleStatus({ exitCode: null }), "idle");
+});
+
+test("deriveLifecycleStatus: a clean exit (code 0) is idle", () => {
+  assert.equal(deriveLifecycleStatus({ exitCode: 0 }), "idle");
+});
+
+test("deriveLifecycleStatus: a non-zero exit is error", () => {
+  assert.equal(deriveLifecycleStatus({ exitCode: 1 }), "error");
+  assert.equal(deriveLifecycleStatus({ exitCode: 137 }), "error");
+});
+
+test("deriveLifecycleStatus: a spawn failure is error even before exit", () => {
+  assert.equal(
+    deriveLifecycleStatus({
+      exitCode: null,
+      spawnFailure: { reason: "command-not-found", detail: "claude" },
+    }),
+    "error",
+  );
+});
+
+test("deriveLifecycleStatus: spawn failure wins over an otherwise-clean exit", () => {
+  assert.equal(
+    deriveLifecycleStatus({
+      exitCode: 0,
+      spawnFailure: { reason: "node-pty-spawn-error", detail: "boom" },
+    }),
+    "error",
+  );
+});
+
+// --- clearedTerminalStatus ----------------------------------------------
+// Shared by the control-socket `clear` and the clickable status dot (#34).
+// Reuses the termState() helper declared at the top of this file.
+
+test("clearedTerminalStatus: drops the agent overlay and reverts a live error to idle", () => {
+  const t = termState("t1", {
+    status: "error",
+    externalStatus: { level: "error", text: "boom", updatedAt: 1 },
+  });
+  const next = clearedTerminalStatus(t);
+  assert.equal(next.externalStatus, undefined);
+  assert.equal(next.status, "idle");
+});
+
+test("clearedTerminalStatus: keeps error for a genuinely failed (exited) terminal", () => {
+  const t = termState("t1", {
+    status: "error",
+    exitCode: 1,
+    externalStatus: { level: "error", text: "boom", updatedAt: 1 },
+  });
+  const next = clearedTerminalStatus(t);
+  assert.equal(next.externalStatus, undefined);
+  assert.equal(next.status, "error");
+});
+
+test("clearedTerminalStatus: clears the bell left by a waiting overlay", () => {
+  const t = termState("t1", {
+    status: "waiting",
+    bell: true,
+    externalStatus: { level: "waiting", text: "needs input", updatedAt: 1 },
+  });
+  const next = clearedTerminalStatus(t);
+  assert.equal(next.bell, false);
+  assert.equal(next.status, "idle");
 });

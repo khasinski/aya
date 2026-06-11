@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { detectApproval } from "./bell";
+import { clearedTerminalStatus } from "./pty-event-reducer";
 import { AttentionCenter } from "./components/AttentionCenter";
 import { EmptyState } from "./components/EmptyState";
 import { MissingDirModal } from "./components/MissingDirModal";
@@ -925,16 +926,10 @@ export function App() {
         if (!entry) return prev;
         const [id, terminal] = entry;
         if (update.level === "clear") {
-          const { externalStatus, ...rest } = terminal;
-          return {
-            ...prev,
-            [id]: {
-              ...rest,
-              status:
-                externalStatus?.level === "waiting" ? "running" : terminal.status,
-              bell: externalStatus?.level === "waiting" ? false : terminal.bell,
-            },
-          };
+          // Fall back to PTY-lifecycle truth, not the stale agent status.
+          // Keeping `terminal.status` left an agent-set "error" stuck forever,
+          // so `aya status clear` could never clear a red dot (#34).
+          return { ...prev, [id]: clearedTerminalStatus(terminal) };
         }
         const text = update.text?.trim();
         if (!text) return prev;
@@ -1175,6 +1170,32 @@ export function App() {
     [appendProjectEvent, persistProject],
   );
 
+  // Drop a terminal's agent status overlay once the user attends to it (#34,
+  // Part 1). The overlay is an attention signal for terminals you are NOT
+  // looking at, so the act of focusing the terminal IS the acknowledgement -
+  // there is deliberately no separate "dismiss" control. Same
+  // fall-back-to-PTY-truth as the control-socket `clear`; a real exit/spawn
+  // error has no overlay and stays untouched. Returns `prev` when there is
+  // nothing to clear so React can skip the re-render. The project-tab badge is
+  // a pure aggregate over its terminals, so it keeps glowing until the last
+  // flagged terminal is visited - no separate project-level clear needed.
+  const clearTerminalStatus = useCallback((id: string) => {
+    setTerminals((prev) => {
+      const t = prev[id];
+      if (!t || !t.externalStatus) return prev;
+      return { ...prev, [id]: clearedTerminalStatus(t) };
+    });
+  }, []);
+
+  // Switching to a terminal (sidebar click, keyboard tab-switch, split-pane
+  // focus) acknowledges its overlay. Keyed on the active-tab map, so it fires
+  // on the transition TO a terminal; clearTerminalStatus no-ops when there is
+  // no overlay. Does not depend on `terminals`, so clearing can't re-trigger it.
+  useEffect(() => {
+    const id = activeProjectId ? activeTabByProject[activeProjectId] : null;
+    if (id) clearTerminalStatus(id);
+  }, [activeProjectId, activeTabByProject, clearTerminalStatus]);
+
   const renameTerminal = useCallback(
     (id: string, name: string) => {
       setTerminals((prev) => {
@@ -1351,8 +1372,27 @@ export function App() {
         ...layout,
         activeCell: Math.max(0, Math.min(layout.cells.length - 1, cellIndex)),
       }));
+      // Keep the active terminal in sync with the focused cell, so the sidebar
+      // highlight and the clear-on-focus effect both track a mouse click on a
+      // pane (not just keyboard/sidebar navigation). Read the layout outside
+      // the updater (mirrors focusSplitPane) to avoid a setState-in-updater.
+      const project = projectsRef.current.find((p) => p.slug === slug);
+      if (!project?.splitLayout) return;
+      const layout = normalizeSplitLayoutForTabs(
+        project.splitLayout,
+        project.tabs,
+        activeTabByProject[slug] ?? project.tabs[0]?.id ?? null,
+      );
+      const activeCell = Math.max(
+        0,
+        Math.min(layout.cells.length - 1, cellIndex),
+      );
+      const focusedId = layout.cells[activeCell];
+      if (focusedId) {
+        setActiveTabByProject((prev) => ({ ...prev, [slug]: focusedId }));
+      }
     },
-    [updateProjectSplitLayout],
+    [activeTabByProject, updateProjectSplitLayout],
   );
 
   const resizeSplit = useCallback(

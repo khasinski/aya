@@ -7,7 +7,35 @@
 // returns the same map reference so React's shallow check can skip a re-render.
 
 import { detectApproval, looksBusy } from "./bell";
-import type { PtyEvent, TerminalState } from "./types";
+import type { PtyEvent, TerminalState, TerminalStatus } from "./types";
+
+/** The PTY-lifecycle status of a terminal, ignoring any agent-reported overlay.
+ *  Single source of truth for "what colour is this terminal from its process
+ *  alone": a spawn failure or a non-zero exit is an "error"; a live or
+ *  cleanly-exited process is "idle" (the data branch below promotes idle ->
+ *  running on the next output). Shared with App.tsx's control-status "clear"
+ *  handler so clearing the agent overlay falls back to this same truth (#34). */
+export function deriveLifecycleStatus(t: {
+  spawnFailure?: TerminalState["spawnFailure"];
+  exitCode: number | null;
+}): TerminalStatus {
+  if (t.spawnFailure) return "error";
+  return t.exitCode === null || t.exitCode === 0 ? "idle" : "error";
+}
+
+/** Drop the agent-reported status overlay and fall back to PTY-lifecycle truth.
+ *  Shared by the control-socket `clear` and by the user clicking the status dot
+ *  to dismiss a stuck status (#34). A real PTY condition (spawn failure /
+ *  non-zero exit) is preserved by deriveLifecycleStatus, so it cannot be
+ *  dismissed this way - only an agent overlay can. */
+export function clearedTerminalStatus(terminal: TerminalState): TerminalState {
+  const { externalStatus, ...rest } = terminal;
+  return {
+    ...rest,
+    status: deriveLifecycleStatus(rest),
+    bell: externalStatus?.level === "waiting" ? false : terminal.bell,
+  };
+}
 
 export function applyPtyEvent(
   prev: Record<string, TerminalState>,
@@ -16,28 +44,24 @@ export function applyPtyEvent(
   if (event.type === "spawn-failed") {
     const t = prev[event.ptyId];
     if (!t) return prev;
+    const next = {
+      ...t,
+      bell: false,
+      spawnFailure: { reason: event.reason, detail: event.detail },
+    };
     return {
       ...prev,
-      [event.ptyId]: {
-        ...t,
-        status: "error",
-        bell: false,
-        spawnFailure: { reason: event.reason, detail: event.detail },
-      },
+      [event.ptyId]: { ...next, status: deriveLifecycleStatus(next) },
     };
   }
 
   if (event.type === "exit") {
     const t = prev[event.ptyId];
     if (!t) return prev;
+    const next = { ...t, bell: false, exitCode: event.exitCode };
     return {
       ...prev,
-      [event.ptyId]: {
-        ...t,
-        status: event.exitCode === 0 ? "idle" : "error",
-        bell: false,
-        exitCode: event.exitCode,
-      },
+      [event.ptyId]: { ...next, status: deriveLifecycleStatus(next) },
     };
   }
 
