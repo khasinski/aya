@@ -17,15 +17,25 @@ const FALLBACK = "/Applications/Aya.app/Contents/Resources/app.asar.unpacked/bin
 test("shim tries the baked path first and execs it", () => {
   const s = renderCliShim(PRIMARY, FALLBACK);
   assert.ok(s.startsWith("#!/bin/sh\n"));
-  assert.ok(s.includes(JSON.stringify(PRIMARY)));
+  assert.ok(s.includes(`AYA_CLI='${PRIMARY}'`));
   assert.ok(s.includes('exec "$AYA_CLI"'));
 });
 
 test("shim falls back to the default install location when the baked path died", () => {
   const s = renderCliShim(PRIMARY, FALLBACK);
-  assert.ok(s.includes(JSON.stringify(FALLBACK)));
+  assert.ok(s.includes(`AYA_CLI='${FALLBACK}'`));
   // fallback only engages when the primary is not executable
   assert.ok(/if \[ ! -x "\$AYA_CLI" \]/.test(s));
+});
+
+// Shell metacharacters must survive verbatim: double-quoted embedding would
+// let sh expand $VARS and `backticks` at runtime and exec a mangled path
+// (grok review finding). Single quotes inhibit all expansion.
+test("paths with $, backticks and quotes are embedded expansion-proof", () => {
+  const nasty = "/Users/dev/My $Work/`aya`/it's here/aya";
+  const s = renderCliShim(nasty, null);
+  assert.ok(s.includes("AYA_CLI='/Users/dev/My $Work/`aya`/it'\\''s here/aya'"));
+  assert.deepEqual(parseShimTargets(s), [nasty]);
 });
 
 test("no fallback block when none is available (non-mac or same path)", () => {
@@ -47,6 +57,11 @@ test("parseShimTargets round-trips the generated shim", () => {
     FALLBACK,
   ]);
   assert.deepEqual(parseShimTargets(renderCliShim(PRIMARY, null)), [PRIMARY]);
+});
+
+test("foreign scripts containing an AYA_CLI lookalike are NOT parsed (marker gate)", () => {
+  const foreign = "#!/bin/sh\n# my notes: AYA_CLI='/shouldnot'\nAYA_CLI='/also/not'\necho hi\n";
+  assert.deepEqual(parseShimTargets(foreign), []);
 });
 
 test("parseShimTargets understands the legacy #42 shim format", () => {
