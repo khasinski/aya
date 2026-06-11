@@ -32,6 +32,7 @@ import {
   saveProjectState,
   updateProject,
 } from "./config";
+import { bundledAyaCliPath } from "./cli-path";
 import { startConfigWatcher } from "./config-watcher";
 import { startControlServer } from "./control";
 import { getGitChangedFiles, getGitDiff, getGitInfo } from "./git";
@@ -117,10 +118,6 @@ function writableDirOnPath(): string | null {
   return null;
 }
 
-function bundledAyaCliPath(): string {
-  return path.join(__dirname, "..", "bin", "aya");
-}
-
 async function cliStatus(): Promise<CliStatus> {
   const installed = findExecutableOnPath("aya");
   const installDir =
@@ -149,7 +146,22 @@ async function installCli(): Promise<CliStatus> {
     };
   }
   await fs.mkdir(installDir, { recursive: true });
-  const source = bundledAyaCliPath();
+  const source = bundledAyaCliPath(__dirname);
+  // Refuse to install a shim that cannot work. The asar path bug (#39) made
+  // Install report success while the written shim exec'd a file inside the
+  // archive; verifying the exec bit up front turns any future packaging
+  // regression into a visible error instead of a silently broken CLI.
+  try {
+    await fs.access(source, fsConstants.X_OK);
+  } catch {
+    return {
+      installed: false,
+      path: null,
+      installDir,
+      installable: false,
+      message: `Bundled aya CLI is not executable at ${source}`,
+    };
+  }
   const target = path.join(installDir, "aya");
   const script = `#!/bin/sh\nexec ${JSON.stringify(source)} "$@"\n`;
   await fs.writeFile(target, script, { mode: CLI_EXECUTABLE_MODE });

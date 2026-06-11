@@ -133,6 +133,17 @@ jobs:
       - name: Package Linux artifacts
         run: npx electron-builder --linux AppImage deb --x64 --publish never
 
+      # The aya CLI shipped broken in v0.4.0 because nothing ever exercised the
+      # PACKAGED artifact: unit/e2e run on the dev build (no asar), and this job
+      # only produced files. The shim exec'd a path inside app.asar -> "Not a
+      # directory" on every user machine, invisible to CI (#39). Assert the
+      # unpacked CLI is a real executable and actually runs from the artifact.
+      - name: Smoke-check bundled aya CLI in the packaged artifact
+        run: |
+          cli=release/linux-unpacked/resources/app.asar.unpacked/bin/aya
+          test -x "$cli"
+          "$cli" help
+
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
