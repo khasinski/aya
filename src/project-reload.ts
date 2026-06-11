@@ -51,6 +51,27 @@ export function terminalsForNewTabs(
     }));
 }
 
+/** One-call application of an external edit to the terminals map: per-tab
+ *  non-destructive updates plus entries for newly-added tabs, across all OPEN
+ *  projects. Pure and reference-stable (same map back when nothing changed),
+ *  so the App handler stays a single line instead of a clone-tracking loop. */
+export function applyExternalProjectEdits(
+  terminals: Readonly<Record<string, TerminalState>>,
+  projects: ProjectConfig[],
+  openSlugs: ReadonlySet<string>,
+): Record<string, TerminalState> {
+  let next = terminals as Record<string, TerminalState>;
+  for (const project of projects) {
+    if (!openSlugs.has(project.slug)) continue;
+    next = withTabUpdatesFromDisk(next, project);
+    const added = terminalsForNewTabs(project, next);
+    if (added.length === 0) continue;
+    if (next === terminals) next = { ...terminals };
+    for (const t of added) next[t.id] = t;
+  }
+  return next;
+}
+
 /** Apply non-destructive per-tab updates from disk to live terminals: an
  *  external rename (or preset change) shows up immediately, but status,
  *  exitCode, cwd and the PTY itself stay untouched. Returns the same reference

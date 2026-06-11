@@ -2,9 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { detectApproval } from "./bell";
 import { clearedTerminalStatus } from "./pty-event-reducer";
 import {
+  applyExternalProjectEdits,
   mergeProjectsFromDisk,
-  terminalsForNewTabs,
-  withTabUpdatesFromDisk,
 } from "./project-reload";
 import { AttentionCenter } from "./components/AttentionCenter";
 import { EmptyState } from "./components/EmptyState";
@@ -613,18 +612,9 @@ export function App() {
                 (p) => merged.find((m) => m.slug === p.slug) ?? p,
               ),
             );
-            setTerminals((prev) => {
-              let next = prev;
-              for (const project of merged) {
-                if (!openSlugs.has(project.slug)) continue;
-                next = withTabUpdatesFromDisk(next, project);
-                for (const t of terminalsForNewTabs(project, next)) {
-                  if (next === prev) next = { ...prev };
-                  next[t.id] = t;
-                }
-              }
-              return next;
-            });
+            setTerminals((prev) =>
+              applyExternalProjectEdits(prev, merged, openSlugs),
+            );
           })
           .catch((e) =>
             console.warn(

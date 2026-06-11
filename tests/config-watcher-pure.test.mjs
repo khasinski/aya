@@ -7,6 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   WATCHED_CONFIG_FILES,
+  isProjectConfigFilename,
   sliceForFilename,
 } from "../dist-electron/config-watcher-pure.js";
 
@@ -47,4 +48,17 @@ test("WATCHED_CONFIG_FILES covers exactly the minimal slices", () => {
     "snippets",
     "themes",
   ]);
+});
+
+// --- isProjectConfigFilename (the projects/ watcher predicate, #4) ----------
+
+test("isProjectConfigFilename accepts <slug>.json only", () => {
+  assert.equal(isProjectConfigFilename("e2e-proj.json"), true);
+  assert.equal(isProjectConfigFilename("my.project.json"), true);
+});
+
+test("isProjectConfigFilename rejects atomic-write temps and editor files", () => {
+  assert.equal(isProjectConfigFilename("e2e-proj.json.123.abc.tmp"), false);
+  assert.equal(isProjectConfigFilename(".e2e-proj.json.swp"), false);
+  assert.equal(isProjectConfigFilename("notes.txt"), false);
 });

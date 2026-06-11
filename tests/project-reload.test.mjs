@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  applyExternalProjectEdits,
   mergeProjectsFromDisk,
   terminalsForNewTabs,
   withTabUpdatesFromDisk,
@@ -116,6 +117,29 @@ test("no changes -> same reference back (React can skip the re-render)", () => {
     "a-tab1": termState("a-tab1", "a", { name: "shell 1" }),
   };
   assert.equal(withTabUpdatesFromDisk(existing, p), existing);
+});
+
+// --- applyExternalProjectEdits (the composer the App handler calls) ---------
+
+test("composer applies rename + added tab in one pass; closed projects skipped", () => {
+  const open = project("a", {
+    tabs: [
+      { id: "a-tab1", presetId: "shell", name: "renamed" },
+      { id: "a-tab2", presetId: "shell", name: "fresh" },
+    ],
+  });
+  const closed = project("b");
+  const prev = { "a-tab1": termState("a-tab1", "a", { name: "old" }) };
+  const next = applyExternalProjectEdits(prev, [open, closed], new Set(["a"]));
+  assert.equal(next["a-tab1"].name, "renamed");
+  assert.equal(next["a-tab2"].spawnDeferred, true);
+  assert.equal(next["b-tab1"], undefined);
+});
+
+test("composer returns the same reference when nothing changed", () => {
+  const p = project("a");
+  const prev = { "a-tab1": termState("a-tab1", "a", { name: "shell 1" }) };
+  assert.equal(applyExternalProjectEdits(prev, [p], new Set(["a"])), prev);
 });
 
 test("a tab belonging to another project's terminal id is not touched", () => {
