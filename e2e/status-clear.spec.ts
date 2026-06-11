@@ -1,5 +1,6 @@
 import net from "node:net";
 import { join } from "node:path";
+import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
 
 // Regression for #34 (Part 0): `aya status clear` must actually clear a red
@@ -7,6 +8,10 @@ import { test, expect } from "./fixtures";
 // the stale `status: "error"`, so the sidebar dot stayed red forever once an
 // agent reported an error and never cleared it. Placement = control-status
 // lifecycle; the one invariant: error -> clear leaves no error dot.
+//
+// No fixed sleeps in this file: readiness and ordering are proven by
+// observables (see the helpers below), so the specs are deterministic on slow
+// CI runners too (#7 follow-up).
 
 // Send one control-socket request (newline-delimited JSON), resolve on the
 // server's `{ ok }` reply. Mirrors what `bin/aya status ...` writes.
@@ -24,22 +29,84 @@ function sendControl(
   });
 }
 
+// --- deterministic readiness helpers ----------------------------------------
+
+/** Bootstrap is settled once the sidebar marks shell 1 active: the active-tab
+ *  map is populated, so no later activation can fire clear-on-focus and wipe a
+ *  status we are about to set on the active terminal. */
+async function bootstrapped(window: Page): Promise<void> {
+  await expect(window.locator(".aya-sidebar-row--active")).toHaveText(
+    /shell 1/,
+  );
+}
+
+/** Prove a pane's shell finished starting up. The PTY buffers typed input
+ *  until the shell reads it (the same prompt-agnostic trick as the #32 restart
+ *  readiness), so the echoed marker appearing in the pane's rows means startup
+ *  output has drained - after this, no late chunk can flip a status we inject.
+ *  NOTE: clicking the pane focuses it, which (by design) makes that terminal
+ *  the active one - callers that rely on a later focus TRANSITION must click
+ *  another pane afterwards. */
+async function shellReady(
+  window: Page,
+  paneIndex: number,
+  marker: string,
+): Promise<void> {
+  const pane = window.locator(".aya-pane").nth(paneIndex);
+  await pane.locator(".xterm-screen").click();
+  await window.keyboard.insertText(`echo ${marker}`);
+  await window.keyboard.press("Enter");
+  await expect(pane.locator(".xterm-rows")).toContainText(marker, {
+    timeout: 10000,
+  });
+}
+
+/** Ordering barrier for control updates: sendControl resolves on the server's
+ *  reply and the renderer applies control:status events in arrival order, so
+ *  once THIS update's effect is visible, every update sent before it has been
+ *  applied too. Lets a test assert "the clear was processed" without sleeping.
+ *  Targets shell 2, so only usable when shell 2 is not itself under test; call
+ *  shellReady(1, ...) first so a late startup chunk cannot flip the waiting
+ *  dot back to running. */
+async function controlBarrier(
+  window: Page,
+  ayaHome: string,
+  rightTabId: string,
+): Promise<void> {
+  await sendControl(ayaHome, {
+    type: "status",
+    level: "waiting",
+    text: "sync barrier",
+    terminalId: rightTabId,
+  });
+  await expect(
+    window
+      .locator(".aya-sidebar-row", { hasText: "shell 2" })
+      .locator(".aya-sidebar-statusdot"),
+  ).toHaveClass(/aya-sidebar-statusdot--waiting/);
+}
+
+function dotFor(window: Page, name: string) {
+  return window
+    .locator(".aya-sidebar-row", { hasText: name })
+    .locator(".aya-sidebar-statusdot");
+}
+
 test("aya status clear removes a red error dot (#34)", async ({
   window,
   seeded,
 }) => {
-  const dot = window
-    .locator(".aya-sidebar-row", { hasText: "shell 1" })
-    .locator(".aya-sidebar-statusdot");
+  const dot = dotFor(window, "shell 1");
 
   // Baseline: a freshly spawned shell is not in error.
   await expect(dot).toBeVisible();
   await expect(dot).not.toHaveClass(/aya-sidebar-statusdot--error/);
 
-  // Let the shell's startup output drain. The PTY reducer sets status="running"
-  // on every data chunk, so late startup output would otherwise flip the dot
-  // away from "error" on its own and mask the clear bug (false green).
-  await window.waitForTimeout(2000);
+  // Deterministic readiness: bootstrap settled, BOTH shells past their startup
+  // output (shell 2 because the barrier below relies on it).
+  await bootstrapped(window);
+  await shellReady(window, 1, "READY_CLEAR_R");
+  await shellReady(window, 0, "READY_CLEAR_L");
 
   // Agent reports an error -> dot turns red.
   await sendControl(seeded.ayaHome, {
@@ -50,19 +117,15 @@ test("aya status clear removes a red error dot (#34)", async ({
   });
   await expect(dot).toHaveClass(/aya-sidebar-statusdot--error/);
 
-  // Guard against the PTY-output race: the error must be STABLE (the PTY is
-  // quiet). If startup output were still arriving it would flip the dot to
-  // "running" here and this would fail loudly instead of a silent false green.
-  await window.waitForTimeout(1500);
-  await expect(dot).toHaveClass(/aya-sidebar-statusdot--error/);
-
   // Agent (or user) clears it -> dot must no longer be red. THIS is the #34
-  // regression: clear used to keep the stale status:"error".
+  // regression: clear used to keep the stale status:"error". The barrier
+  // proves the clear was processed rather than racing the assertion.
   await sendControl(seeded.ayaHome, {
     type: "status",
     level: "clear",
     terminalId: seeded.tabIds.left,
   });
+  await controlBarrier(window, seeded.ayaHome, seeded.tabIds.right);
   await expect(dot).not.toHaveClass(/aya-sidebar-statusdot--error/);
 });
 
@@ -75,27 +138,29 @@ test("aya status clear keeps a red dot for a genuinely failed terminal (#34)", a
   seeded,
 }) => {
   const pane = window.locator(".aya-pane").first();
-  const dot = window
-    .locator(".aya-sidebar-row", { hasText: "shell 1" })
-    .locator(".aya-sidebar-statusdot");
+  const dot = dotFor(window, "shell 1");
+
+  // Shell 2 must be ready before it can serve as the ordering barrier target.
+  await bootstrapped(window);
+  await shellReady(window, 1, "READY_EXIT_R");
 
   // Exit the shell with a non-zero code -> PTY reducer sets status:"error".
   await pane.locator(".xterm-screen").click();
   await window.keyboard.type("exit 1");
   await window.keyboard.press("Enter");
-  await expect(window.locator(".aya-pane:first-child .xterm-rows")).toContainText(
-    /process exited/i,
-    { timeout: 5000 },
-  );
+  await expect(
+    window.locator(".aya-pane:first-child .xterm-rows"),
+  ).toContainText(/process exited/i, { timeout: 5000 });
   await expect(dot).toHaveClass(/aya-sidebar-statusdot--error/);
 
-  // Clearing the agent status must leave the real exit error in place.
+  // Clearing the agent status must leave the real exit error in place. The
+  // barrier proves the clear has been applied before we assert "still red".
   await sendControl(seeded.ayaHome, {
     type: "status",
     level: "clear",
     terminalId: seeded.tabIds.left,
   });
-  await window.waitForTimeout(1000);
+  await controlBarrier(window, seeded.ayaHome, seeded.tabIds.right);
   await expect(dot).toHaveClass(/aya-sidebar-statusdot--error/);
 });
 
@@ -106,22 +171,21 @@ test("focusing a terminal clears its stuck agent error (#34, Part 1)", async ({
   window,
   seeded,
 }) => {
-  const dot = window
-    .locator(".aya-sidebar-row", { hasText: "shell 2" })
-    .locator(".aya-sidebar-statusdot");
+  const dot = dotFor(window, "shell 2");
 
-  // Drain startup output (see the first test for why) then report an error on
-  // the non-active terminal.
-  await window.waitForTimeout(2000);
+  // Readiness: shell 2 past startup (so no late chunk can flip the injected
+  // error), then hand focus back to shell 1 so that selecting shell 2 below is
+  // a genuine focus TRANSITION (shellReady left shell 2 active).
+  await bootstrapped(window);
+  await shellReady(window, 1, "READY_FOCUS_R");
+  await window.locator(".aya-pane").first().locator(".xterm-screen").click();
+
   await sendControl(seeded.ayaHome, {
     type: "status",
     level: "error",
     text: "boom",
     terminalId: seeded.tabIds.right,
   });
-  await expect(dot).toHaveClass(/aya-sidebar-statusdot--error/);
-  // Stable (PTY quiet) - not masked by the output race.
-  await window.waitForTimeout(1500);
   await expect(dot).toHaveClass(/aya-sidebar-statusdot--error/);
 
   // Visit the terminal -> the overlay is acknowledged and the dot clears.
@@ -132,17 +196,15 @@ test("focusing a terminal clears its stuck agent error (#34, Part 1)", async ({
 // The project-tab badge is a pure aggregate: it stays red while ANY terminal in
 // the project is flagged, and only clears once every flagged terminal has been
 // visited. The badge reads externalStatus, so it is immune to the PTY-output
-// race (no drain needed).
+// race - only bootstrap needs to have settled (a late activation would fire
+// clear-on-focus and wipe the flag we set on the active terminal).
 test("project badge persists until every flagged terminal is visited (#34, Part 1)", async ({
   window,
   seeded,
 }) => {
   const badge = window.locator(".aya-tab-bell");
 
-  // Let bootstrap settle so the active-tab is stable; otherwise the late
-  // activation would fire clear-on-focus and wipe the flag we set on the
-  // active terminal before we can assert on it.
-  await window.waitForTimeout(2000);
+  await bootstrapped(window);
 
   // Flag BOTH terminals (shell 1 is the active one, shell 2 is not).
   await sendControl(seeded.ayaHome, {
@@ -177,15 +239,13 @@ test("status with terminalId targets that terminal, not the project's first (#40
   window,
   seeded,
 }) => {
-  const dotFor = (name: string) =>
-    window
-      .locator(".aya-sidebar-row", { hasText: name })
-      .locator(".aya-sidebar-statusdot");
-  const dot1 = dotFor("shell 1");
-  const dot2 = dotFor("shell 2");
+  const dot1 = dotFor(window, "shell 1");
+  const dot2 = dotFor(window, "shell 2");
 
-  // Drain startup output + let bootstrap settle (see the sibling tests).
-  await window.waitForTimeout(2000);
+  // Shell 2 must be past its startup output: a late chunk would flip the
+  // injected error back to "running" and fail the assertion below.
+  await bootstrapped(window);
+  await shellReady(window, 1, "READY_ROUTE_R");
 
   // Mimic the full bin/aya payload: terminalId AND projectSlug AND cwd.
   await sendControl(seeded.ayaHome, {
