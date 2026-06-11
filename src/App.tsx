@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { detectApproval } from "./bell";
+import { findStatusTarget } from "./control-status-target";
 import { clearedTerminalStatus } from "./pty-event-reducer";
 import { AttentionCenter } from "./components/AttentionCenter";
 import { EmptyState } from "./components/EmptyState";
@@ -915,14 +916,7 @@ export function App() {
   useEffect(() => {
     return window.aya.onControlStatus((update) => {
       setTerminals((prev) => {
-        const entry = Object.entries(prev).find(([, terminal]) => {
-          if (update.terminalId && terminal.id === update.terminalId) return true;
-          if (update.projectSlug && terminal.projectSlug === update.projectSlug) {
-            return true;
-          }
-          if (update.cwd && terminal.cwd === update.cwd) return true;
-          return false;
-        });
+        const entry = findStatusTarget(prev, update);
         if (!entry) return prev;
         const [id, terminal] = entry;
         if (update.level === "clear") {

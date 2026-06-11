@@ -14,6 +14,7 @@
   },
   "include": [
     "src/bell.ts",
+    "src/control-status-target.ts",
     "src/double-shift.ts",
     "src/focus-reporting.ts",
     "src/pty-event-reducer.ts",

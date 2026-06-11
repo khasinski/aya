@@ -167,3 +167,38 @@ test("project badge persists until every flagged terminal is visited (#34, Part 
   await window.locator(".aya-sidebar-row", { hasText: "shell 1" }).click();
   await expect(badge).toHaveCount(0);
 });
+
+// Regression for #40: a status carrying an explicit terminalId must land on
+// THAT terminal. bin/aya always sends projectSlug + cwd alongside terminalId,
+// and both match every sibling terminal in the project - the old single-pass
+// matcher let the FIRST sibling (shell 1) win before the exact-id terminal
+// (shell 2) was ever considered.
+test("status with terminalId targets that terminal, not the project's first (#40)", async ({
+  window,
+  seeded,
+}) => {
+  const dotFor = (name: string) =>
+    window
+      .locator(".aya-sidebar-row", { hasText: name })
+      .locator(".aya-sidebar-statusdot");
+  const dot1 = dotFor("shell 1");
+  const dot2 = dotFor("shell 2");
+
+  // Drain startup output + let bootstrap settle (see the sibling tests).
+  await window.waitForTimeout(2000);
+
+  // Mimic the full bin/aya payload: terminalId AND projectSlug AND cwd.
+  await sendControl(seeded.ayaHome, {
+    type: "status",
+    level: "error",
+    text: "boom",
+    terminalId: seeded.tabIds.right,
+    projectSlug: "e2e-proj",
+    cwd: seeded.projectDir,
+  });
+
+  // The exact-id terminal (shell 2) gets the error...
+  await expect(dot2).toHaveClass(/aya-sidebar-statusdot--error/);
+  // ...and the first project sibling (shell 1) must NOT be painted instead.
+  await expect(dot1).not.toHaveClass(/aya-sidebar-statusdot--error/);
+});
