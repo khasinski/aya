@@ -7,6 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  defaultInstallAyaCliPath,
   parseShimTargets,
   renderCliShim,
 } from "../dist-electron/cli-shim.js";
@@ -72,4 +73,20 @@ test("parseShimTargets understands the legacy #42 shim format", () => {
 test("parseShimTargets returns [] for scripts that are not our shim", () => {
   assert.deepEqual(parseShimTargets("#!/bin/bash\necho hello\n"), []);
   assert.deepEqual(parseShimTargets(""), []);
+});
+
+// defaultInstallAyaCliPath: the macOS self-heal target (and "none" elsewhere).
+// The platform param keeps it a pure, testable seam rather than reading
+// process.platform directly.
+
+test("defaultInstallAyaCliPath points at /Applications on macOS", () => {
+  assert.equal(
+    defaultInstallAyaCliPath("darwin"),
+    "/Applications/Aya.app/Contents/Resources/app.asar.unpacked/bin/aya",
+  );
+});
+
+test("defaultInstallAyaCliPath has no well-known location off macOS", () => {
+  assert.equal(defaultInstallAyaCliPath("linux"), null);
+  assert.equal(defaultInstallAyaCliPath("win32"), null);
 });
