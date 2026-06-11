@@ -33,6 +33,11 @@ import {
   updateProject,
 } from "./config";
 import { bundledAyaCliPath } from "./cli-path";
+import {
+  defaultInstallAyaCliPath,
+  parseShimTargets,
+  renderCliShim,
+} from "./cli-shim";
 import { startConfigWatcher } from "./config-watcher";
 import { startControlServer } from "./control";
 import { getGitChangedFiles, getGitDiff, getGitInfo } from "./git";
@@ -122,13 +127,40 @@ async function cliStatus(): Promise<CliStatus> {
   const installed = findExecutableOnPath("aya");
   const installDir =
     writableDirOnPath() ?? path.join(os.homedir(), ".local", "bin");
+  // A shim can be on PATH yet dead: it bakes an absolute path into Aya.app,
+  // and moving/renaming the app kills it. Report that as "needs reinstall"
+  // instead of a healthy "Installed at ..." (follow-up on #42).
+  let broken = false;
+  if (installed) {
+    try {
+      const targets = parseShimTargets(await fs.readFile(installed, "utf-8"));
+      broken =
+        targets.length > 0 &&
+        !(
+          await Promise.all(
+            targets.map((t) =>
+              fs.access(t, fsConstants.X_OK).then(
+                () => true,
+                () => false,
+              ),
+            ),
+          )
+        ).some(Boolean);
+    } catch {
+      // unreadable or not our script - leave it alone
+    }
+  }
   return {
     installed: installed !== null,
     path: installed,
     installDir,
     installable: true,
     ...(installed
-      ? {}
+      ? broken
+        ? {
+            message: `Installed at ${installed}, but it points at a moved or renamed Aya.app - click Reinstall to repair.`,
+          }
+        : {}
       : { message: `Install to ${path.join(installDir, "aya")}` }),
   };
 }
@@ -163,7 +195,7 @@ async function installCli(): Promise<CliStatus> {
     };
   }
   const target = path.join(installDir, "aya");
-  const script = `#!/bin/sh\nexec ${JSON.stringify(source)} "$@"\n`;
+  const script = renderCliShim(source, defaultInstallAyaCliPath(process.platform));
   await fs.writeFile(target, script, { mode: CLI_EXECUTABLE_MODE });
   await fs.chmod(target, CLI_EXECUTABLE_MODE);
   return {

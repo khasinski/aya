@@ -758,9 +758,10 @@ export function SettingsModal({
             </button>
             )}
           >
-            {cliStatus?.installed
-              ? `Installed at ${cliStatus.path}`
-              : cliStatus?.message ?? "Not installed"}
+            {cliStatus?.message ??
+              (cliStatus?.installed
+                ? `Installed at ${cliStatus.path}`
+                : "Not installed")}
           </SettingsRow>
           <SettingsRow
             icon="donut_large"
