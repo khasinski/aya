@@ -144,7 +144,7 @@ export interface ControlStatusUpdate {
 
 /** A config file the user can edit, which the renderer reloads when it changes
  *  on disk under ~/.aya/. */
-export type ConfigSlice = "snippets" | "presets" | "themes";
+export type ConfigSlice = "snippets" | "presets" | "themes" | "projects";
 
 export interface ConfigChange {
   slice: ConfigSlice;
