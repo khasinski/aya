@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { detectApproval } from "./bell";
 import { clearedTerminalStatus } from "./pty-event-reducer";
+import {
+  mergeProjectsFromDisk,
+  terminalsForNewTabs,
+  withTabUpdatesFromDisk,
+} from "./project-reload";
 import { AttentionCenter } from "./components/AttentionCenter";
 import { EmptyState } from "./components/EmptyState";
 import { MissingDirModal } from "./components/MissingDirModal";
@@ -583,6 +588,47 @@ export function App() {
           .catch((e) =>
             console.warn(
               "config hot-reload (themes) failed; keeping current state",
+              e,
+            ),
+          );
+      } else if (slice === "projects") {
+        // External edit to projects/*.json (#4). Disk wins for config, but the
+        // merge never kills running terminals: removed tabs keep their live
+        // rows, added tabs appear without spawning, a deleted file of an OPEN
+        // project leaves it in place as unsaved.
+        void window.aya
+          .listProjects()
+          .then((disk) => {
+            const openSlugs = new Set(
+              projectsRef.current.map((p) => p.slug),
+            );
+            const merged = mergeProjectsFromDisk(
+              disk,
+              allProjectsRef.current,
+              openSlugs,
+            );
+            setAllProjects(merged);
+            setProjects((prev) =>
+              prev.map(
+                (p) => merged.find((m) => m.slug === p.slug) ?? p,
+              ),
+            );
+            setTerminals((prev) => {
+              let next = prev;
+              for (const project of merged) {
+                if (!openSlugs.has(project.slug)) continue;
+                next = withTabUpdatesFromDisk(next, project);
+                for (const t of terminalsForNewTabs(project, next)) {
+                  if (next === prev) next = { ...prev };
+                  next[t.id] = t;
+                }
+              }
+              return next;
+            });
+          })
+          .catch((e) =>
+            console.warn(
+              "config hot-reload (projects) failed; keeping current state",
               e,
             ),
           );
@@ -1965,12 +2011,32 @@ export function App() {
       ? [activeTabId]
       : [];
   const visibleTerminalIdSet = new Set(visibleTerminalIds);
+  // spawnDeferred tabs (added by an external config edit, #4) stay out of the
+  // hidden pool: a hidden TerminalView mounts an xterm and spawns the PTY,
+  // and those tabs must not get a process until first activated.
   const hiddenTerminals = Object.values(terminals).filter(
-    (terminal) => !visibleTerminalIdSet.has(terminal.id),
+    (terminal) => !visibleTerminalIdSet.has(terminal.id) && !terminal.spawnDeferred,
   );
   const assignableProjectTerminals = projectTerminals.filter(
     (terminal) => !visibleTerminalIdSet.has(terminal.id),
   );
+
+  // The first time a deferred tab becomes visible (sidebar activation or
+  // split assignment), drop the flag - from then on it mounts and spawns like
+  // any other terminal, including via the hidden pool.
+  const visibleTerminalsKey = visibleTerminalIds.join("\n");
+  useEffect(() => {
+    setTerminals((prev) => {
+      let next = prev;
+      for (const id of visibleTerminalsKey.split("\n")) {
+        const t = next[id];
+        if (!t?.spawnDeferred) continue;
+        if (next === prev) next = { ...prev };
+        next[id] = { ...t, spawnDeferred: undefined };
+      }
+      return next;
+    });
+  }, [visibleTerminalsKey]);
 
   const projectBadges: Record<
     string,

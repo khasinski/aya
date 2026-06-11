@@ -16,6 +16,7 @@
     "src/bell.ts",
     "src/double-shift.ts",
     "src/focus-reporting.ts",
+    "src/project-reload.ts",
     "src/pty-event-reducer.ts",
     "src/terminal-option-key.ts",
     "src/terminal-keys.ts",

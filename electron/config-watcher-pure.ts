@@ -2,10 +2,12 @@
 // Kept separate from config-watcher so it can be unit-tested on its own,
 // without fs.watch or Electron (same idea as window-state-pure.ts).
 //
-// For now only the files the user is meant to edit by hand live here:
-// snippets, presets and themes. projects/*.json and projects-state.json are
-// left out on purpose: they hold live terminal state and the app rewrites them
-// all the time, so reloading those safely would need more care.
+// Top-level files (snippets, presets, themes) map by exact filename below.
+// projects/*.json live in their own subfolder and get their own predicate
+// (isProjectConfigFilename) because fs.watch is non-recursive on Linux, so the
+// projects dir carries its own watcher. projects-state.json stays out on
+// purpose: it is app-owned live state and needs separate conflict semantics
+// (see #4).
 
 import type { ConfigSlice } from "./types";
 
@@ -26,4 +28,11 @@ export function sliceForFilename(filename: string): ConfigSlice | null {
   return Object.hasOwn(WATCHED_CONFIG_FILES, filename)
     ? WATCHED_CONFIG_FILES[filename]
     : null;
+}
+
+/** True for a project config inside AYA_HOME/projects: `<slug>.json`. The
+ *  `.tmp` files atomic writes create end in `.tmp`, so the suffix check
+ *  excludes them already; dotfiles are skipped for editor swap files. */
+export function isProjectConfigFilename(filename: string): boolean {
+  return filename.endsWith(".json") && !filename.startsWith(".");
 }

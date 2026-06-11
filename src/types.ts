@@ -215,7 +215,7 @@ export interface BufferSearchHit {
 
 /** A config file the user can edit, which the renderer reloads when it changes
  *  on disk under ~/.aya/. */
-export type ConfigSlice = "snippets" | "presets" | "themes";
+export type ConfigSlice = "snippets" | "presets" | "themes" | "projects";
 
 export interface ConfigChange {
   slice: ConfigSlice;
@@ -333,6 +333,10 @@ export interface TerminalState {
     text: string;
     updatedAt: number;
   };
+  /** Tab added by an external config edit (#4): kept out of the hidden
+   *  TerminalView pool so no PTY spawns until the terminal first becomes
+   *  visible (sidebar activation or split assignment clears the flag). */
+  spawnDeferred?: boolean;
 }
 
 export type ProjectEventLevel = "info" | "active" | "waiting" | "done" | "error";
