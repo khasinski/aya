@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   applyPtyEvent,
+  clearedTerminalStatus,
   deriveLifecycleStatus,
   eventTouchesActivity,
 } from "../dist-test/pty-event-reducer.js";
@@ -268,4 +269,40 @@ test("deriveLifecycleStatus: spawn failure wins over an otherwise-clean exit", (
     }),
     "error",
   );
+});
+
+// --- clearedTerminalStatus ----------------------------------------------
+// Shared by the control-socket `clear` and the clickable status dot (#34).
+// Reuses the termState() helper declared at the top of this file.
+
+test("clearedTerminalStatus: drops the agent overlay and reverts a live error to idle", () => {
+  const t = termState("t1", {
+    status: "error",
+    externalStatus: { level: "error", text: "boom", updatedAt: 1 },
+  });
+  const next = clearedTerminalStatus(t);
+  assert.equal(next.externalStatus, undefined);
+  assert.equal(next.status, "idle");
+});
+
+test("clearedTerminalStatus: keeps error for a genuinely failed (exited) terminal", () => {
+  const t = termState("t1", {
+    status: "error",
+    exitCode: 1,
+    externalStatus: { level: "error", text: "boom", updatedAt: 1 },
+  });
+  const next = clearedTerminalStatus(t);
+  assert.equal(next.externalStatus, undefined);
+  assert.equal(next.status, "error");
+});
+
+test("clearedTerminalStatus: clears the bell left by a waiting overlay", () => {
+  const t = termState("t1", {
+    status: "waiting",
+    bell: true,
+    externalStatus: { level: "waiting", text: "needs input", updatedAt: 1 },
+  });
+  const next = clearedTerminalStatus(t);
+  assert.equal(next.bell, false);
+  assert.equal(next.status, "idle");
 });
