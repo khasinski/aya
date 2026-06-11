@@ -206,6 +206,31 @@ async function installCli(): Promise<CliStatus> {
   };
 }
 
+/** Escape text for safe interpolation into the About dialog's HTML. */
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+/** Contributor names from package.json - the same file electron-builder reads
+ *  `author` from to generate the About panel's copyright line, so this keeps a
+ *  single source of truth for credits instead of hardcoding names here. */
+function aboutContributors(): string[] {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(path.join(app.getAppPath(), "package.json"), "utf-8"),
+    ) as { contributors?: Array<string | { name?: string }> };
+    return (pkg.contributors ?? [])
+      .map((c) => (typeof c === "string" ? c : c?.name))
+      .filter((name): name is string => !!name && name.trim().length > 0);
+  } catch {
+    return [];
+  }
+}
+
 function configureAppIdentity(): void {
   // Keep macOS menu/about/notification surfaces aligned. Dev runs inside
   // Electron.app, so some OS chrome can still reflect the host bundle, but
@@ -213,9 +238,15 @@ function configureAppIdentity(): void {
   // chance to expose Aya instead.
   app.setName(WINDOW_TITLE);
   process.title = WINDOW_TITLE;
+  const contributors = aboutContributors();
   app.setAboutPanelOptions({
     applicationName: WINDOW_TITLE,
     applicationVersion: app.getVersion(),
+    // Copyright stays as electron-builder derives it from `author` (Info.plist
+    // NSHumanReadableCopyright); this only adds a credits line for contributors.
+    ...(contributors.length > 0
+      ? { credits: `Contributors: ${contributors.join(", ")}` }
+      : {}),
   });
 }
 
@@ -390,6 +421,11 @@ function showAyaAboutPanel(): void {
   } catch {
     // Empty src keeps the dialog usable even if the icon asset is missing.
   }
+  const contributors = aboutContributors();
+  const creditsLine =
+    contributors.length > 0
+      ? `<p class="credits">Contributors: ${escapeHtml(contributors.join(", "))}</p>`
+      : "";
   const html = `<!doctype html>
 <html>
   <head>
@@ -432,6 +468,11 @@ function showAyaAboutPanel(): void {
         font-size: 13px;
         color: #8b949e;
       }
+      p.credits {
+        margin-top: 4px;
+        font-size: 11px;
+        color: #6e7781;
+      }
       button {
         margin-top: 24px;
         min-width: 78px;
@@ -451,6 +492,7 @@ function showAyaAboutPanel(): void {
       <img src="${iconUrl}" alt="">
       <h1>${WINDOW_TITLE}</h1>
       <p>Version ${app.getVersion()}</p>
+      ${creditsLine}
       <button autofocus onclick="window.close()">OK</button>
     </main>
   </body>
