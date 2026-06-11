@@ -28,6 +28,13 @@ body {
 [data-theme="light"] {
   color-scheme: light;
 
+  /* Status-signal colors (same in light and dark): amber = waiting/attention,
+     red = agent/exit error. Brand colors mirror src/colors.ts - keep in sync. */
+  --status-waiting: #f0ad4e;
+  --status-error: #f85149;
+  --brand-claude: #d97757;
+  --brand-codex: #10a37f;
+
   --aya-pane-bg: #ffffff;
   --aya-pane-header-bg: #f6f8fa;
   --aya-pane-header-border: #d0d7de;
@@ -392,9 +399,9 @@ body {
   font-weight: 700;
   color: var(--fg-tertiary);
 }
-.aya-sidebar-icon--claude { color: #d97757; }
-.aya-sidebar-icon--codex { color: #10a37f; }
-.aya-sidebar-icon--aider { color: #f0ad4e; }
+.aya-sidebar-icon--claude { color: var(--brand-claude); }
+.aya-sidebar-icon--codex { color: var(--brand-codex); }
+.aya-sidebar-icon--aider { color: var(--status-waiting); }
 .aya-sidebar-icon--shell { color: var(--fg-secondary); }
 
 .aya-sidebar-statusdot {
@@ -405,7 +412,7 @@ body {
 }
 .aya-sidebar-statusdot--running { background: var(--accent); animation: aya-pulse 1.6s ease-in-out infinite; }
 .aya-sidebar-statusdot--idle    { background: var(--fg-tertiary); opacity: 0.5; }
-.aya-sidebar-statusdot--waiting { background: #f0ad4e; }
+.aya-sidebar-statusdot--waiting { background: var(--status-waiting); }
 .aya-sidebar-statusdot--error   { background: #c01c28; }
 
 @keyframes aya-pulse {
@@ -473,15 +480,15 @@ body {
 .aya-bell--dot {
   font-size: 0;
   width: 8px; height: 8px;
-  background: #f0ad4e;
-  box-shadow: 0 0 0 2px color-mix(in oklab, #f0ad4e 30%, transparent);
+  background: var(--status-waiting);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--status-waiting) 30%, transparent);
 }
 .aya-bell--icon {
-  color: #f0ad4e;
+  color: var(--status-waiting);
   font-variation-settings: 'FILL' 1;
 }
 .aya-bell--animated {
-  color: #f0ad4e;
+  color: var(--status-waiting);
   font-variation-settings: 'FILL' 1;
   animation: aya-bell-ring 1.4s ease-in-out infinite;
   transform-origin: 50% 20%;
@@ -750,14 +757,14 @@ body {
 
 /* approval box */
 .aya-approval {
-  border: 1px solid #f0ad4e;
+  border: 1px solid var(--status-waiting);
   border-radius: 6px;
   padding: 10px 14px;
   margin: 6px 0;
   background: rgba(240,173,78,0.06);
 }
 .aya-approval-title {
-  color: #f0ad4e;
+  color: var(--status-waiting);
   font-weight: 600;
   margin-bottom: 6px;
   display: flex; align-items: center; gap: 6px;
@@ -767,7 +774,7 @@ body {
   color: var(--aya-pane-fg);
 }
 .aya-approval-opt--selected {
-  color: #f0ad4e;
+  color: var(--status-waiting);
   font-weight: 600;
 }
 
@@ -821,10 +828,10 @@ body {
   background: var(--fg-tertiary);
 }
 .aya-statusbar-item--accent { color: var(--accent); }
-.aya-statusbar-item--warn   { color: #f0ad4e; }
+.aya-statusbar-item--warn   { color: var(--status-waiting); }
 .aya-statusbar-item--agent-active { color: var(--fg-secondary); }
 .aya-statusbar-item--agent-done { color: var(--status-active); }
-.aya-statusbar-item--agent-error { color: #f85149; }
+.aya-statusbar-item--agent-error { color: var(--status-error); }
 .aya-statusbar-spacer { flex: 1; }
 .aya-statusbar-popover-host {
   position: relative;
@@ -907,7 +914,7 @@ body {
   background: var(--bg-tertiary);
 }
 .aya-dirty-file-status {
-  color: #f0ad4e;
+  color: var(--status-waiting);
   font-weight: 700;
   text-align: right;
 }
@@ -1059,8 +1066,8 @@ body {
 .t-purple{ color: var(--aya-term-purple); }
 .t-pink  { color: var(--aya-term-pink); }
 .t-orange{ color: var(--aya-term-orange); }
-.t-claude{ color: #d97757; }
-.t-codex { color: #10a37f; }
+.t-claude{ color: var(--brand-claude); }
+.t-codex { color: var(--brand-codex); }
 
 /* faint scrollbars */
 .aya-sidebar-list::-webkit-scrollbar,

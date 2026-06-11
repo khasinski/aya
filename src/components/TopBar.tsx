@@ -1,3 +1,4 @@
+import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import type { ProjectConfig, UsageData } from "../types";
 import type { SettingsTab } from "../settings-tabs";
@@ -7,8 +8,6 @@ import { UsageChip } from "./UsageChip";
 const TAB_MIN_WIDTH_PX = 120;
 const TAB_MAX_WIDTH_PX = 320;
 // Brand accents for the per-agent usage chips.
-const CLAUDE_ACCENT = "#d97757";
-const CODEX_ACCENT = "#10a37f";
 
 interface ProjectAttention {
   count: number;
@@ -283,10 +282,10 @@ export function TopBar({
       </div>
       <div className="aya-topbar-right">
         {usage && (
-          <UsageChip usage={usage} label="Claude" accent={CLAUDE_ACCENT} />
+          <UsageChip usage={usage} label="Claude" accent={CLAUDE_BRAND_COLOR} />
         )}
         {codexUsage && (
-          <UsageChip usage={codexUsage} label="Codex" accent={CODEX_ACCENT} />
+          <UsageChip usage={codexUsage} label="Codex" accent={CODEX_BRAND_COLOR} />
         )}
         <div className="aya-recent-projects" ref={recentRef}>
           <button

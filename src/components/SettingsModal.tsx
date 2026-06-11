@@ -1,3 +1,4 @@
+import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   type CliStatus,
@@ -36,8 +37,6 @@ interface Props {
   initialTab?: SettingsTab;
 }
 
-// Claude brand color (used for the Claude YOLO preset and as the color placeholder)
-const CLAUDE_BRAND_COLOR = "#d97757";
 // Preset table column widths (px) kept in sync between header row and body rows
 const PRESET_ROW_ICON_WIDTH = 36;
 const PRESET_ROW_NAME_WIDTH = 130;
@@ -390,7 +389,7 @@ export function SettingsModal({
       id: "codex-yolo",
       name: "Codex YOLO",
       icon: "◆",
-      color: "#10a37f",
+      color: CODEX_BRAND_COLOR,
       command: "codex --dangerously-bypass-approvals-and-sandbox",
       themeId: undefined,
     });
