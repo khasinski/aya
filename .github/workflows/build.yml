@@ -52,31 +52,34 @@ jobs:
         run: npm ci
 
       # Ensure node_modules/electron/path.txt exists (Playwright's
-      # electron.launch reads it to find the binary). install-app-deps fills the
-      # ~/.cache/electron download cache during npm ci, which makes electron's
-      # own postinstall skip extraction and never write path.txt. Force a clean
-      # re-extract and fail loudly if path.txt is still missing.
-      # electron is recorded with hasInstallScript:false in the lockfile, so
-      # `npm ci` never downloads its binary. Clear any stale cache and run
-      # `npm rebuild electron`, which executes electron's install script to
-      # download + extract dist/. Write path.txt if the installer still omits it
-      # (Linux job -> binary is dist/electron), then validate require('electron')
-      # resolves to a real file. Diagnostics print on the way for fast triage.
-      # @electron/get downloads the zip fine on this runner, but electron's own
-      # extraction leaves dist/ without the binary. So force the download, then
-      # extract the cached zip ourselves with unzip (Linux x64 job), and point
-      # path.txt at it. Validate that require('electron') resolves to a real file.
+      # electron.launch reads it to find the binary). electron is recorded with
+      # hasInstallScript:false in the lockfile, so `npm ci` never downloads its
+      # binary. @electron/get downloads the zip fine on this runner, but
+      # electron's own extraction leaves dist/ without the binary - so we force
+      # the download, extract the cached zip ourselves (Linux x64 job), point
+      # path.txt at it, and validate require('electron') resolves to a real
+      # file. install.js failing is TOLERATED (its extraction is the broken
+      # part) but surfaced as a warning annotation instead of being swallowed;
+      # every stage after it fails loudly with a specific message (#7).
       - name: Ensure Electron binary
         run: |
           rm -rf node_modules/electron/dist node_modules/electron/path.txt
-          force_no_cache=true node node_modules/electron/install.js || true
+          if ! force_no_cache=true node node_modules/electron/install.js; then
+            echo "::warning title=electron install.js failed::continuing with manual extraction of the downloaded zip (its extraction step is known-broken on this runner)"
+          fi
           zip="$(find "$HOME/.cache/electron" -name 'electron-v*-linux-x64.zip' | head -1)"
+          if [ ! -f "$zip" ]; then
+            echo "::error title=electron download missing::no electron-v*-linux-x64.zip under ~/.cache/electron - install.js failed before downloading"
+            exit 1
+          fi
           echo "cached electron zip: $zip"
-          test -f "$zip"
           mkdir -p node_modules/electron/dist
-          unzip -o -q "$zip" -d node_modules/electron/dist
+          if ! unzip -o -q "$zip" -d node_modules/electron/dist; then
+            echo "::error title=electron zip extraction failed::could not unzip $zip - corrupt or partial download"
+            exit 1
+          fi
           printf 'electron' > node_modules/electron/path.txt
-          node -e "const fs=require('fs'); const e=require('electron'); if (typeof e!=='string' || !fs.existsSync(e)) throw new Error('electron binary missing: '+e); console.log('electron ->', e)"
+          node -e "const fs=require('fs'); const e=require('electron'); if (typeof e!=='string' || !fs.existsSync(e)) throw new Error('electron binary missing after extraction: '+e); console.log('electron ->', e)"
 
       # Electron on Linux CI needs the Chromium system libraries plus a virtual
       # X server. install-deps pulls the shared libs; xvfb-run provides the display.
