@@ -1,6 +1,6 @@
 {
   "name": "aya",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "Agentic terminal manager — Claude Code / Codex / shell sessions organized across projects.",
   "engines": {
