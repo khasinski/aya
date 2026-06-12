@@ -20,6 +20,7 @@ const api: AyaApi = {
     ipcRenderer.invoke("pty:resize", ptyId, cols, rows),
   ptyKill: (ptyId) => ipcRenderer.invoke("pty:kill", ptyId),
   ptySearch: (query) => ipcRenderer.invoke("pty:search", query),
+  restartPtyHost: () => ipcRenderer.invoke("pty-host:restart"),
   onPtyEvent: (handler) => {
     const listener = (_e: unknown, event: PtyEvent) => handler(event);
     ipcRenderer.on("pty:event", listener);

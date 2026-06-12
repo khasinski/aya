@@ -1226,6 +1226,25 @@ export function App() {
     if (id) clearTerminalStatus(id);
   }, [activeProjectId, activeTabByProject, clearTerminalStatus]);
 
+  // Restart the detached PTY host (#28). This necessarily kills every running
+  // terminal process - their PTYs are children of the host - so we mark all
+  // terminals as exited rather than auto-respawning (maintainer decision:
+  // leave tabs stopped; the user restarts each with Shift+Enter). Used by both
+  // the stale-host banner and the Settings action.
+  const restartPtyHost = useCallback(async () => {
+    await window.aya.restartPtyHost();
+    setTerminals((prev) => {
+      const next: typeof prev = {};
+      for (const [id, t] of Object.entries(prev)) {
+        // `stopped` (not a fake exitCode 0) marks the PTY as killed-by-restart:
+        // shows idle + restartable via Shift+Enter, without masquerading as a
+        // clean "done" finish in the project badges or event log.
+        next[id] = { ...t, status: "idle", stopped: true, bell: false };
+      }
+      return next;
+    });
+  }, []);
+
   const renameTerminal = useCallback(
     (id: string, name: string) => {
       setTerminals((prev) => {
@@ -1779,6 +1798,7 @@ export function App() {
           status: "running",
           bell: false,
           spawnFailure: undefined,
+          stopped: undefined,
         },
       };
     });
@@ -1826,6 +1846,7 @@ export function App() {
           status: "running",
           bell: false,
           spawnFailure: undefined,
+          stopped: undefined,
         },
       };
     });
@@ -2549,6 +2570,7 @@ export function App() {
           macOptionKeyMode={macOptionKeyMode}
           onMacOptionKeyModeChange={updateMacOptionKeyMode}
           initialTab={settingsInitialTab}
+          onRestartPtyHost={restartPtyHost}
           onClose={() => setShowSettings(false)}
           onSave={onSavePresets}
           onSaveSnippets={onSaveSnippets}

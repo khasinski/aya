@@ -34,6 +34,9 @@ interface Props {
     activeThemeId: string,
   ) => Promise<void> | void;
   onImportTheme: () => Promise<Theme | null>;
+  /** Restart the detached PTY host (#28). Kills running terminals, so the
+   *  button confirms first. */
+  onRestartPtyHost: () => Promise<void> | void;
   initialTab?: SettingsTab;
 }
 
@@ -163,6 +166,7 @@ export function SettingsModal({
   onSaveSnippets,
   onSaveThemes,
   onImportTheme,
+  onRestartPtyHost,
   initialTab = "general",
 }: Props) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
@@ -762,6 +766,29 @@ export function SettingsModal({
               (cliStatus?.installed
                 ? `Installed at ${cliStatus.path}`
                 : "Not installed")}
+          </SettingsRow>
+          <SettingsRow
+            icon="restart_alt"
+            title="PTY host"
+            control={(
+              <button
+                className="aya-modal-btn"
+                onClick={() => {
+                  if (
+                    confirm(
+                      "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.",
+                    )
+                  ) {
+                    void onRestartPtyHost();
+                  }
+                }}
+              >
+                Restart
+              </button>
+            )}
+          >
+            Restarts the background terminal host. Use after an update if
+            terminals behave like an older version.
           </SettingsRow>
           <SettingsRow
             icon="donut_large"
