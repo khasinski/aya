@@ -21,6 +21,7 @@ import {
   readFileSync,
   statSync,
 } from "node:fs";
+import { deflateSync } from "node:zlib";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -496,6 +497,41 @@ function showAyaAboutPanel(): void {
 // Aya menu item reads this flag so it can kill the stale host before relaunching.
 let staleHostDetected = false;
 
+/** Build a minimal RGBA PNG containing an anti-aliased filled circle.
+ *  Uses only Node built-ins (zlib deflate + manual PNG framing). */
+function makeCirclePng(size: number, r: number, g: number, b: number): Buffer {
+  const cx = size / 2, cy = size / 2, radius = size / 2 - 0.5;
+  const rows: number[] = [];
+  for (let y = 0; y < size; y++) {
+    rows.push(0); // PNG filter byte: None
+    for (let x = 0; x < size; x++) {
+      const dist = Math.sqrt((x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2);
+      const alpha = Math.round(Math.max(0, Math.min(1, radius - dist + 0.5)) * 255);
+      rows.push(r, g, b, alpha);
+    }
+  }
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const t = Buffer.from(type, "ascii");
+    let c = 0xffffffff;
+    for (const byte of Buffer.concat([t, data])) {
+      c ^= byte;
+      for (let i = 0; i < 8; i++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE((c ^ 0xffffffff) >>> 0);
+    return Buffer.concat([len, t, data, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0); ihdr.writeUInt32BE(size, 4);
+  ihdr.writeUInt8(8, 8); ihdr.writeUInt8(6, 9); // 8-bit RGBA
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), // PNG signature
+    chunk("IHDR", ihdr),
+    chunk("IDAT", deflateSync(Buffer.from(rows))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
 function installApplicationMenu(): void {
   configureAppIdentity();
   const restartItem: MenuItemConstructorOptions = {
@@ -833,10 +869,17 @@ async function handleStaleHost(win: BrowserWindow | null): Promise<void> {
       await ptyHost.restart();
       return;
     }
-    // Signal via the menu item instead of an intrusive banner (#52).
+    // Signal via the menu item icon instead of an intrusive banner (#52).
     staleHostDetected = true;
     const item = Menu.getApplicationMenu()?.getMenuItemById("restart-aya");
-    if (item) item.label = `(!) Restart ${WINDOW_TITLE}`;
+    if (item) {
+      // 16x16 px amber dot at scaleFactor 2 = 8pt logical - renders as a
+      // small colored circle to the left of the label (standard macOS pattern).
+      item.icon = nativeImage.createFromBuffer(
+        makeCirclePng(16, 224, 112, 0), // amber #e07000
+        { scaleFactor: 2 },
+      );
+    }
   } catch {
     // best-effort; a host that can't be queried is handled on next use
   }
@@ -870,6 +913,9 @@ function registerIpc(win: BrowserWindow): void {
   );
   ipcMain.handle("pty-host:restart", async () => {
     await ptyHost.restart();
+    staleHostDetected = false;
+    const item = Menu.getApplicationMenu()?.getMenuItemById("restart-aya");
+    if (item) item.icon = nativeImage.createEmpty();
   });
 
   ipcMain.handle("projects:list", async () => listProjects());
