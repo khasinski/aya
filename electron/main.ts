@@ -497,17 +497,18 @@ function showAyaAboutPanel(): void {
 // Aya menu item reads this flag so it can kill the stale host before relaunching.
 let staleHostDetected = false;
 
-/** Build a minimal RGBA PNG containing an anti-aliased filled circle.
+/** Build a minimal RGBA PNG containing a filled circle.
  *  Uses only Node built-ins (zlib deflate + manual PNG framing). */
 function makeCirclePng(size: number, r: number, g: number, b: number): Buffer {
-  const cx = size / 2, cy = size / 2, radius = size / 2 - 0.5;
+  const cx = size / 2;
+  const cy = size / 2;
+  const r2 = (size / 2 - 1) ** 2; // squared radius (1px inset so circle doesn't clip)
   const rows: number[] = [];
   for (let y = 0; y < size; y++) {
     rows.push(0); // PNG filter byte: None
     for (let x = 0; x < size; x++) {
-      const dist = Math.sqrt((x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2);
-      const alpha = Math.round(Math.max(0, Math.min(1, radius - dist + 0.5)) * 255);
-      rows.push(r, g, b, alpha);
+      const inside = (x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 <= r2;
+      rows.push(r, g, b, inside ? 255 : 0);
     }
   }
   const chunk = (type: string, data: Buffer): Buffer => {
@@ -517,13 +518,17 @@ function makeCirclePng(size: number, r: number, g: number, b: number): Buffer {
       c ^= byte;
       for (let i = 0; i < 8; i++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
     }
-    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
-    const crc = Buffer.alloc(4); crc.writeUInt32BE((c ^ 0xffffffff) >>> 0);
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE((c ^ 0xffffffff) >>> 0);
     return Buffer.concat([len, t, data, crc]);
   };
   const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size, 0); ihdr.writeUInt32BE(size, 4);
-  ihdr.writeUInt8(8, 8); ihdr.writeUInt8(6, 9); // 8-bit RGBA
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr.writeUInt8(8, 8); // bit depth
+  ihdr.writeUInt8(6, 9); // color type: RGBA
   return Buffer.concat([
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), // PNG signature
     chunk("IHDR", ihdr),
@@ -912,10 +917,13 @@ function registerIpc(win: BrowserWindow): void {
     ptyHost.search(requireString(query, "pty:search.query")),
   );
   ipcMain.handle("pty-host:restart", async () => {
-    await ptyHost.restart();
-    staleHostDetected = false;
-    const item = Menu.getApplicationMenu()?.getMenuItemById("restart-aya");
-    if (item) item.icon = nativeImage.createEmpty();
+    try {
+      await ptyHost.restart();
+    } finally {
+      staleHostDetected = false;
+      const item = Menu.getApplicationMenu()?.getMenuItemById("restart-aya");
+      if (item) item.icon = nativeImage.createEmpty();
+    }
   });
 
   ipcMain.handle("projects:list", async () => listProjects());
