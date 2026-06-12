@@ -217,21 +217,10 @@ function escapeHtml(value: string): string {
     .replaceAll('"', "&quot;");
 }
 
-/** Contributor names from package.json - the same file electron-builder reads
- *  `author` from to generate the About panel's copyright line, so this keeps a
- *  single source of truth for credits instead of hardcoding names here. */
-function aboutContributors(): string[] {
-  try {
-    const pkg = JSON.parse(
-      readFileSync(path.join(app.getAppPath(), "package.json"), "utf-8"),
-    ) as { contributors?: Array<string | { name?: string }> };
-    return (pkg.contributors ?? [])
-      .map((c) => (typeof c === "string" ? c : c?.name))
-      .filter((name): name is string => !!name && name.trim().length > 0);
-  } catch {
-    return [];
-  }
-}
+// electron-builder strips non-essential fields (contributors, scripts, …) from
+// the bundled package.json, so runtime reads would always return []. Keep the
+// list here where it survives the build.
+const CONTRIBUTORS = ["Justyna Wojtczak"];
 
 function configureAppIdentity(): void {
   // Keep macOS menu/about/notification surfaces aligned. Dev runs inside
@@ -240,7 +229,7 @@ function configureAppIdentity(): void {
   // chance to expose Aya instead.
   app.setName(WINDOW_TITLE);
   process.title = WINDOW_TITLE;
-  const contributors = aboutContributors();
+  const contributors = CONTRIBUTORS;
   app.setAboutPanelOptions({
     applicationName: WINDOW_TITLE,
     applicationVersion: app.getVersion(),
@@ -423,7 +412,7 @@ function showAyaAboutPanel(): void {
   } catch {
     // Empty src keeps the dialog usable even if the icon asset is missing.
   }
-  const contributors = aboutContributors();
+  const contributors = CONTRIBUTORS;
   const creditsLine =
     contributors.length > 0
       ? `<p class="credits">Contributors: ${escapeHtml(contributors.join(", "))}</p>`
