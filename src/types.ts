@@ -340,6 +340,10 @@ export interface TerminalState {
    *  TerminalView pool so no PTY spawns until the terminal first becomes
    *  visible (sidebar activation or split assignment clears the flag). */
   spawnDeferred?: boolean;
+  /** PTY was killed by a host restart (#28), not by a real exit. Renders as
+   *  stopped + restartable (Shift+Enter) without faking a clean exit code, so
+   *  it never shows as a "done"/successful finish. Cleared on restart. */
+  stopped?: boolean;
 }
 
 export type ProjectEventLevel = "info" | "active" | "waiting" | "done" | "error";

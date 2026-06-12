@@ -27,6 +27,23 @@ const IDLE_SHUTDOWN_TIMEOUT_MS = 30_000;
 
 const clients = new Set<net.Socket>();
 let idleTimer: NodeJS.Timeout | null = null;
+let server: net.Server | null = null;
+
+/** Stop accepting connections and remove the socket file. Called on a clean
+ *  shutdown BEFORE the process exits (so a client restarting the host can't
+ *  reconnect to this dying process) and again on process-exit signals. */
+function closeSocket(): void {
+  try {
+    server?.close();
+  } catch {
+    // best effort
+  }
+  try {
+    fs.rmSync(PTY_HOST_SOCKET_PATH, { force: true });
+  } catch {
+    // best effort
+  }
+}
 
 function sendLine(socket: net.Socket, value: PtyHostResponse | PtyHostEventMessage): void {
   socket.write(`${JSON.stringify(value)}\n`);
@@ -68,6 +85,9 @@ async function handle(request: PtyHostRequest): Promise<unknown> {
   }
   if (request.type === "shutdown") {
     killAll();
+    // Drop the socket synchronously so a client spawning a fresh host can't
+    // reconnect to this exiting process in the window before exit.
+    closeSocket();
     setTimeout(() => process.exit(0), 0);
     return null;
   }
@@ -75,15 +95,18 @@ async function handle(request: PtyHostRequest): Promise<unknown> {
     return searchPtyOutputs(request.query);
   }
   if (request.type === "version") {
-    return { ...hostIdentity(), ptyCount: activePtyCount() };
+    return { ...HOST_IDENTITY, ptyCount: activePtyCount() };
   }
   throw new Error("unknown request");
 }
 
-/** Identity of the build THIS host process is running, for the staleness
- *  handshake (#28). The script hash is computed from the running file, so two
- *  builds that share a version number still differ. */
-function hostIdentity(): HostIdentity {
+/** Identity of the build THIS host process was LAUNCHED from, for the
+ *  staleness handshake (#28). Snapshotted once at startup, NOT recomputed per
+ *  request: a host that lingers across a reinstall must keep reporting its old
+ *  identity even though the asar on disk has since been replaced - otherwise
+ *  re-reading disk would make a stale host look current. The script hash makes
+ *  two builds that share a version number still differ. */
+function computeHostIdentity(): HostIdentity {
   let version = "unknown";
   try {
     const pkg = JSON.parse(
@@ -105,6 +128,8 @@ function hostIdentity(): HostIdentity {
   return { version, scriptHash };
 }
 
+const HOST_IDENTITY: HostIdentity = computeHostIdentity();
+
 function scheduleIdleShutdown(): void {
   if (clients.size > 0 || activePtyCount() > 0 || idleTimer) return;
   idleTimer = setTimeout(() => {
@@ -120,7 +145,7 @@ function start(): void {
     // best effort
   }
 
-  const server = net.createServer((socket) => {
+  server = net.createServer((socket) => {
     clients.add(socket);
     let buffer = "";
     socket.setEncoding("utf8");
@@ -166,21 +191,9 @@ function start(): void {
     }
   });
 
-  const cleanup = () => {
-    try {
-      server.close();
-    } catch {
-      // best effort
-    }
-    try {
-      fs.rmSync(PTY_HOST_SOCKET_PATH, { force: true });
-    } catch {
-      // best effort
-    }
-  };
-  process.once("SIGTERM", cleanup);
-  process.once("SIGINT", cleanup);
-  process.once("exit", cleanup);
+  process.once("SIGTERM", closeSocket);
+  process.once("SIGINT", closeSocket);
+  process.once("exit", closeSocket);
 }
 
 start();

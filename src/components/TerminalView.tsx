@@ -220,11 +220,12 @@ export function TerminalView({
   // return focus to the terminal so the user can keep working.
   const sendSnippet = useCallback(
     (snippet: Snippet) => {
-      // A dead PTY (exited / spawn-failed) silently swallows ptyWrite, so the
-      // snippet would vanish with no feedback. Tell the user in the terminal
-      // itself and skip the no-op write. exitCode is non-null once the PTY has
-      // exited; restarting (Shift+Enter) clears it back to null.
-      if (terminal.exitCode !== null) {
+      // A dead PTY (exited / spawn-failed / killed by a host restart) silently
+      // swallows ptyWrite, so the snippet would vanish with no feedback. Tell
+      // the user in the terminal itself and skip the no-op write. exitCode is
+      // non-null once the PTY has exited, and `stopped` marks a host-restart
+      // kill; restarting (Shift+Enter) clears both.
+      if (terminal.exitCode !== null || terminal.stopped) {
         try {
           xtermRef.current?.write(
             "\r\n\x1b[2maya: terminal has exited — press Shift+Enter to restart, then send the snippet again\x1b[0m\r\n",
@@ -246,7 +247,7 @@ export function TerminalView({
         /* ignore — terminal may be mid-dispose */
       }
     },
-    [terminal.id, terminal.exitCode],
+    [terminal.id, terminal.exitCode, terminal.stopped],
   );
   // Current foreground-process title, fed by OSC 0/2 from the inner shell.
   // macOS zsh's default config emits this in preexec/precmd, so we get the
@@ -258,7 +259,7 @@ export function TerminalView({
   // Stored in a ref so the long-lived xterm key handler always reads the
   // current value without re-attaching on every render.
   const canRestartRef = useRef(false);
-  canRestartRef.current = terminal.exitCode === 0;
+  canRestartRef.current = terminal.exitCode === 0 || !!terminal.stopped;
   const commandRef = useRef(command);
   commandRef.current = command;
   const cwdRef = useRef(cwd);

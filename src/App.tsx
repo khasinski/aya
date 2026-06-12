@@ -1251,7 +1251,10 @@ export function App() {
     setTerminals((prev) => {
       const next: typeof prev = {};
       for (const [id, t] of Object.entries(prev)) {
-        next[id] = { ...t, status: "idle", exitCode: t.exitCode ?? 0, bell: false };
+        // `stopped` (not a fake exitCode 0) marks the PTY as killed-by-restart:
+        // shows idle + restartable via Shift+Enter, without masquerading as a
+        // clean "done" finish in the project badges or event log.
+        next[id] = { ...t, status: "idle", stopped: true, bell: false };
       }
       return next;
     });
@@ -1811,6 +1814,7 @@ export function App() {
           status: "running",
           bell: false,
           spawnFailure: undefined,
+          stopped: undefined,
         },
       };
     });
@@ -1858,6 +1862,7 @@ export function App() {
           status: "running",
           bell: false,
           spawnFailure: undefined,
+          stopped: undefined,
         },
       };
     });
