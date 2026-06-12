@@ -864,11 +864,6 @@ function registerIpc(win: BrowserWindow): void {
   ipcMain.handle("pty:search", async (_e, query: unknown) =>
     ptyHost.search(requireString(query, "pty:search.query")),
   );
-  ipcMain.handle("pty-host:status", async () => {
-    const { identity, ptyCount } = await ptyHost.hostStatus();
-    const expected = ptyHost.expectedHostIdentity(app.getVersion());
-    return { stale: isHostStale(expected, identity), ptyCount };
-  });
   ipcMain.handle("pty-host:restart", async () => {
     await ptyHost.restart();
   });
