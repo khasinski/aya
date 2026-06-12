@@ -492,11 +492,21 @@ function showAyaAboutPanel(): void {
   about.once("ready-to-show", () => about.show());
 }
 
+// Set to true when a stale PTY host is detected on launch (#28). The Restart
+// Aya menu item reads this flag so it can kill the stale host before relaunching.
+let staleHostDetected = false;
+
 function installApplicationMenu(): void {
   configureAppIdentity();
   const restartItem: MenuItemConstructorOptions = {
+    id: "restart-aya",
     label: `Restart ${WINDOW_TITLE}`,
-    click: () => {
+    click: async () => {
+      try {
+        if (staleHostDetected) await ptyHost.restart();
+      } catch {
+        // best-effort; stale host may already be gone
+      }
       app.relaunch();
       app.quit();
     },
@@ -823,9 +833,10 @@ async function handleStaleHost(win: BrowserWindow | null): Promise<void> {
       await ptyHost.restart();
       return;
     }
-    if (!win.isDestroyed()) {
-      win.webContents.send("pty-host:stale", { ptyCount });
-    }
+    // Signal via the menu item instead of an intrusive banner (#52).
+    staleHostDetected = true;
+    const item = Menu.getApplicationMenu()?.getMenuItemById("restart-aya");
+    if (item) item.label = `(!) Restart ${WINDOW_TITLE}`;
   } catch {
     // best-effort; a host that can't be queried is handled on next use
   }

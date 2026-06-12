@@ -21,11 +21,6 @@ const api: AyaApi = {
   ptyKill: (ptyId) => ipcRenderer.invoke("pty:kill", ptyId),
   ptySearch: (query) => ipcRenderer.invoke("pty:search", query),
   restartPtyHost: () => ipcRenderer.invoke("pty-host:restart"),
-  onPtyHostStale: (handler) => {
-    const listener = (_e: unknown, info: { ptyCount: number }) => handler(info);
-    ipcRenderer.on("pty-host:stale", listener);
-    return () => ipcRenderer.removeListener("pty-host:stale", listener);
-  },
   onPtyEvent: (handler) => {
     const listener = (_e: unknown, event: PtyEvent) => handler(event);
     ipcRenderer.on("pty:event", listener);

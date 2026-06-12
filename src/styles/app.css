@@ -203,29 +203,6 @@ body {
   background: var(--bg);
 }
 
-/* Stale-PTY-host notice (#28). Overlay at the top so it doesn't disturb the
-   app's 3-row grid; sits above content until the user restarts or dismisses. */
-.aya-host-banner {
-  position: fixed;
-  top: 0; left: 0; right: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 14px;
-  font-size: 12px;
-  color: var(--fg-primary);
-  background: var(--bg-secondary);
-  border-bottom: 2px solid var(--status-waiting);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-}
-.aya-host-banner-actions {
-  display: flex;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
 /* ---- top bar: project tabs ---- */
 .aya-topbar {
   display: flex;

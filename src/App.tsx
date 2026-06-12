@@ -384,11 +384,6 @@ function defaultTabName(preset: Preset): string {
 export function App() {
   const [allProjects, setAllProjects] = useState<ProjectConfig[]>([]);
   const [projects, setProjects] = useState<ProjectConfig[]>([]);
-  // >0 when a stale PTY host (older build) still serves this many terminals
-  // and the user must confirm a restart (#28). null = no notice.
-  const [staleHostPtyCount, setStaleHostPtyCount] = useState<number | null>(
-    null,
-  );
   const [projectState, setProjectState] = useState<ProjectCollectionState>({
     version: PROJECT_STATE_VERSION,
     order: [],
@@ -556,16 +551,6 @@ export function App() {
       active = false;
       unsubscribe();
     };
-  }, []);
-
-  // The detached PTY host survives an app update; when a new build reconnects
-  // to an OLD host that still serves terminals, main can't reap it silently
-  // (it would kill the user's processes), so it tells us to surface a notice
-  // with a manual restart (#28).
-  useEffect(() => {
-    return window.aya.onPtyHostStale(({ ptyCount }) => {
-      setStaleHostPtyCount(ptyCount);
-    });
   }, []);
 
   // Reload config when one of the user-editable files under ~/.aya/ is edited while
@@ -1258,7 +1243,6 @@ export function App() {
       }
       return next;
     });
-    setStaleHostPtyCount(null);
   }, []);
 
   const renameTerminal = useCallback(
@@ -2221,32 +2205,6 @@ export function App() {
       }
       data-accent="green"
     >
-      {staleHostPtyCount !== null && (
-        <div className="aya-host-banner" role="alert">
-          <span>
-            Terminals are served by an older Aya host from a previous version.
-            Restart it to apply the update - this stops the{" "}
-            {staleHostPtyCount} running terminal
-            {staleHostPtyCount === 1 ? "" : "s"} (restart each with Shift+Enter).
-          </span>
-          <span className="aya-host-banner-actions">
-            <button
-              type="button"
-              className="aya-modal-btn aya-modal-btn--primary"
-              onClick={() => void restartPtyHost()}
-            >
-              Restart host
-            </button>
-            <button
-              type="button"
-              className="aya-modal-btn"
-              onClick={() => setStaleHostPtyCount(null)}
-            >
-              Dismiss
-            </button>
-          </span>
-        </div>
-      )}
       <TopBar
         projects={projects}
         activeProjectId={activeProjectId}

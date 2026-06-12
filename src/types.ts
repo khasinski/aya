@@ -232,7 +232,6 @@ export interface AyaApi {
   ptyKill(ptyId: string): Promise<void>;
   ptySearch(query: string): Promise<BufferSearchHit[]>;
   restartPtyHost(): Promise<void>;
-  onPtyHostStale(handler: (info: { ptyCount: number }) => void): () => void;
   onPtyEvent(handler: (event: PtyEvent) => void): () => void;
 
   listProjects(): Promise<ProjectConfig[]>;

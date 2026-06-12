@@ -168,7 +168,6 @@ export interface AyaApi {
    *  an extra-occurrences count). */
   ptySearch(query: string): Promise<BufferSearchHit[]>;
   restartPtyHost(): Promise<void>;
-  onPtyHostStale(handler: (info: { ptyCount: number }) => void): () => void;
   onPtyEvent(handler: (event: PtyEvent) => void): () => void;
 
   // Project config
