@@ -826,7 +826,11 @@ async function handleStaleHost(win: BrowserWindow | null): Promise<void> {
     const { identity, ptyCount } = await ptyHost.hostStatus();
     const expected = ptyHost.expectedHostIdentity(app.getVersion());
     if (!isHostStale(expected, identity)) return;
-    if (ptyCount === 0) {
+    // Only auto-reap silently when the handshake succeeded and confirmed zero
+    // terminals. When identity===null the host does not support the version
+    // request (old host after reinstall) so ptyCount is unknown - always show
+    // the banner.
+    if (identity !== null && ptyCount === 0) {
       await ptyHost.restart();
       return;
     }
