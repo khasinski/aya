@@ -109,6 +109,18 @@ function findExecutableOnPath(name: string): string | null {
   return null;
 }
 
+async function anyExecutable(paths: string[]): Promise<boolean> {
+  for (const p of paths) {
+    try {
+      await fs.access(p, fsConstants.X_OK);
+      return true;
+    } catch {
+      // try the next candidate
+    }
+  }
+  return false;
+}
+
 function writableDirOnPath(): string | null {
   for (const entry of pathEntries()) {
     try {
@@ -134,18 +146,7 @@ async function cliStatus(): Promise<CliStatus> {
   if (installed) {
     try {
       const targets = parseShimTargets(await fs.readFile(installed, "utf-8"));
-      broken =
-        targets.length > 0 &&
-        !(
-          await Promise.all(
-            targets.map((t) =>
-              fs.access(t, fsConstants.X_OK).then(
-                () => true,
-                () => false,
-              ),
-            ),
-          )
-        ).some(Boolean);
+      broken = targets.length > 0 && !(await anyExecutable(targets));
     } catch {
       // unreadable or not our script - leave it alone
     }
