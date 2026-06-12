@@ -384,6 +384,11 @@ function defaultTabName(preset: Preset): string {
 export function App() {
   const [allProjects, setAllProjects] = useState<ProjectConfig[]>([]);
   const [projects, setProjects] = useState<ProjectConfig[]>([]);
+  // >0 when a stale PTY host (older build) still serves this many terminals
+  // and the user must confirm a restart (#28). null = no notice.
+  const [staleHostPtyCount, setStaleHostPtyCount] = useState<number | null>(
+    null,
+  );
   const [projectState, setProjectState] = useState<ProjectCollectionState>({
     version: PROJECT_STATE_VERSION,
     order: [],
@@ -551,6 +556,16 @@ export function App() {
       active = false;
       unsubscribe();
     };
+  }, []);
+
+  // The detached PTY host survives an app update; when a new build reconnects
+  // to an OLD host that still serves terminals, main can't reap it silently
+  // (it would kill the user's processes), so it tells us to surface a notice
+  // with a manual restart (#28).
+  useEffect(() => {
+    return window.aya.onPtyHostStale(({ ptyCount }) => {
+      setStaleHostPtyCount(ptyCount);
+    });
   }, []);
 
   // Reload config when one of the user-editable files under ~/.aya/ is edited while
@@ -1225,6 +1240,23 @@ export function App() {
     const id = activeProjectId ? activeTabByProject[activeProjectId] : null;
     if (id) clearTerminalStatus(id);
   }, [activeProjectId, activeTabByProject, clearTerminalStatus]);
+
+  // Restart the detached PTY host (#28). This necessarily kills every running
+  // terminal process - their PTYs are children of the host - so we mark all
+  // terminals as exited rather than auto-respawning (maintainer decision:
+  // leave tabs stopped; the user restarts each with Shift+Enter). Used by both
+  // the stale-host banner and the Settings action.
+  const restartPtyHost = useCallback(async () => {
+    await window.aya.restartPtyHost();
+    setTerminals((prev) => {
+      const next: typeof prev = {};
+      for (const [id, t] of Object.entries(prev)) {
+        next[id] = { ...t, status: "idle", exitCode: t.exitCode ?? 0, bell: false };
+      }
+      return next;
+    });
+    setStaleHostPtyCount(null);
+  }, []);
 
   const renameTerminal = useCallback(
     (id: string, name: string) => {
@@ -2184,6 +2216,32 @@ export function App() {
       }
       data-accent="green"
     >
+      {staleHostPtyCount !== null && (
+        <div className="aya-host-banner" role="alert">
+          <span>
+            Terminals are served by an older Aya host from a previous version.
+            Restart it to apply the update - this stops the{" "}
+            {staleHostPtyCount} running terminal
+            {staleHostPtyCount === 1 ? "" : "s"} (restart each with Shift+Enter).
+          </span>
+          <span className="aya-host-banner-actions">
+            <button
+              type="button"
+              className="aya-modal-btn aya-modal-btn--primary"
+              onClick={() => void restartPtyHost()}
+            >
+              Restart host
+            </button>
+            <button
+              type="button"
+              className="aya-modal-btn"
+              onClick={() => setStaleHostPtyCount(null)}
+            >
+              Dismiss
+            </button>
+          </span>
+        </div>
+      )}
       <TopBar
         projects={projects}
         activeProjectId={activeProjectId}
@@ -2549,6 +2607,7 @@ export function App() {
           macOptionKeyMode={macOptionKeyMode}
           onMacOptionKeyModeChange={updateMacOptionKeyMode}
           initialTab={settingsInitialTab}
+          onRestartPtyHost={restartPtyHost}
           onClose={() => setShowSettings(false)}
           onSave={onSavePresets}
           onSaveSnippets={onSaveSnippets}

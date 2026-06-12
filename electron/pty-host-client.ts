@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
@@ -10,6 +11,7 @@ import {
   type PtyHostRequest,
   type PtyHostResponse,
 } from "./pty-host-protocol";
+import type { HostIdentity } from "./pty-host-staleness";
 import type { BufferSearchHit } from "./pty";
 import type { SpawnRequest } from "./types";
 
@@ -55,6 +57,58 @@ export class PtyHostClient {
 
   async shutdown(): Promise<void> {
     await this.request({ id: 0, type: "shutdown" });
+    this.socket?.destroy();
+    this.socket = null;
+  }
+
+  /** Running host's identity + live PTY count. identity is null if the
+   *  handshake fails (an old host that predates the `version` request errors
+   *  out - itself a stale signal); ptyCount is 0 when unknown. */
+  async hostStatus(): Promise<{
+    identity: HostIdentity | null;
+    ptyCount: number;
+  }> {
+    try {
+      const result = await this.request({ id: 0, type: "version" });
+      return {
+        identity: asHostIdentity(result),
+        ptyCount:
+          result &&
+          typeof result === "object" &&
+          typeof (result as { ptyCount?: unknown }).ptyCount === "number"
+            ? (result as { ptyCount: number }).ptyCount
+            : 0,
+      };
+    } catch {
+      return { identity: null, ptyCount: 0 };
+    }
+  }
+
+  /** Identity the freshly-spawned host WOULD report: app version + a hash of
+   *  the host script this client launches. Compared against the running host's
+   *  reported identity to detect a stale host (#28). */
+  expectedHostIdentity(appVersion: string): HostIdentity {
+    let scriptHash = "unknown";
+    try {
+      scriptHash = crypto
+        .createHash("sha256")
+        .update(fs.readFileSync(this.hostScript))
+        .digest("hex");
+    } catch {
+      // leave "unknown"; a mismatch on version still flags staleness
+    }
+    return { version: appVersion, scriptHash };
+  }
+
+  /** Tell the current host to shut down and drop the socket, so the next
+   *  request spawns a fresh host. Best-effort: a dead/old host that can't
+   *  shut down cleanly still gets disconnected here. */
+  async restart(): Promise<void> {
+    try {
+      await this.request({ id: 0, type: "shutdown" });
+    } catch {
+      // old host may not honor shutdown; we still drop the socket below
+    }
     this.socket?.destroy();
     this.socket = null;
   }
@@ -176,4 +230,15 @@ export class PtyHostClient {
     }
     this.pending.clear();
   }
+}
+
+/** Narrow an untyped handshake reply to HostIdentity, or null if malformed
+ *  (a wrong-shaped reply is as untrustworthy as no reply). */
+function asHostIdentity(value: unknown): HostIdentity | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.version !== "string" || typeof v.scriptHash !== "string") {
+    return null;
+  }
+  return { version: v.version, scriptHash: v.scriptHash };
 }

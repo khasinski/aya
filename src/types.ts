@@ -231,6 +231,9 @@ export interface AyaApi {
   ptyResize(ptyId: string, cols: number, rows: number): Promise<void>;
   ptyKill(ptyId: string): Promise<void>;
   ptySearch(query: string): Promise<BufferSearchHit[]>;
+  ptyHostStatus(): Promise<{ stale: boolean; ptyCount: number }>;
+  restartPtyHost(): Promise<void>;
+  onPtyHostStale(handler: (info: { ptyCount: number }) => void): () => void;
   onPtyEvent(handler: (event: PtyEvent) => void): () => void;
 
   listProjects(): Promise<ProjectConfig[]>;

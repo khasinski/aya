@@ -39,6 +39,7 @@ import {
   renderCliShim,
 } from "./cli-shim";
 import { startConfigWatcher } from "./config-watcher";
+import { isHostStale } from "./pty-host-staleness";
 import { startControlServer } from "./control";
 import { getGitChangedFiles, getGitDiff, getGitInfo } from "./git";
 import { IS_DEV, IS_E2E_HEADLESS, IS_E2E_PTY_SHUTDOWN } from "./paths";
@@ -815,6 +816,28 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   return win;
 }
 
+/** On launch, detect a stale PTY host (#28). With zero live terminals it is
+ *  safe to reap silently; otherwise a restart would kill the user's running
+ *  processes, so we only notify the renderer (which offers a confirm + button).
+ *  Best-effort: never blocks or crashes startup. */
+async function handleStaleHost(win: BrowserWindow | null): Promise<void> {
+  if (!win || win.isDestroyed()) return;
+  try {
+    const { identity, ptyCount } = await ptyHost.hostStatus();
+    const expected = ptyHost.expectedHostIdentity(app.getVersion());
+    if (!isHostStale(expected, identity)) return;
+    if (ptyCount === 0) {
+      await ptyHost.restart();
+      return;
+    }
+    if (!win.isDestroyed()) {
+      win.webContents.send("pty-host:stale", { ptyCount });
+    }
+  } catch {
+    // best-effort; a host that can't be queried is handled on next use
+  }
+}
+
 function registerIpc(win: BrowserWindow): void {
   ptyHost.setWebContents(win.webContents);
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
@@ -841,6 +864,14 @@ function registerIpc(win: BrowserWindow): void {
   ipcMain.handle("pty:search", async (_e, query: unknown) =>
     ptyHost.search(requireString(query, "pty:search.query")),
   );
+  ipcMain.handle("pty-host:status", async () => {
+    const { identity, ptyCount } = await ptyHost.hostStatus();
+    const expected = ptyHost.expectedHostIdentity(app.getVersion());
+    return { stale: isHostStale(expected, identity), ptyCount };
+  });
+  ipcMain.handle("pty-host:restart", async () => {
+    await ptyHost.restart();
+  });
 
   ipcMain.handle("projects:list", async () => listProjects());
   ipcMain.handle("projects:state", async () => listProjectState());
@@ -1109,6 +1140,12 @@ app.whenReady().then(async () => {
     },
   });
   installApplicationMenu();
+
+  // After the renderer is listening, check whether the (detached, survives-
+  // restart) PTY host is from an older build and act on it (#28).
+  mainWindow.webContents.once("did-finish-load", () => {
+    void handleStaleHost(mainWindow);
+  });
 
   // Honor an initial directory argument on first launch — the renderer
   // applies the same switch-or-create logic as for second-instance.

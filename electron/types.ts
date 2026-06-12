@@ -167,6 +167,9 @@ export interface AyaApi {
    *  output buffer. Returns one hit per matching pty (the first match plus
    *  an extra-occurrences count). */
   ptySearch(query: string): Promise<BufferSearchHit[]>;
+  ptyHostStatus(): Promise<{ stale: boolean; ptyCount: number }>;
+  restartPtyHost(): Promise<void>;
+  onPtyHostStale(handler: (info: { ptyCount: number }) => void): () => void;
   onPtyEvent(handler: (event: PtyEvent) => void): () => void;
 
   // Project config
