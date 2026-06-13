@@ -116,7 +116,7 @@ export function isSafeBinaryName(s: string): boolean {
   return /^[a-zA-Z0-9_.-]+$/.test(s);
 }
 
-function userShell(): string {
+export function userShell(): string {
   const envShell = process.env.SHELL?.trim();
   if (envShell) return envShell;
   const accountShell = os.userInfo().shell;
