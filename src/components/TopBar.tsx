@@ -1,6 +1,6 @@
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
 import { useEffect, useRef, useState, type DragEvent } from "react";
-import type { ProjectConfig, UsageData } from "../types";
+import type { ProjectConfig, UsageAccount } from "../types";
 import type { SettingsTab } from "../settings-tabs";
 import { UsageChip } from "./UsageChip";
 
@@ -34,10 +34,11 @@ interface Props {
   onOpenSearch: () => void;
   onOpenSettings: (tab?: SettingsTab) => void;
   projectBadges?: Record<string, ProjectAttention>;
-  /** Account-wide Claude usage snapshot (null hides its chip). Read-only. */
-  usage?: UsageData | null;
-  /** Account-wide Codex usage snapshot (null hides its chip). Read-only. */
-  codexUsage?: UsageData | null;
+  /** Account-wide Claude usage snapshots. Read-only. */
+  usageAccounts?: UsageAccount[];
+  /** Account-wide Codex usage snapshots. Read-only. */
+  codexUsageAccounts?: UsageAccount[];
+  showUsageHarnessName: boolean;
 }
 
 function compactDir(directory: string, home: string): string {
@@ -64,8 +65,9 @@ export function TopBar({
   onOpenSearch,
   onOpenSettings,
   projectBadges = {},
-  usage = null,
-  codexUsage = null,
+  usageAccounts = [],
+  codexUsageAccounts = [],
+  showUsageHarnessName,
 }: Props) {
   const [renamingSlug, setRenamingSlug] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -281,11 +283,21 @@ export function TopBar({
         </div>
       </div>
       <div className="aya-topbar-right">
-        {usage && (
-          <UsageChip usage={usage} label="Claude" accent={CLAUDE_BRAND_COLOR} />
+        {usageAccounts.length > 0 && (
+          <UsageChip
+            accounts={usageAccounts}
+            label="Claude"
+            accent={CLAUDE_BRAND_COLOR}
+            showHarnessName={showUsageHarnessName}
+          />
         )}
-        {codexUsage && (
-          <UsageChip usage={codexUsage} label="Codex" accent={CODEX_BRAND_COLOR} />
+        {codexUsageAccounts.length > 0 && (
+          <UsageChip
+            accounts={codexUsageAccounts}
+            label="Codex"
+            accent={CODEX_BRAND_COLOR}
+            showHarnessName={showUsageHarnessName}
+          />
         )}
         <div className="aya-recent-projects" ref={recentRef}>
           <button

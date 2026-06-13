@@ -44,6 +44,11 @@ export interface UsageData {
   sevenDay: UsageWindow;
   updatedAt: string;
 }
+export interface UsageAccount {
+  id: string;
+  label: string;
+  usage: UsageData;
+}
 
 /** State of the optional usage-hook installer (mirrors electron/usage-hook.ts). */
 export interface UsageHookStatus {
@@ -249,10 +254,10 @@ export interface AyaApi {
   listSnippets(): Promise<Snippet[]>;
   saveSnippets(snippets: Snippet[]): Promise<void>;
 
-  /** Read-only account-wide usage snapshot (null when no hook has written it). */
-  getUsage(): Promise<UsageData | null>;
-  /** Read-only Codex usage from its local rollout logs (null when none). */
-  getCodexUsage(): Promise<UsageData | null>;
+  /** Read-only account-wide usage snapshots. */
+  getUsage(): Promise<UsageAccount[]>;
+  /** Read-only Codex usage from its local rollout logs. */
+  getCodexUsage(): Promise<UsageAccount[]>;
 
   usageHookStatus(): Promise<UsageHookStatus>;
   installUsageHook(): Promise<UsageHookStatus>;

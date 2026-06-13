@@ -45,7 +45,7 @@ import {
   type TerminalState,
   type Theme,
   type ThemeColors,
-  type UsageData,
+  type UsageAccount,
   type WorkingTab,
 } from "./types";
 
@@ -68,6 +68,7 @@ const PROJECT_STATE_VERSION = 1;
 const APP_THEME_STORAGE_KEY = "aya:app-theme";
 const MAC_OPTION_KEY_STORAGE_KEY = "aya:mac-option-key";
 const TERMINAL_FONT_FAMILY_STORAGE_KEY = "aya:terminal-font-family";
+const USAGE_HARNESS_NAME_STORAGE_KEY = "aya:usage-show-harness-name";
 
 type AppThemePreference = "system" | "light" | "dark";
 
@@ -93,6 +94,14 @@ function readMacOptionKeyMode(): MacOptionKeyMode {
 
 function readTerminalFontFamily(): string {
   return localStorage.getItem(TERMINAL_FONT_FAMILY_STORAGE_KEY) ?? "";
+}
+
+function readUsageHarnessNamePreference(): boolean {
+  try {
+    return localStorage.getItem(USAGE_HARNESS_NAME_STORAGE_KEY) !== "0";
+  } catch {
+    return true;
+  }
 }
 
 // Hard fallback used only if the themes file is somehow empty before boot
@@ -405,8 +414,10 @@ export function App() {
     Record<string, string | null>
   >({});
   const [git, setGit] = useState<Record<string, GitInfo>>({});
-  const [usage, setUsage] = useState<UsageData | null>(null);
-  const [codexUsage, setCodexUsage] = useState<UsageData | null>(null);
+  const [usageAccounts, setUsageAccounts] = useState<UsageAccount[]>([]);
+  const [codexUsageAccounts, setCodexUsageAccounts] = useState<
+    UsageAccount[]
+  >([]);
   const [newProjectModal, setNewProjectModal] =
     useState<NewProjectModalState | null>(null);
   const [missingDirQueue, setMissingDirQueue] = useState<MissingDirEntry[]>([]);
@@ -423,6 +434,9 @@ export function App() {
     useState<MacOptionKeyMode>(readMacOptionKeyMode);
   const [terminalFontFamily, setTerminalFontFamily] =
     useState(readTerminalFontFamily);
+  const [showUsageHarnessName, setShowUsageHarnessName] = useState(
+    readUsageHarnessNamePreference,
+  );
   const effectiveTerminalFontFamily = terminalFontFamily.trim() || undefined;
   const [settingsInitialTab, setSettingsInitialTab] =
     useState<SettingsTab>("general");
@@ -476,10 +490,10 @@ export function App() {
     let cancelled = false;
     const refresh = () => {
       void window.aya.getUsage().then((u) => {
-        if (!cancelled) setUsage(u);
+        if (!cancelled) setUsageAccounts(u);
       });
       void window.aya.getCodexUsage().then((u) => {
-        if (!cancelled) setCodexUsage(u);
+        if (!cancelled) setCodexUsageAccounts(u);
       });
     };
     refresh();
@@ -1780,6 +1794,15 @@ export function App() {
     }
   }, []);
 
+  const updateShowUsageHarnessName = useCallback((next: boolean) => {
+    setShowUsageHarnessName(next);
+    try {
+      localStorage.setItem(USAGE_HARNESS_NAME_STORAGE_KEY, next ? "1" : "0");
+    } catch {
+      /* ignore — localStorage can be unavailable in odd embedded contexts */
+    }
+  }, []);
+
   useEffect(() => {
     const root = document.documentElement;
     if (appThemePreference === "system") {
@@ -2231,8 +2254,9 @@ export function App() {
         onOpenSearch={() => setShowSearch(true)}
         onOpenSettings={openSettings}
         projectBadges={projectBadges}
-        usage={usage}
-        codexUsage={codexUsage}
+        usageAccounts={usageAccounts}
+        codexUsageAccounts={codexUsageAccounts}
+        showUsageHarnessName={showUsageHarnessName}
       />
       {!didBootstrap ? (
         <main className="aya-empty aya-empty--loading" aria-busy="true">
@@ -2574,6 +2598,8 @@ export function App() {
           onAppThemePreferenceChange={updateAppThemePreference}
           terminalFontFamily={terminalFontFamily}
           onTerminalFontFamilyChange={updateTerminalFontFamily}
+          showUsageHarnessName={showUsageHarnessName}
+          onShowUsageHarnessNameChange={updateShowUsageHarnessName}
           macOptionKeyMode={macOptionKeyMode}
           onMacOptionKeyModeChange={updateMacOptionKeyMode}
           initialTab={settingsInitialTab}

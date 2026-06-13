@@ -48,8 +48,8 @@ import { scanHarnesses } from "./harnesses";
 import { isInternalNavigationUrl, parseHttpUrl } from "./navigation";
 import { listPresets, savePresets } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
-import { readUsage } from "./usage";
-import { readCodexUsage } from "./usage-codex";
+import { readUsageAccounts } from "./usage";
+import { readCodexUsageAccounts } from "./usage-codex";
 import {
   usageHookStatus,
   installUsageHook,
@@ -957,10 +957,10 @@ function registerIpc(win: BrowserWindow): void {
     saveSnippets(validateSnippetArray(snippets)),
   );
   // Read-only: the account-wide usage snapshot a user hook writes (no fetch).
-  ipcMain.handle("usage:get", async () => readUsage());
+  ipcMain.handle("usage:get", async () => readUsageAccounts());
   // Read-only: Codex usage, parsed from its own local rollout logs (Codex
   // writes its rate-limit % there, so no token/endpoint/hook is needed).
-  ipcMain.handle("usage:get-codex", async () => readCodexUsage());
+  ipcMain.handle("usage:get-codex", async () => readCodexUsageAccounts());
   // Optional, user-enabled usage hook installer (writes ~/.claude/settings.json
   // + a fetch script). The Aya process never reads a token or calls the
   // endpoint — that happens later in the script, run by Claude Code.

@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   codexUsageFromRateLimit,
+  latestUsageAccountsFromLines,
   latestUsageFromLines,
 } from "../dist-electron/usage-codex.js";
 
@@ -19,6 +20,20 @@ const SAMPLE = {
 
 const line = (timestamp, rate_limits) =>
   JSON.stringify({ timestamp, payload: { type: "token_count", rate_limits } });
+
+const accountLine = (timestamp, account_id, account_label, primary, secondary) =>
+  JSON.stringify({
+    timestamp,
+    payload: {
+      type: "token_count",
+      account_id,
+      account_label,
+      rate_limits: {
+        primary: { used_percent: primary },
+        secondary: { used_percent: secondary },
+      },
+    },
+  });
 
 test("maps primary->5h and secondary->weekly used_percent + resets", () => {
   const u = codexUsageFromRateLimit(SAMPLE, 1780000000000);
@@ -97,4 +112,82 @@ test("latestUsageFromLines tolerates malformed lines; null when none", () => {
   assert.equal(latestUsageFromLines(["not json {", "", '{"payload":{}}'], 0), null);
   const lines = ["{ broken", line("2026-06-03T11:00:00.000Z", SAMPLE), "also broken {"];
   assert.equal(latestUsageFromLines(lines, 0).fiveHour.pct, 1.0);
+});
+
+test("latestUsageAccountsFromLines returns the newest complete snapshot per account", () => {
+  const lines = [
+    accountLine("2026-06-03T10:00:00.000Z", "work", "Work", 5, 10),
+    accountLine("2026-06-03T10:05:00.000Z", "personal", "Personal", 8, 20),
+    accountLine("2026-06-03T11:00:00.000Z", "work", "Work", 3, 12),
+    accountLine("2026-06-03T12:00:00.000Z", "personal", "Personal", 9, 21),
+  ];
+  const out = latestUsageAccountsFromLines(lines, 0);
+  assert.equal(out.length, 2);
+  assert.equal(out[0].id, "personal");
+  assert.equal(out[0].usage.sevenDay.pct, 21);
+  assert.equal(out[1].id, "work");
+  assert.equal(out[1].usage.fiveHour.pct, 3);
+});
+
+test("latestUsageAccountsFromLines falls back to one default account when no id is logged", () => {
+  const out = latestUsageAccountsFromLines([line("2026-06-03T11:00:00.000Z", SAMPLE)], 0);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, "default");
+  assert.equal(out[0].label, "Account");
+});
+
+test("latestUsageAccountsFromLines reads account id from rate_limits.account_id", () => {
+  const inRateLimits = JSON.stringify({
+    timestamp: "2026-06-03T11:00:00.000Z",
+    payload: {
+      type: "token_count",
+      rate_limits: {
+        account_id: "work-123",
+        account_label: "Work",
+        primary: { used_percent: 4 },
+        secondary: { used_percent: 8 },
+      },
+    },
+  });
+  const out = latestUsageAccountsFromLines([inRateLimits], 0);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, "work-123");
+  assert.equal(out[0].label, "Work");
+});
+
+test("latestUsageAccountsFromLines falls back to payload.email when no id is set", () => {
+  const withEmail = JSON.stringify({
+    timestamp: "2026-06-03T11:00:00.000Z",
+    payload: {
+      type: "token_count",
+      email: "ada@example.com",
+      rate_limits: {
+        primary: { used_percent: 1 },
+        secondary: { used_percent: 2 },
+      },
+    },
+  });
+  const out = latestUsageAccountsFromLines([withEmail], 0);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, "ada@example.com");
+  // Label falls back to the id-shaped value when no label is logged.
+  assert.equal(out[0].label, "ada@example.com");
+});
+
+test("latestUsageAccountsFromLines reads id/label from a nested payload.account", () => {
+  const withAccountObj = JSON.stringify({
+    timestamp: "2026-06-03T11:00:00.000Z",
+    payload: {
+      type: "token_count",
+      account: { id: "team-42", label: "Team" },
+      rate_limits: {
+        primary: { used_percent: 6 },
+        secondary: { used_percent: 14 },
+      },
+    },
+  });
+  const out = latestUsageAccountsFromLines([withAccountObj], 0);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, "team-42");
+  assert.equal(out[0].label, "Team");
 });

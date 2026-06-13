@@ -7,7 +7,7 @@ import type { HarnessDef } from "./harnesses";
 import type { Preset } from "./presets";
 import type { BufferSearchHit } from "./pty";
 import type { Theme, ThemesFile } from "./themes";
-import type { UsageData } from "./usage";
+import type { UsageAccount, UsageData } from "./usage";
 import type { UsageHookStatus } from "./usage-hook";
 
 export type {
@@ -18,6 +18,7 @@ export type {
   Theme,
   ThemesFile,
   UsageData,
+  UsageAccount,
   UsageHookStatus,
 };
 
@@ -190,11 +191,11 @@ export interface AyaApi {
   listSnippets(): Promise<Snippet[]>;
   saveSnippets(snippets: Snippet[]): Promise<void>;
 
-  /** Read-only account-wide usage snapshot a user hook writes (null if none).
+  /** Read-only account-wide usage snapshots a user hook writes.
    *  Aya never fetches it — see electron/usage.ts. */
-  getUsage(): Promise<UsageData | null>;
-  /** Read-only Codex usage parsed from its local rollout logs (null if none). */
-  getCodexUsage(): Promise<UsageData | null>;
+  getUsage(): Promise<UsageAccount[]>;
+  /** Read-only Codex usage parsed from its local rollout logs. */
+  getCodexUsage(): Promise<UsageAccount[]>;
 
   // Optional usage-hook installer (writes ~/.claude/settings.json + a fetch
   // script). The Aya process never reads a token or calls the endpoint.
