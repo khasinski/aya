@@ -1201,8 +1201,10 @@
   box-shadow: 0 0 0 2px var(--bg-secondary);
 }
 .aya-settings-pane-shell {
-  min-height: 430px;
-  max-height: min(620px, calc(100vh - 188px));
+  /* Fixed height (not min/max) so the modal does not jump when switching to a
+     tab with less content. Tall tabs scroll inside; short tabs leave space at
+     the bottom. The cap shrinks to fit small viewports. */
+  height: min(620px, calc(100vh - 188px));
   overflow-y: auto;
   padding: 22px 24px 18px;
 }
