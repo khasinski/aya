@@ -7,9 +7,9 @@ import { CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
 import type { ControlStatusUpdate } from "./types";
 
 // Max control-socket message size before rejecting the request (bytes).
-const CONTROL_REQUEST_MAX_SIZE_BYTES = 64_000;
+export const CONTROL_REQUEST_MAX_SIZE_BYTES = 64_000;
 
-interface ControlServerOptions {
+export interface ControlServerOptions {
   getWindow: () => BrowserWindow | null;
   openProject: (directory: string) => void;
 }
@@ -75,10 +75,17 @@ async function handleRequest(
   }
 }
 
-export function startControlServer(options: ControlServerOptions): () => void {
-  fs.mkdirSync(path.dirname(CONTROL_SOCKET_PATH), { recursive: true });
+/** Boot the control server on an explicit socket path. Pure: takes no Electron
+ *  lifecycle dependency (no app.once), so tests can drive framing/limit/dispatch
+ *  against a tmp socket. The packaged startControlServer wraps this with the
+ *  canonical CONTROL_SOCKET_PATH and an app before-quit hook. */
+export function startControlServerOn(
+  socketPath: string,
+  options: ControlServerOptions,
+): () => void {
+  fs.mkdirSync(path.dirname(socketPath), { recursive: true });
   try {
-    fs.rmSync(CONTROL_SOCKET_PATH, { force: true });
+    fs.rmSync(socketPath, { force: true });
   } catch {
     // best effort
   }
@@ -111,22 +118,26 @@ export function startControlServer(options: ControlServerOptions): () => void {
     });
   });
 
-  server.listen(CONTROL_SOCKET_PATH, () => {
+  server.listen(socketPath, () => {
     try {
-      fs.chmodSync(CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS);
+      fs.chmodSync(socketPath, SOCKET_FILE_PERMISSIONS);
     } catch {
       // best effort
     }
   });
 
-  const stop = () => {
+  return () => {
     server.close();
     try {
-      fs.rmSync(CONTROL_SOCKET_PATH, { force: true });
+      fs.rmSync(socketPath, { force: true });
     } catch {
       // best effort
     }
   };
+}
+
+export function startControlServer(options: ControlServerOptions): () => void {
+  const stop = startControlServerOn(CONTROL_SOCKET_PATH, options);
   app.once("before-quit", stop);
   return stop;
 }
