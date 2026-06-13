@@ -932,12 +932,17 @@
 }
 
 /* Close ✕ on project tabs — mirrors the sidebar row close button: invisible
-   by default, shows on tab hover. Hover on the ✕ itself dims a chip behind
-   it so the click target reads. */
+   by default, shows on tab hover. Pinned to the tab's right edge (absolute) so
+   a long title or many narrow tabs can never push it outside the tab; it sits
+   over the title's faded end (see the ::before gradient below) instead. */
 .aya-tab-close {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
   opacity: 0;
   width: 16px; height: 16px;
-  margin-left: 4px;
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: 3px;
   color: var(--fg-tertiary);
@@ -948,6 +953,33 @@
 }
 .aya-tab:hover .aya-tab-close { opacity: 1; }
 .aya-tab-close:hover { background: var(--border-strong); color: var(--fg-primary); }
+
+/* Clip the tab so an over-long title can't spill past it, and fade the title's
+   right end into the tab background on hover so the ✕ (above) reads over a soft
+   gradient rather than directly on bare text. The fade only shows on hover,
+   matching when the ✕ appears. */
+.aya-tab { overflow: hidden; }
+/* The active-tab accent normally straddles the bottom seam (bottom: -1px);
+   pull it fully inside so overflow:hidden doesn't clip it. */
+.aya-tab--active::after { bottom: 0; }
+.aya-tab::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 48px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+  z-index: 1;
+  /* Fade to the hover background. Note `.aya-tab:hover` (0,2,0) outranks
+     `.aya-tab--active` (0,1,0), so a hovered tab — active or not — is always
+     --bg-tertiary; fading to --bg here would be darker than the tab and read as
+     a harsh patch. */
+  background: linear-gradient(to right, transparent, var(--bg-tertiary));
+}
+.aya-tab:hover::before { opacity: 1; }
 
 /* Tab layout: keep the project name fully visible (it's how the user
    identifies the tab). The path takes the remaining flex space and is the
