@@ -238,6 +238,12 @@ export interface AyaApi {
   setDockBadge(text: string): Promise<void>;
   /** Brings the aya window to the foreground (restore if minimized). */
   focusWindow(): Promise<void>;
+  /** Minimize the window (yellow traffic light). */
+  minimizeWindow(): Promise<void>;
+  /** Close the window (red traffic light). */
+  closeWindow(): Promise<void>;
+  /** Programmatic fullscreen control (used for the green traffic light in FS). */
+  setFullScreen(value: boolean): Promise<void>;
   /** Shows a native app notification for a waiting terminal. */
   showWaitingNotification(req: WaitingNotificationRequest): Promise<void>;
   cliStatus(): Promise<CliStatus>;

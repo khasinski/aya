@@ -285,6 +285,12 @@ export interface AyaApi {
   isFullScreen(): Promise<boolean>;
   setDockBadge(text: string): Promise<void>;
   focusWindow(): Promise<void>;
+  /** Minimize the window (yellow traffic light). */
+  minimizeWindow(): Promise<void>;
+  /** Close the window (red traffic light). */
+  closeWindow(): Promise<void>;
+  /** Programmatic fullscreen control (used for the green traffic light in FS). */
+  setFullScreen(value: boolean): Promise<void>;
   showWaitingNotification(req: WaitingNotificationRequest): Promise<void>;
   cliStatus(): Promise<CliStatus>;
   installCli(): Promise<CliStatus>;

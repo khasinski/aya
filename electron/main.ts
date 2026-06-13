@@ -1051,6 +1051,15 @@ function registerIpc(win: BrowserWindow): void {
     clipboard.writeText(requireString(value, "env:clipboard-write.text"));
   });
   ipcMain.handle("app:is-fullscreen", async () => win.isFullScreen());
+  ipcMain.handle("app:minimize", () => {
+    if (!win.isDestroyed()) win.minimize();
+  });
+  ipcMain.handle("app:close", () => {
+    if (!win.isDestroyed()) win.close();
+  });
+  ipcMain.handle("app:set-fullscreen", async (_e, value: unknown) => {
+    if (!win.isDestroyed()) win.setFullScreen(!!value);
+  });
   // Dock badge for unattended notifications (waiting terminals). Empty
   // string clears. macOS only; no-op on Linux/Windows for now since their
   // taskbar badge stories differ.

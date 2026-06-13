@@ -551,8 +551,11 @@ export function App() {
     for (const dir of queued) openProjectRef.current(dir);
   }, [didBootstrap]);
 
-  // Track fullscreen state so the topbar can drop its left padding (the slot
-  // for macOS traffic-light buttons, which hide in fullscreen).
+  // Track fullscreen state. Used to:
+  // - Hide the custom top bar (project tabs + brand + controls) completely
+  //   on macOS so the terminal gets true fullscreen height.
+  // - Render floating custom traffic lights in the top-left (another way
+  //   to present close/minimize/exit-fs when the normal top bar is gone).
   useEffect(() => {
     let active = true;
     void window.aya.isFullScreen().then((fs) => {
@@ -2235,6 +2238,30 @@ export function App() {
       }
       data-accent="green"
     >
+      {/* macOS fullscreen: hide the whole custom title bar (tabs etc). Provide
+          our own tiny traffic lights as a floating overlay so the user still
+          has immediate close / minimize / exit-fullscreen controls without
+          mousing to the top edge to reveal the system bar. */}
+      {window.aya.platform === "darwin" && isFullScreen && (
+        <div className="aya-traffic-lights">
+          <button
+            className="aya-tl aya-tl-close"
+            title="Close window"
+            onClick={() => void window.aya.closeWindow()}
+          />
+          <button
+            className="aya-tl aya-tl-minimize"
+            title="Minimize window"
+            onClick={() => void window.aya.minimizeWindow()}
+          />
+          <button
+            className="aya-tl aya-tl-fullscreen"
+            title="Exit full screen"
+            onClick={() => void window.aya.setFullScreen(false)}
+          />
+        </div>
+      )}
+
       <TopBar
         projects={projects}
         activeProjectId={activeProjectId}

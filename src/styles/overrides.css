@@ -83,26 +83,73 @@
 
 /* Make room for the (hidden) draggable titlebar inset on macOS. The
    padding-left clears the traffic-light buttons (close/minimize/maximize)
-   that sit at the top-left of the window in windowed mode. In fullscreen
-   the buttons are hidden, so we drop the padding and let the brand sit
-   flush against the left edge.
+   that sit at the top-left of the window in windowed mode.
 
-   Native macOS fullscreen reveals the system bar over the top edge when the
-   pointer hits the screen edge. Keep our project tabs below that overlay so
-   they do not disappear under it. */
+   In macOS fullscreen we completely hide the custom top bar (project tabs +
+   brand + right actions) so the terminal content can use the full window
+   height. We handle the traffic lights "in another way" by rendering our
+   own custom dots (see .aya-traffic-lights) as a tiny floating control in
+   the top-left during fullscreen. The native inset lights from
+   titleBarStyle:hiddenInset are still available via the macOS menu/titlebar
+   reveal when you push the pointer to the top edge. */
 .aya-app {
-  --aya-fullscreen-chrome-inset: 28px;
   padding-top: env(safe-area-inset-top, 0);
-}
-.aya-app--fullscreen {
-  padding-top: max(
-    env(safe-area-inset-top, 0px),
-    var(--aya-fullscreen-chrome-inset)
-  );
 }
 .aya-topbar { transition: padding-left 120ms ease-out; }
 .aya-app--macos .aya-topbar { padding-left: 78px; }
-.aya-app--fullscreen .aya-topbar { padding-left: 0; }
+
+/* Fullscreen: collapse the top bar row entirely and hide the header so
+   terminals + statusbar get the full viewport. No extra chrome inset needed
+   because there are no tabs to keep below the transient macOS bar. */
+.aya-app.aya-app--fullscreen {
+  grid-template-rows: 0 1fr 26px;
+}
+.aya-app.aya-app--fullscreen .aya-topbar {
+  display: none;
+}
+
+/* Custom traffic lights for macOS fullscreen (where we hide the whole
+   top bar). Tiny, low-profile colored dots in the top-left. They sit
+   on top of terminal content. Low opacity by default so they don't
+   distract during heavy TUI use; become fully opaque on hover.
+   Clicking red/yellow/green does the expected window action. */
+.aya-traffic-lights {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px;
+  /* Let underlying terminal be clickable except on the dots themselves */
+}
+.aya-traffic-lights button {
+  -webkit-app-region: no-drag;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  opacity: 0.25;
+  transition: opacity 120ms ease, transform 80ms ease;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25) inset;
+}
+.aya-traffic-lights:hover button {
+  opacity: 1;
+}
+.aya-traffic-lights button:hover {
+  transform: scale(1.1);
+}
+.aya-traffic-lights button:active {
+  transform: scale(0.95);
+  opacity: 0.9;
+}
+.aya-tl-close { background: #ff5f56; }
+.aya-tl-minimize { background: #ffbd2e; }
+.aya-tl-fullscreen { background: #27c93f; }
 
 /* The sidebar's drag-to-resize handle is positioned absolutely with
    top:0/bottom:0. Without a positioned ancestor it anchors to the viewport
