@@ -917,13 +917,12 @@ function registerIpc(win: BrowserWindow): void {
     ptyHost.search(requireString(query, "pty:search.query")),
   );
   ipcMain.handle("pty-host:restart", async () => {
-    try {
-      await ptyHost.restart();
-    } finally {
-      staleHostDetected = false;
-      const item = Menu.getApplicationMenu()?.getMenuItemById("restart-aya");
-      if (item) item.icon = nativeImage.createEmpty();
-    }
+    await ptyHost.restart();
+    // Clear only on success: if restart() throws, the stale state is still
+    // true and the amber icon must stay so the user can retry.
+    staleHostDetected = false;
+    const item = Menu.getApplicationMenu()?.getMenuItemById("restart-aya");
+    if (item) item.icon = nativeImage.createEmpty();
   });
 
   ipcMain.handle("projects:list", async () => listProjects());

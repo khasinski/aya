@@ -204,7 +204,15 @@ export class PtyHostClient {
       const line = this.buffer.slice(0, idx).trim();
       this.buffer = this.buffer.slice(idx + 1);
       if (!line) continue;
-      const message = JSON.parse(line) as PtyHostMessage;
+      let message: PtyHostMessage;
+      try {
+        message = JSON.parse(line) as PtyHostMessage;
+      } catch {
+        // Malformed line from a stale/crashing host - skip rather than
+        // letting the SyntaxError escape the event listener and become an
+        // uncaughtException that would crash the Electron main process.
+        continue;
+      }
       if ("type" in message && message.type === "event") {
         if (this.webContents && !this.webContents.isDestroyed()) {
           this.webContents.send("pty:event", message.event);

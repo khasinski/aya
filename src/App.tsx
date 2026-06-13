@@ -1232,7 +1232,14 @@ export function App() {
   // leave tabs stopped; the user restarts each with Shift+Enter). Used by both
   // the stale-host banner and the Settings action.
   const restartPtyHost = useCallback(async () => {
-    await window.aya.restartPtyHost();
+    try {
+      await window.aya.restartPtyHost();
+    } catch {
+      // Restart failed (host unreachable or already dead). The IPC handler
+      // only clears the stale flag on success, so the amber icon stays and
+      // the user can retry via "Restart Aya" from the menu.
+      return;
+    }
     setTerminals((prev) => {
       const next: typeof prev = {};
       for (const [id, t] of Object.entries(prev)) {
