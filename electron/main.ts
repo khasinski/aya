@@ -56,6 +56,7 @@ import {
   uninstallUsageHook,
 } from "./usage-hook";
 import { readRepoProjectConfig } from "./project-local";
+import { repairProcessPath } from "./shell-path";
 import { PtyHostClient } from "./pty-host-client";
 import {
   requirePositiveInt,
@@ -1166,6 +1167,16 @@ app.on("open-file", (event, filePath) => {
 
 app.whenReady().then(async () => {
   configureAppIdentity();
+
+  // Repair PATH before anything that resolves a binary. A GUI-launched app
+  // only inherits launchd's minimal PATH, so the user's CLIs (claude, codex,
+  // …) installed under ~/.local/bin / mise / asdf are invisible until we pull
+  // the real PATH from a login shell. Must run before createWindow (the
+  // renderer's first preset:list triggers a harness scan) and before the PTY
+  // host spawns (it inherits this process's env), so we await it here. The
+  // probe self-bounds (SIGKILL + guard timer), so a slow rc delays first paint
+  // by at most the probe timeout; a failed probe is a no-op.
+  await repairProcessPath();
 
   // In dev, replace Electron's default dock icon with ours so the running
   // instance is visually distinguishable. In packaged builds the bundle's

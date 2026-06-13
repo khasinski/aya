@@ -2,10 +2,15 @@
 //
 // We accept a literal `command` string from the renderer and wrap it in
 // `$SHELL -l -c 'cd CWD && exec COMMAND'`. Using the user's login shell —
-// not a hard-coded bash — means PATH additions from zsh's .zshrc /
-// .zprofile (mise, asdf, oh-my-zsh plugins, brew) work; otherwise users
-// on zsh would see "command not found: claude" because bash doesn't read
-// their rc files.
+// not a hard-coded bash — lets PATH from their login profile (.zprofile /
+// .zlogin, brew shellenv, /etc/paths) flow through; a bare bash wouldn't.
+//
+// CAVEAT: `-l -c` is a login but NON-interactive shell, so it does NOT source
+// .zshrc / .bashrc — exactly where many users add ~/.local/bin, mise, asdf.
+// Those dirs are recovered separately at startup by electron/shell-path.ts,
+// which repairs process.env.PATH from a login+interactive shell before this
+// host is spawned (the host inherits that env). Without that step, GUI-
+// launched Aya would show "command not found: claude" for those installs.
 
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -14,6 +19,7 @@ import { execFile } from "node:child_process";
 import type * as PtyModule from "node-pty";
 import type { PtyEvent, SpawnFailureReason, SpawnRequest } from "./types";
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
+import { userShell } from "./shell";
 
 // Timeout for the shell `command -v` existence check during spawn preflight.
 const COMMAND_CHECK_TIMEOUT_MS = 2500;
@@ -188,16 +194,6 @@ export function searchPtyOutputs(query: string): BufferSearchHit[] {
 
 function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
-}
-
-/** Resolve the user's login shell. GUI-launched macOS apps often don't get
- *  SHELL in their launchd environment, so fall back to the shell from the
- *  OS user database before using /bin/bash as the last resort. */
-function userShell(): string {
-  const envShell = process.env.SHELL?.trim();
-  if (envShell) return envShell;
-  const accountShell = os.userInfo().shell;
-  return accountShell && accountShell.trim() ? accountShell : "/bin/bash";
 }
 
 /** Build the shell argv for a given command + cwd. Uses the user's login
