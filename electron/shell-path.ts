@@ -130,8 +130,10 @@ export function resolveLoginShellPath(
  *  startup, before the PTY host is spawned or harnesses are scanned. Returns
  *  true if PATH actually changed (useful for tests/logging). No-op on any
  *  failure. */
-export async function repairProcessPath(): Promise<boolean> {
-  const resolved = await resolveLoginShellPath();
+export async function repairProcessPath(
+  resolvePath: typeof resolveLoginShellPath = resolveLoginShellPath,
+): Promise<boolean> {
+  const resolved = await resolvePath();
   if (!resolved) return false;
   const merged = mergePath(resolved, process.env.PATH);
   if (merged === process.env.PATH) return false;

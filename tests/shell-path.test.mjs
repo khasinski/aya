@@ -12,6 +12,7 @@ import {
   parseResolvedPath,
   mergePath,
   resolveLoginShellPath,
+  repairProcessPath,
 } from "../dist-electron/shell-path.js";
 
 test("shellPathProbeArgv builds a login+interactive shell that prints PATH", () => {
@@ -100,4 +101,33 @@ test("resolveLoginShellPath parses the PATH the shell prints", async () => {
     await resolveLoginShellPath("darwin", run),
     "/opt/homebrew/bin:/usr/bin",
   );
+});
+
+test("repairProcessPath prepends the resolved PATH into process.env.PATH", async () => {
+  const original = process.env.PATH;
+  try {
+    process.env.PATH = "/usr/bin:/sbin";
+    const changed = await repairProcessPath(() =>
+      Promise.resolve("/opt/homebrew/bin:/usr/bin:/Users/me/.local/bin"),
+    );
+    assert.equal(changed, true);
+    assert.equal(
+      process.env.PATH,
+      "/opt/homebrew/bin:/usr/bin:/Users/me/.local/bin:/sbin",
+    );
+  } finally {
+    process.env.PATH = original;
+  }
+});
+
+test("repairProcessPath leaves PATH unchanged when the shell probe fails", async () => {
+  const original = process.env.PATH;
+  try {
+    process.env.PATH = "/usr/bin:/bin";
+    const changed = await repairProcessPath(() => Promise.resolve(null));
+    assert.equal(changed, false);
+    assert.equal(process.env.PATH, "/usr/bin:/bin");
+  } finally {
+    process.env.PATH = original;
+  }
 });
