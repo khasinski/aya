@@ -15,7 +15,8 @@ import { promises as fs } from "node:fs";
 import { execFile } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
-import { isSafeBinaryName, userShell } from "./harnesses";
+import { isSafeBinaryName } from "./harnesses";
+import { userShell } from "./shell";
 
 export type HarnessKind = "claude" | "codex";
 

@@ -1,4 +1,6 @@
 import { test, expect } from "./fixtures";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // Closing a terminal from the sidebar context menu mutates both the tab list and
 // the active-selection state. The dangling-active-pointer class of bug (see #18)
@@ -48,4 +50,38 @@ test("closing a non-active terminal via the sidebar menu leaves the active one u
     window.locator(".aya-sidebar-row", { hasText: "shell 2" }),
   ).toHaveCount(0);
   await expect(window.locator(".aya-sidebar-row--active")).toHaveText(/shell 1/);
+});
+
+test("renaming a terminal via the sidebar menu opens the inline editor and persists", async ({
+  window,
+  seeded,
+}) => {
+  await window
+    .locator(".aya-sidebar-row", { hasText: "shell 2" })
+    .click({ button: "right" });
+  await window
+    .locator(".aya-context-menu-item", { hasText: "Rename terminal" })
+    .click();
+
+  const editor = window.locator(".aya-sidebar-rename");
+  await expect(editor).toBeVisible();
+  await editor.fill("renamed from menu");
+  await editor.press("Enter");
+
+  await expect(
+    window.locator(".aya-sidebar-row", { hasText: "renamed from menu" }),
+  ).toBeVisible();
+  await expect(
+    window.locator(".aya-sidebar-row", { hasText: "shell 2" }),
+  ).toHaveCount(0);
+  await expect
+    .poll(() => {
+      const raw = readFileSync(
+        join(seeded.ayaHome, "projects", "e2e-proj.json"),
+        "utf8",
+      );
+      const project = JSON.parse(raw) as { tabs: Array<{ id: string; name: string }> };
+      return project.tabs.find((tab) => tab.id === seeded.tabIds.right)?.name;
+    })
+    .toBe("renamed from menu");
 });
