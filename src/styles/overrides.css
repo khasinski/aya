@@ -83,26 +83,73 @@
 
 /* Make room for the (hidden) draggable titlebar inset on macOS. The
    padding-left clears the traffic-light buttons (close/minimize/maximize)
-   that sit at the top-left of the window in windowed mode. In fullscreen
-   the buttons are hidden, so we drop the padding and let the brand sit
-   flush against the left edge.
+   that sit at the top-left of the window in windowed mode.
 
-   Native macOS fullscreen reveals the system bar over the top edge when the
-   pointer hits the screen edge. Keep our project tabs below that overlay so
-   they do not disappear under it. */
+   In macOS fullscreen we completely hide the custom top bar (project tabs +
+   brand + right actions) so the terminal content can use the full window
+   height. We handle the traffic lights "in another way" by rendering our
+   own custom dots (see .aya-traffic-lights) as a tiny floating control in
+   the top-left during fullscreen. The native inset lights from
+   titleBarStyle:hiddenInset are still available via the macOS menu/titlebar
+   reveal when you push the pointer to the top edge. */
 .aya-app {
-  --aya-fullscreen-chrome-inset: 28px;
   padding-top: env(safe-area-inset-top, 0);
-}
-.aya-app--fullscreen {
-  padding-top: max(
-    env(safe-area-inset-top, 0px),
-    var(--aya-fullscreen-chrome-inset)
-  );
 }
 .aya-topbar { transition: padding-left 120ms ease-out; }
 .aya-app--macos .aya-topbar { padding-left: 78px; }
-.aya-app--fullscreen .aya-topbar { padding-left: 0; }
+
+/* Fullscreen: collapse the top bar row entirely and hide the header so
+   terminals + statusbar get the full viewport. No extra chrome inset needed
+   because there are no tabs to keep below the transient macOS bar. */
+.aya-app.aya-app--fullscreen {
+  grid-template-rows: 0 1fr 26px;
+}
+.aya-app.aya-app--fullscreen .aya-topbar {
+  display: none;
+}
+
+/* Custom traffic lights for macOS fullscreen (where we hide the whole
+   top bar). Tiny, low-profile colored dots in the top-left. They sit
+   on top of terminal content. Low opacity by default so they don't
+   distract during heavy TUI use; become fully opaque on hover.
+   Clicking red/yellow/green does the expected window action. */
+.aya-traffic-lights {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px;
+  /* Let underlying terminal be clickable except on the dots themselves */
+}
+.aya-traffic-lights button {
+  -webkit-app-region: no-drag;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  opacity: 0.25;
+  transition: opacity 120ms ease, transform 80ms ease;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25) inset;
+}
+.aya-traffic-lights:hover button {
+  opacity: 1;
+}
+.aya-traffic-lights button:hover {
+  transform: scale(1.1);
+}
+.aya-traffic-lights button:active {
+  transform: scale(0.95);
+  opacity: 0.9;
+}
+.aya-tl-close { background: #ff5f56; }
+.aya-tl-minimize { background: #ffbd2e; }
+.aya-tl-fullscreen { background: #27c93f; }
 
 /* The sidebar's drag-to-resize handle is positioned absolutely with
    top:0/bottom:0. Without a positioned ancestor it anchors to the viewport
@@ -885,12 +932,17 @@
 }
 
 /* Close ✕ on project tabs — mirrors the sidebar row close button: invisible
-   by default, shows on tab hover. Hover on the ✕ itself dims a chip behind
-   it so the click target reads. */
+   by default, shows on tab hover. Pinned to the tab's right edge (absolute) so
+   a long title or many narrow tabs can never push it outside the tab; it sits
+   over the title's faded end (see the ::before gradient below) instead. */
 .aya-tab-close {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
   opacity: 0;
   width: 16px; height: 16px;
-  margin-left: 4px;
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: 3px;
   color: var(--fg-tertiary);
@@ -901,6 +953,36 @@
 }
 .aya-tab:hover .aya-tab-close { opacity: 1; }
 .aya-tab-close:hover { background: var(--border-strong); color: var(--fg-primary); }
+
+/* Clip the tab so an over-long title can't spill past it, and fade the title's
+   right end into the tab background on hover so the ✕ (above) reads over a soft
+   gradient rather than directly on bare text. The fade only shows on hover,
+   matching when the ✕ appears. */
+.aya-tab { overflow: hidden; }
+/* The active-tab accent normally straddles the bottom seam (bottom: -1px);
+   pull it fully inside so overflow:hidden doesn't clip it. The z-index keeps
+   it above .aya-tab::before's gradient (z-index 1) and above .aya-tab-close
+   (z-index 2), so the green underline stays fully visible even when the tab
+   is hovered or the X is shown over it. */
+.aya-tab--active::after { bottom: 0; z-index: 3; }
+.aya-tab::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 48px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+  z-index: 1;
+  /* Fade to the hover background. Note `.aya-tab:hover` (0,2,0) outranks
+     `.aya-tab--active` (0,1,0), so a hovered tab — active or not — is always
+     --bg-tertiary; fading to --bg here would be darker than the tab and read as
+     a harsh patch. */
+  background: linear-gradient(to right, transparent, var(--bg-tertiary));
+}
+.aya-tab:hover::before { opacity: 1; }
 
 /* Tab layout: keep the project name fully visible (it's how the user
    identifies the tab). The path takes the remaining flex space and is the
@@ -1122,8 +1204,10 @@
   box-shadow: 0 0 0 2px var(--bg-secondary);
 }
 .aya-settings-pane-shell {
-  min-height: 430px;
-  max-height: min(620px, calc(100vh - 188px));
+  /* Fixed height (not min/max) so the modal does not jump when switching to a
+     tab with less content. Tall tabs scroll inside; short tabs leave space at
+     the bottom. The cap shrinks to fit small viewports. */
+  height: min(620px, calc(100vh - 188px));
   overflow-y: auto;
   padding: 22px 24px 18px;
 }

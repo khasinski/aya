@@ -45,7 +45,7 @@ import {
   type TerminalState,
   type Theme,
   type ThemeColors,
-  type UsageData,
+  type UsageAccount,
   type WorkingTab,
 } from "./types";
 
@@ -68,6 +68,7 @@ const PROJECT_STATE_VERSION = 1;
 const APP_THEME_STORAGE_KEY = "aya:app-theme";
 const MAC_OPTION_KEY_STORAGE_KEY = "aya:mac-option-key";
 const TERMINAL_FONT_FAMILY_STORAGE_KEY = "aya:terminal-font-family";
+const USAGE_HARNESS_NAME_STORAGE_KEY = "aya:usage-show-harness-name";
 
 type AppThemePreference = "system" | "light" | "dark";
 
@@ -93,6 +94,14 @@ function readMacOptionKeyMode(): MacOptionKeyMode {
 
 function readTerminalFontFamily(): string {
   return localStorage.getItem(TERMINAL_FONT_FAMILY_STORAGE_KEY) ?? "";
+}
+
+function readUsageHarnessNamePreference(): boolean {
+  try {
+    return localStorage.getItem(USAGE_HARNESS_NAME_STORAGE_KEY) !== "0";
+  } catch {
+    return true;
+  }
 }
 
 // Hard fallback used only if the themes file is somehow empty before boot
@@ -405,8 +414,10 @@ export function App() {
     Record<string, string | null>
   >({});
   const [git, setGit] = useState<Record<string, GitInfo>>({});
-  const [usage, setUsage] = useState<UsageData | null>(null);
-  const [codexUsage, setCodexUsage] = useState<UsageData | null>(null);
+  const [usageAccounts, setUsageAccounts] = useState<UsageAccount[]>([]);
+  const [codexUsageAccounts, setCodexUsageAccounts] = useState<
+    UsageAccount[]
+  >([]);
   const [newProjectModal, setNewProjectModal] =
     useState<NewProjectModalState | null>(null);
   const [missingDirQueue, setMissingDirQueue] = useState<MissingDirEntry[]>([]);
@@ -423,6 +434,9 @@ export function App() {
     useState<MacOptionKeyMode>(readMacOptionKeyMode);
   const [terminalFontFamily, setTerminalFontFamily] =
     useState(readTerminalFontFamily);
+  const [showUsageHarnessName, setShowUsageHarnessName] = useState(
+    readUsageHarnessNamePreference,
+  );
   const effectiveTerminalFontFamily = terminalFontFamily.trim() || undefined;
   const [settingsInitialTab, setSettingsInitialTab] =
     useState<SettingsTab>("general");
@@ -476,10 +490,10 @@ export function App() {
     let cancelled = false;
     const refresh = () => {
       void window.aya.getUsage().then((u) => {
-        if (!cancelled) setUsage(u);
+        if (!cancelled) setUsageAccounts(u);
       });
       void window.aya.getCodexUsage().then((u) => {
-        if (!cancelled) setCodexUsage(u);
+        if (!cancelled) setCodexUsageAccounts(u);
       });
     };
     refresh();
@@ -537,8 +551,11 @@ export function App() {
     for (const dir of queued) openProjectRef.current(dir);
   }, [didBootstrap]);
 
-  // Track fullscreen state so the topbar can drop its left padding (the slot
-  // for macOS traffic-light buttons, which hide in fullscreen).
+  // Track fullscreen state. Used to:
+  // - Hide the custom top bar (project tabs + brand + controls) completely
+  //   on macOS so the terminal gets true fullscreen height.
+  // - Render floating custom traffic lights in the top-left (another way
+  //   to present close/minimize/exit-fs when the normal top bar is gone).
   useEffect(() => {
     let active = true;
     void window.aya.isFullScreen().then((fs) => {
@@ -1232,7 +1249,14 @@ export function App() {
   // leave tabs stopped; the user restarts each with Shift+Enter). Used by both
   // the stale-host banner and the Settings action.
   const restartPtyHost = useCallback(async () => {
-    await window.aya.restartPtyHost();
+    try {
+      await window.aya.restartPtyHost();
+    } catch {
+      // Restart failed (host unreachable or already dead). The IPC handler
+      // only clears the stale flag on success, so the amber icon stays and
+      // the user can retry via "Restart Aya" from the menu.
+      return;
+    }
     setTerminals((prev) => {
       const next: typeof prev = {};
       for (const [id, t] of Object.entries(prev)) {
@@ -1773,6 +1797,15 @@ export function App() {
     }
   }, []);
 
+  const updateShowUsageHarnessName = useCallback((next: boolean) => {
+    setShowUsageHarnessName(next);
+    try {
+      localStorage.setItem(USAGE_HARNESS_NAME_STORAGE_KEY, next ? "1" : "0");
+    } catch {
+      /* ignore — localStorage can be unavailable in odd embedded contexts */
+    }
+  }, []);
+
   useEffect(() => {
     const root = document.documentElement;
     if (appThemePreference === "system") {
@@ -2205,6 +2238,30 @@ export function App() {
       }
       data-accent="green"
     >
+      {/* macOS fullscreen: hide the whole custom title bar (tabs etc). Provide
+          our own tiny traffic lights as a floating overlay so the user still
+          has immediate close / minimize / exit-fullscreen controls without
+          mousing to the top edge to reveal the system bar. */}
+      {window.aya.platform === "darwin" && isFullScreen && (
+        <div className="aya-traffic-lights">
+          <button
+            className="aya-tl aya-tl-close"
+            title="Close window"
+            onClick={() => void window.aya.closeWindow()}
+          />
+          <button
+            className="aya-tl aya-tl-minimize"
+            title="Minimize window"
+            onClick={() => void window.aya.minimizeWindow()}
+          />
+          <button
+            className="aya-tl aya-tl-fullscreen"
+            title="Exit full screen"
+            onClick={() => void window.aya.setFullScreen(false)}
+          />
+        </div>
+      )}
+
       <TopBar
         projects={projects}
         activeProjectId={activeProjectId}
@@ -2224,8 +2281,9 @@ export function App() {
         onOpenSearch={() => setShowSearch(true)}
         onOpenSettings={openSettings}
         projectBadges={projectBadges}
-        usage={usage}
-        codexUsage={codexUsage}
+        usageAccounts={usageAccounts}
+        codexUsageAccounts={codexUsageAccounts}
+        showUsageHarnessName={showUsageHarnessName}
       />
       {!didBootstrap ? (
         <main className="aya-empty aya-empty--loading" aria-busy="true">
@@ -2567,6 +2625,8 @@ export function App() {
           onAppThemePreferenceChange={updateAppThemePreference}
           terminalFontFamily={terminalFontFamily}
           onTerminalFontFamilyChange={updateTerminalFontFamily}
+          showUsageHarnessName={showUsageHarnessName}
+          onShowUsageHarnessNameChange={updateShowUsageHarnessName}
           macOptionKeyMode={macOptionKeyMode}
           onMacOptionKeyModeChange={updateMacOptionKeyMode}
           initialTab={settingsInitialTab}

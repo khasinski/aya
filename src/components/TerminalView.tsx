@@ -202,6 +202,10 @@ export function TerminalView({
   // via focus-reporting mode (DECSET 1004). Gates the Shift+Enter soft newline.
   const richInputRef = useRef(false);
   const fitFrameRef = useRef<number | null>(null);
+  // Set once we have emitted the first real (non-replay) PTY data chunk for a
+  // freshly-started terminal. Lets us issue one post-load PTY reassert exactly
+  // once so harnesses like grok pick up the real geometry via SIGWINCH.
+  const didPostLoadResizeRef = useRef(false);
   const replayingOutputRef = useRef(0);
   const optionSideRef = useRef<OptionSide>("unknown");
   const macOptionKeyModeRef = useRef(macOptionKeyMode);
@@ -285,6 +289,36 @@ export function TerminalView({
       }
     });
   }, []);
+
+  /**
+   * Force the PTY/child to re-know the terminal size by emitting a SIGWINCH.
+   * - For ordinary shells: re-send the current size (harmless idempotent SIGWINCH).
+   * - For rich TUIs (richInputRef via DECSET 1004): nudge size by one row then
+   *   restore so the harness perceives a size *change* and redraws its
+   *   static/fullscreen layout from its internal model.
+   *
+   * We never call term.resize() / fitTerminal() here so the xterm-side state
+   * is untouched (preserves the "no reflow on re-show" contract for scrollback).
+   * We never synthesize keyboard input like ^L either, since several harnesses
+   * (grok) use ^L for their own features.
+   */
+  const forcePtyReassert = useCallback(() => {
+    const t = xtermRef.current;
+    if (!t || t.cols <= 0 || t.rows <= 0) return;
+    const c = t.cols;
+    const r = t.rows;
+    if (richInputRef.current) {
+      void window.aya.ptyResize(terminal.id, c, r + 1);
+      setTimeout(() => {
+        const tt = xtermRef.current;
+        if (tt && tt.cols === c && tt.rows === r) {
+          void window.aya.ptyResize(terminal.id, c, r);
+        }
+      }, 0);
+    } else {
+      void window.aya.ptyResize(terminal.id, c, r);
+    }
+  }, [terminal.id]);
 
   const repairTerminalRender = useCallback(
     (shouldFocus = false) => {
@@ -404,6 +438,14 @@ export function TerminalView({
           });
         } else {
           term.write(displayChunk);
+        }
+        if (!event.replay && !didPostLoadResizeRef.current) {
+          didPostLoadResizeRef.current = true;
+          // After the first non-replay chunk arrives, force a SIGWINCH so
+          // harnesses like grok that lay out their fullscreen UI on start or
+          // on SIGWINCH observe the real pane size rather than the 80x24
+          // fallback present at ptySpawn time.
+          forcePtyReassert();
         }
         if (onPtyData) onPtyData(event.chunk);
       } else if (event.type === "exit") {
@@ -593,6 +635,7 @@ export function TerminalView({
         cancelAnimationFrame(fitFrameRef.current);
         fitFrameRef.current = null;
       }
+      didPostLoadResizeRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminal.id]);
@@ -626,15 +669,18 @@ export function TerminalView({
     if (!isVisible) return;
     // Repaint the freshly-shown terminal (webgl atlas, scrollback). Focus is
     // NOT done here — it's owned by the isActive effect below, so a concurrent
-    // fit can't swallow it.
+    // fit can't swallow it. Also re-assert size to the PTY (with nudge for
+    // rich TUIs) so harnesses re-render their static layout when the terminal
+    // view is brought back (tab switch, split activation, etc.).
     repairTerminalRender(false);
+    forcePtyReassert();
     const frame = requestAnimationFrame(() => repairTerminalRender(false));
     const timer = setTimeout(() => repairTerminalRender(false), RENDER_REPAIR_DELAY_MS);
     return () => {
       cancelAnimationFrame(frame);
       clearTimeout(timer);
     };
-  }, [isVisible, repairTerminalRender]);
+  }, [isVisible, repairTerminalRender, forcePtyReassert]);
 
   // Single source of truth for keyboard focus: whenever this becomes THE active
   // terminal (tab switch, split-pane navigation, or an overlay/modal closing),
@@ -650,6 +696,13 @@ export function TerminalView({
         const host = containerRef.current;
         if (term && host && host.clientWidth > 0 && host.clientHeight > 0) {
           term.focus();
+
+          // When we switch *to* this pane as the active one (split navigation or
+          // click), reassert size to PTY (nudge if rich). Harnesses in other
+          // panes may have been the "front" one; the newly focused rich TUI
+          // often needs a fresh SIGWINCH (or size delta) to repaint its focused
+          // static layout.
+          forcePtyReassert();
         }
       } catch {
         /* ignore — xterm may be mid-dispose */
@@ -664,11 +717,16 @@ export function TerminalView({
       cancelAnimationFrame(raf);
       clearTimeout(timer);
     };
-  }, [wantsFocus]);
+  }, [wantsFocus, forcePtyReassert]);
 
   useEffect(() => {
     if (!isVisible) return;
-    const onResumeRender = () => repairTerminalRender(false);
+    // Wake/restore: repaint + idempotent resize, and re-assert PTY size with a
+    // rich-TUI nudge so the harness redraws its static layout.
+    const onResumeRender = () => {
+      repairTerminalRender(false);
+      forcePtyReassert();
+    };
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") onResumeRender();
     };
@@ -680,7 +738,7 @@ export function TerminalView({
       window.removeEventListener("pageshow", onResumeRender);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [isVisible, repairTerminalRender]);
+  }, [isVisible, repairTerminalRender, forcePtyReassert]);
 
   useEffect(() => {
     const onResize = () => fitTerminal();
@@ -727,6 +785,7 @@ export function TerminalView({
     lastRestartTriggerRef.current = restartTrigger;
     const term = xtermRef.current;
     if (!term) return;
+    didPostLoadResizeRef.current = false;
     setIsRestoring(true);
     term.writeln("\x1b[2m[restarting…]\x1b[0m");
     void window.aya.ptySpawn({

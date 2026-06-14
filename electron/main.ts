@@ -48,8 +48,8 @@ import { scanHarnesses } from "./harnesses";
 import { isInternalNavigationUrl, parseHttpUrl } from "./navigation";
 import { listPresets, savePresets } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
-import { readUsage } from "./usage";
-import { readCodexUsage } from "./usage-codex";
+import { readUsageAccounts } from "./usage";
+import { readCodexUsageAccounts } from "./usage-codex";
 import {
   usageHookStatus,
   installUsageHook,
@@ -918,13 +918,12 @@ function registerIpc(win: BrowserWindow): void {
     ptyHost.search(requireString(query, "pty:search.query")),
   );
   ipcMain.handle("pty-host:restart", async () => {
-    try {
-      await ptyHost.restart();
-    } finally {
-      staleHostDetected = false;
-      const item = Menu.getApplicationMenu()?.getMenuItemById("restart-aya");
-      if (item) item.icon = nativeImage.createEmpty();
-    }
+    await ptyHost.restart();
+    // Clear only on success: if restart() throws, the stale state is still
+    // true and the amber icon must stay so the user can retry.
+    staleHostDetected = false;
+    const item = Menu.getApplicationMenu()?.getMenuItemById("restart-aya");
+    if (item) item.icon = nativeImage.createEmpty();
   });
 
   ipcMain.handle("projects:list", async () => listProjects());
@@ -959,10 +958,10 @@ function registerIpc(win: BrowserWindow): void {
     saveSnippets(validateSnippetArray(snippets)),
   );
   // Read-only: the account-wide usage snapshot a user hook writes (no fetch).
-  ipcMain.handle("usage:get", async () => readUsage());
+  ipcMain.handle("usage:get", async () => readUsageAccounts());
   // Read-only: Codex usage, parsed from its own local rollout logs (Codex
   // writes its rate-limit % there, so no token/endpoint/hook is needed).
-  ipcMain.handle("usage:get-codex", async () => readCodexUsage());
+  ipcMain.handle("usage:get-codex", async () => readCodexUsageAccounts());
   // Optional, user-enabled usage hook installer (writes ~/.claude/settings.json
   // + a fetch script). The Aya process never reads a token or calls the
   // endpoint — that happens later in the script, run by Claude Code.
@@ -1053,6 +1052,15 @@ function registerIpc(win: BrowserWindow): void {
     clipboard.writeText(requireString(value, "env:clipboard-write.text"));
   });
   ipcMain.handle("app:is-fullscreen", async () => win.isFullScreen());
+  ipcMain.handle("app:minimize", () => {
+    if (!win.isDestroyed()) win.minimize();
+  });
+  ipcMain.handle("app:close", () => {
+    if (!win.isDestroyed()) win.close();
+  });
+  ipcMain.handle("app:set-fullscreen", async (_e, value: unknown) => {
+    if (!win.isDestroyed()) win.setFullScreen(!!value);
+  });
   // Dock badge for unattended notifications (waiting terminals). Empty
   // string clears. macOS only; no-op on Linux/Windows for now since their
   // taskbar badge stories differ.

@@ -1,6 +1,6 @@
 {
   "name": "aya",
-  "version": "0.4.2",
+  "version": "0.5.0-beta",
   "private": true,
   "description": "Agentic terminal manager — Claude Code / Codex / shell sessions organized across projects.",
   "engines": {
@@ -19,6 +19,7 @@
   ],
   "main": "dist-electron/main.js",
   "type": "commonjs",
+  "desktopName": "Aya",
   "scripts": {
     "dev": "concurrently -k -n vite,tsc,electron -c green,blue,yellow \"npm:dev:renderer\" \"npm:dev:tsc\" \"npm:dev:electron\"",
     "dev:renderer": "vite",
@@ -64,6 +65,9 @@
     "vite": "^8.0.14",
     "wait-on": "^9.0.10"
   },
+  "overrides": {
+    "shell-quote": "^1.8.4"
+  },
   "build": {
     "appId": "com.aya.app",
     "productName": "Aya",
@@ -96,6 +100,11 @@
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Aya lets command-line tools you run in the terminal (such as a voice or dictation plugin) record from the microphone. Aya itself never records — the microphone is used only by the command you launch, and you can revoke this in System Settings > Privacy & Security > Microphone."
       }
+    },
+    "linux": {
+      "syncDesktopName": true,
+      "synopsis": "Agentic terminal manager",
+      "category": "Development;TerminalEmulator;"
     },
     "extraMetadata": {
       "main": "dist-electron/main.js"

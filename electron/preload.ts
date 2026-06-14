@@ -74,6 +74,9 @@ const api: AyaApi = {
   isFullScreen: () => ipcRenderer.invoke("app:is-fullscreen"),
   setDockBadge: (text) => ipcRenderer.invoke("app:set-dock-badge", text),
   focusWindow: () => ipcRenderer.invoke("app:focus-window"),
+  minimizeWindow: () => ipcRenderer.invoke("app:minimize"),
+  closeWindow: () => ipcRenderer.invoke("app:close"),
+  setFullScreen: (value: boolean) => ipcRenderer.invoke("app:set-fullscreen", value),
   showWaitingNotification: (req) =>
     ipcRenderer.invoke("app:notify-waiting", req),
   cliStatus: () => ipcRenderer.invoke("app:cli-status"),

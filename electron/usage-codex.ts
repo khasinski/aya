@@ -11,9 +11,12 @@
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { UsageData } from "./usage";
+import type { UsageAccount, UsageData } from "./usage";
+import { usageAccountFromData } from "./usage";
 
-const CODEX_HOME =
+/** The default Codex home — the env override, else ~/.codex. Additional homes
+ *  (second accounts) are derived from preset commands and passed in explicitly. */
+export const DEFAULT_CODEX_HOME =
   process.env.CODEX_HOME && process.env.CODEX_HOME.trim()
     ? path.resolve(process.env.CODEX_HOME)
     : path.join(os.homedir(), ".codex");
@@ -24,6 +27,61 @@ const MAX_ROLLOUTS_SCANNED = 20;
 function isoFromUnixSeconds(sec: unknown): string | undefined {
   if (typeof sec !== "number" || !Number.isFinite(sec)) return undefined;
   return new Date(sec * 1000).toISOString();
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  for (const v of values) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return undefined;
+}
+
+function accountMetaFromEvent(obj: {
+  payload?: Record<string, unknown>;
+}): { id: string; label: string } {
+  const payload = obj.payload ?? {};
+  const rl =
+    typeof payload.rate_limits === "object" && payload.rate_limits !== null
+      ? (payload.rate_limits as Record<string, unknown>)
+      : {};
+  const account =
+    typeof payload.account === "object" && payload.account !== null
+      ? (payload.account as Record<string, unknown>)
+      : {};
+  const id =
+    firstString(
+      rl.account_id,
+      rl.accountId,
+      rl.user_id,
+      rl.userId,
+      rl.email,
+      payload.account_id,
+      payload.accountId,
+      payload.user_id,
+      payload.userId,
+      payload.email,
+      account.id,
+      account.account_id,
+      account.user_id,
+      account.email,
+    ) ?? "default";
+  const label =
+    firstString(
+      rl.account_label,
+      rl.accountLabel,
+      rl.account_name,
+      rl.accountName,
+      rl.email,
+      payload.account_label,
+      payload.accountLabel,
+      payload.account_name,
+      payload.accountName,
+      payload.email,
+      account.label,
+      account.name,
+      account.email,
+    ) ?? (id === "default" ? "Account" : id);
+  return { id, label };
 }
 
 /** Map Codex's rate_limits object to Aya's shared UsageData. `primary` is the
@@ -80,11 +138,41 @@ export function latestUsageFromLines(
   return null;
 }
 
+export function latestUsageAccountsFromLines(
+  lines: string[],
+  fallbackMs: number,
+): UsageAccount[] {
+  const byId = new Map<string, UsageAccount>();
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].includes('"rate_limits"')) continue;
+    let obj: { timestamp?: unknown; payload?: Record<string, unknown> };
+    try {
+      obj = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    const rl = obj?.payload?.rate_limits;
+    if (!rl || typeof rl !== "object") continue;
+    const tsMs =
+      typeof obj.timestamp === "string" ? Date.parse(obj.timestamp) : NaN;
+    const usage = codexUsageFromRateLimit(
+      rl,
+      Number.isFinite(tsMs) ? tsMs : fallbackMs,
+    );
+    if (!usage) continue;
+    const meta = accountMetaFromEvent(obj);
+    if (!byId.has(meta.id)) {
+      byId.set(meta.id, usageAccountFromData(usage, meta.id, meta.label));
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
 /** The most-recently-modified rollout files under ~/.codex/sessions, newest
  *  first, capped — so an old session that just hasn't emitted a snapshot yet
  *  doesn't sink the chip, without reading the whole history every poll. */
 async function recentRolloutFiles(): Promise<{ file: string; mtimeMs: number }[]> {
-  const root = path.join(CODEX_HOME, "sessions");
+  const root = path.join(DEFAULT_CODEX_HOME, "sessions");
   const found: { file: string; mtimeMs: number }[] = [];
   async function walk(dir: string): Promise<void> {
     let entries: import("node:fs").Dirent[];
@@ -127,4 +215,23 @@ export async function readCodexUsage(): Promise<UsageData | null> {
     if (usage) return usage;
   }
   return null;
+}
+
+/** Read all Codex account-wide usage snapshots discoverable in recent rollouts.
+ *  When Codex logs do not expose an account id, this returns at most one
+ *  "Account" entry, preserving the previous single-chip behavior. */
+export async function readCodexUsageAccounts(): Promise<UsageAccount[]> {
+  const byId = new Map<string, UsageAccount>();
+  for (const f of await recentRolloutFiles()) {
+    let raw: string;
+    try {
+      raw = await fs.readFile(f.file, "utf-8");
+    } catch {
+      continue;
+    }
+    for (const account of latestUsageAccountsFromLines(raw.split("\n"), f.mtimeMs)) {
+      if (!byId.has(account.id)) byId.set(account.id, account);
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.label.localeCompare(b.label));
 }

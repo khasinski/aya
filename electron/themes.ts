@@ -137,10 +137,75 @@ export const TOKYO_NIGHT: Theme = {
   },
 };
 
+/** Canonical Solarized Light, mapped per Ethan Schoonover's spec
+ *  (base3 background, base00 foreground, the same accent hues as the dark
+ *  variant). The companion to SOLARIZED_DARK for users who switch off at
+ *  daytime. */
+export const SOLARIZED_LIGHT: Theme = {
+  id: "solarized-light",
+  name: "Solarized Light",
+  colors: {
+    background: "#fdf6e3",
+    foreground: "#657b83",
+    cursor: "#586e75",
+    cursorAccent: "#fdf6e3",
+    selectionBackground: "rgba(147,161,161,0.4)",
+    black: "#073642",
+    red: "#dc322f",
+    green: "#859900",
+    yellow: "#b58900",
+    blue: "#268bd2",
+    magenta: "#d33682",
+    cyan: "#2aa198",
+    white: "#eee8d5",
+    brightBlack: "#002b36",
+    brightRed: "#cb4b16",
+    brightGreen: "#586e75",
+    brightYellow: "#657b83",
+    brightBlue: "#839496",
+    brightMagenta: "#6c71c4",
+    brightCyan: "#93a1a1",
+    brightWhite: "#fdf6e3",
+  },
+};
+
+/** GitHub Light Primer palette — the same scheme github.com uses for its
+ *  Light theme. Pulled from the Windows Terminal "GitHub Light" scheme so the
+ *  ANSI mappings match what GitHub-rendered docs/code blocks look like. */
+export const GITHUB_LIGHT: Theme = {
+  id: "github-light",
+  name: "GitHub Light",
+  colors: {
+    background: "#ffffff",
+    foreground: "#24292f",
+    cursor: "#24292f",
+    cursorAccent: "#ffffff",
+    selectionBackground: "rgba(33,139,255,0.2)",
+    black: "#24292f",
+    red: "#cf222e",
+    green: "#116329",
+    yellow: "#4d2d00",
+    blue: "#0969da",
+    magenta: "#8250df",
+    cyan: "#1b7c83",
+    white: "#6e7781",
+    brightBlack: "#57606a",
+    brightRed: "#a40e26",
+    brightGreen: "#1a7f37",
+    brightYellow: "#633c01",
+    brightBlue: "#218bff",
+    brightMagenta: "#a475f9",
+    brightCyan: "#3192aa",
+    brightWhite: "#8c959f",
+  },
+};
+
 export const DEFAULT_THEMES: readonly Theme[] = [
   AYA_DARK,
   SOLARIZED_DARK,
   TOKYO_NIGHT,
+  SOLARIZED_LIGHT,
+  GITHUB_LIGHT,
 ];
 
 // ----- Persistence -----------------------------------------------------------

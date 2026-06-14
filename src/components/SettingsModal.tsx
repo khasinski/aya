@@ -24,6 +24,8 @@ interface Props {
   onAppThemePreferenceChange: (theme: "system" | "light" | "dark") => void;
   terminalFontFamily: string;
   onTerminalFontFamilyChange: (fontFamily: string) => void;
+  showUsageHarnessName: boolean;
+  onShowUsageHarnessNameChange: (show: boolean) => void;
   macOptionKeyMode: MacOptionKeyMode;
   onMacOptionKeyModeChange: (mode: MacOptionKeyMode) => void;
   onClose: () => void;
@@ -159,6 +161,8 @@ export function SettingsModal({
   onAppThemePreferenceChange,
   terminalFontFamily,
   onTerminalFontFamilyChange,
+  showUsageHarnessName,
+  onShowUsageHarnessNameChange,
   macOptionKeyMode,
   onMacOptionKeyModeChange,
   onClose,
@@ -789,6 +793,34 @@ export function SettingsModal({
           >
             Restarts the background terminal host. Use after an update if
             terminals behave like an older version.
+          </SettingsRow>
+          <SettingsRow
+            icon="donut_large"
+            title="Display harness name in usage icons"
+            control={(
+              <div className="aya-settings-segmented" aria-label="Usage icons">
+                {([
+                  [true, "Show names"],
+                  [false, "Compact rings"],
+                ] as const).map(([show, label]) => (
+                  <button
+                    key={String(show)}
+                    type="button"
+                    className={`aya-settings-segment ${
+                      showUsageHarnessName === show
+                        ? "aya-settings-segment--active"
+                        : ""
+                    }`}
+                    onClick={() => onShowUsageHarnessNameChange(show)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          >
+            Show Claude/Codex names in the top-bar usage icons, or use compact
+            progress rings.
           </SettingsRow>
           <SettingsRow
             icon="donut_large"

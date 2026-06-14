@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import type { UsageData, UsageWindow } from "../types";
+import type { UsageAccount, UsageData, UsageWindow } from "../types";
 
 // A usage snapshot older than this means the source stopped updating — dim it.
 const USAGE_STALE_AFTER_MS = 15 * 60 * 1000;
-const CHIP_MUTED_COLOR = "#8b949e";
-const CHIP_BORDER_COLOR = "#30363d";
+const CHIP_MUTED_COLOR = "var(--fg-tertiary)";
+const CHIP_BORDER_COLOR = "var(--border)";
 
 function isUsageStale(u: UsageData): boolean {
   const t = Date.parse(u.updatedAt);
@@ -81,18 +81,31 @@ function UsageRow({
   );
 }
 
-/** Account-wide usage chip (icon + popover) for one agent. The numbers are
- *  account-global — all sessions / devices share the limits, never per-project
- *  or per-terminal — so the popover says so explicitly. `accent` is the agent's
- *  brand color; `label` is e.g. "Claude" or "Codex". */
+function averageWeeklyPct(accounts: UsageAccount[]): number {
+  if (accounts.length === 0) return 0;
+  const total = accounts.reduce((sum, account) => {
+    return sum + account.usage.sevenDay.pct;
+  }, 0);
+  return total / accounts.length;
+}
+
+function allUsageStale(accounts: UsageAccount[]): boolean {
+  return accounts.length > 0 && accounts.every((a) => isUsageStale(a.usage));
+}
+
+/** Account-wide usage chip (icon + popover) for one agent. The top-level number
+ *  is average weekly percent used across detected accounts; the popover shows
+ *  each account's own limits. */
 export function UsageChip({
-  usage,
+  accounts,
   label,
   accent,
+  showHarnessName,
 }: {
-  usage: UsageData;
+  accounts: UsageAccount[];
   label: string;
   accent: string;
+  showHarnessName: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -106,13 +119,19 @@ export function UsageChip({
     return () => window.removeEventListener("pointerdown", onPointerDown, true);
   }, [open]);
 
-  const stale = isUsageStale(usage);
+  if (accounts.length === 0) return null;
+
+  const stale = allUsageStale(accounts);
+  const weeklyPct = averageWeeklyPct(accounts);
+  const ringPct = Math.max(0, Math.min(100, weeklyPct));
+  const accountText =
+    accounts.length === 1 ? "1 account" : `${accounts.length} accounts`;
 
   return (
     <div className="aya-recent-projects" ref={ref}>
       <button
         className="aya-iconbtn"
-        title={`${label} usage — account-wide (all sessions, not this project)`}
+        title={`${label} usage — ${accountText}, account-wide (all sessions, not this project)`}
         aria-label={`${label} usage, account-wide`}
         // Don't steal keyboard focus from the active terminal: peeking at usage
         // shouldn't force a re-click to resume typing (the old Settings-focus
@@ -122,36 +141,141 @@ export function UsageChip({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        style={{ width: "auto", gap: 6, padding: "0 8px", opacity: stale ? 0.5 : 1 }}
+        style={{
+          width: "auto",
+          gap: showHarnessName ? 7 : 6,
+          padding: showHarnessName ? "0 9px" : "0 7px",
+          opacity: stale ? 0.5 : 1,
+          background: showHarnessName ? "var(--bg-tertiary)" : undefined,
+          // .aya-iconbtn sets the Material Symbols icon font; the chip has no
+          // glyph icon, so reset to the UI sans so label/number text doesn't
+          // inherit the icon font (which rendered them in the wrong typeface).
+          fontFamily: "var(--font-sans)",
+        }}
       >
-        <span style={{ fontFamily: "Material Symbols Outlined", color: accent }}>
-          speed
-        </span>
+        {showHarnessName ? (
+          <>
+            <span
+              aria-hidden="true"
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: accent,
+                flex: "0 0 auto",
+              }}
+            />
+            <span style={{ color: CHIP_MUTED_COLOR, fontSize: 11 }}>{label}</span>
+          </>
+        ) : (
+          <span
+            aria-hidden="true"
+            style={{
+              width: 19,
+              height: 19,
+              borderRadius: "50%",
+              background: `conic-gradient(${accent} ${ringPct}%, ${CHIP_BORDER_COLOR} 0)`,
+              position: "relative",
+              flex: "0 0 auto",
+            }}
+          >
+            <span
+              style={{
+                position: "absolute",
+                inset: 4,
+                borderRadius: "50%",
+                background: "var(--bg-secondary)",
+              }}
+            />
+          </span>
+        )}
         <span
-          style={{ fontVariantNumeric: "tabular-nums", fontSize: 12, color: accent }}
+          style={{
+            fontVariantNumeric: "tabular-nums",
+            fontSize: 12,
+            fontWeight: showHarnessName ? 650 : 600,
+            color: "var(--fg-primary)",
+            // Numbers always in the mono stack (tabular), matching the mockup.
+            fontFamily:
+              '"SF Mono", "Cascadia Mono", "Roboto Mono", ui-monospace, monospace',
+          }}
         >
-          {Math.round(usage.sevenDay.pct)}%
+          {Math.round(weeklyPct)}%
         </span>
       </button>
       {open && (
-        <div className="aya-recent-menu" role="menu" style={{ width: 240, padding: 12 }}>
+        <div className="aya-recent-menu" role="menu" style={{ width: 280, padding: 12 }}>
           <div className="aya-recent-menu-title">{label} — account-wide</div>
           <div style={{ color: CHIP_MUTED_COLOR, fontSize: 12, marginBottom: 10 }}>
-            all sessions, not this project
+            {accountText}, all sessions, not this project
           </div>
-          <UsageRow label="5h" win={usage.fiveHour} accent={accent} />
-          <UsageRow label="week" win={usage.sevenDay} accent={accent} />
-          <div
-            style={{
-              color: CHIP_MUTED_COLOR,
-              fontSize: 11,
-              marginTop: 10,
-              borderTop: `1px solid ${CHIP_BORDER_COLOR}`,
-              paddingTop: 8,
-            }}
-          >
-            {stale ? "stale · " : ""}updated {fmtClock(usage.updatedAt)}
-          </div>
+          {accounts.map((account, index) => {
+            const accountStale = isUsageStale(account.usage);
+            return (
+              <div
+                key={account.id}
+                style={{
+                  borderTop:
+                    index === 0 ? undefined : `1px solid ${CHIP_BORDER_COLOR}`,
+                  paddingTop: index === 0 ? 0 : 10,
+                  marginTop: index === 0 ? 0 : 10,
+                  opacity: accountStale ? 0.55 : 1,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "baseline",
+                    gap: 12,
+                    marginBottom: 8,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontWeight: 600,
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {account.label}
+                  </span>
+                  <span
+                    style={{
+                      color: CHIP_MUTED_COLOR,
+                      fontSize: 11,
+                      fontVariantNumeric: "tabular-nums",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {accountStale ? "stale · " : ""}updated{" "}
+                    {fmtClock(account.usage.updatedAt)}
+                  </span>
+                </div>
+                <UsageRow label="5h" win={account.usage.fiveHour} accent={accent} />
+                <UsageRow
+                  label="week"
+                  win={account.usage.sevenDay}
+                  accent={accent}
+                />
+              </div>
+            );
+          })}
+          {accounts.length > 1 && (
+            <div
+              style={{
+                color: CHIP_MUTED_COLOR,
+                fontSize: 11,
+                marginTop: 10,
+                borderTop: `1px solid ${CHIP_BORDER_COLOR}`,
+                paddingTop: 8,
+              }}
+            >
+              {Math.round(weeklyPct)}% average weekly used
+            </div>
+          )}
         </div>
       )}
     </div>

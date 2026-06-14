@@ -1,0 +1,892 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aya Usage Chip Variants</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d1117;
+        --bar: #161b22;
+        --bar-2: #111720;
+        --border: #30363d;
+        --border-soft: #21262d;
+        --fg: #f0f6fc;
+        --muted: #8b949e;
+        --dim: #6e7681;
+        --claude: #d97757;
+        --codex: #10a37f;
+        --blue: #79c0ff;
+        --yellow: #e3b341;
+        --red: #f85149;
+        --green: #56d364;
+        --shadow: 0 18px 50px rgba(0, 0, 0, 0.38);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: var(--bg);
+        color: var(--fg);
+      }
+
+      body {
+        padding: 28px;
+      }
+
+      h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+        font-weight: 650;
+        letter-spacing: 0;
+      }
+
+      .intro {
+        max-width: 860px;
+        margin: 0 0 22px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .board {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+        gap: 18px;
+        align-items: start;
+      }
+
+      .mock {
+        border: 1px solid var(--border);
+        background: #0a0d12;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: var(--shadow);
+      }
+
+      .mock-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border-soft);
+        background: #0f141c;
+      }
+
+      .mock-title strong {
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .mock-title span {
+        color: var(--dim);
+        font-size: 11px;
+      }
+
+      .topbar {
+        height: 40px;
+        display: flex;
+        align-items: stretch;
+        justify-content: space-between;
+        background: var(--bar);
+        border-bottom: 1px solid var(--border);
+      }
+
+      .tabs {
+        display: flex;
+        min-width: 0;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 14px;
+        border-right: 1px solid var(--border);
+        color: var(--fg);
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .brand::before {
+        content: "";
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        background: #40c463;
+        box-shadow: 0 0 0 2px rgba(64, 196, 99, 0.2);
+      }
+
+      .tab {
+        width: 176px;
+        display: grid;
+        align-content: center;
+        gap: 1px;
+        padding: 0 12px;
+        border-right: 1px solid var(--border-soft);
+        background: #0d1117;
+      }
+
+      .tab b {
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .tab small {
+        color: var(--dim);
+        font-size: 10px;
+      }
+
+      .right {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 10px;
+      }
+
+      .utility {
+        width: 28px;
+        height: 28px;
+        display: grid;
+        place-items: center;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 15px;
+      }
+
+      .canvas {
+        position: relative;
+        min-height: 310px;
+        padding: 18px;
+        background:
+          linear-gradient(90deg, rgba(121, 192, 255, 0.05), transparent 28%),
+          #0d1117;
+      }
+
+      .menu {
+        width: 292px;
+        margin-left: auto;
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #161b22;
+        box-shadow: var(--shadow);
+      }
+
+      .menu-title {
+        margin-bottom: 2px;
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .menu-sub {
+        margin-bottom: 10px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .account {
+        padding-top: 10px;
+        margin-top: 10px;
+        border-top: 1px solid var(--border-soft);
+      }
+
+      .account:first-of-type {
+        padding-top: 0;
+        margin-top: 0;
+        border-top: 0;
+      }
+
+      .account-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: baseline;
+        margin-bottom: 8px;
+      }
+
+      .account-head b {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .account-head small {
+        color: var(--dim);
+        font-size: 10px;
+        white-space: nowrap;
+      }
+
+      .row {
+        margin: 7px 0;
+      }
+
+      .row-top {
+        display: flex;
+        justify-content: space-between;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .row-top strong {
+        color: var(--fg);
+        font-weight: 650;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .track {
+        height: 5px;
+        overflow: hidden;
+        margin-top: 4px;
+        border-radius: 3px;
+        background: #30363d;
+      }
+
+      .fill {
+        height: 100%;
+        border-radius: inherit;
+      }
+
+      .foot {
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid var(--border-soft);
+        color: var(--dim);
+        font-size: 10px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .chip {
+        height: 28px;
+        border: 0;
+        cursor: default;
+        color: var(--fg);
+        font: inherit;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .v1 {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 0 9px;
+        border-radius: 6px;
+        background: rgba(48, 54, 61, 0.55);
+      }
+
+      .v1 .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--agent);
+      }
+
+      .v1 b,
+      .v4 b,
+      .v6 b {
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .v1 span,
+      .v4 span,
+      .v6 span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .v2 {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 0 7px;
+        border-radius: 6px;
+        background: transparent;
+      }
+
+      .ring {
+        width: 19px;
+        height: 19px;
+        border-radius: 50%;
+        background:
+          conic-gradient(var(--agent) calc(var(--pct) * 1%), #30363d 0);
+        position: relative;
+      }
+
+      .ring::after {
+        content: "";
+        position: absolute;
+        inset: 4px;
+        border-radius: 50%;
+        background: var(--bar);
+      }
+
+      .v2 b {
+        font-family:
+          "SF Mono", "Cascadia Mono", "Roboto Mono", ui-monospace, monospace;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .v3 {
+        display: inline-grid;
+        grid-template-columns: 18px auto;
+        align-items: center;
+        column-gap: 6px;
+        padding: 0 8px 0 6px;
+        border-radius: 6px;
+        background: rgba(48, 54, 61, 0.42);
+      }
+
+      .spark {
+        display: grid;
+        grid-template-columns: repeat(3, 4px);
+        align-items: end;
+        gap: 2px;
+        height: 16px;
+      }
+
+      .spark i {
+        display: block;
+        width: 4px;
+        border-radius: 2px;
+        background: var(--agent);
+      }
+
+      .spark i:nth-child(1) {
+        height: 7px;
+        opacity: 0.55;
+      }
+
+      .spark i:nth-child(2) {
+        height: 12px;
+        opacity: 0.8;
+      }
+
+      .spark i:nth-child(3) {
+        height: 16px;
+      }
+
+      .v3 b {
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .v4 {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 8px;
+        border-radius: 999px;
+        background: rgba(48, 54, 61, 0.48);
+        box-shadow: inset 0 0 0 1px rgba(240, 246, 252, 0.04);
+      }
+
+      .v4 .glyph {
+        width: 17px;
+        height: 17px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        background: color-mix(in oklab, var(--agent) 20%, transparent);
+        color: var(--agent);
+        font-size: 10px;
+        font-weight: 800;
+      }
+
+      .v5 {
+        width: 72px;
+        display: grid;
+        align-content: center;
+        gap: 3px;
+        padding: 0 7px;
+        border-radius: 6px;
+        background: rgba(48, 54, 61, 0.38);
+      }
+
+      .v5 .top {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        font-size: 10px;
+        color: var(--muted);
+      }
+
+      .v5 .top b {
+        color: var(--fg);
+        font-size: 11px;
+      }
+
+      .v5 .mini-track {
+        height: 3px;
+        overflow: hidden;
+        border-radius: 2px;
+        background: #30363d;
+      }
+
+      .v5 .mini-fill {
+        height: 100%;
+        width: calc(var(--pct) * 1%);
+        background: var(--agent);
+      }
+
+      .v6 {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 0 8px;
+        border-radius: 6px;
+        background: transparent;
+      }
+
+      .v6 .bracket {
+        color: var(--agent);
+        font-family:
+          "SF Mono", "Cascadia Mono", "Roboto Mono", ui-monospace, monospace;
+        font-size: 15px;
+        font-weight: 700;
+        line-height: 1;
+      }
+
+      .v7 {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 8px;
+        border: 1px solid color-mix(in oklab, var(--agent) 36%, var(--border));
+        border-radius: 6px;
+        background: color-mix(in oklab, var(--agent) 8%, transparent);
+      }
+
+      .v7 svg {
+        width: 15px;
+        height: 15px;
+        stroke: var(--agent);
+      }
+
+      .v7 b {
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .v8 {
+        display: inline-grid;
+        grid-template-columns: auto auto;
+        align-items: baseline;
+        column-gap: 5px;
+        padding: 0 8px;
+        border-radius: 6px;
+        background: rgba(48, 54, 61, 0.5);
+        letter-spacing: 0;
+      }
+
+      .v8 .agent {
+        color: var(--agent);
+        font-size: 10px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .v8 b {
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .alt-menu {
+        background: #0f141c;
+      }
+
+      .dense .account {
+        display: grid;
+        grid-template-columns: 76px 1fr;
+        gap: 10px;
+        align-items: start;
+      }
+
+      .dense .account-head {
+        display: block;
+        margin: 0;
+      }
+
+      .dense .account-head small {
+        display: block;
+        margin-top: 3px;
+      }
+
+      @media (max-width: 760px) {
+        body {
+          padding: 16px;
+        }
+
+        .board {
+          grid-template-columns: 1fr;
+        }
+
+        .mock {
+          min-width: 0;
+        }
+
+        .tab {
+          width: 128px;
+        }
+
+        .brand {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Usage Chip Mockups</h1>
+    <p class="intro">
+      Each mockup shows the top-bar chip and an opened dropdown. The chip number
+      stays weekly percent used averaged across accounts; the dropdown splits
+      the individual account limits.
+    </p>
+
+    <main class="board">
+      <section class="mock">
+        <div class="mock-title">
+          <strong>1. Dot + Label</strong>
+          <span>Quiet, current-app adjacent</span>
+        </div>
+        <div class="topbar">
+          <div class="tabs">
+            <div class="brand">Aya</div>
+            <div class="tab"><b>aya</b><small>~/Projects/aya</small></div>
+          </div>
+          <div class="right">
+            <button class="chip v1" style="--agent: var(--claude)">
+              <i class="dot"></i><span>Claude</span><b>50%</b>
+            </button>
+            <button class="chip v1" style="--agent: var(--codex)">
+              <i class="dot"></i><span>Codex</span><b>42%</b>
+            </button>
+            <button class="utility">⌕</button>
+            <button class="utility">⚙</button>
+          </div>
+        </div>
+        <div class="canvas">
+          <div class="menu">
+            <div class="menu-title">Claude usage</div>
+            <div class="menu-sub">2 accounts, account-wide</div>
+            <div class="account">
+              <div class="account-head"><b>Work</b><small>updated 10:42</small></div>
+              <div class="row"><div class="row-top"><span>5h</span><strong>12%</strong></div><div class="track"><div class="fill" style="width: 12%; background: var(--claude)"></div></div></div>
+              <div class="row"><div class="row-top"><span>week</span><strong>0%</strong></div><div class="track"><div class="fill" style="width: 0%; background: var(--claude)"></div></div></div>
+            </div>
+            <div class="account">
+              <div class="account-head"><b>Personal</b><small>updated 10:39</small></div>
+              <div class="row"><div class="row-top"><span>5h</span><strong>80%</strong></div><div class="track"><div class="fill" style="width: 80%; background: var(--claude)"></div></div></div>
+              <div class="row"><div class="row-top"><span>week</span><strong>100%</strong></div><div class="track"><div class="fill" style="width: 100%; background: var(--red)"></div></div></div>
+            </div>
+            <div class="foot">50% average weekly used</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mock">
+        <div class="mock-title">
+          <strong>2. Progress Ring</strong>
+          <span>Iconless gauge, compact percentage</span>
+        </div>
+        <div class="topbar">
+          <div class="tabs">
+            <div class="brand">Aya</div>
+            <div class="tab"><b>backend</b><small>~/work/api</small></div>
+          </div>
+          <div class="right">
+            <button class="chip v2" style="--agent: var(--claude); --pct: 50">
+              <i class="ring"></i><b>50%</b>
+            </button>
+            <button class="chip v2" style="--agent: var(--codex); --pct: 42">
+              <i class="ring"></i><b>42%</b>
+            </button>
+            <button class="utility">⌕</button>
+            <button class="utility">⚙</button>
+          </div>
+        </div>
+        <div class="canvas">
+          <div class="menu alt-menu">
+            <div class="menu-title">Codex usage</div>
+            <div class="menu-sub">3 accounts, account-wide</div>
+            <div class="account">
+              <div class="account-head"><b>OpenAI Plus</b><small>updated 10:45</small></div>
+              <div class="row"><div class="row-top"><span>5h</span><strong>18%</strong></div><div class="track"><div class="fill" style="width: 18%; background: var(--codex)"></div></div></div>
+              <div class="row"><div class="row-top"><span>week</span><strong>25%</strong></div><div class="track"><div class="fill" style="width: 25%; background: var(--codex)"></div></div></div>
+            </div>
+            <div class="account">
+              <div class="account-head"><b>Team</b><small>updated 10:41</small></div>
+              <div class="row"><div class="row-top"><span>5h</span><strong>44%</strong></div><div class="track"><div class="fill" style="width: 44%; background: var(--codex)"></div></div></div>
+              <div class="row"><div class="row-top"><span>week</span><strong>62%</strong></div><div class="track"><div class="fill" style="width: 62%; background: var(--yellow)"></div></div></div>
+            </div>
+            <div class="account">
+              <div class="account-head"><b>Sandbox</b><small>updated 10:30</small></div>
+              <div class="row"><div class="row-top"><span>5h</span><strong>4%</strong></div><div class="track"><div class="fill" style="width: 4%; background: var(--codex)"></div></div></div>
+              <div class="row"><div class="row-top"><span>week</span><strong>39%</strong></div><div class="track"><div class="fill" style="width: 39%; background: var(--codex)"></div></div></div>
+            </div>
+            <div class="foot">42% average weekly used</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mock">
+        <div class="mock-title">
+          <strong>3. Usage Spark</strong>
+          <span>Small signal bars instead of speed icon</span>
+        </div>
+        <div class="topbar">
+          <div class="tabs">
+            <div class="brand">Aya</div>
+            <div class="tab"><b>design</b><small>~/ui</small></div>
+          </div>
+          <div class="right">
+            <button class="chip v3" style="--agent: var(--claude)">
+              <span class="spark"><i></i><i></i><i></i></span><b>Claude 50%</b>
+            </button>
+            <button class="chip v3" style="--agent: var(--codex)">
+              <span class="spark"><i></i><i></i><i></i></span><b>Codex 42%</b>
+            </button>
+            <button class="utility">⌕</button>
+            <button class="utility">⚙</button>
+          </div>
+        </div>
+        <div class="canvas">
+          <div class="menu dense">
+            <div class="menu-title">Claude usage</div>
+            <div class="menu-sub">2 accounts, account-wide</div>
+            <div class="account">
+              <div class="account-head"><b>Work</b><small>10:42</small></div>
+              <div><div class="row"><div class="row-top"><span>5h</span><strong>12%</strong></div><div class="track"><div class="fill" style="width: 12%; background: var(--claude)"></div></div></div><div class="row"><div class="row-top"><span>week</span><strong>0%</strong></div><div class="track"><div class="fill" style="width: 0%; background: var(--claude)"></div></div></div></div>
+            </div>
+            <div class="account">
+              <div class="account-head"><b>Personal</b><small>10:39</small></div>
+              <div><div class="row"><div class="row-top"><span>5h</span><strong>80%</strong></div><div class="track"><div class="fill" style="width: 80%; background: var(--claude)"></div></div></div><div class="row"><div class="row-top"><span>week</span><strong>100%</strong></div><div class="track"><div class="fill" style="width: 100%; background: var(--red)"></div></div></div></div>
+            </div>
+            <div class="foot">50% average weekly used</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mock">
+        <div class="mock-title">
+          <strong>4. Agent Monogram</strong>
+          <span>Clear identity, softer pill</span>
+        </div>
+        <div class="topbar">
+          <div class="tabs">
+            <div class="brand">Aya</div>
+            <div class="tab"><b>mobile</b><small>~/app</small></div>
+          </div>
+          <div class="right">
+            <button class="chip v4" style="--agent: var(--claude)">
+              <i class="glyph">C</i><span>Claude</span><b>50%</b>
+            </button>
+            <button class="chip v4" style="--agent: var(--codex)">
+              <i class="glyph">X</i><span>Codex</span><b>42%</b>
+            </button>
+            <button class="utility">⌕</button>
+            <button class="utility">⚙</button>
+          </div>
+        </div>
+        <div class="canvas">
+          <div class="menu">
+            <div class="menu-title">Codex usage</div>
+            <div class="menu-sub">2 accounts, account-wide</div>
+            <div class="account">
+              <div class="account-head"><b>Plus</b><small>updated 10:45</small></div>
+              <div class="row"><div class="row-top"><span>5h</span><strong>16%</strong></div><div class="track"><div class="fill" style="width: 16%; background: var(--codex)"></div></div></div>
+              <div class="row"><div class="row-top"><span>week</span><strong>32%</strong></div><div class="track"><div class="fill" style="width: 32%; background: var(--codex)"></div></div></div>
+            </div>
+            <div class="account">
+              <div class="account-head"><b>Team</b><small>updated 10:41</small></div>
+              <div class="row"><div class="row-top"><span>5h</span><strong>58%</strong></div><div class="track"><div class="fill" style="width: 58%; background: var(--yellow)"></div></div></div>
+              <div class="row"><div class="row-top"><span>week</span><strong>52%</strong></div><div class="track"><div class="fill" style="width: 52%; background: var(--codex)"></div></div></div>
+            </div>
+            <div class="foot">42% average weekly used</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mock">
+        <div class="mock-title">
+          <strong>5. Inline Microbar</strong>
+          <span>Most data-dense closed state</span>
+        </div>
+        <div class="topbar">
+          <div class="tabs">
+            <div class="brand">Aya</div>
+            <div class="tab"><b>ops</b><small>~/infra</small></div>
+          </div>
+          <div class="right">
+            <button class="chip v5" style="--agent: var(--claude); --pct: 50">
+              <span class="top"><span>claude</span><b>50%</b></span>
+              <span class="mini-track"><i class="mini-fill"></i></span>
+            </button>
+            <button class="chip v5" style="--agent: var(--codex); --pct: 42">
+              <span class="top"><span>codex</span><b>42%</b></span>
+              <span class="mini-track"><i class="mini-fill"></i></span>
+            </button>
+            <button class="utility">⌕</button>
+            <button class="utility">⚙</button>
+          </div>
+        </div>
+        <div class="canvas">
+          <div class="menu">
+            <div class="menu-title">Claude usage</div>
+            <div class="menu-sub">2 accounts, account-wide</div>
+            <div class="account">
+              <div class="account-head"><b>Work</b><small>updated 10:42</small></div>
+              <div class="row"><div class="row-top"><span>5h</span><strong>12%</strong></div><div class="track"><div class="fill" style="width: 12%; background: var(--claude)"></div></div></div>
+              <div class="row"><div class="row-top"><span>week</span><strong>0%</strong></div><div class="track"><div class="fill" style="width: 0%; background: var(--claude)"></div></div></div>
+            </div>
+            <div class="account">
+              <div class="account-head"><b>Personal</b><small>updated 10:39</small></div>
+              <div class="row"><div class="row-top"><span>5h</span><strong>80%</strong></div><div class="track"><div class="fill" style="width: 80%; background: var(--claude)"></div></div></div>
+              <div class="row"><div class="row-top"><span>week</span><strong>100%</strong></div><div class="track"><div class="fill" style="width: 100%; background: var(--red)"></div></div></div>
+            </div>
+            <div class="foot">50% average weekly used</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mock">
+        <div class="mock-title">
+          <strong>6. Terminal Brackets</strong>
+          <span>Developer-tool feel, low decoration</span>
+        </div>
+        <div class="topbar">
+          <div class="tabs">
+            <div class="brand">Aya</div>
+            <div class="tab"><b>cli</b><small>~/tools</small></div>
+          </div>
+          <div class="right">
+            <button class="chip v6" style="--agent: var(--claude)">
+              <span class="bracket">[c]</span><span>use</span><b>50%</b>
+            </button>
+            <button class="chip v6" style="--agent: var(--codex)">
+              <span class="bracket">[x]</span><span>use</span><b>42%</b>
+            </button>
+            <button class="utility">⌕</button>
+            <button class="utility">⚙</button>
+          </div>
+        </div>
+        <div class="canvas">
+          <div class="menu dense alt-menu">
+            <div class="menu-title">Codex usage</div>
+            <div class="menu-sub">2 accounts, account-wide</div>
+            <div class="account">
+              <div class="account-head"><b>Plus</b><small>10:45</small></div>
+              <div><div class="row"><div class="row-top"><span>5h</span><strong>16%</strong></div><div class="track"><div class="fill" style="width: 16%; background: var(--codex)"></div></div></div><div class="row"><div class="row-top"><span>week</span><strong>32%</strong></div><div class="track"><div class="fill" style="width: 32%; background: var(--codex)"></div></div></div></div>
+            </div>
+            <div class="account">
+              <div class="account-head"><b>Team</b><small>10:41</small></div>
+              <div><div class="row"><div class="row-top"><span>5h</span><strong>58%</strong></div><div class="track"><div class="fill" style="width: 58%; background: var(--yellow)"></div></div></div><div class="row"><div class="row-top"><span>week</span><strong>52%</strong></div><div class="track"><div class="fill" style="width: 52%; background: var(--codex)"></div></div></div></div>
+            </div>
+            <div class="foot">42% average weekly used</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mock">
+        <div class="mock-title">
+          <strong>7. Lucide-style Gauge</strong>
+          <span>Closest to icon button language</span>
+        </div>
+        <div class="topbar">
+          <div class="tabs">
+            <div class="brand">Aya</div>
+            <div class="tab"><b>research</b><small>~/notes</small></div>
+          </div>
+          <div class="right">
+            <button class="chip v7" style="--agent: var(--claude)">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M4 14a8 8 0 0 1 16 0" /><path d="M12 14l4-5" /><path d="M7 14h10" /></svg><b>50%</b>
+            </button>
+            <button class="chip v7" style="--agent: var(--codex)">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M4 14a8 8 0 0 1 16 0" /><path d="M12 14l4-5" /><path d="M7 14h10" /></svg><b>42%</b>
+            </button>
+            <button class="utility">⌕</button>
+            <button class="utility">⚙</button>
+          </div>
+        </div>
+        <div class="canvas">
+          <div class="menu">
+            <div class="menu-title">Claude usage</div>
+            <div class="menu-sub">2 accounts, account-wide</div>
+            <div class="account">
+              <div class="account-head"><b>Work</b><small>updated 10:42</small></div>
+              <div class="row"><div class="row-top"><span>5h</span><strong>12%</strong></div><div class="track"><div class="fill" style="width: 12%; background: var(--claude)"></div></div></div>
+              <div class="row"><div class="row-top"><span>week</span><strong>0%</strong></div><div class="track"><div class="fill" style="width: 0%; background: var(--claude)"></div></div></div>
+            </div>
+            <div class="account">
+              <div class="account-head"><b>Personal</b><small>updated 10:39</small></div>
+              <div class="row"><div class="row-top"><span>5h</span><strong>80%</strong></div><div class="track"><div class="fill" style="width: 80%; background: var(--claude)"></div></div></div>
+              <div class="row"><div class="row-top"><span>week</span><strong>100%</strong></div><div class="track"><div class="fill" style="width: 100%; background: var(--red)"></div></div></div>
+            </div>
+            <div class="foot">50% average weekly used</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mock">
+        <div class="mock-title">
+          <strong>8. Short Agent Code</strong>
+          <span>Readable without an icon</span>
+        </div>
+        <div class="topbar">
+          <div class="tabs">
+            <div class="brand">Aya</div>
+            <div class="tab"><b>release</b><small>~/ship</small></div>
+          </div>
+          <div class="right">
+            <button class="chip v8" style="--agent: var(--claude)">
+              <span class="agent">cla</span><b>50%</b>
+            </button>
+            <button class="chip v8" style="--agent: var(--codex)">
+              <span class="agent">cod</span><b>42%</b>
+            </button>
+            <button class="utility">⌕</button>
+            <button class="utility">⚙</button>
+          </div>
+        </div>
+        <div class="canvas">
+          <div class="menu">
+            <div class="menu-title">Codex usage</div>
+            <div class="menu-sub">3 accounts, account-wide</div>
+            <div class="account">
+              <div class="account-head"><b>OpenAI Plus</b><small>updated 10:45</small></div>
+              <div class="row"><div class="row-top"><span>5h</span><strong>18%</strong></div><div class="track"><div class="fill" style="width: 18%; background: var(--codex)"></div></div></div>
+              <div class="row"><div class="row-top"><span>week</span><strong>25%</strong></div><div class="track"><div class="fill" style="width: 25%; background: var(--codex)"></div></div></div>
+            </div>
+            <div class="account">
+              <div class="account-head"><b>Team</b><small>updated 10:41</small></div>
+              <div class="row"><div class="row-top"><span>5h</span><strong>44%</strong></div><div class="track"><div class="fill" style="width: 44%; background: var(--codex)"></div></div></div>
+              <div class="row"><div class="row-top"><span>week</span><strong>62%</strong></div><div class="track"><div class="fill" style="width: 62%; background: var(--yellow)"></div></div></div>
+            </div>
+            <div class="account">
+              <div class="account-head"><b>Sandbox</b><small>updated 10:30</small></div>
+              <div class="row"><div class="row-top"><span>5h</span><strong>4%</strong></div><div class="track"><div class="fill" style="width: 4%; background: var(--codex)"></div></div></div>
+              <div class="row"><div class="row-top"><span>week</span><strong>39%</strong></div><div class="track"><div class="fill" style="width: 39%; background: var(--codex)"></div></div></div>
+            </div>
+            <div class="foot">42% average weekly used</div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

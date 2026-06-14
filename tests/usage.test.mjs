@@ -5,7 +5,13 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isUsageData, parseUsage } from "../dist-electron/usage.js";
+import {
+  isUsageAccount,
+  isUsageData,
+  parseUsage,
+  parseUsageAccounts,
+  usageAccountFromData,
+} from "../dist-electron/usage.js";
 
 const valid = {
   fiveHour: { pct: 30, resetsAt: "2026-06-03T17:20:00Z" },
@@ -72,4 +78,80 @@ test("parseUsage returns null on valid JSON of the wrong shape", () => {
 test("parseUsage returns the parsed object for a valid snapshot", () => {
   const out = parseUsage(JSON.stringify(valid));
   assert.deepEqual(out, valid);
+});
+
+test("parseUsageAccounts accepts the legacy single-account snapshot", () => {
+  const out = parseUsageAccounts(JSON.stringify(valid));
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, "default");
+  assert.equal(out[0].label, "Account");
+  assert.deepEqual(out[0].usage, valid);
+});
+
+test("parseUsageAccounts accepts multiple account snapshots", () => {
+  const other = {
+    fiveHour: { pct: 8 },
+    sevenDay: { pct: 12 },
+    updatedAt: "2026-06-03T15:00:00Z",
+  };
+  const out = parseUsageAccounts(
+    JSON.stringify({
+      accounts: [
+        { id: "work", label: "Work", usage: valid },
+        { id: "personal", label: "Personal", usage: other },
+        { id: "", label: "Broken", usage: valid },
+      ],
+    }),
+  );
+  assert.equal(out.length, 2);
+  assert.equal(out[0].label, "Work");
+  assert.equal(out[1].usage.sevenDay.pct, 12);
+});
+
+test("parseUsageAccounts hides invalid files", () => {
+  assert.deepEqual(parseUsageAccounts("{ not json"), []);
+  assert.deepEqual(parseUsageAccounts(JSON.stringify({ accounts: [] })), []);
+  assert.deepEqual(parseUsageAccounts(JSON.stringify({ foo: 1 })), []);
+});
+
+test("parseUsageAccounts dedupes by id (first occurrence wins)", () => {
+  const other = {
+    fiveHour: { pct: 8 },
+    sevenDay: { pct: 12 },
+    updatedAt: "2026-06-03T15:00:00Z",
+  };
+  const out = parseUsageAccounts(
+    JSON.stringify({
+      accounts: [
+        { id: "work", label: "Work", usage: valid },
+        { id: "work", label: "Work copy", usage: other },
+      ],
+    }),
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].label, "Work");
+  assert.deepEqual(out[0].usage, valid);
+});
+
+test("isUsageAccount rejects empty id, blank label, and bad usage", () => {
+  assert.equal(isUsageAccount({ id: "x", label: "X", usage: valid }), true);
+  assert.equal(isUsageAccount({ id: "", label: "X", usage: valid }), false);
+  assert.equal(isUsageAccount({ id: "x", label: "  ", usage: valid }), false);
+  assert.equal(isUsageAccount({ id: "x", label: "X", usage: null }), false);
+  assert.equal(isUsageAccount({ id: "x", label: "X" }), false);
+  assert.equal(isUsageAccount(null), false);
+  assert.equal(isUsageAccount("nope"), false);
+});
+
+test("usageAccountFromData wraps a snapshot with default id and label", () => {
+  const acc = usageAccountFromData(valid);
+  assert.equal(acc.id, "default");
+  assert.equal(acc.label, "Account");
+  assert.deepEqual(acc.usage, valid);
+});
+
+test("usageAccountFromData uses provided id and label", () => {
+  const acc = usageAccountFromData(valid, "work", "Work");
+  assert.equal(acc.id, "work");
+  assert.equal(acc.label, "Work");
 });
