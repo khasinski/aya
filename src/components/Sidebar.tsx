@@ -323,6 +323,16 @@ export function Sidebar({
           <button
             className="aya-context-menu-item"
             onClick={() => {
+              const terminal = terminals.find((t) => t.id === menu.terminalId);
+              if (terminal) startRename(terminal);
+              setMenu(null);
+            }}
+          >
+            Rename terminal
+          </button>
+          <button
+            className="aya-context-menu-item"
+            onClick={() => {
               onRestart(menu.terminalId);
               setMenu(null);
             }}
