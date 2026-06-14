@@ -960,8 +960,11 @@
    matching when the ✕ appears. */
 .aya-tab { overflow: hidden; }
 /* The active-tab accent normally straddles the bottom seam (bottom: -1px);
-   pull it fully inside so overflow:hidden doesn't clip it. */
-.aya-tab--active::after { bottom: 0; }
+   pull it fully inside so overflow:hidden doesn't clip it. The z-index keeps
+   it above .aya-tab::before's gradient (z-index 1) and above .aya-tab-close
+   (z-index 2), so the green underline stays fully visible even when the tab
+   is hovered or the X is shown over it. */
+.aya-tab--active::after { bottom: 0; z-index: 3; }
 .aya-tab::before {
   content: "";
   position: absolute;
