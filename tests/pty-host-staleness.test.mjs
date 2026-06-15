@@ -14,6 +14,8 @@ test("a null identity (handshake failed / old host) is stale", () => {
 
 test("a matching identity is not stale", () => {
   assert.equal(isHostStale(FRESH, { version: "0.4.0", scriptHash: "abc123" }), false);
+  // Guard against "always return false": one-character hash change must be stale.
+  assert.equal(isHostStale(FRESH, { version: "0.4.0", scriptHash: "abc124" }), true);
 });
 
 test("a different version is stale", () => {
