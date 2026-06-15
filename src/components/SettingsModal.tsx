@@ -14,6 +14,9 @@ import {
 import type { SettingsTab } from "../settings-tabs";
 import type { MacOptionKeyMode } from "../terminal-option-key";
 
+const CLAUDE_YOLO_CMD = "claude --dangerously-skip-permissions";
+const CODEX_YOLO_CMD = "codex --dangerously-bypass-approvals-and-sandbox";
+
 interface Props {
   presets: Preset[];
   defaults: Preset[];
@@ -369,11 +372,11 @@ export function SettingsModal({
 
   const addClaudeYolo = () =>
     addPrefilled({
-      id: "claude-yolo",
+      id: "",
       name: "Claude YOLO",
       icon: "✻",
       color: CLAUDE_BRAND_COLOR,
-      command: "claude --dangerously-skip-permissions",
+      command: CLAUDE_YOLO_CMD,
       themeId: undefined,
     });
 
@@ -390,11 +393,11 @@ export function SettingsModal({
 
   const addCodexYolo = () =>
     addPrefilled({
-      id: "codex-yolo",
+      id: "",
       name: "Codex YOLO",
       icon: "◆",
       color: CODEX_BRAND_COLOR,
-      command: "codex --dangerously-bypass-approvals-and-sandbox",
+      command: CODEX_YOLO_CMD,
       themeId: undefined,
     });
 
@@ -961,22 +964,26 @@ export function SettingsModal({
               <SettingsIcon name="add" />
               Add preset
             </button>
-            <button
-              className="aya-settings-add aya-settings-add--yolo"
-              onClick={addClaudeYolo}
-              title="claude --dangerously-skip-permissions"
-            >
-              <SettingsIcon name="add" />
-              Claude YOLO
-            </button>
-            <button
-              className="aya-settings-add aya-settings-add--yolo"
-              onClick={addCodexYolo}
-              title="codex --dangerously-bypass-approvals-and-sandbox"
-            >
-              <SettingsIcon name="add" />
-              Codex YOLO
-            </button>
+            {!existingCmds.has(CLAUDE_YOLO_CMD) && (
+              <button
+                className="aya-settings-add aya-settings-add--yolo"
+                onClick={addClaudeYolo}
+                title={CLAUDE_YOLO_CMD}
+              >
+                <SettingsIcon name="add" />
+                Claude YOLO
+              </button>
+            )}
+            {!existingCmds.has(CODEX_YOLO_CMD) && (
+              <button
+                className="aya-settings-add aya-settings-add--yolo"
+                onClick={addCodexYolo}
+                title={CODEX_YOLO_CMD}
+              >
+                <SettingsIcon name="add" />
+                Codex YOLO
+              </button>
+            )}
           </div>
 
           {suggested.length > 0 && (
