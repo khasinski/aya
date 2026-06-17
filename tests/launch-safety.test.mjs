@@ -40,7 +40,7 @@ test("default claude/codex use bare commands (no flags)", () => {
   }
 });
 
-test("shellArgv wraps the user command in $SHELL -l -c + cd + exec", () => {
+test("shellArgv wraps the user command in $SHELL -l -i -c + cd + exec", () => {
   // Force a known SHELL so the assertion is deterministic in CI.
   const before = process.env.SHELL;
   process.env.SHELL = "/bin/zsh";
@@ -48,8 +48,9 @@ test("shellArgv wraps the user command in $SHELL -l -c + cd + exec", () => {
     const argv = shellArgv("claude", "/tmp/aya-test");
     assert.equal(argv[0], "/bin/zsh");
     assert.equal(argv[1], "-l");
-    assert.equal(argv[2], "-c");
-    assert.match(argv[3], /^cd '\/tmp\/aya-test' && exec claude$/);
+    assert.equal(argv[2], "-i");
+    assert.equal(argv[3], "-c");
+    assert.match(argv[4], /^cd '\/tmp\/aya-test' && exec claude$/);
   } finally {
     if (before === undefined) delete process.env.SHELL;
     else process.env.SHELL = before;
@@ -69,7 +70,7 @@ test("shellArgv falls back to the account login shell when SHELL is unset", () =
 
 test("shellArgv shell-quotes the cwd so spaces and quotes don't break", () => {
   const argv = shellArgv("claude", "/tmp/with 'tricky' name");
-  assert.match(argv[3], /cd '\/tmp\/with '\\''tricky'\\'' name'/);
+  assert.match(argv[4], /cd '\/tmp\/with '\\''tricky'\\'' name'/);
 });
 
 test("shellArgv passes the command verbatim so $VARS expand", () => {
@@ -78,7 +79,7 @@ test("shellArgv passes the command verbatim so $VARS expand", () => {
   // shellArgv.
   const argv = shellArgv("$SHELL", "/tmp");
   assert.ok(
-    argv[3].endsWith("exec $SHELL"),
-    `expected unquoted $SHELL in argv: ${argv[3]}`,
+    argv[4].endsWith("exec $SHELL"),
+    `expected unquoted $SHELL in argv: ${argv[4]}`,
   );
 });
