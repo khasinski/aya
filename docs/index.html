@@ -660,10 +660,12 @@
                   Codex, Aider, and shell sessions organized by project.
                 </p>
                 <div class="hero-actions" aria-label="Primary actions">
-                  <a class="button primary" href="#install">Build locally</a>
-                  <a class="button secondary" href="https://github.com/khasinski/aya"
-                    >View source</a
+                  <a
+                    class="button primary"
+                    href="https://github.com/khasinski/aya/releases/latest"
+                    >Download v0.5.0</a
                   >
+                  <a class="button secondary" href="#install">Build locally</a>
                 </div>
                 <div class="hero-stats" aria-label="Aya highlights">
                   <div class="stat">
@@ -786,14 +788,23 @@
         <section class="install" id="install" aria-labelledby="install-title">
           <div class="section-inner">
             <div>
-              <h2 id="install-title">Build Aya locally.</h2>
+              <h2 id="install-title">Install Aya.</h2>
               <p>
-                The current development flow produces a macOS app, DMG, and zip.
-                Signed and notarized builds are supported through electron-builder.
+                Grab the latest release for macOS or Linux, or build it
+                yourself. The macOS DMG and zip are Developer ID signed and
+                Apple-notarized; Linux ships AppImage and deb.
+              </p>
+              <p>
+                <a
+                  class="button primary"
+                  href="https://github.com/khasinski/aya/releases/latest"
+                  >Download v0.5.0</a
+                >
               </p>
             </div>
             <div class="command">
-              <pre><code>git clone https://github.com/khasinski/aya.git
+              <pre><code># or build from source
+git clone https://github.com/khasinski/aya.git
 cd aya
 npm install
 npm run package</code></pre>
