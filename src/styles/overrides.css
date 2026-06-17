@@ -1608,6 +1608,27 @@ select.aya-modal-input {
   border-color: color-mix(in oklab, var(--accent) 40%, transparent);
 }
 .aya-pane-snippettoggle-label { letter-spacing: 0.02em; }
+.aya-statusbar .aya-pane-snippettoggle {
+  margin-left: 0;
+  gap: 4px;
+  height: 100%;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 0;
+  font-size: 11px;
+  color: inherit;
+}
+.aya-statusbar .aya-pane-snippettoggle:hover {
+  border-color: transparent;
+}
+.aya-statusbar .aya-pane-snippettoggle--on {
+  color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 13%, transparent);
+}
+.aya-statusbar .aya-pane-snippettoggle:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
 
 .aya-snippetbar {
   position: absolute;

@@ -441,6 +441,9 @@ export function App() {
   const [settingsInitialTab, setSettingsInitialTab] =
     useState<SettingsTab>("general");
   const [showSearch, setShowSearch] = useState(false);
+  const [snippetDrawerTerminalId, setSnippetDrawerTerminalId] = useState<
+    string | null
+  >(null);
   const [showAttentionCenter, setShowAttentionCenter] = useState(false);
   const [pendingRepoImport, setPendingRepoImport] =
     useState<PendingRepoImport | null>(null);
@@ -2017,6 +2020,8 @@ export function App() {
     ? (activeTabByProject[activeProjectId] ?? null)
     : null;
   const activeTerminal = activeTabId ? (terminals[activeTabId] ?? null) : null;
+  const snippetsOpenForActiveTerminal =
+    !!activeTerminal && snippetDrawerTerminalId === activeTerminal.id;
   const activeGit = activeProjectId ? (git[activeProjectId] ?? null) : null;
   const savedSplitLayout =
     activeProject && activeProjectId
@@ -2408,6 +2413,10 @@ export function App() {
                   preset={preset}
                   command={preset.command}
                   snippets={snippets}
+                  snippetsOpen={snippetDrawerTerminalId === terminal.id}
+                  onSnippetsOpenChange={(open) =>
+                    setSnippetDrawerTerminalId(open ? terminal.id : null)
+                  }
                   isVisible
                   cwd={terminal.cwd}
                   lastActivity={lastActivityRef.current[terminal.id]}
@@ -2447,6 +2456,8 @@ export function App() {
                   preset={preset}
                   command={preset.command}
                   snippets={snippets}
+                  snippetsOpen={false}
+                  onSnippetsOpenChange={() => undefined}
                   isVisible={false}
                   cwd={t.cwd}
                   lastActivity={lastActivityRef.current[t.id]}
@@ -2507,6 +2518,14 @@ export function App() {
         git={activeGit}
         terminal={activeTerminal}
         attentionCount={attentionCount}
+        snippetsOpen={snippetsOpenForActiveTerminal}
+        snippetsDisabled={!activeTerminal}
+        onToggleSnippets={() => {
+          if (!activeTerminal) return;
+          setSnippetDrawerTerminalId((current) =>
+            current === activeTerminal.id ? null : activeTerminal.id,
+          );
+        }}
         onOpenAttentionCenter={() => setShowAttentionCenter(true)}
         onOpenProjectDirectory={(directory) => {
           void window.aya.openPath(directory);

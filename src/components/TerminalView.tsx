@@ -68,6 +68,8 @@ interface Props {
   command: string;
   /** Saved snippets the user can inject into this terminal via the drawer. */
   snippets: Snippet[];
+  snippetsOpen: boolean;
+  onSnippetsOpenChange: (open: boolean) => void;
   isVisible: boolean;
   cwd: string;
   lastActivity?: number;
@@ -162,6 +164,8 @@ export function TerminalView({
   preset,
   command,
   snippets,
+  snippetsOpen,
+  onSnippetsOpenChange,
   isVisible,
   cwd,
   lastActivity,
@@ -213,7 +217,6 @@ export function TerminalView({
   const [findQuery, setFindQuery] = useState("");
   const [isScrollbarHidden, setIsScrollbarHidden] = useState(false);
   const [isRestoring, setIsRestoring] = useState(true);
-  const [snippetsOpen, setSnippetsOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<TerminalContextMenuState | null>(
     null,
   );
@@ -237,21 +240,21 @@ export function TerminalView({
         } catch {
           /* ignore — terminal may be mid-dispose */
         }
-        setSnippetsOpen(false);
+        onSnippetsOpenChange(false);
         return;
       }
       void window.aya.ptyWrite(terminal.id, snippetPtyPayload(snippet));
       // Collapse the drawer so the result (and the typed text) is visible —
       // an open drawer covers the bottom of the terminal — and return focus
       // so the user can keep typing / press Enter on a held snippet.
-      setSnippetsOpen(false);
+      onSnippetsOpenChange(false);
       try {
         xtermRef.current?.focus();
       } catch {
         /* ignore — terminal may be mid-dispose */
       }
     },
-    [terminal.id, terminal.exitCode, terminal.stopped],
+    [terminal.id, terminal.exitCode, terminal.stopped, onSnippetsOpenChange],
   );
   // Current foreground-process title, fed by OSC 0/2 from the inner shell.
   // macOS zsh's default config emits this in preexec/precmd, so we get the
@@ -937,27 +940,6 @@ export function TerminalView({
             </span>
           </div>
         )}
-        <button
-          data-testid="snippet-toggle"
-          className={`aya-pane-snippettoggle ${
-            snippetsOpen ? "aya-pane-snippettoggle--on" : ""
-          }`}
-          type="button"
-          title="Saved snippets"
-          // Keep terminal focus when toggling the drawer (same as the top-bar
-          // dropdowns) — opening snippets shouldn't force a re-click to type.
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={(e) => {
-            e.stopPropagation();
-            setSnippetsOpen((v) => !v);
-          }}
-        >
-          <span style={{ fontFamily: "Material Symbols Outlined" }}>bolt</span>
-          <span className="aya-pane-snippettoggle-label">snippets</span>
-          <span style={{ fontFamily: "Material Symbols Outlined" }}>
-            {snippetsOpen ? "expand_more" : "expand_less"}
-          </span>
-        </button>
       </div>
       {terminal.spawnFailure && (
         <div className="aya-pane-recovery">
@@ -1073,7 +1055,7 @@ export function TerminalView({
       <SnippetBar
         snippets={snippets}
         open={snippetsOpen}
-        onClose={() => setSnippetsOpen(false)}
+        onClose={() => onSnippetsOpenChange(false)}
         onSend={sendSnippet}
         onOpenSettings={onOpenSettings}
       />
