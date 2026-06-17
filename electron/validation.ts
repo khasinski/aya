@@ -134,6 +134,19 @@ export function validateProjectConfig(value: unknown): ProjectConfig {
     ...(value.splitLayout !== undefined
       ? { splitLayout: validateSplitLayout(value.splitLayout) }
       : {}),
+    ...(value.remote !== undefined
+      ? { remote: validateRemoteProject(value.remote) }
+      : {}),
+  };
+}
+
+function validateRemoteProject(value: unknown): NonNullable<ProjectConfig["remote"]> {
+  if (!isRecord(value)) fail("projects:update.remote", "RemoteProject object");
+  return {
+    hostId: requireString(value.hostId, "projects:update.remote.hostId"),
+    label: requireString(value.label, "projects:update.remote.label"),
+    sshTarget: requireString(value.sshTarget, "projects:update.remote.sshTarget"),
+    directory: requireString(value.directory, "projects:update.remote.directory"),
   };
 }
 

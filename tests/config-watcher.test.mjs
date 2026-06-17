@@ -53,6 +53,7 @@ test("config watcher emits external edits, skips echoes, catches reverts, and st
 
     const file = join(home, "snippets.json");
     stop = startConfigWatcher(win);
+    await new Promise((r) => setTimeout(r, 50));
 
     // (a) An outside write of new content -> exactly one reload of that slice.
     writeFileSync(file, SNIPPETS_A);

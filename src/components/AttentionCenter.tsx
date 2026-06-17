@@ -1,4 +1,5 @@
 import type { ProjectConfig, ProjectEvent, TerminalState } from "../types";
+import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 
 // Max number of recent events shown in the attention center.
 const VISIBLE_EVENTS_LIMIT = 18;
@@ -97,7 +98,12 @@ export function AttentionCenter({
   const visibleEvents = events.slice(0, VISIBLE_EVENTS_LIMIT);
 
   return (
-    <div className="aya-modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <div
+      className="aya-modal-backdrop"
+      role="presentation"
+      onMouseDown={markBackdropMouseDown}
+      onClick={(e) => closeFromBackdropClick(e, onClose)}
+    >
       <section
         className="aya-attention-modal"
         role="dialog"

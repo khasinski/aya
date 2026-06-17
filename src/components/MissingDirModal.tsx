@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 
 interface Props {
   projectName: string;
@@ -41,7 +42,11 @@ export function MissingDirModal({
   };
 
   return (
-    <div className="aya-modal-backdrop" onClick={onClose}>
+    <div
+      className="aya-modal-backdrop"
+      onMouseDown={markBackdropMouseDown}
+      onClick={(e) => closeFromBackdropClick(e, onClose)}
+    >
       <div className="aya-modal" onClick={(e) => e.stopPropagation()}>
         <div className="aya-modal-title">Directory not found</div>
         <div className="aya-modal-hint">

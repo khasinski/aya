@@ -1,4 +1,5 @@
 import type { Preset, ProjectConfig } from "../types";
+import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 
 interface Props {
   project: ProjectConfig;
@@ -14,7 +15,11 @@ export function ProjectPresetImportModal({
   onIgnore,
 }: Props) {
   return (
-    <div className="aya-modal-backdrop" onClick={onIgnore}>
+    <div
+      className="aya-modal-backdrop"
+      onMouseDown={markBackdropMouseDown}
+      onClick={(e) => closeFromBackdropClick(e, onIgnore)}
+    >
       <section
         className="aya-modal aya-project-import-modal"
         role="dialog"

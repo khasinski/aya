@@ -105,6 +105,29 @@ export function normalizeSplitLayout(
   return { rows, cols, rowFr, colFr, cells, activeCell };
 }
 
+function normalizeRemoteProject(raw: unknown): ProjectConfig["remote"] | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const r = raw as Record<string, unknown>;
+  if (
+    typeof r.hostId !== "string" ||
+    !r.hostId ||
+    typeof r.label !== "string" ||
+    !r.label ||
+    typeof r.sshTarget !== "string" ||
+    !r.sshTarget ||
+    typeof r.directory !== "string" ||
+    !r.directory
+  ) {
+    return undefined;
+  }
+  return {
+    hostId: r.hostId,
+    label: r.label,
+    sshTarget: r.sshTarget,
+    directory: r.directory,
+  };
+}
+
 async function loadStringArrayFile(filePath: string): Promise<string[] | null> {
   try {
     const raw = await fs.readFile(filePath, "utf-8");
@@ -211,12 +234,14 @@ export async function listProjects(): Promise<ProjectConfig[]> {
         data.splitLayout,
         new Set(tabs.map((tab) => tab.id)),
       );
+      const remote = normalizeRemoteProject(data.remote);
       out.push({
         slug,
         name: data.name,
         directory: data.directory,
         tabs,
         ...(splitLayout ? { splitLayout } : {}),
+        ...(remote ? { remote } : {}),
       });
     } catch {
       // Skip invalid JSON; don't crash the app.
@@ -266,6 +291,41 @@ export async function createProject(
   return project;
 }
 
+export async function createRemoteProject(req: {
+  name: string;
+  directory: string;
+  hostId: string;
+  label: string;
+  sshTarget: string;
+}): Promise<ProjectConfig> {
+  await ensureDir();
+  const slug = slugify(`${req.label}-${req.name}`);
+  if (RESERVED_SLUGS.has(slug)) {
+    throw new Error(`Project name "${req.name}" produces a reserved slug.`);
+  }
+  const filePath = path.join(PROJECTS_DIR, `${slug}.json`);
+  try {
+    await fs.access(filePath);
+    throw new Error(`Project "${slug}" already exists.`);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  const project: ProjectConfig = {
+    slug,
+    name: req.name,
+    directory: req.directory,
+    tabs: [],
+    remote: {
+      hostId: req.hostId,
+      label: req.label,
+      sshTarget: req.sshTarget,
+      directory: req.directory,
+    },
+  };
+  await writeFileAtomic(filePath, JSON.stringify(toDisk(project), null, 2) + "\n");
+  return project;
+}
+
 export async function updateProject(project: ProjectConfig): Promise<void> {
   await ensureDir();
   const filePath = path.join(PROJECTS_DIR, `${project.slug}.json`);
@@ -287,6 +347,7 @@ function toDisk(project: ProjectConfig): unknown {
     directory: project.directory,
     tabs: project.tabs,
     ...(project.splitLayout ? { splitLayout: project.splitLayout } : {}),
+    ...(project.remote ? { remote: project.remote } : {}),
   };
 }
 

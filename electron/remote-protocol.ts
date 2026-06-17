@@ -15,6 +15,12 @@ export interface RemoteSnapshot {
   presets: Preset[];
 }
 
+export interface RemoteDirectoryEntry {
+  name: string;
+  path: string;
+  kind: "directory";
+}
+
 export type RemoteMessage =
   | {
       type: "hello";
@@ -32,8 +38,28 @@ export type RemoteMessage =
   | {
       type: "error";
       protocol: typeof REMOTE_PROTOCOL_VERSION;
+      id?: string;
       code: string;
       message: string;
+    }
+  | {
+      type: "fs:list-result";
+      protocol: typeof REMOTE_PROTOCOL_VERSION;
+      id: string;
+      path: string;
+      entries: RemoteDirectoryEntry[];
+    }
+  | {
+      type: "fs:mkdir-result";
+      protocol: typeof REMOTE_PROTOCOL_VERSION;
+      id: string;
+      path: string;
+    }
+  | {
+      type: "project:create-result";
+      protocol: typeof REMOTE_PROTOCOL_VERSION;
+      id: string;
+      project: ProjectConfig;
     };
 
 export function remoteHello(
@@ -58,10 +84,15 @@ export function remoteSnapshot(snapshot: RemoteSnapshot): RemoteMessage {
   };
 }
 
-export function remoteError(code: string, message: string): RemoteMessage {
+export function remoteError(
+  code: string,
+  message: string,
+  id?: string,
+): RemoteMessage {
   return {
     type: "error",
     protocol: REMOTE_PROTOCOL_VERSION,
+    ...(id ? { id } : {}),
     code,
     message,
   };

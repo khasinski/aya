@@ -72,6 +72,12 @@ test("remote server sends hello and read-only snapshot on connect", async () => 
         },
       ],
     }),
+    createProject: async (name, directory) => ({
+      slug: name.toLowerCase(),
+      name,
+      directory,
+      tabs: [],
+    }),
   });
   try {
     const messages = await readMessages(socket);
@@ -113,6 +119,12 @@ test("remote server reports read-only for control commands", async () => {
       projectState: { version: 1, order: [], open: [], recent: [] },
       presets: [],
     }),
+    createProject: async (name, directory) => ({
+      slug: name.toLowerCase(),
+      name,
+      directory,
+      tabs: [],
+    }),
   });
   try {
     const messages = await readMessages(
@@ -129,5 +141,107 @@ test("remote server reports read-only for control commands", async () => {
   } finally {
     stop();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("remote server lists directories for fs:list", async () => {
+  const { dir, socket } = mkSocketPath();
+  const root = mkdtempSync(join(tmpdir(), "aya-remote-fs-"));
+  mkdtempSync(join(root, "project-"));
+  mkdtempSync(join(root, ".hidden-"));
+  const stop = startRemoteServerOn(socket, {
+    appVersion: "0.6.0-test",
+    host: {
+      id: "host-1",
+      name: "Host 1",
+      platform: "linux",
+      user: "hasik",
+    },
+    getSnapshot: async () => ({
+      projects: [],
+      projectState: { version: 1, order: [], open: [], recent: [] },
+      presets: [],
+    }),
+    createProject: async (name, directory) => ({
+      slug: name.toLowerCase(),
+      name,
+      directory,
+      tabs: [],
+    }),
+  });
+  try {
+    const messages = await readMessages(
+      socket,
+      (client) => {
+        client.write(
+          `${JSON.stringify({ id: "req-1", type: "fs:list", path: root })}\n`,
+        );
+      },
+      3,
+    );
+    assert.equal(messages[2].type, "fs:list-result");
+    assert.equal(messages[2].id, "req-1");
+    assert.equal(messages[2].path, root);
+    assert.equal(messages[2].entries.length, 1);
+    assert.equal(messages[2].entries[0].kind, "directory");
+    assert.match(messages[2].entries[0].name, /^project-/);
+  } finally {
+    stop();
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("remote server creates a local project for project:create", async () => {
+  const { dir, socket } = mkSocketPath();
+  const root = mkdtempSync(join(tmpdir(), "aya-remote-project-"));
+  let created = null;
+  const stop = startRemoteServerOn(socket, {
+    appVersion: "0.6.0-test",
+    host: {
+      id: "host-1",
+      name: "Host 1",
+      platform: "linux",
+      user: "hasik",
+    },
+    getSnapshot: async () => ({
+      projects: [],
+      projectState: { version: 1, order: [], open: [], recent: [] },
+      presets: [],
+    }),
+    createProject: async (name, directory) => {
+      created = { name, directory };
+      return {
+        slug: "remote-project",
+        name,
+        directory,
+        tabs: [],
+      };
+    },
+  });
+  try {
+    const messages = await readMessages(
+      socket,
+      (client) => {
+        client.write(
+          `${JSON.stringify({
+            id: "req-2",
+            type: "project:create",
+            name: "Remote Project",
+            directory: root,
+          })}\n`,
+        );
+      },
+      3,
+    );
+    assert.deepEqual(created, { name: "Remote Project", directory: root });
+    assert.equal(messages[2].type, "project:create-result");
+    assert.equal(messages[2].id, "req-2");
+    assert.equal(messages[2].project.slug, "remote-project");
+    assert.equal(messages[2].project.directory, root);
+  } finally {
+    stop();
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });

@@ -965,6 +965,155 @@
   border-color: var(--accent-hover);
 }
 
+.aya-remote-picker {
+  display: flex;
+  flex-direction: column;
+}
+.aya-remote-browser {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.aya-remote-browser-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-secondary);
+  font-size: 12px;
+}
+.aya-remote-browser-header span {
+  flex-shrink: 0;
+  color: var(--status-waiting);
+  font-weight: 600;
+}
+.aya-remote-browser-header code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-remote-browser-list {
+  max-height: 220px;
+  overflow: auto;
+  padding: 4px;
+}
+.aya-remote-recent {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.aya-remote-section-title {
+  margin-bottom: 6px;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.aya-remote-recent-list {
+  display: grid;
+  gap: 4px;
+}
+.aya-remote-project-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(90px, 0.45fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+.aya-remote-project-row:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+}
+.aya-remote-project-row:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+.aya-remote-project-name {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-remote-project-row code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-remote-browser-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+.aya-remote-browser-row:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+}
+.aya-remote-browser-row:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+.aya-remote-browser-icon {
+  width: 24px;
+  flex-shrink: 0;
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+.aya-remote-browser-name {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-remote-browser-empty {
+  padding: 12px 8px;
+  color: var(--fg-tertiary);
+  font-size: 12px;
+}
+.aya-remote-create {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.aya-remote-create .aya-modal-input {
+  min-width: 0;
+}
+
 /* `.aya-pane-active` is rendered always but only the active pane should show
    the top accent bar in single-pane mode. We hide it unless inside a split. */
 .aya-pane-active { display: none; }
@@ -1038,6 +1187,24 @@
    thing that shrinks/ellipsizes when the tab is narrow. */
 .aya-tab-name {
   flex-shrink: 0;
+}
+.aya-tab--remote::after {
+  background: var(--status-waiting);
+}
+.aya-tab-remote-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 15px;
+  margin-right: 6px;
+  padding: 0 4px;
+  border: 1px solid color-mix(in oklab, var(--status-waiting) 55%, var(--border));
+  border-radius: 3px;
+  color: var(--status-waiting);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: 1px;
 }
 .aya-tab-path {
   flex: 1 1 auto;

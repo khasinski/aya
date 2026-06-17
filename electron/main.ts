@@ -26,6 +26,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   createProject,
+  createRemoteProject,
   deleteProject,
   expandPath,
   listProjects,
@@ -43,6 +44,12 @@ import { startConfigWatcher } from "./config-watcher";
 import { isHostStale } from "./pty-host-staleness";
 import { startControlServer } from "./control";
 import { startRemoteServer } from "./remote-server";
+import {
+  createRemoteDirectory,
+  createRemoteProjectOnHost,
+  listRemotePresets,
+  listRemoteDirectory,
+} from "./remote-client";
 import { getGitChangedFiles, getGitDiff, getGitInfo } from "./git";
 import { IS_DEV, IS_E2E_HEADLESS, IS_E2E_PTY_SHUTDOWN } from "./paths";
 import { scanHarnesses } from "./harnesses";
@@ -998,6 +1005,47 @@ function registerIpc(win: BrowserWindow): void {
       requireString(dir, "projects:create.dir"),
     ),
   );
+  ipcMain.handle("projects:create-remote", async (_e, req: unknown) => {
+    if (typeof req !== "object" || req === null || Array.isArray(req)) {
+      throw new Error("projects:create-remote.req must be an object");
+    }
+    const r = req as Record<string, unknown>;
+    return createRemoteProject({
+      name: requireString(r.name, "projects:create-remote.name"),
+      directory: requireString(r.directory, "projects:create-remote.directory"),
+      hostId: requireString(r.hostId, "projects:create-remote.hostId"),
+      label: requireString(r.label, "projects:create-remote.label"),
+      sshTarget: requireString(r.sshTarget, "projects:create-remote.sshTarget"),
+    });
+  });
+  ipcMain.handle(
+    "remote:list-directory",
+    async (_e, sshTarget: unknown, directory: unknown) =>
+      listRemoteDirectory(
+        requireString(sshTarget, "remote:list-directory.sshTarget"),
+        typeof directory === "string" ? directory : undefined,
+      ),
+  );
+  ipcMain.handle(
+    "remote:create-directory",
+    async (_e, sshTarget: unknown, directory: unknown) =>
+      createRemoteDirectory(
+        requireString(sshTarget, "remote:create-directory.sshTarget"),
+        requireString(directory, "remote:create-directory.directory"),
+      ),
+  );
+  ipcMain.handle("remote:list-presets", async (_e, sshTarget: unknown) =>
+    listRemotePresets(requireString(sshTarget, "remote:list-presets.sshTarget")),
+  );
+  ipcMain.handle(
+    "remote:create-project",
+    async (_e, sshTarget: unknown, directory: unknown, name: unknown) =>
+      createRemoteProjectOnHost(
+        requireString(sshTarget, "remote:create-project.sshTarget"),
+        requireString(directory, "remote:create-project.directory"),
+        typeof name === "string" ? name : undefined,
+      ),
+  );
   ipcMain.handle("projects:update", async (_e, project: unknown) =>
     updateProject(validateProjectConfig(project)),
   );
@@ -1285,6 +1333,7 @@ app.whenReady().then(async () => {
       projectState: await listProjectState(),
       presets: await listPresets(),
     }),
+    createProject: (name, directory) => createProject(name, directory),
   });
   installApplicationMenu();
 

@@ -262,6 +262,10 @@ export function TopBar({
           const badge = projectBadges[p.slug];
           const isRenaming = renamingSlug === p.slug;
           const isDragging = dragSlug === p.slug;
+          const isRemote = !!p.remote;
+          const displayPath = p.remote
+            ? `${p.remote.label}:${p.remote.directory}`
+            : compactDir(p.directory, homeDir);
           const isDropTarget = dropTarget?.slug === p.slug;
           const dropClass = isDropTarget
             ? dropTarget.before
@@ -273,7 +277,7 @@ export function TopBar({
               key={p.slug}
               className={`aya-tab ${isActive ? "aya-tab--active" : ""} ${
                 isDragging ? "aya-tab--dragging" : ""
-              } ${dropClass}`}
+              } ${isRemote ? "aya-tab--remote" : ""} ${dropClass}`}
               // Keep this in sync with the CSS fallback below. Tabs grow to
               // fill spare room, shrink to 120px, then overflow the strip.
               style={{
@@ -290,7 +294,7 @@ export function TopBar({
               title={
                 isRenaming
                   ? undefined
-                  : `${p.name} — ${p.directory} · double-click to rename · drag to reorder`
+                  : `${p.name} - ${displayPath} · double-click to rename · drag to reorder`
               }
             >
               {isRenaming ? (
@@ -320,10 +324,15 @@ export function TopBar({
                     startRename(p);
                   }}
                 >
+                  {isRemote && (
+                    <span className="aya-tab-remote-chip" title={displayPath}>
+                      SSH
+                    </span>
+                  )}
                   {p.name}
                 </span>
               )}
-              <span className="aya-tab-path">{compactDir(p.directory, homeDir)}</span>
+              <span className="aya-tab-path">{displayPath}</span>
               {badge && (
                 <span
                   className={`aya-tab-bell aya-tab-bell--${badge.level}`}

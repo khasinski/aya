@@ -33,6 +33,16 @@ const api: AyaApi = {
     ipcRenderer.invoke("projects:save-state", state),
   createProject: (name, directory) =>
     ipcRenderer.invoke("projects:create", name, directory),
+  createRemoteProject: (req) =>
+    ipcRenderer.invoke("projects:create-remote", req),
+  listRemoteDirectory: (sshTarget, directory) =>
+    ipcRenderer.invoke("remote:list-directory", sshTarget, directory),
+  createRemoteDirectory: (sshTarget, directory) =>
+    ipcRenderer.invoke("remote:create-directory", sshTarget, directory),
+  listRemotePresets: (sshTarget) =>
+    ipcRenderer.invoke("remote:list-presets", sshTarget),
+  createRemoteProjectOnHost: (sshTarget, directory, name) =>
+    ipcRenderer.invoke("remote:create-project", sshTarget, directory, name),
   updateProject: (project) => ipcRenderer.invoke("projects:update", project),
   deleteProject: (slug) => ipcRenderer.invoke("projects:delete", slug),
   readRepoProjectConfig: (directory) =>

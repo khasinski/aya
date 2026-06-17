@@ -7,6 +7,7 @@ import {
   type ProjectEvent,
   type TerminalState,
 } from "../types";
+import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 
 // Debounce delay (ms) applied to the search input before it becomes the active query.
 const SEARCH_DEBOUNCE_MS = 100;
@@ -452,7 +453,11 @@ export function SearchModal({
   };
 
   return (
-    <div className="aya-modal-backdrop" onClick={onClose}>
+    <div
+      className="aya-modal-backdrop"
+      onMouseDown={markBackdropMouseDown}
+      onClick={(e) => closeFromBackdropClick(e, onClose)}
+    >
       <div
         className="aya-modal aya-modal--search"
         onClick={(e) => e.stopPropagation()}
