@@ -10,6 +10,7 @@ Usage:
   aya open [path]                    Open a project directory
   aya focus                          Focus the Aya window
   aya notify [--title title] body    Show an Aya notification
+  aya remote --stdio                 Bridge remote Aya over stdio
   aya status set text                Show agent status for this terminal
   aya status waiting text            Mark this terminal as waiting
   aya status done text               Mark this terminal as done
@@ -97,6 +98,64 @@ client.on("end", () => {
 NODE
 }
 
+remote_stdio() {
+  socket=$(socket_path)
+  node - "$socket" <<'NODE'
+const net = require("node:net");
+const os = require("node:os");
+const socketPath = process.argv[2];
+
+function write(message) {
+  process.stdout.write(`${JSON.stringify(message)}\n`);
+}
+
+function fail(code, message, extra = {}) {
+  write({ type: "error", code, message, ...extra });
+  process.exitCode = 1;
+}
+
+const hello = {
+  type: "hello",
+  protocol: 1,
+  host: os.hostname(),
+  platform: process.platform,
+  user: os.userInfo().username,
+  socket: socketPath,
+};
+
+const client = net.createConnection(socketPath);
+let settled = false;
+
+const timeout = setTimeout(() => {
+  if (settled) return;
+  settled = true;
+  client.destroy();
+  fail("app_unavailable", `Aya is not accepting connections at ${socketPath}`);
+}, 1500);
+
+client.on("connect", () => {
+  if (settled) return;
+  settled = true;
+  clearTimeout(timeout);
+  write(hello);
+  fail(
+    "remote_api_unavailable",
+    "Aya remote API is not available in this build",
+  );
+  client.end();
+});
+
+client.on("error", (err) => {
+  if (settled) return;
+  settled = true;
+  clearTimeout(timeout);
+  fail("app_unavailable", `Aya is not accepting connections at ${socketPath}`, {
+    detail: err.code || err.message,
+  });
+});
+NODE
+}
+
 open_project() {
   target="${1:-.}"
   if [ -d "$target" ]; then
@@ -171,6 +230,14 @@ case "$command" in
       exit 1
     fi
     send_control notify "$title" "$body"
+    ;;
+  remote)
+    shift || true
+    if [ "${1:-}" != "--stdio" ]; then
+      usage
+      exit 1
+    fi
+    remote_stdio
     ;;
   status)
     shift || true
