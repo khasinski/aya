@@ -42,6 +42,7 @@ import {
 import { startConfigWatcher } from "./config-watcher";
 import { isHostStale } from "./pty-host-staleness";
 import { startControlServer } from "./control";
+import { startRemoteServer } from "./remote-server";
 import { getGitChangedFiles, getGitDiff, getGitInfo } from "./git";
 import { IS_DEV, IS_E2E_HEADLESS, IS_E2E_PTY_SHUTDOWN } from "./paths";
 import { scanHarnesses } from "./harnesses";
@@ -1276,6 +1277,14 @@ app.whenReady().then(async () => {
       }
       dispatchOpenProject(mainWindow, directory);
     },
+  });
+  startRemoteServer({
+    appVersion: app.getVersion(),
+    getSnapshot: async () => ({
+      projects: await listProjects(),
+      projectState: await listProjectState(),
+      presets: await listPresets(),
+    }),
   });
   installApplicationMenu();
 

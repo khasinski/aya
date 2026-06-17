@@ -54,13 +54,14 @@ test("aya help lists the remote stdio bridge", () => {
   assert.match(result.stderr, /aya remote --stdio\s+Bridge remote Aya over stdio/);
 });
 
-test("aya remote --stdio reports app_unavailable when no socket exists", () => {
+test("aya remote --stdio reports app_unavailable when no remote socket exists", () => {
   const home = mkdtempSync(join(tmpdir(), "aya-cli-remote-home-"));
   try {
     const result = runAya(["remote", "--stdio"], {
       HOME: home,
       AYA_HOME: "",
       AYA_SOCKET: "",
+      AYA_REMOTE_SOCKET: "",
     });
 
     assert.notEqual(result.status, 0);
@@ -76,10 +77,26 @@ test("aya remote --stdio reports app_unavailable when no socket exists", () => {
   }
 });
 
-test("aya remote --stdio identifies a connected app without remote API", async () => {
+test("aya remote --stdio bridges the remote API socket over stdout", async () => {
   const dir = mkdtempSync(join(tmpdir(), "aya-cli-remote-socket-"));
-  const socket = join(dir, "aya.sock");
-  const server = net.createServer((client) => client.end());
+  const socket = join(dir, "aya-remote.sock");
+  const server = net.createServer((client) => {
+    client.write(
+      `${JSON.stringify({
+        type: "hello",
+        protocol: 1,
+        host: { id: "test-host", name: "test-host" },
+      })}\n`,
+    );
+    client.write(
+      `${JSON.stringify({
+        type: "snapshot",
+        protocol: 1,
+        snapshot: { projects: [], presets: [] },
+      })}\n`,
+    );
+    client.end();
+  });
   await new Promise((resolvePromise, reject) => {
     server.once("error", reject);
     server.listen(socket, resolvePromise);
@@ -87,19 +104,18 @@ test("aya remote --stdio identifies a connected app without remote API", async (
 
   try {
     const result = await runAyaAsync(["remote", "--stdio"], {
-      AYA_SOCKET: socket,
+      AYA_REMOTE_SOCKET: socket,
     });
 
-    assert.notEqual(result.status, 0);
+    assert.equal(result.status, 0);
     assert.equal(result.stderr, "");
 
     const messages = parseNdjson(result.stdout);
     assert.equal(messages.length, 2);
     assert.equal(messages[0].type, "hello");
     assert.equal(messages[0].protocol, 1);
-    assert.equal(messages[0].socket, socket);
-    assert.equal(messages[1].type, "error");
-    assert.equal(messages[1].code, "remote_api_unavailable");
+    assert.equal(messages[0].host.id, "test-host");
+    assert.equal(messages[1].type, "snapshot");
   } finally {
     await new Promise((resolvePromise) => server.close(resolvePromise));
     rmSync(dir, { recursive: true, force: true });

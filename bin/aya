@@ -29,6 +29,16 @@ socket_path() {
   fi
 }
 
+remote_socket_path() {
+  if [ -n "${AYA_REMOTE_SOCKET:-}" ]; then
+    printf '%s\n' "$AYA_REMOTE_SOCKET"
+  elif [ -n "${AYA_HOME:-}" ]; then
+    printf '%s\n' "$AYA_HOME/aya-remote.sock"
+  else
+    printf '%s\n' "$HOME/.aya/aya-remote.sock"
+  fi
+}
+
 send_control() {
   socket=$(socket_path)
   if [ ! -S "$socket" ]; then
@@ -99,10 +109,9 @@ NODE
 }
 
 remote_stdio() {
-  socket=$(socket_path)
+  socket=$(remote_socket_path)
   node - "$socket" <<'NODE'
 const net = require("node:net");
-const os = require("node:os");
 const socketPath = process.argv[2];
 
 function write(message) {
@@ -113,15 +122,6 @@ function fail(code, message, extra = {}) {
   write({ type: "error", code, message, ...extra });
   process.exitCode = 1;
 }
-
-const hello = {
-  type: "hello",
-  protocol: 1,
-  host: os.hostname(),
-  platform: process.platform,
-  user: os.userInfo().username,
-  socket: socketPath,
-};
 
 const client = net.createConnection(socketPath);
 let settled = false;
@@ -137,12 +137,16 @@ client.on("connect", () => {
   if (settled) return;
   settled = true;
   clearTimeout(timeout);
-  write(hello);
-  fail(
-    "remote_api_unavailable",
-    "Aya remote API is not available in this build",
-  );
+  process.stdin.pipe(client);
+  client.pipe(process.stdout);
+});
+
+process.stdin.on("end", () => {
   client.end();
+});
+
+client.on("close", () => {
+  process.exit(process.exitCode || 0);
 });
 
 client.on("error", (err) => {

@@ -35,9 +35,10 @@ export const PROJECTS_STATE_FILE = path.join(AYA_HOME, "projects-state.json");
 export const PROJECTS_ORDER_FILE = path.join(AYA_HOME, "projects-order.json");
 export const OPEN_PROJECTS_FILE = path.join(AYA_HOME, "open-projects.json");
 export const CONTROL_SOCKET_PATH = path.join(AYA_HOME, "aya.sock");
+export const REMOTE_SOCKET_PATH = path.join(AYA_HOME, "aya-remote.sock");
 export const PTY_HOST_SOCKET_PATH = path.join(AYA_HOME, "pty-host.sock");
 
-// rw------- for both unix sockets above: they accept unauthenticated local
-// commands, so they must never be readable/writable by other users. One
-// definition for both servers (control.ts, pty-host.ts).
+// rw------- for unix sockets: they accept unauthenticated local commands /
+// remote bridge traffic, so they must never be readable/writable by other users.
+// One definition for all socket servers.
 export const SOCKET_FILE_PERMISSIONS = 0o600;

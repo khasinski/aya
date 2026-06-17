@@ -200,15 +200,18 @@ Remote projects should keep their host identity in every UI path:
 
 ## Implementation Phases
 
-1. `aya remote --stdio` CLI skeleton.
-   - Add command to `bin/aya`.
-   - It connects to a new host-local remote socket.
-   - If the app is not running, return a structured `app_unavailable` error.
+1. `aya remote --stdio` CLI skeleton. Done locally.
+   - Added command to `bin/aya`.
+   - It connects to the host-local `aya-remote.sock`.
+   - If the app is not running, it returns a structured `app_unavailable`
+     error.
 
-2. Remote host-local API in the Electron main process.
+2. Remote host-local API in the Electron main process. Initial read-only
+   snapshot done locally.
    - Separate from the existing control socket.
-   - Supports `hello`, `snapshot`, and event streaming.
-   - Initially read-only.
+   - Supports `hello` and `snapshot`.
+   - Control commands return a structured `read_only` error for now.
+   - Event streaming is still pending.
 
 3. Local SSH client service.
    - Spawns `ssh <target> aya remote --stdio`.
