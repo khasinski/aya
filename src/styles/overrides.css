@@ -99,6 +99,9 @@
 }
 .aya-mac-window-control {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 12px;
   height: 12px;
   border: 0;
@@ -126,78 +129,38 @@
 .aya-mac-window-control:active {
   filter: brightness(0.9);
 }
-.aya-mac-window-control::before,
-.aya-mac-window-control::after {
-  content: "";
-  position: absolute;
+.aya-mac-window-control-icon {
+  width: 8px;
+  height: 8px;
   opacity: 0;
   pointer-events: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
-.aya-mac-window-controls:hover .aya-mac-window-control::before,
-.aya-mac-window-controls:hover .aya-mac-window-control::after {
+.aya-mac-window-controls:hover .aya-mac-window-control-icon {
   opacity: 1;
 }
-.aya-mac-window-control--close::before,
-.aya-mac-window-control--close::after {
-  left: 3px;
-  top: 5px;
-  width: 6px;
-  height: 1.5px;
-  border-radius: 999px;
-  background: #460804;
-}
-.aya-mac-window-control--close::before { transform: rotate(45deg); }
-.aya-mac-window-control--close::after { transform: rotate(-45deg); }
-.aya-mac-window-control--minimize::before {
-  left: 3px;
-  top: 5px;
-  width: 6px;
-  height: 1.5px;
-  border-radius: 999px;
-  background: #90591d;
-}
-.aya-mac-window-control--fullscreen::before,
-.aya-mac-window-control--fullscreen::after {
-  width: 0;
-  height: 0;
-}
-.aya-mac-window-control--fullscreen::before {
-  right: 2.5px;
-  top: 2.5px;
-  border-left: 4px solid transparent;
-  border-bottom: 4px solid #2a6218;
-}
-.aya-mac-window-control--fullscreen::after {
-  left: 2.5px;
-  bottom: 2.5px;
-  border-right: 4px solid transparent;
-  border-top: 4px solid #2a6218;
-}
+.aya-mac-window-control--close { color: #460804; }
+.aya-mac-window-control--minimize { color: #90591d; }
+.aya-mac-window-control--fullscreen { color: #2a6218; }
 .aya-mac-window-control--close:active {
   background: #b15048;
   box-shadow: 0 0 0 1px #a14239 inset;
 }
-.aya-mac-window-control--close:active::before,
-.aya-mac-window-control--close:active::after {
-  background: #170101;
-}
+.aya-mac-window-control--close:active { color: #170101; }
 .aya-mac-window-control--minimize:active {
   background: #b8923b;
   box-shadow: 0 0 0 1px #a67f36 inset;
 }
-.aya-mac-window-control--minimize:active::before {
-  background: #532a0a;
-}
+.aya-mac-window-control--minimize:active { color: #532a0a; }
 .aya-mac-window-control--fullscreen:active {
   background: #4a9741;
   box-shadow: 0 0 0 1px #428234 inset;
 }
-.aya-mac-window-control--fullscreen:active::before {
-  border-bottom-color: #113107;
-}
-.aya-mac-window-control--fullscreen:active::after {
-  border-top-color: #113107;
-}
+.aya-mac-window-control--fullscreen:active { color: #113107; }
 
 .aya-window-controls {
   -webkit-app-region: no-drag;

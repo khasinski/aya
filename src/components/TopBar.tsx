@@ -200,19 +200,53 @@ export function TopBar({
             title="Close"
             aria-label="Close"
             onClick={onCloseWindow}
-          />
+          >
+            <svg
+              className="aya-mac-window-control-icon"
+              viewBox="0 0 12 12"
+              aria-hidden="true"
+            >
+              <path d="M3.25 3.25L8.75 8.75M8.75 3.25L3.25 8.75" />
+            </svg>
+          </button>
           <button
             className="aya-mac-window-control aya-mac-window-control--minimize"
             title="Minimize"
             aria-label="Minimize"
             onClick={onMinimizeWindow}
-          />
+          >
+            <svg
+              className="aya-mac-window-control-icon"
+              viewBox="0 0 12 12"
+              aria-hidden="true"
+            >
+              <path d="M3 6H9" />
+            </svg>
+          </button>
           <button
             className="aya-mac-window-control aya-mac-window-control--fullscreen"
             title={isFullScreen ? "Exit full screen" : "Full screen"}
             aria-label={isFullScreen ? "Exit full screen" : "Full screen"}
             onClick={onToggleFullScreenWindow}
-          />
+          >
+            <svg
+              className="aya-mac-window-control-icon"
+              viewBox="0 0 12 12"
+              aria-hidden="true"
+            >
+              {isFullScreen ? (
+                <>
+                  <path d="M4.5 2.75V4.5H2.75" />
+                  <path d="M7.5 9.25V7.5H9.25" />
+                </>
+              ) : (
+                <>
+                  <path d="M7.5 2.75H9.25V4.5" />
+                  <path d="M4.5 9.25H2.75V7.5" />
+                </>
+              )}
+            </svg>
+          </button>
         </div>
       )}
       <div className="aya-brand">
