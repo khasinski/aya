@@ -2535,6 +2535,8 @@ export function App() {
           pathHint={newProjectModal.pathHint}
           onPickDirectory={window.aya.pickDirectory}
           onCompletePath={window.aya.completePath}
+          onDirectoryExists={window.aya.dirExists}
+          onCreateDirectory={window.aya.createDir}
           onSubmit={submitProjectFromModal}
           onCancel={() => {
             setNewProjectModal(null);

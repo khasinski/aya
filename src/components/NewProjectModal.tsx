@@ -8,9 +8,13 @@ interface Props {
   pathHint?: string;
   onPickDirectory?: () => Promise<string | null>;
   onCompletePath?: (pathPrefix: string) => Promise<string[]>;
+  onDirectoryExists?: (directory: string) => Promise<boolean>;
+  onCreateDirectory?: (directory: string) => Promise<void>;
   onSubmit: (directory: string) => Promise<void> | void;
   onCancel: () => void;
 }
+
+type DirectoryStatus = "unknown" | "checking" | "exists" | "missing";
 
 export function NewProjectModal({
   defaultDirectory = "~/",
@@ -20,13 +24,18 @@ export function NewProjectModal({
   pathHint,
   onPickDirectory,
   onCompletePath,
+  onDirectoryExists,
+  onCreateDirectory,
   onSubmit,
   onCancel,
 }: Props) {
   const [directory, setDirectory] = useState(defaultDirectory || "~/");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [directoryStatus, setDirectoryStatus] =
+    useState<DirectoryStatus>("unknown");
   const directoryRef = useRef<HTMLInputElement>(null);
+  const directoryCheckRef = useRef(0);
   const completionRef = useRef<{
     source: string;
     matches: string[];
@@ -51,8 +60,35 @@ export function NewProjectModal({
   const setDirectoryAndMaybeName = (next: string) => {
     setDirectory(next);
     setError(null);
+    setDirectoryStatus("unknown");
     completionRef.current = null;
   };
+
+  useEffect(() => {
+    if (lockDirectory || !onDirectoryExists) return;
+    const current = directory.trim();
+    const token = directoryCheckRef.current + 1;
+    directoryCheckRef.current = token;
+    if (!current) {
+      setDirectoryStatus("unknown");
+      return;
+    }
+    setDirectoryStatus("checking");
+    const timer = window.setTimeout(() => {
+      void onDirectoryExists(current)
+        .then((exists) => {
+          if (directoryCheckRef.current === token) {
+            setDirectoryStatus(exists ? "exists" : "missing");
+          }
+        })
+        .catch(() => {
+          if (directoryCheckRef.current === token) {
+            setDirectoryStatus("unknown");
+          }
+        });
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [directory, lockDirectory, onDirectoryExists]);
 
   const pickDirectory = async () => {
     if (!onPickDirectory || submitting) return;
@@ -89,6 +125,15 @@ export function NewProjectModal({
     setSubmitting(true);
     setError(null);
     try {
+      let status = directoryStatus;
+      if (onDirectoryExists) {
+        const exists = await onDirectoryExists(d);
+        status = exists ? "exists" : "missing";
+        setDirectoryStatus(status);
+      }
+      if (status === "missing" && onCreateDirectory) {
+        await onCreateDirectory(d);
+      }
       await onSubmit(d);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -144,6 +189,11 @@ export function NewProjectModal({
         )}
 
         {error && <div className="aya-modal-error">{error}</div>}
+        {!error && directoryStatus === "missing" && onCreateDirectory && (
+          <div className="aya-modal-hint aya-modal-hint--path">
+            Folder will be created.
+          </div>
+        )}
 
         <div className="aya-modal-actions">
           <button
@@ -156,9 +206,20 @@ export function NewProjectModal({
           <button
             className="aya-modal-btn aya-modal-btn--primary"
             onClick={submit}
-            disabled={submitting || !directory.trim()}
+            disabled={
+              submitting ||
+              !directory.trim() ||
+              directoryStatus === "checking" ||
+              (directoryStatus === "missing" && !onCreateDirectory)
+            }
           >
-            {submitting ? "Opening..." : "Open"}
+            {submitting
+              ? directoryStatus === "missing"
+                ? "Creating..."
+                : "Opening..."
+              : directoryStatus === "missing" && onCreateDirectory
+                ? "Create folder"
+                : "Open"}
           </button>
         </div>
       </div>
