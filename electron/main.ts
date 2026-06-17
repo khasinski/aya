@@ -251,20 +251,6 @@ async function installCli(): Promise<CliStatus> {
   };
 }
 
-/** Escape text for safe interpolation into the About dialog's HTML. */
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-// electron-builder strips non-essential fields (contributors, scripts, …) from
-// the bundled package.json, so runtime reads would always return []. Keep the
-// list here where it survives the build.
-const CONTRIBUTORS = ["Justyna Wojtczak"];
-
 function configureAppIdentity(): void {
   // Keep macOS menu/about/notification surfaces aligned. Dev runs inside
   // Electron.app, so some OS chrome can still reflect the host bundle, but
@@ -272,15 +258,9 @@ function configureAppIdentity(): void {
   // chance to expose Aya instead.
   app.setName(WINDOW_TITLE);
   process.title = WINDOW_TITLE;
-  const contributors = CONTRIBUTORS;
   app.setAboutPanelOptions({
     applicationName: WINDOW_TITLE,
     applicationVersion: app.getVersion(),
-    // Copyright stays as electron-builder derives it from `author` (Info.plist
-    // NSHumanReadableCopyright); this only adds a credits line for contributors.
-    ...(contributors.length > 0
-      ? { credits: `Contributors: ${contributors.join(", ")}` }
-      : {}),
   });
 }
 
@@ -455,11 +435,6 @@ function showAyaAboutPanel(): void {
   } catch {
     // Empty src keeps the dialog usable even if the icon asset is missing.
   }
-  const contributors = CONTRIBUTORS;
-  const creditsLine =
-    contributors.length > 0
-      ? `<p class="credits">Contributors: ${escapeHtml(contributors.join(", "))}</p>`
-      : "";
   const html = `<!doctype html>
 <html>
   <head>
@@ -502,11 +477,6 @@ function showAyaAboutPanel(): void {
         font-size: 13px;
         color: #8b949e;
       }
-      p.credits {
-        margin-top: 4px;
-        font-size: 11px;
-        color: #6e7781;
-      }
       button {
         margin-top: 24px;
         min-width: 78px;
@@ -526,7 +496,6 @@ function showAyaAboutPanel(): void {
       <img src="${iconUrl}" alt="">
       <h1>${WINDOW_TITLE}</h1>
       <p>Version ${app.getVersion()}</p>
-      ${creditsLine}
       <button autofocus onclick="window.close()">OK</button>
     </main>
   </body>
@@ -856,17 +825,38 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   // addon normally calls our IPC handler, but Chromium/Electron can still see
   // window.open or direct navigation paths depending on timing and modifier
   // keys. Catch both centrally and hand http(s) URLs to the OS browser.
+  const handleExternalNavigation = (
+    event: { preventDefault(): void },
+    url: string,
+  ) => {
+    if (isInternalNavigationUrl(url, { isDev: IS_DEV, devServerUrl: DEV_SERVER_URL })) return;
+    event.preventDefault();
+    if (parseHttpUrl(url)) void openExternalHttpUrl(url);
+  };
+
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (parseHttpUrl(url)) void openExternalHttpUrl(url);
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (event, url) => {
-    if (isInternalNavigationUrl(url, { isDev: IS_DEV, devServerUrl: DEV_SERVER_URL })) return;
-    if (parseHttpUrl(url)) {
-      event.preventDefault();
-      void openExternalHttpUrl(url);
-    }
+    handleExternalNavigation(event, url);
   });
+  (
+    win.webContents as typeof win.webContents & {
+      on(
+        channel: "will-frame-navigate",
+        listener: (
+          event: { preventDefault(): void },
+          details: { url: string },
+        ) => void,
+      ): void;
+    }
+  ).on(
+    "will-frame-navigate",
+    (event: { preventDefault(): void }, details: { url: string }) => {
+      handleExternalNavigation(event, details.url);
+    },
+  );
 
   // Intercept keyboard shortcuts at the BrowserWindow level so they fire
   // even while xterm.js has focus (otherwise xterm would forward them to the

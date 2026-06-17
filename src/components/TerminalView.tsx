@@ -159,6 +159,13 @@ function firstHttpUrl(text: string): string | null {
   return match[0].replace(URL_TRAILING_PUNCTUATION_RE, "");
 }
 
+function anchorHttpUrl(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null;
+  const anchor = target.closest("a[href]");
+  if (!(anchor instanceof HTMLAnchorElement)) return null;
+  return firstHttpUrl(anchor.href);
+}
+
 export function TerminalView({
   terminal,
   preset,
@@ -405,6 +412,15 @@ export function TerminalView({
     term.loadAddon(webLinks);
     term.open(containerRef.current);
 
+    const onTerminalLinkClick = (event: globalThis.MouseEvent) => {
+      const url = anchorHttpUrl(event.target);
+      if (!url) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void window.aya.openUrl(url);
+    };
+    containerRef.current.addEventListener("click", onTerminalLinkClick, true);
+
     // GPU-accelerated renderer — eliminates the column-drift you get with
     // the default DOM renderer when fonts (especially JetBrains Mono with
     // ligatures, or unicode box-drawing chars that fall back to a non-
@@ -621,6 +637,11 @@ export function TerminalView({
     }
 
     return () => {
+      containerRef.current?.removeEventListener(
+        "click",
+        onTerminalLinkClick,
+        true,
+      );
       unsubscribe();
       onDataDisposable.dispose();
       onResizeDisposable.dispose();
