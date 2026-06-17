@@ -315,7 +315,7 @@ export function TopBar({
           onClick={blockChrome ? undefined : onNewProject}
           aria-disabled={blockChrome}
         >
-          ＋
+          <span style={{ fontFamily: "Material Symbols Outlined" }}>add</span>
         </div>
       </div>
       <div className="aya-topbar-right">

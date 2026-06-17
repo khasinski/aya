@@ -1205,6 +1205,11 @@
 .aya-tab-new {
   flex: 0 0 36px;
 }
+.aya-tab-new span[style] {
+  display: block;
+  font-size: 18px;
+  line-height: 1;
+}
 .aya-topbar-right {
   flex-shrink: 0;
 }
