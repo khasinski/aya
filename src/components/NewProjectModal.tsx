@@ -15,6 +15,7 @@ interface Props {
 }
 
 type DirectoryStatus = "unknown" | "checking" | "exists" | "missing";
+const DIRECTORY_CHECK_DEBOUNCE_MS = 500;
 
 export function NewProjectModal({
   defaultDirectory = "~/",
@@ -73,8 +74,10 @@ export function NewProjectModal({
       setDirectoryStatus("unknown");
       return;
     }
-    setDirectoryStatus("checking");
     const timer = window.setTimeout(() => {
+      if (directoryCheckRef.current === token) {
+        setDirectoryStatus("checking");
+      }
       void onDirectoryExists(current)
         .then((exists) => {
           if (directoryCheckRef.current === token) {
@@ -86,7 +89,7 @@ export function NewProjectModal({
             setDirectoryStatus("unknown");
           }
         });
-    }, 120);
+    }, DIRECTORY_CHECK_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [directory, lockDirectory, onDirectoryExists]);
 
@@ -189,12 +192,6 @@ export function NewProjectModal({
         )}
 
         {error && <div className="aya-modal-error">{error}</div>}
-        {!error && directoryStatus === "missing" && onCreateDirectory && (
-          <div className="aya-modal-hint aya-modal-hint--path">
-            Folder will be created.
-          </div>
-        )}
-
         <div className="aya-modal-actions">
           <button
             className="aya-modal-btn"
