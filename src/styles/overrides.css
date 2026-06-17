@@ -81,75 +81,75 @@
   border-color: transparent;
 }
 
-/* Make room for the (hidden) draggable titlebar inset on macOS. The
-   padding-left clears the traffic-light buttons (close/minimize/maximize)
-   that sit at the top-left of the window in windowed mode.
-
-   In macOS fullscreen we completely hide the custom top bar (project tabs +
-   brand + right actions) so the terminal content can use the full window
-   height. We handle the traffic lights "in another way" by rendering our
-   own custom dots (see .aya-traffic-lights) as a tiny floating control in
-   the top-left during fullscreen. The native inset lights from
-   titleBarStyle:hiddenInset are still available via the macOS menu/titlebar
-   reveal when you push the pointer to the top edge. */
+/* Custom chrome. The top bar is the draggable titlebar on macOS/Linux; native
+   menu bar remains an application menu, but the window frame itself is ours. */
 .aya-app {
   padding-top: env(safe-area-inset-top, 0);
 }
 .aya-topbar { transition: padding-left 120ms ease-out; }
-.aya-app--macos .aya-topbar { padding-left: 78px; }
 
-/* Fullscreen: collapse the top bar row entirely and hide the header so
-   terminals + statusbar get the full viewport. No extra chrome inset needed
-   because there are no tabs to keep below the transient macOS bar. */
-.aya-app.aya-app--fullscreen {
-  grid-template-rows: 0 1fr 26px;
-}
-.aya-app.aya-app--fullscreen .aya-topbar {
-  display: none;
-}
-
-/* Custom traffic lights for macOS fullscreen (where we hide the whole
-   top bar). Tiny, low-profile colored dots in the top-left. They sit
-   on top of terminal content. Low opacity by default so they don't
-   distract during heavy TUI use; become fully opaque on hover.
-   Clicking red/yellow/green does the expected window action. */
-.aya-traffic-lights {
-  position: fixed;
-  top: 8px;
-  left: 8px;
-  z-index: 99999;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px;
-  /* Let underlying terminal be clickable except on the dots themselves */
-}
-.aya-traffic-lights button {
+.aya-mac-window-controls {
   -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 0 14px;
+  border-right: 1px solid var(--border);
+}
+.aya-mac-window-control {
   width: 12px;
   height: 12px;
-  border-radius: 50%;
   border: 0;
+  border-radius: 999px;
   padding: 0;
   margin: 0;
   cursor: pointer;
-  opacity: 0.25;
-  transition: opacity 120ms ease, transform 80ms ease;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25) inset;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.22) inset;
 }
-.aya-traffic-lights:hover button {
-  opacity: 1;
+.aya-mac-window-control--close { background: #ff5f57; }
+.aya-mac-window-control--minimize { background: #ffbd2e; }
+.aya-mac-window-control--fullscreen { background: #28c840; }
+.aya-mac-window-control:hover {
+  filter: brightness(1.06);
 }
-.aya-traffic-lights button:hover {
-  transform: scale(1.1);
+.aya-mac-window-control:active {
+  filter: brightness(0.9);
 }
-.aya-traffic-lights button:active {
-  transform: scale(0.95);
-  opacity: 0.9;
+
+.aya-window-controls {
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: stretch;
+  align-self: stretch;
+  margin: 0 -10px 0 4px;
 }
-.aya-tl-close { background: #ff5f56; }
-.aya-tl-minimize { background: #ffbd2e; }
-.aya-tl-fullscreen { background: #27c93f; }
+.aya-window-control {
+  -webkit-app-region: no-drag;
+  width: 42px;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg-tertiary);
+  cursor: pointer;
+  padding: 0;
+}
+.aya-window-control span {
+  font-size: 17px;
+  line-height: 1;
+}
+.aya-window-control:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+}
+.aya-window-control--close:hover {
+  background: #e5484d;
+  color: white;
+}
 
 /* The sidebar's drag-to-resize handle is positioned absolutely with
    top:0/bottom:0. Without a positioned ancestor it anchors to the viewport

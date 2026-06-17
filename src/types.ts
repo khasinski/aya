@@ -283,10 +283,13 @@ export interface AyaApi {
   writeClipboard(text: string): Promise<void>;
 
   isFullScreen(): Promise<boolean>;
+  isMaximized(): Promise<boolean>;
   setDockBadge(text: string): Promise<void>;
   focusWindow(): Promise<void>;
   /** Minimize the window (yellow traffic light). */
   minimizeWindow(): Promise<void>;
+  /** Toggle maximized/restored window state. */
+  toggleMaximizeWindow(): Promise<void>;
   /** Close the window (red traffic light). */
   closeWindow(): Promise<void>;
   /** Programmatic fullscreen control (used for the green traffic light in FS). */
@@ -307,6 +310,7 @@ export interface AyaApi {
   ): () => void;
   onControlStatus(handler: (update: ControlStatusUpdate) => void): () => void;
   onFullScreenChange(handler: (isFullScreen: boolean) => void): () => void;
+  onMaximizedChange(handler: (isMaximized: boolean) => void): () => void;
 
   /** Action strings include "new-shell", "close-tab", "search",
    *  "open-settings", "prev-tab", "next-tab", and "project-1".."project-9". */

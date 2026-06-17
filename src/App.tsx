@@ -447,6 +447,7 @@ export function App() {
   const [findInPaneFor, setFindInPaneFor] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH_PX);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
   const [didBootstrap, setDidBootstrap] = useState(false);
   const [harnessScanDone, setHarnessScanDone] = useState(false);
   const [foundHarnessCount, setFoundHarnessCount] = useState(0);
@@ -551,11 +552,8 @@ export function App() {
     for (const dir of queued) openProjectRef.current(dir);
   }, [didBootstrap]);
 
-  // Track fullscreen state. Used to:
-  // - Hide the custom top bar (project tabs + brand + controls) completely
-  //   on macOS so the terminal gets true fullscreen height.
-  // - Render floating custom traffic lights in the top-left (another way
-  //   to present close/minimize/exit-fs when the normal top bar is gone).
+  // Track fullscreen state so platform chrome can change without hiding
+  // Aya's normal project tabs and controls.
   useEffect(() => {
     let active = true;
     void window.aya.isFullScreen().then((fs) => {
@@ -563,6 +561,20 @@ export function App() {
     });
     const unsubscribe = window.aya.onFullScreenChange((fs) => {
       setIsFullScreen(fs);
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void window.aya.isMaximized().then((maximized) => {
+      if (active) setIsMaximized(maximized);
+    });
+    const unsubscribe = window.aya.onMaximizedChange((maximized) => {
+      setIsMaximized(maximized);
     });
     return () => {
       active = false;
@@ -2238,35 +2250,14 @@ export function App() {
       }
       data-accent="green"
     >
-      {/* macOS fullscreen: hide the whole custom title bar (tabs etc). Provide
-          our own tiny traffic lights as a floating overlay so the user still
-          has immediate close / minimize / exit-fullscreen controls without
-          mousing to the top edge to reveal the system bar. */}
-      {window.aya.platform === "darwin" && isFullScreen && (
-        <div className="aya-traffic-lights">
-          <button
-            className="aya-tl aya-tl-close"
-            title="Close window"
-            onClick={() => void window.aya.closeWindow()}
-          />
-          <button
-            className="aya-tl aya-tl-minimize"
-            title="Minimize window"
-            onClick={() => void window.aya.minimizeWindow()}
-          />
-          <button
-            className="aya-tl aya-tl-fullscreen"
-            title="Exit full screen"
-            onClick={() => void window.aya.setFullScreen(false)}
-          />
-        </div>
-      )}
-
       <TopBar
         projects={projects}
         activeProjectId={activeProjectId}
         homeDir={homeDir}
         isDev={window.aya.isDev}
+        platform={window.aya.platform}
+        isFullScreen={isFullScreen}
+        isMaximized={isMaximized}
         blockChrome={chromeBlocked}
         closedProjects={closedProjects}
         onSelectProject={setActiveProjectId}
@@ -2280,6 +2271,12 @@ export function App() {
         onReorderProjects={reorderProjects}
         onOpenSearch={() => setShowSearch(true)}
         onOpenSettings={openSettings}
+        onMinimizeWindow={() => void window.aya.minimizeWindow()}
+        onToggleMaximizeWindow={() => void window.aya.toggleMaximizeWindow()}
+        onToggleFullScreenWindow={() =>
+          void window.aya.setFullScreen(!isFullScreen)
+        }
+        onCloseWindow={() => void window.aya.closeWindow()}
         projectBadges={projectBadges}
         usageAccounts={usageAccounts}
         codexUsageAccounts={codexUsageAccounts}

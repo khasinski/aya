@@ -72,9 +72,11 @@ const api: AyaApi = {
   writeClipboard: (text) => ipcRenderer.invoke("env:clipboard-write", text),
 
   isFullScreen: () => ipcRenderer.invoke("app:is-fullscreen"),
+  isMaximized: () => ipcRenderer.invoke("app:is-maximized"),
   setDockBadge: (text) => ipcRenderer.invoke("app:set-dock-badge", text),
   focusWindow: () => ipcRenderer.invoke("app:focus-window"),
   minimizeWindow: () => ipcRenderer.invoke("app:minimize"),
+  toggleMaximizeWindow: () => ipcRenderer.invoke("app:toggle-maximize"),
   closeWindow: () => ipcRenderer.invoke("app:close"),
   setFullScreen: (value: boolean) => ipcRenderer.invoke("app:set-fullscreen", value),
   showWaitingNotification: (req) =>
@@ -106,6 +108,12 @@ const api: AyaApi = {
       handler(isFullScreen);
     ipcRenderer.on("app:fullscreen", listener);
     return () => ipcRenderer.removeListener("app:fullscreen", listener);
+  },
+  onMaximizedChange: (handler) => {
+    const listener = (_e: unknown, isMaximized: boolean) =>
+      handler(isMaximized);
+    ipcRenderer.on("app:maximized", listener);
+    return () => ipcRenderer.removeListener("app:maximized", listener);
   },
   onConfigChange: (handler) => {
     const listener = (_e: unknown, change: ConfigChange) => handler(change);

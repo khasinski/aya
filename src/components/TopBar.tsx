@@ -20,6 +20,9 @@ interface Props {
   activeProjectId: string | null;
   homeDir: string;
   isDev: boolean;
+  platform: NodeJS.Platform;
+  isFullScreen: boolean;
+  isMaximized: boolean;
   /** When true, the gear is disabled and the "+ New project" sentinel is
    *  inert. Used while a blocking modal (MissingDir / NewProject) is up
    *  so the user can't stack Settings on top of it. */
@@ -33,6 +36,10 @@ interface Props {
   onReorderProjects: (orderedSlugs: string[]) => void;
   onOpenSearch: () => void;
   onOpenSettings: (tab?: SettingsTab) => void;
+  onMinimizeWindow: () => void;
+  onToggleMaximizeWindow: () => void;
+  onToggleFullScreenWindow: () => void;
+  onCloseWindow: () => void;
   projectBadges?: Record<string, ProjectAttention>;
   /** Account-wide Claude usage snapshots. Read-only. */
   usageAccounts?: UsageAccount[];
@@ -55,6 +62,9 @@ export function TopBar({
   activeProjectId,
   homeDir,
   isDev,
+  platform,
+  isFullScreen,
+  isMaximized,
   blockChrome,
   onSelectProject,
   onOpenProject,
@@ -64,6 +74,10 @@ export function TopBar({
   onReorderProjects,
   onOpenSearch,
   onOpenSettings,
+  onMinimizeWindow,
+  onToggleMaximizeWindow,
+  onToggleFullScreenWindow,
+  onCloseWindow,
   projectBadges = {},
   usageAccounts = [],
   codexUsageAccounts = [],
@@ -179,6 +193,28 @@ export function TopBar({
 
   return (
     <header className="aya-topbar">
+      {platform === "darwin" && (
+        <div className="aya-mac-window-controls" aria-label="Window controls">
+          <button
+            className="aya-mac-window-control aya-mac-window-control--close"
+            title="Close"
+            aria-label="Close"
+            onClick={onCloseWindow}
+          />
+          <button
+            className="aya-mac-window-control aya-mac-window-control--minimize"
+            title="Minimize"
+            aria-label="Minimize"
+            onClick={onMinimizeWindow}
+          />
+          <button
+            className="aya-mac-window-control aya-mac-window-control--fullscreen"
+            title={isFullScreen ? "Exit full screen" : "Full screen"}
+            aria-label={isFullScreen ? "Exit full screen" : "Full screen"}
+            onClick={onToggleFullScreenWindow}
+          />
+        </div>
+      )}
       <div className="aya-brand">
         <span
           className="aya-brand-dot"
@@ -367,6 +403,40 @@ export function TopBar({
         >
           <span style={{ fontFamily: "Material Symbols Outlined" }}>settings</span>
         </button>
+        {platform === "linux" && (
+          <div className="aya-window-controls" aria-label="Window controls">
+            <button
+              className="aya-window-control"
+              title="Minimize"
+              aria-label="Minimize"
+              onClick={onMinimizeWindow}
+            >
+              <span style={{ fontFamily: "Material Symbols Outlined" }}>
+                remove
+              </span>
+            </button>
+            <button
+              className="aya-window-control"
+              title={isMaximized ? "Restore" : "Maximize"}
+              aria-label={isMaximized ? "Restore" : "Maximize"}
+              onClick={onToggleMaximizeWindow}
+            >
+              <span style={{ fontFamily: "Material Symbols Outlined" }}>
+                {isMaximized ? "filter_none" : "crop_square"}
+              </span>
+            </button>
+            <button
+              className="aya-window-control aya-window-control--close"
+              title="Close"
+              aria-label="Close"
+              onClick={onCloseWindow}
+            >
+              <span style={{ fontFamily: "Material Symbols Outlined" }}>
+                close
+              </span>
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );

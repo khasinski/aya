@@ -233,13 +233,17 @@ export interface AyaApi {
 
   // Window state
   isFullScreen(): Promise<boolean>;
+  isMaximized(): Promise<boolean>;
   onFullScreenChange(handler: (isFullScreen: boolean) => void): () => void;
+  onMaximizedChange(handler: (isMaximized: boolean) => void): () => void;
   /** Sets the macOS dock badge text. Empty string clears. No-op elsewhere. */
   setDockBadge(text: string): Promise<void>;
   /** Brings the aya window to the foreground (restore if minimized). */
   focusWindow(): Promise<void>;
   /** Minimize the window (yellow traffic light). */
   minimizeWindow(): Promise<void>;
+  /** Toggle maximized/restored window state. */
+  toggleMaximizeWindow(): Promise<void>;
   /** Close the window (red traffic light). */
   closeWindow(): Promise<void>;
   /** Programmatic fullscreen control (used for the green traffic light in FS). */

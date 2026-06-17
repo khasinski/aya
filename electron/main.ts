@@ -92,6 +92,47 @@ const ABOUT_DIALOG_SIZE = 360;
 const ABOUT_ICON_SIZE = 128;
 
 const ptyHost = new PtyHostClient(path.join(__dirname, "pty-host.js"));
+let macosWindowHack:
+  | {
+      apply(handle: Buffer): void;
+    }
+  | null
+  | undefined;
+
+function applyMacOsWindowHack(win: BrowserWindow): void {
+  if (process.platform !== "darwin" || win.isDestroyed()) return;
+  if (macosWindowHack === undefined) {
+    try {
+      macosWindowHack = require(path.join(__dirname, "macos-window-hack.node")) as {
+        apply(handle: Buffer): void;
+      };
+    } catch (error) {
+      macosWindowHack = null;
+      if (IS_DEV) console.warn("macOS window hack unavailable", error);
+    }
+  }
+  if (!macosWindowHack) return;
+  try {
+    macosWindowHack.apply(win.getNativeWindowHandle());
+  } catch (error) {
+    if (IS_DEV) console.warn("macOS window hack failed", error);
+  }
+}
+
+function isAyaFullScreen(win: BrowserWindow): boolean {
+  return win.isFullScreen();
+}
+
+function setAyaFullScreen(win: BrowserWindow, value: boolean): void {
+  if (win.isDestroyed()) return;
+  win.setFullScreen(value);
+  win.webContents.send("app:fullscreen", isAyaFullScreen(win));
+}
+
+function toggleAyaFullScreen(win: BrowserWindow | null): void {
+  if (!win || win.isDestroyed()) return;
+  setAyaFullScreen(win, !isAyaFullScreen(win));
+}
 
 function pathEntries(): string[] {
   return (process.env.PATH ?? "")
@@ -677,7 +718,12 @@ function installApplicationMenu(): void {
         { role: "zoomIn" },
         { role: "zoomOut" },
         { type: "separator" },
-        { role: "togglefullscreen" },
+        {
+          label: "Toggle Full Screen",
+          accelerator:
+            process.platform === "darwin" ? "Ctrl+Command+F" : "F11",
+          click: () => toggleAyaFullScreen(mainWindow),
+        },
       ],
     },
     {
@@ -738,7 +784,10 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     minWidth: WINDOW_MIN_WIDTH,
     minHeight: WINDOW_MIN_HEIGHT,
     title: WINDOW_TITLE,
-    titleBarStyle: "hiddenInset",
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hidden" as const }
+      : {}),
+    ...(process.platform === "linux" ? { frame: false } : {}),
     backgroundColor: COLOR_DARK_BG,
     show: false,
     webPreferences: {
@@ -749,8 +798,13 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     },
   });
 
+  if (process.platform === "darwin") {
+    win.setWindowButtonVisibility(false);
+    applyMacOsWindowHack(win);
+  }
+
   if (initial.isMaximized) win.maximize();
-  if (initial.isFullScreen) win.setFullScreen(true);
+  if (initial.isFullScreen) setAyaFullScreen(win, true);
 
   // Persist geometry changes; the helper handles debouncing + final flush.
   trackWindowState(win);
@@ -776,11 +830,27 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   const sendFullScreen = (isFs: boolean) => {
     if (!win.isDestroyed()) win.webContents.send("app:fullscreen", isFs);
   };
-  win.on("enter-full-screen", () => sendFullScreen(true));
-  win.on("leave-full-screen", () => sendFullScreen(false));
+  const sendMaximized = (isMaximized: boolean) => {
+    if (!win.isDestroyed()) win.webContents.send("app:maximized", isMaximized);
+  };
+  win.on("enter-full-screen", () => {
+    sendFullScreen(true);
+    applyMacOsWindowHack(win);
+    setTimeout(() => applyMacOsWindowHack(win), 250);
+  });
+  win.on("leave-full-screen", () => {
+    sendFullScreen(false);
+    applyMacOsWindowHack(win);
+  });
+  win.on("maximize", () => sendMaximized(true));
+  win.on("unmaximize", () => sendMaximized(false));
   // Initial broadcast once the renderer is ready (also useful if a future
   // restart preserves fullscreen state).
-  win.webContents.once("did-finish-load", () => sendFullScreen(win.isFullScreen()));
+  win.webContents.once("did-finish-load", () => {
+    sendFullScreen(isAyaFullScreen(win));
+    sendMaximized(win.isMaximized());
+    applyMacOsWindowHack(win);
+  });
 
   // External links must never navigate Aya's BrowserWindow. xterm's web-links
   // addon normally calls our IPC handler, but Chromium/Electron can still see
@@ -1051,15 +1121,21 @@ function registerIpc(win: BrowserWindow): void {
   ipcMain.handle("env:clipboard-write", async (_e, value: unknown) => {
     clipboard.writeText(requireString(value, "env:clipboard-write.text"));
   });
-  ipcMain.handle("app:is-fullscreen", async () => win.isFullScreen());
+  ipcMain.handle("app:is-fullscreen", async () => isAyaFullScreen(win));
+  ipcMain.handle("app:is-maximized", async () => win.isMaximized());
   ipcMain.handle("app:minimize", () => {
     if (!win.isDestroyed()) win.minimize();
+  });
+  ipcMain.handle("app:toggle-maximize", () => {
+    if (win.isDestroyed()) return;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
   });
   ipcMain.handle("app:close", () => {
     if (!win.isDestroyed()) win.close();
   });
   ipcMain.handle("app:set-fullscreen", async (_e, value: unknown) => {
-    if (!win.isDestroyed()) win.setFullScreen(!!value);
+    setAyaFullScreen(win, !!value);
   });
   // Dock badge for unattended notifications (waiting terminals). Empty
   // string clears. macOS only; no-op on Linux/Windows for now since their

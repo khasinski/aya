@@ -28,7 +28,7 @@
     "typecheck": "npm run typecheck:renderer && tsc -p electron --noEmit",
     "typecheck:renderer": "tsc -p tsconfig.json --noEmit",
     "build:renderer": "vite build",
-    "build:electron": "tsc -p electron",
+    "build:electron": "tsc -p electron && node scripts/build-macos-window-hack.cjs",
     "build:test-src": "tsc -p tsconfig.test-src.json",
     "build": "npm run build:renderer && npm run build:electron",
     "test": "npm run typecheck:renderer && npm run build:electron && npm run build:test-src && node --test \"tests/**/*.test.mjs\"",
@@ -83,7 +83,8 @@
       "package.json"
     ],
     "asarUnpack": [
-      "bin/**"
+      "bin/**",
+      "dist-electron/*.node"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",

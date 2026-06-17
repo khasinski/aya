@@ -52,7 +52,9 @@ export function trackWindowState(win: BrowserWindow): () => void {
       y: bounds.y,
       width: bounds.width,
       height: bounds.height,
-      isFullScreen: win.isFullScreen(),
+      isFullScreen:
+        win.isFullScreen() ||
+        (process.platform === "darwin" && win.isSimpleFullScreen()),
       isMaximized: win.isMaximized(),
     };
   };
