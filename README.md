@@ -70,6 +70,11 @@ The same applies to Codex, Aider, and every other harness. Aya does not insert i
 
 ### macOS
 
+Download the latest signed build:
+
+- [Aya 0.6.0 DMG](https://github.com/khasinski/aya/releases/download/v0.6.0/Aya-0.6.0-arm64.dmg)
+- [Aya 0.6.0 zip](https://github.com/khasinski/aya/releases/download/v0.6.0/Aya-0.6.0-arm64-mac.zip)
+
 Build locally:
 
 ```sh
@@ -115,6 +120,11 @@ The electron-builder config is wired for hardened-runtime + notarization. To pro
 To produce an **unsigned** local build (no cert needed), prefix with `CSC_IDENTITY_AUTO_DISCOVERY=false`.
 
 ### Linux
+
+Download the latest x64 build:
+
+- [Aya 0.6.0 AppImage](https://github.com/khasinski/aya/releases/download/v0.6.0/Aya-0.6.0.AppImage)
+- [Aya 0.6.0 deb](https://github.com/khasinski/aya/releases/download/v0.6.0/aya_0.6.0_amd64.deb)
 
 Build on Linux so `node-pty` is compiled for the target platform. From macOS, use Docker:
 
