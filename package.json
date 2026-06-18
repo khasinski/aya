@@ -1,6 +1,6 @@
 {
   "name": "aya",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "description": "Agentic terminal manager — Claude Code / Codex / shell sessions organized across projects.",
   "engines": {
@@ -11,12 +11,6 @@
     "name": "Chris Hasiński",
     "email": "krzysztof.hasinski@gmail.com"
   },
-  "contributors": [
-    {
-      "name": "Justyna Wojtczak",
-      "email": "justine84@gmail.com"
-    }
-  ],
   "main": "dist-electron/main.js",
   "type": "commonjs",
   "desktopName": "Aya",
@@ -28,7 +22,7 @@
     "typecheck": "npm run typecheck:renderer && tsc -p electron --noEmit",
     "typecheck:renderer": "tsc -p tsconfig.json --noEmit",
     "build:renderer": "vite build",
-    "build:electron": "tsc -p electron",
+    "build:electron": "tsc -p electron && node scripts/build-macos-window-hack.cjs",
     "build:test-src": "tsc -p tsconfig.test-src.json",
     "build": "npm run build:renderer && npm run build:electron",
     "test": "npm run typecheck:renderer && npm run build:electron && npm run build:test-src && node --test \"tests/**/*.test.mjs\"",
@@ -71,6 +65,7 @@
   "build": {
     "appId": "com.aya.app",
     "productName": "Aya",
+    "copyright": "Copyright © Chris Hasinski, Justyna Wojtczak",
     "directories": {
       "buildResources": "build",
       "output": "release"
@@ -83,7 +78,8 @@
       "package.json"
     ],
     "asarUnpack": [
-      "bin/**"
+      "bin/**",
+      "dist-electron/*.node"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",

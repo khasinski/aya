@@ -13,6 +13,7 @@ import {
 } from "../types";
 import type { SettingsTab } from "../settings-tabs";
 import type { MacOptionKeyMode } from "../terminal-option-key";
+import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 
 const CLAUDE_YOLO_CMD = "claude --dangerously-skip-permissions";
 const CODEX_YOLO_CMD = "codex --dangerously-bypass-approvals-and-sandbox";
@@ -554,7 +555,11 @@ export function SettingsModal({
   ];
 
   return (
-    <div className="aya-modal-backdrop" onClick={onClose}>
+    <div
+      className="aya-modal-backdrop"
+      onMouseDown={markBackdropMouseDown}
+      onClick={(e) => closeFromBackdropClick(e, onClose)}
+    >
       <div
         className="aya-modal aya-modal--settings"
         onClick={(e) => e.stopPropagation()}
@@ -563,9 +568,13 @@ export function SettingsModal({
           <div
             className="aya-modal-backdrop"
             style={{ zIndex: 10 }}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              markBackdropMouseDown(e);
+            }}
             onClick={(e) => {
               e.stopPropagation();
-              setShowUsageConsent(false);
+              closeFromBackdropClick(e, () => setShowUsageConsent(false));
             }}
           >
             <div

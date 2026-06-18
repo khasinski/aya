@@ -1,6 +1,9 @@
 # Aya Remote Sessions Spec
 
-Status: draft, exploratory. No implementation committed yet.
+Status: draft, exploratory. Phase 1 transport skeleton exists on the
+`remote-stdio-bridge` branch: `aya remote --stdio` bridges to a host-local
+`aya-remote.sock`, and the running Aya app serves a read-only `hello` +
+workspace snapshot.
 
 ## Goal
 
@@ -129,7 +132,7 @@ ssh username@hostname aya remote --stdio
 Remote side:
 
 ```text
-ssh session -> aya remote CLI -> remote Aya local socket -> remote PTYs/state
+ssh session -> aya remote CLI -> remote Aya host-local remote socket -> remote PTYs/state
 ```
 
 The `aya remote` CLI should be a bridge to the already-running remote Aya app.
@@ -353,10 +356,10 @@ On reconnect:
 
 ### Phase 1: Read-Only Remote Viewer
 
-- Host-local server bound to `127.0.0.1`.
-- SSH tunnel workflow.
+- Host-local server on owner-only `aya-remote.sock`.
+- SSH stdio workflow through `aya remote --stdio`.
 - Pairing token.
-- Initial snapshot.
+- Initial project/state/preset snapshot. Done on `remote-stdio-bridge`.
 - PTY output streaming.
 - Local app renders remote projects in the normal sidebar.
 - Orange remote highlight and small remote icon in project rows/tabs.

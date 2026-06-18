@@ -2,13 +2,14 @@
   <img src="build/icon.png" width="120" alt="Aya">
   <h1>Aya</h1>
   <p>
-    <strong>A project workspace for coding agents you keep around.</strong><br>
-    Long-lived Claude Code, Codex, Aider, and shell sessions, organized by project, in one desktop app.
+    <strong>A desktop workspace for long-lived coding-agent terminals.</strong><br>
+    Keep Claude Code, Codex, Aider, Gemini, OpenCode, Amp, Crush, Qwen Code,
+    Kilo Code, Pi, and plain shell sessions organized by project.
   </p>
 </div>
 
 <p align="center">
-  <img src="screenshots/hero.png" alt="Aya: the main workspace, with the snippets drawer below" width="900">
+  <img src="screenshots/hero.png" alt="Aya main workspace" width="900">
 </p>
 
 <p align="center">
@@ -19,58 +20,111 @@
 
 ---
 
-## The shape of it
+## What Aya is
 
-One Aya window holds many projects. Each project is a directory. Inside each project, the sidebar holds terminals: a `claude`, a `codex`, a plain shell, whatever the work needs. Switch projects with `⌘1..9` and every terminal in every project stays exactly where you left it.
+Aya is an Electron terminal manager for people who keep AI coding agents running
+while they move between real projects. Each project is a directory. Each project
+can have several terminals: Claude Code, Codex, Aider, another agent CLI, or a
+normal shell. Switching projects hides terminals; it does not kill their PTYs.
 
-That is the whole product idea. The rest is mechanics.
+The core workflow is simple:
 
-## What makes it different
+1. Open a repo as an Aya project.
+2. Start one or more terminal presets inside it.
+3. Switch to other projects during the day.
+4. Come back later and find the same agent sessions, panes, scrollback, status,
+   snippets, and project context still there.
 
-Most coding-agent desktop tools right now solve a different problem: spawn N agents in parallel git worktrees and compare their answers. That is a real workflow and tools like Conductor, Crystal/Nimbalyst, Emdash, and CodeAgentSwarm are built for it.
+Aya does not proxy agent APIs, share accounts, scrape terminal output into a
+service, or force a git-worktree workflow. It launches normal interactive CLIs
+in normal PTYs.
 
-Aya is free, open source, and built for the other workflow:
+## Why it exists
 
-- You work on several real projects across a day or a week, not several variants of the same task in an hour.
-- Each project has one branch you care about, and the agents and shells in that project share it.
-- A `claude` session you opened on Monday should still be alive on Wednesday with its full scrollback, because the conversation is part of the work.
+Many multi-agent tools are built around launching several agents in parallel
+worktrees for one task, then comparing or merging the results. Aya is aimed at a
+different daily pattern:
 
-That shapes the design:
+- You work across several repos, clients, or experiments.
+- Each project usually has one checkout or branch you care about.
+- Long-running terminal conversations are part of the work, not disposable
+  output.
+- Agents and shells should share the same project directory unless you choose
+  otherwise.
 
-- **Project-first, not session-first.** Top tabs are projects, sidebar is that project's terminals. The unit of organization is "which repo am I in", not "which task am I parallelizing".
-- **No forced worktree model.** Aya does not create, switch, or merge worktrees for you. Open a normal checkout, or open each worktree as its own project if that is how you work.
-- **PTYs stay alive across project switches.** Inactive terminals are hidden, not killed. A 4-hour Claude session survives switching to another project, hopping to email, and switching back.
-- **Agent-agnostic from day one.** Claude Code, Codex, Aider, Gemini, OpenCode, Amp, Crush, Qwen Code, Kilo Code, and Pi are auto-detected if installed. Any other CLI is one Settings dialog away. Aya treats every harness as a peer.
-- **Search across what is actually on screen.** `⇧⇧` or `⌘K` searches project names, terminal names, recent PTY output across every project, and `Run ...` shortcuts. AND semantics, so `ruby codex` finds the Codex terminal in your Ruby project.
-- **`aya` from any shell.** `aya` opens the current directory as a project. `aya /path/to/repo` opens that. Already known projects switch in place. The desktop app is the destination, the terminal you are already in is the entry point.
+Aya is project-first: top tabs are projects, the sidebar is that project's
+terminals, and the search jumps across projects, terminals, recent output, and
+run commands.
 
-## What you actually do with it
+## Version 0.6 highlights
 
-Day to day:
-
-- Type `aya` in any shell to open or switch to a project.
-- Open a `claude` tab in one project, a `codex` tab in another, leave both running.
-- Split a project into panes when you want Claude Code, Codex, and a shell visible at the same time.
-- Keep reusable text snippets (prompts, commands) in a drawer and inject them into the active terminal with one click. They live editor-side in `~/.aya/snippets.json`, not in any agent's context, so they never eat conversation tokens.
-- Press `⇧⇧` to jump to either by typing a few characters of the project name or what is on screen.
-- See a red dot on the sidebar tab and a macOS dock badge count when an agent is waiting on you. Get an OS notification if the window is not focused.
-- See the active project's branch and dirty-file count in the status bar.
-- `⌘F` to find inside the active terminal. `Shift+Enter` or `⌥Enter` inserts a newline inside a running rich TUI (claude/codex) instead of submitting; on a cleanly-exited terminal, `Shift+Enter` restarts the PTY in the same pane.
-- Import iTerm2 `.itermcolors` or Windows Terminal JSON themes. Per-preset theme overrides if you want Claude green and Codex orange.
-
-## Claude Code, plainly
-
-Aya launches the official `claude` CLI in a normal interactive PTY, the same way Terminal.app or iTerm2 would. It is not a proxy, scraper, shared-account layer, or headless wrapper.
-
-The built-in Claude Code preset is literally `claude`. Aya deliberately does not ship `-p`, `--print`, `--headless`, or other non-interactive flags, and the test suite fails if those flags appear in shipped defaults. Your Claude Code login, plan limits, and Anthropic's terms apply exactly as they do in any other terminal.
-
-The same applies to Codex, Aider, and every other harness. Aya does not insert itself between you and the agent.
+- **Desktop chrome polish.** Project tabs now own the window header on macOS
+  and Linux, including better macOS fullscreen behavior and Linux custom
+  draggable chrome.
+- **Long-lived PTYs.** Terminals stay alive across project switches, window
+  focus changes, and renderer remounts. A rolling buffer replays recent output
+  when the renderer reconnects.
+- **Agent-agnostic presets.** Aya auto-detects known harnesses on your
+  login-shell PATH and seeds usable presets. Custom commands can be added from
+  Settings.
+- **Interactive launch policy.** Built-in Claude Code and Codex presets are
+  plain `claude` and `codex`. Aya deliberately does not ship `-p`, `--print`,
+  `--headless`, or other non-interactive defaults, and tests enforce that.
+- **Project search.** `⇧⇧` or `⌘K` searches projects, terminal names, recent PTY
+  output, and `Run ...` actions with AND semantics.
+- **Splits and navigation.** Keep several agents or shells visible in one
+  project, then focus adjacent panes from the keyboard.
+- **Snippets.** Save prompts or commands in `~/.aya/snippets.json` and inject
+  them into the active terminal. Snippets live in Aya's editor-side storage, not
+  in any agent's conversation.
+- **Status and attention.** Aya detects common approval prompts, shows sidebar
+  attention dots, can badge the macOS dock, and can send native notifications
+  when a terminal needs attention.
+- **Usage chips.** Claude usage can be read from an explicit user-enabled hook
+  that writes `~/.aya/usage.json`; Codex usage is read from local Codex session
+  logs. Aya itself does not read Anthropic tokens or call Anthropic endpoints.
+- **Early remote support.** The 0.6 tree includes SSH-backed remote project
+  opening and a local `aya remote --stdio` bridge. This is groundwork for fuller
+  remote session sync; remote control is still intentionally limited.
 
 ## Install
 
+Download Aya 0.6.0 from the GitHub release:
+
+- macOS Apple Silicon: [DMG](https://github.com/khasinski/aya/releases/download/v0.6.0/Aya-0.6.0-arm64.dmg) or [zip](https://github.com/khasinski/aya/releases/download/v0.6.0/Aya-0.6.0-arm64-mac.zip)
+- Linux x64: [AppImage](https://github.com/khasinski/aya/releases/download/v0.6.0/Aya-0.6.0.AppImage) or [deb](https://github.com/khasinski/aya/releases/download/v0.6.0/aya_0.6.0_amd64.deb)
+
 ### macOS
 
-Build locally:
+Open the DMG and drag Aya to `/Applications`. The release build is Developer ID
+signed and Apple-notarized.
+
+### Linux
+
+On Ubuntu and Debian-like systems, prefer the DEB:
+
+```sh
+sudo apt install ./aya_0.6.0_amd64.deb
+/opt/Aya/aya
+```
+
+The AppImage can be run directly:
+
+```sh
+chmod +x Aya-0.6.0.AppImage
+./Aya-0.6.0.AppImage
+```
+
+If AppImage complains about FUSE, use the DEB.
+
+## Build from source
+
+Requirements:
+
+- Node.js `>=24 <25`
+- npm
+
+Build and package for the current platform:
 
 ```sh
 git clone https://github.com/khasinski/aya.git
@@ -79,44 +133,17 @@ npm install
 npm run package
 ```
 
-Produces:
+macOS packaging produces:
 
 - `release/mac-arm64/Aya.app`
 - `release/Aya-<version>-arm64.dmg`
 - `release/Aya-<version>-arm64-mac.zip`
 
-Open the DMG, drag Aya to `/Applications`. Unsigned local builds need a right-click → Open the first time. Signed + notarized builds open normally; see "Signing macOS builds" below.
+Unsigned local macOS builds may need right-click -> Open the first time. See
+[Signing macOS builds](docs/signing-macos.md) for release signing and
+notarization.
 
-### Signing macOS builds
-
-The electron-builder config is wired for hardened-runtime + notarization. To produce a signed, notarized DMG:
-
-1. Install a **Developer ID Application** certificate in your login keychain (Apple Developer → Certificates → "+" → Developer ID Application). After install, `security find-identity -v -p codesigning` should show one valid identity.
-2. Create an App Store Connect API key at https://appstoreconnect.apple.com/access/integrations/api with "Developer" role. Save the `.p8` file, note the Key ID and Issuer ID.
-3. Store the credentials in Keychain once:
-
-   ```sh
-   xcrun notarytool store-credentials aya-notarize \
-     --key /path/to/AuthKey_XXXXXXXX.p8 \
-     --key-id XXXXXXXX \
-     --issuer 11111111-2222-3333-4444-555555555555
-   ```
-
-4. Build with the keychain profile in the environment:
-
-   ```sh
-   APPLE_KEYCHAIN=~/Library/Keychains/login.keychain-db \
-   APPLE_KEYCHAIN_PROFILE=aya-notarize \
-     npm run package
-   ```
-
-   electron-builder picks up the Developer ID identity automatically, signs with the hardened runtime + entitlements in `build/entitlements.mac.plist`, then submits to Apple for notarization and staples the ticket to the DMG.
-
-To produce an **unsigned** local build (no cert needed), prefix with `CSC_IDENTITY_AUTO_DISCOVERY=false`.
-
-### Linux
-
-Build on Linux so `node-pty` is compiled for the target platform. From macOS, use Docker:
+To build Linux artifacts from macOS, compile `node-pty` for Linux in Docker:
 
 ```sh
 docker run --rm --platform linux/amd64 \
@@ -126,66 +153,98 @@ docker run --rm --platform linux/amd64 \
   /bin/bash -lc 'npm ci && npm test && npx electron-builder --linux AppImage deb --x64'
 ```
 
-Test artifacts:
+Expected artifacts:
 
-- `release/Aya-0.1.0-linux-x64.AppImage`
-- `release/aya_0.1.0_amd64.deb`
+- `release/Aya-<version>.AppImage`
+- `release/aya_<version>_amd64.deb`
 - `release/linux-unpacked/`
 
-On Ubuntu, prefer the DEB:
+## Development
+
+Run the app in development mode:
 
 ```sh
-sudo apt install ./aya_0.1.0_amd64.deb
-/opt/Aya/aya
-```
-
-The DEB installs a desktop launcher. The AppImage can be run directly:
-
-```sh
-chmod +x Aya-0.1.0-linux-x64.AppImage
-./Aya-0.1.0-linux-x64.AppImage
-```
-
-If AppImage complains about FUSE on Ubuntu, use the DEB.
-
-### Development
-
-```sh
+npm install
 npm run dev
 ```
 
-Launches Vite + `tsc -w` + electronmon. State lives at `~/.aya-dev/` so production builds' data is untouched.
+`npm run dev` starts Vite, TypeScript watch mode for the Electron main process,
+and `electronmon`. Development state lives in `~/.aya-dev/`, so it does not
+touch production state in `~/.aya/`.
 
-## Keyboard shortcuts
+Common commands:
 
-| Shortcut | Action |
-|---|---|
-| `⌘T` / `Ctrl+T` | New shell tab |
-| `⌘W` / `Ctrl+W` | Close active terminal |
-| `⌘K` or `⇧⇧` | Search projects / terminals / output |
-| `⌘F` / `Ctrl+F` | Find inside the active terminal |
-| `⌘[` / `⌘]` | Previous / next terminal in current project |
-| `⌘⌥←/→/↑/↓` / `Ctrl+Alt+←/→/↑/↓` | Focus adjacent split pane |
-| <code>⌘⌥\\</code> / <code>Ctrl+Alt+\\</code> | Split active pane right |
-| `⌘⌥-` / `Ctrl+Alt+-` | Split active pane below |
-| `⌘1..9` | Switch to project N |
-| `⌘,` / `Ctrl+,` | Settings |
-| `Shift+Enter` / `⌥Enter` | Newline inside a running rich TUI (claude/codex) without submitting |
-| `Shift+Enter` | Restart a cleanly-exited terminal (in the same pane) |
+```sh
+npm test          # typecheck + Electron build + test source build + node tests
+npm run build    # renderer + Electron main build
+npm run package  # build and package with electron-builder
+```
 
-Right-click a terminal in the sidebar for Restart / Close. Right-click or `×` on a project tab to close it (the JSON stays on disk; restart restores it).
+## Daily use
 
-## CLI helper
+### Open projects
 
-`bin/aya` opens a directory in the running Aya instance. Symlink it onto PATH:
+Use the app's open-project flow, or install the CLI helper from Settings ->
+General -> `aya` command-line tool and open projects from any shell:
+
+```sh
+aya
+aya ~/code/my-repo
+aya open ~/code/my-repo
+```
+
+If Aya is already running, the helper sends the open request to the existing
+instance. If the project already exists, Aya switches to it.
+
+For repo/dev builds, you can also put `bin/aya` on PATH yourself:
 
 ```sh
 ln -s "$PWD/bin/aya" /usr/local/bin/aya
 ```
 
-Then `aya` opens the current directory as a project, and `aya ~/code/foo` opens that path. If the project exists, Aya switches to it; otherwise it creates one from the directory basename.
+On macOS the helper can launch `/Applications/Aya.app` if Aya is not already
+running. On Linux it expects an `aya-app` launcher on PATH; the DEB installs the
+binary at `/opt/Aya/aya`, so add one if you want that cold-start workflow:
 
-When Aya is running, the helper also exposes a small local control surface for agent harnesses:
+```sh
+sudo ln -s /opt/Aya/aya /usr/local/bin/aya-app
+```
+
+### Start terminals
+
+Each project gets launcher buttons for configured presets. First launch seeds
+presets from agent CLIs found on your login-shell PATH, plus a shell fallback.
+Settings can add suggested harnesses, edit commands, set agent metadata, and
+label unsafe-mode presets.
+
+Aya launches commands with `node-pty` under a login shell in the selected
+project directory. The built-in agent presets are interactive CLIs, not
+headless API wrappers.
+
+### Use snippets
+
+Snippets are saved reusable text blocks. They can type only, or append Enter and
+run immediately. Multi-line snippets are sent with bracketed paste so rich TUIs
+receive the text as one paste operation.
+
+Snippets are stored in:
+
+```text
+~/.aya/snippets.json
+```
+
+### Use status commands
+
+Terminals launched by Aya receive environment variables that let scripts and
+agent skills talk back to the current pane:
+
+- `AYA_SOCKET`
+- `AYA_TERMINAL_ID`
+- `AYA_PROJECT_SLUG`
+- `AYA_PROJECT_DIR`
+- `AYA_PRESET_ID`
+
+The helper exposes a small local control surface:
 
 ```sh
 aya focus
@@ -197,55 +256,104 @@ aya status error "Tests failed"
 aya status clear
 ```
 
-Terminals launched by Aya receive `AYA_SOCKET`, `AYA_TERMINAL_ID`, `AYA_PROJECT_SLUG`, `AYA_PROJECT_DIR`, and `AYA_PRESET_ID` so these status commands attach to the right pane. The companion skill lives in `skills/aya-control/SKILL.md` and only uses this public CLI side channel; Claude Code, Codex, and other harnesses still run as normal interactive TUIs.
+The companion skill lives in `skills/aya-control/SKILL.md` and uses only this
+public CLI side channel.
 
-On macOS the helper expects Aya at `/Applications/Aya.app`. On Linux it expects an `aya-app` command on PATH; the DEB installs the binary at `/opt/Aya/aya`, so add an alias if you want the helper workflow:
+### Open remote projects
 
-```sh
-sudo ln -s /opt/Aya/aya /usr/local/bin/aya-app
-```
+The v0.6 remote flow is SSH-based and early. From the new-project dialog, enter
+an SSH target, browse directories on the remote host, create a remote project,
+and start remote terminals through `ssh -tt`.
+
+Remote support requires:
+
+- Aya installed and running on the remote host.
+- The `aya` helper available to the remote SSH session.
+- SSH access already configured by the user.
+
+The fuller design for synchronized remote sessions is still tracked in
+`docs/remote-sessions.md`.
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `⌘T` / `Ctrl+T` | New shell tab |
+| `⌘W` / `Ctrl+W` | Close active terminal |
+| `⌘K` or `⇧⇧` | Search projects, terminals, output, and run actions |
+| `⌘F` / `Ctrl+F` | Find inside the active terminal |
+| `⌘[` / `⌘]` | Previous / next terminal in the current project |
+| `⌘⌥←/→/↑/↓` / `Ctrl+Alt+←/→/↑/↓` | Focus adjacent split pane |
+| <code>⌘⌥\\</code> / <code>Ctrl+Alt+\\</code> | Split active pane right |
+| `⌘⌥-` / `Ctrl+Alt+-` | Split active pane below |
+| `⌘1..9` | Switch to project N |
+| `⌘,` / `Ctrl+,` | Settings |
+| `Shift+Enter` / `⌥Enter` | Insert a newline in a running rich TUI |
+| `Shift+Enter` | Restart a cleanly exited terminal in the same pane |
+
+Right-click a terminal in the sidebar for terminal actions such as restart,
+rename, and close. Right-click or use the close button on a project tab to close
+the project without deleting its JSON from disk.
 
 ## Configuration
 
-Everything lives in `~/.aya/` (or `~/.aya-dev/` in dev):
+Production state lives in `~/.aya/`. Development state lives in `~/.aya-dev/`.
 
-```
+```text
 ~/.aya/
-  projects/<slug>.json       # one per project, hand-editable
-  projects-state.json        # top-tab order, open projects, recent projects
-  presets.json               # launcher buttons in the sidebar
-  snippets.json              # saved text snippets for the injector drawer
-  themes.json                # color schemes, xterm.js ITheme shape
-  window-state.json          # position, size, fullscreen / maximized
+  aya.sock                 # local app control socket
+  aya-remote.sock          # local remote bridge socket
+  projects/<slug>.json     # one hand-editable project file per project
+  projects-state.json      # project tab order, open/recent projects, selection
+  presets.json             # terminal launcher presets
+  snippets.json            # saved snippet definitions
+  themes.json              # terminal themes and active theme id
+  usage.json               # optional usage snapshot read by top-bar chips
+  window-state.json        # size, position, fullscreen/maximized state
 ```
 
-Older configs with `projects-order.json` / `open-projects.json` are migrated automatically into `projects-state.json` on launch.
+Older configs with `projects-order.json` and `open-projects.json` migrate into
+`projects-state.json` on launch. External edits to snippets, presets, themes,
+and project JSON files are watched and reloaded while Aya is running.
 
-Override the home via `AYA_HOME=/path/to/dir`, useful for screenshots, scratch sessions, or running disjoint configurations.
+Set `AYA_HOME=/path/to/dir` to use a separate state directory for screenshots,
+scratch sessions, or isolated testing.
 
-## How it works
+## Architecture
 
-- **Renderer:** React 19 + TypeScript + Vite. xterm.js renders each PTY; inactive terminals stay mounted but hidden, so PTYs survive project switches.
-- **Main:** Electron 42. PTYs spawned via `node-pty` under `$SHELL -l -c 'cd CWD && exec CMD'`, with `/bin/bash` as a final fallback. Per-PTY rolling buffer (~200kb) replays on renderer remount so HMR doesn't blank terminals.
-- **IPC:** typed contracts in `electron/types.ts`, validated at the boundary in `electron/validation.ts`.
-- **Bell heuristic:** strips ANSI escapes from PTY output and matches against known approval-prompt patterns (`Do you want to`, `❯ 1. Yes`, etc.). Imperfect but correct for the common case.
-- **Atomic writes:** all config writes go through `.tmp` + rename so a crash mid-write can't truncate state.
+- **Renderer:** React 19, TypeScript, Vite, and xterm.js.
+- **Main process:** Electron 42, `node-pty`, local sockets, config IO, git
+  probes, remote bridge plumbing, and package integration.
+- **PTY host:** child process that owns terminal processes and survives
+  renderer reconnects; stale host detection protects app updates.
+- **IPC:** shared contracts in `electron/types.ts`, validated at process
+  boundaries.
+- **Config writes:** atomic `.tmp` + rename writes for user state.
+- **Git status:** read-only status commands with optional repository locks
+  disabled so background checks do not leave `.git/index.lock`.
+- **Notifications:** prompt detection strips ANSI/control sequences and matches
+  common Claude/Codex approval prompts.
 
-## Tests
+## Tests and CI
 
 ```sh
 npm test
 ```
 
-Covers launch-safety (no `-p` ever ships in defaults), theme parsers (iTerm2 + Windows Terminal JSON), config / preset normalization, IPC validation, the rolling output buffer, and the harness allow-list.
+The test suite covers launch-safety for shipped presets, theme import,
+configuration normalization, IPC validation, control sockets, usage parsing,
+PTY buffers, project reloads, git parsing, remote bridge basics, and shared
+constants.
 
-## CI
-
-GitHub Actions runs tests and a renderer/main build on pull requests and pushes to `main`. Pushes to `main`, version tags (`v*`), and manual workflow runs also package unsigned Linux x64 artifacts.
+GitHub Actions runs tests and renderer/main builds on pull requests and pushes
+to `main`. Pushes to `main`, version tags (`v*`), and manual workflow runs also
+package Linux x64 artifacts.
 
 ## Status
 
-Pre-1.0. Dogfooded daily by the author. macOS builds support Developer ID signing + notarization (see "Signing macOS builds"). Linux builds are unsigned local test packages.
+Aya is pre-1.0 and dogfooded daily by the author. macOS Apple Silicon release
+builds are Developer ID signed and Apple-notarized. Linux x64 builds are
+available as AppImage and DEB packages.
 
 ## License
 

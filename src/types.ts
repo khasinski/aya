@@ -113,6 +113,12 @@ export interface ProjectConfig {
   directory: string;
   tabs: WorkingTab[];
   splitLayout?: SplitLayout;
+  remote?: {
+    hostId: string;
+    label: string;
+    sshTarget: string;
+    directory: string;
+  };
 }
 
 export interface RepoProjectConfig {
@@ -135,6 +141,33 @@ export interface ProjectCollectionState {
 export interface ProjectGitInfo {
   branch: string | null;
   dirty: number;
+}
+
+export interface RemoteHostInfo {
+  id: string;
+  name: string;
+  platform: NodeJS.Platform;
+  user: string;
+}
+
+export interface RemoteDirectoryEntry {
+  name: string;
+  path: string;
+  kind: "directory";
+}
+
+export interface RemoteDirectoryListing {
+  host: RemoteHostInfo;
+  presets: Preset[];
+  recentProjects: ProjectConfig[];
+  path: string;
+  entries: RemoteDirectoryEntry[];
+}
+
+export interface RemoteProjectCreateResult {
+  host: RemoteHostInfo;
+  presets: Preset[];
+  project: ProjectConfig;
 }
 
 export interface GitChangedFile {
@@ -243,6 +276,27 @@ export interface AyaApi {
   listProjectState(): Promise<ProjectCollectionState>;
   saveProjectState(state: ProjectCollectionState): Promise<void>;
   createProject(name: string, directory: string): Promise<ProjectConfig>;
+  createRemoteProject(req: {
+    name: string;
+    directory: string;
+    hostId: string;
+    label: string;
+    sshTarget: string;
+  }): Promise<ProjectConfig>;
+  listRemoteDirectory(
+    sshTarget: string,
+    directory?: string,
+  ): Promise<RemoteDirectoryListing>;
+  createRemoteDirectory(
+    sshTarget: string,
+    directory: string,
+  ): Promise<string>;
+  listRemotePresets(sshTarget: string): Promise<Preset[]>;
+  createRemoteProjectOnHost(
+    sshTarget: string,
+    directory: string,
+    name?: string,
+  ): Promise<RemoteProjectCreateResult>;
   updateProject(project: ProjectConfig): Promise<void>;
   deleteProject(slug: string): Promise<void>;
   readRepoProjectConfig(directory: string): Promise<RepoProjectConfig | null>;
@@ -283,10 +337,13 @@ export interface AyaApi {
   writeClipboard(text: string): Promise<void>;
 
   isFullScreen(): Promise<boolean>;
+  isMaximized(): Promise<boolean>;
   setDockBadge(text: string): Promise<void>;
   focusWindow(): Promise<void>;
   /** Minimize the window (yellow traffic light). */
   minimizeWindow(): Promise<void>;
+  /** Toggle maximized/restored window state. */
+  toggleMaximizeWindow(): Promise<void>;
   /** Close the window (red traffic light). */
   closeWindow(): Promise<void>;
   /** Programmatic fullscreen control (used for the green traffic light in FS). */
@@ -307,6 +364,7 @@ export interface AyaApi {
   ): () => void;
   onControlStatus(handler: (update: ControlStatusUpdate) => void): () => void;
   onFullScreenChange(handler: (isFullScreen: boolean) => void): () => void;
+  onMaximizedChange(handler: (isMaximized: boolean) => void): () => void;
 
   /** Action strings include "new-shell", "close-tab", "search",
    *  "open-settings", "prev-tab", "next-tab", and "project-1".."project-9". */

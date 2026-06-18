@@ -42,7 +42,7 @@ test("a non-existent directory can be created and opened as a project", async ({
   await expect(input).toBeVisible();
   await input.fill(missing);
   await expect(primary).toHaveText("Create folder");
-  await expect(window.getByText("Folder will be created.")).toBeVisible();
+  await expect(window.getByText("Folder will be created.")).toHaveCount(0);
   await primary.click();
 
   await expect

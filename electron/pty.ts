@@ -196,16 +196,16 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
-/** Build the shell argv for a given command + cwd. Uses the user's login
- *  shell so PATH/env from their rc files (zsh, fish, etc.) flows through.
- *  zsh, bash, and fish all accept `-l -c "cmd"`; anything more exotic
- *  needs a custom preset command. */
+/** Build the shell argv for a given command + cwd. Uses the user's login +
+ *  interactive shell so PATH/env/functions from their rc files (zsh, fish,
+ *  bash, etc.) flow through. Many user launchers are shell functions or PATH
+ *  edits in .zshrc/.bashrc, which login-only non-interactive shells skip. */
 export function shellArgv(command: string, cwd: string): string[] {
   const cwdQuoted = shellQuote(cwd);
   // The user's command is embedded verbatim so $VARS / quoting / pipes work.
   // It must NOT be shell-quoted, or the shell would treat the whole thing
   // as one literal token.
-  return [userShell(), "-l", "-c", `cd ${cwdQuoted} && exec ${command}`];
+  return [userShell(), "-l", "-i", "-c", `cd ${cwdQuoted} && exec ${command}`];
 }
 
 /** @deprecated Kept as an alias so existing tests / callers compile while
@@ -244,7 +244,7 @@ function commandExists(binary: string): Promise<boolean> {
   return new Promise((resolve) => {
     execFile(
       userShell(),
-      ["-l", "-c", `command -v -- ${binary} >/dev/null 2>&1`],
+      ["-l", "-i", "-c", `command -v -- ${binary} >/dev/null 2>&1`],
       { timeout: COMMAND_CHECK_TIMEOUT_MS, windowsHide: true },
       (err) => resolve(err === null),
     );

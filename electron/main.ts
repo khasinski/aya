@@ -26,6 +26,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   createProject,
+  createRemoteProject,
   deleteProject,
   expandPath,
   listProjects,
@@ -42,6 +43,13 @@ import {
 import { startConfigWatcher } from "./config-watcher";
 import { isHostStale } from "./pty-host-staleness";
 import { startControlServer } from "./control";
+import { startRemoteServer } from "./remote-server";
+import {
+  createRemoteDirectory,
+  createRemoteProjectOnHost,
+  listRemotePresets,
+  listRemoteDirectory,
+} from "./remote-client";
 import { getGitChangedFiles, getGitDiff, getGitInfo } from "./git";
 import { IS_DEV, IS_E2E_HEADLESS, IS_E2E_PTY_SHUTDOWN } from "./paths";
 import { scanHarnesses } from "./harnesses";
@@ -92,6 +100,47 @@ const ABOUT_DIALOG_SIZE = 360;
 const ABOUT_ICON_SIZE = 128;
 
 const ptyHost = new PtyHostClient(path.join(__dirname, "pty-host.js"));
+let macosWindowHack:
+  | {
+      apply(handle: Buffer): void;
+    }
+  | null
+  | undefined;
+
+function applyMacOsWindowHack(win: BrowserWindow): void {
+  if (process.platform !== "darwin" || win.isDestroyed()) return;
+  if (macosWindowHack === undefined) {
+    try {
+      macosWindowHack = require(path.join(__dirname, "macos-window-hack.node")) as {
+        apply(handle: Buffer): void;
+      };
+    } catch (error) {
+      macosWindowHack = null;
+      if (IS_DEV) console.warn("macOS window hack unavailable", error);
+    }
+  }
+  if (!macosWindowHack) return;
+  try {
+    macosWindowHack.apply(win.getNativeWindowHandle());
+  } catch (error) {
+    if (IS_DEV) console.warn("macOS window hack failed", error);
+  }
+}
+
+function isAyaFullScreen(win: BrowserWindow): boolean {
+  return win.isFullScreen();
+}
+
+function setAyaFullScreen(win: BrowserWindow, value: boolean): void {
+  if (win.isDestroyed()) return;
+  win.setFullScreen(value);
+  win.webContents.send("app:fullscreen", isAyaFullScreen(win));
+}
+
+function toggleAyaFullScreen(win: BrowserWindow | null): void {
+  if (!win || win.isDestroyed()) return;
+  setAyaFullScreen(win, !isAyaFullScreen(win));
+}
 
 function pathEntries(): string[] {
   return (process.env.PATH ?? "")
@@ -210,20 +259,6 @@ async function installCli(): Promise<CliStatus> {
   };
 }
 
-/** Escape text for safe interpolation into the About dialog's HTML. */
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-// electron-builder strips non-essential fields (contributors, scripts, …) from
-// the bundled package.json, so runtime reads would always return []. Keep the
-// list here where it survives the build.
-const CONTRIBUTORS = ["Justyna Wojtczak"];
-
 function configureAppIdentity(): void {
   // Keep macOS menu/about/notification surfaces aligned. Dev runs inside
   // Electron.app, so some OS chrome can still reflect the host bundle, but
@@ -231,15 +266,9 @@ function configureAppIdentity(): void {
   // chance to expose Aya instead.
   app.setName(WINDOW_TITLE);
   process.title = WINDOW_TITLE;
-  const contributors = CONTRIBUTORS;
   app.setAboutPanelOptions({
     applicationName: WINDOW_TITLE,
     applicationVersion: app.getVersion(),
-    // Copyright stays as electron-builder derives it from `author` (Info.plist
-    // NSHumanReadableCopyright); this only adds a credits line for contributors.
-    ...(contributors.length > 0
-      ? { credits: `Contributors: ${contributors.join(", ")}` }
-      : {}),
   });
 }
 
@@ -414,11 +443,6 @@ function showAyaAboutPanel(): void {
   } catch {
     // Empty src keeps the dialog usable even if the icon asset is missing.
   }
-  const contributors = CONTRIBUTORS;
-  const creditsLine =
-    contributors.length > 0
-      ? `<p class="credits">Contributors: ${escapeHtml(contributors.join(", "))}</p>`
-      : "";
   const html = `<!doctype html>
 <html>
   <head>
@@ -461,11 +485,6 @@ function showAyaAboutPanel(): void {
         font-size: 13px;
         color: #8b949e;
       }
-      p.credits {
-        margin-top: 4px;
-        font-size: 11px;
-        color: #6e7781;
-      }
       button {
         margin-top: 24px;
         min-width: 78px;
@@ -485,7 +504,6 @@ function showAyaAboutPanel(): void {
       <img src="${iconUrl}" alt="">
       <h1>${WINDOW_TITLE}</h1>
       <p>Version ${app.getVersion()}</p>
-      ${creditsLine}
       <button autofocus onclick="window.close()">OK</button>
     </main>
   </body>
@@ -677,7 +695,12 @@ function installApplicationMenu(): void {
         { role: "zoomIn" },
         { role: "zoomOut" },
         { type: "separator" },
-        { role: "togglefullscreen" },
+        {
+          label: "Toggle Full Screen",
+          accelerator:
+            process.platform === "darwin" ? "Ctrl+Command+F" : "F11",
+          click: () => toggleAyaFullScreen(mainWindow),
+        },
       ],
     },
     {
@@ -738,7 +761,10 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     minWidth: WINDOW_MIN_WIDTH,
     minHeight: WINDOW_MIN_HEIGHT,
     title: WINDOW_TITLE,
-    titleBarStyle: "hiddenInset",
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hidden" as const }
+      : {}),
+    ...(process.platform === "linux" ? { frame: false } : {}),
     backgroundColor: COLOR_DARK_BG,
     show: false,
     webPreferences: {
@@ -749,8 +775,13 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     },
   });
 
+  if (process.platform === "darwin") {
+    win.setWindowButtonVisibility(false);
+    applyMacOsWindowHack(win);
+  }
+
   if (initial.isMaximized) win.maximize();
-  if (initial.isFullScreen) win.setFullScreen(true);
+  if (initial.isFullScreen) setAyaFullScreen(win, true);
 
   // Persist geometry changes; the helper handles debouncing + final flush.
   trackWindowState(win);
@@ -776,27 +807,64 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   const sendFullScreen = (isFs: boolean) => {
     if (!win.isDestroyed()) win.webContents.send("app:fullscreen", isFs);
   };
-  win.on("enter-full-screen", () => sendFullScreen(true));
-  win.on("leave-full-screen", () => sendFullScreen(false));
+  const sendMaximized = (isMaximized: boolean) => {
+    if (!win.isDestroyed()) win.webContents.send("app:maximized", isMaximized);
+  };
+  win.on("enter-full-screen", () => {
+    sendFullScreen(true);
+    applyMacOsWindowHack(win);
+    setTimeout(() => applyMacOsWindowHack(win), 250);
+  });
+  win.on("leave-full-screen", () => {
+    sendFullScreen(false);
+    applyMacOsWindowHack(win);
+  });
+  win.on("maximize", () => sendMaximized(true));
+  win.on("unmaximize", () => sendMaximized(false));
   // Initial broadcast once the renderer is ready (also useful if a future
   // restart preserves fullscreen state).
-  win.webContents.once("did-finish-load", () => sendFullScreen(win.isFullScreen()));
+  win.webContents.once("did-finish-load", () => {
+    sendFullScreen(isAyaFullScreen(win));
+    sendMaximized(win.isMaximized());
+    applyMacOsWindowHack(win);
+  });
 
   // External links must never navigate Aya's BrowserWindow. xterm's web-links
   // addon normally calls our IPC handler, but Chromium/Electron can still see
   // window.open or direct navigation paths depending on timing and modifier
   // keys. Catch both centrally and hand http(s) URLs to the OS browser.
+  const handleExternalNavigation = (
+    event: { preventDefault(): void },
+    url: string,
+  ) => {
+    if (isInternalNavigationUrl(url, { isDev: IS_DEV, devServerUrl: DEV_SERVER_URL })) return;
+    event.preventDefault();
+    if (parseHttpUrl(url)) void openExternalHttpUrl(url);
+  };
+
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (parseHttpUrl(url)) void openExternalHttpUrl(url);
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (event, url) => {
-    if (isInternalNavigationUrl(url, { isDev: IS_DEV, devServerUrl: DEV_SERVER_URL })) return;
-    if (parseHttpUrl(url)) {
-      event.preventDefault();
-      void openExternalHttpUrl(url);
-    }
+    handleExternalNavigation(event, url);
   });
+  (
+    win.webContents as typeof win.webContents & {
+      on(
+        channel: "will-frame-navigate",
+        listener: (
+          event: { preventDefault(): void },
+          details: { url: string },
+        ) => void,
+      ): void;
+    }
+  ).on(
+    "will-frame-navigate",
+    (event: { preventDefault(): void }, details: { url: string }) => {
+      handleExternalNavigation(event, details.url);
+    },
+  );
 
   // Intercept keyboard shortcuts at the BrowserWindow level so they fire
   // even while xterm.js has focus (otherwise xterm would forward them to the
@@ -937,6 +1005,47 @@ function registerIpc(win: BrowserWindow): void {
       requireString(dir, "projects:create.dir"),
     ),
   );
+  ipcMain.handle("projects:create-remote", async (_e, req: unknown) => {
+    if (typeof req !== "object" || req === null || Array.isArray(req)) {
+      throw new Error("projects:create-remote.req must be an object");
+    }
+    const r = req as Record<string, unknown>;
+    return createRemoteProject({
+      name: requireString(r.name, "projects:create-remote.name"),
+      directory: requireString(r.directory, "projects:create-remote.directory"),
+      hostId: requireString(r.hostId, "projects:create-remote.hostId"),
+      label: requireString(r.label, "projects:create-remote.label"),
+      sshTarget: requireString(r.sshTarget, "projects:create-remote.sshTarget"),
+    });
+  });
+  ipcMain.handle(
+    "remote:list-directory",
+    async (_e, sshTarget: unknown, directory: unknown) =>
+      listRemoteDirectory(
+        requireString(sshTarget, "remote:list-directory.sshTarget"),
+        typeof directory === "string" ? directory : undefined,
+      ),
+  );
+  ipcMain.handle(
+    "remote:create-directory",
+    async (_e, sshTarget: unknown, directory: unknown) =>
+      createRemoteDirectory(
+        requireString(sshTarget, "remote:create-directory.sshTarget"),
+        requireString(directory, "remote:create-directory.directory"),
+      ),
+  );
+  ipcMain.handle("remote:list-presets", async (_e, sshTarget: unknown) =>
+    listRemotePresets(requireString(sshTarget, "remote:list-presets.sshTarget")),
+  );
+  ipcMain.handle(
+    "remote:create-project",
+    async (_e, sshTarget: unknown, directory: unknown, name: unknown) =>
+      createRemoteProjectOnHost(
+        requireString(sshTarget, "remote:create-project.sshTarget"),
+        requireString(directory, "remote:create-project.directory"),
+        typeof name === "string" ? name : undefined,
+      ),
+  );
   ipcMain.handle("projects:update", async (_e, project: unknown) =>
     updateProject(validateProjectConfig(project)),
   );
@@ -1051,15 +1160,21 @@ function registerIpc(win: BrowserWindow): void {
   ipcMain.handle("env:clipboard-write", async (_e, value: unknown) => {
     clipboard.writeText(requireString(value, "env:clipboard-write.text"));
   });
-  ipcMain.handle("app:is-fullscreen", async () => win.isFullScreen());
+  ipcMain.handle("app:is-fullscreen", async () => isAyaFullScreen(win));
+  ipcMain.handle("app:is-maximized", async () => win.isMaximized());
   ipcMain.handle("app:minimize", () => {
     if (!win.isDestroyed()) win.minimize();
+  });
+  ipcMain.handle("app:toggle-maximize", () => {
+    if (win.isDestroyed()) return;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
   });
   ipcMain.handle("app:close", () => {
     if (!win.isDestroyed()) win.close();
   });
   ipcMain.handle("app:set-fullscreen", async (_e, value: unknown) => {
-    if (!win.isDestroyed()) win.setFullScreen(!!value);
+    setAyaFullScreen(win, !!value);
   });
   // Dock badge for unattended notifications (waiting terminals). Empty
   // string clears. macOS only; no-op on Linux/Windows for now since their
@@ -1210,6 +1325,15 @@ app.whenReady().then(async () => {
       }
       dispatchOpenProject(mainWindow, directory);
     },
+  });
+  startRemoteServer({
+    appVersion: app.getVersion(),
+    getSnapshot: async () => ({
+      projects: await listProjects(),
+      projectState: await listProjectState(),
+      presets: await listPresets(),
+    }),
+    createProject: (name, directory) => createProject(name, directory),
   });
   installApplicationMenu();
 

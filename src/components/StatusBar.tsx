@@ -15,7 +15,10 @@ interface Props {
   git: GitInfo | null;
   terminal: TerminalState | null;
   attentionCount: number;
+  snippetsOpen: boolean;
+  snippetsDisabled: boolean;
   onOpenProjectDirectory: (directory: string) => void;
+  onToggleSnippets: () => void;
   onOpenAttentionCenter: () => void;
 }
 
@@ -24,7 +27,10 @@ export function StatusBar({
   git,
   terminal,
   attentionCount,
+  snippetsOpen,
+  snippetsDisabled,
   onOpenProjectDirectory,
+  onToggleSnippets,
   onOpenAttentionCenter,
 }: Props) {
   const waiting = terminal?.status === "waiting";
@@ -118,6 +124,29 @@ export function StatusBar({
         </span>
       )}
       <div className="aya-statusbar-spacer" />
+      <button
+        data-testid="snippet-toggle"
+        className={`aya-statusbar-item aya-statusbar-button aya-pane-snippettoggle aya-statusbar-snippet ${
+          snippetsOpen ? "aya-pane-snippettoggle--on" : ""
+        }`}
+        type="button"
+        title={
+          snippetsDisabled
+            ? "Saved snippets (open a terminal first)"
+            : "Saved snippets"
+        }
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onToggleSnippets}
+        disabled={snippetsDisabled}
+      >
+        <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
+          bolt
+        </span>
+        snippets
+        <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
+          {snippetsOpen ? "expand_more" : "expand_less"}
+        </span>
+      </button>
       <button
         className={`aya-statusbar-item aya-statusbar-button ${
           attentionCount > 0 ? "aya-statusbar-item--warn" : ""

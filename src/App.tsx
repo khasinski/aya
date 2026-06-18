@@ -41,6 +41,7 @@ import {
   presetSlug,
   type ProjectCollectionState,
   type ProjectConfig,
+  type RemoteProjectCreateResult,
   type SplitLayout,
   type TerminalState,
   type Theme,
@@ -190,6 +191,20 @@ function findProject(
 function basename(p: string): string {
   const parts = p.replace(/\/+$/, "").split("/");
   return parts[parts.length - 1] || "project";
+}
+
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+function remoteTerminalCommand(project: ProjectConfig, preset: Preset): string {
+  if (!project.remote) return preset.command;
+  const remoteShell = '"${SHELL:-/bin/sh}"';
+  const remoteCommand =
+    preset.id === "shell" || preset.command.trim() === "$SHELL"
+      ? `cd ${shellQuote(project.remote.directory)} && exec ${remoteShell} -l`
+      : `cd ${shellQuote(project.remote.directory)} && exec ${remoteShell} -l -i -c ${shellQuote(`exec ${preset.command}`)}`;
+  return `ssh -tt ${shellQuote(project.remote.sshTarget)} ${shellQuote(remoteCommand)}`;
 }
 
 function uniqueProjectName(projects: ProjectConfig[], directory: string): string {
@@ -400,6 +415,9 @@ export function App() {
     recent: [],
   });
   const [presets, setPresets] = useState<Preset[]>([]);
+  const [remotePresetsByProject, setRemotePresetsByProject] = useState<
+    Record<string, Preset[]>
+  >({});
   const [defaultPresets, setDefaultPresets] = useState<Preset[]>([]);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [themes, setThemes] = useState<Theme[]>([]);
@@ -441,12 +459,16 @@ export function App() {
   const [settingsInitialTab, setSettingsInitialTab] =
     useState<SettingsTab>("general");
   const [showSearch, setShowSearch] = useState(false);
+  const [snippetDrawerTerminalId, setSnippetDrawerTerminalId] = useState<
+    string | null
+  >(null);
   const [showAttentionCenter, setShowAttentionCenter] = useState(false);
   const [pendingRepoImport, setPendingRepoImport] =
     useState<PendingRepoImport | null>(null);
   const [findInPaneFor, setFindInPaneFor] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH_PX);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
   const [didBootstrap, setDidBootstrap] = useState(false);
   const [harnessScanDone, setHarnessScanDone] = useState(false);
   const [foundHarnessCount, setFoundHarnessCount] = useState(0);
@@ -471,6 +493,10 @@ export function App() {
         (p) => p.slug === activeProjectId,
       );
       if (!project || cancelled) return;
+      if (project.remote) {
+        setGit((g) => ({ ...g, [project.slug]: { branch: null, dirty: 0 } }));
+        return;
+      }
       void window.aya.getGitInfo(project.directory).then((info) => {
         if (cancelled) return;
         setGit((g) => ({ ...g, [project.slug]: info }));
@@ -551,11 +577,8 @@ export function App() {
     for (const dir of queued) openProjectRef.current(dir);
   }, [didBootstrap]);
 
-  // Track fullscreen state. Used to:
-  // - Hide the custom top bar (project tabs + brand + controls) completely
-  //   on macOS so the terminal gets true fullscreen height.
-  // - Render floating custom traffic lights in the top-left (another way
-  //   to present close/minimize/exit-fs when the normal top bar is gone).
+  // Track fullscreen state so platform chrome can change without hiding
+  // Aya's normal project tabs and controls.
   useEffect(() => {
     let active = true;
     void window.aya.isFullScreen().then((fs) => {
@@ -563,6 +586,20 @@ export function App() {
     });
     const unsubscribe = window.aya.onFullScreenChange((fs) => {
       setIsFullScreen(fs);
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void window.aya.isMaximized().then((maximized) => {
+      if (active) setIsMaximized(maximized);
+    });
+    const unsubscribe = window.aya.onMaximizedChange((maximized) => {
+      setIsMaximized(maximized);
     });
     return () => {
       active = false;
@@ -656,6 +693,8 @@ export function App() {
   activeProjectIdRef.current = activeProjectId;
   const presetsRef = useRef(presets);
   presetsRef.current = presets;
+  const remotePresetsByProjectRef = useRef(remotePresetsByProject);
+  remotePresetsByProjectRef.current = remotePresetsByProject;
 
   const appendProjectEvent = useCallback(
     (event: Omit<ProjectEvent, "id" | "createdAt"> & { createdAt?: number }) => {
@@ -910,11 +949,26 @@ export function App() {
 
       // Validate each project's directory in parallel.
       const dirChecks = await Promise.all(
-        openProjects.map((p) => window.aya.dirExists(p.directory)),
+        openProjects.map((p) =>
+          p.remote ? Promise.resolve(true) : window.aya.dirExists(p.directory),
+        ),
       );
       const queue: MissingDirEntry[] = [];
       for (let i = 0; i < openProjects.length; i++) {
         const project = openProjects[i];
+        if (project.remote) {
+          hydrateProjectTerminals(project, project.remote.directory);
+          void window.aya
+            .listRemotePresets(project.remote.sshTarget)
+            .then((remotePresets) => {
+              setRemotePresetsByProject((prev) => ({
+                ...prev,
+                [project.slug]: remotePresets,
+              }));
+            })
+            .catch(() => undefined);
+          continue;
+        }
         if (dirChecks[i]) {
           // Dir exists — hydrate terminals normally.
           hydrateProjectTerminals(project, project.directory);
@@ -942,7 +996,7 @@ export function App() {
       }
 
       for (const p of openProjects) {
-        if (dirChecks[openProjects.indexOf(p)]) {
+        if (!p.remote && dirChecks[openProjects.indexOf(p)]) {
           void window.aya.getGitInfo(p.directory).then((info) => {
             setGit((g) => ({ ...g, [p.slug]: info }));
           });
@@ -1024,6 +1078,7 @@ export function App() {
     if (!didBootstrap || !activeProjectId) return;
     const project = projectsRef.current.find((p) => p.slug === activeProjectId);
     if (!project) return;
+    if (project.remote) return;
     const ignoredKey = `aya:repo-config-ignored:${project.directory}`;
     if (localStorage.getItem(ignoredKey) === "1") return;
     let cancelled = false;
@@ -1124,6 +1179,7 @@ export function App() {
       const project = findProject(projectsRef.current, slug);
       if (!project) return;
       const id = uuid();
+      const command = remoteTerminalCommand(project, preset);
       // Default the new tab's display name to the preset's current name (not
       // its id, which stays the same when the user renames a preset).
       const term: TerminalState = {
@@ -1131,7 +1187,7 @@ export function App() {
         projectSlug: slug,
         presetId: preset.id,
         name: defaultTabName(preset),
-        cwd: effectiveCwd(project),
+        cwd: project.remote ? project.remote.directory : effectiveCwd(project),
         status: "running",
         bell: false,
         exitCode: null,
@@ -1176,7 +1232,7 @@ export function App() {
         terminalId: id,
         level: "active",
         title: `${term.name} started`,
-        detail: preset.command,
+        detail: command,
       });
     },
     [activeTabByProject, appendProjectEvent, effectiveCwd],
@@ -1687,6 +1743,20 @@ export function App() {
         recent: dedupeSlugs([project.slug, ...projectStateRef.current.recent]),
       });
 
+      if (project.remote) {
+        setGit((g) => ({ ...g, [project.slug]: { branch: null, dirty: 0 } }));
+        hydrateProjectTerminals(project, project.remote.directory);
+        void window.aya
+          .listRemotePresets(project.remote.sshTarget)
+          .then((remotePresets) => {
+            setRemotePresetsByProject((prev) => ({
+              ...prev,
+              [project.slug]: remotePresets,
+            }));
+          })
+          .catch(() => undefined);
+        return;
+      }
       const exists = await window.aya.dirExists(project.directory);
       if (exists) {
         hydrateProjectTerminals(project, project.directory);
@@ -1749,6 +1819,47 @@ export function App() {
         void window.aya.getGitInfo(withTabs.directory).then((info) =>
           setGit((g) => ({ ...g, [withTabs.slug]: info })),
         );
+        setNewProjectModal(null);
+      } catch (err) {
+        console.error(err);
+        alert(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [updateProjectCollection],
+  );
+
+  const onCreateRemoteProject = useCallback(
+    async (result: RemoteProjectCreateResult, sshTarget: string) => {
+      try {
+        const remoteProject = result.project;
+        const localProject = await window.aya.createRemoteProject({
+          name: remoteProject.name,
+          directory: remoteProject.directory,
+          hostId: result.host.id,
+          label: result.host.name || result.host.id,
+          sshTarget,
+        });
+        setAllProjects((prev) => [...prev, localProject]);
+        const nextProjects = [...projectsRef.current, localProject];
+        setProjects(nextProjects);
+        updateProjectCollection({
+          ...projectStateRef.current,
+          order: dedupeSlugs([
+            ...projectStateRef.current.order,
+            localProject.slug,
+          ]),
+          open: nextProjects.map((p) => p.slug),
+          recent: dedupeSlugs([
+            localProject.slug,
+            ...projectStateRef.current.recent,
+          ]),
+        });
+        setGit((g) => ({ ...g, [localProject.slug]: { branch: null, dirty: 0 } }));
+        setRemotePresetsByProject((prev) => ({
+          ...prev,
+          [localProject.slug]: result.presets,
+        }));
+        setActiveProjectId(localProject.slug);
         setNewProjectModal(null);
       } catch (err) {
         console.error(err);
@@ -1899,8 +2010,13 @@ export function App() {
   const openShellTab = useCallback(() => {
     const slug = activeProjectIdRef.current;
     if (!slug) return;
+    const project = projectsRef.current.find((p) => p.slug === slug);
+    const sourcePresets =
+      project?.remote
+        ? (remotePresetsByProjectRef.current[slug] ?? presetsRef.current)
+        : presetsRef.current;
     const shellPreset =
-      presetsRef.current.find((p) => p.id === "shell") ?? BUILTIN_SHELL;
+      sourcePresets.find((p) => p.id === "shell") ?? sourcePresets[0] ?? BUILTIN_SHELL;
     launchTerminal(shellPreset);
   }, [launchTerminal]);
 
@@ -1994,6 +2110,10 @@ export function App() {
   const activeProject = activeProjectId
     ? findProject(projects, activeProjectId)
     : null;
+  const activePresets =
+    activeProject?.remote && activeProjectId
+      ? (remotePresetsByProject[activeProjectId] ?? presets)
+      : presets;
   const openProjectSlugs = new Set(projects.map((p) => p.slug));
   const closedProjects = allProjects.filter(
     (p) => !openProjectSlugs.has(p.slug),
@@ -2005,6 +2125,8 @@ export function App() {
     ? (activeTabByProject[activeProjectId] ?? null)
     : null;
   const activeTerminal = activeTabId ? (terminals[activeTabId] ?? null) : null;
+  const snippetsOpenForActiveTerminal =
+    !!activeTerminal && snippetDrawerTerminalId === activeTerminal.id;
   const activeGit = activeProjectId ? (git[activeProjectId] ?? null) : null;
   const savedSplitLayout =
     activeProject && activeProjectId
@@ -2043,6 +2165,26 @@ export function App() {
   const canSplitBelow = splitActionLayout
     ? splitActionLayout.rows < MAX_SPLIT_ROWS
     : false;
+
+  useEffect(() => {
+    if (!activeProject?.remote || !activeProjectId) return;
+    if (remotePresetsByProject[activeProjectId]?.length) return;
+    let cancelled = false;
+    void window.aya
+      .listRemotePresets(activeProject.remote.sshTarget)
+      .then((remotePresets) => {
+        if (cancelled) return;
+        setRemotePresetsByProject((prev) => ({
+          ...prev,
+          [activeProjectId]: remotePresets,
+        }));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProject, activeProjectId, remotePresetsByProject]);
+
   const visibleTerminalIds = splitLayout
     ? splitLayout.cells.filter((id): id is string => !!id && !!terminals[id])
     : activeTabId
@@ -2238,35 +2380,14 @@ export function App() {
       }
       data-accent="green"
     >
-      {/* macOS fullscreen: hide the whole custom title bar (tabs etc). Provide
-          our own tiny traffic lights as a floating overlay so the user still
-          has immediate close / minimize / exit-fullscreen controls without
-          mousing to the top edge to reveal the system bar. */}
-      {window.aya.platform === "darwin" && isFullScreen && (
-        <div className="aya-traffic-lights">
-          <button
-            className="aya-tl aya-tl-close"
-            title="Close window"
-            onClick={() => void window.aya.closeWindow()}
-          />
-          <button
-            className="aya-tl aya-tl-minimize"
-            title="Minimize window"
-            onClick={() => void window.aya.minimizeWindow()}
-          />
-          <button
-            className="aya-tl aya-tl-fullscreen"
-            title="Exit full screen"
-            onClick={() => void window.aya.setFullScreen(false)}
-          />
-        </div>
-      )}
-
       <TopBar
         projects={projects}
         activeProjectId={activeProjectId}
         homeDir={homeDir}
         isDev={window.aya.isDev}
+        platform={window.aya.platform}
+        isFullScreen={isFullScreen}
+        isMaximized={isMaximized}
         blockChrome={chromeBlocked}
         closedProjects={closedProjects}
         onSelectProject={setActiveProjectId}
@@ -2280,6 +2401,12 @@ export function App() {
         onReorderProjects={reorderProjects}
         onOpenSearch={() => setShowSearch(true)}
         onOpenSettings={openSettings}
+        onMinimizeWindow={() => void window.aya.minimizeWindow()}
+        onToggleMaximizeWindow={() => void window.aya.toggleMaximizeWindow()}
+        onToggleFullScreenWindow={() =>
+          void window.aya.setFullScreen(!isFullScreen)
+        }
+        onCloseWindow={() => void window.aya.closeWindow()}
         projectBadges={projectBadges}
         usageAccounts={usageAccounts}
         codexUsageAccounts={codexUsageAccounts}
@@ -2313,7 +2440,7 @@ export function App() {
             terminals={projectTerminals}
             activeId={activeTabId}
             sidebarWidth={sidebarWidth}
-            presets={presets}
+            presets={activePresets}
             recentlyActiveIds={recentlyActiveIds}
             splitAssignments={splitAssignments}
             onSelect={selectTerminalFromSidebar}
@@ -2368,7 +2495,7 @@ export function App() {
                       ) : (
                         <div className="aya-pane-empty-list">
                           {assignableProjectTerminals.map((candidate) => {
-                            const preset = getPreset(presets, candidate.presetId);
+                            const preset = getPreset(activePresets, candidate.presetId);
                             return (
                               <button
                                 key={candidate.id}
@@ -2395,7 +2522,7 @@ export function App() {
                   </div>
                 );
               }
-              const preset = getPreset(presets, terminal.presetId);
+              const preset = getPreset(activePresets, terminal.presetId);
               // Per-preset theme override (set in Settings) wins over the
               // global active theme. Missing override → fall back to the
               // default the user picked. Missing theme entirely → fallback.
@@ -2409,10 +2536,18 @@ export function App() {
                   key={terminal.id}
                   terminal={terminal}
                   preset={preset}
-                  command={preset.command}
+                  command={
+                    activeProject
+                      ? remoteTerminalCommand(activeProject, preset)
+                      : preset.command
+                  }
                   snippets={snippets}
+                  snippetsOpen={snippetDrawerTerminalId === terminal.id}
+                  onSnippetsOpenChange={(open) =>
+                    setSnippetDrawerTerminalId(open ? terminal.id : null)
+                  }
                   isVisible
-                  cwd={terminal.cwd}
+                  cwd={activeProject?.remote ? homeDir : terminal.cwd}
                   lastActivity={lastActivityRef.current[terminal.id]}
                   fontFamily={effectiveTerminalFontFamily}
                   fontSize={fontSize}
@@ -2437,7 +2572,7 @@ export function App() {
               );
             })}
             {hiddenTerminals.map((t) => {
-              const preset = getPreset(presets, t.presetId);
+              const preset = getPreset(activePresets, t.presetId);
               const overrideTheme = preset.themeId
                 ? themes.find((th) => th.id === preset.themeId)
                 : null;
@@ -2448,10 +2583,16 @@ export function App() {
                   key={t.id}
                   terminal={t}
                   preset={preset}
-                  command={preset.command}
+                  command={
+                    activeProject
+                      ? remoteTerminalCommand(activeProject, preset)
+                      : preset.command
+                  }
                   snippets={snippets}
+                  snippetsOpen={false}
+                  onSnippetsOpenChange={() => undefined}
                   isVisible={false}
-                  cwd={t.cwd}
+                  cwd={activeProject?.remote ? homeDir : t.cwd}
                   lastActivity={lastActivityRef.current[t.id]}
                   fontFamily={effectiveTerminalFontFamily}
                   fontSize={fontSize}
@@ -2497,7 +2638,9 @@ export function App() {
               <div className="aya-pane">
                 <div className="aya-pane-header">
                   <span className="aya-pane-header-title">
-                    No terminals — pick one from the sidebar.
+                    {activeProject.remote
+                      ? `Remote project on ${activeProject.remote.label}`
+                      : "No terminals - pick one from the sidebar."}
                   </span>
                 </div>
               </div>
@@ -2510,6 +2653,14 @@ export function App() {
         git={activeGit}
         terminal={activeTerminal}
         attentionCount={attentionCount}
+        snippetsOpen={snippetsOpenForActiveTerminal}
+        snippetsDisabled={!activeTerminal}
+        onToggleSnippets={() => {
+          if (!activeTerminal) return;
+          setSnippetDrawerTerminalId((current) =>
+            current === activeTerminal.id ? null : activeTerminal.id,
+          );
+        }}
         onOpenAttentionCenter={() => setShowAttentionCenter(true)}
         onOpenProjectDirectory={(directory) => {
           void window.aya.openPath(directory);
@@ -2537,6 +2688,10 @@ export function App() {
           onCompletePath={window.aya.completePath}
           onDirectoryExists={window.aya.dirExists}
           onCreateDirectory={window.aya.createDir}
+          onListRemoteDirectory={window.aya.listRemoteDirectory}
+          onCreateRemoteProject={window.aya.createRemoteProjectOnHost}
+          onCreateRemoteDirectory={window.aya.createRemoteDirectory}
+          onSubmitRemote={onCreateRemoteProject}
           onSubmit={submitProjectFromModal}
           onCancel={() => {
             setNewProjectModal(null);

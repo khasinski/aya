@@ -81,75 +81,120 @@
   border-color: transparent;
 }
 
-/* Make room for the (hidden) draggable titlebar inset on macOS. The
-   padding-left clears the traffic-light buttons (close/minimize/maximize)
-   that sit at the top-left of the window in windowed mode.
-
-   In macOS fullscreen we completely hide the custom top bar (project tabs +
-   brand + right actions) so the terminal content can use the full window
-   height. We handle the traffic lights "in another way" by rendering our
-   own custom dots (see .aya-traffic-lights) as a tiny floating control in
-   the top-left during fullscreen. The native inset lights from
-   titleBarStyle:hiddenInset are still available via the macOS menu/titlebar
-   reveal when you push the pointer to the top edge. */
+/* Custom chrome. The top bar is the draggable titlebar on macOS/Linux; native
+   menu bar remains an application menu, but the window frame itself is ours. */
 .aya-app {
   padding-top: env(safe-area-inset-top, 0);
 }
 .aya-topbar { transition: padding-left 120ms ease-out; }
-.aya-app--macos .aya-topbar { padding-left: 78px; }
 
-/* Fullscreen: collapse the top bar row entirely and hide the header so
-   terminals + statusbar get the full viewport. No extra chrome inset needed
-   because there are no tabs to keep below the transient macOS bar. */
-.aya-app.aya-app--fullscreen {
-  grid-template-rows: 0 1fr 26px;
-}
-.aya-app.aya-app--fullscreen .aya-topbar {
-  display: none;
-}
-
-/* Custom traffic lights for macOS fullscreen (where we hide the whole
-   top bar). Tiny, low-profile colored dots in the top-left. They sit
-   on top of terminal content. Low opacity by default so they don't
-   distract during heavy TUI use; become fully opaque on hover.
-   Clicking red/yellow/green does the expected window action. */
-.aya-traffic-lights {
-  position: fixed;
-  top: 8px;
-  left: 8px;
-  z-index: 99999;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px;
-  /* Let underlying terminal be clickable except on the dots themselves */
-}
-.aya-traffic-lights button {
+.aya-mac-window-controls {
   -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 0 14px;
+  border-right: 1px solid var(--border);
+}
+.aya-mac-window-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 12px;
   height: 12px;
-  border-radius: 50%;
   border: 0;
+  border-radius: 999px;
   padding: 0;
   margin: 0;
   cursor: pointer;
-  opacity: 0.25;
-  transition: opacity 120ms ease, transform 80ms ease;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25) inset;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.22) inset;
 }
-.aya-traffic-lights:hover button {
+.aya-mac-window-control--close {
+  background: #ed6a5f;
+  box-shadow: 0 0 0 1px #e24b41 inset;
+}
+.aya-mac-window-control--minimize {
+  background: #f6be50;
+  box-shadow: 0 0 0 1px #e1a73e inset;
+}
+.aya-mac-window-control--fullscreen {
+  background: #61c555;
+  box-shadow: 0 0 0 1px #2dac2f inset;
+}
+.aya-mac-window-control:hover {
+  filter: brightness(1.06);
+}
+.aya-mac-window-control:active {
+  filter: brightness(0.9);
+}
+.aya-mac-window-control-icon {
+  width: 8px;
+  height: 8px;
+  opacity: 0;
+  pointer-events: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.aya-mac-window-controls:hover .aya-mac-window-control-icon {
   opacity: 1;
 }
-.aya-traffic-lights button:hover {
-  transform: scale(1.1);
+.aya-mac-window-control--close { color: #460804; }
+.aya-mac-window-control--minimize { color: #90591d; }
+.aya-mac-window-control--fullscreen { color: #2a6218; }
+.aya-mac-window-control--close:active {
+  background: #b15048;
+  box-shadow: 0 0 0 1px #a14239 inset;
 }
-.aya-traffic-lights button:active {
-  transform: scale(0.95);
-  opacity: 0.9;
+.aya-mac-window-control--close:active { color: #170101; }
+.aya-mac-window-control--minimize:active {
+  background: #b8923b;
+  box-shadow: 0 0 0 1px #a67f36 inset;
 }
-.aya-tl-close { background: #ff5f56; }
-.aya-tl-minimize { background: #ffbd2e; }
-.aya-tl-fullscreen { background: #27c93f; }
+.aya-mac-window-control--minimize:active { color: #532a0a; }
+.aya-mac-window-control--fullscreen:active {
+  background: #4a9741;
+  box-shadow: 0 0 0 1px #428234 inset;
+}
+.aya-mac-window-control--fullscreen:active { color: #113107; }
+
+.aya-window-controls {
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: stretch;
+  align-self: stretch;
+  margin: 0 -10px 0 4px;
+}
+.aya-window-control {
+  -webkit-app-region: no-drag;
+  width: 42px;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg-tertiary);
+  cursor: pointer;
+  padding: 0;
+}
+.aya-window-control span {
+  font-size: 17px;
+  line-height: 1;
+}
+.aya-window-control:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+}
+.aya-window-control--close:hover {
+  background: #e5484d;
+  color: white;
+}
 
 /* The sidebar's drag-to-resize handle is positioned absolutely with
    top:0/bottom:0. Without a positioned ancestor it anchors to the viewport
@@ -501,14 +546,17 @@
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--status-error) 30%, transparent);
 }
 .aya-tab-bell {
-  display: inline-block;
-  flex-shrink: 0;
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--status-waiting);
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--status-waiting) 35%, transparent);
-  margin-left: 2px;
+  transition: opacity 0.1s ease;
 }
 .aya-tab-bell--done {
   background: var(--status-active);
@@ -917,6 +965,155 @@
   border-color: var(--accent-hover);
 }
 
+.aya-remote-picker {
+  display: flex;
+  flex-direction: column;
+}
+.aya-remote-browser {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.aya-remote-browser-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-secondary);
+  font-size: 12px;
+}
+.aya-remote-browser-header span {
+  flex-shrink: 0;
+  color: var(--status-waiting);
+  font-weight: 600;
+}
+.aya-remote-browser-header code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-remote-browser-list {
+  max-height: 220px;
+  overflow: auto;
+  padding: 4px;
+}
+.aya-remote-recent {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.aya-remote-section-title {
+  margin-bottom: 6px;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.aya-remote-recent-list {
+  display: grid;
+  gap: 4px;
+}
+.aya-remote-project-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(90px, 0.45fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+.aya-remote-project-row:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+}
+.aya-remote-project-row:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+.aya-remote-project-name {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-remote-project-row code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-remote-browser-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+.aya-remote-browser-row:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+}
+.aya-remote-browser-row:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+.aya-remote-browser-icon {
+  width: 24px;
+  flex-shrink: 0;
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+.aya-remote-browser-name {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-remote-browser-empty {
+  padding: 12px 8px;
+  color: var(--fg-tertiary);
+  font-size: 12px;
+}
+.aya-remote-create {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.aya-remote-create .aya-modal-input {
+  min-width: 0;
+}
+
 /* `.aya-pane-active` is rendered always but only the active pane should show
    the top accent bar in single-pane mode. We hide it unless inside a split. */
 .aya-pane-active { display: none; }
@@ -952,6 +1149,7 @@
   -webkit-app-region: no-drag;
 }
 .aya-tab:hover .aya-tab-close { opacity: 1; }
+.aya-tab:hover .aya-tab-bell { opacity: 0; }
 .aya-tab-close:hover { background: var(--border-strong); color: var(--fg-primary); }
 
 /* Clip the tab so an over-long title can't spill past it, and fade the title's
@@ -990,6 +1188,24 @@
 .aya-tab-name {
   flex-shrink: 0;
 }
+.aya-tab--remote::after {
+  background: var(--status-waiting);
+}
+.aya-tab-remote-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 15px;
+  margin-right: 6px;
+  padding: 0 4px;
+  border: 1px solid color-mix(in oklab, var(--status-waiting) 55%, var(--border));
+  border-radius: 3px;
+  color: var(--status-waiting);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: 1px;
+}
 .aya-tab-path {
   flex: 1 1 auto;
   min-width: 0;
@@ -1002,6 +1218,7 @@
   flex: 1 1 240px !important;
   min-width: 120px !important;
   max-width: 320px !important;
+  padding-right: 30px;
 }
 
 /* The tab strip scrolls horizontally, but unused strip space should still
@@ -1122,6 +1339,11 @@
    project tabs there are. */
 .aya-tab-new {
   flex: 0 0 36px;
+}
+.aya-tab-new span[style] {
+  display: block;
+  font-size: 18px;
+  line-height: 1;
 }
 .aya-topbar-right {
   flex-shrink: 0;
@@ -1608,6 +1830,27 @@ select.aya-modal-input {
   border-color: color-mix(in oklab, var(--accent) 40%, transparent);
 }
 .aya-pane-snippettoggle-label { letter-spacing: 0.02em; }
+.aya-statusbar .aya-pane-snippettoggle {
+  margin-left: 0;
+  gap: 4px;
+  height: 100%;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 0;
+  font-size: 11px;
+  color: inherit;
+}
+.aya-statusbar .aya-pane-snippettoggle:hover {
+  border-color: transparent;
+}
+.aya-statusbar .aya-pane-snippettoggle--on {
+  color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 13%, transparent);
+}
+.aya-statusbar .aya-pane-snippettoggle:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
 
 .aya-snippetbar {
   position: absolute;

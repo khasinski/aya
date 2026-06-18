@@ -16,18 +16,35 @@ const GIT_DIFF_TIMEOUT_MS = 3000;
 // Ceiling on git diff output buffered into memory (5MB).
 const GIT_DIFF_MAX_BUFFER_BYTES = 5_000_000;
 
-const OPTS = { timeout: GIT_COMMAND_TIMEOUT_MS, windowsHide: true } as const;
+// Aya only observes repository state. `git status` can otherwise refresh the
+// index as an optimization, which may briefly create .git/index.lock and race
+// with user-initiated git commands.
+const GIT_ENV = { ...process.env, GIT_OPTIONAL_LOCKS: "0" } as const;
+const READ_ONLY_GIT = "git --no-optional-locks";
+
+const OPTS = {
+  timeout: GIT_COMMAND_TIMEOUT_MS,
+  windowsHide: true,
+  env: GIT_ENV,
+} as const;
 const DIFF_OPTS = {
   timeout: GIT_DIFF_TIMEOUT_MS,
   maxBuffer: GIT_DIFF_MAX_BUFFER_BYTES,
   windowsHide: true,
+  env: GIT_ENV,
 } as const;
 
 export async function getGitInfo(directory: string): Promise<ProjectGitInfo> {
   try {
     const [{ stdout: branch }, { stdout: status }] = await Promise.all([
-      execAsync("git rev-parse --abbrev-ref HEAD", { cwd: directory, ...OPTS }),
-      execAsync("git status --porcelain", { cwd: directory, ...OPTS }),
+      execAsync(`${READ_ONLY_GIT} rev-parse --abbrev-ref HEAD`, {
+        cwd: directory,
+        ...OPTS,
+      }),
+      execAsync(`${READ_ONLY_GIT} status --porcelain`, {
+        cwd: directory,
+        ...OPTS,
+      }),
     ]);
     const dirty = status.split("\n").filter((l) => l.trim().length > 0).length;
     return { branch: branch.trim() || null, dirty };
@@ -53,7 +70,7 @@ export function parseGitPorcelain(status: string): GitChangedFile[] {
 
 export async function getGitChangedFiles(directory: string): Promise<GitChangedFile[]> {
   try {
-    const { stdout } = await execAsync("git status --porcelain", {
+    const { stdout } = await execAsync(`${READ_ONLY_GIT} status --porcelain`, {
       cwd: directory,
       ...OPTS,
     });
@@ -85,7 +102,7 @@ function syntheticNewFileDiff(file: GitChangedFile, content: string): string {
 export async function getGitDiff(directory: string): Promise<string> {
   try {
     const [{ stdout: diff }, files] = await Promise.all([
-      execAsync("git diff --no-ext-diff --no-color HEAD --", {
+      execAsync(`${READ_ONLY_GIT} diff --no-ext-diff --no-color HEAD --`, {
         cwd: directory,
         ...DIFF_OPTS,
       }),
