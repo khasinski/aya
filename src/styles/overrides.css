@@ -1476,6 +1476,116 @@
   overflow: visible;
   margin: 4px 0 8px;
 }
+.aya-settings-presets {
+  gap: 12px;
+}
+.aya-settings-agent-help {
+  color: var(--fg-tertiary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.aya-preset-card {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+.aya-preset-card-head {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 10px;
+}
+.aya-preset-card-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg-secondary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+.aya-preset-card-title {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.aya-preset-card-title strong,
+.aya-preset-card-title code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-preset-card-title strong {
+  color: var(--fg-primary);
+  font-size: 13px;
+}
+.aya-preset-card-title code {
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.aya-preset-section {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.aya-preset-grid {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+.aya-preset-grid--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.aya-preset-grid--appearance {
+  grid-template-columns: minmax(58px, 0.25fr) minmax(100px, 0.35fr) minmax(150px, 1fr);
+}
+.aya-preset-card label,
+.aya-preset-field {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+.aya-preset-card label > span,
+.aya-preset-field > span {
+  color: var(--fg-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.aya-preset-field small,
+.aya-preset-toggle small {
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.aya-preset-toggle {
+  min-width: 0;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+.aya-preset-toggle strong {
+  display: block;
+  color: var(--fg-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.aya-preset-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
 .aya-settings-general {
   display: flex;
   flex-direction: column;
@@ -1632,23 +1742,10 @@ select.aya-modal-input {
   align-items: stretch;
   margin-top: 4px;
 }
-/* Inside the row the parent controls vertical alignment. Strip the
-   align-self / margin that the standalone variant sets, otherwise the
-   first button sits 2px above the YOLO ones. */
+/* Inside the row the parent controls vertical alignment. */
 .aya-settings-add-row .aya-settings-add {
   align-self: auto;
   margin-top: 0;
-}
-/* YOLO quick-adds get an amber dashed border so they read as "spicy" without
-   being alarming — they still spawn interactive sessions, just with auto-
-   approval of tool calls. */
-.aya-settings-add--yolo {
-  border-color: var(--status-waiting);
-  color: var(--status-waiting);
-}
-.aya-settings-add--yolo:hover {
-  background: rgba(240, 173, 78, 0.08);
-  color: var(--status-waiting);
 }
 
 /* Suggested presets — agent CLIs found on the user's PATH but not yet

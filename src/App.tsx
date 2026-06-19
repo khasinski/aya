@@ -70,6 +70,7 @@ const APP_THEME_STORAGE_KEY = "aya:app-theme";
 const MAC_OPTION_KEY_STORAGE_KEY = "aya:mac-option-key";
 const TERMINAL_FONT_FAMILY_STORAGE_KEY = "aya:terminal-font-family";
 const USAGE_HARNESS_NAME_STORAGE_KEY = "aya:usage-show-harness-name";
+const WARM_PROJECT_TERMINAL_CACHE_SIZE = 4;
 
 type AppThemePreference = "system" | "light" | "dark";
 
@@ -205,6 +206,31 @@ function remoteTerminalCommand(project: ProjectConfig, preset: Preset): string {
       ? `cd ${shellQuote(project.remote.directory)} && exec ${remoteShell} -l`
       : `cd ${shellQuote(project.remote.directory)} && exec ${remoteShell} -l -i -c ${shellQuote(`exec ${preset.command}`)}`;
   return `ssh -tt ${shellQuote(project.remote.sshTarget)} ${shellQuote(remoteCommand)}`;
+}
+
+function commandWithAutoResume(preset: Preset, restored: boolean | undefined): string {
+  const command = preset.command.trim();
+  if (
+    !restored ||
+    !preset.autoResume ||
+    !command ||
+    /\s--resume(?:\s|$)/.test(command)
+  ) {
+    return preset.command;
+  }
+  return `${command} --resume`;
+}
+
+function terminalCommand(
+  project: ProjectConfig | null,
+  preset: Preset,
+  terminal: TerminalState,
+): string {
+  const commandPreset = {
+    ...preset,
+    command: commandWithAutoResume(preset, terminal.restored),
+  };
+  return project ? remoteTerminalCommand(project, commandPreset) : commandPreset.command;
 }
 
 function uniqueProjectName(projects: ProjectConfig[], directory: string): string {
@@ -423,6 +449,7 @@ export function App() {
   const [themes, setThemes] = useState<Theme[]>([]);
   const [activeThemeId, setActiveThemeId] = useState<string>("");
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [warmProjectSlugs, setWarmProjectSlugs] = useState<string[]>([]);
   const [terminals, setTerminals] = useState<Record<string, TerminalState>>({});
   const [projectEvents, setProjectEvents] = useState<ProjectEvent[]>([]);
   const [activeTabByProject, setActiveTabByProject] = useState<
@@ -696,6 +723,14 @@ export function App() {
   const remotePresetsByProjectRef = useRef(remotePresetsByProject);
   remotePresetsByProjectRef.current = remotePresetsByProject;
 
+  useEffect(() => {
+    if (!activeProjectId) return;
+    setWarmProjectSlugs((prev) => [
+      activeProjectId,
+      ...prev.filter((slug) => slug !== activeProjectId),
+    ].slice(0, WARM_PROJECT_TERMINAL_CACHE_SIZE));
+  }, [activeProjectId]);
+
   const appendProjectEvent = useCallback(
     (event: Omit<ProjectEvent, "id" | "createdAt"> & { createdAt?: number }) => {
       setProjectEvents((prev) => [
@@ -825,6 +860,7 @@ export function App() {
             status: "running",
             bell: false,
             exitCode: null,
+            restored: true,
           };
         }
         return next;
@@ -1701,6 +1737,7 @@ export function App() {
       delete next[slug];
       return next;
     });
+    setWarmProjectSlugs((prev) => prev.filter((s) => s !== slug));
     const remaining = projectsRef.current.filter((p) => p.slug !== slug);
     setProjects(remaining);
     updateProjectCollection({
@@ -2191,11 +2228,33 @@ export function App() {
       ? [activeTabId]
       : [];
   const visibleTerminalIdSet = new Set(visibleTerminalIds);
+  const mountedTerminalIdSet = new Set(visibleTerminalIds);
+  const warmProjectSlugSet = new Set(warmProjectSlugs);
+  for (const terminal of projectTerminals) {
+    mountedTerminalIdSet.add(terminal.id);
+  }
+  for (const terminal of Object.values(terminals)) {
+    if (warmProjectSlugSet.has(terminal.projectSlug)) {
+      mountedTerminalIdSet.add(terminal.id);
+    }
+  }
+  for (const project of projects) {
+    const terminalId = activeTabByProject[project.slug] ?? project.tabs[0]?.id;
+    if (terminalId) mountedTerminalIdSet.add(terminalId);
+  }
   // spawnDeferred tabs (added by an external config edit, #4) stay out of the
   // hidden pool: a hidden TerminalView mounts an xterm and spawns the PTY,
   // and those tabs must not get a process until first activated.
+  //
+  // Keep all terminals for the active/recent projects warm, plus the active
+  // terminal for each other open project. That preserves fast project switches
+  // in the common working set without mounting every terminal in every project
+  // as hidden xterm DOM/WebGL state.
   const hiddenTerminals = Object.values(terminals).filter(
-    (terminal) => !visibleTerminalIdSet.has(terminal.id) && !terminal.spawnDeferred,
+    (terminal) =>
+      mountedTerminalIdSet.has(terminal.id) &&
+      !visibleTerminalIdSet.has(terminal.id) &&
+      !terminal.spawnDeferred,
   );
   const assignableProjectTerminals = projectTerminals.filter(
     (terminal) => !visibleTerminalIdSet.has(terminal.id),
@@ -2285,6 +2344,8 @@ export function App() {
     showSearch ||
     showAttentionCenter ||
     !!pendingRepoImport;
+  const closeFindPane = useCallback(() => setFindInPaneFor(null), []);
+  const ignoreSnippetsOpenChange = useCallback(() => undefined, []);
 
   const activeTheme = themes.find((t) => t.id === activeThemeId) ?? themes[0];
   const activeThemeColors: ThemeColors =
@@ -2536,11 +2597,7 @@ export function App() {
                   key={terminal.id}
                   terminal={terminal}
                   preset={preset}
-                  command={
-                    activeProject
-                      ? remoteTerminalCommand(activeProject, preset)
-                      : preset.command
-                  }
+                  command={terminalCommand(activeProject, preset, terminal)}
                   snippets={snippets}
                   snippetsOpen={snippetDrawerTerminalId === terminal.id}
                   onSnippetsOpenChange={(open) =>
@@ -2553,7 +2610,7 @@ export function App() {
                   fontSize={fontSize}
                   themeColors={colorsForTerminal}
                   findOpen={findInPaneFor === terminal.id}
-                  onCloseFind={() => setFindInPaneFor(null)}
+                  onCloseFind={closeFindPane}
                   onOpenSettings={openSettings}
                   onCloseProject={closeProject}
                   onRequestRestart={() => restartTerminal(terminal.id)}
@@ -2572,7 +2629,12 @@ export function App() {
               );
             })}
             {hiddenTerminals.map((t) => {
-              const preset = getPreset(activePresets, t.presetId);
+              const project = findProject(projects, t.projectSlug);
+              const projectPresets =
+                project?.remote && remotePresetsByProject[t.projectSlug]
+                  ? remotePresetsByProject[t.projectSlug]
+                  : presets;
+              const preset = getPreset(projectPresets, t.presetId);
               const overrideTheme = preset.themeId
                 ? themes.find((th) => th.id === preset.themeId)
                 : null;
@@ -2583,22 +2645,18 @@ export function App() {
                   key={t.id}
                   terminal={t}
                   preset={preset}
-                  command={
-                    activeProject
-                      ? remoteTerminalCommand(activeProject, preset)
-                      : preset.command
-                  }
+                  command={terminalCommand(project, preset, t)}
                   snippets={snippets}
                   snippetsOpen={false}
-                  onSnippetsOpenChange={() => undefined}
+                  onSnippetsOpenChange={ignoreSnippetsOpenChange}
                   isVisible={false}
-                  cwd={activeProject?.remote ? homeDir : t.cwd}
+                  cwd={project?.remote ? homeDir : t.cwd}
                   lastActivity={lastActivityRef.current[t.id]}
                   fontFamily={effectiveTerminalFontFamily}
                   fontSize={fontSize}
                   themeColors={colorsForTerminal}
                   findOpen={false}
-                  onCloseFind={() => setFindInPaneFor(null)}
+                  onCloseFind={closeFindPane}
                   onOpenSettings={openSettings}
                   onCloseProject={closeProject}
                   onRequestRestart={() => restartTerminal(t.id)}

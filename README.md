@@ -83,16 +83,16 @@ run commands.
 - **Usage chips.** Claude usage can be read from an explicit user-enabled hook
   that writes `~/.aya/usage.json`; Codex usage is read from local Codex session
   logs. Aya itself does not read Anthropic tokens or call Anthropic endpoints.
-- **Early remote support.** The 0.6 tree includes SSH-backed remote project
+- **Early remote support.** Aya includes SSH-backed remote project
   opening and a local `aya remote --stdio` bridge. This is groundwork for fuller
   remote session sync; remote control is still intentionally limited.
 
 ## Install
 
-Download Aya 0.6.0 from the GitHub release:
+Download Aya 0.7.0 from the GitHub release:
 
-- macOS Apple Silicon: [DMG](https://github.com/khasinski/aya/releases/download/v0.6.0/Aya-0.6.0-arm64.dmg) or [zip](https://github.com/khasinski/aya/releases/download/v0.6.0/Aya-0.6.0-arm64-mac.zip)
-- Linux x64: [AppImage](https://github.com/khasinski/aya/releases/download/v0.6.0/Aya-0.6.0.AppImage) or [deb](https://github.com/khasinski/aya/releases/download/v0.6.0/aya_0.6.0_amd64.deb)
+- macOS Apple Silicon: [DMG](https://github.com/khasinski/aya/releases/download/v0.7.0/Aya-0.7.0-arm64.dmg) or [zip](https://github.com/khasinski/aya/releases/download/v0.7.0/Aya-0.7.0-arm64-mac.zip)
+- Linux x64: [AppImage](https://github.com/khasinski/aya/releases/download/v0.7.0/Aya-0.7.0.AppImage) or [deb](https://github.com/khasinski/aya/releases/download/v0.7.0/aya_0.7.0_amd64.deb)
 
 ### macOS
 
@@ -104,15 +104,15 @@ signed and Apple-notarized.
 On Ubuntu and Debian-like systems, prefer the DEB:
 
 ```sh
-sudo apt install ./aya_0.6.0_amd64.deb
+sudo apt install ./aya_0.7.0_amd64.deb
 /opt/Aya/aya
 ```
 
 The AppImage can be run directly:
 
 ```sh
-chmod +x Aya-0.6.0.AppImage
-./Aya-0.6.0.AppImage
+chmod +x Aya-0.7.0.AppImage
+./Aya-0.7.0.AppImage
 ```
 
 If AppImage complains about FUSE, use the DEB.
@@ -121,7 +121,7 @@ If AppImage complains about FUSE, use the DEB.
 
 Requirements:
 
-- Node.js `>=24 <25`
+- Node.js `>=24 <25 || >=26 <27`
 - npm
 
 Build and package for the current platform:

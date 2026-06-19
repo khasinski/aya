@@ -7,6 +7,10 @@ export interface Preset {
   icon: string;
   color: string; // hex or "" for default
   command: string;
+  agent?: "claude" | "codex" | "custom";
+  configDir?: string;
+  unsafeMode?: boolean;
+  autoResume?: boolean;
   /** Optional per-preset theme override. Empty/undefined means use the
    *  global active theme. */
   themeId?: string;
@@ -411,6 +415,9 @@ export interface TerminalState {
    *  stopped + restartable (Shift+Enter) without faking a clean exit code, so
    *  it never shows as a "done"/successful finish. Cleared on restart. */
   stopped?: boolean;
+  /** Restored from a persisted project tab, not newly created by the user.
+   *  Agent presets may append --resume only in this case. */
+  restored?: boolean;
 }
 
 export type ProjectEventLevel = "info" | "active" | "waiting" | "done" | "error";

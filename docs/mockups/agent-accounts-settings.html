@@ -1,0 +1,807 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aya Settings Mockup - Agent Accounts</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #111312;
+        --panel: #181b1a;
+        --panel-2: #202422;
+        --panel-3: #262b28;
+        --border: #333a36;
+        --border-strong: #48524d;
+        --text: #ecefed;
+        --muted: #a6afaa;
+        --dim: #737d78;
+        --green: #3fb982;
+        --amber: #d6a04b;
+        --claude: #d97757;
+        --codex: #10a37f;
+        --focus: #6aa68d;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      button,
+      input,
+      select,
+      textarea { font: inherit; }
+
+      .window {
+        width: min(1180px, calc(100vw - 40px));
+        height: min(760px, calc(100vh - 40px));
+        display: grid;
+        grid-template-columns: 178px minmax(0, 1fr);
+        overflow: hidden;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--panel);
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+      }
+
+      .sidebar {
+        min-width: 0;
+        padding: 14px 10px;
+        border-right: 1px solid var(--border);
+        background: #141716;
+      }
+
+      .nav-title {
+        padding: 8px 10px 14px;
+        color: var(--dim);
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .nav-item {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 10px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+        text-align: left;
+      }
+
+      .nav-item.active {
+        background: var(--panel-2);
+        color: var(--text);
+      }
+
+      .nav-icon {
+        width: 18px;
+        flex: 0 0 auto;
+        color: var(--dim);
+        text-align: center;
+      }
+
+      .content {
+        min-width: 0;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+      }
+
+      .header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 18px 22px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 720;
+      }
+
+      .header p {
+        max-width: 620px;
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.4;
+      }
+
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 0 0 auto;
+      }
+
+      .btn {
+        min-height: 32px;
+        padding: 0 12px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--panel-2);
+        color: var(--text);
+        white-space: nowrap;
+      }
+
+      .btn:hover {
+        border-color: var(--border-strong);
+        background: var(--panel-3);
+      }
+
+      .btn.primary {
+        border-color: rgba(63, 185, 130, 0.45);
+        background: #22372f;
+      }
+
+      .btn.ghost { background: transparent; }
+
+      .main {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(360px, 0.46fr) minmax(470px, 1fr);
+      }
+
+      .accounts,
+      .details {
+        min-width: 0;
+        overflow: auto;
+      }
+
+      .accounts {
+        padding: 16px;
+        border-right: 1px solid var(--border);
+      }
+
+      .details {
+        padding: 18px 20px;
+      }
+
+      .section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+
+      .section-title {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .add-panel {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+
+      .agent-help {
+        margin: -2px 0 10px;
+        color: var(--dim);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .add-card {
+        min-width: 0;
+        min-height: 48px;
+        display: grid;
+        grid-template-columns: 30px minmax(0, 1fr);
+        align-items: center;
+        gap: 10px;
+        padding: 10px;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: var(--panel-2);
+        color: var(--text);
+        text-align: left;
+      }
+
+      .add-card:hover {
+        border-color: var(--border-strong);
+        background: var(--panel-3);
+      }
+
+      .add-copy {
+        min-width: 0;
+      }
+
+      .add-card strong {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-size: 13px;
+        white-space: nowrap;
+      }
+
+      .account-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .account-row {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+        padding: 10px;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: #171a19;
+      }
+
+      .account-row.selected {
+        border-color: rgba(63, 185, 130, 0.55);
+        background: #1d2824;
+      }
+
+      .mark {
+        width: 28px;
+        height: 28px;
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+        border-radius: 6px;
+        background: var(--panel-2);
+        font-weight: 800;
+      }
+
+      .mark.claude { color: var(--claude); }
+      .mark.codex { color: var(--codex); }
+
+      .account-main { min-width: 0; }
+
+      .account-name {
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .account-name-text {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .account-path {
+        overflow: hidden;
+        margin-top: 3px;
+        color: var(--dim);
+        font-family: "SFMono-Regular", ui-monospace, Menlo, monospace;
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .pill {
+        flex: 0 0 auto;
+        padding: 2px 6px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 700;
+      }
+
+      .pill.warn {
+        border-color: rgba(214, 160, 75, 0.4);
+        color: var(--amber);
+      }
+
+      .row-actions {
+        display: flex;
+        gap: 4px;
+      }
+
+      .icon-btn {
+        width: 28px;
+        height: 28px;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+      }
+
+      .icon-btn:hover {
+        border-color: var(--border);
+        background: var(--panel-2);
+        color: var(--text);
+      }
+
+      .presets-title { margin-top: 18px; }
+
+      .preset-row {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: 26px minmax(90px, 0.35fr) minmax(0, 1fr);
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
+      .preset-row strong,
+      .preset-row code {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .preset-row code {
+        color: var(--dim);
+        font-family: "SFMono-Regular", ui-monospace, Menlo, monospace;
+        font-size: 11px;
+      }
+
+      .form-grid {
+        max-width: 680px;
+        display: grid;
+        gap: 16px;
+      }
+
+      .form-row {
+        min-width: 0;
+        display: grid;
+        gap: 7px;
+      }
+
+      label {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .input,
+      .select,
+      .command {
+        width: 100%;
+        min-width: 0;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: #121514;
+        color: var(--text);
+        outline: none;
+      }
+
+      .input,
+      .select {
+        min-height: 34px;
+        padding: 0 10px;
+      }
+
+      .input:focus,
+      .select:focus,
+      .command:focus {
+        border-color: var(--focus);
+      }
+
+      .segmented {
+        width: min(100%, 320px);
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        overflow: hidden;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: #121514;
+      }
+
+      .segment {
+        min-width: 0;
+        min-height: 32px;
+        border: 0;
+        border-right: 1px solid var(--border);
+        background: transparent;
+        color: var(--muted);
+      }
+
+      .segment:last-child { border-right: 0; }
+
+      .segment.active {
+        background: var(--panel-3);
+        color: var(--text);
+      }
+
+      .segment.inactive {
+        color: var(--dim);
+      }
+
+      .two-col {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .icon-color-grid {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: minmax(70px, 0.38fr) minmax(0, 1fr);
+        gap: 8px;
+      }
+
+      .color-input {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: 30px minmax(0, 1fr);
+        align-items: center;
+        gap: 8px;
+      }
+
+      .swatch {
+        width: 30px;
+        height: 30px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--claude);
+      }
+
+      .command-box {
+        min-width: 0;
+        display: grid;
+        gap: 8px;
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: #141716;
+      }
+
+      .command-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .command {
+        min-height: 72px;
+        resize: vertical;
+        padding: 10px;
+        font-family: "SFMono-Regular", ui-monospace, Menlo, monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+      }
+
+      .hint {
+        color: var(--dim);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .field-group {
+        min-width: 0;
+        display: grid;
+        gap: 12px;
+        padding: 14px;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: #141716;
+      }
+
+      .field-group-title {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .warning {
+        display: flex;
+        gap: 8px;
+        padding: 10px;
+        border: 1px solid rgba(214, 160, 75, 0.32);
+        border-radius: 7px;
+        background: rgba(214, 160, 75, 0.08);
+        color: #e4c489;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .toggle-row {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 16px;
+        min-height: 42px;
+      }
+
+      .setting-row {
+        min-width: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(170px, 220px);
+        align-items: center;
+        gap: 16px;
+        padding: 10px 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
+      .setting-row:first-of-type {
+        border-top: 0;
+        padding-top: 0;
+      }
+
+      .setting-copy {
+        min-width: 0;
+      }
+
+      .switch {
+        width: 38px;
+        height: 22px;
+        position: relative;
+        flex: 0 0 auto;
+        border: 1px solid rgba(63, 185, 130, 0.6);
+        border-radius: 999px;
+        background: rgba(63, 185, 130, 0.22);
+      }
+
+      .switch::after {
+        content: "";
+        position: absolute;
+        top: 3px;
+        right: 3px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #dff8ec;
+      }
+
+      .footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        padding: 12px 18px;
+        border-top: 1px solid var(--border);
+        background: #141716;
+      }
+
+      .footer-note {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--dim);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .footer-actions {
+        display: flex;
+        gap: 8px;
+        flex: 0 0 auto;
+      }
+
+      @media (max-width: 920px) {
+        .window {
+          width: 100vw;
+          height: 100vh;
+          border-radius: 0;
+          grid-template-columns: 1fr;
+        }
+
+        .sidebar { display: none; }
+
+        .main {
+          grid-template-columns: 1fr;
+        }
+
+        .accounts {
+          max-height: 330px;
+          border-right: 0;
+          border-bottom: 1px solid var(--border);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="window" aria-label="Aya settings mockup">
+      <aside class="sidebar">
+        <div class="nav-title">Settings</div>
+        <button class="nav-item"><span class="nav-icon">⌘</span>General</button>
+        <button class="nav-item"><span class="nav-icon">▣</span>Themes</button>
+        <button class="nav-item active"><span class="nav-icon">▸</span>Presets</button>
+        <button class="nav-item"><span class="nav-icon">✦</span>Snippets</button>
+      </aside>
+
+      <section class="content">
+        <header class="header">
+          <div>
+            <h1>Terminal presets</h1>
+            <p>Manage Claude and Codex accounts by choosing a config directory. Aya generates the command, but you can still edit it manually.</p>
+          </div>
+          <div class="toolbar">
+            <button class="btn ghost">Reset defaults</button>
+            <button class="btn primary">Save</button>
+          </div>
+        </header>
+
+        <div class="main">
+          <section class="accounts">
+            <div class="section-head">
+              <div class="section-title">Agent accounts</div>
+            </div>
+
+            <div class="agent-help">
+              Use multiple Claude or Codex accounts by giving each one its own
+              config directory.
+            </div>
+
+            <div class="add-panel">
+              <button class="add-card">
+                <span class="mark claude">✻</span>
+                <span class="add-copy">
+                  <strong>Add Claude</strong>
+                </span>
+              </button>
+              <button class="add-card">
+                <span class="mark codex">◆</span>
+                <span class="add-copy">
+                  <strong>Add Codex</strong>
+                </span>
+              </button>
+            </div>
+
+            <div class="account-list">
+              <article class="account-row selected">
+                <div class="mark claude">✻</div>
+                <div class="account-main">
+                  <div class="account-name">
+                    <span class="account-name-text">Claude Primary</span>
+                    <span class="pill">default</span>
+                  </div>
+                  <div class="account-path">~/.claude</div>
+                </div>
+                <div class="row-actions">
+                  <button class="icon-btn" title="Duplicate">⧉</button>
+                  <button class="icon-btn" title="Delete">×</button>
+                </div>
+              </article>
+
+              <article class="account-row">
+                <div class="mark claude">✻</div>
+                <div class="account-main">
+                  <div class="account-name">
+                    <span class="account-name-text">Claude Secondary</span>
+                    <span class="pill warn">YOLO</span>
+                  </div>
+                  <div class="account-path">~/.claude-secondary</div>
+                </div>
+                <div class="row-actions">
+                  <button class="icon-btn" title="Duplicate">⧉</button>
+                  <button class="icon-btn" title="Delete">×</button>
+                </div>
+              </article>
+
+              <article class="account-row">
+                <div class="mark codex">◆</div>
+                <div class="account-main">
+                  <div class="account-name">
+                    <span class="account-name-text">Codex Work</span>
+                  </div>
+                  <div class="account-path">~/.codex-work</div>
+                </div>
+                <div class="row-actions">
+                  <button class="icon-btn" title="Duplicate">⧉</button>
+                  <button class="icon-btn" title="Delete">×</button>
+                </div>
+              </article>
+            </div>
+
+            <div class="section-title presets-title">Other presets</div>
+            <div class="preset-row">
+              <span>$</span>
+              <strong>Shell</strong>
+              <code>$SHELL</code>
+            </div>
+            <div class="preset-row">
+              <span>▸</span>
+              <strong>Aider</strong>
+              <code>aider --dark-mode</code>
+            </div>
+          </section>
+
+          <section class="details">
+            <div class="form-grid">
+              <div class="field-group">
+                <div class="field-group-title">Account</div>
+                <div class="form-row">
+                  <label>Preset type</label>
+                  <div class="segmented">
+                    <button class="segment inactive">Claude</button>
+                    <button class="segment inactive">Codex</button>
+                    <button class="segment active">Custom</button>
+                  </div>
+                </div>
+
+                <div class="two-col">
+                  <div class="form-row">
+                    <label>Name</label>
+                    <input class="input" value="Claude Primary" />
+                  </div>
+                </div>
+              </div>
+
+              <div class="field-group">
+                <div class="field-group-title">Appearance</div>
+                <div class="two-col">
+                  <div class="form-row">
+                    <label>Icon</label>
+                    <input class="input" value="✻" />
+                  </div>
+                  <div class="form-row">
+                    <label>Icon color</label>
+                    <div class="color-input">
+                      <span class="swatch" aria-hidden="true"></span>
+                      <input class="input" value="#d97757" />
+                    </div>
+                  </div>
+                </div>
+                <div class="form-row">
+                  <label>Theme</label>
+                  <select class="select">
+                    <option>Use global theme</option>
+                    <option>Warm Claude</option>
+                    <option>Green terminal</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="field-group">
+                <div class="field-group-title">Behavior</div>
+                <div class="setting-row">
+                  <div class="setting-copy">
+                    <label>Auto-resume restored tabs</label>
+                    <div class="hint">Adds your resume flag only after Aya's background PTY restarts. New tabs start fresh.</div>
+                  </div>
+                  <div class="switch" aria-label="Auto-resume enabled"></div>
+                </div>
+              </div>
+
+              <div class="command-box">
+                <div class="command-head">
+                  <label>Command</label>
+                </div>
+                <textarea class="command">aider --dark-mode</textarea>
+                <div class="hint">Custom presets keep only the shared terminal options: appearance, auto-resume, and manual command editing.</div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <footer class="footer">
+          <div class="footer-note"></div>
+          <div class="footer-actions">
+            <button class="btn">Cancel</button>
+            <button class="btn primary">Save changes</button>
+          </div>
+        </footer>
+      </section>
+    </main>
+  </body>
+</html>

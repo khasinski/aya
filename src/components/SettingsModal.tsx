@@ -15,8 +15,8 @@ import type { SettingsTab } from "../settings-tabs";
 import type { MacOptionKeyMode } from "../terminal-option-key";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 
-const CLAUDE_YOLO_CMD = "claude --dangerously-skip-permissions";
-const CODEX_YOLO_CMD = "codex --dangerously-bypass-approvals-and-sandbox";
+const DEFAULT_CLAUDE_CONFIG_DIR = "~/.claude";
+const DEFAULT_CODEX_CONFIG_DIR = "~/.codex";
 
 interface Props {
   presets: Preset[];
@@ -46,12 +46,6 @@ interface Props {
   initialTab?: SettingsTab;
 }
 
-// Preset table column widths (px) kept in sync between header row and body rows
-const PRESET_ROW_ICON_WIDTH = 36;
-const PRESET_ROW_NAME_WIDTH = 130;
-const PRESET_ROW_THEME_WIDTH = 130;
-const PRESET_ROW_COLOR_WIDTH = 70;
-
 function uuid(): string {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -61,20 +55,102 @@ interface DraftPreset extends Preset {
 }
 
 function toDraft(p: Preset): DraftPreset {
-  return { ...p, __key: uuid() };
+  const agent = p.agent ?? inferAgent(p);
+  const isAgent = agent === "claude" || agent === "codex";
+  return {
+    ...p,
+    agent,
+    configDir: p.configDir ?? inferConfigDir(p.command, agent),
+    unsafeMode: p.unsafeMode ?? inferUnsafeMode(p.command, agent),
+    autoResume: p.autoResume ?? isAgent,
+    __key: uuid(),
+  };
 }
 
 function fromDraft(p: DraftPreset): Preset {
   const id = p.id.trim() || presetSlug(p.name);
   const themeId = p.themeId && p.themeId.trim() ? p.themeId : undefined;
+  const agent = p.agent;
+  const configDir =
+    p.configDir && p.configDir.trim() ? p.configDir.trim() : undefined;
   return {
     id,
     name: p.name,
     icon: p.icon,
     color: p.color,
     command: p.command,
+    ...(agent ? { agent } : {}),
+    ...(configDir ? { configDir } : {}),
+    ...(p.unsafeMode ? { unsafeMode: true } : {}),
+    ...(p.autoResume ? { autoResume: true } : {}),
     ...(themeId ? { themeId } : {}),
   };
+}
+
+function inferAgent(p: Preset): Preset["agent"] {
+  const command = p.command.trim();
+  if (/\bCLAUDE_CONFIG_DIR=/.test(command) || /^claude(?:\s|$)/.test(command)) {
+    return "claude";
+  }
+  if (/\bCODEX_HOME=/.test(command) || /^codex(?:\s|$)/.test(command)) {
+    return "codex";
+  }
+  return "custom";
+}
+
+function inferConfigDir(command: string, agent: Preset["agent"]): string | undefined {
+  const key =
+    agent === "claude"
+      ? "CLAUDE_CONFIG_DIR"
+      : agent === "codex"
+        ? "CODEX_HOME"
+        : null;
+  if (!key) return undefined;
+  const value = command.match(new RegExp(`(?:^|\\s)${key}=("[^"]*"|'[^']*'|\\S+)`))?.[1];
+  if (!value) return undefined;
+  const unquoted = value.replace(/^"|"$/g, "").replace(/^'|'$/g, "");
+  return unquoted.replace(/^\$HOME(?=\/|$)/, "~");
+}
+
+function inferUnsafeMode(command: string, agent: Preset["agent"]): boolean {
+  if (agent === "claude") {
+    return /\s--dangerously-skip-permissions(?:\s|$)/.test(` ${command} `);
+  }
+  if (agent === "codex") {
+    return /\s(?:--dangerously-bypass-approvals-and-sandbox|--yolo)(?:\s|$)/.test(
+      ` ${command} `,
+    );
+  }
+  return false;
+}
+
+function quoteEnv(value: string): string {
+  const trimmed = value.trim();
+  if (/^~(?=\/|$)/.test(trimmed)) {
+    const suffix = trimmed.slice(1).replace(/(["\\$`])/g, "\\$1");
+    return `"$HOME${suffix}"`;
+  }
+  return `"${trimmed.replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
+function agentCommand(
+  agent: Preset["agent"],
+  configDir: string | undefined,
+  unsafeMode: boolean | undefined,
+): string {
+  if (agent === "claude") {
+    const base = configDir?.trim()
+      ? `CLAUDE_CONFIG_DIR=${quoteEnv(configDir)} claude`
+      : "claude";
+    return unsafeMode ? `${base} --dangerously-skip-permissions` : base;
+  }
+  if (agent === "codex") {
+    const base = configDir?.trim()
+      ? `CODEX_HOME=${quoteEnv(configDir)} codex`
+      : "codex";
+    return unsafeMode ? `${base} --dangerously-bypass-approvals-and-sandbox` : base;
+  }
+  return "";
 }
 
 interface DraftSnippet extends Snippet {
@@ -348,6 +424,36 @@ export function SettingsModal({
     );
   };
 
+  const updateAgentFields = (
+    key: string,
+    patch: Partial<Pick<Preset, "agent" | "configDir" | "unsafeMode">>,
+  ) => {
+    editPresets((prev) =>
+      prev.map((p) => {
+        if (p.__key !== key) return p;
+        const next = { ...p, ...patch };
+        if (next.agent === "claude" || next.agent === "codex") {
+          const configDir =
+            next.configDir ||
+            (next.agent === "claude"
+              ? DEFAULT_CLAUDE_CONFIG_DIR
+              : DEFAULT_CODEX_CONFIG_DIR);
+          return {
+            ...next,
+            configDir,
+            command: agentCommand(next.agent, configDir, next.unsafeMode),
+          };
+        }
+        return {
+          ...next,
+          agent: "custom",
+          configDir: undefined,
+          unsafeMode: undefined,
+        };
+      }),
+    );
+  };
+
   const removeRow = (key: string) => {
     const row = draft.find((p) => p.__key === key);
     if (!row) return;
@@ -365,44 +471,63 @@ export function SettingsModal({
         icon: "•",
         color: "",
         command: "",
+        agent: "custom",
+        autoResume: false,
         themeId: undefined,
       },
     ]);
   };
 
-  /** Append a pre-filled preset. Used by the YOLO quick-add buttons. */
+  /** Append a pre-filled preset. */
   const addPrefilled = (preset: Omit<DraftPreset, "__key">) => {
     editPresets((prev) => [...prev, { __key: uuid(), ...preset }]);
   };
 
-  const addClaudeYolo = () =>
+  const addClaudeAccount = () =>
     addPrefilled({
       id: "",
-      name: "Claude YOLO",
+      name: "Claude Account",
       icon: "✻",
       color: CLAUDE_BRAND_COLOR,
-      command: CLAUDE_YOLO_CMD,
+      command: agentCommand("claude", DEFAULT_CLAUDE_CONFIG_DIR, false),
+      agent: "claude",
+      configDir: DEFAULT_CLAUDE_CONFIG_DIR,
+      autoResume: true,
       themeId: undefined,
     });
 
   /** Add a harness suggestion as a new preset row. */
-  const addSuggestion = (h: HarnessDef) =>
+  const addSuggestion = (h: HarnessDef) => {
+    const agent = h.id === "claude" || h.id === "codex" ? h.id : "custom";
+    const configDir =
+      agent === "claude"
+        ? DEFAULT_CLAUDE_CONFIG_DIR
+        : agent === "codex"
+          ? DEFAULT_CODEX_CONFIG_DIR
+          : undefined;
     addPrefilled({
       id: h.id,
       name: h.name,
       icon: h.icon,
       color: h.color,
-      command: h.command,
+      command: configDir ? agentCommand(agent, configDir, false) : h.command,
+      agent,
+      configDir,
+      autoResume: agent === "claude" || agent === "codex",
       themeId: undefined,
     });
+  };
 
-  const addCodexYolo = () =>
+  const addCodexAccount = () =>
     addPrefilled({
       id: "",
-      name: "Codex YOLO",
+      name: "Codex Account",
       icon: "◆",
       color: CODEX_BRAND_COLOR,
-      command: CODEX_YOLO_CMD,
+      command: agentCommand("codex", DEFAULT_CODEX_CONFIG_DIR, false),
+      agent: "codex",
+      configDir: DEFAULT_CODEX_CONFIG_DIR,
+      autoResume: true,
       themeId: undefined,
     });
 
@@ -911,41 +1036,224 @@ export function SettingsModal({
                   Sidebar launchers for shells and agent CLIs.
                 </SettingsHeader>
 
-                <div className="aya-settings-list">
-          <div className="aya-settings-row aya-settings-row--head">
-            <span style={{ width: PRESET_ROW_ICON_WIDTH }}>Icon</span>
-            <span style={{ width: PRESET_ROW_NAME_WIDTH }}>Name</span>
-            <span style={{ flex: 1 }}>Command</span>
-            <span style={{ width: PRESET_ROW_THEME_WIDTH }}>Theme</span>
-            <span style={{ width: PRESET_ROW_COLOR_WIDTH }}>Color</span>
-            <span style={{ width: 28 }} />
+                <div className="aya-settings-list aya-settings-presets">
+          <div className="aya-settings-agent-help">
+            Use multiple Claude or Codex accounts by giving each one its own
+            config directory.
           </div>
+          <div className="aya-settings-add-row">
+            <button className="aya-settings-add" onClick={addClaudeAccount}>
+              <SettingsIcon name="add" />
+              Add Claude
+            </button>
+            <button className="aya-settings-add" onClick={addCodexAccount}>
+              <SettingsIcon name="add" />
+              Add Codex
+            </button>
+            <button className="aya-settings-add" onClick={addRow}>
+              <SettingsIcon name="add" />
+              Add custom
+            </button>
+          </div>
+
           {draft.map((row) => {
             const warn = looksNonInteractive(row.command);
+            const isAgent = row.agent === "claude" || row.agent === "codex";
             return (
-              <div className="aya-settings-row" key={row.__key}>
-                <input
-                  className="aya-modal-input aya-settings-icon-input"
-                  style={{ width: PRESET_ROW_ICON_WIDTH }}
-                  value={row.icon}
-                  maxLength={3}
-                  onChange={(e) => updateRow(row.__key, { icon: e.target.value })}
-                />
-                <input
-                  className="aya-modal-input"
-                  style={{ width: PRESET_ROW_NAME_WIDTH }}
-                  value={row.name}
-                  onChange={(e) => updateRow(row.__key, { name: e.target.value })}
-                  placeholder="Display name"
-                />
-                <div
-                  style={{
-                    flex: 1,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 2,
-                  }}
-                >
+              <div className="aya-preset-card" key={row.__key}>
+                <div className="aya-preset-card-head">
+                  <div
+                    className="aya-preset-card-icon"
+                    style={row.color ? { color: row.color } : undefined}
+                  >
+                    {row.icon || "•"}
+                  </div>
+                  <div className="aya-preset-card-title">
+                    <strong>{row.name || "Untitled preset"}</strong>
+                    <code>{row.command || "No command"}</code>
+                  </div>
+                  <button
+                    className="aya-settings-row-close"
+                    onClick={() => removeRow(row.__key)}
+                    title="Remove preset"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                <div className="aya-preset-section">
+                  <div className="aya-settings-section-title">Account</div>
+                  <div className="aya-preset-grid aya-preset-grid--two">
+                    <label>
+                      <span>Type</span>
+                      <select
+                        className="aya-modal-input"
+                        value={row.agent ?? "custom"}
+                        onChange={(e) => {
+                          const agent = e.target.value as Preset["agent"];
+                          if (agent === "claude") {
+                            updateRow(row.__key, {
+                              agent,
+                              icon: row.icon || "✻",
+                              color: row.color || CLAUDE_BRAND_COLOR,
+                              configDir:
+                                row.configDir || DEFAULT_CLAUDE_CONFIG_DIR,
+                              command: agentCommand(
+                                agent,
+                                row.configDir || DEFAULT_CLAUDE_CONFIG_DIR,
+                                row.unsafeMode,
+                              ),
+                              autoResume: row.autoResume ?? true,
+                            });
+                          } else if (agent === "codex") {
+                            updateRow(row.__key, {
+                              agent,
+                              icon: row.icon || "◆",
+                              color: row.color || CODEX_BRAND_COLOR,
+                              configDir:
+                                row.configDir || DEFAULT_CODEX_CONFIG_DIR,
+                              command: agentCommand(
+                                agent,
+                                row.configDir || DEFAULT_CODEX_CONFIG_DIR,
+                                row.unsafeMode,
+                              ),
+                              autoResume: row.autoResume ?? true,
+                            });
+                          } else {
+                            updateAgentFields(row.__key, { agent: "custom" });
+                          }
+                        }}
+                      >
+                        <option value="claude">Claude</option>
+                        <option value="codex">Codex</option>
+                        <option value="custom">Custom</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Name</span>
+                      <input
+                        className="aya-modal-input"
+                        value={row.name}
+                        onChange={(e) =>
+                          updateRow(row.__key, { name: e.target.value })
+                        }
+                        placeholder="Display name"
+                      />
+                    </label>
+                  </div>
+                  {isAgent && (
+                    <label className="aya-preset-field">
+                      <span>Config directory</span>
+                      <input
+                        className="aya-modal-input"
+                        value={row.configDir ?? ""}
+                        onChange={(e) =>
+                          updateAgentFields(row.__key, {
+                            configDir: e.target.value,
+                          })
+                        }
+                        placeholder={
+                          row.agent === "claude"
+                            ? DEFAULT_CLAUDE_CONFIG_DIR
+                            : DEFAULT_CODEX_CONFIG_DIR
+                        }
+                        spellCheck={false}
+                      />
+                      <small>
+                        Different config directories can use different
+                        Claude/Codex subscriptions.
+                      </small>
+                    </label>
+                  )}
+                </div>
+
+                <div className="aya-preset-section">
+                  <div className="aya-settings-section-title">Appearance</div>
+                  <div className="aya-preset-grid aya-preset-grid--appearance">
+                    <label>
+                      <span>Icon</span>
+                      <input
+                        className="aya-modal-input aya-settings-icon-input"
+                        value={row.icon}
+                        maxLength={3}
+                        onChange={(e) =>
+                          updateRow(row.__key, { icon: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>Icon color</span>
+                      <input
+                        className="aya-modal-input"
+                        value={row.color}
+                        onChange={(e) =>
+                          updateRow(row.__key, { color: e.target.value })
+                        }
+                        placeholder={CLAUDE_BRAND_COLOR}
+                        spellCheck={false}
+                      />
+                    </label>
+                    <label>
+                      <span>Theme</span>
+                      <select
+                        className="aya-modal-input"
+                        value={row.themeId ?? ""}
+                        onChange={(e) =>
+                          updateRow(row.__key, {
+                            themeId: e.target.value || undefined,
+                          })
+                        }
+                      >
+                        <option value="">Default</option>
+                        {themes.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="aya-preset-section">
+                  <div className="aya-settings-section-title">Behavior</div>
+                  <label className="aya-preset-toggle">
+                    <span>
+                      <strong>Auto-resume restored tabs</strong>
+                      <small>
+                        Adds --resume only after Aya's background PTY restarts.
+                        New tabs start fresh.
+                      </small>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={!!row.autoResume}
+                      onChange={(e) =>
+                        updateRow(row.__key, { autoResume: e.target.checked })
+                      }
+                    />
+                  </label>
+                  {isAgent && (
+                    <label className="aya-preset-toggle">
+                      <span>
+                        <strong>Unsafe approvals</strong>
+                        <small>Adds the agent's unsafe approval flag.</small>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={!!row.unsafeMode}
+                        onChange={(e) =>
+                          updateAgentFields(row.__key, {
+                            unsafeMode: e.target.checked,
+                          })
+                        }
+                      />
+                    </label>
+                  )}
+                </div>
+
+                <div className="aya-preset-section">
+                  <div className="aya-settings-section-title">Command</div>
                   <input
                     className="aya-modal-input"
                     value={row.command}
@@ -962,70 +1270,9 @@ export function SettingsModal({
                     </span>
                   )}
                 </div>
-                <select
-                  className="aya-modal-input"
-                  style={{ width: PRESET_ROW_THEME_WIDTH }}
-                  value={row.themeId ?? ""}
-                  onChange={(e) =>
-                    updateRow(row.__key, {
-                      themeId: e.target.value || undefined,
-                    })
-                  }
-                  title="Per-preset theme override (empty = use default)"
-                >
-                  <option value="">Default</option>
-                  {themes.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  className="aya-modal-input"
-                  style={{ width: PRESET_ROW_COLOR_WIDTH }}
-                  value={row.color}
-                  onChange={(e) =>
-                    updateRow(row.__key, { color: e.target.value })
-                  }
-                  placeholder={CLAUDE_BRAND_COLOR}
-                  spellCheck={false}
-                />
-                <button
-                  className="aya-settings-row-close"
-                  onClick={() => removeRow(row.__key)}
-                  title="Remove preset"
-                >
-                  ×
-                </button>
               </div>
             );
           })}
-          <div className="aya-settings-add-row">
-            <button className="aya-settings-add" onClick={addRow}>
-              <SettingsIcon name="add" />
-              Add preset
-            </button>
-            {!existingCmds.has(CLAUDE_YOLO_CMD) && (
-              <button
-                className="aya-settings-add aya-settings-add--yolo"
-                onClick={addClaudeYolo}
-                title={CLAUDE_YOLO_CMD}
-              >
-                <SettingsIcon name="add" />
-                Claude YOLO
-              </button>
-            )}
-            {!existingCmds.has(CODEX_YOLO_CMD) && (
-              <button
-                className="aya-settings-add aya-settings-add--yolo"
-                onClick={addCodexYolo}
-                title={CODEX_YOLO_CMD}
-              >
-                <SettingsIcon name="add" />
-                Codex YOLO
-              </button>
-            )}
-          </div>
 
           {suggested.length > 0 && (
             <div className="aya-settings-suggested">
