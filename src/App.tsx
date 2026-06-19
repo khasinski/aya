@@ -210,15 +210,20 @@ function remoteTerminalCommand(project: ProjectConfig, preset: Preset): string {
 
 function commandWithAutoResume(preset: Preset, restored: boolean | undefined): string {
   const command = preset.command.trim();
+  const resumeArg = preset.agent === "codex" || preset.id === "codex" ? "resume" : "--resume";
+  const alreadyHasResume =
+    resumeArg === "resume"
+      ? /(?:^|\s)resume(?:\s|$)/.test(command)
+      : /(?:^|\s)--resume(?:\s|$)/.test(command);
   if (
     !restored ||
     !preset.autoResume ||
     !command ||
-    /\s--resume(?:\s|$)/.test(command)
+    alreadyHasResume
   ) {
     return preset.command;
   }
-  return `${command} --resume`;
+  return `${command} ${resumeArg}`;
 }
 
 function terminalCommand(

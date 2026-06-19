@@ -83,3 +83,19 @@ test("shellArgv passes the command verbatim so $VARS expand", () => {
     `expected unquoted $SHELL in argv: ${argv[4]}`,
   );
 });
+
+test("shellArgv puts exec after leading env assignments", () => {
+  const argv = shellArgv("CLAUDE_CONFIG_DIR=/tmp/claude-secondary claude", "/tmp");
+  assert.ok(
+    argv[4].endsWith("CLAUDE_CONFIG_DIR=/tmp/claude-secondary exec claude"),
+    `expected exec after env assignment: ${argv[4]}`,
+  );
+});
+
+test("shellArgv keeps quoted env assignment values intact", () => {
+  const argv = shellArgv('CODEX_HOME="$HOME/.codex work" codex', "/tmp");
+  assert.ok(
+    argv[4].endsWith('CODEX_HOME="$HOME/.codex work" exec codex'),
+    `expected quoted assignment before exec: ${argv[4]}`,
+  );
+});

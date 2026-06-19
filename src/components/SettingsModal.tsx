@@ -133,19 +133,34 @@ function quoteEnv(value: string): string {
   return `"${trimmed.replace(/(["\\$`])/g, "\\$1")}"`;
 }
 
+function isDefaultAgentConfigDir(
+  agent: Preset["agent"],
+  configDir: string | undefined,
+): boolean {
+  const trimmed = configDir?.trim();
+  if (!trimmed) return true;
+  if (agent === "claude") {
+    return trimmed === DEFAULT_CLAUDE_CONFIG_DIR || trimmed === "$HOME/.claude";
+  }
+  if (agent === "codex") {
+    return trimmed === DEFAULT_CODEX_CONFIG_DIR || trimmed === "$HOME/.codex";
+  }
+  return false;
+}
+
 function agentCommand(
   agent: Preset["agent"],
   configDir: string | undefined,
   unsafeMode: boolean | undefined,
 ): string {
   if (agent === "claude") {
-    const base = configDir?.trim()
+    const base = configDir?.trim() && !isDefaultAgentConfigDir(agent, configDir)
       ? `CLAUDE_CONFIG_DIR=${quoteEnv(configDir)} claude`
       : "claude";
     return unsafeMode ? `${base} --dangerously-skip-permissions` : base;
   }
   if (agent === "codex") {
-    const base = configDir?.trim()
+    const base = configDir?.trim() && !isDefaultAgentConfigDir(agent, configDir)
       ? `CODEX_HOME=${quoteEnv(configDir)} codex`
       : "codex";
     return unsafeMode ? `${base} --dangerously-bypass-approvals-and-sandbox` : base;
@@ -255,6 +270,7 @@ export function SettingsModal({
 }: Props) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [draft, setDraft] = useState<DraftPreset[]>(() => presets.map(toDraft));
+  const [activePresetKey, setActivePresetKey] = useState<string | null>(null);
   const [snippetDraft, setSnippetDraft] = useState<DraftSnippet[]>(() =>
     snippets.map(snippetToDraft),
   );
@@ -407,6 +423,15 @@ export function SettingsModal({
     if (!presetsDirty) setDraft(presets.map(toDraft));
   }, [presets, presetsDirty]);
   useEffect(() => {
+    if (draft.length === 0) {
+      if (activePresetKey !== null) setActivePresetKey(null);
+      return;
+    }
+    if (!activePresetKey || !draft.some((p) => p.__key === activePresetKey)) {
+      setActivePresetKey(draft[0].__key);
+    }
+  }, [activePresetKey, draft]);
+  useEffect(() => {
     if (!snippetsDirty) setSnippetDraft(snippets.map(snippetToDraft));
   }, [snippets, snippetsDirty]);
   useEffect(() => {
@@ -462,10 +487,11 @@ export function SettingsModal({
   };
 
   const addRow = () => {
+    const key = uuid();
     editPresets((prev) => [
       ...prev,
       {
-        __key: uuid(),
+        __key: key,
         id: "",
         name: "",
         icon: "•",
@@ -476,11 +502,14 @@ export function SettingsModal({
         themeId: undefined,
       },
     ]);
+    setActivePresetKey(key);
   };
 
   /** Append a pre-filled preset. */
   const addPrefilled = (preset: Omit<DraftPreset, "__key">) => {
-    editPresets((prev) => [...prev, { __key: uuid(), ...preset }]);
+    const key = uuid();
+    editPresets((prev) => [...prev, { __key: key, ...preset }]);
+    setActivePresetKey(key);
   };
 
   const addClaudeAccount = () =>
@@ -678,6 +707,7 @@ export function SettingsModal({
     { id: "presets", label: "Presets", icon: "terminal", dirty: presetsDirty },
     { id: "snippets", label: "Snippets", icon: "bolt", dirty: snippetsDirty },
   ];
+  const activePreset = draft.find((p) => p.__key === activePresetKey) ?? draft[0];
 
   return (
     <div
@@ -1033,14 +1063,12 @@ export function SettingsModal({
             {activeTab === "presets" && (
               <section className="aya-settings-pane">
                 <SettingsHeader icon="terminal" title="Presets">
-                  Sidebar launchers for shells and agent CLIs.
+                  Sidebar launchers for shells and agent CLIs. Use multiple
+                  Claude or Codex accounts by giving each one its own config
+                  directory.
                 </SettingsHeader>
 
                 <div className="aya-settings-list aya-settings-presets">
-          <div className="aya-settings-agent-help">
-            Use multiple Claude or Codex accounts by giving each one its own
-            config directory.
-          </div>
           <div className="aya-settings-add-row">
             <button className="aya-settings-add" onClick={addClaudeAccount}>
               <SettingsIcon name="add" />
@@ -1056,34 +1084,71 @@ export function SettingsModal({
             </button>
           </div>
 
-          {draft.map((row) => {
-            const warn = looksNonInteractive(row.command);
-            const isAgent = row.agent === "claude" || row.agent === "codex";
-            return (
-              <div className="aya-preset-card" key={row.__key}>
-                <div className="aya-preset-card-head">
-                  <div
-                    className="aya-preset-card-icon"
-                    style={row.color ? { color: row.color } : undefined}
-                  >
-                    {row.icon || "•"}
-                  </div>
-                  <div className="aya-preset-card-title">
-                    <strong>{row.name || "Untitled preset"}</strong>
-                    <code>{row.command || "No command"}</code>
-                  </div>
+          {draft.length > 0 && (
+            <div className="aya-preset-selector">
+              <div
+                className="aya-preset-tabs"
+                role="tablist"
+                aria-label="Presets"
+              >
+                {draft.map((row) => (
                   <button
-                    className="aya-settings-row-close"
-                    onClick={() => removeRow(row.__key)}
-                    title="Remove preset"
+                    key={row.__key}
+                    type="button"
+                    role="tab"
+                    aria-selected={row.__key === activePreset?.__key}
+                    className={`aya-preset-tab ${
+                      row.__key === activePreset?.__key
+                        ? "aya-preset-tab--active"
+                        : ""
+                    }`}
+                    onClick={() => setActivePresetKey(row.__key)}
+                    title={row.name || row.command || "Untitled preset"}
                   >
-                    ×
+                    <span
+                      className="aya-preset-tab-icon"
+                      style={row.color ? { color: row.color } : undefined}
+                    >
+                      {row.icon || "•"}
+                    </span>
+                    <span className="aya-preset-tab-name">
+                      {row.name || "Untitled"}
+                    </span>
                   </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activePreset &&
+            (() => {
+              const row = activePreset;
+              const warn = looksNonInteractive(row.command);
+              const isAgent = row.agent === "claude" || row.agent === "codex";
+              return (
+              <div className="aya-preset-card" key={row.__key}>
+                <div className="aya-preset-section">
+                  <div className="aya-settings-section-title">Command</div>
+                  <input
+                    className="aya-modal-input"
+                    value={row.command}
+                    onChange={(e) =>
+                      updateRow(row.__key, { command: e.target.value })
+                    }
+                    placeholder="e.g. claude   or   aider --dark   or   $SHELL"
+                    spellCheck={false}
+                  />
+                  {warn && (
+                    <span className="aya-settings-warn">
+                      ⚠ Looks like a non-interactive flag. Claude requires
+                      interactive mode for subscription billing — double-check.
+                    </span>
+                  )}
                 </div>
 
                 <div className="aya-preset-section">
                   <div className="aya-settings-section-title">Account</div>
-                  <div className="aya-preset-grid aya-preset-grid--two">
+                  <div className="aya-preset-grid aya-preset-grid--account">
                     <label>
                       <span>Type</span>
                       <select
@@ -1140,31 +1205,27 @@ export function SettingsModal({
                         placeholder="Display name"
                       />
                     </label>
+                    {isAgent && (
+                      <label>
+                        <span>Config directory</span>
+                        <input
+                          className="aya-modal-input"
+                          value={row.configDir ?? ""}
+                          onChange={(e) =>
+                            updateAgentFields(row.__key, {
+                              configDir: e.target.value,
+                            })
+                          }
+                          placeholder={
+                            row.agent === "claude"
+                              ? DEFAULT_CLAUDE_CONFIG_DIR
+                              : DEFAULT_CODEX_CONFIG_DIR
+                          }
+                          spellCheck={false}
+                        />
+                      </label>
+                    )}
                   </div>
-                  {isAgent && (
-                    <label className="aya-preset-field">
-                      <span>Config directory</span>
-                      <input
-                        className="aya-modal-input"
-                        value={row.configDir ?? ""}
-                        onChange={(e) =>
-                          updateAgentFields(row.__key, {
-                            configDir: e.target.value,
-                          })
-                        }
-                        placeholder={
-                          row.agent === "claude"
-                            ? DEFAULT_CLAUDE_CONFIG_DIR
-                            : DEFAULT_CODEX_CONFIG_DIR
-                        }
-                        spellCheck={false}
-                      />
-                      <small>
-                        Different config directories can use different
-                        Claude/Codex subscriptions.
-                      </small>
-                    </label>
-                  )}
                 </div>
 
                 <div className="aya-preset-section">
@@ -1217,62 +1278,54 @@ export function SettingsModal({
 
                 <div className="aya-preset-section">
                   <div className="aya-settings-section-title">Behavior</div>
-                  <label className="aya-preset-toggle">
-                    <span>
-                      <strong>Auto-resume restored tabs</strong>
-                      <small>
-                        Adds --resume only after Aya's background PTY restarts.
-                        New tabs start fresh.
-                      </small>
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={!!row.autoResume}
-                      onChange={(e) =>
-                        updateRow(row.__key, { autoResume: e.target.checked })
-                      }
-                    />
-                  </label>
-                  {isAgent && (
+                  <div className="aya-preset-toggle-row">
                     <label className="aya-preset-toggle">
                       <span>
-                        <strong>Unsafe approvals</strong>
-                        <small>Adds the agent's unsafe approval flag.</small>
+                        <strong>Auto-resume restored tabs</strong>
+                        <small>
+                          Adds the agent's resume argument after Aya restarts a PTY.
+                        </small>
                       </span>
                       <input
                         type="checkbox"
-                        checked={!!row.unsafeMode}
+                        checked={!!row.autoResume}
                         onChange={(e) =>
-                          updateAgentFields(row.__key, {
-                            unsafeMode: e.target.checked,
-                          })
+                          updateRow(row.__key, { autoResume: e.target.checked })
                         }
                       />
                     </label>
-                  )}
+                    {isAgent && (
+                      <label className="aya-preset-toggle">
+                        <span>
+                          <strong>Unsafe approvals</strong>
+                          <small>Adds the agent's unsafe approval flag.</small>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={!!row.unsafeMode}
+                          onChange={(e) =>
+                            updateAgentFields(row.__key, {
+                              unsafeMode: e.target.checked,
+                            })
+                          }
+                        />
+                      </label>
+                    )}
+                  </div>
                 </div>
 
-                <div className="aya-preset-section">
-                  <div className="aya-settings-section-title">Command</div>
-                  <input
-                    className="aya-modal-input"
-                    value={row.command}
-                    onChange={(e) =>
-                      updateRow(row.__key, { command: e.target.value })
-                    }
-                    placeholder="e.g. claude   or   aider --dark   or   $SHELL"
-                    spellCheck={false}
-                  />
-                  {warn && (
-                    <span className="aya-settings-warn">
-                      ⚠ Looks like a non-interactive flag. Claude requires
-                      interactive mode for subscription billing — double-check.
-                    </span>
-                  )}
+                <div className="aya-preset-remove-row">
+                  <button
+                    type="button"
+                    className="aya-settings-add aya-preset-remove-btn"
+                    onClick={() => removeRow(row.__key)}
+                  >
+                    Remove this preset
+                  </button>
                 </div>
               </div>
-            );
-          })}
+              );
+            })()}
 
           {suggested.length > 0 && (
             <div className="aya-settings-suggested">

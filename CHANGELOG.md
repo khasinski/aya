@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.7.1 - 2026-06-19
+
+Aya 0.7.1 polishes the new multi-account preset workflow introduced in 0.7.0.
+
+### Fixes
+
+- **Agent account preset launch commands.** Claude/Codex config-directory
+  prefixes now launch correctly through zsh, default account commands stay as
+  plain `claude` / `codex`, and Codex restored tabs use `resume` instead of
+  `--resume`.
+- **Preset settings layout.** Multiple presets now use compact secondary tabs
+  with a single selected editor, reducing the long stacked-form layout.
+
 ## v0.7.0 - 2026-06-19
 
 Aya 0.7.0 focuses on making local agent launches match the user's real terminal

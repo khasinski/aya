@@ -89,10 +89,10 @@ run commands.
 
 ## Install
 
-Download Aya 0.7.0 from the GitHub release:
+Download Aya 0.7.1 from the GitHub release:
 
-- macOS Apple Silicon: [DMG](https://github.com/khasinski/aya/releases/download/v0.7.0/Aya-0.7.0-arm64.dmg) or [zip](https://github.com/khasinski/aya/releases/download/v0.7.0/Aya-0.7.0-arm64-mac.zip)
-- Linux x64: [AppImage](https://github.com/khasinski/aya/releases/download/v0.7.0/Aya-0.7.0.AppImage) or [deb](https://github.com/khasinski/aya/releases/download/v0.7.0/aya_0.7.0_amd64.deb)
+- macOS Apple Silicon: [DMG](https://github.com/khasinski/aya/releases/download/v0.7.1/Aya-0.7.1-arm64.dmg) or [zip](https://github.com/khasinski/aya/releases/download/v0.7.1/Aya-0.7.1-arm64-mac.zip)
+- Linux x64: [AppImage](https://github.com/khasinski/aya/releases/download/v0.7.1/Aya-0.7.1.AppImage) or [deb](https://github.com/khasinski/aya/releases/download/v0.7.1/aya_0.7.1_amd64.deb)
 
 ### macOS
 
@@ -104,15 +104,15 @@ signed and Apple-notarized.
 On Ubuntu and Debian-like systems, prefer the DEB:
 
 ```sh
-sudo apt install ./aya_0.7.0_amd64.deb
+sudo apt install ./aya_0.7.1_amd64.deb
 /opt/Aya/aya
 ```
 
 The AppImage can be run directly:
 
 ```sh
-chmod +x Aya-0.7.0.AppImage
-./Aya-0.7.0.AppImage
+chmod +x Aya-0.7.1.AppImage
+./Aya-0.7.1.AppImage
 ```
 
 If AppImage complains about FUSE, use the DEB.

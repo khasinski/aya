@@ -1484,10 +1484,64 @@
   font-size: 12px;
   line-height: 1.45;
 }
+.aya-preset-selector {
+  min-width: 0;
+}
+.aya-preset-tabs {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.aya-preset-tab {
+  min-width: 86px;
+  max-width: 160px;
+  flex: 0 1 auto;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  padding: 4px 7px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  text-align: left;
+}
+.aya-preset-tab:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+}
+.aya-preset-tab--active {
+  border-color: var(--border-strong);
+  background: var(--bg-secondary);
+  color: var(--fg-primary);
+}
+.aya-preset-tab-icon {
+  min-width: 0;
+  color: var(--fg-secondary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  text-align: center;
+}
+.aya-preset-tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 650;
+}
 .aya-preset-card {
   display: grid;
-  gap: 12px;
-  padding: 12px;
+  gap: 10px;
+  padding: 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-secondary);
@@ -1540,6 +1594,10 @@
   padding-top: 10px;
   border-top: 1px solid var(--border);
 }
+.aya-preset-section:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
 .aya-preset-grid {
   min-width: 0;
   display: grid;
@@ -1547,6 +1605,9 @@
 }
 .aya-preset-grid--two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.aya-preset-grid--account {
+  grid-template-columns: minmax(110px, 0.45fr) minmax(130px, 0.7fr) minmax(190px, 1fr);
 }
 .aya-preset-grid--appearance {
   grid-template-columns: minmax(58px, 0.25fr) minmax(100px, 0.35fr) minmax(150px, 1fr);
@@ -1575,6 +1636,25 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
+}
+.aya-preset-toggle-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.aya-preset-remove-row {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+.aya-preset-remove-btn {
+  border-style: solid;
+  color: var(--status-error);
+}
+.aya-preset-remove-btn:hover {
+  border-color: color-mix(in oklab, var(--status-error) 55%, var(--border));
+  color: var(--status-error);
 }
 .aya-preset-toggle strong {
   display: block;
@@ -1834,6 +1914,13 @@ select.aya-modal-input {
   }
   .aya-settings-segment {
     flex: 1;
+  }
+  .aya-preset-grid--account,
+  .aya-preset-grid--appearance {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .aya-preset-toggle-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

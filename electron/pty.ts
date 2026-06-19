@@ -189,6 +189,53 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
+function endOfShellToken(s: string, start: number): number {
+  let quote: "'" | '"' | null = null;
+  for (let i = start; i < s.length; i += 1) {
+    const ch = s[i];
+    if (quote) {
+      if (ch === "\\" && quote === '"' && i + 1 < s.length) {
+        i += 1;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    if (ch === "\\" && i + 1 < s.length) {
+      i += 1;
+      continue;
+    }
+    if (/\s/.test(ch)) return i;
+  }
+  return s.length;
+}
+
+function commandWithExec(command: string): string {
+  const start = command.search(/\S/);
+  if (start < 0) return "exec";
+  let pos = start;
+  let assignmentEnd = start;
+  let sawAssignment = false;
+
+  while (pos < command.length) {
+    const tokenEnd = endOfShellToken(command, pos);
+    const token = command.slice(pos, tokenEnd);
+    if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) break;
+    sawAssignment = true;
+    assignmentEnd = tokenEnd;
+    pos = tokenEnd;
+    while (pos < command.length && /\s/.test(command[pos])) pos += 1;
+  }
+
+  if (!sawAssignment) return `exec ${command}`;
+  if (pos >= command.length) return command;
+  return `${command.slice(0, assignmentEnd)} exec ${command.slice(pos)}`;
+}
+
 /** Build the shell argv for a given command + cwd. Uses the user's login +
  *  interactive shell so PATH/env/functions from their rc files (zsh, fish,
  *  bash, etc.) flow through. Many user launchers are shell functions or PATH
@@ -198,7 +245,7 @@ export function shellArgv(command: string, cwd: string): string[] {
   // The user's command is embedded verbatim so $VARS / quoting / pipes work.
   // It must NOT be shell-quoted, or the shell would treat the whole thing
   // as one literal token.
-  return [userShell(), "-l", "-i", "-c", `cd ${cwdQuoted} && exec ${command}`];
+  return [userShell(), "-l", "-i", "-c", `cd ${cwdQuoted} && ${commandWithExec(command)}`];
 }
 
 /** @deprecated Kept as an alias so existing tests / callers compile while
