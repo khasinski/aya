@@ -9,6 +9,9 @@
 // limits) — never per-project or per-terminal. The UI labels them as such.
 
 import * as fs from "node:fs/promises";
+import * as crypto from "node:crypto";
+import * as os from "node:os";
+import * as path from "node:path";
 import { USAGE_FILE } from "./paths";
 
 export interface UsageWindow {
@@ -73,6 +76,25 @@ export function usageAccountFromData(
   return { id, label, usage };
 }
 
+export interface ClaudeUsageSource {
+  id: string;
+  label: string;
+  configDir: string;
+}
+
+export function expandUserPath(value: string): string {
+  if (value === "~") return os.homedir();
+  if (value.startsWith("~/")) return path.join(os.homedir(), value.slice(2));
+  if (value.startsWith("$HOME/")) return path.join(os.homedir(), value.slice(6));
+  return path.resolve(value);
+}
+
+export function claudeUsageFileForConfigDir(configDir: string): string {
+  const expanded = expandUserPath(configDir);
+  const hash = crypto.createHash("sha256").update(expanded).digest("hex");
+  return path.join(path.dirname(USAGE_FILE), `usage-claude-${hash}.json`);
+}
+
 /** Parse + validate the raw file contents. Returns null on ANY problem
  *  (malformed JSON, wrong shape) so a stale or hand-broken file can never
  *  crash Aya or mis-render the chip — it just hides. */
@@ -129,4 +151,32 @@ export async function readUsageAccounts(): Promise<UsageAccount[]> {
   } catch {
     return [];
   }
+}
+
+export async function readClaudeUsageAccounts(
+  sources: ClaudeUsageSource[],
+): Promise<UsageAccount[]> {
+  if (sources.length === 0) return readUsageAccounts();
+
+  const out: UsageAccount[] = [];
+  const seen = new Set<string>();
+  for (const source of sources) {
+    const configDir = expandUserPath(source.configDir);
+    const files = [claudeUsageFileForConfigDir(configDir)];
+    if (configDir === path.join(os.homedir(), ".claude")) files.push(USAGE_FILE);
+
+    let usage: UsageData | null = null;
+    for (const file of files) {
+      try {
+        usage = parseUsage(await fs.readFile(file, "utf-8"));
+      } catch {
+        usage = null;
+      }
+      if (usage) break;
+    }
+    if (!usage || seen.has(source.id)) continue;
+    seen.add(source.id);
+    out.push(usageAccountFromData(usage, source.id, source.label));
+  }
+  return out;
 }

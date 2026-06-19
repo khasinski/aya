@@ -12,7 +12,7 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { UsageAccount, UsageData } from "./usage";
-import { usageAccountFromData } from "./usage";
+import { expandUserPath, usageAccountFromData } from "./usage";
 
 /** The default Codex home — the env override, else ~/.codex. Additional homes
  *  (second accounts) are derived from preset commands and passed in explicitly. */
@@ -23,6 +23,12 @@ export const DEFAULT_CODEX_HOME =
 
 // Bound the per-poll work: only the few most-recent rollouts are read/parsed.
 const MAX_ROLLOUTS_SCANNED = 20;
+
+export interface CodexUsageSource {
+  id: string;
+  label: string;
+  home: string;
+}
 
 function isoFromUnixSeconds(sec: unknown): string | undefined {
   if (typeof sec !== "number" || !Number.isFinite(sec)) return undefined;
@@ -171,8 +177,10 @@ export function latestUsageAccountsFromLines(
 /** The most-recently-modified rollout files under ~/.codex/sessions, newest
  *  first, capped — so an old session that just hasn't emitted a snapshot yet
  *  doesn't sink the chip, without reading the whole history every poll. */
-async function recentRolloutFiles(): Promise<{ file: string; mtimeMs: number }[]> {
-  const root = path.join(DEFAULT_CODEX_HOME, "sessions");
+async function recentRolloutFiles(
+  home = DEFAULT_CODEX_HOME,
+): Promise<{ file: string; mtimeMs: number }[]> {
+  const root = path.join(expandUserPath(home), "sessions");
   const found: { file: string; mtimeMs: number }[] = [];
   async function walk(dir: string): Promise<void> {
     let entries: import("node:fs").Dirent[];
@@ -221,16 +229,30 @@ export async function readCodexUsage(): Promise<UsageData | null> {
  *  When Codex logs do not expose an account id, this returns at most one
  *  "Account" entry, preserving the previous single-chip behavior. */
 export async function readCodexUsageAccounts(): Promise<UsageAccount[]> {
+  return readCodexUsageAccountsFromSources([
+    { id: "codex", label: "Codex", home: DEFAULT_CODEX_HOME },
+  ]);
+}
+
+export async function readCodexUsageAccountsFromSources(
+  sources: CodexUsageSource[],
+): Promise<UsageAccount[]> {
   const byId = new Map<string, UsageAccount>();
-  for (const f of await recentRolloutFiles()) {
-    let raw: string;
-    try {
-      raw = await fs.readFile(f.file, "utf-8");
-    } catch {
-      continue;
-    }
-    for (const account of latestUsageAccountsFromLines(raw.split("\n"), f.mtimeMs)) {
-      if (!byId.has(account.id)) byId.set(account.id, account);
+  for (const source of sources) {
+    for (const f of await recentRolloutFiles(source.home)) {
+      let raw: string;
+      try {
+        raw = await fs.readFile(f.file, "utf-8");
+      } catch {
+        continue;
+      }
+      for (const account of latestUsageAccountsFromLines(raw.split("\n"), f.mtimeMs)) {
+        const normalized =
+          account.id === "default"
+            ? { ...account, id: source.id, label: source.label }
+            : account;
+        if (!byId.has(normalized.id)) byId.set(normalized.id, normalized);
+      }
     }
   }
   return [...byId.values()].sort((a, b) => a.label.localeCompare(b.label));

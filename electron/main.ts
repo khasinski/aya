@@ -56,8 +56,8 @@ import { scanHarnesses } from "./harnesses";
 import { isInternalNavigationUrl, parseHttpUrl } from "./navigation";
 import { listPresets, savePresets } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
-import { readUsageAccounts } from "./usage";
-import { readCodexUsageAccounts } from "./usage-codex";
+import { expandUserPath, readClaudeUsageAccounts } from "./usage";
+import { readCodexUsageAccountsFromSources } from "./usage-codex";
 import {
   usageHookStatus,
   installUsageHook,
@@ -1067,10 +1067,36 @@ function registerIpc(win: BrowserWindow): void {
     saveSnippets(validateSnippetArray(snippets)),
   );
   // Read-only: the account-wide usage snapshot a user hook writes (no fetch).
-  ipcMain.handle("usage:get", async () => readUsageAccounts());
+  ipcMain.handle("usage:get", async () => {
+    const presets = await listPresets();
+    return readClaudeUsageAccounts(
+      presets
+        .filter((p) => p.agent === "claude")
+        .map((p) => ({
+          id: p.id,
+          label: p.name,
+          configDir: p.configDir || "~/.claude",
+        })),
+    );
+  });
   // Read-only: Codex usage, parsed from its own local rollout logs (Codex
   // writes its rate-limit % there, so no token/endpoint/hook is needed).
-  ipcMain.handle("usage:get-codex", async () => readCodexUsageAccounts());
+  ipcMain.handle("usage:get-codex", async () => {
+    const presets = await listPresets();
+    const codexPresets = presets.filter((p) => p.agent === "codex");
+    return readCodexUsageAccountsFromSources(
+      (codexPresets.length > 0 ? codexPresets : [{ id: "codex", name: "Codex" }]).map(
+        (p) => ({
+          id: p.id,
+          label: p.name,
+          home:
+            "configDir" in p && typeof p.configDir === "string" && p.configDir
+              ? expandUserPath(p.configDir)
+              : expandUserPath("~/.codex"),
+        }),
+      ),
+    );
+  });
   // Optional, user-enabled usage hook installer (writes ~/.claude/settings.json
   // + a fetch script). The Aya process never reads a token or calls the
   // endpoint — that happens later in the script, run by Claude Code.

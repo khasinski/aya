@@ -20,9 +20,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const root = mkdtempSync(join(tmpdir(), "aya-codex-test-"));
+const secondRoot = mkdtempSync(join(tmpdir(), "aya-codex-test-2-"));
 process.env.CODEX_HOME = root;
 const sessions = join(root, "sessions", "2026", "06", "03");
 mkdirSync(sessions, { recursive: true });
+const secondSessions = join(secondRoot, "sessions", "2026", "06", "03");
+mkdirSync(secondSessions, { recursive: true });
 
 const snapshotLine = (p, s, accountId = undefined, accountLabel = undefined) =>
   JSON.stringify({
@@ -42,7 +45,8 @@ const noSnapshotLine = JSON.stringify({ payload: { type: "agent_message" } }) + 
 const older = join(sessions, "rollout-old.jsonl");
 const newer = join(sessions, "rollout-new.jsonl");
 
-const { readCodexUsage, readCodexUsageAccounts } = await import("../dist-electron/usage-codex.js");
+const { readCodexUsage, readCodexUsageAccounts, readCodexUsageAccountsFromSources } =
+  await import("../dist-electron/usage-codex.js");
 
 test("falls back to an older rollout when the newest has no snapshot", async () => {
   writeFileSync(older, snapshotLine(3, 12)); // older HAS a snapshot
@@ -77,4 +81,22 @@ test("returns one newest snapshot per account across recent rollouts", async () 
   assert.equal(out[1].usage.sevenDay.pct, 12);
 });
 
-test.after(() => rmSync(root, { recursive: true, force: true }));
+test("uses source ids when separate CODEX_HOME logs do not expose account ids", async () => {
+  writeFileSync(older, snapshotLine(3, 12));
+  writeFileSync(newer, noSnapshotLine);
+  writeFileSync(join(secondSessions, "rollout-second.jsonl"), snapshotLine(8, 20));
+
+  const out = await readCodexUsageAccountsFromSources([
+    { id: "codex", label: "Codex", home: root },
+    { id: "codex-2", label: "Codex 2", home: secondRoot },
+  ]);
+
+  assert.equal(out.length, 2);
+  assert.equal(out[0].id, "codex");
+  assert.equal(out[1].id, "codex-2");
+});
+
+test.after(() => {
+  rmSync(root, { recursive: true, force: true });
+  rmSync(secondRoot, { recursive: true, force: true });
+});
