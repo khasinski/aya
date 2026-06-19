@@ -18,12 +18,21 @@ import { isEcho, recordWrite } from "./config-echo";
 import {
   isProjectConfigFilename,
   sliceForFilename,
+  WATCHED_CONFIG_FILES,
 } from "./config-watcher-pure";
 import { AYA_HOME, PROJECTS_DIR } from "./paths";
 import type { ConfigSlice } from "./types";
 
 // A single save can fire a burst of file events, wait a moment so it becomes one reload.
 const WATCH_DEBOUNCE_MS = 200;
+// fs.watch directory events are not equally reliable across macOS/libuv
+// versions, especially in temp-like locations. Keep a scoped polling fallback
+// so manual config edits still reload even if the native directory watcher is
+// quiet.
+const WATCH_POLL_MS = 500;
+
+const MISSING = Symbol("missing");
+type ObservedContent = string | typeof MISSING;
 
 /** Start watching AYA_HOME (and AYA_HOME/projects) and send "config:changed"
  *  to the renderer when a file is edited from outside the app. Returns a
@@ -34,6 +43,8 @@ export function startConfigWatcher(win: BrowserWindow): () => void {
   // projects don't swallow each other's reload).
   const timers = new Map<string, NodeJS.Timeout>();
   const watchers: FSWatcher[] = [];
+  const observed = new Map<string, ObservedContent>();
+  let pollTimer: NodeJS.Timeout | null = null;
 
   const send = (slice: ConfigSlice) => {
     if (!win.isDestroyed()) win.webContents.send("config:changed", { slice });
@@ -57,6 +68,7 @@ export function startConfigWatcher(win: BrowserWindow): () => void {
     if (isEcho(filePath, content)) return;
     // Keep track what values the renderer was last given to distinguish in-app and manual edits.
     recordWrite(filePath, content);
+    observed.set(filePath, content);
     send(slice);
   };
 
@@ -88,6 +100,81 @@ export function startConfigWatcher(win: BrowserWindow): () => void {
     );
   };
 
+  const readObserved = async (filePath: string): Promise<ObservedContent> => {
+    try {
+      return await fs.readFile(filePath, "utf-8");
+    } catch {
+      return MISSING;
+    }
+  };
+
+  const pollFile = async (
+    slice: ConfigSlice,
+    filePath: string,
+    emitWhenMissing: boolean,
+  ) => {
+    const content = await readObserved(filePath);
+    if (!observed.has(filePath)) {
+      observed.set(filePath, content);
+      return;
+    }
+    if (observed.get(filePath) === content) return;
+    observed.set(filePath, content);
+    if (content === MISSING) {
+      if (emitWhenMissing) send(slice);
+      return;
+    }
+    if (isEcho(filePath, content)) return;
+    recordWrite(filePath, content);
+    send(slice);
+  };
+
+  const pollOnce = async () => {
+    await Promise.all(
+      Object.entries(WATCHED_CONFIG_FILES).map(([filename, slice]) =>
+        pollFile(slice, path.join(AYA_HOME, filename), false),
+      ),
+    );
+    let projectFilenames: string[] = [];
+    try {
+      projectFilenames = (await fs.readdir(PROJECTS_DIR)).filter(
+        isProjectConfigFilename,
+      );
+    } catch {
+      // If the directory disappears, the next successful scan will rebuild
+      // project observations. startConfigWatcher creates it up front.
+    }
+    const projectPaths = new Set(
+      projectFilenames.map((filename) => path.join(PROJECTS_DIR, filename)),
+    );
+    await Promise.all(
+      projectFilenames.map((filename) =>
+        pollFile("projects", path.join(PROJECTS_DIR, filename), true),
+      ),
+    );
+    for (const [filePath, value] of observed) {
+      if (
+        filePath.startsWith(`${PROJECTS_DIR}${path.sep}`) &&
+        !projectPaths.has(filePath) &&
+        value !== MISSING
+      ) {
+        observed.set(filePath, MISSING);
+        send("projects");
+      }
+    }
+  };
+
+  const startPolling = () => {
+    const tick = () => {
+      pollTimer = setTimeout(tick, WATCH_POLL_MS);
+      pollTimer.unref();
+      void pollOnce();
+    };
+    void pollOnce();
+    pollTimer = setTimeout(tick, WATCH_POLL_MS);
+    pollTimer.unref();
+  };
+
   try {
     mkdirSync(PROJECTS_DIR, { recursive: true });
     watchers.push(
@@ -98,6 +185,7 @@ export function startConfigWatcher(win: BrowserWindow): () => void {
         handleProjects(typeof filename === "string" ? filename : null),
       ),
     );
+    startPolling();
   } catch {
     // Ignore outside edits causing exceptions.
   }
@@ -105,6 +193,7 @@ export function startConfigWatcher(win: BrowserWindow): () => void {
   return () => {
     for (const w of watchers) w.close();
     for (const timer of timers.values()) clearTimeout(timer);
+    if (pollTimer) clearTimeout(pollTimer);
     timers.clear();
   };
 }

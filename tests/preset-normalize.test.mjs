@@ -48,6 +48,49 @@ test("treats empty-string themeId as 'use default'", () => {
   assert.equal(Object.prototype.hasOwnProperty.call(p, "themeId"), false);
 });
 
+test("preserves agent account metadata", () => {
+  const p = normalizePreset({
+    id: "claude-work",
+    name: "Claude Work",
+    icon: "✻",
+    color: "#d97757",
+    command: 'CLAUDE_CONFIG_DIR="$HOME/.claude-work" claude',
+    agent: "claude",
+    configDir: "~/.claude-work",
+    unsafeMode: true,
+    autoResume: true,
+  });
+  assert.deepEqual(p, {
+    id: "claude-work",
+    name: "Claude Work",
+    icon: "✻",
+    color: "#d97757",
+    command: 'CLAUDE_CONFIG_DIR="$HOME/.claude-work" claude',
+    agent: "claude",
+    configDir: "~/.claude-work",
+    unsafeMode: true,
+    autoResume: true,
+  });
+});
+
+test("drops falsey agent metadata flags and empty configDir", () => {
+  const p = normalizePreset({
+    id: "codex",
+    name: "Codex",
+    icon: "◆",
+    color: "#10a37f",
+    command: "codex",
+    agent: "codex",
+    configDir: "",
+    unsafeMode: false,
+    autoResume: false,
+  });
+  assert.equal(p?.agent, "codex");
+  assert.equal(Object.prototype.hasOwnProperty.call(p, "configDir"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(p, "unsafeMode"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(p, "autoResume"), false);
+});
+
 test("rejects bad shapes", () => {
   assert.equal(normalizePreset(null), null);
   assert.equal(normalizePreset(undefined), null);
@@ -62,6 +105,28 @@ test("rejects bad shapes", () => {
       color: "",
       command: "x",
       themeId: 42, // wrong type
+    }),
+    null,
+  );
+  assert.equal(
+    normalizePreset({
+      id: "a",
+      name: "A",
+      icon: "x",
+      color: "",
+      command: "x",
+      agent: "other",
+    }),
+    null,
+  );
+  assert.equal(
+    normalizePreset({
+      id: "a",
+      name: "A",
+      icon: "x",
+      color: "",
+      command: "x",
+      autoResume: "yes",
     }),
     null,
   );

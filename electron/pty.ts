@@ -1,16 +1,9 @@
 // PTY host. One IPty per ptyId, all events forwarded to the renderer.
 //
 // We accept a literal `command` string from the renderer and wrap it in
-// `$SHELL -l -c 'cd CWD && exec COMMAND'`. Using the user's login shell —
-// not a hard-coded bash — lets PATH from their login profile (.zprofile /
-// .zlogin, brew shellenv, /etc/paths) flow through; a bare bash wouldn't.
-//
-// CAVEAT: `-l -c` is a login but NON-interactive shell, so it does NOT source
-// .zshrc / .bashrc — exactly where many users add ~/.local/bin, mise, asdf.
-// Those dirs are recovered separately at startup by electron/shell-path.ts,
-// which repairs process.env.PATH from a login+interactive shell before this
-// host is spawned (the host inherits that env). Without that step, GUI-
-// launched Aya would show "command not found: claude" for those installs.
+// `$SHELL -l -i -c 'cd CWD && exec COMMAND'`. Using the user's login +
+// interactive shell — not a hard-coded bash — lets PATH, functions, aliases,
+// and env from their normal terminal startup files flow through.
 
 import * as fs from "node:fs";
 import * as os from "node:os";

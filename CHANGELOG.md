@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.7.0 - 2026-06-19
+
+Aya 0.7.0 focuses on making local agent launches match the user's real terminal
+environment and on improving multi-agent project workflows.
+
+### Features
+
+- **Agent account presets.** Presets can now carry agent metadata, config
+  directory choices, unsafe-mode toggles, and auto-resume behavior.
+- **Warm project terminals.** Aya keeps recently active project terminals warm so
+  switching between projects preserves responsive terminal state without mounting
+  every tab in every project.
+- **Updated website.** The docs homepage has been refreshed for the current
+  product surface and release assets.
+
+### Fixes
+
+- **Preset launches now use the interactive login shell.** Aya starts PTYs via
+  the user's login + interactive shell so commands installed from `.zshrc` /
+  `.bashrc`, such as `grok`, are visible when opening a new terminal.
+- **Preset validation preserves new fields.** User preset metadata such as
+  `autoResume`, `configDir`, and `unsafeMode` survives normalization and IPC
+  validation.
+
 ## v0.6.0 - 2026-06-17
 
 Aya 0.6.0 focuses on desktop chrome polish and a smoother project-opening flow.

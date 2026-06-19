@@ -291,9 +291,15 @@ test("validatePresetArray rejects malformed preset entries", () => {
       icon: "◆",
       color: "#10a37f",
       command: "codex",
+      agent: "codex",
+      configDir: "~/.codex-work",
+      autoResume: true,
     },
   ]);
   assert.equal(presets[0].command, "codex");
+  assert.equal(presets[0].agent, "codex");
+  assert.equal(presets[0].configDir, "~/.codex-work");
+  assert.equal(presets[0].autoResume, true);
 
   assert.throws(
     () =>

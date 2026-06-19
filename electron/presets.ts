@@ -19,6 +19,10 @@ export interface Preset {
   icon: string;
   color: string; // CSS hex like "#d97757" or "" for the default neutral
   command: string;
+  agent?: "claude" | "codex" | "custom";
+  configDir?: string;
+  unsafeMode?: boolean;
+  autoResume?: boolean;
   /** Optional override. If set, terminals spawned from this preset render
    *  with the matching theme instead of the global active theme. Empty
    *  string and undefined both mean "use the default". */
@@ -69,6 +73,23 @@ export function isPreset(x: unknown): x is Preset {
   if (r.themeId !== undefined && typeof r.themeId !== "string") {
     return false;
   }
+  if (
+    r.agent !== undefined &&
+    r.agent !== "claude" &&
+    r.agent !== "codex" &&
+    r.agent !== "custom"
+  ) {
+    return false;
+  }
+  if (r.configDir !== undefined && typeof r.configDir !== "string") {
+    return false;
+  }
+  if (r.unsafeMode !== undefined && typeof r.unsafeMode !== "boolean") {
+    return false;
+  }
+  if (r.autoResume !== undefined && typeof r.autoResume !== "boolean") {
+    return false;
+  }
   return true;
 }
 
@@ -78,12 +99,24 @@ export function normalizePreset(raw: unknown): Preset | null {
   if (!isPreset(raw)) return null;
   const themeId =
     typeof raw.themeId === "string" && raw.themeId ? raw.themeId : undefined;
+  const agent =
+    raw.agent === "claude" || raw.agent === "codex" || raw.agent === "custom"
+      ? raw.agent
+      : undefined;
+  const configDir =
+    typeof raw.configDir === "string" && raw.configDir.trim()
+      ? raw.configDir
+      : undefined;
   return {
     id: raw.id,
     name: raw.name,
     icon: raw.icon,
     color: raw.color,
     command: raw.command,
+    ...(agent ? { agent } : {}),
+    ...(configDir ? { configDir } : {}),
+    ...(raw.unsafeMode ? { unsafeMode: true } : {}),
+    ...(raw.autoResume ? { autoResume: true } : {}),
     ...(themeId ? { themeId } : {}),
   };
 }

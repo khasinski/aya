@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useRef,
@@ -166,7 +167,7 @@ function anchorHttpUrl(target: EventTarget | null): string | null {
   return firstHttpUrl(anchor.href);
 }
 
-export function TerminalView({
+function TerminalViewComponent({
   terminal,
   preset,
   command,
@@ -1128,6 +1129,8 @@ export function TerminalView({
     </div>
   );
 }
+
+export const TerminalView = memo(TerminalViewComponent);
 
 interface FindBarProps {
   value: string;
