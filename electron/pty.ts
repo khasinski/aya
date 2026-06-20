@@ -233,7 +233,16 @@ function commandWithExec(command: string): string {
 
   if (!sawAssignment) return `exec ${command}`;
   if (pos >= command.length) return command;
-  return `${command.slice(0, assignmentEnd)} exec ${command.slice(pos)}`;
+  const executable = command.slice(pos);
+  return `${command.slice(0, assignmentEnd)} exec ${commandForExec(executable)}`;
+}
+
+function commandForExec(command: string): string {
+  const trimmed = command.trim();
+  if (trimmed === "$SHELL") {
+    return "env -u EDITOR -u VISUAL $SHELL";
+  }
+  return command;
 }
 
 /** Build the shell argv for a given command + cwd. Uses the user's login +
@@ -245,7 +254,7 @@ export function shellArgv(command: string, cwd: string): string[] {
   // The user's command is embedded verbatim so $VARS / quoting / pipes work.
   // It must NOT be shell-quoted, or the shell would treat the whole thing
   // as one literal token.
-  return [userShell(), "-l", "-i", "-c", `cd ${cwdQuoted} && ${commandWithExec(command)}`];
+  return [userShell(), "-l", "-i", "-c", `cd ${cwdQuoted} && ${commandWithExec(commandForExec(command))}`];
 }
 
 /** @deprecated Kept as an alias so existing tests / callers compile while
