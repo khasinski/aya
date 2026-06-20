@@ -57,7 +57,7 @@ import { isInternalNavigationUrl, parseHttpUrl } from "./navigation";
 import { listPresets, savePresets } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
 import { expandUserPath, readClaudeUsageAccounts } from "./usage";
-import { readCodexUsageAccountsFromSources } from "./usage-codex";
+import { DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } from "./usage-codex";
 import {
   usageHookStatus,
   installUsageHook,
@@ -1085,7 +1085,9 @@ function registerIpc(win: BrowserWindow): void {
     const presets = await listPresets();
     const codexPresets = presets.filter((p) => p.agent === "codex");
     return readCodexUsageAccountsFromSources(
-      (codexPresets.length > 0 ? codexPresets : [{ id: "codex", name: "Codex" }]).map(
+      (codexPresets.length > 0
+        ? codexPresets
+        : [{ id: "codex", name: "Codex", configDir: DEFAULT_CODEX_HOME }]).map(
         (p) => ({
           id: p.id,
           label: p.name,
