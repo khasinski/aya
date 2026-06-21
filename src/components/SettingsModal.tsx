@@ -16,6 +16,7 @@ import {
   presetSlug,
 } from "../types";
 import type { SettingsTab } from "../settings-tabs";
+import { localSummaryUnavailableMessage } from "../local-summary-errors";
 import type { MacOptionKeyMode } from "../terminal-option-key";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 
@@ -536,7 +537,10 @@ export function SettingsModal({
           ? result.useful
             ? `OK: ${result.summary}`
             : `No useful summary returned${result.error ? `: ${result.error}` : "."}`
-          : `Unavailable${result.error ? `: ${result.error}` : "."}`,
+          : localSummaryUnavailableMessage(
+              result.error,
+              ayaIntelligence.provider,
+            ),
       );
     } catch (err) {
       setIntelligenceTestResult(err instanceof Error ? err.message : String(err));

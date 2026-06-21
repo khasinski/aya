@@ -25,6 +25,7 @@ import {
 import { useAppShortcuts } from "./hooks/useAppShortcuts";
 import { useDoubleShiftSearch } from "./hooks/useDoubleShiftSearch";
 import { usePtyEventRouter } from "./hooks/usePtyEventRouter";
+import { localSummaryUnavailableMessage } from "./local-summary-errors";
 import type { SettingsTab } from "./settings-tabs";
 import {
   useDockBadge,
@@ -999,9 +1000,13 @@ export function App() {
           intelligence,
         });
         if (!result.available) {
+          const message = localSummaryUnavailableMessage(
+            result.error,
+            intelligence.provider,
+          );
           setAutoSummaryStatus((prev) => ({
             ...prev,
-            lastEvent: `${kind}: provider unavailable${result.error ? ` (${result.error})` : ""}.`,
+            lastEvent: `${kind}: ${message}`,
           }));
           return;
         }

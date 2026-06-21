@@ -75,6 +75,7 @@ import {
   uninstallUsageHook,
 } from "./usage-hook";
 import { listMonitoredSessions } from "./session-monitor";
+import { normalizeLocalSummaryError } from "./local-summary-errors";
 import { readRepoProjectConfig } from "./project-local";
 import { repairProcessPath } from "./shell-path";
 import { PtyHostClient } from "./pty-host-client";
@@ -175,7 +176,13 @@ function toggleAyaFullScreen(win: BrowserWindow | null): void {
 }
 
 function unavailableLocalSummary(error?: string): LocalSummaryResult {
-  return { available: false, useful: false, summary: "", ...(error ? { error } : {}) };
+  const normalized = normalizeLocalSummaryError(error);
+  return {
+    available: false,
+    useful: false,
+    summary: "",
+    ...(normalized ? { error: normalized } : {}),
+  };
 }
 
 function normalizeAyaIntelligenceConfig(
@@ -279,7 +286,9 @@ async function summarizeWithApple(
           available: parsed.available === true,
           useful: parsed.useful === true && summary.length > 0,
           summary: parsed.useful === true ? summary : "",
-          ...(typeof parsed.error === "string" && parsed.error ? { error: parsed.error } : {}),
+          ...(typeof parsed.error === "string" && parsed.error
+            ? { error: normalizeLocalSummaryError(parsed.error) }
+            : {}),
         });
       } catch {
         finish(unavailableLocalSummary("invalid-helper-json"));
