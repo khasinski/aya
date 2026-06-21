@@ -13,6 +13,7 @@ interface Props {
   // Set of terminal ids whose PTY emitted output in the last few seconds.
   // The status dot only pulses while in this set; otherwise it sits steady.
   recentlyActiveIds: Set<string>;
+  summaries?: Record<string, string>;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   onRename: (id: string, name: string) => void;
@@ -44,6 +45,7 @@ export function Sidebar({
   sidebarWidth,
   presets,
   recentlyActiveIds,
+  summaries = {},
   onSelect,
   onClose,
   onRename,
@@ -188,6 +190,7 @@ export function Sidebar({
           const preset = getPreset(presets, t.presetId);
           const isDragging = dragId === t.id;
           const isDropTarget = dropTarget?.id === t.id;
+          const summary = summaries[t.id]?.trim();
           const dropClass = isDropTarget
             ? dropTarget.before
               ? "aya-sidebar-row--drop-before"
@@ -228,37 +231,42 @@ export function Sidebar({
                     : ""
                 }`}
               />
-              {renamingId === t.id ? (
-                <input
-                  ref={inputRef}
-                  className="aya-sidebar-rename"
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  onBlur={commit}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      commit();
-                    } else if (e.key === "Escape") {
-                      e.preventDefault();
-                      cancel();
-                    }
-                  }}
-                  autoFocus
-                />
-              ) : (
-                <span
-                  className="aya-sidebar-name"
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    startRename(t);
-                  }}
-                  title="Double-click to rename"
-                >
-                  {t.name}
-                </span>
-              )}
+              <span className="aya-sidebar-copy">
+                {renamingId === t.id ? (
+                  <input
+                    ref={inputRef}
+                    className="aya-sidebar-rename"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onBlur={commit}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        commit();
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        cancel();
+                      }
+                    }}
+                    autoFocus
+                  />
+                ) : (
+                  <span
+                    className="aya-sidebar-name"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      startRename(t);
+                    }}
+                    title="Double-click to rename"
+                  >
+                    {t.name}
+                  </span>
+                )}
+                {!isRenamingRow && summary && (
+                  <span className="aya-sidebar-summary">{summary}</span>
+                )}
+              </span>
               {t.bell && <BellIcon />}
               {splitAssignments[t.id] !== undefined && (
                 <span className="aya-sidebar-pane-chip">

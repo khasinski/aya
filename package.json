@@ -1,6 +1,6 @@
 {
   "name": "aya",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "private": true,
   "description": "Agentic terminal manager — Claude Code / Codex / shell sessions organized across projects.",
   "engines": {
@@ -28,11 +28,12 @@
     "test": "npm run typecheck:renderer && npm run build:electron && npm run build:test-src && node --test \"tests/**/*.test.mjs\"",
     "test:e2e": "npm run build && playwright test",
     "test:e2e:headed": "npm run build && playwright test --headed",
-    "package": "npm run build && electron-builder",
+    "package": "npm run build && electron-builder --publish never",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
     "@xterm/addon-web-links": "^0.12.0",
+    "electron-updater": "^6.8.9",
     "highlight.js": "^11.11.1",
     "node-pty": "^1.0.0",
     "plist": "^3.1.1"
@@ -70,6 +71,13 @@
       "buildResources": "build",
       "output": "release"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "khasinski",
+        "repo": "aya"
+      }
+    ],
     "afterPack": "scripts/after-pack-prune.cjs",
     "files": [
       "bin/**",
@@ -79,7 +87,8 @@
     ],
     "asarUnpack": [
       "bin/**",
-      "dist-electron/*.node"
+      "dist-electron/*.node",
+      "dist-electron/aya-local-summary"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",

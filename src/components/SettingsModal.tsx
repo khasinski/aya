@@ -1,12 +1,16 @@
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
 import { useEffect, useState, type ReactNode } from "react";
 import {
+  type AyaIntelligenceConfig,
   type CliStatus,
+  type DiagnosticsReport,
   type HarnessDef,
   type MicPermissionStatus,
+  type OllamaStatus,
   type Preset,
   type Snippet,
   type Theme,
+  type UpdateStatus,
   type UsageHookStatus,
   looksNonInteractive,
   presetSlug,
@@ -30,6 +34,17 @@ interface Props {
   onTerminalFontFamilyChange: (fontFamily: string) => void;
   showUsageHarnessName: boolean;
   onShowUsageHarnessNameChange: (show: boolean) => void;
+  localSummariesEnabled: boolean;
+  onLocalSummariesEnabledChange: (enabled: boolean) => void;
+  ayaIntelligence: AyaIntelligenceConfig;
+  onAyaIntelligenceChange: (config: AyaIntelligenceConfig) => void;
+  autoSummaryStatus: {
+    terminalCount: number;
+    terminalsWithLines: number;
+    totalLines: number;
+    lastEvent: string;
+  };
+  onRefreshSummaries: () => void;
   macOptionKeyMode: MacOptionKeyMode;
   onMacOptionKeyModeChange: (mode: MacOptionKeyMode) => void;
   onClose: () => void;
@@ -258,6 +273,12 @@ export function SettingsModal({
   onTerminalFontFamilyChange,
   showUsageHarnessName,
   onShowUsageHarnessNameChange,
+  localSummariesEnabled,
+  onLocalSummariesEnabledChange,
+  ayaIntelligence,
+  onAyaIntelligenceChange,
+  autoSummaryStatus,
+  onRefreshSummaries,
   macOptionKeyMode,
   onMacOptionKeyModeChange,
   onClose,
@@ -295,6 +316,21 @@ export function SettingsModal({
     );
   const [micStatus, setMicStatus] = useState<MicPermissionStatus | null>(null);
   const [micBusy, setMicBusy] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsReport | null>(null);
+  const [diagnosticsBusy, setDiagnosticsBusy] = useState(false);
+  const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
+  const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
+  const [ollamaBusy, setOllamaBusy] = useState(false);
+  const [intelligenceTestBusy, setIntelligenceTestBusy] = useState(false);
+  const [intelligenceTestResult, setIntelligenceTestResult] = useState<string | null>(
+    null,
+  );
+  const [localSummaryStatus, setLocalSummaryStatus] = useState<
+    "checking" | "available" | "unavailable" | null
+  >(null);
   // PATH-scan result cached once per modal open. Derived `suggested` below
   // is the not-yet-added subset; recomputed each render against the live
   // draft so a row added via the suggestions immediately drops from the
@@ -318,10 +354,50 @@ export function SettingsModal({
     void window.aya.micStatus().then((status) => {
       if (!cancelled) setMicStatus(status);
     });
+    void window.aya.getUpdateStatus().then((status) => {
+      if (!cancelled) setUpdateStatus(status);
+    });
+    if (window.aya.platform === "darwin") {
+      setLocalSummaryStatus("checking");
+      void window.aya
+        .summarizeLocal({
+          kind: "terminal",
+          lines: [
+            "Aya local summaries status check",
+            "Checking Apple Intelligence model availability",
+            "No user terminal output is included",
+          ],
+        })
+        .then((status) => {
+          if (!cancelled) {
+            setLocalSummaryStatus(status.available ? "available" : "unavailable");
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setLocalSummaryStatus("unavailable");
+        });
+    }
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    return window.aya.onUpdateStatus((status) => {
+      setUpdateStatus(status);
+      if (status.phase !== "checking") setUpdateBusy(false);
+    });
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.aya.ollamaStatus(ayaIntelligence.ollamaModel).then((status) => {
+      if (!cancelled) setOllamaStatus(status);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [ayaIntelligence.ollamaModel]);
 
   const installCli = async () => {
     setCliInstalling(true);
@@ -379,6 +455,93 @@ export function SettingsModal({
       setMicStatus(await window.aya.micStatus());
     } finally {
       setMicBusy(false);
+    }
+  };
+
+  const diagnosticsJson = diagnostics
+    ? JSON.stringify(diagnostics, null, 2)
+    : "";
+
+  const refreshDiagnostics = async () => {
+    setDiagnosticsBusy(true);
+    setDiagnosticsCopied(false);
+    setDiagnosticsError(null);
+    try {
+      setDiagnostics(await window.aya.getDiagnostics());
+    } catch (err) {
+      setDiagnosticsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDiagnosticsBusy(false);
+    }
+  };
+
+  const copyDiagnostics = async () => {
+    if (!diagnosticsJson) return;
+    await window.aya.writeClipboard(diagnosticsJson);
+    setDiagnosticsCopied(true);
+  };
+
+  const checkUpdates = async () => {
+    setUpdateBusy(true);
+    try {
+      setUpdateStatus(await window.aya.checkForUpdates());
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
+
+  const installUpdate = async () => {
+    await window.aya.installUpdate();
+  };
+
+  const patchAyaIntelligence = (patch: Partial<AyaIntelligenceConfig>) => {
+    if (patch.provider) onLocalSummariesEnabledChange(true);
+    onAyaIntelligenceChange({ ...ayaIntelligence, ...patch });
+  };
+
+  const refreshOllamaStatus = async () => {
+    setOllamaBusy(true);
+    try {
+      setOllamaStatus(await window.aya.ollamaStatus(ayaIntelligence.ollamaModel));
+    } finally {
+      setOllamaBusy(false);
+    }
+  };
+
+  const pullOllamaModel = async () => {
+    setOllamaBusy(true);
+    try {
+      setOllamaStatus(await window.aya.pullOllamaModel(ayaIntelligence.ollamaModel));
+      onLocalSummariesEnabledChange(true);
+    } finally {
+      setOllamaBusy(false);
+    }
+  };
+
+  const testAyaIntelligence = async () => {
+    setIntelligenceTestBusy(true);
+    setIntelligenceTestResult(null);
+    try {
+      const result = await window.aya.summarizeLocal({
+        kind: "terminal",
+        intelligence: ayaIntelligence,
+        lines: [
+          "Starting Aya Intelligence smoke test",
+          "Gemma is summarizing recent terminal output through Ollama",
+          "Expected result: Aya should show a short tab or terminal description",
+        ],
+      });
+      setIntelligenceTestResult(
+        result.available
+          ? result.useful
+            ? `OK: ${result.summary}`
+            : `No useful summary returned${result.error ? `: ${result.error}` : "."}`
+          : `Unavailable${result.error ? `: ${result.error}` : "."}`,
+      );
+    } catch (err) {
+      setIntelligenceTestResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIntelligenceTestBusy(false);
     }
   };
 
@@ -703,6 +866,9 @@ export function SettingsModal({
     dirty: boolean;
   }> = [
     { id: "general", label: "General", icon: "tune", dirty: false },
+    { id: "intelligence", label: "Intelligence", icon: "auto_awesome", dirty: false },
+    { id: "updates", label: "Updates", icon: "system_update", dirty: false },
+    { id: "diagnostics", label: "Diagnostics", icon: "monitor_heart", dirty: false },
     { id: "themes", label: "Themes", icon: "palette", dirty: themesDirty },
     { id: "presets", label: "Presets", icon: "terminal", dirty: presetsDirty },
     { id: "snippets", label: "Snippets", icon: "bolt", dirty: snippetsDirty },
@@ -939,29 +1105,6 @@ export function SettingsModal({
                 : "Not installed")}
           </SettingsRow>
           <SettingsRow
-            icon="restart_alt"
-            title="PTY host"
-            control={(
-              <button
-                className="aya-modal-btn"
-                onClick={() => {
-                  if (
-                    confirm(
-                      "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.",
-                    )
-                  ) {
-                    void onRestartPtyHost();
-                  }
-                }}
-              >
-                Restart
-              </button>
-            )}
-          >
-            Restarts the background terminal host. Use after an update if
-            terminals behave like an older version.
-          </SettingsRow>
-          <SettingsRow
             icon="donut_large"
             title="Display harness name in usage icons"
             control={(
@@ -1056,6 +1199,355 @@ export function SettingsModal({
               /voice plugin). macOS permission: {micStatus}
             </SettingsRow>
           )}
+                </div>
+              </section>
+            )}
+
+            {activeTab === "intelligence" && (
+              <section className="aya-settings-pane">
+                <SettingsHeader icon="auto_awesome" title="Intelligence">
+                  Experimental summaries for project tabs and terminal rows.
+                </SettingsHeader>
+                <div className="aya-intelligence-frame">
+                  <div className="aya-intelligence-head">
+                    <div className="aya-settings-row-icon">
+                      <SettingsIcon name="auto_awesome" />
+                    </div>
+                    <div>
+                      <div className="aya-settings-general-title">
+                        Aya Intelligence <span>Experimental</span>
+                      </div>
+                      <div className="aya-modal-hint">
+                        Short local or API-backed summaries for project tabs and
+                        terminal rows. Aya sends only recent terminal output.
+                      </div>
+                    </div>
+                  </div>
+                  <div className="aya-intelligence-grid">
+                    <div className="aya-intelligence-field">
+                      <label>Summaries</label>
+                      <div className="aya-settings-segmented" aria-label="Aya Intelligence">
+                        {([
+                          [true, "On"],
+                          [false, "Off"],
+                        ] as const).map(([enabled, label]) => (
+                          <button
+                            key={String(enabled)}
+                            type="button"
+                            className={`aya-settings-segment ${
+                              localSummariesEnabled === enabled
+                                ? "aya-settings-segment--active"
+                                : ""
+                            }`}
+                            onClick={() => onLocalSummariesEnabledChange(enabled)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="aya-intelligence-field">
+                      <label>Provider</label>
+                      <div className="aya-settings-segmented" aria-label="Aya Intelligence provider">
+                        {([
+                          ["apple", "Apple"],
+                          ["ollama", "Ollama"],
+                          ["openai", "OpenAI-like"],
+                        ] as const).map(([provider, label]) => (
+                          <button
+                            key={provider}
+                            type="button"
+                            disabled={provider === "apple" && window.aya.platform !== "darwin"}
+                            className={`aya-settings-segment ${
+                              ayaIntelligence.provider === provider
+                                ? "aya-settings-segment--active"
+                                : ""
+                            }`}
+                            onClick={() => patchAyaIntelligence({ provider })}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  {ayaIntelligence.provider === "apple" && (
+                    <div className="aya-intelligence-status">
+                      {window.aya.platform !== "darwin"
+                        ? "Apple Intelligence is only available on macOS."
+                        : localSummaryStatus === "checking"
+                          ? "Checking Apple Intelligence availability."
+                          : localSummaryStatus === "unavailable"
+                            ? "Apple Intelligence model unavailable on this Mac."
+                            : "Apple Intelligence is selected."}
+                    </div>
+                  )}
+                  {ayaIntelligence.provider === "ollama" && (
+                    <div className="aya-intelligence-provider">
+                      <div className="aya-intelligence-field">
+                        <label>Ollama model</label>
+                        <input
+                          className="aya-modal-input"
+                          value={ayaIntelligence.ollamaModel}
+                          onChange={(e) =>
+                            patchAyaIntelligence({ ollamaModel: e.target.value })
+                          }
+                          placeholder="gemma4:e4b"
+                          spellCheck={false}
+                        />
+                      </div>
+                      <div className="aya-intelligence-actions">
+                        <button
+                          className="aya-modal-btn"
+                          onClick={refreshOllamaStatus}
+                          disabled={ollamaBusy}
+                        >
+                          {ollamaBusy ? "Working..." : "Refresh"}
+                        </button>
+                        <button
+                          className="aya-modal-btn"
+                          onClick={pullOllamaModel}
+                          disabled={
+                            ollamaBusy ||
+                            !ollamaStatus?.installed ||
+                            !ayaIntelligence.ollamaModel.trim()
+                          }
+                        >
+                          {ollamaBusy ? "Downloading..." : "Download model"}
+                        </button>
+                      </div>
+                      <div className="aya-intelligence-status">
+                        {!ollamaStatus
+                          ? "Checking Ollama."
+                          : !ollamaStatus.installed
+                            ? "Ollama was not found on PATH."
+                            : !ollamaStatus.running
+                              ? "Ollama is installed, but its local API is not running."
+                              : ollamaStatus.recommendedModelInstalled
+                                ? `${ollamaStatus.recommendedModel} is installed.`
+                                : `${ollamaStatus.recommendedModel} is not installed yet.`}
+                        {ollamaStatus?.message ? ` ${ollamaStatus.message}` : ""}
+                      </div>
+                    </div>
+                  )}
+                  {ayaIntelligence.provider === "openai" && (
+                    <div className="aya-intelligence-provider">
+                      <div className="aya-intelligence-field">
+                        <label>Base URL</label>
+                        <input
+                          className="aya-modal-input"
+                          value={ayaIntelligence.openAiBaseUrl}
+                          onChange={(e) =>
+                            patchAyaIntelligence({ openAiBaseUrl: e.target.value })
+                          }
+                          placeholder="http://localhost:11434/v1"
+                          spellCheck={false}
+                        />
+                      </div>
+                      <div className="aya-intelligence-grid">
+                        <div className="aya-intelligence-field">
+                          <label>Model</label>
+                          <input
+                            className="aya-modal-input"
+                            value={ayaIntelligence.openAiModel}
+                            onChange={(e) =>
+                              patchAyaIntelligence({ openAiModel: e.target.value })
+                            }
+                            placeholder="gpt-4.1-mini"
+                            spellCheck={false}
+                          />
+                        </div>
+                        <div className="aya-intelligence-field">
+                          <label>API key</label>
+                          <input
+                            className="aya-modal-input"
+                            type="password"
+                            value={ayaIntelligence.openAiApiKey}
+                            onChange={(e) =>
+                              patchAyaIntelligence({ openAiApiKey: e.target.value })
+                            }
+                            placeholder="Optional for local servers"
+                            spellCheck={false}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div className="aya-intelligence-actions">
+                    <button
+                      className="aya-modal-btn"
+                      onClick={testAyaIntelligence}
+                      disabled={intelligenceTestBusy || !localSummariesEnabled}
+                    >
+                      {intelligenceTestBusy ? "Testing..." : "Test summary"}
+                    </button>
+                    <button
+                      className="aya-modal-btn"
+                      onClick={onRefreshSummaries}
+                      disabled={!localSummariesEnabled}
+                    >
+                      Refresh summaries now
+                    </button>
+                  </div>
+                  {intelligenceTestResult && (
+                    <div className="aya-intelligence-status">
+                      {intelligenceTestResult}
+                    </div>
+                  )}
+                  <div className="aya-intelligence-status">
+                    Auto: {autoSummaryStatus.terminalCount} terminal
+                    {autoSummaryStatus.terminalCount === 1 ? "" : "s"},{" "}
+                    {autoSummaryStatus.terminalsWithLines} with output,{" "}
+                    {autoSummaryStatus.totalLines} collected lines. Last:{" "}
+                    {autoSummaryStatus.lastEvent}
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {activeTab === "updates" && (
+              <section className="aya-settings-pane">
+                <SettingsHeader icon="system_update" title="Updates">
+                  App version checks and restart-to-update controls.
+                </SettingsHeader>
+                <div className="aya-settings-general">
+                  <SettingsRow
+                    icon="system_update"
+                    title="Updates"
+                    control={(
+                      <div className="aya-settings-button-row">
+                        <button
+                          className="aya-modal-btn"
+                          onClick={checkUpdates}
+                          disabled={
+                            updateBusy ||
+                            updateStatus?.phase === "checking" ||
+                            updateStatus?.phase === "downloading" ||
+                            updateStatus?.supported === false
+                          }
+                        >
+                          {updateBusy || updateStatus?.phase === "checking"
+                            ? "Checking..."
+                            : "Check"}
+                        </button>
+                        <button
+                          className="aya-modal-btn"
+                          onClick={installUpdate}
+                          disabled={updateStatus?.phase !== "downloaded"}
+                        >
+                          Restart to update
+                        </button>
+                      </div>
+                    )}
+                  >
+                    {updateStatus?.phase === "downloaded"
+                      ? updateStatus.message
+                      : updateStatus?.phase === "downloading"
+                        ? `Downloading ${Math.round(updateStatus.percent ?? 0)}%.`
+                        : updateStatus?.message ??
+                          `Current version ${updateStatus?.currentVersion ?? ""}`.trim()}
+                  </SettingsRow>
+                  {updateStatus?.phase === "downloading" && (
+                    <div className="aya-settings-update-progress" aria-hidden="true">
+                      <span style={{ width: `${Math.round(updateStatus.percent ?? 0)}%` }} />
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {activeTab === "diagnostics" && (
+              <section className="aya-settings-pane">
+                <SettingsHeader icon="monitor_heart" title="Diagnostics">
+                  Maintenance tools and a copyable support report.
+                </SettingsHeader>
+                <div className="aya-settings-general">
+                  <SettingsRow
+                    icon="restart_alt"
+                    title="PTY host"
+                    control={(
+                      <button
+                        className="aya-modal-btn"
+                        onClick={() => {
+                          if (
+                            confirm(
+                              "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.",
+                            )
+                          ) {
+                            void onRestartPtyHost();
+                          }
+                        }}
+                      >
+                        Restart
+                      </button>
+                    )}
+                  >
+                    Restarts the background terminal host. Use after an update if
+                    terminals behave like an older version.
+                  </SettingsRow>
+                  <SettingsRow
+                    icon="monitor_heart"
+                    title="Diagnostics"
+                    control={(
+                      <div className="aya-settings-button-row">
+                        <button
+                          className="aya-modal-btn"
+                          onClick={refreshDiagnostics}
+                          disabled={diagnosticsBusy}
+                        >
+                          {diagnosticsBusy ? "Checking..." : "Refresh"}
+                        </button>
+                        <button
+                          className="aya-modal-btn"
+                          onClick={copyDiagnostics}
+                          disabled={!diagnosticsJson}
+                        >
+                          {diagnosticsCopied ? "Copied" : "Copy JSON"}
+                        </button>
+                      </div>
+                    )}
+                  >
+                    App, PTY host, sockets, presets, usage hook, and remote-ready state.
+                  </SettingsRow>
+                  {(diagnostics || diagnosticsError) && (
+                    <div className="aya-settings-diagnostics">
+                      {diagnosticsError ? (
+                        <div className="aya-settings-errors">{diagnosticsError}</div>
+                      ) : diagnostics ? (
+                        <>
+                          <div className="aya-settings-diagnostics-grid">
+                            <div>
+                              <span>Mode</span>
+                              <strong>{diagnostics.app.mode}</strong>
+                            </div>
+                            <div>
+                              <span>Version</span>
+                              <strong>{diagnostics.app.version}</strong>
+                            </div>
+                            <div>
+                              <span>PTYs</span>
+                              <strong>{diagnostics.ptyHost.ptyCount}</strong>
+                            </div>
+                            <div>
+                              <span>PTY host</span>
+                              <strong>{diagnostics.ptyHost.stale ? "stale" : "current"}</strong>
+                            </div>
+                            <div>
+                              <span>Presets</span>
+                              <strong>{diagnostics.presets.length}</strong>
+                            </div>
+                            <div>
+                              <span>Remote projects</span>
+                              <strong>{diagnostics.projects.remote}</strong>
+                            </div>
+                          </div>
+                          <pre className="aya-settings-diagnostics-json">
+                            {diagnosticsJson}
+                          </pre>
+                        </>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
               </section>
             )}

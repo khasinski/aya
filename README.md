@@ -89,10 +89,10 @@ run commands.
 
 ## Install
 
-Download Aya 0.7.2 from the GitHub release:
+Download Aya 0.7.3 from the GitHub release:
 
-- macOS Apple Silicon: [DMG](https://github.com/khasinski/aya/releases/download/v0.7.2/Aya-0.7.2-arm64.dmg) or [zip](https://github.com/khasinski/aya/releases/download/v0.7.2/Aya-0.7.2-arm64-mac.zip)
-- Linux x64: [AppImage](https://github.com/khasinski/aya/releases/download/v0.7.2/Aya-0.7.2.AppImage) or [deb](https://github.com/khasinski/aya/releases/download/v0.7.2/aya_0.7.2_amd64.deb)
+- macOS Apple Silicon: [DMG](https://github.com/khasinski/aya/releases/download/v0.7.3/Aya-0.7.3-arm64.dmg) or [zip](https://github.com/khasinski/aya/releases/download/v0.7.3/Aya-0.7.3-arm64-mac.zip)
+- Linux x64: [AppImage](https://github.com/khasinski/aya/releases/download/v0.7.3/Aya-0.7.3.AppImage) or [deb](https://github.com/khasinski/aya/releases/download/v0.7.3/aya_0.7.3_amd64.deb)
 
 ### macOS
 
@@ -104,15 +104,15 @@ signed and Apple-notarized.
 On Ubuntu and Debian-like systems, prefer the DEB:
 
 ```sh
-sudo apt install ./aya_0.7.2_amd64.deb
+sudo apt install ./aya_0.7.3_amd64.deb
 /opt/Aya/aya
 ```
 
 The AppImage can be run directly:
 
 ```sh
-chmod +x Aya-0.7.2.AppImage
-./Aya-0.7.2.AppImage
+chmod +x Aya-0.7.3.AppImage
+./Aya-0.7.3.AppImage
 ```
 
 If AppImage complains about FUSE, use the DEB.
@@ -138,6 +138,7 @@ macOS packaging produces:
 - `release/mac-arm64/Aya.app`
 - `release/Aya-<version>-arm64.dmg`
 - `release/Aya-<version>-arm64-mac.zip`
+- `release/latest-mac.yml` for the in-app updater
 
 Unsigned local macOS builds may need right-click -> Open the first time. See
 [Signing macOS builds](docs/signing-macos.md) for release signing and
@@ -157,6 +158,7 @@ Expected artifacts:
 
 - `release/Aya-<version>.AppImage`
 - `release/aya_<version>_amd64.deb`
+- `release/latest-linux.yml` for AppImage updates
 - `release/linux-unpacked/`
 
 ## Development

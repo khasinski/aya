@@ -152,4 +152,5 @@ jobs:
           path: |
             release/*.AppImage
             release/*.deb
+            release/latest-linux.yml
             release/linux-unpacked/**

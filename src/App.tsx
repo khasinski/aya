@@ -33,9 +33,11 @@ import {
 } from "./hooks/useTerminalSignals";
 import {
   BUILTIN_SHELL,
+  type AyaIntelligenceConfig,
   type Snippet,
   getPreset,
   type ProjectEvent,
+  type MonitoredSession,
   type Preset,
   type PtyEvent,
   presetSlug,
@@ -70,9 +72,42 @@ const APP_THEME_STORAGE_KEY = "aya:app-theme";
 const MAC_OPTION_KEY_STORAGE_KEY = "aya:mac-option-key";
 const TERMINAL_FONT_FAMILY_STORAGE_KEY = "aya:terminal-font-family";
 const USAGE_HARNESS_NAME_STORAGE_KEY = "aya:usage-show-harness-name";
+const LOCAL_SUMMARIES_STORAGE_KEY = "aya:local-summaries";
+const LOCAL_SUMMARY_CACHE_STORAGE_KEY = "aya:local-summary-cache";
+const AYA_INTELLIGENCE_STORAGE_KEY = "aya:intelligence";
 const WARM_PROJECT_TERMINAL_CACHE_SIZE = 4;
+const LOCAL_SUMMARY_REFRESH_MS = 30 * 60 * 1000;
+const LOCAL_SUMMARY_DEBOUNCE_MS = 10_000;
+const LOCAL_SUMMARY_MIN_UPDATE_MS = 2 * 60 * 1000;
+const LOCAL_SUMMARY_MIN_NEW_LINES = 8;
+const LOCAL_SUMMARY_MAX_LINES = 30;
+const LOCAL_SUMMARY_BUFFER_LINES = 80;
+const LOCAL_SUMMARY_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const SESSION_MONITOR_POLL_INTERVAL_MS = 5_000;
 
 type AppThemePreference = "system" | "light" | "dark";
+
+const DEFAULT_AYA_INTELLIGENCE: AyaIntelligenceConfig = {
+  provider: "apple",
+  ollamaModel: "gemma4:e4b",
+  openAiBaseUrl: "http://localhost:11434/v1",
+  openAiApiKey: "",
+  openAiModel: "gemma4:e4b",
+};
+
+interface AutoSummaryStatus {
+  terminalCount: number;
+  terminalsWithLines: number;
+  totalLines: number;
+  lastEvent: string;
+}
+
+type ProjectBadgeLevel = "active" | "done" | "waiting" | "error";
+
+interface SummaryCache {
+  terminal: Record<string, { summary: string; updatedAt: number }>;
+  project: Record<string, { summary: string; updatedAt: number }>;
+}
 
 function readAppThemePreference(): AppThemePreference {
   try {
@@ -104,6 +139,123 @@ function readUsageHarnessNamePreference(): boolean {
   } catch {
     return true;
   }
+}
+
+function readLocalSummariesPreference(): boolean {
+  try {
+    return localStorage.getItem(LOCAL_SUMMARIES_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function readSummaryCache(): SummaryCache {
+  try {
+    const raw = localStorage.getItem(LOCAL_SUMMARY_CACHE_STORAGE_KEY);
+    if (!raw) return { terminal: {}, project: {} };
+    const parsed = JSON.parse(raw) as Partial<SummaryCache>;
+    const now = Date.now();
+    const normalize = (
+      input: unknown,
+    ): Record<string, { summary: string; updatedAt: number }> => {
+      if (typeof input !== "object" || input === null || Array.isArray(input)) {
+        return {};
+      }
+      const out: Record<string, { summary: string; updatedAt: number }> = {};
+      for (const [key, value] of Object.entries(input)) {
+        if (
+          typeof value !== "object" ||
+          value === null ||
+          Array.isArray(value)
+        ) {
+          continue;
+        }
+        const entry = value as Record<string, unknown>;
+        if (
+          typeof entry.summary !== "string" ||
+          !entry.summary.trim() ||
+          typeof entry.updatedAt !== "number" ||
+          now - entry.updatedAt > LOCAL_SUMMARY_CACHE_MAX_AGE_MS
+        ) {
+          continue;
+        }
+        out[key] = { summary: entry.summary.trim(), updatedAt: entry.updatedAt };
+      }
+      return out;
+    };
+    return {
+      terminal: normalize(parsed.terminal),
+      project: normalize(parsed.project),
+    };
+  } catch {
+    return { terminal: {}, project: {} };
+  }
+}
+
+function summariesFromCache(
+  cache: SummaryCache,
+  kind: "terminal" | "project",
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(cache[kind]).map(([key, value]) => [key, value.summary]),
+  );
+}
+
+function readAyaIntelligenceConfig(): AyaIntelligenceConfig {
+  try {
+    const raw = localStorage.getItem(AYA_INTELLIGENCE_STORAGE_KEY);
+    if (!raw) return DEFAULT_AYA_INTELLIGENCE;
+    const parsed = JSON.parse(raw) as Partial<AyaIntelligenceConfig>;
+    return {
+      provider:
+        parsed.provider === "ollama" || parsed.provider === "openai"
+          ? parsed.provider
+          : "apple",
+      ollamaModel:
+        typeof parsed.ollamaModel === "string" && parsed.ollamaModel.trim()
+          ? parsed.ollamaModel.trim()
+          : DEFAULT_AYA_INTELLIGENCE.ollamaModel,
+      openAiBaseUrl:
+        typeof parsed.openAiBaseUrl === "string"
+          ? parsed.openAiBaseUrl
+          : DEFAULT_AYA_INTELLIGENCE.openAiBaseUrl,
+      openAiApiKey:
+        typeof parsed.openAiApiKey === "string" ? parsed.openAiApiKey : "",
+      openAiModel:
+        typeof parsed.openAiModel === "string" && parsed.openAiModel.trim()
+          ? parsed.openAiModel.trim()
+          : DEFAULT_AYA_INTELLIGENCE.openAiModel,
+    };
+  } catch {
+    return DEFAULT_AYA_INTELLIGENCE;
+  }
+}
+
+function cleanTerminalOutput(chunk: string): string[] {
+  return chunk
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b[@-Z\\-_]/g, "")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    )
+    .filter((line) => line.length >= 3);
+}
+
+function summaryHash(lines: string[]): string {
+  let hash = 2166136261;
+  for (const line of lines) {
+    for (let i = 0; i < line.length; i += 1) {
+      hash ^= line.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+  }
+  return String(hash >>> 0);
 }
 
 // Hard fallback used only if the themes file is somehow empty before boot
@@ -436,6 +588,32 @@ function defaultTabName(preset: Preset): string {
   return preset.name.trim() || preset.id || "terminal";
 }
 
+function normalizeLocalPath(value: string): string {
+  if (value.length > 1) return value.replace(/\/+$/, "");
+  return value;
+}
+
+function pathContainsProject(pathname: string, projectDirectory: string): boolean {
+  const cwd = normalizeLocalPath(pathname);
+  const directory = normalizeLocalPath(projectDirectory);
+  return cwd === directory || cwd.startsWith(directory + "/");
+}
+
+function findProjectSlugForSession(
+  session: MonitoredSession,
+  projects: ProjectConfig[],
+): string | null {
+  let best: ProjectConfig | null = null;
+  for (const project of projects) {
+    if (project.remote) continue;
+    if (!pathContainsProject(session.cwd, project.directory)) continue;
+    if (!best || project.directory.length > best.directory.length) {
+      best = project;
+    }
+  }
+  return best?.slug ?? null;
+}
+
 export function App() {
   const [allProjects, setAllProjects] = useState<ProjectConfig[]>([]);
   const [projects, setProjects] = useState<ProjectConfig[]>([]);
@@ -487,6 +665,27 @@ export function App() {
   const [showUsageHarnessName, setShowUsageHarnessName] = useState(
     readUsageHarnessNamePreference,
   );
+  const [localSummariesEnabled, setLocalSummariesEnabled] = useState(
+    readLocalSummariesPreference,
+  );
+  const [ayaIntelligence, setAyaIntelligence] = useState<AyaIntelligenceConfig>(
+    readAyaIntelligenceConfig,
+  );
+  const [initialSummaryCache] = useState(readSummaryCache);
+  const [terminalSummaries, setTerminalSummaries] = useState<Record<string, string>>(
+    () => summariesFromCache(initialSummaryCache, "terminal"),
+  );
+  const [projectSummaries, setProjectSummaries] = useState<Record<string, string>>(
+    () => summariesFromCache(initialSummaryCache, "project"),
+  );
+  const [monitoredSessions, setMonitoredSessions] = useState<MonitoredSession[]>([]);
+  const [summaryNudge, setSummaryNudge] = useState(0);
+  const [autoSummaryStatus, setAutoSummaryStatus] = useState<AutoSummaryStatus>({
+    terminalCount: 0,
+    terminalsWithLines: 0,
+    totalLines: 0,
+    lastEvent: "No automatic summary run yet.",
+  });
   const effectiveTerminalFontFamily = terminalFontFamily.trim() || undefined;
   const [settingsInitialTab, setSettingsInitialTab] =
     useState<SettingsTab>("general");
@@ -556,6 +755,21 @@ export function App() {
     };
     refresh();
     const id = setInterval(refresh, USAGE_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      void window.aya.listMonitoredSessions().then((sessions) => {
+        if (!cancelled) setMonitoredSessions(sessions);
+      });
+    };
+    refresh();
+    const id = setInterval(refresh, SESSION_MONITOR_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       clearInterval(id);
@@ -727,6 +941,155 @@ export function App() {
   presetsRef.current = presets;
   const remotePresetsByProjectRef = useRef(remotePresetsByProject);
   remotePresetsByProjectRef.current = remotePresetsByProject;
+  const terminalOutputRef = useRef<Record<string, string[]>>({});
+  const localSummariesEnabledRef = useRef(localSummariesEnabled);
+  localSummariesEnabledRef.current = localSummariesEnabled;
+  const ayaIntelligenceRef = useRef(ayaIntelligence);
+  ayaIntelligenceRef.current = ayaIntelligence;
+  const summaryMetaRef = useRef<
+    Record<
+      string,
+      { hash: string; updatedAt: number; inFlight: boolean; lineCount: number }
+    >
+  >({});
+  const summaryTimersRef = useRef<Record<string, number>>({});
+
+  const runAutomaticSummary = useCallback(
+    async (
+      key: string,
+      kind: "terminal" | "project",
+      lines: string[],
+      apply: (summary: string) => void,
+    ) => {
+      const intelligence = ayaIntelligenceRef.current;
+      if (
+        !localSummariesEnabledRef.current ||
+        (intelligence.provider === "apple" && window.aya.platform !== "darwin")
+      ) {
+        return;
+      }
+      const recent = lines.slice(-LOCAL_SUMMARY_MAX_LINES);
+      if (recent.length < 2) {
+        setAutoSummaryStatus((prev) => ({
+          ...prev,
+          lastEvent: `${kind}: not enough output (${recent.length} line${recent.length === 1 ? "" : "s"}).`,
+        }));
+        return;
+      }
+      const hash = summaryHash(recent);
+      const meta = summaryMetaRef.current[key];
+      if (meta?.inFlight || meta?.hash === hash) return;
+      if (
+        meta &&
+        Date.now() - meta.updatedAt < LOCAL_SUMMARY_MIN_UPDATE_MS &&
+        recent.length - meta.lineCount < LOCAL_SUMMARY_MIN_NEW_LINES
+      ) {
+        return;
+      }
+      summaryMetaRef.current[key] = {
+        hash,
+        updatedAt: Date.now(),
+        inFlight: true,
+        lineCount: recent.length,
+      };
+      try {
+        const result = await window.aya.summarizeLocal({
+          kind,
+          lines: recent,
+          intelligence,
+        });
+        if (!result.available) {
+          setAutoSummaryStatus((prev) => ({
+            ...prev,
+            lastEvent: `${kind}: provider unavailable${result.error ? ` (${result.error})` : ""}.`,
+          }));
+          return;
+        }
+        if (!result.useful) {
+          setAutoSummaryStatus((prev) => ({
+            ...prev,
+            lastEvent: `${kind}: provider returned no useful summary.`,
+          }));
+          return;
+        }
+        apply(result.summary);
+        setAutoSummaryStatus((prev) => ({
+          ...prev,
+          lastEvent: `${kind}: ${result.summary}`,
+        }));
+      } catch {
+        setAutoSummaryStatus((prev) => ({
+          ...prev,
+          lastEvent: `${kind}: request failed.`,
+        }));
+      } finally {
+        const current = summaryMetaRef.current[key];
+        if (current?.hash === hash) {
+          summaryMetaRef.current[key] = {
+            ...current,
+            updatedAt: Date.now(),
+            inFlight: false,
+            lineCount: recent.length,
+          };
+        }
+      }
+    },
+    [],
+  );
+
+  const scheduleTerminalSummary = useCallback(
+    (terminalId: string) => {
+      window.clearTimeout(summaryTimersRef.current[terminalId]);
+      summaryTimersRef.current[terminalId] = window.setTimeout(() => {
+        const terminal = terminalsRef.current[terminalId];
+        if (!terminal) return;
+        const terminalLines = terminalOutputRef.current[terminalId] ?? [];
+        const outputEntries = Object.values(terminalOutputRef.current);
+        setAutoSummaryStatus((prev) => ({
+          ...prev,
+          terminalCount: Object.keys(terminalsRef.current).length,
+          terminalsWithLines: outputEntries.filter((lines) => lines.length > 0)
+            .length,
+          totalLines: outputEntries.reduce((sum, lines) => sum + lines.length, 0),
+        }));
+        void runAutomaticSummary(
+          `terminal:${terminalId}`,
+          "terminal",
+          terminalLines,
+          (summary) =>
+            setTerminalSummaries((prev) => ({
+              ...prev,
+              [terminalId]: summary,
+            })),
+        );
+        const projectLines = Object.values(terminalsRef.current)
+          .filter((item) => item.projectSlug === terminal.projectSlug)
+          .flatMap((item) => terminalOutputRef.current[item.id] ?? []);
+        void runAutomaticSummary(
+          `project:${terminal.projectSlug}`,
+          "project",
+          projectLines,
+          (summary) =>
+            setProjectSummaries((prev) => ({
+              ...prev,
+              [terminal.projectSlug]: summary,
+            })),
+        );
+      }, LOCAL_SUMMARY_DEBOUNCE_MS);
+    },
+    [runAutomaticSummary],
+  );
+
+  const rememberTerminalOutput = useCallback((terminalId: string, chunk: string) => {
+    const lines = cleanTerminalOutput(chunk);
+    if (lines.length === 0) return;
+    const current = terminalOutputRef.current[terminalId] ?? [];
+    terminalOutputRef.current[terminalId] = [...current, ...lines].slice(
+      -LOCAL_SUMMARY_BUFFER_LINES,
+    );
+    scheduleTerminalSummary(terminalId);
+    setSummaryNudge((value) => value + 1);
+  }, [scheduleTerminalSummary]);
 
   useEffect(() => {
     if (!activeProjectId) return;
@@ -754,6 +1117,9 @@ export function App() {
     (event: PtyEvent) => {
       const terminal = terminalsRef.current[event.ptyId];
       if (!terminal) return;
+      if (event.type === "data" && !event.replay) {
+        rememberTerminalOutput(event.ptyId, event.chunk);
+      }
       if (event.type === "spawn-failed") {
         appendProjectEvent({
           projectSlug: terminal.projectSlug,
@@ -787,7 +1153,7 @@ export function App() {
         });
       }
     },
-    [appendProjectEvent],
+    [appendProjectEvent, rememberTerminalOutput],
   );
 
   const { lastActivityRef, recentlyActiveIds } = useRecentTerminalActivity();
@@ -1060,6 +1426,203 @@ export function App() {
     setTerminals,
     onPtyEvent: handlePtyTimelineEvent,
   });
+
+  useEffect(() => {
+    const liveIds = new Set(Object.keys(terminals));
+    for (const id of Object.keys(terminalOutputRef.current)) {
+      if (!liveIds.has(id)) delete terminalOutputRef.current[id];
+    }
+    setTerminalSummaries((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const id of Object.keys(next)) {
+        if (!liveIds.has(id)) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [terminals]);
+
+  useEffect(() => {
+    try {
+      const now = Date.now();
+      const terminal = Object.fromEntries(
+        Object.entries(terminalSummaries)
+          .filter(([, summary]) => summary.trim())
+          .map(([id, summary]) => [id, { summary: summary.trim(), updatedAt: now }]),
+      );
+      const project = Object.fromEntries(
+        Object.entries(projectSummaries)
+          .filter(([, summary]) => summary.trim())
+          .map(([slug, summary]) => [
+            slug,
+            { summary: summary.trim(), updatedAt: now },
+          ]),
+      );
+      localStorage.setItem(
+        LOCAL_SUMMARY_CACHE_STORAGE_KEY,
+        JSON.stringify({ terminal, project }),
+      );
+    } catch {
+      /* ignore — summaries are a cache only */
+    }
+  }, [terminalSummaries, projectSummaries]);
+
+  useEffect(() => {
+    if (
+      !localSummariesEnabled ||
+      (ayaIntelligence.provider === "apple" && window.aya.platform !== "darwin")
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const runOne = async (
+      key: string,
+      kind: "terminal" | "project",
+      lines: string[],
+      apply: (summary: string) => void,
+    ) => {
+      const recent = lines.slice(-LOCAL_SUMMARY_MAX_LINES);
+      if (recent.length < 2) {
+        setAutoSummaryStatus((prev) => ({
+          ...prev,
+          lastEvent: `${kind}: not enough output (${recent.length} line${recent.length === 1 ? "" : "s"}).`,
+        }));
+        return;
+      }
+      const hash = summaryHash(recent);
+      const meta = summaryMetaRef.current[key];
+      if (meta?.inFlight || meta?.hash === hash) return;
+      if (
+        meta &&
+        Date.now() - meta.updatedAt < LOCAL_SUMMARY_MIN_UPDATE_MS &&
+        recent.length - meta.lineCount < LOCAL_SUMMARY_MIN_NEW_LINES
+      ) {
+        return;
+      }
+      summaryMetaRef.current[key] = {
+        hash,
+        updatedAt: Date.now(),
+        inFlight: true,
+        lineCount: recent.length,
+      };
+      try {
+        const result = await window.aya.summarizeLocal({
+          kind,
+          lines: recent,
+          intelligence: ayaIntelligence,
+        });
+        if (cancelled) {
+          delete summaryMetaRef.current[key];
+          return;
+        }
+        if (!result.available) {
+          setAutoSummaryStatus((prev) => ({
+            ...prev,
+            lastEvent: `${kind}: provider unavailable${result.error ? ` (${result.error})` : ""}.`,
+          }));
+          return;
+        }
+        if (!result.useful) {
+          setAutoSummaryStatus((prev) => ({
+            ...prev,
+            lastEvent: `${kind}: provider returned no useful summary.`,
+          }));
+          return;
+        }
+        apply(result.summary);
+        setAutoSummaryStatus((prev) => ({
+          ...prev,
+          lastEvent: `${kind}: ${result.summary}`,
+        }));
+      } catch {
+        setAutoSummaryStatus((prev) => ({
+          ...prev,
+          lastEvent: `${kind}: request failed.`,
+        }));
+      } finally {
+        const current = summaryMetaRef.current[key];
+        if (current?.hash === hash) {
+          summaryMetaRef.current[key] = {
+            ...current,
+            updatedAt: Date.now(),
+            inFlight: false,
+            lineCount: recent.length,
+          };
+        }
+      }
+    };
+
+    const linesForTerminal = async (terminalId: string): Promise<string[]> => {
+      const existing = terminalOutputRef.current[terminalId] ?? [];
+      if (existing.length >= 2) return existing;
+      try {
+        const buffered = await window.aya.ptyBuffer(terminalId);
+        const lines = cleanTerminalOutput(buffered);
+        if (lines.length > existing.length) {
+          terminalOutputRef.current[terminalId] = lines.slice(
+            -LOCAL_SUMMARY_BUFFER_LINES,
+          );
+          return terminalOutputRef.current[terminalId];
+        }
+      } catch {
+        // best effort; live event collection still covers new output
+      }
+      return existing;
+    };
+
+    const refresh = () => {
+      const terminalList = Object.values(terminalsRef.current);
+      const outputEntries = Object.values(terminalOutputRef.current);
+      setAutoSummaryStatus((prev) => ({
+        ...prev,
+        terminalCount: terminalList.length,
+        terminalsWithLines: outputEntries.filter((lines) => lines.length > 0).length,
+        totalLines: outputEntries.reduce((sum, lines) => sum + lines.length, 0),
+      }));
+      for (const terminal of terminalList) {
+        void linesForTerminal(terminal.id).then((lines) =>
+          runOne(`terminal:${terminal.id}`, "terminal", lines, (summary) =>
+            setTerminalSummaries((prev) => ({
+              ...prev,
+              [terminal.id]: summary,
+            })),
+          ),
+        );
+      }
+
+      for (const project of projectsRef.current) {
+        const projectTerminals = terminalList.filter(
+          (terminal) => terminal.projectSlug === project.slug,
+        );
+        void Promise.all(
+          projectTerminals.map((terminal) => linesForTerminal(terminal.id)),
+        ).then((lineGroups) => {
+          const lines = lineGroups.flat().slice(-LOCAL_SUMMARY_MAX_LINES);
+          return runOne(`project:${project.slug}`, "project", lines, (summary) =>
+            setProjectSummaries((prev) => ({
+              ...prev,
+              [project.slug]: summary,
+            })),
+          );
+        });
+      }
+    };
+
+    const timeout = window.setTimeout(
+      refresh,
+      summaryNudge === 0 ? 0 : LOCAL_SUMMARY_DEBOUNCE_MS,
+    );
+    const id = window.setInterval(refresh, LOCAL_SUMMARY_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+      window.clearInterval(id);
+    };
+  }, [ayaIntelligence, localSummariesEnabled, summaryNudge]);
 
   useEffect(() => {
     return window.aya.onControlStatus((update) => {
@@ -1959,6 +2522,26 @@ export function App() {
     }
   }, []);
 
+  const updateLocalSummariesEnabled = useCallback((next: boolean) => {
+    setLocalSummariesEnabled(next);
+    try {
+      localStorage.setItem(LOCAL_SUMMARIES_STORAGE_KEY, next ? "1" : "0");
+    } catch {
+      /* ignore — localStorage can be unavailable in odd embedded contexts */
+    }
+  }, []);
+
+  const updateAyaIntelligence = useCallback((next: AyaIntelligenceConfig) => {
+    setAyaIntelligence(next);
+    summaryMetaRef.current = {};
+    setSummaryNudge((n) => n + 1);
+    try {
+      localStorage.setItem(AYA_INTELLIGENCE_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore — localStorage can be unavailable in odd embedded contexts */
+    }
+  }, []);
+
   useEffect(() => {
     const root = document.documentElement;
     if (appThemePreference === "system") {
@@ -2284,11 +2867,21 @@ export function App() {
 
   const projectBadges: Record<
     string,
-    { count: number; level: "done" | "waiting" | "error" }
+    { count: number; level: ProjectBadgeLevel }
   > = {};
-  const severityRank = { done: 1, waiting: 2, error: 3 } as const;
+  const severityRank = { active: 0, done: 1, waiting: 2, error: 3 } as const;
+  const addProjectBadge = (projectSlug: string, level: ProjectBadgeLevel) => {
+    const current = projectBadges[projectSlug];
+    projectBadges[projectSlug] = {
+      count: (current?.count ?? 0) + 1,
+      level:
+        !current || severityRank[level] > severityRank[current.level]
+          ? level
+          : current.level,
+    };
+  };
   for (const t of Object.values(terminals)) {
-    let level: "done" | "waiting" | "error" | null = null;
+    let level: ProjectBadgeLevel | null = null;
     if (
       t.status === "error" ||
       t.externalStatus?.level === "error" ||
@@ -2306,19 +2899,24 @@ export function App() {
       (t.status === "idle" && t.exitCode === 0 && t.presetId !== "shell")
     ) {
       level = "done";
+    } else if (t.externalStatus?.level === "active") {
+      level = "active";
     }
     if (!level) continue;
-    const current = projectBadges[t.projectSlug];
-    projectBadges[t.projectSlug] = {
-      count: (current?.count ?? 0) + 1,
-      level:
-        !current || severityRank[level] > severityRank[current.level]
-          ? level
-          : current.level,
-    };
+    addProjectBadge(t.projectSlug, level);
+  }
+  const monitoredSessionsByProject: Record<string, MonitoredSession[]> = {};
+  for (const session of monitoredSessions) {
+    const projectSlug = findProjectSlugForSession(session, projects);
+    if (!projectSlug) continue;
+    addProjectBadge(projectSlug, session.level);
+    monitoredSessionsByProject[projectSlug] = [
+      ...(monitoredSessionsByProject[projectSlug] ?? []),
+      session,
+    ];
   }
   const attentionCount = Object.values(projectBadges).reduce(
-    (sum, badge) => sum + badge.count,
+    (sum, badge) => sum + (badge.level === "active" ? 0 : badge.count),
     0,
   );
 
@@ -2474,6 +3072,8 @@ export function App() {
         }
         onCloseWindow={() => void window.aya.closeWindow()}
         projectBadges={projectBadges}
+        monitoredSessionsByProject={monitoredSessionsByProject}
+        projectSummaries={localSummariesEnabled ? projectSummaries : {}}
         usageAccounts={usageAccounts}
         codexUsageAccounts={codexUsageAccounts}
         showUsageHarnessName={showUsageHarnessName}
@@ -2508,6 +3108,7 @@ export function App() {
             sidebarWidth={sidebarWidth}
             presets={activePresets}
             recentlyActiveIds={recentlyActiveIds}
+            summaries={localSummariesEnabled ? terminalSummaries : {}}
             splitAssignments={splitAssignments}
             onSelect={selectTerminalFromSidebar}
             onClose={closeTerminal}
@@ -2754,6 +3355,7 @@ export function App() {
           onListRemoteDirectory={window.aya.listRemoteDirectory}
           onCreateRemoteProject={window.aya.createRemoteProjectOnHost}
           onCreateRemoteDirectory={window.aya.createRemoteDirectory}
+          onCheckRemoteHealth={window.aya.checkRemoteHealth}
           onSubmitRemote={onCreateRemoteProject}
           onSubmit={submitProjectFromModal}
           onCancel={() => {
@@ -2791,6 +3393,8 @@ export function App() {
           terminals={terminals}
           events={projectEvents}
           onSelectTerminal={focusTerminal}
+          onRestartTerminal={(terminalId) => void forceRestartTerminal(terminalId)}
+          onCloseTerminal={closeTerminal}
           onClose={() => setShowAttentionCenter(false)}
         />
       )}
@@ -2847,6 +3451,12 @@ export function App() {
           onTerminalFontFamilyChange={updateTerminalFontFamily}
           showUsageHarnessName={showUsageHarnessName}
           onShowUsageHarnessNameChange={updateShowUsageHarnessName}
+          localSummariesEnabled={localSummariesEnabled}
+          onLocalSummariesEnabledChange={updateLocalSummariesEnabled}
+          ayaIntelligence={ayaIntelligence}
+          onAyaIntelligenceChange={updateAyaIntelligence}
+          autoSummaryStatus={autoSummaryStatus}
+          onRefreshSummaries={() => setSummaryNudge((n) => n + 1)}
           macOptionKeyMode={macOptionKeyMode}
           onMacOptionKeyModeChange={updateMacOptionKeyMode}
           initialTab={settingsInitialTab}

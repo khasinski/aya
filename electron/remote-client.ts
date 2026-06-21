@@ -5,6 +5,7 @@ import type {
   ProjectConfig,
   RemoteDirectoryEntry,
   RemoteDirectoryListing,
+  RemoteHealthResult,
   RemoteHostInfo,
   RemoteProjectCreateResult,
 } from "./types";
@@ -331,6 +332,91 @@ export async function listRemotePresets(sshTarget: string): Promise<Preset[]> {
     type: "fs:list",
   });
   return presets;
+}
+
+function healthFailureStage(
+  message: string,
+): "ssh" | "node" | "aya-remote" | "snapshot" {
+  if (/node is not available|node: command not found|node: not found/i.test(message)) {
+    return "node";
+  }
+  if (
+    /not accepting remote connections|Aya is not installed|app_unavailable|aya-remote/i.test(
+      message,
+    )
+  ) {
+    return "aya-remote";
+  }
+  if (/snapshot|presets|projects/i.test(message)) {
+    return "snapshot";
+  }
+  return "ssh";
+}
+
+export async function checkRemoteHealth(
+  sshTarget: string,
+): Promise<RemoteHealthResult> {
+  const target = sshTarget.trim();
+  const checkedAt = new Date().toISOString();
+  if (!target) {
+    return {
+      ok: false,
+      sshTarget,
+      checkedAt,
+      checks: [
+        { stage: "ssh", ok: false, message: "Remote SSH target is required." },
+      ],
+    };
+  }
+  try {
+    const { host, presets, recentProjects } = await runRemoteRequest(target, {
+      type: "fs:list",
+    });
+    return {
+      ok: true,
+      sshTarget: target,
+      checkedAt,
+      host,
+      presetsCount: presets.length,
+      recentProjectsCount: recentProjects.length,
+      checks: [
+        { stage: "ssh", ok: true, message: `Connected to ${target}.` },
+        { stage: "node", ok: true, message: "Remote Node bridge started." },
+        { stage: "aya-remote", ok: true, message: "Remote Aya socket responded." },
+        { stage: "snapshot", ok: true, message: "Remote presets and projects loaded." },
+      ],
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const stage = healthFailureStage(message);
+    const order: Array<"ssh" | "node" | "aya-remote" | "snapshot"> = [
+      "ssh",
+      "node",
+      "aya-remote",
+      "snapshot",
+    ];
+    return {
+      ok: false,
+      sshTarget: target,
+      checkedAt,
+      checks: order
+        .slice(0, order.indexOf(stage) + 1)
+        .map((item) =>
+          item === stage
+            ? { stage: item, ok: false, message }
+            : {
+                stage: item,
+                ok: true,
+                message:
+                  item === "ssh"
+                    ? `Connected to ${target}.`
+                    : item === "node"
+                      ? "Remote Node bridge started."
+                      : "Remote Aya socket responded.",
+              },
+        ),
+    };
+  }
 }
 
 export async function createRemoteProjectOnHost(

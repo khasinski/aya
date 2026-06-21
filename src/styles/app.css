@@ -302,6 +302,120 @@ body {
 .aya-iconbtn:hover { background: var(--bg-tertiary); color: var(--fg-primary); }
 .aya-iconbtn--active { color: var(--accent); background: color-mix(in oklab, var(--accent) 15%, transparent); }
 
+.aya-monitored-sessions {
+  -webkit-app-region: no-drag;
+  position: relative;
+}
+.aya-session-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--fg-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.aya-session-chip:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+}
+.aya-session-chip-bars {
+  display: flex;
+  width: 34px;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+}
+.aya-session-chip-bar--active,
+.aya-session-chip-bar--done {
+  background: var(--status-active);
+}
+.aya-session-chip-bar--waiting {
+  background: var(--status-waiting);
+}
+.aya-session-chip-bar--error {
+  background: var(--status-error);
+}
+.aya-session-menu {
+  position: absolute;
+  top: 34px;
+  right: 0;
+  width: 300px;
+  padding: 4px;
+  z-index: 100;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-card);
+}
+.aya-session-menu-title {
+  padding: 7px 9px 5px;
+  color: var(--fg-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.aya-session-menu-item {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.aya-session-menu-item:hover {
+  background: var(--bg-tertiary);
+}
+.aya-session-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--status-active);
+}
+.aya-session-menu-item--waiting .aya-session-dot {
+  background: var(--status-waiting);
+}
+.aya-session-menu-item--error .aya-session-dot {
+  background: var(--status-error);
+}
+.aya-session-menu-main,
+.aya-session-menu-name,
+.aya-session-menu-detail {
+  min-width: 0;
+}
+.aya-session-menu-main {
+  display: grid;
+  gap: 2px;
+}
+.aya-session-menu-name,
+.aya-session-menu-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-session-menu-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+.aya-session-menu-detail {
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
 /* ---- project switcher dropdown ---- */
 .aya-switcher {
   -webkit-app-region: no-drag;
@@ -421,10 +535,26 @@ body {
 }
 
 .aya-sidebar-name {
-  flex: 1;
   min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-weight: 500;
+}
+.aya-sidebar-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.aya-sidebar-summary {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 400;
 }
 .aya-sidebar-pane-chip {
   flex-shrink: 0;

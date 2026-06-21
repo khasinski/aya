@@ -9,13 +9,15 @@ interface Props {
   terminals: Record<string, TerminalState>;
   events: ProjectEvent[];
   onSelectTerminal: (projectSlug: string, terminalId: string) => void;
+  onRestartTerminal: (terminalId: string) => void;
+  onCloseTerminal: (terminalId: string) => void;
   onClose: () => void;
 }
 
 interface AttentionRow {
   project: ProjectConfig;
   terminal: TerminalState;
-  level: "waiting" | "error" | "done";
+  level: "waiting" | "error" | "done" | "idle";
   title: string;
   detail: string;
 }
@@ -67,6 +69,24 @@ function attentionFor(
       detail: terminal.externalStatus?.text ?? "Completed successfully",
     };
   }
+  if (
+    terminal.status === "idle" ||
+    terminal.stopped ||
+    (terminal.exitCode !== null && terminal.exitCode !== 0)
+  ) {
+    return {
+      project,
+      terminal,
+      level: "idle",
+      title: `${terminal.name} is idle`,
+      detail:
+        terminal.stopped
+          ? "Stopped by PTY host restart"
+          : terminal.exitCode !== null
+            ? `Exited with code ${terminal.exitCode}`
+            : "No active process",
+    };
+  }
   return null;
 }
 
@@ -82,6 +102,8 @@ export function AttentionCenter({
   terminals,
   events,
   onSelectTerminal,
+  onRestartTerminal,
+  onCloseTerminal,
   onClose,
 }: Props) {
   const projectBySlug = new Map(projects.map((project) => [project.slug, project]));
@@ -92,10 +114,31 @@ export function AttentionCenter({
     })
     .filter((row): row is AttentionRow => !!row)
     .sort((a, b) => {
-      const rank = { error: 3, waiting: 2, done: 1 };
+      const rank = { error: 4, waiting: 3, done: 2, idle: 1 };
       return rank[b.level] - rank[a.level] || a.project.name.localeCompare(b.project.name);
     });
+  const groupedRows = {
+    error: rows.filter((row) => row.level === "error"),
+    waiting: rows.filter((row) => row.level === "waiting"),
+    done: rows.filter((row) => row.level === "done"),
+    idle: rows.filter((row) => row.level === "idle"),
+  };
   const visibleEvents = events.slice(0, VISIBLE_EVENTS_LIMIT);
+  const rowGroups: Array<{
+    id: AttentionRow["level"];
+    title: string;
+    rows: AttentionRow[];
+  }> = [
+    { id: "error", title: "Failed", rows: groupedRows.error },
+    { id: "waiting", title: "Waiting", rows: groupedRows.waiting },
+    { id: "done", title: "Finished", rows: groupedRows.done },
+    { id: "idle", title: "Idle", rows: groupedRows.idle },
+  ];
+
+  const focus = (row: AttentionRow) => {
+    onSelectTerminal(row.project.slug, row.terminal.id);
+    onClose();
+  };
 
   return (
     <div
@@ -128,24 +171,45 @@ export function AttentionCenter({
               <p className="aya-attention-empty">No waiting, failed, or completed agent terminals.</p>
             ) : (
               <div className="aya-attention-list">
-                {rows.map((row) => (
-                  <button
-                    key={row.terminal.id}
-                    className={`aya-attention-row aya-attention-row--${row.level}`}
-                    type="button"
-                    onClick={() => {
-                      onSelectTerminal(row.project.slug, row.terminal.id);
-                      onClose();
-                    }}
-                  >
-                    <span className="aya-attention-dot" />
-                    <span className="aya-attention-row-main">
-                      <strong>{row.title}</strong>
-                      <span>{row.project.name} · {row.detail}</span>
-                    </span>
-                    <span className="aya-attention-row-action">Focus</span>
-                  </button>
-                ))}
+                {rowGroups.map((group) =>
+                  group.rows.length === 0 ? null : (
+                    <div className="aya-attention-group" key={group.id}>
+                      <div className="aya-attention-group-title">
+                        {group.title}
+                        <span>{group.rows.length}</span>
+                      </div>
+                      {group.rows.map((row) => (
+                        <div
+                          key={row.terminal.id}
+                          className={`aya-attention-row aya-attention-row--${row.level}`}
+                        >
+                          <span className="aya-attention-dot" />
+                          <span className="aya-attention-row-main">
+                            <strong>{row.title}</strong>
+                            <span>{row.project.name} · {row.detail}</span>
+                          </span>
+                          <span className="aya-attention-row-actions">
+                            <button type="button" onClick={() => focus(row)}>
+                              Focus
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onRestartTerminal(row.terminal.id)}
+                            >
+                              Restart
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onCloseTerminal(row.terminal.id)}
+                            >
+                              Close
+                            </button>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ),
+                )}
               </div>
             )}
           </section>

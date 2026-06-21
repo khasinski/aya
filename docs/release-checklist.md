@@ -6,6 +6,8 @@
 - `npm test`
 - `npm run build`
 - `npm run package`
+- Confirm GitHub release assets include `latest-mac.yml` plus the macOS ZIP; auto-update reads that feed.
+- Confirm Linux AppImage releases include `latest-linux.yml`; `.deb` users are prompted to download manually.
 
 ## Packaged App Smoke Test
 
@@ -21,6 +23,7 @@
 - Confirm Settings opens, harness suggestions render, and adding a suggestion creates a preset.
 - Confirm first launch with no config still creates/opens a Shell preset.
 - Confirm missing project directories show the recovery modal.
+- In Settings > General, confirm Updates shows a supported status in the signed packaged build.
 
 ## CLI / Single Instance
 

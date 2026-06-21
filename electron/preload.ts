@@ -7,6 +7,7 @@ import type {
   ConfigChange,
   ControlStatusUpdate,
   PtyEvent,
+  UpdateStatus,
 } from "./types";
 
 const isDev = process.env.AYA_DEV === "1";
@@ -19,6 +20,7 @@ const api: AyaApi = {
   ptyResize: (ptyId, cols, rows) =>
     ipcRenderer.invoke("pty:resize", ptyId, cols, rows),
   ptyKill: (ptyId) => ipcRenderer.invoke("pty:kill", ptyId),
+  ptyBuffer: (ptyId) => ipcRenderer.invoke("pty:buffer", ptyId),
   ptySearch: (query) => ipcRenderer.invoke("pty:search", query),
   restartPtyHost: () => ipcRenderer.invoke("pty-host:restart"),
   onPtyEvent: (handler) => {
@@ -41,6 +43,8 @@ const api: AyaApi = {
     ipcRenderer.invoke("remote:create-directory", sshTarget, directory),
   listRemotePresets: (sshTarget) =>
     ipcRenderer.invoke("remote:list-presets", sshTarget),
+  checkRemoteHealth: (sshTarget) =>
+    ipcRenderer.invoke("remote:health", sshTarget),
   createRemoteProjectOnHost: (sshTarget, directory, name) =>
     ipcRenderer.invoke("remote:create-project", sshTarget, directory, name),
   updateProject: (project) => ipcRenderer.invoke("projects:update", project),
@@ -60,6 +64,11 @@ const api: AyaApi = {
   usageHookStatus: () => ipcRenderer.invoke("usage-hook:status"),
   installUsageHook: () => ipcRenderer.invoke("usage-hook:install"),
   uninstallUsageHook: () => ipcRenderer.invoke("usage-hook:uninstall"),
+  summarizeLocal: (req) => ipcRenderer.invoke("local-summary:summarize", req),
+  ollamaStatus: (model) => ipcRenderer.invoke("intelligence:ollama-status", model),
+  pullOllamaModel: (model) =>
+    ipcRenderer.invoke("intelligence:pull-ollama-model", model),
+  listMonitoredSessions: () => ipcRenderer.invoke("sessions:list-monitored"),
 
   listThemes: () => ipcRenderer.invoke("themes:list"),
   saveThemes: (file) => ipcRenderer.invoke("themes:save", file),
@@ -93,6 +102,10 @@ const api: AyaApi = {
     ipcRenderer.invoke("app:notify-waiting", req),
   cliStatus: () => ipcRenderer.invoke("app:cli-status"),
   installCli: () => ipcRenderer.invoke("app:install-cli"),
+  getDiagnostics: () => ipcRenderer.invoke("app:diagnostics"),
+  getUpdateStatus: () => ipcRenderer.invoke("updates:status"),
+  checkForUpdates: () => ipcRenderer.invoke("updates:check"),
+  installUpdate: () => ipcRenderer.invoke("updates:install"),
   openNotificationSettings: () =>
     ipcRenderer.invoke("app:open-notification-settings"),
   micStatus: () => ipcRenderer.invoke("mic:status"),
@@ -112,6 +125,11 @@ const api: AyaApi = {
       handler(update);
     ipcRenderer.on("control:status", listener);
     return () => ipcRenderer.removeListener("control:status", listener);
+  },
+  onUpdateStatus: (handler) => {
+    const listener = (_e: unknown, status: UpdateStatus) => handler(status);
+    ipcRenderer.on("updates:status", listener);
+    return () => ipcRenderer.removeListener("updates:status", listener);
   },
   onFullScreenChange: (handler) => {
     const listener = (_e: unknown, isFullScreen: boolean) =>

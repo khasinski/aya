@@ -8,8 +8,10 @@ if (process.platform !== "darwin") process.exit(0);
 
 const root = join(__dirname, "..");
 const source = join(root, "electron", "native", "macos-window-hack.mm");
+const summarySource = join(root, "electron", "native", "aya-local-summary.swift");
 const outDir = join(root, "dist-electron");
 const out = join(outDir, "macos-window-hack.node");
+const summaryOut = join(outDir, "aya-local-summary");
 
 const includeCandidates = [
   join(dirname(process.execPath), "..", "include", "node"),
@@ -47,3 +49,14 @@ const args = [
 
 const result = spawnSync("clang++", args, { stdio: "inherit" });
 if (result.status !== 0) process.exit(result.status ?? 1);
+
+const swiftResult = spawnSync(
+  "swiftc",
+  ["-parse-as-library", summarySource, "-o", summaryOut],
+  { stdio: "inherit" },
+);
+if (swiftResult.error && swiftResult.error.code === "ENOENT") {
+  console.warn("swiftc not found; skipping optional Foundation Models helper.");
+} else if (swiftResult.status !== 0) {
+  console.warn("Could not build optional Foundation Models helper; local summaries will be unavailable.");
+}

@@ -245,6 +245,49 @@ function commandForExec(command: string): string {
   return command;
 }
 
+function unquoteEnvValue(value: string): string {
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1).replace(/\\(["\\$`])/g, "$1");
+  }
+  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1);
+  }
+  return value.replace(/\\(.)/g, "$1");
+}
+
+function expandConfigDir(value: string): string {
+  const home = os.homedir();
+  const unquoted = unquoteEnvValue(value.trim());
+  return path.resolve(
+    unquoted
+      .replace(/^~(?=\/|$)/, home)
+      .replace(/^\$HOME(?=\/|$)/, home)
+      .replace(/^\$\{HOME\}(?=\/|$)/, home),
+  );
+}
+
+export function agentConfigDirsFromCommand(command: string): string[] {
+  const dirs: string[] = [];
+  let pos = command.search(/\S/);
+  if (pos < 0) return dirs;
+
+  while (pos < command.length) {
+    const tokenEnd = endOfShellToken(command, pos);
+    const token = command.slice(pos, tokenEnd);
+    const match = token.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match) break;
+    const key = match[1];
+    if (key === "CODEX_HOME" || key === "CLAUDE_CONFIG_DIR") {
+      const dir = expandConfigDir(match[2]);
+      if (dir) dirs.push(dir);
+    }
+    pos = tokenEnd;
+    while (pos < command.length && /\s/.test(command[pos])) pos += 1;
+  }
+
+  return dirs;
+}
+
 /** Build the shell argv for a given command + cwd. Uses the user's login +
  *  interactive shell so PATH/env/functions from their rc files (zsh, fish,
  *  bash, etc.) flow through. Many user launchers are shell functions or PATH
@@ -383,6 +426,20 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       `preset has no command — edit it in Settings.`,
     );
     return;
+  }
+
+  for (const dir of agentConfigDirsFromCommand(req.command)) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (err) {
+      reportSpawnFailure(
+        sink,
+        req.ptyId,
+        "agent-config-dir-create-failed",
+        `cannot create agent config directory: ${dir}\n${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
   }
 
   const binary = preflightBinary(req.command);

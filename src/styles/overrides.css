@@ -562,6 +562,10 @@
   background: var(--status-active);
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--status-active) 35%, transparent);
 }
+.aya-tab-bell--active {
+  background: var(--status-active);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--status-active) 35%, transparent);
+}
 .aya-tab-bell--waiting {
   background: var(--status-waiting);
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--status-waiting) 35%, transparent);
@@ -755,6 +759,29 @@
   flex-direction: column;
   gap: 4px;
 }
+.aya-attention-group {
+  display: grid;
+  gap: 4px;
+}
+.aya-attention-group + .aya-attention-group {
+  margin-top: 10px;
+}
+.aya-attention-group-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 2px 2px;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.aya-attention-group-title span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+}
 .aya-attention-row,
 .aya-timeline-row {
   width: 100%;
@@ -788,6 +815,7 @@
 .aya-attention-row--waiting .aya-attention-dot { background: var(--status-waiting); }
 .aya-attention-row--error .aya-attention-dot { background: var(--status-error); }
 .aya-attention-row--done .aya-attention-dot { background: var(--status-active); }
+.aya-attention-row--idle .aya-attention-dot { background: var(--fg-tertiary); }
 .aya-attention-row-main,
 .aya-timeline-main {
   min-width: 0;
@@ -813,12 +841,33 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.aya-attention-row-action,
 .aya-timeline-time {
   flex-shrink: 0;
   color: var(--fg-tertiary);
   font-family: var(--font-mono);
   font-size: 11px;
+}
+.aya-attention-row-actions {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.aya-attention-row-actions button {
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg-secondary);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  cursor: pointer;
+}
+.aya-attention-row-actions button:hover {
+  border-color: var(--border-strong);
+  color: var(--fg-primary);
+  background: var(--bg-tertiary);
 }
 .aya-timeline-row--waiting .aya-timeline-time { color: var(--status-waiting); }
 .aya-timeline-row--error .aya-timeline-time { color: var(--status-error); }
@@ -975,6 +1024,57 @@
   border-radius: 6px;
   background: var(--bg);
   overflow: hidden;
+}
+.aya-remote-health {
+  margin-top: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.aya-remote-health--ok {
+  border-color: color-mix(in srgb, var(--status-active) 45%, var(--border));
+}
+.aya-remote-health--error {
+  border-color: color-mix(in srgb, var(--status-error) 45%, var(--border));
+}
+.aya-remote-health-title {
+  color: var(--fg-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+.aya-remote-health-meta {
+  margin-top: 2px;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+}
+.aya-remote-health-steps {
+  display: grid;
+  gap: 5px;
+  margin-top: 8px;
+}
+.aya-remote-health-step {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  color: var(--fg-secondary);
+  font-size: 11px;
+}
+.aya-remote-health-step span {
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+}
+.aya-remote-health-step p {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.aya-remote-health-step--ok p {
+  color: var(--fg-secondary);
+}
+.aya-remote-health-step--error p {
+  color: var(--status-error);
 }
 .aya-remote-browser-header {
   display: flex;
@@ -1209,6 +1309,11 @@
 .aya-tab-path {
   flex: 1 1 auto;
   min-width: 0;
+}
+.aya-tab-path--summary {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--fg-secondary);
 }
 /* Higher-specificity selector + !important so the design handoff's base tab
    sizing cannot collapse the runtime project tabs. */
@@ -1708,6 +1813,11 @@
   align-items: center;
   justify-content: flex-end;
 }
+.aya-settings-button-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
 .aya-settings-general-row .aya-modal-hint {
   margin-bottom: 0;
 }
@@ -1745,6 +1855,128 @@
   color: var(--fg-primary);
   background: var(--bg-tertiary);
   box-shadow: 0 0 0 1px var(--border-strong) inset;
+}
+.aya-settings-diagnostics {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  padding: 10px;
+}
+.aya-settings-diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.aya-settings-diagnostics-grid > div {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  padding: 8px;
+}
+.aya-settings-diagnostics-grid span {
+  display: block;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  margin-bottom: 3px;
+}
+.aya-settings-diagnostics-grid strong {
+  display: block;
+  color: var(--fg-primary);
+  font-size: 12px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-settings-diagnostics-json {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--terminal-bg);
+  color: var(--fg-secondary);
+  font: 11px/1.45 var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.aya-settings-update-progress {
+  height: 5px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+}
+.aya-settings-update-progress span {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 160ms ease;
+}
+.aya-intelligence-frame {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+.aya-intelligence-head {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+.aya-intelligence-head .aya-settings-general-title span {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in oklab, var(--status-waiting) 55%, var(--border));
+  border-radius: 999px;
+  color: var(--status-waiting);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.aya-intelligence-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.aya-intelligence-field {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+.aya-intelligence-field label {
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.aya-intelligence-field .aya-modal-input {
+  width: 100%;
+}
+.aya-intelligence-provider {
+  display: grid;
+  gap: 9px;
+}
+.aya-intelligence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.aya-intelligence-status {
+  color: var(--fg-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
 }
 .aya-settings-row {
   display: flex;

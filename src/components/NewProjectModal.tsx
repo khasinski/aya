@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type {
   RemoteDirectoryListing,
+  RemoteHealthResult,
   RemoteProjectCreateResult,
 } from "../types";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
@@ -28,6 +29,7 @@ interface Props {
     sshTarget: string,
     directory: string,
   ) => Promise<string>;
+  onCheckRemoteHealth?: (sshTarget: string) => Promise<RemoteHealthResult>;
   onSubmitRemote?: (
     result: RemoteProjectCreateResult,
     sshTarget: string,
@@ -66,6 +68,7 @@ export function NewProjectModal({
   onListRemoteDirectory,
   onCreateRemoteProject,
   onCreateRemoteDirectory,
+  onCheckRemoteHealth,
   onSubmitRemote,
   onSubmit,
   onCancel,
@@ -83,6 +86,10 @@ export function NewProjectModal({
   const [remoteNewFolder, setRemoteNewFolder] = useState("");
   const [remoteListing, setRemoteListing] =
     useState<RemoteDirectoryListing | null>(null);
+  const [remoteHealth, setRemoteHealth] = useState<RemoteHealthResult | null>(
+    null,
+  );
+  const [remoteHealthLoading, setRemoteHealthLoading] = useState(false);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -121,9 +128,28 @@ export function NewProjectModal({
   const setRemoteTarget = (next: string) => {
     setSshTarget(next);
     setRemoteListing(null);
+    setRemoteHealth(null);
     setRemoteConnected(false);
     setRemotePath("");
     setError(null);
+  };
+
+  const checkRemote = async () => {
+    if (!onCheckRemoteHealth || remoteHealthLoading || submitting) return;
+    const target = sshTarget.trim();
+    if (!target) {
+      setError("Remote host is required.");
+      return;
+    }
+    setRemoteHealthLoading(true);
+    setError(null);
+    try {
+      setRemoteHealth(await onCheckRemoteHealth(target));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRemoteHealthLoading(false);
+    }
   };
 
   const listRemote = async (nextPath?: string) => {
@@ -365,6 +391,7 @@ export function NewProjectModal({
                     setRemoteVisible(false);
                     setRemoteConnected(false);
                     setRemoteListing(null);
+                    setRemoteHealth(null);
                     setRemotePath("");
                     setError(null);
                   }}
@@ -381,11 +408,56 @@ export function NewProjectModal({
                   {remoteLoading ? "Connecting..." : "Connect"}
                 </button>
               )}
+              {onCheckRemoteHealth && (
+                <button
+                  className="aya-modal-btn"
+                  onClick={() => void checkRemote()}
+                  disabled={
+                    submitting ||
+                    remoteLoading ||
+                    remoteHealthLoading ||
+                    !sshTarget.trim()
+                  }
+                >
+                  {remoteHealthLoading ? "Checking..." : "Check"}
+                </button>
+              )}
             </div>
             <div className="aya-modal-hint aya-remote-help">
               Remote projects connect over SSH and require Aya to be installed
               and running on the other computer.
             </div>
+            {remoteHealth && (
+              <div
+                className={`aya-remote-health ${
+                  remoteHealth.ok ? "aya-remote-health--ok" : "aya-remote-health--error"
+                }`}
+              >
+                <div className="aya-remote-health-title">
+                  {remoteHealth.ok ? "Remote ready" : "Remote check failed"}
+                </div>
+                {remoteHealth.host && (
+                  <div className="aya-remote-health-meta">
+                    {remoteHealth.host.name} · {remoteHealth.presetsCount ?? 0} presets
+                  </div>
+                )}
+                <div className="aya-remote-health-steps">
+                  {remoteHealth.checks.map((check) => (
+                    <div
+                      key={check.stage}
+                      className={`aya-remote-health-step ${
+                        check.ok
+                          ? "aya-remote-health-step--ok"
+                          : "aya-remote-health-step--error"
+                      }`}
+                    >
+                      <span>{check.stage}</span>
+                      <p>{check.message}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {remoteListing && (
               <div className="aya-remote-browser">

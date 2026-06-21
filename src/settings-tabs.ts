@@ -1,1 +1,8 @@
-export type SettingsTab = "general" | "themes" | "presets" | "snippets";
+export type SettingsTab =
+  | "general"
+  | "intelligence"
+  | "updates"
+  | "diagnostics"
+  | "themes"
+  | "presets"
+  | "snippets";

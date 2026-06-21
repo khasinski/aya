@@ -1,6 +1,6 @@
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
 import { useEffect, useRef, useState, type DragEvent } from "react";
-import type { ProjectConfig, UsageAccount } from "../types";
+import type { MonitoredSession, ProjectConfig, UsageAccount } from "../types";
 import type { SettingsTab } from "../settings-tabs";
 import { UsageChip } from "./UsageChip";
 
@@ -11,7 +11,7 @@ const TAB_MAX_WIDTH_PX = 320;
 
 interface ProjectAttention {
   count: number;
-  level: "done" | "waiting" | "error";
+  level: "active" | "done" | "waiting" | "error";
 }
 
 interface Props {
@@ -41,6 +41,8 @@ interface Props {
   onToggleFullScreenWindow: () => void;
   onCloseWindow: () => void;
   projectBadges?: Record<string, ProjectAttention>;
+  monitoredSessionsByProject?: Record<string, MonitoredSession[]>;
+  projectSummaries?: Record<string, string>;
   /** Account-wide Claude usage snapshots. Read-only. */
   usageAccounts?: UsageAccount[];
   /** Account-wide Codex usage snapshots. Read-only. */
@@ -79,6 +81,8 @@ export function TopBar({
   onToggleFullScreenWindow,
   onCloseWindow,
   projectBadges = {},
+  monitoredSessionsByProject = {},
+  projectSummaries = {},
   usageAccounts = [],
   codexUsageAccounts = [],
   showUsageHarnessName,
@@ -88,7 +92,15 @@ export function TopBar({
   const inputRef = useRef<HTMLInputElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
   const recentRef = useRef<HTMLDivElement>(null);
+  const sessionsRef = useRef<HTMLDivElement>(null);
   const [showRecent, setShowRecent] = useState(false);
+  const [showSessions, setShowSessions] = useState(false);
+
+  const monitoredSessions = Object.entries(monitoredSessionsByProject)
+    .flatMap(([projectSlug, sessions]) =>
+      sessions.map((session) => ({ ...session, projectSlug })),
+    )
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 
   useEffect(() => {
     if (!showRecent) return;
@@ -98,6 +110,15 @@ export function TopBar({
     window.addEventListener("pointerdown", onPointerDown, true);
     return () => window.removeEventListener("pointerdown", onPointerDown, true);
   }, [showRecent]);
+
+  useEffect(() => {
+    if (!showSessions) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!sessionsRef.current?.contains(e.target as Node)) setShowSessions(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, [showSessions]);
 
   // Route ANY wheel/trackpad delta over the tab strip into horizontal
   // scroll. macOS trackpad horizontal swipes default to history navigation
@@ -266,6 +287,8 @@ export function TopBar({
           const displayPath = p.remote
             ? `${p.remote.label}:${p.remote.directory}`
             : compactDir(p.directory, homeDir);
+          const projectSummary = projectSummaries[p.slug]?.trim();
+          const displayMeta = projectSummary || displayPath;
           const isDropTarget = dropTarget?.slug === p.slug;
           const dropClass = isDropTarget
             ? dropTarget.before
@@ -294,7 +317,7 @@ export function TopBar({
               title={
                 isRenaming
                   ? undefined
-                  : `${p.name} - ${displayPath} · double-click to rename · drag to reorder`
+                  : `${p.name} - ${displayPath}${projectSummary ? ` · ${projectSummary}` : ""} · double-click to rename · drag to reorder`
               }
             >
               {isRenaming ? (
@@ -332,11 +355,17 @@ export function TopBar({
                   {p.name}
                 </span>
               )}
-              <span className="aya-tab-path">{displayPath}</span>
+              <span
+                className={`aya-tab-path ${
+                  projectSummary ? "aya-tab-path--summary" : ""
+                }`}
+              >
+                {displayMeta}
+              </span>
               {badge && (
                 <span
                   className={`aya-tab-bell aya-tab-bell--${badge.level}`}
-                  title={`${badge.count} terminal${badge.count > 1 ? "s" : ""} need attention`}
+                  title={`${badge.count} monitored session${badge.count > 1 ? "s" : ""}: ${badge.level}`}
                 />
               )}
               <span
@@ -362,6 +391,63 @@ export function TopBar({
         </div>
       </div>
       <div className="aya-topbar-right">
+        {monitoredSessions.length > 0 && (
+          <div className="aya-monitored-sessions" ref={sessionsRef}>
+            <button
+              className="aya-session-chip"
+              title="Claude/Codex sessions"
+              aria-label="Claude/Codex sessions"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setShowSessions((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={showSessions}
+            >
+              <span className="aya-session-chip-bars" aria-hidden="true">
+                {(["error", "waiting", "active", "done"] as const).map((level) => {
+                  const count = monitoredSessions.filter((s) => s.level === level).length;
+                  return count > 0 ? (
+                    <span
+                      key={level}
+                      className={`aya-session-chip-bar aya-session-chip-bar--${level}`}
+                      style={{ flexGrow: count }}
+                    />
+                  ) : null;
+                })}
+              </span>
+              <span>{monitoredSessions.length}</span>
+            </button>
+            {showSessions && (
+              <div className="aya-session-menu" role="menu">
+                <div className="aya-session-menu-title">Claude/Codex sessions</div>
+                {monitoredSessions.slice(0, 8).map((session) => {
+                  const project = projects.find((p) => p.slug === session.projectSlug);
+                  const source = session.source === "codex" ? "Codex" : "Claude";
+                  return (
+                    <button
+                      key={`${session.source}:${session.id}`}
+                      className={`aya-session-menu-item aya-session-menu-item--${session.level}`}
+                      role="menuitem"
+                      onClick={() => {
+                        setShowSessions(false);
+                        onSelectProject(session.projectSlug);
+                      }}
+                    >
+                      <span className="aya-session-dot" aria-hidden="true" />
+                      <span className="aya-session-menu-main">
+                        <span className="aya-session-menu-name">
+                          {project?.name ?? session.projectName ?? session.sessionName ?? source}
+                        </span>
+                        <span className="aya-session-menu-detail">
+                          {source} · {session.text}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
         {usageAccounts.length > 0 && (
           <UsageChip
             accounts={usageAccounts}

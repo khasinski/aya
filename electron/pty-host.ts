@@ -12,6 +12,7 @@ import {
 } from "./pty-host-protocol";
 import {
   activePtyCount,
+  getBufferedOutput,
   killPty,
   killAll,
   resizePty,
@@ -93,6 +94,9 @@ async function handle(request: PtyHostRequest): Promise<unknown> {
   }
   if (request.type === "search") {
     return searchPtyOutputs(request.query);
+  }
+  if (request.type === "buffer") {
+    return getBufferedOutput(request.ptyId);
   }
   if (request.type === "version") {
     return { ...HOST_IDENTITY, ptyCount: activePtyCount() };

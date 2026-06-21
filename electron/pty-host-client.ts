@@ -117,6 +117,11 @@ export class PtyHostClient {
     return asSearchResult(await this.request({ id: 0, type: "search", query }));
   }
 
+  async getBuffer(ptyId: string): Promise<string> {
+    const result = await this.request({ id: 0, type: "buffer", ptyId });
+    return typeof result === "string" ? result : "";
+  }
+
   private async request(request: PtyHostRequest): Promise<unknown> {
     await this.connect();
     const socket = this.socket;

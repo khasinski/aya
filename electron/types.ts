@@ -113,6 +113,24 @@ export interface RemoteProjectCreateResult {
   project: ProjectConfig;
 }
 
+export type RemoteHealthStage = "ssh" | "node" | "aya-remote" | "snapshot";
+
+export interface RemoteHealthCheck {
+  stage: RemoteHealthStage;
+  ok: boolean;
+  message: string;
+}
+
+export interface RemoteHealthResult {
+  ok: boolean;
+  sshTarget: string;
+  checkedAt: string;
+  checks: RemoteHealthCheck[];
+  host?: RemoteHostInfo;
+  presetsCount?: number;
+  recentProjectsCount?: number;
+}
+
 export interface GitChangedFile {
   status: string;
   path: string;
@@ -123,6 +141,7 @@ export type SpawnFailureReason =
   | "cwd-not-directory"
   | "cwd-unreadable"
   | "preset-empty-command"
+  | "agent-config-dir-create-failed"
   | "command-not-found"
   | "node-pty-spawn-error";
 
@@ -147,12 +166,119 @@ export interface TerminalNotificationSelection {
   terminalId: string;
 }
 
+export type AyaIntelligenceProvider = "apple" | "ollama" | "openai";
+
+export interface AyaIntelligenceConfig {
+  provider: AyaIntelligenceProvider;
+  ollamaModel: string;
+  openAiBaseUrl: string;
+  openAiApiKey: string;
+  openAiModel: string;
+}
+
+export interface OllamaStatus {
+  installed: boolean;
+  running: boolean;
+  path: string | null;
+  models: string[];
+  recommendedModel: string;
+  recommendedModelInstalled: boolean;
+  message?: string;
+}
+
+export interface LocalSummaryRequest {
+  kind: "terminal" | "project";
+  lines: string[];
+  intelligence?: AyaIntelligenceConfig;
+}
+
+export interface LocalSummaryResult {
+  available: boolean;
+  useful: boolean;
+  summary: string;
+  error?: string;
+}
+
 export interface CliStatus {
   installed: boolean;
   path: string | null;
   installDir: string | null;
   installable: boolean;
   message?: string;
+}
+
+export interface DiagnosticsReport {
+  generatedAt: string;
+  app: {
+    version: string;
+    mode: "development" | "production";
+    platform: NodeJS.Platform;
+    arch: string;
+    pid: number;
+    cwd: string;
+  };
+  paths: {
+    ayaHome: string;
+    controlSocket: string;
+    remoteSocket: string;
+    ptyHostSocket: string;
+    controlSocketExists: boolean;
+    remoteSocketExists: boolean;
+    ptyHostSocketExists: boolean;
+  };
+  shell: {
+    shell: string | null;
+    pathEntries: string[];
+  };
+  cli: CliStatus;
+  ptyHost: {
+    expected: { version: string; scriptHash: string };
+    actual: { version: string; scriptHash: string } | null;
+    ptyCount: number;
+    stale: boolean;
+  };
+  presets: Array<{
+    id: string;
+    name: string;
+    agent: Preset["agent"];
+    command: string;
+    configDir?: string;
+    autoResume?: boolean;
+    unsafeMode?: boolean;
+  }>;
+  projects: {
+    total: number;
+    open: number;
+    recent: number;
+    remote: number;
+  };
+  usage: {
+    claudeAccounts: number;
+    codexAccounts: number;
+    hookInstalled: boolean;
+    hookScriptPath: string;
+  };
+}
+
+export type UpdateStatusPhase =
+  | "unsupported"
+  | "idle"
+  | "checking"
+  | "available"
+  | "not-available"
+  | "downloading"
+  | "downloaded"
+  | "error";
+
+export interface UpdateStatus {
+  phase: UpdateStatusPhase;
+  supported: boolean;
+  currentVersion: string;
+  availableVersion?: string;
+  downloadedVersion?: string;
+  percent?: number;
+  message?: string;
+  checkedAt?: string;
 }
 
 /** macOS microphone authorization, surfaced read-only in Settings. Maps the
@@ -173,6 +299,19 @@ export interface ControlStatusUpdate {
   cwd?: string;
   level: ControlStatusLevel | "clear";
   text?: string;
+  updatedAt: number;
+}
+
+export type MonitoredSessionLevel = ControlStatusLevel;
+
+export interface MonitoredSession {
+  id: string;
+  source: string;
+  cwd: string;
+  projectName?: string;
+  sessionName?: string;
+  level: MonitoredSessionLevel;
+  text: string;
   updatedAt: number;
 }
 
@@ -197,6 +336,7 @@ export interface AyaApi {
   ptyWrite(ptyId: string, data: string): Promise<void>;
   ptyResize(ptyId: string, cols: number, rows: number): Promise<void>;
   ptyKill(ptyId: string): Promise<void>;
+  ptyBuffer(ptyId: string): Promise<string>;
   /** Case-insensitive substring search across every live PTY's recent
    *  output buffer. Returns one hit per matching pty (the first match plus
    *  an extra-occurrences count). */
@@ -225,6 +365,7 @@ export interface AyaApi {
     directory: string,
   ): Promise<string>;
   listRemotePresets(sshTarget: string): Promise<Preset[]>;
+  checkRemoteHealth(sshTarget: string): Promise<RemoteHealthResult>;
   createRemoteProjectOnHost(
     sshTarget: string,
     directory: string,
@@ -256,6 +397,9 @@ export interface AyaApi {
   usageHookStatus(): Promise<UsageHookStatus>;
   installUsageHook(): Promise<UsageHookStatus>;
   uninstallUsageHook(): Promise<UsageHookStatus>;
+  summarizeLocal(req: LocalSummaryRequest): Promise<LocalSummaryResult>;
+  ollamaStatus(model?: string): Promise<OllamaStatus>;
+  pullOllamaModel(model: string): Promise<OllamaStatus>;
 
   // Themes (terminal color schemes — xterm.js ITheme shape internally)
   listThemes(): Promise<ThemesFile>;
@@ -306,6 +450,10 @@ export interface AyaApi {
   showWaitingNotification(req: WaitingNotificationRequest): Promise<void>;
   cliStatus(): Promise<CliStatus>;
   installCli(): Promise<CliStatus>;
+  getDiagnostics(): Promise<DiagnosticsReport>;
+  getUpdateStatus(): Promise<UpdateStatus>;
+  checkForUpdates(): Promise<UpdateStatus>;
+  installUpdate(): Promise<void>;
   openNotificationSettings(): Promise<void>;
   /** Current macOS microphone authorization (read-only; "unsupported" off-mac). */
   micStatus(): Promise<MicPermissionStatus>;
@@ -319,6 +467,8 @@ export interface AyaApi {
     handler: (selection: TerminalNotificationSelection) => void,
   ): () => void;
   onControlStatus(handler: (update: ControlStatusUpdate) => void): () => void;
+  listMonitoredSessions(): Promise<MonitoredSession[]>;
+  onUpdateStatus(handler: (status: UpdateStatus) => void): () => void;
 
   /** Subscribe to keyboard shortcuts dispatched by the main process. Returns
    *  an unsubscribe function. Action strings: "new-shell", "close-tab",

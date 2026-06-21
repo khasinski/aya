@@ -14,6 +14,7 @@ import {
   systemPreferences,
   type MenuItemConstructorOptions,
 } from "electron";
+import { autoUpdater } from "electron-updater";
 import {
   accessSync,
   constants as fsConstants,
@@ -22,6 +23,7 @@ import {
   statSync,
 } from "node:fs";
 import { deflateSync } from "node:zlib";
+import { spawn } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -47,11 +49,20 @@ import { startRemoteServer } from "./remote-server";
 import {
   createRemoteDirectory,
   createRemoteProjectOnHost,
+  checkRemoteHealth,
   listRemotePresets,
   listRemoteDirectory,
 } from "./remote-client";
 import { getGitChangedFiles, getGitDiff, getGitInfo } from "./git";
-import { IS_DEV, IS_E2E_HEADLESS, IS_E2E_PTY_SHUTDOWN } from "./paths";
+import {
+  AYA_HOME,
+  CONTROL_SOCKET_PATH,
+  IS_DEV,
+  IS_E2E_HEADLESS,
+  IS_E2E_PTY_SHUTDOWN,
+  PTY_HOST_SOCKET_PATH,
+  REMOTE_SOCKET_PATH,
+} from "./paths";
 import { scanHarnesses } from "./harnesses";
 import { isInternalNavigationUrl, parseHttpUrl } from "./navigation";
 import { listPresets, savePresets } from "./presets";
@@ -63,6 +74,7 @@ import {
   installUsageHook,
   uninstallUsageHook,
 } from "./usage-hook";
+import { listMonitoredSessions } from "./session-monitor";
 import { readRepoProjectConfig } from "./project-local";
 import { repairProcessPath } from "./shell-path";
 import { PtyHostClient } from "./pty-host-client";
@@ -77,7 +89,15 @@ import {
   validateThemesFile,
 } from "./validation";
 import { loadWindowState, trackWindowState } from "./window-state";
-import type { CliStatus } from "./types";
+import type {
+  AyaIntelligenceConfig,
+  CliStatus,
+  DiagnosticsReport,
+  LocalSummaryRequest,
+  LocalSummaryResult,
+  OllamaStatus,
+  UpdateStatus,
+} from "./types";
 
 const DEV_SERVER_URL = "http://localhost:5183";
 const WINDOW_TITLE = IS_DEV ? "Aya Dev" : "Aya";
@@ -98,8 +118,20 @@ const COLOR_LIGHT_TEXT = "#f0f6fc";
 const ABOUT_DIALOG_SIZE = 360;
 // About dialog icon dimensions (square, px)
 const ABOUT_ICON_SIZE = 128;
+const LOCAL_SUMMARY_TIMEOUT_MS = 20_000;
+const LOCAL_SUMMARY_MAX_LINES = 30;
+const LOCAL_SUMMARY_MAX_STDOUT_BYTES = 32 * 1024;
+const RECOMMENDED_OLLAMA_MODEL = "gemma4:e4b";
 
 const ptyHost = new PtyHostClient(path.join(__dirname, "pty-host.js"));
+const UPDATE_AUTO_CHECK_DELAY_MS = 12_000;
+let updateStatus: UpdateStatus = {
+  phase: "idle",
+  supported: false,
+  currentVersion: "0.0.0",
+};
+let updateEventsConfigured = false;
+let updateCheckInFlight: Promise<UpdateStatus> | null = null;
 let macosWindowHack:
   | {
       apply(handle: Buffer): void;
@@ -140,6 +172,393 @@ function setAyaFullScreen(win: BrowserWindow, value: boolean): void {
 function toggleAyaFullScreen(win: BrowserWindow | null): void {
   if (!win || win.isDestroyed()) return;
   setAyaFullScreen(win, !isAyaFullScreen(win));
+}
+
+function unavailableLocalSummary(error?: string): LocalSummaryResult {
+  return { available: false, useful: false, summary: "", ...(error ? { error } : {}) };
+}
+
+function normalizeAyaIntelligenceConfig(
+  value: unknown,
+): AyaIntelligenceConfig | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const input = value as Record<string, unknown>;
+  const provider =
+    input.provider === "ollama" || input.provider === "openai"
+      ? input.provider
+      : "apple";
+  return {
+    provider,
+    ollamaModel:
+      typeof input.ollamaModel === "string" && input.ollamaModel.trim()
+        ? input.ollamaModel.trim()
+        : RECOMMENDED_OLLAMA_MODEL,
+    openAiBaseUrl:
+      typeof input.openAiBaseUrl === "string" ? input.openAiBaseUrl.trim() : "",
+    openAiApiKey:
+      typeof input.openAiApiKey === "string" ? input.openAiApiKey.trim() : "",
+    openAiModel:
+      typeof input.openAiModel === "string" ? input.openAiModel.trim() : "",
+  };
+}
+
+function validateLocalSummaryRequest(value: unknown): LocalSummaryRequest {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("local-summary:summarize.req must be an object");
+  }
+  const req = value as Record<string, unknown>;
+  const kind = req.kind === "project" ? "project" : "terminal";
+  if (!Array.isArray(req.lines)) {
+    throw new Error("local-summary:summarize.lines must be an array");
+  }
+  const lines = req.lines
+    .filter((line): line is string => typeof line === "string")
+    .slice(-LOCAL_SUMMARY_MAX_LINES);
+  return {
+    kind,
+    lines,
+    ...(req.intelligence
+      ? { intelligence: normalizeAyaIntelligenceConfig(req.intelligence) }
+      : {}),
+  };
+}
+
+async function summarizeWithApple(
+  req: LocalSummaryRequest,
+): Promise<LocalSummaryResult> {
+  if (process.platform !== "darwin") return unavailableLocalSummary("unsupported-platform");
+  const helper = path.join(__dirname, "aya-local-summary");
+  try {
+    await fs.access(helper, fsConstants.X_OK);
+  } catch {
+    return unavailableLocalSummary("helper-missing");
+  }
+
+  return new Promise((resolve) => {
+    const child = spawn(helper, [], { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGKILL");
+      resolve(unavailableLocalSummary("timeout"));
+    }, LOCAL_SUMMARY_TIMEOUT_MS);
+
+    const finish = (result: LocalSummaryResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+
+    child.stdout.setEncoding("utf-8");
+    child.stdout.on("data", (chunk: string) => {
+      if (stdout.length < LOCAL_SUMMARY_MAX_STDOUT_BYTES) stdout += chunk;
+    });
+    child.stderr.setEncoding("utf-8");
+    child.stderr.on("data", (chunk: string) => {
+      if (stderr.length < LOCAL_SUMMARY_MAX_STDOUT_BYTES) stderr += chunk;
+    });
+    child.on("error", (error) => finish(unavailableLocalSummary(error.message)));
+    child.on("close", (code) => {
+      if (code !== 0) {
+        finish(unavailableLocalSummary(stderr.trim() || `helper-exit-${code}`));
+        return;
+      }
+      try {
+        const parsed = JSON.parse(stdout) as Partial<LocalSummaryResult>;
+        const summary =
+          typeof parsed.summary === "string"
+            ? parsed.summary.replace(/\s+/g, " ").trim().slice(0, 160)
+            : "";
+        finish({
+          available: parsed.available === true,
+          useful: parsed.useful === true && summary.length > 0,
+          summary: parsed.useful === true ? summary : "",
+          ...(typeof parsed.error === "string" && parsed.error ? { error: parsed.error } : {}),
+        });
+      } catch {
+        finish(unavailableLocalSummary("invalid-helper-json"));
+      }
+    });
+    child.stdin.on("error", () => undefined);
+    child.stdin.end(JSON.stringify(req));
+  });
+}
+
+function cleanSummary(value: string): string {
+  const oneLine = value
+    .replace(/\s+/g, " ")
+    .replace(/^["'`]+|["'`.]+$/g, "")
+    .trim();
+  const words = oneLine.split(/\s+/).filter(Boolean).slice(0, 8).join(" ");
+  return words.slice(0, 80);
+}
+
+function summaryPrompt(req: LocalSummaryRequest): string {
+  const subject =
+    req.kind === "project" ? "project activity" : "terminal output";
+  return [
+    `Summarize recent ${subject} for a compact app label.`,
+    "Return strict JSON only, with shape:",
+    '{"useful":true,"summary":"2-6 word label"}',
+    "If the output is too noisy, generic, idle, or not meaningful, return:",
+    '{"useful":false,"summary":""}',
+    "Do not invent context. No full sentences. No punctuation. Max 6 words.",
+    "",
+    "Recent output:",
+    req.lines.join("\n"),
+  ].join("\n");
+}
+
+function openAiBaseUrl(baseUrl: string): string {
+  const trimmed = baseUrl.trim().replace(/\/+$/, "");
+  if (!trimmed) return "";
+  return /\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/v1`;
+}
+
+function parseSummaryResponse(content: string): LocalSummaryResult {
+  const trimmed = content.trim();
+  const jsonText =
+    trimmed.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1]?.trim() ?? trimmed;
+  try {
+    const parsed = JSON.parse(jsonText) as Partial<LocalSummaryResult>;
+    const summary =
+      typeof parsed.summary === "string" ? cleanSummary(parsed.summary) : "";
+    return {
+      available: true,
+      useful: parsed.useful === true && summary.length > 0,
+      summary: parsed.useful === true ? summary : "",
+    };
+  } catch {
+    const summary = cleanSummary(trimmed);
+    return { available: true, useful: summary.length > 0, summary };
+  }
+}
+
+async function summarizeWithOpenAiCompatible(args: {
+  req: LocalSummaryRequest;
+  baseUrl: string;
+  apiKey?: string;
+  model: string;
+}): Promise<LocalSummaryResult> {
+  const baseUrl = openAiBaseUrl(args.baseUrl);
+  const model = args.model.trim();
+  if (!baseUrl || !model) return unavailableLocalSummary("missing-api-config");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), LOCAL_SUMMARY_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(args.apiKey ? { Authorization: `Bearer ${args.apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        max_tokens: 64,
+        think: false,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You summarize terminal output for a developer tool. Return JSON only.",
+          },
+          { role: "user", content: summaryPrompt(args.req) },
+        ],
+      }),
+    });
+    if (!response.ok) {
+      return unavailableLocalSummary(`api-http-${response.status}`);
+    }
+    const json = (await response.json()) as {
+      choices?: Array<{
+        message?: { content?: unknown; reasoning?: unknown };
+        text?: unknown;
+      }>;
+    };
+    const content =
+      typeof json.choices?.[0]?.message?.content === "string"
+        ? json.choices[0].message.content ||
+          (typeof json.choices[0].message.reasoning === "string"
+            ? json.choices[0].message.reasoning
+            : "")
+        : typeof json.choices?.[0]?.text === "string"
+          ? json.choices[0].text
+          : "";
+    if (!content) return { available: true, useful: false, summary: "" };
+    return parseSummaryResponse(content);
+  } catch (err) {
+    return unavailableLocalSummary(err instanceof Error ? err.message : String(err));
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function summarizeWithOllama(
+  req: LocalSummaryRequest,
+  model: string,
+): Promise<LocalSummaryResult> {
+  const selectedModel = model.trim() || RECOMMENDED_OLLAMA_MODEL;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), LOCAL_SUMMARY_TIMEOUT_MS);
+  try {
+    const response = await fetch("http://localhost:11434/api/chat", {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: selectedModel,
+        stream: false,
+        think: false,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You summarize terminal output for a developer tool. Return JSON only.",
+          },
+          { role: "user", content: summaryPrompt(req) },
+        ],
+        options: {
+          temperature: 0.2,
+          num_predict: 64,
+        },
+      }),
+    });
+    if (!response.ok) {
+      return unavailableLocalSummary(`ollama-http-${response.status}`);
+    }
+    const json = (await response.json()) as {
+      message?: { content?: unknown };
+    };
+    const content =
+      typeof json.message?.content === "string" ? json.message.content : "";
+    if (!content) return { available: true, useful: false, summary: "" };
+    return parseSummaryResponse(content);
+  } catch (err) {
+    return unavailableLocalSummary(err instanceof Error ? err.message : String(err));
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function summarizeLocal(
+  req: LocalSummaryRequest,
+): Promise<LocalSummaryResult> {
+  const intelligence = req.intelligence;
+  if (!intelligence || intelligence.provider === "apple") {
+    return summarizeWithApple(req);
+  }
+  if (intelligence.provider === "ollama") {
+    return summarizeWithOllama(
+      req,
+      intelligence.ollamaModel || RECOMMENDED_OLLAMA_MODEL,
+    );
+  }
+  return summarizeWithOpenAiCompatible({
+    req,
+    baseUrl: intelligence.openAiBaseUrl,
+    apiKey: intelligence.openAiApiKey,
+    model: intelligence.openAiModel,
+  });
+}
+
+async function ollamaStatus(
+  recommendedModel = RECOMMENDED_OLLAMA_MODEL,
+): Promise<OllamaStatus> {
+  const executable = findExecutableOnPath("ollama");
+  if (!executable) {
+    return {
+      installed: false,
+      running: false,
+      path: null,
+      models: [],
+      recommendedModel,
+      recommendedModelInstalled: false,
+      message: "Ollama is not installed or not on PATH.",
+    };
+  }
+  try {
+    const response = await fetch("http://localhost:11434/api/tags", {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!response.ok) {
+      return {
+        installed: true,
+        running: false,
+        path: executable,
+        models: [],
+        recommendedModel,
+        recommendedModelInstalled: false,
+        message: `Ollama API returned HTTP ${response.status}.`,
+      };
+    }
+    const json = (await response.json()) as {
+      models?: Array<{ name?: unknown; model?: unknown }>;
+    };
+    const models = (Array.isArray(json.models) ? json.models : [])
+      .map((model) =>
+        typeof model.name === "string"
+          ? model.name
+          : typeof model.model === "string"
+            ? model.model
+            : "",
+      )
+      .filter(Boolean);
+    return {
+      installed: true,
+      running: true,
+      path: executable,
+      models,
+      recommendedModel,
+      recommendedModelInstalled: models.includes(recommendedModel),
+    };
+  } catch (err) {
+    return {
+      installed: true,
+      running: false,
+      path: executable,
+      models: [],
+      recommendedModel,
+      recommendedModelInstalled: false,
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+function validateOllamaModelName(value: unknown): string {
+  const model = requireString(value, "intelligence:pull-ollama-model.model").trim();
+  if (!/^[A-Za-z0-9._:/-]{1,120}$/.test(model)) {
+    throw new Error("Ollama model name contains unsupported characters.");
+  }
+  return model;
+}
+
+async function pullOllamaModel(model: string): Promise<OllamaStatus> {
+  const executable = findExecutableOnPath("ollama");
+  if (!executable) throw new Error("Ollama is not installed or not on PATH.");
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(executable, ["pull", model], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf-8");
+    child.stderr.on("data", (chunk: string) => {
+      if (stderr.length < 8192) stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr.trim() || `ollama pull exited ${code}`));
+    });
+  });
+  return ollamaStatus(model);
 }
 
 function pathEntries(): string[] {
@@ -257,6 +676,235 @@ async function installCli(): Promise<CliStatus> {
     installed: true,
     message: `Installed at ${target}`,
   };
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function diagnosticsReport(): Promise<DiagnosticsReport> {
+  const [presets, projects, projectState, usageHook, cli, hostStatus] =
+    await Promise.all([
+      listPresets(),
+      listProjects(),
+      listProjectState(),
+      usageHookStatus(),
+      cliStatus(),
+      ptyHost.hostStatus(),
+    ]);
+  const expected = ptyHost.expectedHostIdentity(app.getVersion());
+  return {
+    generatedAt: new Date().toISOString(),
+    app: {
+      version: app.getVersion(),
+      mode: IS_DEV ? "development" : "production",
+      platform: process.platform,
+      arch: process.arch,
+      pid: process.pid,
+      cwd: process.cwd(),
+    },
+    paths: {
+      ayaHome: AYA_HOME,
+      controlSocket: CONTROL_SOCKET_PATH,
+      remoteSocket: REMOTE_SOCKET_PATH,
+      ptyHostSocket: PTY_HOST_SOCKET_PATH,
+      controlSocketExists: await pathExists(CONTROL_SOCKET_PATH),
+      remoteSocketExists: await pathExists(REMOTE_SOCKET_PATH),
+      ptyHostSocketExists: await pathExists(PTY_HOST_SOCKET_PATH),
+    },
+    shell: {
+      shell: process.env.SHELL ?? null,
+      pathEntries: pathEntries().slice(0, 40),
+    },
+    cli,
+    ptyHost: {
+      expected,
+      actual: hostStatus.identity,
+      ptyCount: hostStatus.ptyCount,
+      stale: isHostStale(expected, hostStatus.identity),
+    },
+    presets: presets.map((preset) => ({
+      id: preset.id,
+      name: preset.name,
+      agent: preset.agent,
+      command: preset.command,
+      ...(preset.configDir ? { configDir: preset.configDir } : {}),
+      ...(typeof preset.autoResume === "boolean"
+        ? { autoResume: preset.autoResume }
+        : {}),
+      ...(typeof preset.unsafeMode === "boolean"
+        ? { unsafeMode: preset.unsafeMode }
+        : {}),
+    })),
+    projects: {
+      total: projects.length,
+      open: projectState.open.length,
+      recent: projectState.recent.length,
+      remote: projects.filter((project) => !!project.remote).length,
+    },
+    usage: {
+      claudeAccounts: presets.filter((preset) => preset.agent === "claude").length,
+      codexAccounts: presets.filter((preset) => preset.agent === "codex").length,
+      hookInstalled: usageHook.installed,
+      hookScriptPath: usageHook.scriptPath,
+    },
+  };
+}
+
+function updatesSupportedMessage(): string {
+  if (IS_DEV || !app.isPackaged) return "Updates are disabled in development builds.";
+  if (process.platform === "darwin") return "";
+  if (process.platform === "linux") {
+    return process.env.APPIMAGE
+      ? ""
+      : "Automatic install is only available for the AppImage build on Linux.";
+  }
+  return "Automatic updates are not supported on this platform.";
+}
+
+function updateStatusBase(): Pick<UpdateStatus, "supported" | "currentVersion"> {
+  return {
+    supported: updatesSupportedMessage() === "",
+    currentVersion: app.getVersion(),
+  };
+}
+
+function setUpdateStatus(
+  next: Omit<UpdateStatus, "supported" | "currentVersion">,
+  win: BrowserWindow | null = mainWindow,
+): UpdateStatus {
+  updateStatus = {
+    ...updateStatusBase(),
+    ...next,
+  };
+  if (win && !win.isDestroyed()) {
+    win.webContents.send("updates:status", updateStatus);
+  }
+  return updateStatus;
+}
+
+function getUpdateStatus(): UpdateStatus {
+  if (updatesSupportedMessage()) {
+    return {
+      ...updateStatusBase(),
+      phase: "unsupported",
+      message: updatesSupportedMessage(),
+    };
+  }
+  return {
+    ...updateStatus,
+    ...updateStatusBase(),
+  };
+}
+
+function updateVersion(info: unknown): string | undefined {
+  return typeof info === "object" &&
+    info !== null &&
+    typeof (info as { version?: unknown }).version === "string"
+    ? (info as { version: string }).version
+    : undefined;
+}
+
+function configureAutoUpdates(win: BrowserWindow): void {
+  if (updateEventsConfigured) return;
+  updateEventsConfigured = true;
+  updateStatus = getUpdateStatus();
+  if (!updateStatus.supported) return;
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.allowPrerelease = false;
+
+  autoUpdater.on("checking-for-update", () => {
+    setUpdateStatus({ phase: "checking", message: "Checking for updates." }, win);
+  });
+  autoUpdater.on("update-available", (info) => {
+    setUpdateStatus(
+      {
+        phase: "available",
+        availableVersion: updateVersion(info),
+        message: "Update found. Downloading in the background.",
+        checkedAt: new Date().toISOString(),
+      },
+      win,
+    );
+  });
+  autoUpdater.on("update-not-available", (info) => {
+    setUpdateStatus(
+      {
+        phase: "not-available",
+        availableVersion: updateVersion(info),
+        message: "Aya is up to date.",
+        checkedAt: new Date().toISOString(),
+      },
+      win,
+    );
+  });
+  autoUpdater.on("download-progress", (progress) => {
+    setUpdateStatus(
+      {
+        phase: "downloading",
+        percent:
+          typeof progress.percent === "number"
+            ? Math.max(0, Math.min(100, progress.percent))
+            : undefined,
+        message: "Downloading update.",
+      },
+      win,
+    );
+  });
+  autoUpdater.on("update-downloaded", (info) => {
+    const downloadedVersion = updateVersion(info);
+    setUpdateStatus(
+      {
+        phase: "downloaded",
+        downloadedVersion,
+        message: downloadedVersion
+          ? `Aya ${downloadedVersion} is ready to install.`
+          : "Update is ready to install.",
+      },
+      win,
+    );
+    if (Notification.isSupported()) {
+      new Notification({
+        title: "Aya update ready",
+        body: "Restart Aya to install the update.",
+      }).show();
+    }
+  });
+  autoUpdater.on("error", (error) => {
+    setUpdateStatus({
+      phase: "error",
+      message: error instanceof Error ? error.message : String(error),
+      checkedAt: new Date().toISOString(),
+    });
+  });
+}
+
+async function checkForUpdates(): Promise<UpdateStatus> {
+  if (updatesSupportedMessage()) return getUpdateStatus();
+  if (updateCheckInFlight) return updateCheckInFlight;
+  updateCheckInFlight = (async () => {
+    try {
+      setUpdateStatus({ phase: "checking", message: "Checking for updates." });
+      await autoUpdater.checkForUpdates();
+      return getUpdateStatus();
+    } catch (err) {
+      return setUpdateStatus({
+        phase: "error",
+        message: err instanceof Error ? err.message : String(err),
+        checkedAt: new Date().toISOString(),
+      });
+    } finally {
+      updateCheckInFlight = null;
+    }
+  })();
+  return updateCheckInFlight;
 }
 
 function configureAppIdentity(): void {
@@ -982,6 +1630,19 @@ function registerIpc(win: BrowserWindow): void {
   ipcMain.handle("pty:kill", async (_e, ptyId: unknown) =>
     ptyHost.kill(requireString(ptyId, "pty:kill.ptyId")),
   );
+  ipcMain.handle("pty:buffer", async (_e, ptyId: unknown) => {
+    try {
+      return await ptyHost.getBuffer(requireString(ptyId, "pty:buffer.ptyId"));
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        /unknown request|PTY host is not connected/i.test(err.message)
+      ) {
+        return "";
+      }
+      throw err;
+    }
+  });
   ipcMain.handle("pty:search", async (_e, query: unknown) =>
     ptyHost.search(requireString(query, "pty:search.query")),
   );
@@ -1037,6 +1698,9 @@ function registerIpc(win: BrowserWindow): void {
   ipcMain.handle("remote:list-presets", async (_e, sshTarget: unknown) =>
     listRemotePresets(requireString(sshTarget, "remote:list-presets.sshTarget")),
   );
+  ipcMain.handle("remote:health", async (_e, sshTarget: unknown) =>
+    checkRemoteHealth(requireString(sshTarget, "remote:health.sshTarget")),
+  );
   ipcMain.handle(
     "remote:create-project",
     async (_e, sshTarget: unknown, directory: unknown, name: unknown) =>
@@ -1065,6 +1729,9 @@ function registerIpc(win: BrowserWindow): void {
   ipcMain.handle("snippets:list", async () => listSnippets());
   ipcMain.handle("snippets:save", async (_e, snippets: unknown) =>
     saveSnippets(validateSnippetArray(snippets)),
+  );
+  ipcMain.handle("local-summary:summarize", async (_e, req: unknown) =>
+    summarizeLocal(validateLocalSummaryRequest(req)),
   );
   // Read-only: the account-wide usage snapshot a user hook writes (no fetch).
   ipcMain.handle("usage:get", async () => {
@@ -1105,6 +1772,13 @@ function registerIpc(win: BrowserWindow): void {
   ipcMain.handle("usage-hook:status", async () => usageHookStatus());
   ipcMain.handle("usage-hook:install", async () => installUsageHook());
   ipcMain.handle("usage-hook:uninstall", async () => uninstallUsageHook());
+  ipcMain.handle("sessions:list-monitored", async () => listMonitoredSessions());
+  ipcMain.handle("intelligence:ollama-status", async (_e, model: unknown) =>
+    ollamaStatus(typeof model === "string" && model.trim() ? model.trim() : undefined),
+  );
+  ipcMain.handle("intelligence:pull-ollama-model", async (_e, model: unknown) =>
+    pullOllamaModel(validateOllamaModelName(model)),
+  );
 
   ipcMain.handle("themes:list", async () => {
     const { loadThemes } = await import("./themes");
@@ -1244,6 +1918,15 @@ function registerIpc(win: BrowserWindow): void {
   });
   ipcMain.handle("app:cli-status", async () => cliStatus());
   ipcMain.handle("app:install-cli", async () => installCli());
+  ipcMain.handle("app:diagnostics", async () => diagnosticsReport());
+  ipcMain.handle("updates:status", async () => getUpdateStatus());
+  ipcMain.handle("updates:check", async () => checkForUpdates());
+  ipcMain.handle("updates:install", async () => {
+    if (getUpdateStatus().phase !== "downloaded") {
+      throw new Error("No downloaded update is ready to install.");
+    }
+    autoUpdater.quitAndInstall(false, true);
+  });
   ipcMain.handle("app:open-notification-settings", async () => {
     if (process.platform === "darwin") {
       await shell.openExternal(
@@ -1344,6 +2027,12 @@ app.whenReady().then(async () => {
   const savedState = await loadWindowState();
   mainWindow = createWindow(savedState);
   registerIpc(mainWindow);
+  configureAutoUpdates(mainWindow);
+  if (getUpdateStatus().supported) {
+    setTimeout(() => {
+      void checkForUpdates();
+    }, UPDATE_AUTO_CHECK_DELAY_MS);
+  }
   startControlServer({
     getWindow: () => mainWindow,
     openProject: (directory) => {

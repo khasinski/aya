@@ -10,7 +10,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import { DEFAULT_PRESETS } from "../dist-electron/presets.js";
-import { shellArgv } from "../dist-electron/pty.js";
+import { agentConfigDirsFromCommand, shellArgv } from "../dist-electron/pty.js";
 
 const FORBIDDEN = [
   /(?<!\w)-p(?!\w)/,
@@ -113,5 +113,16 @@ test("shellArgv keeps quoted env assignment values intact", () => {
   assert.ok(
     argv[4].endsWith('CODEX_HOME="$HOME/.codex work" exec codex'),
     `expected quoted assignment before exec: ${argv[4]}`,
+  );
+});
+
+test("agent config dirs are extracted from leading env assignments", () => {
+  assert.deepEqual(
+    agentConfigDirsFromCommand('CODEX_HOME="$HOME/.codex3" codex'),
+    [`${os.homedir()}/.codex3`],
+  );
+  assert.deepEqual(
+    agentConfigDirsFromCommand("CLAUDE_CONFIG_DIR=~/.claude-secondary claude"),
+    [`${os.homedir()}/.claude-secondary`],
   );
 });

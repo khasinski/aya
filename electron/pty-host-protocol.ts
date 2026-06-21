@@ -8,6 +8,7 @@ export type PtyHostRequest =
   | { id: number; type: "kill"; ptyId: string }
   | { id: number; type: "shutdown" }
   | { id: number; type: "search"; query: string }
+  | { id: number; type: "buffer"; ptyId: string }
   | { id: number; type: "version" };
 
 export type PtyHostResponse =
