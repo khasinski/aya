@@ -1,5 +1,13 @@
 import * as path from "node:path";
 
+function rewriteAsarPath(filePath: string): string {
+  const parts = filePath.split(path.sep);
+  const asarIndex = parts.lastIndexOf("app.asar");
+  if (asarIndex === -1) return filePath;
+  parts[asarIndex] = "app.asar.unpacked";
+  return parts.join(path.sep);
+}
+
 /** Absolute path to the bundled `bin/aya` CLI script, given the __dirname of
  *  the running main module.
  *
@@ -11,9 +19,17 @@ import * as path from "node:path";
  *  the repo, no asar anywhere in the path) pass through untouched. */
 export function bundledAyaCliPath(mainDirname: string): string {
   const inside = path.join(mainDirname, "..", "bin", "aya");
-  const parts = inside.split(path.sep);
-  const asarIndex = parts.lastIndexOf("app.asar");
-  if (asarIndex === -1) return inside;
-  parts[asarIndex] = "app.asar.unpacked";
-  return parts.join(path.sep);
+  return rewriteAsarPath(inside);
+}
+
+/** Absolute path to a native helper emitted into dist-electron.
+ *
+ *  Native binaries cannot be executed from app.asar. electron-builder unpacks
+ *  them to app.asar.unpacked/dist-electron, so packaged runs must point there.
+ */
+export function bundledDistElectronHelperPath(
+  mainDirname: string,
+  helperName: string,
+): string {
+  return rewriteAsarPath(path.join(mainDirname, helperName));
 }

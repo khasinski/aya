@@ -36,7 +36,7 @@ import {
   saveProjectState,
   updateProject,
 } from "./config";
-import { bundledAyaCliPath } from "./cli-path";
+import { bundledAyaCliPath, bundledDistElectronHelperPath } from "./cli-path";
 import {
   defaultInstallAyaCliPath,
   parseShimTargets,
@@ -229,7 +229,7 @@ async function summarizeWithApple(
   req: LocalSummaryRequest,
 ): Promise<LocalSummaryResult> {
   if (process.platform !== "darwin") return unavailableLocalSummary("unsupported-platform");
-  const helper = path.join(__dirname, "aya-local-summary");
+  const helper = bundledDistElectronHelperPath(__dirname, "aya-local-summary");
   try {
     await fs.access(helper, fsConstants.X_OK);
   } catch {
