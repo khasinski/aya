@@ -56,7 +56,19 @@ test("Settings uses icon tabs and focused panes", async ({ window, app }) => {
   const settings = window.locator(".aya-modal--settings");
   await expect(settings).toBeVisible();
 
-  await expect(settings.getByTestId("settings-tab")).toHaveCount(4);
+  const tabs = settings.getByTestId("settings-tab");
+  await expect(tabs).toHaveCount(7);
+  for (const label of [
+    "General",
+    "Intelligence",
+    "Updates",
+    "Diagnostics",
+    "Themes",
+    "Presets",
+    "Snippets",
+  ]) {
+    await expect(tabs.filter({ hasText: label })).toBeVisible();
+  }
   await expect(settings.locator(".aya-settings-header", { hasText: "General" })).toBeVisible();
 
   await settings.getByTestId("settings-tab").filter({ hasText: "Snippets" }).click();
