@@ -133,16 +133,6 @@ export function parseUsageAccounts(raw: string): UsageAccount[] {
   return out;
 }
 
-/** Read the usage snapshot the user's hook writes. Never fetches anything. */
-export async function readUsage(): Promise<UsageData | null> {
-  try {
-    const raw = await fs.readFile(USAGE_FILE, "utf-8");
-    return parseUsage(raw);
-  } catch {
-    return null; // absent / unreadable — the chip simply doesn't show
-  }
-}
-
 /** Read one or more usage snapshots the user's hook writes. Never fetches. */
 export async function readUsageAccounts(): Promise<UsageAccount[]> {
   try {

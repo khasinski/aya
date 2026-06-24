@@ -300,10 +300,6 @@ export function shellArgv(command: string, cwd: string): string[] {
   return [userShell(), "-l", "-i", "-c", `cd ${cwdQuoted} && ${commandWithExec(commandForExec(command))}`];
 }
 
-/** @deprecated Kept as an alias so existing tests / callers compile while
- *  in-flight branches converge. New code should call shellArgv. */
-export const bashArgv = shellArgv;
-
 /** Friendly error reporter — writes a red banner into the terminal and emits
  *  a synthetic exit so the host knows the spawn never happened. */
 function reportSpawnFailure(
