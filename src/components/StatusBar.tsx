@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import hljs from "highlight.js/lib/common";
-import type { GitChangedFile, ProjectConfig, TerminalState } from "../types";
+import type {
+  GitChangedFile,
+  GitHubLink,
+  ProjectConfig,
+  TerminalState,
+} from "../types";
+import { diffFileLineIndex } from "../diff-navigation";
 
 // Material Symbols small icon size (px) used for status-bar glyphs
 const ICON_SIZE_SM_PX = 13;
@@ -13,6 +19,8 @@ interface GitInfo {
 interface Props {
   project: ProjectConfig | null;
   git: GitInfo | null;
+  githubLink: GitHubLink | null;
+  showGitHubLink: boolean;
   terminal: TerminalState | null;
   attentionCount: number;
   snippetsOpen: boolean;
@@ -25,6 +33,8 @@ interface Props {
 export function StatusBar({
   project,
   git,
+  githubLink,
+  showGitHubLink,
   terminal,
   attentionCount,
   snippetsOpen,
@@ -43,6 +53,8 @@ export function StatusBar({
   const [diffText, setDiffText] = useState("");
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffQuery, setDiffQuery] = useState("");
+  // When set, the diff view scrolls to this file's section once it renders.
+  const [scrollToPath, setScrollToPath] = useState<string | null>(null);
 
   useEffect(() => {
     if (!showDirtyFiles) return;
@@ -61,6 +73,7 @@ export function StatusBar({
     setShowDiff(false);
     setDiffText("");
     setDiffQuery("");
+    setScrollToPath(null);
   }, [project?.directory]);
 
   const toggleDirtyFiles = () => {
@@ -73,7 +86,7 @@ export function StatusBar({
     });
   };
 
-  const openDiff = () => {
+  const loadDiff = () => {
     if (!project) return;
     setShowDiff(true);
     setDiffLoading(true);
@@ -81,6 +94,17 @@ export function StatusBar({
       setDiffText(diff);
       setDiffLoading(false);
     });
+  };
+
+  const openDiff = () => {
+    setScrollToPath(null);
+    loadDiff();
+  };
+
+  // Open the full diff but jump straight to the clicked file's section.
+  const openDiffAtFile = (path: string) => {
+    setScrollToPath(path);
+    loadDiff();
   };
 
   return (
@@ -168,6 +192,20 @@ export function StatusBar({
           {git.branch}
         </span>
       )}
+      {showGitHubLink && githubLink && (
+        <button
+          className="aya-statusbar-item aya-statusbar-button"
+          type="button"
+          title={githubLink.url}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => void window.aya.openUrl(githubLink.url)}
+        >
+          <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
+            {githubLink.kind === "pr" ? "merge" : "open_in_new"}
+          </span>
+          {githubLink.kind === "pr" ? "PR" : "branch on GitHub"}
+        </button>
+      )}
       {git && git.dirty > 0 ? (
         <div className="aya-statusbar-popover-host" ref={dirtyRef}>
           <button
@@ -196,7 +234,10 @@ export function StatusBar({
                       className="aya-statusbar-popover-back"
                       type="button"
                       title="Back to changed files"
-                      onClick={() => setShowDiff(false)}
+                      onClick={() => {
+                        setShowDiff(false);
+                        setScrollToPath(null);
+                      }}
                     >
                       <span style={{ fontFamily: "Material Symbols Outlined", fontSize: 15 }}>
                         arrow_back
@@ -223,6 +264,8 @@ export function StatusBar({
                   loading={diffLoading}
                   query={diffQuery}
                   onQueryChange={setDiffQuery}
+                  scrollToPath={scrollToPath}
+                  onScrolled={() => setScrollToPath(null)}
                 />
               ) : dirtyFilesLoading ? (
                 <div className="aya-statusbar-popover-empty">Loading...</div>
@@ -231,14 +274,16 @@ export function StatusBar({
               ) : (
                 <div className="aya-dirty-file-list">
                   {dirtyFiles.map((file) => (
-                    <div
+                    <button
                       className="aya-dirty-file-row"
+                      type="button"
                       key={`${file.status}-${file.path}`}
-                      title={file.path}
+                      title={`Show ${file.path} in diff`}
+                      onClick={() => openDiffAtFile(file.path)}
                     >
                       <span className="aya-dirty-file-status">{file.status}</span>
                       <span className="aya-dirty-file-path">{file.path}</span>
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
@@ -389,11 +434,15 @@ function DiffPanel({
   loading,
   query,
   onQueryChange,
+  scrollToPath,
+  onScrolled,
 }: {
   diff: string;
   loading: boolean;
   query: string;
   onQueryChange: (query: string) => void;
+  scrollToPath: string | null;
+  onScrolled: () => void;
 }) {
   const lines = useMemo(() => annotateDiff(diff), [diff]);
   const matchCount = useMemo(() => {
@@ -401,6 +450,20 @@ function DiffPanel({
     if (!q) return 0;
     return diff.toLowerCase().split(q).length - 1;
   }, [diff, query]);
+  // Row to scroll to for the requested file. Line-based index over the same
+  // split the rows are rendered from, so it lines up with the rendered rows.
+  const targetIndex = useMemo(
+    () => (scrollToPath ? diffFileLineIndex(diff, scrollToPath) : -1),
+    [diff, scrollToPath],
+  );
+  const targetRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (loading || targetIndex < 0) return;
+    targetRef.current?.scrollIntoView({ block: "start" });
+    onScrolled();
+    // onScrolled clears the target, so this fires once per file selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetIndex, loading]);
   return (
     <div className="aya-diff-panel">
       <div className="aya-diff-search">
@@ -427,7 +490,11 @@ function DiffPanel({
               query,
             );
             return (
-              <div className={`aya-diff-view-line aya-diff-view-line--${line.kind}`} key={index}>
+              <div
+                className={`aya-diff-view-line aya-diff-view-line--${line.kind}`}
+                key={index}
+                ref={index === targetIndex ? targetRef : undefined}
+              >
                 <span className="aya-diff-view-gutter">{index + 1}</span>
                 <span className="aya-diff-view-code">
                   {prefix ? <span className="aya-diff-prefix">{prefix}</span> : null}

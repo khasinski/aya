@@ -86,6 +86,15 @@ export interface ProjectGitInfo {
   dirty: number;
 }
 
+export type GitHubLinkKind = "pr" | "branch";
+
+/** A GitHub URL for the active project's current branch: its open PR, or the
+ *  branch's tree page when there is no PR. Resolved via the `gh` CLI. */
+export interface GitHubLink {
+  kind: GitHubLinkKind;
+  url: string;
+}
+
 export interface RemoteHostInfo {
   id: string;
   name: string;
@@ -416,6 +425,10 @@ export interface AyaApi {
   getGitInfo(directory: string): Promise<ProjectGitInfo>;
   getGitChangedFiles(directory: string): Promise<GitChangedFile[]>;
   getGitDiff(directory: string): Promise<string>;
+  /** GitHub URL for the current branch: its PR, else the branch tree page. */
+  getGitHubLink(directory: string): Promise<GitHubLink | null>;
+  /** True if the `gh` CLI is on PATH. */
+  githubCliAvailable(): Promise<boolean>;
   pickDirectory(): Promise<string | null>;
   /** True if the path exists and is a directory. */
   dirExists(path: string): Promise<boolean>;
@@ -423,7 +436,7 @@ export interface AyaApi {
   createDir(path: string): Promise<void>;
   /** Opens a path in the OS file browser. */
   openPath(path: string): Promise<void>;
-  /** Opens an http/https URL in the OS default browser. */
+  /** Opens a safe external URL in the OS default handler. */
   openUrl(url: string): Promise<void>;
   /** Clipboard helpers used by the terminal context menu. */
   readClipboard(): Promise<string>;

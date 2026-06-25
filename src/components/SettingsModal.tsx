@@ -5,6 +5,7 @@ import {
   type CliStatus,
   type DiagnosticsReport,
   type HarnessDef,
+  type LayoutMode,
   type MicPermissionStatus,
   type OllamaStatus,
   type Preset,
@@ -35,6 +36,10 @@ interface Props {
   onTerminalFontFamilyChange: (fontFamily: string) => void;
   showUsageHarnessName: boolean;
   onShowUsageHarnessNameChange: (show: boolean) => void;
+  showGitHubLink: boolean;
+  onShowGitHubLinkChange: (show: boolean) => void;
+  layoutMode: LayoutMode;
+  onLayoutModeChange: (mode: LayoutMode) => void;
   localSummariesEnabled: boolean;
   onLocalSummariesEnabledChange: (enabled: boolean) => void;
   ayaIntelligence: AyaIntelligenceConfig;
@@ -242,7 +247,7 @@ function SettingsRow({
   control,
 }: {
   icon: string;
-  title: string;
+  title: ReactNode;
   children?: ReactNode;
   control: ReactNode;
 }) {
@@ -274,6 +279,10 @@ export function SettingsModal({
   onTerminalFontFamilyChange,
   showUsageHarnessName,
   onShowUsageHarnessNameChange,
+  showGitHubLink,
+  onShowGitHubLinkChange,
+  layoutMode,
+  onLayoutModeChange,
   localSummariesEnabled,
   onLocalSummariesEnabledChange,
   ayaIntelligence,
@@ -308,6 +317,7 @@ export function SettingsModal({
   const [errors, setErrors] = useState<string[]>([]);
   const [cliStatus, setCliStatus] = useState<CliStatus | null>(null);
   const [cliInstalling, setCliInstalling] = useState(false);
+  const [ghAvailable, setGhAvailable] = useState<boolean | null>(null);
   const [usageHook, setUsageHook] = useState<UsageHookStatus | null>(null);
   const [usageHookBusy, setUsageHookBusy] = useState(false);
   const [showUsageConsent, setShowUsageConsent] = useState(false);
@@ -348,6 +358,9 @@ export function SettingsModal({
     });
     void window.aya.cliStatus().then((status) => {
       if (!cancelled) setCliStatus(status);
+    });
+    void window.aya.githubCliAvailable().then((available) => {
+      if (!cancelled) setGhAvailable(available);
     });
     void window.aya.usageHookStatus().then((status) => {
       if (!cancelled) setUsageHook(status);
@@ -1137,6 +1150,69 @@ export function SettingsModal({
             progress rings.
           </SettingsRow>
           <SettingsRow
+            icon="merge"
+            title="GitHub link in the status bar"
+            control={(
+              <div className="aya-settings-segmented" aria-label="GitHub link">
+                {([
+                  [true, "Show"],
+                  [false, "Hide"],
+                ] as const).map(([show, label]) => (
+                  <button
+                    key={String(show)}
+                    type="button"
+                    className={`aya-settings-segment ${
+                      showGitHubLink === show
+                        ? "aya-settings-segment--active"
+                        : ""
+                    }`}
+                    onClick={() => onShowGitHubLinkChange(show)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          >
+            Show a link to the current branch's pull request next to the branch
+            name, falling back to the branch page on GitHub.{" "}
+            {ghAvailable === false
+              ? "Requires the GitHub CLI (gh), which isn't installed."
+              : "Requires the GitHub CLI (gh)."}
+          </SettingsRow>
+          <SettingsRow
+            icon="view_sidebar"
+            title={
+              <>
+                Window layout{" "}
+                <span className="aya-settings-experimental">Experimental</span>
+              </>
+            }
+            control={(
+              <div className="aya-settings-segmented" aria-label="Window layout">
+                {([
+                  ["classic", "Projects on top"],
+                  ["projects-left", "Projects on left"],
+                ] as const).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={`aya-settings-segment ${
+                      layoutMode === mode ? "aya-settings-segment--active" : ""
+                    }`}
+                    onClick={() => onLayoutModeChange(mode)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          >
+            Classic keeps project tabs on top with the terminal list on the
+            left. "Projects on left" moves projects into a left rail and puts
+            terminal tabs along the top.
+          </SettingsRow>
+          <SettingsRow
             icon="donut_large"
             title="Claude usage chip"
             control={(
@@ -1159,7 +1235,7 @@ export function SettingsModal({
           >
             {usageHook?.installed
               ? "On. Updated by a Claude Code hook."
-              : "Off. Shows account-wide Claude limits."}
+              : "Off. Shows Claude limits."}
           </SettingsRow>
           <SettingsRow
             icon="notifications"

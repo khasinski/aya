@@ -13,6 +13,7 @@ import { NewProjectModal } from "./components/NewProjectModal";
 import { ProjectPresetImportModal } from "./components/ProjectPresetImportModal";
 import { SearchModal } from "./components/SearchModal";
 import { SettingsModal } from "./components/SettingsModal";
+import { ProjectsLeftLayout } from "./components/ProjectsLeftLayout";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
 import { TerminalView } from "./components/TerminalView";
@@ -37,6 +38,8 @@ import {
   type AyaIntelligenceConfig,
   type Snippet,
   getPreset,
+  type GitHubLink,
+  type LayoutMode,
   type ProjectEvent,
   type MonitoredSession,
   type Preset,
@@ -65,6 +68,7 @@ const MAX_SUGGESTED_PRESETS = 8;
 const MIN_SPLIT_PANE_FRACTION = 0.18;
 // Default sidebar width in pixels.
 const DEFAULT_SIDEBAR_WIDTH_PX = 240;
+const DEFAULT_RAIL_WIDTH_PX = 220;
 // Default terminal font size in pixels.
 const TERMINAL_FONT_SIZE_PX = 13;
 // Persisted schema version for ProjectCollectionState.
@@ -73,6 +77,8 @@ const APP_THEME_STORAGE_KEY = "aya:app-theme";
 const MAC_OPTION_KEY_STORAGE_KEY = "aya:mac-option-key";
 const TERMINAL_FONT_FAMILY_STORAGE_KEY = "aya:terminal-font-family";
 const USAGE_HARNESS_NAME_STORAGE_KEY = "aya:usage-show-harness-name";
+const STATUSBAR_GITHUB_LINK_STORAGE_KEY = "aya:statusbar-github-link";
+const LAYOUT_MODE_STORAGE_KEY = "aya:layout-mode";
 const LOCAL_SUMMARIES_STORAGE_KEY = "aya:local-summaries";
 const LOCAL_SUMMARY_CACHE_STORAGE_KEY = "aya:local-summary-cache";
 const AYA_INTELLIGENCE_STORAGE_KEY = "aya:intelligence";
@@ -139,6 +145,28 @@ function readUsageHarnessNamePreference(): boolean {
     return localStorage.getItem(USAGE_HARNESS_NAME_STORAGE_KEY) !== "0";
   } catch {
     return true;
+  }
+}
+
+// Opt-in: the PR/branch link needs the gh CLI and a network round-trip, so it
+// stays off until the user enables it.
+function readStatusBarGitHubLinkPreference(): boolean {
+  try {
+    return localStorage.getItem(STATUSBAR_GITHUB_LINK_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+// "classic": project tabs on top, terminal list on the left (the default).
+// "projects-left": project tabs in a left rail, terminal tabs along the top.
+function readLayoutMode(): LayoutMode {
+  try {
+    return localStorage.getItem(LAYOUT_MODE_STORAGE_KEY) === "projects-left"
+      ? "projects-left"
+      : "classic";
+  } catch {
+    return "classic";
   }
 }
 
@@ -643,6 +671,9 @@ export function App() {
     Record<string, string | null>
   >({});
   const [git, setGit] = useState<Record<string, GitInfo>>({});
+  const [githubLinks, setGithubLinks] = useState<
+    Record<string, GitHubLink | null>
+  >({});
   const [usageAccounts, setUsageAccounts] = useState<UsageAccount[]>([]);
   const [codexUsageAccounts, setCodexUsageAccounts] = useState<
     UsageAccount[]
@@ -666,6 +697,11 @@ export function App() {
   const [showUsageHarnessName, setShowUsageHarnessName] = useState(
     readUsageHarnessNamePreference,
   );
+  const [showGitHubLink, setShowGitHubLink] = useState(
+    readStatusBarGitHubLinkPreference,
+  );
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>(readLayoutMode);
+  const [railWidth, setRailWidth] = useState(DEFAULT_RAIL_WIDTH_PX);
   const [localSummariesEnabled, setLocalSummariesEnabled] = useState(
     readLocalSummariesPreference,
   );
@@ -2527,6 +2563,25 @@ export function App() {
     }
   }, []);
 
+  const updateShowGitHubLink = useCallback((next: boolean) => {
+    setShowGitHubLink(next);
+    if (!next) setGithubLinks({});
+    try {
+      localStorage.setItem(STATUSBAR_GITHUB_LINK_STORAGE_KEY, next ? "1" : "0");
+    } catch {
+      /* ignore — localStorage can be unavailable in odd embedded contexts */
+    }
+  }, []);
+
+  const updateLayoutMode = useCallback((next: LayoutMode) => {
+    setLayoutMode(next);
+    try {
+      localStorage.setItem(LAYOUT_MODE_STORAGE_KEY, next);
+    } catch {
+      /* ignore — localStorage can be unavailable in odd embedded contexts */
+    }
+  }, []);
+
   const updateLocalSummariesEnabled = useCallback((next: boolean) => {
     setLocalSummariesEnabled(next);
     try {
@@ -2758,6 +2813,34 @@ export function App() {
   const snippetsOpenForActiveTerminal =
     !!activeTerminal && snippetDrawerTerminalId === activeTerminal.id;
   const activeGit = activeProjectId ? (git[activeProjectId] ?? null) : null;
+  const activeGithubLink = activeProjectId
+    ? (githubLinks[activeProjectId] ?? null)
+    : null;
+  // Resolve the PR/branch link only when the active project or its branch
+  // changes — `gh pr view` hits the GitHub API, so we deliberately keep it off
+  // the 3s git poll. Local repos only; remote projects have no working tree.
+  const activeBranch = activeGit?.branch ?? null;
+  const activeDirectory = activeProject?.directory ?? null;
+  const activeIsRemote = !!activeProject?.remote;
+  useEffect(() => {
+    if (!showGitHubLink || !activeProjectId || activeIsRemote || !activeDirectory) {
+      return;
+    }
+    let cancelled = false;
+    void window.aya.getGitHubLink(activeDirectory).then((link) => {
+      if (cancelled) return;
+      setGithubLinks((prev) => ({ ...prev, [activeProjectId]: link }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    showGitHubLink,
+    activeProjectId,
+    activeDirectory,
+    activeIsRemote,
+    activeBranch,
+  ]);
   const savedSplitLayout =
     activeProject && activeProjectId
       ? normalizeSplitLayoutForTabs(
@@ -3049,90 +3132,29 @@ export function App() {
       }
       data-accent="green"
     >
-      <TopBar
-        projects={projects}
-        activeProjectId={activeProjectId}
-        homeDir={homeDir}
-        isDev={window.aya.isDev}
-        platform={window.aya.platform}
-        isFullScreen={isFullScreen}
-        isMaximized={isMaximized}
-        blockChrome={chromeBlocked}
-        closedProjects={closedProjects}
-        onSelectProject={setActiveProjectId}
-        onOpenProject={(slug) => {
-          const project = allProjects.find((p) => p.slug === slug);
-          if (project) void openKnownProject(project);
-        }}
-        onNewProject={showNewProjectModal}
-        onCloseProject={closeProject}
-        onRenameProject={renameProject}
-        onReorderProjects={reorderProjects}
-        onOpenSearch={() => setShowSearch(true)}
-        onOpenSettings={openSettings}
-        onMinimizeWindow={() => void window.aya.minimizeWindow()}
-        onToggleMaximizeWindow={() => void window.aya.toggleMaximizeWindow()}
-        onToggleFullScreenWindow={() =>
-          void window.aya.setFullScreen(!isFullScreen)
-        }
-        onCloseWindow={() => void window.aya.closeWindow()}
-        projectBadges={projectBadges}
-        monitoredSessionsByProject={monitoredSessionsByProject}
-        projectSummaries={localSummariesEnabled ? projectSummaries : {}}
-        usageAccounts={usageAccounts}
-        codexUsageAccounts={codexUsageAccounts}
-        showUsageHarnessName={showUsageHarnessName}
-      />
-      {!didBootstrap ? (
-        <main className="aya-empty aya-empty--loading" aria-busy="true">
-          <div className="aya-empty-mark" aria-hidden="true">
-            <span />
-          </div>
-          <h1>Opening Aya...</h1>
-        </main>
-      ) : isEmpty ? (
-        <EmptyState
-          showNoHarnessHint={
-            harnessScanDone && foundHarnessCount === 0 && !hideNoHarnessHint
-          }
-          onOpenProject={showNewProjectModal}
-          onOpenSettings={openSettings}
-          onDismissNoHarnessHint={() => {
-            localStorage.setItem("aya:no-harness-hint-dismissed", "1");
-            setHideNoHarnessHint(true);
-          }}
-        />
-      ) : (
-        <div
-          className="aya-main"
-          style={{ gridTemplateColumns: `${sidebarWidth}px 1fr` }}
-        >
-          <Sidebar
-            terminals={projectTerminals}
-            activeId={activeTabId}
-            sidebarWidth={sidebarWidth}
-            presets={activePresets}
-            recentlyActiveIds={recentlyActiveIds}
-            summaries={localSummariesEnabled ? terminalSummaries : {}}
-            splitAssignments={splitAssignments}
-            onSelect={selectTerminalFromSidebar}
-            onClose={closeTerminal}
-            onRename={renameTerminal}
-            onLaunch={launchTerminal}
-            onResize={setSidebarWidth}
-            onReorder={(orderedIds) => {
-              if (activeProjectId) {
-                reorderTerminalsInProject(activeProjectId, orderedIds);
-              }
+      {(() => {
+        const loadingNode = (
+          <main className="aya-empty aya-empty--loading" aria-busy="true">
+            <div className="aya-empty-mark" aria-hidden="true">
+              <span />
+            </div>
+            <h1>Opening Aya...</h1>
+          </main>
+        );
+        const emptyStateNode = (
+          <EmptyState
+            showNoHarnessHint={
+              harnessScanDone && foundHarnessCount === 0 && !hideNoHarnessHint
+            }
+            onOpenProject={showNewProjectModal}
+            onOpenSettings={openSettings}
+            onDismissNoHarnessHint={() => {
+              localStorage.setItem("aya:no-harness-hint-dismissed", "1");
+              setHideNoHarnessHint(true);
             }}
-            onRestart={forceRestartTerminal}
-            canSplitRight={canSplitRight}
-            canSplitBelow={canSplitBelow}
-            onAssignToSplit={assignTerminalToActiveSplitCell}
-            onSplitRight={(id) => addTerminalSplit(id, "right")}
-            onSplitBelow={(id) => addTerminalSplit(id, "below")}
-            onRemoveFromSplit={removeTerminalFromSplit}
           />
+        );
+        const panesNode = (
           <div
             className={`aya-panes ${isSplit ? "aya-panes--split" : ""}`}
             style={
@@ -3309,17 +3331,155 @@ export function App() {
                   <span className="aya-pane-header-title">
                     {activeProject.remote
                       ? `Remote project on ${activeProject.remote.label}`
-                      : "No terminals - pick one from the sidebar."}
+                      : "No terminals yet — launch one to get started."}
                   </span>
                 </div>
               </div>
             )}
           </div>
-        </div>
-      )}
+        );
+        const body =
+          !didBootstrap ? loadingNode : isEmpty ? emptyStateNode : null;
+        if (layoutMode === "projects-left") {
+          return (
+            <ProjectsLeftLayout
+              projects={projects}
+              closedProjects={closedProjects}
+              activeProjectId={activeProjectId}
+              homeDir={homeDir}
+              isDev={window.aya.isDev}
+              platform={window.aya.platform}
+              isFullScreen={isFullScreen}
+              isMaximized={isMaximized}
+              blockChrome={chromeBlocked}
+              railWidth={railWidth}
+              onRailResize={setRailWidth}
+              onSelectProject={setActiveProjectId}
+              onOpenProject={(slug) => {
+                const project = allProjects.find((p) => p.slug === slug);
+                if (project) void openKnownProject(project);
+              }}
+              onNewProject={showNewProjectModal}
+              onCloseProject={closeProject}
+              onRenameProject={renameProject}
+              onReorderProjects={reorderProjects}
+              onOpenSearch={() => setShowSearch(true)}
+              onOpenSettings={openSettings}
+              onMinimizeWindow={() => void window.aya.minimizeWindow()}
+              onToggleMaximizeWindow={() => void window.aya.toggleMaximizeWindow()}
+              onToggleFullScreenWindow={() =>
+                void window.aya.setFullScreen(!isFullScreen)
+              }
+              onCloseWindow={() => void window.aya.closeWindow()}
+              projectBadges={projectBadges}
+              projectSummaries={localSummariesEnabled ? projectSummaries : {}}
+              usageAccounts={usageAccounts}
+              codexUsageAccounts={codexUsageAccounts}
+              showUsageHarnessName={showUsageHarnessName}
+              terminals={projectTerminals}
+              activeTerminalId={activeTabId}
+              presets={activePresets}
+              recentlyActiveIds={recentlyActiveIds}
+              terminalSummaries={localSummariesEnabled ? terminalSummaries : {}}
+              splitAssignments={splitAssignments}
+              onSelectTerminal={selectTerminalFromSidebar}
+              onCloseTerminal={closeTerminal}
+              onRenameTerminal={renameTerminal}
+              onLaunchTerminal={launchTerminal}
+              onReorderTerminals={(orderedIds) => {
+                if (activeProjectId) {
+                  reorderTerminalsInProject(activeProjectId, orderedIds);
+                }
+              }}
+              onRestartTerminal={forceRestartTerminal}
+              canSplitRight={canSplitRight}
+              canSplitBelow={canSplitBelow}
+              onAssignToSplit={assignTerminalToActiveSplitCell}
+              onSplitRight={(id) => addTerminalSplit(id, "right")}
+              onSplitBelow={(id) => addTerminalSplit(id, "below")}
+              onRemoveFromSplit={removeTerminalFromSplit}
+              body={body ?? panesNode}
+            />
+          );
+        }
+        return (
+          <>
+            <TopBar
+              projects={projects}
+              activeProjectId={activeProjectId}
+              homeDir={homeDir}
+              isDev={window.aya.isDev}
+              platform={window.aya.platform}
+              isFullScreen={isFullScreen}
+              isMaximized={isMaximized}
+              blockChrome={chromeBlocked}
+              closedProjects={closedProjects}
+              onSelectProject={setActiveProjectId}
+              onOpenProject={(slug) => {
+                const project = allProjects.find((p) => p.slug === slug);
+                if (project) void openKnownProject(project);
+              }}
+              onNewProject={showNewProjectModal}
+              onCloseProject={closeProject}
+              onRenameProject={renameProject}
+              onReorderProjects={reorderProjects}
+              onOpenSearch={() => setShowSearch(true)}
+              onOpenSettings={openSettings}
+              onMinimizeWindow={() => void window.aya.minimizeWindow()}
+              onToggleMaximizeWindow={() => void window.aya.toggleMaximizeWindow()}
+              onToggleFullScreenWindow={() =>
+                void window.aya.setFullScreen(!isFullScreen)
+              }
+              onCloseWindow={() => void window.aya.closeWindow()}
+              projectBadges={projectBadges}
+              monitoredSessionsByProject={monitoredSessionsByProject}
+              projectSummaries={localSummariesEnabled ? projectSummaries : {}}
+              usageAccounts={usageAccounts}
+              codexUsageAccounts={codexUsageAccounts}
+              showUsageHarnessName={showUsageHarnessName}
+            />
+            {body ?? (
+              <div
+                className="aya-main"
+                style={{ gridTemplateColumns: `${sidebarWidth}px 1fr` }}
+              >
+                <Sidebar
+                  terminals={projectTerminals}
+                  activeId={activeTabId}
+                  sidebarWidth={sidebarWidth}
+                  presets={activePresets}
+                  recentlyActiveIds={recentlyActiveIds}
+                  summaries={localSummariesEnabled ? terminalSummaries : {}}
+                  splitAssignments={splitAssignments}
+                  onSelect={selectTerminalFromSidebar}
+                  onClose={closeTerminal}
+                  onRename={renameTerminal}
+                  onLaunch={launchTerminal}
+                  onResize={setSidebarWidth}
+                  onReorder={(orderedIds) => {
+                    if (activeProjectId) {
+                      reorderTerminalsInProject(activeProjectId, orderedIds);
+                    }
+                  }}
+                  onRestart={forceRestartTerminal}
+                  canSplitRight={canSplitRight}
+                  canSplitBelow={canSplitBelow}
+                  onAssignToSplit={assignTerminalToActiveSplitCell}
+                  onSplitRight={(id) => addTerminalSplit(id, "right")}
+                  onSplitBelow={(id) => addTerminalSplit(id, "below")}
+                  onRemoveFromSplit={removeTerminalFromSplit}
+                />
+                {panesNode}
+              </div>
+            )}
+          </>
+        );
+      })()}
       <StatusBar
         project={activeProject}
         git={activeGit}
+        githubLink={activeGithubLink}
+        showGitHubLink={showGitHubLink}
         terminal={activeTerminal}
         attentionCount={attentionCount}
         snippetsOpen={snippetsOpenForActiveTerminal}
@@ -3456,6 +3616,10 @@ export function App() {
           onTerminalFontFamilyChange={updateTerminalFontFamily}
           showUsageHarnessName={showUsageHarnessName}
           onShowUsageHarnessNameChange={updateShowUsageHarnessName}
+          showGitHubLink={showGitHubLink}
+          onShowGitHubLinkChange={updateShowGitHubLink}
+          layoutMode={layoutMode}
+          onLayoutModeChange={updateLayoutMode}
           localSummariesEnabled={localSummariesEnabled}
           onLocalSummariesEnabledChange={updateLocalSummariesEnabled}
           ayaIntelligence={ayaIntelligence}

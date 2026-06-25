@@ -52,6 +52,16 @@ const RESTORE_FALLBACK_MS = 2_500;
 const INPUT_LOG_MAX_CHARS = 240;
 const URL_IN_TEXT_RE = /https?:\/\/[^\s<>"'`]+/i;
 const URL_TRAILING_PUNCTUATION_RE = /[),.;\]]+$/;
+const EXTERNAL_LINK_PROTOCOLS = new Set([
+  "http:",
+  "https:",
+  "file:",
+  "vscode:",
+  "vscode-insiders:",
+  "cursor:",
+  "zed:",
+  "jetbrains:",
+]);
 const TERMINAL_CONTEXT_MENU_WIDTH = 170;
 const TERMINAL_CONTEXT_MENU_MAX_HEIGHT = 132;
 const TERMINAL_CONTEXT_MENU_VIEWPORT_MARGIN = 8;
@@ -160,11 +170,16 @@ function firstHttpUrl(text: string): string | null {
   return match[0].replace(URL_TRAILING_PUNCTUATION_RE, "");
 }
 
-function anchorHttpUrl(target: EventTarget | null): string | null {
+function anchorExternalUrl(target: EventTarget | null): string | null {
   if (!(target instanceof Element)) return null;
   const anchor = target.closest("a[href]");
   if (!(anchor instanceof HTMLAnchorElement)) return null;
-  return firstHttpUrl(anchor.href);
+  try {
+    const parsed = new URL(anchor.href);
+    return EXTERNAL_LINK_PROTOCOLS.has(parsed.protocol) ? anchor.href : null;
+  } catch {
+    return null;
+  }
 }
 
 function TerminalViewComponent({
@@ -414,7 +429,7 @@ function TerminalViewComponent({
     term.open(containerRef.current);
 
     const onTerminalLinkClick = (event: globalThis.MouseEvent) => {
-      const url = anchorHttpUrl(event.target);
+      const url = anchorExternalUrl(event.target);
       if (!url) return;
       event.preventDefault();
       event.stopPropagation();

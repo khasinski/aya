@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.7.4 - 2026-06-25
+
+Aya 0.7.4 adds an alternative window layout, richer status-bar and terminal
+links, and trims unused code.
+
+### Features
+
+- **Alternative window layout (experimental).** A new Settings option moves
+  project tabs into a left rail and puts terminal tabs along the top. The two
+  layouts are fully separate; the classic project-tabs-on-top layout stays the
+  default.
+- **GitHub link in the status bar.** Optionally show a link to the current
+  branch's pull request next to the branch name, falling back to the branch
+  page on GitHub when there is no PR. Requires the `gh` CLI and is off by
+  default.
+- **Jump to a file in the diff.** Clicking a file in the status-bar changed-files
+  list now opens the diff scrolled to that file's section.
+- **More terminal link targets.** Terminal hyperlinks now open editor/IDE URLs
+  (`vscode`, `vscode-insiders`, `cursor`, `zed`, `jetbrains`) in addition to
+  web and file links.
+- **Filter recent projects.** The recent-projects menu can be filtered by name
+  or path.
+- **Usage chip account labels.** Usage chips can surface the account label
+  alongside the harness name.
+
+### Maintenance
+
+- Removed unused code: the never-wired `harness-account` module (and its test),
+  the dead `readUsage` helper, and the `bashArgv` alias.
+
 ## v0.7.1 - 2026-06-19
 
 Aya 0.7.1 polishes the new multi-account preset workflow introduced in 0.7.0.

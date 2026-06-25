@@ -1,0 +1,1193 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aya UX Directions</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #101211;
+        --surface: #151817;
+        --surface-2: #1b201e;
+        --surface-3: #222825;
+        --line: #303833;
+        --line-soft: #252c29;
+        --text: #edf1ee;
+        --muted: #a3ada7;
+        --dim: #747e78;
+        --green: #39b982;
+        --blue: #72a7d8;
+        --amber: #d8a84c;
+        --red: #e15f56;
+        --claude: #d97957;
+        --codex: #10a37f;
+        --shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      body { padding: 24px; }
+
+      button,
+      input { font: inherit; }
+
+      .page {
+        max-width: 1440px;
+        margin: 0 auto;
+      }
+
+      .top {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 18px;
+      }
+
+      h1 {
+        margin: 0 0 5px;
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+
+      .intro {
+        max-width: 820px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .switcher {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #121514;
+      }
+
+      .switcher button {
+        min-height: 30px;
+        padding: 0 10px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+      }
+
+      .switcher button.active {
+        background: var(--surface-3);
+        color: var(--text);
+      }
+
+      .board {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .concept {
+        display: block;
+        min-width: 0;
+      }
+
+      .concept.hidden { display: none; }
+
+      .caption {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        margin-bottom: 8px;
+      }
+
+      .caption strong {
+        font-size: 13px;
+        font-weight: 680;
+      }
+
+      .caption span {
+        color: var(--dim);
+        font-size: 12px;
+      }
+
+      .window {
+        height: 560px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .app {
+        height: 100%;
+        display: grid;
+        grid-template-rows: 38px minmax(0, 1fr);
+      }
+
+      .appbar {
+        display: grid;
+        grid-template-columns: 188px minmax(0, 1fr) auto;
+        border-bottom: 1px solid var(--line);
+        background: #121615;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 0 12px;
+        border-right: 1px solid var(--line);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .mark {
+        width: 11px;
+        height: 11px;
+        border-radius: 3px;
+        background: var(--green);
+        box-shadow: 0 0 0 2px rgba(57, 185, 130, 0.16);
+      }
+
+      .tabs {
+        min-width: 0;
+        display: flex;
+        overflow: hidden;
+      }
+
+      .tab {
+        width: 184px;
+        min-width: 148px;
+        display: grid;
+        align-content: center;
+        gap: 1px;
+        padding: 0 11px;
+        border-right: 1px solid var(--line-soft);
+        background: #151817;
+      }
+
+      .tab.active { background: var(--surface-2); }
+
+      .tab-row {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 0;
+      }
+
+      .dot {
+        width: 7px;
+        height: 7px;
+        flex: 0 0 auto;
+        border-radius: 50%;
+        background: var(--dim);
+      }
+
+      .dot.green { background: var(--green); }
+      .dot.amber { background: var(--amber); }
+      .dot.red { background: var(--red); }
+      .dot.claude { background: var(--claude); }
+      .dot.codex { background: var(--codex); }
+
+      .tab b {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .tab small {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--dim);
+        font-size: 10px;
+      }
+
+      .tools {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 0 8px;
+      }
+
+      .icon {
+        width: 28px;
+        height: 28px;
+        display: grid;
+        place-items: center;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+      }
+
+      .workspace {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 188px minmax(0, 1fr);
+      }
+
+      .side {
+        min-width: 0;
+        overflow: hidden;
+        border-right: 1px solid var(--line);
+        background: #121615;
+      }
+
+      .side-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 10px 8px;
+        color: var(--dim);
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .project {
+        display: grid;
+        gap: 1px;
+        padding: 8px 10px;
+        border-top: 1px solid transparent;
+        border-bottom: 1px solid transparent;
+      }
+
+      .project.active {
+        border-color: var(--line-soft);
+        background: var(--surface-2);
+      }
+
+      .project b {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+      }
+
+      .project small {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--dim);
+        font-size: 10px;
+      }
+
+      .main {
+        min-width: 0;
+        min-height: 0;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        background: #101312;
+      }
+
+      .terminal-head {
+        min-height: 42px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 0 14px;
+        border-bottom: 1px solid var(--line-soft);
+      }
+
+      .crumb {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .crumb b {
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 24px;
+        padding: 0 8px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .terminal {
+        min-width: 0;
+        min-height: 0;
+        padding: 14px;
+        color: #d8ddd9;
+        font-family:
+          "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.55;
+        background: #0b0d0c;
+      }
+
+      .prompt { color: var(--green); }
+      .muted { color: var(--dim); }
+      .warn { color: var(--amber); }
+
+      .command-overlay {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: start center;
+        padding-top: 76px;
+        background: rgba(7, 9, 8, 0.58);
+      }
+
+      .palette {
+        width: min(560px, calc(100% - 52px));
+        overflow: hidden;
+        border: 1px solid #3b4640;
+        border-radius: 8px;
+        background: #151918;
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+      }
+
+      .search {
+        height: 48px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 14px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .search code {
+        color: var(--dim);
+        font-size: 12px;
+      }
+
+      .search input {
+        width: 100%;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: var(--text);
+        font-size: 15px;
+      }
+
+      .actions { padding: 6px; }
+
+      .action {
+        display: grid;
+        grid-template-columns: 30px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 9px;
+        min-height: 42px;
+        padding: 0 9px;
+        border-radius: 6px;
+      }
+
+      .action.active { background: var(--surface-3); }
+
+      .action b {
+        display: block;
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .action small {
+        color: var(--dim);
+        font-size: 10px;
+      }
+
+      .key {
+        color: var(--dim);
+        font-size: 10px;
+      }
+
+      .settings {
+        height: 100%;
+        display: grid;
+        grid-template-columns: 176px minmax(0, 1fr);
+      }
+
+      .settings-nav {
+        padding: 12px 8px;
+        border-right: 1px solid var(--line);
+        background: #121615;
+      }
+
+      .nav {
+        width: 100%;
+        min-height: 34px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 0 10px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+        text-align: left;
+      }
+
+      .nav.active {
+        background: var(--surface-2);
+        color: var(--text);
+      }
+
+      .settings-body {
+        min-width: 0;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+
+      .settings-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 15px 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .settings-title h2 {
+        margin: 0;
+        font-size: 17px;
+      }
+
+      .settings-title p {
+        margin: 3px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .diagnostics {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 260px minmax(0, 1fr);
+      }
+
+      .preset-list {
+        padding: 12px;
+        border-right: 1px solid var(--line);
+        overflow: hidden;
+      }
+
+      .preset {
+        display: grid;
+        gap: 3px;
+        padding: 10px;
+        border: 1px solid transparent;
+        border-radius: 7px;
+      }
+
+      .preset.active {
+        border-color: var(--line);
+        background: var(--surface-2);
+      }
+
+      .preset b {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 12px;
+      }
+
+      .preset small {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--dim);
+        font-size: 10px;
+      }
+
+      .detail {
+        padding: 14px 16px;
+        overflow: hidden;
+      }
+
+      .field-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .field {
+        display: grid;
+        gap: 5px;
+      }
+
+      label {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 650;
+      }
+
+      .input {
+        min-height: 34px;
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #111514;
+        color: var(--text);
+        font-size: 12px;
+      }
+
+      .checklist {
+        display: grid;
+        gap: 7px;
+        margin-top: 12px;
+      }
+
+      .check {
+        display: grid;
+        grid-template-columns: 18px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 9px;
+        min-height: 34px;
+        padding: 0 10px;
+        border: 1px solid var(--line-soft);
+        border-radius: 6px;
+        background: #121615;
+      }
+
+      .check b {
+        font-size: 12px;
+        font-weight: 620;
+      }
+
+      .check small {
+        color: var(--dim);
+        font-size: 10px;
+      }
+
+      .ok { color: var(--green); }
+      .bad { color: var(--red); }
+
+      .preview {
+        margin-top: 12px;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #0b0d0c;
+        color: #d8ddd9;
+        font-family:
+          "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+        font-size: 11px;
+        line-height: 1.5;
+      }
+
+      .dashboard {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 300px;
+      }
+
+      .dash-main {
+        min-width: 0;
+        padding: 14px;
+        overflow: hidden;
+      }
+
+      .strip {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .metric {
+        min-height: 76px;
+        display: grid;
+        gap: 5px;
+        align-content: center;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--surface-2);
+      }
+
+      .metric strong {
+        font-size: 20px;
+        font-weight: 720;
+      }
+
+      .metric span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .activity {
+        display: grid;
+        gap: 8px;
+      }
+
+      .session {
+        display: grid;
+        grid-template-columns: 26px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+        min-height: 52px;
+        padding: 8px 10px;
+        border: 1px solid var(--line-soft);
+        border-radius: 7px;
+        background: #121615;
+      }
+
+      .session b {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+      }
+
+      .session small {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--dim);
+        font-size: 10px;
+      }
+
+      .rail {
+        border-left: 1px solid var(--line);
+        padding: 12px;
+        background: #121615;
+        overflow: hidden;
+      }
+
+      .rail h3 {
+        margin: 0 0 9px;
+        font-size: 12px;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .summary {
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--surface-2);
+        margin-bottom: 10px;
+      }
+
+      .summary b {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 12px;
+      }
+
+      .summary p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .summary footer {
+        margin-top: 8px;
+        color: var(--dim);
+        font-size: 10px;
+      }
+
+      .compact .appbar {
+        grid-template-columns: 56px minmax(0, 1fr) auto;
+      }
+
+      .compact .brand span { display: none; }
+      .compact .brand { justify-content: center; padding: 0; }
+
+      .compact .workspace {
+        grid-template-columns: 260px minmax(0, 1fr);
+      }
+
+      .dense-list {
+        padding: 8px;
+        display: grid;
+        gap: 4px;
+      }
+
+      .dense-item {
+        display: grid;
+        grid-template-columns: 8px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        min-height: 30px;
+        padding: 0 8px;
+        border-radius: 6px;
+      }
+
+      .dense-item.active { background: var(--surface-2); }
+
+      .dense-item b {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 11px;
+      }
+
+      .dense-item small {
+        color: var(--dim);
+        font-size: 10px;
+      }
+
+      .mini-status {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        padding: 10px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .mini {
+        display: grid;
+        gap: 2px;
+        padding: 8px;
+        border: 1px solid var(--line-soft);
+        border-radius: 6px;
+        background: #111514;
+      }
+
+      .mini b { font-size: 12px; }
+      .mini span {
+        color: var(--dim);
+        font-size: 10px;
+      }
+
+      @media (max-width: 1100px) {
+        .board { grid-template-columns: 1fr; }
+        .window { height: 620px; }
+      }
+
+      @media (max-width: 760px) {
+        body { padding: 14px; }
+        .top { align-items: stretch; flex-direction: column; }
+        .switcher { overflow: auto; }
+        .window { height: 680px; }
+        .appbar { grid-template-columns: 56px minmax(0, 1fr) auto; }
+        .brand span { display: none; }
+        .brand { justify-content: center; padding: 0; }
+        .workspace,
+        .settings,
+        .dashboard,
+        .diagnostics {
+          grid-template-columns: 1fr;
+        }
+        .side,
+        .settings-nav,
+        .preset-list,
+        .rail { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <div class="top">
+        <div>
+          <h1>Aya UX Directions</h1>
+          <p class="intro">
+            Four compact UI directions for day-to-day Aya work: faster actions,
+            clearer preset setup, persistent summaries, and denser session
+            navigation.
+          </p>
+        </div>
+        <div class="switcher" aria-label="Mockup view switcher">
+          <button class="active" data-filter="all">All</button>
+          <button data-filter="command">Command</button>
+          <button data-filter="presets">Presets</button>
+          <button data-filter="dashboard">Dashboard</button>
+          <button data-filter="compact">Compact</button>
+        </div>
+      </div>
+
+      <section class="board">
+        <article class="concept" data-kind="command">
+          <div class="caption">
+            <strong>1. Command Center</strong>
+            <span>Cmd+K as the shortest path to every frequent action</span>
+          </div>
+          <div class="window" style="position: relative">
+            <div class="app">
+              <div class="appbar">
+                <div class="brand"><i class="mark"></i><span>Aya</span></div>
+                <div class="tabs">
+                  <div class="tab active">
+                    <div class="tab-row"><i class="dot green"></i><b>aya</b></div>
+                    <small>Codex updates Foundation Models fallback</small>
+                  </div>
+                  <div class="tab">
+                    <div class="tab-row"><i class="dot amber"></i><b>release</b></div>
+                    <small>Claude is waiting for input</small>
+                  </div>
+                </div>
+                <div class="tools">
+                  <button class="icon">+</button>
+                  <button class="icon">K</button>
+                  <button class="icon">.</button>
+                </div>
+              </div>
+              <div class="workspace">
+                <aside class="side">
+                  <div class="side-head">Projects <span>+</span></div>
+                  <div class="project active">
+                    <b>aya</b>
+                    <small>3 sessions, 1 waiting</small>
+                  </div>
+                  <div class="project">
+                    <b>cdaction</b>
+                    <small>Codex indexing repo</small>
+                  </div>
+                  <div class="project">
+                    <b>combinaut</b>
+                    <small>No recent summary</small>
+                  </div>
+                </aside>
+                <section class="main">
+                  <div class="terminal-head">
+                    <div class="crumb">
+                      <i class="dot codex"></i>
+                      <b>Codex Main</b>
+                      <span class="pill">running</span>
+                    </div>
+                    <span class="pill">updated 12 min ago</span>
+                  </div>
+                  <pre class="terminal"><span class="prompt">$</span> npm test
+387 tests passed
+<span class="prompt">$</span> npm run package -- --mac --arm64
+signing Aya.app
+notarization skipped locally
+<span class="muted">Codex is preparing release notes...</span></pre>
+                </section>
+              </div>
+            </div>
+            <div class="command-overlay">
+              <div class="palette">
+                <div class="search">
+                  <code>Cmd K</code>
+                  <input value="new codex" aria-label="Command query" />
+                </div>
+                <div class="actions">
+                  <div class="action active">
+                    <span class="pill">+</span>
+                    <div><b>New Codex session</b><small>Current project, default account</small></div>
+                    <span class="key">Return</span>
+                  </div>
+                  <div class="action">
+                    <span class="pill">A</span>
+                    <div><b>New Codex with account...</b><small>Pick config directory before launch</small></div>
+                    <span class="key">Cmd 2</span>
+                  </div>
+                  <div class="action">
+                    <span class="pill">R</span>
+                    <div><b>Resume Codex session</b><small>Use selected terminal history</small></div>
+                    <span class="key">Cmd R</span>
+                  </div>
+                  <div class="action">
+                    <span class="pill">D</span>
+                    <div><b>Open preset diagnostics</b><small>Check command, config dir, usage source</small></div>
+                    <span class="key">Cmd D</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="concept" data-kind="presets">
+          <div class="caption">
+            <strong>2. Preset Diagnostics</strong>
+            <span>Setup should tell users what will work before they launch</span>
+          </div>
+          <div class="window">
+            <div class="settings">
+              <aside class="settings-nav">
+                <button class="nav">General</button>
+                <button class="nav">Appearance</button>
+                <button class="nav active">Presets</button>
+                <button class="nav">Aya Intelligence</button>
+                <button class="nav">Usage</button>
+              </aside>
+              <section class="settings-body">
+                <header class="settings-title">
+                  <div>
+                    <h2>Presets</h2>
+                    <p>Configure shell and agent launchers with live validation.</p>
+                  </div>
+                  <button class="pill">+ Add preset</button>
+                </header>
+                <div class="diagnostics">
+                  <aside class="preset-list">
+                    <div class="preset active">
+                      <b><i class="dot codex"></i> Codex work</b>
+                      <small>CODEX_HOME ~/.codex</small>
+                    </div>
+                    <div class="preset">
+                      <b><i class="dot codex"></i> Codex secondary</b>
+                      <small>CODEX_HOME ~/.codex3</small>
+                    </div>
+                    <div class="preset">
+                      <b><i class="dot claude"></i> Claude personal</b>
+                      <small>CLAUDE_CONFIG_DIR ~/.claude</small>
+                    </div>
+                    <div class="preset">
+                      <b><i class="dot green"></i> Shell</b>
+                      <small>$SHELL</small>
+                    </div>
+                  </aside>
+                  <section class="detail">
+                    <div class="field-grid">
+                      <div class="field">
+                        <label>Name</label>
+                        <div class="input">Codex work</div>
+                      </div>
+                      <div class="field">
+                        <label>Command</label>
+                        <div class="input">codex resume</div>
+                      </div>
+                      <div class="field">
+                        <label>Config dir</label>
+                        <div class="input">~/.codex</div>
+                      </div>
+                      <div class="field">
+                        <label>Usage source</label>
+                        <div class="input">~/.codex/usage.sqlite</div>
+                      </div>
+                    </div>
+                    <div class="checklist">
+                      <div class="check">
+                        <span class="ok">OK</span>
+                        <div><b>Command resolves</b><small>/opt/homebrew/bin/codex</small></div>
+                        <span class="pill">ready</span>
+                      </div>
+                      <div class="check">
+                        <span class="ok">OK</span>
+                        <div><b>Config directory exists</b><small>Default path, no env prefix needed</small></div>
+                        <span class="pill">default</span>
+                      </div>
+                      <div class="check">
+                        <span class="ok">OK</span>
+                        <div><b>Usage database found</b><small>Last updated 4 minutes ago</small></div>
+                        <span class="pill">linked</span>
+                      </div>
+                      <div class="check">
+                        <span class="bad">ERR</span>
+                        <div><b>Secondary preset needs attention</b><small>~/.codex3 does not exist yet</small></div>
+                        <span class="pill">fix</span>
+                      </div>
+                    </div>
+                    <div class="preview">
+Generated command
+
+cd ~/Projects/aya && exec codex resume
+                    </div>
+                  </section>
+                </div>
+              </section>
+            </div>
+          </div>
+        </article>
+
+        <article class="concept" data-kind="dashboard">
+          <div class="caption">
+            <strong>3. Project Dashboard</strong>
+            <span>A compact overview for sessions, summaries, usage, and waiting work</span>
+          </div>
+          <div class="window">
+            <div class="app">
+              <div class="appbar">
+                <div class="brand"><i class="mark"></i><span>Aya</span></div>
+                <div class="tabs">
+                  <div class="tab active">
+                    <div class="tab-row"><i class="dot green"></i><b>aya</b></div>
+                    <small>4 active sessions</small>
+                  </div>
+                  <div class="tab">
+                    <div class="tab-row"><i class="dot amber"></i><b>cdaction</b></div>
+                    <small>1 waiting input</small>
+                  </div>
+                </div>
+                <div class="tools">
+                  <button class="icon">+</button>
+                  <button class="icon">K</button>
+                  <button class="icon">.</button>
+                </div>
+              </div>
+              <div class="dashboard">
+                <section class="dash-main">
+                  <div class="strip">
+                    <div class="metric"><strong>4</strong><span>active sessions</span></div>
+                    <div class="metric"><strong>1</strong><span>waiting for input</span></div>
+                    <div class="metric"><strong>$1.82</strong><span>usage today</span></div>
+                  </div>
+                  <div class="activity">
+                    <div class="session">
+                      <i class="dot codex"></i>
+                      <div><b>Codex Main</b><small>Updates auto summaries and release checks</small></div>
+                      <span class="pill">running</span>
+                    </div>
+                    <div class="session">
+                      <i class="dot claude"></i>
+                      <div><b>Claude UI</b><small>Waiting for answer about settings split</small></div>
+                      <span class="pill">waiting</span>
+                    </div>
+                    <div class="session">
+                      <i class="dot green"></i>
+                      <div><b>Shell</b><small>npm test completed, dev server alive</small></div>
+                      <span class="pill">idle</span>
+                    </div>
+                    <div class="session">
+                      <i class="dot amber"></i>
+                      <div><b>Release</b><small>Package signed, notarization pending credentials</small></div>
+                      <span class="pill">attention</span>
+                    </div>
+                  </div>
+                </section>
+                <aside class="rail">
+                  <h3>Aya Intelligence</h3>
+                  <div class="summary">
+                    <b>Project summary</b>
+                    <p>Codex is preparing a signed Aya release and verifying packaged local summaries.</p>
+                    <footer>updated 18 min ago</footer>
+                  </div>
+                  <div class="summary">
+                    <b>Pinned note</b>
+                    <p>Keep generated commands readable. Hide default config env prefixes.</p>
+                    <footer>pinned yesterday</footer>
+                  </div>
+                  <h3>Health</h3>
+                  <div class="checklist">
+                    <div class="check">
+                      <span class="ok">OK</span>
+                      <div><b>Apple summaries</b><small>Foundation Models available</small></div>
+                      <span></span>
+                    </div>
+                    <div class="check">
+                      <span class="ok">OK</span>
+                      <div><b>Usage monitor</b><small>Claude and Codex linked</small></div>
+                      <span></span>
+                    </div>
+                  </div>
+                </aside>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="concept" data-kind="compact">
+          <div class="caption">
+            <strong>4. Compact Workspace</strong>
+            <span>More sessions visible with status and summaries kept one line high</span>
+          </div>
+          <div class="window">
+            <div class="app compact">
+              <div class="appbar">
+                <div class="brand"><i class="mark"></i><span>Aya</span></div>
+                <div class="tabs">
+                  <div class="tab active">
+                    <div class="tab-row"><i class="dot green"></i><b>aya</b></div>
+                    <small>Codex updates diagnostics</small>
+                  </div>
+                  <div class="tab">
+                    <div class="tab-row"><i class="dot claude"></i><b>claude</b></div>
+                    <small>Reviewing UX plan</small>
+                  </div>
+                  <div class="tab">
+                    <div class="tab-row"><i class="dot amber"></i><b>release</b></div>
+                    <small>Waiting on signing</small>
+                  </div>
+                </div>
+                <div class="tools">
+                  <button class="icon">+</button>
+                  <button class="icon">K</button>
+                  <button class="icon">.</button>
+                </div>
+              </div>
+              <div class="workspace">
+                <aside class="side">
+                  <div class="mini-status">
+                    <div class="mini"><b>12</b><span>sessions</span></div>
+                    <div class="mini"><b>2</b><span>waiting</span></div>
+                    <div class="mini"><b>3</b><span>errors</span></div>
+                    <div class="mini"><b>18m</b><span>summary</span></div>
+                  </div>
+                  <div class="dense-list">
+                    <div class="dense-item active"><i class="dot codex"></i><b>Codex Main</b><small>run</small></div>
+                    <div class="dense-item"><i class="dot claude"></i><b>Claude UI Review</b><small>wait</small></div>
+                    <div class="dense-item"><i class="dot green"></i><b>Shell</b><small>idle</small></div>
+                    <div class="dense-item"><i class="dot amber"></i><b>Release Build</b><small>sign</small></div>
+                    <div class="dense-item"><i class="dot codex"></i><b>Codex Usage</b><small>run</small></div>
+                    <div class="dense-item"><i class="dot green"></i><b>Vite Dev</b><small>5173</small></div>
+                    <div class="dense-item"><i class="dot red"></i><b>Failed E2E</b><small>err</small></div>
+                    <div class="dense-item"><i class="dot claude"></i><b>Claude Docs</b><small>idle</small></div>
+                    <div class="dense-item"><i class="dot green"></i><b>Git</b><small>clean</small></div>
+                    <div class="dense-item"><i class="dot amber"></i><b>Notary</b><small>hold</small></div>
+                  </div>
+                </aside>
+                <section class="main">
+                  <div class="terminal-head">
+                    <div class="crumb">
+                      <i class="dot codex"></i>
+                      <b>Codex Main</b>
+                      <span class="pill">running</span>
+                      <span class="pill">summary 18m</span>
+                    </div>
+                    <span class="pill">Aya builds UX diagnostics</span>
+                  </div>
+                  <pre class="terminal"><span class="prompt">$</span> rg "local-summary" electron src tests
+electron/main.ts: bundledDistElectronHelperPath(...)
+tests/local-summary-errors.test.mjs: apple-model-unavailable
+
+<span class="prompt">$</span> npm test
+387 tests passed
+
+<span class="muted">Compact mode keeps the list dense while the selected session remains readable.</span></pre>
+                </section>
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <script>
+      const buttons = document.querySelectorAll(".switcher button");
+      const concepts = document.querySelectorAll(".concept");
+
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => {
+          const filter = button.dataset.filter;
+          buttons.forEach((item) => item.classList.toggle("active", item === button));
+          concepts.forEach((concept) => {
+            concept.classList.toggle(
+              "hidden",
+              filter !== "all" && concept.dataset.kind !== filter,
+            );
+          });
+        });
+      });
+    </script>
+  </body>
+</html>

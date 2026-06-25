@@ -90,10 +90,12 @@ export function TopBar({
   const [renamingSlug, setRenamingSlug] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const recentFilterRef = useRef<HTMLInputElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
   const recentRef = useRef<HTMLDivElement>(null);
   const sessionsRef = useRef<HTMLDivElement>(null);
   const [showRecent, setShowRecent] = useState(false);
+  const [recentFilter, setRecentFilter] = useState("");
   const [showSessions, setShowSessions] = useState(false);
 
   const monitoredSessions = Object.entries(monitoredSessionsByProject)
@@ -101,6 +103,18 @@ export function TopBar({
       sessions.map((session) => ({ ...session, projectSlug })),
     )
     .sort((a, b) => b.updatedAt - a.updatedAt);
+  const normalizedRecentFilter = recentFilter.trim().toLowerCase();
+  const filteredClosedProjects =
+    normalizedRecentFilter.length === 0
+      ? closedProjects
+      : closedProjects.filter((p) => {
+          const path = compactDir(p.directory, homeDir);
+          return (
+            p.name.toLowerCase().includes(normalizedRecentFilter) ||
+            path.toLowerCase().includes(normalizedRecentFilter) ||
+            p.directory.toLowerCase().includes(normalizedRecentFilter)
+          );
+        });
 
   useEffect(() => {
     if (!showRecent) return;
@@ -109,6 +123,18 @@ export function TopBar({
     };
     window.addEventListener("pointerdown", onPointerDown, true);
     return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, [showRecent]);
+
+  useEffect(() => {
+    if (!showRecent) {
+      setRecentFilter("");
+      return;
+    }
+    const id = window.requestAnimationFrame(() => {
+      recentFilterRef.current?.focus();
+      recentFilterRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(id);
   }, [showRecent]);
 
   useEffect(() => {
@@ -489,10 +515,36 @@ export function TopBar({
           {showRecent && (
             <div className="aya-recent-menu" role="menu">
               <div className="aya-recent-menu-title">Recent projects</div>
+              {closedProjects.length > 0 && (
+                <div className="aya-recent-menu-filter">
+                  <span
+                    className="aya-recent-menu-filter-icon"
+                    style={{ fontFamily: "Material Symbols Outlined" }}
+                    aria-hidden="true"
+                  >
+                    search
+                  </span>
+                  <input
+                    ref={recentFilterRef}
+                    value={recentFilter}
+                    onChange={(e) => setRecentFilter(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.stopPropagation();
+                        setShowRecent(false);
+                      }
+                    }}
+                    placeholder="Filter projects"
+                    aria-label="Filter recent projects"
+                  />
+                </div>
+              )}
               {closedProjects.length === 0 ? (
                 <div className="aya-recent-menu-empty">No closed projects</div>
+              ) : filteredClosedProjects.length === 0 ? (
+                <div className="aya-recent-menu-empty">No matching projects</div>
               ) : (
-                closedProjects.map((p) => (
+                filteredClosedProjects.map((p) => (
                   <button
                     key={p.slug}
                     className="aya-recent-menu-item"

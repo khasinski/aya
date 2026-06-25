@@ -32,10 +32,12 @@ function fmtReset(iso?: string): string {
 /** One limit window in the popover: label, percent, bar, reset time. */
 function UsageRow({
   label,
+  accountLabel,
   win,
   accent,
 }: {
   label: string;
+  accountLabel: string;
   win: UsageWindow;
   accent: string;
 }) {
@@ -49,7 +51,23 @@ function UsageRow({
           alignItems: "baseline",
         }}
       >
-        <span style={{ color: CHIP_MUTED_COLOR }}>{label}</span>
+        <span style={{ minWidth: 0 }}>
+          <span style={{ color: CHIP_MUTED_COLOR }}>{label}</span>
+          <span
+            style={{
+              display: "block",
+              maxWidth: 190,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              color: CHIP_MUTED_COLOR,
+              fontSize: 11,
+              marginTop: 1,
+            }}
+          >
+            {accountLabel}
+          </span>
+        </span>
         <span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
           {Math.round(win.pct)}%
         </span>
@@ -131,8 +149,8 @@ export function UsageChip({
     <div className="aya-recent-projects" ref={ref}>
       <button
         className="aya-iconbtn"
-        title={`${label} usage — ${accountText}, account-wide (all sessions, not this project)`}
-        aria-label={`${label} usage, account-wide`}
+        title={`${label} usage — ${accountText}`}
+        aria-label={`${label} usage`}
         // Don't steal keyboard focus from the active terminal: peeking at usage
         // shouldn't force a re-click to resume typing (the old Settings-focus
         // bug). preventDefault on mousedown keeps focus where it was; the click
@@ -205,10 +223,7 @@ export function UsageChip({
       </button>
       {open && (
         <div className="aya-recent-menu" role="menu" style={{ width: 280, padding: 12 }}>
-          <div className="aya-recent-menu-title">{label} — account-wide</div>
-          <div style={{ color: CHIP_MUTED_COLOR, fontSize: 12, marginBottom: 10 }}>
-            {accountText}, all sessions, not this project
-          </div>
+          <div className="aya-recent-menu-title">{label}</div>
           {accounts.map((account, index) => {
             const accountStale = isUsageStale(account.usage);
             return (
@@ -254,9 +269,15 @@ export function UsageChip({
                     {fmtClock(account.usage.updatedAt)}
                   </span>
                 </div>
-                <UsageRow label="5h" win={account.usage.fiveHour} accent={accent} />
+                <UsageRow
+                  label="5h"
+                  accountLabel={account.label}
+                  win={account.usage.fiveHour}
+                  accent={accent}
+                />
                 <UsageRow
                   label="week"
+                  accountLabel={account.label}
                   win={account.usage.sevenDay}
                   accent={accent}
                 />

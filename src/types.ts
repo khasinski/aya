@@ -147,6 +147,20 @@ export interface ProjectGitInfo {
   dirty: number;
 }
 
+/** Overall window layout. "classic": project tabs on top + terminal list on
+ *  the left. "projects-left": project tabs in a left rail + terminal tabs on
+ *  top. The two are rendered by separate, self-contained layout components. */
+export type LayoutMode = "classic" | "projects-left";
+
+export type GitHubLinkKind = "pr" | "branch";
+
+/** A GitHub URL for the active project's current branch: its open PR, or the
+ *  branch's tree page when there is no PR. Resolved via the `gh` CLI. */
+export interface GitHubLink {
+  kind: GitHubLinkKind;
+  url: string;
+}
+
 export interface RemoteHostInfo {
   id: string;
   name: string;
@@ -477,6 +491,8 @@ export interface AyaApi {
   getGitInfo(directory: string): Promise<ProjectGitInfo>;
   getGitChangedFiles(directory: string): Promise<GitChangedFile[]>;
   getGitDiff(directory: string): Promise<string>;
+  getGitHubLink(directory: string): Promise<GitHubLink | null>;
+  githubCliAvailable(): Promise<boolean>;
   pickDirectory(): Promise<string | null>;
   dirExists(path: string): Promise<boolean>;
   createDir(path: string): Promise<void>;

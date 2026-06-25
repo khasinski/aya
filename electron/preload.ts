@@ -82,6 +82,9 @@ const api: AyaApi = {
   getGitChangedFiles: (directory) =>
     ipcRenderer.invoke("env:git-changed-files", directory),
   getGitDiff: (directory) => ipcRenderer.invoke("env:git-diff", directory),
+  getGitHubLink: (directory) =>
+    ipcRenderer.invoke("env:github-link", directory),
+  githubCliAvailable: () => ipcRenderer.invoke("env:github-cli-available"),
   pickDirectory: () => ipcRenderer.invoke("env:pick-dir"),
   dirExists: (p) => ipcRenderer.invoke("env:dir-exists", p),
   createDir: (p) => ipcRenderer.invoke("env:create-dir", p),

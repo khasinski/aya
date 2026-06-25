@@ -24,6 +24,7 @@ import {
 } from "node:fs";
 import { deflateSync } from "node:zlib";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -54,6 +55,7 @@ import {
   listRemoteDirectory,
 } from "./remote-client";
 import { getGitChangedFiles, getGitDiff, getGitInfo } from "./git";
+import { getGitHubLink, isGitHubCliAvailable } from "./github";
 import {
   AYA_HOME,
   CONTROL_SOCKET_PATH,
@@ -64,7 +66,7 @@ import {
   REMOTE_SOCKET_PATH,
 } from "./paths";
 import { scanHarnesses } from "./harnesses";
-import { isInternalNavigationUrl, parseHttpUrl } from "./navigation";
+import { isInternalNavigationUrl, parseExternalUrl } from "./navigation";
 import { listPresets, savePresets } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
 import { expandUserPath, readClaudeUsageAccounts } from "./usage";
@@ -987,9 +989,14 @@ function devAboutIconPath(): string {
   return devIconPath();
 }
 
-async function openExternalHttpUrl(raw: string): Promise<void> {
-  const parsed = parseHttpUrl(raw);
-  if (!parsed) throw new Error("Only HTTP and HTTPS URLs can be opened.");
+async function openExternalUrl(raw: string): Promise<void> {
+  const parsed = parseExternalUrl(raw);
+  if (!parsed) throw new Error("Unsupported external URL.");
+  if (parsed.protocol === "file:") {
+    const error = await shell.openPath(fileURLToPath(parsed));
+    if (error) throw new Error(error);
+    return;
+  }
   await shell.openExternal(parsed.toString());
 }
 
@@ -1489,18 +1496,26 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   // External links must never navigate Aya's BrowserWindow. xterm's web-links
   // addon normally calls our IPC handler, but Chromium/Electron can still see
   // window.open or direct navigation paths depending on timing and modifier
-  // keys. Catch both centrally and hand http(s) URLs to the OS browser.
+  // keys. Catch both centrally and hand safe external URLs to the OS.
   const handleExternalNavigation = (
     event: { preventDefault(): void },
     url: string,
   ) => {
-    if (isInternalNavigationUrl(url, { isDev: IS_DEV, devServerUrl: DEV_SERVER_URL })) return;
+    if (
+      isInternalNavigationUrl(url, {
+        isDev: IS_DEV,
+        devServerUrl: DEV_SERVER_URL,
+        appIndexPath: path.join(__dirname, "..", "dist", "index.html"),
+      })
+    ) {
+      return;
+    }
     event.preventDefault();
-    if (parseHttpUrl(url)) void openExternalHttpUrl(url);
+    if (parseExternalUrl(url)) void openExternalUrl(url);
   };
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (parseHttpUrl(url)) void openExternalHttpUrl(url);
+    if (parseExternalUrl(url)) void openExternalUrl(url);
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (event, url) => {
@@ -1836,6 +1851,12 @@ function registerIpc(win: BrowserWindow): void {
   ipcMain.handle("env:git-diff", async (_e, directory: unknown) =>
     getGitDiff(requireString(directory, "env:git-diff.directory")),
   );
+  ipcMain.handle("env:github-link", async (_e, directory: unknown) =>
+    getGitHubLink(requireString(directory, "env:github-link.directory")),
+  );
+  ipcMain.handle("env:github-cli-available", async () =>
+    isGitHubCliAvailable(),
+  );
   ipcMain.handle("env:pick-dir", async () => {
     const result = await dialog.showOpenDialog(win, {
       title: "Pick a project directory",
@@ -1865,7 +1886,7 @@ function registerIpc(win: BrowserWindow): void {
     if (error) throw new Error(error);
   });
   ipcMain.handle("env:open-url", async (_e, value: unknown) => {
-    await openExternalHttpUrl(requireString(value, "env:open-url.url"));
+    await openExternalUrl(requireString(value, "env:open-url.url"));
   });
   ipcMain.handle("env:clipboard-read", async () => clipboard.readText());
   ipcMain.handle("env:clipboard-write", async (_e, value: unknown) => {
