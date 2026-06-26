@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getPreset, type Preset, type TerminalState } from "../types";
+import { useDragReorder } from "../hooks/useDragReorder";
 
 // Clamp bounds for drag-resizing the sidebar (px).
 const SIDEBAR_MIN_WIDTH_PX = 180;
@@ -86,64 +87,12 @@ export function Sidebar({
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Vertical drag-and-drop state for reordering terminal rows.
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [dropTarget, setDropTarget] = useState<{
-    id: string;
-    before: boolean;
-  } | null>(null);
-
-  const handleRowDragStart = (
-    e: DragEvent<HTMLDivElement>,
-    id: string,
-  ) => {
-    setDragId(id);
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", id);
-  };
-  const handleRowDragOver = (
-    e: DragEvent<HTMLDivElement>,
-    id: string,
-  ) => {
-    if (!dragId || dragId === id) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const before = e.clientY < rect.top + rect.height / 2;
-    setDropTarget((prev) =>
-      prev && prev.id === id && prev.before === before
-        ? prev
-        : { id, before },
-    );
-  };
-  const handleRowDrop = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    if (!dragId || !dropTarget) {
-      setDragId(null);
-      setDropTarget(null);
-      return;
-    }
-    const order = terminals.map((t) => t.id);
-    const fromIdx = order.indexOf(dragId);
-    const targetIdx = order.indexOf(dropTarget.id);
-    if (fromIdx < 0 || targetIdx < 0) {
-      setDragId(null);
-      setDropTarget(null);
-      return;
-    }
-    order.splice(fromIdx, 1);
-    let insertIdx = targetIdx;
-    if (fromIdx < targetIdx) insertIdx -= 1;
-    if (!dropTarget.before) insertIdx += 1;
-    order.splice(insertIdx, 0, dragId);
-    onReorder(order);
-    setDragId(null);
-    setDropTarget(null);
-  };
-  const handleRowDragEnd = () => {
-    setDragId(null);
-    setDropTarget(null);
-  };
+  // Vertical drag-and-drop for reordering terminal rows.
+  const { dragId, dropTarget, itemHandlers } = useDragReorder(
+    "y",
+    terminals.map((t) => t.id),
+    onReorder,
+  );
 
   const startRename = (t: TerminalState) => {
     setRenamingId(t.id);
@@ -207,10 +156,7 @@ export function Sidebar({
                 isDragging ? "aya-sidebar-row--dragging" : ""
               } ${dropClass}`}
               draggable={!isRenamingRow}
-              onDragStart={(e) => handleRowDragStart(e, t.id)}
-              onDragOver={(e) => handleRowDragOver(e, t.id)}
-              onDrop={handleRowDrop}
-              onDragEnd={handleRowDragEnd}
+              {...itemHandlers(t.id)}
               onClick={() => onSelect(t.id)}
               onContextMenu={(e) => {
                 e.preventDefault();

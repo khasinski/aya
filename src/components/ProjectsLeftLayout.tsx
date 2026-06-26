@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type DragEvent,
-  type ReactNode,
-} from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
 import {
   getPreset,
@@ -14,6 +8,7 @@ import {
   type UsageAccount,
 } from "../types";
 import type { SettingsTab } from "../settings-tabs";
+import { useDragReorder } from "../hooks/useDragReorder";
 import { UsageChip } from "./UsageChip";
 import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
 
@@ -147,11 +142,11 @@ export function ProjectsLeftLayout({
   const [renamingSlug, setRenamingSlug] = useState<string | null>(null);
   const [projectDraft, setProjectDraft] = useState("");
   const projectInputRef = useRef<HTMLInputElement>(null);
-  const [dragSlug, setDragSlug] = useState<string | null>(null);
-  const [projectDrop, setProjectDrop] = useState<{
-    slug: string;
-    before: boolean;
-  } | null>(null);
+  const {
+    dragId: dragSlug,
+    dropTarget: projectDrop,
+    itemHandlers: projectDragHandlers,
+  } = useDragReorder("y", projects.map((p) => p.slug), onReorderProjects);
 
   const startProjectRename = (project: ProjectConfig) => {
     setRenamingSlug(project.slug);
@@ -166,54 +161,15 @@ export function ProjectsLeftLayout({
     setRenamingSlug(null);
   };
 
-  const onProjectDragStart = (e: DragEvent<HTMLDivElement>, slug: string) => {
-    setDragSlug(slug);
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", slug);
-  };
-  const onProjectDragOver = (e: DragEvent<HTMLDivElement>, slug: string) => {
-    if (!dragSlug || dragSlug === slug) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const before = e.clientY < rect.top + rect.height / 2;
-    setProjectDrop((prev) =>
-      prev && prev.slug === slug && prev.before === before
-        ? prev
-        : { slug, before },
-    );
-  };
-  const onProjectDrop = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    if (dragSlug && projectDrop) {
-      const order = projects.map((p) => p.slug);
-      const fromIdx = order.indexOf(dragSlug);
-      const targetIdx = order.indexOf(projectDrop.slug);
-      if (fromIdx >= 0 && targetIdx >= 0) {
-        order.splice(fromIdx, 1);
-        let insertIdx = targetIdx;
-        if (fromIdx < targetIdx) insertIdx -= 1;
-        if (!projectDrop.before) insertIdx += 1;
-        order.splice(insertIdx, 0, dragSlug);
-        onReorderProjects(order);
-      }
-    }
-    setDragSlug(null);
-    setProjectDrop(null);
-  };
-  const onProjectDragEnd = () => {
-    setDragSlug(null);
-    setProjectDrop(null);
-  };
-
   // ---- Terminal top tabs: rename / horizontal drag-reorder / context menu ----
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [termDraft, setTermDraft] = useState("");
   const termInputRef = useRef<HTMLInputElement>(null);
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [termDrop, setTermDrop] = useState<{ id: string; before: boolean } | null>(
-    null,
-  );
+  const {
+    dragId,
+    dropTarget: termDrop,
+    itemHandlers: termDragHandlers,
+  } = useDragReorder("x", terminals.map((t) => t.id), onReorderTerminals);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(
     null,
   );
@@ -270,44 +226,6 @@ export function ProjectsLeftLayout({
       if (trimmed) onRenameTerminal(renamingId, trimmed);
     }
     setRenamingId(null);
-  };
-
-  const onTermDragStart = (e: DragEvent<HTMLDivElement>, id: string) => {
-    setDragId(id);
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", id);
-  };
-  const onTermDragOver = (e: DragEvent<HTMLDivElement>, id: string) => {
-    if (!dragId || dragId === id) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const before = e.clientX < rect.left + rect.width / 2;
-    setTermDrop((prev) =>
-      prev && prev.id === id && prev.before === before ? prev : { id, before },
-    );
-  };
-  const onTermDrop = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    if (dragId && termDrop) {
-      const order = terminals.map((t) => t.id);
-      const fromIdx = order.indexOf(dragId);
-      const targetIdx = order.indexOf(termDrop.id);
-      if (fromIdx >= 0 && targetIdx >= 0) {
-        order.splice(fromIdx, 1);
-        let insertIdx = targetIdx;
-        if (fromIdx < targetIdx) insertIdx -= 1;
-        if (!termDrop.before) insertIdx += 1;
-        order.splice(insertIdx, 0, dragId);
-        onReorderTerminals(order);
-      }
-    }
-    setDragId(null);
-    setTermDrop(null);
-  };
-  const onTermDragEnd = () => {
-    setDragId(null);
-    setTermDrop(null);
   };
 
   // ---- Project rail resize ----
@@ -379,10 +297,7 @@ export function ProjectsLeftLayout({
                 } ${dropClass}`}
                 style={{ flex: "0 0 auto" }}
                 draggable={!isRenaming}
-                onDragStart={(e) => onTermDragStart(e, t.id)}
-                onDragOver={(e) => onTermDragOver(e, t.id)}
-                onDrop={onTermDrop}
-                onDragEnd={onTermDragEnd}
+                {...termDragHandlers(t.id)}
                 onClick={() => !isRenaming && onSelectTerminal(t.id)}
                 onContextMenu={(e) => {
                   e.preventDefault();
@@ -611,7 +526,7 @@ export function ProjectsLeftLayout({
                 : compactDir(p.directory, homeDir);
               const projectSummary = projectSummaries[p.slug]?.trim();
               const displayMeta = projectSummary || displayPath;
-              const isDropTarget = projectDrop?.slug === p.slug;
+              const isDropTarget = projectDrop?.id === p.slug;
               const dropClass = isDropTarget
                 ? projectDrop.before
                   ? "aya-railtab--drop-before"
@@ -625,10 +540,7 @@ export function ProjectsLeftLayout({
                     isDragging ? "aya-railtab--dragging" : ""
                   } ${isRemote ? "aya-railtab--remote" : ""} ${dropClass}`}
                   draggable={!isRenaming}
-                  onDragStart={(e) => onProjectDragStart(e, p.slug)}
-                  onDragOver={(e) => onProjectDragOver(e, p.slug)}
-                  onDrop={onProjectDrop}
-                  onDragEnd={onProjectDragEnd}
+                  {...projectDragHandlers(p.slug)}
                   onClick={() => !isRenaming && onSelectProject(p.slug)}
                   title={
                     isRenaming

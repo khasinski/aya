@@ -1,5 +1,6 @@
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useDragReorder } from "../hooks/useDragReorder";
 import type { MonitoredSession, ProjectConfig, UsageAccount } from "../types";
 import type { SettingsTab } from "../settings-tabs";
 import { UsageChip } from "./UsageChip";
@@ -166,64 +167,12 @@ export function TopBar({
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
-  // Drag-and-drop state for project tab reordering.
-  const [dragSlug, setDragSlug] = useState<string | null>(null);
-  const [dropTarget, setDropTarget] = useState<{
-    slug: string;
-    before: boolean;
-  } | null>(null);
-
-  const handleDragStart = (
-    e: DragEvent<HTMLDivElement>,
-    slug: string,
-  ) => {
-    setDragSlug(slug);
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", slug);
-  };
-  const handleDragOver = (
-    e: DragEvent<HTMLDivElement>,
-    slug: string,
-  ) => {
-    if (!dragSlug || dragSlug === slug) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const before = e.clientX < rect.left + rect.width / 2;
-    setDropTarget((prev) =>
-      prev && prev.slug === slug && prev.before === before
-        ? prev
-        : { slug, before },
-    );
-  };
-  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    if (!dragSlug || !dropTarget) {
-      setDragSlug(null);
-      setDropTarget(null);
-      return;
-    }
-    const fromIdx = projects.findIndex((p) => p.slug === dragSlug);
-    const targetIdx = projects.findIndex((p) => p.slug === dropTarget.slug);
-    if (fromIdx < 0 || targetIdx < 0) {
-      setDragSlug(null);
-      setDropTarget(null);
-      return;
-    }
-    const order = projects.map((p) => p.slug);
-    order.splice(fromIdx, 1);
-    let insertIdx = targetIdx;
-    if (fromIdx < targetIdx) insertIdx -= 1;
-    if (!dropTarget.before) insertIdx += 1;
-    order.splice(insertIdx, 0, dragSlug);
-    onReorderProjects(order);
-    setDragSlug(null);
-    setDropTarget(null);
-  };
-  const handleDragEnd = () => {
-    setDragSlug(null);
-    setDropTarget(null);
-  };
+  // Horizontal drag-and-drop for project tab reordering.
+  const { dragId: dragSlug, dropTarget, itemHandlers } = useDragReorder(
+    "x",
+    projects.map((p) => p.slug),
+    onReorderProjects,
+  );
 
   const startRename = (project: ProjectConfig) => {
     setRenamingSlug(project.slug);
@@ -267,7 +216,7 @@ export function TopBar({
             : compactDir(p.directory, homeDir);
           const projectSummary = projectSummaries[p.slug]?.trim();
           const displayMeta = projectSummary || displayPath;
-          const isDropTarget = dropTarget?.slug === p.slug;
+          const isDropTarget = dropTarget?.id === p.slug;
           const dropClass = isDropTarget
             ? dropTarget.before
               ? "aya-tab--drop-before"
@@ -287,10 +236,7 @@ export function TopBar({
                 maxWidth: TAB_MAX_WIDTH_PX,
               }}
               draggable={!isRenaming}
-              onDragStart={(e) => handleDragStart(e, p.slug)}
-              onDragOver={(e) => handleDragOver(e, p.slug)}
-              onDrop={handleDrop}
-              onDragEnd={handleDragEnd}
+              {...itemHandlers(p.slug)}
               onClick={() => !isRenaming && onSelectProject(p.slug)}
               title={
                 isRenaming
