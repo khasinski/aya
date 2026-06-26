@@ -17,16 +17,12 @@ import {
   PROJECT_STATE_VERSION,
   sanitizeStringRecord,
 } from "./validation";
+import { slugifyName } from "./text";
 
 const RESERVED_SLUGS = new Set(["aya-sentinel-new"]);
 
 function slugify(name: string): string {
-  const slug = name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug || "project";
+  return slugifyName(name, "project");
 }
 
 async function ensureDir(): Promise<void> {

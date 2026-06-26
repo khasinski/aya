@@ -13,6 +13,7 @@ import { promises as fs } from "node:fs";
 import * as plist from "plist";
 import { writeFileAtomic } from "./atomic-write";
 import { THEMES_FILE } from "./paths";
+import { slugifyName } from "./text";
 
 export interface ThemeColors {
   background: string;
@@ -426,12 +427,7 @@ export function parseTheme(content: string, sourceName: string): Theme {
 }
 
 function makeImportedId(name: string): string {
-  const slug = name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
   // Suffix with a short random so reimporting the same name doesn't collide.
   const tail = Math.random().toString(36).slice(2, 6);
-  return `${slug || "imported"}-${tail}`;
+  return `${slugifyName(name, "imported")}-${tail}`;
 }

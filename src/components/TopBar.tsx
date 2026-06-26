@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type DragEvent } from "react";
 import type { MonitoredSession, ProjectConfig, UsageAccount } from "../types";
 import type { SettingsTab } from "../settings-tabs";
 import { UsageChip } from "./UsageChip";
+import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
 
 // Project tab width bounds (px): tabs shrink to min, then overflow the strip.
 const TAB_MIN_WIDTH_PX = 120;
@@ -240,62 +241,13 @@ export function TopBar({
 
   return (
     <header className="aya-topbar">
-      {platform === "darwin" && (
-        <div className="aya-mac-window-controls" aria-label="Window controls">
-          <button
-            className="aya-mac-window-control aya-mac-window-control--close"
-            title="Close"
-            aria-label="Close"
-            onClick={onCloseWindow}
-          >
-            <svg
-              className="aya-mac-window-control-icon"
-              viewBox="0 0 12 12"
-              aria-hidden="true"
-            >
-              <path d="M3.25 3.25L8.75 8.75M8.75 3.25L3.25 8.75" />
-            </svg>
-          </button>
-          <button
-            className="aya-mac-window-control aya-mac-window-control--minimize"
-            title="Minimize"
-            aria-label="Minimize"
-            onClick={onMinimizeWindow}
-          >
-            <svg
-              className="aya-mac-window-control-icon"
-              viewBox="0 0 12 12"
-              aria-hidden="true"
-            >
-              <path d="M3 6H9" />
-            </svg>
-          </button>
-          <button
-            className="aya-mac-window-control aya-mac-window-control--fullscreen"
-            title={isFullScreen ? "Exit full screen" : "Full screen"}
-            aria-label={isFullScreen ? "Exit full screen" : "Full screen"}
-            onClick={onToggleFullScreenWindow}
-          >
-            <svg
-              className="aya-mac-window-control-icon"
-              viewBox="0 0 12 12"
-              aria-hidden="true"
-            >
-              {isFullScreen ? (
-                <>
-                  <path d="M4.5 2.75V4.5H2.75" />
-                  <path d="M7.5 9.25V7.5H9.25" />
-                </>
-              ) : (
-                <>
-                  <path d="M7.5 2.75H9.25V4.5" />
-                  <path d="M4.5 9.25H2.75V7.5" />
-                </>
-              )}
-            </svg>
-          </button>
-        </div>
-      )}
+      <MacWindowControls
+        platform={platform}
+        isFullScreen={isFullScreen}
+        onClose={onCloseWindow}
+        onMinimize={onMinimizeWindow}
+        onToggleFullScreen={onToggleFullScreenWindow}
+      />
       <div className="aya-brand">
         <span
           className="aya-brand-dot"
@@ -584,40 +536,13 @@ export function TopBar({
         >
           <span style={{ fontFamily: "Material Symbols Outlined" }}>settings</span>
         </button>
-        {platform === "linux" && (
-          <div className="aya-window-controls" aria-label="Window controls">
-            <button
-              className="aya-window-control"
-              title="Minimize"
-              aria-label="Minimize"
-              onClick={onMinimizeWindow}
-            >
-              <span style={{ fontFamily: "Material Symbols Outlined" }}>
-                remove
-              </span>
-            </button>
-            <button
-              className="aya-window-control"
-              title={isMaximized ? "Restore" : "Maximize"}
-              aria-label={isMaximized ? "Restore" : "Maximize"}
-              onClick={onToggleMaximizeWindow}
-            >
-              <span style={{ fontFamily: "Material Symbols Outlined" }}>
-                {isMaximized ? "filter_none" : "crop_square"}
-              </span>
-            </button>
-            <button
-              className="aya-window-control aya-window-control--close"
-              title="Close"
-              aria-label="Close"
-              onClick={onCloseWindow}
-            >
-              <span style={{ fontFamily: "Material Symbols Outlined" }}>
-                close
-              </span>
-            </button>
-          </div>
-        )}
+        <LinuxWindowControls
+          platform={platform}
+          isMaximized={isMaximized}
+          onMinimize={onMinimizeWindow}
+          onToggleMaximize={onToggleMaximizeWindow}
+          onClose={onCloseWindow}
+        />
       </div>
     </header>
   );
