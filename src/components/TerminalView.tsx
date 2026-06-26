@@ -209,7 +209,11 @@ function TerminalViewComponent({
   macOptionKeyMode,
 }: Props) {
   const shouldUseWebgl =
-    shouldUseTerminalWebgl(enableWebgl, preset.id);
+    shouldUseTerminalWebgl(enableWebgl, preset.id) &&
+    // Under test automation (Playwright/WebDriver) force xterm's DOM renderer:
+    // the e2e tests read rendered text from `.xterm-rows`, which the WebGL
+    // renderer paints to a canvas instead. Real users never set this flag.
+    !navigator.webdriver;
   const shouldPreserveScrollback =
     shouldPreserveTerminalScrollback(preset.id);
   const lastActivityLabel = lastActivity ? formatLastActivity(lastActivity) : null;

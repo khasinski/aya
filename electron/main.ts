@@ -1436,6 +1436,12 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false, // node-pty needs the preload to have node access
+      // In headless e2e the window is never shown, so Chromium would throttle
+      // requestAnimationFrame and xterm's render loop would never paint — the
+      // tests that read rendered rows then time out. Keep the hidden test
+      // window fully active. Production keeps the default (throttle when
+      // backgrounded to save power).
+      ...(IS_E2E_HEADLESS ? { backgroundThrottling: false } : {}),
     },
   });
 
