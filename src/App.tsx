@@ -34,6 +34,12 @@ import {
   useTerminalNotifications,
 } from "./hooks/useTerminalSignals";
 import {
+  boolPreference,
+  enumPreference,
+  usePersistentPreference,
+  type PreferenceCodec,
+} from "./hooks/usePersistentPreference";
+import {
   BUILTIN_SHELL,
   type AyaIntelligenceConfig,
   type Snippet,
@@ -138,66 +144,29 @@ interface SummaryCache {
   project: Record<string, { summary: string; updatedAt: number }>;
 }
 
-function readAppThemePreference(): AppThemePreference {
-  try {
-    const value = localStorage.getItem(APP_THEME_STORAGE_KEY);
-    return value === "light" || value === "dark" || value === "system"
-      ? value
-      : "system";
-  } catch {
-    return "system";
-  }
-}
-
-function readMacOptionKeyMode(): MacOptionKeyMode {
-  try {
-    const value = localStorage.getItem(MAC_OPTION_KEY_STORAGE_KEY);
-    return isMacOptionKeyMode(value) ? value : DEFAULT_MAC_OPTION_KEY_MODE;
-  } catch {
-    return DEFAULT_MAC_OPTION_KEY_MODE;
-  }
-}
+// localStorage codecs for the simple preferences (see usePersistentPreference).
+const THEME_CODEC = enumPreference<AppThemePreference>(
+  ["system", "light", "dark"],
+  "system",
+);
+const MAC_OPTION_CODEC: PreferenceCodec<MacOptionKeyMode> = {
+  fallback: DEFAULT_MAC_OPTION_KEY_MODE,
+  parse: (raw) => (isMacOptionKeyMode(raw) ? raw : DEFAULT_MAC_OPTION_KEY_MODE),
+  serialize: (v) => v,
+};
+// "classic" (default): project tabs on top, terminal list left.
+// "projects-left": project tabs in a left rail, terminal tabs on top.
+const LAYOUT_CODEC = enumPreference<LayoutMode>(
+  ["classic", "projects-left"],
+  "classic",
+);
+// Harness names show by default; the PR/branch link is opt-in (needs gh).
+const HARNESS_NAME_CODEC = boolPreference(true);
+const GITHUB_LINK_CODEC = boolPreference(false);
+const LOCAL_SUMMARIES_CODEC = boolPreference(false);
 
 function readTerminalFontFamily(): string {
   return localStorage.getItem(TERMINAL_FONT_FAMILY_STORAGE_KEY) ?? "";
-}
-
-function readUsageHarnessNamePreference(): boolean {
-  try {
-    return localStorage.getItem(USAGE_HARNESS_NAME_STORAGE_KEY) !== "0";
-  } catch {
-    return true;
-  }
-}
-
-// Opt-in: the PR/branch link needs the gh CLI and a network round-trip, so it
-// stays off until the user enables it.
-function readStatusBarGitHubLinkPreference(): boolean {
-  try {
-    return localStorage.getItem(STATUSBAR_GITHUB_LINK_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-// "classic": project tabs on top, terminal list on the left (the default).
-// "projects-left": project tabs in a left rail, terminal tabs along the top.
-function readLayoutMode(): LayoutMode {
-  try {
-    return localStorage.getItem(LAYOUT_MODE_STORAGE_KEY) === "projects-left"
-      ? "projects-left"
-      : "classic";
-  } catch {
-    return "classic";
-  }
-}
-
-function readLocalSummariesPreference(): boolean {
-  try {
-    return localStorage.getItem(LOCAL_SUMMARIES_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
 }
 
 function readSummaryCache(): SummaryCache {
@@ -710,23 +679,29 @@ export function App() {
   >({});
   const [homeDir, setHomeDir] = useState<string>("");
   const [showSettings, setShowSettings] = useState(false);
-  const [appThemePreference, setAppThemePreference] =
-    useState<AppThemePreference>(readAppThemePreference);
-  const [macOptionKeyMode, setMacOptionKeyMode] =
-    useState<MacOptionKeyMode>(readMacOptionKeyMode);
+  const [appThemePreference, setAppThemePreference] = usePersistentPreference(
+    APP_THEME_STORAGE_KEY,
+    THEME_CODEC,
+  );
+  const [macOptionKeyMode, setMacOptionKeyMode] = usePersistentPreference(
+    MAC_OPTION_KEY_STORAGE_KEY,
+    MAC_OPTION_CODEC,
+  );
   const [terminalFontFamily, setTerminalFontFamily] =
     useState(readTerminalFontFamily);
-  const [showUsageHarnessName, setShowUsageHarnessName] = useState(
-    readUsageHarnessNamePreference,
+  const [showUsageHarnessName, setShowUsageHarnessName] =
+    usePersistentPreference(USAGE_HARNESS_NAME_STORAGE_KEY, HARNESS_NAME_CODEC);
+  const [showGitHubLink, setShowGitHubLink] = usePersistentPreference(
+    STATUSBAR_GITHUB_LINK_STORAGE_KEY,
+    GITHUB_LINK_CODEC,
   );
-  const [showGitHubLink, setShowGitHubLink] = useState(
-    readStatusBarGitHubLinkPreference,
+  const [layoutMode, setLayoutMode] = usePersistentPreference(
+    LAYOUT_MODE_STORAGE_KEY,
+    LAYOUT_CODEC,
   );
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>(readLayoutMode);
   const [railWidth, setRailWidth] = useState(DEFAULT_RAIL_WIDTH_PX);
-  const [localSummariesEnabled, setLocalSummariesEnabled] = useState(
-    readLocalSummariesPreference,
-  );
+  const [localSummariesEnabled, setLocalSummariesEnabled] =
+    usePersistentPreference(LOCAL_SUMMARIES_STORAGE_KEY, LOCAL_SUMMARIES_CODEC);
   const [ayaIntelligence, setAyaIntelligence] = useState<AyaIntelligenceConfig>(
     readAyaIntelligenceConfig,
   );
@@ -2552,24 +2527,8 @@ export function App() {
     setSnippets(await window.aya.listSnippets());
   }, []);
 
-  const updateAppThemePreference = useCallback((next: AppThemePreference) => {
-    setAppThemePreference(next);
-    try {
-      localStorage.setItem(APP_THEME_STORAGE_KEY, next);
-    } catch {
-      /* ignore — localStorage can be unavailable in odd embedded contexts */
-    }
-  }, []);
-
-  const updateMacOptionKeyMode = useCallback((next: MacOptionKeyMode) => {
-    setMacOptionKeyMode(next);
-    try {
-      localStorage.setItem(MAC_OPTION_KEY_STORAGE_KEY, next);
-    } catch {
-      /* ignore — localStorage can be unavailable in odd embedded contexts */
-    }
-  }, []);
-
+  // Most preferences now persist through usePersistentPreference's setter
+  // directly; only ones with extra side effects keep a wrapper.
   const updateTerminalFontFamily = useCallback((next: string) => {
     setTerminalFontFamily(next);
     if (next.trim()) {
@@ -2579,42 +2538,13 @@ export function App() {
     }
   }, []);
 
-  const updateShowUsageHarnessName = useCallback((next: boolean) => {
-    setShowUsageHarnessName(next);
-    try {
-      localStorage.setItem(USAGE_HARNESS_NAME_STORAGE_KEY, next ? "1" : "0");
-    } catch {
-      /* ignore — localStorage can be unavailable in odd embedded contexts */
-    }
-  }, []);
-
-  const updateShowGitHubLink = useCallback((next: boolean) => {
-    setShowGitHubLink(next);
-    if (!next) setGithubLinks({});
-    try {
-      localStorage.setItem(STATUSBAR_GITHUB_LINK_STORAGE_KEY, next ? "1" : "0");
-    } catch {
-      /* ignore — localStorage can be unavailable in odd embedded contexts */
-    }
-  }, []);
-
-  const updateLayoutMode = useCallback((next: LayoutMode) => {
-    setLayoutMode(next);
-    try {
-      localStorage.setItem(LAYOUT_MODE_STORAGE_KEY, next);
-    } catch {
-      /* ignore — localStorage can be unavailable in odd embedded contexts */
-    }
-  }, []);
-
-  const updateLocalSummariesEnabled = useCallback((next: boolean) => {
-    setLocalSummariesEnabled(next);
-    try {
-      localStorage.setItem(LOCAL_SUMMARIES_STORAGE_KEY, next ? "1" : "0");
-    } catch {
-      /* ignore — localStorage can be unavailable in odd embedded contexts */
-    }
-  }, []);
+  const updateShowGitHubLink = useCallback(
+    (next: boolean) => {
+      setShowGitHubLink(next);
+      if (!next) setGithubLinks({}); // drop resolved links once the chip is off
+    },
+    [setShowGitHubLink],
+  );
 
   const updateAyaIntelligence = useCallback((next: AyaIntelligenceConfig) => {
     setAyaIntelligence(next);
@@ -3636,23 +3566,23 @@ export function App() {
           themes={themes}
           activeThemeId={activeThemeId}
           appThemePreference={appThemePreference}
-          onAppThemePreferenceChange={updateAppThemePreference}
+          onAppThemePreferenceChange={setAppThemePreference}
           terminalFontFamily={terminalFontFamily}
           onTerminalFontFamilyChange={updateTerminalFontFamily}
           showUsageHarnessName={showUsageHarnessName}
-          onShowUsageHarnessNameChange={updateShowUsageHarnessName}
+          onShowUsageHarnessNameChange={setShowUsageHarnessName}
           showGitHubLink={showGitHubLink}
           onShowGitHubLinkChange={updateShowGitHubLink}
           layoutMode={layoutMode}
-          onLayoutModeChange={updateLayoutMode}
+          onLayoutModeChange={setLayoutMode}
           localSummariesEnabled={localSummariesEnabled}
-          onLocalSummariesEnabledChange={updateLocalSummariesEnabled}
+          onLocalSummariesEnabledChange={setLocalSummariesEnabled}
           ayaIntelligence={ayaIntelligence}
           onAyaIntelligenceChange={updateAyaIntelligence}
           autoSummaryStatus={autoSummaryStatus}
           onRefreshSummaries={() => setSummaryNudge((n) => n + 1)}
           macOptionKeyMode={macOptionKeyMode}
-          onMacOptionKeyModeChange={updateMacOptionKeyMode}
+          onMacOptionKeyModeChange={setMacOptionKeyMode}
           initialTab={settingsInitialTab}
           onRestartPtyHost={restartPtyHost}
           onClose={() => setShowSettings(false)}
