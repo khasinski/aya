@@ -12,7 +12,7 @@ interface Props {
   presets: Preset[];
   // Set of terminal ids whose PTY emitted output in the last few seconds.
   // The status dot only pulses while in this set; otherwise it sits steady.
-  recentlyActiveIds: Set<string>;
+  recentlyActiveIds: ReadonlySet<string>;
   summaries?: Record<string, string>;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;

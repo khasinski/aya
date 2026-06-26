@@ -69,6 +69,28 @@ const MIN_SPLIT_PANE_FRACTION = 0.18;
 // Default sidebar width in pixels.
 const DEFAULT_SIDEBAR_WIDTH_PX = 240;
 const DEFAULT_RAIL_WIDTH_PX = 220;
+// Stable empty map handed to chrome when summaries are off, so the prop doesn't
+// change identity every render (a fresh `{}` would defeat child memoization).
+const EMPTY_SUMMARIES: Record<string, string> = {};
+
+// Run `refresh` now, then on an interval — but skip ticks while the window is
+// hidden (no point spawning `git`, re-reading session/usage files in the
+// background), and refresh once immediately when it becomes visible again.
+// Returns a cleanup that stops the interval and removes the listener.
+function pollVisible(refresh: () => void, intervalMs: number): () => void {
+  refresh();
+  const id = window.setInterval(() => {
+    if (!document.hidden) refresh();
+  }, intervalMs);
+  const onVisible = () => {
+    if (!document.hidden) refresh();
+  };
+  document.addEventListener("visibilitychange", onVisible);
+  return () => {
+    window.clearInterval(id);
+    document.removeEventListener("visibilitychange", onVisible);
+  };
+}
 // Default terminal font size in pixels.
 const TERMINAL_FONT_SIZE_PX = 13;
 // Persisted schema version for ProjectCollectionState.
@@ -770,11 +792,10 @@ export function App() {
         setGit((g) => ({ ...g, [project.slug]: info }));
       });
     };
-    refresh();
-    const id = setInterval(refresh, GIT_STATUS_POLL_INTERVAL_MS);
+    const stop = pollVisible(refresh, GIT_STATUS_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      stop();
     };
   }, [activeProjectId]);
 
@@ -790,11 +811,10 @@ export function App() {
         if (!cancelled) setCodexUsageAccounts(u);
       });
     };
-    refresh();
-    const id = setInterval(refresh, USAGE_POLL_INTERVAL_MS);
+    const stop = pollVisible(refresh, USAGE_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      stop();
     };
   }, []);
 
@@ -805,11 +825,10 @@ export function App() {
         if (!cancelled) setMonitoredSessions(sessions);
       });
     };
-    refresh();
-    const id = setInterval(refresh, SESSION_MONITOR_POLL_INTERVAL_MS);
+    const stop = pollVisible(refresh, SESSION_MONITOR_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      stop();
     };
   }, []);
 
@@ -1122,14 +1141,20 @@ export function App() {
   );
 
   const rememberTerminalOutput = useCallback((terminalId: string, chunk: string) => {
+    // Summaries are opt-in; when off, skip the regex cleaning, buffering, and
+    // scheduling entirely so PTY output isn't taxed on its hot path.
+    if (!localSummariesEnabledRef.current) return;
     const lines = cleanTerminalOutput(chunk);
     if (lines.length === 0) return;
     const current = terminalOutputRef.current[terminalId] ?? [];
     terminalOutputRef.current[terminalId] = [...current, ...lines].slice(
       -LOCAL_SUMMARY_BUFFER_LINES,
     );
+    // scheduleTerminalSummary already debounces the actual summary work off
+    // refs (no per-chunk render). The account-wide "refresh all" effect is
+    // driven by mount / its interval / settings changes / the manual button —
+    // bumping state on every chunk just re-rendered the whole app for nothing.
     scheduleTerminalSummary(terminalId);
-    setSummaryNudge((value) => value + 1);
   }, [scheduleTerminalSummary]);
 
   useEffect(() => {
@@ -3372,7 +3397,7 @@ export function App() {
               }
               onCloseWindow={() => void window.aya.closeWindow()}
               projectBadges={projectBadges}
-              projectSummaries={localSummariesEnabled ? projectSummaries : {}}
+              projectSummaries={localSummariesEnabled ? projectSummaries : EMPTY_SUMMARIES}
               usageAccounts={usageAccounts}
               codexUsageAccounts={codexUsageAccounts}
               showUsageHarnessName={showUsageHarnessName}
@@ -3380,7 +3405,7 @@ export function App() {
               activeTerminalId={activeTabId}
               presets={activePresets}
               recentlyActiveIds={recentlyActiveIds}
-              terminalSummaries={localSummariesEnabled ? terminalSummaries : {}}
+              terminalSummaries={localSummariesEnabled ? terminalSummaries : EMPTY_SUMMARIES}
               splitAssignments={splitAssignments}
               onSelectTerminal={selectTerminalFromSidebar}
               onCloseTerminal={closeTerminal}
@@ -3433,7 +3458,7 @@ export function App() {
               onCloseWindow={() => void window.aya.closeWindow()}
               projectBadges={projectBadges}
               monitoredSessionsByProject={monitoredSessionsByProject}
-              projectSummaries={localSummariesEnabled ? projectSummaries : {}}
+              projectSummaries={localSummariesEnabled ? projectSummaries : EMPTY_SUMMARIES}
               usageAccounts={usageAccounts}
               codexUsageAccounts={codexUsageAccounts}
               showUsageHarnessName={showUsageHarnessName}
@@ -3449,7 +3474,7 @@ export function App() {
                   sidebarWidth={sidebarWidth}
                   presets={activePresets}
                   recentlyActiveIds={recentlyActiveIds}
-                  summaries={localSummariesEnabled ? terminalSummaries : {}}
+                  summaries={localSummariesEnabled ? terminalSummaries : EMPTY_SUMMARIES}
                   splitAssignments={splitAssignments}
                   onSelect={selectTerminalFromSidebar}
                   onClose={closeTerminal}

@@ -46,7 +46,7 @@ interface Props {
   terminals: TerminalState[];
   activeTerminalId: string | null;
   presets: Preset[];
-  recentlyActiveIds: Set<string>;
+  recentlyActiveIds: ReadonlySet<string>;
   terminalSummaries?: Record<string, string>;
   splitAssignments?: Record<string, number>;
   onSelectTerminal: (id: string) => void;

@@ -42,7 +42,14 @@ const ptys = new Map<string, PtyModule.IPty>();
 // scrollback — we replay the buffered bytes so the user sees the existing
 // terminal state instead of an empty pane.
 export const OUTPUT_BUFFER_MAX = 1_000_000; // ~1MB of recent bytes per terminal
-const outputBuffers = new Map<string, string[]>();
+// `total` is the summed length of `chunks`, kept incrementally so the 1MB cap
+// is enforced in O(1) per chunk instead of re-summing the whole buffer (which
+// was O(chunks) per chunk → O(n²) over a busy session).
+interface OutputBuffer {
+  chunks: string[];
+  total: number;
+}
+const outputBuffers = new Map<string, OutputBuffer>();
 
 // Spawn/kill race guard: if killPty arrives before the corresponding
 // spawnPty's IPC has finished (renderer remounted/closed quickly), the kill
@@ -60,17 +67,16 @@ export interface PtyEventSink {
 }
 
 function appendToOutputBuffer(ptyId: string, chunk: string): void {
-  let chunks = outputBuffers.get(ptyId);
-  if (!chunks) {
-    chunks = [];
-    outputBuffers.set(ptyId, chunks);
+  let buffer = outputBuffers.get(ptyId);
+  if (!buffer) {
+    buffer = { chunks: [], total: 0 };
+    outputBuffers.set(ptyId, buffer);
   }
-  chunks.push(chunk);
-  let total = 0;
-  for (const c of chunks) total += c.length;
-  while (total > OUTPUT_BUFFER_MAX && chunks.length > 1) {
-    const removed = chunks.shift();
-    if (removed) total -= removed.length;
+  buffer.chunks.push(chunk);
+  buffer.total += chunk.length;
+  while (buffer.total > OUTPUT_BUFFER_MAX && buffer.chunks.length > 1) {
+    const removed = buffer.chunks.shift();
+    if (removed) buffer.total -= removed.length;
   }
 }
 
@@ -83,8 +89,8 @@ export function __testClearOutputBuffers(): void {
 }
 
 export function getBufferedOutput(ptyId: string): string {
-  const chunks = outputBuffers.get(ptyId);
-  return chunks ? chunks.join("") : "";
+  const buffer = outputBuffers.get(ptyId);
+  return buffer ? buffer.chunks.join("") : "";
 }
 
 /** Strip ANSI escape sequences and control chars so search snippets are
@@ -130,8 +136,8 @@ export function searchPtyOutputs(query: string): BufferSearchHit[] {
     .filter((t) => t.length > 0);
   if (tokens.length === 0) return [];
   const hits: BufferSearchHit[] = [];
-  for (const [ptyId, chunks] of outputBuffers) {
-    const cleaned = stripAnsi(chunks.join(""));
+  for (const [ptyId, buffer] of outputBuffers) {
+    const cleaned = stripAnsi(buffer.chunks.join(""));
     const lower = cleaned.toLowerCase();
     // Every token must be present somewhere.
     const tokenIdxs: Array<{ idx: number; len: number }> = [];
