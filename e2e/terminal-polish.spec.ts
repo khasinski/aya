@@ -47,7 +47,18 @@ test("terminal context menu recognizes an http link without navigating Aya", asy
   const menu = window.getByTestId("terminal-context-menu");
   await expect(menu).toBeVisible();
   await expect(menu.getByTestId("terminal-context-open-link")).toBeVisible();
+  // Aya must not have navigated its own window to the link. Compare the parsed
+  // hostname exactly rather than a substring of the URL (a prefix check would
+  // also accept e.g. example.com.attacker.test).
   await expect
-    .poll(() => window.evaluate(() => location.href.startsWith("http://example.com")))
+    .poll(() =>
+      window.evaluate(() => {
+        try {
+          return new URL(location.href).hostname === "example.com";
+        } catch {
+          return false;
+        }
+      }),
+    )
     .toBe(false);
 });

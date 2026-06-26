@@ -351,7 +351,12 @@ interface PendingRepoImport {
 }
 
 function uuid(): string {
-  return Math.random().toString(36).slice(2, 10);
+  // Cryptographically secure source — CodeQL flags Math.random() ids as
+  // insecure. getRandomValues works in every context (incl. the file://
+  // production page, where crypto.randomUUID is unavailable).
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function findProject(
