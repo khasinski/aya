@@ -30,6 +30,7 @@ import * as path from "node:path";
 import {
   createProject,
   createRemoteProject,
+  getOrCreateProject,
   deleteProject,
   expandPath,
   listProjects,
@@ -2086,7 +2087,10 @@ app.whenReady().then(async () => {
       projectState: await listProjectState(),
       presets: await listPresets(),
     }),
-    createProject: (name, directory) => createProject(name, directory),
+    // Open-or-create: the remote "open project" flow sends project:create even
+    // for an existing project, so this must return the existing one rather than
+    // fail on the "already exists" guard.
+    createProject: (name, directory) => getOrCreateProject(name, directory),
   });
   installApplicationMenu();
 

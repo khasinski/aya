@@ -287,6 +287,23 @@ export async function createProject(
   return project;
 }
 
+/** Open-or-create by directory. Backs the remote "open project" flow: re-opening
+ *  a project that already exists must return it, not fail on createProject's
+ *  "already exists" guard. Matches on the resolved directory (the project's real
+ *  identity) and falls back to creating a fresh project otherwise. */
+export async function getOrCreateProject(
+  name: string,
+  directory: string,
+): Promise<ProjectConfig> {
+  await ensureDir();
+  const absDir = path.resolve(directory.replace(/^~/, os.homedir()));
+  const existing = (await listProjects()).find(
+    (p) => !p.remote && p.directory === absDir,
+  );
+  if (existing) return existing;
+  return createProject(name, directory);
+}
+
 export async function createRemoteProject(req: {
   name: string;
   directory: string;
@@ -300,11 +317,19 @@ export async function createRemoteProject(req: {
     throw new Error(`Project name "${req.name}" produces a reserved slug.`);
   }
   const filePath = path.join(PROJECTS_DIR, `${slug}.json`);
-  try {
-    await fs.access(filePath);
+  const existing = (await listProjects()).find((p) => p.slug === slug);
+  if (existing) {
+    // Re-adding a remote project already in the local list is an open, not an
+    // error: return it as-is when it targets the same host + directory.
+    // Anything else is a genuine slug collision with a different project.
+    if (
+      existing.remote &&
+      existing.remote.sshTarget === req.sshTarget &&
+      existing.remote.directory === req.directory
+    ) {
+      return existing;
+    }
     throw new Error(`Project "${slug}" already exists.`);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
   const project: ProjectConfig = {
     slug,

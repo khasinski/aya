@@ -2490,8 +2490,17 @@ export function App() {
           label: result.host.name || result.host.id,
           sshTarget,
         });
-        setAllProjects((prev) => [...prev, localProject]);
-        const nextProjects = [...projectsRef.current, localProject];
+        // Replace any existing entry with the same slug rather than append:
+        // createRemoteProject is idempotent now (re-opening an existing remote
+        // project returns it), so a blind push would duplicate it.
+        setAllProjects((prev) => [
+          ...prev.filter((p) => p.slug !== localProject.slug),
+          localProject,
+        ]);
+        const nextProjects = [
+          ...projectsRef.current.filter((p) => p.slug !== localProject.slug),
+          localProject,
+        ];
         setProjects(nextProjects);
         updateProjectCollection({
           ...projectStateRef.current,
