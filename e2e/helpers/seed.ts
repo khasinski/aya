@@ -39,6 +39,9 @@ export interface SeedOptions {
   launchEnv?: Record<string, string>;
   /** Create a fake shell/bin setup where interactive shell PATH reveals claude. */
   pathRepairHarness?: boolean;
+  /** Names of extra projects that are known + recent but NOT open, so the
+   *  recent-projects menu lists them as closed projects. */
+  closedProjects?: string[];
 }
 
 function shellQuote(value: string): string {
@@ -95,9 +98,29 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
       2,
     ),
   );
+  // Closed projects: known + recent but NOT open, so the recent-projects menu
+  // lists them. Their directories need not exist (the menu only displays them).
+  const closed = opts.closedProjects ?? [];
+  for (const name of closed) {
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    writeFileSync(
+      join(ayaHome, "projects", `${slug}.json`),
+      JSON.stringify({ name, directory: join(root, "closed", slug), tabs: [] }, null, 2),
+    );
+  }
+  const closedSlugs = closed.map((n) => n.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
   writeFileSync(
     join(ayaHome, "projects-state.json"),
-    JSON.stringify({ version: 1, order: ["e2e-proj"], open: ["e2e-proj"], recent: ["e2e-proj"] }, null, 2),
+    JSON.stringify(
+      {
+        version: 1,
+        order: ["e2e-proj", ...closedSlugs],
+        open: ["e2e-proj"],
+        recent: ["e2e-proj", ...closedSlugs],
+      },
+      null,
+      2,
+    ),
   );
 
   if (opts.usage) {

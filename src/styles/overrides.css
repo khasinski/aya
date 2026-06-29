@@ -1398,6 +1398,15 @@
   box-shadow: var(--shadow-card);
   z-index: 1200;
 }
+/* In the left project rail the folder button sits at the window's left edge, so
+   a right-anchored 280px menu spills past the viewport and gets clipped by
+   .aya-main { overflow:hidden }. Open it rightward instead so it stays on
+   screen. (The classic top-bar recent menu keeps right:0 - it opens from the
+   top-right corner.) */
+.aya-projectrail .aya-recent-menu {
+  left: 0;
+  right: auto;
+}
 .aya-recent-menu-title {
   padding: 6px 8px 8px;
   color: var(--fg-tertiary);
