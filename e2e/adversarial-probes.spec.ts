@@ -16,10 +16,15 @@ test.describe("no split seed", () => {
 
   test("P1 Split below creates a fillable second cell", async ({ window }) => {
     await expect(visiblePanes(window)).toHaveCount(1);
-    await window.getByTestId("sidebar-terminal").first().click({ button: "right" });
+    await window
+      .locator('[data-testid="sidebar-terminal"][data-terminal-name="shell 1"]')
+      .click({ button: "right" });
     await window.locator(".aya-context-menu .aya-context-menu-item", { hasText: "Split below" }).click();
     await expect(window.locator(".aya-pane-empty")).toBeVisible();
-    await window.locator(".aya-pane-empty .aya-pane-empty-terminal", { hasText: "shell 2" }).click();
+    await window
+      .locator(".aya-pane-empty .aya-pane-empty-terminal")
+      .filter({ has: window.getByText("shell 2", { exact: true }) })
+      .click();
     await expect(visiblePane(window, "shell 1")).toBeVisible();
     await expect(visiblePane(window, "shell 2")).toBeVisible();
   });
@@ -36,7 +41,9 @@ test.describe("no split seed", () => {
       await input.press("Enter", { timeout: 800 });
     }).toPass({ timeout: 15000 });
     // blank rename must be rejected - the name stays "shell 1"
-    await expect(window.getByTestId("sidebar-terminal").filter({ hasText: "shell 1" })).toHaveCount(1);
+    await expect(
+      window.locator('[data-testid="sidebar-terminal"][data-terminal-name="shell 1"]'),
+    ).toHaveCount(1);
   });
 
   test("P6 next-tab cycles and wraps back to the first terminal", async ({ window, app }) => {
@@ -52,8 +59,7 @@ test.describe("no split seed", () => {
 test("P2 closing the active terminal in a split keeps the other visible", async ({ window }) => {
   await expect(visiblePanes(window)).toHaveCount(2); // seeded 1x2
   await window
-    .getByTestId("sidebar-terminal")
-    .filter({ hasText: "shell 1" })
+    .locator('[data-testid="sidebar-terminal"][data-terminal-name="shell 1"]')
     .click({ button: "right" });
   await window.locator(".aya-context-menu .aya-context-menu-item", { hasText: "Close terminal" }).click();
   await expect(visiblePane(window, "shell 2")).toBeVisible();
@@ -83,21 +89,31 @@ test("P7 search-jump in a split activates the target's pane", async ({ window, a
   await window.locator(".aya-search-input").fill("shell 2");
   await window
     .locator(".aya-search-row")
-    .filter({ has: window.locator(".aya-search-label", { hasText: "shell 2" }) })
-    .first()
+    .filter({ has: window.locator(".aya-search-label", { hasText: /^shell 2$/ }) })
     .click();
   // the active-split pane should now be shell 2, not still shell 1
   await expect(
     window.locator('.aya-pane--active-split[data-terminal-name="shell 2"]'),
   ).toBeVisible();
+  // ...and real keyboard focus actually lands inside shell 2's pane (not just
+  // the active-split class - the whole point of the bug was focus diverging).
+  await expect
+    .poll(() =>
+      window.evaluate(
+        () =>
+          document.activeElement
+            ?.closest('[data-testid="terminal-pane"]')
+            ?.getAttribute("data-terminal-name") ?? null,
+      ),
+    )
+    .toBe("shell 2");
 });
 
 // P8 - closing a NON-active terminal in a split must leave the active one intact.
 test("P8 closing a non-active split terminal keeps the active one", async ({ window }) => {
   await expect(visiblePanes(window)).toHaveCount(2);
   await window
-    .getByTestId("sidebar-terminal")
-    .filter({ hasText: "shell 2" })
+    .locator('[data-testid="sidebar-terminal"][data-terminal-name="shell 2"]')
     .click({ button: "right" });
   await window.locator(".aya-context-menu .aya-context-menu-item", { hasText: "Close terminal" }).click();
   await expect(visiblePane(window, "shell 1")).toBeVisible();
@@ -111,6 +127,8 @@ test("P3 a terminal displaced from the split is shown when selected", async ({ w
   await window.locator(".aya-launcher .aya-launcher-btn", { hasText: "Shell" }).click();
   await expect(visiblePane(window, "shell 1")).toHaveCount(0);
   // Selecting shell 1 from the sidebar must bring it back into view.
-  await window.getByTestId("sidebar-terminal").filter({ hasText: "shell 1" }).click();
+  await window
+    .locator('[data-testid="sidebar-terminal"][data-terminal-name="shell 1"]')
+    .click();
   await expect(visiblePane(window, "shell 1")).toBeVisible();
 });

@@ -18,8 +18,10 @@ test("the sidebar context menu splits a terminal and the empty cell can be fille
   await expect(visiblePanes(window)).toHaveCount(1);
   await expect(visiblePane(window, "shell 1")).toBeVisible();
 
-  // Split the active terminal to the right.
-  await window.getByTestId("sidebar-terminal").first().click({ button: "right" });
+  // Split the active terminal (shell 1) to the right - target by attribute, not order.
+  await window
+    .locator('[data-testid="sidebar-terminal"][data-terminal-name="shell 1"]')
+    .click({ button: "right" });
   const menu = window.locator(".aya-context-menu");
   await expect(menu).toBeVisible();
   await menu.locator(".aya-context-menu-item", { hasText: "Split right" }).click();
@@ -27,7 +29,10 @@ test("the sidebar context menu splits a terminal and the empty cell can be fille
   // A second cell appears, empty, with the hidden terminal offered to fill it.
   const emptyPane = window.locator(".aya-pane-empty");
   await expect(emptyPane).toBeVisible();
-  await emptyPane.locator(".aya-pane-empty-terminal", { hasText: "shell 2" }).click();
+  await emptyPane
+    .locator(".aya-pane-empty-terminal")
+    .filter({ has: window.getByText("shell 2", { exact: true }) })
+    .click();
 
   // Both specific terminals are now visible side by side (identity, not count).
   await expect(visiblePanes(window)).toHaveCount(2);
@@ -37,15 +42,19 @@ test("the sidebar context menu splits a terminal and the empty cell can be fille
 
 test("removing a terminal from the split leaves the other one visible", async ({ window }) => {
   // Build a 2-pane split first.
-  await window.getByTestId("sidebar-terminal").first().click({ button: "right" });
+  await window
+    .locator('[data-testid="sidebar-terminal"][data-terminal-name="shell 1"]')
+    .click({ button: "right" });
   await window.locator(".aya-context-menu .aya-context-menu-item", { hasText: "Split right" }).click();
-  await window.locator(".aya-pane-empty .aya-pane-empty-terminal", { hasText: "shell 2" }).click();
+  await window
+    .locator(".aya-pane-empty .aya-pane-empty-terminal")
+    .filter({ has: window.getByText("shell 2", { exact: true }) })
+    .click();
   await expect(visiblePanes(window)).toHaveCount(2);
 
   // Remove shell 2 from the split via its sidebar context menu.
   await window
-    .getByTestId("sidebar-terminal")
-    .filter({ hasText: "shell 2" })
+    .locator('[data-testid="sidebar-terminal"][data-terminal-name="shell 2"]')
     .click({ button: "right" });
   await window
     .locator(".aya-context-menu .aya-context-menu-item", { hasText: "Remove from split" })

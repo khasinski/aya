@@ -22,11 +22,10 @@ test("search can run a launcher preset to spawn a terminal for that preset", asy
 
   await fireShortcut(app, "search");
   await window.locator(".aya-search-input").fill("Shell");
-  // Target the launcher result by its label ("Run <preset>"), not a row substring.
+  // Target the launcher result by its exact label ("Run <preset>").
   await window
     .locator(".aya-search-row")
-    .filter({ has: window.locator(".aya-search-label", { hasText: "Run Shell" }) })
-    .first()
+    .filter({ has: window.locator(".aya-search-label", { hasText: /^Run Shell$/ }) })
     .click();
 
   await expect(window.getByTestId("sidebar-terminal")).toHaveCount(3);
@@ -42,8 +41,7 @@ test("search jumps to a terminal selected by name", async ({ window, app }) => {
   await window.locator(".aya-search-input").fill("shell 2");
   await window
     .locator(".aya-search-row")
-    .filter({ has: window.locator(".aya-search-label", { hasText: "shell 2" }) })
-    .first()
+    .filter({ has: window.locator(".aya-search-label", { hasText: /^shell 2$/ }) })
     .click();
 
   // After: shell 2 is now the visible terminal (real focus change, not a proxy).
