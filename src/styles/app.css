@@ -1236,12 +1236,25 @@ body {
 /* Terminal tabs live in the top bar; size to content and scroll. */
 .aya-termtabs { overflow-x: auto; overflow-y: hidden; }
 .aya-termtab { max-width: 260px; }
+/* The strip is only 40px tall. The name stays vertically centered (on the same
+   line as the icon/dot), and the summary is positioned just below it; without
+   room that summary clips at the tab's bottom edge. padding-bottom shifts the
+   centered row up so the summary fits, identically for every tab (so names stay
+   aligned). The close ✕ is absolutely centered, so nudge it up to match. */
+.aya-termtab { padding-bottom: 12px; }
+.aya-termtab > .aya-tab-close { top: calc(50% - 6px); }
 .aya-termtab-main {
   display: flex;
   flex-direction: column;
   justify-content: center;
   min-width: 0;
   flex: 1;
+  /* Anchor for the summary, which is taken out of flow (positioned below) so it
+     never changes this box's height. That keeps the name vertically centered on
+     the same line as the icon/dot, and at the same height whether or not a
+     summary is present — centering the name+summary pair instead pulled the name
+     up on tabs that had a summary. */
+  position: relative;
 }
 .aya-termtab .aya-tab-name {
   overflow: hidden;
@@ -1257,6 +1270,11 @@ body {
   color: var(--fg-tertiary);
   font-size: 11px;
   line-height: 1.2;
+  /* Out of flow, directly beneath the centered name (see .aya-termtab-main). */
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
 }
 .aya-termtab-launcher {
   -webkit-app-region: no-drag;

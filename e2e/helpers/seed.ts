@@ -31,6 +31,10 @@ export interface SeedOptions {
   codexRateLimits?: Record<string, unknown>;
   /** When false, leave presets.json absent so first-launch PATH scanning runs. */
   presets?: boolean;
+  /** Override the seeded preset list (defaults to a single "Shell" preset).
+   *  Ignored when `presets` is false. Use to exercise the launcher menu with
+   *  many entries (e.g. a scrollable dropdown). */
+  presetList?: Array<{ id: string; name: string; icon: string; color: string; command: string }>;
   /** Extra environment variables for the Electron process. */
   launchEnv?: Record<string, string>;
   /** Create a fake shell/bin setup where interactive shell PATH reveals claude. */
@@ -56,14 +60,10 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
   mkdirSync(projectDir, { recursive: true });
 
   if (opts.presets !== false) {
-    writeFileSync(
-      join(ayaHome, "presets.json"),
-      JSON.stringify(
-        { presets: [{ id: "shell", name: "Shell", icon: "$", color: "", command: "$SHELL" }] },
-        null,
-        2,
-      ),
-    );
+    const presetList = opts.presetList ?? [
+      { id: "shell", name: "Shell", icon: "$", color: "", command: "$SHELL" },
+    ];
+    writeFileSync(join(ayaHome, "presets.json"), JSON.stringify({ presets: presetList }, null, 2));
   }
 
   const left = "tab-left";
