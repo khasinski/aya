@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,6 +43,10 @@ export interface SeedOptions {
   /** Names of extra projects that are known + recent but NOT open, so the
    *  recent-projects menu lists them as closed projects. */
   closedProjects?: string[];
+  /** Make the project dir a real git repo on branch "feature/foo" with one
+   *  commit, then leave a modified tracked file + an untracked file so the
+   *  StatusBar shows a branch + "2 dirty" + a diff. */
+  gitRepo?: boolean;
 }
 
 function shellQuote(value: string): string {
@@ -61,6 +66,19 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
   mkdirSync(join(ayaHome, "projects"), { recursive: true });
   mkdirSync(userDataDir, { recursive: true });
   mkdirSync(projectDir, { recursive: true });
+
+  if (opts.gitRepo) {
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: projectDir, stdio: "ignore" });
+    git("init", "-q", "-b", "feature/foo");
+    writeFileSync(join(projectDir, "committed.txt"), "one\ntwo\n");
+    git("add", "committed.txt");
+    git("-c", "user.email=t@e", "-c", "user.name=t", "commit", "-qm", "init");
+    // Dirty state: modify the committed file + add a new one. (Distinct name
+    // prefixes so test selectors don't collide on substrings.)
+    writeFileSync(join(projectDir, "committed.txt"), "one\ntwoX\n");
+    writeFileSync(join(projectDir, "added.txt"), "brand new\n");
+  }
 
   if (opts.presets !== false) {
     const presetList = opts.presetList ?? [
