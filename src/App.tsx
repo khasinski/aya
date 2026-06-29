@@ -1211,11 +1211,21 @@ export function App() {
 
   const { lastActivityRef, recentlyActiveIds } = useRecentTerminalActivity();
   useDockBadge(terminals);
+  // Notification clicks focus a terminal through the same cell-aware path as the
+  // sidebar/search/attention-center (focusTerminal, assigned below) - via a ref
+  // because focusTerminal is defined later. Tab-only selection here would leave
+  // the active pane/keyboard focus on the wrong terminal in a split.
+  const focusTerminalRef = useRef<(slug: string, terminalId: string) => void>(
+    () => {},
+  );
+  const focusTerminalFromNotification = useCallback(
+    (slug: string, terminalId: string) => focusTerminalRef.current(slug, terminalId),
+    [],
+  );
   useTerminalNotifications({
     projects,
     terminals,
-    setActiveProjectId,
-    setActiveTabByProject,
+    onSelectTerminal: focusTerminalFromNotification,
   });
 
   // Update the order/open/recent collection state. Persistence is centralised in
@@ -3002,21 +3012,29 @@ export function App() {
     0,
   );
 
-  const focusTerminal = useCallback((slug: string, terminalId: string) => {
-    setActiveProjectId(slug);
-    setActiveTabByProject((prev) => ({ ...prev, [slug]: terminalId }));
-    setTerminals((prev) => {
-      const terminal = prev[terminalId];
-      if (!terminal || !terminal.bell) return prev;
-      return {
-        ...prev,
-        [terminalId]: {
-          ...terminal,
-          bell: false,
-        },
-      };
-    });
-  }, []);
+  const focusTerminal = useCallback(
+    (slug: string, terminalId: string) => {
+      setActiveProjectId(slug);
+      // Move the active split CELL + keyboard focus to the target (or collapse
+      // to single view for a hidden terminal) - not just the active tab. Without
+      // this, focusing from the AttentionCenter / timeline in a split left the
+      // active pane and keyboard focus on the old terminal.
+      selectTerminalFromSidebar(terminalId);
+      setTerminals((prev) => {
+        const terminal = prev[terminalId];
+        if (!terminal || !terminal.bell) return prev;
+        return {
+          ...prev,
+          [terminalId]: {
+            ...terminal,
+            bell: false,
+          },
+        };
+      });
+    },
+    [selectTerminalFromSidebar],
+  );
+  focusTerminalRef.current = focusTerminal;
 
   const currentMissingDir = missingDirQueue[0] ?? null;
   const chromeBlocked = !!currentMissingDir || !!newProjectModal;
