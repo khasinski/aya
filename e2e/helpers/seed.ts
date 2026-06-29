@@ -100,15 +100,24 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
   );
   // Closed projects: known + recent but NOT open, so the recent-projects menu
   // lists them. Their directories need not exist (the menu only displays them).
+  // Mirror the app's slugify (electron/text.ts) so seeded slugs match what real
+  // project creation would produce, and guard against collisions that would
+  // overwrite a file or duplicate a state entry.
+  const slugify = (name: string) =>
+    name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
   const closed = opts.closedProjects ?? [];
+  const closedSlugs: string[] = [];
   for (const name of closed) {
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const slug = slugify(name);
+    if (slug === "e2e-proj" || closedSlugs.includes(slug)) {
+      throw new Error(`seed: closedProjects slug collision for "${name}" (${slug})`);
+    }
+    closedSlugs.push(slug);
     writeFileSync(
       join(ayaHome, "projects", `${slug}.json`),
       JSON.stringify({ name, directory: join(root, "closed", slug), tabs: [] }, null, 2),
     );
   }
-  const closedSlugs = closed.map((n) => n.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
   writeFileSync(
     join(ayaHome, "projects-state.json"),
     JSON.stringify(
