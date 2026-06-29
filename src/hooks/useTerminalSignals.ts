@@ -2,9 +2,7 @@ import {
   useEffect,
   useRef,
   useState,
-  type Dispatch,
   type MutableRefObject,
-  type SetStateAction,
 } from "react";
 import type { ProjectConfig, TerminalState } from "../types";
 
@@ -28,26 +26,25 @@ export function useDockBadge(
 interface NotificationOptions {
   projects: ProjectConfig[];
   terminals: Record<string, TerminalState>;
-  setActiveProjectId: Dispatch<SetStateAction<string | null>>;
-  setActiveTabByProject: Dispatch<SetStateAction<Record<string, string | null>>>;
+  /** Cell-aware terminal focus (moves the active split cell + keyboard focus),
+   *  not just the active tab. */
+  onSelectTerminal: (projectSlug: string, terminalId: string) => void;
 }
 
 export function useTerminalNotifications({
   projects,
   terminals,
-  setActiveProjectId,
-  setActiveTabByProject,
+  onSelectTerminal,
 }: NotificationOptions): void {
   const prevBellRef = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
     return window.aya.onTerminalNotificationSelect(
       ({ projectSlug, terminalId }) => {
-        setActiveProjectId(projectSlug);
-        setActiveTabByProject((p) => ({ ...p, [projectSlug]: terminalId }));
+        onSelectTerminal(projectSlug, terminalId);
       },
     );
-  }, [setActiveProjectId, setActiveTabByProject]);
+  }, [onSelectTerminal]);
 
   useEffect(() => {
     const prev = prevBellRef.current;
