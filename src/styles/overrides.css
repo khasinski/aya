@@ -1460,6 +1460,11 @@
 .aya-recent-menu-item:hover {
   background: var(--bg-tertiary);
 }
+.aya-termtab-launcher .aya-recent-menu-item {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
 .aya-recent-menu-name,
 .aya-recent-menu-path {
   overflow: hidden;

@@ -174,8 +174,28 @@ export function ProjectsLeftLayout({
     null,
   );
   const [showLauncher, setShowLauncher] = useState(false);
+  // Viewport coords for the launcher dropdown. The menu is position:fixed so it
+  // can escape the tab strip's overflow:hidden clip; that means we must anchor
+  // it ourselves to the "+" button's on-screen rect.
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(
+    null,
+  );
   const launcherRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
+
+  // Toggle the launcher, anchoring the fixed-position menu to the "+" button's
+  // current rect. Takes the element so it works for both click and keyboard.
+  const toggleLauncher = (anchor: HTMLElement) => {
+    // Capture the anchor rect unconditionally (harmless when closing — the menu
+    // won't render) and use a functional updater so two fast toggles can't both
+    // read a stale `showLauncher` and leave the menu stuck open.
+    const r = anchor.getBoundingClientRect();
+    setMenuPos({
+      top: Math.round(r.bottom + 6),
+      right: Math.round(window.innerWidth - r.right),
+    });
+    setShowLauncher((prev) => !prev);
+  };
 
   useEffect(() => {
     if (!menu) return;
@@ -193,11 +213,31 @@ export function ProjectsLeftLayout({
 
   useEffect(() => {
     if (!showLauncher) return;
+    const close = () => setShowLauncher(false);
     const onPointerDown = (e: PointerEvent) => {
       if (!launcherRef.current?.contains(e.target as Node)) setShowLauncher(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowLauncher(false);
+    };
+    // The menu is position:fixed at coords captured on open; if the layout
+    // shifts under it those coords go stale, so close rather than leave it
+    // detached from the "+" button. Only two things move the button: a window
+    // resize, and the tab strip scrolling horizontally. Listen on the strip
+    // itself (not window) so scrolling the dropdown, terminal, or project rail
+    // doesn't dismiss the menu. (scroll events don't bubble, so the dropdown's
+    // own overflow scroll never reaches the strip listener.)
+    const strip = tabsRef.current;
     window.addEventListener("pointerdown", onPointerDown, true);
-    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("resize", close);
+    strip?.addEventListener("scroll", close);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", close);
+      strip?.removeEventListener("scroll", close);
+    };
   }, [showLauncher]);
 
   // Translate wheel deltas over the tab strip into horizontal scroll (same as
@@ -206,6 +246,9 @@ export function ProjectsLeftLayout({
     const el = tabsRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
+      // Leave wheel scrolling that belongs to the open launcher dropdown alone;
+      // otherwise this would hijack it into horizontal tab-strip scroll.
+      if (launcherRef.current?.querySelector(".aya-recent-menu")?.contains(e.target as Node)) return;
       if (el.scrollWidth <= el.clientWidth) return;
       e.preventDefault();
       const delta = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
@@ -376,14 +419,29 @@ export function ProjectsLeftLayout({
             <div
               className="aya-tab-new"
               title="New terminal"
-              onClick={() => setShowLauncher((v) => !v)}
+              role="button"
+              tabIndex={0}
+              aria-label="New terminal"
+              onClick={(e) => toggleLauncher(e.currentTarget)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  toggleLauncher(e.currentTarget);
+                }
+              }}
               aria-haspopup="menu"
               aria-expanded={showLauncher}
             >
               <span style={{ fontFamily: "Material Symbols Outlined" }}>add</span>
             </div>
-            {showLauncher && (
-              <div className="aya-recent-menu" role="menu">
+            {showLauncher && menuPos && (
+              // position:fixed so the dropdown escapes the tab strip's
+              // overflow:hidden clip; anchored to the "+" button's rect.
+              <div
+                className="aya-recent-menu"
+                role="menu"
+                style={{ position: "fixed", top: menuPos.top, right: menuPos.right }}
+              >
                 <div className="aya-recent-menu-title">New terminal</div>
                 {presets.map((p) => (
                   <button
