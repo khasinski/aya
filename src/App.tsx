@@ -973,6 +973,13 @@ export function App() {
   projectStateRef.current = projectState;
   const activeProjectIdRef = useRef(activeProjectId);
   activeProjectIdRef.current = activeProjectId;
+  // Split panes are unsupported in the experimental "projects-left" layout. The
+  // ref lets the split callbacks below (defined before the render-time gating)
+  // bail out, so keyboard shortcuts and pane clicks can't create or reshape a
+  // split that would only surface after switching back to the classic layout.
+  const splitEnabled = layoutMode !== "projects-left";
+  const splitEnabledRef = useRef(splitEnabled);
+  splitEnabledRef.current = splitEnabled;
   const presetsRef = useRef(presets);
   presetsRef.current = presets;
   const remotePresetsByProjectRef = useRef(remotePresetsByProject);
@@ -1847,13 +1854,17 @@ export function App() {
         const tabs: WorkingTab[] = Object.values(next)
           .filter((t) => t.projectSlug === slug)
           .map((t) => ({ id: t.id, presetId: t.presetId, name: t.name }));
-        const currentLayout = project.splitLayout
-          ? normalizeSplitLayoutForTabs(
-              project.splitLayout,
-              tabs,
-              activeTabByProject[slug] ?? project.tabs[0]?.id ?? null,
-            )
-          : null;
+        // In the projects-left layout splits are disabled, so leave the saved
+        // splitLayout untouched (don't assign the new terminal to a cell, and
+        // don't clear it) - it should come back unchanged in the classic layout.
+        const currentLayout =
+          splitEnabledRef.current && project.splitLayout
+            ? normalizeSplitLayoutForTabs(
+                project.splitLayout,
+                tabs,
+                activeTabByProject[slug] ?? project.tabs[0]?.id ?? null,
+              )
+            : null;
         const splitLayout = currentLayout
           ? compactSplitLayout({
               ...currentLayout,
@@ -1865,7 +1876,11 @@ export function App() {
         const updated: ProjectConfig = {
           ...project,
           tabs,
-          ...(splitLayout ? { splitLayout } : { splitLayout: undefined }),
+          ...(splitEnabledRef.current
+            ? splitLayout
+              ? { splitLayout }
+              : { splitLayout: undefined }
+            : {}),
         };
         setAllProjects((ps) => ps.map((p) => (p.slug === slug ? updated : p)));
         setProjects((ps) => ps.map((p) => (p.slug === slug ? updated : p)));
@@ -2146,6 +2161,7 @@ export function App() {
 
   const setActiveSplitCell = useCallback(
     (slug: string, cellIndex: number) => {
+      if (!splitEnabledRef.current) return;
       setSingleViewByProject((prev) => ({ ...prev, [slug]: null }));
       updateProjectSplitLayout(slug, (layout) => ({
         ...layout,
@@ -2196,6 +2212,7 @@ export function App() {
 
   const focusSplitPane = useCallback(
     (direction: "left" | "right" | "up" | "down") => {
+      if (!splitEnabledRef.current) return;
       if (!activeProjectId) return;
       const project = projectsRef.current.find((p) => p.slug === activeProjectId);
       if (!project?.splitLayout) return;
@@ -2234,6 +2251,7 @@ export function App() {
 
   const splitActivePane = useCallback(
     (direction: "right" | "below") => {
+      if (!splitEnabledRef.current) return;
       if (!activeProjectId) return;
       const project = projectsRef.current.find((p) => p.slug === activeProjectId);
       if (!project) return;
@@ -2812,10 +2830,9 @@ export function App() {
   ]);
   // Split panes are not supported in the experimental "projects-left" layout
   // (terminals live in a top tab strip there). Ignore any saved split so the
-  // body shows a single terminal, and disable the split actions below. The
-  // project's stored splitLayout is left untouched, so switching back to the
-  // classic layout restores it.
-  const splitEnabled = layoutMode !== "projects-left";
+  // body shows a single terminal, and disable the split actions. The project's
+  // stored splitLayout is left untouched, so switching back to the classic
+  // layout restores it. (splitEnabled is defined up near the refs above.)
   const savedSplitLayout =
     splitEnabled && activeProject && activeProjectId
       ? normalizeSplitLayoutForTabs(

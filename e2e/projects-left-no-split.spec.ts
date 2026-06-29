@@ -7,17 +7,23 @@ import type { ElectronApplication, Page } from "@playwright/test";
 // terminal should render, and the terminal context menu must offer no split
 // actions.
 
-async function enableProjectsLeftLayout(window: Page, app: ElectronApplication) {
+async function setLayout(window: Page, app: ElectronApplication, label: "Projects on top" | "Projects on left") {
   await fireShortcut(app, "open-settings");
   const settings = window.locator(".aya-modal--settings");
   await expect(settings).toBeVisible();
   await settings
-    .locator('.aya-settings-segmented[aria-label="Window layout"] button', { hasText: "Projects on left" })
+    .locator('.aya-settings-segmented[aria-label="Window layout"] button', { hasText: label })
     .click();
   await window.keyboard.press("Escape");
   await expect(settings).toBeHidden();
+}
+
+async function enableProjectsLeftLayout(window: Page, app: ElectronApplication) {
+  await setLayout(window, app, "Projects on left");
   await expect(window.locator(".aya-topbar--alt")).toBeVisible();
 }
+
+const visiblePanes = (window: Page) => window.locator('[data-testid="terminal-pane"]:visible');
 
 test("only one terminal is visible (no split) in Projects-on-left", async ({ window, app }) => {
   // Hidden terminals stay mounted (display:none) as a persistence pool, so we
@@ -47,4 +53,33 @@ test("the terminal context menu offers no split actions in Projects-on-left", as
   await expect(menu).not.toContainText("Split below");
   await expect(menu).not.toContainText("Show in active pane");
   await expect(menu).not.toContainText("Remove from split");
+});
+
+test("switching back to Classic restores the saved split", async ({ window, app }) => {
+  await expect(visiblePanes(window)).toHaveCount(2); // classic 1x2
+
+  await enableProjectsLeftLayout(window, app);
+  await expect(visiblePanes(window)).toHaveCount(1); // collapsed
+
+  await setLayout(window, app, "Projects on top");
+  await expect(visiblePanes(window)).toHaveCount(2); // split restored intact
+});
+
+test("split-pane shortcuts are inert in Projects-on-left and don't leak to Classic", async ({
+  window,
+  app,
+}) => {
+  await enableProjectsLeftLayout(window, app);
+  await expect(visiblePanes(window)).toHaveCount(1);
+
+  // These would create/reshape a split if they weren't gated by layout.
+  await fireShortcut(app, "split-pane-right");
+  await fireShortcut(app, "split-pane-below");
+  await window.waitForTimeout(300);
+  await expect(visiblePanes(window)).toHaveCount(1); // still single
+
+  // And the saved split is unchanged: back in Classic it's still the seeded 1x2,
+  // not a 3- or 4-pane grid a leaked shortcut would have produced.
+  await setLayout(window, app, "Projects on top");
+  await expect(visiblePanes(window)).toHaveCount(2);
 });
