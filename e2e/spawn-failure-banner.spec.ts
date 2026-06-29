@@ -1,35 +1,40 @@
 import { test, expect } from "./fixtures";
+import type { Page } from "@playwright/test";
 
 // Spawn-failure recovery banner. An empty preset command makes the PTY preflight
-// report preset-empty-command and render the banner (a deterministic failure
-// that needs no missing binary / missing dir).
+// report preset-empty-command and render the banner. Single-view seed so there
+// is exactly one visible pane/banner (no split-pane .first() ambiguity).
 
 test.use({
   seedOptions: {
+    split: false,
     presetList: [{ id: "shell", name: "Shell", icon: "$", color: "", command: "   " }],
   },
 });
 
+const visibleBanner = (window: Page) => window.locator(".aya-pane-recovery:visible");
+
 test("the recovery banner shows for an empty-command preset", async ({ window }) => {
-  const banner = window.locator(".aya-pane-recovery").first();
+  const banner = visibleBanner(window);
   await expect(banner).toBeVisible();
   await expect(banner.locator(".aya-pane-recovery-text strong")).toHaveText("Preset command is empty");
   await expect(banner.locator(".aya-pane-recovery-btn", { hasText: "Open Settings" })).toBeVisible();
 });
 
-// ADVERSARIAL: the primary "Restart" button should re-attempt the spawn. The
-// preset command is still empty, so a real retry fails again and the banner must
-// reappear. If Restart only clears the banner (no re-spawn), this is RED - a
-// misleading "Restart" that leaves a "running" terminal with no PTY.
-test("the banner Restart re-attempts the spawn (banner reappears, command still empty)", async ({
+// The banner's primary "Restart" must actually re-attempt the spawn. The preset
+// command is still empty, so a real retry fails again and the banner stays. If
+// Restart only clears spawnFailure without re-spawning, the banner vanishes and
+// the terminal is left "running" with no PTY (a zombie) - this asserts it does NOT.
+test("the banner Restart re-attempts the spawn instead of leaving a zombie terminal", async ({
   window,
 }) => {
-  const banner = window.locator(".aya-pane-recovery").first();
+  const banner = visibleBanner(window);
   await expect(banner).toBeVisible();
   await banner.locator(".aya-pane-recovery-btn--primary", { hasText: "Restart" }).click();
 
-  await expect(window.locator(".aya-pane-recovery").first()).toBeVisible();
+  // Still broken (empty command) -> the failure banner must still be shown.
+  await expect(visibleBanner(window)).toBeVisible();
   await expect(
-    window.locator(".aya-pane-recovery-text strong").first(),
+    visibleBanner(window).locator(".aya-pane-recovery-text strong"),
   ).toHaveText("Preset command is empty");
 });

@@ -39,11 +39,17 @@ test("deleting the active theme falls back to a valid theme and persists", async
     .poll(() => {
       try {
         const cfg = JSON.parse(readFileSync(join(seeded.ayaHome, "themes.json"), "utf8"));
-        const ids = (cfg.themes as Array<{ id: string; name: string }>).map((t) => t.name);
-        return { activeId: cfg.activeId as string, count: cfg.themes.length, hasDeleted: ids.includes(deletedName!) };
+        const themes = cfg.themes as Array<{ id: string; name: string }>;
+        return {
+          count: themes.length,
+          deletedGone: !themes.some((t) => t.name === deletedName),
+          // the persisted active id must reference one of the REMAINING themes,
+          // not an empty/stale id pointing at the deleted theme
+          activeIsValid: themes.some((t) => t.id === cfg.activeId),
+        };
       } catch {
         return null;
       }
     })
-    .toEqual({ activeId: expect.stringMatching(/.+/), count: 4, hasDeleted: false });
+    .toEqual({ count: 4, deletedGone: true, activeIsValid: true });
 });
