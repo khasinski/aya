@@ -31,7 +31,7 @@ test("StatusBar shows the branch, dirty count, changed files and a diff", async 
   await expect(diff).toBeVisible();
   await expect(diff).toContainText("twoX");
 
-  // In-diff search reports matches.
+  // In-diff search reports a non-zero match count (not "0 matches").
   await popover.locator('input[placeholder="Search diff"]').fill("twoX");
-  await expect(popover.locator(".aya-diff-search")).toContainText(/match/i);
+  await expect(popover.locator(".aya-diff-search")).toContainText(/[1-9]\d* match/i);
 });

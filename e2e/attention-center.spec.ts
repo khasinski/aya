@@ -63,12 +63,12 @@ test("AttentionCenter Focus activates the target's pane in a split", async ({
   ).toBeVisible();
   await expect
     .poll(() =>
-      window.evaluate(
-        () =>
-          document.activeElement
-            ?.closest('[data-testid="terminal-pane"]')
-            ?.getAttribute("data-terminal-name") ?? null,
-      ),
+      window.evaluate(() => {
+        const ae = document.activeElement;
+        // require the focused element to be xterm's input, not just any node in the pane
+        if (ae?.tagName !== "TEXTAREA") return null;
+        return ae.closest('[data-testid="terminal-pane"]')?.getAttribute("data-terminal-name") ?? null;
+      }),
     )
     .toBe("shell 2");
 });
