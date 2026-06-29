@@ -44,19 +44,12 @@ interface Props {
   presets: Preset[];
   recentlyActiveIds: ReadonlySet<string>;
   terminalSummaries?: Record<string, string>;
-  splitAssignments?: Record<string, number>;
   onSelectTerminal: (id: string) => void;
   onCloseTerminal: (id: string) => void;
   onRenameTerminal: (id: string, name: string) => void;
   onLaunchTerminal: (preset: Preset) => void;
   onReorderTerminals: (orderedIds: string[]) => void;
   onRestartTerminal: (id: string) => void;
-  canSplitRight: boolean;
-  canSplitBelow: boolean;
-  onAssignToSplit: (id: string) => void;
-  onSplitRight: (id: string) => void;
-  onSplitBelow: (id: string) => void;
-  onRemoveFromSplit: (id: string) => void;
 
   // App chrome
   isDev: boolean;
@@ -109,19 +102,12 @@ export function ProjectsLeftLayout({
   presets,
   recentlyActiveIds,
   terminalSummaries = {},
-  splitAssignments = {},
   onSelectTerminal,
   onCloseTerminal,
   onRenameTerminal,
   onLaunchTerminal,
   onReorderTerminals,
   onRestartTerminal,
-  canSplitRight,
-  canSplitBelow,
-  onAssignToSplit,
-  onSplitRight,
-  onSplitBelow,
-  onRemoveFromSplit,
   isDev,
   platform,
   isFullScreen,
@@ -397,11 +383,6 @@ export function ProjectsLeftLayout({
                   )}
                 </span>
                 {t.bell && <span className="aya-bell aya-bell--alert" />}
-                {splitAssignments[t.id] !== undefined && (
-                  <span className="aya-sidebar-pane-chip">
-                    {splitAssignments[t.id] + 1}
-                  </span>
-                )}
                 <span
                   className="aya-tab-close"
                   onClick={(e) => {
@@ -715,48 +696,8 @@ export function ProjectsLeftLayout({
           >
             Restart terminal
           </button>
-          <button
-            className="aya-context-menu-item"
-            onClick={() => {
-              onAssignToSplit(menu.id);
-              setMenu(null);
-            }}
-          >
-            Show in active pane
-          </button>
-          {canSplitRight && (
-            <button
-              className="aya-context-menu-item"
-              onClick={() => {
-                onSplitRight(menu.id);
-                setMenu(null);
-              }}
-            >
-              Split right
-            </button>
-          )}
-          {canSplitBelow && (
-            <button
-              className="aya-context-menu-item"
-              onClick={() => {
-                onSplitBelow(menu.id);
-                setMenu(null);
-              }}
-            >
-              Split below
-            </button>
-          )}
-          {splitAssignments[menu.id] !== undefined && (
-            <button
-              className="aya-context-menu-item"
-              onClick={() => {
-                onRemoveFromSplit(menu.id);
-                setMenu(null);
-              }}
-            >
-              Remove from split
-            </button>
-          )}
+          {/* Split actions are intentionally absent: this layout does not
+              support split panes (see App's layoutMode gating). */}
           <button
             className="aya-context-menu-item aya-context-menu-item--danger"
             onClick={() => {

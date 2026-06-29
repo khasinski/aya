@@ -2810,8 +2810,14 @@ export function App() {
     activeIsRemote,
     activeBranch,
   ]);
+  // Split panes are not supported in the experimental "projects-left" layout
+  // (terminals live in a top tab strip there). Ignore any saved split so the
+  // body shows a single terminal, and disable the split actions below. The
+  // project's stored splitLayout is left untouched, so switching back to the
+  // classic layout restores it.
+  const splitEnabled = layoutMode !== "projects-left";
   const savedSplitLayout =
-    activeProject && activeProjectId
+    splitEnabled && activeProject && activeProjectId
       ? normalizeSplitLayoutForTabs(
           activeProject.splitLayout,
           activeProject.tabs,
@@ -2841,12 +2847,14 @@ export function App() {
     });
   }
   const splitActionLayout = savedSplitLayout ?? splitLayout;
-  const canSplitRight = splitActionLayout
-    ? splitActionLayout.cols < MAX_SPLIT_COLS
-    : false;
-  const canSplitBelow = splitActionLayout
-    ? splitActionLayout.rows < MAX_SPLIT_ROWS
-    : false;
+  const canSplitRight =
+    splitEnabled && splitActionLayout
+      ? splitActionLayout.cols < MAX_SPLIT_COLS
+      : false;
+  const canSplitBelow =
+    splitEnabled && splitActionLayout
+      ? splitActionLayout.rows < MAX_SPLIT_ROWS
+      : false;
 
   useEffect(() => {
     if (!activeProject?.remote || !activeProjectId) return;
@@ -3350,7 +3358,6 @@ export function App() {
               presets={activePresets}
               recentlyActiveIds={recentlyActiveIds}
               terminalSummaries={localSummariesEnabled ? terminalSummaries : EMPTY_SUMMARIES}
-              splitAssignments={splitAssignments}
               onSelectTerminal={selectTerminalFromSidebar}
               onCloseTerminal={closeTerminal}
               onRenameTerminal={renameTerminal}
@@ -3361,12 +3368,6 @@ export function App() {
                 }
               }}
               onRestartTerminal={forceRestartTerminal}
-              canSplitRight={canSplitRight}
-              canSplitBelow={canSplitBelow}
-              onAssignToSplit={assignTerminalToActiveSplitCell}
-              onSplitRight={(id) => addTerminalSplit(id, "right")}
-              onSplitBelow={(id) => addTerminalSplit(id, "below")}
-              onRemoveFromSplit={removeTerminalFromSplit}
               body={body ?? panesNode}
             />
           );
