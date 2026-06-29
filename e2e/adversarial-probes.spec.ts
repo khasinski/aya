@@ -75,6 +75,10 @@ test("P5 launching in a split shows the new terminal in the active cell", async 
 // active one (the sidebar-highlight vs active-cell divergence reviewers flagged).
 test("P7 search-jump in a split activates the target's pane", async ({ window, app }) => {
   await expect(visiblePanes(window)).toHaveCount(2);
+  // Before: shell 1 (cell 0) is the active pane - proves the jump CHANGES it.
+  await expect(
+    window.locator('.aya-pane--active-split[data-terminal-name="shell 1"]'),
+  ).toBeVisible();
   await fireShortcut(app, "search");
   await window.locator(".aya-search-input").fill("shell 2");
   await window
