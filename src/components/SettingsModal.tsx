@@ -1214,7 +1214,7 @@ export function SettingsModal({
           >
             Classic keeps project tabs on top with the terminal list on the
             left. "Projects on left" moves projects into a left rail and puts
-            terminal tabs along the top.
+            terminal tabs along the top. Split panes are disabled in this layout.
           </SettingsRow>
           <SettingsRow
             icon="donut_large"
