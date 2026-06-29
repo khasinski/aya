@@ -1236,6 +1236,13 @@ body {
 /* Terminal tabs live in the top bar; size to content and scroll. */
 .aya-termtabs { overflow-x: auto; overflow-y: hidden; }
 .aya-termtab { max-width: 260px; }
+/* The strip is only 40px tall. The name stays vertically centered (on the same
+   line as the icon/dot), and the summary is positioned just below it; without
+   room that summary clips at the tab's bottom edge. padding-bottom shifts the
+   centered row up so the summary fits, identically for every tab (so names stay
+   aligned). The close ✕ is absolutely centered, so nudge it up to match. */
+.aya-termtab { padding-bottom: 12px; }
+.aya-termtab > .aya-tab-close { top: calc(50% - 6px); }
 .aya-termtab-main {
   display: flex;
   flex-direction: column;
