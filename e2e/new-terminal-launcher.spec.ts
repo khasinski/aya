@@ -86,6 +86,38 @@ test.describe("no-split seed (single view)", () => {
   });
 });
 
+test.describe("selecting a specific preset", () => {
+  test.use({
+    seedOptions: {
+      presetList: [
+        { id: "shell", name: "Shell", icon: "$", color: "", command: "$SHELL" },
+        { id: "claude", name: "Claude Code", icon: "✻", color: "#d97757", command: "$SHELL" },
+        { id: "codex", name: "Codex", icon: "◆", color: "#10a37f", command: "$SHELL" },
+      ],
+    },
+  });
+
+  // Picking a preset from the "+" menu must open a new tab for THAT preset -
+  // not just "a tab". Verifies name, icon, active state, and that the menu closes.
+  test("picking a preset opens a correct new tab for it", async ({ window, app }) => {
+    await enableProjectsLeftLayout(window, app);
+    const before = await window.getByTestId("termtab").count();
+
+    await window.locator(".aya-termtab-launcher .aya-tab-new").click();
+    await expect(window.locator(".aya-termtab-launcher .aya-recent-menu")).toBeVisible();
+    await window
+      .locator(".aya-termtab-launcher .aya-recent-menu .aya-recent-menu-item", { hasText: "Claude Code" })
+      .click();
+
+    await expect(window.getByTestId("termtab")).toHaveCount(before + 1);
+    const newTab = window.locator('[data-testid="termtab"][data-terminal-name="Claude Code"]');
+    await expect(newTab).toHaveCount(1);
+    await expect(newTab.locator(".aya-sidebar-icon")).toHaveText("✻"); // Claude preset icon
+    await expect(newTab).toHaveClass(/aya-tab--active/); // becomes the active tab
+    await expect(window.locator(".aya-termtab-launcher .aya-recent-menu")).toBeHidden(); // menu closed
+  });
+});
+
 test.describe("scrollable launcher menu", () => {
   // Enough presets that the dropdown exceeds its max-height and scrolls.
   test.use({
