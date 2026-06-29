@@ -3529,8 +3529,11 @@ export function App() {
             if (project) void openKnownProject(project);
           }}
           onSelectTerminal={(slug, terminalId) => {
+            // Activate the project, then reuse the sidebar selection logic so a
+            // jump into a split also moves the active CELL (and keyboard focus)
+            // to the target pane - not just the active tab.
             setActiveProjectId(slug);
-            setActiveTabByProject((prev) => ({ ...prev, [slug]: terminalId }));
+            selectTerminalFromSidebar(terminalId);
           }}
           onRunPreset={(presetId) => {
             const preset = presets.find((p) => p.id === presetId);
