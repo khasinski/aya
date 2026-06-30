@@ -81,7 +81,7 @@ function attentionFor(
       title: `${terminal.name} is idle`,
       detail:
         terminal.stopped
-          ? "Stopped by PTY host restart"
+          ? "Stopped - press Shift+Enter to restart"
           : terminal.exitCode !== null
             ? `Exited with code ${terminal.exitCode}`
             : "No active process",

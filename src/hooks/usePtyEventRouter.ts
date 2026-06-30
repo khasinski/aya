@@ -1,5 +1,6 @@
 import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { applyPtyEvent, eventTouchesActivity } from "../pty-event-reducer";
+import { markSpawned } from "../spawnSession";
 import type { PtyEvent, TerminalState } from "../types";
 
 interface Options {
@@ -16,6 +17,9 @@ export function usePtyEventRouter({
   useEffect(() => {
     return window.aya.onPtyEvent((event) => {
       onPtyEvent?.(event);
+      // A data event confirms this id has a live PTY session - so a later
+      // re-mount can attach-only and surface "stopped" if the process is gone.
+      if (event.type === "data") markSpawned(event.ptyId);
       if (eventTouchesActivity(event)) {
         lastActivityRef.current[event.ptyId] = Date.now();
       }

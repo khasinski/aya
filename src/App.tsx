@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { detectApproval } from "./bell";
 import { findStatusTarget } from "./control-status-target";
 import { clearedTerminalStatus } from "./pty-event-reducer";
+import { forgetSpawn } from "./spawnSession";
 import {
   applyExternalProjectEdits,
   mergeProjectsFromDisk,
@@ -1917,6 +1918,9 @@ export function App() {
     (id: string) => {
       const t = terminalsRef.current[id];
       if (!t) return;
+    // Drop the confirmed-session marker so the id doesn't linger (and can't be
+    // mistaken for a re-mount if the id were ever reused).
+    forgetSpawn(id);
     void window.aya.ptyKill(id);
     appendProjectEvent({
       projectSlug: t.projectSlug,
@@ -2653,6 +2657,11 @@ export function App() {
   const forceRestartTerminal = useCallback(async (id: string) => {
     const t = terminalsRef.current[id];
     if (!t) return;
+    // Explicit restart: forget the confirmed-session marker so that if the tab
+    // is currently UNMOUNTED, its next mount spawns fresh instead of attaching-
+    // only (which would no-session the PTY we just killed and leave the
+    // requested restart stuck as stopped).
+    forgetSpawn(id);
     // Await the kill so the main-side ptys map is empty by the time the
     // new spawn IPC arrives — otherwise spawnPty treats it as a re-mount
     // and replays the old buffer instead of starting fresh.

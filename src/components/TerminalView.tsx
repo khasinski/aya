@@ -29,6 +29,7 @@ import {
   stripScrollbackErase,
 } from "../terminal-rendering";
 import { snippetPtyPayload } from "../snippet-payload";
+import { wasSpawned } from "../spawnSession";
 import { SnippetBar } from "./SnippetBar";
 
 // Terminal sizing + timing constants. The fallback cols/rows are the standard
@@ -50,14 +51,6 @@ const FOCUS_RETRY_DELAY_MS = 60;
 // arrived (or there was nothing to replay).
 const RESTORE_FALLBACK_MS = 2_500;
 const INPUT_LOG_MAX_CHARS = 240;
-
-// Terminal ids that already had their initial mount-spawn THIS renderer session.
-// A LATER re-mount of one of these (tab re-activation, warm-pool churn) spawns
-// attach-only: if the host lost the PTY (process died while the host stayed up)
-// it surfaces a stopped/restartable state instead of silently starting a fresh
-// process. The set lives at module scope so it survives a TerminalView remount
-// but resets on a full renderer reload - so first-boot auto-start is unaffected.
-const spawnedThisSession = new Set<string>();
 const URL_IN_TEXT_RE = /https?:\/\/[^\s<>"'`]+/i;
 const URL_TRAILING_PUNCTUATION_RE = /[),.;\]]+$/;
 const EXTERNAL_LINK_PROTOCOLS = new Set([
@@ -681,11 +674,12 @@ function TerminalViewComponent({
 
     if (!spawnedRef.current) {
       spawnedRef.current = true;
-      // First mount this session -> normal spawn (boot auto-start). A later
-      // re-mount of the same id -> attach-only, so a tab whose PTY died shows
-      // a stopped state rather than a silent fresh process.
-      const attachOnly = spawnedThisSession.has(terminal.id);
-      spawnedThisSession.add(terminal.id);
+      // First mount this session -> normal spawn (boot auto-start). A re-mount
+      // of an id that already produced a confirmed session -> attach-only, so a
+      // tab whose PTY died shows a stopped state rather than a silent fresh
+      // process. Keyed on confirmed output (not the request), so an in-flight
+      // first spawn that re-mounts is not mistaken for a dead session.
+      const attachOnly = wasSpawned(terminal.id);
       const { cols, rows } = term;
       void window.aya.ptySpawn({
         ptyId: terminal.id,
