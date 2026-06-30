@@ -55,6 +55,9 @@ export interface SeedOptions {
    *  dir-check queues it and MissingDirModal appears. The path is exposed as
    *  `seeded.missingDirPath` so a test can assert "Create folder" made it. */
   missingDir?: boolean;
+  /** Write the project's `.aya/project.json` with these presets, so the repo
+   *  preset-import flow (ProjectPresetImportModal) triggers for the project. */
+  repoPresets?: Array<{ id: string; name: string; icon: string; color: string; command: string }>;
 }
 
 function shellQuote(value: string): string {
@@ -78,6 +81,15 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
   // so the boot dir-check queues it and MissingDirModal appears.
   const missingDirPath = opts.missingDir ? join(root, "missing-project-dir") : undefined;
   const effectiveProjectDir = missingDirPath ?? projectDir;
+  // Repo-local launchers: a `.aya/project.json` in the project dir triggers the
+  // ProjectPresetImportModal (suggest importing the repo's presets).
+  if (opts.repoPresets) {
+    mkdirSync(join(projectDir, ".aya"), { recursive: true });
+    writeFileSync(
+      join(projectDir, ".aya", "project.json"),
+      JSON.stringify({ presets: opts.repoPresets }, null, 2),
+    );
+  }
 
   if (opts.gitRepo) {
     const git = (...args: string[]) =>
