@@ -17,13 +17,22 @@ export function usePtyEventRouter({
   useEffect(() => {
     return window.aya.onPtyEvent((event) => {
       onPtyEvent?.(event);
-      // A data event confirms this id has a live PTY session - so a later
-      // re-mount can attach-only and surface "stopped" if the process is gone.
-      if (event.type === "data") markSpawned(event.ptyId);
       if (eventTouchesActivity(event)) {
         lastActivityRef.current[event.ptyId] = Date.now();
       }
-      setTerminals((prev) => applyPtyEvent(prev, event));
+      setTerminals((prev) => {
+        // Mark a CONFIRMED live session only on genuine live output, so a later
+        // re-mount attaches (and surfaces "stopped" if the process is gone).
+        // Skip when the terminal: is spawn-failed (the synthetic failure banner
+        // is also a data event but no PTY exists), has already exited (a
+        // straggler chunk after a kill must not re-mark), or is gone (closed).
+        // Set.add is idempotent, so running inside the updater is safe.
+        const t = prev[event.ptyId];
+        if (event.type === "data" && t && !t.spawnFailure && t.exitCode === null) {
+          markSpawned(event.ptyId);
+        }
+        return applyPtyEvent(prev, event);
+      });
     });
   }, [lastActivityRef, onPtyEvent, setTerminals]);
 }

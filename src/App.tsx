@@ -2657,11 +2657,6 @@ export function App() {
   const forceRestartTerminal = useCallback(async (id: string) => {
     const t = terminalsRef.current[id];
     if (!t) return;
-    // Explicit restart: forget the confirmed-session marker so that if the tab
-    // is currently UNMOUNTED, its next mount spawns fresh instead of attaching-
-    // only (which would no-session the PTY we just killed and leave the
-    // requested restart stuck as stopped).
-    forgetSpawn(id);
     // Await the kill so the main-side ptys map is empty by the time the
     // new spawn IPC arrives — otherwise spawnPty treats it as a re-mount
     // and replays the old buffer instead of starting fresh.
@@ -2670,6 +2665,12 @@ export function App() {
     } catch {
       /* ignore — best effort */
     }
+    // Forget the confirmed-session marker AFTER the kill: a still-alive process
+    // can emit output between the request and the kill landing, which would
+    // re-mark the id; clearing it last (once the PTY is dead, no more output)
+    // ensures an UNMOUNTED tab's next mount spawns fresh instead of attaching-
+    // only to a killed PTY (which would no-session it and stick it as stopped).
+    forgetSpawn(id);
     setTerminals((prev) => {
       const cur = prev[id];
       if (!cur) return prev;
