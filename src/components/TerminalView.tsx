@@ -299,6 +299,29 @@ function TerminalViewComponent({
   const cwdRef = useRef(cwd);
   cwdRef.current = cwd;
 
+  // Restart the terminal in place: clear the host-side failed/exited state AND
+  // actually spawn a new PTY (same xterm + scrollback). Used by the recovery
+  // banner's "Restart" - without the spawn it would only clear the banner and
+  // leave a "running" terminal with no process.
+  const respawnInPlace = useCallback(() => {
+    const t = xtermRef.current;
+    if (!t) return;
+    onRequestRestart?.();
+    // The spawn-failure banner chunk already flipped this ref to true, so a
+    // successful respawn would skip the one-time post-load SIGWINCH that
+    // fullscreen TUIs need. Reset it like the forced-restart path does.
+    didPostLoadResizeRef.current = false;
+    void window.aya.ptySpawn({
+      ptyId: terminal.id,
+      projectSlug: terminal.projectSlug,
+      presetId: terminal.presetId,
+      command: commandRef.current,
+      cwd: cwdRef.current,
+      cols: Math.max(t.cols, TERMINAL_FALLBACK_COLS),
+      rows: Math.max(t.rows, TERMINAL_FALLBACK_ROWS),
+    });
+  }, [onRequestRestart, terminal.id, terminal.projectSlug, terminal.presetId]);
+
   const fitTerminal = useCallback((shouldFocus = false) => {
     if (fitFrameRef.current !== null) {
       cancelAnimationFrame(fitFrameRef.current);
@@ -986,7 +1009,6 @@ function TerminalViewComponent({
         <div className="aya-pane-recovery">
           <div className="aya-pane-recovery-text">
             <strong>{recoveryTitle(terminal.spawnFailure.reason)}</strong>
-            <span>{terminal.spawnFailure.detail.split("\n")[0]}</span>
           </div>
           <div className="aya-pane-recovery-actions">
             {terminal.spawnFailure.reason.startsWith("cwd-") && (
@@ -1002,7 +1024,7 @@ function TerminalViewComponent({
             </button>
             <button
               className="aya-pane-recovery-btn aya-pane-recovery-btn--primary"
-              onClick={onRequestRestart}
+              onClick={respawnInPlace}
             >
               Restart
             </button>
