@@ -2707,8 +2707,13 @@ export function App() {
     const idx = tabs.findIndex((t) => t.id === currentId);
     if (idx < 0) return;
     const next = (idx + delta + tabs.length) % tabs.length;
-    setActiveTabByProject((p) => ({ ...p, [slug]: tabs[next].id }));
-  }, [activeTabByProject]);
+    // Route through selectTerminalFromSidebar (not a bare setActiveTabByProject)
+    // so that in a SPLIT the active cell + keyboard focus follow to the next
+    // terminal instead of silently changing only the active-tab pointer (the
+    // active-tab-vs-active-cell divergence - same class as BUG-1). In single
+    // view it collapses to show the cycled-to terminal, as before.
+    selectTerminalFromSidebar(tabs[next].id);
+  }, [activeTabByProject, selectTerminalFromSidebar]);
 
   const onSaveThemes = useCallback(
     async (nextThemes: Theme[], nextActiveId: string) => {
