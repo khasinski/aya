@@ -24,10 +24,14 @@ test.use({
         name: "Shell",
         icon: "$",
         color: "",
-        // Inferred as claude (CLAUDE_CONFIG_DIR=); writes "$@" (the args Aya
-        // appended) to resume-marker.txt in the project cwd.
+        // Inferred as claude (CLAUDE_CONFIG_DIR=); echoes the args Aya appended
+        // to resume-marker.txt in the project cwd. NOTE: deliberately NOT a
+        // `sh -c '...'` wrapper - the `-c` token would trip commandHasResumeFlag
+        // (it reads as an existing continue flag) and suppress the very append
+        // we are testing. The host already runs the command inside a shell, so
+        // the redirection works directly.
         command:
-          "CLAUDE_CONFIG_DIR=/tmp/aya-e2e-resume sh -c 'printf \"%s\" \"$@\" > resume-marker.txt' aya",
+          'CLAUDE_CONFIG_DIR=/tmp/aya-e2e-resume echo "$@" > resume-marker.txt',
       },
     ],
   },
@@ -41,16 +45,19 @@ test("a restored agent terminal respawns with --continue (resumes, not fresh)", 
   await expect(window.getByTestId("xterm-host").first()).toBeVisible();
 
   const markerPath = join(seeded.projectDir, "resume-marker.txt");
+  // The marker contains the args Aya appended. It must include the continue
+  // flag; substring (not exact) tolerates echo's trailing newline / spacing.
+  // Without the autoResume default, no flag is appended -> marker lacks it.
   await expect
     .poll(
       () => {
         try {
-          return readFileSync(markerPath, "utf8");
+          return readFileSync(markerPath, "utf8").includes("--continue");
         } catch {
-          return null;
+          return false;
         }
       },
       { timeout: 10_000 },
     )
-    .toBe("--continue");
+    .toBe(true);
 });
