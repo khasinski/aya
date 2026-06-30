@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.7.5 - 2026-06-30
+
+Aya 0.7.5 hardens the terminal/agent lifecycle and fixes opening existing remote
+projects.
+
+### Fixes
+
+- **Agent sessions resume instead of starting fresh.** A restored Claude/Codex
+  tab now respawns with "continue latest session" (`--continue` / `resume
+  --last`) instead of a bare picker, and the auto-resume default the Settings UI
+  shows matches what the runtime actually applies - so a restored agent tab no
+  longer silently loses its conversation. An explicit opt-out is preserved.
+- **A re-mounted tab whose process died shows a stopped state.** When a tab
+  re-mounts after its PTY exited (tab re-activation, warm-pool churn) Aya no
+  longer silently starts a brand-new (contextless) process; it surfaces a
+  stopped/restartable state (Shift+Enter to restart).
+- **No more orphaned PTYs from a fast unmount+remount.** Concurrent spawns for
+  the same terminal id are guarded so only one process starts.
+- **Opening an existing remote project works.** Re-opening a remote project that
+  already exists on the host no longer fails with "Project already exists"; the
+  open is now idempotent (new projects are still created).
+
+### Performance
+
+- The terminal-output hot path and the idle-activity tick no longer re-render
+  the whole window, and the git/session/usage polls pause while the window is
+  hidden.
+
+### Security
+
+- Resolved the CodeQL findings: ids now use a cryptographically secure RNG, and
+  the atomic-write temp path is no longer predictable.
+
 ## v0.7.4 - 2026-06-25
 
 Aya 0.7.4 adds an alternative window layout, richer status-bar and terminal
