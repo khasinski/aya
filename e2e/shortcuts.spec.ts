@@ -55,16 +55,32 @@ test.describe("single view (no split)", () => {
     await expect(visiblePane(window, "shell 2")).toBeVisible();
   });
 
-  test("project-N out of range is a no-op (no crash, active project unchanged)", async ({
+});
+
+test.describe("project switching", () => {
+  // Two open projects so project-N actually changes the visible terminal - a
+  // single-project seed can't tell a correct switch from a no-op (the active
+  // project would not change either way).
+  test.use({ seedOptions: { split: false, secondProject: true } });
+
+  test("project-N switches the active project; out-of-range is a no-op", async ({
     window,
     app,
   }) => {
+    // Boots on the first open project (shell 1).
     await expect(visiblePane(window, "shell 1")).toBeVisible();
-    // Only one open project; index far past the end must not throw or blank out.
+
+    // project-2 -> second project (shell 3) becomes visible.
+    await fireShortcut(app, "project-2");
+    await expect(visiblePane(window, "shell 3")).toBeVisible();
+    await expect(visiblePane(window, "shell 1")).toHaveCount(0);
+
+    // Out of range: must NOT change the active project.
     await fireShortcut(app, "project-99");
     await fireShortcut(app, "project-0");
-    await expect(visiblePane(window, "shell 1")).toBeVisible();
-    // project-1 selects the (only) open project - still showing its terminal.
+    await expect(visiblePane(window, "shell 3")).toBeVisible();
+
+    // project-1 -> back to the first project.
     await fireShortcut(app, "project-1");
     await expect(visiblePane(window, "shell 1")).toBeVisible();
   });

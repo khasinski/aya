@@ -77,10 +77,16 @@ test.describe("dedup filter", () => {
 
   test("a repo preset duplicating an existing command does not prompt", async ({
     window,
+    seeded,
   }) => {
-    // The terminal is up; give the repo-config check time to run and decide.
     await expect(window.locator('[data-testid="terminal-pane"]').first()).toBeVisible();
-    await window.waitForTimeout(800);
+    // Deterministic "the repo-config check ran and decided": when every
+    // suggestion is a duplicate, the app auto-marks the project ignored in
+    // localStorage. Poll that instead of sleeping, then assert no modal.
+    const ignoredKey = `aya:repo-config-ignored:${seeded.projectDir}`;
+    await expect
+      .poll(() => window.evaluate((k) => localStorage.getItem(k), ignoredKey))
+      .toBe("1");
     await expect(modal(window)).toHaveCount(0);
   });
 });
