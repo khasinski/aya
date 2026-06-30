@@ -654,11 +654,6 @@
   color: #ffa198;
   font-size: 12px;
 }
-.aya-pane-recovery-text span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .aya-pane-recovery-actions {
   display: flex;
   gap: 6px;

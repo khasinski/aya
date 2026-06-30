@@ -1005,7 +1005,6 @@ function TerminalViewComponent({
         <div className="aya-pane-recovery">
           <div className="aya-pane-recovery-text">
             <strong>{recoveryTitle(terminal.spawnFailure.reason)}</strong>
-            <span>{terminal.spawnFailure.detail.split("\n")[0]}</span>
           </div>
           <div className="aya-pane-recovery-actions">
             {terminal.spawnFailure.reason.startsWith("cwd-") && (
