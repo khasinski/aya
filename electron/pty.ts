@@ -60,6 +60,12 @@ const pendingKills = new Set<string>();
 // Auto-evict pending-kill markers so stale ids don't linger forever (defense
 // in depth — usually the spawn either runs within milliseconds or never).
 const PENDING_KILL_TTL_MS = 5_000;
+// In-flight spawn guard: spawnPty awaits an async command-exists preflight
+// between the `ptys.has` check and registering the PTY. Two concurrent spawns
+// for the same id (e.g. a fast unmount+remount) could both pass that check and
+// both spawn, orphaning the first. We mark an id as spawning across the await
+// so a racing call bails instead of starting a second process.
+const spawning = new Set<string>();
 
 export interface PtyEventSink {
   isDestroyed(): boolean;
@@ -454,56 +460,65 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
   }
 
   const binary = preflightBinary(req.command);
-  if (binary && !(await commandExists(binary))) {
-    reportSpawnFailure(
-      sink,
-      req.ptyId,
-      "command-not-found",
-      `command not found: ${binary}\nEdit the preset, install the CLI, or re-scan installed CLIs.`,
-    );
-    return;
-  }
-
-  const argv = shellArgv(req.command, cwd);
-  const file = argv[0];
-  const args = argv.slice(1);
-
-  let child: PtyModule.IPty;
+  // A spawn for this id is already in flight (a concurrent re-mount got here
+  // first). Bail so we don't start a second process and orphan the first; the
+  // in-flight spawn owns the session and streams to the renderer.
+  if (spawning.has(req.ptyId)) return;
+  spawning.add(req.ptyId);
   try {
-    child = loadNodePty().spawn(file, args, {
-      name: "xterm-256color",
-      cols: Math.max(req.cols, MIN_PTY_COLS),
-      rows: Math.max(req.rows, MIN_PTY_ROWS),
-      cwd,
-      env: safeEnv(req, cwd),
-    });
-  } catch (err) {
-    reportSpawnFailure(
-      sink,
-      req.ptyId,
-      "node-pty-spawn-error",
-      `failed to spawn: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return;
-  }
-
-  ptys.set(req.ptyId, child);
-
-  child.onData((chunk) => {
-    appendToOutputBuffer(req.ptyId, chunk);
-    if (sink.isDestroyed()) return;
-    sink.sendPtyEvent({ type: "data", ptyId: req.ptyId, chunk });
-  });
-
-  child.onExit(({ exitCode }) => {
-    if (ptys.get(req.ptyId) !== child) {
+    if (binary && !(await commandExists(binary))) {
+      reportSpawnFailure(
+        sink,
+        req.ptyId,
+        "command-not-found",
+        `command not found: ${binary}\nEdit the preset, install the CLI, or re-scan installed CLIs.`,
+      );
       return;
     }
-    ptys.delete(req.ptyId);
-    outputBuffers.delete(req.ptyId);
-    if (sink.isDestroyed()) return;
-    sink.sendPtyEvent({ type: "exit", ptyId: req.ptyId, exitCode });
-  });
+
+    const argv = shellArgv(req.command, cwd);
+    const file = argv[0];
+    const args = argv.slice(1);
+
+    let child: PtyModule.IPty;
+    try {
+      child = loadNodePty().spawn(file, args, {
+        name: "xterm-256color",
+        cols: Math.max(req.cols, MIN_PTY_COLS),
+        rows: Math.max(req.rows, MIN_PTY_ROWS),
+        cwd,
+        env: safeEnv(req, cwd),
+      });
+    } catch (err) {
+      reportSpawnFailure(
+        sink,
+        req.ptyId,
+        "node-pty-spawn-error",
+        `failed to spawn: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+
+    ptys.set(req.ptyId, child);
+
+    child.onData((chunk) => {
+      appendToOutputBuffer(req.ptyId, chunk);
+      if (sink.isDestroyed()) return;
+      sink.sendPtyEvent({ type: "data", ptyId: req.ptyId, chunk });
+    });
+
+    child.onExit(({ exitCode }) => {
+      if (ptys.get(req.ptyId) !== child) {
+        return;
+      }
+      ptys.delete(req.ptyId);
+      outputBuffers.delete(req.ptyId);
+      if (sink.isDestroyed()) return;
+      sink.sendPtyEvent({ type: "exit", ptyId: req.ptyId, exitCode });
+    });
+  } finally {
+    spawning.delete(req.ptyId);
+  }
 }
 
 export function writePty(ptyId: string, data: string): void {
