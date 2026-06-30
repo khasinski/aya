@@ -1196,7 +1196,7 @@ export function App() {
         });
         return;
       }
-      if (detectApproval(event.chunk)) {
+      if (event.type === "data" && detectApproval(event.chunk)) {
         appendProjectEvent({
           projectSlug: terminal.projectSlug,
           terminalId: terminal.id,

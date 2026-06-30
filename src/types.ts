@@ -228,6 +228,11 @@ export interface SpawnRequest {
   cwd: string;
   cols: number;
   rows: number;
+  /** Attach to an existing PTY only - do NOT start a fresh process if the host
+   *  has no session for this id. Used when re-mounting a tab that already ran
+   *  this session: if its PTY died, surface a stopped/restartable state via a
+   *  `no-session` event instead of silently spawning a brand-new process. */
+  attachOnly?: boolean;
 }
 
 export type PtyEvent =
@@ -238,7 +243,10 @@ export type PtyEvent =
       ptyId: string;
       reason: SpawnFailureReason;
       detail: string;
-    };
+    }
+  // Host had no live session for an attach-only spawn: the process died while
+  // the host stayed up. The tab becomes stopped/restartable, not respawned.
+  | { type: "no-session"; ptyId: string };
 
 export interface WaitingNotificationRequest {
   projectSlug: string;

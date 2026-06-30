@@ -387,6 +387,15 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     }
     return;
   }
+  if (req.attachOnly) {
+    // Re-mount of a tab that already ran this session, but its PTY is gone (the
+    // process died while the host stayed up). Don't silently start a fresh
+    // process - tell the renderer so it can show a stopped/restartable state.
+    if (!sink.isDestroyed()) {
+      sink.sendPtyEvent({ type: "no-session", ptyId: req.ptyId });
+    }
+    return;
+  }
   const cwd = path.resolve(req.cwd.replace(/^~/, os.homedir()));
 
   try {

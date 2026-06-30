@@ -50,6 +50,14 @@ const FOCUS_RETRY_DELAY_MS = 60;
 // arrived (or there was nothing to replay).
 const RESTORE_FALLBACK_MS = 2_500;
 const INPUT_LOG_MAX_CHARS = 240;
+
+// Terminal ids that already had their initial mount-spawn THIS renderer session.
+// A LATER re-mount of one of these (tab re-activation, warm-pool churn) spawns
+// attach-only: if the host lost the PTY (process died while the host stayed up)
+// it surfaces a stopped/restartable state instead of silently starting a fresh
+// process. The set lives at module scope so it survives a TerminalView remount
+// but resets on a full renderer reload - so first-boot auto-start is unaffected.
+const spawnedThisSession = new Set<string>();
 const URL_IN_TEXT_RE = /https?:\/\/[^\s<>"'`]+/i;
 const URL_TRAILING_PUNCTUATION_RE = /[),.;\]]+$/;
 const EXTERNAL_LINK_PROTOCOLS = new Set([
@@ -518,6 +526,12 @@ function TerminalViewComponent({
         term.write(
           `\r\n\x1b[2m[process exited with code ${event.exitCode}${restartHint}]\x1b[0m\r\n`,
         );
+      } else if (event.type === "no-session") {
+        // Attach-only re-mount with no live PTY: the process ended while we were
+        // away. Show a restartable hint instead of a fresh, contextless session.
+        term.write(
+          `\r\n\x1b[2m[session ended - press Shift+Enter to restart]\x1b[0m\r\n`,
+        );
       }
     });
 
@@ -667,6 +681,11 @@ function TerminalViewComponent({
 
     if (!spawnedRef.current) {
       spawnedRef.current = true;
+      // First mount this session -> normal spawn (boot auto-start). A later
+      // re-mount of the same id -> attach-only, so a tab whose PTY died shows
+      // a stopped state rather than a silent fresh process.
+      const attachOnly = spawnedThisSession.has(terminal.id);
+      spawnedThisSession.add(terminal.id);
       const { cols, rows } = term;
       void window.aya.ptySpawn({
         ptyId: terminal.id,
@@ -676,6 +695,7 @@ function TerminalViewComponent({
         cwd,
         cols: Math.max(cols, TERMINAL_FALLBACK_COLS),
         rows: Math.max(rows, TERMINAL_FALLBACK_ROWS),
+        attachOnly,
       });
     }
 

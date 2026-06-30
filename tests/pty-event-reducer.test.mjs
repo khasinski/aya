@@ -306,3 +306,26 @@ test("clearedTerminalStatus: clears the bell left by a waiting overlay", () => {
   assert.equal(next.bell, false);
   assert.equal(next.status, "idle");
 });
+
+// --- no-session ----------------------------------------------------------
+
+test("no-session marks the terminal stopped + restartable, not running", () => {
+  const prev = { t1: termState("t1", { status: "running", bell: true }) };
+  const next = applyPtyEvent(prev, { type: "no-session", ptyId: "t1" });
+  assert.equal(next.t1.stopped, true);
+  assert.equal(next.t1.bell, false);
+  // exitCode stays null so it never reads as a clean "done" finish, and the
+  // derived lifecycle status is idle (restartable), not running or error.
+  assert.equal(next.t1.exitCode, null);
+  assert.equal(next.t1.status, "idle");
+});
+
+test("no-session for an unknown ptyId is a no-op (same map reference)", () => {
+  const prev = { t1: termState("t1") };
+  const next = applyPtyEvent(prev, { type: "no-session", ptyId: "ghost" });
+  assert.equal(next, prev);
+});
+
+test("no-session is not counted as activity", () => {
+  assert.equal(eventTouchesActivity({ type: "no-session", ptyId: "t1" }), false);
+});
