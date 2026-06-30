@@ -116,7 +116,9 @@ export function normalizePreset(raw: unknown): Preset | null {
     ...(agent ? { agent } : {}),
     ...(configDir ? { configDir } : {}),
     ...(raw.unsafeMode ? { unsafeMode: true } : {}),
-    ...(raw.autoResume ? { autoResume: true } : {}),
+    // Preserve an explicit autoResume:false (deliberate opt-out); absence is
+    // treated as "default on" for agent presets by the renderer.
+    ...(typeof raw.autoResume === "boolean" ? { autoResume: raw.autoResume } : {}),
     ...(themeId ? { themeId } : {}),
   };
 }

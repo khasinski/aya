@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { detectApproval } from "./bell";
+import { commandWithAutoResume } from "./agentPreset";
 import { findStatusTarget } from "./control-status-target";
 import { clearedTerminalStatus } from "./pty-event-reducer";
 import {
@@ -383,24 +384,6 @@ function remoteTerminalCommand(project: ProjectConfig, preset: Preset): string {
       ? `cd ${shellQuote(project.remote.directory)} && exec ${remoteShell} -l`
       : `cd ${shellQuote(project.remote.directory)} && exec ${remoteShell} -l -i -c ${shellQuote(`exec ${preset.command}`)}`;
   return `ssh -tt ${shellQuote(project.remote.sshTarget)} ${shellQuote(remoteCommand)}`;
-}
-
-function commandWithAutoResume(preset: Preset, restored: boolean | undefined): string {
-  const command = preset.command.trim();
-  const resumeArg = preset.agent === "codex" || preset.id === "codex" ? "resume" : "--resume";
-  const alreadyHasResume =
-    resumeArg === "resume"
-      ? /(?:^|\s)resume(?:\s|$)/.test(command)
-      : /(?:^|\s)--resume(?:\s|$)/.test(command);
-  if (
-    !restored ||
-    !preset.autoResume ||
-    !command ||
-    alreadyHasResume
-  ) {
-    return preset.command;
-  }
-  return `${command} ${resumeArg}`;
 }
 
 function terminalCommand(
