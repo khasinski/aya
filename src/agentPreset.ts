@@ -49,7 +49,11 @@ export function resumeArg(preset: Preset): string {
 }
 
 /** True when the command already carries a resume/continue flag, so appending
- *  another would be wrong (e.g. the user baked `-c` into the preset). */
+ *  another would be wrong (e.g. the user baked `-c` into the preset). This is a
+ *  token-level heuristic, not a shell parser: it matches whitespace-delimited
+ *  flags, so a flag quoted inside a literal prompt or one wedged against shell
+ *  punctuation (`;`, `|`) is not recognized. Preset commands are simple launch
+ *  lines, so that limit is acceptable. */
 export function commandHasResumeFlag(preset: Preset, command: string): boolean {
   return effectiveAgent(preset) === "codex"
     ? /(?:^|\s)resume(?:\s|$)/.test(command)
