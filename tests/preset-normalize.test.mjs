@@ -73,7 +73,7 @@ test("preserves agent account metadata", () => {
   });
 });
 
-test("drops falsey agent metadata flags and empty configDir", () => {
+test("drops falsey unsafeMode and empty configDir, but preserves autoResume:false", () => {
   const p = normalizePreset({
     id: "codex",
     name: "Codex",
@@ -88,7 +88,10 @@ test("drops falsey agent metadata flags and empty configDir", () => {
   assert.equal(p?.agent, "codex");
   assert.equal(Object.prototype.hasOwnProperty.call(p, "configDir"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(p, "unsafeMode"), false);
-  assert.equal(Object.prototype.hasOwnProperty.call(p, "autoResume"), false);
+  // autoResume:false is a deliberate opt-out and MUST survive the roundtrip:
+  // absence is treated as "default on" for agent presets, so dropping false
+  // would silently re-enable resume.
+  assert.equal(p?.autoResume, false);
 });
 
 test("rejects bad shapes", () => {

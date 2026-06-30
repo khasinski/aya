@@ -1,3 +1,4 @@
+import { effectiveAutoResume, inferAgent } from "../agentPreset";
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
 import { useEffect, useState, type ReactNode } from "react";
 import {
@@ -81,13 +82,14 @@ interface DraftPreset extends Preset {
 
 function toDraft(p: Preset): DraftPreset {
   const agent = p.agent ?? inferAgent(p);
-  const isAgent = agent === "claude" || agent === "codex";
   return {
     ...p,
     agent,
     configDir: p.configDir ?? inferConfigDir(p.command, agent),
     unsafeMode: p.unsafeMode ?? inferUnsafeMode(p.command, agent),
-    autoResume: p.autoResume ?? isAgent,
+    // Same default the runtime uses, so the toggle the user sees matches the
+    // flag the spawn actually applies (single source: effectiveAutoResume).
+    autoResume: effectiveAutoResume(p),
     __key: uuid(),
   };
 }
@@ -107,20 +109,11 @@ function fromDraft(p: DraftPreset): Preset {
     ...(agent ? { agent } : {}),
     ...(configDir ? { configDir } : {}),
     ...(p.unsafeMode ? { unsafeMode: true } : {}),
-    ...(p.autoResume ? { autoResume: true } : {}),
+    // Persist autoResume explicitly (incl. false) so a deliberate opt-out
+    // survives - absence is treated as "default on" for agent presets.
+    ...(typeof p.autoResume === "boolean" ? { autoResume: p.autoResume } : {}),
     ...(themeId ? { themeId } : {}),
   };
-}
-
-function inferAgent(p: Preset): Preset["agent"] {
-  const command = p.command.trim();
-  if (/\bCLAUDE_CONFIG_DIR=/.test(command) || /^claude(?:\s|$)/.test(command)) {
-    return "claude";
-  }
-  if (/\bCODEX_HOME=/.test(command) || /^codex(?:\s|$)/.test(command)) {
-    return "codex";
-  }
-  return "custom";
 }
 
 function inferConfigDir(command: string, agent: Preset["agent"]): string | undefined {
