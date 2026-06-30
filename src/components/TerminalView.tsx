@@ -29,6 +29,7 @@ import {
   stripScrollbackErase,
 } from "../terminal-rendering";
 import { snippetPtyPayload } from "../snippet-payload";
+import { wasSpawned } from "../spawnSession";
 import { SnippetBar } from "./SnippetBar";
 
 // Terminal sizing + timing constants. The fallback cols/rows are the standard
@@ -518,6 +519,12 @@ function TerminalViewComponent({
         term.write(
           `\r\n\x1b[2m[process exited with code ${event.exitCode}${restartHint}]\x1b[0m\r\n`,
         );
+      } else if (event.type === "no-session") {
+        // Attach-only re-mount with no live PTY: the process ended while we were
+        // away. Show a restartable hint instead of a fresh, contextless session.
+        term.write(
+          `\r\n\x1b[2m[session ended - press Shift+Enter to restart]\x1b[0m\r\n`,
+        );
       }
     });
 
@@ -667,6 +674,12 @@ function TerminalViewComponent({
 
     if (!spawnedRef.current) {
       spawnedRef.current = true;
+      // First mount this session -> normal spawn (boot auto-start). A re-mount
+      // of an id that already produced a confirmed session -> attach-only, so a
+      // tab whose PTY died shows a stopped state rather than a silent fresh
+      // process. Keyed on confirmed output (not the request), so an in-flight
+      // first spawn that re-mounts is not mistaken for a dead session.
+      const attachOnly = wasSpawned(terminal.id);
       const { cols, rows } = term;
       void window.aya.ptySpawn({
         ptyId: terminal.id,
@@ -676,6 +689,7 @@ function TerminalViewComponent({
         cwd,
         cols: Math.max(cols, TERMINAL_FALLBACK_COLS),
         rows: Math.max(rows, TERMINAL_FALLBACK_ROWS),
+        attachOnly,
       });
     }
 

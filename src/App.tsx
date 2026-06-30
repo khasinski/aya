@@ -3,6 +3,7 @@ import { detectApproval } from "./bell";
 import { commandWithAutoResume } from "./agentPreset";
 import { findStatusTarget } from "./control-status-target";
 import { clearedTerminalStatus } from "./pty-event-reducer";
+import { forgetSpawn } from "./spawnSession";
 import {
   applyExternalProjectEdits,
   mergeProjectsFromDisk,
@@ -1179,7 +1180,7 @@ export function App() {
         });
         return;
       }
-      if (detectApproval(event.chunk)) {
+      if (event.type === "data" && detectApproval(event.chunk)) {
         appendProjectEvent({
           projectSlug: terminal.projectSlug,
           terminalId: terminal.id,
@@ -1900,6 +1901,9 @@ export function App() {
     (id: string) => {
       const t = terminalsRef.current[id];
       if (!t) return;
+    // Drop the confirmed-session marker so the id doesn't linger (and can't be
+    // mistaken for a re-mount if the id were ever reused).
+    forgetSpawn(id);
     void window.aya.ptyKill(id);
     appendProjectEvent({
       projectSlug: t.projectSlug,
@@ -2644,6 +2648,12 @@ export function App() {
     } catch {
       /* ignore — best effort */
     }
+    // Forget the confirmed-session marker AFTER the kill: a still-alive process
+    // can emit output between the request and the kill landing, which would
+    // re-mark the id; clearing it last (once the PTY is dead, no more output)
+    // ensures an UNMOUNTED tab's next mount spawns fresh instead of attaching-
+    // only to a killed PTY (which would no-session it and stick it as stopped).
+    forgetSpawn(id);
     setTerminals((prev) => {
       const cur = prev[id];
       if (!cur) return prev;

@@ -65,6 +65,19 @@ export function applyPtyEvent(
     };
   }
 
+  if (event.type === "no-session") {
+    // Attach-only re-mount found no live PTY: mark the tab stopped/restartable
+    // (like a host-restart) instead of letting it look running. exitCode stays
+    // null so it never reads as a clean "done" finish.
+    const t = prev[event.ptyId];
+    if (!t) return prev;
+    const next = { ...t, bell: false, stopped: true };
+    return {
+      ...prev,
+      [event.ptyId]: { ...next, status: deriveLifecycleStatus(next) },
+    };
+  }
+
   // event.type === "data"
   const t = prev[event.ptyId];
   if (!t) return prev;
