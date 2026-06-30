@@ -393,6 +393,15 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     }
     return;
   }
+  if (spawning.has(req.ptyId)) {
+    // A spawn for this id is already in flight (a concurrent re-mount got here
+    // first, before it could register its PTY). Bail BEFORE the attachOnly
+    // branch: the in-flight spawn owns the session and will stream to the
+    // renderer, so emitting no-session here would falsely strand the tab as
+    // stopped. (Checked before attachOnly so the host is robust regardless of
+    // the renderer's confirmed-output gating.)
+    return;
+  }
   if (req.attachOnly) {
     // Re-mount of a tab that already ran this session, but its PTY is gone (the
     // process died while the host stayed up). Don't silently start a fresh
@@ -460,10 +469,10 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
   }
 
   const binary = preflightBinary(req.command);
-  // A spawn for this id is already in flight (a concurrent re-mount got here
-  // first). Bail so we don't start a second process and orphan the first; the
-  // in-flight spawn owns the session and streams to the renderer.
-  if (spawning.has(req.ptyId)) return;
+  // Mark this id in-flight across the async preflight + spawn so a concurrent
+  // call bails at the guard above. (The bail itself lives before the attachOnly
+  // branch; here we only claim the marker, synchronously before the first await
+  // so no racing call can interleave before it is set.)
   spawning.add(req.ptyId);
   try {
     if (binary && !(await commandExists(binary))) {
