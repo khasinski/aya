@@ -30,7 +30,24 @@ test("the banner Restart re-attempts the spawn instead of leaving a zombie termi
 }) => {
   const banner = visibleBanner(window);
   await expect(banner).toBeVisible();
+
+  // Each spawn attempt echoes "[process exited with code 127]" into the
+  // terminal (pty.ts reportSpawnFailure). The initial failure produced one.
+  // A no-op clear-only Restart (the old zombie bug) leaves the banner visible
+  // too, so asserting visibility alone would false-pass. A REAL respawn fails
+  // again and writes a SECOND exit echo - count must reach 2.
+  const exitEchoes = () =>
+    window
+      .locator(".aya-xterm-host:visible")
+      .first()
+      .innerText()
+      .then((t) => (t.match(/process exited with code/g) || []).length);
+  await expect.poll(exitEchoes).toBe(1);
+
   await banner.locator(".aya-pane-recovery-btn--primary", { hasText: "Restart" }).click();
+
+  // Restart actually re-attempted the spawn (not a clear-only no-op).
+  await expect.poll(exitEchoes).toBe(2);
 
   // Still broken (empty command) -> the failure banner must still be shown.
   await expect(visibleBanner(window)).toBeVisible();

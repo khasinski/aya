@@ -307,6 +307,10 @@ function TerminalViewComponent({
     const t = xtermRef.current;
     if (!t) return;
     onRequestRestart?.();
+    // The spawn-failure banner chunk already flipped this ref to true, so a
+    // successful respawn would skip the one-time post-load SIGWINCH that
+    // fullscreen TUIs need. Reset it like the forced-restart path does.
+    didPostLoadResizeRef.current = false;
     void window.aya.ptySpawn({
       ptyId: terminal.id,
       projectSlug: terminal.projectSlug,
