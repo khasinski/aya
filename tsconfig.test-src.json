@@ -20,6 +20,7 @@
     "src/diff-navigation.ts",
     "src/double-shift.ts",
     "src/focus-reporting.ts",
+    "src/hooks/usePersistentPreference.ts",
     "src/project-reload.ts",
     "src/pty-event-reducer.ts",
     "src/terminal-option-key.ts",
