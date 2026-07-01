@@ -60,6 +60,12 @@ const pendingKills = new Set<string>();
 // Auto-evict pending-kill markers so stale ids don't linger forever (defense
 // in depth — usually the spawn either runs within milliseconds or never).
 const PENDING_KILL_TTL_MS = 5_000;
+// Grace period before escalating a kill to SIGKILL. node-pty's default kill
+// sends SIGHUP, which a stuck agent (e.g. `claude --chrome`) can trap and
+// survive; since killPty removes the id from the map, a survivor becomes an
+// orphan that a later respawn of the same id turns into a SECOND live process.
+// The uncatchable follow-up guarantees the old child actually dies.
+const KILL_ESCALATE_MS = 750;
 // In-flight spawn guard: spawnPty awaits an async command-exists preflight
 // between the `ptys.has` check and registering the PTY. Two concurrent spawns
 // for the same id (e.g. a fast unmount+remount) could both pass that check and
@@ -546,6 +552,30 @@ export function resizePty(ptyId: string, cols: number, rows: number): void {
   }
 }
 
+/** Kill a PTY child, escalating to SIGKILL after a grace period. The graceful
+ *  signal lets a well-behaved process exit and clean up; the SIGKILL guarantees
+ *  a signal-ignoring one (e.g. `claude --chrome`) actually dies, so it can't
+ *  linger as an orphan after killPty removes it from the map (which would let a
+ *  respawn of the same id create a second live process). Exported for tests;
+ *  `schedule` is injectable so the escalation can be exercised synchronously. */
+export function terminatePtyChild(
+  p: Pick<PtyModule.IPty, "kill">,
+  schedule: (fn: () => void, ms: number) => void = setTimeout,
+): void {
+  try {
+    p.kill();
+  } catch {
+    // already gone
+  }
+  schedule(() => {
+    try {
+      p.kill("SIGKILL");
+    } catch {
+      // already exited — nothing to force-kill
+    }
+  }, KILL_ESCALATE_MS);
+}
+
 export function killPty(ptyId: string): void {
   outputBuffers.delete(ptyId);
   const p = ptys.get(ptyId);
@@ -557,21 +587,17 @@ export function killPty(ptyId: string): void {
     setTimeout(() => pendingKills.delete(ptyId), PENDING_KILL_TTL_MS);
     return;
   }
-  try {
-    p.kill();
-  } catch {
-    // already gone
-  }
+  // Remove from the map first (a re-mount/respawn should not attach to a dying
+  // PTY), then terminate with SIGKILL escalation so a signal-ignoring child
+  // can't survive and get orphaned.
   ptys.delete(ptyId);
+  terminatePtyChild(p);
 }
 
 export function killAll(): void {
   for (const [, p] of ptys) {
-    try {
-      p.kill();
-    } catch {
-      // ignore
-    }
+    // Same SIGKILL escalation as killPty so no child survives as an orphan.
+    terminatePtyChild(p);
   }
   ptys.clear();
   outputBuffers.clear();
