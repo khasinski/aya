@@ -109,6 +109,7 @@ const TERMINAL_FONT_FAMILY_STORAGE_KEY = "aya:terminal-font-family";
 const USAGE_HARNESS_NAME_STORAGE_KEY = "aya:usage-show-harness-name";
 const STATUSBAR_GITHUB_LINK_STORAGE_KEY = "aya:statusbar-github-link";
 const LAYOUT_MODE_STORAGE_KEY = "aya:layout-mode";
+const WORKTREES_STORAGE_KEY = "aya:worktrees";
 const LOCAL_SUMMARIES_STORAGE_KEY = "aya:local-summaries";
 const LOCAL_SUMMARY_CACHE_STORAGE_KEY = "aya:local-summary-cache";
 const AYA_INTELLIGENCE_STORAGE_KEY = "aya:intelligence";
@@ -166,6 +167,8 @@ const LAYOUT_CODEC = enumPreference<LayoutMode>(
 const HARNESS_NAME_CODEC = boolPreference(true);
 const GITHUB_LINK_CODEC = boolPreference(false);
 const LOCAL_SUMMARIES_CODEC = boolPreference(false);
+// Experimental: git worktree support (detect + group + launch/create in worktrees).
+const WORKTREES_CODEC = boolPreference(false);
 
 function readTerminalFontFamily(): string {
   return localStorage.getItem(TERMINAL_FONT_FAMILY_STORAGE_KEY) ?? "";
@@ -687,6 +690,10 @@ export function App() {
   const [layoutMode, setLayoutMode] = usePersistentPreference(
     LAYOUT_MODE_STORAGE_KEY,
     LAYOUT_CODEC,
+  );
+  const [worktreesEnabled, setWorktreesEnabled] = usePersistentPreference(
+    WORKTREES_STORAGE_KEY,
+    WORKTREES_CODEC,
   );
   const [railWidth, setRailWidth] = useState(DEFAULT_RAIL_WIDTH_PX);
   const [localSummariesEnabled, setLocalSummariesEnabled] =
@@ -3626,6 +3633,8 @@ export function App() {
           onShowGitHubLinkChange={updateShowGitHubLink}
           layoutMode={layoutMode}
           onLayoutModeChange={setLayoutMode}
+          worktreesEnabled={worktreesEnabled}
+          onWorktreesEnabledChange={setWorktreesEnabled}
           localSummariesEnabled={localSummariesEnabled}
           onLocalSummariesEnabledChange={setLocalSummariesEnabled}
           ayaIntelligence={ayaIntelligence}
