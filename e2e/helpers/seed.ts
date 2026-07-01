@@ -16,6 +16,10 @@ export interface SeededEnv {
   /** Extra environment variables used when launching Electron for this seed. */
   launchEnv?: Record<string, string>;
   tabIds: { left: string; right: string };
+  /** Set only when `missingDir` is requested: the non-existent path the open
+   *  project points at (so a test can assert MissingDirModal's "Create folder"
+   *  created it, or "Use home" did not). */
+  missingDirPath?: string;
 }
 
 export interface SeedOptions {
@@ -35,7 +39,14 @@ export interface SeedOptions {
   /** Override the seeded preset list (defaults to a single "Shell" preset).
    *  Ignored when `presets` is false. Use to exercise the launcher menu with
    *  many entries (e.g. a scrollable dropdown). */
-  presetList?: Array<{ id: string; name: string; icon: string; color: string; command: string }>;
+  presetList?: Array<{
+    id: string;
+    name: string;
+    icon: string;
+    color: string;
+    command: string;
+    autoResume?: boolean;
+  }>;
   /** Extra environment variables for the Electron process. */
   launchEnv?: Record<string, string>;
   /** Create a fake shell/bin setup where interactive shell PATH reveals claude. */
@@ -47,6 +58,16 @@ export interface SeedOptions {
    *  commit, then leave a modified tracked file + an untracked file so the
    *  StatusBar shows a branch + "2 dirty" + a diff. */
   gitRepo?: boolean;
+  /** Point the open project at a directory that does NOT exist, so the boot
+   *  dir-check queues it and MissingDirModal appears. The path is exposed as
+   *  `seeded.missingDirPath` so a test can assert "Create folder" made it. */
+  missingDir?: boolean;
+  /** Write the project's `.aya/project.json` with these presets, so the repo
+   *  preset-import flow (ProjectPresetImportModal) triggers for the project. */
+  repoPresets?: Array<{ id: string; name: string; icon: string; color: string; command: string }>;
+  /** Open a SECOND project ("e2e-proj-2", one tab named "shell 3") so tests can
+   *  exercise project switching (e.g. the project-N shortcut). */
+  secondProject?: boolean;
 }
 
 function shellQuote(value: string): string {
@@ -66,6 +87,24 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
   mkdirSync(join(ayaHome, "projects"), { recursive: true });
   mkdirSync(userDataDir, { recursive: true });
   mkdirSync(projectDir, { recursive: true });
+  // When requested, point the project at a path we deliberately do NOT create,
+  // so the boot dir-check queues it and MissingDirModal appears.
+  if (opts.missingDir && opts.repoPresets) {
+    // repoPresets writes under projectDir, but missingDir repoints the project
+    // away from it, so the repo config would not be associated with the project.
+    throw new Error("seed: missingDir and repoPresets cannot be combined");
+  }
+  const missingDirPath = opts.missingDir ? join(root, "missing-project-dir") : undefined;
+  const effectiveProjectDir = missingDirPath ?? projectDir;
+  // Repo-local launchers: a `.aya/project.json` in the project dir triggers the
+  // ProjectPresetImportModal (suggest importing the repo's presets).
+  if (opts.repoPresets) {
+    mkdirSync(join(projectDir, ".aya"), { recursive: true });
+    writeFileSync(
+      join(projectDir, ".aya", "project.json"),
+      JSON.stringify({ presets: opts.repoPresets }, null, 2),
+    );
+  }
 
   if (opts.gitRepo) {
     const git = (...args: string[]) =>
@@ -94,7 +133,7 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     JSON.stringify(
       {
         name: "e2e",
-        directory: projectDir,
+        directory: effectiveProjectDir,
         tabs: [
           { id: left, presetId: "shell", name: "shell 1" },
           { id: right, presetId: "shell", name: "shell 2" },
@@ -136,14 +175,33 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
       JSON.stringify({ name, directory: join(root, "closed", slug), tabs: [] }, null, 2),
     );
   }
+  // Optional second OPEN project so tests can switch projects.
+  const secondSlug = opts.secondProject ? "e2e-proj-2" : null;
+  if (secondSlug) {
+    const projectDir2 = join(root, "project2");
+    mkdirSync(projectDir2, { recursive: true });
+    writeFileSync(
+      join(ayaHome, "projects", `${secondSlug}.json`),
+      JSON.stringify(
+        {
+          name: "e2e 2",
+          directory: projectDir2,
+          tabs: [{ id: "tab-p2", presetId: "shell", name: "shell 3" }],
+        },
+        null,
+        2,
+      ),
+    );
+  }
+  const openSlugs = ["e2e-proj", ...(secondSlug ? [secondSlug] : [])];
   writeFileSync(
     join(ayaHome, "projects-state.json"),
     JSON.stringify(
       {
         version: 1,
-        order: ["e2e-proj", ...closedSlugs],
-        open: ["e2e-proj"],
-        recent: ["e2e-proj", ...closedSlugs],
+        order: [...openSlugs, ...closedSlugs],
+        open: openSlugs,
+        recent: [...openSlugs, ...closedSlugs],
       },
       null,
       2,
@@ -212,5 +270,6 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     projectDir,
     launchEnv,
     tabIds: { left, right },
+    missingDirPath,
   };
 }

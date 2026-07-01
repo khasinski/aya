@@ -163,9 +163,9 @@ export function ProjectsLeftLayout({
   // Viewport coords for the launcher dropdown. The menu is position:fixed so it
   // can escape the tab strip's overflow:hidden clip; that means we must anchor
   // it ourselves to the "+" button's on-screen rect.
-  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(
-    null,
-  );
+  const [menuPos, setMenuPos] = useState<
+    { top: number; right: number } | { top: number; left: number } | null
+  >(null);
   const launcherRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
 
@@ -176,10 +176,26 @@ export function ProjectsLeftLayout({
     // won't render) and use a functional updater so two fast toggles can't both
     // read a stale `showLauncher` and leave the menu stuck open.
     const r = anchor.getBoundingClientRect();
-    setMenuPos({
-      top: Math.round(r.bottom + 6),
-      right: Math.round(window.innerWidth - r.right),
-    });
+    const top = Math.round(r.bottom + 6);
+    // The fixed menu is right-anchored by default (opens leftward, aligned to the
+    // button's right edge). When the "+" sits near the left edge (few / no tabs)
+    // that runs off-screen to the left, so anchor by the left edge instead (opens
+    // rightward). MENU_WIDTH must track `.aya-recent-menu { width }` in
+    // overrides.css.
+    const MENU_WIDTH = 280;
+    const EDGE = 6;
+    setMenuPos(
+      r.right < MENU_WIDTH
+        ? {
+            top,
+            // Clamp so a very narrow window doesn't clip the right edge either.
+            left: Math.max(
+              EDGE,
+              Math.min(Math.round(r.left), window.innerWidth - MENU_WIDTH - EDGE),
+            ),
+          }
+        : { top, right: Math.round(window.innerWidth - r.right) },
+    );
     setShowLauncher((prev) => !prev);
   };
 
@@ -421,7 +437,13 @@ export function ProjectsLeftLayout({
               <div
                 className="aya-recent-menu"
                 role="menu"
-                style={{ position: "fixed", top: menuPos.top, right: menuPos.right }}
+                style={{
+                  position: "fixed",
+                  top: menuPos.top,
+                  ...("left" in menuPos
+                    ? { left: menuPos.left }
+                    : { right: menuPos.right }),
+                }}
               >
                 <div className="aya-recent-menu-title">New terminal</div>
                 {presets.map((p) => (
