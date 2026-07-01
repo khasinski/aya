@@ -82,6 +82,7 @@ import { normalizeLocalSummaryError } from "./local-summary-errors";
 import { readRepoProjectConfig } from "./project-local";
 import { repairProcessPath } from "./shell-path";
 import { PtyHostClient } from "./pty-host-client";
+import { reapStaleHostRecords } from "./pty-host-registry";
 import {
   requirePositiveInt,
   requireString,
@@ -1614,13 +1615,21 @@ async function handleStaleHost(win: BrowserWindow | null): Promise<void> {
     const { identity, ptyCount } = await ptyHost.hostStatus();
     const expected = ptyHost.expectedHostIdentity(app.getVersion());
     if (!isHostStale(expected, identity)) return;
-    // Only auto-reap silently when the handshake succeeded and confirmed zero
-    // terminals. When identity===null the host does not support the version
-    // request (old host after reinstall) so ptyCount is unknown - always show
-    // the banner.
-    if (identity !== null && ptyCount === 0) {
+    void ptyCount; // no longer gates the reap - see below
+    // Auto-reap a stale host, even with live terminals. Staleness means a
+    // version/scriptHash mismatch (the app was updated) or a failed handshake:
+    // either way the old host runs incompatible code, so its terminals must
+    // restart anyway (Shift+Enter). Leaving it alive is exactly what accumulated
+    // orphaned hosts + processes. restart() escalates child kills to SIGKILL
+    // (#73), so no signal-ignoring child is orphaned. The by-pid reconciliation
+    // at startup already reaps *recorded* stale hosts; this covers the one still
+    // holding the socket (incl. old hosts that predate the registry).
+    try {
       await ptyHost.restart();
       return;
+    } catch {
+      // Reap failed (host unreachable). Fall back to the manual affordance so
+      // the user can retry via "Restart Aya".
     }
     // Signal via the menu item icon instead of an intrusive banner (#52).
     staleHostDetected = true;
@@ -2059,6 +2068,26 @@ app.whenReady().then(async () => {
     } catch {
       // Non-fatal — just means we keep Electron's default dock icon.
     }
+  }
+
+  // Reap stale detached PTY hosts (and their whole process trees) left by older
+  // app versions BEFORE anything connects or spawns a fresh host. A same-build
+  // host is kept (survive-restart, #28); a version-mismatched one is force-killed
+  // by pid (fail-closed, verified via its recorded start time). This stops the
+  // orphan pile-up where each update left the previous host + its children alive.
+  try {
+    const summary = reapStaleHostRecords(
+      ptyHost.expectedHostIdentity(app.getVersion()),
+      path.join(__dirname, "pty-host.js"),
+    );
+    if (summary.reaped.length > 0) {
+      console.log(
+        `[aya] reaped ${summary.reaped.length} stale pty-host(s) + ${summary.killedDescendants.length} descendant(s):`,
+        summary.reaped,
+      );
+    }
+  } catch {
+    // best effort — never block startup on reconciliation
   }
 
   const savedState = await loadWindowState();

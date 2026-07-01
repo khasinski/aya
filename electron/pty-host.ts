@@ -4,6 +4,7 @@ import * as net from "node:net";
 import * as path from "node:path";
 import { PTY_HOST_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
 import type { HostIdentity } from "./pty-host-staleness";
+import { writeHostRecord, removeHostRecord, ownStartTime } from "./pty-host-registry";
 import {
   type PtyHostEventMessage,
   type PtyHostRequest,
@@ -44,6 +45,12 @@ function closeSocket(): void {
   } catch {
     // best effort
   }
+  // NOTE: the registry record is deliberately NOT removed here. closeSocket runs
+  // on SIGTERM/SIGINT/exit, i.e. potentially while child PTYs are still alive; if
+  // we dropped the record now and the host then died, surviving children would be
+  // unreapable orphans (no record to find them by). The record is removed only
+  // after a clean shutdown confirms the children are dead (see the shutdown
+  // handler); otherwise the next launch GCs it once the pid is verified gone.
 }
 
 function sendLine(socket: net.Socket, value: PtyHostResponse | PtyHostEventMessage): void {
@@ -93,7 +100,13 @@ async function handle(request: PtyHostRequest): Promise<unknown> {
     // deadline. Event-driven so a clean quit isn't delayed by a fixed timer, and
     // - unlike a bare `process.exit(0)` - the host stays alive long enough to
     // actually deliver the escalation, so no stuck child is left orphaned.
-    shutdownPtyChildren(() => process.exit(0));
+    shutdownPtyChildren(() => {
+      // Children are confirmed dead now - safe to drop our registry record (a
+      // signal/crash exit skips this and leaves the record for the next launch
+      // to GC once the pid is verified gone).
+      removeHostRecord(process.pid);
+      process.exit(0);
+    });
     return null;
   }
   if (request.type === "search") {
@@ -197,6 +210,18 @@ function start(): void {
     } catch {
       // best effort
     }
+    // Publish our registry record so a future app version can reap THIS host by
+    // pid if it turns out stale (spawned detached, we're our own group leader so
+    // pgid == pid). Written after listen so the record only exists once we're
+    // actually serving.
+    writeHostRecord({
+      pid: process.pid,
+      pgid: process.pid,
+      version: HOST_IDENTITY.version,
+      scriptHash: HOST_IDENTITY.scriptHash,
+      startTime: ownStartTime(),
+      nonce: crypto.randomBytes(8).toString("hex"),
+    });
   });
 
   process.once("SIGTERM", closeSocket);
