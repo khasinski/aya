@@ -67,6 +67,10 @@ const markerCmd = 'CLAUDE_CONFIG_DIR=/tmp/aya-e2e-ar echo "$@" > resume-marker.t
 const markerPath = (projectDir: string) => join(projectDir, "resume-marker.txt");
 
 test.describe("real resume behavior", () => {
+  // These drive a real PTY spawn (the marker command must execute); the local
+  // sandbox does not exec PTYs, so run them only in CI where node-pty works.
+  test.skip(!process.env.CI, "needs real PTY execution (unavailable in local sandbox)");
+
   test.describe("auto-resume ON", () => {
     test.use({
       seedOptions: {
