@@ -1,4 +1,5 @@
 import { test, expect } from "./fixtures";
+import { enableProjectsLeftLayout } from "./helpers/layout";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
@@ -62,6 +63,24 @@ test.describe("import flow", () => {
     // No preset added by ignoring.
     expect(savedPresetCommands(seeded.ayaHome)).not.toContain(REPO_PRESET.command);
     expect(savedPresetCommands(seeded.ayaHome).length).toBe(before.length);
+  });
+
+  test("the modal renders and Import works in the experimental layout", async ({
+    window,
+    app,
+    seeded,
+  }) => {
+    // The prompt appears after boot (classic). Switch to projects-left with it
+    // open and confirm the App-root overlay + Import still work there.
+    await expect(modal(window)).toBeVisible();
+    await enableProjectsLeftLayout(window, app);
+    await expect(modal(window)).toBeVisible();
+
+    await modal(window).locator(".aya-modal-btn--primary", { hasText: "Import launchers" }).click();
+    await expect(modal(window)).toBeHidden();
+    await expect
+      .poll(() => savedPresetCommands(seeded.ayaHome))
+      .toContain(REPO_PRESET.command);
   });
 });
 

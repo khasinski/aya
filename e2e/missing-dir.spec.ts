@@ -47,3 +47,11 @@ test("'Use home for now' dismisses the modal WITHOUT creating the directory", as
   // The fallback must NOT have created the folder (the user chose to skip it).
   expect(existsSync(seeded.missingDirPath!)).toBe(false);
 });
+
+// NOTE: MissingDirModal is an App-root overlay, rendered identically regardless
+// of layout. Its "renders + works in the experimental (projects-left) layout"
+// smoke is covered representatively by project-preset-import.spec.ts (the same
+// overlay class) - duplicating it here adds no signal, and switching layout with
+// THIS modal open collides on the Escape key (both the missing-dir modal and the
+// Settings dialog listen for it), which is a test-harness artifact, not product
+// behavior worth pinning.

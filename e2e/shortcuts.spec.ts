@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import { fireShortcut } from "./helpers/shortcut";
+import { enableProjectsLeftLayout } from "./helpers/layout";
 import type { Page } from "@playwright/test";
 
 // Keyboard-shortcut actions (electron/main.ts -> "shortcut" IPC -> useAppShortcuts).
@@ -18,22 +19,6 @@ const focusedTerminalName = (w: Page) =>
         ?.closest('[data-testid="terminal-pane"]')
         ?.getAttribute("data-terminal-name") ?? null,
   );
-
-// Switch to the experimental "Projects on left" layout (split disabled, tabs on
-// top) so the same shortcuts are exercised against the OTHER layout too.
-async function enableProjectsLeft(w: Page, app: Parameters<typeof fireShortcut>[0]) {
-  await fireShortcut(app, "open-settings");
-  const settings = w.locator(".aya-modal--settings");
-  await expect(settings).toBeVisible();
-  await settings
-    .locator('.aya-settings-segmented[aria-label="Window layout"] button', {
-      hasText: "Projects on left",
-    })
-    .click();
-  await w.keyboard.press("Escape");
-  await expect(settings).toBeHidden();
-  await expect(w.locator(".aya-topbar--alt")).toBeVisible();
-}
 
 test.describe("single view (no split)", () => {
   test.use({ seedOptions: { split: false } });
@@ -133,7 +118,7 @@ test.describe("experimental layout (projects-left)", () => {
     window,
     app,
   }) => {
-    await enableProjectsLeft(window, app);
+    await enableProjectsLeftLayout(window, app);
     await expect(window.locator('[data-testid="terminal-pane"]:visible')).toHaveCount(1);
     await expect(visiblePane(window, "shell 1")).toBeVisible();
 
@@ -150,7 +135,7 @@ test.describe("experimental layout (projects-left)", () => {
     window,
     app,
   }) => {
-    await enableProjectsLeft(window, app);
+    await enableProjectsLeftLayout(window, app);
     await expect(window.getByTestId("termtab")).toHaveCount(2);
 
     await fireShortcut(app, "close-tab");
