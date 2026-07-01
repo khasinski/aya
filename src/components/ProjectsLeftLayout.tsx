@@ -177,14 +177,23 @@ export function ProjectsLeftLayout({
     // read a stale `showLauncher` and leave the menu stuck open.
     const r = anchor.getBoundingClientRect();
     const top = Math.round(r.bottom + 6);
-    // The fixed menu is 280px wide and normally right-anchored (opens leftward,
-    // aligned to the button's right edge). When the "+" sits near the left edge
-    // (few / no tabs) that would run off-screen to the left, so anchor by the
-    // left edge instead (open rightward).
+    // The fixed menu is right-anchored by default (opens leftward, aligned to the
+    // button's right edge). When the "+" sits near the left edge (few / no tabs)
+    // that runs off-screen to the left, so anchor by the left edge instead (opens
+    // rightward). MENU_WIDTH must track `.aya-recent-menu { width }` in
+    // overrides.css.
     const MENU_WIDTH = 280;
+    const EDGE = 6;
     setMenuPos(
       r.right < MENU_WIDTH
-        ? { top, left: Math.round(r.left) }
+        ? {
+            top,
+            // Clamp so a very narrow window doesn't clip the right edge either.
+            left: Math.max(
+              EDGE,
+              Math.min(Math.round(r.left), window.innerWidth - MENU_WIDTH - EDGE),
+            ),
+          }
         : { top, right: Math.round(window.innerWidth - r.right) },
     );
     setShowLauncher((prev) => !prev);
