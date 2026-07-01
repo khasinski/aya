@@ -88,6 +88,17 @@ test("externally-added tab gets a TerminalState without a PTY (idle, decision 2)
   assert.equal(created[0].spawnDeferred, true);
 });
 
+test("an externally-added worktree tab keeps its cwd (not the project dir)", () => {
+  const p = project("a", {
+    tabs: [
+      { id: "a-wt", presetId: "claude", name: "feature", cwd: "/tmp/a-worktrees/feature" },
+    ],
+  });
+  const created = terminalsForNewTabs(p, {});
+  assert.equal(created.length, 1);
+  assert.equal(created[0].cwd, "/tmp/a-worktrees/feature");
+});
+
 test("existing terminals are never recreated (no respawn, decision 1)", () => {
   const p = project("a");
   const existing = { "a-tab1": termState("a-tab1", "a", { status: "error" }) };

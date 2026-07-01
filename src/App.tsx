@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { detectApproval } from "./bell";
 import { commandWithAutoResume } from "./agentPreset";
+import { projectBaseCwd, tabFromTerminal } from "./worktree";
 import { findStatusTarget } from "./control-status-target";
 import { clearedTerminalStatus } from "./pty-event-reducer";
 import { forgetSpawn } from "./spawnSession";
@@ -1281,7 +1282,8 @@ export function App() {
             projectSlug: project.slug,
             presetId: tab.presetId,
             name: tab.name,
-            cwd: effectiveCwd,
+            // Restore the tab's worktree cwd if it had one, else the project dir.
+            cwd: tab.cwd ?? effectiveCwd,
             status: "running",
             bell: false,
             exitCode: null,
@@ -1773,7 +1775,7 @@ export function App() {
       if (!project) return;
       const tabs: WorkingTab[] = Object.values(nextTerminals)
         .filter((t) => t.projectSlug === slug)
-        .map((t) => ({ id: t.id, presetId: t.presetId, name: t.name }));
+        .map((t) => tabFromTerminal(t, projectBaseCwd(project)));
       const splitLayout = project.splitLayout
         ? compactSplitLayout(
             pruneEmptySplitTracks(
@@ -1854,7 +1856,7 @@ export function App() {
         const next = { ...prev, [id]: term };
         const tabs: WorkingTab[] = Object.values(next)
           .filter((t) => t.projectSlug === slug)
-          .map((t) => ({ id: t.id, presetId: t.presetId, name: t.name }));
+          .map((t) => tabFromTerminal(t, projectBaseCwd(project)));
         // In the projects-left layout splits are disabled, so leave the saved
         // splitLayout untouched (don't assign the new terminal to a cell, and
         // don't clear it) - it should come back unchanged in the classic layout.

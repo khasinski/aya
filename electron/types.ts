@@ -26,6 +26,9 @@ export interface WorkingTab {
   id: string;
   presetId: string;
   name: string;
+  /** Worktree binding: absolute cwd this tab spawns in. Absent = the project's
+   *  own directory. Set when the terminal runs in a git worktree. */
+  cwd?: string;
 }
 
 export interface SplitLayout {

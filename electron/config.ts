@@ -10,7 +10,12 @@ import {
   PROJECTS_ORDER_FILE,
   PROJECTS_STATE_FILE,
 } from "./paths";
-import type { ProjectCollectionState, ProjectConfig, SplitLayout } from "./types";
+import type {
+  ProjectCollectionState,
+  ProjectConfig,
+  SplitLayout,
+  WorkingTab,
+} from "./types";
 import {
   MAX_SPLIT_COLS,
   MAX_SPLIT_ROWS,
@@ -31,9 +36,7 @@ async function ensureDir(): Promise<void> {
 
 /** Normalize a raw tab object from disk: drop bad shapes, backfill name, and
  *  migrate the old `kind` field to the new `presetId`. */
-export function normalizeTab(
-  raw: unknown,
-): { id: string; presetId: string; name: string } | null {
+export function normalizeTab(raw: unknown): WorkingTab | null {
   if (typeof raw !== "object" || raw === null) return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.id !== "string" || !r.id) return null;
@@ -44,7 +47,9 @@ export function normalizeTab(
   if (!presetId) return null;
   const name =
     typeof r.name === "string" && r.name.trim() ? r.name : presetId;
-  return { id: r.id, presetId, name };
+  // Preserve a worktree cwd binding (absolute path); ignore empty/invalid.
+  const cwd = typeof r.cwd === "string" && r.cwd.trim() ? r.cwd : undefined;
+  return { id: r.id, presetId, name, ...(cwd ? { cwd } : {}) };
 }
 
 function stringArray(value: unknown): string[] | null {

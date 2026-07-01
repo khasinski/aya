@@ -22,6 +22,20 @@ test("normalizes a new-format tab (presetId + name)", () => {
   assert.deepEqual(out, { id: "abc", presetId: "claude", name: "main-claude" });
 });
 
+test("preserves a worktree cwd binding; drops an empty/invalid one", () => {
+  assert.deepEqual(
+    normalizeTab({ id: "a", presetId: "claude", name: "wt", cwd: "/home/me/repo-feature" }),
+    { id: "a", presetId: "claude", name: "wt", cwd: "/home/me/repo-feature" },
+  );
+  // No cwd field for a plain tab, and an empty/blank cwd is dropped (not "").
+  const plain = normalizeTab({ id: "b", presetId: "claude", name: "main" });
+  assert.equal(Object.prototype.hasOwnProperty.call(plain, "cwd"), false);
+  const blank = normalizeTab({ id: "c", presetId: "claude", name: "x", cwd: "  " });
+  assert.equal(Object.prototype.hasOwnProperty.call(blank, "cwd"), false);
+  const bad = normalizeTab({ id: "d", presetId: "claude", name: "x", cwd: 42 });
+  assert.equal(Object.prototype.hasOwnProperty.call(bad, "cwd"), false);
+});
+
 test("migrates old-format tab (`kind` → `presetId`)", () => {
   const out = normalizeTab({ id: "abc", kind: "codex", name: "feature-branch" });
   assert.deepEqual(out, {

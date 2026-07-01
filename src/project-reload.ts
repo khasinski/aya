@@ -43,7 +43,7 @@ export function terminalsForNewTabs(
       projectSlug: project.slug,
       presetId: tab.presetId,
       name: tab.name,
-      cwd: project.directory,
+      cwd: tab.cwd ?? project.directory,
       status: "idle" as const,
       bell: false,
       exitCode: null,
