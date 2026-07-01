@@ -19,6 +19,22 @@ const focusedTerminalName = (w: Page) =>
         ?.getAttribute("data-terminal-name") ?? null,
   );
 
+// Switch to the experimental "Projects on left" layout (split disabled, tabs on
+// top) so the same shortcuts are exercised against the OTHER layout too.
+async function enableProjectsLeft(w: Page, app: Parameters<typeof fireShortcut>[0]) {
+  await fireShortcut(app, "open-settings");
+  const settings = w.locator(".aya-modal--settings");
+  await expect(settings).toBeVisible();
+  await settings
+    .locator('.aya-settings-segmented[aria-label="Window layout"] button', {
+      hasText: "Projects on left",
+    })
+    .click();
+  await w.keyboard.press("Escape");
+  await expect(settings).toBeHidden();
+  await expect(w.locator(".aya-topbar--alt")).toBeVisible();
+}
+
 test.describe("single view (no split)", () => {
   test.use({ seedOptions: { split: false } });
 
@@ -105,5 +121,40 @@ test.describe("split view", () => {
 
     await expect(activeSplitPane(window, "shell 2")).toBeVisible();
     await expect.poll(() => focusedTerminalName(window)).toBe("shell 2");
+  });
+});
+
+test.describe("experimental layout (projects-left)", () => {
+  // Same shortcut handlers, different rendering (top tabs, split disabled). The
+  // seeded 1x2 split collapses to a single visible terminal in this layout.
+  test.use({ seedOptions: { split: true } });
+
+  test("next-tab cycles the visible terminal in the experimental layout", async ({
+    window,
+    app,
+  }) => {
+    await enableProjectsLeft(window, app);
+    await expect(window.locator('[data-testid="terminal-pane"]:visible')).toHaveCount(1);
+    await expect(visiblePane(window, "shell 1")).toBeVisible();
+
+    await fireShortcut(app, "next-tab");
+    await expect(visiblePane(window, "shell 2")).toBeVisible();
+    await expect(visiblePane(window, "shell 1")).toHaveCount(0);
+
+    // Wrap back to the first tab.
+    await fireShortcut(app, "next-tab");
+    await expect(visiblePane(window, "shell 1")).toBeVisible();
+  });
+
+  test("close-tab closes the active tab in the experimental layout", async ({
+    window,
+    app,
+  }) => {
+    await enableProjectsLeft(window, app);
+    await expect(window.getByTestId("termtab")).toHaveCount(2);
+
+    await fireShortcut(app, "close-tab");
+
+    await expect(window.getByTestId("termtab")).toHaveCount(1);
   });
 });
