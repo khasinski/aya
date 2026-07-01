@@ -14,7 +14,7 @@ import {
   activePtyCount,
   getBufferedOutput,
   killPty,
-  killAll,
+  shutdownPtyChildren,
   resizePty,
   searchPtyOutputs,
   spawnPty,
@@ -85,11 +85,15 @@ async function handle(request: PtyHostRequest): Promise<unknown> {
     return null;
   }
   if (request.type === "shutdown") {
-    killAll();
     // Drop the socket synchronously so a client spawning a fresh host can't
     // reconnect to this exiting process in the window before exit.
     closeSocket();
-    setTimeout(() => process.exit(0), 0);
+    // Graceful-kill every child and exit as soon as they're all dead, escalating
+    // any survivor (e.g. a SIGHUP-ignoring `claude --chrome`) to SIGKILL at the
+    // deadline. Event-driven so a clean quit isn't delayed by a fixed timer, and
+    // - unlike a bare `process.exit(0)` - the host stays alive long enough to
+    // actually deliver the escalation, so no stuck child is left orphaned.
+    shutdownPtyChildren(() => process.exit(0));
     return null;
   }
   if (request.type === "search") {

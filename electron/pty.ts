@@ -65,13 +65,20 @@ const PENDING_KILL_TTL_MS = 5_000;
 // survive; since killPty removes the id from the map, a survivor becomes an
 // orphan that a later respawn of the same id turns into a SECOND live process.
 // The uncatchable follow-up guarantees the old child actually dies.
-const KILL_ESCALATE_MS = 750;
+export const KILL_ESCALATE_MS = 750;
 // In-flight spawn guard: spawnPty awaits an async command-exists preflight
 // between the `ptys.has` check and registering the PTY. Two concurrent spawns
 // for the same id (e.g. a fast unmount+remount) could both pass that check and
 // both spawn, orphaning the first. We mark an id as spawning across the await
 // so a racing call bails instead of starting a second process.
 const spawning = new Set<string>();
+// Set once the host begins shutting down. shutdownPtyChildren snapshots the live
+// PTYs and the host then lingers up to KILL_ESCALATE_MS to deliver SIGKILL; a
+// spawn that registered a PTY in that window would escape the snapshot and be
+// orphaned on exit. spawnPty bails when this is set (and again after its async
+// preflight) so no child is created after the snapshot. One-way: the host is
+// exiting, so it never resets.
+let shuttingDown = false;
 
 export interface PtyEventSink {
   isDestroyed(): boolean;
@@ -376,6 +383,11 @@ function safeEnv(req: SpawnRequest, cwd: string): { [key: string]: string } {
 }
 
 export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<void> {
+  if (shuttingDown) {
+    // The host is tearing down; a new PTY here would miss the shutdown snapshot
+    // and be orphaned on exit. Drop the spawn.
+    return;
+  }
   if (pendingKills.has(req.ptyId)) {
     // killPty arrived before this spawn (the renderer closed the tab between
     // mounting and the IPC round-trip). Drop the spawn so we don't orphan a
@@ -514,6 +526,20 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       return;
     }
 
+    if (shuttingDown) {
+      // Shutdown began during our async preflight, after the snapshot was taken.
+      // Registering now would orphan this child, and a scheduled escalation might
+      // not fire before the host exits - so force-kill it synchronously (the
+      // SIGKILL syscall dooms it regardless of the host's remaining lifetime).
+      try {
+        child.kill();
+        child.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      return;
+    }
+
     ptys.set(req.ptyId, child);
 
     child.onData((chunk) => {
@@ -594,14 +620,77 @@ export function killPty(ptyId: string): void {
   terminatePtyChild(p);
 }
 
-export function killAll(): void {
-  for (const [, p] of ptys) {
-    // Same SIGKILL escalation as killPty so no child survives as an orphan.
-    terminatePtyChild(p);
+/** Graceful shutdown of a set of PTY children, event-driven with a hard deadline
+ *  (the graceful->timeout->SIGKILL ladder of systemd/k8s/docker, but resolving
+ *  as soon as the children are actually dead so a clean quit isn't delayed by a
+ *  fixed timer). Sends the graceful signal to each, calls `onDone` once the last
+ *  child exits, and at the KILL_ESCALATE_MS deadline force-kills any survivor
+ *  (the SIGKILL syscall dooms it regardless of whether this host outlives it)
+ *  before resolving. Split from `shutdownPtyChildren` so the loop is unit-testable
+ *  with fake children; `schedule` is injectable. `onDone` fires exactly once. */
+export function shutdownChildren(
+  children: Array<Pick<PtyModule.IPty, "kill" | "onExit">>,
+  onDone: () => void,
+  schedule: (fn: () => void, ms: number) => void = setTimeout,
+): void {
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    onDone();
+  };
+
+  if (children.length === 0) {
+    // Defer so a caller returning a response can flush before the process exits.
+    schedule(finish, 0);
+    return;
   }
+
+  let remaining = children.length;
+  const settleOne = () => {
+    remaining -= 1;
+    if (remaining <= 0) finish();
+  };
+
+  for (const p of children) {
+    try {
+      p.onExit(() => settleOne());
+    } catch {
+      // Can't observe this child's exit — let the deadline cover it.
+    }
+    try {
+      p.kill(); // graceful first; a well-behaved child exits and triggers onExit
+    } catch {
+      settleOne(); // already gone — counts as settled
+    }
+  }
+
+  schedule(() => {
+    for (const p of children) {
+      try {
+        p.kill("SIGKILL");
+      } catch {
+        // already exited — nothing to force-kill
+      }
+    }
+    finish();
+  }, KILL_ESCALATE_MS);
+}
+
+/** Shut down every live PTY: drain the map, then graceful-kill-with-escalation
+ *  via shutdownChildren. Used by the host's shutdown path. */
+export function shutdownPtyChildren(
+  onDone: () => void,
+  schedule: (fn: () => void, ms: number) => void = setTimeout,
+): void {
+  // Block any further spawns (including one mid-preflight) from escaping the
+  // snapshot below and getting orphaned when the host exits.
+  shuttingDown = true;
+  const children = [...ptys.values()];
   ptys.clear();
   outputBuffers.clear();
   pendingKills.clear();
+  shutdownChildren(children, onDone, schedule);
 }
 
 export function activePtyCount(): number {
