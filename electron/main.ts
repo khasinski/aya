@@ -55,7 +55,7 @@ import {
   listRemotePresets,
   listRemoteDirectory,
 } from "./remote-client";
-import { getGitChangedFiles, getGitDiff, getGitInfo } from "./git";
+import { getGitChangedFiles, getGitDiff, getGitInfo, listWorktrees } from "./git";
 import { getGitHubLink, isGitHubCliAvailable } from "./github";
 import {
   AYA_HOME,
@@ -1892,6 +1892,9 @@ function registerIpc(win: BrowserWindow): void {
   );
   ipcMain.handle("env:git-diff", async (_e, directory: unknown) =>
     getGitDiff(requireString(directory, "env:git-diff.directory")),
+  );
+  ipcMain.handle("env:git-worktrees", async (_e, directory: unknown) =>
+    listWorktrees(requireString(directory, "env:git-worktrees.directory")),
   );
   ipcMain.handle("env:github-link", async (_e, directory: unknown) =>
     getGitHubLink(requireString(directory, "env:github-link.directory")),

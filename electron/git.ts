@@ -5,7 +5,7 @@
 import { exec } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
-import type { ProjectGitInfo } from "./types";
+import type { ProjectGitInfo, Worktree } from "./types";
 
 const execAsync = promisify(exec);
 
@@ -50,6 +50,64 @@ export async function getGitInfo(directory: string): Promise<ProjectGitInfo> {
     return { branch: branch.trim() || null, dirty };
   } catch {
     return { branch: null, dirty: 0 };
+  }
+}
+
+/** Parse `git worktree list --porcelain`. Blocks are separated by a blank line;
+ *  each starts with `worktree <path>` then optional `HEAD <sha>` /
+ *  `branch refs/heads/<name>` / `detached` / `bare` / `prunable …`. The first
+ *  block is the primary worktree. Exported for unit tests. */
+export function parseWorktrees(porcelain: string): Worktree[] {
+  const out: Worktree[] = [];
+  let cur: {
+    path: string;
+    branch: string | null;
+    detached: boolean;
+    bare: boolean;
+    prunable: boolean;
+  } | null = null;
+  const flush = () => {
+    if (cur) out.push({ ...cur, isMain: out.length === 0 });
+    cur = null;
+  };
+  for (const raw of porcelain.split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    if (line.startsWith("worktree ")) {
+      flush();
+      cur = {
+        path: line.slice("worktree ".length).trim(),
+        branch: null,
+        detached: false,
+        bare: false,
+        prunable: false,
+      };
+    } else if (!cur) {
+      continue;
+    } else if (line.startsWith("branch ")) {
+      cur.branch = line.slice("branch ".length).trim().replace(/^refs\/heads\//, "");
+    } else if (line === "detached") {
+      cur.detached = true;
+    } else if (line === "bare") {
+      cur.bare = true;
+    } else if (line === "prunable" || line.startsWith("prunable ")) {
+      cur.prunable = true;
+    }
+  }
+  flush();
+  return out;
+}
+
+/** List the git worktrees for the repo containing `directory`. Returns [] for a
+ *  non-repo dir or if git is missing (read-only; safe to poll). */
+export async function listWorktrees(directory: string): Promise<Worktree[]> {
+  try {
+    const { stdout } = await execAsync(
+      `${READ_ONLY_GIT} worktree list --porcelain`,
+      { cwd: directory, ...OPTS },
+    );
+    return parseWorktrees(stdout);
+  } catch {
+    return [];
   }
 }
 

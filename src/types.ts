@@ -211,6 +211,20 @@ export interface GitChangedFile {
   path: string;
 }
 
+/** A git worktree of a repository (from `git worktree list --porcelain`). */
+export interface Worktree {
+  /** Absolute path to the worktree checkout. */
+  path: string;
+  /** Short branch name, or null when detached/bare. */
+  branch: string | null;
+  /** The primary worktree (the repo's original checkout). */
+  isMain: boolean;
+  detached: boolean;
+  bare: boolean;
+  /** Git flagged this worktree as prunable (its gitdir is gone). */
+  prunable: boolean;
+}
+
 export type SpawnFailureReason =
   | "cwd-missing"
   | "cwd-not-directory"
@@ -499,6 +513,7 @@ export interface AyaApi {
   getGitInfo(directory: string): Promise<ProjectGitInfo>;
   getGitChangedFiles(directory: string): Promise<GitChangedFile[]>;
   getGitDiff(directory: string): Promise<string>;
+  getGitWorktrees(directory: string): Promise<Worktree[]>;
   getGitHubLink(directory: string): Promise<GitHubLink | null>;
   githubCliAvailable(): Promise<boolean>;
   pickDirectory(): Promise<string | null>;
