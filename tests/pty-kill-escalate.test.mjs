@@ -69,3 +69,37 @@ test("a SIGHUP-ignoring process survives the graceful kill but the escalation ki
   await sleep(1000); // past KILL_ESCALATE_MS -> SIGKILL delivered
   assert.equal(exited, true, "the SIGKILL escalation must terminate the stuck process");
 });
+
+// Edge: a well-behaved process exits on the graceful signal; the later SIGKILL
+// must be a harmless no-op (dead pid -> caught), not an error.
+test("a normal process exits on the graceful signal; escalation is a harmless no-op", async () => {
+  const child = spawn("sh", ["-c", "sleep 30"], { stdio: "ignore" }); // no trap -> dies on SIGHUP
+  let exited = false;
+  child.on("exit", () => {
+    exited = true;
+  });
+  await sleep(100);
+  // The handle does NOT swallow - so the escalation's SIGKILL on the by-then
+  // dead pid throws ESRCH straight into terminatePtyChild's own try/catch. If
+  // that catch regressed, the throw would escape the real setTimeout callback
+  // and crash the test process (uncaught) - so the tail wait actually verifies
+  // terminatePtyChild swallows the escalation error, not the handle.
+  const handle = {
+    kill: (sig) => process.kill(child.pid, sig ?? "SIGHUP"),
+  };
+  assert.doesNotThrow(() => terminatePtyChild(handle));
+  await sleep(300); // graceful SIGHUP kills a non-trapping process quickly
+  assert.equal(exited, true, "a non-trapping process dies on the graceful signal");
+  await sleep(700); // escalation fires on the already-dead pid -> must not crash
+});
+
+// Edge: terminating an already-exited process throws nothing (both signals hit a
+// dead pid -> ESRCH, swallowed).
+test("terminating an already-exited process is a no-op", async () => {
+  const child = spawn("sh", ["-c", "exit 0"], { stdio: "ignore" });
+  await new Promise((r) => child.on("exit", r));
+  const handle = {
+    kill: (sig) => process.kill(child.pid, sig ?? "SIGHUP"), // will throw ESRCH
+  };
+  assert.doesNotThrow(() => terminatePtyChild(handle, (fn) => fn()));
+});
