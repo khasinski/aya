@@ -39,7 +39,14 @@ export interface SeedOptions {
   /** Override the seeded preset list (defaults to a single "Shell" preset).
    *  Ignored when `presets` is false. Use to exercise the launcher menu with
    *  many entries (e.g. a scrollable dropdown). */
-  presetList?: Array<{ id: string; name: string; icon: string; color: string; command: string }>;
+  presetList?: Array<{
+    id: string;
+    name: string;
+    icon: string;
+    color: string;
+    command: string;
+    autoResume?: boolean;
+  }>;
   /** Extra environment variables for the Electron process. */
   launchEnv?: Record<string, string>;
   /** Create a fake shell/bin setup where interactive shell PATH reveals claude. */
