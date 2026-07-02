@@ -70,53 +70,90 @@ function describeSession(raw: CctopSessionFile, level: MonitoredSessionLevel) {
   }
 }
 
-export async function listMonitoredSessions(): Promise<MonitoredSession[]> {
+function parseSessionFile(
+  entry: string,
+  raw: CctopSessionFile,
+): MonitoredSession | null {
+  if (raw.hidden === true || raw.is_subagent === true) return null;
+  if (optionalString(raw.ended_at)) return null;
+  const cwd = optionalString(raw.project_path) ?? optionalString(raw.cwd);
+  if (!cwd) return null;
+  const source = optionalString(raw.source) ?? "cc";
+  if (!SUPPORTED_SOURCES.has(source)) return null;
+  const status = optionalString(raw.status) ?? "working";
+  const level = mapCctopStatus(status);
+  const lastActivity =
+    readTimestamp(raw.last_activity) ?? readTimestamp(raw.started_at) ?? 0;
+  const id = optionalString(raw.session_id) ?? entry.replace(/\.json$/, "");
+  return {
+    id,
+    source,
+    cwd,
+    projectName: optionalString(raw.project_name),
+    sessionName: optionalString(raw.session_name),
+    level,
+    text: describeSession(raw, level),
+    updatedAt: lastActivity || Date.now(),
+  };
+}
+
+// Per-file parse cache: the renderer polls every 5s but a session file only
+// changes when its agent does something, so a stat gates the read+parse.
+// Cached nulls (hidden/ended/foreign files) matter too — they'd otherwise be
+// re-parsed every poll. Keyed by absolute path; entries are dropped when the
+// file disappears.
+const sessionParseCache = new Map<
+  string,
+  { mtimeMs: number; session: MonitoredSession | null }
+>();
+
+/** Test hook: forget all cached session-file parses. */
+export function resetSessionMonitorCache(): void {
+  sessionParseCache.clear();
+}
+
+export async function listMonitoredSessions(
+  dir: string = CCTOP_SESSIONS_DIR,
+): Promise<MonitoredSession[]> {
   let entries: string[];
   try {
-    entries = await fs.readdir(CCTOP_SESSIONS_DIR);
+    entries = await fs.readdir(dir);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "ENOENT") return [];
     throw err;
   }
 
+  const seen = new Set<string>();
   const sessions = await Promise.all(
     entries
       .filter((entry) => entry.endsWith(".json"))
       .map(async (entry): Promise<MonitoredSession | null> => {
-        const filePath = path.join(CCTOP_SESSIONS_DIR, entry);
+        const filePath = path.join(dir, entry);
+        seen.add(filePath);
         try {
-          const raw = JSON.parse(
-            await fs.readFile(filePath, "utf8"),
-          ) as CctopSessionFile;
-          if (raw.hidden === true || raw.is_subagent === true) return null;
-          if (optionalString(raw.ended_at)) return null;
-          const cwd = optionalString(raw.project_path) ?? optionalString(raw.cwd);
-          if (!cwd) return null;
-          const source = optionalString(raw.source) ?? "cc";
-          if (!SUPPORTED_SOURCES.has(source)) return null;
-          const status = optionalString(raw.status) ?? "working";
-          const level = mapCctopStatus(status);
-          const lastActivity =
-            readTimestamp(raw.last_activity) ??
-            readTimestamp(raw.started_at) ??
-            0;
-          const id = optionalString(raw.session_id) ?? entry.replace(/\.json$/, "");
-          return {
-            id,
-            source,
-            cwd,
-            projectName: optionalString(raw.project_name),
-            sessionName: optionalString(raw.session_name),
-            level,
-            text: describeSession(raw, level),
-            updatedAt: lastActivity || Date.now(),
-          };
+          const st = await fs.stat(filePath);
+          const cached = sessionParseCache.get(filePath);
+          if (cached && cached.mtimeMs === st.mtimeMs) return cached.session;
+          const session = parseSessionFile(
+            entry,
+            JSON.parse(await fs.readFile(filePath, "utf8")) as CctopSessionFile,
+          );
+          sessionParseCache.set(filePath, { mtimeMs: st.mtimeMs, session });
+          return session;
         } catch {
           return null;
         }
       }),
   );
+
+  // Drop cache entries for files that disappeared (scoped to this dir so a
+  // non-default dir, e.g. in tests, can't evict the real one's entries).
+  for (const key of sessionParseCache.keys()) {
+    if (key.startsWith(dir + path.sep) && !seen.has(key)) {
+      sessionParseCache.delete(key);
+    }
+  }
 
   return sessions
     .filter((session): session is MonitoredSession => !!session)
