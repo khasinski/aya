@@ -83,6 +83,7 @@ import { readRepoProjectConfig } from "./project-local";
 import { repairProcessPath } from "./shell-path";
 import { PtyHostClient } from "./pty-host-client";
 import { reapStaleHostRecords } from "./pty-host-registry";
+import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
 import {
   requirePositiveInt,
   requireString,
@@ -130,6 +131,10 @@ const RECOMMENDED_OLLAMA_MODEL = "gemma4:e4b";
 
 const ptyHost = new PtyHostClient(path.join(__dirname, "pty-host.js"));
 const UPDATE_AUTO_CHECK_DELAY_MS = 12_000;
+// Delay before the Phase-2 legacy sweep (stray pre-registry hosts + orphaned
+// terminal children of dead hosts). Off the startup path: nothing it targets
+// can interfere with the fresh session, so first paint never pays for it.
+const LEGACY_SWEEP_DELAY_MS = 5_000;
 let updateStatus: UpdateStatus = {
   phase: "idle",
   supported: false,
@@ -1181,6 +1186,12 @@ function showAyaAboutPanel(): void {
 // Set to true when a stale PTY host is detected on launch (#28). The Restart
 // Aya menu item reads this flag so it can kill the stale host before relaunching.
 let staleHostDetected = false;
+// Deferred Phase-2 legacy-sweep timer; cancelled on quit so a mid-teardown
+// sweep can't spawn a host or probe processes while the app is exiting.
+let legacySweepTimer: NodeJS.Timeout | null = null;
+// Set in before-quit: an already-fired sweep callback checks it and bails
+// (clearTimeout can't stop a callback that is already running).
+let appQuitting = false;
 
 /** Build a minimal RGBA PNG containing a filled circle.
  *  Uses only Node built-ins (zlib deflate + manual PNG framing). */
@@ -2095,11 +2106,13 @@ app.whenReady().then(async () => {
   // createWindow so a recorded stale host is dead before anything can connect
   // to it; the common-path cost is one `ps -p` fork for the kept host (the
   // system-wide snapshot only runs when a kill actually happens).
+  let keptCompatibleHosts: number[] = [];
   try {
     const summary = reapStaleHostRecords(
       ptyHost.expectedHostIdentity(app.getVersion()),
       path.join(__dirname, "pty-host.js"),
     );
+    keptCompatibleHosts = summary.keptCompatible;
     if (summary.reaped.length > 0) {
       console.log(
         `[aya] reaped ${summary.reaped.length} stale pty-host(s) + ${summary.killedDescendants.length} descendant(s):`,
@@ -2162,6 +2175,56 @@ app.whenReady().then(async () => {
   // not exist yet, so apply the amber "Restart Aya" affordance now if needed.
   if (staleHostDetected) setStaleMenuIcon();
 
+  // Phase-2 legacy sweep, deferred off the startup path: clean up what the
+  // registry structurally can't reach - pre-registry stray hosts (no record
+  // file, e.g. left behind by builds before the registry existed) and orphaned
+  // terminal children whose host already died. Deferred because none of these
+  // can interfere with the fresh session (a stray host holds no socket, a dead
+  // -leader orphan has no owner), so first paint shouldn't pay for the probes.
+  legacySweepTimer = setTimeout(() => {
+    legacySweepTimer = null;
+    void (async () => {
+      try {
+        // A quit that races the timer can't un-schedule an already-running
+        // callback - bail if teardown began (the flag is set in before-quit).
+        if (appQuitting) return;
+        // The current socket host must never be swept. Fail-closed twice over:
+        // no socket file -> don't consult the client at all (hostStatus would
+        // SPAWN a host as a side effect) and run without the stray-host pass;
+        // socket present but the host reports no pid (pre-registry host) ->
+        // also skip the stray-host pass, since we can't positively exclude it.
+        // S2 is unaffected either way - a live host's children are never in a
+        // dead-leader group.
+        let strayHosts = false;
+        const exclude = new Set<number>(keptCompatibleHosts);
+        if (await pathExists(PTY_HOST_SOCKET_PATH)) {
+          const status = await ptyHost.hostStatus();
+          if (typeof status.pid === "number") {
+            exclude.add(status.pid);
+            strayHosts = true;
+          } else {
+            console.log(
+              "[aya] legacy sweep: socket host has no pid handshake - skipping stray-host pass",
+            );
+          }
+        }
+        const summary = sweepLegacyAyaProcesses(exclude, undefined, { strayHosts });
+        if (summary.sweptHosts.length > 0 || summary.sweptOrphans.length > 0) {
+          console.log(
+            `[aya] legacy sweep: killed ${summary.sweptHosts.length} stray host group(s) ${JSON.stringify(summary.sweptHosts)} + ${summary.sweptOrphans.length} orphaned terminal process(es)`,
+          );
+        }
+        if (summary.truncated > 0) {
+          console.log(
+            `[aya] legacy sweep: ${summary.truncated} orphan candidate(s) beyond the probe cap - retried next launch`,
+          );
+        }
+      } catch {
+        // best effort - never destabilize a running session over cleanup
+      }
+    })();
+  }, LEGACY_SWEEP_DELAY_MS);
+
   // Honor an initial directory argument on first launch — the renderer
   // applies the same switch-or-create logic as for second-instance.
   const initialDir = findDirInArgv(process.argv);
@@ -2184,6 +2247,11 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  appQuitting = true;
+  if (legacySweepTimer) {
+    clearTimeout(legacySweepTimer);
+    legacySweepTimer = null;
+  }
   if (!IS_E2E_PTY_SHUTDOWN) return;
   void ptyHost.shutdown().catch(() => {
     // Test-only cleanup. Normal app runs intentionally keep PTYs alive.
