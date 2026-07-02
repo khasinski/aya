@@ -23,6 +23,7 @@
     "src/hooks/usePersistentPreference.ts",
     "src/project-reload.ts",
     "src/preset-ids.ts",
+    "src/ptyEventBus.ts",
     "src/pty-event-reducer.ts",
     "src/terminal-option-key.ts",
     "src/terminal-keys.ts",

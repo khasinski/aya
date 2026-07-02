@@ -13,6 +13,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { Preset, Snippet, TerminalState, ThemeColors } from "../types";
+import { ptyEventBus } from "../ptyEventBus";
 import type { SettingsTab } from "../settings-tabs";
 import { focusReportingState } from "../focus-reporting";
 import { enterKeyAction, META_ENTER } from "../terminal-keys";
@@ -489,8 +490,10 @@ function TerminalViewComponent({
 
     fitTerminal();
 
-    const unsubscribe = window.aya.onPtyEvent((event) => {
-      if (event.ptyId !== terminal.id) return;
+    // Per-id subscription via the shared bus: one chunk wakes THIS pane only,
+    // not every mounted TerminalView (visible + warm pool) as a raw
+    // window.aya.onPtyEvent listener would.
+    const unsubscribe = ptyEventBus.onFor(terminal.id, (event) => {
       setIsRestoring(false);
       if (event.type === "data") {
         // Track whether a full-screen / rich TUI (claude, codex, vim…) is

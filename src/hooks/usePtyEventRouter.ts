@@ -1,5 +1,6 @@
 import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { applyPtyEvent, eventTouchesActivity } from "../pty-event-reducer";
+import { ptyEventBus } from "../ptyEventBus";
 import { markSpawned } from "../spawnSession";
 import type { PtyEvent, TerminalState } from "../types";
 
@@ -15,7 +16,9 @@ export function usePtyEventRouter({
   onPtyEvent,
 }: Options): void {
   useEffect(() => {
-    return window.aya.onPtyEvent((event) => {
+    // Through the shared bus (single ipcRenderer listener for the whole app);
+    // the router needs every event, so it registers as the "any" consumer.
+    return ptyEventBus.onAny((event) => {
       onPtyEvent?.(event);
       if (eventTouchesActivity(event)) {
         lastActivityRef.current[event.ptyId] = Date.now();
