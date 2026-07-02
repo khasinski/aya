@@ -133,14 +133,59 @@ export function parseUsageAccounts(raw: string): UsageAccount[] {
   return out;
 }
 
+// Poll-path caches: the usage chip polls every 30s but the hook rewrites these
+// files far less often, so a stat (cheap) gates the read+parse (not). Parsed
+// results — including null/[] for a broken file — are reused until the mtime
+// moves. Entries are dropped when a file disappears; the key space is bounded
+// by the number of configured sources.
+interface CachedParse<T> {
+  mtimeMs: number;
+  value: T;
+}
+const usageDataCache = new Map<string, CachedParse<UsageData | null>>();
+const usageAccountsCache = new Map<string, CachedParse<UsageAccount[]>>();
+
+/** Test hook: forget all cached usage-file parses. */
+export function resetUsageFileCaches(): void {
+  usageDataCache.clear();
+  usageAccountsCache.clear();
+}
+
+/** stat-gated read+parse. Returns undefined when the file is unreadable. */
+async function readParsed<T>(
+  file: string,
+  cache: Map<string, CachedParse<T>>,
+  parse: (raw: string) => T,
+): Promise<T | undefined> {
+  let mtimeMs: number;
+  try {
+    mtimeMs = (await fs.stat(file)).mtimeMs;
+  } catch {
+    cache.delete(file);
+    return undefined;
+  }
+  const cached = cache.get(file);
+  if (cached && cached.mtimeMs === mtimeMs) return cached.value;
+  let raw: string;
+  try {
+    raw = await fs.readFile(file, "utf-8");
+  } catch {
+    cache.delete(file);
+    return undefined;
+  }
+  const value = parse(raw);
+  cache.set(file, { mtimeMs, value });
+  return value;
+}
+
 /** Read one or more usage snapshots the user's hook writes. Never fetches. */
 export async function readUsageAccounts(): Promise<UsageAccount[]> {
-  try {
-    const raw = await fs.readFile(USAGE_FILE, "utf-8");
-    return parseUsageAccounts(raw);
-  } catch {
-    return [];
-  }
+  const accounts = await readParsed(
+    USAGE_FILE,
+    usageAccountsCache,
+    parseUsageAccounts,
+  );
+  return accounts ? [...accounts] : [];
 }
 
 export async function readClaudeUsageAccounts(
@@ -157,11 +202,7 @@ export async function readClaudeUsageAccounts(
 
     let usage: UsageData | null = null;
     for (const file of files) {
-      try {
-        usage = parseUsage(await fs.readFile(file, "utf-8"));
-      } catch {
-        usage = null;
-      }
+      usage = (await readParsed(file, usageDataCache, parseUsage)) ?? null;
       if (usage) break;
     }
     if (!usage || seen.has(source.id)) continue;
