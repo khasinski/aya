@@ -14,7 +14,7 @@ export interface DragReorder {
     onDragStart: (e: DragEvent) => void;
     onDragOver: (e: DragEvent) => void;
     onDrop: (e: DragEvent) => void;
-    onDragEnd: () => void;
+    onDragEnd: (e: DragEvent) => void;
   };
 }
 
@@ -22,10 +22,16 @@ export interface DragReorder {
  *  terminal list (vertical), and both strips in the alternative layout. The
  *  splice math is identical everywhere; only the axis differs. `order` is the
  *  current id ordering; `onReorder` fires with the new ordering on drop. */
+/** `onDragOut` (optional) fires when a drag ends WITHOUT any drop target
+ *  consuming it (dropEffect "none") - the item was released outside the strip,
+ *  possibly outside the window entirely. The dragend event still carries
+ *  screen coordinates, which is what makes Chrome-style tab tear-out possible
+ *  without tracking the pointer across windows. */
 export function useDragReorder(
   axis: "x" | "y",
   order: string[],
   onReorder: (ordered: string[]) => void,
+  onDragOut?: (id: string, e: DragEvent) => void,
 ): DragReorder {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
@@ -74,7 +80,15 @@ export function useDragReorder(
       }
       reset();
     },
-    onDragEnd: reset,
+    onDragEnd: (e: DragEvent) => {
+      // A drop inside the strip resets state (and re-renders) before dragend
+      // fires, so a still-set dragId + dropEffect "none" means the item was
+      // released outside every drop target.
+      if (dragId && e.dataTransfer.dropEffect === "none" && onDragOut) {
+        onDragOut(dragId, e);
+      }
+      reset();
+    },
   });
 
   return { dragId, dropTarget, itemHandlers };

@@ -43,7 +43,11 @@ interface Props {
   onCloseProject: (slug: string) => void;
   /** Multi-window: move a project tab (with its running terminals) to a new
    *  window or an existing one. Absent = the menu items are hidden. */
-  onMoveProjectToWindow?: (slug: string, target: number | "new") => void;
+  onMoveProjectToWindow?: (
+    slug: string,
+    target: number | "new",
+    at?: { x: number; y: number },
+  ) => void;
   onRenameProject: (slug: string, newName: string) => void;
   onReorderProjects: (orderedSlugs: string[]) => void;
   onOpenSearch: () => void;
@@ -218,11 +222,25 @@ function TopBarImpl({
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
-  // Horizontal drag-and-drop for project tab reordering.
+  // Horizontal drag-and-drop for project tab reordering. A drag released
+  // outside the strip (possibly outside the window) becomes a Chrome-style
+  // tear-out: main hit-tests the release point against the live windows and
+  // the tab either attaches to the window under the cursor or opens a new one.
+  const handleTabDragOut = (slug: string, e: { screenX: number; screenY: number }) => {
+    if (!onMoveProjectToWindow) return;
+    const project = projects.find((pr) => pr.slug === slug);
+    if (!project || project.remote) return;
+    const at = { x: e.screenX, y: e.screenY };
+    void window.aya.resolveProjectDrop(at.x, at.y).then((r) => {
+      if (r.kind === "self") return;
+      onMoveProjectToWindow(slug, r.kind === "new" ? "new" : r.id, at);
+    });
+  };
   const { dragId: dragSlug, dropTarget, itemHandlers } = useDragReorder(
     "x",
     projects.map((p) => p.slug),
     onReorderProjects,
+    handleTabDragOut,
   );
 
   const startRename = (project: ProjectConfig) => {

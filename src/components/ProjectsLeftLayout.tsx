@@ -40,7 +40,11 @@ interface Props {
   onCloseProject: (slug: string) => void;
   /** Multi-window: move a project (with its running terminals) to a new
    *  window or an existing one. Absent = the menu items are hidden. */
-  onMoveProjectToWindow?: (slug: string, target: number | "new") => void;
+  onMoveProjectToWindow?: (
+    slug: string,
+    target: number | "new",
+    at?: { x: number; y: number },
+  ) => void;
   onRenameProject: (slug: string, newName: string) => void;
   onReorderProjects: (orderedSlugs: string[]) => void;
   projectBadges?: Record<string, ProjectAttention>;
@@ -141,7 +145,23 @@ function ProjectsLeftLayoutImpl({
     dragId: dragSlug,
     dropTarget: projectDrop,
     itemHandlers: projectDragHandlers,
-  } = useDragReorder("y", projects.map((p) => p.slug), onReorderProjects);
+  } = useDragReorder(
+    "y",
+    projects.map((p) => p.slug),
+    onReorderProjects,
+    // Chrome-style tear-out: a rail tab released outside the strip attaches to
+    // the window under the cursor or opens a new one (see TopBar for details).
+    (slug, e) => {
+      if (!onMoveProjectToWindow) return;
+      const project = projects.find((pr) => pr.slug === slug);
+      if (!project || project.remote) return;
+      const at = { x: e.screenX, y: e.screenY };
+      void window.aya.resolveProjectDrop(at.x, at.y).then((r) => {
+        if (r.kind === "self") return;
+        onMoveProjectToWindow(slug, r.kind === "new" ? "new" : r.id, at);
+      });
+    },
+  );
 
   const startProjectRename = (project: ProjectConfig) => {
     setRenamingSlug(project.slug);

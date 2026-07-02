@@ -2516,11 +2516,11 @@ export function App() {
    *  project's directory lives on the remote host, so the adopt-by-directory
    *  flow can't resolve it there. */
   const moveProjectToWindow = useCallback(
-    (slug: string, target: number | "new") => {
+    (slug: string, target: number | "new", at?: { x: number; y: number }) => {
       const project = projectsRef.current.find((p) => p.slug === slug);
       if (!project || project.remote) return;
       releaseProject(slug);
-      void window.aya.adoptProjectInWindow(project.directory, target);
+      void window.aya.adoptProjectInWindow(project.directory, target, at);
     },
     [releaseProject],
   );

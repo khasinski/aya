@@ -100,3 +100,33 @@ export class WindowProjectSlices {
     return this.activeProject.get(windowId) ?? null;
   }
 }
+
+export interface DropCandidate {
+  id: number;
+  bounds: { x: number; y: number; width: number; height: number };
+  isSelf: boolean;
+}
+
+export type DropResolution =
+  | { kind: "self" }
+  | { kind: "window"; id: number }
+  | { kind: "new" };
+
+/** Where a project tab released at screen point (x, y) lands: the source
+ *  window itself (no-op), another Aya window (attach), or empty space (tear
+ *  out into a new window). Self wins when windows overlap - releasing inside
+ *  your own window must never tear the tab out. */
+export function resolveDropTarget(
+  x: number,
+  y: number,
+  candidates: DropCandidate[],
+): DropResolution {
+  const hit = (c: DropCandidate) =>
+    x >= c.bounds.x &&
+    x <= c.bounds.x + c.bounds.width &&
+    y >= c.bounds.y &&
+    y <= c.bounds.y + c.bounds.height;
+  if (candidates.some((c) => c.isSelf && hit(c))) return { kind: "self" };
+  const other = candidates.find((c) => !c.isSelf && hit(c));
+  return other ? { kind: "window", id: other.id } : { kind: "new" };
+}

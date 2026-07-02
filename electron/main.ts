@@ -96,7 +96,7 @@ import {
   validateThemesFile,
 } from "./validation";
 import { loadWindowState, trackWindowState } from "./window-state";
-import { WindowProjectSlices } from "./window-slices";
+import { resolveDropTarget, WindowProjectSlices } from "./window-slices";
 import type {
   AyaIntelligenceConfig,
   CliStatus,
@@ -1466,24 +1466,36 @@ interface WindowGeometry {
 // tab tear-out), so it doesn't cover its parent exactly.
 const NEW_WINDOW_CASCADE_OFFSET_PX = 28;
 
-/** Open an additional (empty) Aya window, cascaded from the focused one. New
- *  windows own no projects until the user opens/moves one into them (their
- *  projects:state slice starts empty - see projectStateForWindow). */
-async function openNewWindow(): Promise<BrowserWindow> {
+/** Open an additional (empty) Aya window, cascaded from the focused one - or,
+ *  for a tab tear-out, positioned at the release point so the new window
+ *  appears under the cursor like a Chrome tab drag. New windows own no
+ *  projects until the user opens/moves one into them (their projects:state
+ *  slice starts empty - see projectStateForWindow). */
+async function openNewWindow(at?: {
+  x: number;
+  y: number;
+}): Promise<BrowserWindow> {
   const anchor = focusedAyaWindow();
-  if (anchor) {
-    const bounds = anchor.getBounds();
-    return createWindow({
-      x: bounds.x + NEW_WINDOW_CASCADE_OFFSET_PX,
-      y: bounds.y + NEW_WINDOW_CASCADE_OFFSET_PX,
-      width: bounds.width,
-      height: bounds.height,
-      isFullScreen: false,
-      isMaximized: false,
-    });
-  }
-  const saved = await loadWindowState();
-  return createWindow({ ...saved, isFullScreen: false, isMaximized: false });
+  const size = anchor
+    ? anchor.getBounds()
+    : { ...(await loadWindowState()), x: undefined, y: undefined };
+  const position = at
+    ? // Nudge so the cursor lands on the new window's tab strip, not its corner.
+      { x: Math.max(0, at.x - 80), y: Math.max(0, at.y - 20) }
+    : anchor
+      ? {
+          x: anchor.getBounds().x + NEW_WINDOW_CASCADE_OFFSET_PX,
+          y: anchor.getBounds().y + NEW_WINDOW_CASCADE_OFFSET_PX,
+        }
+      : { x: size.x, y: size.y };
+  return createWindow({
+    x: position.x,
+    y: position.y,
+    width: size.width,
+    height: size.height,
+    isFullScreen: false,
+    isMaximized: false,
+  });
 }
 
 function createWindow(initial: WindowGeometry): BrowserWindow {
@@ -1834,13 +1846,36 @@ function registerIpc(): void {
   // its local state first (WITHOUT killing PTYs), then calls this; the target
   // window runs the ordinary switch-or-create open flow and re-attaches to the
   // live PTYs exactly like after an app restart.
+  // Where would a tab released at this screen point land? Pure hit-test over
+  // the live windows' bounds; the source window wins overlaps (see
+  // resolveDropTarget).
+  ipcMain.handle(
+    "windows:resolve-drop",
+    async (e, x: unknown, y: unknown) => {
+      if (typeof x !== "number" || typeof y !== "number") {
+        throw new Error("windows:resolve-drop: x/y must be numbers");
+      }
+      const self = senderWindow(e);
+      const candidates = [...ayaWindows]
+        .filter((w) => !w.isDestroyed() && w.isVisible())
+        .map((w) => ({ id: w.id, bounds: w.getBounds(), isSelf: w === self }));
+      return resolveDropTarget(x, y, candidates);
+    },
+  );
   ipcMain.handle(
     "windows:adopt-project",
-    async (_e, directory: unknown, target: unknown) => {
+    async (_e, directory: unknown, target: unknown, at: unknown) => {
       const dir = requireString(directory, "windows:adopt-project.directory");
+      const dropAt =
+        at &&
+        typeof at === "object" &&
+        typeof (at as Record<string, unknown>).x === "number" &&
+        typeof (at as Record<string, unknown>).y === "number"
+          ? (at as { x: number; y: number })
+          : undefined;
       let win: BrowserWindow | null = null;
       if (target === "new") {
-        win = await openNewWindow();
+        win = await openNewWindow(dropAt);
       } else if (typeof target === "number") {
         win =
           [...ayaWindows].find((w) => w.id === target && !w.isDestroyed()) ??

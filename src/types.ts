@@ -465,8 +465,23 @@ export interface AyaApi {
   /** Other live Aya windows (multi-window "Move to window…" targets). */
   listOtherWindows(): Promise<Array<{ id: number; activeProject: string | null }>>;
   /** Open a project (by directory) in another / a new window. The caller must
-   *  have released its own copy first (drop local state, keep PTYs alive). */
-  adoptProjectInWindow(directory: string, target: number | "new"): Promise<void>;
+   *  have released its own copy first (drop local state, keep PTYs alive).
+   *  `at` (screen coords) positions a torn-out NEW window at the release
+   *  point, Chrome-tab style. */
+  adoptProjectInWindow(
+    directory: string,
+    target: number | "new",
+    at?: { x: number; y: number },
+  ): Promise<void>;
+  /** Hit-test a drag release point (screen coords) against the live windows:
+   *  the source window itself, another window (attach), or empty space (tear
+   *  out into a new window). */
+  resolveProjectDrop(
+    x: number,
+    y: number,
+  ): Promise<
+    { kind: "self" } | { kind: "window"; id: number } | { kind: "new" }
+  >;
   createProject(name: string, directory: string): Promise<ProjectConfig>;
   createRemoteProject(req: {
     name: string;

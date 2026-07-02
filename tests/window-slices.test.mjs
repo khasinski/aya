@@ -88,3 +88,37 @@ test("per-window activeProject is remembered and validated against the slice", (
   s.mergeSave(disk({ open: ["b"], activeProject: "a" }), 1, disk());
   assert.equal(s.stateForWindow(disk(), 1, true).activeProject, "b");
 });
+
+// --- resolveDropTarget (tab tear-out hit-testing) ------------------------------
+
+test("drop inside the source window is 'self' even when windows overlap", async () => {
+  const { resolveDropTarget } = await import("../dist-electron/window-slices.js");
+  const candidates = [
+    { id: 1, bounds: { x: 0, y: 0, width: 800, height: 600 }, isSelf: true },
+    { id: 2, bounds: { x: 400, y: 0, width: 800, height: 600 }, isSelf: false },
+  ];
+  // Point inside BOTH windows: self must win (never tear out of your own drop).
+  assert.deepEqual(resolveDropTarget(500, 100, candidates), { kind: "self" });
+});
+
+test("drop inside another window attaches there", async () => {
+  const { resolveDropTarget } = await import("../dist-electron/window-slices.js");
+  const candidates = [
+    { id: 1, bounds: { x: 0, y: 0, width: 800, height: 600 }, isSelf: true },
+    { id: 2, bounds: { x: 900, y: 0, width: 800, height: 600 }, isSelf: false },
+  ];
+  assert.deepEqual(resolveDropTarget(1000, 300, candidates), {
+    kind: "window",
+    id: 2,
+  });
+});
+
+test("drop on empty desktop tears out into a new window", async () => {
+  const { resolveDropTarget } = await import("../dist-electron/window-slices.js");
+  const candidates = [
+    { id: 1, bounds: { x: 0, y: 0, width: 800, height: 600 }, isSelf: true },
+  ];
+  assert.deepEqual(resolveDropTarget(1200, 900, candidates), { kind: "new" });
+  // Boundary points count as inside (releasing at the very edge stays put).
+  assert.deepEqual(resolveDropTarget(800, 600, candidates), { kind: "self" });
+});
