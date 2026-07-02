@@ -48,6 +48,14 @@ export const OUTPUT_BUFFER_MAX = 1_000_000; // ~1MB of recent bytes per terminal
 interface OutputBuffer {
   chunks: string[];
   total: number;
+  /** Monotonic append counter; invalidates searchCache below. (`total` alone
+   *  is not a safe key: cap eviction can shrink and regrow it to the same
+   *  value with different content.) */
+  version: number;
+  /** Cleaned + lowercased render of `chunks`, reused across search keystrokes
+   *  so an unchanged buffer costs indexOf scans instead of a full join + 4
+   *  regex passes + toLowerCase over ~1MB per live PTY per keystroke. */
+  searchCache?: { version: number; cleaned: string; lower: string };
 }
 const outputBuffers = new Map<string, OutputBuffer>();
 
@@ -88,11 +96,12 @@ export interface PtyEventSink {
 function appendToOutputBuffer(ptyId: string, chunk: string): void {
   let buffer = outputBuffers.get(ptyId);
   if (!buffer) {
-    buffer = { chunks: [], total: 0 };
+    buffer = { chunks: [], total: 0, version: 0 };
     outputBuffers.set(ptyId, buffer);
   }
   buffer.chunks.push(chunk);
   buffer.total += chunk.length;
+  buffer.version += 1;
   while (buffer.total > OUTPUT_BUFFER_MAX && buffer.chunks.length > 1) {
     const removed = buffer.chunks.shift();
     if (removed) buffer.total -= removed.length;
@@ -156,8 +165,19 @@ export function searchPtyOutputs(query: string): BufferSearchHit[] {
   if (tokens.length === 0) return [];
   const hits: BufferSearchHit[] = [];
   for (const [ptyId, buffer] of outputBuffers) {
-    const cleaned = stripAnsi(buffer.chunks.join(""));
-    const lower = cleaned.toLowerCase();
+    // Re-clean only buffers that changed since the last query; while the user
+    // types, the typical buffer is static and this is a cache hit.
+    let cache = buffer.searchCache;
+    if (!cache || cache.version !== buffer.version) {
+      const freshCleaned = stripAnsi(buffer.chunks.join(""));
+      cache = {
+        version: buffer.version,
+        cleaned: freshCleaned,
+        lower: freshCleaned.toLowerCase(),
+      };
+      buffer.searchCache = cache;
+    }
+    const { cleaned, lower } = cache;
     // Every token must be present somewhere.
     const tokenIdxs: Array<{ idx: number; len: number }> = [];
     let allFound = true;
@@ -353,8 +373,16 @@ function preflightBinary(command: string): string | null {
   return /^[a-zA-Z0-9_.-]+$/.test(binary) ? binary : null;
 }
 
-function commandExists(binary: string): Promise<boolean> {
-  return new Promise((resolve) => {
+// The probe spawns a full login+interactive shell (oh-my-zsh startup can be
+// hundreds of ms), and it runs before EVERY non-shell spawn for the same few
+// binaries. A found binary effectively never disappears mid-session, so cache
+// positives for the process lifetime; misses stay uncached so installing a
+// tool mid-session is picked up by the next spawn.
+const commandExistsCache = new Set<string>();
+
+async function commandExists(binary: string): Promise<boolean> {
+  if (commandExistsCache.has(binary)) return true;
+  const found = await new Promise<boolean>((resolve) => {
     execFile(
       userShell(),
       ["-l", "-i", "-c", `command -v -- ${binary} >/dev/null 2>&1`],
@@ -362,6 +390,8 @@ function commandExists(binary: string): Promise<boolean> {
       (err) => resolve(err === null),
     );
   });
+  if (found) commandExistsCache.add(binary);
+  return found;
 }
 
 function safeEnv(req: SpawnRequest, cwd: string): { [key: string]: string } {

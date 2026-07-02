@@ -2,12 +2,13 @@
 // already require a working POSIX env (claude / codex need it too). If git
 // isn't installed or the dir isn't a repo, return nulls.
 
-import { exec } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { ProjectGitInfo, Worktree } from "./types";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // Timeout for quick git info commands (branch / status).
 const GIT_COMMAND_TIMEOUT_MS = 1500;
@@ -34,20 +35,38 @@ const DIFF_OPTS = {
   env: GIT_ENV,
 } as const;
 
+/** Parse `git status --porcelain --branch`: the "## <branch>" header carries
+ *  the branch name, every other non-blank line is one dirty entry. Preserves
+ *  the old two-command contract: unborn repos ("No commits yet") report
+ *  {null, 0} and a detached HEAD reports "HEAD" (what rev-parse used to say).
+ *  Exported for unit tests. */
+export function parseStatusWithBranch(stdout: string): ProjectGitInfo {
+  let branch: string | null = null;
+  let dirty = 0;
+  for (const line of stdout.split("\n")) {
+    if (line.startsWith("## ")) {
+      const head = line.slice(3);
+      if (head.startsWith("No commits yet")) return { branch: null, dirty: 0 };
+      // "main...origin/main [ahead 1]" | "HEAD (no branch)" | "main"
+      branch = head.startsWith("HEAD") ? "HEAD" : head.split("...")[0].trim();
+    } else if (line.trim().length > 0) {
+      dirty += 1;
+    }
+  }
+  return { branch: branch || null, dirty };
+}
+
 export async function getGitInfo(directory: string): Promise<ProjectGitInfo> {
   try {
-    const [{ stdout: branch }, { stdout: status }] = await Promise.all([
-      execAsync(`${READ_ONLY_GIT} rev-parse --abbrev-ref HEAD`, {
-        cwd: directory,
-        ...OPTS,
-      }),
-      execAsync(`${READ_ONLY_GIT} status --porcelain`, {
-        cwd: directory,
-        ...OPTS,
-      }),
-    ]);
-    const dirty = status.split("\n").filter((l) => l.trim().length > 0).length;
-    return { branch: branch.trim() || null, dirty };
+    // This runs on the status-bar poll (every 3s while visible), so keep it to
+    // ONE process: --branch folds the branch header into the porcelain output,
+    // and execFile skips the /bin/sh wrapper exec() would fork.
+    const { stdout } = await execFileAsync(
+      "git",
+      ["--no-optional-locks", "status", "--porcelain", "--branch"],
+      { cwd: directory, ...OPTS },
+    );
+    return parseStatusWithBranch(stdout);
   } catch {
     return { branch: null, dirty: 0 };
   }
