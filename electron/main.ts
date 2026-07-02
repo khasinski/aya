@@ -96,6 +96,7 @@ import {
   validateThemesFile,
 } from "./validation";
 import { loadWindowState, trackWindowState } from "./window-state";
+import { WindowProjectSlices } from "./window-slices";
 import type {
   AyaIntelligenceConfig,
   CliStatus,
@@ -103,6 +104,7 @@ import type {
   LocalSummaryRequest,
   LocalSummaryResult,
   OllamaStatus,
+  ProjectCollectionState,
   UpdateStatus,
 } from "./types";
 
@@ -817,15 +819,17 @@ function updateStatusBase(): Pick<UpdateStatus, "supported" | "currentVersion"> 
 
 function setUpdateStatus(
   next: Omit<UpdateStatus, "supported" | "currentVersion">,
-  win: BrowserWindow | null = mainWindow,
+  // Kept for call-site compat; updates are app-wide, so the status is
+  // broadcast to every live window regardless of which one was passed.
+  _win: BrowserWindow | null = null,
 ): UpdateStatus {
   updateStatus = {
     ...updateStatusBase(),
     ...next,
   };
-  if (win && !win.isDestroyed()) {
+  eachAyaWindow((win) => {
     win.webContents.send("updates:status", updateStatus);
-  }
+  });
   return updateStatus;
 }
 
@@ -1101,8 +1105,9 @@ function dispatchOpenProject(
 }
 
 function dispatchShortcut(action: string): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send("shortcut", action);
+  const target = focusedAyaWindow();
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send("shortcut", action);
 }
 
 function showAyaAboutPanel(): void {
@@ -1110,7 +1115,7 @@ function showAyaAboutPanel(): void {
     app.showAboutPanel();
     return;
   }
-  const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  const parent = focusedAyaWindow() ?? undefined;
   const about = new BrowserWindow({
     width: ABOUT_DIALOG_SIZE,
     height: ABOUT_DIALOG_SIZE,
@@ -1307,6 +1312,11 @@ function installApplicationMenu(): void {
           click: () => dispatchShortcut("new-shell"),
         },
         {
+          label: "New Window",
+          accelerator: "CmdOrCtrl+Shift+N",
+          click: () => void openNewWindow(),
+        },
+        {
           label: "Close Terminal",
           accelerator: "CmdOrCtrl+W",
           click: () => dispatchShortcut("close-tab"),
@@ -1399,7 +1409,7 @@ function installApplicationMenu(): void {
           label: "Toggle Full Screen",
           accelerator:
             process.platform === "darwin" ? "Ctrl+Command+F" : "F11",
-          click: () => toggleAyaFullScreen(mainWindow),
+          click: () => toggleAyaFullScreen(focusedAyaWindow()),
         },
       ],
     },
@@ -1452,6 +1462,30 @@ interface WindowGeometry {
   isMaximized: boolean;
 }
 
+// Cascade offset for a window opened from another window (File > New Window,
+// tab tear-out), so it doesn't cover its parent exactly.
+const NEW_WINDOW_CASCADE_OFFSET_PX = 28;
+
+/** Open an additional (empty) Aya window, cascaded from the focused one. New
+ *  windows own no projects until the user opens/moves one into them (their
+ *  projects:state slice starts empty - see projectStateForWindow). */
+async function openNewWindow(): Promise<BrowserWindow> {
+  const anchor = focusedAyaWindow();
+  if (anchor) {
+    const bounds = anchor.getBounds();
+    return createWindow({
+      x: bounds.x + NEW_WINDOW_CASCADE_OFFSET_PX,
+      y: bounds.y + NEW_WINDOW_CASCADE_OFFSET_PX,
+      width: bounds.width,
+      height: bounds.height,
+      isFullScreen: false,
+      isMaximized: false,
+    });
+  }
+  const saved = await loadWindowState();
+  return createWindow({ ...saved, isFullScreen: false, isMaximized: false });
+}
+
 function createWindow(initial: WindowGeometry): BrowserWindow {
   const win = new BrowserWindow({
     x: initial.x,
@@ -1490,8 +1524,22 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   if (initial.isFullScreen) setAyaFullScreen(win, true);
 
   // Persist geometry changes; the helper handles debouncing + final flush.
-  trackWindowState(win);
-  ptyHost.setWebContents(win.webContents);
+  // Only the boot window drives the saved single-window geometry; secondary
+  // windows are session-only (a restart collapses back to one window).
+  if (ayaWindows.size === 0) trackWindowState(win);
+
+  // Multi-window registry: PTY events broadcast to every live window, and
+  // `mainWindow` follows focus so outside actions have a target.
+  ayaWindows.add(win);
+  mainWindow = win;
+  if (bootWindowId === null) bootWindowId = win.id;
+  const windowId = win.id;
+  // Captured now: the webContents getter throws after 'closed'.
+  const windowWebContents = win.webContents;
+  win.on("focus", () => {
+    mainWindow = win;
+  });
+  ptyHost.attachWebContents(windowWebContents);
 
   // Watch ~/.aya/ for edits to snippets/presets/themes made outside the app
   // and reload that slice in the renderer. Stopped when the window closes.
@@ -1502,9 +1550,16 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   });
   win.on("closed", () => {
     stopConfigWatcher();
+    ptyHost.detachWebContents(windowWebContents);
+    ayaWindows.delete(win);
+    // The closed window's projects fall back to recent; PTYs keep running in
+    // the detached host (same contract as an app restart).
+    void releaseWindowSlices(windowId);
     // Keep the module-level ref in sync so second-instance handlers don't
     // try to focus a destroyed window.
-    if (mainWindow === win) mainWindow = null;
+    if (mainWindow === win) {
+      mainWindow = [...ayaWindows].at(-1) ?? null;
+    }
   });
 
   // Notify the renderer when fullscreen state changes so the topbar can drop
@@ -1696,8 +1751,13 @@ function setStaleMenuIcon(): void {
   }
 }
 
-function registerIpc(win: BrowserWindow): void {
-  ptyHost.setWebContents(win.webContents);
+function registerIpc(): void {
+  // Multi-window: registered once for the whole app, so handlers that act on
+  // "the window" resolve the calling renderer's BrowserWindow instead of a
+  // captured reference.
+  const senderWindow = (
+    e: Electron.IpcMainInvokeEvent,
+  ): BrowserWindow | null => BrowserWindow.fromWebContents(e.sender);
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
     await ptyHost.spawn(validateSpawnRequest(req));
   });
@@ -1745,10 +1805,20 @@ function registerIpc(win: BrowserWindow): void {
   });
 
   ipcMain.handle("projects:list", async () => listProjects());
-  ipcMain.handle("projects:state", async () => listProjectState());
-  ipcMain.handle("projects:save-state", async (_e, state: unknown) =>
-    saveProjectState(validateProjectCollectionState(state)),
-  );
+  ipcMain.handle("projects:state", async (e) => {
+    const state = await listProjectState();
+    const win = senderWindow(e);
+    // Each window sees only its own open-project slice (multi-window). No
+    // window (e.g. remote server path) gets the full on-disk state.
+    return win ? projectStateForWindow(state, win.id) : state;
+  });
+  ipcMain.handle("projects:save-state", async (e, state: unknown) => {
+    const valid = validateProjectCollectionState(state);
+    const win = senderWindow(e);
+    if (!win) return saveProjectState(valid);
+    const disk = await listProjectState().catch(() => null);
+    return saveProjectState(windowSlices.mergeSave(valid, win.id, disk));
+  });
   ipcMain.handle("projects:create", async (_e, name: unknown, dir: unknown) =>
     createProject(
       requireString(name, "projects:create.name"),
@@ -1877,11 +1947,12 @@ function registerIpc(win: BrowserWindow): void {
     const { saveThemes } = await import("./themes");
     return saveThemes(validateThemesFile(file));
   });
-  ipcMain.handle("themes:import", async () => {
+  ipcMain.handle("themes:import", async (e) => {
     const { parseTheme } = await import("./themes");
-    const result = await dialog.showOpenDialog(win, {
+    const win = senderWindow(e);
+    const options = {
       title: "Import terminal theme",
-      properties: ["openFile"],
+      properties: ["openFile" as const],
       filters: [
         {
           name: "Terminal themes (.itermcolors, .json)",
@@ -1891,7 +1962,10 @@ function registerIpc(win: BrowserWindow): void {
         { name: "Windows Terminal JSON", extensions: ["json"] },
         { name: "All files", extensions: ["*"] },
       ],
-    });
+    };
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
     if (result.canceled || result.filePaths.length === 0) return null;
     const filePath = result.filePaths[0];
     const content = await fs.readFile(filePath, "utf-8");
@@ -1925,11 +1999,15 @@ function registerIpc(win: BrowserWindow): void {
   ipcMain.handle("env:github-cli-available", async () =>
     isGitHubCliAvailable(),
   );
-  ipcMain.handle("env:pick-dir", async () => {
-    const result = await dialog.showOpenDialog(win, {
+  ipcMain.handle("env:pick-dir", async (e) => {
+    const win = senderWindow(e);
+    const options = {
       title: "Pick a project directory",
-      properties: ["openDirectory", "createDirectory"],
-    });
+      properties: ["openDirectory" as const, "createDirectory" as const],
+    };
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
   });
@@ -1960,32 +2038,46 @@ function registerIpc(win: BrowserWindow): void {
   ipcMain.handle("env:clipboard-write", async (_e, value: unknown) => {
     clipboard.writeText(requireString(value, "env:clipboard-write.text"));
   });
-  ipcMain.handle("app:is-fullscreen", async () => isAyaFullScreen(win));
-  ipcMain.handle("app:is-maximized", async () => win.isMaximized());
-  ipcMain.handle("app:minimize", () => {
-    if (!win.isDestroyed()) win.minimize();
+  ipcMain.handle("app:is-fullscreen", async (e) => {
+    const win = senderWindow(e);
+    return win ? isAyaFullScreen(win) : false;
   });
-  ipcMain.handle("app:toggle-maximize", () => {
-    if (win.isDestroyed()) return;
+  ipcMain.handle("app:is-maximized", async (e) => {
+    const win = senderWindow(e);
+    return win ? win.isMaximized() : false;
+  });
+  ipcMain.handle("app:minimize", (e) => {
+    const win = senderWindow(e);
+    if (win && !win.isDestroyed()) win.minimize();
+  });
+  ipcMain.handle("app:toggle-maximize", (e) => {
+    const win = senderWindow(e);
+    if (!win || win.isDestroyed()) return;
     if (win.isMaximized()) win.unmaximize();
     else win.maximize();
   });
-  ipcMain.handle("app:close", () => {
-    if (!win.isDestroyed()) win.close();
+  ipcMain.handle("app:close", (e) => {
+    const win = senderWindow(e);
+    if (win && !win.isDestroyed()) win.close();
   });
-  ipcMain.handle("app:set-fullscreen", async (_e, value: unknown) => {
-    setAyaFullScreen(win, !!value);
+  ipcMain.handle("app:set-fullscreen", async (e, value: unknown) => {
+    const win = senderWindow(e);
+    if (win) setAyaFullScreen(win, !!value);
   });
   // Dock badge for unattended notifications (waiting terminals). Empty
   // string clears. macOS only; no-op on Linux/Windows for now since their
   // taskbar badge stories differ.
-  ipcMain.handle("app:focus-window", () => {
-    if (win.isDestroyed()) return;
+  ipcMain.handle("app:focus-window", (e) => {
+    const win = senderWindow(e);
+    if (!win || win.isDestroyed()) return;
     if (win.isMinimized()) win.restore();
     win.focus();
   });
-  ipcMain.handle("app:notify-waiting", async (_e, req: unknown) => {
+  ipcMain.handle("app:notify-waiting", async (e, req: unknown) => {
     if (!Notification.isSupported()) return;
+    // The notifying renderer owns the terminal - clicking the notification
+    // must focus THAT window, which may not exist anymore by click time.
+    const win = senderWindow(e);
     const projectSlug = requireString(
       (req as Record<string, unknown> | null)?.projectSlug,
       "app:notify-waiting.projectSlug",
@@ -2004,7 +2096,7 @@ function registerIpc(win: BrowserWindow): void {
       silent: false,
     });
     notification.on("click", () => {
-      if (win.isDestroyed()) return;
+      if (!win || win.isDestroyed()) return;
       if (win.isMinimized()) win.restore();
       win.focus();
       win.webContents.send("notification:select-terminal", {
@@ -2065,32 +2157,81 @@ function registerIpc(win: BrowserWindow): void {
   });
 }
 
-// Holds the active window reference so second-instance / app:open-file
-// handlers can talk to the renderer.
+// Multi-window: every live Aya window, in creation order. `mainWindow` tracks
+// the last-focused live window so second-instance / app:open-file / menu
+// actions have a sensible target when no Aya window has OS focus.
+const ayaWindows = new Set<BrowserWindow>();
 let mainWindow: BrowserWindow | null = null;
+
+/** The window an outside action (menu, CLI open, notification) should hit:
+ *  the OS-focused Aya window, else the last-focused live one. */
+function focusedAyaWindow(): BrowserWindow | null {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && ayaWindows.has(focused)) return focused;
+  return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+}
+
+function eachAyaWindow(fn: (win: BrowserWindow) => void): void {
+  for (const win of ayaWindows) {
+    if (!win.isDestroyed()) fn(win);
+  }
+}
+
+// Per-window project slices (multi-window, session-only) - semantics live in
+// window-slices.ts; main only wires window ids and the disk write.
+const windowSlices = new WindowProjectSlices();
+let bootWindowId: number | null = null;
+
+function projectStateForWindow(
+  state: ProjectCollectionState,
+  windowId: number,
+): ProjectCollectionState {
+  return windowSlices.stateForWindow(state, windowId, windowId === bootWindowId);
+}
+
+/** A window died: drop its slice and persist the shrunken union so its
+ *  projects fall out of `open` (they land back in recent; their PTYs keep
+ *  running in the detached host, same as an app restart). */
+async function releaseWindowSlices(windowId: number): Promise<void> {
+  const released = windowSlices.release(windowId);
+  if (released.length === 0 || appQuitting) return;
+  try {
+    const disk = await listProjectState();
+    const openUnion = windowSlices.openUnion();
+    const recent = [
+      ...released.filter((s) => !openUnion.includes(s)),
+      ...disk.recent.filter((s) => !released.includes(s)),
+    ];
+    await saveProjectState({ ...disk, open: openUnion, recent });
+  } catch {
+    // best effort - a failed trim only means the projects reopen on restart
+  }
+}
 
 // Triggered when a second `Aya` launch happens while we're already running
 // (the single-instance lock above redirects argv here). Focus the window and
 // forward any directory argument to the renderer.
 app.on("second-instance", (_e, argv, workingDir) => {
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
+  const target = focusedAyaWindow();
+  if (target) {
+    if (target.isMinimized()) target.restore();
+    target.focus();
   }
   const dir = findDirInArgv(argv) ?? workingDir ?? null;
-  dispatchOpenProject(mainWindow, dir);
+  dispatchOpenProject(target, dir);
 });
 
 // macOS sends open-file for `open -a Aya /path` (when invoked without --args).
 app.on("open-file", (event, filePath) => {
   event.preventDefault();
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
+  const target = focusedAyaWindow();
+  if (target) {
+    if (target.isMinimized()) target.restore();
+    target.focus();
   }
   try {
     if (statSync(filePath).isDirectory()) {
-      dispatchOpenProject(mainWindow, filePath);
+      dispatchOpenProject(target, filePath);
     }
   } catch {
     // ignore
@@ -2166,7 +2307,7 @@ app.whenReady().then(async () => {
 
   const savedState = await loadWindowState();
   mainWindow = createWindow(savedState);
-  registerIpc(mainWindow);
+  registerIpc();
   configureAutoUpdates(mainWindow);
   if (getUpdateStatus().supported) {
     setTimeout(() => {
@@ -2174,13 +2315,15 @@ app.whenReady().then(async () => {
     }, UPDATE_AUTO_CHECK_DELAY_MS);
   }
   startControlServer({
-    getWindow: () => mainWindow,
+    getWindow: () => focusedAyaWindow(),
+    getWindows: () => [...ayaWindows].filter((w) => !w.isDestroyed()),
     openProject: (directory) => {
-      if (mainWindow) {
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.focus();
+      const target = focusedAyaWindow();
+      if (target) {
+        if (target.isMinimized()) target.restore();
+        target.focus();
       }
-      dispatchOpenProject(mainWindow, directory);
+      dispatchOpenProject(target, directory);
     },
   });
   startRemoteServer({

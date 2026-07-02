@@ -10,7 +10,12 @@ import type { ControlStatusUpdate } from "./types";
 export const CONTROL_REQUEST_MAX_SIZE_BYTES = 64_000;
 
 export interface ControlServerOptions {
+  /** Target for focus/notification actions (the focused/last-focused window). */
   getWindow: () => BrowserWindow | null;
+  /** All live windows - status updates are broadcast, because the terminal
+   *  they describe may live in a window that is not focused. Each renderer
+   *  ignores updates for terminals it doesn't host. Optional for tests. */
+  getWindows?: () => BrowserWindow[];
   openProject: (directory: string) => void;
 }
 
@@ -63,15 +68,20 @@ async function handleRequest(
     return;
   }
   if (request.type === "status") {
-    if (!win || win.isDestroyed()) return;
-    win.webContents.send("control:status", {
+    const update: ControlStatusUpdate = {
       terminalId: request.terminalId,
       projectSlug: request.projectSlug,
       cwd: request.cwd,
       level: request.level,
       text: request.text,
       updatedAt: Date.now(),
-    } satisfies ControlStatusUpdate);
+    };
+    const targets = options.getWindows?.() ?? (win ? [win] : []);
+    for (const target of targets) {
+      if (!target.isDestroyed()) {
+        target.webContents.send("control:status", update);
+      }
+    }
   }
 }
 

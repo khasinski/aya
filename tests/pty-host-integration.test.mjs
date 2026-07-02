@@ -8,7 +8,7 @@
 // The PTY host derives its socket path from AYA_HOME at module load time,
 // so this test sets AYA_HOME to a fresh tmpdir BEFORE importing the client.
 // We talk through the client's public API: spawn / write / kill / search /
-// shutdown, plus the event sink injected via setWebContents.
+// shutdown, plus the event sink attached via attachWebContents (multi-window: a Set of sinks).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -55,7 +55,7 @@ function ptyEventsFor(wc, ptyId) {
 test("PtyHostClient: spawn echo then receive data and exit through the event sink", async (t) => {
   const wc = fakeWebContents();
   const client = new PtyHostClient(HOST_SCRIPT);
-  client.setWebContents(wc);
+  client.attachWebContents(wc);
   t.after(async () => {
     try {
       await client.shutdown();
@@ -93,7 +93,7 @@ test("PtyHostClient: spawn echo then receive data and exit through the event sin
 test("PtyHostClient: spawn into a missing cwd surfaces a spawn-failed event (cwd-missing)", async (t) => {
   const wc = fakeWebContents();
   const client = new PtyHostClient(HOST_SCRIPT);
-  client.setWebContents(wc);
+  client.attachWebContents(wc);
   t.after(async () => {
     try {
       await client.shutdown();
@@ -123,7 +123,7 @@ test("PtyHostClient: spawn into a missing cwd surfaces a spawn-failed event (cwd
 test("PtyHostClient: write reaches the PTY and is echoed back via the data event", async (t) => {
   const wc = fakeWebContents();
   const client = new PtyHostClient(HOST_SCRIPT);
-  client.setWebContents(wc);
+  client.attachWebContents(wc);
   t.after(async () => {
     try {
       await client.kill("cat-1");
@@ -161,7 +161,7 @@ test("PtyHostClient: write reaches the PTY and is echoed back via the data event
 test("PtyHostClient: search returns hits across living PTYs", async (t) => {
   const wc = fakeWebContents();
   const client = new PtyHostClient(HOST_SCRIPT);
-  client.setWebContents(wc);
+  client.attachWebContents(wc);
   t.after(async () => {
     try {
       await client.kill("cat-search");
@@ -203,7 +203,7 @@ test("PtyHostClient: search returns hits across living PTYs", async (t) => {
 test("PtyHostClient: shutdown drops the socket file (clean restart possible)", async (t) => {
   const wc = fakeWebContents();
   const client = new PtyHostClient(HOST_SCRIPT);
-  client.setWebContents(wc);
+  client.attachWebContents(wc);
 
   await client.spawn({
     ptyId: "ephemeral",

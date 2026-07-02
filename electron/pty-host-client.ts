@@ -31,12 +31,19 @@ export class PtyHostClient {
   private nextId = 1;
   private pending = new Map<number, PendingRequest>();
   private buffer = "";
-  private webContents: WebContents | null = null;
+  // All live Aya windows' webContents. PTY events are broadcast to every
+  // window; each renderer's event bus routes by ptyId, so a window that
+  // doesn't host the terminal does a single cheap no-op per event.
+  private readonly sinks = new Set<WebContents>();
 
   constructor(private readonly hostScript: string) {}
 
-  setWebContents(webContents: WebContents): void {
-    this.webContents = webContents;
+  attachWebContents(webContents: WebContents): void {
+    this.sinks.add(webContents);
+  }
+
+  detachWebContents(webContents: WebContents): void {
+    this.sinks.delete(webContents);
   }
 
   async spawn(req: SpawnRequest): Promise<void> {
@@ -219,8 +226,12 @@ export class PtyHostClient {
         continue;
       }
       if ("type" in message && message.type === "event") {
-        if (this.webContents && !this.webContents.isDestroyed()) {
-          this.webContents.send("pty:event", message.event);
+        for (const wc of this.sinks) {
+          if (wc.isDestroyed()) {
+            this.sinks.delete(wc);
+            continue;
+          }
+          wc.send("pty:event", message.event);
         }
         continue;
       }
