@@ -96,3 +96,25 @@ test("looksBusy ignores ANSI noise when judging length", () => {
     "hi";
   assert.equal(looksBusy(ansiHeavy), false);
 });
+
+// --- single-entry memo (hot-path) ---------------------------------------------
+// stripAnsi/detectApproval memoize the last chunk (the reducer and the timeline
+// handler analyze the same chunk back-to-back). The memo must be transparent:
+// repeated and interleaved calls return exactly what fresh calls would.
+
+test("memo: repeated and interleaved chunks keep pure-function semantics", () => {
+  const approval = "\x1b[1mDo you want to proceed?\x1b[0m ❯ 1. Yes";
+  const plain = "just some build output that is long enough ".repeat(3);
+  // Repeated same-chunk calls (memo hit) match the first (memo miss).
+  assert.equal(detectApproval(approval), true);
+  assert.equal(detectApproval(approval), true);
+  assert.equal(looksBusy(plain), true);
+  assert.equal(looksBusy(plain), true);
+  // Interleaving different chunks invalidates the single-entry memo correctly.
+  assert.equal(detectApproval(plain), false);
+  assert.equal(detectApproval(approval), true);
+  assert.equal(looksBusy("$ "), false);
+  assert.equal(looksBusy(plain), true);
+  // Same content, different string instance (no reference identity) still works.
+  assert.equal(detectApproval(approval.split("").join("")), true);
+});
