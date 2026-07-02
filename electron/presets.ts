@@ -134,13 +134,37 @@ const SHELL_PRESET: Preset = {
   command: "$SHELL",
 };
 
+// Parsed presets keyed by the file's mtime. Both usage handlers call
+// listPresets on every 30s poll, so steady state should cost one stat instead
+// of a read+parse. Gating on mtime (rather than invalidating in savePresets)
+// also picks up hand-edits to presets.json.
+let presetsCache: { mtimeMs: number; presets: Preset[] } | null = null;
+
+/** Test hook: forget the cached presets.json parse. */
+export function resetPresetsCache(): void {
+  presetsCache = null;
+}
+
 export async function listPresets(): Promise<Preset[]> {
+  let mtimeMs: number | null = null;
+  try {
+    mtimeMs = (await fs.stat(PRESETS_FILE)).mtimeMs;
+  } catch {
+    // Missing/unreadable — fall through so the read path below handles it
+    // (ENOENT seeds the first-launch presets).
+    presetsCache = null;
+  }
+  if (mtimeMs !== null && presetsCache?.mtimeMs === mtimeMs) {
+    // Copy so a caller mutating the array can't poison later polls.
+    return [...presetsCache.presets];
+  }
   try {
     const raw = await fs.readFile(PRESETS_FILE, "utf-8");
     const data = JSON.parse(raw);
-    if (!Array.isArray(data?.presets)) return [...DEFAULT_PRESETS];
-    const ok = data.presets.filter(isPreset);
-    return ok.length > 0 ? ok : [...DEFAULT_PRESETS];
+    const ok = Array.isArray(data?.presets) ? data.presets.filter(isPreset) : [];
+    const presets: Preset[] = ok.length > 0 ? ok : [...DEFAULT_PRESETS];
+    if (mtimeMs !== null) presetsCache = { mtimeMs, presets };
+    return [...presets];
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       // First launch — scan PATH for installed harnesses and seed only
@@ -172,4 +196,7 @@ export async function savePresets(presets: Preset[]): Promise<void> {
     PRESETS_FILE,
     JSON.stringify({ presets: sanitized }, null, 2) + "\n",
   );
+  // The new mtime would invalidate the cache anyway, but dropping it here
+  // guards against sub-millisecond mtime collisions on rapid saves.
+  presetsCache = null;
 }
