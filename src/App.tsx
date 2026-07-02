@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { detectApproval } from "./bell";
 import { commandWithAutoResume } from "./agentPreset";
 import { projectBaseCwd, tabFromTerminal } from "./worktree";
@@ -2833,12 +2833,20 @@ export function App() {
     activeProject?.remote && activeProjectId
       ? (remotePresetsByProject[activeProjectId] ?? presets)
       : presets;
-  const openProjectSlugs = new Set(projects.map((p) => p.slug));
-  const closedProjects = allProjects.filter(
-    (p) => !openProjectSlugs.has(p.slug),
-  );
-  const projectTerminals: TerminalState[] = Object.values(terminals).filter(
-    (t) => activeProjectId && t.projectSlug === activeProjectId,
+  // The derived collections below are memoized: App re-renders on every poll
+  // tick and PTY status flip, and rebuilding these arrays/Sets/records each time
+  // both wastes O(terminals) work several times over AND hands children fresh
+  // object identities, which would defeat React.memo on them.
+  const closedProjects = useMemo(() => {
+    const openProjectSlugs = new Set(projects.map((p) => p.slug));
+    return allProjects.filter((p) => !openProjectSlugs.has(p.slug));
+  }, [projects, allProjects]);
+  const projectTerminals: TerminalState[] = useMemo(
+    () =>
+      Object.values(terminals).filter(
+        (t) => activeProjectId && t.projectSlug === activeProjectId,
+      ),
+    [terminals, activeProjectId],
   );
   const activeTabId = activeProjectId
     ? (activeTabByProject[activeProjectId] ?? null)
@@ -2880,23 +2888,29 @@ export function App() {
   // body shows a single terminal, and disable the split actions. The project's
   // stored splitLayout is left untouched, so switching back to the classic
   // layout restores it. (splitEnabled is defined up near the refs above.)
-  const savedSplitLayout =
-    splitEnabled && activeProject && activeProjectId
-      ? normalizeSplitLayoutForTabs(
-          activeProject.splitLayout,
-          activeProject.tabs,
-          activeTabId,
-        )
-      : null;
+  const savedSplitLayout = useMemo(
+    () =>
+      splitEnabled && activeProject && activeProjectId
+        ? normalizeSplitLayoutForTabs(
+            activeProject.splitLayout,
+            activeProject.tabs,
+            activeTabId,
+          )
+        : null,
+    [splitEnabled, activeProject, activeProjectId, activeTabId],
+  );
   const singleViewTerminalId =
     activeProjectId && singleViewByProject[activeProjectId] && terminals[singleViewByProject[activeProjectId]!]
       ? singleViewByProject[activeProjectId]
       : null;
-  const splitLayout =
-    savedSplitLayout && singleViewTerminalId
-      ? singleTerminalLayout(singleViewTerminalId)
-      : (savedSplitLayout ??
-          (activeTabId ? singleTerminalLayout(activeTabId) : null));
+  const splitLayout = useMemo(
+    () =>
+      savedSplitLayout && singleViewTerminalId
+        ? singleTerminalLayout(singleViewTerminalId)
+        : (savedSplitLayout ??
+            (activeTabId ? singleTerminalLayout(activeTabId) : null)),
+    [savedSplitLayout, singleViewTerminalId, activeTabId],
+  );
   const isSplit =
     !!splitLayout &&
     !singleViewTerminalId &&
@@ -2904,12 +2918,15 @@ export function App() {
     (splitLayout.rows > 1 ||
       splitLayout.cols > 1 ||
       splitLayout.cells.filter(Boolean).length > 1);
-  const splitAssignments: Record<string, number> = {};
-  if (savedSplitLayout && activeProject?.splitLayout) {
-    savedSplitLayout.cells.forEach((terminalId, index) => {
-      if (terminalId) splitAssignments[terminalId] = index;
-    });
-  }
+  const splitAssignments: Record<string, number> = useMemo(() => {
+    const out: Record<string, number> = {};
+    if (savedSplitLayout && activeProject?.splitLayout) {
+      savedSplitLayout.cells.forEach((terminalId, index) => {
+        if (terminalId) out[terminalId] = index;
+      });
+    }
+    return out;
+  }, [savedSplitLayout, activeProject]);
   const splitActionLayout = savedSplitLayout ?? splitLayout;
   const canSplitRight =
     splitEnabled && splitActionLayout
@@ -2939,26 +2956,15 @@ export function App() {
     };
   }, [activeProject, activeProjectId, remotePresetsByProject]);
 
-  const visibleTerminalIds = splitLayout
-    ? splitLayout.cells.filter((id): id is string => !!id && !!terminals[id])
-    : activeTabId
-      ? [activeTabId]
-      : [];
-  const visibleTerminalIdSet = new Set(visibleTerminalIds);
-  const mountedTerminalIdSet = new Set(visibleTerminalIds);
-  const warmProjectSlugSet = new Set(warmProjectSlugs);
-  for (const terminal of projectTerminals) {
-    mountedTerminalIdSet.add(terminal.id);
-  }
-  for (const terminal of Object.values(terminals)) {
-    if (warmProjectSlugSet.has(terminal.projectSlug)) {
-      mountedTerminalIdSet.add(terminal.id);
-    }
-  }
-  for (const project of projects) {
-    const terminalId = activeTabByProject[project.slug] ?? project.tabs[0]?.id;
-    if (terminalId) mountedTerminalIdSet.add(terminalId);
-  }
+  const visibleTerminalIds = useMemo(
+    () =>
+      splitLayout
+        ? splitLayout.cells.filter((id): id is string => !!id && !!terminals[id])
+        : activeTabId
+          ? [activeTabId]
+          : [],
+    [splitLayout, activeTabId, terminals],
+  );
   // spawnDeferred tabs (added by an external config edit, #4) stay out of the
   // hidden pool: a hidden TerminalView mounts an xterm and spawns the PTY,
   // and those tabs must not get a process until first activated.
@@ -2967,15 +2973,43 @@ export function App() {
   // terminal for each other open project. That preserves fast project switches
   // in the common working set without mounting every terminal in every project
   // as hidden xterm DOM/WebGL state.
-  const hiddenTerminals = Object.values(terminals).filter(
-    (terminal) =>
-      mountedTerminalIdSet.has(terminal.id) &&
-      !visibleTerminalIdSet.has(terminal.id) &&
-      !terminal.spawnDeferred,
-  );
-  const assignableProjectTerminals = projectTerminals.filter(
-    (terminal) => !visibleTerminalIdSet.has(terminal.id),
-  );
+  const { hiddenTerminals, assignableProjectTerminals } =
+    useMemo(() => {
+      const visibleSet = new Set(visibleTerminalIds);
+      const mountedSet = new Set(visibleTerminalIds);
+      const warmProjectSlugSet = new Set(warmProjectSlugs);
+      for (const terminal of projectTerminals) {
+        mountedSet.add(terminal.id);
+      }
+      for (const terminal of Object.values(terminals)) {
+        if (warmProjectSlugSet.has(terminal.projectSlug)) {
+          mountedSet.add(terminal.id);
+        }
+      }
+      for (const project of projects) {
+        const terminalId =
+          activeTabByProject[project.slug] ?? project.tabs[0]?.id;
+        if (terminalId) mountedSet.add(terminalId);
+      }
+      return {
+        hiddenTerminals: Object.values(terminals).filter(
+          (terminal) =>
+            mountedSet.has(terminal.id) &&
+            !visibleSet.has(terminal.id) &&
+            !terminal.spawnDeferred,
+        ),
+        assignableProjectTerminals: projectTerminals.filter(
+          (terminal) => !visibleSet.has(terminal.id),
+        ),
+      };
+    }, [
+      visibleTerminalIds,
+      warmProjectSlugs,
+      projectTerminals,
+      terminals,
+      projects,
+      activeTabByProject,
+    ]);
 
   // The first time a deferred tab becomes visible (sidebar activation or
   // split assignment), drop the flag - from then on it mounts and spawns like
@@ -2994,60 +3028,65 @@ export function App() {
     });
   }, [visibleTerminalsKey]);
 
-  const projectBadges: Record<
-    string,
-    { count: number; level: ProjectBadgeLevel }
-  > = {};
-  const severityRank = { active: 0, done: 1, waiting: 2, error: 3 } as const;
-  const addProjectBadge = (projectSlug: string, level: ProjectBadgeLevel) => {
-    const current = projectBadges[projectSlug];
-    projectBadges[projectSlug] = {
-      count: (current?.count ?? 0) + 1,
-      level:
-        !current || severityRank[level] > severityRank[current.level]
-          ? level
-          : current.level,
-    };
-  };
-  for (const t of Object.values(terminals)) {
-    let level: ProjectBadgeLevel | null = null;
-    if (
-      t.status === "error" ||
-      t.externalStatus?.level === "error" ||
-      t.spawnFailure
-    ) {
-      level = "error";
-    } else if (
-      t.bell ||
-      t.status === "waiting" ||
-      t.externalStatus?.level === "waiting"
-    ) {
-      level = "waiting";
-    } else if (
-      t.externalStatus?.level === "done" ||
-      (t.status === "idle" && t.exitCode === 0 && t.presetId !== "shell")
-    ) {
-      level = "done";
-    } else if (t.externalStatus?.level === "active") {
-      level = "active";
-    }
-    if (!level) continue;
-    addProjectBadge(t.projectSlug, level);
-  }
-  const monitoredSessionsByProject: Record<string, MonitoredSession[]> = {};
-  for (const session of monitoredSessions) {
-    const projectSlug = findProjectSlugForSession(session, projects);
-    if (!projectSlug) continue;
-    addProjectBadge(projectSlug, session.level);
-    monitoredSessionsByProject[projectSlug] = [
-      ...(monitoredSessionsByProject[projectSlug] ?? []),
-      session,
-    ];
-  }
-  const attentionCount = Object.values(projectBadges).reduce(
-    (sum, badge) => sum + (badge.level === "active" ? 0 : badge.count),
-    0,
-  );
+  const { projectBadges, monitoredSessionsByProject, attentionCount } =
+    useMemo(() => {
+      const badges: Record<string, { count: number; level: ProjectBadgeLevel }> =
+        {};
+      const severityRank = { active: 0, done: 1, waiting: 2, error: 3 } as const;
+      const addProjectBadge = (
+        projectSlug: string,
+        level: ProjectBadgeLevel,
+      ) => {
+        const current = badges[projectSlug];
+        badges[projectSlug] = {
+          count: (current?.count ?? 0) + 1,
+          level:
+            !current || severityRank[level] > severityRank[current.level]
+              ? level
+              : current.level,
+        };
+      };
+      for (const t of Object.values(terminals)) {
+        let level: ProjectBadgeLevel | null = null;
+        if (
+          t.status === "error" ||
+          t.externalStatus?.level === "error" ||
+          t.spawnFailure
+        ) {
+          level = "error";
+        } else if (
+          t.bell ||
+          t.status === "waiting" ||
+          t.externalStatus?.level === "waiting"
+        ) {
+          level = "waiting";
+        } else if (
+          t.externalStatus?.level === "done" ||
+          (t.status === "idle" && t.exitCode === 0 && t.presetId !== "shell")
+        ) {
+          level = "done";
+        } else if (t.externalStatus?.level === "active") {
+          level = "active";
+        }
+        if (!level) continue;
+        addProjectBadge(t.projectSlug, level);
+      }
+      const byProject: Record<string, MonitoredSession[]> = {};
+      for (const session of monitoredSessions) {
+        const projectSlug = findProjectSlugForSession(session, projects);
+        if (!projectSlug) continue;
+        addProjectBadge(projectSlug, session.level);
+        byProject[projectSlug] = [...(byProject[projectSlug] ?? []), session];
+      }
+      return {
+        projectBadges: badges,
+        monitoredSessionsByProject: byProject,
+        attentionCount: Object.values(badges).reduce(
+          (sum, badge) => sum + (badge.level === "active" ? 0 : badge.count),
+          0,
+        ),
+      };
+    }, [terminals, monitoredSessions, projects]);
 
   const focusTerminal = useCallback(
     (slug: string, terminalId: string) => {
