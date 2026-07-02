@@ -24,7 +24,7 @@ import { AYA_HOME, PROJECTS_DIR } from "./paths";
 import type { ConfigSlice } from "./types";
 
 // A single save can fire a burst of file events, wait a moment so it becomes one reload.
-const WATCH_DEBOUNCE_MS = 200;
+export const WATCH_DEBOUNCE_MS = 200;
 // fs.watch directory events are not equally reliable across macOS/libuv
 // versions, especially in temp-like locations. Keep a scoped polling fallback
 // so manual config edits still reload even if the native directory watcher is

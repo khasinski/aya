@@ -4,6 +4,7 @@
 // the repair path (Settings -> Reinstall) instead of sh's cryptic
 // "No such file or directory".
 
+import { COMMAND_NOT_FOUND_EXIT_CODE } from "../dist-electron/constants.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -49,7 +50,7 @@ test("when nothing resolves, the shim names the repair path and exits 127", () =
   const s = renderCliShim(PRIMARY, FALLBACK);
   assert.ok(s.includes("Settings"));
   assert.ok(s.toLowerCase().includes("reinstall"));
-  assert.ok(s.includes("exit 127"));
+  assert.ok(s.includes(`exit ${COMMAND_NOT_FOUND_EXIT_CODE}`));
 });
 
 test("parseShimTargets round-trips the generated shim", () => {

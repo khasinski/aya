@@ -118,6 +118,8 @@ const AYA_INTELLIGENCE_STORAGE_KEY = "aya:intelligence";
 const WARM_PROJECT_TERMINAL_CACHE_SIZE = 4;
 const LOCAL_SUMMARY_REFRESH_MS = 30 * 60 * 1000;
 const LOCAL_SUMMARY_DEBOUNCE_MS = 10_000;
+// Debounce for the single project-state disk writer (the #18 race fix).
+const PROJECT_STATE_SAVE_DEBOUNCE_MS = 150;
 const LOCAL_SUMMARY_MIN_UPDATE_MS = 2 * 60 * 1000;
 const LOCAL_SUMMARY_MIN_NEW_LINES = 8;
 const LOCAL_SUMMARY_MAX_LINES = 30;
@@ -1283,7 +1285,7 @@ export function App() {
         activeTab: compactRecord(activeTabByProject),
         singleView: compactRecord(singleViewByProject),
       });
-    }, 150);
+    }, PROJECT_STATE_SAVE_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
   }, [
     didBootstrap,

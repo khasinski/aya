@@ -18,6 +18,15 @@ import {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Real-timer margins anchored to the production grace window so a retuned
+// KILL_ESCALATE_MS moves them automatically. Values preserved from the
+// hand-tuned originals (250 / 1000 / 700); slack is deliberate CI headroom.
+const TRAP_INSTALL_MS = 150;
+const SPAWN_SETTLE_MS = 100;
+const GRACEFUL_EXIT_SETTLE_MS = 300;
+const PRE_ESCALATION_PROBE_MS = KILL_ESCALATE_MS - 500; // after graceful kill, before SIGKILL
+const POST_ESCALATION_TOTAL_MS = KILL_ESCALATE_MS + 250; // safely past the deadline
+
 test("terminatePtyChild sends the default kill, then escalates to SIGKILL", () => {
   const signals = [];
   const fake = { kill: (s) => signals.push(s ?? "default") };
@@ -63,7 +72,7 @@ test("a SIGHUP-ignoring process survives the graceful kill but the escalation ki
   child.on("exit", () => {
     exited = true;
   });
-  await sleep(150); // let the trap install
+  await sleep(TRAP_INSTALL_MS); // let the trap install
 
   // Map the IPty-shaped kill(signal) onto the real process, recording signals so
   // we prove the graceful kill was actually SENT (not merely that the process
@@ -82,11 +91,11 @@ test("a SIGHUP-ignoring process survives the graceful kill but the escalation ki
   };
   terminatePtyChild(handle); // real setTimeout escalation
 
-  await sleep(250); // past the graceful kill, before escalation
+  await sleep(PRE_ESCALATION_PROBE_MS); // past the graceful kill, before escalation
   assert.deepEqual(signals, ["SIGHUP"], "the graceful signal was actually sent");
   assert.equal(exited, false, "SIGHUP-ignoring process must survive the graceful kill");
 
-  await sleep(1000); // past KILL_ESCALATE_MS -> SIGKILL delivered
+  await sleep(POST_ESCALATION_TOTAL_MS); // past KILL_ESCALATE_MS -> SIGKILL delivered
   assert.deepEqual(signals, ["SIGHUP", "SIGKILL"], "escalation followed with SIGKILL");
   assert.equal(exited, true, "the SIGKILL escalation must terminate the stuck process");
 });
@@ -99,7 +108,7 @@ test("a normal process exits on the graceful signal; escalation is a harmless no
   child.on("exit", () => {
     exited = true;
   });
-  await sleep(100);
+  await sleep(SPAWN_SETTLE_MS);
   // The handle does NOT swallow - so the escalation's SIGKILL on the by-then
   // dead pid throws ESRCH straight into terminatePtyChild's own try/catch. If
   // that catch regressed, the throw would escape the real setTimeout callback
@@ -109,9 +118,9 @@ test("a normal process exits on the graceful signal; escalation is a harmless no
     kill: (sig) => process.kill(child.pid, sig ?? "SIGHUP"),
   };
   assert.doesNotThrow(() => terminatePtyChild(handle));
-  await sleep(300); // graceful SIGHUP kills a non-trapping process quickly
+  await sleep(GRACEFUL_EXIT_SETTLE_MS); // graceful SIGHUP kills a non-trapping process quickly
   assert.equal(exited, true, "a non-trapping process dies on the graceful signal");
-  await sleep(700); // escalation fires on the already-dead pid -> must not crash
+  await sleep(POST_ESCALATION_TOTAL_MS - GRACEFUL_EXIT_SETTLE_MS); // total wait passes the deadline -> must not crash
 });
 
 // Edge: terminating an already-exited process throws nothing (both signals hit a

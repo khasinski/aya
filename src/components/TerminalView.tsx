@@ -49,6 +49,12 @@ const RENDER_REPAIR_DELAY_MS = 80;
 const FOCUS_RETRY_DELAY_MS = 60;
 // How long to keep showing "Restoring sessions…" before assuming the replay
 // arrived (or there was nothing to replay).
+// ASCII range/offset for the Ctrl+<letter> -> control-byte mapping below:
+// 'a'(97)..'z'(122) minus 96 yields 0x01..0x1A.
+const ASCII_LOWER_A = 97;
+const ASCII_LOWER_Z = 122;
+const CTRL_BYTE_OFFSET = 96;
+
 const RESTORE_FALLBACK_MS = 2_500;
 const INPUT_LOG_MAX_CHARS = 240;
 const URL_IN_TEXT_RE = /https?:\/\/[^\s<>"'`]+/i;
@@ -638,10 +644,10 @@ function TerminalViewComponent({
         ev.key.length === 1
       ) {
         const code = ev.key.toLowerCase().charCodeAt(0);
-        if (code >= 97 && code <= 122) {
+        if (code >= ASCII_LOWER_A && code <= ASCII_LOWER_Z) {
           // a–z → control byte 0x01–0x1A
           ev.preventDefault();
-          const ctrlByte = String.fromCharCode(code - 96);
+          const ctrlByte = String.fromCharCode(code - CTRL_BYTE_OFFSET);
           void window.aya.ptyWrite(terminal.id, ctrlByte);
           return false;
         }

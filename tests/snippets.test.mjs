@@ -86,7 +86,7 @@ test("normalizeSnippets enforces the cap", () => {
     id: `c${i}`,
     text: `cmd ${i}`,
   }));
-  assert.equal(normalizeSnippets(many).length, 200);
+  assert.equal(normalizeSnippets(many).length, SNIPPETS_MAX);
   assert.equal(normalizeSnippets(many, 3).length, 3);
 });
 

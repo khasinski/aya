@@ -1,3 +1,6 @@
+// One viewport definition - the clip clamps below must never exceed it.
+const VIEWPORT = { width: 1440, height: 920 };
+
 const { _electron: electron } = require("@playwright/test");
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
@@ -144,8 +147,8 @@ async function screenshotUnion(page, locators, out, padding = 18) {
   if (boxes.length === 0) throw new Error(`No boxes for ${out}`);
   const left = Math.max(0, Math.min(...boxes.map((b) => b.x)) - padding);
   const top = Math.max(0, Math.min(...boxes.map((b) => b.y)) - padding);
-  const right = Math.min(1440, Math.max(...boxes.map((b) => b.x + b.width)) + padding);
-  const bottom = Math.min(920, Math.max(...boxes.map((b) => b.y + b.height)) + padding);
+  const right = Math.min(VIEWPORT.width, Math.max(...boxes.map((b) => b.x + b.width)) + padding);
+  const bottom = Math.min(VIEWPORT.height, Math.max(...boxes.map((b) => b.y + b.height)) + padding);
   await page.screenshot({
     path: out,
     clip: { x: left, y: top, width: right - left, height: bottom - top },
@@ -174,7 +177,7 @@ async function main() {
 
   try {
     const page = await app.firstWindow();
-    await page.setViewportSize({ width: 1440, height: 920 });
+    await page.setViewportSize(VIEWPORT);
     await page.waitForLoadState("domcontentloaded");
     await waitForApp(page);
     await setDarkTheme(page);

@@ -66,6 +66,10 @@ export function isHostArgv(command: string): boolean {
 // process table can't stall startup. Anything past the cap is logged, not
 // silently dropped (it gets another chance next launch).
 export const MAX_ORPHAN_PROBES = 64;
+// Output caps for the ps probes: the full process table can be large (many
+// processes x long commands); a single env-laden process is much smaller.
+export const PS_SNAPSHOT_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
+export const PS_ENV_PROBE_MAX_BUFFER_BYTES = 4 * 1024 * 1024;
 
 /** The AYA "scope" (config home) a process runs under, parsed from its env
  *  dump: explicit AYA_HOME= wins; else AYA_DEV=1 implies ~/.aya-dev; else the
@@ -277,7 +281,7 @@ export function readSnapshot(): ProcRow[] {
     const out = execFileSync("ps", ["-Axo", "uid=,pid=,ppid=,pgid=,command="], {
       encoding: "utf8",
       env: PS_ENV,
-      maxBuffer: 16 * 1024 * 1024,
+      maxBuffer: PS_SNAPSHOT_MAX_BUFFER_BYTES,
     });
     return parseSnapshot(out);
   } catch {
@@ -308,7 +312,7 @@ export function readEnvProbe(pid: number): EnvProbe | null {
     const out = execFileSync("ps", ["eww", "-p", String(pid), "-o", "pgid=,command="], {
       encoding: "utf8",
       env: PS_ENV,
-      maxBuffer: 4 * 1024 * 1024,
+      maxBuffer: PS_ENV_PROBE_MAX_BUFFER_BYTES,
     }).trim();
     const m = out.match(/^\s*(\d+)\s+(.+)$/s);
     if (!m) return null;

@@ -1,3 +1,4 @@
+import { RECENT_MENU_WIDTH_PX } from "../ui-constants";
 import { useEffect, useRef, useState } from "react";
 import type { UsageAccount, UsageData, UsageWindow } from "../types";
 
@@ -204,7 +205,7 @@ export function UsageChip({
         </span>
       </button>
       {open && (
-        <div className="aya-recent-menu" role="menu" style={{ width: 280, padding: 12 }}>
+        <div className="aya-recent-menu" role="menu" style={{ width: RECENT_MENU_WIDTH_PX, padding: 12 }}>
           <div className="aya-recent-menu-title">{label} — account-wide</div>
           <div style={{ color: CHIP_MUTED_COLOR, fontSize: 12, marginBottom: 10 }}>
             {accountText}, all sessions, not this project

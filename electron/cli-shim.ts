@@ -6,6 +6,7 @@
 // at the repair path; parseShimTargets lets cliStatus() detect a dead shim
 // and surface "Reinstall" in Settings.
 
+import { COMMAND_NOT_FOUND_EXIT_CODE } from "./constants";
 import * as path from "node:path";
 
 // Marker baked into every shim we generate; parseShimTargets refuses to parse
@@ -42,7 +43,7 @@ export function renderCliShim(
   lines.push(
     'if [ ! -x "$AYA_CLI" ]; then',
     '  echo "aya: cannot find Aya.app (moved or renamed?). Open Aya -> Settings -> aya command-line tool -> Reinstall." >&2',
-    "  exit 127",
+    `  exit ${COMMAND_NOT_FOUND_EXIT_CODE}`,
     "fi",
     'exec "$AYA_CLI" "$@"',
     "",

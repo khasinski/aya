@@ -12,6 +12,8 @@ import type {
 import type { RemoteMessage } from "./remote-protocol";
 
 const REQUEST_TIMEOUT_MS = 15_000;
+// Cap on the base64 bridge child's stdout - bounds the remote snapshot size.
+const REMOTE_BRIDGE_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
 const REMOTE_NODE_BRIDGE = `
 const net = require("node:net");
 const id = process.argv[1];
@@ -207,7 +209,7 @@ function runRemoteRequest(
       {
         encoding: "utf8",
         timeout: REQUEST_TIMEOUT_MS,
-        maxBuffer: 10 * 1024 * 1024,
+        maxBuffer: REMOTE_BRIDGE_MAX_BUFFER_BYTES,
       },
       (err, stdout, stderr) => {
         let matchedError: Error | null = null;
