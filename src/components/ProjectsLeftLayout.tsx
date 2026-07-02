@@ -3,7 +3,7 @@ import {
   MENU_VIEWPORT_EDGE_PX,
   MENU_ANCHOR_GAP_PX,
 } from "../ui-constants";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
 import {
   getPreset,
@@ -87,7 +87,7 @@ function compactDir(directory: string, home: string): string {
 /** Alternative window layout: project tabs in a left rail, terminal tabs along
  *  the top. Fully self-contained — App picks between this and the classic
  *  layout with a single switch. */
-export function ProjectsLeftLayout({
+function ProjectsLeftLayoutImpl({
   projects,
   closedProjects,
   activeProjectId,
@@ -737,3 +737,8 @@ export function ProjectsLeftLayout({
     </>
   );
 }
+
+/** Memoized: App re-renders on every poll tick / terminal status flip; with
+ *  the derived props memoized in App (R1) and the handlers useCallback'd,
+ *  the shallow compare lets the chrome skip those renders entirely. */
+export const ProjectsLeftLayout = memo(ProjectsLeftLayoutImpl);

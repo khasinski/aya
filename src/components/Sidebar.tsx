@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
   getPreset,
   type Preset,
@@ -52,7 +52,7 @@ function BellIcon() {
   return <span className="aya-bell aya-bell--alert" />;
 }
 
-export function Sidebar({
+function SidebarImpl({
   terminals,
   activeId,
   sidebarWidth,
@@ -434,3 +434,8 @@ export function Sidebar({
     </aside>
   );
 }
+
+/** Memoized: App re-renders on every poll tick / terminal status flip; with
+ *  the derived props memoized in App (R1) and the handlers useCallback'd,
+ *  the shallow compare lets the chrome skip those renders entirely. */
+export const Sidebar = memo(SidebarImpl);

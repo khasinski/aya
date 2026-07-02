@@ -56,6 +56,7 @@ import {
   presetSlug,
   type ProjectCollectionState,
   type ProjectConfig,
+  type ProjectGitInfo,
   type RemoteProjectCreateResult,
   type SplitLayout,
   type TerminalState,
@@ -378,6 +379,28 @@ function findProject(
 function basename(p: string): string {
   const parts = p.replace(/\/+$/, "").split("/");
   return parts[parts.length - 1] || "project";
+}
+
+/** Keep the previous poll-state reference when the fresh result is
+ *  value-identical. The polls (git 3s, sessions 5s, usage 30s) hand back fresh
+ *  objects every tick; without this every tick re-renders App AND breaks
+ *  React.memo on the chrome components by changing prop identities. Poll
+ *  payloads are small, so a JSON compare is cheap. */
+function samePollPayload<T>(prev: T, next: T): boolean {
+  return JSON.stringify(prev) === JSON.stringify(next);
+}
+
+/** setGit updater that no-ops (same reference back) when the slug's git info
+ *  is unchanged — the common case for the 3s status-bar poll. */
+function mergeGitInfo(
+  g: Record<string, ProjectGitInfo>,
+  slug: string,
+  info: ProjectGitInfo,
+): Record<string, ProjectGitInfo> {
+  const cur = g[slug];
+  return cur && cur.branch === info.branch && cur.dirty === info.dirty
+    ? g
+    : { ...g, [slug]: info };
 }
 
 function shellQuote(s: string): string {
@@ -762,12 +785,12 @@ export function App() {
       );
       if (!project || cancelled) return;
       if (project.remote) {
-        setGit((g) => ({ ...g, [project.slug]: { branch: null, dirty: 0 } }));
+        setGit((g) => mergeGitInfo(g, project.slug, { branch: null, dirty: 0 }));
         return;
       }
       void window.aya.getGitInfo(project.directory).then((info) => {
         if (cancelled) return;
-        setGit((g) => ({ ...g, [project.slug]: info }));
+        setGit((g) => mergeGitInfo(g, project.slug, info));
       });
     };
     const stop = pollVisible(refresh, GIT_STATUS_POLL_INTERVAL_MS);
@@ -805,10 +828,16 @@ export function App() {
     let cancelled = false;
     const refresh = () => {
       void window.aya.getUsage().then((u) => {
-        if (!cancelled) setUsageAccounts(u);
+        if (!cancelled) {
+          setUsageAccounts((prev) => (samePollPayload(prev, u) ? prev : u));
+        }
       });
       void window.aya.getCodexUsage().then((u) => {
-        if (!cancelled) setCodexUsageAccounts(u);
+        if (!cancelled) {
+          setCodexUsageAccounts((prev) =>
+            samePollPayload(prev, u) ? prev : u,
+          );
+        }
       });
     };
     const stop = pollVisible(refresh, USAGE_POLL_INTERVAL_MS);
@@ -822,7 +851,11 @@ export function App() {
     let cancelled = false;
     const refresh = () => {
       void window.aya.listMonitoredSessions().then((sessions) => {
-        if (!cancelled) setMonitoredSessions(sessions);
+        if (!cancelled) {
+          setMonitoredSessions((prev) =>
+            samePollPayload(prev, sessions) ? prev : sessions,
+          );
+        }
       });
     };
     const stop = pollVisible(refresh, SESSION_MONITOR_POLL_INTERVAL_MS);
@@ -1489,7 +1522,7 @@ export function App() {
       for (const p of openProjects) {
         if (!p.remote && dirChecks[openProjects.indexOf(p)]) {
           void window.aya.getGitInfo(p.directory).then((info) => {
-            setGit((g) => ({ ...g, [p.slug]: info }));
+            setGit((g) => mergeGitInfo(g, p.slug, info));
           });
         }
       }
@@ -2449,7 +2482,7 @@ export function App() {
       });
 
       if (project.remote) {
-        setGit((g) => ({ ...g, [project.slug]: { branch: null, dirty: 0 } }));
+        setGit((g) => mergeGitInfo(g, project.slug, { branch: null, dirty: 0 }));
         hydrateProjectTerminals(project, project.remote.directory);
         void window.aya
           .listRemotePresets(project.remote.sshTarget)
@@ -2466,7 +2499,7 @@ export function App() {
       if (exists) {
         hydrateProjectTerminals(project, project.directory);
         void window.aya.getGitInfo(project.directory).then((info) => {
-          setGit((g) => ({ ...g, [project.slug]: info }));
+          setGit((g) => mergeGitInfo(g, project.slug, info));
         });
       } else {
         setMissingDirQueue((prev) => [
@@ -2522,7 +2555,7 @@ export function App() {
         }));
         setActiveProjectId(withTabs.slug);
         void window.aya.getGitInfo(withTabs.directory).then((info) =>
-          setGit((g) => ({ ...g, [withTabs.slug]: info })),
+          setGit((g) => mergeGitInfo(g, withTabs.slug, info)),
         );
         setNewProjectModal(null);
       } catch (err) {
@@ -2568,7 +2601,7 @@ export function App() {
             ...projectStateRef.current.recent,
           ]),
         });
-        setGit((g) => ({ ...g, [localProject.slug]: { branch: null, dirty: 0 } }));
+        setGit((g) => mergeGitInfo(g, localProject.slug, { branch: null, dirty: 0 }));
         setRemotePresetsByProject((prev) => ({
           ...prev,
           [localProject.slug]: result.presets,
@@ -2806,7 +2839,7 @@ export function App() {
     if (project) {
       hydrateProjectTerminals(project, project.directory);
       void window.aya.getGitInfo(project.directory).then((info) => {
-        setGit((g) => ({ ...g, [project.slug]: info }));
+        setGit((g) => mergeGitInfo(g, project.slug, info));
       });
     }
     dequeueMissingDir();
@@ -3087,6 +3120,60 @@ export function App() {
         ),
       };
     }, [terminals, monitoredSessions, projects]);
+
+  // Stable handlers for the chrome components (TopBar / Sidebar /
+  // ProjectsLeftLayout / StatusBar). These were inline arrows at the call
+  // sites, which hands the memoized children a fresh prop identity on every
+  // App render and defeats their React.memo.
+  const openProjectBySlug = useCallback(
+    (slug: string) => {
+      const project = allProjects.find((p) => p.slug === slug);
+      if (project) void openKnownProject(project);
+    },
+    [allProjects, openKnownProject],
+  );
+  const openSearch = useCallback(() => setShowSearch(true), []);
+  const minimizeWindow = useCallback(
+    () => void window.aya.minimizeWindow(),
+    [],
+  );
+  const toggleMaximizeWindow = useCallback(
+    () => void window.aya.toggleMaximizeWindow(),
+    [],
+  );
+  const toggleFullScreenWindow = useCallback(
+    () => void window.aya.setFullScreen(!isFullScreen),
+    [isFullScreen],
+  );
+  const closeWindow = useCallback(() => void window.aya.closeWindow(), []);
+  const reorderActiveProjectTerminals = useCallback(
+    (orderedIds: string[]) => {
+      const slug = activeProjectIdRef.current;
+      if (slug) reorderTerminalsInProject(slug, orderedIds);
+    },
+    [reorderTerminalsInProject],
+  );
+  const splitTerminalRight = useCallback(
+    (id: string) => addTerminalSplit(id, "right"),
+    [addTerminalSplit],
+  );
+  const splitTerminalBelow = useCallback(
+    (id: string) => addTerminalSplit(id, "below"),
+    [addTerminalSplit],
+  );
+  const toggleSnippetsDrawer = useCallback(() => {
+    if (!activeTerminal) return;
+    setSnippetDrawerTerminalId((current) =>
+      current === activeTerminal.id ? null : activeTerminal.id,
+    );
+  }, [activeTerminal]);
+  const openAttentionCenter = useCallback(
+    () => setShowAttentionCenter(true),
+    [],
+  );
+  const openProjectDirectory = useCallback((directory: string) => {
+    void window.aya.openPath(directory);
+  }, []);
 
   const focusTerminal = useCallback(
     (slug: string, terminalId: string) => {
@@ -3443,22 +3530,17 @@ export function App() {
               railWidth={railWidth}
               onRailResize={setRailWidth}
               onSelectProject={setActiveProjectId}
-              onOpenProject={(slug) => {
-                const project = allProjects.find((p) => p.slug === slug);
-                if (project) void openKnownProject(project);
-              }}
+              onOpenProject={openProjectBySlug}
               onNewProject={showNewProjectModal}
               onCloseProject={closeProject}
               onRenameProject={renameProject}
               onReorderProjects={reorderProjects}
-              onOpenSearch={() => setShowSearch(true)}
+              onOpenSearch={openSearch}
               onOpenSettings={openSettings}
-              onMinimizeWindow={() => void window.aya.minimizeWindow()}
-              onToggleMaximizeWindow={() => void window.aya.toggleMaximizeWindow()}
-              onToggleFullScreenWindow={() =>
-                void window.aya.setFullScreen(!isFullScreen)
-              }
-              onCloseWindow={() => void window.aya.closeWindow()}
+              onMinimizeWindow={minimizeWindow}
+              onToggleMaximizeWindow={toggleMaximizeWindow}
+              onToggleFullScreenWindow={toggleFullScreenWindow}
+              onCloseWindow={closeWindow}
               projectBadges={projectBadges}
               projectSummaries={localSummariesEnabled ? projectSummaries : EMPTY_SUMMARIES}
               usageAccounts={usageAccounts}
@@ -3473,11 +3555,7 @@ export function App() {
               onCloseTerminal={closeTerminal}
               onRenameTerminal={renameTerminal}
               onLaunchTerminal={launchTerminal}
-              onReorderTerminals={(orderedIds) => {
-                if (activeProjectId) {
-                  reorderTerminalsInProject(activeProjectId, orderedIds);
-                }
-              }}
+              onReorderTerminals={reorderActiveProjectTerminals}
               onRestartTerminal={forceRestartTerminal}
               body={body ?? panesNode}
             />
@@ -3496,22 +3574,17 @@ export function App() {
               blockChrome={chromeBlocked}
               closedProjects={closedProjects}
               onSelectProject={setActiveProjectId}
-              onOpenProject={(slug) => {
-                const project = allProjects.find((p) => p.slug === slug);
-                if (project) void openKnownProject(project);
-              }}
+              onOpenProject={openProjectBySlug}
               onNewProject={showNewProjectModal}
               onCloseProject={closeProject}
               onRenameProject={renameProject}
               onReorderProjects={reorderProjects}
-              onOpenSearch={() => setShowSearch(true)}
+              onOpenSearch={openSearch}
               onOpenSettings={openSettings}
-              onMinimizeWindow={() => void window.aya.minimizeWindow()}
-              onToggleMaximizeWindow={() => void window.aya.toggleMaximizeWindow()}
-              onToggleFullScreenWindow={() =>
-                void window.aya.setFullScreen(!isFullScreen)
-              }
-              onCloseWindow={() => void window.aya.closeWindow()}
+              onMinimizeWindow={minimizeWindow}
+              onToggleMaximizeWindow={toggleMaximizeWindow}
+              onToggleFullScreenWindow={toggleFullScreenWindow}
+              onCloseWindow={closeWindow}
               projectBadges={projectBadges}
               monitoredSessionsByProject={monitoredSessionsByProject}
               projectSummaries={localSummariesEnabled ? projectSummaries : EMPTY_SUMMARIES}
@@ -3542,17 +3615,13 @@ export function App() {
                     activeProject ? projectBaseCwd(activeProject) : undefined
                   }
                   onResize={setSidebarWidth}
-                  onReorder={(orderedIds) => {
-                    if (activeProjectId) {
-                      reorderTerminalsInProject(activeProjectId, orderedIds);
-                    }
-                  }}
+                  onReorder={reorderActiveProjectTerminals}
                   onRestart={forceRestartTerminal}
                   canSplitRight={canSplitRight}
                   canSplitBelow={canSplitBelow}
                   onAssignToSplit={assignTerminalToActiveSplitCell}
-                  onSplitRight={(id) => addTerminalSplit(id, "right")}
-                  onSplitBelow={(id) => addTerminalSplit(id, "below")}
+                  onSplitRight={splitTerminalRight}
+                  onSplitBelow={splitTerminalBelow}
                   onRemoveFromSplit={removeTerminalFromSplit}
                 />
                 {panesNode}
@@ -3570,16 +3639,9 @@ export function App() {
         attentionCount={attentionCount}
         snippetsOpen={snippetsOpenForActiveTerminal}
         snippetsDisabled={!activeTerminal}
-        onToggleSnippets={() => {
-          if (!activeTerminal) return;
-          setSnippetDrawerTerminalId((current) =>
-            current === activeTerminal.id ? null : activeTerminal.id,
-          );
-        }}
-        onOpenAttentionCenter={() => setShowAttentionCenter(true)}
-        onOpenProjectDirectory={(directory) => {
-          void window.aya.openPath(directory);
-        }}
+        onToggleSnippets={toggleSnippetsDrawer}
+        onOpenAttentionCenter={openAttentionCenter}
+        onOpenProjectDirectory={openProjectDirectory}
       />
       {currentMissingDir && (
         <MissingDirModal

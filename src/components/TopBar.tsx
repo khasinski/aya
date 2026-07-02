@@ -1,5 +1,5 @@
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useDragReorder } from "../hooks/useDragReorder";
 import type { MonitoredSession, ProjectConfig, UsageAccount } from "../types";
 import type { SettingsTab } from "../settings-tabs";
@@ -60,7 +60,7 @@ function compactDir(directory: string, home: string): string {
   return directory;
 }
 
-export function TopBar({
+function TopBarImpl({
   projects,
   closedProjects,
   activeProjectId,
@@ -100,23 +100,32 @@ export function TopBar({
   const [recentFilter, setRecentFilter] = useState("");
   const [showSessions, setShowSessions] = useState(false);
 
-  const monitoredSessions = Object.entries(monitoredSessionsByProject)
-    .flatMap(([projectSlug, sessions]) =>
-      sessions.map((session) => ({ ...session, projectSlug })),
-    )
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+  // Memoized: these ran (flatMap+sort / filter) on every TopBar render even
+  // with both dropdowns closed.
+  const monitoredSessions = useMemo(
+    () =>
+      Object.entries(monitoredSessionsByProject)
+        .flatMap(([projectSlug, sessions]) =>
+          sessions.map((session) => ({ ...session, projectSlug })),
+        )
+        .sort((a, b) => b.updatedAt - a.updatedAt),
+    [monitoredSessionsByProject],
+  );
   const normalizedRecentFilter = recentFilter.trim().toLowerCase();
-  const filteredClosedProjects =
-    normalizedRecentFilter.length === 0
-      ? closedProjects
-      : closedProjects.filter((p) => {
-          const path = compactDir(p.directory, homeDir);
-          return (
-            p.name.toLowerCase().includes(normalizedRecentFilter) ||
-            path.toLowerCase().includes(normalizedRecentFilter) ||
-            p.directory.toLowerCase().includes(normalizedRecentFilter)
-          );
-        });
+  const filteredClosedProjects = useMemo(
+    () =>
+      normalizedRecentFilter.length === 0
+        ? closedProjects
+        : closedProjects.filter((p) => {
+            const path = compactDir(p.directory, homeDir);
+            return (
+              p.name.toLowerCase().includes(normalizedRecentFilter) ||
+              path.toLowerCase().includes(normalizedRecentFilter) ||
+              p.directory.toLowerCase().includes(normalizedRecentFilter)
+            );
+          }),
+    [normalizedRecentFilter, closedProjects, homeDir],
+  );
 
   useEffect(() => {
     if (!showRecent) return;
@@ -493,3 +502,8 @@ export function TopBar({
     </header>
   );
 }
+
+/** Memoized: App re-renders on every poll tick / terminal status flip; with
+ *  the derived props memoized in App (R1) and the handlers useCallback'd,
+ *  the shallow compare lets the chrome skip those renders entirely. */
+export const TopBar = memo(TopBarImpl);

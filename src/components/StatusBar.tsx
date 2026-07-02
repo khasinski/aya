@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import hljs from "highlight.js/lib/common";
 import type {
   GitChangedFile,
@@ -30,7 +30,7 @@ interface Props {
   onOpenAttentionCenter: () => void;
 }
 
-export function StatusBar({
+function StatusBarImpl({
   project,
   git,
   githubLink,
@@ -508,3 +508,8 @@ function DiffPanel({
     </div>
   );
 }
+
+/** Memoized: App re-renders on every poll tick / terminal status flip; with
+ *  the derived props memoized in App (R1) and the handlers useCallback'd,
+ *  the shallow compare lets the chrome skip those renders entirely. */
+export const StatusBar = memo(StatusBarImpl);
