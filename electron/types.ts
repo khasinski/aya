@@ -65,6 +65,10 @@ export interface ProjectCollectionState {
   recent: string[];
   /** Last active project (slug), restored on boot. Optional for back-compat. */
   activeProject?: string | null;
+  /** IPC-response-only (never persisted; the save validator strips it): true
+   *  when this state was sliced for a secondary window, so the renderer must
+   *  NOT apply the first-run "open everything" fallback to the empty list. */
+  secondaryWindow?: boolean;
   /** Active terminal id per project slug, so the selection survives a restart. */
   activeTab?: Record<string, string>;
   /** Per-project single-terminal view: the shown terminal id (absent = all/split). */
@@ -381,6 +385,11 @@ export interface AyaApi {
   listProjects(): Promise<ProjectConfig[]>;
   listProjectState(): Promise<ProjectCollectionState>;
   saveProjectState(state: ProjectCollectionState): Promise<void>;
+  /** Other live Aya windows (multi-window "Move to window…" targets). */
+  listOtherWindows(): Promise<Array<{ id: number; activeProject: string | null }>>;
+  /** Open a project (by directory) in another / a new window. The caller must
+   *  have released its own copy first (drop local state, keep PTYs alive). */
+  adoptProjectInWindow(directory: string, target: number | "new"): Promise<void>;
   createProject(name: string, directory: string): Promise<ProjectConfig>;
   createRemoteProject(req: {
     name: string;

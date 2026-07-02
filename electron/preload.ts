@@ -33,6 +33,9 @@ const api: AyaApi = {
   listProjectState: () => ipcRenderer.invoke("projects:state"),
   saveProjectState: (state) =>
     ipcRenderer.invoke("projects:save-state", state),
+  listOtherWindows: () => ipcRenderer.invoke("windows:list-others"),
+  adoptProjectInWindow: (directory, target) =>
+    ipcRenderer.invoke("windows:adopt-project", directory, target),
   createProject: (name, directory) =>
     ipcRenderer.invoke("projects:create", name, directory),
   createRemoteProject: (req) =>

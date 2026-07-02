@@ -38,6 +38,9 @@ interface Props {
   onOpenProject: (slug: string) => void;
   onNewProject: () => void;
   onCloseProject: (slug: string) => void;
+  /** Multi-window: move a project (with its running terminals) to a new
+   *  window or an existing one. Absent = the menu items are hidden. */
+  onMoveProjectToWindow?: (slug: string, target: number | "new") => void;
   onRenameProject: (slug: string, newName: string) => void;
   onReorderProjects: (orderedSlugs: string[]) => void;
   projectBadges?: Record<string, ProjectAttention>;
@@ -98,6 +101,7 @@ function ProjectsLeftLayoutImpl({
   onOpenProject,
   onNewProject,
   onCloseProject,
+  onMoveProjectToWindow,
   onRenameProject,
   onReorderProjects,
   projectBadges = {},
@@ -164,6 +168,28 @@ function ProjectsLeftLayoutImpl({
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(
     null,
   );
+  // Right-click menu on a project rail tab (multi-window move). The
+  // other-windows list is fetched when the menu opens, so labels are current.
+  const [projectMenu, setProjectMenu] = useState<{
+    x: number;
+    y: number;
+    slug: string;
+    windows: Array<{ id: number; activeProject: string | null }>;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!projectMenu) return;
+    const close = () => setProjectMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setProjectMenu(null);
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [projectMenu]);
   const [showLauncher, setShowLauncher] = useState(false);
   // Viewport coords for the launcher dropdown. The menu is position:fixed so it
   // can escape the tab strip's overflow:hidden clip; that means we must anchor
@@ -606,6 +632,16 @@ function ProjectsLeftLayoutImpl({
                   draggable={!isRenaming}
                   {...projectDragHandlers(p.slug)}
                   onClick={() => !isRenaming && onSelectProject(p.slug)}
+                  onContextMenu={(e) => {
+                    // Remote projects can't be adopted by directory (it lives
+                    // on the remote host) - no move menu for them yet.
+                    if (isRemote || !onMoveProjectToWindow) return;
+                    e.preventDefault();
+                    const at = { x: e.clientX, y: e.clientY };
+                    void window.aya.listOtherWindows().then((windows) => {
+                      setProjectMenu({ ...at, slug: p.slug, windows });
+                    });
+                  }}
                   title={
                     isRenaming
                       ? undefined
@@ -696,6 +732,35 @@ function ProjectsLeftLayoutImpl({
         </aside>
         {body}
       </div>
+      {projectMenu && onMoveProjectToWindow && (
+        <div
+          className="aya-context-menu"
+          style={{ left: projectMenu.x, top: projectMenu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            className="aya-context-menu-item"
+            onClick={() => {
+              onMoveProjectToWindow(projectMenu.slug, "new");
+              setProjectMenu(null);
+            }}
+          >
+            Move to New Window
+          </button>
+          {projectMenu.windows.map((w) => (
+            <button
+              key={w.id}
+              className="aya-context-menu-item"
+              onClick={() => {
+                onMoveProjectToWindow(projectMenu.slug, w.id);
+                setProjectMenu(null);
+              }}
+            >
+              Move to Window: {w.activeProject ?? "(empty)"}
+            </button>
+          ))}
+        </div>
+      )}
       {menu && (
         <div
           className="aya-context-menu"

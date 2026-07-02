@@ -1,5 +1,12 @@
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { useDragReorder } from "../hooks/useDragReorder";
 import type { MonitoredSession, ProjectConfig, UsageAccount } from "../types";
 import type { SettingsTab } from "../settings-tabs";
@@ -34,6 +41,9 @@ interface Props {
   onNewProject: () => void;
   /** Closes the project tab without deleting the project config. */
   onCloseProject: (slug: string) => void;
+  /** Multi-window: move a project tab (with its running terminals) to a new
+   *  window or an existing one. Absent = the menu items are hidden. */
+  onMoveProjectToWindow?: (slug: string, target: number | "new") => void;
   onRenameProject: (slug: string, newName: string) => void;
   onReorderProjects: (orderedSlugs: string[]) => void;
   onOpenSearch: () => void;
@@ -74,6 +84,7 @@ function TopBarImpl({
   onOpenProject,
   onNewProject,
   onCloseProject,
+  onMoveProjectToWindow,
   onRenameProject,
   onReorderProjects,
   onOpenSearch,
@@ -99,6 +110,37 @@ function TopBarImpl({
   const [showRecent, setShowRecent] = useState(false);
   const [recentFilter, setRecentFilter] = useState("");
   const [showSessions, setShowSessions] = useState(false);
+  // Right-click menu on a project tab (multi-window move). The other-windows
+  // list is fetched when the menu opens, so labels are current.
+  const [tabMenu, setTabMenu] = useState<{
+    x: number;
+    y: number;
+    slug: string;
+    windows: Array<{ id: number; activeProject: string | null }>;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!tabMenu) return;
+    const close = () => setTabMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setTabMenu(null);
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [tabMenu]);
+
+  const openTabMenu = (e: ReactMouseEvent, slug: string) => {
+    if (!onMoveProjectToWindow) return;
+    e.preventDefault();
+    const at = { x: e.clientX, y: e.clientY };
+    void window.aya.listOtherWindows().then((windows) => {
+      setTabMenu({ ...at, slug, windows });
+    });
+  };
 
   // Memoized: these ran (flatMap+sort / filter) on every TopBar render even
   // with both dropdowns closed.
@@ -247,6 +289,11 @@ function TopBarImpl({
               draggable={!isRenaming}
               {...itemHandlers(p.slug)}
               onClick={() => !isRenaming && onSelectProject(p.slug)}
+              onContextMenu={(e) => {
+                // Remote projects can't be adopted by directory (it lives on
+                // the remote host) - no move menu for them yet.
+                if (!isRemote) openTabMenu(e, p.slug);
+              }}
               title={
                 isRenaming
                   ? undefined
@@ -499,6 +546,35 @@ function TopBarImpl({
           onClose={onCloseWindow}
         />
       </div>
+      {tabMenu && onMoveProjectToWindow && (
+        <div
+          className="aya-context-menu"
+          style={{ left: tabMenu.x, top: tabMenu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            className="aya-context-menu-item"
+            onClick={() => {
+              onMoveProjectToWindow(tabMenu.slug, "new");
+              setTabMenu(null);
+            }}
+          >
+            Move to New Window
+          </button>
+          {tabMenu.windows.map((w) => (
+            <button
+              key={w.id}
+              className="aya-context-menu-item"
+              onClick={() => {
+                onMoveProjectToWindow(tabMenu.slug, w.id);
+                setTabMenu(null);
+              }}
+            >
+              Move to Window: {w.activeProject ?? "(empty)"}
+            </button>
+          ))}
+        </div>
+      )}
     </header>
   );
 }

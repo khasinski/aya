@@ -35,7 +35,14 @@ export class WindowProjectSlices {
         : state.activeProject && slice.includes(state.activeProject)
           ? state.activeProject
           : (slice[0] ?? null);
-    return { ...state, open: slice, activeProject };
+    return {
+      ...state,
+      open: slice,
+      activeProject,
+      // Tells the renderer an empty list is intentional (secondary window),
+      // not a first run - so it must skip the "open everything" fallback.
+      secondaryWindow: !isBootWindow,
+    };
   }
 
   /** Merge one window's save into the global state: its open-list replaces its
@@ -85,5 +92,11 @@ export class WindowProjectSlices {
       if (slugs.includes(slug)) return windowId;
     }
     return null;
+  }
+
+  /** Last-saved active project of a window (labels the "Move to window…"
+   *  menu); null when unknown or the window is empty. */
+  activeProjectOf(windowId: number): string | null {
+    return this.activeProject.get(windowId) ?? null;
   }
 }

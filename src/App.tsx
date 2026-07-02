@@ -1427,7 +1427,9 @@ export function App() {
       const open =
         loadedProjectState.open.length > 0
           ? loadedProjectState.open
-          : seededProjects.map((p) => p.slug);
+          : loadedProjectState.secondaryWindow
+            ? [] // an empty secondary window is intentional, not a first run
+            : seededProjects.map((p) => p.slug);
       const recent =
         loadedProjectState.recent.length > 0 ? loadedProjectState.recent : order;
       // Restore the persisted active selections, but validate them against the
@@ -2461,6 +2463,67 @@ export function App() {
       return next;
     });
   }, []);
+
+  /** Hand a project to another window: drop ALL local state for it WITHOUT
+   *  killing its PTYs (they live in the detached host; the adopting window
+   *  re-attaches like after an app restart) and WITHOUT touching recent (the
+   *  project stays open - just elsewhere). Mirrors closeProject minus the
+   *  ptyKill loop and the recent bump. */
+  const releaseProject = useCallback((slug: string) => {
+    const owned = Object.values(terminalsRef.current).filter(
+      (t) => t.projectSlug === slug,
+    );
+    setTerminals((prev) => {
+      const next = { ...prev };
+      for (const t of owned) delete next[t.id];
+      return next;
+    });
+    setActiveTabByProject((prev) => {
+      const next = { ...prev };
+      delete next[slug];
+      return next;
+    });
+    setSingleViewByProject((prev) => {
+      const next = { ...prev };
+      delete next[slug];
+      return next;
+    });
+    setWarmProjectSlugs((prev) => prev.filter((s) => s !== slug));
+    const remaining = projectsRef.current.filter((p) => p.slug !== slug);
+    setProjects(remaining);
+    updateProjectCollection({
+      ...projectStateRef.current,
+      open: remaining.map((p) => p.slug),
+    });
+    setActiveProjectId((cur) => {
+      if (cur !== slug) return cur;
+      return remaining[0]?.slug ?? null;
+    });
+    setGit((prev) => {
+      const next = { ...prev };
+      delete next[slug];
+      return next;
+    });
+    setProjectFallbacks((prev) => {
+      const next = { ...prev };
+      delete next[slug];
+      return next;
+    });
+  }, []);
+
+  /** Move a project (its tab + running terminals) to another Aya window, or
+   *  tear it out into a new one. Local projects only for now - a remote
+   *  project's directory lives on the remote host, so the adopt-by-directory
+   *  flow can't resolve it there. */
+  const moveProjectToWindow = useCallback(
+    (slug: string, target: number | "new") => {
+      const project = projectsRef.current.find((p) => p.slug === slug);
+      if (!project || project.remote) return;
+      releaseProject(slug);
+      void window.aya.adoptProjectInWindow(project.directory, target);
+    },
+    [releaseProject],
+  );
 
   const openKnownProject = useCallback(
     async (project: ProjectConfig) => {
@@ -3533,6 +3596,7 @@ export function App() {
               onOpenProject={openProjectBySlug}
               onNewProject={showNewProjectModal}
               onCloseProject={closeProject}
+              onMoveProjectToWindow={moveProjectToWindow}
               onRenameProject={renameProject}
               onReorderProjects={reorderProjects}
               onOpenSearch={openSearch}
@@ -3577,6 +3641,7 @@ export function App() {
               onOpenProject={openProjectBySlug}
               onNewProject={showNewProjectModal}
               onCloseProject={closeProject}
+              onMoveProjectToWindow={moveProjectToWindow}
               onRenameProject={renameProject}
               onReorderProjects={reorderProjects}
               onOpenSearch={openSearch}

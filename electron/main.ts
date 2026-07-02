@@ -1819,6 +1819,46 @@ function registerIpc(): void {
     const disk = await listProjectState().catch(() => null);
     return saveProjectState(windowSlices.mergeSave(valid, win.id, disk));
   });
+  // Multi-window: targets for "Move to window…" (every live window but the
+  // caller, labeled by its last-saved active project).
+  ipcMain.handle("windows:list-others", async (e) => {
+    const self = senderWindow(e);
+    return [...ayaWindows]
+      .filter((w) => !w.isDestroyed() && w !== self)
+      .map((w) => ({
+        id: w.id,
+        activeProject: windowSlices.activeProjectOf(w.id),
+      }));
+  });
+  // Adopt a (released) project into another window - the source renderer drops
+  // its local state first (WITHOUT killing PTYs), then calls this; the target
+  // window runs the ordinary switch-or-create open flow and re-attaches to the
+  // live PTYs exactly like after an app restart.
+  ipcMain.handle(
+    "windows:adopt-project",
+    async (_e, directory: unknown, target: unknown) => {
+      const dir = requireString(directory, "windows:adopt-project.directory");
+      let win: BrowserWindow | null = null;
+      if (target === "new") {
+        win = await openNewWindow();
+      } else if (typeof target === "number") {
+        win =
+          [...ayaWindows].find((w) => w.id === target && !w.isDestroyed()) ??
+          null;
+      }
+      if (!win) throw new Error("windows:adopt-project: target window not found");
+      if (win.isMinimized()) win.restore();
+      win.focus();
+      const targetWin = win;
+      if (targetWin.webContents.isLoading()) {
+        targetWin.webContents.once("did-finish-load", () =>
+          dispatchOpenProject(targetWin, dir),
+        );
+      } else {
+        dispatchOpenProject(targetWin, dir);
+      }
+    },
+  );
   ipcMain.handle("projects:create", async (_e, name: unknown, dir: unknown) =>
     createProject(
       requireString(name, "projects:create.name"),
