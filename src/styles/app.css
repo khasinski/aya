@@ -649,6 +649,76 @@ body {
   grid-template-columns: 1fr 1fr;
   gap: 4px;
 }
+/* Experimental worktrees: launcher target label. */
+.aya-launcher-target {
+  color: var(--accent, var(--fg-secondary));
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+/* Experimental worktrees: terminal-list sections, one per worktree. */
+.aya-worktree-group {
+  margin-bottom: 4px;
+}
+.aya-worktree-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  margin: 2px 0;
+  background: transparent;
+  border: none;
+  border-left: 2px solid transparent;
+  color: var(--fg-tertiary);
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  text-align: left;
+  cursor: pointer;
+}
+.aya-worktree-header:hover {
+  color: var(--fg-secondary);
+  background: var(--bg-tertiary);
+}
+.aya-worktree-header--target {
+  color: var(--fg-primary);
+  border-left-color: var(--accent, var(--border-strong));
+}
+.aya-worktree-header-icon {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-weight: 400;
+  font-size: 12px;
+}
+.aya-worktree-header-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.aya-worktree-header-tag {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--fg-tertiary);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.aya-worktree-header-tag--warn {
+  color: var(--warn, #c60);
+}
+.aya-worktree-empty {
+  padding: 3px 8px 6px 18px;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  font-style: italic;
+}
 .aya-launcher-btn {
   display: flex; align-items: center; gap: 6px;
   padding: 6px 8px;

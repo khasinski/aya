@@ -63,6 +63,7 @@ import {
   type ThemeColors,
   type UsageAccount,
   type WorkingTab,
+  type Worktree,
 } from "./types";
 
 // Cadence for polling the active project's git branch/dirty count (no inotify watch).
@@ -696,6 +697,9 @@ export function App() {
     WORKTREES_STORAGE_KEY,
     WORKTREES_CODEC,
   );
+  // Git worktrees for the active (local) project, when the experimental flag is
+  // on. Drives the launcher's worktree target and the per-row branch chip.
+  const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [railWidth, setRailWidth] = useState(DEFAULT_RAIL_WIDTH_PX);
   const [localSummariesEnabled, setLocalSummariesEnabled] =
     usePersistentPreference(LOCAL_SUMMARIES_STORAGE_KEY, LOCAL_SUMMARIES_CODEC);
@@ -770,6 +774,28 @@ export function App() {
       stop();
     };
   }, [activeProjectId]);
+
+  // Load the active local project's git worktrees when the experimental flag is
+  // on. The list changes rarely (add/remove worktree), so we load on project
+  // switch / flag toggle rather than polling.
+  useEffect(() => {
+    if (!worktreesEnabled || !activeProjectId) {
+      setWorktrees([]);
+      return;
+    }
+    const project = projectsRef.current.find((p) => p.slug === activeProjectId);
+    if (!project || project.remote) {
+      setWorktrees([]);
+      return;
+    }
+    let cancelled = false;
+    void window.aya.getGitWorktrees(project.directory).then((list) => {
+      if (!cancelled) setWorktrees(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [worktreesEnabled, activeProjectId]);
 
   // Re-read the account-wide usage snapshot a user hook writes (~/.aya/usage.json).
   // Aya only reads the file — it never fetches usage or touches any token.
@@ -1833,7 +1859,7 @@ export function App() {
   );
 
   const launchTerminal = useCallback(
-    (preset: Preset) => {
+    (preset: Preset, cwd?: string) => {
       const slug = activeProjectIdRef.current;
       if (!slug) return;
       const project = findProject(projectsRef.current, slug);
@@ -1847,7 +1873,9 @@ export function App() {
         projectSlug: slug,
         presetId: preset.id,
         name: defaultTabName(preset),
-        cwd: project.remote ? project.remote.directory : effectiveCwd(project),
+        cwd:
+          cwd ??
+          (project.remote ? project.remote.directory : effectiveCwd(project)),
         status: "running",
         bell: false,
         exitCode: null,
@@ -3467,6 +3495,11 @@ export function App() {
                   onClose={closeTerminal}
                   onRename={renameTerminal}
                   onLaunch={launchTerminal}
+                  worktreesEnabled={worktreesEnabled}
+                  worktrees={worktrees}
+                  projectDir={
+                    activeProject ? projectBaseCwd(activeProject) : undefined
+                  }
                   onResize={setSidebarWidth}
                   onReorder={(orderedIds) => {
                     if (activeProjectId) {

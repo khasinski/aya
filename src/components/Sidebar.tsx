@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { getPreset, type Preset, type TerminalState } from "../types";
+import {
+  getPreset,
+  type Preset,
+  type TerminalState,
+  type Worktree,
+} from "../types";
 import { useDragReorder } from "../hooks/useDragReorder";
 
 // Clamp bounds for drag-resizing the sidebar (px).
@@ -18,7 +23,14 @@ interface Props {
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   onRename: (id: string, name: string) => void;
-  onLaunch: (preset: Preset) => void;
+  /** Launch a preset. `cwd` targets a git worktree; omitted = the project dir. */
+  onLaunch: (preset: Preset, cwd?: string) => void;
+  /** Experimental worktrees: when enabled and the project has >1 worktree, the
+   *  launcher offers a target worktree and rows show their branch. */
+  worktreesEnabled?: boolean;
+  worktrees?: Worktree[];
+  /** The project's own directory (the "main" worktree cwd). */
+  projectDir?: string;
   onResize: (width: number) => void;
   /** Called with the new id order after a successful drag-drop. Only fires
    *  when the order actually changed. */
@@ -51,6 +63,9 @@ export function Sidebar({
   onClose,
   onRename,
   onLaunch,
+  worktreesEnabled = false,
+  worktrees = [],
+  projectDir,
   onResize,
   onReorder,
   onRestart,
@@ -86,6 +101,28 @@ export function Sidebar({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Experimental worktrees: group terminals under their worktree, and launch new
+  // terminals into the selected group. Only kicks in with >1 worktree; defaults
+  // to the project's own dir (main), reset when the active project changes.
+  const showWorktrees = worktreesEnabled && worktrees.length > 1;
+  const [targetCwd, setTargetCwd] = useState<string>(projectDir ?? "");
+  useEffect(() => {
+    setTargetCwd(projectDir ?? "");
+  }, [projectDir]);
+  const worktreeName = (p: string): string =>
+    p.replace(/\/+$/, "").split("/").pop() || p;
+  // One section per worktree (main first). Terminals whose cwd matches no known
+  // worktree fall under the main/project section so nothing goes missing.
+  const wtPaths = new Set(worktrees.map((w) => w.path));
+  const groups = showWorktrees
+    ? worktrees.map((w) => ({
+        worktree: w,
+        terminals: terminals.filter(
+          (t) => t.cwd === w.path || (w.isMain && !wtPaths.has(t.cwd)),
+        ),
+      }))
+    : null;
 
   // Vertical drag-and-drop for reordering terminal rows.
   const { dragId, dropTarget, itemHandlers } = useDragReorder(
@@ -128,119 +165,167 @@ export function Sidebar({
     };
   }, [onResize]);
 
+  const renderRow = (t: TerminalState) => {
+    const isActive = t.id === activeId;
+    const preset = getPreset(presets, t.presetId);
+    const isDragging = dragId === t.id;
+    const isDropTarget = dropTarget?.id === t.id;
+    const summary = summaries[t.id]?.trim();
+    const dropClass = isDropTarget
+      ? dropTarget.before
+        ? "aya-sidebar-row--drop-before"
+        : "aya-sidebar-row--drop-after"
+      : "";
+    const isRenamingRow = renamingId === t.id;
+    return (
+      <div
+        key={t.id}
+        data-testid="sidebar-terminal"
+        data-terminal-id={t.id}
+        data-terminal-name={t.name}
+        className={`aya-sidebar-row ${isActive ? "aya-sidebar-row--active" : ""} ${
+          isDragging ? "aya-sidebar-row--dragging" : ""
+        } ${dropClass}`}
+        draggable={!isRenamingRow}
+        {...itemHandlers(t.id)}
+        onClick={() => onSelect(t.id)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenu({ x: e.clientX, y: e.clientY, terminalId: t.id });
+        }}
+        title={`${t.name} — ${t.cwd}`}
+      >
+        <span
+          className="aya-sidebar-icon"
+          style={preset.color ? { color: preset.color } : undefined}
+        >
+          {preset.icon}
+        </span>
+        <span
+          className={`aya-sidebar-statusdot aya-sidebar-statusdot--${t.status} ${
+            recentlyActiveIds.has(t.id)
+              ? "aya-sidebar-statusdot--blinking"
+              : ""
+          }`}
+        />
+        <span className="aya-sidebar-copy">
+          {renamingId === t.id ? (
+            <input
+              ref={inputRef}
+              className="aya-sidebar-rename"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onBlur={commit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commit();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  cancel();
+                }
+              }}
+              autoFocus
+            />
+          ) : (
+            <span
+              className="aya-sidebar-name"
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                startRename(t);
+              }}
+              title="Double-click to rename"
+            >
+              {t.name}
+            </span>
+          )}
+          {!isRenamingRow && summary && (
+            <span className="aya-sidebar-summary">{summary}</span>
+          )}
+        </span>
+        {t.bell && <BellIcon />}
+        {splitAssignments[t.id] !== undefined && (
+          <span className="aya-sidebar-pane-chip">
+            {splitAssignments[t.id] + 1}
+          </span>
+        )}
+        <span
+          className="aya-sidebar-close"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose(t.id);
+          }}
+          title="Close terminal"
+        >
+          ×
+        </span>
+      </div>
+    );
+  };
+
   return (
     <aside className="aya-sidebar" style={{ width: sidebarWidth }}>
       <div className="aya-sidebar-header">
         <span>{terminals.length} terminals</span>
       </div>
       <div className="aya-sidebar-list">
-        {terminals.map((t) => {
-          const isActive = t.id === activeId;
-          const preset = getPreset(presets, t.presetId);
-          const isDragging = dragId === t.id;
-          const isDropTarget = dropTarget?.id === t.id;
-          const summary = summaries[t.id]?.trim();
-          const dropClass = isDropTarget
-            ? dropTarget.before
-              ? "aya-sidebar-row--drop-before"
-              : "aya-sidebar-row--drop-after"
-            : "";
-          const isRenamingRow = renamingId === t.id;
-          return (
-            <div
-              key={t.id}
-              data-testid="sidebar-terminal"
-              data-terminal-id={t.id}
-              data-terminal-name={t.name}
-              className={`aya-sidebar-row ${isActive ? "aya-sidebar-row--active" : ""} ${
-                isDragging ? "aya-sidebar-row--dragging" : ""
-              } ${dropClass}`}
-              draggable={!isRenamingRow}
-              {...itemHandlers(t.id)}
-              onClick={() => onSelect(t.id)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setMenu({ x: e.clientX, y: e.clientY, terminalId: t.id });
-              }}
-              title={`${t.name} — ${t.cwd}`}
-            >
-              <span
-                className="aya-sidebar-icon"
-                style={preset.color ? { color: preset.color } : undefined}
-              >
-                {preset.icon}
-              </span>
-              <span
-                className={`aya-sidebar-statusdot aya-sidebar-statusdot--${t.status} ${
-                  recentlyActiveIds.has(t.id)
-                    ? "aya-sidebar-statusdot--blinking"
-                    : ""
-                }`}
-              />
-              <span className="aya-sidebar-copy">
-                {renamingId === t.id ? (
-                  <input
-                    ref={inputRef}
-                    className="aya-sidebar-rename"
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    onClick={(e) => e.stopPropagation()}
-                    onBlur={commit}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        commit();
-                      } else if (e.key === "Escape") {
-                        e.preventDefault();
-                        cancel();
-                      }
-                    }}
-                    autoFocus
-                  />
-                ) : (
-                  <span
-                    className="aya-sidebar-name"
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      startRename(t);
-                    }}
-                    title="Double-click to rename"
-                  >
-                    {t.name}
+        {groups
+          ? groups.map((g) => (
+              <div key={g.worktree.path} className="aya-worktree-group">
+                <button
+                  type="button"
+                  className={`aya-worktree-header ${
+                    targetCwd === g.worktree.path
+                      ? "aya-worktree-header--target"
+                      : ""
+                  }`}
+                  onClick={() => setTargetCwd(g.worktree.path)}
+                  title={`${g.worktree.path}${
+                    g.worktree.branch ? ` · ${g.worktree.branch}` : ""
+                  }\nClick to launch new terminals in this worktree`}
+                >
+                  <span className="aya-worktree-header-icon">⑂</span>
+                  <span className="aya-worktree-header-name">
+                    {worktreeName(g.worktree.path)}
                   </span>
+                  {g.worktree.isMain && (
+                    <span className="aya-worktree-header-tag">main</span>
+                  )}
+                  {g.worktree.prunable && (
+                    <span className="aya-worktree-header-tag aya-worktree-header-tag--warn">
+                      stale
+                    </span>
+                  )}
+                </button>
+                {g.terminals.length > 0 ? (
+                  g.terminals.map(renderRow)
+                ) : (
+                  <div className="aya-worktree-empty">No terminals yet</div>
                 )}
-                {!isRenamingRow && summary && (
-                  <span className="aya-sidebar-summary">{summary}</span>
-                )}
-              </span>
-              {t.bell && <BellIcon />}
-              {splitAssignments[t.id] !== undefined && (
-                <span className="aya-sidebar-pane-chip">
-                  {splitAssignments[t.id] + 1}
-                </span>
-              )}
-              <span
-                className="aya-sidebar-close"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onClose(t.id);
-                }}
-                title="Close terminal"
-              >
-                ×
-              </span>
-            </div>
-          );
-        })}
+              </div>
+            ))
+          : terminals.map(renderRow)}
       </div>
       <div className="aya-launcher">
-        <div className="aya-launcher-label">New terminal</div>
+        <div className="aya-launcher-label">
+          {showWorktrees ? (
+            <>
+              New terminal in{" "}
+              <span className="aya-launcher-target">⑂ {worktreeName(targetCwd)}</span>
+            </>
+          ) : (
+            "New terminal"
+          )}
+        </div>
         <div className="aya-launcher-row">
           {presets.map((p) => (
             <button
               key={p.id}
               className="aya-launcher-btn"
-              onClick={() => onLaunch(p)}
+              onClick={() =>
+                onLaunch(p, showWorktrees && targetCwd ? targetCwd : undefined)
+              }
               title={p.command}
             >
               <span
