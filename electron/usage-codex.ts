@@ -174,6 +174,60 @@ export function latestUsageAccountsFromLines(
   return [...byId.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
+// ---- Poll-to-poll caches ---------------------------------------------------
+//
+// The renderer polls usage every 30s. Without caching, each poll re-walks the
+// whole sharded sessions tree (readdir per YYYY/MM/DD dir), re-stats every
+// rollout in history and re-reads + re-parses up to 20 full JSONL files per
+// source. Rollouts can be megabytes, so the parse is the dominant cost. The
+// caches below make a steady-state poll cost roughly one stat per directory
+// plus one stat per candidate file, and zero reads/parses.
+
+// Recover exotic mtime changes (e.g. resuming a months-old session appends to
+// its old rollout without touching any directory mtime) by re-statting every
+// file periodically instead of every poll.
+const FULL_STAT_SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+
+interface DirCacheEntry {
+  mtimeMs: number;
+  subdirs: string[];
+  /** rollout-*.jsonl basenames in this dir. */
+  files: string[];
+}
+
+interface WalkCache {
+  /** readdir results, keyed by dir path + gated on the dir's mtime. A dir's
+   *  mtime changes whenever an entry is added/removed, so NEW rollout files
+   *  (and new day-dirs) are always discovered within one poll. */
+  dirs: Map<string, DirCacheEntry>;
+  /** Last observed mtime per rollout file. */
+  fileMtimes: Map<string, number>;
+  /** The candidates returned last poll. Appending to a file does NOT bump its
+   *  parent dir's mtime, so the active rollouts (which are by definition the
+   *  newest) are re-statted every poll to notice fresh snapshots. */
+  hotFiles: Set<string>;
+  lastFullSweepMs: number;
+}
+
+// Keyed by expanded sessions root, so multiple CODEX_HOME sources don't mix.
+const walkCaches = new Map<string, WalkCache>();
+
+interface ParsedRollout {
+  mtimeMs: number;
+  usage: UsageData | null;
+  accounts: UsageAccount[];
+}
+
+// Parsed usage per rollout file, keyed by path + gated on mtime. Bounded: the
+// walk prunes entries that fall out of a source's newest-N candidate list.
+const rolloutParseCache = new Map<string, ParsedRollout>();
+
+/** Test hook: forget everything cached between polls. */
+export function resetCodexUsageCaches(): void {
+  walkCaches.clear();
+  rolloutParseCache.clear();
+}
+
 /** The most-recently-modified rollout files under ~/.codex/sessions, newest
  *  first, capped — so an old session that just hasn't emitted a snapshot yet
  *  doesn't sink the chip, without reading the whole history every poll. */
@@ -181,31 +235,124 @@ async function recentRolloutFiles(
   home = DEFAULT_CODEX_HOME,
 ): Promise<{ file: string; mtimeMs: number }[]> {
   const root = path.join(expandUserPath(home), "sessions");
+  let cache = walkCaches.get(root);
+  if (!cache) {
+    cache = {
+      dirs: new Map(),
+      fileMtimes: new Map(),
+      hotFiles: new Set(),
+      lastFullSweepMs: 0,
+    };
+    walkCaches.set(root, cache);
+  }
+  const now = Date.now();
+  const fullSweep = now - cache.lastFullSweepMs >= FULL_STAT_SWEEP_INTERVAL_MS;
+  if (fullSweep) cache.lastFullSweepMs = now;
+
+  const seenDirs = new Set<string>();
+  const seenFiles = new Set<string>();
   const found: { file: string; mtimeMs: number }[] = [];
-  async function walk(dir: string): Promise<void> {
-    let entries: import("node:fs").Dirent[];
-    try {
-      entries = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
+
+  async function statFile(full: string, force: boolean): Promise<void> {
+    const cached = cache!.fileMtimes.get(full);
+    if (cached !== undefined && !force) {
+      found.push({ file: full, mtimeMs: cached });
       return;
     }
-    for (const e of entries) {
-      const full = path.join(dir, e.name);
-      if (e.isDirectory()) {
-        await walk(full);
-      } else if (e.name.startsWith("rollout-") && e.name.endsWith(".jsonl")) {
-        try {
-          const st = await fs.stat(full);
-          found.push({ file: full, mtimeMs: st.mtimeMs });
-        } catch {
-          /* ignore */
+    try {
+      const st = await fs.stat(full);
+      cache!.fileMtimes.set(full, st.mtimeMs);
+      found.push({ file: full, mtimeMs: st.mtimeMs });
+    } catch {
+      // Vanished between readdir and stat.
+      cache!.fileMtimes.delete(full);
+    }
+  }
+
+  async function walk(dir: string): Promise<void> {
+    seenDirs.add(dir);
+    let dirStat: import("node:fs").Stats;
+    try {
+      dirStat = await fs.stat(dir);
+    } catch {
+      cache!.dirs.delete(dir);
+      return;
+    }
+    let entry = cache!.dirs.get(dir);
+    if (!entry || entry.mtimeMs !== dirStat.mtimeMs) {
+      let entries: import("node:fs").Dirent[];
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch {
+        cache!.dirs.delete(dir);
+        return;
+      }
+      entry = { mtimeMs: dirStat.mtimeMs, subdirs: [], files: [] };
+      for (const e of entries) {
+        if (e.isDirectory()) {
+          entry.subdirs.push(e.name);
+        } else if (e.name.startsWith("rollout-") && e.name.endsWith(".jsonl")) {
+          entry.files.push(e.name);
         }
       }
+      cache!.dirs.set(dir, entry);
+    }
+    for (const name of entry.subdirs) await walk(path.join(dir, name));
+    for (const name of entry.files) {
+      const full = path.join(dir, name);
+      seenFiles.add(full);
+      await statFile(full, fullSweep || cache!.hotFiles.has(full));
     }
   }
   await walk(root);
+
+  // Drop cache entries for dirs/files that disappeared from the tree.
+  for (const dir of cache.dirs.keys()) {
+    if (!seenDirs.has(dir)) cache.dirs.delete(dir);
+  }
+  for (const file of cache.fileMtimes.keys()) {
+    if (!seenFiles.has(file)) {
+      cache.fileMtimes.delete(file);
+      rolloutParseCache.delete(file);
+    }
+  }
+
   found.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  return found.slice(0, MAX_ROLLOUTS_SCANNED);
+  const top = found.slice(0, MAX_ROLLOUTS_SCANNED);
+  cache.hotFiles = new Set(top.map((f) => f.file));
+
+  // Bound the parse cache: keep only this source's current candidates.
+  for (const file of rolloutParseCache.keys()) {
+    if (file.startsWith(root + path.sep) && !cache.hotFiles.has(file)) {
+      rolloutParseCache.delete(file);
+    }
+  }
+  return top;
+}
+
+/** Read + parse a rollout, or reuse the cached parse when its mtime hasn't
+ *  moved. Both the single-usage and per-account results are derived in one
+ *  pass so either caller warms the cache for the other. */
+async function parseRollout(
+  file: string,
+  mtimeMs: number,
+): Promise<ParsedRollout | null> {
+  const cached = rolloutParseCache.get(file);
+  if (cached && cached.mtimeMs === mtimeMs) return cached;
+  let raw: string;
+  try {
+    raw = await fs.readFile(file, "utf-8");
+  } catch {
+    return null;
+  }
+  const lines = raw.split("\n");
+  const parsed: ParsedRollout = {
+    mtimeMs,
+    usage: latestUsageFromLines(lines, mtimeMs),
+    accounts: latestUsageAccountsFromLines(lines, mtimeMs),
+  };
+  rolloutParseCache.set(file, parsed);
+  return parsed;
 }
 
 /** Read Codex's account-wide usage from its newest rollout that carries a
@@ -213,14 +360,8 @@ async function recentRolloutFiles(
  *  has a rate-limit event yet. */
 export async function readCodexUsage(): Promise<UsageData | null> {
   for (const f of await recentRolloutFiles()) {
-    let raw: string;
-    try {
-      raw = await fs.readFile(f.file, "utf-8");
-    } catch {
-      continue;
-    }
-    const usage = latestUsageFromLines(raw.split("\n"), f.mtimeMs);
-    if (usage) return usage;
+    const parsed = await parseRollout(f.file, f.mtimeMs);
+    if (parsed?.usage) return parsed.usage;
   }
   return null;
 }
@@ -240,13 +381,9 @@ export async function readCodexUsageAccountsFromSources(
   const byId = new Map<string, UsageAccount>();
   for (const source of sources) {
     for (const f of await recentRolloutFiles(source.home)) {
-      let raw: string;
-      try {
-        raw = await fs.readFile(f.file, "utf-8");
-      } catch {
-        continue;
-      }
-      for (const account of latestUsageAccountsFromLines(raw.split("\n"), f.mtimeMs)) {
+      const parsed = await parseRollout(f.file, f.mtimeMs);
+      if (!parsed) continue;
+      for (const account of parsed.accounts) {
         const normalized =
           account.id === "default"
             ? { ...account, id: source.id, label: source.label }
