@@ -61,23 +61,23 @@ export class PtyHostClient {
     this.socket = null;
   }
 
-  /** Running host's identity + live PTY count. identity is null if the
-   *  handshake fails (an old host that predates the `version` request errors
-   *  out - itself a stale signal); ptyCount is 0 when unknown. */
+  /** Running host's identity + live PTY count + its pid (hosts from the
+   *  registry era report it; older hosts don't -> undefined). identity is null
+   *  if the handshake fails (an old host that predates the `version` request
+   *  errors out - itself a stale signal); ptyCount is 0 when unknown. */
   async hostStatus(): Promise<{
     identity: HostIdentity | null;
     ptyCount: number;
+    pid?: number;
   }> {
     try {
       const result = await this.request({ id: 0, type: "version" });
+      const obj =
+        result && typeof result === "object" ? (result as Record<string, unknown>) : {};
       return {
         identity: asHostIdentity(result),
-        ptyCount:
-          result &&
-          typeof result === "object" &&
-          typeof (result as { ptyCount?: unknown }).ptyCount === "number"
-            ? (result as { ptyCount: number }).ptyCount
-            : 0,
+        ptyCount: typeof obj.ptyCount === "number" ? obj.ptyCount : 0,
+        pid: typeof obj.pid === "number" ? obj.pid : undefined,
       };
     } catch {
       return { identity: null, ptyCount: 0 };
