@@ -17,7 +17,7 @@ import { execFileSync } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { AYA_HOME } from "./paths";
+import { AYA_HOME, OWNER_ONLY_FILE_MODE } from "./paths";
 
 export interface HostRecord {
   /** Host process pid (also its process-group leader: spawned detached). */
@@ -49,6 +49,11 @@ export interface ProcInfo {
 
 export const HOST_REGISTRY_DIR = path.join(AYA_HOME, "pty-hosts");
 
+// Fixed width of the `ps -o lstart=` ctime field (C locale + UTC pinned in
+// PS_ENV below): "Wed Jul  2 10:00:00 2026" = 24 chars. The two slices in
+// readProcInfo MUST use the same offset - one constant keeps them agreeing.
+export const PS_LSTART_WIDTH = 24;
+
 // A .tmp older than this is a crash leftover, safe to sweep. Young .tmp files
 // are spared: another host may be mid-write (writeFileSync -> renameSync).
 const TMP_SWEEP_AGE_MS = 60_000;
@@ -64,7 +69,7 @@ export function writeHostRecord(rec: HostRecord, dir: string = HOST_REGISTRY_DIR
   const tmp = `${recordPath(dir, rec.pid)}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`;
   try {
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(tmp, JSON.stringify(rec), { mode: 0o600 });
+    fs.writeFileSync(tmp, JSON.stringify(rec), { mode: OWNER_ONLY_FILE_MODE });
     fs.renameSync(tmp, recordPath(dir, rec.pid));
   } catch {
     // best effort; a missing record just means this host won't be reaped by pid
@@ -242,8 +247,8 @@ export function readProcInfo(pid: number): ProcInfo {
     }).trim();
     if (!out) return { alive: false, probeFailed: false, startTime: null, command: null };
     // lstart is a fixed 24-char ctime string; the rest is the command.
-    const lstart = out.slice(0, 24).trim();
-    const command = out.slice(24).trim();
+    const lstart = out.slice(0, PS_LSTART_WIDTH).trim();
+    const command = out.slice(PS_LSTART_WIDTH).trim();
     return { alive: true, probeFailed: false, startTime: lstart, command };
   } catch (err) {
     // execFileSync throws BOTH when ps exits non-zero (pid does not exist -

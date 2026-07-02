@@ -21,6 +21,7 @@
     "src/double-shift.ts",
     "src/focus-reporting.ts",
     "src/project-reload.ts",
+    "src/preset-ids.ts",
     "src/pty-event-reducer.ts",
     "src/terminal-option-key.ts",
     "src/terminal-keys.ts",

@@ -7,6 +7,7 @@
 // binaries installed via version managers.
 
 import { execFile } from "node:child_process";
+import { COMMAND_PROBE_TIMEOUT_MS } from "./constants";
 import { userShell } from "./shell";
 
 export interface HarnessDef {
@@ -22,7 +23,6 @@ export interface HarnessDef {
 }
 
 // Timeout for the login-shell PATH probe used to detect a harness binary.
-const COMMAND_PROBE_TIMEOUT_MS = 2500;
 
 /** Known agent harnesses + interactive AI CLIs we'll probe for. Add new
  *  ones here as the ecosystem grows. */

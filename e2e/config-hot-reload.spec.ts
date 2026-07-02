@@ -1,3 +1,4 @@
+import { WATCH_DEBOUNCE_MS } from "../dist-electron/config-watcher.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect } from "./fixtures";
@@ -119,7 +120,7 @@ test("an invalid hand-edit is handled gracefully and keeps the last good state",
   // debounce so the bad write is processed, then check the UI kept the last good
   // value and stayed responsive (it didn't blank out or crash).
   writeFileSync(join(seeded.ayaHome, "snippets.json"), "{ this is not json");
-  await window.waitForTimeout(400);
+  await window.waitForTimeout(WATCH_DEBOUNCE_MS * 2);
   await expect(
     drawer.locator(".aya-snippet-name", { hasText: GOOD }),
   ).toBeVisible();

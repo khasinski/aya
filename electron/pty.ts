@@ -12,10 +12,11 @@ import { execFile } from "node:child_process";
 import type * as PtyModule from "node-pty";
 import type { PtyEvent, SpawnFailureReason, SpawnRequest } from "./types";
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
+import { COMMAND_NOT_FOUND_EXIT_CODE, COMMAND_PROBE_TIMEOUT_MS } from "./constants";
 import { userShell } from "./shell";
 
 // Timeout for the shell `command -v` existence check during spawn preflight.
-const COMMAND_CHECK_TIMEOUT_MS = 2500;
+
 // Minimum PTY dimensions clamped before spawn/resize (node-pty needs >0).
 const MIN_PTY_COLS = 4; // minimum PTY columns
 const MIN_PTY_ROWS = 2; // minimum PTY rows
@@ -337,7 +338,7 @@ function reportSpawnFailure(
   const banner = `\r\n\x1b[1;31maya: \x1b[0m\x1b[31m${message}\x1b[0m\r\n\r\n`;
   sink.sendPtyEvent({ type: "spawn-failed", ptyId, reason, detail: message });
   sink.sendPtyEvent({ type: "data", ptyId, chunk: banner });
-  sink.sendPtyEvent({ type: "exit", ptyId, exitCode: 127 });
+  sink.sendPtyEvent({ type: "exit", ptyId, exitCode: COMMAND_NOT_FOUND_EXIT_CODE });
 }
 
 function preflightBinary(command: string): string | null {
@@ -358,7 +359,7 @@ function commandExists(binary: string): Promise<boolean> {
     execFile(
       userShell(),
       ["-l", "-i", "-c", `command -v -- ${binary} >/dev/null 2>&1`],
-      { timeout: COMMAND_CHECK_TIMEOUT_MS, windowsHide: true },
+      { timeout: COMMAND_PROBE_TIMEOUT_MS, windowsHide: true },
       (err) => resolve(err === null),
     );
   });

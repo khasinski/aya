@@ -44,8 +44,14 @@ export function effectiveAutoResume(preset: Preset): boolean {
 /** The argument that continues the MOST RECENT session for the cwd. A bare
  *  `--resume` (claude) / `resume` (codex) opens an interactive picker instead
  *  of auto-continuing, so use the "continue latest" forms. */
+/** The per-agent "continue latest session" CLI arguments. Wrong string =
+ *  silently lost agent sessions, so they are named and pinned by tests (which
+ *  also assert commandHasResumeFlag recognizes each one). */
+export const CODEX_RESUME_ARG = "resume --last";
+export const CLAUDE_RESUME_ARG = "--continue";
+
 export function resumeArg(preset: Preset): string {
-  return effectiveAgent(preset) === "codex" ? "resume --last" : "--continue";
+  return effectiveAgent(preset) === "codex" ? CODEX_RESUME_ARG : CLAUDE_RESUME_ARG;
 }
 
 /** True when the command already carries a resume/continue flag, so appending

@@ -1,11 +1,11 @@
-const SCROLLBACK_PRESERVING_PRESET_IDS = new Set([
-  "codex",
-]);
+import { PRESET_ID_CODEX, PRESET_ID_GEMINI } from "./preset-ids";
+
+const SCROLLBACK_PRESERVING_PRESET_IDS = new Set([PRESET_ID_CODEX]);
 
 // Gemini redraws its prompt/status region aggressively enough that xterm's
 // WebGL canvas can flicker on prompt-line updates. Keep opencode on WebGL:
 // its block-heavy UI shows 1px glyph seams in the DOM renderer.
-const WEBGL_DISABLED_PRESET_IDS = new Set(["gemini"]);
+const WEBGL_DISABLED_PRESET_IDS = new Set([PRESET_ID_GEMINI]);
 
 export function shouldUseTerminalWebgl(
   enableWebgl: boolean,

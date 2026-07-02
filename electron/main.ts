@@ -78,11 +78,12 @@ import {
   uninstallUsageHook,
 } from "./usage-hook";
 import { listMonitoredSessions } from "./session-monitor";
-import { normalizeLocalSummaryError } from "./local-summary-errors";
+import { normalizeLocalSummaryError, SUMMARY_TEXT_MAX_CHARS } from "./local-summary-errors";
 import { readRepoProjectConfig } from "./project-local";
 import { repairProcessPath } from "./shell-path";
 import { PtyHostClient } from "./pty-host-client";
 import { reapStaleHostRecords } from "./pty-host-registry";
+import { COMMAND_PROBE_TIMEOUT_MS } from "./constants";
 import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
 import {
   requirePositiveInt,
@@ -131,6 +132,28 @@ const RECOMMENDED_OLLAMA_MODEL = "gemma4:e4b";
 
 const ptyHost = new PtyHostClient(path.join(__dirname, "pty-host.js"));
 const UPDATE_AUTO_CHECK_DELAY_MS = 12_000;
+// Local Ollama daemon endpoint (fixed default port) - chat + tags probes.
+const OLLAMA_BASE_URL = "http://localhost:11434";
+// Summarizer sampling knobs, shared by BOTH backends (OpenAI-compatible and
+// Ollama) - the two request builders must stay in sync.
+const SUMMARY_TEMPERATURE = 0.2;
+const SUMMARY_MAX_TOKENS = 64;
+// Title fallback caps (first-line words / chars) for the local summary.
+const SUMMARY_TITLE_MAX_WORDS = 8;
+const SUMMARY_TITLE_MAX_CHARS = 80;
+// Bound captured `ollama pull` stderr so a chatty child can't balloon memory.
+const OLLAMA_PULL_STDERR_MAX_BYTES = 8192;
+// Max accepted Ollama model-name length (IPC input-validation cap).
+const OLLAMA_MODEL_NAME_MAX_LEN = 120;
+const OLLAMA_MODEL_NAME_RE = new RegExp(`^[A-Za-z0-9._:/-]{1,${OLLAMA_MODEL_NAME_MAX_LEN}}$`);
+// Cap of $PATH entries returned to the renderer diagnostics view.
+const MAX_PATH_ENTRIES_RETURNED = 40;
+// Delay before re-probing a host that answered the version handshake with
+// null - long enough for a slow cold spawn to finish listening.
+const STALE_HOST_REPROBE_DELAY_MS = 1_000;
+// macOS needs a moment after fullscreen transitions before the window hack
+// can be re-applied.
+const MACOS_FULLSCREEN_HACK_DELAY_MS = 250;
 // Delay before the Phase-2 legacy sweep (stray pre-registry hosts + orphaned
 // terminal children of dead hosts). Off the startup path: nothing it targets
 // can interfere with the fresh session, so first paint never pays for it.
@@ -289,7 +312,7 @@ async function summarizeWithApple(
         const parsed = JSON.parse(stdout) as Partial<LocalSummaryResult>;
         const summary =
           typeof parsed.summary === "string"
-            ? parsed.summary.replace(/\s+/g, " ").trim().slice(0, 160)
+            ? parsed.summary.replace(/\s+/g, " ").trim().slice(0, SUMMARY_TEXT_MAX_CHARS)
             : "";
         finish({
           available: parsed.available === true,
@@ -313,8 +336,8 @@ function cleanSummary(value: string): string {
     .replace(/\s+/g, " ")
     .replace(/^["'`]+|["'`.]+$/g, "")
     .trim();
-  const words = oneLine.split(/\s+/).filter(Boolean).slice(0, 8).join(" ");
-  return words.slice(0, 80);
+  const words = oneLine.split(/\s+/).filter(Boolean).slice(0, SUMMARY_TITLE_MAX_WORDS).join(" ");
+  return words.slice(0, SUMMARY_TITLE_MAX_CHARS);
 }
 
 function summaryPrompt(req: LocalSummaryRequest): string {
@@ -379,8 +402,8 @@ async function summarizeWithOpenAiCompatible(args: {
       },
       body: JSON.stringify({
         model,
-        temperature: 0.2,
-        max_tokens: 64,
+        temperature: SUMMARY_TEMPERATURE,
+        max_tokens: SUMMARY_MAX_TOKENS,
         think: false,
         messages: [
           {
@@ -427,7 +450,7 @@ async function summarizeWithOllama(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), LOCAL_SUMMARY_TIMEOUT_MS);
   try {
-    const response = await fetch("http://localhost:11434/api/chat", {
+    const response = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
       method: "POST",
       signal: controller.signal,
       headers: { "Content-Type": "application/json" },
@@ -444,8 +467,8 @@ async function summarizeWithOllama(
           { role: "user", content: summaryPrompt(req) },
         ],
         options: {
-          temperature: 0.2,
-          num_predict: 64,
+          temperature: SUMMARY_TEMPERATURE,
+          num_predict: SUMMARY_MAX_TOKENS,
         },
       }),
     });
@@ -503,8 +526,8 @@ async function ollamaStatus(
     };
   }
   try {
-    const response = await fetch("http://localhost:11434/api/tags", {
-      signal: AbortSignal.timeout(2500),
+    const response = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
+      signal: AbortSignal.timeout(COMMAND_PROBE_TIMEOUT_MS),
     });
     if (!response.ok) {
       return {
@@ -552,7 +575,7 @@ async function ollamaStatus(
 
 function validateOllamaModelName(value: unknown): string {
   const model = requireString(value, "intelligence:pull-ollama-model.model").trim();
-  if (!/^[A-Za-z0-9._:/-]{1,120}$/.test(model)) {
+  if (!OLLAMA_MODEL_NAME_RE.test(model)) {
     throw new Error("Ollama model name contains unsupported characters.");
   }
   return model;
@@ -568,7 +591,7 @@ async function pullOllamaModel(model: string): Promise<OllamaStatus> {
     let stderr = "";
     child.stderr.setEncoding("utf-8");
     child.stderr.on("data", (chunk: string) => {
-      if (stderr.length < 8192) stderr += chunk;
+      if (stderr.length < OLLAMA_PULL_STDERR_MAX_BYTES) stderr += chunk;
     });
     child.on("error", reject);
     child.on("close", (code) => {
@@ -737,7 +760,7 @@ async function diagnosticsReport(): Promise<DiagnosticsReport> {
     },
     shell: {
       shell: process.env.SHELL ?? null,
-      pathEntries: pathEntries().slice(0, 40),
+      pathEntries: pathEntries().slice(0, MAX_PATH_ENTRIES_RETURNED),
     },
     cli,
     ptyHost: {
@@ -1496,7 +1519,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   win.on("enter-full-screen", () => {
     sendFullScreen(true);
     applyMacOsWindowHack(win);
-    setTimeout(() => applyMacOsWindowHack(win), 250);
+    setTimeout(() => applyMacOsWindowHack(win), MACOS_FULLSCREEN_HACK_DELAY_MS);
   });
   win.on("leave-full-screen", () => {
     sendFullScreen(false);
@@ -1638,7 +1661,7 @@ async function handleStaleHost(): Promise<void> {
       // the freshly-spawned, current-version host. Re-probe once after a short
       // delay: a genuinely ancient host fails the version request consistently,
       // while a slow spawn answers with a matching identity the second time.
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      await new Promise((resolve) => setTimeout(resolve, STALE_HOST_REPROBE_DELAY_MS));
       ({ identity } = await ptyHost.hostStatus());
     }
     if (!isHostStale(expected, identity)) return;

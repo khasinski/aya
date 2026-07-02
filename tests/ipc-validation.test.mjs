@@ -1,6 +1,7 @@
 // Runtime validation for renderer -> main IPC payloads. TypeScript covers the
 // happy path, but malformed IPC messages still arrive as unknown at runtime.
 
+import { MAX_SPLIT_ROWS, MAX_SPLIT_COLS } from "../dist-electron/validation.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -94,7 +95,7 @@ test("validateProjectConfig rejects invalid split layout payloads", () => {
       validateProjectConfig({
         ...base,
         splitLayout: {
-          rows: 6,
+          rows: MAX_SPLIT_ROWS + 1,
           cols: 1,
           rowFr: [1],
           colFr: [1],
@@ -147,16 +148,16 @@ test("validateProjectConfig accepts a max 5x5 split but rejects one beyond max",
   const atMax = validateProjectConfig({
     ...base,
     splitLayout: {
-      rows: 5,
-      cols: 5,
+      rows: MAX_SPLIT_ROWS,
+      cols: MAX_SPLIT_COLS,
       rowFr: [1, 1, 1, 1, 1],
       colFr: [1, 1, 1, 1, 1],
       cells: ["t1"],
       activeCell: 0,
     },
   });
-  assert.equal(atMax.splitLayout?.rows, 5);
-  assert.equal(atMax.splitLayout?.cols, 5);
+  assert.equal(atMax.splitLayout?.rows, MAX_SPLIT_ROWS);
+  assert.equal(atMax.splitLayout?.cols, MAX_SPLIT_COLS);
 
   // One row beyond the maximum is rejected.
   assert.throws(
@@ -164,8 +165,8 @@ test("validateProjectConfig accepts a max 5x5 split but rejects one beyond max",
       validateProjectConfig({
         ...base,
         splitLayout: {
-          rows: 6,
-          cols: 5,
+          rows: MAX_SPLIT_ROWS + 1,
+          cols: MAX_SPLIT_COLS,
           rowFr: [1],
           colFr: [1],
           cells: ["t1"],
@@ -181,8 +182,8 @@ test("validateProjectConfig accepts a max 5x5 split but rejects one beyond max",
       validateProjectConfig({
         ...base,
         splitLayout: {
-          rows: 5,
-          cols: 6,
+          rows: MAX_SPLIT_ROWS,
+          cols: MAX_SPLIT_COLS + 1,
           rowFr: [1],
           colFr: [1],
           cells: ["t1"],
@@ -335,4 +336,9 @@ test("validateThemesFile checks nested theme color shape", () => {
       }),
     /themes:save\.themes\[0\]\.colors\.brightWhite/,
   );
+});
+
+test("split-grid maximum is pinned (boundary tests above derive from it)", () => {
+  assert.equal(MAX_SPLIT_ROWS, 5);
+  assert.equal(MAX_SPLIT_COLS, 5);
 });

@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -105,6 +105,9 @@ test("host record write/read/remove round-trips atomically", () => {
   const dir = mkdtempSync(join(tmpdir(), "aya-reg-"));
   try {
     writeHostRecord(REC, dir);
+    // Records name kill targets - they must be owner-only like the sockets.
+    const mode = statSync(join(dir, `${REC.pid}.json`)).mode & 0o777;
+    assert.equal(mode, 0o600, "host record written owner-only");
     writeHostRecord({ ...REC, pid: 4343 }, dir);
     const recs = readHostRecords(dir).sort((a, b) => a.pid - b.pid);
     assert.equal(recs.length, 2);

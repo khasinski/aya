@@ -38,7 +38,8 @@ export const CONTROL_SOCKET_PATH = path.join(AYA_HOME, "aya.sock");
 export const REMOTE_SOCKET_PATH = path.join(AYA_HOME, "aya-remote.sock");
 export const PTY_HOST_SOCKET_PATH = path.join(AYA_HOME, "pty-host.sock");
 
-// rw------- for unix sockets: they accept unauthenticated local commands /
-// remote bridge traffic, so they must never be readable/writable by other users.
-// One definition for all socket servers.
-export const SOCKET_FILE_PERMISSIONS = 0o600;
+// rw------- (owner-only). Sockets accept unauthenticated local commands /
+// remote bridge traffic, and host-registry records name kill targets - none
+// of it may be readable/writable by other users. One definition for both.
+export const OWNER_ONLY_FILE_MODE = 0o600;
+export const SOCKET_FILE_PERMISSIONS = OWNER_ONLY_FILE_MODE;

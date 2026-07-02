@@ -110,3 +110,35 @@ test("commandWithAutoResume returns the original command verbatim when skipped",
   // Empty command is returned as-is (not trimmed) so callers see no surprise.
   assert.equal(commandWithAutoResume(preset({ command: "   " }), true), "   ");
 });
+
+// --- pinned resume-arg vocabulary (cross-checked against its own detector) ---
+import {
+  CODEX_RESUME_ARG,
+  CLAUDE_RESUME_ARG,
+} from "../dist-test/agentPreset.js";
+import { PRESET_ID_CODEX, PRESET_ID_GEMINI } from "../dist-test/preset-ids.js";
+import { DEFAULT_PRESETS } from "../dist-electron/presets.js";
+
+test("resume args are the pinned CLI vocabulary", () => {
+  assert.equal(CODEX_RESUME_ARG, "resume --last");
+  assert.equal(CLAUDE_RESUME_ARG, "--continue");
+});
+
+test("commandHasResumeFlag recognizes exactly the args resumeArg appends", () => {
+  // If the arg and its detector ever drift apart, a restored tab would either
+  // double-append the flag or never resume - the bug the module guards against.
+  const claude = { id: "claude", name: "c", icon: "", color: "", command: "claude" };
+  const codex = { id: "codex", name: "x", icon: "", color: "", command: "codex" };
+  assert.equal(commandHasResumeFlag(claude, `claude ${CLAUDE_RESUME_ARG}`), true);
+  assert.equal(commandHasResumeFlag(codex, `codex ${CODEX_RESUME_ARG}`), true);
+  assert.equal(commandHasResumeFlag(claude, "claude"), false);
+  assert.equal(commandHasResumeFlag(codex, "codex"), false);
+});
+
+test("behavior-keyed preset ids match the electron built-ins (cross-boundary tripwire)", () => {
+  const ids = DEFAULT_PRESETS.map((p) => p.id);
+  assert.ok(ids.includes(PRESET_ID_CODEX), "codex built-in id drifted from PRESET_ID_CODEX");
+  // gemini is intentionally NOT a built-in - it matches a user-named preset.
+  assert.equal(ids.includes(PRESET_ID_GEMINI), false);
+  assert.equal(PRESET_ID_GEMINI, "gemini");
+});
