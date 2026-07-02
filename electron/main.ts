@@ -82,6 +82,8 @@ import { normalizeLocalSummaryError } from "./local-summary-errors";
 import { readRepoProjectConfig } from "./project-local";
 import { repairProcessPath } from "./shell-path";
 import { PtyHostClient } from "./pty-host-client";
+import { reapStaleHostRecords } from "./pty-host-registry";
+import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
 import {
   requirePositiveInt,
   requireString,
@@ -129,6 +131,10 @@ const RECOMMENDED_OLLAMA_MODEL = "gemma4:e4b";
 
 const ptyHost = new PtyHostClient(path.join(__dirname, "pty-host.js"));
 const UPDATE_AUTO_CHECK_DELAY_MS = 12_000;
+// Delay before the Phase-2 legacy sweep (stray pre-registry hosts + orphaned
+// terminal children of dead hosts). Off the startup path: nothing it targets
+// can interfere with the fresh session, so first paint never pays for it.
+const LEGACY_SWEEP_DELAY_MS = 5_000;
 let updateStatus: UpdateStatus = {
   phase: "idle",
   supported: false,
@@ -1180,6 +1186,12 @@ function showAyaAboutPanel(): void {
 // Set to true when a stale PTY host is detected on launch (#28). The Restart
 // Aya menu item reads this flag so it can kill the stale host before relaunching.
 let staleHostDetected = false;
+// Deferred Phase-2 legacy-sweep timer; cancelled on quit so a mid-teardown
+// sweep can't spawn a host or probe processes while the app is exiting.
+let legacySweepTimer: NodeJS.Timeout | null = null;
+// Set in before-quit: an already-fired sweep callback checks it and bails
+// (clearTimeout can't stop a callback that is already running).
+let appQuitting = false;
 
 /** Build a minimal RGBA PNG containing a filled circle.
  *  Uses only Node built-ins (zlib deflate + manual PNG framing). */
@@ -1604,37 +1616,60 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   return win;
 }
 
-/** On launch, detect a stale PTY host (#28). With zero live terminals it is
- *  safe to reap silently; otherwise a restart would kill the user's running
- *  processes, so we only notify the renderer (which offers a confirm + button).
- *  Best-effort: never blocks or crashes startup. */
-async function handleStaleHost(win: BrowserWindow | null): Promise<void> {
-  if (!win || win.isDestroyed()) return;
+/** On launch, auto-reap a stale PTY host (#28), even with live terminals: an
+ *  update ships new binaries, so the old host's terminals must restart anyway
+ *  (Shift+Enter), and leaving it alive is exactly what accumulated orphaned
+ *  hosts + processes. Best-effort: never blocks or crashes startup.
+ *
+ *  Honest limits: restart() only ASKS the socket-connected host to shut down -
+ *  the old host runs ITS OWN shutdown code. Hosts from builds before the #73
+ *  escalation SIGHUP their children and exit immediately, so a signal-ignoring
+ *  child (claude --chrome) can still be orphaned once, at this first-update
+ *  boundary; such hosts also predate the registry, so the by-pid reap can't
+ *  cover them either. Cleaning those already-orphaned trees is the Phase-2
+ *  sweep's job. Hosts from this build onward are covered on both paths. */
+async function handleStaleHost(): Promise<void> {
   try {
-    const { identity, ptyCount } = await ptyHost.hostStatus();
     const expected = ptyHost.expectedHostIdentity(app.getVersion());
+    let { identity } = await ptyHost.hostStatus();
+    if (identity === null) {
+      // identity null is ALSO returned for transient client-side failures (e.g.
+      // a >5s cold-spawn socket wait). Acting on it immediately would shut down
+      // the freshly-spawned, current-version host. Re-probe once after a short
+      // delay: a genuinely ancient host fails the version request consistently,
+      // while a slow spawn answers with a matching identity the second time.
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      ({ identity } = await ptyHost.hostStatus());
+    }
     if (!isHostStale(expected, identity)) return;
-    // Only auto-reap silently when the handshake succeeded and confirmed zero
-    // terminals. When identity===null the host does not support the version
-    // request (old host after reinstall) so ptyCount is unknown - always show
-    // the banner.
-    if (identity !== null && ptyCount === 0) {
-      await ptyHost.restart();
-      return;
-    }
-    // Signal via the menu item icon instead of an intrusive banner (#52).
+    await ptyHost.restart();
+    // restart() swallows request errors by design (an old host may not honor
+    // "shutdown"), so returning is NOT proof the host died. Verify: re-probe the
+    // socket; a fresh current-version host (or none yet) means success, the SAME
+    // stale identity answering again means the reap failed.
+    const after = await ptyHost.hostStatus();
+    if (!isHostStale(expected, after.identity)) return;
+    // Reap didn't take - surface the manual affordance so the user can retry.
+    // The menu may not be installed yet (this runs before createWindow), so the
+    // caller applies the icon from the flag after installApplicationMenu.
     staleHostDetected = true;
-    const item = Menu.getApplicationMenu()?.getMenuItemById("restart-aya");
-    if (item) {
-      // 16x16 px amber dot at scaleFactor 2 = 8pt logical - renders as a
-      // small colored circle to the left of the label (standard macOS pattern).
-      item.icon = nativeImage.createFromBuffer(
-        makeCirclePng(16, 224, 112, 0), // amber #e07000
-        { scaleFactor: 2 },
-      );
-    }
+    setStaleMenuIcon();
   } catch {
     // best-effort; a host that can't be queried is handled on next use
+  }
+}
+
+/** Amber dot on the "Restart Aya" menu item - the manual reap affordance (#52).
+ *  No-op until the application menu is installed. */
+function setStaleMenuIcon(): void {
+  const item = Menu.getApplicationMenu()?.getMenuItemById("restart-aya");
+  if (item) {
+    // 16x16 px amber dot at scaleFactor 2 = 8pt logical - renders as a
+    // small colored circle to the left of the label (standard macOS pattern).
+    item.icon = nativeImage.createFromBuffer(
+      makeCirclePng(16, 224, 112, 0), // amber #e07000
+      { scaleFactor: 2 },
+    );
   }
 }
 
@@ -2061,6 +2096,48 @@ app.whenReady().then(async () => {
     }
   }
 
+  // Reap stale detached PTY hosts (and their whole process groups) that THIS
+  // registry recorded - i.e. hosts from this build onward left behind by future
+  // updates. A same-build host is kept (survive-restart, #28); a version-
+  // mismatched one is force-killed by pid (fail-closed, verified via its
+  // recorded start time). Pre-registry hosts have no record and are NOT covered
+  // here (Phase-2 sweep); the one currently holding the socket is handled by
+  // handleStaleHost after the window loads. Placement: deliberately BEFORE
+  // createWindow so a recorded stale host is dead before anything can connect
+  // to it; the common-path cost is one `ps -p` fork for the kept host (the
+  // system-wide snapshot only runs when a kill actually happens).
+  let keptCompatibleHosts: number[] = [];
+  try {
+    const summary = reapStaleHostRecords(
+      ptyHost.expectedHostIdentity(app.getVersion()),
+      path.join(__dirname, "pty-host.js"),
+    );
+    keptCompatibleHosts = summary.keptCompatible;
+    if (summary.reaped.length > 0) {
+      console.log(
+        `[aya] reaped ${summary.reaped.length} stale pty-host(s) + ${summary.killedDescendants.length} descendant(s):`,
+        summary.reaped,
+      );
+    }
+    if (summary.gc.length > 0 || summary.skipped.length > 0) {
+      console.log(
+        `[aya] pty-host registry: gc'd ${summary.gc.length} dead record(s), skipped ${summary.skipped.length} (indeterminate/probe-failed)`,
+      );
+    }
+  } catch {
+    // best effort — never block startup on reconciliation
+  }
+
+  // Reconcile the SOCKET-connected host too, still before the window exists:
+  // once the renderer loads it immediately spawns terminals, and a spawn that
+  // raced this check could land on the stale host and be killed by the reap
+  // (losing the user's first terminal). Fast path: no socket file, no host to
+  // reconcile — don't pay a probe (which would spawn a host early) on a cold
+  // start. The amber fallback icon is applied after installApplicationMenu.
+  if (await pathExists(PTY_HOST_SOCKET_PATH)) {
+    await handleStaleHost();
+  }
+
   const savedState = await loadWindowState();
   mainWindow = createWindow(savedState);
   registerIpc(mainWindow);
@@ -2094,11 +2171,59 @@ app.whenReady().then(async () => {
   });
   installApplicationMenu();
 
-  // After the renderer is listening, check whether the (detached, survives-
-  // restart) PTY host is from an older build and act on it (#28).
-  mainWindow.webContents.once("did-finish-load", () => {
-    void handleStaleHost(mainWindow);
-  });
+  // The stale-host reconcile ran before the window (see above); the menu did
+  // not exist yet, so apply the amber "Restart Aya" affordance now if needed.
+  if (staleHostDetected) setStaleMenuIcon();
+
+  // Phase-2 legacy sweep, deferred off the startup path: clean up what the
+  // registry structurally can't reach - pre-registry stray hosts (no record
+  // file, e.g. left behind by builds before the registry existed) and orphaned
+  // terminal children whose host already died. Deferred because none of these
+  // can interfere with the fresh session (a stray host holds no socket, a dead
+  // -leader orphan has no owner), so first paint shouldn't pay for the probes.
+  legacySweepTimer = setTimeout(() => {
+    legacySweepTimer = null;
+    void (async () => {
+      try {
+        // A quit that races the timer can't un-schedule an already-running
+        // callback - bail if teardown began (the flag is set in before-quit).
+        if (appQuitting) return;
+        // The current socket host must never be swept. Fail-closed twice over:
+        // no socket file -> don't consult the client at all (hostStatus would
+        // SPAWN a host as a side effect) and run without the stray-host pass;
+        // socket present but the host reports no pid (pre-registry host) ->
+        // also skip the stray-host pass, since we can't positively exclude it.
+        // S2 is unaffected either way - a live host's children are never in a
+        // dead-leader group.
+        let strayHosts = false;
+        const exclude = new Set<number>(keptCompatibleHosts);
+        if (await pathExists(PTY_HOST_SOCKET_PATH)) {
+          const status = await ptyHost.hostStatus();
+          if (typeof status.pid === "number") {
+            exclude.add(status.pid);
+            strayHosts = true;
+          } else {
+            console.log(
+              "[aya] legacy sweep: socket host has no pid handshake - skipping stray-host pass",
+            );
+          }
+        }
+        const summary = sweepLegacyAyaProcesses(exclude, undefined, { strayHosts });
+        if (summary.sweptHosts.length > 0 || summary.sweptOrphans.length > 0) {
+          console.log(
+            `[aya] legacy sweep: killed ${summary.sweptHosts.length} stray host group(s) ${JSON.stringify(summary.sweptHosts)} + ${summary.sweptOrphans.length} orphaned terminal process(es)`,
+          );
+        }
+        if (summary.truncated > 0) {
+          console.log(
+            `[aya] legacy sweep: ${summary.truncated} orphan candidate(s) beyond the probe cap - retried next launch`,
+          );
+        }
+      } catch {
+        // best effort - never destabilize a running session over cleanup
+      }
+    })();
+  }, LEGACY_SWEEP_DELAY_MS);
 
   // Honor an initial directory argument on first launch — the renderer
   // applies the same switch-or-create logic as for second-instance.
@@ -2122,6 +2247,11 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  appQuitting = true;
+  if (legacySweepTimer) {
+    clearTimeout(legacySweepTimer);
+    legacySweepTimer = null;
+  }
   if (!IS_E2E_PTY_SHUTDOWN) return;
   void ptyHost.shutdown().catch(() => {
     // Test-only cleanup. Normal app runs intentionally keep PTYs alive.

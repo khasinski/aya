@@ -5,6 +5,12 @@ import * as path from "node:path";
 import { PTY_HOST_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
 import type { HostIdentity } from "./pty-host-staleness";
 import {
+  writeHostRecord,
+  removeHostRecord,
+  ownStartTime,
+  ownPgid,
+} from "./pty-host-registry";
+import {
   type PtyHostEventMessage,
   type PtyHostRequest,
   type PtyHostResponse,
@@ -14,7 +20,7 @@ import {
   activePtyCount,
   getBufferedOutput,
   killPty,
-  killAll,
+  shutdownPtyChildren,
   resizePty,
   searchPtyOutputs,
   spawnPty,
@@ -33,6 +39,30 @@ let server: net.Server | null = null;
 /** Stop accepting connections and remove the socket file. Called on a clean
  *  shutdown BEFORE the process exits (so a client restarting the host can't
  *  reconnect to this dying process) and again on process-exit signals. */
+// Guards against overlapping shutdowns (a socket "shutdown" request racing a
+// SIGTERM): the SECOND shutdownPtyChildren call would find the ptys map already
+// drained by the first, take the empty-children fast path, and process.exit(0)
+// BEFORE the first call's 750ms SIGKILL escalation could fire - orphaning the
+// very stuck children the ladder exists to kill. First caller owns the exit.
+let hostShutdownStarted = false;
+
+/** Graceful host shutdown, idempotent: drop the socket synchronously (so a
+ *  client spawning a fresh host can't reconnect to this exiting process), kill
+ *  every child via the graceful->SIGKILL escalation ladder (event-driven, so a
+ *  clean quit isn't delayed by a fixed timer, and - unlike a bare
+ *  process.exit(0) - the host stays alive long enough to actually deliver the
+ *  escalation), then remove the registry record (children confirmed dead; a
+ *  crash exit skips this and leaves the record for next-launch GC) and exit. */
+function beginShutdown(): void {
+  if (hostShutdownStarted) return; // the in-flight shutdown owns the exit
+  hostShutdownStarted = true;
+  closeSocket();
+  shutdownPtyChildren(() => {
+    removeHostRecord(process.pid);
+    process.exit(0);
+  });
+}
+
 function closeSocket(): void {
   try {
     server?.close();
@@ -44,6 +74,12 @@ function closeSocket(): void {
   } catch {
     // best effort
   }
+  // NOTE: the registry record is deliberately NOT removed here. closeSocket runs
+  // on SIGTERM/SIGINT/exit, i.e. potentially while child PTYs are still alive; if
+  // we dropped the record now and the host then died, surviving children would be
+  // unreapable orphans (no record to find them by). The record is removed only
+  // after a clean shutdown confirms the children are dead (see the shutdown
+  // handler); otherwise the next launch GCs it once the pid is verified gone.
 }
 
 function sendLine(socket: net.Socket, value: PtyHostResponse | PtyHostEventMessage): void {
@@ -85,11 +121,7 @@ async function handle(request: PtyHostRequest): Promise<unknown> {
     return null;
   }
   if (request.type === "shutdown") {
-    killAll();
-    // Drop the socket synchronously so a client spawning a fresh host can't
-    // reconnect to this exiting process in the window before exit.
-    closeSocket();
-    setTimeout(() => process.exit(0), 0);
+    beginShutdown();
     return null;
   }
   if (request.type === "search") {
@@ -99,7 +131,9 @@ async function handle(request: PtyHostRequest): Promise<unknown> {
     return getBufferedOutput(request.ptyId);
   }
   if (request.type === "version") {
-    return { ...HOST_IDENTITY, ptyCount: activePtyCount() };
+    // pid lets a client correlate the socket-connected host with a registry
+    // record (e.g. to spot a same-version host stranded off-socket).
+    return { ...HOST_IDENTITY, ptyCount: activePtyCount(), pid: process.pid };
   }
   throw new Error("unknown request");
 }
@@ -193,10 +227,34 @@ function start(): void {
     } catch {
       // best effort
     }
+    // Publish our registry record so a future app version can reap THIS host by
+    // pid if it turns out stale. Written after listen so the record only exists
+    // once we're actually serving. Leadership is VERIFIED via the OS, not
+    // assumed from detached spawn: the reaper's kill(-pgid) is only safe when
+    // this process really leads its own group, so if it doesn't (alternate
+    // launcher, future spawn change) we skip the record - degrading to
+    // pre-registry behavior instead of recording an unkillable/foreign group.
+    // writeHostRecord itself refuses an empty startTime (unverifiable record).
+    const pgid = ownPgid();
+    if (pgid === process.pid) {
+      writeHostRecord({
+        pid: process.pid,
+        pgid,
+        version: HOST_IDENTITY.version,
+        scriptHash: HOST_IDENTITY.scriptHash,
+        startTime: ownStartTime(),
+        nonce: crypto.randomBytes(8).toString("hex"),
+      });
+    }
   });
 
-  process.once("SIGTERM", closeSocket);
-  process.once("SIGINT", closeSocket);
+  // SIGTERM/SIGINT: registering a handler SUPPRESSES node's default termination,
+  // so closeSocket alone would leave a socketless zombie host running with live
+  // children (and, being same-version, the registry would keep it forever). Do a
+  // real graceful shutdown instead - beginShutdown is idempotent, so a signal
+  // racing an in-flight socket "shutdown" joins it instead of double-draining.
+  process.once("SIGTERM", beginShutdown);
+  process.once("SIGINT", beginShutdown);
   process.once("exit", closeSocket);
 }
 

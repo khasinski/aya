@@ -1,6 +1,6 @@
 import { test, expect } from "./fixtures";
 import { fireShortcut } from "./helpers/shortcut";
-import { existsSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 import type { ElectronApplication, Page } from "@playwright/test";
 
@@ -61,17 +61,28 @@ async function reproInLayout(
   await expect
     .poll(() => hbSize(seeded.projectDir, activeTab), { timeout: 10_000 })
     .toBeGreaterThan(0);
+  const beforeClose = hbSize(seeded.projectDir, activeTab);
 
-  // Close the active tab -> killPty -> SIGHUP (ignored) then SIGKILL escalation.
+  // Close the active tab -> killPty -> graceful SIGHUP (ignored by the trap) then
+  // SIGKILL escalation.
   await fireShortcut(app, "close-tab");
 
-  // Past the 750ms escalation + margin, the process must be DEAD: the heartbeat
-  // file stops growing. (Orphan bug: it would keep appending.)
+  // First prove the process SURVIVES the graceful kill: inside the grace window
+  // (before the 750ms escalation) the trap-HUP loop keeps appending. This ASSERTS
+  // SIGHUP-resistance rather than assuming it from the fixture string - if the
+  // graceful signal alone killed the process (e.g. the trap silently broke, or
+  // node-pty's default signal changed), this fails RED instead of letting the
+  // test quietly decay into a facade.
+  await expect
+    .poll(() => hbSize(seeded.projectDir, activeTab), { timeout: 700 })
+    .toBeGreaterThan(beforeClose);
+
+  // Then prove the escalation actually kills it: past the 750ms window the file
+  // stops growing. (Orphan bug: a survivor would keep appending forever.)
   await window.waitForTimeout(2000);
   const s1 = hbSize(seeded.projectDir, activeTab);
   await window.waitForTimeout(700); // > the 150ms heartbeat interval
   const s2 = hbSize(seeded.projectDir, activeTab);
-  expect(existsSync(join(seeded.projectDir, `hb-${activeTab}.txt`))).toBe(true);
   expect(s2).toBe(s1); // no further writes -> the process was actually killed
 }
 
