@@ -5,9 +5,12 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 import {
   isReapableHost,
   collectDescendants,
@@ -15,6 +18,7 @@ import {
   readHostRecords,
   removeHostRecord,
   reapStaleHostRecords,
+  classifyRecord,
 } from "../dist-electron/pty-host-registry.js";
 
 const SCRIPT = "/Applications/Aya.app/Contents/Resources/app.asar/dist-electron/pty-host.js";
@@ -147,9 +151,10 @@ test("reap: a stale, verified host has its whole tree SIGKILLed + record removed
       kill: (pid, sig) => { assert.equal(sig, "SIGKILL"); killed.push(pid); },
     });
     assert.deepEqual(summary.reaped, [5000]);
-    // Kills by PROCESS GROUP (-pgid) plus the leader pid - NOT per-descendant
-    // enumeration (that would be a reuse-race kill target). pgid == 5000.
-    assert.deepEqual(killed.sort((a, b) => a - b), [-5000, 5000], "group kill + leader, no per-pid enumeration kill");
+    // ONE group kill (-pgid) and nothing else: no per-descendant enumeration
+    // kills (reuse-race targets) and no follow-up kill(pid) (POSIX group kill
+    // already hits the leader; a second signal would be the only unverified one).
+    assert.deepEqual(killed, [-5000], "exactly one group kill, no extra signals");
     assert.deepEqual(summary.killedDescendants.sort((a, b) => a - b), [5001, 5002], "descendants observed for the log only");
     assert.deepEqual(readHostRecords(dir), [], "stale record removed");
   });
@@ -226,10 +231,194 @@ test("reap: empty registry is a no-op", () => {
   withReg([], (dir) => {
     const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
       selfPid: 1,
-      readProcInfo: () => ({ alive: false, startTime: null, command: null }),
+      readProcInfo: () => ({ alive: false, probeFailed: false, startTime: null, command: null }),
       listProcs: () => [],
       kill: () => assert.fail("must not kill anything"),
     });
-    assert.deepEqual(summary, { reaped: [], killedDescendants: [], keptCompatible: [], gc: [] });
+    assert.deepEqual(summary, {
+      reaped: [],
+      killedDescendants: [],
+      keptCompatible: [],
+      gc: [],
+      skipped: [],
+    });
   });
+});
+
+// --- the "unknown" identity sentinel must never decide a kill or a keep ---
+
+test("classifyRecord: version mismatch is stale regardless of hashes", () => {
+  assert.equal(classifyRecord({ version: "0.7.0", scriptHash: "unknown" }, EXPECTED), "stale");
+  assert.equal(classifyRecord({ version: "0.7.0", scriptHash: "new" }, EXPECTED), "stale");
+});
+
+test("classifyRecord: same version needs BOTH hashes known to decide", () => {
+  assert.equal(classifyRecord({ version: "0.8.0", scriptHash: "new" }, EXPECTED), "compatible");
+  assert.equal(classifyRecord({ version: "0.8.0", scriptHash: "other" }, EXPECTED), "stale");
+  // 'unknown' on either side -> indeterminate: 'unknown'==='unknown' must not
+  // trust a foreign build, and real-vs-'unknown' must not SIGKILL a healthy one.
+  assert.equal(classifyRecord({ version: "0.8.0", scriptHash: "unknown" }, EXPECTED), "indeterminate");
+  assert.equal(
+    classifyRecord({ version: "0.8.0", scriptHash: "real" }, { version: "0.8.0", scriptHash: "unknown" }),
+    "indeterminate",
+  );
+});
+
+test("reap: a LIVE indeterminate record is skipped - never killed, record kept", () => {
+  const rec = { pid: 5100, pgid: 5100, version: "0.8.0", scriptHash: "unknown", startTime: "T", nonce: "n" };
+  withReg([rec], (dir) => {
+    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+      selfPid: 1,
+      readProcInfo: () => ({ alive: true, probeFailed: false, startTime: "T", command: `Aya ${SCRIPT}` }),
+      listProcs: () => [],
+      kill: () => assert.fail("must not kill on an indeterminate identity"),
+    });
+    assert.deepEqual(summary.skipped, [5100]);
+    assert.equal(readHostRecords(dir).length, 1, "record survives for a later launch");
+  });
+});
+
+test("reap: a DEAD indeterminate record is GC'd (no kill) so unknown-hash records can't pile up", () => {
+  const rec = { pid: 5150, pgid: 5150, version: "0.8.0", scriptHash: "unknown", startTime: "T", nonce: "n" };
+  withReg([rec], (dir) => {
+    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+      selfPid: 1,
+      readProcInfo: () => ({ alive: false, probeFailed: false, startTime: null, command: null }),
+      listProcs: () => [],
+      kill: () => assert.fail("must not kill on an indeterminate identity"),
+    });
+    assert.deepEqual(summary.gc, [5150]);
+    assert.deepEqual(readHostRecords(dir), [], "conclusively-dead record removed");
+  });
+});
+
+test("reap: a kill failing with EPERM KEEPS the record (live host must stay reapable)", () => {
+  const stale = { pid: 5300, pgid: 5300, version: "0.7.0", scriptHash: "old", startTime: "T", nonce: "n" };
+  withReg([stale], (dir) => {
+    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+      selfPid: 1,
+      readProcInfo: () => ({ alive: true, probeFailed: false, startTime: "T", command: `Aya ${SCRIPT}` }),
+      listProcs: () => [{ pid: 5300, ppid: 1 }],
+      kill: () => {
+        const err = new Error("not permitted");
+        err.code = "EPERM";
+        throw err;
+      },
+    });
+    assert.deepEqual(summary.reaped, [], "a failed signal is not a reap");
+    assert.deepEqual(summary.skipped, [5300]);
+    assert.equal(readHostRecords(dir).length, 1, "record kept for a retry next launch");
+  });
+});
+
+test("reap: a kill failing with ESRCH (group vanished mid-reap) still drops the record", () => {
+  const stale = { pid: 5400, pgid: 5400, version: "0.7.0", scriptHash: "old", startTime: "T", nonce: "n" };
+  withReg([stale], (dir) => {
+    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+      selfPid: 1,
+      readProcInfo: () => ({ alive: true, probeFailed: false, startTime: "T", command: `Aya ${SCRIPT}` }),
+      listProcs: () => [],
+      kill: () => {
+        const err = new Error("no such process");
+        err.code = "ESRCH";
+        throw err;
+      },
+    });
+    assert.deepEqual(summary.reaped, [5400], "gone-between-probe-and-kill counts as reaped");
+    assert.deepEqual(readHostRecords(dir), []);
+  });
+});
+
+test("reap: a failed probe (ps could not run) keeps the record - no kill, no GC", () => {
+  const stale = { pid: 5200, pgid: 5200, version: "0.7.0", scriptHash: "old", startTime: "T", nonce: "n" };
+  withReg([stale], (dir) => {
+    const summary = reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+      selfPid: 1,
+      readProcInfo: () => ({ alive: false, probeFailed: true, startTime: null, command: null }),
+      listProcs: () => [],
+      kill: () => assert.fail("must not kill on an unknown process state"),
+    });
+    assert.deepEqual(summary.skipped, [5200]);
+    assert.deepEqual(summary.gc, [], "a live stale host must not lose its record to a transient ps failure");
+    assert.equal(readHostRecords(dir).length, 1);
+  });
+});
+
+// --- registry hygiene ---
+
+test("writeHostRecord refuses a record with an empty startTime", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-reg-"));
+  try {
+    writeHostRecord({ ...REC, startTime: "" }, dir);
+    assert.deepEqual(readHostRecords(dir), [], "an unverifiable record must never be written");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("readHostRecords self-heals: unparseable and wrong-shape .json files are removed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-reg-"));
+  try {
+    writeFileSync(join(dir, "123.json"), "{ not json");
+    writeFileSync(join(dir, "456.json"), JSON.stringify({ pid: 0.5, pgid: 1 })); // wrong shape
+    writeHostRecord(REC, dir); // one good record
+    const recs = readHostRecords(dir);
+    assert.deepEqual(recs.map((r) => r.pid), [REC.pid]);
+    const left = readdirSync(dir).filter((n) => n.endsWith(".json"));
+    assert.deepEqual(left, [`${REC.pid}.json`], "bad files are unlinked, not skipped forever");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- real host process: record lifecycle + graceful SIGTERM (integration) ---
+
+test("a real spawned host writes its record, and SIGTERM shuts it down cleanly (record removed)", async () => {
+  const home = mkdtempSync(join(tmpdir(), "aya-host-it-"));
+  // detached:true mirrors the real client spawn (pty-host-client.ts startHost) -
+  // and is REQUIRED for the record: a non-leader host refuses to publish (its
+  // ownPgid() !== pid verification; confirmed by this very test failing without
+  // detached).
+  const host = spawn(process.execPath, ["dist-electron/pty-host.js"], {
+    env: { ...process.env, AYA_HOME: home },
+    stdio: "ignore",
+    detached: true,
+  });
+  let exited = false;
+  host.on("exit", () => {
+    exited = true;
+  });
+  try {
+    // Wait for the record (written after listen) - proves pid/pgid verification
+    // passed and startTime was non-empty on a real process.
+    const regDir = join(home, "pty-hosts");
+    const deadline = Date.now() + 5000;
+    let recs = [];
+    while (Date.now() < deadline) {
+      recs = readHostRecords(regDir);
+      if (recs.length > 0) break;
+      await sleep(50);
+    }
+    assert.equal(recs.length, 1, "host published its registry record");
+    assert.equal(recs[0].pid, host.pid);
+    assert.equal(recs[0].pgid, recs[0].pid, "host verified it leads its own group");
+    assert.ok(recs[0].startTime.length > 0, "record carries a verifiable start time");
+
+    // SIGTERM must now do a REAL graceful shutdown (not leave a socketless
+    // zombie): host exits and removes its record (children confirmed dead -
+    // there are none here).
+    host.kill("SIGTERM");
+    const exitDeadline = Date.now() + 5000;
+    while (Date.now() < exitDeadline && !exited) await sleep(50);
+    assert.equal(exited, true, "SIGTERM terminates the host (no suppressed-default zombie)");
+    await sleep(100); // let the record removal land
+    assert.deepEqual(readHostRecords(regDir), [], "clean shutdown removed the record");
+  } finally {
+    try {
+      host.kill("SIGKILL");
+    } catch {
+      // already dead
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
 });

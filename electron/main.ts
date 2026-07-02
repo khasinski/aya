@@ -1605,45 +1605,60 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   return win;
 }
 
-/** On launch, detect a stale PTY host (#28). With zero live terminals it is
- *  safe to reap silently; otherwise a restart would kill the user's running
- *  processes, so we only notify the renderer (which offers a confirm + button).
- *  Best-effort: never blocks or crashes startup. */
-async function handleStaleHost(win: BrowserWindow | null): Promise<void> {
-  if (!win || win.isDestroyed()) return;
+/** On launch, auto-reap a stale PTY host (#28), even with live terminals: an
+ *  update ships new binaries, so the old host's terminals must restart anyway
+ *  (Shift+Enter), and leaving it alive is exactly what accumulated orphaned
+ *  hosts + processes. Best-effort: never blocks or crashes startup.
+ *
+ *  Honest limits: restart() only ASKS the socket-connected host to shut down -
+ *  the old host runs ITS OWN shutdown code. Hosts from builds before the #73
+ *  escalation SIGHUP their children and exit immediately, so a signal-ignoring
+ *  child (claude --chrome) can still be orphaned once, at this first-update
+ *  boundary; such hosts also predate the registry, so the by-pid reap can't
+ *  cover them either. Cleaning those already-orphaned trees is the Phase-2
+ *  sweep's job. Hosts from this build onward are covered on both paths. */
+async function handleStaleHost(): Promise<void> {
   try {
-    const { identity, ptyCount } = await ptyHost.hostStatus();
     const expected = ptyHost.expectedHostIdentity(app.getVersion());
+    let { identity } = await ptyHost.hostStatus();
+    if (identity === null) {
+      // identity null is ALSO returned for transient client-side failures (e.g.
+      // a >5s cold-spawn socket wait). Acting on it immediately would shut down
+      // the freshly-spawned, current-version host. Re-probe once after a short
+      // delay: a genuinely ancient host fails the version request consistently,
+      // while a slow spawn answers with a matching identity the second time.
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      ({ identity } = await ptyHost.hostStatus());
+    }
     if (!isHostStale(expected, identity)) return;
-    void ptyCount; // no longer gates the reap - see below
-    // Auto-reap a stale host, even with live terminals. Staleness means a
-    // version/scriptHash mismatch (the app was updated) or a failed handshake:
-    // either way the old host runs incompatible code, so its terminals must
-    // restart anyway (Shift+Enter). Leaving it alive is exactly what accumulated
-    // orphaned hosts + processes. restart() escalates child kills to SIGKILL
-    // (#73), so no signal-ignoring child is orphaned. The by-pid reconciliation
-    // at startup already reaps *recorded* stale hosts; this covers the one still
-    // holding the socket (incl. old hosts that predate the registry).
-    try {
-      await ptyHost.restart();
-      return;
-    } catch {
-      // Reap failed (host unreachable). Fall back to the manual affordance so
-      // the user can retry via "Restart Aya".
-    }
-    // Signal via the menu item icon instead of an intrusive banner (#52).
+    await ptyHost.restart();
+    // restart() swallows request errors by design (an old host may not honor
+    // "shutdown"), so returning is NOT proof the host died. Verify: re-probe the
+    // socket; a fresh current-version host (or none yet) means success, the SAME
+    // stale identity answering again means the reap failed.
+    const after = await ptyHost.hostStatus();
+    if (!isHostStale(expected, after.identity)) return;
+    // Reap didn't take - surface the manual affordance so the user can retry.
+    // The menu may not be installed yet (this runs before createWindow), so the
+    // caller applies the icon from the flag after installApplicationMenu.
     staleHostDetected = true;
-    const item = Menu.getApplicationMenu()?.getMenuItemById("restart-aya");
-    if (item) {
-      // 16x16 px amber dot at scaleFactor 2 = 8pt logical - renders as a
-      // small colored circle to the left of the label (standard macOS pattern).
-      item.icon = nativeImage.createFromBuffer(
-        makeCirclePng(16, 224, 112, 0), // amber #e07000
-        { scaleFactor: 2 },
-      );
-    }
+    setStaleMenuIcon();
   } catch {
     // best-effort; a host that can't be queried is handled on next use
+  }
+}
+
+/** Amber dot on the "Restart Aya" menu item - the manual reap affordance (#52).
+ *  No-op until the application menu is installed. */
+function setStaleMenuIcon(): void {
+  const item = Menu.getApplicationMenu()?.getMenuItemById("restart-aya");
+  if (item) {
+    // 16x16 px amber dot at scaleFactor 2 = 8pt logical - renders as a
+    // small colored circle to the left of the label (standard macOS pattern).
+    item.icon = nativeImage.createFromBuffer(
+      makeCirclePng(16, 224, 112, 0), // amber #e07000
+      { scaleFactor: 2 },
+    );
   }
 }
 
@@ -2070,11 +2085,16 @@ app.whenReady().then(async () => {
     }
   }
 
-  // Reap stale detached PTY hosts (and their whole process trees) left by older
-  // app versions BEFORE anything connects or spawns a fresh host. A same-build
-  // host is kept (survive-restart, #28); a version-mismatched one is force-killed
-  // by pid (fail-closed, verified via its recorded start time). This stops the
-  // orphan pile-up where each update left the previous host + its children alive.
+  // Reap stale detached PTY hosts (and their whole process groups) that THIS
+  // registry recorded - i.e. hosts from this build onward left behind by future
+  // updates. A same-build host is kept (survive-restart, #28); a version-
+  // mismatched one is force-killed by pid (fail-closed, verified via its
+  // recorded start time). Pre-registry hosts have no record and are NOT covered
+  // here (Phase-2 sweep); the one currently holding the socket is handled by
+  // handleStaleHost after the window loads. Placement: deliberately BEFORE
+  // createWindow so a recorded stale host is dead before anything can connect
+  // to it; the common-path cost is one `ps -p` fork for the kept host (the
+  // system-wide snapshot only runs when a kill actually happens).
   try {
     const summary = reapStaleHostRecords(
       ptyHost.expectedHostIdentity(app.getVersion()),
@@ -2086,8 +2106,23 @@ app.whenReady().then(async () => {
         summary.reaped,
       );
     }
+    if (summary.gc.length > 0 || summary.skipped.length > 0) {
+      console.log(
+        `[aya] pty-host registry: gc'd ${summary.gc.length} dead record(s), skipped ${summary.skipped.length} (indeterminate/probe-failed)`,
+      );
+    }
   } catch {
     // best effort — never block startup on reconciliation
+  }
+
+  // Reconcile the SOCKET-connected host too, still before the window exists:
+  // once the renderer loads it immediately spawns terminals, and a spawn that
+  // raced this check could land on the stale host and be killed by the reap
+  // (losing the user's first terminal). Fast path: no socket file, no host to
+  // reconcile — don't pay a probe (which would spawn a host early) on a cold
+  // start. The amber fallback icon is applied after installApplicationMenu.
+  if (await pathExists(PTY_HOST_SOCKET_PATH)) {
+    await handleStaleHost();
   }
 
   const savedState = await loadWindowState();
@@ -2123,11 +2158,9 @@ app.whenReady().then(async () => {
   });
   installApplicationMenu();
 
-  // After the renderer is listening, check whether the (detached, survives-
-  // restart) PTY host is from an older build and act on it (#28).
-  mainWindow.webContents.once("did-finish-load", () => {
-    void handleStaleHost(mainWindow);
-  });
+  // The stale-host reconcile ran before the window (see above); the menu did
+  // not exist yet, so apply the amber "Restart Aya" affordance now if needed.
+  if (staleHostDetected) setStaleMenuIcon();
 
   // Honor an initial directory argument on first launch — the renderer
   // applies the same switch-or-create logic as for second-instance.
