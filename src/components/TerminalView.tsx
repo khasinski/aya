@@ -415,7 +415,13 @@ function TerminalViewComponent({
       attachingWebglRef.current = true;
       try {
         const webgl = new WebglAddon();
+        // A context loss can be delivered SYNCHRONOUSLY inside loadAddon; the
+        // handler below then disposes this very addon while the attaching
+        // guard still blocks its retry. Without this flag we would assign the
+        // already-disposed addon to webglRef right after loadAddon returns.
+        let disposedDuringAttach = false;
         webgl.onContextLoss(() => {
+          disposedDuringAttach = true;
           try {
             webgl.dispose();
           } catch {
@@ -434,6 +440,11 @@ function TerminalViewComponent({
           }
         });
         term.loadAddon(webgl);
+        if (disposedDuringAttach) {
+          // The loss fired mid-load and the handler already disposed the
+          // addon - leave the ref null; the next resume/heal attaches fresh.
+          return;
+        }
         webglRef.current = webgl;
         repairTerminalRender(false);
       } catch {

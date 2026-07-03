@@ -67,9 +67,14 @@ test("WebGL is dropped while hidden and comes back fresh on visibility - nothing
   // mount-attach regression and must FAIL, not skip (test-honesty audit: the
   // old app-derived skip swallowed exactly that mutation).
   await window.waitForTimeout(2000);
-  const envHasGl = await window.evaluate(
-    () => !!document.createElement("canvas").getContext("webgl2"),
-  );
+  const envHasGl = await window.evaluate(() => {
+    const probe = document.createElement("canvas");
+    const gl = probe.getContext("webgl2");
+    const ok = !!gl;
+    // Release the probe context right away instead of waiting for GC.
+    gl?.getExtension("WEBGL_lose_context")?.loseContext();
+    return ok;
+  });
   test.skip(!envHasGl, "no WebGL in this environment");
   const initial = await webglState(window);
   expect(initial).toBe("healthy");
