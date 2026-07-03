@@ -235,6 +235,9 @@ function TerminalViewComponent({
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const webglRef = useRef<WebglAddon | null>(null);
+  // Guards the construction->loadAddon window so a synchronously-delivered
+  // context loss can't re-enter attachWebgl mid-attach.
+  const attachingWebglRef = useRef(false);
   const spawnedRef = useRef(false);
   // True while a full-screen/rich TUI (claude, codex, vim…) is running, detected
   // via focus-reporting mode (DECSET 1004). Gates the Shift+Enter soft newline.
@@ -405,7 +408,11 @@ function TerminalViewComponent({
 
   const attachWebgl = useCallback(
     (term: XTerm) => {
-      if (!shouldUseWebgl || webglRef.current) return;
+      if (!shouldUseWebgl || webglRef.current || attachingWebglRef.current) return;
+      // Never hold a WebGL context in a hidden/occluded window - it's exactly
+      // what the GPU evicts into a white quad. The visibility flip re-attaches.
+      if (document.visibilityState === "hidden") return;
+      attachingWebglRef.current = true;
       try {
         const webgl = new WebglAddon();
         webgl.onContextLoss(() => {
@@ -416,16 +423,95 @@ function TerminalViewComponent({
           }
           if (webglRef.current === webgl) webglRef.current = null;
           repairTerminalRender(false);
+          // Come back on a FRESH context right away when we're visible (a lost
+          // context is unusable forever - without this the terminal silently
+          // degrades to the DOM renderer until remount). If the GPU is still
+          // under pressure the attach throws -> caught -> DOM fallback stays
+          // and the next resume retries via healWebgl.
+          if (document.visibilityState === "visible") {
+            const t = xtermRef.current;
+            if (t) attachWebgl(t);
+          }
         });
         term.loadAddon(webgl);
         webglRef.current = webgl;
         repairTerminalRender(false);
       } catch {
-        // WebGL unavailable; DOM renderer is fine, just drifty.
+        // WebGL unavailable; DOM renderer is fine, just drifty. A failed attach
+        // also STOPS any loss->retry chain (nothing new to lose) - and xterm
+        // itself debounces onContextLoss by ~3s, so retries can't hot-spin.
+      } finally {
+        attachingWebglRef.current = false;
       }
     },
     [repairTerminalRender, shouldUseWebgl],
   );
+
+  // PREVENTION: a WebGL context held by a hidden/occluded window is what the
+  // GPU evicts under memory pressure (e.g. a headless-Chrome PDF render in a
+  // terminal); the compositor then paints the missing canvas texture as a
+  // WHITE quad, the throttled renderer can't react, and the user returns to a
+  // white terminal area for seconds (panels intact - only the canvas layer is
+  // gone). Instead of racing that, drop WebGL the moment the document goes
+  // hidden (the DOM renderer's layers survive eviction) and come back on a
+  // FRESH context when it becomes visible again - nothing evictable exists
+  // while we're in the background, so the white quad can't happen.
+  useEffect(() => {
+    if (!shouldUseWebgl) return;
+    const onDocVisibility = () => {
+      const term = xtermRef.current;
+      if (!term) return;
+      if (document.visibilityState === "hidden") {
+        if (webglRef.current) {
+          try {
+            webglRef.current.dispose();
+          } catch {
+            /* ignore */
+          }
+          webglRef.current = null;
+        }
+        return;
+      }
+      attachWebgl(term); // fresh context + full repaint (no-op if attached)
+      repairTerminalRender(false);
+    };
+    document.addEventListener("visibilitychange", onDocVisibility);
+    return () => document.removeEventListener("visibilitychange", onDocVisibility);
+  }, [shouldUseWebgl, attachWebgl, repairTerminalRender]);
+
+  // BELT for paths with no visibility flip (focus regained without occlusion,
+  // wake from sleep, a foreground driver reset whose event got coalesced): ask
+  // the context itself (isContextLost()) instead of waiting for the throttled
+  // webglcontextlost event, dispose the dead addon, and attach a fresh one
+  // (which also repaints).
+  const healWebgl = useCallback(() => {
+    const term = xtermRef.current;
+    if (!term || !shouldUseWebgl) return;
+    if (webglRef.current) {
+      const host = containerRef.current;
+      let found = false;
+      let lost = false;
+      for (const c of Array.from(host?.querySelectorAll("canvas") ?? [])) {
+        const gl = (c.getContext("webgl2") ||
+          c.getContext("webgl")) as WebGLRenderingContext | null;
+        if (gl) {
+          found = true;
+          lost = gl.isContextLost();
+          break;
+        }
+      }
+      // "Ref set but no WebGL canvas in the DOM" is a desync (partial dispose)
+      // - treat it as unhealthy rather than returning and staying degraded.
+      if (found && !lost) return; // healthy - nothing to heal
+      try {
+        webglRef.current.dispose();
+      } catch {
+        /* ignore */
+      }
+      webglRef.current = null;
+    }
+    attachWebgl(term); // fresh context + full repaint
+  }, [attachWebgl, shouldUseWebgl]);
 
   // Create the xterm instance + spawn the PTY once.
   useEffect(() => {
@@ -759,6 +845,7 @@ function TerminalViewComponent({
     // fit can't swallow it. Also re-assert size to the PTY (with nudge for
     // rich TUIs) so harnesses re-render their static layout when the terminal
     // view is brought back (tab switch, split activation, etc.).
+    healWebgl();
     repairTerminalRender(false);
     forcePtyReassert();
     const frame = requestAnimationFrame(() => repairTerminalRender(false));
@@ -767,7 +854,7 @@ function TerminalViewComponent({
       cancelAnimationFrame(frame);
       clearTimeout(timer);
     };
-  }, [isVisible, repairTerminalRender, forcePtyReassert]);
+  }, [isVisible, healWebgl, repairTerminalRender, forcePtyReassert]);
 
   // Single source of truth for keyboard focus: whenever this becomes THE active
   // terminal (tab switch, split-pane navigation, or an overlay/modal closing),
@@ -808,9 +895,13 @@ function TerminalViewComponent({
 
   useEffect(() => {
     if (!isVisible) return;
-    // Wake/restore: repaint + idempotent resize, and re-assert PTY size with a
-    // rich-TUI nudge so the harness redraws its static layout.
+    // Wake/restore: heal a possibly-dead WebGL context FIRST (a loss during
+    // background/sleep won't have delivered its event yet - the user would
+    // otherwise stare at a white terminal area for seconds), then repaint +
+    // idempotent resize, and re-assert PTY size with a rich-TUI nudge so the
+    // harness redraws its static layout.
     const onResumeRender = () => {
+      healWebgl();
       repairTerminalRender(false);
       forcePtyReassert();
     };
@@ -825,7 +916,7 @@ function TerminalViewComponent({
       window.removeEventListener("pageshow", onResumeRender);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [isVisible, repairTerminalRender, forcePtyReassert]);
+  }, [isVisible, healWebgl, repairTerminalRender, forcePtyReassert]);
 
   useEffect(() => {
     const onResize = () => fitTerminal();
