@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.7.7 - 2026-07-03
+
+Aya 0.7.7 introduces multiple windows with Chrome-style project-tab tear-out.
+
+### Multi-window
+
+- **Drag a project tab out of the window** and release it on empty desktop to
+  tear it out into a new window at the cursor - or release it over another Aya
+  window to attach the project there. In-strip drags still reorder. Works in
+  both layouts (top tabs and the experimental left rail).
+- **Right-click a project tab** for "Move to New Window" / "Move to Window: …"
+  as a no-drag alternative, and File > New Window (Cmd/Ctrl+Shift+N) opens an
+  empty window.
+- **Running terminals survive every move.** Terminals live in Aya's detached
+  PTY host, so a moved project re-attaches to its live sessions - agents keep
+  their context mid-conversation.
+- **Chrome semantics throughout:** a window that loses its last project closes
+  itself; closing a window sends its projects to Recent while their terminals
+  keep running (reopen the project anywhere to re-attach); quitting and
+  relaunching collapses back to a single window.
+- Remote (SSH) projects can't be moved between windows yet.
+
+### Fixes
+
+- The terminal area no longer stays white after returning to a long-
+  backgrounded window (WebGL context loss is now recovered).
+
 ## v0.7.6 - 2026-07-02
 
 Aya 0.7.6 fixes a slow terminal-death bug ("posix_spawnp failed."), makes the
