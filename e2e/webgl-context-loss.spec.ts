@@ -79,16 +79,29 @@ test("WebGL is dropped while hidden and comes back fresh on visibility - nothing
   const initial = await webglState(window);
   expect(initial).toBe("healthy");
 
-  // Going hidden (browser covers/hides Aya) must DROP the WebGL addon - a
-  // context that does not exist cannot be evicted into a white quad.
+  // While hidden, zero frames are painted - the context is RELEASED (not
+  // "GPU disabled": no visible frame is ever rendered without it), so there
+  // is nothing for the GPU to evict into a white quad.
   await setDocVisibility(window, "hidden");
   await expect.poll(() => webglState(window), { timeout: 1_000 }).toBe("none");
 
   // Whatever happens in the background (GPU pressure etc.), there is nothing
-  // to lose now. Coming back must attach a FRESH, healthy context promptly -
-  // the user must never stare at a dead canvas.
-  await setDocVisibility(window, "visible");
-  await expect
-    .poll(() => webglState(window), { timeout: 600, intervals: [50, 100, 150] })
-    .toBe("healthy");
+  // to lose now. THE claim on return: flip to visible and read the state IN
+  // THE SAME TASK - before the event loop can paint a single frame. "healthy"
+  // here proves the FIRST visible frame is already GPU-rendered: WebGL is
+  // never disabled for anything the user sees; the context is merely not held
+  // while zero frames are painted (the strategy Chromium's own canvas
+  // hibernation applies to 2D canvases of hidden pages).
+  const rightAfterDispatch = await window.evaluate(() => {
+    (window as unknown as { __vis: string }).__vis = "visible";
+    document.dispatchEvent(new Event("visibilitychange"));
+    const frame = document.querySelector('[data-testid="xterm-frame"]');
+    for (const c of Array.from(frame?.querySelectorAll("canvas") ?? [])) {
+      const gl = ((c as HTMLCanvasElement).getContext("webgl2") ||
+        (c as HTMLCanvasElement).getContext("webgl")) as WebGLRenderingContext | null;
+      if (gl) return gl.isContextLost() ? "lost" : "healthy";
+    }
+    return "none";
+  });
+  expect(rightAfterDispatch, "first visible frame must already be WebGL-rendered").toBe("healthy");
 });
