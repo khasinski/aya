@@ -41,6 +41,37 @@ test("Move to New Window tears the project out; terminals survive", async ({
   await expect.poll(() => window.isClosed()).toBe(true);
 });
 
+test("round-trip: detach, reattach, no phantom window target remains", async ({
+  window,
+  app,
+}) => {
+  // Detach the (only) project into a new window; the source window closes.
+  await window.locator(".aya-tab").first().click({ button: "right" });
+  const win2Promise = app.waitForEvent("window");
+  await window
+    .locator(".aya-context-menu-item", { hasText: "Move to New Window" })
+    .click();
+  const win2 = await win2Promise;
+  await win2.waitForLoadState("domcontentloaded");
+  await expect(win2.locator(".aya-tab")).toHaveCount(1);
+  await expect.poll(() => window.isClosed()).toBe(true);
+
+  // Detach AGAIN from the surviving window: the context menu must offer ONLY
+  // "Move to New Window" - no phantom entry for the closed source window
+  // (the reported bug: a hidden/dead window kept showing up as a target).
+  await win2.locator(".aya-tab").first().click({ button: "right" });
+  const menuItems = win2.locator(".aya-context-menu-item");
+  await expect(menuItems).toHaveCount(1);
+  await expect(menuItems.first()).toContainText("Move to New Window");
+  await win2.keyboard.press("Escape");
+
+  // And the app is down to exactly one live window.
+  const windowCount = await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed()).length,
+  );
+  expect(windowCount).toBe(1);
+});
+
 test("File menu New Window opens an empty second window", async ({
   window,
   app,
