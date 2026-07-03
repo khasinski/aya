@@ -35,9 +35,10 @@ test("Move to New Window tears the project out; terminals survive", async ({
     win2.locator('[data-testid="terminal-pane"][data-terminal-name="shell 1"]'),
   ).toBeVisible();
 
-  // The source window no longer shows the project - and NOT in recent either
-  // (the project is still open, just in another window).
-  await expect(window.locator(".aya-tab")).toHaveCount(0);
+  // Chrome semantics: the source window lost its last tab, so it closes
+  // itself instead of lingering as a hidden empty window (which would show up
+  // as a phantom "Move to window…" target).
+  await expect.poll(() => window.isClosed()).toBe(true);
 });
 
 test("File menu New Window opens an empty second window", async ({

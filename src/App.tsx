@@ -2519,8 +2519,17 @@ export function App() {
     (slug: string, target: number | "new", at?: { x: number; y: number }) => {
       const project = projectsRef.current.find((p) => p.slug === slug);
       if (!project || project.remote) return;
+      // Chrome semantics: a window that loses its last tab closes itself.
+      // Without this the emptied window lingers (often hidden behind another)
+      // and keeps showing up as a phantom "Move to window…" target.
+      const emptiesThisWindow =
+        projectsRef.current.filter((p) => p.slug !== slug).length === 0;
       releaseProject(slug);
-      void window.aya.adoptProjectInWindow(project.directory, target, at);
+      void window.aya
+        .adoptProjectInWindow(project.directory, target, at)
+        .then(() => {
+          if (emptiesThisWindow) void window.aya.closeWindow();
+        });
     },
     [releaseProject],
   );

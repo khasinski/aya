@@ -1561,17 +1561,20 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     if (!IS_E2E_HEADLESS) win.show();
   });
   win.on("closed", () => {
-    stopConfigWatcher();
-    ptyHost.detachWebContents(windowWebContents);
+    // De-register FIRST: if any cleanup below ever throws, a dead window must
+    // not linger in the registry (it would show up as a phantom "Move to
+    // window…" target).
     ayaWindows.delete(win);
-    // The closed window's projects fall back to recent; PTYs keep running in
-    // the detached host (same contract as an app restart).
-    void releaseWindowSlices(windowId);
     // Keep the module-level ref in sync so second-instance handlers don't
     // try to focus a destroyed window.
     if (mainWindow === win) {
       mainWindow = [...ayaWindows].at(-1) ?? null;
     }
+    ptyHost.detachWebContents(windowWebContents);
+    stopConfigWatcher();
+    // The closed window's projects fall back to recent; PTYs keep running in
+    // the detached host (same contract as an app restart).
+    void releaseWindowSlices(windowId);
   });
 
   // Notify the renderer when fullscreen state changes so the topbar can drop
