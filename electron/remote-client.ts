@@ -203,6 +203,11 @@ function runRemoteRequest(
     let host: RemoteHostInfo | null = null;
     let presets: Preset[] = [];
     let recentProjects: ProjectConfig[] = [];
+    // Every remote project in the snapshot (unfiltered, unlike recentProjects
+    // which collapses to the recent subset). Lets a caller recover from a
+    // command error that still carried a valid snapshot - e.g. an old remote
+    // Aya rejecting "project already exists" (see createRemoteProjectOnHost).
+    let allProjects: ProjectConfig[] = [];
     execFile(
       "ssh",
       [target, remoteCommand],
@@ -229,8 +234,9 @@ function runRemoteRequest(
           }
           if (message.type === "snapshot") {
             presets = requirePresets(message.snapshot.presets);
+            allProjects = requireProjects(message.snapshot.projects);
             recentProjects = orderRecentProjects(
-              requireProjects(message.snapshot.projects),
+              allProjects,
               requireRecentProjectSlugs(message.snapshot.projectState),
             );
             continue;
@@ -249,6 +255,15 @@ function runRemoteRequest(
           }
         }
         if (matchedError) {
+          // Carry the snapshot context (parsed before the error) so callers can
+          // recover from a benign command failure without a second round-trip.
+          if (host) {
+            (matchedError as RemoteRequestError).remoteContext = {
+              host,
+              presets,
+              projects: allProjects,
+            };
+          }
           reject(matchedError);
           return;
         }
@@ -421,22 +436,59 @@ export async function checkRemoteHealth(
   }
 }
 
+/** An Error from runRemoteRequest that still carried a usable snapshot (the
+ *  request reached the host and got a hello + snapshot before the command
+ *  itself failed). */
+interface RemoteRequestError extends Error {
+  remoteContext?: {
+    host: RemoteHostInfo;
+    presets: Preset[];
+    projects: ProjectConfig[];
+  };
+}
+
+/** Recover an "open" from a remote "project already exists" rejection. Older
+ *  remote Aya builds (before open-or-create) reject re-opening an existing
+ *  project instead of returning it. But the project IS there - which is exactly
+ *  what opening it needs - and the failed request already carried the host's
+ *  full project snapshot. The error names the colliding slug, so we look that
+ *  project up and return it as if the create had succeeded. Returns null when
+ *  the error is anything else, so the caller rethrows. Exported for tests. */
+export function recoverExistingRemoteProject(
+  err: unknown,
+): RemoteProjectCreateResult | null {
+  if (!(err instanceof Error)) return null;
+  const ctx = (err as RemoteRequestError).remoteContext;
+  if (!ctx) return null;
+  const slug = /Project "([^"]+)" already exists/.exec(err.message)?.[1];
+  if (!slug) return null;
+  const existing = ctx.projects.find((p) => p.slug === slug && !p.remote);
+  if (!existing) return null;
+  return { host: ctx.host, presets: ctx.presets, project: existing };
+}
+
 export async function createRemoteProjectOnHost(
   sshTarget: string,
   directory: string,
   name?: string,
 ): Promise<RemoteProjectCreateResult> {
-  const { host, presets, response } = await runRemoteRequest(sshTarget, {
-    type: "project:create",
-    directory,
-    ...(name ? { name } : {}),
-  });
-  if (response.type !== "project:create-result") {
-    throw new Error("Remote Aya returned an unexpected response.");
+  try {
+    const { host, presets, response } = await runRemoteRequest(sshTarget, {
+      type: "project:create",
+      directory,
+      ...(name ? { name } : {}),
+    });
+    if (response.type !== "project:create-result") {
+      throw new Error("Remote Aya returned an unexpected response.");
+    }
+    return {
+      host,
+      presets,
+      project: requireProject(response.project),
+    };
+  } catch (err) {
+    const recovered = recoverExistingRemoteProject(err);
+    if (recovered) return recovered;
+    throw err;
   }
-  return {
-    host,
-    presets,
-    project: requireProject(response.project),
-  };
 }

@@ -10,7 +10,62 @@ const {
   createRemoteProjectOnHost,
   listRemoteDirectory,
   listRemotePresets,
+  recoverExistingRemoteProject,
 } = await import("../dist-electron/remote-client.js");
+
+// --- recoverExistingRemoteProject --------------------------------------------
+// An older remote Aya (before open-or-create) rejects re-opening an existing
+// project with "Project \"<slug>\" already exists." The failed request still
+// carried the host's project snapshot, so we recover the open from it instead
+// of updating the remote host. This keeps opening remote projects working
+// against remote hosts that haven't been upgraded.
+
+function existsErr(slug, projects, host = { id: "darwine", name: "darwine" }) {
+  const err = new Error(`Project "${slug}" already exists.`);
+  err.remoteContext = { host, presets: [{ id: "shell" }], projects };
+  return err;
+}
+
+test("recovers the existing project named by an 'already exists' error", () => {
+  const pe = { slug: "pe", name: "pe", directory: "/home/hasik/pe", tabs: [] };
+  const result = recoverExistingRemoteProject(
+    existsErr("pe", [{ slug: "other", name: "o", directory: "/x", tabs: [] }, pe]),
+  );
+  assert.ok(result);
+  assert.deepEqual(result.project, pe); // resolved absolute dir preserved
+  assert.equal(result.host.id, "darwine");
+  assert.equal(result.presets.length, 1);
+});
+
+test("returns null when the error carried no snapshot context", () => {
+  const bare = new Error('Project "pe" already exists.');
+  assert.equal(recoverExistingRemoteProject(bare), null);
+});
+
+test("returns null for errors that are not 'already exists'", () => {
+  const err = new Error("Node is not available on darwine.");
+  err.remoteContext = { host: { id: "d" }, presets: [], projects: [] };
+  assert.equal(recoverExistingRemoteProject(err), null);
+});
+
+test("returns null when the named slug is absent from the snapshot", () => {
+  assert.equal(
+    recoverExistingRemoteProject(existsErr("pe", [{ slug: "nope", tabs: [] }])),
+    null,
+  );
+});
+
+test("never resolves a colliding slug to a remote-of-remote project", () => {
+  // A project whose slug matches but is itself remote is not a local open
+  // target - skip it and let the caller rethrow.
+  const remoteProj = { slug: "pe", name: "pe", directory: "/x", tabs: [], remote: {} };
+  assert.equal(recoverExistingRemoteProject(existsErr("pe", [remoteProj])), null);
+});
+
+test("non-Error inputs return null (no throw)", () => {
+  assert.equal(recoverExistingRemoteProject(null), null);
+  assert.equal(recoverExistingRemoteProject("boom"), null);
+});
 
 function mkFakeSsh() {
   const dir = mkdtempSync(join(tmpdir(), "aya-fake-ssh-"));
