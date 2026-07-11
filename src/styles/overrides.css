@@ -305,6 +305,104 @@
   color: var(--fg-primary);
 }
 
+/* Harness-aware search (experimental): the find bar grows a Terminal|History
+   mode toggle and, in History mode, a scrollable transcript-hit list. */
+.aya-findbar-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.aya-findbar--history {
+  flex-direction: column;
+  align-items: stretch;
+  width: 440px;
+}
+.aya-findbar--history .aya-findbar-input {
+  flex: 1;
+  width: auto;
+}
+.aya-findbar-modes {
+  display: inline-flex;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.aya-findbar-mode {
+  padding: 3px 8px;
+  font-size: 11px;
+  font-family: var(--font-sans);
+  background: transparent;
+  border: none;
+  color: var(--fg-secondary);
+  cursor: pointer;
+}
+.aya-findbar-mode--active {
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+}
+.aya-findbar-results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.aya-findbar-empty {
+  padding: 4px 2px;
+  font-size: 11px;
+  color: var(--fg-secondary);
+}
+.aya-findbar-hit {
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+.aya-findbar-hit:hover {
+  background: var(--bg-tertiary);
+}
+.aya-findbar-hit-meta {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 2px;
+  font-size: 10px;
+  font-family: var(--font-sans);
+  color: var(--fg-secondary);
+}
+.aya-findbar-hit-role {
+  font-weight: 600;
+}
+.aya-findbar-hit-snippet {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--fg-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.aya-findbar-hit-snippet mark {
+  background: color-mix(in oklab, var(--accent) 30%, transparent);
+  color: inherit;
+  border-radius: 2px;
+}
+.aya-findbar-hit-full {
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--fg-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  cursor: text;
+}
+
 /* Search-everything modal (double-Shift). Fixed height so the dialog
    doesn't grow/shrink/flicker as the result list changes — the inner
    list scrolls instead. Capped to viewport on small windows. */

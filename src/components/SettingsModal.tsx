@@ -43,6 +43,8 @@ interface Props {
   onLayoutModeChange: (mode: LayoutMode) => void;
   worktreesEnabled: boolean;
   onWorktreesEnabledChange: (enabled: boolean) => void;
+  harnessSearchEnabled: boolean;
+  onHarnessSearchEnabledChange: (enabled: boolean) => void;
   localSummariesEnabled: boolean;
   onLocalSummariesEnabledChange: (enabled: boolean) => void;
   ayaIntelligence: AyaIntelligenceConfig;
@@ -284,6 +286,8 @@ export function SettingsModal({
   onLayoutModeChange,
   worktreesEnabled,
   onWorktreesEnabledChange,
+  harnessSearchEnabled,
+  onHarnessSearchEnabledChange,
   localSummariesEnabled,
   onLocalSummariesEnabledChange,
   ayaIntelligence,
@@ -1245,6 +1249,44 @@ export function SettingsModal({
           >
             Detect a project's git worktrees, group terminals by worktree, and
             launch or create terminals in a chosen worktree.
+          </SettingsRow>
+          <SettingsRow
+            icon="manage_search"
+            title={
+              <>
+                Harness-aware search{" "}
+                <span className="aya-settings-experimental">Experimental</span>
+              </>
+            }
+            control={(
+              <div
+                className="aya-settings-segmented"
+                aria-label="Harness-aware search"
+              >
+                {([
+                  [true, "On"],
+                  [false, "Off"],
+                ] as const).map(([enabled, label]) => (
+                  <button
+                    key={String(enabled)}
+                    type="button"
+                    className={`aya-settings-segment ${
+                      harnessSearchEnabled === enabled
+                        ? "aya-settings-segment--active"
+                        : ""
+                    }`}
+                    onClick={() => onHarnessSearchEnabledChange(enabled)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          >
+            Adds a History mode to the find bar (Cmd+F) in Claude Code and
+            Codex tabs: searches the session transcripts those agents already
+            keep on disk for the tab's directory, so hits survive TUI redraws
+            and restarts. Local files only; nothing is indexed or uploaded.
           </SettingsRow>
           <SettingsRow
             icon="donut_large"

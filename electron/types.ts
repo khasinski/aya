@@ -4,6 +4,10 @@
 
 import type { Snippet } from "./snippets";
 import type { HarnessDef } from "./harnesses";
+import type {
+  HarnessSearchHit,
+  HarnessSearchRequest,
+} from "./harness-search";
 import type { Preset } from "./presets";
 import type { BufferSearchHit } from "./pty";
 import type { Theme, ThemesFile } from "./themes";
@@ -12,6 +16,8 @@ import type { UsageHookStatus } from "./usage-hook";
 
 export type {
   BufferSearchHit,
+  HarnessSearchHit,
+  HarnessSearchRequest,
   Snippet,
   HarnessDef,
   Preset,
@@ -378,6 +384,9 @@ export interface AyaApi {
    *  output buffer. Returns one hit per matching pty (the first match plus
    *  an extra-occurrences count). */
   ptySearch(query: string): Promise<BufferSearchHit[]>;
+  /** Experimental harness-aware search: scans the LOCAL Claude Code / Codex
+   *  session transcripts for the tab's cwd (history, not terminal output). */
+  harnessSearch(req: HarnessSearchRequest): Promise<HarnessSearchHit[]>;
   restartPtyHost(): Promise<void>;
   onPtyEvent(handler: (event: PtyEvent) => void): () => void;
 

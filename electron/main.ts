@@ -77,6 +77,7 @@ import {
   installUsageHook,
   uninstallUsageHook,
 } from "./usage-hook";
+import { searchHarnessSessions } from "./harness-search";
 import { listMonitoredSessions } from "./session-monitor";
 import { normalizeLocalSummaryError, SUMMARY_TEXT_MAX_CHARS } from "./local-summary-errors";
 import { readRepoProjectConfig } from "./project-local";
@@ -1810,6 +1811,25 @@ function registerIpc(): void {
   ipcMain.handle("pty:search", async (_e, query: unknown) =>
     ptyHost.search(requireString(query, "pty:search.query")),
   );
+  ipcMain.handle("harness:search", async (_e, req: unknown) => {
+    if (typeof req !== "object" || req === null) {
+      throw new Error("harness:search: request must be an object");
+    }
+    const r = req as Record<string, unknown>;
+    const agent = requireString(r.agent, "harness:search.agent");
+    if (agent !== "claude" && agent !== "codex") {
+      throw new Error("harness:search.agent must be 'claude' or 'codex'");
+    }
+    return searchHarnessSessions({
+      agent,
+      cwd: requireString(r.cwd, "harness:search.cwd"),
+      configDir:
+        r.configDir === undefined
+          ? undefined
+          : requireString(r.configDir, "harness:search.configDir"),
+      query: requireString(r.query, "harness:search.query"),
+    });
+  });
   ipcMain.handle("pty-host:restart", async () => {
     await ptyHost.restart();
     // Clear only on success: if restart() throws, the stale state is still

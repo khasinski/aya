@@ -113,6 +113,7 @@ const USAGE_HARNESS_NAME_STORAGE_KEY = "aya:usage-show-harness-name";
 const STATUSBAR_GITHUB_LINK_STORAGE_KEY = "aya:statusbar-github-link";
 const LAYOUT_MODE_STORAGE_KEY = "aya:layout-mode";
 const WORKTREES_STORAGE_KEY = "aya:worktrees";
+const HARNESS_SEARCH_STORAGE_KEY = "aya:harness-search";
 const LOCAL_SUMMARIES_STORAGE_KEY = "aya:local-summaries";
 const LOCAL_SUMMARY_CACHE_STORAGE_KEY = "aya:local-summary-cache";
 const AYA_INTELLIGENCE_STORAGE_KEY = "aya:intelligence";
@@ -174,6 +175,9 @@ const GITHUB_LINK_CODEC = boolPreference(false);
 const LOCAL_SUMMARIES_CODEC = boolPreference(false);
 // Experimental: git worktree support (detect + group + launch/create in worktrees).
 const WORKTREES_CODEC = boolPreference(false);
+// Experimental: Cmd+F "History" mode searching Claude/Codex session
+// transcripts on disk for the tab's cwd.
+const HARNESS_SEARCH_CODEC = boolPreference(false);
 
 function readTerminalFontFamily(): string {
   return localStorage.getItem(TERMINAL_FONT_FAMILY_STORAGE_KEY) ?? "";
@@ -722,6 +726,8 @@ export function App() {
     WORKTREES_STORAGE_KEY,
     WORKTREES_CODEC,
   );
+  const [harnessSearchEnabled, setHarnessSearchEnabled] =
+    usePersistentPreference(HARNESS_SEARCH_STORAGE_KEY, HARNESS_SEARCH_CODEC);
   // Git worktrees for the active (local) project, when the experimental flag is
   // on. Drives the launcher's worktree target and the per-row branch chip.
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
@@ -3491,6 +3497,9 @@ export function App() {
                   themeColors={colorsForTerminal}
                   findOpen={findInPaneFor === terminal.id}
                   onCloseFind={closeFindPane}
+                  historySearchEnabled={
+                    harnessSearchEnabled && !activeProject?.remote
+                  }
                   onOpenSettings={openSettings}
                   onCloseProject={closeProject}
                   onRequestRestart={() => restartTerminal(terminal.id)}
@@ -3847,6 +3856,8 @@ export function App() {
           onLayoutModeChange={setLayoutMode}
           worktreesEnabled={worktreesEnabled}
           onWorktreesEnabledChange={setWorktreesEnabled}
+          harnessSearchEnabled={harnessSearchEnabled}
+          onHarnessSearchEnabledChange={setHarnessSearchEnabled}
           localSummariesEnabled={localSummariesEnabled}
           onLocalSummariesEnabledChange={setLocalSummariesEnabled}
           ayaIntelligence={ayaIntelligence}

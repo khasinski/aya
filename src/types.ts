@@ -437,6 +437,29 @@ export interface BufferSearchHit {
   more: number;
 }
 
+/** Experimental harness-aware search (FindBar "History" mode): request to
+ *  search the LOCAL Claude Code / Codex session transcripts for a tab's cwd. */
+export interface HarnessSearchRequest {
+  agent: "claude" | "codex";
+  cwd: string;
+  /** Preset's config-dir override (may be ~-relative). */
+  configDir?: string;
+  query: string;
+}
+
+export interface HarnessSearchHit {
+  sessionId: string;
+  role: "user" | "assistant";
+  /** ISO timestamp of the matched message, when the transcript carried one. */
+  timestamp?: string;
+  /** Full message text (capped) — shown when the user expands the hit. */
+  text: string;
+  snippet: string;
+  /** Offset/length of the first matched token WITHIN the snippet. */
+  matchStart: number;
+  matchLength: number;
+}
+
 /** A config file the user can edit, which the renderer reloads when it changes
  *  on disk under ~/.aya/. */
 export type ConfigSlice = "snippets" | "presets" | "themes" | "projects";
@@ -456,6 +479,9 @@ export interface AyaApi {
   ptyKill(ptyId: string): Promise<void>;
   ptyBuffer(ptyId: string): Promise<string>;
   ptySearch(query: string): Promise<BufferSearchHit[]>;
+  /** Experimental harness-aware search: scans the LOCAL Claude Code / Codex
+   *  session transcripts for the tab's cwd (history, not terminal output). */
+  harnessSearch(req: HarnessSearchRequest): Promise<HarnessSearchHit[]>;
   restartPtyHost(): Promise<void>;
   onPtyEvent(handler: (event: PtyEvent) => void): () => void;
 

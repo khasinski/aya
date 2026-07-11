@@ -12,7 +12,14 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import type { Preset, Snippet, TerminalState, ThemeColors } from "../types";
+import type {
+  HarnessSearchHit,
+  Preset,
+  Snippet,
+  TerminalState,
+  ThemeColors,
+} from "../types";
+import { effectiveAgent } from "../agentPreset";
 import { ptyEventBus } from "../ptyEventBus";
 import type { SettingsTab } from "../settings-tabs";
 import { focusReportingState } from "../focus-reporting";
@@ -99,6 +106,11 @@ interface Props {
   findOpen: boolean;
   /** Called when the user closes the search bar (Esc / ✕). */
   onCloseFind: () => void;
+  /** Experimental "Harness-aware search": offer a History mode in the find
+   *  bar for Claude/Codex tabs, searching the agent's on-disk session
+   *  transcripts for this cwd. Off for remote projects (transcripts live on
+   *  the remote host). */
+  historySearchEnabled?: boolean;
   onOpenSettings: (tab?: SettingsTab) => void;
   onCloseProject: (slug: string) => void;
   onPtyData?: (chunk: string) => void;
@@ -205,6 +217,7 @@ function TerminalViewComponent({
   themeColors,
   findOpen,
   onCloseFind,
+  historySearchEnabled = false,
   onOpenSettings,
   onCloseProject,
   onPtyData,
@@ -224,6 +237,13 @@ function TerminalViewComponent({
     !navigator.webdriver;
   const shouldPreserveScrollback =
     shouldPreserveTerminalScrollback(preset.id);
+  // History (transcript) search is only meaningful for tabs running a
+  // harness that persists sessions we know how to read.
+  const presetAgent = effectiveAgent(preset);
+  const findHistoryAgent =
+    historySearchEnabled && (presetAgent === "claude" || presetAgent === "codex")
+      ? presetAgent
+      : null;
   const lastActivityLabel = lastActivity ? formatLastActivity(lastActivity) : null;
   const headerStatusText = terminal.externalStatus?.text ?? lastActivityLabel;
   const headerStatusTitle = terminal.externalStatus
@@ -1250,8 +1270,11 @@ function TerminalViewComponent({
       {findOpen && (
         <FindBar
           value={findQuery}
-          onChange={(v) => {
+          onChange={(v, historyMode) => {
             setFindQuery(v);
+            // In History mode the query drives the transcript search inside
+            // FindBar; don't move the live terminal's match cursor around.
+            if (historyMode) return;
             if (!v) {
               try {
                 searchRef.current?.clearDecorations();
@@ -1267,6 +1290,16 @@ function TerminalViewComponent({
                 caseSensitive: false,
                 incremental: true,
               });
+            } catch {
+              /* ignore */
+            }
+          }}
+          historyAgent={findHistoryAgent}
+          cwd={cwd}
+          configDir={preset.configDir}
+          onClearTerminalMatches={() => {
+            try {
+              searchRef.current?.clearDecorations();
             } catch {
               /* ignore */
             }
@@ -1300,10 +1333,30 @@ export const TerminalView = memo(TerminalViewComponent);
 
 interface FindBarProps {
   value: string;
-  onChange: (v: string) => void;
+  /** `historyMode` tells the host whether the query is driving the live
+   *  terminal search (false) or the transcript search inside the bar (true). */
+  onChange: (v: string, historyMode: boolean) => void;
   onNext: () => void;
   onPrev: () => void;
   onClose: () => void;
+  /** Non-null enables the experimental History mode for this agent tab. */
+  historyAgent: "claude" | "codex" | null;
+  cwd: string;
+  configDir?: string;
+  /** Clears xterm search highlights when the bar switches to History mode. */
+  onClearTerminalMatches: () => void;
+}
+
+// History (transcript) search: debounce keystrokes before the IPC round-trip
+// and skip 1-character queries, which match everything.
+const HISTORY_SEARCH_DEBOUNCE_MS = 200;
+const HISTORY_MIN_QUERY_CHARS = 2;
+
+function formatHitTime(timestamp: string | undefined): string | null {
+  if (!timestamp) return null;
+  const ms = Date.parse(timestamp);
+  if (!Number.isFinite(ms)) return null;
+  return formatLastActivity(ms) ?? "just now";
 }
 
 function FindBar({
@@ -1312,55 +1365,196 @@ function FindBar({
   onNext,
   onPrev,
   onClose,
+  historyAgent,
+  cwd,
+  configDir,
+  onClearTerminalMatches,
 }: FindBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [historyMode, setHistoryMode] = useState(false);
+  const [hits, setHits] = useState<HarnessSearchHit[]>([]);
+  // True once a transcript search has completed for the current query, so
+  // "No matches" only shows after an actual (empty) result, not while typing.
+  const [searched, setSearched] = useState(false);
+  const [expandedHit, setExpandedHit] = useState<number | null>(null);
+  const historySeqRef = useRef(0);
   useEffect(() => {
     // Focus + select-all on mount so opening the bar twice in a row lets
     // the user replace the query directly.
     inputRef.current?.focus();
     inputRef.current?.select();
   }, []);
+
+  const historyActive = historyMode && historyAgent !== null;
+  const query = value.trim();
+  useEffect(() => {
+    if (!historyActive || !historyAgent) return;
+    if (query.length < HISTORY_MIN_QUERY_CHARS) {
+      setHits([]);
+      setSearched(false);
+      setExpandedHit(null);
+      return;
+    }
+    const seq = ++historySeqRef.current;
+    const timer = window.setTimeout(() => {
+      window.aya
+        .harnessSearch({ agent: historyAgent, cwd, configDir, query })
+        .then((results) => {
+          if (historySeqRef.current !== seq) return; // stale response
+          setHits(results);
+          setSearched(true);
+          setExpandedHit(null);
+        })
+        .catch(() => {
+          if (historySeqRef.current !== seq) return;
+          setHits([]);
+          setSearched(true);
+        });
+    }, HISTORY_SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [historyActive, historyAgent, cwd, configDir, query]);
+
+  const switchMode = (toHistory: boolean) => {
+    if (toHistory === historyMode) return;
+    setHistoryMode(toHistory);
+    setExpandedHit(null);
+    if (toHistory) {
+      onClearTerminalMatches();
+    } else {
+      setHits([]);
+      setSearched(false);
+      // Re-run the live terminal search for the query already in the box.
+      onChange(value, false);
+    }
+    inputRef.current?.focus();
+  };
+
+  const agentLabel = historyAgent === "claude" ? "Claude" : "Codex";
   return (
-    <div className="aya-findbar">
-      <input
-        ref={inputRef}
-        className="aya-findbar-input"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            e.preventDefault();
-            onClose();
-          } else if (e.key === "Enter") {
-            e.preventDefault();
-            if (e.shiftKey) onPrev();
-            else onNext();
+    <div className={`aya-findbar ${historyActive ? "aya-findbar--history" : ""}`}>
+      <div className="aya-findbar-row">
+        {historyAgent && (
+          <div
+            className="aya-findbar-modes"
+            aria-label="Search scope"
+            title="Terminal searches visible output; History searches this directory's agent session transcripts"
+          >
+            {([
+              [false, "Terminal"],
+              [true, "History"],
+            ] as const).map(([mode, label]) => (
+              <button
+                key={label}
+                type="button"
+                className={`aya-findbar-mode ${
+                  historyMode === mode ? "aya-findbar-mode--active" : ""
+                }`}
+                onClick={() => switchMode(mode)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+        <input
+          ref={inputRef}
+          className="aya-findbar-input"
+          value={value}
+          onChange={(e) => onChange(e.target.value, historyActive)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              onClose();
+            } else if (e.key === "Enter" && !historyActive) {
+              e.preventDefault();
+              if (e.shiftKey) onPrev();
+              else onNext();
+            }
+          }}
+          placeholder={
+            historyActive
+              ? `Search ${agentLabel} session history…`
+              : "Find in terminal…"
           }
-        }}
-        placeholder="Find in terminal…"
-        spellCheck={false}
-      />
-      <button
-        className="aya-findbar-btn"
-        onClick={onPrev}
-        title="Previous match (Shift+Enter)"
-      >
-        ↑
-      </button>
-      <button
-        className="aya-findbar-btn"
-        onClick={onNext}
-        title="Next match (Enter)"
-      >
-        ↓
-      </button>
-      <button
-        className="aya-findbar-btn"
-        onClick={onClose}
-        title="Close (Esc)"
-      >
-        ✕
-      </button>
+          spellCheck={false}
+        />
+        {!historyActive && (
+          <>
+            <button
+              className="aya-findbar-btn"
+              onClick={onPrev}
+              title="Previous match (Shift+Enter)"
+            >
+              ↑
+            </button>
+            <button
+              className="aya-findbar-btn"
+              onClick={onNext}
+              title="Next match (Enter)"
+            >
+              ↓
+            </button>
+          </>
+        )}
+        <button
+          className="aya-findbar-btn"
+          onClick={onClose}
+          title="Close (Esc)"
+        >
+          ✕
+        </button>
+      </div>
+      {historyActive && (searched || hits.length > 0) && (
+        <div className="aya-findbar-results">
+          {hits.length === 0 ? (
+            <div className="aya-findbar-empty">
+              No matches in recent {agentLabel} sessions for this directory
+            </div>
+          ) : (
+            hits.map((hit, index) => {
+              const time = formatHitTime(hit.timestamp);
+              const expanded = expandedHit === index;
+              return (
+                <button
+                  key={`${hit.sessionId}-${index}`}
+                  type="button"
+                  className="aya-findbar-hit"
+                  onClick={() => setExpandedHit(expanded ? null : index)}
+                  title={expanded ? "Collapse" : "Expand full message"}
+                >
+                  <div className="aya-findbar-hit-meta">
+                    <span className="aya-findbar-hit-role">
+                      {hit.role === "user" ? "You" : agentLabel}
+                    </span>
+                    {time && <span>{time}</span>}
+                  </div>
+                  {expanded ? (
+                    <div
+                      className="aya-findbar-hit-full"
+                      // Let the user select/copy the text without the click
+                      // bubbling to the row button and collapsing it.
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {hit.text}
+                    </div>
+                  ) : (
+                    <div className="aya-findbar-hit-snippet">
+                      {hit.snippet.slice(0, hit.matchStart)}
+                      <mark>
+                        {hit.snippet.slice(
+                          hit.matchStart,
+                          hit.matchStart + hit.matchLength,
+                        )}
+                      </mark>
+                      {hit.snippet.slice(hit.matchStart + hit.matchLength)}
+                    </div>
+                  )}
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
     </div>
   );
 }
