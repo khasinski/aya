@@ -1547,6 +1547,7 @@ export function App() {
   }, []);
 
   usePtyEventRouter({
+    currentTerminalsRef: terminalsRef,
     lastActivityRef,
     setTerminals,
     onPtyEvent: handlePtyTimelineEvent,

@@ -1,16 +1,23 @@
-import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import {
+  useEffect,
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+} from "react";
 import { applyPtyEvent, eventTouchesActivity } from "../pty-event-reducer";
 import { ptyEventBus } from "../ptyEventBus";
 import { markSpawned } from "../spawnSession";
 import type { PtyEvent, TerminalState } from "../types";
 
 interface Options {
+  currentTerminalsRef?: MutableRefObject<Record<string, TerminalState>>;
   lastActivityRef: MutableRefObject<Record<string, number>>;
   setTerminals: Dispatch<SetStateAction<Record<string, TerminalState>>>;
   onPtyEvent?: (event: PtyEvent) => void;
 }
 
 export function usePtyEventRouter({
+  currentTerminalsRef,
   lastActivityRef,
   setTerminals,
   onPtyEvent,
@@ -23,6 +30,19 @@ export function usePtyEventRouter({
       if (eventTouchesActivity(event)) {
         lastActivityRef.current[event.ptyId] = Date.now();
       }
+      const current = currentTerminalsRef?.current;
+      const currentTerminal = current?.[event.ptyId];
+      if (
+        event.type === "data" &&
+        currentTerminal &&
+        !currentTerminal.spawnFailure &&
+        currentTerminal.exitCode === null
+      ) {
+        markSpawned(event.ptyId);
+      }
+      if (current && applyPtyEvent(current, event) === current) {
+        return;
+      }
       setTerminals((prev) => {
         // Mark a CONFIRMED live session only on genuine live output, so a later
         // re-mount attaches (and surfaces "stopped" if the process is gone).
@@ -31,11 +51,17 @@ export function usePtyEventRouter({
         // straggler chunk after a kill must not re-mark), or is gone (closed).
         // Set.add is idempotent, so running inside the updater is safe.
         const t = prev[event.ptyId];
-        if (event.type === "data" && t && !t.spawnFailure && t.exitCode === null) {
+        if (
+          !current &&
+          event.type === "data" &&
+          t &&
+          !t.spawnFailure &&
+          t.exitCode === null
+        ) {
           markSpawned(event.ptyId);
         }
         return applyPtyEvent(prev, event);
       });
     });
-  }, [lastActivityRef, onPtyEvent, setTerminals]);
+  }, [currentTerminalsRef, lastActivityRef, onPtyEvent, setTerminals]);
 }

@@ -161,6 +161,20 @@ function formatLastActivity(timestamp: number): string | null {
   return `${months} ${months === 1 ? "month" : "months"} ago`;
 }
 
+function lastActivityRenderBucket(timestamp: number | undefined): string {
+  if (!timestamp) return "";
+  const elapsedMs = Math.max(0, Date.now() - timestamp);
+  const minuteMs = 60 * 1000;
+  const hourMs = 60 * minuteMs;
+  const dayMs = 24 * hourMs;
+  const monthMs = 30 * dayMs;
+  if (elapsedMs < minuteMs) return "now";
+  if (elapsedMs < hourMs) return `m:${Math.floor(elapsedMs / minuteMs)}`;
+  if (elapsedMs < dayMs) return `h:${Math.floor(elapsedMs / hourMs)}`;
+  if (elapsedMs < monthMs) return `d:${Math.floor(elapsedMs / dayMs)}`;
+  return `mo:${Math.floor(elapsedMs / monthMs)}`;
+}
+
 function recoveryTitle(
   reason: NonNullable<TerminalState["spawnFailure"]>["reason"],
 ): string {
@@ -170,6 +184,58 @@ function recoveryTitle(
   if (reason === "cwd-not-directory") return "Project path is not a folder";
   if (reason === "cwd-unreadable") return "Project folder is not readable";
   return "Terminal failed to start";
+}
+
+function terminalRenderStateEqual(a: TerminalState, b: TerminalState): boolean {
+  return (
+    a === b ||
+    (a.id === b.id &&
+      a.projectSlug === b.projectSlug &&
+      a.presetId === b.presetId &&
+      a.name === b.name &&
+      a.exitCode === b.exitCode &&
+      a.stopped === b.stopped &&
+      a.spawnDeferred === b.spawnDeferred &&
+      a.spawnFailure?.reason === b.spawnFailure?.reason &&
+      a.spawnFailure?.detail === b.spawnFailure?.detail &&
+      a.externalStatus?.text === b.externalStatus?.text &&
+      a.externalStatus?.level === b.externalStatus?.level &&
+      a.externalStatus?.updatedAt === b.externalStatus?.updatedAt)
+  );
+}
+
+function presetRenderStateEqual(a: Preset, b: Preset): boolean {
+  return (
+    a === b ||
+    (a.id === b.id &&
+      a.icon === b.icon &&
+      a.color === b.color &&
+      a.themeId === b.themeId)
+  );
+}
+
+function terminalViewPropsEqual(a: Props, b: Props): boolean {
+  return (
+    terminalRenderStateEqual(a.terminal, b.terminal) &&
+    presetRenderStateEqual(a.preset, b.preset) &&
+    a.command === b.command &&
+    a.snippets === b.snippets &&
+    a.snippetsOpen === b.snippetsOpen &&
+    a.isVisible === b.isVisible &&
+    a.cwd === b.cwd &&
+    lastActivityRenderBucket(a.lastActivity) ===
+      lastActivityRenderBucket(b.lastActivity) &&
+    a.fontFamily === b.fontFamily &&
+    a.fontSize === b.fontSize &&
+    a.themeColors === b.themeColors &&
+    a.findOpen === b.findOpen &&
+    a.historySearchEnabled === b.historySearchEnabled &&
+    a.restartTrigger === b.restartTrigger &&
+    a.isActivePane === b.isActivePane &&
+    a.isActive === b.isActive &&
+    a.enableWebgl === b.enableWebgl &&
+    a.macOptionKeyMode === b.macOptionKeyMode
+  );
 }
 
 function printableControlData(data: string): string {
@@ -1329,7 +1395,7 @@ function TerminalViewComponent({
   );
 }
 
-export const TerminalView = memo(TerminalViewComponent);
+export const TerminalView = memo(TerminalViewComponent, terminalViewPropsEqual);
 
 interface FindBarProps {
   value: string;
