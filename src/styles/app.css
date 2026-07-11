@@ -198,7 +198,8 @@ body {
    ============================================================ */
 .aya-app {
   display: grid;
-  grid-template-rows: 40px 1fr 26px;
+  /* 48px top bar: project tabs are two-line (name over path/summary). */
+  grid-template-rows: 48px 1fr 26px;
   height: 100vh;
   background: var(--bg);
 }

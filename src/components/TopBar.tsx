@@ -318,47 +318,49 @@ function TopBarImpl({
                   : `${p.name} - ${displayPath}${projectSummary ? ` · ${projectSummary}` : ""} · double-click to rename · drag to reorder`
               }
             >
-              {isRenaming ? (
-                <input
-                  ref={inputRef}
-                  className="aya-tab-rename"
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  onBlur={commitRename}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      commitRename();
-                    } else if (e.key === "Escape") {
-                      e.preventDefault();
-                      cancelRename();
-                    }
-                  }}
-                  autoFocus
-                />
-              ) : (
+              <span className="aya-tab-text">
+                {isRenaming ? (
+                  <input
+                    ref={inputRef}
+                    className="aya-tab-rename"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        commitRename();
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        cancelRename();
+                      }
+                    }}
+                    autoFocus
+                  />
+                ) : (
+                  <span
+                    className="aya-tab-name"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      startRename(p);
+                    }}
+                  >
+                    {isRemote && (
+                      <span className="aya-tab-remote-chip" title={displayPath}>
+                        SSH
+                      </span>
+                    )}
+                    {p.name}
+                  </span>
+                )}
                 <span
-                  className="aya-tab-name"
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    startRename(p);
-                  }}
+                  className={`aya-tab-path ${
+                    projectSummary ? "aya-tab-path--summary" : ""
+                  }`}
                 >
-                  {isRemote && (
-                    <span className="aya-tab-remote-chip" title={displayPath}>
-                      SSH
-                    </span>
-                  )}
-                  {p.name}
+                  {displayMeta}
                 </span>
-              )}
-              <span
-                className={`aya-tab-path ${
-                  projectSummary ? "aya-tab-path--summary" : ""
-                }`}
-              >
-                {displayMeta}
               </span>
               {badge && (
                 <span
