@@ -16,6 +16,7 @@ import {
   type PtyHostResponse,
   isPtyHostRequest,
 } from "./pty-host-protocol";
+import { createPtyDataCoalescer } from "./pty-event-coalescer";
 import {
   activePtyCount,
   getBufferedOutput,
@@ -94,9 +95,14 @@ function broadcast(event: PtyEvent): void {
   scheduleIdleShutdown();
 }
 
+// Coalesce data chunks per tick before they become JSON socket lines: a busy
+// TUI's many small node-pty reads collapse into one line per stream per tick,
+// instead of one stringify+write per read (see pty-event-coalescer.ts).
+const broadcastCoalesced = createPtyDataCoalescer(broadcast);
+
 const sink: PtyEventSink = {
   isDestroyed: () => false,
-  sendPtyEvent: broadcast,
+  sendPtyEvent: (event) => broadcastCoalesced.push(event),
 };
 
 async function handle(request: PtyHostRequest): Promise<unknown> {

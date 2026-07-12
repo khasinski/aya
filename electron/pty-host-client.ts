@@ -12,8 +12,9 @@ import {
   type PtyHostResponse,
 } from "./pty-host-protocol";
 import type { HostIdentity } from "./pty-host-staleness";
+import { coalesceAdjacentData } from "./pty-event-coalescer";
 import type { BufferSearchHit } from "./pty";
-import type { SpawnRequest } from "./types";
+import type { PtyEvent, SpawnRequest } from "./types";
 
 // Deadline waiting for the pty host to create its socket (ms).
 const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
@@ -211,6 +212,25 @@ export class PtyHostClient {
 
   private onData(chunk: string): void {
     this.buffer += chunk;
+    // Events decoded from this read are batched and adjacent data chunks of
+    // the same stream merged before crossing the IPC boundary: when the main
+    // process lags behind a busy host, one socket read carries many event
+    // lines, and forwarding them merged means a few webContents.send calls
+    // (structured clone + renderer wakeup each) instead of one per line.
+    // Responses flush the batch first so stream order is preserved exactly.
+    let events: PtyEvent[] = [];
+    const flushEvents = (): void => {
+      if (events.length === 0) return;
+      const merged = coalesceAdjacentData(events);
+      events = [];
+      for (const wc of this.sinks) {
+        if (wc.isDestroyed()) {
+          this.sinks.delete(wc);
+          continue;
+        }
+        for (const event of merged) wc.send("pty:event", event);
+      }
+    };
     while (this.buffer.includes("\n")) {
       const idx = this.buffer.indexOf("\n");
       const line = this.buffer.slice(0, idx).trim();
@@ -226,17 +246,15 @@ export class PtyHostClient {
         continue;
       }
       if ("type" in message && message.type === "event") {
-        for (const wc of this.sinks) {
-          if (wc.isDestroyed()) {
-            this.sinks.delete(wc);
-            continue;
-          }
-          wc.send("pty:event", message.event);
-        }
+        events.push(message.event);
         continue;
       }
-      if ("id" in message) this.onResponse(message);
+      if ("id" in message) {
+        flushEvents();
+        this.onResponse(message);
+      }
     }
+    flushEvents();
   }
 
   private onResponse(message: PtyHostResponse): void {
