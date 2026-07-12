@@ -341,6 +341,15 @@ function TerminalViewComponent({
   const [findQuery, setFindQuery] = useState("");
   const [isScrollbarHidden, setIsScrollbarHidden] = useState(false);
   const [isRestoring, setIsRestoring] = useState(true);
+  // Ref mirror so the per-chunk PTY handler can check-and-clear without
+  // dispatching a React state update on every data chunk (the value flips
+  // once per restore, but the handler runs hundreds of times per second
+  // under busy agent output).
+  const isRestoringRef = useRef(true);
+  const markRestoring = useCallback((value: boolean) => {
+    isRestoringRef.current = value;
+    setIsRestoring(value);
+  }, []);
   const [contextMenu, setContextMenu] = useState<TerminalContextMenuState | null>(
     null,
   );
@@ -677,7 +686,7 @@ function TerminalViewComponent({
     // not every mounted TerminalView (visible + warm pool) as a raw
     // window.aya.onPtyEvent listener would.
     const unsubscribe = ptyEventBus.onFor(terminal.id, (event) => {
-      setIsRestoring(false);
+      if (isRestoringRef.current) markRestoring(false);
       if (event.type === "data") {
         // Track whether a full-screen / rich TUI (claude, codex, vim…) is
         // running via focus-reporting mode (DECSET 1004). It gates Shift+Enter:
@@ -1064,7 +1073,7 @@ function TerminalViewComponent({
     const term = xtermRef.current;
     if (!term) return;
     didPostLoadResizeRef.current = false;
-    setIsRestoring(true);
+    markRestoring(true);
     term.writeln("\x1b[2m[restarting…]\x1b[0m");
     void window.aya.ptySpawn({
       ptyId: terminal.id,
@@ -1078,10 +1087,10 @@ function TerminalViewComponent({
   }, [restartTrigger, terminal.id]);
 
   useEffect(() => {
-    setIsRestoring(true);
-    const id = window.setTimeout(() => setIsRestoring(false), RESTORE_FALLBACK_MS);
+    markRestoring(true);
+    const id = window.setTimeout(() => markRestoring(false), RESTORE_FALLBACK_MS);
     return () => window.clearTimeout(id);
-  }, [terminal.id]);
+  }, [terminal.id, markRestoring]);
 
   // Hot-swap theme when the active selection changes. xterm.js stashes the
   // new palette into `options.theme` but does NOT repaint the visible grid by

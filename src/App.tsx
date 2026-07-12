@@ -29,6 +29,8 @@ import {
 import { useAppShortcuts } from "./hooks/useAppShortcuts";
 import { useDoubleShiftSearch } from "./hooks/useDoubleShiftSearch";
 import { usePtyEventRouter } from "./hooks/usePtyEventRouter";
+import { useStable } from "./hooks/useStableIdentity";
+import { sameArrayItems, sameRecordValues } from "./stable-identity";
 import { localSummaryUnavailableMessage } from "./local-summary-errors";
 import type { SettingsTab } from "./settings-tabs";
 import {
@@ -147,6 +149,27 @@ interface AutoSummaryStatus {
 }
 
 type ProjectBadgeLevel = "active" | "done" | "waiting" | "error";
+
+// Content comparators for useStable: badge/session records are rebuilt with
+// fresh value objects on every terminals-map change, so identity alone can't
+// tell "same badges" from "changed badges".
+function sameProjectBadges(
+  a: Record<string, { count: number; level: ProjectBadgeLevel }>,
+  b: Record<string, { count: number; level: ProjectBadgeLevel }>,
+): boolean {
+  return sameRecordValues(
+    a,
+    b,
+    (x, y) => x.count === y.count && x.level === y.level,
+  );
+}
+
+function sameSessionRecords(
+  a: Record<string, MonitoredSession[]>,
+  b: Record<string, MonitoredSession[]>,
+): boolean {
+  return sameRecordValues(a, b, sameArrayItems);
+}
 
 interface SummaryCache {
   terminal: Record<string, { summary: string; updatedAt: number }>;
@@ -2953,12 +2976,21 @@ export function App() {
     const openProjectSlugs = new Set(projects.map((p) => p.slug));
     return allProjects.filter((p) => !openProjectSlugs.has(p.slug));
   }, [projects, allProjects]);
-  const projectTerminals: TerminalState[] = useMemo(
-    () =>
-      Object.values(terminals).filter(
-        (t) => activeProjectId && t.projectSlug === activeProjectId,
-      ),
-    [terminals, activeProjectId],
+  // useStable on the terminals-derived collections below: the memos recompute
+  // whenever the terminals MAP identity changes (any terminal's status/bell
+  // flip, in any project), but the derived contents are often the very same
+  // object refs — e.g. a background project's flip leaves the active
+  // project's list untouched. Reusing the previous identity then keeps
+  // Sidebar/TopBar's memo warm instead of re-rendering them for nothing.
+  const projectTerminals: TerminalState[] = useStable(
+    useMemo(
+      () =>
+        Object.values(terminals).filter(
+          (t) => activeProjectId && t.projectSlug === activeProjectId,
+        ),
+      [terminals, activeProjectId],
+    ),
+    sameArrayItems,
   );
   const activeTabId = activeProjectId
     ? (activeTabByProject[activeProjectId] ?? null)
@@ -3068,14 +3100,17 @@ export function App() {
     };
   }, [activeProject, activeProjectId, remotePresetsByProject]);
 
-  const visibleTerminalIds = useMemo(
-    () =>
-      splitLayout
-        ? splitLayout.cells.filter((id): id is string => !!id && !!terminals[id])
-        : activeTabId
-          ? [activeTabId]
-          : [],
-    [splitLayout, activeTabId, terminals],
+  const visibleTerminalIds = useStable(
+    useMemo(
+      () =>
+        splitLayout
+          ? splitLayout.cells.filter((id): id is string => !!id && !!terminals[id])
+          : activeTabId
+            ? [activeTabId]
+            : [],
+      [splitLayout, activeTabId, terminals],
+    ),
+    sameArrayItems,
   );
   // spawnDeferred tabs (added by an external config edit, #4) stay out of the
   // hidden pool: a hidden TerminalView mounts an xterm and spawns the PTY,
@@ -3085,7 +3120,7 @@ export function App() {
   // terminal for each other open project. That preserves fast project switches
   // in the common working set without mounting every terminal in every project
   // as hidden xterm DOM/WebGL state.
-  const { hiddenTerminals, assignableProjectTerminals } =
+  const { hiddenTerminals: hiddenTerminalsNext, assignableProjectTerminals: assignableProjectTerminalsNext } =
     useMemo(() => {
       const visibleSet = new Set(visibleTerminalIds);
       const mountedSet = new Set(visibleTerminalIds);
@@ -3122,6 +3157,11 @@ export function App() {
       projects,
       activeTabByProject,
     ]);
+  const hiddenTerminals = useStable(hiddenTerminalsNext, sameArrayItems);
+  const assignableProjectTerminals = useStable(
+    assignableProjectTerminalsNext,
+    sameArrayItems,
+  );
 
   // The first time a deferred tab becomes visible (sidebar activation or
   // split assignment), drop the flag - from then on it mounts and spawns like
@@ -3140,8 +3180,11 @@ export function App() {
     });
   }, [visibleTerminalsKey]);
 
-  const { projectBadges, monitoredSessionsByProject, attentionCount } =
-    useMemo(() => {
+  const {
+    projectBadges: projectBadgesNext,
+    monitoredSessionsByProject: monitoredSessionsByProjectNext,
+    attentionCount,
+  } = useMemo(() => {
       const badges: Record<string, { count: number; level: ProjectBadgeLevel }> =
         {};
       const severityRank = { active: 0, done: 1, waiting: 2, error: 3 } as const;
@@ -3199,6 +3242,14 @@ export function App() {
         ),
       };
     }, [terminals, monitoredSessions, projects]);
+  // Badge/session records rebuild with fresh value objects every recompute;
+  // compare by content so an output-only flip (same badges) doesn't hand
+  // TopBar/Sidebar a new record identity.
+  const projectBadges = useStable(projectBadgesNext, sameProjectBadges);
+  const monitoredSessionsByProject = useStable(
+    monitoredSessionsByProjectNext,
+    sameSessionRecords,
+  );
 
   // Stable handlers for the chrome components (TopBar / Sidebar /
   // ProjectsLeftLayout / StatusBar). These were inline arrows at the call
