@@ -32,6 +32,8 @@
     "src/spawnSession.ts",
     "src/stable-identity.ts",
     "src/types.ts",
+    "src/web/protocol.ts",
+    "src/web/shortcuts.ts",
     "src/worktree.ts"
   ]
 }

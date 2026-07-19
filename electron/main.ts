@@ -98,6 +98,16 @@ import {
 } from "./validation";
 import { loadWindowState, trackWindowState } from "./window-state";
 import { resolveDropTarget, WindowProjectSlices } from "./window-slices";
+import {
+  generateWebPassword,
+  loadWebConfig,
+  normalizeWebPort,
+  saveWebConfig,
+  webCredentials,
+  type WebConfig,
+} from "./web-config";
+import { captureIpcHandlers } from "./web-ipc";
+import { startWebServer, type WebServerHandle } from "./web-server";
 import type {
   AyaIntelligenceConfig,
   CliStatus,
@@ -107,6 +117,7 @@ import type {
   OllamaStatus,
   ProjectCollectionState,
   UpdateStatus,
+  WebServerStatus,
 } from "./types";
 
 const DEV_SERVER_URL = "http://localhost:5183";
@@ -1222,6 +1233,89 @@ let legacySweepTimer: NodeJS.Timeout | null = null;
 // (clearTimeout can't stop a callback that is already running).
 let appQuitting = false;
 
+// --- Aya Web (experimental): browser access over HTTP + WebSocket ---
+let webConfig: WebConfig | null = null;
+let webServer: WebServerHandle | null = null;
+// Last start failure (e.g. port already in use) — surfaced in Settings.
+let webServerError: string | null = null;
+// Virtual PTY-event sink: fans "pty:event" out to the web clients exactly
+// like a window's webContents. Registered while the server runs.
+const webPtySink = {
+  isDestroyed: () => false,
+  send: (channel: "pty:event", event: unknown) => {
+    webServer?.broadcast(channel, event);
+  },
+};
+
+/** (Re)apply the current web config: stop the running server, then start a
+ *  fresh one when enabled. Start failures are recorded, never thrown. */
+async function applyWebServerState(): Promise<void> {
+  if (webServer) {
+    ptyHost.detachWebContents(webPtySink);
+    const closing = webServer;
+    webServer = null;
+    await closing.close();
+  }
+  webServerError = null;
+  const config = webConfig;
+  if (!config || !config.enabled) return;
+  try {
+    webServer = await startWebServer({
+      appVersion: app.getVersion(),
+      isDev: IS_DEV,
+      distDir: path.join(__dirname, "..", "dist"),
+      getConfig: () => webConfig ?? config,
+    });
+    ptyHost.attachWebContents(webPtySink);
+  } catch (err) {
+    webServerError = err instanceof Error ? err.message : String(err);
+  }
+}
+
+/** Reachable URLs for the settings UI: the pinned address, or every
+ *  non-internal IPv4 when listening on all interfaces. */
+function webServerUrls(config: WebConfig): string[] {
+  if (config.host !== "0.0.0.0" && config.host !== "::") {
+    return [`http://${config.host}:${config.port}`];
+  }
+  const hosts: string[] = [];
+  for (const infos of Object.values(os.networkInterfaces())) {
+    for (const info of infos ?? []) {
+      if (info.family === "IPv4" && !info.internal) hosts.push(info.address);
+    }
+  }
+  if (hosts.length === 0) hosts.push("127.0.0.1");
+  return hosts.map((host) => `http://${host}:${config.port}`);
+}
+
+function webStatus(): WebServerStatus {
+  const config = webConfig;
+  if (!config) {
+    return {
+      enabled: false,
+      running: false,
+      port: 0,
+      host: "",
+      user: "",
+      generatedPassword: null,
+      urls: [],
+      clients: 0,
+      error: webServerError,
+    };
+  }
+  return {
+    enabled: config.enabled,
+    running: webServer !== null,
+    port: config.port,
+    host: config.host,
+    user: config.user,
+    generatedPassword: config.generatedPassword ?? null,
+    urls: webServerUrls(config),
+    clients: webServer?.clientCount() ?? 0,
+    error: webServerError,
+  };
+}
+
 /** Build a minimal RGBA PNG containing a filled circle.
  *  Uses only Node built-ins (zlib deflate + manual PNG framing). */
 function makeCirclePng(size: number, r: number, g: number, b: number): Buffer {
@@ -1768,6 +1862,9 @@ function setStaleMenuIcon(): void {
 }
 
 function registerIpc(): void {
+  // Aya Web reuses these handlers over WebSocket — record every registration
+  // (must run before the first ipcMain.handle below).
+  captureIpcHandlers(ipcMain);
   // Multi-window: registered once for the whole app, so handlers that act on
   // "the window" resolve the calling renderer's BrowserWindow instead of a
   // captured reference.
@@ -2253,6 +2350,45 @@ function registerIpc(): void {
       }
     }
   });
+
+  // --- Aya Web (experimental) ---
+  ipcMain.handle("web:status", async () => {
+    if (!webConfig) webConfig = await loadWebConfig();
+    return webStatus();
+  });
+  ipcMain.handle("web:configure", async (_e, req: unknown) => {
+    if (typeof req !== "object" || req === null) {
+      throw new Error("web:configure: request must be an object");
+    }
+    if (!webConfig) webConfig = await loadWebConfig();
+    const r = req as Record<string, unknown>;
+    const next: WebConfig = { ...webConfig };
+    if (typeof r.enabled === "boolean") next.enabled = r.enabled;
+    if (r.port !== undefined) next.port = normalizeWebPort(r.port);
+    if (typeof r.user === "string" && r.user.trim()) {
+      next.user = r.user.trim();
+    }
+    if (typeof r.password === "string" && r.password) {
+      // Custom password: store only the hash; the plaintext generated copy
+      // (if any) is dropped by webCredentials.
+      delete next.generatedPassword;
+      Object.assign(next, webCredentials(r.password, false));
+    }
+    webConfig = next;
+    await saveWebConfig(next);
+    await applyWebServerState();
+    return webStatus();
+  });
+  ipcMain.handle("web:regenerate-password", async () => {
+    if (!webConfig) webConfig = await loadWebConfig();
+    webConfig = {
+      ...webConfig,
+      ...webCredentials(generateWebPassword(), true),
+    };
+    await saveWebConfig(webConfig);
+    // Existing sessions stay valid; new logins need the new password.
+    return webStatus();
+  });
 }
 
 // Multi-window: every live Aya window, in creation order. `mainWindow` tracks
@@ -2414,7 +2550,19 @@ app.whenReady().then(async () => {
   }
   startControlServer({
     getWindow: () => focusedAyaWindow(),
-    getWindows: () => [...ayaWindows].filter((w) => !w.isDestroyed()),
+    // Status updates also reach Aya Web clients via a virtual window-like
+    // sink (harness status dots must work in the browser too).
+    getWindows: () => [
+      ...[...ayaWindows].filter((w) => !w.isDestroyed()),
+      {
+        isDestroyed: () => false,
+        webContents: {
+          send: (channel: "control:status", update: unknown) => {
+            webServer?.broadcast(channel, update);
+          },
+        },
+      },
+    ],
     openProject: (directory) => {
       const target = focusedAyaWindow();
       if (target) {
@@ -2436,6 +2584,17 @@ app.whenReady().then(async () => {
     // fail on the "already exists" guard.
     createProject: (name, directory) => getOrCreateProject(name, directory),
   });
+  // Aya Web (experimental): start the browser-access server when enabled.
+  // Off the critical path — a bad config or busy port must not block boot;
+  // the failure lands in webServerError and shows up in Settings.
+  void loadWebConfig()
+    .then(async (config) => {
+      webConfig = config;
+      await applyWebServerState();
+    })
+    .catch((err: unknown) => {
+      webServerError = err instanceof Error ? err.message : String(err);
+    });
   installApplicationMenu();
 
   // The stale-host reconcile ran before the window (see above); the menu did

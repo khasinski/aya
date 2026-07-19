@@ -26,24 +26,32 @@ interface PendingRequest {
   reject: (err: Error) => void;
 }
 
+/** Anything PTY events can be forwarded to. Every BrowserWindow's WebContents
+ *  satisfies this shape; the Aya Web server registers a virtual sink that
+ *  fans events out to its WebSocket clients. */
+export interface PtyEventSink {
+  isDestroyed(): boolean;
+  send(channel: "pty:event", event: PtyEvent): void;
+}
+
 export class PtyHostClient {
   private socket: net.Socket | null = null;
   private connectPromise: Promise<void> | null = null;
   private nextId = 1;
   private pending = new Map<number, PendingRequest>();
   private buffer = "";
-  // All live Aya windows' webContents. PTY events are broadcast to every
-  // window; each renderer's event bus routes by ptyId, so a window that
-  // doesn't host the terminal does a single cheap no-op per event.
-  private readonly sinks = new Set<WebContents>();
+  // All live Aya windows' webContents (plus any virtual sink). PTY events are
+  // broadcast to every sink; each renderer's event bus routes by ptyId, so a
+  // window that doesn't host the terminal does a single cheap no-op per event.
+  private readonly sinks = new Set<PtyEventSink>();
 
   constructor(private readonly hostScript: string) {}
 
-  attachWebContents(webContents: WebContents): void {
+  attachWebContents(webContents: WebContents | PtyEventSink): void {
     this.sinks.add(webContents);
   }
 
-  detachWebContents(webContents: WebContents): void {
+  detachWebContents(webContents: WebContents | PtyEventSink): void {
     this.sinks.delete(webContents);
   }
 

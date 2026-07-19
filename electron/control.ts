@@ -9,13 +9,23 @@ import type { ControlStatusUpdate } from "./types";
 // Max control-socket message size before rejecting the request (bytes).
 export const CONTROL_REQUEST_MAX_SIZE_BYTES = 64_000;
 
+/** Anywhere a status update can be delivered: real BrowserWindows plus the
+ *  Aya Web server's virtual sink (which fans out to WebSocket clients). */
+export interface ControlStatusSink {
+  isDestroyed(): boolean;
+  webContents: {
+    send(channel: "control:status", update: ControlStatusUpdate): void;
+  };
+}
+
 export interface ControlServerOptions {
   /** Target for focus/notification actions (the focused/last-focused window). */
   getWindow: () => BrowserWindow | null;
-  /** All live windows - status updates are broadcast, because the terminal
-   *  they describe may live in a window that is not focused. Each renderer
-   *  ignores updates for terminals it doesn't host. Optional for tests. */
-  getWindows?: () => BrowserWindow[];
+  /** All live windows (and window-like sinks) - status updates are broadcast,
+   *  because the terminal they describe may live in a window that is not
+   *  focused. Each renderer ignores updates for terminals it doesn't host.
+   *  Optional for tests. */
+  getWindows?: () => ControlStatusSink[];
   openProject: (directory: string) => void;
 }
 

@@ -366,6 +366,33 @@ export interface ConfigChange {
   slice: ConfigSlice;
 }
 
+// --- Aya Web (experimental): browser access to Aya ---
+
+export interface WebServerStatus {
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  host: string;
+  user: string;
+  /** Plaintext of the auto-generated password so Settings can show it.
+   *  Null once the user sets a custom password (only its hash is stored). */
+  generatedPassword: string | null;
+  /** URLs the server is reachable at (one per non-internal IPv4 interface). */
+  urls: string[];
+  /** Currently connected browser clients. */
+  clients: number;
+  /** Last start failure (e.g. port in use), or null. */
+  error: string | null;
+}
+
+export interface WebConfigureRequest {
+  enabled?: boolean;
+  port?: number;
+  user?: string;
+  /** New custom password; stored as a hash, never echoed back. */
+  password?: string;
+}
+
 // What the preload exposes to window.aya:
 export interface AyaApi {
   /** True when running under `npm run dev` (AYA_DEV=1). False in the packaged
@@ -556,6 +583,11 @@ export interface AyaApi {
    *  (snippets/presets/themes) under ~/.aya/. The renderer reloads that slice
    *  so an edit made by hand isn't overwritten by the next save in the app. */
   onConfigChange(handler: (change: ConfigChange) => void): () => void;
+
+  // Aya Web (experimental) — browser access to Aya
+  webStatus(): Promise<WebServerStatus>;
+  configureWeb(req: WebConfigureRequest): Promise<WebServerStatus>;
+  regenerateWebPassword(): Promise<WebServerStatus>;
 }
 
 declare global {

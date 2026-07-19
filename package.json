@@ -36,7 +36,8 @@
     "electron-updater": "^6.8.9",
     "highlight.js": "^11.11.1",
     "node-pty": "1.2.0-beta.14",
-    "plist": "^3.1.1"
+    "plist": "^3.1.1",
+    "ws": "^8.21.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
@@ -44,6 +45,7 @@
     "@types/plist": "^3.0.5",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.2",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",

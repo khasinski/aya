@@ -171,6 +171,10 @@ const api: AyaApi = {
     ipcRenderer.on("open-project", listener);
     return () => ipcRenderer.removeListener("open-project", listener);
   },
+
+  webStatus: () => ipcRenderer.invoke("web:status"),
+  configureWeb: (req) => ipcRenderer.invoke("web:configure", req),
+  regenerateWebPassword: () => ipcRenderer.invoke("web:regenerate-password"),
 };
 
 contextBridge.exposeInMainWorld("aya", api);

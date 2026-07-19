@@ -13,6 +13,12 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     rolldownOptions: {
+      // Two entry points: the desktop renderer (index.html, loaded by
+      // Electron) and Aya Web (web.html, served by electron/web-server.ts).
+      input: {
+        main: "./index.html",
+        web: "./web.html",
+      },
       output: {
         chunkFileNames: "assets/[name]-[hash].js",
         codeSplitting: {
