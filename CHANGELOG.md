@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.7.8 - 2026-07-20
+
+Aya 0.7.8 adds experimental browser access to your terminals, a history search
+that survives TUI redraws, and a noticeably lighter renderer under heavy agent
+output.
+
+### Experimental
+
+- **Aya Web: use Aya from a browser.** Aya can serve its UI over a local
+  HTTP + WebSocket bridge, with user/password login, session cookies, and
+  rate limiting. Terminals attach to the same live PTY sessions as the
+  desktop window. Off by default, configured from Settings.
+- **History mode in the find bar.** Claude Code and Codex keep full session
+  transcripts on disk; with the new setting enabled, Cmd+F in an agent tab
+  gains a Terminal | History toggle that searches those transcripts for the
+  tab's project. Hits survive TUI redraws and app restarts. No indexing or
+  background work involved.
+
+### Performance
+
+- PTY output is coalesced in the PTY host and across IPC hops, so busy agent
+  output costs far fewer events end to end.
+- TerminalView skips re-renders and no-op PTY updates it previously paid for
+  on every chunk, and tab switches no longer rebuild derived collections.
+
+### UI
+
+- Project tabs in the top bar use two lines: project name over its path.
+
+### Fixes
+
+- Remote (SSH): adding a project that already exists on an older remote Aya
+  no longer fails the connection.
+
 ## v0.7.7 - 2026-07-03
 
 Aya 0.7.7 introduces multiple windows with Chrome-style project-tab tear-out.
