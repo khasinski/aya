@@ -44,8 +44,9 @@ export interface UsageWindow {
   resetsAt?: string;
 }
 export interface UsageData {
-  fiveHour: UsageWindow;
-  sevenDay: UsageWindow;
+  /** Optional: newer Codex plans expose only a single (weekly) window. */
+  fiveHour?: UsageWindow;
+  sevenDay?: UsageWindow;
   updatedAt: string;
 }
 export interface UsageAccount {

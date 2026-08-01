@@ -34,8 +34,14 @@ test("accepts windows without resetsAt (optional)", () => {
   );
 });
 
-test("rejects a missing window", () => {
-  assert.equal(isUsageData({ fiveHour: { pct: 30 }, updatedAt: "x" }), false);
+test("accepts a single-window snapshot (newer Codex plans have one)", () => {
+  assert.equal(isUsageData({ fiveHour: { pct: 30 }, updatedAt: "x" }), true);
+  assert.equal(isUsageData({ sevenDay: { pct: 0 }, updatedAt: "x" }), true);
+});
+
+test("rejects a snapshot with NO windows, and a present-but-invalid window", () => {
+  assert.equal(isUsageData({ updatedAt: "x" }), false);
+  assert.equal(isUsageData({ fiveHour: { pct: "30" }, updatedAt: "x" }), false);
 });
 
 test("rejects a non-numeric pct", () => {

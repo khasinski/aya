@@ -22,10 +22,11 @@ export interface UsageWindow {
 }
 
 export interface UsageData {
-  /** Rolling 5-hour window. */
-  fiveHour: UsageWindow;
-  /** Rolling 7-day (weekly) window — the account-wide cap. */
-  sevenDay: UsageWindow;
+  /** Rolling 5-hour window. Optional: newer Codex plans expose only a single
+   *  (weekly) window, so a snapshot may carry either ring alone. */
+  fiveHour?: UsageWindow;
+  /** Rolling 7-day (weekly) window — the account-wide cap. Optional, see above. */
+  sevenDay?: UsageWindow;
   /** ISO 8601 time the hook last wrote this snapshot. */
   updatedAt: string;
 }
@@ -49,10 +50,14 @@ function isWindow(x: unknown): x is UsageWindow {
 export function isUsageData(x: unknown): x is UsageData {
   if (typeof x !== "object" || x === null) return false;
   const r = x as Record<string, unknown>;
+  // At least one window must be present, and every present window must be
+  // well-formed. (Newer Codex plans report a single weekly window; Claude's
+  // hook always writes both - both shapes are valid snapshots.)
   return (
-    isWindow(r.fiveHour) &&
-    isWindow(r.sevenDay) &&
-    typeof r.updatedAt === "string"
+    typeof r.updatedAt === "string" &&
+    (r.fiveHour !== undefined || r.sevenDay !== undefined) &&
+    (r.fiveHour === undefined || isWindow(r.fiveHour)) &&
+    (r.sevenDay === undefined || isWindow(r.sevenDay))
   );
 }
 

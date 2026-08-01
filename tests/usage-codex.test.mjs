@@ -50,22 +50,79 @@ test("does NOT swap the windows (5h is primary, not the weekly 25%)", () => {
   assert.equal(u.sevenDay.pct, 25.0);
 });
 
-test("null when a window's used_percent is missing or non-numeric", () => {
-  assert.equal(codexUsageFromRateLimit({ primary: { used_percent: 1 } }, 0), null);
+test("a single valid window is a VALID snapshot (newer Codex plans have one)", () => {
+  // Contract change (the chip used to vanish on these): one finite window
+  // suffices. Position decides the ring when window_minutes is absent.
+  const only5h = codexUsageFromRateLimit({ primary: { used_percent: 1 } }, 0);
+  assert.equal(only5h.fiveHour.pct, 1);
+  assert.equal(only5h.sevenDay, undefined);
+  // An invalid sibling window is dropped, not fatal:
+  const bad5h = codexUsageFromRateLimit(
+    { primary: { used_percent: "1" }, secondary: { used_percent: 2 } },
+    0,
+  );
+  assert.equal(bad5h.fiveHour, undefined);
+  assert.equal(bad5h.sevenDay.pct, 2);
+  const nan5h = codexUsageFromRateLimit(
+    { primary: { used_percent: NaN }, secondary: { used_percent: 2 } },
+    0,
+  );
+  assert.equal(nan5h.fiveHour, undefined);
+  assert.equal(nan5h.sevenDay.pct, 2);
+});
+
+test("null only when NO window carries a finite used_percent", () => {
+  assert.equal(codexUsageFromRateLimit({ primary: {}, secondary: null }, 0), null);
   assert.equal(
     codexUsageFromRateLimit(
-      { primary: { used_percent: "1" }, secondary: { used_percent: 2 } },
+      { primary: { used_percent: "x" }, secondary: { used_percent: NaN } },
       0,
     ),
     null,
   );
-  assert.equal(
-    codexUsageFromRateLimit(
-      { primary: { used_percent: NaN }, secondary: { used_percent: 2 } },
-      0,
-    ),
-    null,
+});
+
+test("REAL new-schema payload: secondary null, weekly primary -> week ring only", () => {
+  // Verbatim shape observed live on 2026-08-01 (plan_type plus): the chip
+  // disappeared because the old parser demanded a secondary window.
+  const u = codexUsageFromRateLimit(
+    {
+      limit_id: "codex",
+      limit_name: null,
+      primary: { used_percent: 0.0, window_minutes: 10080, resets_at: 1786182650 },
+      secondary: null,
+      credits: { has_credits: false, unlimited: false, balance: "0" },
+      plan_type: "plus",
+    },
+    1780000000000,
   );
+  assert.equal(u.fiveHour, undefined, "no short window in the new schema");
+  assert.equal(u.sevenDay.pct, 0, "zero percent is a VALUE, not absence");
+  assert.equal(u.sevenDay.resetsAt, new Date(1786182650 * 1000).toISOString());
+});
+
+test("two same-class windows: the extra is DROPPED, never relabeled as the other ring", () => {
+  const u = codexUsageFromRateLimit(
+    {
+      primary: { used_percent: 3, window_minutes: 300 },
+      secondary: { used_percent: 9, window_minutes: 60 }, // also short -> conflict
+    },
+    0,
+  );
+  assert.equal(u.fiveHour.pct, 3, "first short window keeps the 5h ring");
+  assert.equal(u.sevenDay, undefined, "the extra short window must NOT masquerade as weekly");
+});
+
+test("window_minutes outranks position: a short secondary renders as the 5h ring", () => {
+  const u = codexUsageFromRateLimit(
+    {
+      primary: { used_percent: 30, window_minutes: 10080 },
+      secondary: { used_percent: 7, window_minutes: 300 },
+    },
+    0,
+  );
+  assert.equal(u.fiveHour.pct, 7);
+  assert.equal(u.sevenDay.pct, 30);
 });
 
 test("null for null / non-object", () => {
@@ -92,14 +149,25 @@ test("latestUsageFromLines uses the NEWEST complete snapshot + its timestamp", (
   assert.equal(u.updatedAt, "2026-06-03T11:00:00.000Z"); // the line's own timestamp
 });
 
-test("latestUsageFromLines skips an incomplete trailing snapshot for an earlier complete one", () => {
+test("latestUsageFromLines skips a VALUELESS trailing snapshot for an earlier valid one", () => {
   const lines = [
     line("2026-06-03T10:00:00.000Z", { primary: { used_percent: 5 }, secondary: { used_percent: 10 } }),
-    line("2026-06-03T11:00:00.000Z", { primary: { used_percent: 9 } }), // no secondary → not renderable
+    line("2026-06-03T11:00:00.000Z", { primary: {}, secondary: null }), // nothing renderable
   ];
   const u = latestUsageFromLines(lines, 0);
-  assert.equal(u.fiveHour.pct, 5); // fell back to the complete earlier snapshot
+  assert.equal(u.fiveHour.pct, 5); // fell back to the earlier valid snapshot
   assert.equal(u.sevenDay.pct, 10);
+});
+
+test("latestUsageFromLines: a trailing SINGLE-window snapshot wins (it is complete now)", () => {
+  const lines = [
+    line("2026-06-03T10:00:00.000Z", { primary: { used_percent: 5 }, secondary: { used_percent: 10 } }),
+    line("2026-06-03T11:00:00.000Z", { primary: { used_percent: 9 } }),
+  ];
+  const u = latestUsageFromLines(lines, 0);
+  assert.equal(u.fiveHour.pct, 9);
+  assert.equal(u.sevenDay, undefined);
+  assert.equal(u.updatedAt, "2026-06-03T11:00:00.000Z");
 });
 
 test("latestUsageFromLines falls back to fallbackMs when the line has no timestamp", () => {

@@ -90,28 +90,69 @@ function accountMetaFromEvent(obj: {
   return { id, label };
 }
 
-/** Map Codex's rate_limits object to Aya's shared UsageData. `primary` is the
- *  5-hour window, `secondary` the weekly one; both carry `used_percent`.
- *  `resets_at` is Unix SECONDS (Codex's wire format). `updatedAtMs` is when the
- *  snapshot was produced. Returns null if either percentage is missing. */
+// Windows at or below this length render as the "5h" ring; anything longer
+// (the weekly 10080) is the "week" ring. Newer Codex schemas carry
+// window_minutes per window; older ones didn't, so position is the fallback.
+const SHORT_WINDOW_MAX_MINUTES = 600;
+
+interface CodexRawWindow {
+  used_percent?: unknown;
+  resets_at?: unknown;
+  window_minutes?: unknown;
+}
+
+/** Map Codex's rate_limits to UsageData. Historically this REQUIRED both
+ *  `primary` and `secondary` windows - newer Codex plans set `secondary: null`
+ *  and report a single weekly window in `primary` (window_minutes: 10080),
+ *  which silently killed the chip. Now: every window that carries a finite
+ *  used_percent is kept, classified by its own window_minutes (short -> 5h
+ *  ring, long -> week ring; positional fallback when absent), and a snapshot
+ *  with at least ONE valid window is a valid snapshot. */
 export function codexUsageFromRateLimit(
   rl: unknown,
   updatedAtMs: number,
 ): UsageData | null {
   if (typeof rl !== "object" || rl === null) return null;
-  const r = rl as {
-    primary?: { used_percent?: unknown; resets_at?: unknown };
-    secondary?: { used_percent?: unknown; resets_at?: unknown };
+  const r = rl as { primary?: unknown; secondary?: unknown };
+
+  const toWindow = (
+    raw: unknown,
+  ): { pct: number; resetsAt?: string; minutes?: number } | null => {
+    if (typeof raw !== "object" || raw === null) return null;
+    const w = raw as CodexRawWindow;
+    if (typeof w.used_percent !== "number" || !Number.isFinite(w.used_percent)) {
+      return null;
+    }
+    const minutes =
+      typeof w.window_minutes === "number" && Number.isFinite(w.window_minutes)
+        ? w.window_minutes
+        : undefined;
+    return {
+      pct: w.used_percent,
+      resetsAt: isoFromUnixSeconds(w.resets_at),
+      minutes,
+    };
   };
-  const p = r.primary?.used_percent;
-  const s = r.secondary?.used_percent;
-  if (typeof p !== "number" || !Number.isFinite(p)) return null;
-  if (typeof s !== "number" || !Number.isFinite(s)) return null;
-  return {
-    fiveHour: { pct: p, resetsAt: isoFromUnixSeconds(r.primary?.resets_at) },
-    sevenDay: { pct: s, resetsAt: isoFromUnixSeconds(r.secondary?.resets_at) },
-    updatedAt: new Date(updatedAtMs).toISOString(),
-  };
+
+  const result: UsageData = { updatedAt: new Date(updatedAtMs).toISOString() };
+  const positions: Array<"fiveHour" | "sevenDay"> = ["fiveHour", "sevenDay"];
+  [r.primary, r.secondary].forEach((raw, i) => {
+    const win = toWindow(raw);
+    if (!win) return;
+    const slot: "fiveHour" | "sevenDay" =
+      win.minutes !== undefined
+        ? win.minutes <= SHORT_WINDOW_MAX_MINUTES
+          ? "fiveHour"
+          : "sevenDay"
+        : positions[i];
+    // Slot conflict (two windows classifying to the same ring): DROP the
+    // extra rather than relabeling it as the other ring - a silently
+    // mislabeled limit is worse than an omitted one.
+    if (result[slot] !== undefined) return;
+    result[slot] = { pct: win.pct, resetsAt: win.resetsAt };
+  });
+  if (result.fiveHour === undefined && result.sevenDay === undefined) return null;
+  return result;
 }
 
 /** Scan rollout JSONL lines (oldest→newest) and return UsageData from the LAST
