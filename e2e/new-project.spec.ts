@@ -1,0 +1,76 @@
+import { test, expect } from "./fixtures";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+
+// Creating a project via the top-bar "+" had no e2e coverage at all, even though
+// it is a core flow. These cover the happy path (a real directory becomes a new
+// active project tab named after its basename) and the missing-directory path
+// where Aya offers to create the folder before opening it.
+
+test("the + button opens a real directory as a new active project", async ({
+  window,
+  seeded,
+}) => {
+  // A real directory the app's dirExists check will accept.
+  const dir = join(seeded.root, "freshproj");
+  mkdirSync(dir);
+
+  await window.locator(".aya-tab-new").click();
+  const input = window.locator(".aya-modal-input");
+  await expect(input).toBeVisible();
+  await input.fill(dir);
+  await window.locator(".aya-modal-btn--primary").click();
+
+  // A new project tab named after the directory's basename becomes active.
+  await expect(
+    window.locator(".aya-tab--active .aya-tab-name"),
+  ).toHaveText(/freshproj/);
+  // The modal closed (no input left on screen).
+  await expect(window.locator(".aya-modal-input")).toHaveCount(0);
+});
+
+test("a non-existent directory can be created and opened as a project", async ({
+  window,
+  seeded,
+}) => {
+  const missing = join(seeded.root, "does-not-exist-xyz");
+  expect(existsSync(missing)).toBe(false);
+
+  await window.locator(".aya-tab-new").click();
+  const input = window.locator(".aya-modal-input");
+  const primary = window.locator(".aya-modal-btn--primary");
+  await expect(input).toBeVisible();
+  await input.fill(missing);
+  await expect(primary).toHaveText("Create folder");
+  await expect(window.getByText("Folder will be created.")).toHaveCount(0);
+  await primary.click();
+
+  await expect
+    .poll(() => existsSync(missing), { message: "created project directory" })
+    .toBe(true);
+  await expect(
+    window.locator(".aya-tab-name", { hasText: "does-not-exist-xyz" }),
+  ).toBeVisible();
+  await expect(window.locator(".aya-modal-input")).toHaveCount(0);
+});
+
+test("the primary action returns to Open when the directory changes to an existing one", async ({
+  window,
+  seeded,
+}) => {
+  const missing = join(seeded.root, "missing-then-existing");
+  const existing = join(seeded.root, "already-there");
+  mkdirSync(existing);
+
+  await window.locator(".aya-tab-new").click();
+  const input = window.locator(".aya-modal-input");
+  const primary = window.locator(".aya-modal-btn--primary");
+  await expect(input).toBeVisible();
+
+  await input.fill(missing);
+  await expect(primary).toHaveText("Create folder");
+
+  await input.fill(existing);
+  await expect(primary).toHaveText("Open");
+  await expect(window.getByText("Folder will be created.")).toHaveCount(0);
+});

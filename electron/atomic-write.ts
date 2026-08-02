@@ -5,6 +5,7 @@
 // Used for everything in ~/.aya/: projects/*.json, presets.json, themes.json.
 // All three are small (<10kb each), so the extra disk I/O is negligible.
 
+import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { recordWrite } from "./config-echo";
@@ -15,11 +16,10 @@ export async function writeFileAtomic(
 ): Promise<void> {
   const dir = path.dirname(filePath);
   await fs.mkdir(dir, { recursive: true });
-  // Embed PID + a short random suffix in case two callers race on the same
-  // path (shouldn't happen given the single-instance lock, but defensive).
-  const tmpPath = `${filePath}.${process.pid}.${Math.random()
-    .toString(36)
-    .slice(2, 8)}.tmp`;
+  // Embed PID + a random suffix in case two callers race on the same path
+  // (shouldn't happen given the single-instance lock, but defensive). Use a
+  // secure RNG so the temp path isn't predictable (symlink-attack hygiene).
+  const tmpPath = `${filePath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   try {
     await fs.writeFile(tmpPath, data);
     await fs.rename(tmpPath, filePath);

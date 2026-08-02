@@ -7,7 +7,8 @@
 // binaries installed via version managers.
 
 import { execFile } from "node:child_process";
-import * as os from "node:os";
+import { COMMAND_PROBE_TIMEOUT_MS } from "./constants";
+import { userShell } from "./shell";
 
 export interface HarnessDef {
   /** Canonical id; used as the preset id when seeded. */
@@ -22,7 +23,6 @@ export interface HarnessDef {
 }
 
 // Timeout for the login-shell PATH probe used to detect a harness binary.
-const COMMAND_PROBE_TIMEOUT_MS = 2500;
 
 /** Known agent harnesses + interactive AI CLIs we'll probe for. Add new
  *  ones here as the ecosystem grows. */
@@ -114,13 +114,6 @@ export const KNOWN_HARNESSES: readonly HarnessDef[] = [
  *  from accidentally smuggling shell syntax into the PATH probe. */
 export function isSafeBinaryName(s: string): boolean {
   return /^[a-zA-Z0-9_.-]+$/.test(s);
-}
-
-function userShell(): string {
-  const envShell = process.env.SHELL?.trim();
-  if (envShell) return envShell;
-  const accountShell = os.userInfo().shell;
-  return accountShell && accountShell.trim() ? accountShell : "/bin/bash";
 }
 
 async function commandExists(binary: string): Promise<boolean> {

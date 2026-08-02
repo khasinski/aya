@@ -58,6 +58,25 @@ test.describe("with a usage snapshot", () => {
     await expect(window.getByText("Claude — account-wide")).toBeVisible();
     expect(await inTerminal()).toBe(true);
   });
+
+  test("settings can hide harness names in usage icons", async ({ window }) => {
+    const chip = window.getByRole("button", {
+      name: /claude usage, account-wide/i,
+    });
+    await expect(chip).toContainText("Claude");
+    await expect(chip).toContainText("55%");
+
+    await window.getByRole("button", { name: "Settings" }).click();
+    await window
+      .getByRole("button", { name: "Compact rings" })
+      .click();
+    // The Settings modal closes on Escape (no Cancel button in the shell);
+    // pressing Escape leaves the "Compact rings" choice persisted.
+    await window.keyboard.press("Escape");
+
+    await expect(chip).not.toContainText("Claude");
+    await expect(chip).toContainText("55%");
+  });
 });
 
 test.describe("without a usage snapshot", () => {
@@ -68,6 +87,55 @@ test.describe("without a usage snapshot", () => {
     await expect(
       window.getByRole("button", { name: /account-wide/i }),
     ).toHaveCount(0);
+  });
+});
+
+test.describe("with multiple Claude usage accounts", () => {
+  test.use({
+    seedOptions: {
+      usage: {
+        accounts: [
+          {
+            id: "work",
+            label: "Work",
+            usage: {
+              fiveHour: { pct: 10 },
+              sevenDay: { pct: 0 },
+              updatedAt: new Date().toISOString(),
+            },
+          },
+          {
+            id: "personal",
+            label: "Personal",
+            usage: {
+              fiveHour: { pct: 80 },
+              sevenDay: { pct: 100 },
+              updatedAt: new Date().toISOString(),
+            },
+          },
+        ],
+      },
+    },
+  });
+
+  test("Claude chip shows average weekly percent and dropdown splits accounts", async ({
+    window,
+  }) => {
+    const chip = window.getByRole("button", {
+      name: /claude usage, account-wide/i,
+    });
+    await expect(chip).toBeVisible();
+    await expect(chip).toContainText("50%");
+    await expect(
+      window.getByRole("button", { name: /claude usage, account-wide/i }),
+    ).toHaveCount(1);
+
+    await chip.click();
+    await expect(window.getByText("2 accounts, all sessions, not this project")).toBeVisible();
+    await expect(window.getByText("Work", { exact: true })).toBeVisible();
+    await expect(window.getByText("Personal", { exact: true })).toBeVisible();
+    await expect(window.getByText("0%", { exact: true })).toBeVisible();
+    await expect(window.getByText("100%", { exact: true })).toBeVisible();
   });
 });
 

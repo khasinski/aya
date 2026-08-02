@@ -22,18 +22,40 @@ const APPROVAL_PATTERNS: RegExp[] = [
 // We DON'T just look for "no approval text" because the agent may repaint
 // the same approval box with different cursor positions.
 
+// Hot path: every PTY data chunk is analyzed several times per event — the
+// reducer checks approval AND busy, then App's timeline handler checks approval
+// again, all on the SAME chunk string. Single-entry memos collapse that to one
+// real strip (3 regex passes) and one approval-pattern scan per chunk instead
+// of three strips (9 passes) and two scans. Pure-function semantics unchanged.
+let lastStripInput: string | null = null;
+let lastStripOutput = "";
+let lastApprovalInput: string | null = null;
+let lastApprovalResult = false;
+
 function stripAnsi(s: string): string {
-  // Drop CSI / OSC escape sequences and the standalone ESC codes the screen
-  // repaint cycle emits.
-  return s
+  // Drop CSI / OSC / DCS escape sequences the screen repaint cycle emits.
+  // DUPLICATE: a near-identical copy lives in electron/pty.ts (main process).
+  // Keep the escape-sequence rules in sync — the only intended difference is
+  // that pty.ts also strips stray control chars (for readable search snippets).
+  if (s === lastStripInput) return lastStripOutput;
+  const stripped = s
     .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
-    .replace(/\x1b\][^\x07]*\x07/g, "")
-    .replace(/\x1b[PX^_].*?\x1b\\/g, "");
+    // DCS / PM / APC / SOS before OSC (so OSC can't steal a DCS string's ST);
+    // OSC terminated by BEL or ST (matching only BEL leaked ST-OSC payloads).
+    .replace(/\x1b[PX^_][\s\S]*?\x1b\\/g, "")
+    .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "");
+  lastStripInput = s;
+  lastStripOutput = stripped;
+  return stripped;
 }
 
 export function detectApproval(chunk: string): boolean {
+  if (chunk === lastApprovalInput) return lastApprovalResult;
   const text = stripAnsi(chunk);
-  return APPROVAL_PATTERNS.some((re) => re.test(text));
+  const result = APPROVAL_PATTERNS.some((re) => re.test(text));
+  lastApprovalInput = chunk;
+  lastApprovalResult = result;
+  return result;
 }
 
 // "Active output" — large chunks of new content with no approval signal — is a

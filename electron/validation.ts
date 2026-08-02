@@ -18,6 +18,9 @@ import { isSnippet, SNIPPET_TEXT_MAX } from "./snippets";
  *  payloads before any per-item work happens. */
 const SNIPPETS_IPC_MAX = 1_000;
 
+/** Persisted schema version for projects-state.json. */
+export const PROJECT_STATE_VERSION = 1;
+
 /** Maximum split-grid dimensions (rows x cols). Single source of truth for the
  *  split-layout limit — imported by config.ts so the clamp and this validator
  *  enforce the same rule. */
@@ -65,7 +68,27 @@ export function validateSpawnRequest(value: unknown): SpawnRequest {
     cwd: requireString(value.cwd, "pty:spawn.cwd"),
     cols: requirePositiveInt(value.cols, "pty:spawn.cols"),
     rows: requirePositiveInt(value.rows, "pty:spawn.rows"),
+    // Flags must be copied through EXPLICITLY: this validator rebuilds the
+    // object, so any field missing here is silently dropped at the IPC
+    // boundary. That is exactly what happened to attachOnly - the renderer
+    // sent it, the host never saw it, and dead-PTY re-mounts kept silently
+    // respawning fresh processes while the unit tests (which call the host
+    // directly) stayed green.
+    ...(optionalFlag(value.attachOnly, "pty:spawn.attachOnly")
+      ? { attachOnly: true }
+      : {}),
+    ...(optionalFlag(value.attachIfReused, "pty:spawn.attachIfReused")
+      ? { attachIfReused: true }
+      : {}),
   };
+}
+
+/** Optional boolean field: absent -> undefined, boolean -> itself, anything
+ *  else -> validation failure (a truthy string must not act as a flag). */
+function optionalFlag(value: unknown, name: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "boolean") fail(name, "boolean");
+  return value;
 }
 
 function validateWorkingTab(value: unknown, name: string): WorkingTab {
@@ -131,14 +154,25 @@ export function validateProjectConfig(value: unknown): ProjectConfig {
     ...(value.splitLayout !== undefined
       ? { splitLayout: validateSplitLayout(value.splitLayout) }
       : {}),
+    ...(value.remote !== undefined
+      ? { remote: validateRemoteProject(value.remote) }
+      : {}),
   };
 }
 
-/** A lenient string->string map for the optional active-selection fields:
- *  absent or non-object => {}, and any non-string value is dropped. Mirrors
- *  config.ts `stringRecord` so the IPC boundary and the persistence normalizer
- *  agree on the shape. */
-function optionalStringRecord(value: unknown): Record<string, string> {
+function validateRemoteProject(value: unknown): NonNullable<ProjectConfig["remote"]> {
+  if (!isRecord(value)) fail("projects:update.remote", "RemoteProject object");
+  return {
+    hostId: requireString(value.hostId, "projects:update.remote.hostId"),
+    label: requireString(value.label, "projects:update.remote.label"),
+    sshTarget: requireString(value.sshTarget, "projects:update.remote.sshTarget"),
+    directory: requireString(value.directory, "projects:update.remote.directory"),
+  };
+}
+
+/** A lenient string->string map for optional persisted selections:
+ *  absent or non-object => {}, and any non-string value is dropped. */
+export function sanitizeStringRecord(value: unknown): Record<string, string> {
   const out: Record<string, string> = {};
   if (isRecord(value)) {
     for (const [k, v] of Object.entries(value)) {
@@ -161,14 +195,14 @@ export function validateProjectCollectionState(
   // exactly the hand-built-subset bug that reset the active terminal on restart
   // (#18). Read this together with config.ts saveProjectState / normalizeProjectState.
   return {
-    version: 1,
+    version: PROJECT_STATE_VERSION,
     order: requireStringArray(value.order, "projects:save-state.order"),
     open: requireStringArray(value.open, "projects:save-state.open"),
     recent: requireStringArray(value.recent, "projects:save-state.recent"),
     activeProject:
       typeof value.activeProject === "string" ? value.activeProject : null,
-    activeTab: optionalStringRecord(value.activeTab),
-    singleView: optionalStringRecord(value.singleView),
+    activeTab: sanitizeStringRecord(value.activeTab),
+    singleView: sanitizeStringRecord(value.singleView),
   };
 }
 

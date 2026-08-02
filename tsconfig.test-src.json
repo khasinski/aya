@@ -13,12 +13,27 @@
     "rootDir": "src"
   },
   "include": [
+    "src/agentPreset.ts",
     "src/bell.ts",
+    "src/colors.ts",
+    "src/control-status-target.ts",
+    "src/diff-navigation.ts",
     "src/double-shift.ts",
     "src/focus-reporting.ts",
+    "src/hooks/usePersistentPreference.ts",
+    "src/project-reload.ts",
+    "src/preset-ids.ts",
+    "src/ptyEventBus.ts",
     "src/pty-event-reducer.ts",
+    "src/terminal-option-key.ts",
     "src/terminal-keys.ts",
+    "src/terminal-rendering.ts",
     "src/snippet-payload.ts",
-    "src/types.ts"
+    "src/spawnSession.ts",
+    "src/stable-identity.ts",
+    "src/types.ts",
+    "src/web/protocol.ts",
+    "src/web/shortcuts.ts",
+    "src/worktree.ts"
   ]
 }

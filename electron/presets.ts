@@ -19,6 +19,10 @@ export interface Preset {
   icon: string;
   color: string; // CSS hex like "#d97757" or "" for the default neutral
   command: string;
+  agent?: "claude" | "codex" | "custom";
+  configDir?: string;
+  unsafeMode?: boolean;
+  autoResume?: boolean;
   /** Optional override. If set, terminals spawned from this preset render
    *  with the matching theme instead of the global active theme. Empty
    *  string and undefined both mean "use the default". */
@@ -26,6 +30,14 @@ export interface Preset {
 }
 
 export const DEFAULT_PRESETS: readonly Preset[] = [
+  {
+    id: "shell",
+    name: "Shell",
+    icon: "$",
+    color: "",
+    // The literal $SHELL — the PTY wrapper expands this to the user's shell.
+    command: "$SHELL",
+  },
   {
     id: "claude",
     name: "Claude Code",
@@ -41,14 +53,6 @@ export const DEFAULT_PRESETS: readonly Preset[] = [
     icon: "◆",
     color: "#10a37f",
     command: "codex",
-  },
-  {
-    id: "shell",
-    name: "Shell",
-    icon: "$",
-    color: "",
-    // The literal $SHELL — the PTY wrapper expands this to the user's shell.
-    command: "$SHELL",
   },
 ];
 
@@ -69,6 +73,23 @@ export function isPreset(x: unknown): x is Preset {
   if (r.themeId !== undefined && typeof r.themeId !== "string") {
     return false;
   }
+  if (
+    r.agent !== undefined &&
+    r.agent !== "claude" &&
+    r.agent !== "codex" &&
+    r.agent !== "custom"
+  ) {
+    return false;
+  }
+  if (r.configDir !== undefined && typeof r.configDir !== "string") {
+    return false;
+  }
+  if (r.unsafeMode !== undefined && typeof r.unsafeMode !== "boolean") {
+    return false;
+  }
+  if (r.autoResume !== undefined && typeof r.autoResume !== "boolean") {
+    return false;
+  }
   return true;
 }
 
@@ -78,12 +99,26 @@ export function normalizePreset(raw: unknown): Preset | null {
   if (!isPreset(raw)) return null;
   const themeId =
     typeof raw.themeId === "string" && raw.themeId ? raw.themeId : undefined;
+  const agent =
+    raw.agent === "claude" || raw.agent === "codex" || raw.agent === "custom"
+      ? raw.agent
+      : undefined;
+  const configDir =
+    typeof raw.configDir === "string" && raw.configDir.trim()
+      ? raw.configDir
+      : undefined;
   return {
     id: raw.id,
     name: raw.name,
     icon: raw.icon,
     color: raw.color,
     command: raw.command,
+    ...(agent ? { agent } : {}),
+    ...(configDir ? { configDir } : {}),
+    ...(raw.unsafeMode ? { unsafeMode: true } : {}),
+    // Preserve an explicit autoResume:false (deliberate opt-out); absence is
+    // treated as "default on" for agent presets by the renderer.
+    ...(typeof raw.autoResume === "boolean" ? { autoResume: raw.autoResume } : {}),
     ...(themeId ? { themeId } : {}),
   };
 }
@@ -99,13 +134,37 @@ const SHELL_PRESET: Preset = {
   command: "$SHELL",
 };
 
+// Parsed presets keyed by the file's mtime. Both usage handlers call
+// listPresets on every 30s poll, so steady state should cost one stat instead
+// of a read+parse. Gating on mtime (rather than invalidating in savePresets)
+// also picks up hand-edits to presets.json.
+let presetsCache: { mtimeMs: number; presets: Preset[] } | null = null;
+
+/** Test hook: forget the cached presets.json parse. */
+export function resetPresetsCache(): void {
+  presetsCache = null;
+}
+
 export async function listPresets(): Promise<Preset[]> {
+  let mtimeMs: number | null = null;
+  try {
+    mtimeMs = (await fs.stat(PRESETS_FILE)).mtimeMs;
+  } catch {
+    // Missing/unreadable — fall through so the read path below handles it
+    // (ENOENT seeds the first-launch presets).
+    presetsCache = null;
+  }
+  if (mtimeMs !== null && presetsCache?.mtimeMs === mtimeMs) {
+    // Copy so a caller mutating the array can't poison later polls.
+    return [...presetsCache.presets];
+  }
   try {
     const raw = await fs.readFile(PRESETS_FILE, "utf-8");
     const data = JSON.parse(raw);
-    if (!Array.isArray(data?.presets)) return [...DEFAULT_PRESETS];
-    const ok = data.presets.filter(isPreset);
-    return ok.length > 0 ? ok : [...DEFAULT_PRESETS];
+    const ok = Array.isArray(data?.presets) ? data.presets.filter(isPreset) : [];
+    const presets: Preset[] = ok.length > 0 ? ok : [...DEFAULT_PRESETS];
+    if (mtimeMs !== null) presetsCache = { mtimeMs, presets };
+    return [...presets];
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       // First launch — scan PATH for installed harnesses and seed only
@@ -137,4 +196,7 @@ export async function savePresets(presets: Preset[]): Promise<void> {
     PRESETS_FILE,
     JSON.stringify({ presets: sanitized }, null, 2) + "\n",
   );
+  // The new mtime would invalidate the cache anyway, but dropping it here
+  // guards against sub-millisecond mtime collisions on rapid saves.
+  presetsCache = null;
 }

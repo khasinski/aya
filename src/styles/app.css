@@ -21,12 +21,185 @@ body {
 [data-accent="purple"] { --accent-soft: #d2a8ff; }
 [data-accent="amber"]  { --accent-soft: #e3b341; }
 
+/* App-specific theme tokens. The base is light; the media query below
+   mirrors armillary.css so the shell follows the OS when no explicit theme
+   attribute is set. */
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* Status-signal colors (same in light and dark): amber = waiting/attention,
+     red = agent/exit error. Brand colors mirror src/colors.ts - keep in sync. */
+  --status-waiting: #f0ad4e;
+  --status-error: #f85149;
+  --brand-claude: #d97757;
+  --brand-codex: #10a37f;
+
+  --aya-pane-bg: #ffffff;
+  --aya-pane-header-bg: #f6f8fa;
+  --aya-pane-header-border: #d0d7de;
+  --aya-pane-fg: #24292f;
+  --aya-pane-strong: #0b0d12;
+  --aya-pane-muted: #57606a;
+  --aya-pane-subtle: #6e7781;
+  --aya-pane-border: #d0d7de;
+  --aya-cc-input-bg: rgba(255,255,255,0.95);
+  --aya-diff-bg: #f6f8fa;
+  --aya-diff-border: #d0d7de;
+  --aya-diff-hunk-bg: rgba(9, 105, 218, 0.10);
+  --aya-diff-hunk-fg: #0969da;
+  --aya-diff-add-bg: rgba(26, 127, 55, 0.10);
+  --aya-diff-add-fg: #1a7f37;
+  --aya-diff-del-bg: rgba(207, 34, 46, 0.10);
+  --aya-diff-del-fg: #cf222e;
+  --aya-mark-bg: rgba(154, 103, 0, 0.28);
+
+  --aya-syntax-keyword: #cf222e;
+  --aya-syntax-string: #0a3069;
+  --aya-syntax-number: #0969da;
+  --aya-syntax-comment: #6e7781;
+  --aya-syntax-purple: #8250df;
+
+  --aya-term-dim: #6e7781;
+  --aya-term-sub: #57606a;
+  --aya-term-fg: #24292f;
+  --aya-term-strong: #0b0d12;
+  --aya-term-green: #1a7f37;
+  --aya-term-yellow: #9a6700;
+  --aya-term-red: #cf222e;
+  --aya-term-blue: #0969da;
+  --aya-term-purple: #8250df;
+  --aya-term-pink: #cf222e;
+  --aya-term-orange: #bc4c00;
+
+  --aya-snippetbar-bg: linear-gradient(180deg, #ffffff 0%, #f6f8fa 100%);
+  --aya-snippetbar-border: #d0d7de;
+  --aya-snippetbar-divider: #d8dee4;
+  --aya-snippetbar-shadow: 0 -12px 32px rgba(31, 35, 40, 0.16);
+  --aya-snippetbar-fg: #24292f;
+  --aya-snippetbar-muted: #57606a;
+  --aya-snippetbar-subtle: #6e7781;
+  --aya-snippet-row-bg: #ffffff;
+  --aya-snippet-row-hover-bg: #f6f8fa;
+  --aya-snippet-action-bg: #f6f8fa;
+  --aya-snippet-toggle-hover-bg: #f6f8fa;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --aya-pane-bg: #0d1117;
+  --aya-pane-header-bg: #161b22;
+  --aya-pane-header-border: #30363d;
+  --aya-pane-fg: #c9d1d9;
+  --aya-pane-strong: #f0f6fc;
+  --aya-pane-muted: #6e7781;
+  --aya-pane-subtle: #8b949e;
+  --aya-pane-border: #30363d;
+  --aya-cc-input-bg: rgba(13,17,23,0.95);
+  --aya-diff-bg: #0a0c10;
+  --aya-diff-border: #21262d;
+  --aya-diff-hunk-bg: rgba(88, 166, 255, 0.12);
+  --aya-diff-hunk-fg: #79c0ff;
+  --aya-diff-add-bg: rgba(64,196,99,0.12);
+  --aya-diff-add-fg: #56d364;
+  --aya-diff-del-bg: rgba(248,81,73,0.12);
+  --aya-diff-del-fg: #f85149;
+  --aya-mark-bg: rgba(210, 153, 34, 0.45);
+
+  --aya-syntax-keyword: #ff7b72;
+  --aya-syntax-string: #a5d6ff;
+  --aya-syntax-number: #79c0ff;
+  --aya-syntax-comment: #8b949e;
+  --aya-syntax-purple: #d2a8ff;
+
+  --aya-term-dim: #6e7781;
+  --aya-term-sub: #8b949e;
+  --aya-term-fg: #c9d1d9;
+  --aya-term-strong: #f0f6fc;
+  --aya-term-green: #56d364;
+  --aya-term-yellow: #e3b341;
+  --aya-term-red: #f85149;
+  --aya-term-blue: #79c0ff;
+  --aya-term-purple: #d2a8ff;
+  --aya-term-pink: #ff7b72;
+  --aya-term-orange: #ffa657;
+
+  --aya-snippetbar-bg: linear-gradient(180deg, #161b22 0%, #12161d 100%);
+  --aya-snippetbar-border: #30363d;
+  --aya-snippetbar-divider: #21262d;
+  --aya-snippetbar-shadow: 0 -12px 32px rgba(0, 0, 0, 0.5);
+  --aya-snippetbar-fg: #c9d1d9;
+  --aya-snippetbar-muted: #8b949e;
+  --aya-snippetbar-subtle: #6e7681;
+  --aya-snippet-row-bg: #0d1117;
+  --aya-snippet-row-hover-bg: #11151c;
+  --aya-snippet-action-bg: #1c2230;
+  --aya-snippet-toggle-hover-bg: #1c2230;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --aya-pane-bg: #0d1117;
+    --aya-pane-header-bg: #161b22;
+    --aya-pane-header-border: #30363d;
+    --aya-pane-fg: #c9d1d9;
+    --aya-pane-strong: #f0f6fc;
+    --aya-pane-muted: #6e7781;
+    --aya-pane-subtle: #8b949e;
+    --aya-pane-border: #30363d;
+    --aya-cc-input-bg: rgba(13,17,23,0.95);
+    --aya-diff-bg: #0a0c10;
+    --aya-diff-border: #21262d;
+    --aya-diff-hunk-bg: rgba(88, 166, 255, 0.12);
+    --aya-diff-hunk-fg: #79c0ff;
+    --aya-diff-add-bg: rgba(64,196,99,0.12);
+    --aya-diff-add-fg: #56d364;
+    --aya-diff-del-bg: rgba(248,81,73,0.12);
+    --aya-diff-del-fg: #f85149;
+    --aya-mark-bg: rgba(210, 153, 34, 0.45);
+
+    --aya-syntax-keyword: #ff7b72;
+    --aya-syntax-string: #a5d6ff;
+    --aya-syntax-number: #79c0ff;
+    --aya-syntax-comment: #8b949e;
+    --aya-syntax-purple: #d2a8ff;
+
+    --aya-term-dim: #6e7781;
+    --aya-term-sub: #8b949e;
+    --aya-term-fg: #c9d1d9;
+    --aya-term-strong: #f0f6fc;
+    --aya-term-green: #56d364;
+    --aya-term-yellow: #e3b341;
+    --aya-term-red: #f85149;
+    --aya-term-blue: #79c0ff;
+    --aya-term-purple: #d2a8ff;
+    --aya-term-pink: #ff7b72;
+    --aya-term-orange: #ffa657;
+
+    --aya-snippetbar-bg: linear-gradient(180deg, #161b22 0%, #12161d 100%);
+    --aya-snippetbar-border: #30363d;
+    --aya-snippetbar-divider: #21262d;
+    --aya-snippetbar-shadow: 0 -12px 32px rgba(0, 0, 0, 0.5);
+    --aya-snippetbar-fg: #c9d1d9;
+    --aya-snippetbar-muted: #8b949e;
+    --aya-snippetbar-subtle: #6e7681;
+    --aya-snippet-row-bg: #0d1117;
+    --aya-snippet-row-hover-bg: #11151c;
+    --aya-snippet-action-bg: #1c2230;
+    --aya-snippet-toggle-hover-bg: #1c2230;
+  }
+}
+
 /* ============================================================
    APP SHELL
    ============================================================ */
 .aya-app {
   display: grid;
-  grid-template-rows: 40px 1fr 26px;
+  /* 48px top bar: project tabs are two-line (name over path/summary). */
+  grid-template-rows: 48px 1fr 26px;
   height: 100vh;
   background: var(--bg);
 }
@@ -130,6 +303,120 @@ body {
 .aya-iconbtn:hover { background: var(--bg-tertiary); color: var(--fg-primary); }
 .aya-iconbtn--active { color: var(--accent); background: color-mix(in oklab, var(--accent) 15%, transparent); }
 
+.aya-monitored-sessions {
+  -webkit-app-region: no-drag;
+  position: relative;
+}
+.aya-session-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--fg-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.aya-session-chip:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+}
+.aya-session-chip-bars {
+  display: flex;
+  width: 34px;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+}
+.aya-session-chip-bar--active,
+.aya-session-chip-bar--done {
+  background: var(--status-active);
+}
+.aya-session-chip-bar--waiting {
+  background: var(--status-waiting);
+}
+.aya-session-chip-bar--error {
+  background: var(--status-error);
+}
+.aya-session-menu {
+  position: absolute;
+  top: 34px;
+  right: 0;
+  width: 300px;
+  padding: 4px;
+  z-index: 100;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-card);
+}
+.aya-session-menu-title {
+  padding: 7px 9px 5px;
+  color: var(--fg-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.aya-session-menu-item {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.aya-session-menu-item:hover {
+  background: var(--bg-tertiary);
+}
+.aya-session-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--status-active);
+}
+.aya-session-menu-item--waiting .aya-session-dot {
+  background: var(--status-waiting);
+}
+.aya-session-menu-item--error .aya-session-dot {
+  background: var(--status-error);
+}
+.aya-session-menu-main,
+.aya-session-menu-name,
+.aya-session-menu-detail {
+  min-width: 0;
+}
+.aya-session-menu-main {
+  display: grid;
+  gap: 2px;
+}
+.aya-session-menu-name,
+.aya-session-menu-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-session-menu-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+.aya-session-menu-detail {
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
 /* ---- project switcher dropdown ---- */
 .aya-switcher {
   -webkit-app-region: no-drag;
@@ -227,9 +514,9 @@ body {
   font-weight: 700;
   color: var(--fg-tertiary);
 }
-.aya-sidebar-icon--claude { color: #d97757; }
-.aya-sidebar-icon--codex { color: #10a37f; }
-.aya-sidebar-icon--aider { color: #f0ad4e; }
+.aya-sidebar-icon--claude { color: var(--brand-claude); }
+.aya-sidebar-icon--codex { color: var(--brand-codex); }
+.aya-sidebar-icon--aider { color: var(--status-waiting); }
 .aya-sidebar-icon--shell { color: var(--fg-secondary); }
 
 .aya-sidebar-statusdot {
@@ -240,7 +527,7 @@ body {
 }
 .aya-sidebar-statusdot--running { background: var(--accent); animation: aya-pulse 1.6s ease-in-out infinite; }
 .aya-sidebar-statusdot--idle    { background: var(--fg-tertiary); opacity: 0.5; }
-.aya-sidebar-statusdot--waiting { background: #f0ad4e; }
+.aya-sidebar-statusdot--waiting { background: var(--status-waiting); }
 .aya-sidebar-statusdot--error   { background: #c01c28; }
 
 @keyframes aya-pulse {
@@ -249,10 +536,26 @@ body {
 }
 
 .aya-sidebar-name {
-  flex: 1;
   min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-weight: 500;
+}
+.aya-sidebar-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.aya-sidebar-summary {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 400;
 }
 .aya-sidebar-pane-chip {
   flex-shrink: 0;
@@ -308,15 +611,15 @@ body {
 .aya-bell--dot {
   font-size: 0;
   width: 8px; height: 8px;
-  background: #f0ad4e;
-  box-shadow: 0 0 0 2px color-mix(in oklab, #f0ad4e 30%, transparent);
+  background: var(--status-waiting);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--status-waiting) 30%, transparent);
 }
 .aya-bell--icon {
-  color: #f0ad4e;
+  color: var(--status-waiting);
   font-variation-settings: 'FILL' 1;
 }
 .aya-bell--animated {
-  color: #f0ad4e;
+  color: var(--status-waiting);
   font-variation-settings: 'FILL' 1;
   animation: aya-bell-ring 1.4s ease-in-out infinite;
   transform-origin: 50% 20%;
@@ -346,6 +649,76 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
+}
+/* Experimental worktrees: launcher target label. */
+.aya-launcher-target {
+  color: var(--accent, var(--fg-secondary));
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+/* Experimental worktrees: terminal-list sections, one per worktree. */
+.aya-worktree-group {
+  margin-bottom: 4px;
+}
+.aya-worktree-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  margin: 2px 0;
+  background: transparent;
+  border: none;
+  border-left: 2px solid transparent;
+  color: var(--fg-tertiary);
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  text-align: left;
+  cursor: pointer;
+}
+.aya-worktree-header:hover {
+  color: var(--fg-secondary);
+  background: var(--bg-tertiary);
+}
+.aya-worktree-header--target {
+  color: var(--fg-primary);
+  border-left-color: var(--accent, var(--border-strong));
+}
+.aya-worktree-header-icon {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-weight: 400;
+  font-size: 12px;
+}
+.aya-worktree-header-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.aya-worktree-header-tag {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--fg-tertiary);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.aya-worktree-header-tag--warn {
+  color: var(--warn, #c60);
+}
+.aya-worktree-empty {
+  padding: 3px 8px 6px 18px;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  font-style: italic;
 }
 .aya-launcher-btn {
   display: flex; align-items: center; gap: 6px;
@@ -403,7 +776,7 @@ body {
 .aya-pane {
   display: flex; flex-direction: column;
   min-width: 0; min-height: 0;
-  background: #0d1117;
+  background: var(--aya-pane-bg);
   position: relative;
 }
 .aya-panes:not(.aya-panes--split) .aya-pane + .aya-pane {
@@ -491,15 +864,15 @@ body {
 .aya-pane-header {
   display: flex; align-items: center; gap: 10px;
   padding: 7px 14px;
-  background: #161b22;
-  border-bottom: 1px solid #30363d;
+  background: var(--aya-pane-header-bg);
+  border-bottom: 1px solid var(--aya-pane-header-border);
   font-size: 12px;
-  color: #8b949e;
+  color: var(--aya-pane-subtle);
   flex-shrink: 0;
 }
 .aya-pane-header-title {
   font-family: var(--font-mono);
-  color: #c9d1d9;
+  color: var(--aya-pane-fg);
   font-weight: 500;
 }
 .aya-pane-header-meta {
@@ -508,16 +881,16 @@ body {
   font-size: 11px;
   font-family: var(--font-mono);
 }
-.aya-pane-header-meta .dim { color: #6e7781; }
+.aya-pane-header-meta .dim { color: var(--aya-pane-muted); }
 .aya-pane-header-btn {
   font-family: 'Material Symbols Outlined';
   font-size: 16px;
-  color: #6e7781;
+  color: var(--aya-pane-muted);
   cursor: pointer;
   background: none; border: none;
   padding: 2px;
 }
-.aya-pane-header-btn:hover { color: #c9d1d9; }
+.aya-pane-header-btn:hover { color: var(--aya-pane-fg); }
 .aya-pane-header-btn--active { color: var(--accent-soft, var(--accent)); }
 
 .aya-pane-active {
@@ -536,7 +909,7 @@ body {
   font-family: var(--font-mono);
   font-size: var(--term-font-size, 13px);
   line-height: 1.55;
-  color: #c9d1d9;
+  color: var(--aya-pane-fg);
   padding: 16px 20px 100px;
   white-space: pre-wrap;
   word-break: break-word;
@@ -547,7 +920,7 @@ body {
 .aya-term-cursor {
   display: inline-block;
   width: 0.5em; height: 1em;
-  background: #c9d1d9;
+  background: var(--aya-pane-fg);
   vertical-align: middle;
   animation: aya-blink 1.1s steps(1) infinite;
 }
@@ -555,70 +928,70 @@ body {
 
 /* claude code welcome box */
 .aya-cc-welcome {
-  border: 1px solid #30363d;
+  border: 1px solid var(--aya-pane-border);
   border-radius: 8px;
   padding: 12px 16px;
   margin-bottom: 12px;
-  color: #c9d1d9;
-  background: #0d1117;
+  color: var(--aya-pane-fg);
+  background: var(--aya-pane-bg);
 }
 .aya-cc-input {
   position: sticky;
   bottom: 16px;
   margin: 20px 0 0;
-  border: 1px solid #30363d;
+  border: 1px solid var(--aya-pane-border);
   border-radius: 8px;
   padding: 10px 14px;
-  background: rgba(13,17,23,0.95);
+  background: var(--aya-cc-input-bg);
   backdrop-filter: blur(6px);
   display: flex; align-items: center; gap: 8px;
   font-family: var(--font-mono);
   font-size: var(--term-font-size, 13px);
-  color: #c9d1d9;
+  color: var(--aya-pane-fg);
 }
 .aya-cc-input-prompt { color: var(--accent-soft, #79c0ff); font-weight: 600; }
-.aya-cc-input-placeholder { color: #6e7781; flex: 1; }
+.aya-cc-input-placeholder { color: var(--aya-pane-muted); flex: 1; }
 .aya-cc-input-shortcut {
-  font-size: 10px; color: #6e7781;
+  font-size: 10px; color: var(--aya-pane-muted);
   font-family: var(--font-sans);
 }
 
 /* approval box */
 .aya-approval {
-  border: 1px solid #f0ad4e;
+  border: 1px solid var(--status-waiting);
   border-radius: 6px;
   padding: 10px 14px;
   margin: 6px 0;
   background: rgba(240,173,78,0.06);
 }
 .aya-approval-title {
-  color: #f0ad4e;
+  color: var(--status-waiting);
   font-weight: 600;
   margin-bottom: 6px;
   display: flex; align-items: center; gap: 6px;
 }
 .aya-approval-opt {
   padding: 1px 0;
-  color: #c9d1d9;
+  color: var(--aya-pane-fg);
 }
 .aya-approval-opt--selected {
-  color: #f0ad4e;
+  color: var(--status-waiting);
   font-weight: 600;
 }
 
 /* diff blocks */
 .aya-diff {
-  background: #0a0c10;
-  border: 1px solid #21262d;
+  background: var(--aya-diff-bg);
+  border: 1px solid var(--aya-diff-border);
   border-radius: 4px;
   padding: 6px 10px;
   margin: 4px 0;
   font-size: 12px;
 }
 .aya-diff-line { padding: 0 4px; }
-.aya-diff-add { background: rgba(64,196,99,0.12); color: #56d364; }
-.aya-diff-del { background: rgba(248,81,73,0.12); color: #f85149; }
-.aya-diff-ctx { color: #8b949e; }
+.aya-diff-add { background: var(--aya-diff-add-bg); color: var(--aya-diff-add-fg); }
+.aya-diff-del { background: var(--aya-diff-del-bg); color: var(--aya-diff-del-fg); }
+.aya-diff-ctx { color: var(--aya-pane-subtle); }
 
 /* ============================================================
    STATUS BAR
@@ -656,10 +1029,10 @@ body {
   background: var(--fg-tertiary);
 }
 .aya-statusbar-item--accent { color: var(--accent); }
-.aya-statusbar-item--warn   { color: #f0ad4e; }
+.aya-statusbar-item--warn   { color: var(--status-waiting); }
 .aya-statusbar-item--agent-active { color: var(--fg-secondary); }
 .aya-statusbar-item--agent-done { color: var(--status-active); }
-.aya-statusbar-item--agent-error { color: #f85149; }
+.aya-statusbar-item--agent-error { color: var(--status-error); }
 .aya-statusbar-spacer { flex: 1; }
 .aya-statusbar-popover-host {
   position: relative;
@@ -737,12 +1110,22 @@ body {
   align-items: center;
   gap: 8px;
   padding: 5px 12px;
+  width: 100%;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 .aya-dirty-file-row:hover {
   background: var(--bg-tertiary);
 }
+.aya-dirty-file-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
 .aya-dirty-file-status {
-  color: #f0ad4e;
+  color: var(--status-waiting);
   font-weight: 700;
   text-align: right;
 }
@@ -802,14 +1185,14 @@ body {
   font-weight: 700;
 }
 .aya-diff-view-line--hunk {
-  background: rgba(88, 166, 255, 0.12);
-  color: #79c0ff;
+  background: var(--aya-diff-hunk-bg);
+  color: var(--aya-diff-hunk-fg);
 }
 .aya-diff-view-line--add {
-  background: rgba(64, 196, 99, 0.10);
+  background: var(--aya-diff-add-bg);
 }
 .aya-diff-view-line--del {
-  background: rgba(248, 81, 73, 0.10);
+  background: var(--aya-diff-del-bg);
 }
 .aya-diff-view-line--meta {
   color: var(--fg-tertiary);
@@ -832,14 +1215,14 @@ body {
   width: 12px;
   color: var(--fg-tertiary);
 }
-.aya-diff-view-line--add .aya-diff-prefix { color: #56d364; }
-.aya-diff-view-line--del .aya-diff-prefix { color: #f85149; }
+.aya-diff-view-line--add .aya-diff-prefix { color: var(--aya-diff-add-fg); }
+.aya-diff-view-line--del .aya-diff-prefix { color: var(--aya-diff-del-fg); }
 .aya-diff-view .hljs-keyword,
 .aya-diff-view .hljs-selector-tag,
 .aya-diff-view .hljs-built_in,
 .aya-diff-view .hljs-name,
 .aya-diff-view .hljs-tag {
-  color: #ff7b72;
+  color: var(--aya-syntax-keyword);
 }
 .aya-diff-view .hljs-string,
 .aya-diff-view .hljs-title,
@@ -850,7 +1233,7 @@ body {
 .aya-diff-view .hljs-template-variable,
 .aya-diff-view .hljs-type,
 .aya-diff-view .hljs-addition {
-  color: #a5d6ff;
+  color: var(--aya-syntax-string);
 }
 .aya-diff-view .hljs-number,
 .aya-diff-view .hljs-symbol,
@@ -859,43 +1242,43 @@ body {
 .aya-diff-view .hljs-params,
 .aya-diff-view .hljs-meta,
 .aya-diff-view .hljs-link {
-  color: #79c0ff;
+  color: var(--aya-syntax-number);
 }
 .aya-diff-view .hljs-comment,
 .aya-diff-view .hljs-quote,
 .aya-diff-view .hljs-deletion {
-  color: #8b949e;
+  color: var(--aya-syntax-comment);
   font-style: italic;
 }
 .aya-diff-view .hljs-regexp,
 .aya-diff-view .hljs-selector-id,
 .aya-diff-view .hljs-selector-class {
-  color: #d2a8ff;
+  color: var(--aya-syntax-purple);
 }
 .aya-diff-view .hljs-emphasis { font-style: italic; }
 .aya-diff-view .hljs-strong { font-weight: 700; }
 .aya-diff-view mark {
   border-radius: 2px;
-  background: rgba(210, 153, 34, 0.45);
+  background: var(--aya-mark-bg);
   color: var(--fg-primary);
 }
 
 /* ============================================================
    COLORS used inside terminal output
    ============================================================ */
-.t-dim   { color: #6e7781; }
-.t-sub   { color: #8b949e; }
-.t-fg    { color: #c9d1d9; }
-.t-strong{ color: #f0f6fc; font-weight: 600; }
-.t-green { color: #56d364; }
-.t-yellow{ color: #e3b341; }
-.t-red   { color: #f85149; }
-.t-blue  { color: #79c0ff; }
-.t-purple{ color: #d2a8ff; }
-.t-pink  { color: #ff7b72; }
-.t-orange{ color: #ffa657; }
-.t-claude{ color: #d97757; }
-.t-codex { color: #10a37f; }
+.t-dim   { color: var(--aya-term-dim); }
+.t-sub   { color: var(--aya-term-sub); }
+.t-fg    { color: var(--aya-term-fg); }
+.t-strong{ color: var(--aya-term-strong); font-weight: 600; }
+.t-green { color: var(--aya-term-green); }
+.t-yellow{ color: var(--aya-term-yellow); }
+.t-red   { color: var(--aya-term-red); }
+.t-blue  { color: var(--aya-term-blue); }
+.t-purple{ color: var(--aya-term-purple); }
+.t-pink  { color: var(--aya-term-pink); }
+.t-orange{ color: var(--aya-term-orange); }
+.t-claude{ color: var(--brand-claude); }
+.t-codex { color: var(--brand-codex); }
 
 /* faint scrollbars */
 .aya-sidebar-list::-webkit-scrollbar,
@@ -907,9 +1290,169 @@ body {
   border: 2px solid transparent;
   background-clip: padding-box;
 }
-.aya-term::-webkit-scrollbar-thumb { background: rgba(110,119,129,0.4); border: 2px solid #0d1117; background-clip: padding-box; }
+.aya-term::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--aya-pane-muted) 54%, transparent);
+  border: 2px solid var(--aya-pane-bg);
+  background-clip: padding-box;
+}
 
 /* ============================================================
    tweaks panel positioning
    ============================================================ */
 .aya-tweaks { font-family: var(--font-sans); }
+
+/* ============================================================
+   Alternative layout: projects in a left rail, terminals on top
+   ============================================================ */
+/* Terminal tabs live in the top bar; size to content and scroll. */
+.aya-termtabs { overflow-x: auto; overflow-y: hidden; }
+.aya-termtab { max-width: 260px; }
+/* The strip is only 40px tall. The name stays vertically centered (on the same
+   line as the icon/dot), and the summary is positioned just below it; without
+   room that summary clips at the tab's bottom edge. padding-bottom shifts the
+   centered row up so the summary fits, identically for every tab (so names stay
+   aligned). The close ✕ is absolutely centered, so nudge it up to match. */
+.aya-termtab { padding-bottom: 12px; }
+.aya-termtab > .aya-tab-close { top: calc(50% - 6px); }
+.aya-termtab-main {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  flex: 1;
+  /* Anchor for the summary, which is taken out of flow (positioned below) so it
+     never changes this box's height. That keeps the name vertically centered on
+     the same line as the icon/dot, and at the same height whether or not a
+     summary is present — centering the name+summary pair instead pulled the name
+     up on tabs that had a summary. */
+  position: relative;
+}
+.aya-termtab .aya-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+.aya-termtab-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  line-height: 1.2;
+  /* Out of flow, directly beneath the centered name (see .aya-termtab-main). */
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+}
+.aya-termtab-launcher {
+  -webkit-app-region: no-drag;
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+/* Left project rail. */
+.aya-projectrail {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  min-height: 0;
+}
+.aya-projectrail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.aya-projectrail-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.aya-railtab {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  color: var(--fg-secondary);
+  position: relative;
+  border-left: 2px solid transparent;
+}
+.aya-railtab:hover { background: var(--bg-tertiary); color: var(--fg-primary); }
+.aya-railtab--active {
+  background: var(--bg);
+  color: var(--fg-primary);
+  border-left-color: var(--accent);
+}
+.aya-railtab--dragging { opacity: 0.5; }
+.aya-railtab--drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.aya-railtab--drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.aya-railtab-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.aya-railtab-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-railtab-path {
+  font-size: 11px;
+  color: var(--fg-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-railtab-path--summary { font-style: italic; }
+.aya-railtab-close {
+  flex-shrink: 0;
+  opacity: 0;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+  color: var(--fg-tertiary);
+}
+.aya-railtab:hover .aya-railtab-close { opacity: 1; }
+.aya-railtab-close:hover { color: var(--fg-primary); }
+.aya-projectrail-new {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 8px;
+  padding: 6px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--fg-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.aya-projectrail-new:hover { background: var(--bg-tertiary); color: var(--fg-primary); }
+.aya-projectrail-new.aya-tab-new--disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.aya-projectrail-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -2px;
+  width: 4px;
+  cursor: col-resize;
+}

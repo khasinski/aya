@@ -12,6 +12,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 export const IS_DEV = process.env.AYA_DEV === "1";
+export const IS_E2E_HEADLESS = process.env.AYA_E2E_HEADLESS === "1";
+export const IS_E2E_PTY_SHUTDOWN = process.env.AYA_E2E_PTY_SHUTDOWN === "1";
 
 // AYA_HOME env var lets you point a single launch at an arbitrary config
 // directory (e.g. /tmp/aya-demo for screenshots, or a per-task scratch dir).
@@ -33,4 +35,11 @@ export const PROJECTS_STATE_FILE = path.join(AYA_HOME, "projects-state.json");
 export const PROJECTS_ORDER_FILE = path.join(AYA_HOME, "projects-order.json");
 export const OPEN_PROJECTS_FILE = path.join(AYA_HOME, "open-projects.json");
 export const CONTROL_SOCKET_PATH = path.join(AYA_HOME, "aya.sock");
+export const REMOTE_SOCKET_PATH = path.join(AYA_HOME, "aya-remote.sock");
 export const PTY_HOST_SOCKET_PATH = path.join(AYA_HOME, "pty-host.sock");
+
+// rw------- (owner-only). Sockets accept unauthenticated local commands /
+// remote bridge traffic, and host-registry records name kill targets - none
+// of it may be readable/writable by other users. One definition for both.
+export const OWNER_ONLY_FILE_MODE = 0o600;
+export const SOCKET_FILE_PERMISSIONS = OWNER_ONLY_FILE_MODE;

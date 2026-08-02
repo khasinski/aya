@@ -211,3 +211,37 @@ test("subdirectory of a repo still reports the parent repo's branch", async () =
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// --- parseStatusWithBranch (pure) ---------------------------------------------
+// getGitInfo now runs ONE `git status --porcelain --branch` per poll; the
+// parser must preserve the old two-command contract exactly.
+
+test("parseStatusWithBranch: plain branch, upstream decoration, dirty count", async () => {
+  const { parseStatusWithBranch } = await import("../dist-electron/git.js");
+  assert.deepEqual(parseStatusWithBranch("## main\n"), { branch: "main", dirty: 0 });
+  assert.deepEqual(
+    parseStatusWithBranch("## main...origin/main [ahead 1]\n M a.txt\n?? b.txt\n"),
+    { branch: "main", dirty: 2 },
+  );
+  // Slashed branch names survive; the header line never counts as dirty.
+  assert.deepEqual(
+    parseStatusWithBranch("## feature/some-thing...origin/feature/some-thing\n"),
+    { branch: "feature/some-thing", dirty: 0 },
+  );
+});
+
+test("parseStatusWithBranch: detached HEAD reports 'HEAD' (rev-parse compat)", async () => {
+  const { parseStatusWithBranch } = await import("../dist-electron/git.js");
+  assert.deepEqual(parseStatusWithBranch("## HEAD (no branch)\n M x\n"), {
+    branch: "HEAD",
+    dirty: 1,
+  });
+});
+
+test("parseStatusWithBranch: unborn repo keeps the {null, 0} fallback", async () => {
+  const { parseStatusWithBranch } = await import("../dist-electron/git.js");
+  assert.deepEqual(parseStatusWithBranch("## No commits yet on main\n?? a\n"), {
+    branch: null,
+    dirty: 0,
+  });
+});

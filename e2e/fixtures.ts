@@ -4,12 +4,64 @@ import {
   type ElectronApplication,
   type Page,
 } from "@playwright/test";
-import { execSync } from "node:child_process";
-import { rmSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync, rmSync } from "node:fs";
+import * as net from "node:net";
 import { join } from "node:path";
 import { seedEnv, type SeededEnv, type SeedOptions } from "./helpers/seed";
 
 const APP_ROOT = join(__dirname, "..");
+const REMOVE_RETRY_COUNT = 5;
+const REMOVE_RETRY_DELAY_MS = 100;
+export const PTY_HOST_SHUTDOWN_TIMEOUT_MS = 1_000;
+export const APP_GRACEFUL_CLOSE_TIMEOUT_MS = 1_000;
+export const APP_PROCESS_EXIT_TIMEOUT_MS = 2_000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function removeSeededRoot(root: string): Promise<void> {
+  for (let attempt = 0; attempt < REMOVE_RETRY_COUNT; attempt += 1) {
+    try {
+      rmSync(root, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (
+        attempt === REMOVE_RETRY_COUNT - 1 ||
+        (code !== "ENOTEMPTY" && code !== "EBUSY" && code !== "EPERM")
+      ) {
+        throw error;
+      }
+      await delay(REMOVE_RETRY_DELAY_MS);
+    }
+  }
+}
+
+async function shutdownPtyHost(ayaHome: string): Promise<void> {
+  const socketPath = join(ayaHome, "pty-host.sock");
+  await Promise.race([
+    new Promise<void>((resolve) => {
+      const socket = net.createConnection(socketPath);
+      socket.once("connect", () => {
+        socket.end(`${JSON.stringify({ id: 1, type: "shutdown" })}\n`);
+      });
+      socket.once("close", resolve);
+      socket.once("error", resolve);
+    }),
+    delay(PTY_HOST_SHUTDOWN_TIMEOUT_MS),
+  ]);
+}
+
+async function closeAndWait(app: ElectronApplication): Promise<void> {
+  const proc = app.process();
+  const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
+  const closed = app.close().catch(() => undefined);
+  await Promise.race([closed, delay(APP_GRACEFUL_CLOSE_TIMEOUT_MS)]);
+  if (!proc.killed) proc.kill("SIGKILL");
+  await Promise.race([closed, exited, delay(APP_PROCESS_EXIT_TIMEOUT_MS)]);
+}
 
 /** Fixtures that launch the built Aya app once per test against an isolated,
  *  seeded environment and tear it down afterward. */
@@ -22,13 +74,47 @@ export const test = base.extend<{
 }>({
   seedOptions: [{}, { option: true }],
 
-  seeded: async ({ seedOptions }, use) => {
+  seeded: async ({ seedOptions }, use, testInfo) => {
     const s = seedEnv(seedOptions);
     await use(s);
-    rmSync(s.root, { recursive: true, force: true });
+    // On failure, preserve the PTY lifecycle log (spawn/kill/exit/host events
+    // with verbatim commands) in the report BEFORE the seeded root is wiped -
+    // it is the only forensic record of what the host actually did.
+    if (testInfo.status !== testInfo.expectedStatus) {
+      for (const name of ["pty-events.log", "pty-events.log.1"]) {
+        const p = join(s.ayaHome, name);
+        if (existsSync(p)) {
+          await testInfo.attach(name, { path: p, contentType: "text/plain" });
+        }
+      }
+    }
+    await removeSeededRoot(s.root);
   },
 
-  app: async ({ seeded }, use) => {
+  app: async ({ seeded, seedOptions }, use) => {
+    // preStartPtyHost: bring a session-less host up FIRST, so the app's
+    // client finds its socket and treats the host as REUSED - the scenario
+    // where boot-restored tabs must attach-only instead of auto-respawning.
+    // Runs under plain node (the host script never needs Electron APIs).
+    let preStartedHost: ChildProcess | null = null;
+    if (seedOptions.preStartPtyHost) {
+      preStartedHost = spawn(
+        process.execPath,
+        [join(APP_ROOT, "dist-electron", "pty-host.js")],
+        {
+          env: { ...process.env, AYA_HOME: seeded.ayaHome },
+          stdio: "ignore",
+        },
+      );
+      const socketPath = join(seeded.ayaHome, "pty-host.sock");
+      const deadline = Date.now() + PTY_HOST_SHUTDOWN_TIMEOUT_MS * 5;
+      while (!existsSync(socketPath)) {
+        if (Date.now() > deadline) {
+          throw new Error("pre-started pty host never created its socket");
+        }
+        await delay(50);
+      }
+    }
     // Production-like launch: no AYA_DEV, so the app loads the built
     // dist/index.html. ELECTRON_RUN_AS_NODE must be stripped or Electron starts
     // as plain Node (no `app`). AYA_HOME + --user-data-dir isolate all state.
@@ -39,9 +125,14 @@ export const test = base.extend<{
       }
     }
     env.AYA_HOME = seeded.ayaHome;
+    env.AYA_E2E_PTY_SHUTDOWN = "1";
+    if (!process.env.CI) {
+      env.AYA_E2E_HEADLESS = "1";
+    }
     // Isolate Codex usage too: point CODEX_HOME at an empty dir so the Codex
     // chip never picks up the real machine's ~/.codex rollout logs.
     env.CODEX_HOME = join(seeded.root, "codex-home");
+    Object.assign(env, seeded.launchEnv);
 
     // Point Electron at the built main entry, NOT the app root: a bare
     // directory arg is interpreted by main.ts as "open this project", which
@@ -60,23 +151,12 @@ export const test = base.extend<{
 
     const app = await electron.launch({ args: launchArgs, cwd: APP_ROOT, env });
     await use(app);
-    try {
-      app.process().kill("SIGKILL");
-    } catch {
-      /* already gone */
-    }
-    if (process.env.CI) {
-      // Aya spawns a detached pty-host (its "PTYs survive restart" design) that
-      // outlives the window; on the isolated CI runner that leftover process
-      // keeps Playwright's worker from exiting (45s teardown timeout). Reap it.
-      // CI-only: locally this would also kill a developer's running Aya.
-      try {
-        execSync("pkill -9 -f pty-host.js", { stdio: "ignore" });
-      } catch {
-        /* nothing to kill */
-      }
-    } else {
-      await app.close().catch(() => {});
+    await closeAndWait(app);
+    await shutdownPtyHost(seeded.ayaHome);
+    if (preStartedHost && !preStartedHost.killed) {
+      // Belt: the socket shutdown above normally takes the host down; a hung
+      // one must not leak past the test.
+      preStartedHost.kill("SIGKILL");
     }
   },
 

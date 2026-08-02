@@ -2,14 +2,17 @@ import {
   useEffect,
   useRef,
   useState,
-  type Dispatch,
   type MutableRefObject,
-  type SetStateAction,
 } from "react";
 import type { ProjectConfig, TerminalState } from "../types";
 
 // Poll interval (ms) for ticking recent-activity recomputation.
 const ACTIVITY_TICK_INTERVAL_MS = 800;
+// A terminal counts as "recently active" for this long after its last output.
+const ACTIVITY_WINDOW_MS = 3000;
+// Stable empty-set reference so an idle app keeps handing memoized children the
+// same prop (a fresh `new Set()` each tick would defeat their memoization).
+const EMPTY_ACTIVE_IDS: ReadonlySet<string> = new Set<string>();
 
 export function useDockBadge(
   terminals: Record<string, TerminalState>,
@@ -23,26 +26,25 @@ export function useDockBadge(
 interface NotificationOptions {
   projects: ProjectConfig[];
   terminals: Record<string, TerminalState>;
-  setActiveProjectId: Dispatch<SetStateAction<string | null>>;
-  setActiveTabByProject: Dispatch<SetStateAction<Record<string, string | null>>>;
+  /** Cell-aware terminal focus (moves the active split cell + keyboard focus),
+   *  not just the active tab. */
+  onSelectTerminal: (projectSlug: string, terminalId: string) => void;
 }
 
 export function useTerminalNotifications({
   projects,
   terminals,
-  setActiveProjectId,
-  setActiveTabByProject,
+  onSelectTerminal,
 }: NotificationOptions): void {
   const prevBellRef = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
     return window.aya.onTerminalNotificationSelect(
       ({ projectSlug, terminalId }) => {
-        setActiveProjectId(projectSlug);
-        setActiveTabByProject((p) => ({ ...p, [projectSlug]: terminalId }));
+        onSelectTerminal(projectSlug, terminalId);
       },
     );
-  }, [setActiveProjectId, setActiveTabByProject]);
+  }, [onSelectTerminal]);
 
   useEffect(() => {
     const prev = prevBellRef.current;
@@ -65,28 +67,32 @@ export function useTerminalNotifications({
 
 interface RecentActivity {
   lastActivityRef: MutableRefObject<Record<string, number>>;
-  recentlyActiveIds: Set<string>;
+  recentlyActiveIds: ReadonlySet<string>;
 }
 
 export function useRecentTerminalActivity(): RecentActivity {
   const lastActivityRef = useRef<Record<string, number>>({});
-  const [activityTick, setActivityTick] = useState(0);
+  const [recentlyActiveIds, setRecentlyActiveIds] =
+    useState<ReadonlySet<string>>(EMPTY_ACTIVE_IDS);
+  // Sorted-id signature of the current set; we only re-render when it changes.
+  const keyRef = useRef("");
 
   useEffect(() => {
-    const id = setInterval(
-      () => setActivityTick((t) => t + 1),
-      ACTIVITY_TICK_INTERVAL_MS,
-    );
+    const recompute = () => {
+      const now = Date.now();
+      const ids: string[] = [];
+      for (const [tid, ts] of Object.entries(lastActivityRef.current)) {
+        if (now - ts < ACTIVITY_WINDOW_MS) ids.push(tid);
+      }
+      ids.sort();
+      const key = ids.join("\n");
+      if (key === keyRef.current) return; // membership unchanged — no re-render
+      keyRef.current = key;
+      setRecentlyActiveIds(ids.length === 0 ? EMPTY_ACTIVE_IDS : new Set(ids));
+    };
+    const id = setInterval(recompute, ACTIVITY_TICK_INTERVAL_MS);
     return () => clearInterval(id);
   }, []);
-
-  const activityWindowMs = 3000;
-  const now = Date.now();
-  const recentlyActiveIds = new Set<string>();
-  for (const [tid, ts] of Object.entries(lastActivityRef.current)) {
-    if (now - ts < activityWindowMs) recentlyActiveIds.add(tid);
-  }
-  void activityTick;
 
   return { lastActivityRef, recentlyActiveIds };
 }

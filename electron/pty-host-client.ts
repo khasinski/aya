@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
@@ -10,8 +11,10 @@ import {
   type PtyHostRequest,
   type PtyHostResponse,
 } from "./pty-host-protocol";
+import type { HostIdentity } from "./pty-host-staleness";
+import { coalesceAdjacentData } from "./pty-event-coalescer";
 import type { BufferSearchHit } from "./pty";
-import type { SpawnRequest } from "./types";
+import type { PtyEvent, SpawnRequest } from "./types";
 
 // Deadline waiting for the pty host to create its socket (ms).
 const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
@@ -23,22 +26,62 @@ interface PendingRequest {
   reject: (err: Error) => void;
 }
 
+/** Anything PTY events can be forwarded to. Every BrowserWindow's WebContents
+ *  satisfies this shape; the Aya Web server registers a virtual sink that
+ *  fans events out to its WebSocket clients. */
+export interface PtyEventSink {
+  isDestroyed(): boolean;
+  send(channel: "pty:event", event: PtyEvent): void;
+}
+
 export class PtyHostClient {
   private socket: net.Socket | null = null;
   private connectPromise: Promise<void> | null = null;
   private nextId = 1;
   private pending = new Map<number, PendingRequest>();
   private buffer = "";
-  private webContents: WebContents | null = null;
+  // Whether the CURRENT host connection is to a host that was already running
+  // (found via its socket) rather than one this client spawned. Drives the
+  // attachIfReused resolution in spawn(): a reused host may still hold
+  // sessions from before this app session; a fresh host cannot. Updated on
+  // every (re)connect; false until the first connect completes (spawn()
+  // awaits connect first, so it always reads a settled value).
+  private reusedHost = false;
+  // All live Aya windows' webContents (plus any virtual sink). PTY events are
+  // broadcast to every sink; each renderer's event bus routes by ptyId, so a
+  // window that doesn't host the terminal does a single cheap no-op per event.
+  private readonly sinks = new Set<PtyEventSink>();
 
   constructor(private readonly hostScript: string) {}
 
-  setWebContents(webContents: WebContents): void {
-    this.webContents = webContents;
+  attachWebContents(webContents: WebContents | PtyEventSink): void {
+    this.sinks.add(webContents);
+  }
+
+  detachWebContents(webContents: WebContents | PtyEventSink): void {
+    this.sinks.delete(webContents);
   }
 
   async spawn(req: SpawnRequest): Promise<void> {
-    await this.request({ id: 0, type: "spawn", req });
+    // Resolve attachIfReused in request()'s post-connect hook - only this
+    // client knows whether the host was reused or freshly spawned, and that
+    // is settled once connect() resolves. The host itself only understands
+    // attachOnly; the intent flag never crosses the socket.
+    //
+    // ORDERING: the resolution must NOT add its own `await this.connect()`
+    // before request(). Every request chain has exactly ONE connect await;
+    // adding a second one to spawn re-queues its socket write one microtask
+    // BEHIND any write/resize that was queued while the cold-start connect
+    // was in flight - so the renderer's first typed bytes hit the host
+    // before the spawn line, found no PTY, and were silently dropped (typed
+    // input during app boot vanished; caught by e2e as dead terminals).
+    const { attachIfReused, ...rest } = req;
+    await this.request({ id: 0, type: "spawn", req: rest }, (request) => {
+      if (!resolveSpawnAttach(rest.attachOnly, attachIfReused, this.reusedHost)) {
+        return request;
+      }
+      return { ...request, req: { ...rest, attachOnly: true } };
+    });
   }
 
   async write(ptyId: string, data: string): Promise<void> {
@@ -53,16 +96,86 @@ export class PtyHostClient {
     await this.request({ id: 0, type: "kill", ptyId });
   }
 
+  async shutdown(): Promise<void> {
+    await this.request({ id: 0, type: "shutdown" });
+    this.socket?.destroy();
+    this.socket = null;
+  }
+
+  /** Running host's identity + live PTY count + its pid (hosts from the
+   *  registry era report it; older hosts don't -> undefined). identity is null
+   *  if the handshake fails (an old host that predates the `version` request
+   *  errors out - itself a stale signal); ptyCount is 0 when unknown. */
+  async hostStatus(): Promise<{
+    identity: HostIdentity | null;
+    ptyCount: number;
+    pid?: number;
+  }> {
+    try {
+      const result = await this.request({ id: 0, type: "version" });
+      const obj =
+        result && typeof result === "object" ? (result as Record<string, unknown>) : {};
+      return {
+        identity: asHostIdentity(result),
+        ptyCount: typeof obj.ptyCount === "number" ? obj.ptyCount : 0,
+        pid: typeof obj.pid === "number" ? obj.pid : undefined,
+      };
+    } catch {
+      return { identity: null, ptyCount: 0 };
+    }
+  }
+
+  /** Identity the freshly-spawned host WOULD report: app version + a hash of
+   *  the host script this client launches. Compared against the running host's
+   *  reported identity to detect a stale host (#28). */
+  expectedHostIdentity(appVersion: string): HostIdentity {
+    let scriptHash = "unknown";
+    try {
+      scriptHash = crypto
+        .createHash("sha256")
+        .update(fs.readFileSync(this.hostScript))
+        .digest("hex");
+    } catch {
+      // leave "unknown"; a mismatch on version still flags staleness
+    }
+    return { version: appVersion, scriptHash };
+  }
+
+  /** Tell the current host to shut down and drop the socket, so the next
+   *  request spawns a fresh host. Best-effort: a dead/old host that can't
+   *  shut down cleanly still gets disconnected here. */
+  async restart(): Promise<void> {
+    try {
+      await this.request({ id: 0, type: "shutdown" });
+    } catch {
+      // old host may not honor shutdown; we still drop the socket below
+    }
+    this.socket?.destroy();
+    this.socket = null;
+  }
+
   async search(query: string): Promise<BufferSearchHit[]> {
     return asSearchResult(await this.request({ id: 0, type: "search", query }));
   }
 
-  private async request(request: PtyHostRequest): Promise<unknown> {
+  async getBuffer(ptyId: string): Promise<string> {
+    const result = await this.request({ id: 0, type: "buffer", ptyId });
+    return typeof result === "string" ? result : "";
+  }
+
+  private async request(
+    request: PtyHostRequest,
+    // Applied AFTER connect() resolves, right before the socket write - for
+    // request fields that depend on connection state (spawn's attachOnly
+    // resolution reads reusedHost). Runs synchronously in the same microtask
+    // as the write so it cannot perturb request ordering.
+    finalize?: (request: PtyHostRequest) => PtyHostRequest,
+  ): Promise<unknown> {
     await this.connect();
     const socket = this.socket;
     if (!socket || socket.destroyed) throw new Error("PTY host is not connected");
     const id = this.nextId++;
-    const withId = { ...request, id } as PtyHostRequest;
+    const withId = { ...(finalize ? finalize(request) : request), id } as PtyHostRequest;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       socket.write(`${JSON.stringify(withId)}\n`, (err) => {
@@ -85,11 +198,15 @@ export class PtyHostClient {
   private async connectWithHostStart(): Promise<void> {
     try {
       await this.openSocket();
+      // The socket already existed: this host predates the connection, so it
+      // may hold PTY sessions from a previous app session.
+      this.reusedHost = true;
       return;
     } catch {
       this.startHost();
       await this.waitForSocket();
       await this.openSocket();
+      this.reusedHost = false;
     }
   }
 
@@ -139,20 +256,49 @@ export class PtyHostClient {
 
   private onData(chunk: string): void {
     this.buffer += chunk;
+    // Events decoded from this read are batched and adjacent data chunks of
+    // the same stream merged before crossing the IPC boundary: when the main
+    // process lags behind a busy host, one socket read carries many event
+    // lines, and forwarding them merged means a few webContents.send calls
+    // (structured clone + renderer wakeup each) instead of one per line.
+    // Responses flush the batch first so stream order is preserved exactly.
+    let events: PtyEvent[] = [];
+    const flushEvents = (): void => {
+      if (events.length === 0) return;
+      const merged = coalesceAdjacentData(events);
+      events = [];
+      for (const wc of this.sinks) {
+        if (wc.isDestroyed()) {
+          this.sinks.delete(wc);
+          continue;
+        }
+        for (const event of merged) wc.send("pty:event", event);
+      }
+    };
     while (this.buffer.includes("\n")) {
       const idx = this.buffer.indexOf("\n");
       const line = this.buffer.slice(0, idx).trim();
       this.buffer = this.buffer.slice(idx + 1);
       if (!line) continue;
-      const message = JSON.parse(line) as PtyHostMessage;
-      if ("type" in message && message.type === "event") {
-        if (this.webContents && !this.webContents.isDestroyed()) {
-          this.webContents.send("pty:event", message.event);
-        }
+      let message: PtyHostMessage;
+      try {
+        message = JSON.parse(line) as PtyHostMessage;
+      } catch {
+        // Malformed line from a stale/crashing host - skip rather than
+        // letting the SyntaxError escape the event listener and become an
+        // uncaughtException that would crash the Electron main process.
         continue;
       }
-      if ("id" in message) this.onResponse(message);
+      if ("type" in message && message.type === "event") {
+        events.push(message.event);
+        continue;
+      }
+      if ("id" in message) {
+        flushEvents();
+        this.onResponse(message);
+      }
     }
+    flushEvents();
   }
 
   private onResponse(message: PtyHostResponse): void {
@@ -170,4 +316,28 @@ export class PtyHostClient {
     }
     this.pending.clear();
   }
+}
+
+/** Resolve the wire-level attachOnly flag for a spawn request. Pure and
+ *  exported for unit tests: `attachOnly` (the tab already ran this renderer
+ *  session) always attaches; `attachIfReused` attaches only when the client
+ *  is talking to a host it did NOT spawn - a fresh host cannot hold the
+ *  session, so forcing attach there would wrongly stop every boot tab. */
+export function resolveSpawnAttach(
+  attachOnly: boolean | undefined,
+  attachIfReused: boolean | undefined,
+  reusedHost: boolean,
+): boolean {
+  return !!attachOnly || (!!attachIfReused && reusedHost);
+}
+
+/** Narrow an untyped handshake reply to HostIdentity, or null if malformed
+ *  (a wrong-shaped reply is as untrustworthy as no reply). */
+function asHostIdentity(value: unknown): HostIdentity | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.version !== "string" || typeof v.scriptHash !== "string") {
+    return null;
+  }
+  return { version: v.version, scriptHash: v.scriptHash };
 }

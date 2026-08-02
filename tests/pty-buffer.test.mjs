@@ -115,3 +115,20 @@ test("buffer keeps at least one chunk even if it exceeds the limit", () => {
   b.append(giant);
   assert.equal(b.read(), giant);
 });
+
+test("search cache: appended output is found by the next query (invalidation)", () => {
+  // searchPtyOutputs caches the cleaned+lowercased buffer per PTY between
+  // keystrokes; an append must invalidate it or new output becomes unsearchable.
+  __testClearOutputBuffers();
+  __testAppendToOutputBuffer("pty-c", "first \x1b[1mchunk\x1b[0m of output");
+  const before = searchPtyOutputs("chunk");
+  assert.equal(before.length, 1);
+  // Warm the cache, then append and search again.
+  assert.equal(searchPtyOutputs("zebra-token").length, 0);
+  __testAppendToOutputBuffer("pty-c", " and a zebra-token arrives");
+  const after = searchPtyOutputs("zebra-token");
+  assert.equal(after.length, 1);
+  assert.ok(after[0].snippet.includes("zebra-token"));
+  // Repeated identical queries (pure cache hits) stay stable.
+  assert.deepEqual(searchPtyOutputs("zebra-token"), after);
+});

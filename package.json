@@ -1,21 +1,19 @@
 {
   "name": "aya",
-  "version": "0.4.0",
+  "version": "0.7.9",
   "private": true,
   "description": "Agentic terminal manager — Claude Code / Codex / shell sessions organized across projects.",
+  "engines": {
+    "node": ">=24 <25 || >=26 <27"
+  },
   "homepage": "https://github.com/khasinski/aya",
   "author": {
     "name": "Chris Hasiński",
     "email": "krzysztof.hasinski@gmail.com"
   },
-  "contributors": [
-    {
-      "name": "Justyna Wojtczak",
-      "email": "justine84@gmail.com"
-    }
-  ],
   "main": "dist-electron/main.js",
   "type": "commonjs",
+  "desktopName": "Aya",
   "scripts": {
     "dev": "concurrently -k -n vite,tsc,electron -c green,blue,yellow \"npm:dev:renderer\" \"npm:dev:tsc\" \"npm:dev:electron\"",
     "dev:renderer": "vite",
@@ -24,20 +22,22 @@
     "typecheck": "npm run typecheck:renderer && tsc -p electron --noEmit",
     "typecheck:renderer": "tsc -p tsconfig.json --noEmit",
     "build:renderer": "vite build",
-    "build:electron": "tsc -p electron",
+    "build:electron": "tsc -p electron && node scripts/build-macos-window-hack.cjs",
     "build:test-src": "tsc -p tsconfig.test-src.json",
     "build": "npm run build:renderer && npm run build:electron",
     "test": "npm run typecheck:renderer && npm run build:electron && npm run build:test-src && node --test \"tests/**/*.test.mjs\"",
     "test:e2e": "npm run build && playwright test",
     "test:e2e:headed": "npm run build && playwright test --headed",
-    "package": "npm run build && electron-builder",
+    "package": "npm run build && electron-builder --publish never",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
     "@xterm/addon-web-links": "^0.12.0",
+    "electron-updater": "^6.8.9",
     "highlight.js": "^11.11.1",
-    "node-pty": "^1.0.0",
-    "plist": "^3.1.1"
+    "node-pty": "1.2.0-beta.14",
+    "plist": "^3.1.1",
+    "ws": "^8.21.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
@@ -45,6 +45,7 @@
     "@types/plist": "^3.0.5",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.2",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",
@@ -61,19 +62,35 @@
     "vite": "^8.0.14",
     "wait-on": "^9.0.10"
   },
+  "overrides": {
+    "shell-quote": "^1.8.4"
+  },
   "build": {
     "appId": "com.aya.app",
     "productName": "Aya",
+    "copyright": "Copyright © Chris Hasinski, Justyna Wojtczak",
     "directories": {
       "buildResources": "build",
       "output": "release"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "khasinski",
+        "repo": "aya"
+      }
+    ],
     "afterPack": "scripts/after-pack-prune.cjs",
     "files": [
       "bin/**",
       "dist/**",
       "dist-electron/**",
       "package.json"
+    ],
+    "asarUnpack": [
+      "bin/**",
+      "dist-electron/*.node",
+      "dist-electron/aya-local-summary"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
@@ -86,7 +103,15 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": true
+      "notarize": true,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Aya lets command-line tools you run in the terminal (such as a voice or dictation plugin) record from the microphone. Aya itself never records — the microphone is used only by the command you launch, and you can revoke this in System Settings > Privacy & Security > Microphone."
+      }
+    },
+    "linux": {
+      "syncDesktopName": true,
+      "synopsis": "Agentic terminal manager",
+      "category": "Development;TerminalEmulator;"
     },
     "extraMetadata": {
       "main": "dist-electron/main.js"

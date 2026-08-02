@@ -51,7 +51,8 @@ test("install writes script + merges hook; idempotent; uninstall reverts; existi
   assert.equal(s1.env.FOO, "1"); // unrelated key preserved
   assert.equal(s1.hooks.Stop[0].hooks[0].command, "/existing.sh"); // existing hook preserved
   assert.equal(s1.hooks.Stop.length, 2); // ours appended, not replacing
-  assert.equal(s1.hooks.Stop[1].hooks[0].command, HOOK_SCRIPT_FILE);
+  assert.match(s1.hooks.Stop[1].hooks[0].command, /AYA_CLAUDE_CONFIG_DIR=/);
+  assert.match(s1.hooks.Stop[1].hooks[0].command, new RegExp(HOOK_SCRIPT_FILE));
 
   // --- idempotent: install again must not duplicate ---
   await installUsageHook();

@@ -1,21 +1,22 @@
 # Account-wide usage chip
 
-Aya can show an **account-wide** Claude usage chip in the top-right of the
-window (5-hour + weekly limit, with reset times). The numbers are global to
-your Claude account — they cover **all** your sessions and devices, not the
+Aya can show **account-wide** Claude and Codex usage chips in the top-right of
+the window (5-hour + weekly limit, with reset times). The numbers are global to
+each account — they cover **all** sessions and devices for that account, not the
 current project or terminal.
 
 ## How it works
 
-Aya is deliberately **source-agnostic and hands-off**: it only **reads** a small
-JSON file and renders it. It never fetches usage, never reads your auth token,
-and ships no endpoint code. You decide what writes that file.
+For Claude, Aya is deliberately **source-agnostic and hands-off**: it only
+**reads** a small JSON file and renders it. It never fetches usage, never reads
+your auth token, and ships no endpoint code. You decide what writes that file.
 
 ```
 ~/.aya/usage.json        (or ~/.aya-dev/usage.json under `npm run dev`)
 ```
 
-Expected shape (anything else is ignored and the chip hides):
+Expected shape (anything else is ignored and the chip hides). The original
+single-account shape still works:
 
 ```json
 {
@@ -27,6 +28,45 @@ Expected shape (anything else is ignored and the chip hides):
 
 `pct` is 0–100 (percent used). `resetsAt` is optional. If `updatedAt` is older
 than 15 minutes the chip dims and shows "stale".
+
+For multiple Claude accounts, write an account list instead:
+
+```json
+{
+  "accounts": [
+    {
+      "id": "work",
+      "label": "Work",
+      "usage": {
+        "fiveHour": { "pct": 30, "resetsAt": "2026-06-03T17:20:00Z" },
+        "sevenDay": { "pct": 55, "resetsAt": "2026-06-06T15:00:00Z" },
+        "updatedAt": "2026-06-03T14:32:00Z"
+      }
+    },
+    {
+      "id": "personal",
+      "label": "Personal",
+      "usage": {
+        "fiveHour": { "pct": 8 },
+        "sevenDay": { "pct": 12 },
+        "updatedAt": "2026-06-03T14:32:00Z"
+      }
+    }
+  ]
+}
+```
+
+Aya renders one chip per agent. The number in the top bar is the average weekly
+percent used across detected accounts, so two Claude accounts at 0% and 100%
+show `50%`. The dropdown lists each account by `label` and shows that account's
+own 5-hour and weekly limits. `id` must be stable and unique.
+
+Codex usage is automatic: Aya reads Codex's local rollout logs under
+`$CODEX_HOME/sessions` or `~/.codex/sessions`. If Codex logs include an account
+identifier on `token_count` rate-limit events, Aya includes those accounts in
+the Codex chip dropdown and averages them in the top-bar number. If no account
+identifier is present, Aya keeps the previous behavior and shows a single Codex
+account in the dropdown.
 
 ## Easiest: the Settings toggle
 

@@ -1,4 +1,5 @@
 import type { Snippet } from "../types";
+import type { SettingsTab } from "../settings-tabs";
 
 interface Props {
   snippets: Snippet[];
@@ -8,7 +9,7 @@ interface Props {
    *  (appending a carriage return for autoRun) and returns focus to the
    *  terminal. */
   onSend: (snippet: Snippet) => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (tab?: SettingsTab) => void;
 }
 
 function MaterialIcon({ name, className }: { name: string; className?: string }) {
@@ -35,6 +36,7 @@ export function SnippetBar({
 }: Props) {
   return (
     <div
+      data-testid="snippet-drawer"
       className={`aya-snippetbar ${open ? "aya-snippetbar--open" : ""}`}
       // While closed the drawer is translated off-screen but still in the DOM.
       // `inert` removes its buttons from the tab order and the a11y tree (and
@@ -48,10 +50,11 @@ export function SnippetBar({
         <span>Snippets</span>
         <span className="aya-snippetbar-spacer" />
         <button
+          data-testid="snippet-settings-button"
           className="aya-snippetbar-headbtn"
           type="button"
           title="Edit snippets in Settings"
-          onClick={onOpenSettings}
+          onClick={() => onOpenSettings("snippets")}
         >
           <MaterialIcon name="settings" />
         </button>
@@ -73,7 +76,7 @@ export function SnippetBar({
           <button
             type="button"
             className="aya-snippetbar-empty-link"
-            onClick={onOpenSettings}
+            onClick={() => onOpenSettings("snippets")}
           >
             Add some in Settings
           </button>{" "}
@@ -84,6 +87,7 @@ export function SnippetBar({
           {snippets.map((snippet) => (
             <button
               key={snippet.id}
+              data-testid="snippet-item"
               type="button"
               className={`aya-snippet aya-snippet--${snippet.autoRun ? "run" : "hold"}`}
               onClick={() => onSend(snippet)}
@@ -101,7 +105,7 @@ export function SnippetBar({
                 <MaterialIcon name={snippet.autoRun ? "play_arrow" : "pause"} />
               </span>
               <span className="aya-snippet-body">
-                <span className="aya-snippet-name">
+                <span data-testid="snippet-name" className="aya-snippet-name">
                   {snippet.name}
                   <span
                     className={`aya-snippet-tag aya-snippet-tag--${
@@ -111,7 +115,9 @@ export function SnippetBar({
                     {snippet.autoRun ? "run" : "hold"}
                   </span>
                 </span>
-                <span className="aya-snippet-text">{snippet.text}</span>
+                <span data-testid="snippet-text" className="aya-snippet-text">
+                  {snippet.text}
+                </span>
               </span>
               <span className="aya-snippet-send">
                 <MaterialIcon name={snippet.autoRun ? "play_arrow" : "keyboard"} />

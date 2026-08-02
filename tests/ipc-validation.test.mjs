@@ -1,6 +1,7 @@
 // Runtime validation for renderer -> main IPC payloads. TypeScript covers the
 // happy path, but malformed IPC messages still arrive as unknown at runtime.
 
+import { MAX_SPLIT_ROWS, MAX_SPLIT_COLS } from "../dist-electron/validation.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -34,6 +35,33 @@ test("validateSpawnRequest accepts the pty spawn shape", () => {
       cols: 80,
       rows: 24,
     },
+  );
+});
+
+test("validateSpawnRequest passes the attach flags through (regression: they were silently dropped)", () => {
+  // The validator REBUILDS the request object, so a field it does not copy
+  // dies at the IPC boundary. attachOnly shipped after the validator and was
+  // never added: the renderer sent it, the host never saw it, and dead-PTY
+  // re-mounts silently respawned fresh processes - while the host-side unit
+  // tests (which bypass the validator) stayed green. These pins make that
+  // class of regression loud.
+  const base = { ptyId: "abc", command: "claude", cwd: "/tmp", cols: 80, rows: 24 };
+  assert.equal(validateSpawnRequest({ ...base, attachOnly: true }).attachOnly, true);
+  assert.equal(
+    validateSpawnRequest({ ...base, attachIfReused: true }).attachIfReused,
+    true,
+  );
+  // Absent or false flags stay off the wire (undefined, not false).
+  assert.equal(validateSpawnRequest(base).attachOnly, undefined);
+  assert.equal(validateSpawnRequest({ ...base, attachOnly: false }).attachOnly, undefined);
+  // A truthy non-boolean must not act as a flag.
+  assert.throws(
+    () => validateSpawnRequest({ ...base, attachOnly: "yes" }),
+    /pty:spawn\.attachOnly/,
+  );
+  assert.throws(
+    () => validateSpawnRequest({ ...base, attachIfReused: 1 }),
+    /pty:spawn\.attachIfReused/,
   );
 });
 
@@ -94,7 +122,7 @@ test("validateProjectConfig rejects invalid split layout payloads", () => {
       validateProjectConfig({
         ...base,
         splitLayout: {
-          rows: 6,
+          rows: MAX_SPLIT_ROWS + 1,
           cols: 1,
           rowFr: [1],
           colFr: [1],
@@ -147,16 +175,16 @@ test("validateProjectConfig accepts a max 5x5 split but rejects one beyond max",
   const atMax = validateProjectConfig({
     ...base,
     splitLayout: {
-      rows: 5,
-      cols: 5,
+      rows: MAX_SPLIT_ROWS,
+      cols: MAX_SPLIT_COLS,
       rowFr: [1, 1, 1, 1, 1],
       colFr: [1, 1, 1, 1, 1],
       cells: ["t1"],
       activeCell: 0,
     },
   });
-  assert.equal(atMax.splitLayout?.rows, 5);
-  assert.equal(atMax.splitLayout?.cols, 5);
+  assert.equal(atMax.splitLayout?.rows, MAX_SPLIT_ROWS);
+  assert.equal(atMax.splitLayout?.cols, MAX_SPLIT_COLS);
 
   // One row beyond the maximum is rejected.
   assert.throws(
@@ -164,8 +192,8 @@ test("validateProjectConfig accepts a max 5x5 split but rejects one beyond max",
       validateProjectConfig({
         ...base,
         splitLayout: {
-          rows: 6,
-          cols: 5,
+          rows: MAX_SPLIT_ROWS + 1,
+          cols: MAX_SPLIT_COLS,
           rowFr: [1],
           colFr: [1],
           cells: ["t1"],
@@ -181,8 +209,8 @@ test("validateProjectConfig accepts a max 5x5 split but rejects one beyond max",
       validateProjectConfig({
         ...base,
         splitLayout: {
-          rows: 5,
-          cols: 6,
+          rows: MAX_SPLIT_ROWS,
+          cols: MAX_SPLIT_COLS + 1,
           rowFr: [1],
           colFr: [1],
           cells: ["t1"],
@@ -291,9 +319,15 @@ test("validatePresetArray rejects malformed preset entries", () => {
       icon: "◆",
       color: "#10a37f",
       command: "codex",
+      agent: "codex",
+      configDir: "~/.codex-work",
+      autoResume: true,
     },
   ]);
   assert.equal(presets[0].command, "codex");
+  assert.equal(presets[0].agent, "codex");
+  assert.equal(presets[0].configDir, "~/.codex-work");
+  assert.equal(presets[0].autoResume, true);
 
   assert.throws(
     () =>
@@ -329,4 +363,9 @@ test("validateThemesFile checks nested theme color shape", () => {
       }),
     /themes:save\.themes\[0\]\.colors\.brightWhite/,
   );
+});
+
+test("split-grid maximum is pinned (boundary tests above derive from it)", () => {
+  assert.equal(MAX_SPLIT_ROWS, 5);
+  assert.equal(MAX_SPLIT_COLS, 5);
 });

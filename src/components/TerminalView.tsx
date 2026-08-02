@@ -1,25 +1,56 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useRef,
   useState,
   type CSSProperties,
+  type MouseEvent,
 } from "react";
 import { Terminal as XTerm, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import type { Preset, Snippet, TerminalState, ThemeColors } from "../types";
+import type {
+  HarnessSearchHit,
+  Preset,
+  Snippet,
+  TerminalState,
+  ThemeColors,
+} from "../types";
+import { effectiveAgent } from "../agentPreset";
+import { ptyEventBus } from "../ptyEventBus";
+import type { SettingsTab } from "../settings-tabs";
 import { focusReportingState } from "../focus-reporting";
 import { enterKeyAction, META_ENTER } from "../terminal-keys";
+import {
+  leftOptionMetaSequence,
+  optionSideFromCode,
+  shouldUseXtermOptionAsMeta,
+  type MacOptionKeyMode,
+  type OptionSide,
+} from "../terminal-option-key";
+import {
+  shouldPreserveTerminalScrollback,
+  shouldUseTerminalWebgl,
+  stripScrollbackErase,
+} from "../terminal-rendering";
 import { snippetPtyPayload } from "../snippet-payload";
+import {
+  hadNoSession,
+  markMountDecided,
+  wasMountDecided,
+  wasSpawned,
+} from "../spawnSession";
 import { SnippetBar } from "./SnippetBar";
 
 // Terminal sizing + timing constants. The fallback cols/rows are the standard
 // 80x24 a PTY gets before xterm has measured the pane (used at every spawn).
 const TERMINAL_FALLBACK_COLS = 80;
 const TERMINAL_FALLBACK_ROWS = 24;
+const DEFAULT_TERMINAL_FONT_FAMILY =
+  '"JetBrains Mono", "SF Mono", Menlo, Consolas, monospace';
 // Lines of scrollback xterm keeps in memory per terminal.
 const SCROLLBACK_LINES = 10_000;
 // Wheel-scroll easing: ~8 frames at 60Hz — smooth without feeling sluggish.
@@ -31,7 +62,36 @@ const RENDER_REPAIR_DELAY_MS = 80;
 const FOCUS_RETRY_DELAY_MS = 60;
 // How long to keep showing "Restoring sessions…" before assuming the replay
 // arrived (or there was nothing to replay).
+// ASCII range/offset for the Ctrl+<letter> -> control-byte mapping below:
+// 'a'(97)..'z'(122) minus 96 yields 0x01..0x1A.
+const ASCII_LOWER_A = 97;
+const ASCII_LOWER_Z = 122;
+const CTRL_BYTE_OFFSET = 96;
+
 const RESTORE_FALLBACK_MS = 2_500;
+const INPUT_LOG_MAX_CHARS = 240;
+const URL_IN_TEXT_RE = /https?:\/\/[^\s<>"'`]+/i;
+const URL_TRAILING_PUNCTUATION_RE = /[),.;\]]+$/;
+const EXTERNAL_LINK_PROTOCOLS = new Set([
+  "http:",
+  "https:",
+  "file:",
+  "vscode:",
+  "vscode-insiders:",
+  "cursor:",
+  "zed:",
+  "jetbrains:",
+]);
+const TERMINAL_CONTEXT_MENU_WIDTH = 170;
+const TERMINAL_CONTEXT_MENU_MAX_HEIGHT = 132;
+const TERMINAL_CONTEXT_MENU_VIEWPORT_MARGIN = 8;
+
+interface TerminalContextMenuState {
+  x: number;
+  y: number;
+  selectedText: string;
+  link: string | null;
+}
 
 interface Props {
   terminal: TerminalState;
@@ -39,18 +99,27 @@ interface Props {
   command: string;
   /** Saved snippets the user can inject into this terminal via the drawer. */
   snippets: Snippet[];
+  snippetsOpen: boolean;
+  onSnippetsOpenChange: (open: boolean) => void;
   isVisible: boolean;
   cwd: string;
   lastActivity?: number;
+  fontFamily?: string;
   fontSize: number;
   themeColors: ThemeColors;
   /** When true, render the in-pane search bar (Cmd+F target). */
   findOpen: boolean;
   /** Called when the user closes the search bar (Esc / ✕). */
   onCloseFind: () => void;
-  onOpenSettings: () => void;
+  /** Experimental "Harness-aware search": offer a History mode in the find
+   *  bar for Claude/Codex tabs, searching the agent's on-disk session
+   *  transcripts for this cwd. Off for remote projects (transcripts live on
+   *  the remote host). */
+  historySearchEnabled?: boolean;
+  onOpenSettings: (tab?: SettingsTab) => void;
   onCloseProject: (slug: string) => void;
   onPtyData?: (chunk: string) => void;
+  macOptionKeyMode: MacOptionKeyMode;
   /** Called when the user requests a restart of an exited PTY via the
    *  Shift+Enter hint. The host resets the terminal's exitCode/status so the
    *  PTY event loop can flow again. */
@@ -97,6 +166,20 @@ function formatLastActivity(timestamp: number): string | null {
   return `${months} ${months === 1 ? "month" : "months"} ago`;
 }
 
+function lastActivityRenderBucket(timestamp: number | undefined): string {
+  if (!timestamp) return "";
+  const elapsedMs = Math.max(0, Date.now() - timestamp);
+  const minuteMs = 60 * 1000;
+  const hourMs = 60 * minuteMs;
+  const dayMs = 24 * hourMs;
+  const monthMs = 30 * dayMs;
+  if (elapsedMs < minuteMs) return "now";
+  if (elapsedMs < hourMs) return `m:${Math.floor(elapsedMs / minuteMs)}`;
+  if (elapsedMs < dayMs) return `h:${Math.floor(elapsedMs / hourMs)}`;
+  if (elapsedMs < monthMs) return `d:${Math.floor(elapsedMs / dayMs)}`;
+  return `mo:${Math.floor(elapsedMs / monthMs)}`;
+}
+
 function recoveryTitle(
   reason: NonNullable<TerminalState["spawnFailure"]>["reason"],
 ): string {
@@ -108,18 +191,104 @@ function recoveryTitle(
   return "Terminal failed to start";
 }
 
-export function TerminalView({
+function terminalRenderStateEqual(a: TerminalState, b: TerminalState): boolean {
+  return (
+    a === b ||
+    (a.id === b.id &&
+      a.projectSlug === b.projectSlug &&
+      a.presetId === b.presetId &&
+      a.name === b.name &&
+      a.exitCode === b.exitCode &&
+      a.stopped === b.stopped &&
+      a.spawnDeferred === b.spawnDeferred &&
+      a.spawnFailure?.reason === b.spawnFailure?.reason &&
+      a.spawnFailure?.detail === b.spawnFailure?.detail &&
+      a.externalStatus?.text === b.externalStatus?.text &&
+      a.externalStatus?.level === b.externalStatus?.level &&
+      a.externalStatus?.updatedAt === b.externalStatus?.updatedAt)
+  );
+}
+
+function presetRenderStateEqual(a: Preset, b: Preset): boolean {
+  return (
+    a === b ||
+    (a.id === b.id &&
+      a.icon === b.icon &&
+      a.color === b.color &&
+      a.themeId === b.themeId)
+  );
+}
+
+function terminalViewPropsEqual(a: Props, b: Props): boolean {
+  return (
+    terminalRenderStateEqual(a.terminal, b.terminal) &&
+    presetRenderStateEqual(a.preset, b.preset) &&
+    a.command === b.command &&
+    a.snippets === b.snippets &&
+    a.snippetsOpen === b.snippetsOpen &&
+    a.isVisible === b.isVisible &&
+    a.cwd === b.cwd &&
+    lastActivityRenderBucket(a.lastActivity) ===
+      lastActivityRenderBucket(b.lastActivity) &&
+    a.fontFamily === b.fontFamily &&
+    a.fontSize === b.fontSize &&
+    a.themeColors === b.themeColors &&
+    a.findOpen === b.findOpen &&
+    a.historySearchEnabled === b.historySearchEnabled &&
+    a.restartTrigger === b.restartTrigger &&
+    a.isActivePane === b.isActivePane &&
+    a.isActive === b.isActive &&
+    a.enableWebgl === b.enableWebgl &&
+    a.macOptionKeyMode === b.macOptionKeyMode
+  );
+}
+
+function printableControlData(data: string): string {
+  return data
+    .replace(/\x1b/g, "\\x1b")
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n")
+    .replace(/\t/g, "\\t")
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, (ch) => {
+      return `\\x${ch.charCodeAt(0).toString(16).padStart(2, "0")}`;
+    })
+    .slice(0, INPUT_LOG_MAX_CHARS);
+}
+
+function firstHttpUrl(text: string): string | null {
+  const match = text.match(URL_IN_TEXT_RE);
+  if (!match) return null;
+  return match[0].replace(URL_TRAILING_PUNCTUATION_RE, "");
+}
+
+function anchorExternalUrl(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null;
+  const anchor = target.closest("a[href]");
+  if (!(anchor instanceof HTMLAnchorElement)) return null;
+  try {
+    const parsed = new URL(anchor.href);
+    return EXTERNAL_LINK_PROTOCOLS.has(parsed.protocol) ? anchor.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function TerminalViewComponent({
   terminal,
   preset,
   command,
   snippets,
+  snippetsOpen,
+  onSnippetsOpenChange,
   isVisible,
   cwd,
   lastActivity,
+  fontFamily,
   fontSize,
   themeColors,
   findOpen,
   onCloseFind,
+  historySearchEnabled = false,
   onOpenSettings,
   onCloseProject,
   onPtyData,
@@ -129,7 +298,23 @@ export function TerminalView({
   isActive = false,
   onActivatePane,
   enableWebgl = true,
+  macOptionKeyMode,
 }: Props) {
+  const shouldUseWebgl =
+    shouldUseTerminalWebgl(enableWebgl, preset.id) &&
+    // Under test automation (Playwright/WebDriver) force xterm's DOM renderer:
+    // the e2e tests read rendered text from `.xterm-rows`, which the WebGL
+    // renderer paints to a canvas instead. Real users never set this flag.
+    !navigator.webdriver;
+  const shouldPreserveScrollback =
+    shouldPreserveTerminalScrollback(preset.id);
+  // History (transcript) search is only meaningful for tabs running a
+  // harness that persists sessions we know how to read.
+  const presetAgent = effectiveAgent(preset);
+  const findHistoryAgent =
+    historySearchEnabled && (presetAgent === "claude" || presetAgent === "codex")
+      ? presetAgent
+      : null;
   const lastActivityLabel = lastActivity ? formatLastActivity(lastActivity) : null;
   const headerStatusText = terminal.externalStatus?.text ?? lastActivityLabel;
   const headerStatusTitle = terminal.externalStatus
@@ -142,16 +327,37 @@ export function TerminalView({
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const webglRef = useRef<WebglAddon | null>(null);
+  // Guards the construction->loadAddon window so a synchronously-delivered
+  // context loss can't re-enter attachWebgl mid-attach.
+  const attachingWebglRef = useRef(false);
   const spawnedRef = useRef(false);
   // True while a full-screen/rich TUI (claude, codex, vim…) is running, detected
   // via focus-reporting mode (DECSET 1004). Gates the Shift+Enter soft newline.
   const richInputRef = useRef(false);
   const fitFrameRef = useRef<number | null>(null);
+  // Set once we have emitted the first real (non-replay) PTY data chunk for a
+  // freshly-started terminal. Lets us issue one post-load PTY reassert exactly
+  // once so harnesses like grok pick up the real geometry via SIGWINCH.
+  const didPostLoadResizeRef = useRef(false);
   const replayingOutputRef = useRef(0);
+  const optionSideRef = useRef<OptionSide>("unknown");
+  const macOptionKeyModeRef = useRef(macOptionKeyMode);
+  macOptionKeyModeRef.current = macOptionKeyMode;
   const [findQuery, setFindQuery] = useState("");
   const [isScrollbarHidden, setIsScrollbarHidden] = useState(false);
   const [isRestoring, setIsRestoring] = useState(true);
-  const [snippetsOpen, setSnippetsOpen] = useState(false);
+  // Ref mirror so the per-chunk PTY handler can check-and-clear without
+  // dispatching a React state update on every data chunk (the value flips
+  // once per restore, but the handler runs hundreds of times per second
+  // under busy agent output).
+  const isRestoringRef = useRef(true);
+  const markRestoring = useCallback((value: boolean) => {
+    isRestoringRef.current = value;
+    setIsRestoring(value);
+  }, []);
+  const [contextMenu, setContextMenu] = useState<TerminalContextMenuState | null>(
+    null,
+  );
 
   // Write a saved snippet's text into this terminal's PTY. autoRun appends a
   // carriage return so it executes immediately; otherwise we only type the
@@ -159,11 +365,12 @@ export function TerminalView({
   // return focus to the terminal so the user can keep working.
   const sendSnippet = useCallback(
     (snippet: Snippet) => {
-      // A dead PTY (exited / spawn-failed) silently swallows ptyWrite, so the
-      // snippet would vanish with no feedback. Tell the user in the terminal
-      // itself and skip the no-op write. exitCode is non-null once the PTY has
-      // exited; restarting (Shift+Enter) clears it back to null.
-      if (terminal.exitCode !== null) {
+      // A dead PTY (exited / spawn-failed / killed by a host restart) silently
+      // swallows ptyWrite, so the snippet would vanish with no feedback. Tell
+      // the user in the terminal itself and skip the no-op write. exitCode is
+      // non-null once the PTY has exited, and `stopped` marks a host-restart
+      // kill; restarting (Shift+Enter) clears both.
+      if (terminal.exitCode !== null || terminal.stopped) {
         try {
           xtermRef.current?.write(
             "\r\n\x1b[2maya: terminal has exited — press Shift+Enter to restart, then send the snippet again\x1b[0m\r\n",
@@ -171,21 +378,21 @@ export function TerminalView({
         } catch {
           /* ignore — terminal may be mid-dispose */
         }
-        setSnippetsOpen(false);
+        onSnippetsOpenChange(false);
         return;
       }
       void window.aya.ptyWrite(terminal.id, snippetPtyPayload(snippet));
       // Collapse the drawer so the result (and the typed text) is visible —
       // an open drawer covers the bottom of the terminal — and return focus
       // so the user can keep typing / press Enter on a held snippet.
-      setSnippetsOpen(false);
+      onSnippetsOpenChange(false);
       try {
         xtermRef.current?.focus();
       } catch {
         /* ignore — terminal may be mid-dispose */
       }
     },
-    [terminal.id, terminal.exitCode],
+    [terminal.id, terminal.exitCode, terminal.stopped, onSnippetsOpenChange],
   );
   // Current foreground-process title, fed by OSC 0/2 from the inner shell.
   // macOS zsh's default config emits this in preexec/precmd, so we get the
@@ -197,11 +404,22 @@ export function TerminalView({
   // Stored in a ref so the long-lived xterm key handler always reads the
   // current value without re-attaching on every render.
   const canRestartRef = useRef(false);
-  canRestartRef.current = terminal.exitCode === 0;
+  canRestartRef.current = terminal.exitCode === 0 || !!terminal.stopped;
   const commandRef = useRef(command);
   commandRef.current = command;
   const cwdRef = useRef(cwd);
   cwdRef.current = cwd;
+
+  // Restart the terminal in place: clear the host-side failed/exited state AND
+  // actually spawn a new PTY (same xterm + scrollback). Used by the recovery
+  // banner's "Restart" - without the spawn it would only clear the banner and
+  // leave a "running" terminal with no process.
+  const respawnInPlace = useCallback(() => {
+    // Delegate to the restartTrigger path: onRequestRestart clears the failed
+    // state AND bumps the trigger, whose effect spawns after the re-render
+    // (with the resume-aware command) and resets didPostLoadResizeRef itself.
+    onRequestRestart?.();
+  }, [onRequestRestart]);
 
   const fitTerminal = useCallback((shouldFocus = false) => {
     if (fitFrameRef.current !== null) {
@@ -223,6 +441,36 @@ export function TerminalView({
       }
     });
   }, []);
+
+  /**
+   * Force the PTY/child to re-know the terminal size by emitting a SIGWINCH.
+   * - For ordinary shells: re-send the current size (harmless idempotent SIGWINCH).
+   * - For rich TUIs (richInputRef via DECSET 1004): nudge size by one row then
+   *   restore so the harness perceives a size *change* and redraws its
+   *   static/fullscreen layout from its internal model.
+   *
+   * We never call term.resize() / fitTerminal() here so the xterm-side state
+   * is untouched (preserves the "no reflow on re-show" contract for scrollback).
+   * We never synthesize keyboard input like ^L either, since several harnesses
+   * (grok) use ^L for their own features.
+   */
+  const forcePtyReassert = useCallback(() => {
+    const t = xtermRef.current;
+    if (!t || t.cols <= 0 || t.rows <= 0) return;
+    const c = t.cols;
+    const r = t.rows;
+    if (richInputRef.current) {
+      void window.aya.ptyResize(terminal.id, c, r + 1);
+      setTimeout(() => {
+        const tt = xtermRef.current;
+        if (tt && tt.cols === c && tt.rows === r) {
+          void window.aya.ptyResize(terminal.id, c, r);
+        }
+      }, 0);
+    } else {
+      void window.aya.ptyResize(terminal.id, c, r);
+    }
+  }, [terminal.id]);
 
   const repairTerminalRender = useCallback(
     (shouldFocus = false) => {
@@ -249,10 +497,20 @@ export function TerminalView({
 
   const attachWebgl = useCallback(
     (term: XTerm) => {
-      if (!enableWebgl || webglRef.current) return;
+      if (!shouldUseWebgl || webglRef.current || attachingWebglRef.current) return;
+      // Never hold a WebGL context in a hidden/occluded window - it's exactly
+      // what the GPU evicts into a white quad. The visibility flip re-attaches.
+      if (document.visibilityState === "hidden") return;
+      attachingWebglRef.current = true;
       try {
         const webgl = new WebglAddon();
+        // A context loss can be delivered SYNCHRONOUSLY inside loadAddon; the
+        // handler below then disposes this very addon while the attaching
+        // guard still blocks its retry. Without this flag we would assign the
+        // already-disposed addon to webglRef right after loadAddon returns.
+        let disposedDuringAttach = false;
         webgl.onContextLoss(() => {
+          disposedDuringAttach = true;
           try {
             webgl.dispose();
           } catch {
@@ -260,25 +518,108 @@ export function TerminalView({
           }
           if (webglRef.current === webgl) webglRef.current = null;
           repairTerminalRender(false);
+          // Come back on a FRESH context right away when we're visible (a lost
+          // context is unusable forever - without this the terminal silently
+          // degrades to the DOM renderer until remount). If the GPU is still
+          // under pressure the attach throws -> caught -> DOM fallback stays
+          // and the next resume retries via healWebgl.
+          if (document.visibilityState === "visible") {
+            const t = xtermRef.current;
+            if (t) attachWebgl(t);
+          }
         });
         term.loadAddon(webgl);
+        if (disposedDuringAttach) {
+          // The loss fired mid-load and the handler already disposed the
+          // addon - leave the ref null; the next resume/heal attaches fresh.
+          return;
+        }
         webglRef.current = webgl;
         repairTerminalRender(false);
       } catch {
-        // WebGL unavailable; DOM renderer is fine, just drifty.
+        // WebGL unavailable; DOM renderer is fine, just drifty. A failed attach
+        // also STOPS any loss->retry chain (nothing new to lose) - and xterm
+        // itself debounces onContextLoss by ~3s, so retries can't hot-spin.
+      } finally {
+        attachingWebglRef.current = false;
       }
     },
-    [enableWebgl, repairTerminalRender],
+    [repairTerminalRender, shouldUseWebgl],
   );
+
+  // PREVENTION: a WebGL context held by a hidden/occluded window is what the
+  // GPU evicts under memory pressure (e.g. a headless-Chrome PDF render in a
+  // terminal); the compositor then paints the missing canvas texture as a
+  // WHITE quad, the throttled renderer can't react, and the user returns to a
+  // white terminal area for seconds (panels intact - only the canvas layer is
+  // gone). Instead of racing that, drop WebGL the moment the document goes
+  // hidden (the DOM renderer's layers survive eviction) and come back on a
+  // FRESH context when it becomes visible again - nothing evictable exists
+  // while we're in the background, so the white quad can't happen.
+  useEffect(() => {
+    if (!shouldUseWebgl) return;
+    const onDocVisibility = () => {
+      const term = xtermRef.current;
+      if (!term) return;
+      if (document.visibilityState === "hidden") {
+        if (webglRef.current) {
+          try {
+            webglRef.current.dispose();
+          } catch {
+            /* ignore */
+          }
+          webglRef.current = null;
+        }
+        return;
+      }
+      attachWebgl(term); // fresh context + full repaint (no-op if attached)
+      repairTerminalRender(false);
+    };
+    document.addEventListener("visibilitychange", onDocVisibility);
+    return () => document.removeEventListener("visibilitychange", onDocVisibility);
+  }, [shouldUseWebgl, attachWebgl, repairTerminalRender]);
+
+  // BELT for paths with no visibility flip (focus regained without occlusion,
+  // wake from sleep, a foreground driver reset whose event got coalesced): ask
+  // the context itself (isContextLost()) instead of waiting for the throttled
+  // webglcontextlost event, dispose the dead addon, and attach a fresh one
+  // (which also repaints).
+  const healWebgl = useCallback(() => {
+    const term = xtermRef.current;
+    if (!term || !shouldUseWebgl) return;
+    if (webglRef.current) {
+      const host = containerRef.current;
+      let found = false;
+      let lost = false;
+      for (const c of Array.from(host?.querySelectorAll("canvas") ?? [])) {
+        const gl = (c.getContext("webgl2") ||
+          c.getContext("webgl")) as WebGLRenderingContext | null;
+        if (gl) {
+          found = true;
+          lost = gl.isContextLost();
+          break;
+        }
+      }
+      // "Ref set but no WebGL canvas in the DOM" is a desync (partial dispose)
+      // - treat it as unhealthy rather than returning and staying degraded.
+      if (found && !lost) return; // healthy - nothing to heal
+      try {
+        webglRef.current.dispose();
+      } catch {
+        /* ignore */
+      }
+      webglRef.current = null;
+    }
+    attachWebgl(term); // fresh context + full repaint
+  }, [attachWebgl, shouldUseWebgl]);
 
   // Create the xterm instance + spawn the PTY once.
   useEffect(() => {
     if (!containerRef.current || xtermRef.current) return;
     const term = new XTerm({
       theme: toXtermTheme(themeColors),
-      fontFamily:
-        '"JetBrains Mono", "SF Mono", Menlo, Consolas, monospace',
       fontSize,
+      fontFamily: fontFamily ?? DEFAULT_TERMINAL_FONT_FAMILY,
       cursorBlink: true,
       allowProposedApi: true,
       scrollback: SCROLLBACK_LINES,
@@ -288,22 +629,33 @@ export function TerminalView({
       // the trackpad. 125ms is about 8 frames at 60Hz: noticeable easing
       // without feeling sluggish.
       smoothScrollDuration: SMOOTH_SCROLL_DURATION_MS,
-      // Option-as-Meta so Option+B / Option+F / Option+Backspace send the
-      // ESC-prefixed sequences readline (zsh, bash, claude, codex) expects
-      // for backward-word / forward-word / delete-word. Without this, macOS
-      // intercepts Option+letter and emits Unicode (Option+e → "´"), which
-      // is what produced the "aeaer ;3D" garbage on backspace-word.
-      macOptionIsMeta: true,
+      scrollOnEraseInDisplay: true,
+      // In iTerm-style mode, xterm must not globally convert Option+letter to
+      // Meta: right Option needs to remain available for macOS compose/dead-key
+      // input (Polish characters, accents). TerminalView reimplements left
+      // Option+letter as Meta below.
+      macOptionIsMeta: shouldUseXtermOptionAsMeta(macOptionKeyModeRef.current),
     });
     const fit = new FitAddon();
     const search = new SearchAddon();
-    const webLinks = new WebLinksAddon((_e, uri) => {
+    const webLinks = new WebLinksAddon((event, uri) => {
+      event.preventDefault();
+      event.stopPropagation();
       void window.aya.openUrl(uri);
     });
     term.loadAddon(fit);
     term.loadAddon(search);
     term.loadAddon(webLinks);
     term.open(containerRef.current);
+
+    const onTerminalLinkClick = (event: globalThis.MouseEvent) => {
+      const url = anchorExternalUrl(event.target);
+      if (!url) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void window.aya.openUrl(url);
+    };
+    containerRef.current.addEventListener("click", onTerminalLinkClick, true);
 
     // GPU-accelerated renderer — eliminates the column-drift you get with
     // the default DOM renderer when fonts (especially JetBrains Mono with
@@ -323,21 +675,34 @@ export function TerminalView({
 
     fitTerminal();
 
-    const unsubscribe = window.aya.onPtyEvent((event) => {
-      if (event.ptyId !== terminal.id) return;
-      setIsRestoring(false);
+    // Per-id subscription via the shared bus: one chunk wakes THIS pane only,
+    // not every mounted TerminalView (visible + warm pool) as a raw
+    // window.aya.onPtyEvent listener would.
+    const unsubscribe = ptyEventBus.onFor(terminal.id, (event) => {
+      if (isRestoringRef.current) markRestoring(false);
       if (event.type === "data") {
         // Track whether a full-screen / rich TUI (claude, codex, vim…) is
         // running via focus-reporting mode (DECSET 1004). It gates Shift+Enter:
         // soft newline inside the TUI, plain Enter (submit) at the shell prompt.
         richInputRef.current = focusReportingState(event.chunk, richInputRef.current);
+        const displayChunk = shouldPreserveScrollback
+          ? stripScrollbackErase(event.chunk)
+          : event.chunk;
         if (event.replay) {
           replayingOutputRef.current += 1;
-          term.write(event.chunk, () => {
+          term.write(displayChunk, () => {
             replayingOutputRef.current = Math.max(0, replayingOutputRef.current - 1);
           });
         } else {
-          term.write(event.chunk);
+          term.write(displayChunk);
+        }
+        if (!event.replay && !didPostLoadResizeRef.current) {
+          didPostLoadResizeRef.current = true;
+          // After the first non-replay chunk arrives, force a SIGWINCH so
+          // harnesses like grok that lay out their fullscreen UI on start or
+          // on SIGWINCH observe the real pane size rather than the 80x24
+          // fallback present at ptySpawn time.
+          forcePtyReassert();
         }
         if (onPtyData) onPtyData(event.chunk);
       } else if (event.type === "exit") {
@@ -348,10 +713,21 @@ export function TerminalView({
         term.write(
           `\r\n\x1b[2m[process exited with code ${event.exitCode}${restartHint}]\x1b[0m\r\n`,
         );
+      } else if (event.type === "no-session") {
+        // Attach-only re-mount with no live PTY: the process ended while we were
+        // away. Show a restartable hint instead of a fresh, contextless session.
+        term.write(
+          `\r\n\x1b[2m[session ended - press Shift+Enter to restart]\x1b[0m\r\n`,
+        );
       }
     });
 
     term.attachCustomKeyEventHandler((ev) => {
+      if (ev.key === "Alt") {
+        optionSideRef.current =
+          ev.type === "keydown" ? optionSideFromCode(ev.code) : "unknown";
+        return true;
+      }
       if (ev.type !== "keydown") return true;
 
       // Enter handling (restart / soft newline / submit) — see enterKeyAction.
@@ -368,19 +744,11 @@ export function TerminalView({
         if (action === "restart") {
           // Shift+Enter on a cleanly-exited terminal: restart in the same pane.
           ev.preventDefault();
-          const t = xtermRef.current;
-          if (!t) return false;
-          t.writeln("\x1b[2m[restarting...]\x1b[0m");
+          // No local spawn: onRequestRestart bumps the restartTrigger and its
+          // effect spawns AFTER the state re-render - so the command already
+          // carries the resume arg for a tab that had a session. Spawning here
+          // read the pre-render command and lost the -c.
           onRequestRestart?.();
-          void window.aya.ptySpawn({
-            ptyId: terminal.id,
-            projectSlug: terminal.projectSlug,
-            presetId: terminal.presetId,
-            command: commandRef.current,
-            cwd: cwdRef.current,
-            cols: Math.max(t.cols, TERMINAL_FALLBACK_COLS),
-            rows: Math.max(t.rows, TERMINAL_FALLBACK_ROWS),
-          });
           canRestartRef.current = false;
           return false;
         }
@@ -397,6 +765,19 @@ export function TerminalView({
           return false;
         }
         // "default" → fall through to xterm's normal Enter.
+      }
+
+      const leftOptionSeq = leftOptionMetaSequence(
+        ev.key,
+        ev.code,
+        ev.shiftKey,
+        optionSideRef.current,
+        macOptionKeyModeRef.current,
+      );
+      if (leftOptionSeq && ev.altKey && !ev.metaKey && !ev.ctrlKey) {
+        ev.preventDefault();
+        void window.aya.ptyWrite(terminal.id, leftOptionSeq);
+        return false;
       }
 
       // Option+Arrow / Option+Backspace word navigation. xterm.js's default
@@ -443,10 +824,10 @@ export function TerminalView({
         ev.key.length === 1
       ) {
         const code = ev.key.toLowerCase().charCodeAt(0);
-        if (code >= 97 && code <= 122) {
+        if (code >= ASCII_LOWER_A && code <= ASCII_LOWER_Z) {
           // a–z → control byte 0x01–0x1A
           ev.preventDefault();
-          const ctrlByte = String.fromCharCode(code - 96);
+          const ctrlByte = String.fromCharCode(code - CTRL_BYTE_OFFSET);
           void window.aya.ptyWrite(terminal.id, ctrlByte);
           return false;
         }
@@ -458,6 +839,11 @@ export function TerminalView({
     const onDataDisposable = term.onData((data) => {
       if (replayingOutputRef.current > 0) return;
       if (data.length > 0) setIsScrollbarHidden(true);
+      if (localStorage.getItem("aya:debug-terminal-input") === "1") {
+        console.debug(
+          `[aya terminal input] ${terminal.id} ${preset.id}: ${printableControlData(data)}`,
+        );
+      }
       void window.aya.ptyWrite(terminal.id, data);
     });
 
@@ -474,6 +860,23 @@ export function TerminalView({
 
     if (!spawnedRef.current) {
       spawnedRef.current = true;
+      // First mount this session -> normal spawn (boot auto-start). A re-mount
+      // of an id that already produced a confirmed session - or that the host
+      // already declared no-session for (the tab is deliberately stopped) ->
+      // attach-only, so a tab whose PTY died shows a stopped state rather
+      // than a silent fresh process. Keyed on confirmed output (not the
+      // request), so an in-flight first spawn that re-mounts is not mistaken
+      // for a dead session.
+      const attachOnly = wasSpawned(terminal.id) || hadNoSession(terminal.id);
+      // Boot-restored tab, FIRST mount decision only: if the app reconnected
+      // to a host that predates this session, attach instead of spawning -
+      // the session either still lives there (replay) or the tab becomes
+      // stopped/restartable, the same behavior the manual host-restart path
+      // settled on. Resolved by the main-process client; a fresh host
+      // ignores it (boot auto-start). One-shot per renderer session so a
+      // re-mount after an explicit restart (forgetSpawn) spawns fresh.
+      const attachIfReused = terminal.restored && !wasMountDecided(terminal.id);
+      markMountDecided(terminal.id);
       const { cols, rows } = term;
       void window.aya.ptySpawn({
         ptyId: terminal.id,
@@ -483,10 +886,17 @@ export function TerminalView({
         cwd,
         cols: Math.max(cols, TERMINAL_FALLBACK_COLS),
         rows: Math.max(rows, TERMINAL_FALLBACK_ROWS),
+        attachOnly,
+        attachIfReused,
       });
     }
 
     return () => {
+      containerRef.current?.removeEventListener(
+        "click",
+        onTerminalLinkClick,
+        true,
+      );
       unsubscribe();
       onDataDisposable.dispose();
       onResizeDisposable.dispose();
@@ -504,6 +914,7 @@ export function TerminalView({
         cancelAnimationFrame(fitFrameRef.current);
         fitFrameRef.current = null;
       }
+      didPostLoadResizeRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminal.id]);
@@ -511,7 +922,13 @@ export function TerminalView({
   useEffect(() => {
     const term = xtermRef.current;
     if (!term) return;
-    if (enableWebgl) {
+    term.options.macOptionIsMeta = shouldUseXtermOptionAsMeta(macOptionKeyMode);
+  }, [macOptionKeyMode]);
+
+  useEffect(() => {
+    const term = xtermRef.current;
+    if (!term) return;
+    if (shouldUseWebgl) {
       attachWebgl(term);
       repairTerminalRender(false);
       return;
@@ -525,21 +942,25 @@ export function TerminalView({
       webglRef.current = null;
     }
     repairTerminalRender(false);
-  }, [attachWebgl, enableWebgl, repairTerminalRender]);
+  }, [attachWebgl, repairTerminalRender, shouldUseWebgl]);
 
   useEffect(() => {
     if (!isVisible) return;
     // Repaint the freshly-shown terminal (webgl atlas, scrollback). Focus is
     // NOT done here — it's owned by the isActive effect below, so a concurrent
-    // fit can't swallow it.
+    // fit can't swallow it. Also re-assert size to the PTY (with nudge for
+    // rich TUIs) so harnesses re-render their static layout when the terminal
+    // view is brought back (tab switch, split activation, etc.).
+    healWebgl();
     repairTerminalRender(false);
+    forcePtyReassert();
     const frame = requestAnimationFrame(() => repairTerminalRender(false));
     const timer = setTimeout(() => repairTerminalRender(false), RENDER_REPAIR_DELAY_MS);
     return () => {
       cancelAnimationFrame(frame);
       clearTimeout(timer);
     };
-  }, [isVisible, repairTerminalRender]);
+  }, [isVisible, healWebgl, repairTerminalRender, forcePtyReassert]);
 
   // Single source of truth for keyboard focus: whenever this becomes THE active
   // terminal (tab switch, split-pane navigation, or an overlay/modal closing),
@@ -555,6 +976,13 @@ export function TerminalView({
         const host = containerRef.current;
         if (term && host && host.clientWidth > 0 && host.clientHeight > 0) {
           term.focus();
+
+          // When we switch *to* this pane as the active one (split navigation or
+          // click), reassert size to PTY (nudge if rich). Harnesses in other
+          // panes may have been the "front" one; the newly focused rich TUI
+          // often needs a fresh SIGWINCH (or size delta) to repaint its focused
+          // static layout.
+          forcePtyReassert();
         }
       } catch {
         /* ignore — xterm may be mid-dispose */
@@ -569,11 +997,20 @@ export function TerminalView({
       cancelAnimationFrame(raf);
       clearTimeout(timer);
     };
-  }, [wantsFocus]);
+  }, [wantsFocus, forcePtyReassert]);
 
   useEffect(() => {
     if (!isVisible) return;
-    const onResumeRender = () => repairTerminalRender(false);
+    // Wake/restore: heal a possibly-dead WebGL context FIRST (a loss during
+    // background/sleep won't have delivered its event yet - the user would
+    // otherwise stare at a white terminal area for seconds), then repaint +
+    // idempotent resize, and re-assert PTY size with a rich-TUI nudge so the
+    // harness redraws its static layout.
+    const onResumeRender = () => {
+      healWebgl();
+      repairTerminalRender(false);
+      forcePtyReassert();
+    };
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") onResumeRender();
     };
@@ -585,7 +1022,7 @@ export function TerminalView({
       window.removeEventListener("pageshow", onResumeRender);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [isVisible, repairTerminalRender]);
+  }, [isVisible, healWebgl, repairTerminalRender, forcePtyReassert]);
 
   useEffect(() => {
     const onResize = () => fitTerminal();
@@ -606,9 +1043,11 @@ export function TerminalView({
 
   useEffect(() => {
     if (!xtermRef.current) return;
+    xtermRef.current.options.fontFamily =
+      fontFamily ?? DEFAULT_TERMINAL_FONT_FAMILY;
     xtermRef.current.options.fontSize = fontSize;
     fitTerminal();
-  }, [fitTerminal, fontSize]);
+  }, [fitTerminal, fontFamily, fontSize]);
 
   // Clear highlights when the find bar closes so stale "match outline"
   // doesn't linger on the canvas while the user types in the PTY.
@@ -630,7 +1069,8 @@ export function TerminalView({
     lastRestartTriggerRef.current = restartTrigger;
     const term = xtermRef.current;
     if (!term) return;
-    setIsRestoring(true);
+    didPostLoadResizeRef.current = false;
+    markRestoring(true);
     term.writeln("\x1b[2m[restarting…]\x1b[0m");
     void window.aya.ptySpawn({
       ptyId: terminal.id,
@@ -644,10 +1084,10 @@ export function TerminalView({
   }, [restartTrigger, terminal.id]);
 
   useEffect(() => {
-    setIsRestoring(true);
-    const id = window.setTimeout(() => setIsRestoring(false), RESTORE_FALLBACK_MS);
+    markRestoring(true);
+    const id = window.setTimeout(() => markRestoring(false), RESTORE_FALLBACK_MS);
     return () => window.clearTimeout(id);
-  }, [terminal.id]);
+  }, [terminal.id, markRestoring]);
 
   // Hot-swap theme when the active selection changes. xterm.js stashes the
   // new palette into `options.theme` but does NOT repaint the visible grid by
@@ -664,8 +1104,84 @@ export function TerminalView({
     }
   }, [themeColors]);
 
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", close);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("keydown", close);
+      window.removeEventListener("resize", close);
+    };
+  }, [contextMenu]);
+
+  const openTerminalContextMenu = (event: MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onActivatePane?.();
+    const selectedText = xtermRef.current?.getSelection() ?? "";
+    const target = event.target instanceof Element ? event.target : null;
+    const rowText =
+      target?.closest(".xterm-rows > div")?.textContent ??
+      target?.closest(".xterm-screen")?.textContent ??
+      "";
+    setContextMenu({
+      x: Math.max(
+        TERMINAL_CONTEXT_MENU_VIEWPORT_MARGIN,
+        Math.min(
+          event.clientX,
+          window.innerWidth -
+            TERMINAL_CONTEXT_MENU_WIDTH -
+            TERMINAL_CONTEXT_MENU_VIEWPORT_MARGIN,
+        ),
+      ),
+      y: Math.max(
+        TERMINAL_CONTEXT_MENU_VIEWPORT_MARGIN,
+        Math.min(
+          event.clientY,
+          window.innerHeight -
+            TERMINAL_CONTEXT_MENU_MAX_HEIGHT -
+            TERMINAL_CONTEXT_MENU_VIEWPORT_MARGIN,
+        ),
+      ),
+      selectedText,
+      link: firstHttpUrl(selectedText) ?? firstHttpUrl(rowText),
+    });
+  };
+
+  const copySelection = async () => {
+    const text = contextMenu?.selectedText || xtermRef.current?.getSelection() || "";
+    if (text) await window.aya.writeClipboard(text);
+    setContextMenu(null);
+    xtermRef.current?.focus();
+  };
+
+  const pasteClipboard = async () => {
+    const text = await window.aya.readClipboard();
+    if (text) xtermRef.current?.paste(text);
+    setContextMenu(null);
+    xtermRef.current?.focus();
+  };
+
+  const selectAllTerminal = () => {
+    xtermRef.current?.selectAll();
+    setContextMenu(null);
+    xtermRef.current?.focus();
+  };
+
+  const openContextLink = () => {
+    if (contextMenu?.link) void window.aya.openUrl(contextMenu.link);
+    setContextMenu(null);
+    xtermRef.current?.focus();
+  };
+
   return (
     <div
+      data-testid="terminal-pane"
+      data-terminal-id={terminal.id}
+      data-terminal-name={terminal.name}
       className={
         `aya-pane ${isScrollbarHidden ? "aya-pane--scrollbar-hidden" : ""} ${
           isActivePane ? "aya-pane--active-split" : ""
@@ -705,32 +1221,11 @@ export function TerminalView({
             </span>
           </div>
         )}
-        <button
-          className={`aya-pane-snippettoggle ${
-            snippetsOpen ? "aya-pane-snippettoggle--on" : ""
-          }`}
-          type="button"
-          title="Saved snippets"
-          // Keep terminal focus when toggling the drawer (same as the top-bar
-          // dropdowns) — opening snippets shouldn't force a re-click to type.
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={(e) => {
-            e.stopPropagation();
-            setSnippetsOpen((v) => !v);
-          }}
-        >
-          <span style={{ fontFamily: "Material Symbols Outlined" }}>bolt</span>
-          <span className="aya-pane-snippettoggle-label">snippets</span>
-          <span style={{ fontFamily: "Material Symbols Outlined" }}>
-            {snippetsOpen ? "expand_more" : "expand_less"}
-          </span>
-        </button>
       </div>
       {terminal.spawnFailure && (
         <div className="aya-pane-recovery">
           <div className="aya-pane-recovery-text">
             <strong>{recoveryTitle(terminal.spawnFailure.reason)}</strong>
-            <span>{terminal.spawnFailure.detail.split("\n")[0]}</span>
           </div>
           <div className="aya-pane-recovery-actions">
             {terminal.spawnFailure.reason.startsWith("cwd-") && (
@@ -741,12 +1236,12 @@ export function TerminalView({
                 Close project
               </button>
             )}
-            <button className="aya-pane-recovery-btn" onClick={onOpenSettings}>
+            <button className="aya-pane-recovery-btn" onClick={() => onOpenSettings()}>
               Open Settings
             </button>
             <button
               className="aya-pane-recovery-btn aya-pane-recovery-btn--primary"
-              onClick={onRequestRestart}
+              onClick={respawnInPlace}
             >
               Restart
             </button>
@@ -754,6 +1249,7 @@ export function TerminalView({
         </div>
       )}
       <div
+        data-testid="xterm-host"
         className="aya-xterm-host"
         // CSS variable consumed by overrides.css so the padding strip around
         // the xterm canvas (the "frame" around the terminal) tracks the
@@ -764,8 +1260,9 @@ export function TerminalView({
             : undefined
         }
         onWheelCapture={() => setIsScrollbarHidden(false)}
+        onContextMenu={openTerminalContextMenu}
       >
-        <div className="aya-xterm-frame" ref={containerRef} />
+        <div data-testid="xterm-frame" className="aya-xterm-frame" ref={containerRef} />
         {isRestoring && (
           <div className="aya-terminal-restoring" aria-live="polite">
             <span
@@ -778,18 +1275,78 @@ export function TerminalView({
           </div>
         )}
       </div>
+      {contextMenu && (
+        <div
+          data-testid="terminal-context-menu"
+          className="aya-terminal-context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={(event) => event.stopPropagation()}
+        >
+          {contextMenu.link && (
+            <button
+              data-testid="terminal-context-open-link"
+              className="aya-terminal-context-item"
+              type="button"
+              onClick={openContextLink}
+            >
+              <span style={{ fontFamily: "Material Symbols Outlined" }}>
+                open_in_browser
+              </span>
+              Open Link
+            </button>
+          )}
+          <button
+            data-testid="terminal-context-copy"
+            className="aya-terminal-context-item"
+            type="button"
+            disabled={!contextMenu.selectedText}
+            onClick={copySelection}
+          >
+            <span style={{ fontFamily: "Material Symbols Outlined" }}>
+              content_copy
+            </span>
+            Copy
+          </button>
+          <button
+            data-testid="terminal-context-paste"
+            className="aya-terminal-context-item"
+            type="button"
+            onClick={pasteClipboard}
+          >
+            <span style={{ fontFamily: "Material Symbols Outlined" }}>
+              content_paste
+            </span>
+            Paste
+          </button>
+          <button
+            data-testid="terminal-context-select-all"
+            className="aya-terminal-context-item"
+            type="button"
+            onClick={selectAllTerminal}
+          >
+            <span style={{ fontFamily: "Material Symbols Outlined" }}>
+              select_all
+            </span>
+            Select All
+          </button>
+        </div>
+      )}
       <SnippetBar
         snippets={snippets}
         open={snippetsOpen}
-        onClose={() => setSnippetsOpen(false)}
+        onClose={() => onSnippetsOpenChange(false)}
         onSend={sendSnippet}
         onOpenSettings={onOpenSettings}
       />
       {findOpen && (
         <FindBar
           value={findQuery}
-          onChange={(v) => {
+          onChange={(v, historyMode) => {
             setFindQuery(v);
+            // In History mode the query drives the transcript search inside
+            // FindBar; don't move the live terminal's match cursor around.
+            if (historyMode) return;
             if (!v) {
               try {
                 searchRef.current?.clearDecorations();
@@ -805,6 +1362,16 @@ export function TerminalView({
                 caseSensitive: false,
                 incremental: true,
               });
+            } catch {
+              /* ignore */
+            }
+          }}
+          historyAgent={findHistoryAgent}
+          cwd={cwd}
+          configDir={preset.configDir}
+          onClearTerminalMatches={() => {
+            try {
+              searchRef.current?.clearDecorations();
             } catch {
               /* ignore */
             }
@@ -834,12 +1401,34 @@ export function TerminalView({
   );
 }
 
+export const TerminalView = memo(TerminalViewComponent, terminalViewPropsEqual);
+
 interface FindBarProps {
   value: string;
-  onChange: (v: string) => void;
+  /** `historyMode` tells the host whether the query is driving the live
+   *  terminal search (false) or the transcript search inside the bar (true). */
+  onChange: (v: string, historyMode: boolean) => void;
   onNext: () => void;
   onPrev: () => void;
   onClose: () => void;
+  /** Non-null enables the experimental History mode for this agent tab. */
+  historyAgent: "claude" | "codex" | null;
+  cwd: string;
+  configDir?: string;
+  /** Clears xterm search highlights when the bar switches to History mode. */
+  onClearTerminalMatches: () => void;
+}
+
+// History (transcript) search: debounce keystrokes before the IPC round-trip
+// and skip 1-character queries, which match everything.
+const HISTORY_SEARCH_DEBOUNCE_MS = 200;
+const HISTORY_MIN_QUERY_CHARS = 2;
+
+function formatHitTime(timestamp: string | undefined): string | null {
+  if (!timestamp) return null;
+  const ms = Date.parse(timestamp);
+  if (!Number.isFinite(ms)) return null;
+  return formatLastActivity(ms) ?? "just now";
 }
 
 function FindBar({
@@ -848,55 +1437,196 @@ function FindBar({
   onNext,
   onPrev,
   onClose,
+  historyAgent,
+  cwd,
+  configDir,
+  onClearTerminalMatches,
 }: FindBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [historyMode, setHistoryMode] = useState(false);
+  const [hits, setHits] = useState<HarnessSearchHit[]>([]);
+  // True once a transcript search has completed for the current query, so
+  // "No matches" only shows after an actual (empty) result, not while typing.
+  const [searched, setSearched] = useState(false);
+  const [expandedHit, setExpandedHit] = useState<number | null>(null);
+  const historySeqRef = useRef(0);
   useEffect(() => {
     // Focus + select-all on mount so opening the bar twice in a row lets
     // the user replace the query directly.
     inputRef.current?.focus();
     inputRef.current?.select();
   }, []);
+
+  const historyActive = historyMode && historyAgent !== null;
+  const query = value.trim();
+  useEffect(() => {
+    if (!historyActive || !historyAgent) return;
+    if (query.length < HISTORY_MIN_QUERY_CHARS) {
+      setHits([]);
+      setSearched(false);
+      setExpandedHit(null);
+      return;
+    }
+    const seq = ++historySeqRef.current;
+    const timer = window.setTimeout(() => {
+      window.aya
+        .harnessSearch({ agent: historyAgent, cwd, configDir, query })
+        .then((results) => {
+          if (historySeqRef.current !== seq) return; // stale response
+          setHits(results);
+          setSearched(true);
+          setExpandedHit(null);
+        })
+        .catch(() => {
+          if (historySeqRef.current !== seq) return;
+          setHits([]);
+          setSearched(true);
+        });
+    }, HISTORY_SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [historyActive, historyAgent, cwd, configDir, query]);
+
+  const switchMode = (toHistory: boolean) => {
+    if (toHistory === historyMode) return;
+    setHistoryMode(toHistory);
+    setExpandedHit(null);
+    if (toHistory) {
+      onClearTerminalMatches();
+    } else {
+      setHits([]);
+      setSearched(false);
+      // Re-run the live terminal search for the query already in the box.
+      onChange(value, false);
+    }
+    inputRef.current?.focus();
+  };
+
+  const agentLabel = historyAgent === "claude" ? "Claude" : "Codex";
   return (
-    <div className="aya-findbar">
-      <input
-        ref={inputRef}
-        className="aya-findbar-input"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            e.preventDefault();
-            onClose();
-          } else if (e.key === "Enter") {
-            e.preventDefault();
-            if (e.shiftKey) onPrev();
-            else onNext();
+    <div className={`aya-findbar ${historyActive ? "aya-findbar--history" : ""}`}>
+      <div className="aya-findbar-row">
+        {historyAgent && (
+          <div
+            className="aya-findbar-modes"
+            aria-label="Search scope"
+            title="Terminal searches visible output; History searches this directory's agent session transcripts"
+          >
+            {([
+              [false, "Terminal"],
+              [true, "History"],
+            ] as const).map(([mode, label]) => (
+              <button
+                key={label}
+                type="button"
+                className={`aya-findbar-mode ${
+                  historyMode === mode ? "aya-findbar-mode--active" : ""
+                }`}
+                onClick={() => switchMode(mode)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+        <input
+          ref={inputRef}
+          className="aya-findbar-input"
+          value={value}
+          onChange={(e) => onChange(e.target.value, historyActive)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              onClose();
+            } else if (e.key === "Enter" && !historyActive) {
+              e.preventDefault();
+              if (e.shiftKey) onPrev();
+              else onNext();
+            }
+          }}
+          placeholder={
+            historyActive
+              ? `Search ${agentLabel} session history…`
+              : "Find in terminal…"
           }
-        }}
-        placeholder="Find in terminal…"
-        spellCheck={false}
-      />
-      <button
-        className="aya-findbar-btn"
-        onClick={onPrev}
-        title="Previous match (Shift+Enter)"
-      >
-        ↑
-      </button>
-      <button
-        className="aya-findbar-btn"
-        onClick={onNext}
-        title="Next match (Enter)"
-      >
-        ↓
-      </button>
-      <button
-        className="aya-findbar-btn"
-        onClick={onClose}
-        title="Close (Esc)"
-      >
-        ✕
-      </button>
+          spellCheck={false}
+        />
+        {!historyActive && (
+          <>
+            <button
+              className="aya-findbar-btn"
+              onClick={onPrev}
+              title="Previous match (Shift+Enter)"
+            >
+              ↑
+            </button>
+            <button
+              className="aya-findbar-btn"
+              onClick={onNext}
+              title="Next match (Enter)"
+            >
+              ↓
+            </button>
+          </>
+        )}
+        <button
+          className="aya-findbar-btn"
+          onClick={onClose}
+          title="Close (Esc)"
+        >
+          ✕
+        </button>
+      </div>
+      {historyActive && (searched || hits.length > 0) && (
+        <div className="aya-findbar-results">
+          {hits.length === 0 ? (
+            <div className="aya-findbar-empty">
+              No matches in recent {agentLabel} sessions for this directory
+            </div>
+          ) : (
+            hits.map((hit, index) => {
+              const time = formatHitTime(hit.timestamp);
+              const expanded = expandedHit === index;
+              return (
+                <button
+                  key={`${hit.sessionId}-${index}`}
+                  type="button"
+                  className="aya-findbar-hit"
+                  onClick={() => setExpandedHit(expanded ? null : index)}
+                  title={expanded ? "Collapse" : "Expand full message"}
+                >
+                  <div className="aya-findbar-hit-meta">
+                    <span className="aya-findbar-hit-role">
+                      {hit.role === "user" ? "You" : agentLabel}
+                    </span>
+                    {time && <span>{time}</span>}
+                  </div>
+                  {expanded ? (
+                    <div
+                      className="aya-findbar-hit-full"
+                      // Let the user select/copy the text without the click
+                      // bubbling to the row button and collapsing it.
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {hit.text}
+                    </div>
+                  ) : (
+                    <div className="aya-findbar-hit-snippet">
+                      {hit.snippet.slice(0, hit.matchStart)}
+                      <mark>
+                        {hit.snippet.slice(
+                          hit.matchStart,
+                          hit.matchStart + hit.matchLength,
+                        )}
+                      </mark>
+                      {hit.snippet.slice(hit.matchStart + hit.matchLength)}
+                    </div>
+                  )}
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
     </div>
   );
 }

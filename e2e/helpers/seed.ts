@@ -1,4 +1,5 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,7 +13,13 @@ export interface SeededEnv {
   userDataDir: string;
   /** Working directory of the seeded project (must exist for terminals). */
   projectDir: string;
+  /** Extra environment variables used when launching Electron for this seed. */
+  launchEnv?: Record<string, string>;
   tabIds: { left: string; right: string };
+  /** Set only when `missingDir` is requested: the non-existent path the open
+   *  project points at (so a test can assert MissingDirModal's "Create folder"
+   *  created it, or "Use home" did not). */
+  missingDirPath?: string;
 }
 
 export interface SeedOptions {
@@ -27,6 +34,49 @@ export interface SeedOptions {
    *  token_count event carrying this rate_limits object, so the Codex chip
    *  renders. */
   codexRateLimits?: Record<string, unknown>;
+  /** When false, leave presets.json absent so first-launch PATH scanning runs. */
+  presets?: boolean;
+  /** Override the seeded preset list (defaults to a single "Shell" preset).
+   *  Ignored when `presets` is false. Use to exercise the launcher menu with
+   *  many entries (e.g. a scrollable dropdown). */
+  presetList?: Array<{
+    id: string;
+    name: string;
+    icon: string;
+    color: string;
+    command: string;
+    autoResume?: boolean;
+  }>;
+  /** Extra environment variables for the Electron process. */
+  launchEnv?: Record<string, string>;
+  /** Create a fake shell/bin setup where interactive shell PATH reveals claude. */
+  pathRepairHarness?: boolean;
+  /** Names of extra projects that are known + recent but NOT open, so the
+   *  recent-projects menu lists them as closed projects. */
+  closedProjects?: string[];
+  /** Make the project dir a real git repo on branch "feature/foo" with one
+   *  commit, then leave a modified tracked file + an untracked file so the
+   *  StatusBar shows a branch + "2 dirty" + a diff. */
+  gitRepo?: boolean;
+  /** Point the open project at a directory that does NOT exist, so the boot
+   *  dir-check queues it and MissingDirModal appears. The path is exposed as
+   *  `seeded.missingDirPath` so a test can assert "Create folder" made it. */
+  missingDir?: boolean;
+  /** Write the project's `.aya/project.json` with these presets, so the repo
+   *  preset-import flow (ProjectPresetImportModal) triggers for the project. */
+  repoPresets?: Array<{ id: string; name: string; icon: string; color: string; command: string }>;
+  /** Open a SECOND project ("e2e-proj-2", one tab named "shell 3") so tests can
+   *  exercise project switching (e.g. the project-N shortcut). */
+  secondProject?: boolean;
+  /** Start a PTY host (holding no sessions) BEFORE the app launches, so the
+   *  app connects to a REUSED host: boot-restored tabs must then attach-only
+   *  (-> stopped/restartable) instead of auto-respawning. Consumed by the
+   *  `app` fixture, not by seedEnv. */
+  preStartPtyHost?: boolean;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 /** Build a throwaway, deterministic environment for one Electron launch:
@@ -42,15 +92,44 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
   mkdirSync(join(ayaHome, "projects"), { recursive: true });
   mkdirSync(userDataDir, { recursive: true });
   mkdirSync(projectDir, { recursive: true });
+  // When requested, point the project at a path we deliberately do NOT create,
+  // so the boot dir-check queues it and MissingDirModal appears.
+  if (opts.missingDir && opts.repoPresets) {
+    // repoPresets writes under projectDir, but missingDir repoints the project
+    // away from it, so the repo config would not be associated with the project.
+    throw new Error("seed: missingDir and repoPresets cannot be combined");
+  }
+  const missingDirPath = opts.missingDir ? join(root, "missing-project-dir") : undefined;
+  const effectiveProjectDir = missingDirPath ?? projectDir;
+  // Repo-local launchers: a `.aya/project.json` in the project dir triggers the
+  // ProjectPresetImportModal (suggest importing the repo's presets).
+  if (opts.repoPresets) {
+    mkdirSync(join(projectDir, ".aya"), { recursive: true });
+    writeFileSync(
+      join(projectDir, ".aya", "project.json"),
+      JSON.stringify({ presets: opts.repoPresets }, null, 2),
+    );
+  }
 
-  writeFileSync(
-    join(ayaHome, "presets.json"),
-    JSON.stringify(
-      { presets: [{ id: "shell", name: "Shell", icon: "$", color: "", command: "$SHELL" }] },
-      null,
-      2,
-    ),
-  );
+  if (opts.gitRepo) {
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: projectDir, stdio: "ignore" });
+    git("init", "-q", "-b", "feature/foo");
+    writeFileSync(join(projectDir, "committed.txt"), "one\ntwo\n");
+    git("add", "committed.txt");
+    git("-c", "user.email=t@e", "-c", "user.name=t", "commit", "-qm", "init");
+    // Dirty state: modify the committed file + add a new one. (Distinct name
+    // prefixes so test selectors don't collide on substrings.)
+    writeFileSync(join(projectDir, "committed.txt"), "one\ntwoX\n");
+    writeFileSync(join(projectDir, "added.txt"), "brand new\n");
+  }
+
+  if (opts.presets !== false) {
+    const presetList = opts.presetList ?? [
+      { id: "shell", name: "Shell", icon: "$", color: "", command: "$SHELL" },
+    ];
+    writeFileSync(join(ayaHome, "presets.json"), JSON.stringify({ presets: presetList }, null, 2));
+  }
 
   const left = "tab-left";
   const right = "tab-right";
@@ -59,7 +138,7 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     JSON.stringify(
       {
         name: "e2e",
-        directory: projectDir,
+        directory: effectiveProjectDir,
         tabs: [
           { id: left, presetId: "shell", name: "shell 1" },
           { id: right, presetId: "shell", name: "shell 2" },
@@ -81,9 +160,57 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
       2,
     ),
   );
+  // Closed projects: known + recent but NOT open, so the recent-projects menu
+  // lists them. Their directories need not exist (the menu only displays them).
+  // Mirror the app's slugify (electron/text.ts) so seeded slugs match what real
+  // project creation would produce, and guard against collisions that would
+  // overwrite a file or duplicate a state entry.
+  const slugify = (name: string) =>
+    name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  const closed = opts.closedProjects ?? [];
+  const closedSlugs: string[] = [];
+  for (const name of closed) {
+    const slug = slugify(name);
+    if (slug === "e2e-proj" || closedSlugs.includes(slug)) {
+      throw new Error(`seed: closedProjects slug collision for "${name}" (${slug})`);
+    }
+    closedSlugs.push(slug);
+    writeFileSync(
+      join(ayaHome, "projects", `${slug}.json`),
+      JSON.stringify({ name, directory: join(root, "closed", slug), tabs: [] }, null, 2),
+    );
+  }
+  // Optional second OPEN project so tests can switch projects.
+  const secondSlug = opts.secondProject ? "e2e-proj-2" : null;
+  if (secondSlug) {
+    const projectDir2 = join(root, "project2");
+    mkdirSync(projectDir2, { recursive: true });
+    writeFileSync(
+      join(ayaHome, "projects", `${secondSlug}.json`),
+      JSON.stringify(
+        {
+          name: "e2e 2",
+          directory: projectDir2,
+          tabs: [{ id: "tab-p2", presetId: "shell", name: "shell 3" }],
+        },
+        null,
+        2,
+      ),
+    );
+  }
+  const openSlugs = ["e2e-proj", ...(secondSlug ? [secondSlug] : [])];
   writeFileSync(
     join(ayaHome, "projects-state.json"),
-    JSON.stringify({ version: 1, order: ["e2e-proj"], open: ["e2e-proj"], recent: ["e2e-proj"] }, null, 2),
+    JSON.stringify(
+      {
+        version: 1,
+        order: [...openSlugs, ...closedSlugs],
+        open: openSlugs,
+        recent: [...openSlugs, ...closedSlugs],
+      },
+      null,
+      2,
+    ),
   );
 
   if (opts.usage) {
@@ -102,5 +229,52 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     );
   }
 
-  return { root, ayaHome, userDataDir, projectDir, tabIds: { left, right } };
+  let launchEnv = opts.launchEnv;
+  if (opts.pathRepairHarness) {
+    const fakeBin = join(root, "interactive-bin");
+    const fakeShell = join(root, "fake-login-shell");
+    mkdirSync(fakeBin, { recursive: true });
+    writeFileSync(join(fakeBin, "claude"), "#!/bin/sh\nexit 0\n", {
+      mode: 0o755,
+    });
+    writeFileSync(
+      fakeShell,
+      [
+        "#!/bin/sh",
+        "interactive=0",
+        "cmd=",
+        'while [ "$#" -gt 0 ]; do',
+        '  case "$1" in',
+        "    -i) interactive=1; shift ;;",
+        "    -l) shift ;;",
+        '    -c) shift; cmd="$1"; break ;;',
+        "    *) shift ;;",
+        "  esac",
+        "done",
+        'if [ "$interactive" = "1" ]; then',
+        `  PATH=${shellQuote(fakeBin)}:$PATH`,
+        "  export PATH",
+        "fi",
+        'exec /bin/sh -c "$cmd"',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    chmodSync(fakeShell, 0o755);
+    launchEnv = {
+      ...launchEnv,
+      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+      SHELL: fakeShell,
+    };
+  }
+
+  return {
+    root,
+    ayaHome,
+    userDataDir,
+    projectDir,
+    launchEnv,
+    tabIds: { left, right },
+    missingDirPath,
+  };
 }

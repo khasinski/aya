@@ -10,18 +10,24 @@ import {
   PROJECTS_ORDER_FILE,
   PROJECTS_STATE_FILE,
 } from "./paths";
-import type { ProjectCollectionState, ProjectConfig, SplitLayout } from "./types";
-import { MAX_SPLIT_COLS, MAX_SPLIT_ROWS } from "./validation";
+import type {
+  ProjectCollectionState,
+  ProjectConfig,
+  SplitLayout,
+  WorkingTab,
+} from "./types";
+import {
+  MAX_SPLIT_COLS,
+  MAX_SPLIT_ROWS,
+  PROJECT_STATE_VERSION,
+  sanitizeStringRecord,
+} from "./validation";
+import { slugifyName } from "./text";
 
 const RESERVED_SLUGS = new Set(["aya-sentinel-new"]);
 
 function slugify(name: string): string {
-  const slug = name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug || "project";
+  return slugifyName(name, "project");
 }
 
 async function ensureDir(): Promise<void> {
@@ -30,9 +36,7 @@ async function ensureDir(): Promise<void> {
 
 /** Normalize a raw tab object from disk: drop bad shapes, backfill name, and
  *  migrate the old `kind` field to the new `presetId`. */
-export function normalizeTab(
-  raw: unknown,
-): { id: string; presetId: string; name: string } | null {
+export function normalizeTab(raw: unknown): WorkingTab | null {
   if (typeof raw !== "object" || raw === null) return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.id !== "string" || !r.id) return null;
@@ -43,7 +47,9 @@ export function normalizeTab(
   if (!presetId) return null;
   const name =
     typeof r.name === "string" && r.name.trim() ? r.name : presetId;
-  return { id: r.id, presetId, name };
+  // Preserve a worktree cwd binding (absolute path); ignore empty/invalid.
+  const cwd = typeof r.cwd === "string" && r.cwd.trim() ? r.cwd : undefined;
+  return { id: r.id, presetId, name, ...(cwd ? { cwd } : {}) };
 }
 
 function stringArray(value: unknown): string[] | null {
@@ -100,6 +106,29 @@ export function normalizeSplitLayout(
   return { rows, cols, rowFr, colFr, cells, activeCell };
 }
 
+function normalizeRemoteProject(raw: unknown): ProjectConfig["remote"] | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const r = raw as Record<string, unknown>;
+  if (
+    typeof r.hostId !== "string" ||
+    !r.hostId ||
+    typeof r.label !== "string" ||
+    !r.label ||
+    typeof r.sshTarget !== "string" ||
+    !r.sshTarget ||
+    typeof r.directory !== "string" ||
+    !r.directory
+  ) {
+    return undefined;
+  }
+  return {
+    hostId: r.hostId,
+    label: r.label,
+    sshTarget: r.sshTarget,
+    directory: r.directory,
+  };
+}
+
 async function loadStringArrayFile(filePath: string): Promise<string[] | null> {
   try {
     const raw = await fs.readFile(filePath, "utf-8");
@@ -109,18 +138,6 @@ async function loadStringArrayFile(filePath: string): Promise<string[] | null> {
     // ENOENT or malformed — caller decides the fallback.
     return null;
   }
-}
-
-/** A plain string->string map, dropping any non-string values. Used for the
- *  optional activeTab / singleView selections (back-compat: absent => {}). */
-function stringRecord(x: unknown): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (typeof x === "object" && x !== null && !Array.isArray(x)) {
-    for (const [k, v] of Object.entries(x)) {
-      if (typeof v === "string") out[k] = v;
-    }
-  }
-  return out;
 }
 
 export function normalizeProjectState(
@@ -133,13 +150,13 @@ export function normalizeProjectState(
   const recent = stringArray(r.recent);
   if (!order || !open || !recent) return null;
   return {
-    version: 1,
+    version: PROJECT_STATE_VERSION,
     order,
     open,
     recent,
     activeProject: typeof r.activeProject === "string" ? r.activeProject : null,
-    activeTab: stringRecord(r.activeTab),
-    singleView: stringRecord(r.singleView),
+    activeTab: sanitizeStringRecord(r.activeTab),
+    singleView: sanitizeStringRecord(r.singleView),
   };
 }
 
@@ -155,7 +172,12 @@ export async function listProjectState(): Promise<ProjectCollectionState> {
   const order = (await loadStringArrayFile(PROJECTS_ORDER_FILE)) ?? [];
   const open = (await loadStringArrayFile(OPEN_PROJECTS_FILE)) ?? order;
   const recent = order.length > 0 ? order : open;
-  const migrated: ProjectCollectionState = { version: 1, order, open, recent };
+  const migrated: ProjectCollectionState = {
+    version: PROJECT_STATE_VERSION,
+    order,
+    open,
+    recent,
+  };
   if (order.length > 0 || open.length > 0) {
     await saveProjectState(migrated);
   }
@@ -171,7 +193,7 @@ export async function saveProjectState(
   // bug — a dropped activeTab/activeProject — is exactly what reset the active
   // selection on restart, #18).
   const normalized = normalizeProjectState(state) ?? {
-    version: 1 as const,
+    version: PROJECT_STATE_VERSION,
     order: [],
     open: [],
     recent: [],
@@ -213,12 +235,14 @@ export async function listProjects(): Promise<ProjectConfig[]> {
         data.splitLayout,
         new Set(tabs.map((tab) => tab.id)),
       );
+      const remote = normalizeRemoteProject(data.remote);
       out.push({
         slug,
         name: data.name,
         directory: data.directory,
         tabs,
         ...(splitLayout ? { splitLayout } : {}),
+        ...(remote ? { remote } : {}),
       });
     } catch {
       // Skip invalid JSON; don't crash the app.
@@ -268,6 +292,66 @@ export async function createProject(
   return project;
 }
 
+/** Open-or-create by directory. Backs the remote "open project" flow: re-opening
+ *  a project that already exists must return it, not fail on createProject's
+ *  "already exists" guard. Matches on the resolved directory (the project's real
+ *  identity) and falls back to creating a fresh project otherwise. */
+export async function getOrCreateProject(
+  name: string,
+  directory: string,
+): Promise<ProjectConfig> {
+  await ensureDir();
+  const absDir = path.resolve(directory.replace(/^~/, os.homedir()));
+  const existing = (await listProjects()).find(
+    (p) => !p.remote && p.directory === absDir,
+  );
+  if (existing) return existing;
+  return createProject(name, directory);
+}
+
+export async function createRemoteProject(req: {
+  name: string;
+  directory: string;
+  hostId: string;
+  label: string;
+  sshTarget: string;
+}): Promise<ProjectConfig> {
+  await ensureDir();
+  const slug = slugify(`${req.label}-${req.name}`);
+  if (RESERVED_SLUGS.has(slug)) {
+    throw new Error(`Project name "${req.name}" produces a reserved slug.`);
+  }
+  const filePath = path.join(PROJECTS_DIR, `${slug}.json`);
+  const existing = (await listProjects()).find((p) => p.slug === slug);
+  if (existing) {
+    // Re-adding a remote project already in the local list is an open, not an
+    // error: return it as-is when it targets the same host + directory.
+    // Anything else is a genuine slug collision with a different project.
+    if (
+      existing.remote &&
+      existing.remote.sshTarget === req.sshTarget &&
+      existing.remote.directory === req.directory
+    ) {
+      return existing;
+    }
+    throw new Error(`Project "${slug}" already exists.`);
+  }
+  const project: ProjectConfig = {
+    slug,
+    name: req.name,
+    directory: req.directory,
+    tabs: [],
+    remote: {
+      hostId: req.hostId,
+      label: req.label,
+      sshTarget: req.sshTarget,
+      directory: req.directory,
+    },
+  };
+  await writeFileAtomic(filePath, JSON.stringify(toDisk(project), null, 2) + "\n");
+  return project;
+}
+
 export async function updateProject(project: ProjectConfig): Promise<void> {
   await ensureDir();
   const filePath = path.join(PROJECTS_DIR, `${project.slug}.json`);
@@ -289,6 +373,7 @@ function toDisk(project: ProjectConfig): unknown {
     directory: project.directory,
     tabs: project.tabs,
     ...(project.splitLayout ? { splitLayout: project.splitLayout } : {}),
+    ...(project.remote ? { remote: project.remote } : {}),
   };
 }
 

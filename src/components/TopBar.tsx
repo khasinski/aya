@@ -1,17 +1,26 @@
-import { useEffect, useRef, useState, type DragEvent } from "react";
-import type { ProjectConfig, UsageData } from "../types";
+import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
+import { useDragReorder } from "../hooks/useDragReorder";
+import type { MonitoredSession, ProjectConfig, UsageAccount } from "../types";
+import type { SettingsTab } from "../settings-tabs";
 import { UsageChip } from "./UsageChip";
+import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
 
 // Project tab width bounds (px): tabs shrink to min, then overflow the strip.
 const TAB_MIN_WIDTH_PX = 120;
 const TAB_MAX_WIDTH_PX = 320;
 // Brand accents for the per-agent usage chips.
-const CLAUDE_ACCENT = "#d97757";
-const CODEX_ACCENT = "#10a37f";
 
 interface ProjectAttention {
   count: number;
-  level: "done" | "waiting" | "error";
+  level: "active" | "done" | "waiting" | "error";
 }
 
 interface Props {
@@ -20,6 +29,9 @@ interface Props {
   activeProjectId: string | null;
   homeDir: string;
   isDev: boolean;
+  platform: NodeJS.Platform;
+  isFullScreen: boolean;
+  isMaximized: boolean;
   /** When true, the gear is disabled and the "+ New project" sentinel is
    *  inert. Used while a blocking modal (MissingDir / NewProject) is up
    *  so the user can't stack Settings on top of it. */
@@ -29,15 +41,29 @@ interface Props {
   onNewProject: () => void;
   /** Closes the project tab without deleting the project config. */
   onCloseProject: (slug: string) => void;
+  /** Multi-window: move a project tab (with its running terminals) to a new
+   *  window or an existing one. Absent = the menu items are hidden. */
+  onMoveProjectToWindow?: (
+    slug: string,
+    target: number | "new",
+    at?: { x: number; y: number },
+  ) => void;
   onRenameProject: (slug: string, newName: string) => void;
   onReorderProjects: (orderedSlugs: string[]) => void;
   onOpenSearch: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (tab?: SettingsTab) => void;
+  onMinimizeWindow: () => void;
+  onToggleMaximizeWindow: () => void;
+  onToggleFullScreenWindow: () => void;
+  onCloseWindow: () => void;
   projectBadges?: Record<string, ProjectAttention>;
-  /** Account-wide Claude usage snapshot (null hides its chip). Read-only. */
-  usage?: UsageData | null;
-  /** Account-wide Codex usage snapshot (null hides its chip). Read-only. */
-  codexUsage?: UsageData | null;
+  monitoredSessionsByProject?: Record<string, MonitoredSession[]>;
+  projectSummaries?: Record<string, string>;
+  /** Account-wide Claude usage snapshots. Read-only. */
+  usageAccounts?: UsageAccount[];
+  /** Account-wide Codex usage snapshots. Read-only. */
+  codexUsageAccounts?: UsageAccount[];
+  showUsageHarnessName: boolean;
 }
 
 function compactDir(directory: string, home: string): string {
@@ -48,31 +74,104 @@ function compactDir(directory: string, home: string): string {
   return directory;
 }
 
-export function TopBar({
+function TopBarImpl({
   projects,
   closedProjects,
   activeProjectId,
   homeDir,
   isDev,
+  platform,
+  isFullScreen,
+  isMaximized,
   blockChrome,
   onSelectProject,
   onOpenProject,
   onNewProject,
   onCloseProject,
+  onMoveProjectToWindow,
   onRenameProject,
   onReorderProjects,
   onOpenSearch,
   onOpenSettings,
+  onMinimizeWindow,
+  onToggleMaximizeWindow,
+  onToggleFullScreenWindow,
+  onCloseWindow,
   projectBadges = {},
-  usage = null,
-  codexUsage = null,
+  monitoredSessionsByProject = {},
+  projectSummaries = {},
+  usageAccounts = [],
+  codexUsageAccounts = [],
+  showUsageHarnessName,
 }: Props) {
   const [renamingSlug, setRenamingSlug] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const recentFilterRef = useRef<HTMLInputElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
   const recentRef = useRef<HTMLDivElement>(null);
+  const sessionsRef = useRef<HTMLDivElement>(null);
   const [showRecent, setShowRecent] = useState(false);
+  const [recentFilter, setRecentFilter] = useState("");
+  const [showSessions, setShowSessions] = useState(false);
+  // Right-click menu on a project tab (multi-window move). The other-windows
+  // list is fetched when the menu opens, so labels are current.
+  const [tabMenu, setTabMenu] = useState<{
+    x: number;
+    y: number;
+    slug: string;
+    windows: Array<{ id: number; activeProject: string | null }>;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!tabMenu) return;
+    const close = () => setTabMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setTabMenu(null);
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [tabMenu]);
+
+  const openTabMenu = (e: ReactMouseEvent, slug: string) => {
+    if (!onMoveProjectToWindow) return;
+    e.preventDefault();
+    const at = { x: e.clientX, y: e.clientY };
+    void window.aya.listOtherWindows().then((windows) => {
+      setTabMenu({ ...at, slug, windows });
+    });
+  };
+
+  // Memoized: these ran (flatMap+sort / filter) on every TopBar render even
+  // with both dropdowns closed.
+  const monitoredSessions = useMemo(
+    () =>
+      Object.entries(monitoredSessionsByProject)
+        .flatMap(([projectSlug, sessions]) =>
+          sessions.map((session) => ({ ...session, projectSlug })),
+        )
+        .sort((a, b) => b.updatedAt - a.updatedAt),
+    [monitoredSessionsByProject],
+  );
+  const normalizedRecentFilter = recentFilter.trim().toLowerCase();
+  const filteredClosedProjects = useMemo(
+    () =>
+      normalizedRecentFilter.length === 0
+        ? closedProjects
+        : closedProjects.filter((p) => {
+            const path = compactDir(p.directory, homeDir);
+            return (
+              p.name.toLowerCase().includes(normalizedRecentFilter) ||
+              path.toLowerCase().includes(normalizedRecentFilter) ||
+              p.directory.toLowerCase().includes(normalizedRecentFilter)
+            );
+          }),
+    [normalizedRecentFilter, closedProjects, homeDir],
+  );
 
   useEffect(() => {
     if (!showRecent) return;
@@ -82,6 +181,27 @@ export function TopBar({
     window.addEventListener("pointerdown", onPointerDown, true);
     return () => window.removeEventListener("pointerdown", onPointerDown, true);
   }, [showRecent]);
+
+  useEffect(() => {
+    if (!showRecent) {
+      setRecentFilter("");
+      return;
+    }
+    const id = window.requestAnimationFrame(() => {
+      recentFilterRef.current?.focus();
+      recentFilterRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [showRecent]);
+
+  useEffect(() => {
+    if (!showSessions) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!sessionsRef.current?.contains(e.target as Node)) setShowSessions(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, [showSessions]);
 
   // Route ANY wheel/trackpad delta over the tab strip into horizontal
   // scroll. macOS trackpad horizontal swipes default to history navigation
@@ -102,64 +222,26 @@ export function TopBar({
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
-  // Drag-and-drop state for project tab reordering.
-  const [dragSlug, setDragSlug] = useState<string | null>(null);
-  const [dropTarget, setDropTarget] = useState<{
-    slug: string;
-    before: boolean;
-  } | null>(null);
-
-  const handleDragStart = (
-    e: DragEvent<HTMLDivElement>,
-    slug: string,
-  ) => {
-    setDragSlug(slug);
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", slug);
+  // Horizontal drag-and-drop for project tab reordering. A drag released
+  // outside the strip (possibly outside the window) becomes a Chrome-style
+  // tear-out: main hit-tests the release point against the live windows and
+  // the tab either attaches to the window under the cursor or opens a new one.
+  const handleTabDragOut = (slug: string, e: { screenX: number; screenY: number }) => {
+    if (!onMoveProjectToWindow) return;
+    const project = projects.find((pr) => pr.slug === slug);
+    if (!project || project.remote) return;
+    const at = { x: e.screenX, y: e.screenY };
+    void window.aya.resolveProjectDrop(at.x, at.y).then((r) => {
+      if (r.kind === "self") return;
+      onMoveProjectToWindow(slug, r.kind === "new" ? "new" : r.id, at);
+    });
   };
-  const handleDragOver = (
-    e: DragEvent<HTMLDivElement>,
-    slug: string,
-  ) => {
-    if (!dragSlug || dragSlug === slug) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const before = e.clientX < rect.left + rect.width / 2;
-    setDropTarget((prev) =>
-      prev && prev.slug === slug && prev.before === before
-        ? prev
-        : { slug, before },
-    );
-  };
-  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    if (!dragSlug || !dropTarget) {
-      setDragSlug(null);
-      setDropTarget(null);
-      return;
-    }
-    const fromIdx = projects.findIndex((p) => p.slug === dragSlug);
-    const targetIdx = projects.findIndex((p) => p.slug === dropTarget.slug);
-    if (fromIdx < 0 || targetIdx < 0) {
-      setDragSlug(null);
-      setDropTarget(null);
-      return;
-    }
-    const order = projects.map((p) => p.slug);
-    order.splice(fromIdx, 1);
-    let insertIdx = targetIdx;
-    if (fromIdx < targetIdx) insertIdx -= 1;
-    if (!dropTarget.before) insertIdx += 1;
-    order.splice(insertIdx, 0, dragSlug);
-    onReorderProjects(order);
-    setDragSlug(null);
-    setDropTarget(null);
-  };
-  const handleDragEnd = () => {
-    setDragSlug(null);
-    setDropTarget(null);
-  };
+  const { dragId: dragSlug, dropTarget, itemHandlers } = useDragReorder(
+    "x",
+    projects.map((p) => p.slug),
+    onReorderProjects,
+    handleTabDragOut,
+  );
 
   const startRename = (project: ProjectConfig) => {
     setRenamingSlug(project.slug);
@@ -177,6 +259,13 @@ export function TopBar({
 
   return (
     <header className="aya-topbar">
+      <MacWindowControls
+        platform={platform}
+        isFullScreen={isFullScreen}
+        onClose={onCloseWindow}
+        onMinimize={onMinimizeWindow}
+        onToggleFullScreen={onToggleFullScreenWindow}
+      />
       <div className="aya-brand">
         <span
           className="aya-brand-dot"
@@ -190,7 +279,13 @@ export function TopBar({
           const badge = projectBadges[p.slug];
           const isRenaming = renamingSlug === p.slug;
           const isDragging = dragSlug === p.slug;
-          const isDropTarget = dropTarget?.slug === p.slug;
+          const isRemote = !!p.remote;
+          const displayPath = p.remote
+            ? `${p.remote.label}:${p.remote.directory}`
+            : compactDir(p.directory, homeDir);
+          const projectSummary = projectSummaries[p.slug]?.trim();
+          const displayMeta = projectSummary || displayPath;
+          const isDropTarget = dropTarget?.id === p.slug;
           const dropClass = isDropTarget
             ? dropTarget.before
               ? "aya-tab--drop-before"
@@ -201,7 +296,7 @@ export function TopBar({
               key={p.slug}
               className={`aya-tab ${isActive ? "aya-tab--active" : ""} ${
                 isDragging ? "aya-tab--dragging" : ""
-              } ${dropClass}`}
+              } ${isRemote ? "aya-tab--remote" : ""} ${dropClass}`}
               // Keep this in sync with the CSS fallback below. Tabs grow to
               // fill spare room, shrink to 120px, then overflow the strip.
               style={{
@@ -210,52 +305,67 @@ export function TopBar({
                 maxWidth: TAB_MAX_WIDTH_PX,
               }}
               draggable={!isRenaming}
-              onDragStart={(e) => handleDragStart(e, p.slug)}
-              onDragOver={(e) => handleDragOver(e, p.slug)}
-              onDrop={handleDrop}
-              onDragEnd={handleDragEnd}
+              {...itemHandlers(p.slug)}
               onClick={() => !isRenaming && onSelectProject(p.slug)}
+              onContextMenu={(e) => {
+                // Remote projects can't be adopted by directory (it lives on
+                // the remote host) - no move menu for them yet.
+                if (!isRemote) openTabMenu(e, p.slug);
+              }}
               title={
                 isRenaming
                   ? undefined
-                  : `${p.name} — ${p.directory} · double-click to rename · drag to reorder`
+                  : `${p.name} - ${displayPath}${projectSummary ? ` · ${projectSummary}` : ""} · double-click to rename · drag to reorder`
               }
             >
-              {isRenaming ? (
-                <input
-                  ref={inputRef}
-                  className="aya-tab-rename"
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  onBlur={commitRename}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      commitRename();
-                    } else if (e.key === "Escape") {
-                      e.preventDefault();
-                      cancelRename();
-                    }
-                  }}
-                  autoFocus
-                />
-              ) : (
+              <span className="aya-tab-text">
+                {isRenaming ? (
+                  <input
+                    ref={inputRef}
+                    className="aya-tab-rename"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        commitRename();
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        cancelRename();
+                      }
+                    }}
+                    autoFocus
+                  />
+                ) : (
+                  <span
+                    className="aya-tab-name"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      startRename(p);
+                    }}
+                  >
+                    {isRemote && (
+                      <span className="aya-tab-remote-chip" title={displayPath}>
+                        SSH
+                      </span>
+                    )}
+                    {p.name}
+                  </span>
+                )}
                 <span
-                  className="aya-tab-name"
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    startRename(p);
-                  }}
+                  className={`aya-tab-path ${
+                    projectSummary ? "aya-tab-path--summary" : ""
+                  }`}
                 >
-                  {p.name}
+                  {displayMeta}
                 </span>
-              )}
-              <span className="aya-tab-path">{compactDir(p.directory, homeDir)}</span>
+              </span>
               {badge && (
                 <span
                   className={`aya-tab-bell aya-tab-bell--${badge.level}`}
-                  title={`${badge.count} terminal${badge.count > 1 ? "s" : ""} need attention`}
+                  title={`${badge.count} monitored session${badge.count > 1 ? "s" : ""}: ${badge.level}`}
                 />
               )}
               <span
@@ -277,15 +387,82 @@ export function TopBar({
           onClick={blockChrome ? undefined : onNewProject}
           aria-disabled={blockChrome}
         >
-          ＋
+          <span style={{ fontFamily: "Material Symbols Outlined" }}>add</span>
         </div>
       </div>
       <div className="aya-topbar-right">
-        {usage && (
-          <UsageChip usage={usage} label="Claude" accent={CLAUDE_ACCENT} />
+        {monitoredSessions.length > 0 && (
+          <div className="aya-monitored-sessions" ref={sessionsRef}>
+            <button
+              className="aya-session-chip"
+              title="Claude/Codex sessions"
+              aria-label="Claude/Codex sessions"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setShowSessions((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={showSessions}
+            >
+              <span className="aya-session-chip-bars" aria-hidden="true">
+                {(["error", "waiting", "active", "done"] as const).map((level) => {
+                  const count = monitoredSessions.filter((s) => s.level === level).length;
+                  return count > 0 ? (
+                    <span
+                      key={level}
+                      className={`aya-session-chip-bar aya-session-chip-bar--${level}`}
+                      style={{ flexGrow: count }}
+                    />
+                  ) : null;
+                })}
+              </span>
+              <span>{monitoredSessions.length}</span>
+            </button>
+            {showSessions && (
+              <div className="aya-session-menu" role="menu">
+                <div className="aya-session-menu-title">Claude/Codex sessions</div>
+                {monitoredSessions.slice(0, 8).map((session) => {
+                  const project = projects.find((p) => p.slug === session.projectSlug);
+                  const source = session.source === "codex" ? "Codex" : "Claude";
+                  return (
+                    <button
+                      key={`${session.source}:${session.id}`}
+                      className={`aya-session-menu-item aya-session-menu-item--${session.level}`}
+                      role="menuitem"
+                      onClick={() => {
+                        setShowSessions(false);
+                        onSelectProject(session.projectSlug);
+                      }}
+                    >
+                      <span className="aya-session-dot" aria-hidden="true" />
+                      <span className="aya-session-menu-main">
+                        <span className="aya-session-menu-name">
+                          {project?.name ?? session.projectName ?? session.sessionName ?? source}
+                        </span>
+                        <span className="aya-session-menu-detail">
+                          {source} · {session.text}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         )}
-        {codexUsage && (
-          <UsageChip usage={codexUsage} label="Codex" accent={CODEX_ACCENT} />
+        {usageAccounts.length > 0 && (
+          <UsageChip
+            accounts={usageAccounts}
+            label="Claude"
+            accent={CLAUDE_BRAND_COLOR}
+            showHarnessName={showUsageHarnessName}
+          />
+        )}
+        {codexUsageAccounts.length > 0 && (
+          <UsageChip
+            accounts={codexUsageAccounts}
+            label="Codex"
+            accent={CODEX_BRAND_COLOR}
+            showHarnessName={showUsageHarnessName}
+          />
         )}
         <div className="aya-recent-projects" ref={recentRef}>
           <button
@@ -312,10 +489,36 @@ export function TopBar({
           {showRecent && (
             <div className="aya-recent-menu" role="menu">
               <div className="aya-recent-menu-title">Recent projects</div>
+              {closedProjects.length > 0 && (
+                <div className="aya-recent-menu-filter">
+                  <span
+                    className="aya-recent-menu-filter-icon"
+                    style={{ fontFamily: "Material Symbols Outlined" }}
+                    aria-hidden="true"
+                  >
+                    search
+                  </span>
+                  <input
+                    ref={recentFilterRef}
+                    value={recentFilter}
+                    onChange={(e) => setRecentFilter(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.stopPropagation();
+                        setShowRecent(false);
+                      }
+                    }}
+                    placeholder="Filter projects"
+                    aria-label="Filter recent projects"
+                  />
+                </div>
+              )}
               {closedProjects.length === 0 ? (
                 <div className="aya-recent-menu-empty">No closed projects</div>
+              ) : filteredClosedProjects.length === 0 ? (
+                <div className="aya-recent-menu-empty">No matching projects</div>
               ) : (
-                closedProjects.map((p) => (
+                filteredClosedProjects.map((p) => (
                   <button
                     key={p.slug}
                     className="aya-recent-menu-item"
@@ -350,12 +553,53 @@ export function TopBar({
         <button
           className="aya-iconbtn"
           title={blockChrome ? "Settings (close the open dialog first)" : "Settings"}
-          onClick={onOpenSettings}
+          onClick={() => onOpenSettings()}
           disabled={blockChrome}
         >
           <span style={{ fontFamily: "Material Symbols Outlined" }}>settings</span>
         </button>
+        <LinuxWindowControls
+          platform={platform}
+          isMaximized={isMaximized}
+          onMinimize={onMinimizeWindow}
+          onToggleMaximize={onToggleMaximizeWindow}
+          onClose={onCloseWindow}
+        />
       </div>
+      {tabMenu && onMoveProjectToWindow && (
+        <div
+          className="aya-context-menu"
+          style={{ left: tabMenu.x, top: tabMenu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            className="aya-context-menu-item"
+            onClick={() => {
+              onMoveProjectToWindow(tabMenu.slug, "new");
+              setTabMenu(null);
+            }}
+          >
+            Move to New Window
+          </button>
+          {tabMenu.windows.map((w) => (
+            <button
+              key={w.id}
+              className="aya-context-menu-item"
+              onClick={() => {
+                onMoveProjectToWindow(tabMenu.slug, w.id);
+                setTabMenu(null);
+              }}
+            >
+              Move to Window: {w.activeProject ?? "(empty)"}
+            </button>
+          ))}
+        </div>
+      )}
     </header>
   );
 }
+
+/** Memoized: App re-renders on every poll tick / terminal status flip; with
+ *  the derived props memoized in App (R1) and the handlers useCallback'd,
+ *  the shallow compare lets the chrome skip those renders entirely. */
+export const TopBar = memo(TopBarImpl);

@@ -1,14 +1,31 @@
-import { useEffect, useState } from "react";
+import { effectiveAutoResume, inferAgent } from "../agentPreset";
+import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
+import { useEffect, useState, type ReactNode } from "react";
 import {
+  type AyaIntelligenceConfig,
   type CliStatus,
+  type DiagnosticsReport,
   type HarnessDef,
+  type LayoutMode,
+  type MicPermissionStatus,
+  type OllamaStatus,
   type Preset,
   type Snippet,
   type Theme,
+  type UpdateStatus,
   type UsageHookStatus,
+  type WebConfigureRequest,
+  type WebServerStatus,
   looksNonInteractive,
   presetSlug,
 } from "../types";
+import type { SettingsTab } from "../settings-tabs";
+import { localSummaryUnavailableMessage } from "../local-summary-errors";
+import type { MacOptionKeyMode } from "../terminal-option-key";
+import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
+
+const DEFAULT_CLAUDE_CONFIG_DIR = "~/.claude";
+const DEFAULT_CODEX_CONFIG_DIR = "~/.codex";
 
 interface Props {
   presets: Preset[];
@@ -16,6 +33,33 @@ interface Props {
   snippets: Snippet[];
   themes: Theme[];
   activeThemeId: string;
+  appThemePreference: "system" | "light" | "dark";
+  onAppThemePreferenceChange: (theme: "system" | "light" | "dark") => void;
+  terminalFontFamily: string;
+  onTerminalFontFamilyChange: (fontFamily: string) => void;
+  showUsageHarnessName: boolean;
+  onShowUsageHarnessNameChange: (show: boolean) => void;
+  showGitHubLink: boolean;
+  onShowGitHubLinkChange: (show: boolean) => void;
+  layoutMode: LayoutMode;
+  onLayoutModeChange: (mode: LayoutMode) => void;
+  worktreesEnabled: boolean;
+  onWorktreesEnabledChange: (enabled: boolean) => void;
+  harnessSearchEnabled: boolean;
+  onHarnessSearchEnabledChange: (enabled: boolean) => void;
+  localSummariesEnabled: boolean;
+  onLocalSummariesEnabledChange: (enabled: boolean) => void;
+  ayaIntelligence: AyaIntelligenceConfig;
+  onAyaIntelligenceChange: (config: AyaIntelligenceConfig) => void;
+  autoSummaryStatus: {
+    terminalCount: number;
+    terminalsWithLines: number;
+    totalLines: number;
+    lastEvent: string;
+  };
+  onRefreshSummaries: () => void;
+  macOptionKeyMode: MacOptionKeyMode;
+  onMacOptionKeyModeChange: (mode: MacOptionKeyMode) => void;
   onClose: () => void;
   onSave: (presets: Preset[]) => Promise<void> | void;
   onSaveSnippets: (snippets: Snippet[]) => Promise<void> | void;
@@ -24,18 +68,18 @@ interface Props {
     activeThemeId: string,
   ) => Promise<void> | void;
   onImportTheme: () => Promise<Theme | null>;
+  /** Restart the detached PTY host (#28). Kills running terminals, so the
+   *  button confirms first. */
+  onRestartPtyHost: () => Promise<void> | void;
+  initialTab?: SettingsTab;
 }
 
-// Claude brand color (used for the Claude YOLO preset and as the color placeholder)
-const CLAUDE_BRAND_COLOR = "#d97757";
-// Preset table column widths (px) kept in sync between header row and body rows
-const PRESET_ROW_ICON_WIDTH = 36;
-const PRESET_ROW_NAME_WIDTH = 130;
-const PRESET_ROW_THEME_WIDTH = 130;
-const PRESET_ROW_COLOR_WIDTH = 70;
-
 function uuid(): string {
-  return Math.random().toString(36).slice(2, 10);
+  // Secure RNG (CodeQL flags Math.random() ids); getRandomValues is available
+  // even on the file:// production page, unlike crypto.randomUUID.
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 interface DraftPreset extends Preset {
@@ -43,20 +87,109 @@ interface DraftPreset extends Preset {
 }
 
 function toDraft(p: Preset): DraftPreset {
-  return { ...p, __key: uuid() };
+  const agent = p.agent ?? inferAgent(p);
+  return {
+    ...p,
+    agent,
+    configDir: p.configDir ?? inferConfigDir(p.command, agent),
+    unsafeMode: p.unsafeMode ?? inferUnsafeMode(p.command, agent),
+    // Same default the runtime uses, so the toggle the user sees matches the
+    // flag the spawn actually applies (single source: effectiveAutoResume).
+    autoResume: effectiveAutoResume(p),
+    __key: uuid(),
+  };
 }
 
 function fromDraft(p: DraftPreset): Preset {
   const id = p.id.trim() || presetSlug(p.name);
   const themeId = p.themeId && p.themeId.trim() ? p.themeId : undefined;
+  const agent = p.agent;
+  const configDir =
+    p.configDir && p.configDir.trim() ? p.configDir.trim() : undefined;
   return {
     id,
     name: p.name,
     icon: p.icon,
     color: p.color,
     command: p.command,
+    ...(agent ? { agent } : {}),
+    ...(configDir ? { configDir } : {}),
+    ...(p.unsafeMode ? { unsafeMode: true } : {}),
+    // Persist autoResume explicitly (incl. false) so a deliberate opt-out
+    // survives - absence is treated as "default on" for agent presets.
+    ...(typeof p.autoResume === "boolean" ? { autoResume: p.autoResume } : {}),
     ...(themeId ? { themeId } : {}),
   };
+}
+
+function inferConfigDir(command: string, agent: Preset["agent"]): string | undefined {
+  const key =
+    agent === "claude"
+      ? "CLAUDE_CONFIG_DIR"
+      : agent === "codex"
+        ? "CODEX_HOME"
+        : null;
+  if (!key) return undefined;
+  const value = command.match(new RegExp(`(?:^|\\s)${key}=("[^"]*"|'[^']*'|\\S+)`))?.[1];
+  if (!value) return undefined;
+  const unquoted = value.replace(/^"|"$/g, "").replace(/^'|'$/g, "");
+  return unquoted.replace(/^\$HOME(?=\/|$)/, "~");
+}
+
+function inferUnsafeMode(command: string, agent: Preset["agent"]): boolean {
+  if (agent === "claude") {
+    return /\s--dangerously-skip-permissions(?:\s|$)/.test(` ${command} `);
+  }
+  if (agent === "codex") {
+    return /\s(?:--dangerously-bypass-approvals-and-sandbox|--yolo)(?:\s|$)/.test(
+      ` ${command} `,
+    );
+  }
+  return false;
+}
+
+function quoteEnv(value: string): string {
+  const trimmed = value.trim();
+  if (/^~(?=\/|$)/.test(trimmed)) {
+    const suffix = trimmed.slice(1).replace(/(["\\$`])/g, "\\$1");
+    return `"$HOME${suffix}"`;
+  }
+  return `"${trimmed.replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
+function isDefaultAgentConfigDir(
+  agent: Preset["agent"],
+  configDir: string | undefined,
+): boolean {
+  const trimmed = configDir?.trim();
+  if (!trimmed) return true;
+  if (agent === "claude") {
+    return trimmed === DEFAULT_CLAUDE_CONFIG_DIR || trimmed === "$HOME/.claude";
+  }
+  if (agent === "codex") {
+    return trimmed === DEFAULT_CODEX_CONFIG_DIR || trimmed === "$HOME/.codex";
+  }
+  return false;
+}
+
+function agentCommand(
+  agent: Preset["agent"],
+  configDir: string | undefined,
+  unsafeMode: boolean | undefined,
+): string {
+  if (agent === "claude") {
+    const base = configDir?.trim() && !isDefaultAgentConfigDir(agent, configDir)
+      ? `CLAUDE_CONFIG_DIR=${quoteEnv(configDir)} claude`
+      : "claude";
+    return unsafeMode ? `${base} --dangerously-skip-permissions` : base;
+  }
+  if (agent === "codex") {
+    const base = configDir?.trim() && !isDefaultAgentConfigDir(agent, configDir)
+      ? `CODEX_HOME=${quoteEnv(configDir)} codex`
+      : "codex";
+    return unsafeMode ? `${base} --dangerously-bypass-approvals-and-sandbox` : base;
+  }
+  return "";
 }
 
 interface DraftSnippet extends Snippet {
@@ -76,19 +209,106 @@ function snippetFromDraft(c: DraftSnippet): Snippet {
   };
 }
 
+function SettingsIcon({ name, className = "" }: { name: string; className?: string }) {
+  return (
+    <span
+      className={`aya-settings-material ${className}`}
+      style={{ fontFamily: "Material Symbols Outlined" }}
+      aria-hidden="true"
+    >
+      {name}
+    </span>
+  );
+}
+
+function SettingsHeader({
+  icon,
+  title,
+  children,
+}: {
+  icon: string;
+  title: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="aya-settings-header">
+      <div className="aya-settings-header-icon">
+        <SettingsIcon name={icon} />
+      </div>
+      <div>
+        <div className="aya-modal-title">{title}</div>
+        {children && <div className="aya-modal-hint">{children}</div>}
+      </div>
+    </div>
+  );
+}
+
+function SettingsRow({
+  icon,
+  title,
+  children,
+  control,
+}: {
+  icon: string;
+  title: ReactNode;
+  children?: ReactNode;
+  control: ReactNode;
+}) {
+  return (
+    <div className="aya-settings-general-row">
+      <div className="aya-settings-general-copy">
+        <div className="aya-settings-row-icon">
+          <SettingsIcon name={icon} />
+        </div>
+        <div>
+          <div className="aya-settings-general-title">{title}</div>
+          {children && <div className="aya-modal-hint">{children}</div>}
+        </div>
+      </div>
+      <div className="aya-settings-control">{control}</div>
+    </div>
+  );
+}
+
 export function SettingsModal({
   presets,
   defaults,
   snippets,
   themes: initialThemes,
   activeThemeId: initialActiveThemeId,
+  appThemePreference,
+  onAppThemePreferenceChange,
+  terminalFontFamily,
+  onTerminalFontFamilyChange,
+  showUsageHarnessName,
+  onShowUsageHarnessNameChange,
+  showGitHubLink,
+  onShowGitHubLinkChange,
+  layoutMode,
+  onLayoutModeChange,
+  worktreesEnabled,
+  onWorktreesEnabledChange,
+  harnessSearchEnabled,
+  onHarnessSearchEnabledChange,
+  localSummariesEnabled,
+  onLocalSummariesEnabledChange,
+  ayaIntelligence,
+  onAyaIntelligenceChange,
+  autoSummaryStatus,
+  onRefreshSummaries,
+  macOptionKeyMode,
+  onMacOptionKeyModeChange,
   onClose,
   onSave,
   onSaveSnippets,
   onSaveThemes,
   onImportTheme,
+  onRestartPtyHost,
+  initialTab = "general",
 }: Props) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [draft, setDraft] = useState<DraftPreset[]>(() => presets.map(toDraft));
+  const [activePresetKey, setActivePresetKey] = useState<string | null>(null);
   const [snippetDraft, setSnippetDraft] = useState<DraftSnippet[]>(() =>
     snippets.map(snippetToDraft),
   );
@@ -104,6 +324,7 @@ export function SettingsModal({
   const [errors, setErrors] = useState<string[]>([]);
   const [cliStatus, setCliStatus] = useState<CliStatus | null>(null);
   const [cliInstalling, setCliInstalling] = useState(false);
+  const [ghAvailable, setGhAvailable] = useState<boolean | null>(null);
   const [usageHook, setUsageHook] = useState<UsageHookStatus | null>(null);
   const [usageHookBusy, setUsageHookBusy] = useState(false);
   const [showUsageConsent, setShowUsageConsent] = useState(false);
@@ -111,11 +332,40 @@ export function SettingsModal({
     useState<NotificationPermission>(() =>
       typeof Notification === "undefined" ? "default" : Notification.permission,
     );
+  const [micStatus, setMicStatus] = useState<MicPermissionStatus | null>(null);
+  const [micBusy, setMicBusy] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsReport | null>(null);
+  const [diagnosticsBusy, setDiagnosticsBusy] = useState(false);
+  const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
+  const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
+  const [ollamaBusy, setOllamaBusy] = useState(false);
+  const [intelligenceTestBusy, setIntelligenceTestBusy] = useState(false);
+  const [intelligenceTestResult, setIntelligenceTestResult] = useState<string | null>(
+    null,
+  );
+  const [localSummaryStatus, setLocalSummaryStatus] = useState<
+    "checking" | "available" | "unavailable" | null
+  >(null);
+  // Aya Web (experimental): status is main-process state (web.json + the
+  // running server), loaded on open and refreshed after every change.
+  const [ayaWeb, setAyaWeb] = useState<WebServerStatus | null>(null);
+  const [ayaWebBusy, setAyaWebBusy] = useState(false);
+  const [ayaWebError, setAyaWebError] = useState<string | null>(null);
+  const [ayaWebPortDraft, setAyaWebPortDraft] = useState("");
+  const [ayaWebUserDraft, setAyaWebUserDraft] = useState("");
+  const [ayaWebPasswordDraft, setAyaWebPasswordDraft] = useState("");
   // PATH-scan result cached once per modal open. Derived `suggested` below
   // is the not-yet-added subset; recomputed each render against the live
   // draft so a row added via the suggestions immediately drops from the
   // list without waiting for Save.
   const [allHarnesses, setAllHarnesses] = useState<HarnessDef[]>([]);
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
+
   useEffect(() => {
     let cancelled = false;
     void window.aya.scanHarnesses().then((all) => {
@@ -124,13 +374,93 @@ export function SettingsModal({
     void window.aya.cliStatus().then((status) => {
       if (!cancelled) setCliStatus(status);
     });
+    void window.aya.githubCliAvailable().then((available) => {
+      if (!cancelled) setGhAvailable(available);
+    });
     void window.aya.usageHookStatus().then((status) => {
       if (!cancelled) setUsageHook(status);
     });
+    void window.aya.micStatus().then((status) => {
+      if (!cancelled) setMicStatus(status);
+    });
+    void window.aya.getUpdateStatus().then((status) => {
+      if (!cancelled) setUpdateStatus(status);
+    });
+    void window.aya.webStatus().then((status) => {
+      if (cancelled) return;
+      setAyaWeb(status);
+      setAyaWebPortDraft(String(status.port));
+      setAyaWebUserDraft(status.user);
+    });
+    if (window.aya.platform === "darwin") {
+      setLocalSummaryStatus("checking");
+      void window.aya
+        .summarizeLocal({
+          kind: "terminal",
+          lines: [
+            "Aya local summaries status check",
+            "Checking Apple Intelligence model availability",
+            "No user terminal output is included",
+          ],
+        })
+        .then((status) => {
+          if (!cancelled) {
+            setLocalSummaryStatus(status.available ? "available" : "unavailable");
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setLocalSummaryStatus("unavailable");
+        });
+    }
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    return window.aya.onUpdateStatus((status) => {
+      setUpdateStatus(status);
+      if (status.phase !== "checking") setUpdateBusy(false);
+    });
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.aya.ollamaStatus(ayaIntelligence.ollamaModel).then((status) => {
+      if (!cancelled) setOllamaStatus(status);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [ayaIntelligence.ollamaModel]);
+
+  const applyAyaWeb = async (req: WebConfigureRequest) => {
+    setAyaWebBusy(true);
+    setAyaWebError(null);
+    try {
+      const status = await window.aya.configureWeb(req);
+      setAyaWeb(status);
+      setAyaWebPortDraft(String(status.port));
+      setAyaWebUserDraft(status.user);
+      setAyaWebPasswordDraft("");
+    } catch (err) {
+      setAyaWebError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAyaWebBusy(false);
+    }
+  };
+
+  const regenerateAyaWebPassword = async () => {
+    setAyaWebBusy(true);
+    setAyaWebError(null);
+    try {
+      setAyaWeb(await window.aya.regenerateWebPassword());
+    } catch (err) {
+      setAyaWebError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAyaWebBusy(false);
+    }
+  };
 
   const installCli = async () => {
     setCliInstalling(true);
@@ -171,6 +501,114 @@ export function SettingsModal({
       await window.aya.openNotificationSettings();
     }
     setNotificationPermission(Notification.permission);
+  };
+
+  // Aya never records; CLI tools the user runs (e.g. a /voice plugin) may. macOS
+  // owns the grant: when undecided we trigger its prompt, otherwise we deep-link
+  // to System Settings where the user can grant or revoke. We only re-read the
+  // status — we never claim to toggle it ourselves.
+  const handleMicAction = async () => {
+    setMicBusy(true);
+    try {
+      if (micStatus === "not-determined") {
+        await window.aya.requestMicAccess();
+      } else {
+        await window.aya.openMicrophoneSettings();
+      }
+      setMicStatus(await window.aya.micStatus());
+    } finally {
+      setMicBusy(false);
+    }
+  };
+
+  const diagnosticsJson = diagnostics
+    ? JSON.stringify(diagnostics, null, 2)
+    : "";
+
+  const refreshDiagnostics = async () => {
+    setDiagnosticsBusy(true);
+    setDiagnosticsCopied(false);
+    setDiagnosticsError(null);
+    try {
+      setDiagnostics(await window.aya.getDiagnostics());
+    } catch (err) {
+      setDiagnosticsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDiagnosticsBusy(false);
+    }
+  };
+
+  const copyDiagnostics = async () => {
+    if (!diagnosticsJson) return;
+    await window.aya.writeClipboard(diagnosticsJson);
+    setDiagnosticsCopied(true);
+  };
+
+  const checkUpdates = async () => {
+    setUpdateBusy(true);
+    try {
+      setUpdateStatus(await window.aya.checkForUpdates());
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
+
+  const installUpdate = async () => {
+    await window.aya.installUpdate();
+  };
+
+  const patchAyaIntelligence = (patch: Partial<AyaIntelligenceConfig>) => {
+    if (patch.provider) onLocalSummariesEnabledChange(true);
+    onAyaIntelligenceChange({ ...ayaIntelligence, ...patch });
+  };
+
+  const refreshOllamaStatus = async () => {
+    setOllamaBusy(true);
+    try {
+      setOllamaStatus(await window.aya.ollamaStatus(ayaIntelligence.ollamaModel));
+    } finally {
+      setOllamaBusy(false);
+    }
+  };
+
+  const pullOllamaModel = async () => {
+    setOllamaBusy(true);
+    try {
+      setOllamaStatus(await window.aya.pullOllamaModel(ayaIntelligence.ollamaModel));
+      onLocalSummariesEnabledChange(true);
+    } finally {
+      setOllamaBusy(false);
+    }
+  };
+
+  const testAyaIntelligence = async () => {
+    setIntelligenceTestBusy(true);
+    setIntelligenceTestResult(null);
+    try {
+      const result = await window.aya.summarizeLocal({
+        kind: "terminal",
+        intelligence: ayaIntelligence,
+        lines: [
+          "Starting Aya Intelligence smoke test",
+          "Gemma is summarizing recent terminal output through Ollama",
+          "Expected result: Aya should show a short tab or terminal description",
+        ],
+      });
+      setIntelligenceTestResult(
+        result.available
+          ? result.useful
+            ? `OK: ${result.summary}`
+            : `No useful summary returned${result.error ? `: ${result.error}` : "."}`
+          : localSummaryUnavailableMessage(
+              result.error,
+              ayaIntelligence.provider,
+            ),
+      );
+    } catch (err) {
+      setIntelligenceTestResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIntelligenceTestBusy(false);
+    }
   };
 
   const existingCmds = new Set(
@@ -214,6 +652,15 @@ export function SettingsModal({
     if (!presetsDirty) setDraft(presets.map(toDraft));
   }, [presets, presetsDirty]);
   useEffect(() => {
+    if (draft.length === 0) {
+      if (activePresetKey !== null) setActivePresetKey(null);
+      return;
+    }
+    if (!activePresetKey || !draft.some((p) => p.__key === activePresetKey)) {
+      setActivePresetKey(draft[0].__key);
+    }
+  }, [activePresetKey, draft]);
+  useEffect(() => {
     if (!snippetsDirty) setSnippetDraft(snippets.map(snippetToDraft));
   }, [snippets, snippetsDirty]);
   useEffect(() => {
@@ -231,6 +678,36 @@ export function SettingsModal({
     );
   };
 
+  const updateAgentFields = (
+    key: string,
+    patch: Partial<Pick<Preset, "agent" | "configDir" | "unsafeMode">>,
+  ) => {
+    editPresets((prev) =>
+      prev.map((p) => {
+        if (p.__key !== key) return p;
+        const next = { ...p, ...patch };
+        if (next.agent === "claude" || next.agent === "codex") {
+          const configDir =
+            next.configDir ||
+            (next.agent === "claude"
+              ? DEFAULT_CLAUDE_CONFIG_DIR
+              : DEFAULT_CODEX_CONFIG_DIR);
+          return {
+            ...next,
+            configDir,
+            command: agentCommand(next.agent, configDir, next.unsafeMode),
+          };
+        }
+        return {
+          ...next,
+          agent: "custom",
+          configDir: undefined,
+          unsafeMode: undefined,
+        };
+      }),
+    );
+  };
+
   const removeRow = (key: string) => {
     const row = draft.find((p) => p.__key === key);
     if (!row) return;
@@ -239,53 +716,76 @@ export function SettingsModal({
   };
 
   const addRow = () => {
+    const key = uuid();
     editPresets((prev) => [
       ...prev,
       {
-        __key: uuid(),
+        __key: key,
         id: "",
         name: "",
         icon: "•",
         color: "",
         command: "",
+        agent: "custom",
+        autoResume: false,
         themeId: undefined,
       },
     ]);
+    setActivePresetKey(key);
   };
 
-  /** Append a pre-filled preset. Used by the YOLO quick-add buttons. */
+  /** Append a pre-filled preset. */
   const addPrefilled = (preset: Omit<DraftPreset, "__key">) => {
-    editPresets((prev) => [...prev, { __key: uuid(), ...preset }]);
+    const key = uuid();
+    editPresets((prev) => [...prev, { __key: key, ...preset }]);
+    setActivePresetKey(key);
   };
 
-  const addClaudeYolo = () =>
+  const addClaudeAccount = () =>
     addPrefilled({
-      id: "claude-yolo",
-      name: "Claude YOLO",
+      id: "",
+      name: "Claude Account",
       icon: "✻",
       color: CLAUDE_BRAND_COLOR,
-      command: "claude --dangerously-skip-permissions",
+      command: agentCommand("claude", DEFAULT_CLAUDE_CONFIG_DIR, false),
+      agent: "claude",
+      configDir: DEFAULT_CLAUDE_CONFIG_DIR,
+      autoResume: true,
       themeId: undefined,
     });
 
   /** Add a harness suggestion as a new preset row. */
-  const addSuggestion = (h: HarnessDef) =>
+  const addSuggestion = (h: HarnessDef) => {
+    const agent = h.id === "claude" || h.id === "codex" ? h.id : "custom";
+    const configDir =
+      agent === "claude"
+        ? DEFAULT_CLAUDE_CONFIG_DIR
+        : agent === "codex"
+          ? DEFAULT_CODEX_CONFIG_DIR
+          : undefined;
     addPrefilled({
       id: h.id,
       name: h.name,
       icon: h.icon,
       color: h.color,
-      command: h.command,
+      command: configDir ? agentCommand(agent, configDir, false) : h.command,
+      agent,
+      configDir,
+      autoResume: agent === "claude" || agent === "codex",
       themeId: undefined,
     });
+  };
 
-  const addCodexYolo = () =>
+  const addCodexAccount = () =>
     addPrefilled({
-      id: "codex-yolo",
-      name: "Codex YOLO",
+      id: "",
+      name: "Codex Account",
       icon: "◆",
-      color: "#10a37f",
-      command: "codex --dangerously-bypass-approvals-and-sandbox",
+      color: CODEX_BRAND_COLOR,
+      command: agentCommand("codex", DEFAULT_CODEX_CONFIG_DIR, false),
+      agent: "codex",
+      configDir: DEFAULT_CODEX_CONFIG_DIR,
+      autoResume: true,
       themeId: undefined,
     });
 
@@ -425,8 +925,28 @@ export function SettingsModal({
     }
   };
 
+  const tabItems: Array<{
+    id: SettingsTab;
+    label: string;
+    icon: string;
+    dirty: boolean;
+  }> = [
+    { id: "general", label: "General", icon: "tune", dirty: false },
+    { id: "intelligence", label: "Intelligence", icon: "auto_awesome", dirty: false },
+    { id: "updates", label: "Updates", icon: "system_update", dirty: false },
+    { id: "diagnostics", label: "Diagnostics", icon: "monitor_heart", dirty: false },
+    { id: "themes", label: "Themes", icon: "palette", dirty: themesDirty },
+    { id: "presets", label: "Presets", icon: "terminal", dirty: presetsDirty },
+    { id: "snippets", label: "Snippets", icon: "bolt", dirty: snippetsDirty },
+  ];
+  const activePreset = draft.find((p) => p.__key === activePresetKey) ?? draft[0];
+
   return (
-    <div className="aya-modal-backdrop" onClick={onClose}>
+    <div
+      className="aya-modal-backdrop"
+      onMouseDown={markBackdropMouseDown}
+      onClick={(e) => closeFromBackdropClick(e, onClose)}
+    >
       <div
         className="aya-modal aya-modal--settings"
         onClick={(e) => e.stopPropagation()}
@@ -435,9 +955,13 @@ export function SettingsModal({
           <div
             className="aya-modal-backdrop"
             style={{ zIndex: 10 }}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              markBackdropMouseDown(e);
+            }}
             onClick={(e) => {
               e.stopPropagation();
-              setShowUsageConsent(false);
+              closeFromBackdropClick(e, () => setShowUsageConsent(false));
             }}
           >
             <div
@@ -483,61 +1007,152 @@ export function SettingsModal({
             </div>
           </div>
         )}
-        {/* === Theme section === */}
-        <div className="aya-modal-title">Terminal theme</div>
-        <div className="aya-modal-hint">
-          Color scheme for all terminals. Import iTerm2 <code>.itermcolors</code>{" "}
-          or Windows Terminal JSON files — both are converted to xterm.js's
-          native format internally.
-        </div>
-
-        <div className="aya-theme-list">
-          {themes.map((t) => (
-            <label key={t.id} className="aya-theme-row">
-              <input
-                type="radio"
-                name="active-theme"
-                checked={t.id === activeThemeId}
-                onChange={() => setActiveTheme(t.id)}
-              />
-              <ThemeSwatch theme={t} />
-              <span className="aya-theme-name">{t.name}</span>
+        <div className="aya-settings-chrome">
+          <div className="aya-settings-toolbar" role="tablist" aria-label="Settings">
+            {tabItems.map((item) => (
               <button
-                className="aya-settings-row-close"
-                onClick={() => deleteTheme(t.id)}
-                title="Delete this theme"
+                key={item.id}
+                data-testid="settings-tab"
+                type="button"
+                role="tab"
+                aria-selected={activeTab === item.id}
+                className={`aya-settings-tab ${
+                  activeTab === item.id ? "aya-settings-tab--active" : ""
+                }`}
+                onClick={() => setActiveTab(item.id)}
               >
-                ×
+                <span className="aya-settings-tab-icon">
+                  <SettingsIcon name={item.icon} />
+                </span>
+                <span>{item.label}</span>
+                {item.dirty && <span className="aya-settings-tab-dirty" />}
               </button>
-            </label>
-          ))}
-          <button className="aya-settings-add" onClick={importTheme}>
-            ＋ Import theme (.itermcolors / .json)
-          </button>
-          {importError && (
-            <div className="aya-settings-errors" style={{ marginTop: 8 }}>
-              Import failed: {importError}
-            </div>
-          )}
-        </div>
+            ))}
+          </div>
 
-        <hr className="aya-settings-divider" />
+          <div className="aya-settings-pane-shell">
+            {activeTab === "themes" && (
+              <section className="aya-settings-pane">
+                <SettingsHeader icon="palette" title="Themes">
+                  Terminal color schemes, including imported iTerm2 and Windows
+                  Terminal themes.
+                </SettingsHeader>
 
-        {/* === General section === */}
-        <div className="aya-modal-title">General</div>
-        <div className="aya-settings-general">
-          <div className="aya-settings-general-row">
-            <div>
-              <div className="aya-settings-general-title">
-                aya command-line tool
-              </div>
-              <div className="aya-modal-hint">
-                {cliStatus?.installed
-                  ? `Installed at ${cliStatus.path}`
-                  : cliStatus?.message ?? "Not installed"}
-              </div>
+                <div className="aya-theme-list">
+                  {themes.map((t) => (
+                    <label key={t.id} className="aya-theme-row">
+                      <input
+                        type="radio"
+                        name="active-theme"
+                        checked={t.id === activeThemeId}
+                        onChange={() => setActiveTheme(t.id)}
+                      />
+                      <ThemeSwatch theme={t} />
+                      <span className="aya-theme-name">{t.name}</span>
+                      <button
+                        className="aya-settings-row-close"
+                        onClick={() => deleteTheme(t.id)}
+                        title="Delete this theme"
+                      >
+                        ×
+                      </button>
+                    </label>
+                  ))}
+                  <button className="aya-settings-add" onClick={importTheme}>
+                    <SettingsIcon name="add" />
+                    Import theme
+                  </button>
+                  {importError && (
+                    <div className="aya-settings-errors" style={{ marginTop: 8 }}>
+                      Import failed: {importError}
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {activeTab === "general" && (
+              <section className="aya-settings-pane">
+                <SettingsHeader icon="tune" title="General" />
+                <div className="aya-settings-general">
+          <SettingsRow
+            icon="contrast"
+            title="Appearance"
+            control={(
+              <div className="aya-settings-segmented" aria-label="Appearance">
+              {(["system", "light", "dark"] as const).map((theme) => (
+                <button
+                  key={theme}
+                  data-testid="appearance-segment"
+                  type="button"
+                  className={`aya-settings-segment ${
+                    appThemePreference === theme
+                      ? "aya-settings-segment--active"
+                      : ""
+                  }`}
+                  onClick={() => onAppThemePreferenceChange(theme)}
+                >
+                  {theme === "system"
+                    ? "System"
+                    : theme === "light"
+                      ? "Light"
+                      : "Dark"}
+                </button>
+              ))}
             </div>
-            <button
+            )}
+          >
+            Follow system appearance or pin Aya.
+          </SettingsRow>
+          <SettingsRow
+            icon="text_fields"
+            title="Terminal font"
+            control={(
+              <input
+                className="aya-modal-input"
+                style={{ width: 320 }}
+                value={terminalFontFamily}
+                onChange={(e) => onTerminalFontFamilyChange(e.target.value)}
+                placeholder={'"Berkeley Mono", monospace'}
+                spellCheck={false}
+              />
+            )}
+          >
+            Leave empty to use Aya's default terminal font.
+          </SettingsRow>
+          <SettingsRow
+            icon="keyboard_option_key"
+            title="Mac Option key"
+            control={(
+              <div className="aya-settings-segmented" aria-label="Mac Option key">
+              {([
+                ["right-option-compose", "Right Option composes"],
+                ["option-as-meta", "All Option = Meta"],
+              ] as const).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  data-testid="mac-option-segment"
+                  type="button"
+                  className={`aya-settings-segment ${
+                    macOptionKeyMode === mode
+                      ? "aya-settings-segment--active"
+                      : ""
+                  }`}
+                  onClick={() => onMacOptionKeyModeChange(mode)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            )}
+          >
+            Left Option as Meta, right Option for accents.
+          </SettingsRow>
+          <SettingsRow
+            icon="terminal"
+            title="aya command-line tool"
+            control={(
+              <button
               className="aya-modal-btn"
               onClick={installCli}
               disabled={cliInstalling}
@@ -548,19 +1163,328 @@ export function SettingsModal({
                   ? "Reinstall"
                   : "Install"}
             </button>
-          </div>
-          <div className="aya-settings-general-row">
-            <div>
-              <div className="aya-settings-general-title">
-                Claude usage chip
+            )}
+          >
+            {cliStatus?.message ??
+              (cliStatus?.installed
+                ? `Installed at ${cliStatus.path}`
+                : "Not installed")}
+          </SettingsRow>
+          <SettingsRow
+            icon="donut_large"
+            title="Display harness name in usage icons"
+            control={(
+              <div className="aya-settings-segmented" aria-label="Usage icons">
+                {([
+                  [true, "Show names"],
+                  [false, "Compact rings"],
+                ] as const).map(([show, label]) => (
+                  <button
+                    key={String(show)}
+                    type="button"
+                    className={`aya-settings-segment ${
+                      showUsageHarnessName === show
+                        ? "aya-settings-segment--active"
+                        : ""
+                    }`}
+                    onClick={() => onShowUsageHarnessNameChange(show)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
-              <div className="aya-modal-hint">
-                {usageHook?.installed
-                  ? "On — a Claude Code hook updates the account-wide usage chip."
-                  : "Off — shows your account-wide Claude limit (5h + weekly) in the title bar."}
+            )}
+          >
+            Show Claude/Codex names in the top-bar usage icons, or use compact
+            progress rings.
+          </SettingsRow>
+          <SettingsRow
+            icon="merge"
+            title="GitHub link in the status bar"
+            control={(
+              <div className="aya-settings-segmented" aria-label="GitHub link">
+                {([
+                  [true, "Show"],
+                  [false, "Hide"],
+                ] as const).map(([show, label]) => (
+                  <button
+                    key={String(show)}
+                    type="button"
+                    className={`aya-settings-segment ${
+                      showGitHubLink === show
+                        ? "aya-settings-segment--active"
+                        : ""
+                    }`}
+                    onClick={() => onShowGitHubLinkChange(show)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
-            </div>
-            <button
+            )}
+          >
+            Show a link to the current branch's pull request next to the branch
+            name, falling back to the branch page on GitHub.{" "}
+            {ghAvailable === false
+              ? "Requires the GitHub CLI (gh), which isn't installed."
+              : "Requires the GitHub CLI (gh)."}
+          </SettingsRow>
+          <SettingsRow
+            icon="view_sidebar"
+            title={
+              <>
+                Window layout{" "}
+                <span className="aya-settings-experimental">Experimental</span>
+              </>
+            }
+            control={(
+              <div className="aya-settings-segmented" aria-label="Window layout">
+                {([
+                  ["classic", "Projects on top"],
+                  ["projects-left", "Projects on left"],
+                ] as const).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={`aya-settings-segment ${
+                      layoutMode === mode ? "aya-settings-segment--active" : ""
+                    }`}
+                    onClick={() => onLayoutModeChange(mode)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          >
+            Classic keeps project tabs on top with the terminal list on the
+            left. "Projects on left" moves projects into a left rail and puts
+            terminal tabs along the top. Split panes are disabled in this layout.
+          </SettingsRow>
+          <SettingsRow
+            icon="account_tree"
+            title={
+              <>
+                Enable worktrees support{" "}
+                <span className="aya-settings-experimental">Experimental</span>
+              </>
+            }
+            control={(
+              <div className="aya-settings-segmented" aria-label="Worktrees support">
+                {([
+                  [true, "On"],
+                  [false, "Off"],
+                ] as const).map(([enabled, label]) => (
+                  <button
+                    key={String(enabled)}
+                    type="button"
+                    className={`aya-settings-segment ${
+                      worktreesEnabled === enabled
+                        ? "aya-settings-segment--active"
+                        : ""
+                    }`}
+                    onClick={() => onWorktreesEnabledChange(enabled)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          >
+            Detect a project's git worktrees, group terminals by worktree, and
+            launch or create terminals in a chosen worktree.
+          </SettingsRow>
+          <SettingsRow
+            icon="manage_search"
+            title={
+              <>
+                Harness-aware search{" "}
+                <span className="aya-settings-experimental">Experimental</span>
+              </>
+            }
+            control={(
+              <div
+                className="aya-settings-segmented"
+                aria-label="Harness-aware search"
+              >
+                {([
+                  [true, "On"],
+                  [false, "Off"],
+                ] as const).map(([enabled, label]) => (
+                  <button
+                    key={String(enabled)}
+                    type="button"
+                    className={`aya-settings-segment ${
+                      harnessSearchEnabled === enabled
+                        ? "aya-settings-segment--active"
+                        : ""
+                    }`}
+                    onClick={() => onHarnessSearchEnabledChange(enabled)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          >
+            Adds a History mode to the find bar (Cmd+F) in Claude Code and
+            Codex tabs: searches the session transcripts those agents already
+            keep on disk for the tab's directory, so hits survive TUI redraws
+            and restarts. Local files only; nothing is indexed or uploaded.
+          </SettingsRow>
+          <SettingsRow
+            icon="captive_portal"
+            title={
+              <>
+                Aya Web{" "}
+                <span className="aya-settings-experimental">Experimental</span>
+              </>
+            }
+            control={(
+              <div className="aya-settings-segmented" aria-label="Aya Web">
+                {([
+                  [true, "On"],
+                  [false, "Off"],
+                ] as const).map(([enabled, label]) => (
+                  <button
+                    key={String(enabled)}
+                    type="button"
+                    className={`aya-settings-segment ${
+                      (ayaWeb?.enabled ?? false) === enabled
+                        ? "aya-settings-segment--active"
+                        : ""
+                    }`}
+                    disabled={ayaWebBusy || !ayaWeb}
+                    onClick={() => void applyAyaWeb({ enabled })}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          >
+            Use Aya from a browser on another computer, behind a user and
+            password. Signing in gives full shell access to this machine and
+            there is no TLS — only expose it on a network you trust (LAN,
+            Tailscale/WireGuard, or an SSH tunnel).
+            {(ayaWebError ?? ayaWeb?.error) && (
+              <div style={{ color: "#f85149", marginTop: 6 }}>
+                {ayaWebError ?? ayaWeb?.error}
+              </div>
+            )}
+            {ayaWeb?.enabled && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                  marginTop: 8,
+                }}
+              >
+                <div>
+                  {ayaWeb.running ? (
+                    <>
+                      Running at{" "}
+                      {ayaWeb.urls.map((url, i) => (
+                        <span key={url}>
+                          {i > 0 && ", "}
+                          <a
+                            href={url}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              void window.aya.openUrl(url);
+                            }}
+                          >
+                            {url}
+                          </a>
+                        </span>
+                      ))}
+                      {" — "}
+                      {ayaWeb.clients} client{ayaWeb.clients === 1 ? "" : "s"}{" "}
+                      connected.
+                    </>
+                  ) : (
+                    "Enabled but not running."
+                  )}
+                </div>
+                <div>
+                  Sign in as <code>{ayaWeb.user}</code> with{" "}
+                  {ayaWeb.generatedPassword ? (
+                    <>
+                      password <code>{ayaWeb.generatedPassword}</code>
+                    </>
+                  ) : (
+                    "your custom password"
+                  )}
+                  {"  "}
+                  <button
+                    className="aya-modal-btn"
+                    type="button"
+                    disabled={ayaWebBusy}
+                    onClick={() => void regenerateAyaWebPassword()}
+                    style={{ marginLeft: 8 }}
+                  >
+                    Regenerate password
+                  </button>
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 6,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <input
+                    className="aya-modal-input"
+                    style={{ width: 70 }}
+                    aria-label="Aya Web port"
+                    value={ayaWebPortDraft}
+                    onChange={(e) => setAyaWebPortDraft(e.target.value)}
+                    placeholder="Port"
+                  />
+                  <input
+                    className="aya-modal-input"
+                    style={{ width: 120 }}
+                    aria-label="Aya Web user"
+                    value={ayaWebUserDraft}
+                    onChange={(e) => setAyaWebUserDraft(e.target.value)}
+                    placeholder="User"
+                  />
+                  <input
+                    className="aya-modal-input"
+                    style={{ width: 160 }}
+                    aria-label="Aya Web custom password"
+                    type="password"
+                    value={ayaWebPasswordDraft}
+                    onChange={(e) => setAyaWebPasswordDraft(e.target.value)}
+                    placeholder="New password (optional)"
+                  />
+                  <button
+                    className="aya-modal-btn"
+                    type="button"
+                    disabled={ayaWebBusy}
+                    onClick={() =>
+                      void applyAyaWeb({
+                        port: Number(ayaWebPortDraft),
+                        user: ayaWebUserDraft,
+                        ...(ayaWebPasswordDraft
+                          ? { password: ayaWebPasswordDraft }
+                          : {}),
+                      })
+                    }
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
+            )}
+          </SettingsRow>
+          <SettingsRow
+            icon="donut_large"
+            title="Claude usage chip"
+            control={(
+              <button
               className="aya-modal-btn"
               onClick={
                 usageHook?.installed
@@ -575,15 +1499,17 @@ export function SettingsModal({
                   ? "Disable"
                   : "Enable"}
             </button>
-          </div>
-          <div className="aya-settings-general-row">
-            <div>
-              <div className="aya-settings-general-title">Notifications</div>
-              <div className="aya-modal-hint">
-                macOS permission: {notificationPermission}
-              </div>
-            </div>
-            <button
+            )}
+          >
+            {usageHook?.installed
+              ? "On. Updated by a Claude Code hook."
+              : "Off. Shows Claude limits."}
+          </SettingsRow>
+          <SettingsRow
+            icon="notifications"
+            title="Notifications"
+            control={(
+              <button
               className="aya-modal-btn"
               onClick={refreshNotificationPermission}
             >
@@ -593,53 +1519,456 @@ export function SettingsModal({
                   ? "Enable"
                   : "Enabled"}
             </button>
-          </div>
-        </div>
-
-        <hr className="aya-settings-divider" />
-
-        {/* === Presets section === */}
-        <div className="aya-modal-title">Terminal presets</div>
-        <div className="aya-modal-hint">
-          Each preset is a launcher button in the sidebar. The command runs in
-          your shell in the project directory.
-        </div>
-
-        <div className="aya-settings-list">
-          <div className="aya-settings-row aya-settings-row--head">
-            <span style={{ width: PRESET_ROW_ICON_WIDTH }}>Icon</span>
-            <span style={{ width: PRESET_ROW_NAME_WIDTH }}>Name</span>
-            <span style={{ flex: 1 }}>Command</span>
-            <span style={{ width: PRESET_ROW_THEME_WIDTH }}>Theme</span>
-            <span style={{ width: PRESET_ROW_COLOR_WIDTH }}>Color</span>
-            <span style={{ width: 28 }} />
-          </div>
-          {draft.map((row) => {
-            const warn = looksNonInteractive(row.command);
-            return (
-              <div className="aya-settings-row" key={row.__key}>
-                <input
-                  className="aya-modal-input aya-settings-icon-input"
-                  style={{ width: PRESET_ROW_ICON_WIDTH }}
-                  value={row.icon}
-                  maxLength={3}
-                  onChange={(e) => updateRow(row.__key, { icon: e.target.value })}
-                />
-                <input
-                  className="aya-modal-input"
-                  style={{ width: PRESET_ROW_NAME_WIDTH }}
-                  value={row.name}
-                  onChange={(e) => updateRow(row.__key, { name: e.target.value })}
-                  placeholder="Display name"
-                />
-                <div
-                  style={{
-                    flex: 1,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 2,
-                  }}
+            )}
+          >
+            macOS permission: {notificationPermission}
+          </SettingsRow>
+          {micStatus && micStatus !== "unsupported" && (
+            <SettingsRow
+              icon="mic"
+              title="Microphone"
+              control={(
+                <button
+                  className="aya-modal-btn"
+                  onClick={handleMicAction}
+                  disabled={micBusy}
                 >
+                  {micBusy
+                    ? "Working..."
+                    : micStatus === "not-determined"
+                      ? "Allow…"
+                      : micStatus === "granted"
+                        ? "Manage"
+                        : "Open System Settings"}
+                </button>
+              )}
+            >
+              Aya never records. Used only by terminal tools you run (e.g. a
+              /voice plugin). macOS permission: {micStatus}
+            </SettingsRow>
+          )}
+                </div>
+              </section>
+            )}
+
+            {activeTab === "intelligence" && (
+              <section className="aya-settings-pane">
+                <SettingsHeader icon="auto_awesome" title="Intelligence">
+                  Experimental summaries for project tabs and terminal rows.
+                </SettingsHeader>
+                <div className="aya-intelligence-frame">
+                  <div className="aya-intelligence-head">
+                    <div className="aya-settings-row-icon">
+                      <SettingsIcon name="auto_awesome" />
+                    </div>
+                    <div>
+                      <div className="aya-settings-general-title">
+                        Aya Intelligence <span>Experimental</span>
+                      </div>
+                      <div className="aya-modal-hint">
+                        Short local or API-backed summaries for project tabs and
+                        terminal rows. Aya sends only recent terminal output.
+                      </div>
+                    </div>
+                  </div>
+                  <div className="aya-intelligence-grid">
+                    <div className="aya-intelligence-field">
+                      <label>Summaries</label>
+                      <div className="aya-settings-segmented" aria-label="Aya Intelligence">
+                        {([
+                          [true, "On"],
+                          [false, "Off"],
+                        ] as const).map(([enabled, label]) => (
+                          <button
+                            key={String(enabled)}
+                            type="button"
+                            className={`aya-settings-segment ${
+                              localSummariesEnabled === enabled
+                                ? "aya-settings-segment--active"
+                                : ""
+                            }`}
+                            onClick={() => onLocalSummariesEnabledChange(enabled)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="aya-intelligence-field">
+                      <label>Provider</label>
+                      <div className="aya-settings-segmented" aria-label="Aya Intelligence provider">
+                        {([
+                          ["apple", "Apple"],
+                          ["ollama", "Ollama"],
+                          ["openai", "OpenAI-like"],
+                        ] as const).map(([provider, label]) => (
+                          <button
+                            key={provider}
+                            type="button"
+                            disabled={provider === "apple" && window.aya.platform !== "darwin"}
+                            className={`aya-settings-segment ${
+                              ayaIntelligence.provider === provider
+                                ? "aya-settings-segment--active"
+                                : ""
+                            }`}
+                            onClick={() => patchAyaIntelligence({ provider })}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  {ayaIntelligence.provider === "apple" && (
+                    <div className="aya-intelligence-status">
+                      {window.aya.platform !== "darwin"
+                        ? "Apple Intelligence is only available on macOS."
+                        : localSummaryStatus === "checking"
+                          ? "Checking Apple Intelligence availability."
+                          : localSummaryStatus === "unavailable"
+                            ? "Apple Intelligence model unavailable on this Mac."
+                            : "Apple Intelligence is selected."}
+                    </div>
+                  )}
+                  {ayaIntelligence.provider === "ollama" && (
+                    <div className="aya-intelligence-provider">
+                      <div className="aya-intelligence-field">
+                        <label>Ollama model</label>
+                        <input
+                          className="aya-modal-input"
+                          value={ayaIntelligence.ollamaModel}
+                          onChange={(e) =>
+                            patchAyaIntelligence({ ollamaModel: e.target.value })
+                          }
+                          placeholder="gemma4:e4b"
+                          spellCheck={false}
+                        />
+                      </div>
+                      <div className="aya-intelligence-actions">
+                        <button
+                          className="aya-modal-btn"
+                          onClick={refreshOllamaStatus}
+                          disabled={ollamaBusy}
+                        >
+                          {ollamaBusy ? "Working..." : "Refresh"}
+                        </button>
+                        <button
+                          className="aya-modal-btn"
+                          onClick={pullOllamaModel}
+                          disabled={
+                            ollamaBusy ||
+                            !ollamaStatus?.installed ||
+                            !ayaIntelligence.ollamaModel.trim()
+                          }
+                        >
+                          {ollamaBusy ? "Downloading..." : "Download model"}
+                        </button>
+                      </div>
+                      <div className="aya-intelligence-status">
+                        {!ollamaStatus
+                          ? "Checking Ollama."
+                          : !ollamaStatus.installed
+                            ? "Ollama was not found on PATH."
+                            : !ollamaStatus.running
+                              ? "Ollama is installed, but its local API is not running."
+                              : ollamaStatus.recommendedModelInstalled
+                                ? `${ollamaStatus.recommendedModel} is installed.`
+                                : `${ollamaStatus.recommendedModel} is not installed yet.`}
+                        {ollamaStatus?.message ? ` ${ollamaStatus.message}` : ""}
+                      </div>
+                    </div>
+                  )}
+                  {ayaIntelligence.provider === "openai" && (
+                    <div className="aya-intelligence-provider">
+                      <div className="aya-intelligence-field">
+                        <label>Base URL</label>
+                        <input
+                          className="aya-modal-input"
+                          value={ayaIntelligence.openAiBaseUrl}
+                          onChange={(e) =>
+                            patchAyaIntelligence({ openAiBaseUrl: e.target.value })
+                          }
+                          placeholder="http://localhost:11434/v1"
+                          spellCheck={false}
+                        />
+                      </div>
+                      <div className="aya-intelligence-grid">
+                        <div className="aya-intelligence-field">
+                          <label>Model</label>
+                          <input
+                            className="aya-modal-input"
+                            value={ayaIntelligence.openAiModel}
+                            onChange={(e) =>
+                              patchAyaIntelligence({ openAiModel: e.target.value })
+                            }
+                            placeholder="gpt-4.1-mini"
+                            spellCheck={false}
+                          />
+                        </div>
+                        <div className="aya-intelligence-field">
+                          <label>API key</label>
+                          <input
+                            className="aya-modal-input"
+                            type="password"
+                            value={ayaIntelligence.openAiApiKey}
+                            onChange={(e) =>
+                              patchAyaIntelligence({ openAiApiKey: e.target.value })
+                            }
+                            placeholder="Optional for local servers"
+                            spellCheck={false}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div className="aya-intelligence-actions">
+                    <button
+                      className="aya-modal-btn"
+                      onClick={testAyaIntelligence}
+                      disabled={intelligenceTestBusy || !localSummariesEnabled}
+                    >
+                      {intelligenceTestBusy ? "Testing..." : "Test summary"}
+                    </button>
+                    <button
+                      className="aya-modal-btn"
+                      onClick={onRefreshSummaries}
+                      disabled={!localSummariesEnabled}
+                    >
+                      Refresh summaries now
+                    </button>
+                  </div>
+                  {intelligenceTestResult && (
+                    <div className="aya-intelligence-status">
+                      {intelligenceTestResult}
+                    </div>
+                  )}
+                  <div className="aya-intelligence-status">
+                    Auto: {autoSummaryStatus.terminalCount} terminal
+                    {autoSummaryStatus.terminalCount === 1 ? "" : "s"},{" "}
+                    {autoSummaryStatus.terminalsWithLines} with output,{" "}
+                    {autoSummaryStatus.totalLines} collected lines. Last:{" "}
+                    {autoSummaryStatus.lastEvent}
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {activeTab === "updates" && (
+              <section className="aya-settings-pane">
+                <SettingsHeader icon="system_update" title="Updates">
+                  App version checks and restart-to-update controls.
+                </SettingsHeader>
+                <div className="aya-settings-general">
+                  <SettingsRow
+                    icon="system_update"
+                    title="Updates"
+                    control={(
+                      <div className="aya-settings-button-row">
+                        <button
+                          className="aya-modal-btn"
+                          onClick={checkUpdates}
+                          disabled={
+                            updateBusy ||
+                            updateStatus?.phase === "checking" ||
+                            updateStatus?.phase === "downloading" ||
+                            updateStatus?.supported === false
+                          }
+                        >
+                          {updateBusy || updateStatus?.phase === "checking"
+                            ? "Checking..."
+                            : "Check"}
+                        </button>
+                        <button
+                          className="aya-modal-btn"
+                          onClick={installUpdate}
+                          disabled={updateStatus?.phase !== "downloaded"}
+                        >
+                          Restart to update
+                        </button>
+                      </div>
+                    )}
+                  >
+                    {updateStatus?.phase === "downloaded"
+                      ? updateStatus.message
+                      : updateStatus?.phase === "downloading"
+                        ? `Downloading ${Math.round(updateStatus.percent ?? 0)}%.`
+                        : updateStatus?.message ??
+                          `Current version ${updateStatus?.currentVersion ?? ""}`.trim()}
+                  </SettingsRow>
+                  {updateStatus?.phase === "downloading" && (
+                    <div className="aya-settings-update-progress" aria-hidden="true">
+                      <span style={{ width: `${Math.round(updateStatus.percent ?? 0)}%` }} />
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {activeTab === "diagnostics" && (
+              <section className="aya-settings-pane">
+                <SettingsHeader icon="monitor_heart" title="Diagnostics">
+                  Maintenance tools and a copyable support report.
+                </SettingsHeader>
+                <div className="aya-settings-general">
+                  <SettingsRow
+                    icon="restart_alt"
+                    title="PTY host"
+                    control={(
+                      <button
+                        className="aya-modal-btn"
+                        onClick={() => {
+                          if (
+                            confirm(
+                              "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.",
+                            )
+                          ) {
+                            void onRestartPtyHost();
+                          }
+                        }}
+                      >
+                        Restart
+                      </button>
+                    )}
+                  >
+                    Restarts the background terminal host. Use after an update if
+                    terminals behave like an older version.
+                  </SettingsRow>
+                  <SettingsRow
+                    icon="monitor_heart"
+                    title="Diagnostics"
+                    control={(
+                      <div className="aya-settings-button-row">
+                        <button
+                          className="aya-modal-btn"
+                          onClick={refreshDiagnostics}
+                          disabled={diagnosticsBusy}
+                        >
+                          {diagnosticsBusy ? "Checking..." : "Refresh"}
+                        </button>
+                        <button
+                          className="aya-modal-btn"
+                          onClick={copyDiagnostics}
+                          disabled={!diagnosticsJson}
+                        >
+                          {diagnosticsCopied ? "Copied" : "Copy JSON"}
+                        </button>
+                      </div>
+                    )}
+                  >
+                    App, PTY host, sockets, presets, usage hook, and remote-ready state.
+                  </SettingsRow>
+                  {(diagnostics || diagnosticsError) && (
+                    <div className="aya-settings-diagnostics">
+                      {diagnosticsError ? (
+                        <div className="aya-settings-errors">{diagnosticsError}</div>
+                      ) : diagnostics ? (
+                        <>
+                          <div className="aya-settings-diagnostics-grid">
+                            <div>
+                              <span>Mode</span>
+                              <strong>{diagnostics.app.mode}</strong>
+                            </div>
+                            <div>
+                              <span>Version</span>
+                              <strong>{diagnostics.app.version}</strong>
+                            </div>
+                            <div>
+                              <span>PTYs</span>
+                              <strong>{diagnostics.ptyHost.ptyCount}</strong>
+                            </div>
+                            <div>
+                              <span>PTY host</span>
+                              <strong>{diagnostics.ptyHost.stale ? "stale" : "current"}</strong>
+                            </div>
+                            <div>
+                              <span>Presets</span>
+                              <strong>{diagnostics.presets.length}</strong>
+                            </div>
+                            <div>
+                              <span>Remote projects</span>
+                              <strong>{diagnostics.projects.remote}</strong>
+                            </div>
+                          </div>
+                          <pre className="aya-settings-diagnostics-json">
+                            {diagnosticsJson}
+                          </pre>
+                        </>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {activeTab === "presets" && (
+              <section className="aya-settings-pane">
+                <SettingsHeader icon="terminal" title="Presets">
+                  Sidebar launchers for shells and agent CLIs. Use multiple
+                  Claude or Codex accounts by giving each one its own config
+                  directory.
+                </SettingsHeader>
+
+                <div className="aya-settings-list aya-settings-presets">
+          <div className="aya-settings-add-row">
+            <button className="aya-settings-add" onClick={addClaudeAccount}>
+              <SettingsIcon name="add" />
+              Add Claude
+            </button>
+            <button className="aya-settings-add" onClick={addCodexAccount}>
+              <SettingsIcon name="add" />
+              Add Codex
+            </button>
+            <button className="aya-settings-add" onClick={addRow}>
+              <SettingsIcon name="add" />
+              Add custom
+            </button>
+          </div>
+
+          {draft.length > 0 && (
+            <div className="aya-preset-selector">
+              <div
+                className="aya-preset-tabs"
+                role="tablist"
+                aria-label="Presets"
+              >
+                {draft.map((row) => (
+                  <button
+                    key={row.__key}
+                    type="button"
+                    role="tab"
+                    aria-selected={row.__key === activePreset?.__key}
+                    className={`aya-preset-tab ${
+                      row.__key === activePreset?.__key
+                        ? "aya-preset-tab--active"
+                        : ""
+                    }`}
+                    onClick={() => setActivePresetKey(row.__key)}
+                    title={row.name || row.command || "Untitled preset"}
+                  >
+                    <span
+                      className="aya-preset-tab-icon"
+                      style={row.color ? { color: row.color } : undefined}
+                    >
+                      {row.icon || "•"}
+                    </span>
+                    <span className="aya-preset-tab-name">
+                      {row.name || "Untitled"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activePreset &&
+            (() => {
+              const row = activePreset;
+              const warn = looksNonInteractive(row.command);
+              const isAgent = row.agent === "claude" || row.agent === "codex";
+              return (
+              <div className="aya-preset-card" key={row.__key}>
+                <div className="aya-preset-section">
+                  <div className="aya-settings-section-title">Command</div>
                   <input
                     className="aya-modal-input"
                     value={row.command}
@@ -656,63 +1985,187 @@ export function SettingsModal({
                     </span>
                   )}
                 </div>
-                <select
-                  className="aya-modal-input"
-                  style={{ width: PRESET_ROW_THEME_WIDTH }}
-                  value={row.themeId ?? ""}
-                  onChange={(e) =>
-                    updateRow(row.__key, {
-                      themeId: e.target.value || undefined,
-                    })
-                  }
-                  title="Per-preset theme override (empty = use default)"
-                >
-                  <option value="">Default</option>
-                  {themes.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  className="aya-modal-input"
-                  style={{ width: PRESET_ROW_COLOR_WIDTH }}
-                  value={row.color}
-                  onChange={(e) =>
-                    updateRow(row.__key, { color: e.target.value })
-                  }
-                  placeholder={CLAUDE_BRAND_COLOR}
-                  spellCheck={false}
-                />
-                <button
-                  className="aya-settings-row-close"
-                  onClick={() => removeRow(row.__key)}
-                  title="Remove preset"
-                >
-                  ×
-                </button>
+
+                <div className="aya-preset-section">
+                  <div className="aya-settings-section-title">Account</div>
+                  <div className="aya-preset-grid aya-preset-grid--account">
+                    <label>
+                      <span>Type</span>
+                      <select
+                        className="aya-modal-input"
+                        value={row.agent ?? "custom"}
+                        onChange={(e) => {
+                          const agent = e.target.value as Preset["agent"];
+                          if (agent === "claude") {
+                            updateRow(row.__key, {
+                              agent,
+                              icon: row.icon || "✻",
+                              color: row.color || CLAUDE_BRAND_COLOR,
+                              configDir:
+                                row.configDir || DEFAULT_CLAUDE_CONFIG_DIR,
+                              command: agentCommand(
+                                agent,
+                                row.configDir || DEFAULT_CLAUDE_CONFIG_DIR,
+                                row.unsafeMode,
+                              ),
+                              autoResume: row.autoResume ?? true,
+                            });
+                          } else if (agent === "codex") {
+                            updateRow(row.__key, {
+                              agent,
+                              icon: row.icon || "◆",
+                              color: row.color || CODEX_BRAND_COLOR,
+                              configDir:
+                                row.configDir || DEFAULT_CODEX_CONFIG_DIR,
+                              command: agentCommand(
+                                agent,
+                                row.configDir || DEFAULT_CODEX_CONFIG_DIR,
+                                row.unsafeMode,
+                              ),
+                              autoResume: row.autoResume ?? true,
+                            });
+                          } else {
+                            updateAgentFields(row.__key, { agent: "custom" });
+                          }
+                        }}
+                      >
+                        <option value="claude">Claude</option>
+                        <option value="codex">Codex</option>
+                        <option value="custom">Custom</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Name</span>
+                      <input
+                        className="aya-modal-input"
+                        value={row.name}
+                        onChange={(e) =>
+                          updateRow(row.__key, { name: e.target.value })
+                        }
+                        placeholder="Display name"
+                      />
+                    </label>
+                    {isAgent && (
+                      <label>
+                        <span>Config directory</span>
+                        <input
+                          className="aya-modal-input"
+                          value={row.configDir ?? ""}
+                          onChange={(e) =>
+                            updateAgentFields(row.__key, {
+                              configDir: e.target.value,
+                            })
+                          }
+                          placeholder={
+                            row.agent === "claude"
+                              ? DEFAULT_CLAUDE_CONFIG_DIR
+                              : DEFAULT_CODEX_CONFIG_DIR
+                          }
+                          spellCheck={false}
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
+
+                <div className="aya-preset-section">
+                  <div className="aya-settings-section-title">Appearance</div>
+                  <div className="aya-preset-grid aya-preset-grid--appearance">
+                    <label>
+                      <span>Icon</span>
+                      <input
+                        className="aya-modal-input aya-settings-icon-input"
+                        value={row.icon}
+                        maxLength={3}
+                        onChange={(e) =>
+                          updateRow(row.__key, { icon: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label>
+                      <span>Icon color</span>
+                      <input
+                        className="aya-modal-input"
+                        value={row.color}
+                        onChange={(e) =>
+                          updateRow(row.__key, { color: e.target.value })
+                        }
+                        placeholder={CLAUDE_BRAND_COLOR}
+                        spellCheck={false}
+                      />
+                    </label>
+                    <label>
+                      <span>Theme</span>
+                      <select
+                        className="aya-modal-input"
+                        value={row.themeId ?? ""}
+                        onChange={(e) =>
+                          updateRow(row.__key, {
+                            themeId: e.target.value || undefined,
+                          })
+                        }
+                      >
+                        <option value="">Default</option>
+                        {themes.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="aya-preset-section">
+                  <div className="aya-settings-section-title">Behavior</div>
+                  <div className="aya-preset-toggle-row">
+                    <label className="aya-preset-toggle">
+                      <span>
+                        <strong>Auto-resume restored tabs</strong>
+                        <small>
+                          Adds the agent's resume argument after Aya restarts a PTY.
+                        </small>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={!!row.autoResume}
+                        onChange={(e) =>
+                          updateRow(row.__key, { autoResume: e.target.checked })
+                        }
+                      />
+                    </label>
+                    {isAgent && (
+                      <label className="aya-preset-toggle">
+                        <span>
+                          <strong>Unsafe approvals</strong>
+                          <small>Adds the agent's unsafe approval flag.</small>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={!!row.unsafeMode}
+                          onChange={(e) =>
+                            updateAgentFields(row.__key, {
+                              unsafeMode: e.target.checked,
+                            })
+                          }
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
+
+                <div className="aya-preset-remove-row">
+                  <button
+                    type="button"
+                    className="aya-settings-add aya-preset-remove-btn"
+                    onClick={() => removeRow(row.__key)}
+                  >
+                    Remove this preset
+                  </button>
+                </div>
               </div>
-            );
-          })}
-          <div className="aya-settings-add-row">
-            <button className="aya-settings-add" onClick={addRow}>
-              ＋ Add preset
-            </button>
-            <button
-              className="aya-settings-add aya-settings-add--yolo"
-              onClick={addClaudeYolo}
-              title="claude --dangerously-skip-permissions"
-            >
-              ＋ Claude YOLO
-            </button>
-            <button
-              className="aya-settings-add aya-settings-add--yolo"
-              onClick={addCodexYolo}
-              title="codex --dangerously-bypass-approvals-and-sandbox"
-            >
-              ＋ Codex YOLO
-            </button>
-          </div>
+              );
+            })()}
 
           {suggested.length > 0 && (
             <div className="aya-settings-suggested">
@@ -734,41 +2187,31 @@ export function SettingsModal({
                     >
                       {h.icon}
                     </span>
-                    <span>＋ {h.name}</span>
+                    <span>Add {h.name}</span>
                   </button>
                 ))}
               </div>
             </div>
           )}
-        </div>
+                </div>
 
-        {errors.length > 0 && (
-          <div className="aya-settings-errors">
-            {errors.map((e, i) => (
-              <div key={i}>• {e}</div>
-            ))}
-          </div>
-        )}
+                {errors.length > 0 && (
+                  <div className="aya-settings-errors">
+                    {errors.map((e, i) => (
+                      <div key={i}>• {e}</div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
 
-        <hr className="aya-settings-divider" />
+            {activeTab === "snippets" && (
+              <section className="aya-settings-pane">
+                <SettingsHeader icon="bolt" title="Snippets">
+                  Reusable terminal text stored editor-side.
+                </SettingsHeader>
 
-        {/* === Snippets section === */}
-        <div className="aya-modal-title">Snippets</div>
-        <div className="aya-modal-hint">
-          Saved text you can inject into the active terminal from its snippet
-          drawer (the <strong>snippets</strong> button in a pane header). Toggle{" "}
-          <span className="aya-snippet-inline-ico" style={{ color: "#56d364" }}>
-            ▶
-          </span>{" "}
-          to run on send (adds Enter), or{" "}
-          <span className="aya-snippet-inline-ico" style={{ color: "#e3b341" }}>
-            ⏸
-          </span>{" "}
-          to only type it (you press Enter). Lives in Aya, not in an agent's
-          context.
-        </div>
-
-        <div className="aya-settings-list">
+                <div className="aya-settings-list">
           {snippetDraft.map((row) => (
             <div className="aya-settings-snippet-row" key={row.__key}>
               <button
@@ -820,15 +2263,24 @@ export function SettingsModal({
           ))}
           <div className="aya-settings-add-row">
             <button className="aya-settings-add" onClick={addSnippetRow}>
-              ＋ Add snippet
+              <SettingsIcon name="add" />
+              Add snippet
             </button>
+          </div>
+                </div>
+              </section>
+            )}
           </div>
         </div>
 
         <div className="aya-modal-actions aya-settings-actions">
-          <button className="aya-modal-btn" onClick={resetPresetsToDefaults}>
-            Reset presets to defaults
-          </button>
+          {activeTab === "presets" ? (
+            <button className="aya-modal-btn" onClick={resetPresetsToDefaults}>
+              Reset presets to defaults
+            </button>
+          ) : (
+            <div />
+          )}
           <div style={{ flex: 1 }} />
           <button className="aya-modal-btn" onClick={onClose}>
             Cancel

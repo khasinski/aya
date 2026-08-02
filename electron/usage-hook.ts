@@ -15,6 +15,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
 import { AYA_HOME, USAGE_FILE } from "./paths";
+import { listPresets } from "./presets";
+import { expandUserPath } from "./usage";
 
 // Claude Code's global settings. AYA_CLAUDE_SETTINGS overrides it so tests can
 // run the install/uninstall round-trip against a throwaway file instead of the
@@ -40,6 +42,38 @@ export interface UsageHookStatus {
   scriptPath: string;
   /** Where the hook is registered. */
   settingsPath: string;
+}
+
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+function hookCommand(configDir: string): string {
+  return `AYA_CLAUDE_CONFIG_DIR=${shellQuote(expandUserPath(configDir))} ${shellQuote(HOOK_SCRIPT_FILE)}`;
+}
+
+async function claudeConfigDirs(): Promise<string[]> {
+  if (process.env.AYA_CLAUDE_SETTINGS && process.env.AYA_CLAUDE_SETTINGS.trim()) {
+    return [path.dirname(CLAUDE_SETTINGS_FILE)];
+  }
+  const dirs = new Set<string>();
+  try {
+    for (const preset of await listPresets()) {
+      if (preset.agent !== "claude") continue;
+      dirs.add(expandUserPath(preset.configDir || "~/.claude"));
+    }
+  } catch {
+    // fall through to default
+  }
+  if (dirs.size === 0) dirs.add(path.join(os.homedir(), ".claude"));
+  return [...dirs];
+}
+
+function settingsFileForConfigDir(configDir: string): string {
+  if (process.env.AYA_CLAUDE_SETTINGS && process.env.AYA_CLAUDE_SETTINGS.trim()) {
+    return CLAUDE_SETTINGS_FILE;
+  }
+  return path.join(expandUserPath(configDir), "settings.json");
 }
 
 // ---- pure settings.json merge/unmerge (the risky part — unit-tested) --------
@@ -110,14 +144,26 @@ set -euo pipefail
 OUT=${JSON.stringify(outFile)}
 command -v jq >/dev/null 2>&1 || exit 0
 command -v curl >/dev/null 2>&1 || exit 0
-# Throttle: skip if written in the last 5 minutes.
-if [ -f "$OUT" ]; then
+CONFIG_DIR="\${AYA_CLAUDE_CONFIG_DIR:-\${CLAUDE_CONFIG_DIR:-$HOME/.claude}}"
+mkdir -p "$(dirname "$OUT")"
+if command -v shasum >/dev/null 2>&1; then
+  HASH=$(printf '%s' "$CONFIG_DIR" | shasum -a 256 | awk '{print $1}')
+else
+  HASH=$(printf '%s' "$CONFIG_DIR" | sha256sum | awk '{print $1}')
+fi
+ACCOUNT_OUT="$(dirname "$OUT")/usage-claude-$HASH.json"
+# Throttle per account: skip if this config dir was written in the last 5 minutes.
+if [ -f "$ACCOUNT_OUT" ]; then
   now=$(date +%s)
-  mod=$(stat -f %m "$OUT" 2>/dev/null || stat -c %Y "$OUT" 2>/dev/null || echo 0)
+  mod=$(stat -f %m "$ACCOUNT_OUT" 2>/dev/null || stat -c %Y "$ACCOUNT_OUT" 2>/dev/null || echo 0)
   [ $((now - mod)) -lt ${HOOK_THROTTLE_SECONDS} ] && exit 0
 fi
 # Claude Code OAuth token: macOS Keychain, else Linux credentials file.
-if RAW=$(security find-generic-password -s 'Claude Code-credentials' -w 2>/dev/null); then
+if [ -f "$CONFIG_DIR/.credentials.json" ]; then
+  RAW=$(cat "$CONFIG_DIR/.credentials.json")
+elif RAW=$(security find-generic-password -s "Claude Code-credentials-\${HASH:0:8}" -w 2>/dev/null); then
+  :
+elif [ "$CONFIG_DIR" = "$HOME/.claude" ] && RAW=$(security find-generic-password -s 'Claude Code-credentials' -w 2>/dev/null); then
   :
 elif [ -f "$HOME/.claude/.credentials.json" ]; then
   RAW=$(cat "$HOME/.claude/.credentials.json")
@@ -128,20 +174,22 @@ TOKEN=$(printf '%s' "$RAW" | jq -r '.claudeAiOauth.accessToken // empty')
 [ -n "$TOKEN" ] || exit 0
 RESP=$(curl -sS -m ${HOOK_FETCH_TIMEOUT_SECONDS} -H "Authorization: Bearer $TOKEN" \\
   https://api.anthropic.com/api/oauth/usage) || exit 0
-mkdir -p "$(dirname "$OUT")"
 printf '%s' "$RESP" | jq \\
   --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \\
   '{fiveHour:{pct:.five_hour.utilization, resetsAt:.five_hour.resets_at},
     sevenDay:{pct:.seven_day.utilization, resetsAt:.seven_day.resets_at},
-    updatedAt:$ts}' > "$OUT.tmp" && mv "$OUT.tmp" "$OUT"
+    updatedAt:$ts}' > "$ACCOUNT_OUT.tmp" && mv "$ACCOUNT_OUT.tmp" "$ACCOUNT_OUT"
+if [ "$CONFIG_DIR" = "$HOME/.claude" ]; then
+  cp "$ACCOUNT_OUT" "$OUT"
+fi
 `;
 }
 
 // ---- fs-bound install / uninstall / status ----------------------------------
 
-async function readSettings(): Promise<Record<string, unknown>> {
+async function readSettingsFile(file: string): Promise<Record<string, unknown>> {
   try {
-    const raw = await fs.readFile(CLAUDE_SETTINGS_FILE, "utf-8");
+    const raw = await fs.readFile(file, "utf-8");
     const parsed = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       throw new Error("settings.json is not an object");
@@ -154,11 +202,16 @@ async function readSettings(): Promise<Record<string, unknown>> {
 }
 
 export async function usageHookStatus(): Promise<UsageHookStatus> {
-  let registered = false;
-  try {
-    registered = hasStopHook(await readSettings(), HOOK_SCRIPT_FILE);
-  } catch {
-    registered = false;
+  let registered = true;
+  const dirs = await claudeConfigDirs();
+  for (const dir of dirs) {
+    try {
+      const settingsPath = settingsFileForConfigDir(dir);
+      const settings = await readSettingsFile(settingsPath);
+      registered &&= hasStopHook(settings, hookCommand(dir)) || hasStopHook(settings, HOOK_SCRIPT_FILE);
+    } catch {
+      registered = false;
+    }
   }
   let scriptExists = false;
   try {
@@ -170,29 +223,37 @@ export async function usageHookStatus(): Promise<UsageHookStatus> {
   return {
     installed: registered && scriptExists,
     scriptPath: HOOK_SCRIPT_FILE,
-    settingsPath: CLAUDE_SETTINGS_FILE,
+    settingsPath: dirs.map(settingsFileForConfigDir).join(", "),
   };
 }
 
 export async function installUsageHook(): Promise<UsageHookStatus> {
-  const settings = await readSettings();
-  const next = withStopHook(settings, HOOK_SCRIPT_FILE);
-  await writeFileAtomic(CLAUDE_SETTINGS_FILE, JSON.stringify(next, null, 2) + "\n");
+  for (const dir of await claudeConfigDirs()) {
+    const settingsPath = settingsFileForConfigDir(dir);
+    const settings = await readSettingsFile(settingsPath);
+    const withoutLegacy = withoutStopHook(settings, HOOK_SCRIPT_FILE);
+    const next = withStopHook(withoutLegacy, hookCommand(dir));
+    await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+    await writeFileAtomic(settingsPath, JSON.stringify(next, null, 2) + "\n");
+  }
   await writeFileAtomic(HOOK_SCRIPT_FILE, hookScriptSource(USAGE_FILE));
   await fs.chmod(HOOK_SCRIPT_FILE, HOOK_SCRIPT_MODE);
   return usageHookStatus();
 }
 
 export async function uninstallUsageHook(): Promise<UsageHookStatus> {
-  try {
-    const settings = await readSettings();
-    const next = withoutStopHook(settings, HOOK_SCRIPT_FILE);
-    await writeFileAtomic(
-      CLAUDE_SETTINGS_FILE,
-      JSON.stringify(next, null, 2) + "\n",
-    );
-  } catch {
-    /* malformed/unreadable settings — leave it alone */
+  for (const dir of await claudeConfigDirs()) {
+    try {
+      const settingsPath = settingsFileForConfigDir(dir);
+      const settings = await readSettingsFile(settingsPath);
+      const next = withoutStopHook(
+        withoutStopHook(settings, HOOK_SCRIPT_FILE),
+        hookCommand(dir),
+      );
+      await writeFileAtomic(settingsPath, JSON.stringify(next, null, 2) + "\n");
+    } catch {
+      /* malformed/unreadable settings — leave it alone */
+    }
   }
   await fs.rm(HOOK_SCRIPT_FILE, { force: true });
   return usageHookStatus();

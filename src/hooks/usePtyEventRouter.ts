@@ -1,25 +1,74 @@
-import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import {
+  useEffect,
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+} from "react";
 import { applyPtyEvent, eventTouchesActivity } from "../pty-event-reducer";
+import { ptyEventBus } from "../ptyEventBus";
+import { markNoSession, markSpawned } from "../spawnSession";
 import type { PtyEvent, TerminalState } from "../types";
 
 interface Options {
+  currentTerminalsRef?: MutableRefObject<Record<string, TerminalState>>;
   lastActivityRef: MutableRefObject<Record<string, number>>;
   setTerminals: Dispatch<SetStateAction<Record<string, TerminalState>>>;
   onPtyEvent?: (event: PtyEvent) => void;
 }
 
 export function usePtyEventRouter({
+  currentTerminalsRef,
   lastActivityRef,
   setTerminals,
   onPtyEvent,
 }: Options): void {
   useEffect(() => {
-    return window.aya.onPtyEvent((event) => {
+    // Through the shared bus (single ipcRenderer listener for the whole app);
+    // the router needs every event, so it registers as the "any" consumer.
+    return ptyEventBus.onAny((event) => {
       onPtyEvent?.(event);
       if (eventTouchesActivity(event)) {
         lastActivityRef.current[event.ptyId] = Date.now();
       }
-      setTerminals((prev) => applyPtyEvent(prev, event));
+      if (event.type === "no-session") {
+        // Remember the deliberate stopped state: a later re-mount of this tab
+        // must attach-only again (and stay stopped) instead of silently
+        // respawning on a project switch. Cleared by forgetSpawn on an
+        // explicit restart. Set.add is idempotent; a stale id is harmless.
+        markNoSession(event.ptyId);
+      }
+      const current = currentTerminalsRef?.current;
+      const currentTerminal = current?.[event.ptyId];
+      if (
+        event.type === "data" &&
+        currentTerminal &&
+        !currentTerminal.spawnFailure &&
+        currentTerminal.exitCode === null
+      ) {
+        markSpawned(event.ptyId);
+      }
+      if (current && applyPtyEvent(current, event) === current) {
+        return;
+      }
+      setTerminals((prev) => {
+        // Mark a CONFIRMED live session only on genuine live output, so a later
+        // re-mount attaches (and surfaces "stopped" if the process is gone).
+        // Skip when the terminal: is spawn-failed (the synthetic failure banner
+        // is also a data event but no PTY exists), has already exited (a
+        // straggler chunk after a kill must not re-mark), or is gone (closed).
+        // Set.add is idempotent, so running inside the updater is safe.
+        const t = prev[event.ptyId];
+        if (
+          !current &&
+          event.type === "data" &&
+          t &&
+          !t.spawnFailure &&
+          t.exitCode === null
+        ) {
+          markSpawned(event.ptyId);
+        }
+        return applyPtyEvent(prev, event);
+      });
     });
-  }, [lastActivityRef, onPtyEvent, setTerminals]);
+  }, [currentTerminalsRef, lastActivityRef, onPtyEvent, setTerminals]);
 }

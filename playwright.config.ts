@@ -12,6 +12,13 @@ export default defineConfig({
   workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
+  // Hard ceiling for the WHOLE suite on CI. Size it with real headroom: the
+  // suite already ran ~4.6m before the respawn/boot-reuse specs (real PTY
+  // flows) joined, and a single genuine failure adds a retried app launch on
+  // top. At 5m the overrun killed whichever tests were in flight around the
+  // deadline - alphabetical-tail specs (search, snippet-*) "failed" with
+  // assertion timeouts that had nothing to do with their content.
+  globalTimeout: process.env.CI ? 10 * 60_000 : undefined,
   timeout: 45_000,
   expect: { timeout: 10_000 },
   reporter: process.env.CI

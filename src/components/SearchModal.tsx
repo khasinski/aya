@@ -7,6 +7,7 @@ import {
   type ProjectEvent,
   type TerminalState,
 } from "../types";
+import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 
 // Debounce delay (ms) applied to the search input before it becomes the active query.
 const SEARCH_DEBOUNCE_MS = 100;
@@ -50,22 +51,55 @@ export interface SearchResult {
   moreOccurrences?: number;
 }
 
+/** The whole relevance-scoring rubric in one place. Tiers follow a rough
+ *  exact = 2x prefix, prefix ~ 2-4x contains ladder; result kinds are ranked
+ *  against each other by their tier magnitudes (projects above terminals,
+ *  launcher entries above events, content hits lowest). Edit ordering here,
+ *  not in the scoring functions below. */
+const SCORE = {
+  project: { exact: 1000, prefix: 500, contains: 200 },
+  terminal: { exact: 500, prefix: 250, contains: 100 },
+  launcher: {
+    run: { exact: 800, prefix: 400, contains: 120 },
+    name: { exact: 700, prefix: 350, contains: 100 },
+    command: { exact: 500, prefix: 250, contains: 80 },
+  },
+  event: {
+    title: { exact: 650, prefix: 325, contains: 120 },
+    detail: { exact: 450, prefix: 225, contains: 90 },
+    project: { exact: 350, prefix: 175, contains: 70 },
+    terminal: { exact: 300, prefix: 150, contains: 60 },
+    level: { exact: 500, prefix: 250, contains: 100 },
+  },
+  /** Boost for "Run <preset>" launcher rows (actionable over informational). */
+  launcherRunBonus: 25,
+  /** Closed projects rank below open ones with the same match quality. */
+  closedProjectPenalty: -25,
+  /** Base score of a scrollback content hit... */
+  contentHitBase: 10,
+  /** ...plus one point per extra occurrence, capped (NOT related to the
+   *  SEARCH_MAX_RESULTS=50 result cap despite the equal value). */
+  contentHitMaxOccurrenceBonus: 50,
+  /** Small boost so a matching event outranks a bare content hit. */
+  eventBonus: 15,
+} as const;
+
 /** Per-token score against a project name. Returns 0 if the token doesn't
  *  match anywhere — caller treats that as "this token disqualifies the
  *  whole item" in AND-matching. */
 function scoreTokenAgainstProject(name: string, tok: string): number {
   const n = name.toLowerCase();
-  if (n === tok) return 1000;
-  if (n.startsWith(tok)) return 500;
-  if (n.includes(tok)) return 200;
+  if (n === tok) return SCORE.project.exact;
+  if (n.startsWith(tok)) return SCORE.project.prefix;
+  if (n.includes(tok)) return SCORE.project.contains;
   return 0;
 }
 /** Per-token score against a terminal name. */
 function scoreTokenAgainstTerminal(name: string, tok: string): number {
   const n = name.toLowerCase();
-  if (n === tok) return 500;
-  if (n.startsWith(tok)) return 250;
-  if (n.includes(tok)) return 100;
+  if (n === tok) return SCORE.terminal.exact;
+  if (n.startsWith(tok)) return SCORE.terminal.prefix;
+  if (n.includes(tok)) return SCORE.terminal.contains;
   return 0;
 }
 
@@ -102,9 +136,9 @@ function terminalAllTokens(
 function launcherAllTokens(preset: Preset, tokens: string[]): number {
   let total = 0;
   const haystacks = [
-    { value: "run", exact: 800, prefix: 400, contains: 120 },
-    { value: preset.name, exact: 700, prefix: 350, contains: 100 },
-    { value: preset.command, exact: 500, prefix: 250, contains: 80 },
+    { value: "run", ...SCORE.launcher.run },
+    { value: preset.name, ...SCORE.launcher.name },
+    { value: preset.command, ...SCORE.launcher.command },
   ];
   for (const tok of tokens) {
     let best = 0;
@@ -128,11 +162,11 @@ function eventAllTokens(
 ): number {
   let total = 0;
   const haystacks = [
-    { value: event.title, exact: 650, prefix: 325, contains: 120 },
-    { value: event.detail ?? "", exact: 450, prefix: 225, contains: 90 },
-    { value: projectName, exact: 350, prefix: 175, contains: 70 },
-    { value: terminalName, exact: 300, prefix: 150, contains: 60 },
-    { value: event.level, exact: 500, prefix: 250, contains: 100 },
+    { value: event.title, ...SCORE.event.title },
+    { value: event.detail ?? "", ...SCORE.event.detail },
+    { value: projectName, ...SCORE.event.project },
+    { value: terminalName, ...SCORE.event.terminal },
+    { value: event.level, ...SCORE.event.level },
   ];
   for (const tok of tokens) {
     let best = 0;
@@ -235,7 +269,7 @@ function buildResults(
           secondary: `New terminal in ${activeProject.name}`,
           icon: preset.icon,
           iconColor: preset.color || undefined,
-          score: s + 25,
+          score: s + SCORE.launcherRunBonus,
         });
       }
     }
@@ -253,7 +287,7 @@ function buildResults(
         label: p.name,
         secondary: isOpen ? p.directory : `Closed · ${p.directory}`,
         icon: "📁",
-        score: s + (isOpen ? 0 : -25),
+        score: s + (isOpen ? 0 : SCORE.closedProjectPenalty),
       });
     }
   }
@@ -296,7 +330,7 @@ function buildResults(
       secondary: project ? `in ${project.name}` : "",
       icon: preset.icon,
       iconColor: preset.color || undefined,
-      score: 10 + Math.min(hit.more, 50),
+      score: SCORE.contentHitBase + Math.min(hit.more, SCORE.contentHitMaxOccurrenceBonus),
       snippet: hit.snippet,
       matchStart: hit.matchStart,
       matchLength: hit.matchLength,
@@ -321,7 +355,7 @@ function buildResults(
         event.detail,
       ].filter(Boolean).join(" · "),
       icon: event.level === "error" ? "!" : event.level === "waiting" ? "?" : "i",
-      score: s + 15,
+      score: s + SCORE.eventBonus,
     });
   }
 
@@ -452,7 +486,11 @@ export function SearchModal({
   };
 
   return (
-    <div className="aya-modal-backdrop" onClick={onClose}>
+    <div
+      className="aya-modal-backdrop"
+      onMouseDown={markBackdropMouseDown}
+      onClick={(e) => closeFromBackdropClick(e, onClose)}
+    >
       <div
         className="aya-modal aya-modal--search"
         onClick={(e) => e.stopPropagation()}

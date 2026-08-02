@@ -6,6 +6,7 @@ dist/
 dist-electron/
 dist-test/
 release/
+ci-linux*/
 !build/icon.png
 
 # Vite cache
@@ -44,3 +45,5 @@ test-results/
 playwright-report/
 blob-report/
 playwright/.cache/
+
+.claude/

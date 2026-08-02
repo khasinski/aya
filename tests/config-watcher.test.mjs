@@ -20,9 +20,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// WATCH_DEBOUNCE_MS is 200; leave a comfortable margin for the burst of file
-// events plus the debounce before we read `received`.
-const SETTLE_MS = 320;
+// WATCH_DEBOUNCE_MS is 200; leave enough margin for the burst of file events
+// plus the debounce before we read `received`. Under the full test suite macOS
+// fs.watch can deliver the event noticeably later than when this file runs alone.
+const SETTLE_MS = 1000;
 const waitForDebounce = () => new Promise((r) => setTimeout(r, SETTLE_MS));
 
 // Two different JSON payloads so each write differs from the last (the watcher
@@ -52,6 +53,7 @@ test("config watcher emits external edits, skips echoes, catches reverts, and st
 
     const file = join(home, "snippets.json");
     stop = startConfigWatcher(win);
+    await new Promise((r) => setTimeout(r, 50));
 
     // (a) An outside write of new content -> exactly one reload of that slice.
     writeFileSync(file, SNIPPETS_A);

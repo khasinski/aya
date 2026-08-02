@@ -3,16 +3,29 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import { parseControlRequest, type ControlRequest } from "./control-protocol";
-import { CONTROL_SOCKET_PATH } from "./paths";
+import { CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
 import type { ControlStatusUpdate } from "./types";
 
 // Max control-socket message size before rejecting the request (bytes).
-const CONTROL_REQUEST_MAX_SIZE_BYTES = 64_000;
-// rw------- permissions for the control socket file.
-const SOCKET_FILE_PERMISSIONS = 0o600;
+export const CONTROL_REQUEST_MAX_SIZE_BYTES = 64_000;
 
-interface ControlServerOptions {
+/** Anywhere a status update can be delivered: real BrowserWindows plus the
+ *  Aya Web server's virtual sink (which fans out to WebSocket clients). */
+export interface ControlStatusSink {
+  isDestroyed(): boolean;
+  webContents: {
+    send(channel: "control:status", update: ControlStatusUpdate): void;
+  };
+}
+
+export interface ControlServerOptions {
+  /** Target for focus/notification actions (the focused/last-focused window). */
   getWindow: () => BrowserWindow | null;
+  /** All live windows (and window-like sinks) - status updates are broadcast,
+   *  because the terminal they describe may live in a window that is not
+   *  focused. Each renderer ignores updates for terminals it doesn't host.
+   *  Optional for tests. */
+  getWindows?: () => ControlStatusSink[];
   openProject: (directory: string) => void;
 }
 
@@ -65,22 +78,34 @@ async function handleRequest(
     return;
   }
   if (request.type === "status") {
-    if (!win || win.isDestroyed()) return;
-    win.webContents.send("control:status", {
+    const update: ControlStatusUpdate = {
       terminalId: request.terminalId,
       projectSlug: request.projectSlug,
       cwd: request.cwd,
       level: request.level,
       text: request.text,
       updatedAt: Date.now(),
-    } satisfies ControlStatusUpdate);
+    };
+    const targets = options.getWindows?.() ?? (win ? [win] : []);
+    for (const target of targets) {
+      if (!target.isDestroyed()) {
+        target.webContents.send("control:status", update);
+      }
+    }
   }
 }
 
-export function startControlServer(options: ControlServerOptions): () => void {
-  fs.mkdirSync(path.dirname(CONTROL_SOCKET_PATH), { recursive: true });
+/** Boot the control server on an explicit socket path. Pure: takes no Electron
+ *  lifecycle dependency (no app.once), so tests can drive framing/limit/dispatch
+ *  against a tmp socket. The packaged startControlServer wraps this with the
+ *  canonical CONTROL_SOCKET_PATH and an app before-quit hook. */
+export function startControlServerOn(
+  socketPath: string,
+  options: ControlServerOptions,
+): () => void {
+  fs.mkdirSync(path.dirname(socketPath), { recursive: true });
   try {
-    fs.rmSync(CONTROL_SOCKET_PATH, { force: true });
+    fs.rmSync(socketPath, { force: true });
   } catch {
     // best effort
   }
@@ -113,22 +138,26 @@ export function startControlServer(options: ControlServerOptions): () => void {
     });
   });
 
-  server.listen(CONTROL_SOCKET_PATH, () => {
+  server.listen(socketPath, () => {
     try {
-      fs.chmodSync(CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS);
+      fs.chmodSync(socketPath, SOCKET_FILE_PERMISSIONS);
     } catch {
       // best effort
     }
   });
 
-  const stop = () => {
+  return () => {
     server.close();
     try {
-      fs.rmSync(CONTROL_SOCKET_PATH, { force: true });
+      fs.rmSync(socketPath, { force: true });
     } catch {
       // best effort
     }
   };
+}
+
+export function startControlServer(options: ControlServerOptions): () => void {
+  const stop = startControlServerOn(CONTROL_SOCKET_PATH, options);
   app.once("before-quit", stop);
   return stop;
 }
