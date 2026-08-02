@@ -63,17 +63,24 @@ export class PtyHostClient {
   }
 
   async spawn(req: SpawnRequest): Promise<void> {
-    // Resolve attachIfReused HERE - only this client knows whether the host
-    // was reused or freshly spawned, and connect() (awaited before the flag
-    // is read) is what settles that. The host itself only understands
+    // Resolve attachIfReused in request()'s post-connect hook - only this
+    // client knows whether the host was reused or freshly spawned, and that
+    // is settled once connect() resolves. The host itself only understands
     // attachOnly; the intent flag never crosses the socket.
-    await this.connect();
+    //
+    // ORDERING: the resolution must NOT add its own `await this.connect()`
+    // before request(). Every request chain has exactly ONE connect await;
+    // adding a second one to spawn re-queues its socket write one microtask
+    // BEHIND any write/resize that was queued while the cold-start connect
+    // was in flight - so the renderer's first typed bytes hit the host
+    // before the spawn line, found no PTY, and were silently dropped (typed
+    // input during app boot vanished; caught by e2e as dead terminals).
     const { attachIfReused, ...rest } = req;
-    const attach = resolveSpawnAttach(rest.attachOnly, attachIfReused, this.reusedHost);
-    await this.request({
-      id: 0,
-      type: "spawn",
-      req: { ...rest, ...(attach ? { attachOnly: true } : {}) },
+    await this.request({ id: 0, type: "spawn", req: rest }, (request) => {
+      if (!resolveSpawnAttach(rest.attachOnly, attachIfReused, this.reusedHost)) {
+        return request;
+      }
+      return { ...request, req: { ...rest, attachOnly: true } };
     });
   }
 
@@ -156,12 +163,19 @@ export class PtyHostClient {
     return typeof result === "string" ? result : "";
   }
 
-  private async request(request: PtyHostRequest): Promise<unknown> {
+  private async request(
+    request: PtyHostRequest,
+    // Applied AFTER connect() resolves, right before the socket write - for
+    // request fields that depend on connection state (spawn's attachOnly
+    // resolution reads reusedHost). Runs synchronously in the same microtask
+    // as the write so it cannot perturb request ordering.
+    finalize?: (request: PtyHostRequest) => PtyHostRequest,
+  ): Promise<unknown> {
     await this.connect();
     const socket = this.socket;
     if (!socket || socket.destroyed) throw new Error("PTY host is not connected");
     const id = this.nextId++;
-    const withId = { ...request, id } as PtyHostRequest;
+    const withId = { ...(finalize ? finalize(request) : request), id } as PtyHostRequest;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       socket.write(`${JSON.stringify(withId)}\n`, (err) => {
