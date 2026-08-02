@@ -2832,8 +2832,9 @@ export function App() {
     {},
   );
 
-  /** Right-click → "Restart" handler. Kills the existing PTY (alive or
-   *  not) and asks TerminalView to spawn a fresh one. */
+  /** Right-click → "Restart" handler. Kills the PTY if it can still be
+   *  alive (see the maybeAlive gate) and asks TerminalView to spawn a
+   *  fresh one. */
   const forceRestartTerminal = useCallback(async (id: string) => {
     const t = terminalsRef.current[id];
     if (!t) return;
@@ -2841,13 +2842,24 @@ export function App() {
     // it - the respawned agent tab must resume its conversation (see
     // restartTerminal for the rationale, including the spawnFailure veto).
     const hadSession = wasSpawned(id) && !t.spawnFailure;
-    // Await the kill so the main-side ptys map is empty by the time the
-    // new spawn IPC arrives — otherwise spawnPty treats it as a re-mount
-    // and replays the old buffer instead of starting fresh.
-    try {
-      await window.aya.ptyKill(id);
-    } catch {
-      /* ignore — best effort */
+    // Kill only a possibly-live PTY. For an already-dead tab (exited - which
+    // includes spawn failures, they emit a synthetic exit - or stopped by a
+    // host restart) the host map has no entry, so killPty would arm its
+    // pending-kill marker (the closed-tab race guard) and that marker would
+    // swallow the respawn the trigger below requests - a silent "Restart did
+    // nothing" for up to the marker's TTL. A death the renderer has not seen
+    // yet (exit event still in flight) can still hit that window; the gate
+    // covers every state the user can actually observe when clicking.
+    const maybeAlive = t.exitCode === null && !t.stopped;
+    if (maybeAlive) {
+      // Await the kill so the main-side ptys map is empty by the time the
+      // new spawn IPC arrives — otherwise spawnPty treats it as a re-mount
+      // and replays the old buffer instead of starting fresh.
+      try {
+        await window.aya.ptyKill(id);
+      } catch {
+        /* ignore — best effort */
+      }
     }
     // Forget the confirmed-session marker AFTER the kill: a still-alive process
     // can emit output between the request and the kill landing, which would
