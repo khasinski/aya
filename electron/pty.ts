@@ -14,6 +14,7 @@ import type { PtyEvent, SpawnFailureReason, SpawnRequest } from "./types";
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 import { COMMAND_NOT_FOUND_EXIT_CODE, COMMAND_PROBE_TIMEOUT_MS } from "./constants";
 import { userShell } from "./shell";
+import { ptyLog } from "./pty-log";
 
 // Timeout for the shell `command -v` existence check during spawn preflight.
 
@@ -354,6 +355,9 @@ function reportSpawnFailure(
   reason: SpawnFailureReason,
   message: string,
 ): void {
+  // Log BEFORE the destroyed-sink bail: the failure happened either way, and
+  // a failure nobody could see is exactly what the forensic log is for.
+  ptyLog.append("spawn-failed", { ptyId, reason });
   if (sink.isDestroyed()) return;
   const banner = `\r\n\x1b[1;31maya: \x1b[0m\x1b[31m${message}\x1b[0m\r\n\r\n`;
   sink.sendPtyEvent({ type: "spawn-failed", ptyId, reason, detail: message });
@@ -417,6 +421,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
   if (shuttingDown) {
     // The host is tearing down; a new PTY here would miss the shutdown snapshot
     // and be orphaned on exit. Drop the spawn.
+    ptyLog.append("spawn-dropped-shutting-down", { ptyId: req.ptyId });
     return;
   }
   if (pendingKills.has(req.ptyId)) {
@@ -424,6 +429,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     // mounting and the IPC round-trip). Drop the spawn so we don't orphan a
     // process the user already asked to discard.
     pendingKills.delete(req.ptyId);
+    ptyLog.append("spawn-dropped-pending-kill", { ptyId: req.ptyId });
     return;
   }
   if (ptys.has(req.ptyId)) {
@@ -432,6 +438,10 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     // xterm.js can repaint the existing scrollback. The PTY's own onData
     // continues to deliver new bytes to the renderer.
     const buffered = getBufferedOutput(req.ptyId);
+    ptyLog.append("spawn-replay", {
+      ptyId: req.ptyId,
+      bytes: Buffer.byteLength(buffered),
+    });
     if (buffered && !sink.isDestroyed()) {
       sink.sendPtyEvent({
         type: "data",
@@ -455,6 +465,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     // Re-mount of a tab that already ran this session, but its PTY is gone (the
     // process died while the host stayed up). Don't silently start a fresh
     // process - tell the renderer so it can show a stopped/restartable state.
+    ptyLog.append("no-session", { ptyId: req.ptyId });
     if (!sink.isDestroyed()) {
       sink.sendPtyEvent({ type: "no-session", ptyId: req.ptyId });
     }
@@ -568,10 +579,22 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       } catch {
         // already gone
       }
+      ptyLog.append("spawn-killed-on-shutdown", { ptyId: req.ptyId });
       return;
     }
 
     ptys.set(req.ptyId, child);
+    // The command is logged verbatim: it is the single most diagnostic field
+    // (e.g. did this respawn carry --continue?), and it is already stored in
+    // plaintext in ~/.aya/presets.json - the log adds no new exposure.
+    ptyLog.append("spawn", {
+      ptyId: req.ptyId,
+      childPid: child.pid,
+      projectSlug: req.projectSlug,
+      presetId: req.presetId,
+      cwd,
+      command: req.command,
+    });
 
     child.onData((chunk) => {
       appendToOutputBuffer(req.ptyId, chunk);
@@ -585,6 +608,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       }
       ptys.delete(req.ptyId);
       outputBuffers.delete(req.ptyId);
+      ptyLog.append("exit", { ptyId: req.ptyId, exitCode });
       if (sink.isDestroyed()) return;
       sink.sendPtyEvent({ type: "exit", ptyId: req.ptyId, exitCode });
     });
@@ -636,6 +660,7 @@ export function terminatePtyChild(
 export function killPty(ptyId: string): void {
   outputBuffers.delete(ptyId);
   const p = ptys.get(ptyId);
+  ptyLog.append("kill", { ptyId, live: !!p });
   if (!p) {
     // No PTY for this id yet — either it never existed, or the spawn IPC is
     // still in flight. Mark it so a late-arriving spawnPty bails out. The
@@ -718,6 +743,7 @@ export function shutdownPtyChildren(
   // snapshot below and getting orphaned when the host exits.
   shuttingDown = true;
   const children = [...ptys.values()];
+  ptyLog.append("children-shutdown", { children: children.length });
   ptys.clear();
   outputBuffers.clear();
   pendingKills.clear();
