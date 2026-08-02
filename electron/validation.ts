@@ -68,7 +68,27 @@ export function validateSpawnRequest(value: unknown): SpawnRequest {
     cwd: requireString(value.cwd, "pty:spawn.cwd"),
     cols: requirePositiveInt(value.cols, "pty:spawn.cols"),
     rows: requirePositiveInt(value.rows, "pty:spawn.rows"),
+    // Flags must be copied through EXPLICITLY: this validator rebuilds the
+    // object, so any field missing here is silently dropped at the IPC
+    // boundary. That is exactly what happened to attachOnly - the renderer
+    // sent it, the host never saw it, and dead-PTY re-mounts kept silently
+    // respawning fresh processes while the unit tests (which call the host
+    // directly) stayed green.
+    ...(optionalFlag(value.attachOnly, "pty:spawn.attachOnly")
+      ? { attachOnly: true }
+      : {}),
+    ...(optionalFlag(value.attachIfReused, "pty:spawn.attachIfReused")
+      ? { attachIfReused: true }
+      : {}),
   };
+}
+
+/** Optional boolean field: absent -> undefined, boolean -> itself, anything
+ *  else -> validation failure (a truthy string must not act as a flag). */
+function optionalFlag(value: unknown, name: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "boolean") fail(name, "boolean");
+  return value;
 }
 
 function validateWorkingTab(value: unknown, name: string): WorkingTab {

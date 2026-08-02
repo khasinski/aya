@@ -37,7 +37,12 @@ import {
   stripScrollbackErase,
 } from "../terminal-rendering";
 import { snippetPtyPayload } from "../snippet-payload";
-import { wasSpawned } from "../spawnSession";
+import {
+  hadNoSession,
+  markMountDecided,
+  wasMountDecided,
+  wasSpawned,
+} from "../spawnSession";
 import { SnippetBar } from "./SnippetBar";
 
 // Terminal sizing + timing constants. The fallback cols/rows are the standard
@@ -856,11 +861,22 @@ function TerminalViewComponent({
     if (!spawnedRef.current) {
       spawnedRef.current = true;
       // First mount this session -> normal spawn (boot auto-start). A re-mount
-      // of an id that already produced a confirmed session -> attach-only, so a
-      // tab whose PTY died shows a stopped state rather than a silent fresh
-      // process. Keyed on confirmed output (not the request), so an in-flight
-      // first spawn that re-mounts is not mistaken for a dead session.
-      const attachOnly = wasSpawned(terminal.id);
+      // of an id that already produced a confirmed session - or that the host
+      // already declared no-session for (the tab is deliberately stopped) ->
+      // attach-only, so a tab whose PTY died shows a stopped state rather
+      // than a silent fresh process. Keyed on confirmed output (not the
+      // request), so an in-flight first spawn that re-mounts is not mistaken
+      // for a dead session.
+      const attachOnly = wasSpawned(terminal.id) || hadNoSession(terminal.id);
+      // Boot-restored tab, FIRST mount decision only: if the app reconnected
+      // to a host that predates this session, attach instead of spawning -
+      // the session either still lives there (replay) or the tab becomes
+      // stopped/restartable, the same behavior the manual host-restart path
+      // settled on. Resolved by the main-process client; a fresh host
+      // ignores it (boot auto-start). One-shot per renderer session so a
+      // re-mount after an explicit restart (forgetSpawn) spawns fresh.
+      const attachIfReused = terminal.restored && !wasMountDecided(terminal.id);
+      markMountDecided(terminal.id);
       const { cols, rows } = term;
       void window.aya.ptySpawn({
         ptyId: terminal.id,
@@ -871,6 +887,7 @@ function TerminalViewComponent({
         cols: Math.max(cols, TERMINAL_FALLBACK_COLS),
         rows: Math.max(rows, TERMINAL_FALLBACK_ROWS),
         attachOnly,
+        attachIfReused,
       });
     }
 

@@ -38,6 +38,33 @@ test("validateSpawnRequest accepts the pty spawn shape", () => {
   );
 });
 
+test("validateSpawnRequest passes the attach flags through (regression: they were silently dropped)", () => {
+  // The validator REBUILDS the request object, so a field it does not copy
+  // dies at the IPC boundary. attachOnly shipped after the validator and was
+  // never added: the renderer sent it, the host never saw it, and dead-PTY
+  // re-mounts silently respawned fresh processes - while the host-side unit
+  // tests (which bypass the validator) stayed green. These pins make that
+  // class of regression loud.
+  const base = { ptyId: "abc", command: "claude", cwd: "/tmp", cols: 80, rows: 24 };
+  assert.equal(validateSpawnRequest({ ...base, attachOnly: true }).attachOnly, true);
+  assert.equal(
+    validateSpawnRequest({ ...base, attachIfReused: true }).attachIfReused,
+    true,
+  );
+  // Absent or false flags stay off the wire (undefined, not false).
+  assert.equal(validateSpawnRequest(base).attachOnly, undefined);
+  assert.equal(validateSpawnRequest({ ...base, attachOnly: false }).attachOnly, undefined);
+  // A truthy non-boolean must not act as a flag.
+  assert.throws(
+    () => validateSpawnRequest({ ...base, attachOnly: "yes" }),
+    /pty:spawn\.attachOnly/,
+  );
+  assert.throws(
+    () => validateSpawnRequest({ ...base, attachIfReused: 1 }),
+    /pty:spawn\.attachIfReused/,
+  );
+});
+
 test("validateSpawnRequest rejects missing or invalid dimensions", () => {
   assert.throws(
     () =>

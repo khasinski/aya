@@ -2800,16 +2800,16 @@ export function App() {
     // session before a failed respawn keeps continuity through the sticky
     // `restored` flag flipped by that earlier restart.
     const hadSession = wasSpawned(id) && !terminal?.spawnFailure;
-    if (terminal?.spawnFailure) {
-      // The veto must not be one-shot: the banner's synthetic data event
-      // marked wasSpawned for a tab with NO real session, and the state
-      // update below clears spawnFailure - so a second restart landing
-      // before the retry resolves would see wasSpawned && !spawnFailure and
-      // latch `restored` for a session that never existed (#87). Drop the
-      // poisoned marker; a tab that had a real session keeps continuity
-      // through the sticky `restored` flag regardless.
-      forgetSpawn(id);
-    }
+    // Same marker hygiene as forceRestartTerminal (after hadSession is read):
+    // an explicit restart means the NEXT mount of this id must plain-spawn.
+    // Leaving the no-session marker set would let a remount that races the
+    // trigger spawn attach-probe again and re-stick `stopped` onto a live
+    // process; the host's in-flight/ptys guards make a double plain spawn
+    // safe, so forgetting is the strictly better side of that race. The
+    // unconditional forget also subsumes the #87 veto fix: a poisoned
+    // wasSpawned marker from a failed spawn's banner is dropped here too,
+    // so it can never latch `restored` on a later restart.
+    forgetSpawn(id);
     setTerminals((prev) => {
       const t = prev[id];
       if (!t) return prev;

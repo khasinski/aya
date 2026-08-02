@@ -6,7 +6,7 @@ import {
 } from "react";
 import { applyPtyEvent, eventTouchesActivity } from "../pty-event-reducer";
 import { ptyEventBus } from "../ptyEventBus";
-import { markSpawned } from "../spawnSession";
+import { markNoSession, markSpawned } from "../spawnSession";
 import type { PtyEvent, TerminalState } from "../types";
 
 interface Options {
@@ -29,6 +29,13 @@ export function usePtyEventRouter({
       onPtyEvent?.(event);
       if (eventTouchesActivity(event)) {
         lastActivityRef.current[event.ptyId] = Date.now();
+      }
+      if (event.type === "no-session") {
+        // Remember the deliberate stopped state: a later re-mount of this tab
+        // must attach-only again (and stay stopped) instead of silently
+        // respawning on a project switch. Cleared by forgetSpawn on an
+        // explicit restart. Set.add is idempotent; a stale id is harmless.
+        markNoSession(event.ptyId);
       }
       const current = currentTerminalsRef?.current;
       const currentTerminal = current?.[event.ptyId];

@@ -5,7 +5,15 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { markSpawned, wasSpawned, forgetSpawn } from "../dist-test/spawnSession.js";
+import {
+  markSpawned,
+  wasSpawned,
+  forgetSpawn,
+  markNoSession,
+  hadNoSession,
+  markMountDecided,
+  wasMountDecided,
+} from "../dist-test/spawnSession.js";
 
 test("an unseen id was not spawned (first mount spawns normally)", () => {
   assert.equal(wasSpawned("ss-new"), false);
@@ -27,4 +35,29 @@ test("forgetSpawn clears the marker so the next mount spawns fresh", () => {
 test("forgetSpawn on an unknown id is a harmless no-op", () => {
   forgetSpawn("ss-never");
   assert.equal(wasSpawned("ss-never"), false);
+});
+
+test("a no-session verdict sticks: the re-mount must attach and stay stopped", () => {
+  assert.equal(hadNoSession("ss-ns"), false);
+  markNoSession("ss-ns");
+  assert.equal(hadNoSession("ss-ns"), true);
+});
+
+test("the first mount decision is one-shot (gates boot-time attachIfReused)", () => {
+  assert.equal(wasMountDecided("ss-md"), false);
+  markMountDecided("ss-md");
+  assert.equal(wasMountDecided("ss-md"), true);
+});
+
+test("forgetSpawn clears BOTH attach sources and closes the boot attach window", () => {
+  // The contract behind an explicit restart of a possibly-unmounted tab: the
+  // next mount must plain-spawn. That requires clearing the confirmed-session
+  // AND no-session markers, and keeping the boot-only attachIfReused intent
+  // from firing again (mount decision counts as made).
+  markSpawned("ss-fg");
+  markNoSession("ss-fg");
+  forgetSpawn("ss-fg");
+  assert.equal(wasSpawned("ss-fg"), false);
+  assert.equal(hadNoSession("ss-fg"), false);
+  assert.equal(wasMountDecided("ss-fg"), true);
 });

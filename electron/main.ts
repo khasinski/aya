@@ -742,6 +742,28 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
+/** Version of the build whose host the client WOULD spawn - read from the
+ *  package.json next to dist-electron, exactly how the host computes its own
+ *  identity (pty-host.ts computeHostIdentity). app.getVersion() is WRONG for
+ *  this in any non-packaged launch (dev, e2e): there it reports Electron's
+ *  own version, so the staleness probe compared e.g. "42.5.2" against the
+ *  host's honest "0.7.8" and KILLED a perfectly current host on every boot -
+ *  murdering all live consoles in dev, and in e2e racing the first spawns
+ *  (tabs that landed on the first host died mid-test: a long-standing flake
+ *  source). Snapshotted once - the build cannot change under a running app
+ *  in a way this comparison should follow. */
+const EXPECTED_HOST_VERSION: string = (() => {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(path.join(__dirname, "..", "package.json"), "utf-8"),
+    ) as { version?: string };
+    if (typeof pkg.version === "string") return pkg.version;
+  } catch {
+    // fall through to app.getVersion() - correct in packaged builds
+  }
+  return app.getVersion();
+})();
+
 async function diagnosticsReport(): Promise<DiagnosticsReport> {
   const [presets, projects, projectState, usageHook, cli, hostStatus] =
     await Promise.all([
@@ -752,7 +774,7 @@ async function diagnosticsReport(): Promise<DiagnosticsReport> {
       cliStatus(),
       ptyHost.hostStatus(),
     ]);
-  const expected = ptyHost.expectedHostIdentity(app.getVersion());
+  const expected = ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION);
   return {
     generatedAt: new Date().toISOString(),
     app: {
@@ -1818,7 +1840,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
  *  sweep's job. Hosts from this build onward are covered on both paths. */
 async function handleStaleHost(): Promise<void> {
   try {
-    const expected = ptyHost.expectedHostIdentity(app.getVersion());
+    const expected = ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION);
     let { identity } = await ptyHost.hostStatus();
     if (identity === null) {
       // identity null is ALSO returned for transient client-side failures (e.g.
@@ -2510,7 +2532,7 @@ app.whenReady().then(async () => {
   let keptCompatibleHosts: number[] = [];
   try {
     const summary = reapStaleHostRecords(
-      ptyHost.expectedHostIdentity(app.getVersion()),
+      ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION),
       path.join(__dirname, "pty-host.js"),
     );
     keptCompatibleHosts = summary.keptCompatible;

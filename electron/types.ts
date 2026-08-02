@@ -96,6 +96,15 @@ export interface SpawnRequest {
   // NOT spawn a fresh process; emit a `no-session` event instead. Set by the
   // renderer when re-mounting a tab that already ran this session.
   attachOnly?: boolean;
+  // Attach-only IF the connected PTY host predates this app session (it was
+  // found running, not spawned by us). Set by the renderer for the first mount
+  // of a boot-restored tab; PtyHostClient.spawn resolves it into `attachOnly`
+  // because only the main-process client knows how the host came to be. On a
+  // reused host the tab's session either still lives (attach + replay) or died
+  // while the app was away - then the tab shows stopped/restartable instead of
+  // silently auto-respawning (the same maintainer decision as for manual host
+  // restarts). On a freshly-spawned host this is a no-op: boot auto-start.
+  attachIfReused?: boolean;
 }
 
 export interface ProjectGitInfo {
