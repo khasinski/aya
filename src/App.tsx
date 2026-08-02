@@ -4,7 +4,7 @@ import { commandWithAutoResume } from "./agentPreset";
 import { projectBaseCwd, tabFromTerminal } from "./worktree";
 import { findStatusTarget } from "./control-status-target";
 import { clearedTerminalStatus } from "./pty-event-reducer";
-import { forgetSpawn } from "./spawnSession";
+import { forgetSpawn, wasSpawned } from "./spawnSession";
 import {
   applyExternalProjectEdits,
   mergeProjectsFromDisk,
@@ -2774,6 +2774,23 @@ export function App() {
    *  can resume updating status when the new PTY emits data. */
   const restartTerminal = useCallback((id: string) => {
     const terminal = terminalsRef.current[id];
+    // Continuity across in-session respawns: if this tab already ran a session
+    // (confirmed live output - wasSpawned, #67), the respawn must carry the
+    // agent resume arg exactly like a boot-restored tab, or a launcher-opened
+    // claude/codex tab comes back as a brand-new EMPTY session and the
+    // conversation is lost. Flipping `restored` is the one gate
+    // terminalCommand already reads. A deliberately fresh session = close the
+    // tab and open a new one from the launcher.
+    //
+    // spawnFailure veto: the host paints the failure banner as a synthetic
+    // `data` event (pty.ts reportSpawnFailure) which can mark wasSpawned
+    // before the spawn-failed state lands in the ref the router guards on -
+    // and a tab whose spawn FAILED has no session to resume. Without the
+    // veto, the banner's Restart would append --continue and resume an
+    // unrelated conversation from the same cwd. A tab that had a REAL
+    // session before a failed respawn keeps continuity through the sticky
+    // `restored` flag flipped by that earlier restart.
+    const hadSession = wasSpawned(id) && !terminal?.spawnFailure;
     setTerminals((prev) => {
       const t = prev[id];
       if (!t) return prev;
@@ -2786,9 +2803,15 @@ export function App() {
           bell: false,
           spawnFailure: undefined,
           stopped: undefined,
+          restored: t.restored || hadSession,
         },
       };
     });
+    // Spawn via the restartTrigger effect in TerminalView - it fires AFTER
+    // this state batch re-renders, so the command it reads already carries the
+    // resume arg from the restored flip above. Spawning directly in the
+    // caller (the old way) raced the re-render and lost the -c.
+    setRestartTriggers((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
     // Also clear the activity timestamp so the dot doesn't claim "recently
     // active" until the new PTY actually writes something.
     delete lastActivityRef.current[id];
@@ -2814,6 +2837,10 @@ export function App() {
   const forceRestartTerminal = useCallback(async (id: string) => {
     const t = terminalsRef.current[id];
     if (!t) return;
+    // Read the had-a-session marker BEFORE the kill and forgetSpawn below wipe
+    // it - the respawned agent tab must resume its conversation (see
+    // restartTerminal for the rationale, including the spawnFailure veto).
+    const hadSession = wasSpawned(id) && !t.spawnFailure;
     // Await the kill so the main-side ptys map is empty by the time the
     // new spawn IPC arrives — otherwise spawnPty treats it as a re-mount
     // and replays the old buffer instead of starting fresh.
@@ -2840,6 +2867,7 @@ export function App() {
           bell: false,
           spawnFailure: undefined,
           stopped: undefined,
+          restored: cur.restored || hadSession,
         },
       };
     });

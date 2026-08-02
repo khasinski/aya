@@ -410,23 +410,11 @@ function TerminalViewComponent({
   // banner's "Restart" - without the spawn it would only clear the banner and
   // leave a "running" terminal with no process.
   const respawnInPlace = useCallback(() => {
-    const t = xtermRef.current;
-    if (!t) return;
+    // Delegate to the restartTrigger path: onRequestRestart clears the failed
+    // state AND bumps the trigger, whose effect spawns after the re-render
+    // (with the resume-aware command) and resets didPostLoadResizeRef itself.
     onRequestRestart?.();
-    // The spawn-failure banner chunk already flipped this ref to true, so a
-    // successful respawn would skip the one-time post-load SIGWINCH that
-    // fullscreen TUIs need. Reset it like the forced-restart path does.
-    didPostLoadResizeRef.current = false;
-    void window.aya.ptySpawn({
-      ptyId: terminal.id,
-      projectSlug: terminal.projectSlug,
-      presetId: terminal.presetId,
-      command: commandRef.current,
-      cwd: cwdRef.current,
-      cols: Math.max(t.cols, TERMINAL_FALLBACK_COLS),
-      rows: Math.max(t.rows, TERMINAL_FALLBACK_ROWS),
-    });
-  }, [onRequestRestart, terminal.id, terminal.projectSlug, terminal.presetId]);
+  }, [onRequestRestart]);
 
   const fitTerminal = useCallback((shouldFocus = false) => {
     if (fitFrameRef.current !== null) {
@@ -751,19 +739,11 @@ function TerminalViewComponent({
         if (action === "restart") {
           // Shift+Enter on a cleanly-exited terminal: restart in the same pane.
           ev.preventDefault();
-          const t = xtermRef.current;
-          if (!t) return false;
-          t.writeln("\x1b[2m[restarting...]\x1b[0m");
+          // No local spawn: onRequestRestart bumps the restartTrigger and its
+          // effect spawns AFTER the state re-render - so the command already
+          // carries the resume arg for a tab that had a session. Spawning here
+          // read the pre-render command and lost the -c.
           onRequestRestart?.();
-          void window.aya.ptySpawn({
-            ptyId: terminal.id,
-            projectSlug: terminal.projectSlug,
-            presetId: terminal.presetId,
-            command: commandRef.current,
-            cwd: cwdRef.current,
-            cols: Math.max(t.cols, TERMINAL_FALLBACK_COLS),
-            rows: Math.max(t.rows, TERMINAL_FALLBACK_ROWS),
-          });
           canRestartRef.current = false;
           return false;
         }

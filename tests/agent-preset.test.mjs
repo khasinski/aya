@@ -111,6 +111,21 @@ test("commandWithAutoResume returns the original command verbatim when skipped",
   assert.equal(commandWithAutoResume(preset({ command: "   " }), true), "   ");
 });
 
+test("the e2e respawn-resume marker preset appends onto tee's operand list", () => {
+  // Pins the contract e2e/respawn-resume.spec.ts is built on: this exact
+  // command (a) infers as claude, (b) has no token commandHasResumeFlag would
+  // read as an existing resume flag (`tee --` must not count), and (c) gets
+  // the resume arg appended at the very END of the line, where tee (after its
+  // `--`) treats it as a second output file - the spec asserts that file
+  // exists. If any of these drift, the e2e goes silently vacuous.
+  const command = "CLAUDE_CONFIG_DIR=/tmp/aya-e2e-rr echo run | tee -- respawn-marker.txt";
+  const p = preset({ command });
+  assert.equal(effectiveAgent(p), "claude");
+  assert.equal(commandHasResumeFlag(p, command), false);
+  assert.equal(commandWithAutoResume(p, true), `${command} --continue`);
+  assert.equal(commandWithAutoResume(p, false), command);
+});
+
 // --- pinned resume-arg vocabulary (cross-checked against its own detector) ---
 import {
   CODEX_RESUME_ARG,
