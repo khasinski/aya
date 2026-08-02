@@ -8,7 +8,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnPty } from "../dist-electron/pty.js";
@@ -45,6 +45,17 @@ test("a concurrent spawn for the same id is suppressed (no second process)", asy
   );
   // ...the racing second call bails at the in-flight guard: no events at all.
   assert.deepEqual(sink2.events, [], "concurrent duplicate spawn must be suppressed");
+
+  // The drop must not be silent (#90): the lifecycle log is the only place a
+  // suppressed duplicate is distinguishable from a request that never arrived.
+  const logLines = readFileSync(join(process.env.AYA_HOME, "pty-events.log"), "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+  assert.ok(
+    logLines.some((l) => l.ev === "spawn-dropped-in-flight" && l.ptyId === req.ptyId),
+    "the in-flight drop must leave a spawn-dropped-in-flight line",
+  );
 });
 
 test("a sequential re-spawn after the first finished is NOT suppressed", async () => {

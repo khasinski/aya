@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createPtyLog, PTY_LOG_MAX_BYTES } from "../dist-electron/pty-log.js";
+import { createPtyLog, ptyLog, PTY_LOG_MAX_BYTES } from "../dist-electron/pty-log.js";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "aya-pty-log-"));
 
@@ -91,11 +91,69 @@ test("rotation accounts for bytes, not string length (multibyte command)", () =>
   assert.equal(readLines(file)[0].command, cmd);
 });
 
+test("a failed rotation keeps the cap: overflow lines are dropped, never appended past it (#89)", () => {
+  const dir = tmp();
+  const file = path.join(dir, "pty-events.log");
+  // The rotation target is a DIRECTORY, so renameSync fails on every attempt.
+  fs.mkdirSync(`${file}.1`);
+  const log = createPtyLog(file, 120);
+  log.append("spawn", { ptyId: "first" });
+  log.append("spawn", { ptyId: "second" }); // crosses the cap; cannot rotate
+  log.append("spawn", { ptyId: "third" }); // regression guard: size must NOT have reset to 0
+  const lines = readLines(file);
+  assert.equal(
+    lines.length,
+    1,
+    "un-rotatable overflow must be dropped - the old unconditional size=0 appended it and grew the file without bound",
+  );
+  assert.equal(lines[0].ptyId, "first");
+  assert.ok(fs.statSync(file).size <= 120, "the cap must hold even when rotation is impossible");
+});
+
+test("a stale in-process size never double-rotates over a fresh generation (#89)", () => {
+  const file = path.join(tmp(), "pty-events.log");
+  const log = createPtyLog(file, 200);
+  log.append("spawn", { ptyId: "aaaa" });
+  log.append("spawn", { ptyId: "bbbb" }); // cached size now ~150 of the 200 cap
+  // Simulate a concurrent host having rotated: the full file moved to .1 and a
+  // fresh (empty) file sits at the path, while THIS writer's counter is stale.
+  fs.renameSync(file, `${file}.1`);
+  fs.writeFileSync(file, "");
+  log.append("spawn", { ptyId: "cccc" });
+  assert.equal(
+    readLines(`${file}.1`).length,
+    2,
+    "the writer must re-stat and see the fresh file - rotating off the stale counter would rename the near-empty file OVER .1 and destroy the generation",
+  );
+  assert.equal(readLines(file)[0].ptyId, "cccc");
+});
+
+test("the ptyLog singleton resolves AYA_HOME lazily at the first append (#91)", () => {
+  // pty-log.js was imported at the top of this file, BEFORE this env write -
+  // an eager import-time binding (the natural regression) would aim at the
+  // real ~/.aya and leave this tmpdir empty.
+  const home = tmp();
+  process.env.AYA_HOME = home;
+  ptyLog.append("host-start", { version: "test" });
+  const lines = readLines(path.join(home, "pty-events.log"));
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].ev, "host-start");
+});
+
 test("append never throws when the path is unwritable", () => {
   const dir = tmp();
   const blocker = path.join(dir, "not-a-dir");
   fs.writeFileSync(blocker, "plain file");
   // Parent of the log path is a FILE -> mkdir/append fail internally.
   const log = createPtyLog(path.join(blocker, "pty-events.log"), PTY_LOG_MAX_BYTES);
+  assert.doesNotThrow(() => log.append("spawn", { ptyId: "t1" }));
+});
+
+test("append never throws when the log path itself is a directory (append leg, #91)", () => {
+  // Here mkdirSync(dirname) SUCCEEDS and the failure comes from appendFileSync
+  // (EISDIR) - a regression that only guards the mkdir leg stays red here.
+  const file = path.join(tmp(), "pty-events.log");
+  fs.mkdirSync(file);
+  const log = createPtyLog(file, PTY_LOG_MAX_BYTES);
   assert.doesNotThrow(() => log.append("spawn", { ptyId: "t1" }));
 });

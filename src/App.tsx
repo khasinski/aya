@@ -2008,6 +2008,15 @@ export function App() {
     // Drop the confirmed-session marker so the id doesn't linger (and can't be
     // mistaken for a re-mount if the id were ever reused).
     forgetSpawn(id);
+    // Drop the restart-trigger counter too - entries are tiny, but a
+    // long-lived session cycling many tabs would otherwise retain one per
+    // closed id forever (#94).
+    setRestartTriggers((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     void window.aya.ptyKill(id);
     appendProjectEvent({
       projectSlug: t.projectSlug,
@@ -2796,7 +2805,10 @@ export function App() {
     // Leaving the no-session marker set would let a remount that races the
     // trigger spawn attach-probe again and re-stick `stopped` onto a live
     // process; the host's in-flight/ptys guards make a double plain spawn
-    // safe, so forgetting is the strictly better side of that race.
+    // safe, so forgetting is the strictly better side of that race. The
+    // unconditional forget also subsumes the #87 veto fix: a poisoned
+    // wasSpawned marker from a failed spawn's banner is dropped here too,
+    // so it can never latch `restored` on a later restart.
     forgetSpawn(id);
     setTerminals((prev) => {
       const t = prev[id];
