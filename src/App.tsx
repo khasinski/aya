@@ -2791,6 +2791,13 @@ export function App() {
     // session before a failed respawn keeps continuity through the sticky
     // `restored` flag flipped by that earlier restart.
     const hadSession = wasSpawned(id) && !terminal?.spawnFailure;
+    // Same marker hygiene as forceRestartTerminal (after hadSession is read):
+    // an explicit restart means the NEXT mount of this id must plain-spawn.
+    // Leaving the no-session marker set would let a remount that races the
+    // trigger spawn attach-probe again and re-stick `stopped` onto a live
+    // process; the host's in-flight/ptys guards make a double plain spawn
+    // safe, so forgetting is the strictly better side of that race.
+    forgetSpawn(id);
     setTerminals((prev) => {
       const t = prev[id];
       if (!t) return prev;

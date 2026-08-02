@@ -40,6 +40,13 @@ export class PtyHostClient {
   private nextId = 1;
   private pending = new Map<number, PendingRequest>();
   private buffer = "";
+  // Whether the CURRENT host connection is to a host that was already running
+  // (found via its socket) rather than one this client spawned. Drives the
+  // attachIfReused resolution in spawn(): a reused host may still hold
+  // sessions from before this app session; a fresh host cannot. Updated on
+  // every (re)connect; false until the first connect completes (spawn()
+  // awaits connect first, so it always reads a settled value).
+  private reusedHost = false;
   // All live Aya windows' webContents (plus any virtual sink). PTY events are
   // broadcast to every sink; each renderer's event bus routes by ptyId, so a
   // window that doesn't host the terminal does a single cheap no-op per event.
@@ -56,7 +63,18 @@ export class PtyHostClient {
   }
 
   async spawn(req: SpawnRequest): Promise<void> {
-    await this.request({ id: 0, type: "spawn", req });
+    // Resolve attachIfReused HERE - only this client knows whether the host
+    // was reused or freshly spawned, and connect() (awaited before the flag
+    // is read) is what settles that. The host itself only understands
+    // attachOnly; the intent flag never crosses the socket.
+    await this.connect();
+    const { attachIfReused, ...rest } = req;
+    const attach = resolveSpawnAttach(rest.attachOnly, attachIfReused, this.reusedHost);
+    await this.request({
+      id: 0,
+      type: "spawn",
+      req: { ...rest, ...(attach ? { attachOnly: true } : {}) },
+    });
   }
 
   async write(ptyId: string, data: string): Promise<void> {
@@ -166,11 +184,15 @@ export class PtyHostClient {
   private async connectWithHostStart(): Promise<void> {
     try {
       await this.openSocket();
+      // The socket already existed: this host predates the connection, so it
+      // may hold PTY sessions from a previous app session.
+      this.reusedHost = true;
       return;
     } catch {
       this.startHost();
       await this.waitForSocket();
       await this.openSocket();
+      this.reusedHost = false;
     }
   }
 
@@ -280,6 +302,19 @@ export class PtyHostClient {
     }
     this.pending.clear();
   }
+}
+
+/** Resolve the wire-level attachOnly flag for a spawn request. Pure and
+ *  exported for unit tests: `attachOnly` (the tab already ran this renderer
+ *  session) always attaches; `attachIfReused` attaches only when the client
+ *  is talking to a host it did NOT spawn - a fresh host cannot hold the
+ *  session, so forcing attach there would wrongly stop every boot tab. */
+export function resolveSpawnAttach(
+  attachOnly: boolean | undefined,
+  attachIfReused: boolean | undefined,
+  reusedHost: boolean,
+): boolean {
+  return !!attachOnly || (!!attachIfReused && reusedHost);
 }
 
 /** Narrow an untyped handshake reply to HostIdentity, or null if malformed

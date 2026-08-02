@@ -254,6 +254,14 @@ export interface SpawnRequest {
    *  this session: if its PTY died, surface a stopped/restartable state via a
    *  `no-session` event instead of silently spawning a brand-new process. */
   attachOnly?: boolean;
+  /** Attach-only IF the PTY host predates this app session (the main-process
+   *  client found it running instead of spawning it - only the client can
+   *  tell, so it resolves this into attachOnly). Set on the first mount of a
+   *  boot-restored tab: on a reused host the session either still lives
+   *  (attach + replay) or died while the app was away - then the tab shows
+   *  stopped/restartable instead of silently auto-respawning. On a fresh
+   *  host this is a no-op and boot auto-start is unchanged. */
+  attachIfReused?: boolean;
 }
 
 export type PtyEvent =

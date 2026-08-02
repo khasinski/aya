@@ -68,6 +68,11 @@ export interface SeedOptions {
   /** Open a SECOND project ("e2e-proj-2", one tab named "shell 3") so tests can
    *  exercise project switching (e.g. the project-N shortcut). */
   secondProject?: boolean;
+  /** Start a PTY host (holding no sessions) BEFORE the app launches, so the
+   *  app connects to a REUSED host: boot-restored tabs must then attach-only
+   *  (-> stopped/restartable) instead of auto-respawning. Consumed by the
+   *  `app` fixture, not by seedEnv. */
+  preStartPtyHost?: boolean;
 }
 
 function shellQuote(value: string): string {

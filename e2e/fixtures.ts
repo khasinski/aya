@@ -4,7 +4,8 @@ import {
   type ElectronApplication,
   type Page,
 } from "@playwright/test";
-import { rmSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync, rmSync } from "node:fs";
 import * as net from "node:net";
 import { join } from "node:path";
 import { seedEnv, type SeededEnv, type SeedOptions } from "./helpers/seed";
@@ -79,7 +80,30 @@ export const test = base.extend<{
     await removeSeededRoot(s.root);
   },
 
-  app: async ({ seeded }, use) => {
+  app: async ({ seeded, seedOptions }, use) => {
+    // preStartPtyHost: bring a session-less host up FIRST, so the app's
+    // client finds its socket and treats the host as REUSED - the scenario
+    // where boot-restored tabs must attach-only instead of auto-respawning.
+    // Runs under plain node (the host script never needs Electron APIs).
+    let preStartedHost: ChildProcess | null = null;
+    if (seedOptions.preStartPtyHost) {
+      preStartedHost = spawn(
+        process.execPath,
+        [join(APP_ROOT, "dist-electron", "pty-host.js")],
+        {
+          env: { ...process.env, AYA_HOME: seeded.ayaHome },
+          stdio: "ignore",
+        },
+      );
+      const socketPath = join(seeded.ayaHome, "pty-host.sock");
+      const deadline = Date.now() + PTY_HOST_SHUTDOWN_TIMEOUT_MS * 5;
+      while (!existsSync(socketPath)) {
+        if (Date.now() > deadline) {
+          throw new Error("pre-started pty host never created its socket");
+        }
+        await delay(50);
+      }
+    }
     // Production-like launch: no AYA_DEV, so the app loads the built
     // dist/index.html. ELECTRON_RUN_AS_NODE must be stripped or Electron starts
     // as plain Node (no `app`). AYA_HOME + --user-data-dir isolate all state.
@@ -118,6 +142,11 @@ export const test = base.extend<{
     await use(app);
     await closeAndWait(app);
     await shutdownPtyHost(seeded.ayaHome);
+    if (preStartedHost && !preStartedHost.killed) {
+      // Belt: the socket shutdown above normally takes the host down; a hung
+      // one must not leak past the test.
+      preStartedHost.kill("SIGKILL");
+    }
   },
 
   window: async ({ app }, use) => {
