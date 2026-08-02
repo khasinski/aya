@@ -71,7 +71,9 @@ async function openMarkerTabAndFinishFirstRun(window: Page, projectDir: string) 
   await window.locator(".aya-launcher .aya-launcher-btn", { hasText: "Marker" }).click();
   await expect(window.getByTestId("sidebar-terminal")).toHaveCount(3);
 
-  const markerRow = window.locator('[data-terminal-name="Marker"]');
+  // Scoped to the sidebar row - the terminal pane carries the same
+  // data-terminal-name, so an unscoped locator trips strict mode.
+  const markerRow = window.locator('.aya-sidebar-row[data-terminal-name="Marker"]');
   await expect(markerRow.locator(".aya-sidebar-statusdot--idle")).toBeVisible({
     timeout: 10_000,
   });
