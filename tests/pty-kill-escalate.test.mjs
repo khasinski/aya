@@ -15,6 +15,14 @@ import {
   activePtyCount,
   KILL_ESCALATE_MS,
 } from "../dist-electron/pty.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// pty.ts logs lifecycle events to $AYA_HOME/pty-events.log (resolved lazily at
+// the first append), so redirect it before any PTY call - otherwise unit runs
+// write into the user's real ~/.aya.
+process.env.AYA_HOME = mkdtempSync(join(tmpdir(), "aya-pty-test-"));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

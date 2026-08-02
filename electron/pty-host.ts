@@ -29,6 +29,7 @@ import {
   type PtyEventSink,
 } from "./pty";
 import type { PtyEvent } from "./types";
+import { ptyLog } from "./pty-log";
 
 // Wait before shutting down the idle pty host with no clients or ptys (ms).
 const IDLE_SHUTDOWN_TIMEOUT_MS = 30_000;
@@ -54,9 +55,13 @@ let hostShutdownStarted = false;
  *  process.exit(0) - the host stays alive long enough to actually deliver the
  *  escalation), then remove the registry record (children confirmed dead; a
  *  crash exit skips this and leaves the record for next-launch GC) and exit. */
-function beginShutdown(): void {
+function beginShutdown(reason: string): void {
   if (hostShutdownStarted) return; // the in-flight shutdown owns the exit
   hostShutdownStarted = true;
+  // The reason is the single most valuable line in the lifecycle log: it
+  // distinguishes "a client told this host to die" (staleness handoff) from
+  // an OS signal when every console dies at once.
+  ptyLog.append("host-shutdown", { reason, children: activePtyCount() });
   closeSocket();
   shutdownPtyChildren(() => {
     removeHostRecord(process.pid);
@@ -127,7 +132,7 @@ async function handle(request: PtyHostRequest): Promise<unknown> {
     return null;
   }
   if (request.type === "shutdown") {
-    beginShutdown();
+    beginShutdown("client-request");
     return null;
   }
   if (request.type === "search") {
@@ -177,7 +182,10 @@ const HOST_IDENTITY: HostIdentity = computeHostIdentity();
 function scheduleIdleShutdown(): void {
   if (clients.size > 0 || activePtyCount() > 0 || idleTimer) return;
   idleTimer = setTimeout(() => {
-    if (clients.size === 0 && activePtyCount() === 0) process.exit(0);
+    if (clients.size === 0 && activePtyCount() === 0) {
+      ptyLog.append("host-idle-exit");
+      process.exit(0);
+    }
   }, IDLE_SHUTDOWN_TIMEOUT_MS);
 }
 
@@ -241,6 +249,10 @@ function start(): void {
     // launcher, future spawn change) we skip the record - degrading to
     // pre-registry behavior instead of recording an unkillable/foreign group.
     // writeHostRecord itself refuses an empty startTime (unverifiable record).
+    ptyLog.append("host-start", {
+      version: HOST_IDENTITY.version,
+      scriptHash: HOST_IDENTITY.scriptHash.slice(0, 8),
+    });
     const pgid = ownPgid();
     if (pgid === process.pid) {
       writeHostRecord({
@@ -259,8 +271,8 @@ function start(): void {
   // children (and, being same-version, the registry would keep it forever). Do a
   // real graceful shutdown instead - beginShutdown is idempotent, so a signal
   // racing an in-flight socket "shutdown" joins it instead of double-draining.
-  process.once("SIGTERM", beginShutdown);
-  process.once("SIGINT", beginShutdown);
+  process.once("SIGTERM", () => beginShutdown("SIGTERM"));
+  process.once("SIGINT", () => beginShutdown("SIGINT"));
   process.once("exit", closeSocket);
 }
 
