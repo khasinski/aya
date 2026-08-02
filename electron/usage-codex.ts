@@ -32,7 +32,14 @@ export interface CodexUsageSource {
 
 function isoFromUnixSeconds(sec: unknown): string | undefined {
   if (typeof sec !== "number" || !Number.isFinite(sec)) return undefined;
-  return new Date(sec * 1000).toISOString();
+  const ms = sec * 1000;
+  // ECMAScript Date range guard: a finite but absurd resets_at (corrupt
+  // rollout line) would make toISOString throw RangeError, and that throw
+  // propagates through the usage:get-codex IPC handler into an uncaught
+  // rejection that silently stops the chip from refreshing (#93). An
+  // out-of-range value means "no reset time", not a poisoned snapshot.
+  if (Math.abs(ms) > 8.64e15) return undefined;
+  return new Date(ms).toISOString();
 }
 
 function firstString(...values: unknown[]): string | undefined {

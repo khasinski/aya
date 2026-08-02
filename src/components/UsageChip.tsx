@@ -82,8 +82,13 @@ function UsageRow({
   );
 }
 
-function averageWeeklyPct(accounts: UsageAccount[]): number {
-  if (accounts.length === 0) return 0;
+function averageUsagePct(accounts: UsageAccount[]): {
+  pct: number;
+  /** Which ring the average was computed from - the popover label must not
+   *  claim "weekly" for a 5h-only fallback (#92). */
+  ring: "weekly" | "5h";
+} {
+  if (accounts.length === 0) return { pct: 0, ring: "weekly" };
   // Average the WEEKLY ring across accounts that have one; only when no
   // account exposes a weekly window (5h-only schema) fall back to the 5h
   // ring, so a lone short-window account still lights the chip instead of
@@ -92,7 +97,10 @@ function averageWeeklyPct(accounts: UsageAccount[]): number {
   const pool = weekly.length > 0 ? weekly : accounts;
   const pick = (a: UsageAccount) =>
     a.usage.sevenDay?.pct ?? a.usage.fiveHour?.pct ?? 0;
-  return pool.reduce((sum, a) => sum + pick(a), 0) / pool.length;
+  return {
+    pct: pool.reduce((sum, a) => sum + pick(a), 0) / pool.length,
+    ring: weekly.length > 0 ? "weekly" : "5h",
+  };
 }
 
 function allUsageStale(accounts: UsageAccount[]): boolean {
@@ -128,7 +136,7 @@ export function UsageChip({
   if (accounts.length === 0) return null;
 
   const stale = allUsageStale(accounts);
-  const weeklyPct = averageWeeklyPct(accounts);
+  const { pct: weeklyPct, ring: avgRing } = averageUsagePct(accounts);
   const ringPct = Math.max(0, Math.min(100, weeklyPct));
   const accountText =
     accounts.length === 1 ? "1 account" : `${accounts.length} accounts`;
@@ -283,7 +291,7 @@ export function UsageChip({
                 paddingTop: 8,
               }}
             >
-              {Math.round(weeklyPct)}% average weekly used
+              {Math.round(weeklyPct)}% average {avgRing} used
             </div>
           )}
         </div>

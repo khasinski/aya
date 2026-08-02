@@ -130,6 +130,21 @@ test("null for null / non-object", () => {
   assert.equal(codexUsageFromRateLimit(42, 0), null);
 });
 
+test("a finite but out-of-range resets_at drops the reset time, never throws (#93)", () => {
+  // Corrupt rollout data: resets_at far outside the ECMAScript Date range
+  // used to throw RangeError out of toISOString, and the throw propagated
+  // through the usage IPC handler and silently killed the chip's refresh.
+  const u = codexUsageFromRateLimit(
+    {
+      primary: { used_percent: 12, window_minutes: 10080, resets_at: 1e20 },
+      secondary: null,
+    },
+    0,
+  );
+  assert.equal(u.sevenDay.pct, 12, "the window itself must survive");
+  assert.equal(u.sevenDay.resetsAt, undefined, "out-of-range reset time is omitted");
+});
+
 test("resetsAt accepts only Unix seconds; absent/other types omit it", () => {
   const u = codexUsageFromRateLimit(
     { primary: { used_percent: 1, resets_at: "2026-01-01" }, secondary: { used_percent: 2 } },
