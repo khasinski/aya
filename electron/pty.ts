@@ -459,6 +459,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     // renderer, so emitting no-session here would falsely strand the tab as
     // stopped. (Checked before attachOnly so the host is robust regardless of
     // the renderer's confirmed-output gating.)
+    ptyLog.append("spawn-dropped-in-flight", { ptyId: req.ptyId });
     return;
   }
   if (req.attachOnly) {
@@ -573,6 +574,9 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       // Registering now would orphan this child, and a scheduled escalation might
       // not fire before the host exits - so force-kill it synchronously (the
       // SIGKILL syscall dooms it regardless of the host's remaining lifetime).
+      child.onExit(({ exitCode }) => {
+        ptyLog.append("exit", { ptyId: req.ptyId, exitCode, killed: true });
+      });
       try {
         child.kill();
         child.kill("SIGKILL");
@@ -593,7 +597,10 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       projectSlug: req.projectSlug,
       presetId: req.presetId,
       cwd,
-      command: req.command,
+      // Clamped: the command is unbounded user input, and a single line
+      // larger than the log cap would blow straight past it (#89). 4 KB
+      // keeps every realistic command (and its resume arg) intact.
+      command: req.command.slice(0, 4096),
     });
 
     child.onData((chunk) => {
@@ -673,6 +680,13 @@ export function killPty(ptyId: string): void {
   // PTY), then terminate with SIGKILL escalation so a signal-ignoring child
   // can't survive and get orphaned.
   ptys.delete(ptyId);
+  // The spawn-time onExit skips its "exit" append once the map entry is gone
+  // (its identity guard exists so a respawn under the same id is not wrongly
+  // torn down) - so log the killed child's actual exit here, or the forensic
+  // trail shows a kill with no evidence the child ever died (#88).
+  p.onExit(({ exitCode }) => {
+    ptyLog.append("exit", { ptyId, exitCode, killed: true });
+  });
   terminatePtyChild(p);
 }
 
@@ -742,8 +756,17 @@ export function shutdownPtyChildren(
   // Block any further spawns (including one mid-preflight) from escaping the
   // snapshot below and getting orphaned when the host exits.
   shuttingDown = true;
-  const children = [...ptys.values()];
+  const entries = [...ptys.entries()];
+  const children = entries.map(([, child]) => child);
   ptyLog.append("children-shutdown", { children: children.length });
+  // Same identity-guard gap as killPty: the map is cleared below, so the
+  // spawn-time onExit never logs these deaths. Log each child's exit (with
+  // code) from here so a mass shutdown leaves a per-child trail (#88).
+  for (const [ptyId, child] of entries) {
+    child.onExit(({ exitCode }) => {
+      ptyLog.append("exit", { ptyId, exitCode, killed: true });
+    });
+  }
   ptys.clear();
   outputBuffers.clear();
   pendingKills.clear();

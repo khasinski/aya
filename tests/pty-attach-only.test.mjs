@@ -7,10 +7,10 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnPty } from "../dist-electron/pty.js";
+import { killPty, spawnPty } from "../dist-electron/pty.js";
 
 // pty.ts logs lifecycle events to $AYA_HOME/pty-events.log (resolved lazily at
 // the first append), so redirect it before any spawnPty call - otherwise unit
@@ -40,6 +40,29 @@ test("attachOnly with no live session emits no-session and does not spawn", asyn
   const req = baseReq({ attachOnly: true });
   await spawnPty(req, sink);
   assert.deepEqual(sink.events, [{ type: "no-session", ptyId: req.ptyId }]);
+});
+
+test("lifecycle events land in $AYA_HOME/pty-events.log (lazy singleton + wiring)", async () => {
+  // AYA_HOME was set ABOVE, after pty.js was already imported - so a hit here
+  // pins BOTH halves of the isolation story (#91): the ptyLog singleton must
+  // resolve its path lazily at the first append (an eager import-time binding
+  // would write into the user's real ~/.aya and leave this file empty), and
+  // the pty.ts call sites must actually fire (deleting the appends would also
+  // leave this file empty while every event-sink assertion stays green).
+  const sink = fakeSink();
+  const req = baseReq({ attachOnly: true });
+  await spawnPty(req, sink);
+  killPty(req.ptyId); // dead id -> arms the pending-kill marker, logs live:false
+  const lines = readFileSync(join(process.env.AYA_HOME, "pty-events.log"), "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+  const noSession = lines.find((l) => l.ev === "no-session" && l.ptyId === req.ptyId);
+  assert.ok(noSession, "the no-session event must be logged");
+  assert.equal(noSession.pid, process.pid);
+  const kill = lines.find((l) => l.ev === "kill" && l.ptyId === req.ptyId);
+  assert.ok(kill, "the kill event must be logged");
+  assert.equal(kill.live, false);
 });
 
 test("attachOnly returns before command/cwd validation (no spawn-failed)", async () => {

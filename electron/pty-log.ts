@@ -7,7 +7,9 @@
 //
 // Design constraints:
 // - Logging must NEVER break the PTY layer: every append is wrapped, all
-//   failures are swallowed.
+//   THROWN failures are swallowed. (A blocked sync write - hung NFS $HOME,
+//   a FIFO planted at the log path - is not a throw and would stall the
+//   host; accepted risk, see #95.)
 // - Small and self-limiting: the file rotates to a single `.1` generation at
 //   PTY_LOG_MAX_BYTES, so it cannot grow unbounded on a chatty session.
 // - Every line carries ts (ISO), pid (writer - distinguishes overlapping
@@ -47,7 +49,12 @@ export function createPtyLog(
           ...fields,
         })}\n`;
         const bytes = Buffer.byteLength(line);
-        if (size < 0) {
+        if (size < 0 || size + bytes > maxBytes) {
+          // Re-stat instead of trusting the in-process counter before acting
+          // on it: a concurrent writer (second host during a handoff) may
+          // have rotated already, and rotating again off a stale size would
+          // rename a near-empty file OVER the freshly rotated generation and
+          // destroy it (#89).
           try {
             size = fs.statSync(file).size;
           } catch {
@@ -55,11 +62,13 @@ export function createPtyLog(
           }
         }
         if (size + bytes > maxBytes) {
-          try {
-            fs.renameSync(file, `${file}.1`);
-          } catch {
-            // Nothing to rotate (or a concurrent writer won the rename).
-          }
+          // No inner try: if the rename fails (`.1` unwritable), the outer
+          // catch drops this line while `size` keeps the real file size - the
+          // cap must hold even when rotation is impossible, and the previous
+          // unconditional `size = 0` here let the file grow without bound
+          // (#89). A single line larger than the whole cap is dropped the
+          // same way (spawn already clamps its command field).
+          fs.renameSync(file, `${file}.1`);
           size = 0;
         }
         fs.mkdirSync(path.dirname(file), { recursive: true });
