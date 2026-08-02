@@ -4,7 +4,7 @@ import { commandWithAutoResume } from "./agentPreset";
 import { projectBaseCwd, tabFromTerminal } from "./worktree";
 import { findStatusTarget } from "./control-status-target";
 import { clearedTerminalStatus } from "./pty-event-reducer";
-import { forgetSpawn } from "./spawnSession";
+import { forgetSpawn, wasSpawned } from "./spawnSession";
 import {
   applyExternalProjectEdits,
   mergeProjectsFromDisk,
@@ -2008,6 +2008,15 @@ export function App() {
     // Drop the confirmed-session marker so the id doesn't linger (and can't be
     // mistaken for a re-mount if the id were ever reused).
     forgetSpawn(id);
+    // Drop the restart-trigger counter too - entries are tiny, but a
+    // long-lived session cycling many tabs would otherwise retain one per
+    // closed id forever (#94).
+    setRestartTriggers((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     void window.aya.ptyKill(id);
     appendProjectEvent({
       projectSlug: t.projectSlug,
@@ -2774,6 +2783,33 @@ export function App() {
    *  can resume updating status when the new PTY emits data. */
   const restartTerminal = useCallback((id: string) => {
     const terminal = terminalsRef.current[id];
+    // Continuity across in-session respawns: if this tab already ran a session
+    // (confirmed live output - wasSpawned, #67), the respawn must carry the
+    // agent resume arg exactly like a boot-restored tab, or a launcher-opened
+    // claude/codex tab comes back as a brand-new EMPTY session and the
+    // conversation is lost. Flipping `restored` is the one gate
+    // terminalCommand already reads. A deliberately fresh session = close the
+    // tab and open a new one from the launcher.
+    //
+    // spawnFailure veto: the host paints the failure banner as a synthetic
+    // `data` event (pty.ts reportSpawnFailure) which can mark wasSpawned
+    // before the spawn-failed state lands in the ref the router guards on -
+    // and a tab whose spawn FAILED has no session to resume. Without the
+    // veto, the banner's Restart would append --continue and resume an
+    // unrelated conversation from the same cwd. A tab that had a REAL
+    // session before a failed respawn keeps continuity through the sticky
+    // `restored` flag flipped by that earlier restart.
+    const hadSession = wasSpawned(id) && !terminal?.spawnFailure;
+    if (terminal?.spawnFailure) {
+      // The veto must not be one-shot: the banner's synthetic data event
+      // marked wasSpawned for a tab with NO real session, and the state
+      // update below clears spawnFailure - so a second restart landing
+      // before the retry resolves would see wasSpawned && !spawnFailure and
+      // latch `restored` for a session that never existed (#87). Drop the
+      // poisoned marker; a tab that had a real session keeps continuity
+      // through the sticky `restored` flag regardless.
+      forgetSpawn(id);
+    }
     setTerminals((prev) => {
       const t = prev[id];
       if (!t) return prev;
@@ -2786,9 +2822,15 @@ export function App() {
           bell: false,
           spawnFailure: undefined,
           stopped: undefined,
+          restored: t.restored || hadSession,
         },
       };
     });
+    // Spawn via the restartTrigger effect in TerminalView - it fires AFTER
+    // this state batch re-renders, so the command it reads already carries the
+    // resume arg from the restored flip above. Spawning directly in the
+    // caller (the old way) raced the re-render and lost the -c.
+    setRestartTriggers((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
     // Also clear the activity timestamp so the dot doesn't claim "recently
     // active" until the new PTY actually writes something.
     delete lastActivityRef.current[id];
@@ -2809,18 +2851,34 @@ export function App() {
     {},
   );
 
-  /** Right-click → "Restart" handler. Kills the existing PTY (alive or
-   *  not) and asks TerminalView to spawn a fresh one. */
+  /** Right-click → "Restart" handler. Kills the PTY if it can still be
+   *  alive (see the maybeAlive gate) and asks TerminalView to spawn a
+   *  fresh one. */
   const forceRestartTerminal = useCallback(async (id: string) => {
     const t = terminalsRef.current[id];
     if (!t) return;
-    // Await the kill so the main-side ptys map is empty by the time the
-    // new spawn IPC arrives — otherwise spawnPty treats it as a re-mount
-    // and replays the old buffer instead of starting fresh.
-    try {
-      await window.aya.ptyKill(id);
-    } catch {
-      /* ignore — best effort */
+    // Read the had-a-session marker BEFORE the kill and forgetSpawn below wipe
+    // it - the respawned agent tab must resume its conversation (see
+    // restartTerminal for the rationale, including the spawnFailure veto).
+    const hadSession = wasSpawned(id) && !t.spawnFailure;
+    // Kill only a possibly-live PTY. For an already-dead tab (exited - which
+    // includes spawn failures, they emit a synthetic exit - or stopped by a
+    // host restart) the host map has no entry, so killPty would arm its
+    // pending-kill marker (the closed-tab race guard) and that marker would
+    // swallow the respawn the trigger below requests - a silent "Restart did
+    // nothing" for up to the marker's TTL. A death the renderer has not seen
+    // yet (exit event still in flight) can still hit that window; the gate
+    // covers every state the user can actually observe when clicking.
+    const maybeAlive = t.exitCode === null && !t.stopped;
+    if (maybeAlive) {
+      // Await the kill so the main-side ptys map is empty by the time the
+      // new spawn IPC arrives — otherwise spawnPty treats it as a re-mount
+      // and replays the old buffer instead of starting fresh.
+      try {
+        await window.aya.ptyKill(id);
+      } catch {
+        /* ignore — best effort */
+      }
     }
     // Forget the confirmed-session marker AFTER the kill: a still-alive process
     // can emit output between the request and the kill landing, which would
@@ -2840,6 +2898,7 @@ export function App() {
           bell: false,
           spawnFailure: undefined,
           stopped: undefined,
+          restored: cur.restored || hadSession,
         },
       };
     });
