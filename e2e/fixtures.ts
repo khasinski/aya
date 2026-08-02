@@ -74,9 +74,20 @@ export const test = base.extend<{
 }>({
   seedOptions: [{}, { option: true }],
 
-  seeded: async ({ seedOptions }, use) => {
+  seeded: async ({ seedOptions }, use, testInfo) => {
     const s = seedEnv(seedOptions);
     await use(s);
+    // On failure, preserve the PTY lifecycle log (spawn/kill/exit/host events
+    // with verbatim commands) in the report BEFORE the seeded root is wiped -
+    // it is the only forensic record of what the host actually did.
+    if (testInfo.status !== testInfo.expectedStatus) {
+      for (const name of ["pty-events.log", "pty-events.log.1"]) {
+        const p = join(s.ayaHome, name);
+        if (existsSync(p)) {
+          await testInfo.attach(name, { path: p, contentType: "text/plain" });
+        }
+      }
+    }
     await removeSeededRoot(s.root);
   },
 
