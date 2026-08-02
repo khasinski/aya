@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.7.9 - 2026-08-02
+
+Aya 0.7.9 makes agent sessions survive restarts the way they always should
+have: an in-session restart resumes the conversation, and a dead tab comes
+back restartable instead of silently starting a fresh session. A new PTY
+lifecycle log makes session-death bugs diagnosable after the fact.
+
+### Fixes
+
+- **Restarting an agent tab resumes its session.** Right-click Restart,
+  Shift+Enter after an exit, and the recovery banner all respawn with the
+  resume argument (`--continue` / `resume --last`), so the conversation
+  continues instead of starting over. A deliberately fresh session is still
+  one gesture away: close the tab and open a new one.
+- **Dead tabs attach instead of silently respawning.** The attach flag was
+  dropped at an IPC validation boundary, so every re-mount of a dead PTY
+  quietly started a fresh process (the "console comes back empty" symptom).
+  Re-mounts now attach and replay; a tab whose session died while the app
+  was away comes up stopped and restartable, with resume on Shift+Enter.
+- **Typed input no longer vanishes right after a terminal starts.** A
+  connect-ordering inversion in the PTY client could deliver the first
+  keystrokes before the spawn request, where the host dropped them.
+- **Codex usage chip survives the new single-window rate_limits schema**,
+  an out-of-range resets_at no longer kills the usage poll, and the popover
+  no longer claims "weekly" for a 5h-only average.
+- Right-click Restart on an already-exited tab respawns again (the pending-
+  kill guard was swallowing it).
+
+### Diagnostics
+
+- **PTY lifecycle log**: the PTY host now writes a durable JSONL trail of
+  spawn/kill/exit/host events (with exit codes) to `~/.aya/pty-events.log`,
+  size-capped with rotation - built to pin down the periodic mass console
+  reloads (#83).
+
+### Security
+
+- Dependency patches: brace-expansion (two high advisories), node-tar
+  (moderate), postcss, fast-uri. `npm audit` reports 0 vulnerabilities.
+
 ## v0.7.8 - 2026-07-20
 
 Aya 0.7.8 adds experimental browser access to your terminals, a history search
