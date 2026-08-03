@@ -5,7 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
     private var store: SessionStore!
     private var sidebar: SidebarController!
-    private let terminalContainer = NSView()
+    private let terminalHost = NSView()
     private let statusField = NSTextField(labelWithString: "connecting to host…")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -25,44 +25,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.show(tab: tab, project: project)
         }
 
-        window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Aya Native (experiment)"
-        window.center()
-        window.setFrameAutosaveName("AyaNativeMain")
+        // NSSplitViewController owns the split layout end to end - the v0
+        // hand-rolled NSStackView + NSSplitView mix collapsed to a broken
+        // zero-sized window.
+        let split = NSSplitViewController()
 
-        let split = NSSplitView()
-        split.isVertical = true
-        split.dividerStyle = .thin
-
+        let sidebarVC = NSViewController()
         let sidebarScroll = NSScrollView()
         sidebarScroll.documentView = sidebar.tableView
         sidebarScroll.hasVerticalScroller = true
-        sidebarScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 200).isActive = true
+        sidebarScroll.drawsBackground = true
+        sidebarVC.view = sidebarScroll
 
-        terminalContainer.wantsLayer = true
-        terminalContainer.layer?.backgroundColor = NSColor.black.cgColor
-
-        split.addArrangedSubview(sidebarScroll)
-        split.addArrangedSubview(terminalContainer)
-        split.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
-
+        let terminalVC = NSViewController()
+        let rightSide = NSView()
+        terminalHost.translatesAutoresizingMaskIntoConstraints = false
+        terminalHost.wantsLayer = true
+        terminalHost.layer?.backgroundColor = NSColor(calibratedWhite: 0.07, alpha: 1).cgColor
+        statusField.translatesAutoresizingMaskIntoConstraints = false
         statusField.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
         statusField.textColor = .secondaryLabelColor
         statusField.lineBreakMode = .byTruncatingMiddle
+        rightSide.addSubview(terminalHost)
+        rightSide.addSubview(statusField)
+        NSLayoutConstraint.activate([
+            terminalHost.topAnchor.constraint(equalTo: rightSide.topAnchor),
+            terminalHost.leadingAnchor.constraint(equalTo: rightSide.leadingAnchor),
+            terminalHost.trailingAnchor.constraint(equalTo: rightSide.trailingAnchor),
+            statusField.topAnchor.constraint(equalTo: terminalHost.bottomAnchor, constant: 3),
+            statusField.leadingAnchor.constraint(equalTo: rightSide.leadingAnchor, constant: 8),
+            statusField.trailingAnchor.constraint(lessThanOrEqualTo: rightSide.trailingAnchor, constant: -8),
+            statusField.bottomAnchor.constraint(equalTo: rightSide.bottomAnchor, constant: -3),
+        ])
+        terminalVC.view = rightSide
 
-        let root = NSStackView(views: [split, statusField])
-        root.orientation = .vertical
-        root.spacing = 4
-        root.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 4, right: 8)
-        root.distribution = .fill
-        split.setContentHuggingPriority(.defaultLow, for: .vertical)
+        let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarVC)
+        sidebarItem.minimumThickness = 180
+        sidebarItem.maximumThickness = 360
+        sidebarItem.canCollapse = false
+        split.addSplitViewItem(sidebarItem)
+        let terminalItem = NSSplitViewItem(viewController: terminalVC)
+        terminalItem.minimumThickness = 400
+        split.addSplitViewItem(terminalItem)
 
-        window.contentView = root
+        window = NSWindow(contentViewController: split)
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.title = "Aya Native (experiment)"
+        window.setContentSize(NSSize(width: 1180, height: 760))
+        window.center()
+        window.setFrameAutosaveName("AyaNativeMain")
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
@@ -70,8 +81,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.start()
         sidebar.reload()
 
-        // Open the first tab so the tester lands in a live terminal, not an
-        // empty pane.
         if let project = store.projects.first, let tab = project.tabs.first {
             sidebar.select(tabId: tab.id)
             show(tab: tab, project: project)
@@ -82,14 +91,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func show(tab: AyaTab, project: AyaProject) {
         let pane = store.pane(for: tab, in: project)
-        guard pane.superview !== terminalContainer || terminalContainer.subviews.first !== pane else {
+        if terminalHost.subviews.first === pane {
             window.makeFirstResponder(pane.terminalView)
             return
         }
-        terminalContainer.subviews.forEach { $0.removeFromSuperview() }
-        pane.frame = terminalContainer.bounds
-        pane.autoresizingMask = [.width, .height]
-        terminalContainer.addSubview(pane)
+        terminalHost.subviews.forEach { $0.removeFromSuperview() }
+        pane.translatesAutoresizingMaskIntoConstraints = false
+        terminalHost.addSubview(pane)
+        NSLayoutConstraint.activate([
+            pane.topAnchor.constraint(equalTo: terminalHost.topAnchor),
+            pane.bottomAnchor.constraint(equalTo: terminalHost.bottomAnchor),
+            pane.leadingAnchor.constraint(equalTo: terminalHost.leadingAnchor),
+            pane.trailingAnchor.constraint(equalTo: terminalHost.trailingAnchor),
+        ])
         window.title = "\(project.name) — \(tab.name)"
         window.makeFirstResponder(pane.terminalView)
     }
