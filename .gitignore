@@ -47,3 +47,6 @@ blob-report/
 playwright/.cache/
 
 .claude/
+
+# Swift experiment build artifacts
+native/.build/
