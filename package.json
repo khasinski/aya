@@ -73,6 +73,9 @@
       "buildResources": "build",
       "output": "release"
     },
+    "toolsets": {
+      "appimage": "1.0.3"
+    },
     "publish": [
       {
         "provider": "github",
