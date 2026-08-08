@@ -13,6 +13,19 @@
 //     chunk into a replay one would mislabel it),
 //   - any non-data event flushes pending data first, so e.g. an exit can
 //     never overtake the output that preceded it.
+//
+// One ordering subtlety this design does NOT close in the general case: for a
+// single ptyId, pushing live1, replay, live2 within one tick would flush as
+// [live1+live2, replay], reordering the replay after live2. This is unreachable
+// with Aya's real producers, so the per-tick Map is safe: a ptyId emits at most
+// one replay event, pushed synchronously in the spawn/remount handler (pty.ts
+// spawnPty, the `ptys.has` branch, before any await), while live chunks arrive
+// from node-pty's onData. Both are poll-phase I/O callbacks; libuv services each
+// fd's callback once per loop iteration and the flush is a setImmediate (check
+// phase) that fires once per iteration — so a single fd's live chunks are never
+// split around another fd's replay push within one un-flushed tick. If a future
+// producer ever emits replay and live for the same ptyId interleaved in one
+// tick, switch to the adjacent-only model of coalesceAdjacentData below.
 
 import type { PtyEvent } from "./types";
 
