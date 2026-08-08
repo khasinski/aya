@@ -1630,7 +1630,9 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     ...(process.platform === "darwin"
       ? { titleBarStyle: "hidden" as const }
       : {}),
-    ...(process.platform === "linux" ? { frame: false } : {}),
+    ...(process.platform === "linux"
+      ? { frame: false, roundedCorners: false }
+      : {}),
     backgroundColor: COLOR_DARK_BG,
     show: false,
     webPreferences: {
@@ -2172,6 +2174,7 @@ function registerIpc(): void {
     const win = senderWindow(e);
     const options = {
       title: "Import terminal theme",
+      defaultPath: app.getPath("home"),
       properties: ["openFile" as const],
       filters: [
         {
@@ -2240,6 +2243,7 @@ function registerIpc(): void {
     const win = senderWindow(e);
     const options = {
       title: "Pick a project directory",
+      defaultPath: app.getPath("home"),
       properties: ["openDirectory" as const, "createDirectory" as const],
     };
     const result = win
