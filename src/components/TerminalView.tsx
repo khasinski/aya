@@ -481,7 +481,11 @@ function TerminalViewComponent({
     }
   }, [terminal.id]);
 
-  const repairTerminalRender = useCallback(
+  // RECOVER: the expensive path. clearTextureAtlas() throws away the whole
+  // glyph cache and forces every visible cell to re-rasterize — that full
+  // re-raster is the visible "flash". Reserve it for the moments the atlas is
+  // genuinely suspect (a lost/rebuilt GL context), NOT ordinary focus/resize.
+  const recoverTerminalRender = useCallback(
     (shouldFocus = false) => {
       const refresh = () => {
         const term = xtermRef.current;
@@ -497,6 +501,44 @@ function TerminalViewComponent({
       fitTerminal(shouldFocus);
       requestAnimationFrame(refresh);
       window.setTimeout(() => {
+        refresh();
+        fitTerminal(shouldFocus);
+      }, RENDER_REPAIR_DELAY_MS);
+    },
+    [fitTerminal],
+  );
+
+  // REPAINT: the cheap path. Just re-runs the render from the EXISTING atlas
+  // (no glyph re-raster, so no flash) and re-fits. Used by the high-frequency
+  // lifecycle events (visibility, window focus, resume, resize) where the GL
+  // context is intact and only a redraw/measure is needed. healWebgl() runs
+  // ahead of these and handles the dead-context case with a real recover, so a
+  // plain repaint here is sufficient. Coalesced via a scheduled flag so an
+  // overlapping burst (focus + visibilitychange + isVisible firing together)
+  // collapses to one rAF + one delayed pass instead of a storm.
+  const repaintScheduledRef = useRef(false);
+  // Coalesces the full-refresh triggered by an atlas page add/merge (see the
+  // onAddTextureAtlasCanvas handler in attachWebgl) so a warm-up burst of page
+  // creations collapses to a single rAF repaint.
+  const atlasRefreshScheduledRef = useRef(false);
+  const repaintTerminal = useCallback(
+    (shouldFocus = false) => {
+      const refresh = () => {
+        const term = xtermRef.current;
+        if (!term) return;
+        try {
+          term.refresh(0, Math.max(term.rows - 1, 0));
+        } catch {
+          /* ignore — xterm may be mid-dispose or still measuring */
+        }
+      };
+      refresh();
+      fitTerminal(shouldFocus);
+      if (repaintScheduledRef.current) return;
+      repaintScheduledRef.current = true;
+      requestAnimationFrame(refresh);
+      window.setTimeout(() => {
+        repaintScheduledRef.current = false;
         refresh();
         fitTerminal(shouldFocus);
       }, RENDER_REPAIR_DELAY_MS);
@@ -526,7 +568,7 @@ function TerminalViewComponent({
             /* ignore */
           }
           if (webglRef.current === webgl) webglRef.current = null;
-          repairTerminalRender(false);
+          recoverTerminalRender(false);
           // Come back on a FRESH context right away when we're visible (a lost
           // context is unusable forever - without this the terminal silently
           // degrades to the DOM renderer until remount). If the GPU is still
@@ -544,7 +586,31 @@ function TerminalViewComponent({
           return;
         }
         webglRef.current = webgl;
-        repairTerminalRender(false);
+        // STALE-GLYPH FIX: when the atlas overflows its page budget it
+        // merges/repacks pages, relocating glyphs that the renderer has
+        // already baked into vertex buffers for cells whose logical content
+        // (code/fg/bg) hasn't changed. Those cells keep sampling the OLD atlas
+        // slot -> a wrong character on screen. The addon arms an internal
+        // "clear model" flag on merge, but nothing SCHEDULES the corrective
+        // frame, so once output goes idle the wrong glyphs persist until an
+        // unrelated redraw (classically: a mouse selection) fires. This event
+        // fires on every page add/merge; force one coalesced full refresh to
+        // consume that armed flag and repaint the relocated glyphs at once.
+        webgl.onAddTextureAtlasCanvas(() => {
+          if (atlasRefreshScheduledRef.current) return;
+          atlasRefreshScheduledRef.current = true;
+          requestAnimationFrame(() => {
+            atlasRefreshScheduledRef.current = false;
+            const t = xtermRef.current;
+            if (!t) return;
+            try {
+              t.refresh(0, Math.max(t.rows - 1, 0));
+            } catch {
+              /* ignore — terminal may be mid-dispose */
+            }
+          });
+        });
+        recoverTerminalRender(false);
       } catch {
         // WebGL unavailable; DOM renderer is fine, just drifty. A failed attach
         // also STOPS any loss->retry chain (nothing new to lose) - and xterm
@@ -553,7 +619,7 @@ function TerminalViewComponent({
         attachingWebglRef.current = false;
       }
     },
-    [repairTerminalRender, shouldUseWebgl],
+    [recoverTerminalRender, shouldUseWebgl],
   );
 
   // PREVENTION: a WebGL context held by a hidden/occluded window is what the
@@ -582,11 +648,11 @@ function TerminalViewComponent({
         return;
       }
       attachWebgl(term); // fresh context + full repaint (no-op if attached)
-      repairTerminalRender(false);
+      repaintTerminal(false);
     };
     document.addEventListener("visibilitychange", onDocVisibility);
     return () => document.removeEventListener("visibilitychange", onDocVisibility);
-  }, [shouldUseWebgl, attachWebgl, repairTerminalRender]);
+  }, [shouldUseWebgl, attachWebgl, repaintTerminal]);
 
   // BELT for paths with no visibility flip (focus regained without occlusion,
   // wake from sleep, a foreground driver reset whose event got coalesced): ask
@@ -953,7 +1019,7 @@ function TerminalViewComponent({
     if (!term) return;
     if (shouldUseWebgl) {
       attachWebgl(term);
-      repairTerminalRender(false);
+      repaintTerminal(false);
       return;
     }
     if (webglRef.current) {
@@ -964,8 +1030,46 @@ function TerminalViewComponent({
       }
       webglRef.current = null;
     }
-    repairTerminalRender(false);
-  }, [attachWebgl, repairTerminalRender, shouldUseWebgl]);
+    repaintTerminal(false);
+  }, [attachWebgl, repaintTerminal, shouldUseWebgl]);
+
+  // FONT-LOAD FIX: the WebGL atlas rasterizes each glyph with whatever font is
+  // actually resolved at draw time. "JetBrains Mono" is a web font, so if the
+  // atlas warms up before it finishes loading, the initial glyph cache is built
+  // from a fallback (SF Mono / Menlo) with wrong shapes and metrics — and those
+  // stay cached (keyed by codepoint+colors, not by font) until something clears
+  // them. Once the real font is ready, throw the atlas away once so glyphs
+  // re-rasterize correctly. Skipped entirely when the primary family is already
+  // available, so it costs nothing on the steady-state path.
+  useEffect(() => {
+    if (!shouldUseWebgl) return;
+    const family = fontFamily ?? DEFAULT_TERMINAL_FONT_FAMILY;
+    const primary = family.split(",")[0].trim();
+    if (!primary) return;
+    const probe = `${fontSize}px ${primary}`;
+    try {
+      if (document.fonts.check(probe)) return; // already loaded — atlas is fine
+    } catch {
+      /* font shorthand rejected (unusual) — fall through and wait on ready */
+    }
+    let cancelled = false;
+    document.fonts.ready
+      .then(() => {
+        if (cancelled) return;
+        const term = xtermRef.current;
+        if (!term) return;
+        try {
+          webglRef.current?.clearTextureAtlas();
+          term.refresh(0, Math.max(term.rows - 1, 0));
+        } catch {
+          /* ignore — terminal may be mid-dispose */
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [shouldUseWebgl, fontFamily, fontSize]);
 
   useEffect(() => {
     if (!isVisible) return;
@@ -975,15 +1079,15 @@ function TerminalViewComponent({
     // rich TUIs) so harnesses re-render their static layout when the terminal
     // view is brought back (tab switch, split activation, etc.).
     healWebgl();
-    repairTerminalRender(false);
+    repaintTerminal(false);
     forcePtyReassert();
-    const frame = requestAnimationFrame(() => repairTerminalRender(false));
-    const timer = setTimeout(() => repairTerminalRender(false), RENDER_REPAIR_DELAY_MS);
+    const frame = requestAnimationFrame(() => repaintTerminal(false));
+    const timer = setTimeout(() => repaintTerminal(false), RENDER_REPAIR_DELAY_MS);
     return () => {
       cancelAnimationFrame(frame);
       clearTimeout(timer);
     };
-  }, [isVisible, healWebgl, repairTerminalRender, forcePtyReassert]);
+  }, [isVisible, healWebgl, repaintTerminal, forcePtyReassert]);
 
   // Single source of truth for keyboard focus: whenever this becomes THE active
   // terminal (tab switch, split-pane navigation, or an overlay/modal closing),
@@ -1031,7 +1135,7 @@ function TerminalViewComponent({
     // harness redraws its static layout.
     const onResumeRender = () => {
       healWebgl();
-      repairTerminalRender(false);
+      repaintTerminal(false);
       forcePtyReassert();
     };
     const onVisibilityChange = () => {
@@ -1045,7 +1149,7 @@ function TerminalViewComponent({
       window.removeEventListener("pageshow", onResumeRender);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [isVisible, healWebgl, repairTerminalRender, forcePtyReassert]);
+  }, [isVisible, healWebgl, repaintTerminal, forcePtyReassert]);
 
   useEffect(() => {
     const onResize = () => fitTerminal();
