@@ -14,12 +14,14 @@ export function projectBaseCwd(project: ProjectConfig): string {
 /** Map a live terminal back to its persisted WorkingTab. Keeps the worktree cwd
  *  binding only when it differs from the project's own directory, so an ordinary
  *  main-dir tab stays cwd-free (and keeps following the project if its directory
- *  ever moves). */
+ *  ever moves). The agent session id rides along so a restore can resume that
+ *  exact conversation. */
 export function tabFromTerminal(t: TerminalState, baseCwd: string): WorkingTab {
   return {
     id: t.id,
     presetId: t.presetId,
     name: t.name,
     ...(t.cwd && t.cwd !== baseCwd ? { cwd: t.cwd } : {}),
+    ...(t.sessionId ? { sessionId: t.sessionId } : {}),
   };
 }

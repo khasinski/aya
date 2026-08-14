@@ -16,6 +16,8 @@ Usage:
   aya status done text               Mark this terminal as done
   aya status error text              Mark this terminal as errored
   aya status clear                   Clear agent status
+  aya pane read name                 Print another pane's recent output
+  aya pane send name [--submit] text Type text into another pane
 EOF
 }
 
@@ -79,6 +81,24 @@ function requestFromArgs() {
       cwd: optionalEnv("AYA_PROJECT_DIR") || process.cwd(),
     };
   }
+  // pane read/send target ANOTHER terminal, so the caller's own project scopes
+  // the name lookup — "reviewer" means the one in this project.
+  if (kind === "pane-read") {
+    return {
+      type: "pane-read",
+      target: process.argv[4],
+      projectSlug: optionalEnv("AYA_PROJECT_SLUG"),
+    };
+  }
+  if (kind === "pane-send") {
+    return {
+      type: "pane-send",
+      target: process.argv[4],
+      text: process.argv[5],
+      submit: process.argv[6] === "submit",
+      projectSlug: optionalEnv("AYA_PROJECT_SLUG"),
+    };
+  }
   throw new Error(`unknown command: ${kind}`);
 }
 
@@ -103,7 +123,10 @@ client.on("end", () => {
   if (!parsed.ok) {
     console.error(`aya: ${parsed.error || "command failed"}`);
     process.exitCode = 1;
+    return;
   }
+  // pane read is the one command whose payload IS the answer.
+  if (typeof parsed.output === "string") process.stdout.write(parsed.output);
 });
 NODE
 }
@@ -242,6 +265,40 @@ case "$command" in
       exit 1
     fi
     remote_stdio
+    ;;
+  pane)
+    shift || true
+    action="${1:-}"
+    shift || true
+    case "$action" in
+      read)
+        target="${1:-}"
+        if [ -z "$target" ]; then
+          usage
+          exit 1
+        fi
+        send_control pane-read "$target"
+        ;;
+      send)
+        target="${1:-}"
+        shift || true
+        submit=""
+        if [ "${1:-}" = "--submit" ]; then
+          submit="submit"
+          shift || true
+        fi
+        text="$*"
+        if [ -z "$target" ] || [ -z "$text" ]; then
+          usage
+          exit 1
+        fi
+        send_control pane-send "$target" "$text" "$submit"
+        ;;
+      *)
+        usage
+        exit 1
+        ;;
+    esac
     ;;
   status)
     shift || true

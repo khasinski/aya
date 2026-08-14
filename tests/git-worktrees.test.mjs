@@ -10,9 +10,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-const { parseWorktrees, listWorktrees } = await import(
-  "../dist-electron/git.js"
-);
+const { parseWorktrees, listWorktrees, createWorktree, removeWorktree } =
+  await import("../dist-electron/git.js");
 
 // --- parseWorktrees (pure) ---------------------------------------------------
 
@@ -192,4 +191,86 @@ test("listWorktrees returns [] for a non-repo directory", async () => {
 
 test("listWorktrees returns [] (no throw) for a missing directory", async () => {
   assert.deepEqual(await listWorktrees("/no/such/dir/aya-xyz-123"), []);
+});
+
+// --- mutations -------------------------------------------------------------
+// The first git commands in Aya that CHANGE a repository. Unlike every read
+// (which degrades to an empty result), these must report failure: "a branch
+// named 'x' already exists" is information the user needs in order to act.
+
+test("createWorktree makes a new checkout on a new branch", async () => {
+  const repo = makeRepo();
+  const wtPath = tmpWorktreePath("feature");
+  const result = await createWorktree(repo, wtPath, "feature");
+  assert.equal(result.ok, true, result.ok ? "" : result.error);
+
+  const list = await listWorktrees(repo);
+  // Compare by basename: macOS resolves /var -> /private/var, so the absolute
+  // path git reports is not literally the one we passed in.
+  const added = list.find((w) => w.path.endsWith("/feature"));
+  assert.ok(added, "the new worktree should be listed");
+  assert.equal(added.branch, "feature");
+  assert.equal(added.isMain, false);
+});
+
+test("creating a branch that already exists FAILS with git's message", async () => {
+  const repo = makeRepo();
+  await createWorktree(repo, tmpWorktreePath("dup"), "dup");
+  const again = await createWorktree(
+    repo,
+    tmpWorktreePath("dup2"),
+    "dup",
+  );
+  assert.equal(again.ok, false);
+  assert.match(again.error, /already exists/i);
+  // The message must be usable in a dialog, not a raw multi-line dump.
+  assert.ok(!again.error.includes("\n"));
+  assert.ok(!/^fatal:/i.test(again.error), "the fatal: prefix is noise");
+});
+
+test("removeWorktree drops the checkout but keeps the branch", async () => {
+  const repo = makeRepo();
+  const wtPath = tmpWorktreePath("gone");
+  await createWorktree(repo, wtPath, "gone");
+  const removed = await removeWorktree(repo, wtPath);
+  assert.equal(removed.ok, true, removed.ok ? "" : removed.error);
+
+  const list = await listWorktrees(repo);
+  assert.equal(list.some((w) => w.path.endsWith("/gone")), false);
+  const branches = execSync("git branch --list gone", { cwd: repo }).toString();
+  assert.match(branches, /gone/, "the branch itself must survive");
+});
+
+test("removing an unknown path fails instead of reporting success", async () => {
+  const repo = makeRepo();
+  const result = await removeWorktree(repo, tmpWorktreePath("never-existed"));
+  assert.equal(result.ok, false);
+  assert.ok(result.error.length > 0);
+});
+
+test("a dirty worktree is refused without force, and removed with it", async () => {
+  // Losing uncommitted work must be a deliberate choice, so the default
+  // refuses and the caller decides whether to escalate.
+  const repo = makeRepo();
+  const wtPath = tmpWorktreePath("dirty");
+  await createWorktree(repo, wtPath, "dirty");
+  writeFileSync(join(wtPath, "scratch.txt"), "uncommitted work");
+
+  const refused = await removeWorktree(repo, wtPath);
+  assert.equal(refused.ok, false, "a dirty worktree must not vanish silently");
+
+  const forced = await removeWorktree(repo, wtPath, true);
+  assert.equal(forced.ok, true, forced.ok ? "" : forced.error);
+});
+
+test("the surfaced error is git's reason, not its progress chatter", async () => {
+  // Regression: git writes progress to stderr too, so taking the FIRST line
+  // showed "Preparing worktree (new branch 'x')" — which tells the user
+  // nothing about why the operation failed.
+  const repo = makeRepo();
+  await createWorktree(repo, tmpWorktreePath("chatter"), "chatter");
+  const again = await createWorktree(repo, tmpWorktreePath("chatter2"), "chatter");
+  assert.equal(again.ok, false);
+  assert.doesNotMatch(again.error, /Preparing worktree/i);
+  assert.match(again.error, /already exists/i);
 });

@@ -4,6 +4,13 @@
 // sequences, so we strip ANSI escapes first, then look for distinctive
 // approval-prompt strings. Imperfect but correct for the common case where the
 // agent literally renders the approval box on screen.
+//
+// This is the LOWEST-priority of Aya's three waiting signals (see the
+// precedence list in integrations.md): an agent's own report wins, then
+// electron/vt-state.ts's rendered-screen match, then this. Because it sees
+// only the byte stream it cannot tell that a prompt has since been repainted
+// away, which is exactly what vt-state.ts exists to fix — keep this one
+// conservative rather than widening its patterns.
 
 // Min stripped char-count for a chunk to be treated as "busy output".
 const BUSY_OUTPUT_MIN_LENGTH = 64;

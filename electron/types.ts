@@ -8,7 +8,7 @@ import type {
   HarnessSearchHit,
   HarnessSearchRequest,
 } from "./harness-search";
-import type { Preset } from "./presets";
+import type { AgentKind, Preset } from "./presets";
 import type { BufferSearchHit } from "./pty";
 import type { Theme, ThemesFile } from "./themes";
 import type { UsageAccount, UsageData } from "./usage";
@@ -28,6 +28,8 @@ export type {
   UsageHookStatus,
 };
 
+import type { SplitNode } from "./split-tree";
+
 export interface WorkingTab {
   id: string;
   presetId: string;
@@ -35,6 +37,10 @@ export interface WorkingTab {
   /** Worktree binding: absolute cwd this tab spawns in. Absent = the project's
    *  own directory. Set when the terminal runs in a git worktree. */
   cwd?: string;
+  /** Last session id the agent reported over OSC 9001 (see integrations.md).
+   *  Lets a restore resume that exact conversation instead of whatever the
+   *  CLI considers "latest". Absent for agents that never report one. */
+  sessionId?: string;
 }
 
 export interface SplitLayout {
@@ -51,7 +57,10 @@ export interface ProjectConfig {
   name: string;
   directory: string;
   tabs: WorkingTab[];
+  /** Legacy flat grid. Read for migration; no longer written. */
   splitLayout?: SplitLayout;
+  /** Pane layout as a BSP tree (see electron/split-tree.ts). */
+  splitTree?: SplitNode;
   remote?: {
     hostId: string;
     label: string;
@@ -85,6 +94,10 @@ export interface SpawnRequest {
   ptyId: string;
   projectSlug?: string;
   presetId?: string;
+  /** Which agent CLI this pane runs, resolved by the renderer (it owns the
+   *  inference — see src/agentPreset.ts). Lets the host pick that agent's
+   *  screen-detection rules without duplicating the inference. */
+  agent?: AgentKind;
   // The user-resolved command (e.g. "claude", "$SHELL", "aider --dark"). The
   // renderer picks this from the active preset and the main process embeds it
   // verbatim into `$SHELL -l -c 'cd … && exec <command>'`. NEVER -p / --print.
@@ -166,6 +179,11 @@ export interface RemoteHealthResult {
   recentProjectsCount?: number;
 }
 
+/** Outcome of a repository-changing git command. Mirrors electron/git.ts. */
+export type GitMutationResult =
+  | { ok: true; path: string }
+  | { ok: false; error: string };
+
 export interface GitChangedFile {
   status: string;
   path: string;
@@ -205,7 +223,27 @@ export type PtyEvent =
     }
   // Host had no live session for an attach-only spawn (process died while the
   // host stayed up). The tab becomes stopped/restartable, not respawned.
-  | { type: "no-session"; ptyId: string };
+  | { type: "no-session"; ptyId: string }
+  // Explicit status parsed from an OSC 9001 `aya.status` sequence the TUI (or
+  // a wrapper script) emitted inline in its own output — see integrations.md.
+  // Carries the same vocabulary as ControlStatusUpdate's "status" request,
+  // just delivered in-band through the PTY stream instead of the control
+  // socket.
+  | {
+      type: "osc-status";
+      ptyId: string;
+      level: ControlStatusLevel;
+      text: string;
+      updatedAt: number;
+    }
+  // Agent session id reported over OSC 9001, persisted so a later restore can
+  // resume this exact conversation.
+  | { type: "osc-session"; ptyId: string; sessionId: string }
+  // Derived from the pane's real rendered screen (electron/vt-state.ts):
+  // whether an approval prompt is on screen RIGHT NOW. Unlike the raw-byte
+  // heuristic it also reports when the prompt goes away, so it is emitted on
+  // both edges.
+  | { type: "vt-status"; ptyId: string; waiting: boolean };
 
 export interface WaitingNotificationRequest {
   projectSlug: string;
@@ -520,11 +558,27 @@ export interface AyaApi {
   getGitDiff(directory: string): Promise<string>;
   /** Git worktrees for the repo containing `directory` ([] if not a repo). */
   getGitWorktrees(directory: string): Promise<Worktree[]>;
+  /** Create a git worktree. Errors are RETURNED, not thrown: the caller shows
+   *  git's own message (e.g. "a branch named 'x' already exists"). */
+  createWorktree(req: {
+    directory: string;
+    path: string;
+    branch?: string;
+    base?: string;
+  }): Promise<GitMutationResult>;
+  /** Remove a git worktree. `force` discards uncommitted changes in it. */
+  removeWorktree(req: {
+    directory: string;
+    path: string;
+    force?: boolean;
+  }): Promise<GitMutationResult>;
   /** GitHub URL for the current branch: its PR, else the branch tree page. */
   getGitHubLink(directory: string): Promise<GitHubLink | null>;
   /** True if the `gh` CLI is on PATH. */
   githubCliAvailable(): Promise<boolean>;
   pickDirectory(): Promise<string | null>;
+  /** Picks an audio file for the terminal notification chimes. */
+  pickSoundFile(): Promise<string | null>;
   /** True if the path exists and is a directory. */
   dirExists(path: string): Promise<boolean>;
   /** `mkdir -p` semantics. Throws if the path can't be created. */

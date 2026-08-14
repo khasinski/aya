@@ -1,6 +1,6 @@
 {
   "name": "aya",
-  "version": "0.7.9",
+  "version": "0.7.10-beta",
   "private": true,
   "description": "Agentic terminal manager — Claude Code / Codex / shell sessions organized across projects.",
   "engines": {
@@ -18,7 +18,7 @@
     "dev": "concurrently -k -n vite,tsc,electron -c green,blue,yellow \"npm:dev:renderer\" \"npm:dev:tsc\" \"npm:dev:electron\"",
     "dev:renderer": "vite",
     "dev:tsc": "tsc -w -p electron --preserveWatchOutput",
-    "dev:electron": "wait-on tcp:5183 dist-electron/main.js && cross-env AYA_DEV=1 electronmon .",
+    "dev:electron": "wait-on tcp:5183 dist-electron/main.js && ./scripts/dev-electron.sh",
     "typecheck": "npm run typecheck:renderer && tsc -p electron --noEmit",
     "typecheck:renderer": "tsc -p tsconfig.json --noEmit",
     "build:renderer": "vite build",
@@ -33,6 +33,7 @@
   },
   "dependencies": {
     "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/headless": "^6.0.0",
     "electron-updater": "^6.8.9",
     "highlight.js": "^11.11.1",
     "node-pty": "1.2.0-beta.14",

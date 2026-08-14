@@ -2015,6 +2015,170 @@
   background: var(--bg-tertiary);
   box-shadow: 0 0 0 1px var(--border-strong) inset;
 }
+/* Status rail — cross-project terminals that are blocked or broken. It is
+   nested below New Terminal in the sidebar, so it only reduces the scrollable
+   terminal list and never the terminal viewport. */
+.aya-status-rail {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-top: 8px;
+  font-family: var(--font-sans);
+  max-height: 30vh;
+}
+.aya-status-rail-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 7px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+}
+.aya-status-rail-toggle:hover { background: var(--bg-tertiary); }
+.aya-status-rail-counts {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.aya-status-rail-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+}
+.aya-status-rail-count::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.aya-status-rail-count--waiting { color: var(--status-waiting); }
+.aya-status-rail-count--error { color: var(--status-error); }
+.aya-status-rail-chevron { font-size: 16px; line-height: 1; }
+.aya-status-rail-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+.aya-status-rail-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 7px;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: var(--fg-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.aya-status-rail-row:hover { background: var(--bg-tertiary); }
+.aya-status-rail-row--waiting { border-left-color: var(--status-waiting); }
+.aya-status-rail-row--error { border-left-color: var(--status-error); }
+.aya-status-rail-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+.aya-status-rail-row--waiting .aya-status-rail-dot { background: var(--status-waiting); }
+.aya-status-rail-row--error .aya-status-rail-dot { background: var(--status-error); }
+.aya-status-rail-name {
+  font-weight: 600;
+  color: var(--fg-primary);
+  white-space: nowrap;
+}
+.aya-status-rail-project {
+  color: var(--fg-tertiary);
+  white-space: nowrap;
+}
+.aya-launcher .aya-status-rail-project { display: none; }
+.aya-status-rail-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-tertiary);
+}
+
+/* Terminal-sound customisation, nested under the Notifications sound row. */
+.aya-sound-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+.aya-sound-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.aya-sound-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.aya-sound-file-label {
+  min-width: 62px;
+  font-size: 12px;
+  color: var(--fg-secondary);
+}
+.aya-sound-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--fg-primary);
+}
+.aya-modal-btn--slim {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+.aya-sound-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+.aya-sound-presets-label {
+  width: 100%;
+  font-size: 11px;
+  color: var(--fg-tertiary, var(--fg-secondary));
+}
+.aya-sound-preset {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--fg-secondary);
+  cursor: pointer;
+}
+.aya-sound-preset input {
+  cursor: pointer;
+}
 .aya-settings-diagnostics {
   border: 1px solid var(--border);
   border-radius: 6px;

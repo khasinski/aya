@@ -130,6 +130,80 @@ export async function listWorktrees(directory: string): Promise<Worktree[]> {
   }
 }
 
+/** Outcome of a git command that CHANGES the repository. Unlike every read
+ *  above (which degrades to an empty result), a failed mutation must reach the
+ *  user: "branch already exists" or "worktree is dirty" is information they
+ *  need in order to act, and a silent no-op would look like a broken button. */
+export type GitMutationResult =
+  | { ok: true; path: string }
+  | { ok: false; error: string };
+
+// Creating a worktree can pull, resolve refs and write a whole checkout, so it
+// gets a longer leash than the read-only status probes.
+const GIT_MUTATION_TIMEOUT_MS = 30_000;
+const MUTATION_OPTS = {
+  timeout: GIT_MUTATION_TIMEOUT_MS,
+  windowsHide: true,
+  env: GIT_ENV,
+} as const;
+
+/** git's own message, trimmed to something a dialog can show.
+ *
+ *  git writes PROGRESS to stderr as well as errors ("Preparing worktree (new
+ *  branch 'x')" precedes the failure), so the first line is usually the wrong
+ *  one. Prefer an explicitly-marked error line and fall back to the last line,
+ *  which is where git puts the reason when it is unmarked. */
+function gitErrorMessage(err: unknown): string {
+  const e = err as { stderr?: string; message?: string };
+  const raw = (e?.stderr || e?.message || "git command failed").trim();
+  const lines = raw.split("\n").map((line) => line.trim()).filter(Boolean);
+  const marked = lines.find((line) => /^(?:fatal|error):/i.test(line));
+  const chosen = marked ?? lines[lines.length - 1] ?? raw;
+  return chosen.replace(/^(?:fatal|error):\s*/i, "").slice(0, 300);
+}
+
+/** Create a worktree at `path`. With `branch`, creates that branch (from
+ *  `base`, or the current HEAD); without one, checks out an existing ref.
+ *
+ *  This is the first command in Aya that writes to a repository — everything
+ *  else only observes — so it uses execFile (no shell) and surfaces failures
+ *  rather than swallowing them. */
+export async function createWorktree(
+  directory: string,
+  path: string,
+  branch?: string,
+  base?: string,
+): Promise<GitMutationResult> {
+  const args = ["worktree", "add"];
+  if (branch) args.push("-b", branch);
+  args.push(path);
+  if (base) args.push(base);
+  try {
+    await execFileAsync("git", args, { cwd: directory, ...MUTATION_OPTS });
+    return { ok: true, path };
+  } catch (err) {
+    return { ok: false, error: gitErrorMessage(err) };
+  }
+}
+
+/** Remove a worktree. Git refuses when the checkout has uncommitted changes;
+ *  `force` overrides that, so the caller must ask for it deliberately. */
+export async function removeWorktree(
+  directory: string,
+  path: string,
+  force = false,
+): Promise<GitMutationResult> {
+  const args = ["worktree", "remove"];
+  if (force) args.push("--force");
+  args.push(path);
+  try {
+    await execFileAsync("git", args, { cwd: directory, ...MUTATION_OPTS });
+    return { ok: true, path };
+  } catch (err) {
+    return { ok: false, error: gitErrorMessage(err) };
+  }
+}
+
 export interface GitChangedFile {
   status: string;
   path: string;

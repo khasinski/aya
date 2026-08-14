@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   getPreset,
   type Preset,
@@ -31,6 +31,10 @@ interface Props {
   worktrees?: Worktree[];
   /** The project's own directory (the "main" worktree cwd). */
   projectDir?: string;
+  /** Create a worktree (opens a prompt). Absent = the action is hidden. */
+  onCreateWorktree?: () => void;
+  /** Remove a worktree. Never offered for the main checkout. */
+  onRemoveWorktree?: (worktree: Worktree) => void;
   onResize: (width: number) => void;
   /** Called with the new id order after a successful drag-drop. Only fires
    *  when the order actually changed. */
@@ -44,6 +48,9 @@ interface Props {
   onSplitRight: (id: string) => void;
   onSplitBelow: (id: string) => void;
   onRemoveFromSplit: (id: string) => void;
+  /** Cross-project attention summary. Kept inside the sidebar so appearing
+   *  notifications never reduce the terminal viewport height. */
+  statusRail?: ReactNode;
 }
 
 /** "Agent is waiting for input" indicator — small red dot, the same shape
@@ -66,6 +73,8 @@ function SidebarImpl({
   worktreesEnabled = false,
   worktrees = [],
   projectDir,
+  onCreateWorktree,
+  onRemoveWorktree,
   onResize,
   onReorder,
   onRestart,
@@ -76,6 +85,7 @@ function SidebarImpl({
   onSplitRight,
   onSplitBelow,
   onRemoveFromSplit,
+  statusRail,
 }: Props) {
   // Right-click context menu state. Positioned at the cursor; closes on
   // outside click, Esc, or after the user picks an item.
@@ -105,7 +115,10 @@ function SidebarImpl({
   // Experimental worktrees: group terminals under their worktree, and launch new
   // terminals into the selected group. Only kicks in with >1 worktree; defaults
   // to the project's own dir (main), reset when the active project changes.
-  const showWorktrees = worktreesEnabled && worktrees.length > 1;
+  // Shown whenever worktrees are enabled and the directory is a repo at all —
+  // gating on >1 used to hide the section entirely, which left no way to
+  // create the FIRST worktree.
+  const showWorktrees = worktreesEnabled && worktrees.length > 0;
   const [targetCwd, setTargetCwd] = useState<string>(projectDir ?? "");
   useEffect(() => {
     setTargetCwd(projectDir ?? "");
@@ -297,6 +310,25 @@ function SidebarImpl({
                       stale
                     </span>
                   )}
+                  {!g.worktree.isMain && onRemoveWorktree && (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      className="aya-worktree-header-remove"
+                      title={`Remove worktree ${worktreeName(g.worktree.path)}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRemoveWorktree(g.worktree);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter" && e.key !== " ") return;
+                        e.stopPropagation();
+                        onRemoveWorktree(g.worktree);
+                      }}
+                    >
+                      ×
+                    </span>
+                  )}
                 </button>
                 {g.terminals.length > 0 ? (
                   g.terminals.map(renderRow)
@@ -306,6 +338,16 @@ function SidebarImpl({
               </div>
             ))
           : terminals.map(renderRow)}
+        {groups && onCreateWorktree && (
+          <button
+            type="button"
+            className="aya-worktree-add"
+            onClick={onCreateWorktree}
+            title="Create a new git worktree for this repository"
+          >
+            + New worktree…
+          </button>
+        )}
       </div>
       <div className="aya-launcher">
         <div className="aya-launcher-label">
@@ -338,6 +380,7 @@ function SidebarImpl({
             </button>
           ))}
         </div>
+        {statusRail}
       </div>
       <div
         className="aya-sidebar-resize"

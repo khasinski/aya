@@ -3,13 +3,19 @@ import { detectApproval } from "./bell";
 import { commandWithAutoResume } from "./agentPreset";
 import { projectBaseCwd, tabFromTerminal } from "./worktree";
 import { findStatusTarget } from "./control-status-target";
-import { clearedTerminalStatus } from "./pty-event-reducer";
+import {
+  clearedTerminalStatus,
+  controlLevelToTerminalStatus,
+  controlStatusEventTitle,
+  isTerminalDone,
+} from "./pty-event-reducer";
 import { forgetSpawn, wasSpawned } from "./spawnSession";
 import {
   applyExternalProjectEdits,
   mergeProjectsFromDisk,
 } from "./project-reload";
 import { AttentionCenter } from "./components/AttentionCenter";
+import { StatusRail } from "./components/StatusRail";
 import { EmptyState } from "./components/EmptyState";
 import { MissingDirModal } from "./components/MissingDirModal";
 import { NewProjectModal } from "./components/NewProjectModal";
@@ -38,6 +44,27 @@ import {
   useRecentTerminalActivity,
   useTerminalNotifications,
 } from "./hooks/useTerminalSignals";
+import { useTerminalSounds } from "./hooks/useTerminalSounds";
+import { normalizeSoundOverrides } from "./terminal-sound-prefs";
+import {
+  MAX_SPLIT_LEAVES,
+  assignTerminal,
+  compactTree,
+  dividerRects,
+  findLeafByTerminal,
+  focusDirection,
+  layoutRects,
+  leaf,
+  leafCount,
+  leaves,
+  normalizeTreeForTabs,
+  removeTerminal,
+  resizeSplit as resizeSplitNode,
+  splitLeaf,
+  treeFromLegacyLayout,
+  type DividerRect,
+  type SplitNode,
+} from "./split-tree";
 import {
   boolPreference,
   enumPreference,
@@ -60,7 +87,6 @@ import {
   type ProjectConfig,
   type ProjectGitInfo,
   type RemoteProjectCreateResult,
-  type SplitLayout,
   type TerminalState,
   type Theme,
   type ThemeColors,
@@ -77,8 +103,6 @@ const USAGE_POLL_INTERVAL_MS = 30_000;
 const MAX_PROJECT_EVENTS = 200;
 // Cap on preset suggestions offered during repo preset import.
 const MAX_SUGGESTED_PRESETS = 8;
-// Minimum fractional size of a split pane; drives the drag clamp.
-const MIN_SPLIT_PANE_FRACTION = 0.18;
 // Default sidebar width in pixels.
 const DEFAULT_SIDEBAR_WIDTH_PX = 240;
 const DEFAULT_RAIL_WIDTH_PX = 220;
@@ -116,6 +140,15 @@ const STATUSBAR_GITHUB_LINK_STORAGE_KEY = "aya:statusbar-github-link";
 const LAYOUT_MODE_STORAGE_KEY = "aya:layout-mode";
 const WORKTREES_STORAGE_KEY = "aya:worktrees";
 const HARNESS_SEARCH_STORAGE_KEY = "aya:harness-search";
+const TERMINAL_SOUNDS_STORAGE_KEY = "aya:terminal-sounds";
+const STATUS_RAIL_COLLAPSED_STORAGE_KEY = "aya:status-rail-collapsed";
+/** Leaf id for the synthetic one-pane tree used when a project has no stored
+ *  split (or is showing a single terminal). Constant so React keys and focus
+ *  stay stable across renders. */
+const SINGLE_VIEW_LEAF_ID = "single";
+const SOUND_OVERRIDES_STORAGE_KEY = "aya:terminal-sound-overrides";
+const CUSTOM_WAITING_SOUND_STORAGE_KEY = "aya:terminal-sound-waiting";
+const CUSTOM_DONE_SOUND_STORAGE_KEY = "aya:terminal-sound-done";
 const LOCAL_SUMMARIES_STORAGE_KEY = "aya:local-summaries";
 const LOCAL_SUMMARY_CACHE_STORAGE_KEY = "aya:local-summary-cache";
 const AYA_INTELLIGENCE_STORAGE_KEY = "aya:intelligence";
@@ -201,6 +234,37 @@ const WORKTREES_CODEC = boolPreference(false);
 // Experimental: Cmd+F "History" mode searching Claude/Codex session
 // transcripts on disk for the tab's cwd.
 const HARNESS_SEARCH_CODEC = boolPreference(false);
+// Waiting/done chimes default on; the settings toggle is an opt-out.
+const TERMINAL_SOUNDS_CODEC = boolPreference(true);
+// The status rail starts expanded — it only renders at all when something
+// actually needs attention, so hiding it by default would defeat the point.
+const STATUS_RAIL_COLLAPSED_CODEC = boolPreference(false);
+// Per-preset chime exceptions ({presetId: false}) and custom audio paths.
+// Stored as JSON because they're maps/nullable strings, not flags.
+const SOUND_OVERRIDES_CODEC: PreferenceCodec<Record<string, boolean>> = {
+  fallback: {},
+  parse: (raw) => {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return {};
+      }
+      const out: Record<string, boolean> = {};
+      for (const [key, value] of Object.entries(parsed)) {
+        if (typeof value === "boolean") out[key] = value;
+      }
+      return out;
+    } catch {
+      return {};
+    }
+  },
+  serialize: (value) => JSON.stringify(value),
+};
+const SOUND_PATH_CODEC: PreferenceCodec<string | null> = {
+  fallback: null,
+  parse: (raw) => (raw.trim() ? raw : null),
+  serialize: (value) => value ?? "",
+};
 
 function readTerminalFontFamily(): string {
   return localStorage.getItem(TERMINAL_FONT_FAMILY_STORAGE_KEY) ?? "";
@@ -451,7 +515,7 @@ function terminalCommand(
 ): string {
   const commandPreset = {
     ...preset,
-    command: commandWithAutoResume(preset, terminal.restored),
+    command: commandWithAutoResume(preset, terminal.restored, terminal.sessionId),
   };
   return project ? remoteTerminalCommand(project, commandPreset) : commandPreset.command;
 }
@@ -481,166 +545,78 @@ function uniquePresetId(existing: Preset[], project: ProjectConfig, preset: Pres
   return candidate;
 }
 
-const MAX_SPLIT_ROWS = 5;
-const MAX_SPLIT_COLS = 5;
+/** A project's pane layout, migrating the pre-tree grid format on the fly.
+ *  Migration lives here (not in the main process) so the conversion has exactly
+ *  one tested implementation — see src/split-tree.ts treeFromLegacyLayout. The
+ *  next save writes `splitTree` and drops `splitLayout`. */
+function projectSplitTree(project: ProjectConfig): SplitNode | undefined {
+  if (project.splitTree) return project.splitTree;
+  if (project.splitLayout) return treeFromLegacyLayout(project.splitLayout);
+  return undefined;
+}
 
-function normalizeSplitLayoutForTabs(
-  layout: SplitLayout | undefined,
-  tabs: WorkingTab[],
-  fallbackId: string | null,
-): SplitLayout {
-  const tabIds = new Set(tabs.map((tab) => tab.id));
-  if (!layout) {
-    return {
-      rows: 1,
-      cols: 1,
-      rowFr: [1],
-      colFr: [1],
-      cells: [fallbackId && tabIds.has(fallbackId) ? fallbackId : (tabs[0]?.id ?? null)],
-      activeCell: 0,
-    };
+/** Which pane is focused. A remembered id wins while it still exists;
+ *  otherwise the pane holding the active terminal, else the first pane — so
+ *  focus never dangles after a pane is closed or collapsed. */
+function resolveActiveLeafId(
+  tree: SplitNode,
+  remembered: string | undefined,
+  activeTerminalId: string | null,
+): string {
+  const all = leaves(tree);
+  if (remembered && all.some((l) => l.id === remembered)) return remembered;
+  if (activeTerminalId) {
+    const holding = all.find((l) => l.terminalId === activeTerminalId);
+    if (holding) return holding.id;
   }
-  const rows = Math.max(1, Math.min(MAX_SPLIT_ROWS, layout.rows));
-  const cols = Math.max(1, Math.min(MAX_SPLIT_COLS, layout.cols));
-  const size = rows * cols;
-  const rowFr = layout.rowFr.slice(0, rows);
-  const colFr = layout.colFr.slice(0, cols);
-  while (rowFr.length < rows) rowFr.push(1);
-  while (colFr.length < cols) colFr.push(1);
-  const seenCells = new Set<string>();
-  const cells = Array.from({ length: size }, (_, idx) => {
-    const value = layout.cells[idx];
-    if (!value || !tabIds.has(value) || seenCells.has(value)) return null;
-    seenCells.add(value);
-    return value;
-  });
-  if (!cells.some(Boolean)) {
-    cells[0] = fallbackId && tabIds.has(fallbackId) ? fallbackId : (tabs[0]?.id ?? null);
-  }
-  return {
-    rows,
-    cols,
-    rowFr,
-    colFr,
-    cells,
-    activeCell: Math.max(0, Math.min(size - 1, layout.activeCell)),
-  };
+  return all[0].id;
 }
 
-function singleTerminalLayout(terminalId: string | null): SplitLayout {
-  return {
-    rows: 1,
-    cols: 1,
-    rowFr: [1],
-    colFr: [1],
-    cells: [terminalId],
-    activeCell: 0,
-  };
-}
-
-function compactSplitLayout(layout: SplitLayout): SplitLayout | undefined {
-  const assigned = layout.cells.filter(Boolean).length;
-  if (assigned === 0) return undefined;
-  if (layout.rows === 1 && layout.cols === 1 && assigned <= 1) return undefined;
-  return layout;
-}
-
-function pruneEmptySplitTracks(layout: SplitLayout): SplitLayout {
-  let rows = layout.rows;
-  let cols = layout.cols;
-  let rowFr = [...layout.rowFr];
-  let colFr = [...layout.colFr];
-  let cells = [...layout.cells];
-  let activeCell = layout.activeCell;
-
-  for (let row = rows - 1; row >= 0 && rows > 1; row -= 1) {
-    const rowCells = cells.slice(row * cols, row * cols + cols);
-    if (rowCells.some(Boolean)) continue;
-    cells.splice(row * cols, cols);
-    rowFr.splice(row, 1);
-    rows -= 1;
-    const activeRow = Math.floor(activeCell / cols);
-    const activeCol = activeCell % cols;
-    activeCell =
-      activeRow > row
-        ? (activeRow - 1) * cols + activeCol
-        : Math.min(activeCell, rows * cols - 1);
-  }
-
-  for (let col = cols - 1; col >= 0 && cols > 1; col -= 1) {
-    let empty = true;
-    for (let row = 0; row < rows; row += 1) {
-      if (cells[row * cols + col]) {
-        empty = false;
-        break;
-      }
-    }
-    if (!empty) continue;
-    const nextCells: (string | null)[] = [];
-    for (let row = 0; row < rows; row += 1) {
-      for (let currentCol = 0; currentCol < cols; currentCol += 1) {
-        if (currentCol !== col) nextCells.push(cells[row * cols + currentCol]);
-      }
-    }
-    const activeRow = Math.floor(activeCell / cols);
-    const activeCol = activeCell % cols;
-    colFr.splice(col, 1);
-    cols -= 1;
-    cells = nextCells;
-    activeCell =
-      activeCol > col
-        ? activeRow * cols + activeCol - 1
-        : Math.min(activeRow * cols + Math.min(activeCol, cols - 1), rows * cols - 1);
-  }
-
-  activeCell = Math.max(0, Math.min(rows * cols - 1, activeCell));
-  return { rows, cols, rowFr, colFr, cells, activeCell };
-}
-
-function splitOffset(values: number[], index: number): number {
-  const total = values.reduce((sum, value) => sum + value, 0);
-  const before = values.slice(0, index + 1).reduce((sum, value) => sum + value, 0);
-  return total > 0 ? (before / total) * 100 : 0;
-}
-
+/** Geometry lives in src/split-tree.ts; App only wires it to state.
+ *  A divider is dragged in pixels and converted to a ratio against the area
+ *  ITS split governs — measuring against the whole container would make a
+ *  divider nested inside a half-width pane move at twice the pointer's speed. */
 function SplitResizeHandle({
-  axis,
-  index,
-  colFr,
-  rowFr,
+  divider,
   onResize,
 }: {
-  axis: "col" | "row";
-  index: number;
-  colFr: number[];
-  rowFr: number[];
-  onResize: (deltaPx: number, totalPx: number) => void;
+  divider: DividerRect;
+  onResize: (ratio: number) => void;
 }) {
-  const offset = splitOffset(axis === "col" ? colFr : rowFr, index);
+  const vertical = divider.direction === "row";
   return (
     <div
-      className={`aya-split-resize aya-split-resize--${axis}`}
-      style={axis === "col" ? { left: `${offset}%` } : { top: `${offset}%` }}
+      className={`aya-split-resize aya-split-resize--${vertical ? "col" : "row"}`}
+      style={{
+        left: `${divider.rect.left}%`,
+        top: `${divider.rect.top}%`,
+        ...(vertical
+          ? { height: `${divider.rect.height}%` }
+          : { width: `${divider.rect.width}%` }),
+      }}
       onMouseDown={(event) => {
         event.preventDefault();
         const host = event.currentTarget.parentElement;
         if (!host) return;
-        const rect = host.getBoundingClientRect();
-        const start = axis === "col" ? event.clientX : event.clientY;
-        const total = axis === "col" ? rect.width : rect.height;
-        let lastDelta = 0;
+        const hostRect = host.getBoundingClientRect();
+        const { bounds } = divider;
+        const spanPx = vertical
+          ? (hostRect.width * bounds.width) / 100
+          : (hostRect.height * bounds.height) / 100;
+        const originPx = vertical
+          ? hostRect.left + (hostRect.width * bounds.left) / 100
+          : hostRect.top + (hostRect.height * bounds.top) / 100;
+        if (spanPx <= 0) return;
         const move = (moveEvent: MouseEvent) => {
-          const current = axis === "col" ? moveEvent.clientX : moveEvent.clientY;
-          const delta = current - start;
-          onResize(delta - lastDelta, total);
-          lastDelta = delta;
+          const pointer = vertical ? moveEvent.clientX : moveEvent.clientY;
+          onResize((pointer - originPx) / spanPx);
         };
         const up = () => {
           window.removeEventListener("mousemove", move);
           window.removeEventListener("mouseup", up);
           document.body.style.cursor = "";
         };
-        document.body.style.cursor = axis === "col" ? "col-resize" : "row-resize";
+        document.body.style.cursor = vertical ? "col-resize" : "row-resize";
         window.addEventListener("mousemove", move);
         window.addEventListener("mouseup", up);
       }}
@@ -707,6 +683,12 @@ export function App() {
   const [singleViewByProject, setSingleViewByProject] = useState<
     Record<string, string | null>
   >({});
+  // Which pane is focused, per project. Not persisted: the pane holding the
+  // (persisted) active terminal is the right answer on boot, and a remembered
+  // leaf id would dangle once the layout changed on disk.
+  const [activeLeafByProject, setActiveLeafByProject] = useState<
+    Record<string, string>
+  >({});
   const [git, setGit] = useState<Record<string, GitInfo>>({});
   const [githubLinks, setGithubLinks] = useState<
     Record<string, GitHubLink | null>
@@ -751,9 +733,28 @@ export function App() {
   );
   const [harnessSearchEnabled, setHarnessSearchEnabled] =
     usePersistentPreference(HARNESS_SEARCH_STORAGE_KEY, HARNESS_SEARCH_CODEC);
+  const [terminalSoundsEnabled, setTerminalSoundsEnabled] =
+    usePersistentPreference(TERMINAL_SOUNDS_STORAGE_KEY, TERMINAL_SOUNDS_CODEC);
+  const [statusRailCollapsed, setStatusRailCollapsed] = usePersistentPreference(
+    STATUS_RAIL_COLLAPSED_STORAGE_KEY,
+    STATUS_RAIL_COLLAPSED_CODEC,
+  );
+  const [terminalSoundOverrides, setTerminalSoundOverrides] =
+    usePersistentPreference(SOUND_OVERRIDES_STORAGE_KEY, SOUND_OVERRIDES_CODEC);
+  const [customWaitingSound, setCustomWaitingSound] = usePersistentPreference(
+    CUSTOM_WAITING_SOUND_STORAGE_KEY,
+    SOUND_PATH_CODEC,
+  );
+  const [customDoneSound, setCustomDoneSound] = usePersistentPreference(
+    CUSTOM_DONE_SOUND_STORAGE_KEY,
+    SOUND_PATH_CODEC,
+  );
   // Git worktrees for the active (local) project, when the experimental flag is
   // on. Drives the launcher's worktree target and the per-row branch chip.
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
+  // Bumped after a create/remove so the list effect re-reads; without it a
+  // freshly created worktree would not appear until the project changed.
+  const [worktreeNudge, setWorktreeNudge] = useState(0);
   const [railWidth, setRailWidth] = useState(DEFAULT_RAIL_WIDTH_PX);
   const [localSummariesEnabled, setLocalSummariesEnabled] =
     usePersistentPreference(LOCAL_SUMMARIES_STORAGE_KEY, LOCAL_SUMMARIES_CODEC);
@@ -849,7 +850,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [worktreesEnabled, activeProjectId]);
+  }, [worktreesEnabled, activeProjectId, worktreeNudge]);
 
   // Re-read the account-wide usage snapshot a user hook writes (~/.aya/usage.json).
   // Aya only reads the file — it never fetches usage or touches any token.
@@ -1053,6 +1054,11 @@ export function App() {
   projectsRef.current = projects;
   const projectStateRef = useRef(projectState);
   projectStateRef.current = projectState;
+  // Mirrors the active-tab map. closeTerminal advances this ref itself, so a
+  // close arriving before the re-render still resolves the CURRENT active tab
+  // rather than the one just closed.
+  const activeTabByProjectRef = useRef(activeTabByProject);
+  activeTabByProjectRef.current = activeTabByProject;
   const activeProjectIdRef = useRef(activeProjectId);
   activeProjectIdRef.current = activeProjectId;
   // Split panes are unsupported in the experimental "projects-left" layout. The
@@ -1286,6 +1292,17 @@ export function App() {
           title: `${terminal.name} is waiting`,
           detail: "Approval or input needed",
         });
+        return;
+      }
+      if (event.type === "osc-status") {
+        appendProjectEvent({
+          projectSlug: terminal.projectSlug,
+          terminalId: terminal.id,
+          level: event.level === "active" ? "active" : event.level,
+          title: controlStatusEventTitle(terminal.name, event.level),
+          detail: event.text,
+          createdAt: event.updatedAt,
+        });
       }
     },
     [appendProjectEvent, rememberTerminalOutput],
@@ -1378,6 +1395,7 @@ export function App() {
             bell: false,
             exitCode: null,
             restored: true,
+            ...(tab.sessionId ? { sessionId: tab.sessionId } : {}),
           };
         }
         return next;
@@ -1787,26 +1805,11 @@ export function App() {
         }
         const text = update.text?.trim();
         if (!text) return prev;
-        const nextStatus =
-          update.level === "waiting"
-            ? "waiting"
-            : update.level === "done"
-              ? "idle"
-              : update.level === "error"
-                ? "error"
-                : "running";
         appendProjectEvent({
           projectSlug: terminal.projectSlug,
           terminalId: terminal.id,
           level: update.level === "active" ? "active" : update.level,
-          title:
-            update.level === "waiting"
-              ? `${terminal.name} is waiting`
-              : update.level === "done"
-                ? `${terminal.name} finished`
-                : update.level === "error"
-                  ? `${terminal.name} reported an error`
-                  : `${terminal.name} updated status`,
+          title: controlStatusEventTitle(terminal.name, update.level),
           detail: text,
           createdAt: update.updatedAt,
         });
@@ -1814,7 +1817,7 @@ export function App() {
           ...prev,
           [id]: {
             ...terminal,
-            status: nextStatus,
+            status: controlLevelToTerminalStatus(update.level),
             bell: update.level === "waiting",
             externalStatus: {
               level: update.level,
@@ -1869,17 +1872,23 @@ export function App() {
       const tabs: WorkingTab[] = Object.values(nextTerminals)
         .filter((t) => t.projectSlug === slug)
         .map((t) => tabFromTerminal(t, projectBaseCwd(project)));
-      const splitLayout = project.splitLayout
-        ? compactSplitLayout(
-            pruneEmptySplitTracks(
-              normalizeSplitLayoutForTabs(project.splitLayout, tabs, tabs[0]?.id ?? null),
+      const tree = projectSplitTree(project);
+      const splitTree = tree
+        ? compactTree(
+            normalizeTreeForTabs(
+              tree,
+              new Set(tabs.map((tab) => tab.id)),
+              tabs[0]?.id ?? null,
+              uuid(),
             ),
           )
         : undefined;
       const updated: ProjectConfig = {
         ...project,
         tabs,
-        ...(splitLayout ? { splitLayout } : { splitLayout: undefined }),
+        // The legacy grid is dropped on the first save after migration.
+        splitLayout: undefined,
+        ...(splitTree ? { splitTree } : { splitTree: undefined }),
       };
       setAllProjects((ps) => ps.map((p) => (p.slug === slug ? updated : p)));
       setProjects((ps) => ps.map((p) => (p.slug === slug ? updated : p)));
@@ -1888,32 +1897,79 @@ export function App() {
     [],
   );
 
-  const updateProjectSplitLayout = useCallback(
-    (slug: string, updater: (layout: SplitLayout, project: ProjectConfig) => SplitLayout) => {
+  // A session id arrives asynchronously (OSC 9001) while a terminal is already
+  // running, so it needs its own persist trigger — the others (launch, rename,
+  // close) may never fire again before the app quits, and an unsaved id means
+  // the next restore silently falls back to "latest session".
+  const sessionIdSignature = Object.values(terminals)
+    .filter((t) => t.sessionId)
+    .map((t) => `${t.id}:${t.sessionId}`)
+    .sort()
+    .join("\n");
+  useEffect(() => {
+    if (!didBootstrap || !sessionIdSignature) return;
+    const slugs = new Set(
+      Object.values(terminalsRef.current)
+        .filter((t) => t.sessionId)
+        .map((t) => t.projectSlug),
+    );
+    for (const slug of slugs) persistProject(slug, terminalsRef.current);
+  }, [sessionIdSignature, didBootstrap, persistProject]);
+
+  /** The single write funnel for a project's pane layout. `updater` gets a
+   *  tree already reconciled against the project's live tabs and the id of the
+   *  focused pane, and returns the next tree (optionally moving focus). */
+  const updateProjectSplitTree = useCallback(
+    (
+      slug: string,
+      updater: (
+        tree: SplitNode,
+        activeLeafId: string,
+        project: ProjectConfig,
+      ) => { tree: SplitNode; activeLeafId?: string },
+    ) => {
       const project = projectsRef.current.find((p) => p.slug === slug);
       if (!project) return;
       const fallbackId = activeTabByProject[slug] ?? project.tabs[0]?.id ?? null;
-      const current = normalizeSplitLayoutForTabs(project.splitLayout, project.tabs, fallbackId);
-      const normalized = normalizeSplitLayoutForTabs(
-        updater(current, project),
-        project.tabs,
+      const tabIds = new Set(project.tabs.map((tab) => tab.id));
+      const current = normalizeTreeForTabs(
+        projectSplitTree(project),
+        tabIds,
+        fallbackId,
+        uuid(),
+      );
+      const currentActive = resolveActiveLeafId(
+        current,
+        activeLeafByProject[slug],
         fallbackId,
       );
-      const splitLayout = compactSplitLayout(normalized);
+      const result = updater(current, currentActive, project);
+      const normalized = normalizeTreeForTabs(result.tree, tabIds, fallbackId, uuid());
+      const splitTree = compactTree(normalized);
       const updated: ProjectConfig = {
         ...project,
-        ...(splitLayout ? { splitLayout } : { splitLayout: undefined }),
+        splitLayout: undefined,
+        ...(splitTree ? { splitTree } : { splitTree: undefined }),
       };
       setSingleViewByProject((prev) => ({ ...prev, [slug]: null }));
       setAllProjects((ps) => ps.map((p) => (p.slug === slug ? updated : p)));
       setProjects((ps) => ps.map((p) => (p.slug === slug ? updated : p)));
       void window.aya.updateProject(updated);
-      const activeTerminalId = normalized.cells[normalized.activeCell];
+      // The requested pane may have been collapsed away by normalization, so
+      // resolve against the tree that actually survived.
+      const nextActive = resolveActiveLeafId(
+        normalized,
+        result.activeLeafId ?? currentActive,
+        fallbackId,
+      );
+      setActiveLeafByProject((prev) => ({ ...prev, [slug]: nextActive }));
+      const activeTerminalId = leaves(normalized).find((l) => l.id === nextActive)
+        ?.terminalId;
       if (activeTerminalId) {
         setActiveTabByProject((prev) => ({ ...prev, [slug]: activeTerminalId }));
       }
     },
-    [activeTabByProject],
+    [activeTabByProject, activeLeafByProject],
   );
 
   /** Resolve the effective cwd for a project at terminal-launch time. Honors
@@ -1953,31 +2009,36 @@ export function App() {
           .filter((t) => t.projectSlug === slug)
           .map((t) => tabFromTerminal(t, projectBaseCwd(project)));
         // In the projects-left layout splits are disabled, so leave the saved
-        // splitLayout untouched (don't assign the new terminal to a cell, and
-        // don't clear it) - it should come back unchanged in the classic layout.
-        const currentLayout =
-          splitEnabledRef.current && project.splitLayout
-            ? normalizeSplitLayoutForTabs(
-                project.splitLayout,
-                tabs,
+        // tree untouched (don't claim a pane for the new terminal, and don't
+        // clear it) - it should come back unchanged in the classic layout.
+        const existingTree = projectSplitTree(project);
+        const currentTree =
+          splitEnabledRef.current && existingTree
+            ? normalizeTreeForTabs(
+                existingTree,
+                new Set(tabs.map((tab) => tab.id)),
                 activeTabByProject[slug] ?? project.tabs[0]?.id ?? null,
+                uuid(),
               )
             : null;
-        const splitLayout = currentLayout
-          ? compactSplitLayout({
-              ...currentLayout,
-              cells: currentLayout.cells.map((cell, idx) =>
-                idx === currentLayout.activeCell ? id : cell === id ? null : cell,
+        const splitTree = currentTree
+          ? compactTree(
+              assignTerminal(
+                currentTree,
+                resolveActiveLeafId(
+                  currentTree,
+                  activeLeafByProject[slug],
+                  activeTabByProject[slug] ?? null,
+                ),
+                id,
               ),
-            })
+            )
           : undefined;
         const updated: ProjectConfig = {
           ...project,
           tabs,
           ...(splitEnabledRef.current
-            ? splitLayout
-              ? { splitLayout }
-              : { splitLayout: undefined }
+            ? { splitLayout: undefined, ...(splitTree ? { splitTree } : { splitTree: undefined }) }
             : {}),
         };
         setAllProjects((ps) => ps.map((p) => (p.slug === slug ? updated : p)));
@@ -1988,7 +2049,7 @@ export function App() {
       setActiveTabByProject((prev) => ({ ...prev, [slug]: id }));
       setSingleViewByProject((prev) => ({
         ...prev,
-        [slug]: project.splitLayout && prev[slug] ? id : null,
+        [slug]: projectSplitTree(project) && prev[slug] ? id : null,
       }));
       appendProjectEvent({
         projectSlug: slug,
@@ -2024,24 +2085,32 @@ export function App() {
       level: "info",
       title: `${t.name} closed`,
     });
+    // Advance the refs now instead of waiting for the re-render. Closes can
+    // arrive back-to-back - two quick Cmd+W, a script driving the control
+    // socket - and the next one resolves "the active tab" through these refs.
+    // While they still named the tab we just closed, that second close looked
+    // up a terminal that was already gone and silently did nothing.
+    const nextTerminals = { ...terminalsRef.current };
+    delete nextTerminals[id];
+    terminalsRef.current = nextTerminals;
+    if (activeTabByProjectRef.current[t.projectSlug] === id) {
+      const remaining = Object.values(nextTerminals).filter(
+        (x) => x.projectSlug === t.projectSlug,
+      );
+      const nextActive =
+        remaining.length > 0 ? remaining[remaining.length - 1].id : null;
+      activeTabByProjectRef.current = {
+        ...activeTabByProjectRef.current,
+        [t.projectSlug]: nextActive,
+      };
+      setActiveTabByProject((p) =>
+        p[t.projectSlug] === id ? { ...p, [t.projectSlug]: nextActive } : p,
+      );
+    }
     setTerminals((prev) => {
         const next = { ...prev };
         delete next[id];
         persistProject(t.projectSlug, next);
-        const remaining = Object.values(next).filter(
-          (x) => x.projectSlug === t.projectSlug,
-        );
-        setActiveTabByProject((p) =>
-          p[t.projectSlug] === id
-            ? {
-                ...p,
-                [t.projectSlug]:
-                  remaining.length > 0
-                    ? remaining[remaining.length - 1].id
-                    : null,
-              }
-            : p,
-        );
         return next;
       });
     },
@@ -2117,27 +2186,23 @@ export function App() {
     const terminal = terminalsRef.current[id];
     if (!terminal) return;
     setActiveTabByProject((prev) => ({ ...prev, [terminal.projectSlug]: id }));
-      updateProjectSplitLayout(terminal.projectSlug, (layout) => {
-        const cells = layout.cells.map((cell) => (cell === id ? null : cell));
-        cells[layout.activeCell] = id;
-        return { ...layout, cells };
-      });
-  }, [updateProjectSplitLayout]);
+    updateProjectSplitTree(terminal.projectSlug, (tree, activeLeafId) => ({
+      tree: assignTerminal(tree, activeLeafId, id),
+    }));
+  }, [updateProjectSplitTree]);
 
   const assignTerminalToSplitCell = useCallback(
-    (id: string, cellIndex: number) => {
+    (id: string, leafId: string) => {
       const terminal = terminalsRef.current[id];
       if (!terminal) return;
       setSingleViewByProject((prev) => ({ ...prev, [terminal.projectSlug]: null }));
       setActiveTabByProject((prev) => ({ ...prev, [terminal.projectSlug]: id }));
-      updateProjectSplitLayout(terminal.projectSlug, (layout) => {
-        const cells = layout.cells.map((cell) => (cell === id ? null : cell));
-        const target = Math.max(0, Math.min(cells.length - 1, cellIndex));
-        cells[target] = id;
-        return { ...layout, cells, activeCell: target };
-      });
+      updateProjectSplitTree(terminal.projectSlug, (tree) => ({
+        tree: assignTerminal(tree, leafId, id),
+        activeLeafId: leafId,
+      }));
     },
-    [updateProjectSplitLayout],
+    [updateProjectSplitTree],
   );
 
   const collapseToSingleTerminal = useCallback((terminal: TerminalState) => {
@@ -2159,24 +2224,27 @@ export function App() {
       if (!terminal) return;
       const project = projectsRef.current.find((p) => p.slug === terminal.projectSlug);
       if (!project) return;
-      const layout = normalizeSplitLayoutForTabs(
-        project.splitLayout,
-        project.tabs,
+      const existing = projectSplitTree(project);
+      const tree = normalizeTreeForTabs(
+        existing,
+        new Set(project.tabs.map((tab) => tab.id)),
         activeTabByProject[project.slug] ?? project.tabs[0]?.id ?? null,
+        uuid(),
       );
-      const visibleCell = layout.cells.indexOf(id);
-      if (project.splitLayout && visibleCell >= 0) {
+      const holding = findLeafByTerminal(tree, id);
+      if (existing && holding) {
+        // Already on screen: just move focus to its pane.
         setSingleViewByProject((prev) => ({ ...prev, [project.slug]: null }));
-        updateProjectSplitLayout(project.slug, (current) => ({
-          ...current,
-          activeCell: visibleCell,
+        updateProjectSplitTree(project.slug, (current) => ({
+          tree: current,
+          activeLeafId: findLeafByTerminal(current, id)?.id,
         }));
         setActiveTabByProject((prev) => ({ ...prev, [project.slug]: id }));
         return;
       }
       collapseToSingleTerminal(terminal);
     },
-    [activeTabByProject, collapseToSingleTerminal, updateProjectSplitLayout],
+    [activeTabByProject, collapseToSingleTerminal, updateProjectSplitTree],
   );
 
   const addTerminalSplit = useCallback(
@@ -2185,178 +2253,91 @@ export function App() {
       if (!terminal) return;
       setSingleViewByProject((prev) => ({ ...prev, [terminal.projectSlug]: null }));
       setActiveTabByProject((prev) => ({ ...prev, [terminal.projectSlug]: id }));
-      updateProjectSplitLayout(terminal.projectSlug, (layout) => {
-        const activeRow = Math.floor(layout.activeCell / layout.cols);
-        const activeCol = layout.activeCell % layout.cols;
-        if (direction === "right" && layout.cols >= MAX_SPLIT_COLS) return layout;
-        if (direction === "below" && layout.rows >= MAX_SPLIT_ROWS) return layout;
-
-        if (direction === "right") {
-          const cols = layout.cols + 1;
-          const cells: (string | null)[] = [];
-          for (let row = 0; row < layout.rows; row += 1) {
-            for (let col = 0; col < cols; col += 1) {
-              if (row === activeRow && col === activeCol + 1) {
-                cells.push(id);
-              } else {
-                const oldCol = col > activeCol ? col - 1 : col;
-                const value = oldCol < layout.cols ? layout.cells[row * layout.cols + oldCol] : null;
-                cells.push(value === id ? null : value);
-              }
-            }
-          }
-          return {
-            rows: layout.rows,
-            cols,
-            rowFr: layout.rowFr,
-            colFr: [
-              ...layout.colFr.slice(0, activeCol + 1),
-              layout.colFr[activeCol] ?? 1,
-              ...layout.colFr.slice(activeCol + 1),
-            ],
-            cells,
-            activeCell: activeRow * cols + activeCol + 1,
-          };
-        }
-
-        const rows = layout.rows + 1;
-        const cells: (string | null)[] = [];
-        for (let row = 0; row < rows; row += 1) {
-          for (let col = 0; col < layout.cols; col += 1) {
-            if (row === activeRow + 1 && col === activeCol) {
-              cells.push(id);
-            } else {
-              const oldRow = row > activeRow ? row - 1 : row;
-              const value = oldRow < layout.rows ? layout.cells[oldRow * layout.cols + col] : null;
-              cells.push(value === id ? null : value);
-            }
-          }
-        }
+      // The whole grid-shuffling dance this replaced existed only because a
+      // split had to insert a full row/column. A tree divides just this pane.
+      updateProjectSplitTree(terminal.projectSlug, (tree, activeLeafId) => {
+        const newLeafId = uuid();
+        const withPane = assignTerminal(tree, activeLeafId, id);
         return {
-          rows,
-          cols: layout.cols,
-          rowFr: [
-            ...layout.rowFr.slice(0, activeRow + 1),
-            layout.rowFr[activeRow] ?? 1,
-            ...layout.rowFr.slice(activeRow + 1),
-          ],
-          colFr: layout.colFr,
-          cells,
-          activeCell: (activeRow + 1) * layout.cols + activeCol,
+          tree: splitLeaf(
+            withPane,
+            activeLeafId,
+            direction === "right" ? "row" : "column",
+            uuid(),
+            newLeafId,
+          ),
+          activeLeafId: newLeafId,
         };
       });
     },
-    [updateProjectSplitLayout],
+    [updateProjectSplitTree],
   );
 
   const removeTerminalFromSplit = useCallback(
     (id: string) => {
       const terminal = terminalsRef.current[id];
       if (!terminal) return;
-      updateProjectSplitLayout(terminal.projectSlug, (layout) => {
-        const cells = layout.cells.map((cell) => (cell === id ? null : cell));
-        const activeCell =
-          cells[layout.activeCell] === null
-            ? Math.max(0, cells.findIndex(Boolean))
-            : layout.activeCell;
-        return pruneEmptySplitTracks({
-          ...layout,
-          cells,
-          activeCell: activeCell < 0 ? 0 : activeCell,
-        });
-      });
+      updateProjectSplitTree(terminal.projectSlug, (tree) => ({
+        tree: removeTerminal(tree, id),
+      }));
     },
-    [updateProjectSplitLayout],
+    [updateProjectSplitTree],
   );
 
+  /** Focus a pane by id (mouse click on a pane, or filling an empty one).
+   *  Keeping the active terminal in sync is what makes the sidebar highlight
+   *  and the clear-on-focus effect follow a click, not just keyboard nav. */
   const setActiveSplitCell = useCallback(
-    (slug: string, cellIndex: number) => {
+    (slug: string, leafId: string) => {
       if (!splitEnabledRef.current) return;
       setSingleViewByProject((prev) => ({ ...prev, [slug]: null }));
-      updateProjectSplitLayout(slug, (layout) => ({
-        ...layout,
-        activeCell: Math.max(0, Math.min(layout.cells.length - 1, cellIndex)),
-      }));
-      // Keep the active terminal in sync with the focused cell, so the sidebar
-      // highlight and the clear-on-focus effect both track a mouse click on a
-      // pane (not just keyboard/sidebar navigation). Read the layout outside
-      // the updater (mirrors focusSplitPane) to avoid a setState-in-updater.
-      const project = projectsRef.current.find((p) => p.slug === slug);
-      if (!project?.splitLayout) return;
-      const layout = normalizeSplitLayoutForTabs(
-        project.splitLayout,
-        project.tabs,
-        activeTabByProject[slug] ?? project.tabs[0]?.id ?? null,
-      );
-      const activeCell = Math.max(
-        0,
-        Math.min(layout.cells.length - 1, cellIndex),
-      );
-      const focusedId = layout.cells[activeCell];
-      if (focusedId) {
-        setActiveTabByProject((prev) => ({ ...prev, [slug]: focusedId }));
-      }
+      updateProjectSplitTree(slug, (tree) => ({ tree, activeLeafId: leafId }));
     },
-    [activeTabByProject, updateProjectSplitLayout],
+    [updateProjectSplitTree],
   );
 
   const resizeSplit = useCallback(
-    (slug: string, axis: "col" | "row", index: number, deltaPx: number, totalPx: number) => {
-      updateProjectSplitLayout(slug, (layout) => {
-        const values = axis === "col" ? [...layout.colFr] : [...layout.rowFr];
-        if (index < 0 || index >= values.length - 1 || totalPx <= 0) return layout;
-        const totalFr = values.reduce((sum, value) => sum + value, 0);
-        const deltaFr = (deltaPx / totalPx) * totalFr;
-        const min = MIN_SPLIT_PANE_FRACTION;
-        const left = Math.max(min, values[index] + deltaFr);
-        const right = Math.max(min, values[index + 1] - deltaFr);
-        values[index] = left;
-        values[index + 1] = right;
-        return axis === "col"
-          ? { ...layout, colFr: values }
-          : { ...layout, rowFr: values };
-      });
+    (slug: string, splitId: string, ratio: number) => {
+      updateProjectSplitTree(slug, (tree, activeLeafId) => ({
+        tree: resizeSplitNode(tree, splitId, ratio),
+        activeLeafId,
+      }));
     },
-    [updateProjectSplitLayout],
+    [updateProjectSplitTree],
   );
 
+  /** Directional pane navigation. Geometric rather than grid arithmetic: with
+   *  a tree the panes no longer line up in rows and columns, so "the pane to
+   *  the right" is whichever rectangle actually sits there. */
   const focusSplitPane = useCallback(
     (direction: "left" | "right" | "up" | "down") => {
       if (!splitEnabledRef.current) return;
       if (!activeProjectId) return;
       const project = projectsRef.current.find((p) => p.slug === activeProjectId);
-      if (!project?.splitLayout) return;
-      const layout = normalizeSplitLayoutForTabs(
-        project.splitLayout,
-        project.tabs,
-        activeTabByProject[project.slug] ?? project.tabs[0]?.id ?? null,
+      if (!project) return;
+      const existing = projectSplitTree(project);
+      if (!existing) return;
+      const fallbackId = activeTabByProject[project.slug] ?? project.tabs[0]?.id ?? null;
+      const tree = normalizeTreeForTabs(
+        existing,
+        new Set(project.tabs.map((tab) => tab.id)),
+        fallbackId,
+        uuid(),
       );
-      const row = Math.floor(layout.activeCell / layout.cols);
-      const col = layout.activeCell % layout.cols;
-      const nextRow =
-        direction === "up" ? row - 1 : direction === "down" ? row + 1 : row;
-      const nextCol =
-        direction === "left" ? col - 1 : direction === "right" ? col + 1 : col;
-      if (
-        nextRow < 0 ||
-        nextRow >= layout.rows ||
-        nextCol < 0 ||
-        nextCol >= layout.cols
-      ) {
-        return;
-      }
-      const nextCell = nextRow * layout.cols + nextCol;
-      const terminalId = layout.cells[nextCell];
+      const from = resolveActiveLeafId(
+        tree,
+        activeLeafByProject[project.slug],
+        fallbackId,
+      );
+      const target = focusDirection(tree, from, direction);
+      if (!target) return; // at the edge — a no-op, never a wrap-around
       setSingleViewByProject((prev) => ({ ...prev, [project.slug]: null }));
-      updateProjectSplitLayout(project.slug, (current) => ({
-        ...current,
-        activeCell: nextCell,
+      updateProjectSplitTree(project.slug, (current) => ({
+        tree: current,
+        activeLeafId: target,
       }));
-      if (terminalId) {
-        setActiveTabByProject((prev) => ({ ...prev, [project.slug]: terminalId }));
-      }
     },
-    [activeProjectId, activeTabByProject, updateProjectSplitLayout],
+    [activeProjectId, activeTabByProject, activeLeafByProject, updateProjectSplitTree],
   );
 
   const splitActivePane = useCallback(
@@ -2365,20 +2346,31 @@ export function App() {
       if (!activeProjectId) return;
       const project = projectsRef.current.find((p) => p.slug === activeProjectId);
       if (!project) return;
-      const layout = normalizeSplitLayoutForTabs(
-        project.splitLayout,
-        project.tabs,
-        activeTabByProject[project.slug] ?? project.tabs[0]?.id ?? null,
+      const fallbackId = activeTabByProject[project.slug] ?? project.tabs[0]?.id ?? null;
+      const tree = normalizeTreeForTabs(
+        projectSplitTree(project),
+        new Set(project.tabs.map((tab) => tab.id)),
+        fallbackId,
+        uuid(),
+      );
+      const activeLeafId = resolveActiveLeafId(
+        tree,
+        activeLeafByProject[project.slug],
+        fallbackId,
       );
       const terminalId =
         singleViewByProject[project.slug] ??
-        layout.cells[layout.activeCell] ??
-        activeTabByProject[project.slug] ??
-        project.tabs[0]?.id ??
-        null;
+        leaves(tree).find((l) => l.id === activeLeafId)?.terminalId ??
+        fallbackId;
       if (terminalId) addTerminalSplit(terminalId, direction);
     },
-    [activeProjectId, activeTabByProject, addTerminalSplit, singleViewByProject],
+    [
+      activeProjectId,
+      activeTabByProject,
+      activeLeafByProject,
+      addTerminalSplit,
+      singleViewByProject,
+    ],
   );
 
   /** Reorder project tabs. Persists the new slug order to disk so a
@@ -2457,6 +2449,70 @@ export function App() {
 
   /** Close the project tab without deleting its JSON config. Closed projects
    *  stay available from search / recent projects but do not auto-reopen. */
+  /** Create a worktree for the active project. Git's own error text is shown
+   *  verbatim — "a branch named 'x' already exists" is exactly what the user
+   *  needs, and a silent failure would look like a broken button. */
+  const createWorktreeForProject = useCallback(async () => {
+    const project = projectsRef.current.find((p) => p.slug === activeProjectId);
+    if (!project || project.remote) return;
+    const branch = window.prompt("New worktree — branch name:")?.trim();
+    if (!branch) return;
+    const parent = project.directory.replace(/\/+$/, "");
+    const suggested = `${parent}-${branch.replace(/[^A-Za-z0-9._-]+/g, "-")}`;
+    const path = window.prompt("Worktree directory:", suggested)?.trim();
+    if (!path) return;
+    const result = await window.aya.createWorktree({
+      directory: project.directory,
+      path,
+      branch,
+    });
+    if (!result.ok) {
+      window.alert(`Could not create the worktree:\n\n${result.error}`);
+      return;
+    }
+    setWorktreeNudge((n) => n + 1);
+  }, [activeProjectId]);
+
+  const removeWorktreeForProject = useCallback(
+    async (worktree: Worktree) => {
+      const project = projectsRef.current.find((p) => p.slug === activeProjectId);
+      if (!project || worktree.isMain) return;
+      if (
+        !window.confirm(
+          `Remove the worktree at ${worktree.path}?\n\nThe branch itself is kept.`,
+        )
+      ) {
+        return;
+      }
+      let result = await window.aya.removeWorktree({
+        directory: project.directory,
+        path: worktree.path,
+      });
+      // Git refuses while the checkout is dirty. Losing uncommitted work is
+      // the user's call to make, so ask rather than forcing by default.
+      if (!result.ok && /contains modified or untracked files|not empty/i.test(result.error)) {
+        if (
+          !window.confirm(
+            `${result.error}\n\nDiscard those changes and remove it anyway?`,
+          )
+        ) {
+          return;
+        }
+        result = await window.aya.removeWorktree({
+          directory: project.directory,
+          path: worktree.path,
+          force: true,
+        });
+      }
+      if (!result.ok) {
+        window.alert(`Could not remove the worktree:\n\n${result.error}`);
+        return;
+      }
+      setWorktreeNudge((n) => n + 1);
+    },
+    [activeProjectId],
+  );
+
   const closeProject = useCallback(async (slug: string) => {
     const owned = Object.values(terminalsRef.current).filter(
       (t) => t.projectSlug === slug,
@@ -3055,6 +3111,25 @@ export function App() {
     ? (activeTabByProject[activeProjectId] ?? null)
     : null;
   const activeTerminal = activeTabId ? (terminals[activeTabId] ?? null) : null;
+  const terminalSoundPrefs = useMemo(
+    () => ({
+      enabled: terminalSoundsEnabled,
+      overrides: terminalSoundOverrides,
+      customWaitingPath: customWaitingSound,
+      customDonePath: customDoneSound,
+    }),
+    [
+      terminalSoundsEnabled,
+      terminalSoundOverrides,
+      customWaitingSound,
+      customDoneSound,
+    ],
+  );
+  useTerminalSounds({
+    terminals,
+    activeTerminalId: activeTabId,
+    prefs: terminalSoundPrefs,
+  });
   const snippetsOpenForActiveTerminal =
     !!activeTerminal && snippetDrawerTerminalId === activeTerminal.id;
   const activeGit = activeProjectId ? (git[activeProjectId] ?? null) : null;
@@ -3091,54 +3166,68 @@ export function App() {
   // body shows a single terminal, and disable the split actions. The project's
   // stored splitLayout is left untouched, so switching back to the classic
   // layout restores it. (splitEnabled is defined up near the refs above.)
-  const savedSplitLayout = useMemo(
+  const savedSplitTree = useMemo(
     () =>
       splitEnabled && activeProject && activeProjectId
-        ? normalizeSplitLayoutForTabs(
-            activeProject.splitLayout,
-            activeProject.tabs,
+        ? normalizeTreeForTabs(
+            projectSplitTree(activeProject),
+            new Set(activeProject.tabs.map((tab) => tab.id)),
             activeTabId,
+            uuid(),
           )
         : null,
     [splitEnabled, activeProject, activeProjectId, activeTabId],
   );
+  const hasStoredSplit =
+    !!activeProject && !!projectSplitTree(activeProject) && splitEnabled;
   const singleViewTerminalId =
     activeProjectId && singleViewByProject[activeProjectId] && terminals[singleViewByProject[activeProjectId]!]
       ? singleViewByProject[activeProjectId]
       : null;
-  const splitLayout = useMemo(
-    () =>
-      savedSplitLayout && singleViewTerminalId
-        ? singleTerminalLayout(singleViewTerminalId)
-        : (savedSplitLayout ??
-            (activeTabId ? singleTerminalLayout(activeTabId) : null)),
-    [savedSplitLayout, singleViewTerminalId, activeTabId],
-  );
+  /** The tree actually rendered: a single-terminal view collapses to one pane,
+   *  and a project with no stored split still renders through the same path so
+   *  panes and the unsplit view share one code path. */
+  const splitTree = useMemo(() => {
+    if (savedSplitTree && singleViewTerminalId) {
+      return leaf(SINGLE_VIEW_LEAF_ID, singleViewTerminalId);
+    }
+    if (savedSplitTree) return savedSplitTree;
+    return activeTabId ? leaf(SINGLE_VIEW_LEAF_ID, activeTabId) : null;
+  }, [savedSplitTree, singleViewTerminalId, activeTabId]);
   const isSplit =
-    !!splitLayout &&
-    !singleViewTerminalId &&
-    !!activeProject?.splitLayout &&
-    (splitLayout.rows > 1 ||
-      splitLayout.cols > 1 ||
-      splitLayout.cells.filter(Boolean).length > 1);
+    !!splitTree && !singleViewTerminalId && hasStoredSplit && leafCount(splitTree) > 1;
+  const paneRects = useMemo(
+    () => (splitTree ? layoutRects(splitTree) : []),
+    [splitTree],
+  );
+  const paneDividers = useMemo(
+    () => (isSplit && splitTree ? dividerRects(splitTree) : []),
+    [isSplit, splitTree],
+  );
+  /** Pane number per terminal, for the sidebar chip. Positional, so it tracks
+   *  what the user sees rather than tree structure. */
   const splitAssignments: Record<string, number> = useMemo(() => {
     const out: Record<string, number> = {};
-    if (savedSplitLayout && activeProject?.splitLayout) {
-      savedSplitLayout.cells.forEach((terminalId, index) => {
-        if (terminalId) out[terminalId] = index;
-      });
-    }
+    if (!hasStoredSplit) return out;
+    paneRects.forEach((pane, index) => {
+      if (pane.terminalId) out[pane.terminalId] = index;
+    });
     return out;
-  }, [savedSplitLayout, activeProject]);
-  const splitActionLayout = savedSplitLayout ?? splitLayout;
-  const canSplitRight =
-    splitEnabled && splitActionLayout
-      ? splitActionLayout.cols < MAX_SPLIT_COLS
-      : false;
-  const canSplitBelow =
-    splitEnabled && splitActionLayout
-      ? splitActionLayout.rows < MAX_SPLIT_ROWS
-      : false;
+  }, [paneRects, hasStoredSplit]);
+  const activeLeafId = useMemo(
+    () =>
+      splitTree && activeProjectId
+        ? resolveActiveLeafId(
+            splitTree,
+            activeLeafByProject[activeProjectId],
+            activeTabId,
+          )
+        : null,
+    [splitTree, activeProjectId, activeLeafByProject, activeTabId],
+  );
+  // One cap now, not separate row/column limits: a tree has no tracks.
+  const canSplit =
+    splitEnabled && !!splitTree && leafCount(splitTree) < MAX_SPLIT_LEAVES;
 
   useEffect(() => {
     if (!activeProject?.remote || !activeProjectId) return;
@@ -3162,12 +3251,14 @@ export function App() {
   const visibleTerminalIds = useStable(
     useMemo(
       () =>
-        splitLayout
-          ? splitLayout.cells.filter((id): id is string => !!id && !!terminals[id])
+        splitTree
+          ? paneRects
+              .map((pane) => pane.terminalId)
+              .filter((id): id is string => !!id && !!terminals[id])
           : activeTabId
             ? [activeTabId]
             : [],
-      [splitLayout, activeTabId, terminals],
+      [splitTree, paneRects, activeTabId, terminals],
     ),
     sameArrayItems,
   );
@@ -3274,10 +3365,7 @@ export function App() {
           t.externalStatus?.level === "waiting"
         ) {
           level = "waiting";
-        } else if (
-          t.externalStatus?.level === "done" ||
-          (t.status === "idle" && t.exitCode === 0 && t.presetId !== "shell")
-        ) {
+        } else if (isTerminalDone(t)) {
           level = "done";
         } else if (t.externalStatus?.level === "active") {
           level = "active";
@@ -3459,7 +3547,11 @@ export function App() {
   useAppShortcuts({
     newShell: openShellTab,
     closeCurrentTab: () => {
-      if (activeTabId) closeTerminal(activeTabId);
+      // Through the refs, not render state: a burst of closes must each act on
+      // the tab that is active by then, not on a snapshot from the last render.
+      const slug = activeProjectIdRef.current;
+      const id = slug ? activeTabByProjectRef.current[slug] : null;
+      if (id) closeTerminal(id);
     },
     search: () => {
       if (!chromeBlocked) setShowSearch(true);
@@ -3519,29 +3611,31 @@ export function App() {
           />
         );
         const panesNode = (
-          <div
-            className={`aya-panes ${isSplit ? "aya-panes--split" : ""}`}
-            style={
-              splitLayout
-                ? {
-                    gridTemplateColumns: splitLayout.colFr.map((fr) => `${fr}fr`).join(" "),
-                    gridTemplateRows: splitLayout.rowFr.map((fr) => `${fr}fr`).join(" "),
-                  }
-                : undefined
-            }
-          >
-            {splitLayout?.cells.map((terminalId, cellIndex) => {
+          <div className={`aya-panes ${isSplit ? "aya-panes--split" : ""}`}>
+            {paneRects.map(({ leafId, terminalId, rect }) => {
               const terminal = terminalId ? terminals[terminalId] : null;
+              // Panes are positioned from the tree's rectangles rather than
+              // nested to match it: nesting would move each TerminalView in
+              // the React tree on every reshape and remount the terminal.
+              const paneStyle = isSplit
+                ? {
+                    left: `${rect.left}%`,
+                    top: `${rect.top}%`,
+                    width: `${rect.width}%`,
+                    height: `${rect.height}%`,
+                  }
+                : undefined;
               if (!terminal) {
                 return (
                   <div
-                    key={`empty-${cellIndex}`}
+                    key={`empty-${leafId}`}
+                    style={paneStyle}
                     className={`aya-pane aya-pane-empty ${
-                      splitLayout.activeCell === cellIndex ? "aya-pane-empty--active" : ""
+                      activeLeafId === leafId ? "aya-pane-empty--active" : ""
                     }`}
                     onClick={() => {
                       if (!activeProjectId) return;
-                      setActiveSplitCell(activeProjectId, cellIndex);
+                      setActiveSplitCell(activeProjectId, leafId);
                     }}
                   >
                     <div className="aya-pane-header">
@@ -3561,7 +3655,7 @@ export function App() {
                                 type="button"
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  assignTerminalToSplitCell(candidate.id, cellIndex);
+                                  assignTerminalToSplitCell(candidate.id, leafId);
                                 }}
                               >
                                 <span
@@ -3592,6 +3686,7 @@ export function App() {
               return (
                 <TerminalView
                   key={terminal.id}
+                  paneStyle={paneStyle}
                   terminal={terminal}
                   preset={preset}
                   command={terminalCommand(activeProject, preset, terminal)}
@@ -3616,13 +3711,10 @@ export function App() {
                   onRequestRestart={() => restartTerminal(terminal.id)}
                   restartTrigger={restartTriggers[terminal.id] ?? 0}
                   macOptionKeyMode={macOptionKeyMode}
-                  isActivePane={isSplit && splitLayout.activeCell === cellIndex}
-                  isActive={
-                    (isSplit ? splitLayout.activeCell === cellIndex : true) &&
-                    !anyOverlayOpen
-                  }
+                  isActivePane={isSplit && activeLeafId === leafId}
+                  isActive={(isSplit ? activeLeafId === leafId : true) && !anyOverlayOpen}
                   onActivatePane={() =>
-                    activeProjectId && setActiveSplitCell(activeProjectId, cellIndex)
+                    activeProjectId && setActiveSplitCell(activeProjectId, leafId)
                   }
                   enableWebgl={!isSplit}
                 />
@@ -3666,30 +3758,12 @@ export function App() {
                 />
               );
             })}
-            {splitLayout && splitLayout.cols > 1 && activeProjectId &&
-              Array.from({ length: splitLayout.cols - 1 }, (_, index) => (
+            {activeProjectId &&
+              paneDividers.map((divider) => (
                 <SplitResizeHandle
-                  key={`col-resize-${index}`}
-                  axis="col"
-                  index={index}
-                  colFr={splitLayout.colFr}
-                  rowFr={splitLayout.rowFr}
-                  onResize={(delta, total) =>
-                    resizeSplit(activeProjectId, "col", index, delta, total)
-                  }
-                />
-              ))}
-            {splitLayout && splitLayout.rows > 1 && activeProjectId &&
-              Array.from({ length: splitLayout.rows - 1 }, (_, index) => (
-                <SplitResizeHandle
-                  key={`row-resize-${index}`}
-                  axis="row"
-                  index={index}
-                  colFr={splitLayout.colFr}
-                  rowFr={splitLayout.rowFr}
-                  onResize={(delta, total) =>
-                    resizeSplit(activeProjectId, "row", index, delta, total)
-                  }
+                  key={divider.splitId}
+                  divider={divider}
+                  onResize={(ratio) => resizeSplit(activeProjectId, divider.splitId, ratio)}
                 />
               ))}
             {projectTerminals.length === 0 && activeProject && (
@@ -3808,15 +3882,26 @@ export function App() {
                   projectDir={
                     activeProject ? projectBaseCwd(activeProject) : undefined
                   }
+                  onCreateWorktree={createWorktreeForProject}
+                  onRemoveWorktree={removeWorktreeForProject}
                   onResize={setSidebarWidth}
                   onReorder={reorderActiveProjectTerminals}
                   onRestart={forceRestartTerminal}
-                  canSplitRight={canSplitRight}
-                  canSplitBelow={canSplitBelow}
+                  canSplitRight={canSplit}
+                  canSplitBelow={canSplit}
                   onAssignToSplit={assignTerminalToActiveSplitCell}
                   onSplitRight={splitTerminalRight}
                   onSplitBelow={splitTerminalBelow}
                   onRemoveFromSplit={removeTerminalFromSplit}
+                  statusRail={
+                    <StatusRail
+                      projects={projects}
+                      terminals={terminals}
+                      collapsed={statusRailCollapsed}
+                      onCollapsedChange={setStatusRailCollapsed}
+                      onSelectTerminal={focusTerminalFromNotification}
+                    />
+                  }
                 />
                 {panesNode}
               </div>
@@ -3969,6 +4054,19 @@ export function App() {
           onWorktreesEnabledChange={setWorktreesEnabled}
           harnessSearchEnabled={harnessSearchEnabled}
           onHarnessSearchEnabledChange={setHarnessSearchEnabled}
+          terminalSoundsEnabled={terminalSoundsEnabled}
+          onTerminalSoundsEnabledChange={setTerminalSoundsEnabled}
+          terminalSoundOverrides={terminalSoundOverrides}
+          onTerminalSoundOverridesChange={(next) =>
+            setTerminalSoundOverrides(normalizeSoundOverrides(next))
+          }
+          customWaitingSound={customWaitingSound}
+          customDoneSound={customDoneSound}
+          onCustomSoundChange={(cue, path) =>
+            cue === "waiting"
+              ? setCustomWaitingSound(path)
+              : setCustomDoneSound(path)
+          }
           localSummariesEnabled={localSummariesEnabled}
           onLocalSummariesEnabledChange={setLocalSummariesEnabled}
           ayaIntelligence={ayaIntelligence}

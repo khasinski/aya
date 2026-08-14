@@ -1,4 +1,3 @@
-import { app } from "electron";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
@@ -190,6 +189,9 @@ export function startRemoteServerOn(
 }
 
 export function startRemoteServer(options: RemoteServerOptions): () => void {
+  // startRemoteServerOn is intentionally usable from plain Node. Load the
+  // Electron lifecycle only in the packaged-app wrapper.
+  const { app } = require("electron") as typeof import("electron");
   const stop = startRemoteServerOn(REMOTE_SOCKET_PATH, options);
   app.once("before-quit", stop);
   return stop;

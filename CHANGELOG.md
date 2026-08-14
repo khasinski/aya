@@ -1,5 +1,72 @@
 # Changelog
 
+## v0.7.10-beta - 2026-08-11
+
+Aya learns what its panes are actually doing, and lets agents work with each
+other instead of only reporting to you.
+
+### Features
+
+- **Panes split like a real tiling terminal.** Splitting now divides only the
+  selected pane instead of inserting a whole row or column, so the rest of the
+  layout keeps its size. Layouts can nest arbitrarily, each divider drags
+  independently, and pane navigation follows what you see rather than grid
+  arithmetic. Existing layouts are migrated automatically.
+- **Create and remove git worktrees.** The worktree section can now add a
+  worktree on a new branch and remove one (keeping the branch); git's own error
+  text is shown when it refuses, and discarding uncommitted work always asks
+  first. Previously Aya could only list worktrees.
+- **Approval detection knows its agent.** Screen rules are now per-agent, with
+  suppressors for screens that merely look like prompts — scrolling back
+  through Claude's transcript no longer marks a pane as waiting.
+- **Agents can read and drive each other's panes.** `aya pane read "reviewer"`
+  returns another pane's recent output and `aya pane send "reviewer" "…"` types
+  into it (`--submit` presses Enter), so one agent can hand work to another and
+  collect the result. Panes are addressed by tab name within your project; an
+  ambiguous name is rejected rather than guessed. Documented for agents in
+  `skills/aya-control/SKILL.md`.
+- **"Waiting" is now read off the real screen.** The pty host keeps a headless
+  VT mirror of each pane, so an approval prompt is detected from what the pane
+  actually shows — and, unlike the old byte-stream heuristic, the waiting state
+  clears again once the agent repaints over it. An agent's own reported status
+  still wins over both.
+- **Status rail.** An always-visible strip lists every terminal that is waiting
+  or failed across all open projects, so a blocked pane in a project you aren't
+  looking at is visible without opening anything. Click to jump to it; collapse
+  it to just the counts.
+- **Nine more agent CLIs** ship as presets: Cursor Agent, GitHub Copilot, Grok,
+  Droid, Devin, Kimi, Hermes, Qoder, and Antigravity.
+- **Auto-resume for OpenCode, Kilo Code and Pi.** Restoring one of these tabs
+  now continues its conversation (`--continue`) instead of starting over —
+  previously only Claude and Codex resumed.
+- **Session-precise resume.** An agent that reports its session id over OSC 9001
+  gets that exact conversation resumed on restore, instead of whatever the CLI
+  considers most recent. Resume is no longer hardcoded to Claude and Codex.
+- **Terminal sounds are configurable.** Pick your own audio files for the
+  waiting and finished chimes, and turn them off per preset.
+
+### Fixes
+
+- **The weakest signal can no longer overrule an agent's own status.** A regex
+  over raw output could overwrite a status the agent reported for itself. It is
+  now only allowed to raise the "waiting" bell — never to clear or downgrade
+  what the agent said — so a genuinely blocked pane still alerts while a
+  reported state stays authoritative.
+- **A terminal's worktree binding no longer resets to the project directory.**
+  The IPC validator rebuilt each saved tab field-by-field and silently dropped
+  its `cwd`, so a tab running in a git worktree came back in the main checkout
+  after a restart.
+- **Closing tabs quickly no longer swallows a press.** Cmd+W resolved "the
+  active tab" from the last render, so a second press that arrived before the
+  first close had been applied targeted the tab it had just closed and did
+  nothing — closing two tabs took three presses.
+- **Typing into a pane while its agent is still starting no longer loses the
+  keystrokes.** Input that arrived before the process was registered was
+  discarded with no echo and no error; it is now held and delivered once the
+  pane is live, the way a real terminal buffers type-ahead. Affected the CLIs
+  that run a command-exists check first — Claude, Codex and the other agent
+  presets — rather than plain shells.
+
 ## v0.7.9 - 2026-08-02
 
 Aya 0.7.9 makes agent sessions survive restarts the way they always should

@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import type { Page, Locator } from "@playwright/test";
+import { waitForShellReady } from "./helpers/terminal";
 
 // Buffer-content search (Cmd/Ctrl+K, ptySearch over each PTY's output buffer)
 // had no behavioural e2e — only focus-on-close was covered. Search reads the
@@ -9,6 +10,11 @@ import type { Page, Locator } from "@playwright/test";
 test.use({ seedOptions: { split: false } }); // single-view: one active terminal at a time
 
 async function typeInActiveTerminal(window: Page, text: string) {
+  // Wait for the shell's prompt before typing (race C): bytes sent to a shell
+  // that has not finished starting can be discarded as type-ahead, and nothing
+  // retries them - the command would simply never run, so the marker never
+  // reaches the buffer search reads.
+  await waitForShellReady(window);
   await window.locator(".aya-pane .xterm-screen").first().click();
   // Wait for the textarea to actually hold focus before typing, so insertText
   // can't race the focus and get dropped (race A).

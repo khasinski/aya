@@ -68,6 +68,7 @@ import {
 } from "./paths";
 import { scanHarnesses } from "./harnesses";
 import { isInternalNavigationUrl, parseExternalUrl } from "./navigation";
+import { createWorktree, removeWorktree } from "./git";
 import { listPresets, savePresets } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
 import { expandUserPath, readClaudeUsageAccounts } from "./usage";
@@ -92,6 +93,8 @@ import {
   validateSnippetArray,
   validatePresetArray,
   validateProjectCollectionState,
+  optionalTrimmed,
+  requireRecord,
   validateProjectConfig,
   validateSpawnRequest,
   validateThemesFile,
@@ -2213,6 +2216,23 @@ function registerIpc(): void {
   ipcMain.handle("env:github-link", async (_e, directory: unknown) =>
     getGitHubLink(requireString(directory, "env:github-link.directory")),
   );
+  ipcMain.handle("env:git-worktree-add", async (_e, req: unknown) => {
+    const r = requireRecord(req, "env:git-worktree-add");
+    return createWorktree(
+      requireString(r.directory, "env:git-worktree-add.directory"),
+      requireString(r.path, "env:git-worktree-add.path"),
+      optionalTrimmed(r.branch),
+      optionalTrimmed(r.base),
+    );
+  });
+  ipcMain.handle("env:git-worktree-remove", async (_e, req: unknown) => {
+    const r = requireRecord(req, "env:git-worktree-remove");
+    return removeWorktree(
+      requireString(r.directory, "env:git-worktree-remove.directory"),
+      requireString(r.path, "env:git-worktree-remove.path"),
+      r.force === true,
+    );
+  });
   ipcMain.handle("env:github-cli-available", async () =>
     isGitHubCliAvailable(),
   );
@@ -2221,6 +2241,22 @@ function registerIpc(): void {
     const options = {
       title: "Pick a project directory",
       properties: ["openDirectory" as const, "createDirectory" as const],
+    };
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+  ipcMain.handle("env:pick-sound", async (e) => {
+    const win = senderWindow(e);
+    const options = {
+      title: "Pick a notification sound",
+      properties: ["openFile" as const],
+      filters: [
+        { name: "Audio", extensions: ["wav", "mp3", "ogg", "m4a", "aac", "flac"] },
+        { name: "All files", extensions: ["*"] },
+      ],
     };
     const result = win
       ? await dialog.showOpenDialog(win, options)
@@ -2572,6 +2608,14 @@ app.whenReady().then(async () => {
   }
   startControlServer({
     getWindow: () => focusedAyaWindow(),
+    // Pane read/send resolve their target against the on-disk project configs
+    // and act through the pty host, so they work regardless of which window
+    // (if any) currently owns the target project.
+    listProjects: () => listProjects(),
+    readPane: (terminalId) => ptyHost.getBuffer(terminalId),
+    writePane: async (terminalId, data) => {
+      ptyHost.write(terminalId, data);
+    },
     // Status updates also reach Aya Web clients via a virtual window-like
     // sink (harness status dots must work in the browser too).
     getWindows: () => [

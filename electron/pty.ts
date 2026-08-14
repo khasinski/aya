@@ -11,6 +11,18 @@ import * as path from "node:path";
 import { execFile } from "node:child_process";
 import type * as PtyModule from "node-pty";
 import type { PtyEvent, SpawnFailureReason, SpawnRequest } from "./types";
+import {
+  extractAyaOsc,
+  parseAyaOscSession,
+  parseAyaOscStatus,
+} from "./osc-extractor";
+import {
+  closeAllVtPanes,
+  closeVtPane,
+  openVtPane,
+  resizeVtPane,
+  writeVtPane,
+} from "./vt-state";
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 import { COMMAND_NOT_FOUND_EXIT_CODE, COMMAND_PROBE_TIMEOUT_MS } from "./constants";
 import { userShell } from "./shell";
@@ -61,6 +73,11 @@ interface OutputBuffer {
 }
 const outputBuffers = new Map<string, OutputBuffer>();
 
+// Per-PTY held-back partial OSC 9001 sequence, when a chunk boundary lands
+// mid-sequence (see osc-extractor.ts). Cleared alongside outputBuffers on
+// exit/kill/shutdown so nothing leaks across a respawn under the same id.
+const oscCarryBuffers = new Map<string, string>();
+
 // Spawn/kill race guard: if killPty arrives before the corresponding
 // spawnPty's IPC has finished (renderer remounted/closed quickly), the kill
 // finds no IPty in the map and is a no-op. The pending spawn then runs and
@@ -82,6 +99,16 @@ export const KILL_ESCALATE_MS = 750;
 // both spawn, orphaning the first. We mark an id as spawning across the await
 // so a racing call bails instead of starting a second process.
 const spawning = new Set<string>();
+// Keystrokes that arrived while a spawn was still in flight. A real tty buffers
+// what you type before the shell has read it; dropping it here instead meant a
+// command typed into a pane that looked ready vanished with no echo and no
+// error. Held only across the spawn window: once the PTY registers, these are
+// written in order and the map entry is gone (see spawnPty's flush + finally).
+const pendingWrites = new Map<string, string[]>();
+// Bound per id, so a spawn that never completes (or a paste into a pane whose
+// command hangs in preflight) cannot grow the host's memory without limit.
+// Well above any realistic burst of typing; a paste past it is truncated.
+const PENDING_WRITE_MAX_BYTES = 64 * 1024;
 // Set once the host begins shutting down. shutdownPtyChildren snapshots the live
 // PTYs and the host then lingers up to KILL_ESCALATE_MS to deliver SIGKILL; a
 // spawn that registered a PTY in that window would escape the snapshot and be
@@ -116,6 +143,14 @@ export function __testAppendToOutputBuffer(ptyId: string, chunk: string): void {
 
 export function __testClearOutputBuffers(): void {
   outputBuffers.clear();
+}
+
+/** Input currently held for an in-flight spawn: [chunks, bytes]. The queue is
+ *  private and empty by the time any spawn settles, so a test observing it has
+ *  to look while the spawn is still in flight. */
+export function __testPendingWrites(ptyId: string): [number, number] {
+  const queued = pendingWrites.get(ptyId) ?? [];
+  return [queued.length, queued.reduce((n, s) => n + Buffer.byteLength(s), 0)];
 }
 
 export function getBufferedOutput(ptyId: string): string {
@@ -588,6 +623,31 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     }
 
     ptys.set(req.ptyId, child);
+    // Replay anything typed during the spawn window, in order, before the pane
+    // takes live input. Writes arriving after this point find the PTY through
+    // `ptys` on the normal path, so there is no gap between flush and cleanup.
+    const queued = pendingWrites.get(req.ptyId);
+    if (queued?.length) {
+      pendingWrites.delete(req.ptyId);
+      ptyLog.append("pending-write-flush", {
+        ptyId: req.ptyId,
+        chunks: queued.length,
+      });
+      for (const chunk of queued) child.write(chunk);
+    }
+    // Mirror of the pane's screen, used to tell what it SHOWS (see vt-state.ts).
+    // Fires on both edges, so a prompt appearing AND being answered both
+    // reach the renderer.
+    openVtPane(
+      req.ptyId,
+      req.cols,
+      req.rows,
+      (waiting) => {
+        if (sink.isDestroyed()) return;
+        sink.sendPtyEvent({ type: "vt-status", ptyId: req.ptyId, waiting });
+      },
+      req.agent,
+    );
     // The command is logged verbatim: it is the single most diagnostic field
     // (e.g. did this respawn carry --continue?), and it is already stored in
     // plaintext in ~/.aya/presets.json - the log adds no new exposure.
@@ -604,9 +664,40 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     });
 
     child.onData((chunk) => {
-      appendToOutputBuffer(req.ptyId, chunk);
+      // Strip Aya's OSC 9001 vocabulary (integrations.md) before anything
+      // downstream sees this chunk: the agent's visible output, the replay
+      // buffer, and search must never contain raw escape-sequence noise, and
+      // must reflect the exact bytes xterm.js renders.
+      const carry = oscCarryBuffers.get(req.ptyId) ?? "";
+      const extracted = extractAyaOsc(chunk, carry);
+      if (extracted.carry) {
+        oscCarryBuffers.set(req.ptyId, extracted.carry);
+      } else if (carry) {
+        oscCarryBuffers.delete(req.ptyId);
+      }
+      appendToOutputBuffer(req.ptyId, extracted.cleaned);
+      // Same bytes the renderer's xterm will draw, so the mirror matches what
+      // the user sees.
+      writeVtPane(req.ptyId, extracted.cleaned);
       if (sink.isDestroyed()) return;
-      sink.sendPtyEvent({ type: "data", ptyId: req.ptyId, chunk });
+      sink.sendPtyEvent({ type: "data", ptyId: req.ptyId, chunk: extracted.cleaned });
+      for (const event of extracted.events) {
+        const status = parseAyaOscStatus(event);
+        if (status) {
+          sink.sendPtyEvent({
+            type: "osc-status",
+            ptyId: req.ptyId,
+            level: status.level,
+            text: status.text,
+            updatedAt: Date.now(),
+          });
+          continue;
+        }
+        const sessionId = parseAyaOscSession(event);
+        if (sessionId) {
+          sink.sendPtyEvent({ type: "osc-session", ptyId: req.ptyId, sessionId });
+        }
+      }
     });
 
     child.onExit(({ exitCode }) => {
@@ -615,24 +706,69 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       }
       ptys.delete(req.ptyId);
       outputBuffers.delete(req.ptyId);
+      oscCarryBuffers.delete(req.ptyId);
+      closeVtPane(req.ptyId);
       ptyLog.append("exit", { ptyId: req.ptyId, exitCode });
       if (sink.isDestroyed()) return;
       sink.sendPtyEvent({ type: "exit", ptyId: req.ptyId, exitCode });
     });
   } finally {
     spawning.delete(req.ptyId);
+    // Covers every early return above (preflight failure, spawn error,
+    // shutdown): the spawn window is over, so nothing may keep holding input
+    // for it. On the success path the flush already emptied this.
+    pendingWrites.delete(req.ptyId);
   }
 }
 
 export function writePty(ptyId: string, data: string): void {
   const p = ptys.get(ptyId);
-  if (!p) return;
+  if (!p) {
+    // No PTY yet, but one is on its way: hold the input rather than discard it.
+    // Anything else (an exited or unknown id) still drops, as before.
+    if (spawning.has(ptyId)) bufferPendingWrite(ptyId, data);
+    return;
+  }
   p.write(data);
+}
+
+/** Queue input for an in-flight spawn, capped at PENDING_WRITE_MAX_BYTES.
+ *  Truncation drops the tail of the overflowing chunk: the earliest keystrokes
+ *  are the ones the user most expects to survive, and a partial line is more
+ *  recoverable than a silently reordered one. */
+function bufferPendingWrite(ptyId: string, data: string): void {
+  const queued = pendingWrites.get(ptyId) ?? [];
+  const used = queued.reduce((n, s) => n + Buffer.byteLength(s), 0);
+  const room = PENDING_WRITE_MAX_BYTES - used;
+  if (room <= 0) {
+    ptyLog.append("pending-write-dropped", {
+      ptyId,
+      bytes: Buffer.byteLength(data),
+    });
+    return;
+  }
+  let chunk = data;
+  if (Buffer.byteLength(chunk) > room) {
+    // Back off the cut to a character boundary. Slicing mid-character and
+    // decoding would hand the shell a U+FFFD it never typed, so walk back over
+    // any UTF-8 continuation bytes (0b10xxxxxx) first.
+    const buf = Buffer.from(chunk);
+    let end = room;
+    while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
+    chunk = buf.subarray(0, end).toString("utf8");
+    ptyLog.append("pending-write-truncated", { ptyId, keptBytes: end });
+    // The remaining room was smaller than the first character, so nothing of
+    // this chunk survives - queue no empty entry for the flush to write.
+    if (!chunk) return;
+  }
+  queued.push(chunk);
+  pendingWrites.set(ptyId, queued);
 }
 
 export function resizePty(ptyId: string, cols: number, rows: number): void {
   const p = ptys.get(ptyId);
   if (!p) return;
+  resizeVtPane(ptyId, cols, rows);
   try {
     p.resize(Math.max(cols, MIN_PTY_COLS), Math.max(rows, MIN_PTY_ROWS));
   } catch {
@@ -666,6 +802,8 @@ export function terminatePtyChild(
 
 export function killPty(ptyId: string): void {
   outputBuffers.delete(ptyId);
+  oscCarryBuffers.delete(ptyId);
+  closeVtPane(ptyId);
   const p = ptys.get(ptyId);
   ptyLog.append("kill", { ptyId, live: !!p });
   if (!p) {
@@ -769,6 +907,8 @@ export function shutdownPtyChildren(
   }
   ptys.clear();
   outputBuffers.clear();
+  oscCarryBuffers.clear();
+  closeAllVtPanes();
   pendingKills.clear();
   shutdownChildren(children, onDone, schedule);
 }

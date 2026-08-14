@@ -198,11 +198,16 @@ body {
    ============================================================ */
 .aya-app {
   display: grid;
-  /* 48px top bar: project tabs are two-line (name over path/summary). */
+  /* 48px top bar: project tabs are two-line (name over path/summary).
+     Attention status lives in the sidebar launcher, so it can never resize
+     the terminal viewport. */
   grid-template-rows: 48px 1fr 26px;
   height: 100vh;
   background: var(--bg);
 }
+.aya-app > .aya-topbar { grid-row: 1; }
+.aya-app > .aya-main { grid-row: 2; }
+.aya-app > .aya-statusbar { grid-row: 3; }
 
 /* ---- top bar: project tabs ---- */
 .aya-topbar {
@@ -711,6 +716,38 @@ body {
   font-weight: 700;
   letter-spacing: 0.04em;
 }
+.aya-worktree-header-remove {
+  margin-left: auto;
+  padding: 0 4px;
+  border-radius: 4px;
+  color: var(--fg-tertiary);
+  cursor: pointer;
+  opacity: 0;
+}
+.aya-worktree-header:hover .aya-worktree-header-remove { opacity: 1; }
+.aya-worktree-header-remove:hover {
+  color: var(--status-error);
+  background: color-mix(in oklab, var(--status-error) 16%, transparent);
+}
+.aya-worktree-add {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 6px 8px 2px;
+  padding: 5px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-tertiary);
+  font-family: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.aya-worktree-add:hover {
+  color: var(--fg-primary);
+  border-color: var(--border-strong);
+  background: var(--bg-tertiary);
+}
 .aya-worktree-header-tag--warn {
   color: var(--warn, #c60);
 }
@@ -769,9 +806,16 @@ body {
   min-height: 0;
   position: relative;
 }
+/* In split view panes are positioned absolutely from the layout tree's
+   rectangles (see src/split-tree.ts layoutRects). A grid can only express
+   uniform rows/columns, which is exactly the limitation the tree removes. */
 .aya-panes--split {
-  gap: 1px;
   background: color-mix(in oklab, var(--border) 36%, var(--bg) 64%);
+}
+.aya-panes--split > .aya-pane {
+  position: absolute;
+  /* The 1px inset draws the divider line the old grid `gap` used to. */
+  outline: 1px solid color-mix(in oklab, var(--border) 36%, var(--bg) 64%);
 }
 .aya-pane {
   display: flex; flex-direction: column;
@@ -844,16 +888,14 @@ body {
   z-index: 20;
   background: transparent;
 }
+/* Position comes from the tree; only the thickness and hit area are styled
+   here, centred on the boundary. */
 .aya-split-resize--col {
-  top: 0;
-  bottom: 0;
   width: 7px;
   transform: translateX(-3px);
   cursor: col-resize;
 }
 .aya-split-resize--row {
-  left: 0;
-  right: 0;
   height: 7px;
   transform: translateY(-3px);
   cursor: row-resize;

@@ -14,6 +14,7 @@
   },
   "include": [
     "src/agentPreset.ts",
+    "src/attention.ts",
     "src/bell.ts",
     "src/colors.ts",
     "src/control-status-target.ts",
@@ -28,7 +29,9 @@
     "src/terminal-option-key.ts",
     "src/terminal-keys.ts",
     "src/terminal-rendering.ts",
+    "src/terminal-sound-prefs.ts",
     "src/snippet-payload.ts",
+    "src/split-tree.ts",
     "src/spawnSession.ts",
     "src/stable-identity.ts",
     "src/types.ts",

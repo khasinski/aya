@@ -10,6 +10,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { normalizeSplitLayout, normalizeTab } from "../dist-electron/config.js";
+import { validateProjectConfig } from "../dist-electron/validation.js";
+import {
+  isStorableSplitTree,
+  pruneSplitTreeTerminals,
+} from "../dist-electron/split-tree.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -275,4 +280,87 @@ test("projects-state.json wins over legacy order/open files", async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("normalizeTab preserves the agent session id read back from disk", () => {
+  const out = normalizeTab({
+    id: "a",
+    presetId: "claude",
+    name: "Claude",
+    sessionId: "sess-abc.123",
+  });
+  assert.equal(out.sessionId, "sess-abc.123");
+  // Blank/absent ids stay absent rather than becoming an empty string that
+  // would build a malformed `--resume ` argument.
+  assert.equal("sessionId" in normalizeTab({ id: "b", presetId: "claude", name: "x" }), false);
+  assert.equal(
+    "sessionId" in normalizeTab({ id: "c", presetId: "claude", name: "x", sessionId: "   " }),
+    false,
+  );
+});
+
+test("a tab survives the full write->read round-trip with both bindings", () => {
+  // The regression this guards: each layer looked correct in isolation, but
+  // the IPC validator rebuilt the object and dropped the optional fields.
+  const original = {
+    id: "t1",
+    presetId: "claude",
+    name: "Claude",
+    cwd: "/tmp/wt/feature",
+    sessionId: "sess-1",
+  };
+  const afterIpc = validateProjectConfig({
+    slug: "aya",
+    name: "Aya",
+    directory: "/tmp/aya",
+    tabs: [original],
+  }).tabs[0];
+  const afterDisk = normalizeTab(JSON.parse(JSON.stringify(afterIpc)));
+  assert.deepEqual(afterDisk, original);
+});
+
+// --- splitTree on disk -----------------------------------------------------
+
+test("a stored split tree survives the read path, pruned to live tabs", () => {
+  const tree = {
+    kind: "split",
+    id: "s1",
+    direction: "row",
+    ratio: 0.5,
+    first: { kind: "leaf", id: "a", terminalId: "t1" },
+    second: { kind: "leaf", id: "b", terminalId: "gone" },
+  };
+  assert.equal(isStorableSplitTree(tree), true);
+  const pruned = pruneSplitTreeTerminals(tree, new Set(["t1"]));
+  assert.equal(pruned.first.terminalId, "t1");
+  assert.equal(pruned.second.terminalId, null, "a closed terminal must be cleared");
+});
+
+test("a terminal placed twice is kept in only the first pane", () => {
+  const tree = {
+    kind: "split",
+    id: "s1",
+    direction: "row",
+    ratio: 0.5,
+    first: { kind: "leaf", id: "a", terminalId: "t1" },
+    second: { kind: "leaf", id: "b", terminalId: "t1" },
+  };
+  const pruned = pruneSplitTreeTerminals(tree, new Set(["t1"]));
+  assert.equal(pruned.first.terminalId, "t1");
+  assert.equal(pruned.second.terminalId, null);
+});
+
+test("a tree beyond the pane cap is not storable", () => {
+  let tree = { kind: "leaf", id: "l0", terminalId: null };
+  for (let i = 0; i < 30; i += 1) {
+    tree = {
+      kind: "split",
+      id: `s${i}`,
+      direction: "row",
+      ratio: 0.5,
+      first: { kind: "leaf", id: `x${i}`, terminalId: null },
+      second: tree,
+    };
+  }
+  assert.equal(isStorableSplitTree(tree), false);
 });

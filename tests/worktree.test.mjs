@@ -74,3 +74,19 @@ test("round-trip: a worktree binding survives terminal -> tab", () => {
   const tab = tabFromTerminal(t, projectBaseCwd(p));
   assert.equal(tab.cwd, "/home/me/repo-wt/feature");
 });
+
+test("tabFromTerminal carries the agent session id to disk", () => {
+  const tab = tabFromTerminal(
+    { id: "t1", presetId: "claude", name: "Claude", cwd: "/p", sessionId: "abc123" },
+    "/p",
+  );
+  assert.equal(tab.sessionId, "abc123");
+});
+
+test("tabFromTerminal omits sessionId when the agent never reported one", () => {
+  const tab = tabFromTerminal(
+    { id: "t1", presetId: "claude", name: "Claude", cwd: "/p" },
+    "/p",
+  );
+  assert.equal("sessionId" in tab, false);
+});

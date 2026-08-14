@@ -3,6 +3,7 @@
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { isStorableSplitTree, pruneSplitTreeTerminals } from "./split-tree";
 import { writeFileAtomic } from "./atomic-write";
 import {
   OPEN_PROJECTS_FILE,
@@ -49,7 +50,19 @@ export function normalizeTab(raw: unknown): WorkingTab | null {
     typeof r.name === "string" && r.name.trim() ? r.name : presetId;
   // Preserve a worktree cwd binding (absolute path); ignore empty/invalid.
   const cwd = typeof r.cwd === "string" && r.cwd.trim() ? r.cwd : undefined;
-  return { id: r.id, presetId, name, ...(cwd ? { cwd } : {}) };
+  // Preserve the agent session id so a restore can resume that exact
+  // conversation instead of falling back to "the latest one".
+  const sessionId =
+    typeof r.sessionId === "string" && r.sessionId.trim()
+      ? r.sessionId
+      : undefined;
+  return {
+    id: r.id,
+    presetId,
+    name,
+    ...(cwd ? { cwd } : {}),
+    ...(sessionId ? { sessionId } : {}),
+  };
 }
 
 function stringArray(value: unknown): string[] | null {
@@ -231,17 +244,21 @@ export async function listProjects(): Promise<ProjectConfig[]> {
         .filter(
           (t): t is NonNullable<ReturnType<typeof normalizeTab>> => t !== null,
         );
-      const splitLayout = normalizeSplitLayout(
-        data.splitLayout,
-        new Set(tabs.map((tab) => tab.id)),
-      );
+      const tabIdSet = new Set(tabs.map((tab) => tab.id));
+      const splitLayout = normalizeSplitLayout(data.splitLayout, tabIdSet);
+      // A tree wins when present; the legacy grid is kept only so the renderer
+      // can migrate it on first load (it owns the conversion — see
+      // src/split-tree.ts treeFromLegacyLayout).
+      const splitTree = isStorableSplitTree(data.splitTree)
+        ? pruneSplitTreeTerminals(data.splitTree, tabIdSet)
+        : undefined;
       const remote = normalizeRemoteProject(data.remote);
       out.push({
         slug,
         name: data.name,
         directory: data.directory,
         tabs,
-        ...(splitLayout ? { splitLayout } : {}),
+        ...(splitTree ? { splitTree } : splitLayout ? { splitLayout } : {}),
         ...(remote ? { remote } : {}),
       });
     } catch {
@@ -372,7 +389,8 @@ function toDisk(project: ProjectConfig): unknown {
     name: project.name,
     directory: project.directory,
     tabs: project.tabs,
-    ...(project.splitLayout ? { splitLayout: project.splitLayout } : {}),
+    // Only the tree is written now; a legacy grid is dropped once migrated.
+    ...(project.splitTree ? { splitTree: project.splitTree } : {}),
     ...(project.remote ? { remote: project.remote } : {}),
   };
 }

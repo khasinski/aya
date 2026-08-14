@@ -10,7 +10,8 @@ import type {
 import type { Preset } from "./presets";
 import type { Snippet } from "./snippets";
 import type { ThemeColors } from "./themes";
-import { isPreset } from "./presets";
+import { isAgentKind, isPreset } from "./presets";
+import { isStorableSplitTree, type SplitNode } from "./split-tree";
 import { isSnippet, SNIPPET_TEXT_MAX } from "./snippets";
 
 /** Hard IPC ceiling on the number of snippets accepted in one save. Well above
@@ -47,6 +48,23 @@ export function requireStringArray(value: unknown, name: string): string[] {
   return value;
 }
 
+/** IPC payloads for the worktree mutations. Kept strict: these arguments end
+ *  up as git argv, and a wrong type here would be a confusing failure deep in
+ *  a child process rather than at the boundary. */
+export function requireRecord(
+  value: unknown,
+  name: string,
+): Record<string, unknown> {
+  if (!isRecord(value)) fail(name, "object");
+  return value;
+}
+
+/** Optional non-blank string, trimmed. Blank means "not provided" — an empty
+ *  branch name must never become a bare `-b` flag. */
+export function optionalTrimmed(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 export function requirePositiveInt(value: unknown, name: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
     fail(name, "positive integer");
@@ -64,6 +82,7 @@ export function validateSpawnRequest(value: unknown): SpawnRequest {
     ...(optionalString(value.presetId, "pty:spawn.presetId")
       ? { presetId: value.presetId as string }
       : {}),
+    ...(isAgentKind(value.agent) ? { agent: value.agent } : {}),
     command: requireString(value.command, "pty:spawn.command"),
     cwd: requireString(value.cwd, "pty:spawn.cwd"),
     cols: requirePositiveInt(value.cols, "pty:spawn.cols"),
@@ -91,12 +110,29 @@ function optionalFlag(value: unknown, name: string): boolean | undefined {
   return value;
 }
 
+// A session id is substituted into a spawn command line on restore, so this
+// boundary re-checks its shape rather than trusting the renderer: the same
+// charset the OSC parser enforces (electron/osc-extractor.ts), no shell
+// metacharacters, no whitespace.
+const SESSION_ID_RE = /^[A-Za-z0-9_.:/-]{1,200}$/;
+
 function validateWorkingTab(value: unknown, name: string): WorkingTab {
   if (!isRecord(value)) fail(name, "WorkingTab object");
+  // cwd (the worktree binding) and sessionId (the agent conversation to
+  // resume) are optional but MUST survive the round-trip — dropping them here
+  // silently reverts a worktree tab to the project directory and downgrades a
+  // precise `--resume <id>` to "whatever was latest".
+  const cwd = optionalString(value.cwd, `${name}.cwd`);
+  const sessionId = optionalString(value.sessionId, `${name}.sessionId`);
+  if (sessionId !== undefined && !SESSION_ID_RE.test(sessionId)) {
+    fail(`${name}.sessionId`, "shell-safe session id");
+  }
   return {
     id: requireString(value.id, `${name}.id`),
     presetId: requireString(value.presetId, `${name}.presetId`),
     name: requireString(value.name, `${name}.name`),
+    ...(cwd ? { cwd } : {}),
+    ...(sessionId ? { sessionId } : {}),
   };
 }
 
@@ -140,6 +176,16 @@ function validateSplitLayout(value: unknown): SplitLayout {
   return { rows, cols, rowFr, colFr, cells, activeCell };
 }
 
+/** The pane layout tree. Shape, ratio bounds, nesting depth and pane count are
+ *  all checked in `isStorableSplitTree`; anything else is rejected outright
+ *  rather than silently repaired, so a malformed layout can never reach disk. */
+function validateSplitTree(value: unknown): SplitNode {
+  if (!isStorableSplitTree(value)) {
+    fail("projects:update.splitTree", "SplitNode tree");
+  }
+  return value;
+}
+
 export function validateProjectConfig(value: unknown): ProjectConfig {
   if (!isRecord(value)) fail("projects:update", "ProjectConfig object");
   if (!Array.isArray(value.tabs)) fail("projects:update.tabs", "WorkingTab[]");
@@ -153,6 +199,9 @@ export function validateProjectConfig(value: unknown): ProjectConfig {
     tabs,
     ...(value.splitLayout !== undefined
       ? { splitLayout: validateSplitLayout(value.splitLayout) }
+      : {}),
+    ...(value.splitTree !== undefined
+      ? { splitTree: validateSplitTree(value.splitTree) }
       : {}),
     ...(value.remote !== undefined
       ? { remote: validateRemoteProject(value.remote) }

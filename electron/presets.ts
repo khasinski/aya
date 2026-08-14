@@ -13,13 +13,33 @@ import { writeFileAtomic } from "./atomic-write";
 import { scanHarnesses } from "./harnesses";
 import { PRESETS_FILE } from "./paths";
 
+/** Agent CLIs Aya knows how to classify and resume. "custom" is anything
+ *  else — a plain shell, a script, an agent we have no resume story for.
+ *  Mirrored in src/types.ts; keep the two in sync. */
+export type AgentKind =
+  | "claude"
+  | "codex"
+  | "opencode"
+  | "kilo"
+  | "pi"
+  | "cursor"
+  | "copilot"
+  | "grok"
+  | "droid"
+  | "devin"
+  | "kimi"
+  | "hermes"
+  | "qodercli"
+  | "antigravity"
+  | "custom";
+
 export interface Preset {
   id: string;
   name: string;
   icon: string;
   color: string; // CSS hex like "#d97757" or "" for the default neutral
   command: string;
-  agent?: "claude" | "codex" | "custom";
+  agent?: AgentKind;
   configDir?: string;
   unsafeMode?: boolean;
   autoResume?: boolean;
@@ -56,6 +76,28 @@ export const DEFAULT_PRESETS: readonly Preset[] = [
   },
 ];
 
+const AGENT_KINDS: readonly AgentKind[] = [
+  "claude",
+  "codex",
+  "opencode",
+  "kilo",
+  "pi",
+  "cursor",
+  "copilot",
+  "grok",
+  "droid",
+  "devin",
+  "kimi",
+  "hermes",
+  "qodercli",
+  "antigravity",
+  "custom",
+];
+
+export function isAgentKind(x: unknown): x is AgentKind {
+  return typeof x === "string" && (AGENT_KINDS as readonly string[]).includes(x);
+}
+
 export function isPreset(x: unknown): x is Preset {
   if (typeof x !== "object" || x === null) return false;
   const r = x as Record<string, unknown>;
@@ -73,12 +115,7 @@ export function isPreset(x: unknown): x is Preset {
   if (r.themeId !== undefined && typeof r.themeId !== "string") {
     return false;
   }
-  if (
-    r.agent !== undefined &&
-    r.agent !== "claude" &&
-    r.agent !== "codex" &&
-    r.agent !== "custom"
-  ) {
+  if (r.agent !== undefined && !isAgentKind(r.agent)) {
     return false;
   }
   if (r.configDir !== undefined && typeof r.configDir !== "string") {
@@ -99,10 +136,7 @@ export function normalizePreset(raw: unknown): Preset | null {
   if (!isPreset(raw)) return null;
   const themeId =
     typeof raw.themeId === "string" && raw.themeId ? raw.themeId : undefined;
-  const agent =
-    raw.agent === "claude" || raw.agent === "codex" || raw.agent === "custom"
-      ? raw.agent
-      : undefined;
+  const agent = isAgentKind(raw.agent) ? raw.agent : undefined;
   const configDir =
     typeof raw.configDir === "string" && raw.configDir.trim()
       ? raw.configDir

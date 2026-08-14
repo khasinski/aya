@@ -1,3 +1,4 @@
+import { attentionRows, type AttentionRow } from "../attention";
 import type { ProjectConfig, ProjectEvent, TerminalState } from "../types";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 
@@ -12,82 +13,6 @@ interface Props {
   onRestartTerminal: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
   onClose: () => void;
-}
-
-interface AttentionRow {
-  project: ProjectConfig;
-  terminal: TerminalState;
-  level: "waiting" | "error" | "done" | "idle";
-  title: string;
-  detail: string;
-}
-
-function attentionFor(
-  project: ProjectConfig,
-  terminal: TerminalState,
-): AttentionRow | null {
-  if (
-    terminal.status === "error" ||
-    terminal.externalStatus?.level === "error" ||
-    terminal.spawnFailure
-  ) {
-    return {
-      project,
-      terminal,
-      level: "error",
-      title: `${terminal.name} needs recovery`,
-      detail:
-        terminal.externalStatus?.text ??
-        terminal.spawnFailure?.detail ??
-        (terminal.exitCode !== null
-          ? `Exited with code ${terminal.exitCode}`
-          : "Terminal is in an error state"),
-    };
-  }
-  if (
-    terminal.bell ||
-    terminal.status === "waiting" ||
-    terminal.externalStatus?.level === "waiting"
-  ) {
-    return {
-      project,
-      terminal,
-      level: "waiting",
-      title: `${terminal.name} is waiting`,
-      detail: terminal.externalStatus?.text ?? "Approval or input needed",
-    };
-  }
-  if (
-    terminal.externalStatus?.level === "done" ||
-    (terminal.status === "idle" && terminal.exitCode === 0 && terminal.presetId !== "shell")
-  ) {
-    return {
-      project,
-      terminal,
-      level: "done",
-      title: `${terminal.name} finished`,
-      detail: terminal.externalStatus?.text ?? "Completed successfully",
-    };
-  }
-  if (
-    terminal.status === "idle" ||
-    terminal.stopped ||
-    (terminal.exitCode !== null && terminal.exitCode !== 0)
-  ) {
-    return {
-      project,
-      terminal,
-      level: "idle",
-      title: `${terminal.name} is idle`,
-      detail:
-        terminal.stopped
-          ? "Stopped - press Shift+Enter to restart"
-          : terminal.exitCode !== null
-            ? `Exited with code ${terminal.exitCode}`
-            : "No active process",
-    };
-  }
-  return null;
 }
 
 function formatTime(ts: number): string {
@@ -107,16 +32,7 @@ export function AttentionCenter({
   onClose,
 }: Props) {
   const projectBySlug = new Map(projects.map((project) => [project.slug, project]));
-  const rows = Object.values(terminals)
-    .map((terminal) => {
-      const project = projectBySlug.get(terminal.projectSlug);
-      return project ? attentionFor(project, terminal) : null;
-    })
-    .filter((row): row is AttentionRow => !!row)
-    .sort((a, b) => {
-      const rank = { error: 4, waiting: 3, done: 2, idle: 1 };
-      return rank[b.level] - rank[a.level] || a.project.name.localeCompare(b.project.name);
-    });
+  const rows = attentionRows(projects, terminals);
   const groupedRows = {
     error: rows.filter((row) => row.level === "error"),
     waiting: rows.filter((row) => row.level === "waiting"),

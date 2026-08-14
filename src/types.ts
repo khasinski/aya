@@ -1,13 +1,32 @@
 // Renderer types. Mirrors the electron-side definitions; we keep these in two
 // places (here and electron/types.ts) so the two TS projects stay independent.
 
+/** Agent CLIs Aya knows how to classify and resume. "custom" is anything
+ *  else — a plain shell, a script, an agent we have no resume story for. */
+export type AgentKind =
+  | "claude"
+  | "codex"
+  | "opencode"
+  | "kilo"
+  | "pi"
+  | "cursor"
+  | "copilot"
+  | "grok"
+  | "droid"
+  | "devin"
+  | "kimi"
+  | "hermes"
+  | "qodercli"
+  | "antigravity"
+  | "custom";
+
 export interface Preset {
   id: string;
   name: string;
   icon: string;
   color: string; // hex or "" for default
   command: string;
-  agent?: "claude" | "codex" | "custom";
+  agent?: AgentKind;
   configDir?: string;
   unsafeMode?: boolean;
   autoResume?: boolean;
@@ -97,6 +116,8 @@ export interface ThemesFile {
   activeId: string;
 }
 
+import type { SplitNode } from "./split-tree";
+
 export interface WorkingTab {
   id: string;
   presetId: string;
@@ -104,6 +125,10 @@ export interface WorkingTab {
   /** Worktree binding: absolute cwd this tab spawns in. Absent = the project's
    *  own directory. Set when the terminal runs in a git worktree. */
   cwd?: string;
+  /** Last session id the agent reported over OSC 9001 (see integrations.md).
+   *  Lets a restore resume that exact conversation instead of whatever the
+   *  CLI considers "latest". Absent for agents that never report one. */
+  sessionId?: string;
 }
 
 export interface SplitLayout {
@@ -120,7 +145,10 @@ export interface ProjectConfig {
   name: string;
   directory: string;
   tabs: WorkingTab[];
+  /** Legacy flat grid. Read for migration; no longer written. */
   splitLayout?: SplitLayout;
+  /** Pane layout as a BSP tree (see src/split-tree.ts). */
+  splitTree?: SplitNode;
   remote?: {
     hostId: string;
     label: string;
@@ -214,6 +242,11 @@ export interface RemoteHealthResult {
   recentProjectsCount?: number;
 }
 
+/** Outcome of a repository-changing git command. Mirrors electron/git.ts. */
+export type GitMutationResult =
+  | { ok: true; path: string }
+  | { ok: false; error: string };
+
 export interface GitChangedFile {
   status: string;
   path: string;
@@ -246,6 +279,10 @@ export interface SpawnRequest {
   ptyId: string;
   projectSlug?: string;
   presetId?: string;
+  /** Which agent CLI this pane runs, resolved by the renderer (it owns the
+   *  inference — see src/agentPreset.ts). Lets the host pick that agent's
+   *  screen-detection rules without duplicating the inference. */
+  agent?: AgentKind;
   command: string;
   cwd: string;
   cols: number;
@@ -276,7 +313,26 @@ export type PtyEvent =
     }
   // Host had no live session for an attach-only spawn: the process died while
   // the host stayed up. The tab becomes stopped/restartable, not respawned.
-  | { type: "no-session"; ptyId: string };
+  | { type: "no-session"; ptyId: string }
+  // Explicit status parsed from an OSC 9001 `aya.status` sequence the TUI (or
+  // a wrapper script) emitted inline in its own output — see integrations.md.
+  // Same vocabulary as ControlStatusUpdate's "status" request, delivered
+  // in-band through the PTY stream instead of the control socket.
+  | {
+      type: "osc-status";
+      ptyId: string;
+      level: ControlStatusLevel;
+      text: string;
+      updatedAt: number;
+    }
+  // Agent session id reported over OSC 9001, persisted so a later restore can
+  // resume this exact conversation.
+  | { type: "osc-session"; ptyId: string; sessionId: string }
+  // Derived from the pane's real rendered screen (electron/vt-state.ts):
+  // whether an approval prompt is on screen RIGHT NOW. Unlike the raw-byte
+  // heuristic it also reports when the prompt goes away, so it is emitted on
+  // both edges.
+  | { type: "vt-status"; ptyId: string; waiting: boolean };
 
 export interface WaitingNotificationRequest {
   projectSlug: string;
@@ -603,9 +659,24 @@ export interface AyaApi {
   getGitChangedFiles(directory: string): Promise<GitChangedFile[]>;
   getGitDiff(directory: string): Promise<string>;
   getGitWorktrees(directory: string): Promise<Worktree[]>;
+  /** Create a git worktree. Errors are RETURNED, not thrown: the caller shows
+   *  git's own message (e.g. "a branch named 'x' already exists"). */
+  createWorktree(req: {
+    directory: string;
+    path: string;
+    branch?: string;
+    base?: string;
+  }): Promise<GitMutationResult>;
+  /** Remove a git worktree. `force` discards uncommitted changes in it. */
+  removeWorktree(req: {
+    directory: string;
+    path: string;
+    force?: boolean;
+  }): Promise<GitMutationResult>;
   getGitHubLink(directory: string): Promise<GitHubLink | null>;
   githubCliAvailable(): Promise<boolean>;
   pickDirectory(): Promise<string | null>;
+  pickSoundFile(): Promise<string | null>;
   dirExists(path: string): Promise<boolean>;
   createDir(path: string): Promise<void>;
   openPath(path: string): Promise<void>;
@@ -701,6 +772,10 @@ export interface TerminalState {
   /** Restored from a persisted project tab, not newly created by the user.
    *  Agent presets may append --resume only in this case. */
   restored?: boolean;
+  /** Last session id the agent reported over OSC 9001, mirrored from (and
+   *  persisted back to) the project's WorkingTab so a restore can resume this
+   *  exact conversation. */
+  sessionId?: string;
 }
 
 export type ProjectEventLevel = "info" | "active" | "waiting" | "done" | "error";

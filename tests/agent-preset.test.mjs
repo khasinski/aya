@@ -11,6 +11,7 @@ import {
   isAgentPreset,
   effectiveAutoResume,
   resumeArg,
+  sessionResumeArg,
   commandHasResumeFlag,
   commandWithAutoResume,
 } from "../dist-test/agentPreset.js";
@@ -156,4 +157,143 @@ test("behavior-keyed preset ids match the electron built-ins (cross-boundary tri
   // gemini is intentionally NOT a built-in - it matches a user-named preset.
   assert.equal(ids.includes(PRESET_ID_GEMINI), false);
   assert.equal(PRESET_ID_GEMINI, "gemini");
+});
+
+// --- multi-agent support --------------------------------------------------
+// Beyond claude/codex, agents are classified so their sessions can be resumed
+// by id. These CLIs have no verified "continue latest" form, so they must
+// resume ONLY when a concrete session id is known — never guess a flag onto
+// an ordinary launch.
+
+test("inferAgent classifies the newer agent CLIs by binary", () => {
+  assert.equal(inferAgent({ command: "cursor-agent" }), "cursor");
+  assert.equal(inferAgent({ command: "copilot" }), "copilot");
+  assert.equal(inferAgent({ command: "grok" }), "grok");
+  assert.equal(inferAgent({ command: "droid" }), "droid");
+  assert.equal(inferAgent({ command: "devin" }), "devin");
+  assert.equal(inferAgent({ command: "kimi" }), "kimi");
+  assert.equal(inferAgent({ command: "hermes" }), "hermes");
+  assert.equal(inferAgent({ command: "qodercli" }), "qodercli");
+  assert.equal(inferAgent({ command: "agy" }), "antigravity");
+});
+
+test("inferAgent does not match a binary that merely starts with an agent name", () => {
+  assert.equal(inferAgent({ command: "grokking" }), "custom");
+  assert.equal(inferAgent({ command: "cursor-agentx" }), "custom");
+});
+
+test("agents without a continue-latest form append nothing on a bare restore", () => {
+  // The dangerous failure would be inventing a flag: it would break every
+  // restore of that CLI. No id, no flag.
+  for (const command of ["cursor-agent", "grok", "kimi", "agy"]) {
+    assert.equal(resumeArg(preset({ command })), null);
+    assert.equal(commandWithAutoResume(preset({ command }), true), command);
+  }
+});
+
+test("a known session id resumes that exact session, per agent syntax", () => {
+  assert.equal(
+    commandWithAutoResume(preset({ command: "cursor-agent" }), true, "abc123"),
+    "cursor-agent --resume abc123",
+  );
+  assert.equal(
+    commandWithAutoResume(preset({ command: "copilot" }), true, "abc123"),
+    "copilot --resume=abc123",
+  );
+  assert.equal(
+    commandWithAutoResume(preset({ command: "kimi" }), true, "abc123"),
+    "kimi --session abc123",
+  );
+  assert.equal(
+    commandWithAutoResume(preset({ command: "agy" }), true, "abc123"),
+    "agy --conversation abc123",
+  );
+});
+
+test("a session id beats the continue-latest form for claude/codex", () => {
+  assert.equal(
+    commandWithAutoResume(preset({ command: "claude" }), true, "sess-1"),
+    "claude --resume sess-1",
+  );
+  assert.equal(
+    commandWithAutoResume(preset({ command: "codex" }), true, "sess-1"),
+    "codex resume sess-1",
+  );
+});
+
+test("a session id is ignored on a fresh (non-restored) launch", () => {
+  assert.equal(
+    commandWithAutoResume(preset({ command: "claude" }), false, "sess-1"),
+    "claude",
+  );
+});
+
+test("a blank session id falls back to the continue-latest form", () => {
+  assert.equal(
+    commandWithAutoResume(preset({ command: "claude" }), true, "   "),
+    "claude --continue",
+  );
+});
+
+test("sessionResumeArg returns null for a custom preset or empty id", () => {
+  assert.equal(sessionResumeArg(preset({ command: "vim" }), "abc"), null);
+  assert.equal(sessionResumeArg(preset({ command: "claude" }), ""), null);
+});
+
+test("an existing resume flag still suppresses the session-id append", () => {
+  assert.equal(
+    commandWithAutoResume(preset({ command: "kimi --session old" }), true, "new"),
+    "kimi --session old",
+  );
+});
+
+// --- opencode / kilo / pi ---------------------------------------------------
+// Unlike the session-id-only agents above, these three were verified against
+// the actually-installed CLIs, so they get a real "continue latest" form and
+// resume on any restore — no session id needed.
+
+test("opencode, kilo and pi continue their latest session on a bare restore", () => {
+  assert.equal(commandWithAutoResume(preset({ command: "opencode" }), true), "opencode --continue");
+  assert.equal(commandWithAutoResume(preset({ command: "kilo" }), true), "kilo --continue");
+  assert.equal(commandWithAutoResume(preset({ command: "pi" }), true), "pi --continue");
+});
+
+test("opencode, kilo and pi resume a specific session when one is known", () => {
+  assert.equal(
+    commandWithAutoResume(preset({ command: "opencode" }), true, "ses_1"),
+    "opencode --session ses_1",
+  );
+  assert.equal(
+    commandWithAutoResume(preset({ command: "kilo" }), true, "ses_1"),
+    "kilo --session ses_1",
+  );
+  // pi's --session takes a path or a partial UUID.
+  assert.equal(
+    commandWithAutoResume(preset({ command: "pi" }), true, "/tmp/s.jsonl"),
+    "pi --session /tmp/s.jsonl",
+  );
+});
+
+test("pi's interactive picker flag is never what auto-resume appends", () => {
+  // `pi --resume` opens a session PICKER and would hang a restored tab waiting
+  // for a keypress — the same trap as a bare `claude --resume`.
+  for (const command of ["opencode", "kilo", "pi"]) {
+    assert.equal(resumeArg(preset({ command })), "--continue");
+  }
+});
+
+test("an already-flagged opencode-family command is not double-appended", () => {
+  for (const command of ["opencode -c", "kilo --continue", "pi --session abc"]) {
+    assert.equal(commandWithAutoResume(preset({ command }), true), command);
+  }
+});
+
+test("opencode-family binaries are matched exactly, not by prefix", () => {
+  assert.equal(inferAgent({ command: "opencode" }), "opencode");
+  assert.equal(inferAgent({ command: "kilo" }), "kilo");
+  assert.equal(inferAgent({ command: "pi" }), "pi");
+  // Near-misses must not be swept in.
+  assert.equal(inferAgent({ command: "pip install x" }), "custom");
+  assert.equal(inferAgent({ command: "kilobyte" }), "custom");
+  assert.equal(inferAgent({ command: "opencoder" }), "custom");
 });

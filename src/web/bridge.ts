@@ -124,8 +124,13 @@ export function createWebAya(transport: WebTransport): AyaApi {
     getGitWorktrees: inv("env:git-worktrees"),
     getGitHubLink: inv("env:github-link"),
     githubCliAvailable: inv("env:github-cli-available"),
-    // Native directory picker — the manual path field still works.
+    // Repository mutations stay on the desktop app, where the user can see the
+    // result and the confirmation prompt.
+    createWorktree: async () => ({ ok: false, error: "Not available in Aya Web" }),
+    removeWorktree: async () => ({ ok: false, error: "Not available in Aya Web" }),
+    // Native pickers — a browser session can't drive the host's file dialogs.
     pickDirectory: async () => null,
+    pickSoundFile: async () => null,
     dirExists: inv("env:dir-exists"),
     createDir: inv("env:create-dir"),
     // Opening the HOST's file browser from a remote session is meaningless.

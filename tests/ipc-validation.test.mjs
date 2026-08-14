@@ -369,3 +369,63 @@ test("split-grid maximum is pinned (boundary tests above derive from it)", () =>
   assert.equal(MAX_SPLIT_ROWS, 5);
   assert.equal(MAX_SPLIT_COLS, 5);
 });
+
+// --- WorkingTab optional fields must SURVIVE the boundary -------------------
+// Regression: this validator rebuilt the tab field-by-field and silently
+// dropped `cwd` and `sessionId`. Everything upstream looked correct — the
+// renderer sent them, tabFromTerminal produced them — but a worktree tab
+// reverted to the project directory on restart and `--resume <id>` quietly
+// degraded to "resume whatever was latest". Nothing failed loudly.
+
+test("validateProjectConfig preserves a tab's worktree cwd", () => {
+  const project = validateProjectConfig({
+    slug: "aya",
+    name: "Aya",
+    directory: "/tmp/aya",
+    tabs: [
+      { id: "t1", presetId: "claude", name: "Claude", cwd: "/tmp/aya-wt/feat" },
+    ],
+  });
+  assert.equal(project.tabs[0].cwd, "/tmp/aya-wt/feat");
+});
+
+test("validateProjectConfig preserves a tab's agent session id", () => {
+  const project = validateProjectConfig({
+    slug: "aya",
+    name: "Aya",
+    directory: "/tmp/aya",
+    tabs: [
+      { id: "t1", presetId: "claude", name: "Claude", sessionId: "sess-abc.123" },
+    ],
+  });
+  assert.equal(project.tabs[0].sessionId, "sess-abc.123");
+});
+
+test("a tab without cwd/sessionId keeps them absent, not undefined-valued", () => {
+  const project = validateProjectConfig({
+    slug: "aya",
+    name: "Aya",
+    directory: "/tmp/aya",
+    tabs: [{ id: "t1", presetId: "shell", name: "Shell" }],
+  });
+  assert.equal("cwd" in project.tabs[0], false);
+  assert.equal("sessionId" in project.tabs[0], false);
+});
+
+test("a session id that could alter a command line is rejected at the boundary", () => {
+  // The id ends up inside a spawn command on restore, so the IPC layer
+  // re-checks it rather than trusting the renderer.
+  for (const sessionId of ["bad; rm -rf /", "a b", "$(whoami)", "`id`", "x".repeat(201)]) {
+    assert.throws(
+      () =>
+        validateProjectConfig({
+          slug: "aya",
+          name: "Aya",
+          directory: "/tmp/aya",
+          tabs: [{ id: "t1", presetId: "claude", name: "C", sessionId }],
+        }),
+      /sessionId/,
+      `should reject: ${JSON.stringify(sessionId)}`,
+    );
+  }
+});

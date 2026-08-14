@@ -22,6 +22,7 @@ import {
 import type { SettingsTab } from "../settings-tabs";
 import { localSummaryUnavailableMessage } from "../local-summary-errors";
 import type { MacOptionKeyMode } from "../terminal-option-key";
+import type { TerminalSoundCue } from "../terminal-sound-prefs";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 
 const DEFAULT_CLAUDE_CONFIG_DIR = "~/.claude";
@@ -47,6 +48,13 @@ interface Props {
   onWorktreesEnabledChange: (enabled: boolean) => void;
   harnessSearchEnabled: boolean;
   onHarnessSearchEnabledChange: (enabled: boolean) => void;
+  terminalSoundsEnabled: boolean;
+  onTerminalSoundsEnabledChange: (enabled: boolean) => void;
+  terminalSoundOverrides: Record<string, boolean>;
+  onTerminalSoundOverridesChange: (overrides: Record<string, boolean>) => void;
+  customWaitingSound: string | null;
+  customDoneSound: string | null;
+  onCustomSoundChange: (cue: TerminalSoundCue, path: string | null) => void;
   localSummariesEnabled: boolean;
   onLocalSummariesEnabledChange: (enabled: boolean) => void;
   ayaIntelligence: AyaIntelligenceConfig;
@@ -290,6 +298,13 @@ export function SettingsModal({
   onWorktreesEnabledChange,
   harnessSearchEnabled,
   onHarnessSearchEnabledChange,
+  terminalSoundsEnabled,
+  onTerminalSoundsEnabledChange,
+  terminalSoundOverrides,
+  onTerminalSoundOverridesChange,
+  customWaitingSound,
+  customDoneSound,
+  onCustomSoundChange,
   localSummariesEnabled,
   onLocalSummariesEnabledChange,
   ayaIntelligence,
@@ -1523,6 +1538,92 @@ export function SettingsModal({
           >
             macOS permission: {notificationPermission}
           </SettingsRow>
+          <SettingsRow
+            icon="volume_up"
+            title="Terminal sounds"
+            control={(
+              <div className="aya-settings-segmented" aria-label="Terminal sounds">
+                {([
+                  [true, "On"],
+                  [false, "Off"],
+                ] as const).map(([on, label]) => (
+                  <button
+                    key={String(on)}
+                    type="button"
+                    className={`aya-settings-segment ${
+                      terminalSoundsEnabled === on
+                        ? "aya-settings-segment--active"
+                        : ""
+                    }`}
+                    onClick={() => onTerminalSoundsEnabledChange(on)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          >
+            Play a short chime when a terminal starts waiting for you, and
+            another when one finishes in the background.
+            {terminalSoundsEnabled && (
+              <div className="aya-sound-settings">
+                <div className="aya-sound-files">
+                  {([
+                    ["waiting", "Waiting", customWaitingSound],
+                    ["done", "Finished", customDoneSound],
+                  ] as const).map(([cue, label, current]) => (
+                    <div className="aya-sound-file" key={cue}>
+                      <span className="aya-sound-file-label">{label}</span>
+                      <span className="aya-sound-file-name" title={current ?? ""}>
+                        {current ? current.split("/").pop() : "Built-in chime"}
+                      </span>
+                      <button
+                        type="button"
+                        className="aya-modal-btn aya-modal-btn--slim"
+                        onClick={async () => {
+                          const picked = await window.aya.pickSoundFile();
+                          if (picked) onCustomSoundChange(cue, picked);
+                        }}
+                      >
+                        Choose…
+                      </button>
+                      {current && (
+                        <button
+                          type="button"
+                          className="aya-modal-btn aya-modal-btn--slim"
+                          onClick={() => onCustomSoundChange(cue, null)}
+                        >
+                          Reset
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="aya-sound-presets">
+                  <span className="aya-sound-presets-label">
+                    Play for these presets
+                  </span>
+                  {presets
+                    .filter((preset) => preset.id !== "shell")
+                    .map((preset) => (
+                      <label className="aya-sound-preset" key={preset.id}>
+                        <input
+                          type="checkbox"
+                          checked={terminalSoundOverrides[preset.id] ?? true}
+                          onChange={(event) =>
+                            onTerminalSoundOverridesChange({
+                              ...terminalSoundOverrides,
+                              [preset.id]: event.target.checked,
+                            })
+                          }
+                        />
+                        <span>{preset.name}</span>
+                      </label>
+                    ))}
+                </div>
+              </div>
+            )}
+          </SettingsRow>
           {micStatus && micStatus !== "unsupported" && (
             <SettingsRow
               icon="mic"
@@ -2123,7 +2224,9 @@ export function SettingsModal({
                       <span>
                         <strong>Auto-resume restored tabs</strong>
                         <small>
-                          Adds the agent's resume argument after Aya restarts a PTY.
+                          Adds the agent's resume argument after Aya restarts a
+                          PTY. Agents that resume by session id do so once
+                          they've reported one.
                         </small>
                       </span>
                       <input

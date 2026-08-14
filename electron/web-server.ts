@@ -83,6 +83,7 @@ const CHANNEL_OVERRIDES: Record<
     throw new Error("Multi-window is not available in Aya Web");
   },
   "env:pick-dir": async () => null,
+  "env:pick-sound": async () => null,
   "themes:import": async () => null,
   "app:is-fullscreen": async () => false,
   "app:is-maximized": async () => false,

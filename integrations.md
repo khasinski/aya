@@ -162,27 +162,65 @@ state on disk. The `aya` CLI is the glue that makes both feel uniform.
 
 ## Recommended ship order
 
-1. **Define the OSC 9001 vocabulary** (this document is the source of
+1. ✅ **Define the OSC 9001 vocabulary** (this document is the source of
    truth) and write `electron/osc-extractor.ts`. Hook it into `pty.ts`
    between the rolling buffer and the renderer-bound forward path.
    Strip sequences before they reach xterm.js.
 2. **Route extracted events to**:
-   - Renderer state (status bar slot for cost, context label in the
-     sidebar, explicit bell signal that supersedes the regex).
-   - The search store as `kind='status'` lines so they're searchable
+   - ✅ Renderer state — `status` drives the same status/bell/externalStatus
+     fields as the control-socket path (`osc-status` PtyEvent ->
+     `pty-event-reducer.ts`), including a waiting/done sound
+     (`useTerminalSounds`). `session` is persisted to the project's
+     `WorkingTab.sessionId` and replayed as a precise resume argument on
+     restore (`agentPreset.ts`); ids are restricted to shell-safe characters
+     because they end up on a spawn command line.
+     `tool`/`file`/`cost`/`context`/`progress`/`error` are parsed but not yet
+     consumed anywhere.
+   - ⬜ Status bar slot for cost, context label in the sidebar.
+   - ⬜ The search store as `kind='status'` lines so they're searchable
      across restarts.
-3. **Extend `bin/aya`** with `tool`, `file`, `cost`, `context`,
+3. ⬜ **Extend `bin/aya`** with `tool`, `file`, `cost`, `context`,
    `progress`, `error` subcommands. Each writes the OSC sequence to
-   the controlling tty.
-4. **Document the vocabulary** so TUI authors have a stable reference.
+   the controlling tty. (Not required to use the channel today — anything
+   can `printf` the raw sequence directly; see the vocabulary above.)
+4. ✅ **Document the vocabulary** so TUI authors have a stable reference.
    Mention the iTerm-style pattern so it doesn't feel exotic.
-5. **Ship reference wrappers** in `skills/aya-wrap-claude/` and
+5. ⬜ **Ship reference wrappers** in `skills/aya-wrap-claude/` and
    `skills/aya-wrap-codex/` as bash scripts. Optional, drop-in,
    documented. Retire gracefully if the official tools ever adopt OSC
    natively.
-6. **Adopt the OSC channel in the existing bell detection path**: when
-   the TUI emits `aya.status=waiting`, prefer that over the regex.
-   Heuristic stays as fallback.
+6. ✅ **Adopt the OSC channel in the existing bell detection path**: an
+   `aya.status` event sets `externalStatus`/`bell` exactly like the
+   control-socket path, which already wins over the regex heuristic in the
+   project-badge computation. The regex (`src/bell.ts`) is untouched and
+   stays the universal fallback for TUIs that emit neither.
+
+## Detection precedence
+
+Three signals can mark a terminal as waiting. They are layered so the most
+trustworthy one wins:
+
+1. **What the agent says about itself** — `aya status` over the control socket,
+   or `aya.status` over OSC 9001. Sets `externalStatus`; nothing overrules it.
+2. **What the pane actually shows** — `electron/vt-state.ts` feeds the byte
+   stream through a real VT parser (`@xterm/headless`) in the pty host and
+   matches per-agent rules (`electron/agent-screen-rules.ts`) against the
+   *rendered screen*. Emitted as the `vt-status` PtyEvent on both edges, so it
+   can also clear a stale waiting state — something the byte heuristic
+   structurally cannot do, since it only ever sees a prompt appear, never
+   disappear. Rules include *suppressors*: screens that contain prompt-like
+   text but are not a prompt (Claude's scrolled-back transcript, an idle
+   composer hint). An agent with no rules of its own falls back to the generic
+   set, so an unknown CLI is never worse off.
+3. **What the bytes contained** — `src/bell.ts`'s regex over raw chunks. Kept
+   as the universal fallback; it is the one that misfires when a TUI repaints
+   over a prompt it printed earlier.
+
+The ordering is asymmetric on purpose. A weaker signal may **raise** the bell
+even when a stronger one is present — a blocked agent nobody notices is the
+expensive failure — but it may never clear or downgrade a state the agent
+reported for itself. Only `aya status clear` (or the user dismissing it) does
+that.
 
 ## Trade-offs to remember
 

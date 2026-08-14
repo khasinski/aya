@@ -48,6 +48,7 @@ export function terminalsForNewTabs(
       bell: false,
       exitCode: null,
       spawnDeferred: true,
+      ...(tab.sessionId ? { sessionId: tab.sessionId } : {}),
     }));
 }
 

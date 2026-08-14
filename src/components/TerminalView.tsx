@@ -32,6 +32,7 @@ import {
   type OptionSide,
 } from "../terminal-option-key";
 import {
+  normalizeTerminalLinkUnderline,
   shouldPreserveTerminalScrollback,
   shouldUseTerminalWebgl,
   stripScrollbackErase,
@@ -128,6 +129,9 @@ interface Props {
    *  The component reuses its xterm instance and spawns a fresh PTY. */
   restartTrigger: number;
   isActivePane?: boolean;
+  /** Absolute position within the pane container, from the layout tree.
+   *  Undefined in single-pane view, where the pane simply fills its parent. */
+  paneStyle?: { left: string; top: string; width: string; height: string };
   /** True when this is THE terminal the user is interacting with right now:
    *  active project + active tab + active split cell, and no overlay/modal is
    *  open. Drives deterministic keyboard focus (see the focus effect below). */
@@ -237,6 +241,10 @@ function terminalViewPropsEqual(a: Props, b: Props): boolean {
     a.historySearchEnabled === b.historySearchEnabled &&
     a.restartTrigger === b.restartTrigger &&
     a.isActivePane === b.isActivePane &&
+    a.paneStyle?.left === b.paneStyle?.left &&
+    a.paneStyle?.top === b.paneStyle?.top &&
+    a.paneStyle?.width === b.paneStyle?.width &&
+    a.paneStyle?.height === b.paneStyle?.height &&
     a.isActive === b.isActive &&
     a.enableWebgl === b.enableWebgl &&
     a.macOptionKeyMode === b.macOptionKeyMode
@@ -295,6 +303,7 @@ function TerminalViewComponent({
   onRequestRestart,
   restartTrigger,
   isActivePane = false,
+  paneStyle,
   isActive = false,
   onActivatePane,
   enableWebgl = true,
@@ -630,6 +639,17 @@ function TerminalViewComponent({
       // without feeling sluggish.
       smoothScrollDuration: SMOOTH_SCROLL_DURATION_MS,
       scrollOnEraseInDisplay: true,
+      // OSC 8 links (used for Markdown labels such as [OpenAI](...)) have a
+      // separate activation path from URLs detected by WebLinksAddon. Without
+      // this handler xterm shows its security warning and calls window.open,
+      // which targets Aya's Electron window instead of the system browser.
+      linkHandler: {
+        activate: (event, uri) => {
+          event.preventDefault();
+          event.stopPropagation();
+          void window.aya.openUrl(uri);
+        },
+      },
       // In iTerm-style mode, xterm must not globally convert Option+letter to
       // Meta: right Option needs to remain available for macOS compose/dead-key
       // input (Polish characters, accents). TerminalView reimplements left
@@ -685,9 +705,10 @@ function TerminalViewComponent({
         // running via focus-reporting mode (DECSET 1004). It gates Shift+Enter:
         // soft newline inside the TUI, plain Enter (submit) at the shell prompt.
         richInputRef.current = focusReportingState(event.chunk, richInputRef.current);
-        const displayChunk = shouldPreserveScrollback
+        const scrollbackSafeChunk = shouldPreserveScrollback
           ? stripScrollbackErase(event.chunk)
           : event.chunk;
+        const displayChunk = normalizeTerminalLinkUnderline(scrollbackSafeChunk);
         if (event.replay) {
           replayingOutputRef.current += 1;
           term.write(displayChunk, () => {
@@ -882,6 +903,8 @@ function TerminalViewComponent({
         ptyId: terminal.id,
         projectSlug: terminal.projectSlug,
         presetId: terminal.presetId,
+        // The host uses this to pick the agent's own screen-detection rules.
+        agent: presetAgent,
         command,
         cwd,
         cols: Math.max(cols, TERMINAL_FALLBACK_COLS),
@@ -1187,7 +1210,7 @@ function TerminalViewComponent({
           isActivePane ? "aya-pane--active-split" : ""
         }`
       }
-      style={{ display: isVisible ? "flex" : "none" }}
+      style={{ display: isVisible ? "flex" : "none", ...(paneStyle ?? {}) }}
       onMouseDown={onActivatePane}
     >
       <div className="aya-pane-active" />

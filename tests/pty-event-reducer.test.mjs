@@ -7,8 +7,11 @@ import assert from "node:assert/strict";
 import {
   applyPtyEvent,
   clearedTerminalStatus,
+  controlLevelToTerminalStatus,
+  controlStatusEventTitle,
   deriveLifecycleStatus,
   eventTouchesActivity,
+  isTerminalDone,
 } from "../dist-test/pty-event-reducer.js";
 
 function termState(id, overrides = {}) {
@@ -307,6 +310,163 @@ test("clearedTerminalStatus: clears the bell left by a waiting overlay", () => {
   assert.equal(next.status, "idle");
 });
 
+// --- osc-status ------------------------------------------------------------
+// Explicit status parsed from an inline OSC 9001 sequence (integrations.md) —
+// the same vocabulary as the control-socket `aya status` path, delivered
+// through the PTY stream instead. Must drive status/bell/externalStatus
+// identically to the control-socket effect in App.tsx.
+
+test("osc-status: waiting sets status + rings the bell + records externalStatus", () => {
+  const prev = { t1: termState("t1", { status: "running", bell: false }) };
+  const next = applyPtyEvent(prev, {
+    type: "osc-status",
+    ptyId: "t1",
+    level: "waiting",
+    text: "Approval needed",
+    updatedAt: 1000,
+  });
+  assert.equal(next.t1.status, "waiting");
+  assert.equal(next.t1.bell, true);
+  assert.deepEqual(next.t1.externalStatus, {
+    level: "waiting",
+    text: "Approval needed",
+    updatedAt: 1000,
+  });
+});
+
+test("osc-status: done maps to idle and clears the bell", () => {
+  const prev = { t1: termState("t1", { status: "waiting", bell: true }) };
+  const next = applyPtyEvent(prev, {
+    type: "osc-status",
+    ptyId: "t1",
+    level: "done",
+    text: "Build passed",
+    updatedAt: 2000,
+  });
+  assert.equal(next.t1.status, "idle");
+  assert.equal(next.t1.bell, false);
+});
+
+test("osc-status: active maps to running", () => {
+  const prev = { t1: termState("t1", { status: "idle" }) };
+  const next = applyPtyEvent(prev, {
+    type: "osc-status",
+    ptyId: "t1",
+    level: "active",
+    text: "Running tests",
+    updatedAt: 3000,
+  });
+  assert.equal(next.t1.status, "running");
+  assert.equal(next.t1.bell, false);
+});
+
+test("osc-status: error maps to error", () => {
+  const prev = { t1: termState("t1", { status: "running" }) };
+  const next = applyPtyEvent(prev, {
+    type: "osc-status",
+    ptyId: "t1",
+    level: "error",
+    text: "Tests failed",
+    updatedAt: 4000,
+  });
+  assert.equal(next.t1.status, "error");
+});
+
+test("osc-status: blank text is a no-op (same map reference)", () => {
+  const prev = { t1: termState("t1") };
+  const next = applyPtyEvent(prev, {
+    type: "osc-status",
+    ptyId: "t1",
+    level: "waiting",
+    text: "   ",
+    updatedAt: 5000,
+  });
+  assert.equal(next, prev);
+});
+
+test("osc-status: unknown ptyId is a no-op", () => {
+  const prev = { t1: termState("t1") };
+  const next = applyPtyEvent(prev, {
+    type: "osc-status",
+    ptyId: "ghost",
+    level: "waiting",
+    text: "hi",
+    updatedAt: 6000,
+  });
+  assert.equal(next, prev);
+});
+
+test("eventTouchesActivity: osc-status counts as activity", () => {
+  assert.equal(
+    eventTouchesActivity({
+      type: "osc-status",
+      ptyId: "t1",
+      level: "active",
+      text: "Running",
+      updatedAt: 1,
+    }),
+    true,
+  );
+});
+
+test("controlLevelToTerminalStatus maps every level", () => {
+  assert.equal(controlLevelToTerminalStatus("waiting"), "waiting");
+  assert.equal(controlLevelToTerminalStatus("done"), "idle");
+  assert.equal(controlLevelToTerminalStatus("error"), "error");
+  assert.equal(controlLevelToTerminalStatus("active"), "running");
+});
+
+test("controlStatusEventTitle produces a per-level human title", () => {
+  assert.equal(controlStatusEventTitle("Claude", "waiting"), "Claude is waiting");
+  assert.equal(controlStatusEventTitle("Claude", "done"), "Claude finished");
+  assert.equal(controlStatusEventTitle("Claude", "error"), "Claude reported an error");
+  assert.equal(controlStatusEventTitle("Claude", "active"), "Claude updated status");
+});
+
+// --- isTerminalDone --------------------------------------------------------
+// Shared by the project-badge computation and the completion sound: what
+// counts as "finished" for a terminal.
+
+test("isTerminalDone: explicit externalStatus done is done regardless of PTY state", () => {
+  assert.equal(
+    isTerminalDone({
+      externalStatus: { level: "done", text: "x", updatedAt: 1 },
+      status: "running",
+      exitCode: null,
+      presetId: "codex",
+    }),
+    true,
+  );
+});
+
+test("isTerminalDone: idle + clean exit is done for an agent preset", () => {
+  assert.equal(
+    isTerminalDone({ status: "idle", exitCode: 0, presetId: "claude" }),
+    true,
+  );
+});
+
+test("isTerminalDone: a plain shell never reads as done from lifecycle alone", () => {
+  assert.equal(
+    isTerminalDone({ status: "idle", exitCode: 0, presetId: "shell" }),
+    false,
+  );
+});
+
+test("isTerminalDone: idle with a non-zero exit is not done", () => {
+  assert.equal(
+    isTerminalDone({ status: "idle", exitCode: 1, presetId: "claude" }),
+    false,
+  );
+});
+
+test("isTerminalDone: a live (non-idle) terminal is not done", () => {
+  assert.equal(
+    isTerminalDone({ status: "running", exitCode: null, presetId: "claude" }),
+    false,
+  );
+});
+
 // --- no-session ----------------------------------------------------------
 
 test("no-session marks the terminal stopped + restartable, not running", () => {
@@ -328,4 +488,192 @@ test("no-session for an unknown ptyId is a no-op (same map reference)", () => {
 
 test("no-session is not counted as activity", () => {
   assert.equal(eventTouchesActivity({ type: "no-session", ptyId: "t1" }), false);
+});
+
+// --- osc-session -----------------------------------------------------------
+// The agent reports its session id mid-run; it rides on TerminalState until a
+// persist writes it to the project's WorkingTab, so a later restore can resume
+// that exact conversation instead of "whatever was latest".
+
+test("osc-session records the id on the terminal", () => {
+  const prev = { t1: termState("t1") };
+  const next = applyPtyEvent(prev, {
+    type: "osc-session",
+    ptyId: "t1",
+    sessionId: "claude-abc123",
+  });
+  assert.equal(next.t1.sessionId, "claude-abc123");
+});
+
+test("osc-session with an unchanged id is a no-op (same map reference)", () => {
+  const prev = { t1: termState("t1", { sessionId: "same" }) };
+  const next = applyPtyEvent(prev, {
+    type: "osc-session",
+    ptyId: "t1",
+    sessionId: "same",
+  });
+  assert.equal(next, prev);
+});
+
+test("osc-session replaces an older id (agent started a new conversation)", () => {
+  const prev = { t1: termState("t1", { sessionId: "old" }) };
+  const next = applyPtyEvent(prev, {
+    type: "osc-session",
+    ptyId: "t1",
+    sessionId: "new",
+  });
+  assert.equal(next.t1.sessionId, "new");
+});
+
+test("osc-session for an unknown ptyId is a no-op", () => {
+  const prev = { t1: termState("t1") };
+  const next = applyPtyEvent(prev, {
+    type: "osc-session",
+    ptyId: "ghost",
+    sessionId: "x",
+  });
+  assert.equal(next, prev);
+});
+
+test("osc-session does not disturb status or bell", () => {
+  const prev = { t1: termState("t1", { status: "waiting", bell: true }) };
+  const next = applyPtyEvent(prev, {
+    type: "osc-session",
+    ptyId: "t1",
+    sessionId: "x",
+  });
+  assert.equal(next.t1.status, "waiting");
+  assert.equal(next.t1.bell, true);
+});
+
+// --- vt-status -------------------------------------------------------------
+// Derived from the pane's real screen (electron/vt-state.ts). Unlike the
+// byte-stream heuristic it reports BOTH edges, so it can also clear a stale
+// waiting state — but it must never overrule what an agent said about itself.
+
+test("vt-status waiting sets the waiting state and rings the bell", () => {
+  const prev = { t1: termState("t1", { status: "running" }) };
+  const next = applyPtyEvent(prev, {
+    type: "vt-status",
+    ptyId: "t1",
+    waiting: true,
+  });
+  assert.equal(next.t1.status, "waiting");
+  assert.equal(next.t1.bell, true);
+});
+
+test("vt-status clears a waiting state once the prompt leaves the screen", () => {
+  // The byte heuristic cannot do this: it only ever sees the prompt appear.
+  const prev = { t1: termState("t1", { status: "waiting", bell: true }) };
+  const next = applyPtyEvent(prev, {
+    type: "vt-status",
+    ptyId: "t1",
+    waiting: false,
+  });
+  assert.equal(next.t1.status, "running");
+  assert.equal(next.t1.bell, false);
+});
+
+test("vt-status never overrules an agent's own reported status", () => {
+  const prev = {
+    t1: termState("t1", {
+      status: "waiting",
+      bell: true,
+      externalStatus: { level: "waiting", text: "Needs approval", updatedAt: 1 },
+    }),
+  };
+  const next = applyPtyEvent(prev, {
+    type: "vt-status",
+    ptyId: "t1",
+    waiting: false,
+  });
+  assert.equal(next, prev);
+});
+
+test("vt-status does not resurrect an exited terminal", () => {
+  const prev = { t1: termState("t1", { status: "idle", exitCode: 0 }) };
+  const next = applyPtyEvent(prev, {
+    type: "vt-status",
+    ptyId: "t1",
+    waiting: true,
+  });
+  assert.equal(next, prev);
+});
+
+test("vt-status with no actual change returns the same map reference", () => {
+  const prev = { t1: termState("t1", { status: "waiting", bell: true }) };
+  const next = applyPtyEvent(prev, {
+    type: "vt-status",
+    ptyId: "t1",
+    waiting: true,
+  });
+  assert.equal(next, prev);
+});
+
+test("vt-status for an unknown ptyId is a no-op", () => {
+  const prev = { t1: termState("t1") };
+  const next = applyPtyEvent(prev, {
+    type: "vt-status",
+    ptyId: "ghost",
+    waiting: true,
+  });
+  assert.equal(next, prev);
+});
+
+// --- precedence between the three waiting signals ---------------------------
+// integrations.md documents the chain: an agent's own report > the rendered
+// screen > a regex over raw bytes. The rule is asymmetric on purpose — a
+// blocked agent nobody notices is the expensive failure, so a weaker signal
+// may still RAISE the bell; it just may never silence or downgrade what the
+// agent said about itself.
+
+test("inferred signals may still raise the bell over a stale agent status", () => {
+  // An agent that announced "active" once and then hit an approval prompt it
+  // did not report must still ring, or the user waits forever.
+  const prev = {
+    t1: termState("t1", {
+      status: "running",
+      externalStatus: { level: "active", text: "Running tests", updatedAt: 1 },
+    }),
+  };
+  const fromBytes = applyPtyEvent(prev, {
+    type: "data",
+    ptyId: "t1",
+    chunk: "Do you want me to apply this edit?",
+  });
+  assert.equal(fromBytes.t1.bell, true);
+  assert.equal(fromBytes.t1.status, "waiting");
+
+  const fromScreen = applyPtyEvent(prev, { type: "vt-status", ptyId: "t1", waiting: true });
+  assert.equal(fromScreen.t1.bell, true);
+});
+
+test("inferred signals never clear or downgrade an agent's own report", () => {
+  const done = {
+    t1: termState("t1", {
+      status: "idle",
+      bell: false,
+      externalStatus: { level: "done", text: "Build passed", updatedAt: 1 },
+    }),
+  };
+  // Ordinary output must not flip a reported "done" back to running.
+  assert.equal(applyPtyEvent(done, { type: "data", ptyId: "t1", chunk: "trailing log\n" }), done);
+  // Nor may the screen watcher clear it.
+  assert.equal(applyPtyEvent(done, { type: "vt-status", ptyId: "t1", waiting: false }), done);
+});
+
+test("an agent-reported status is preserved even while the bell is raised", () => {
+  // The overlay stays so `aya status clear` (and the status dot) still work.
+  const prev = {
+    t1: termState("t1", {
+      status: "running",
+      externalStatus: { level: "active", text: "Running tests", updatedAt: 1 },
+    }),
+  };
+  const next = applyPtyEvent(prev, { type: "vt-status", ptyId: "t1", waiting: true });
+  assert.deepEqual(next.t1.externalStatus, {
+    level: "active",
+    text: "Running tests",
+    updatedAt: 1,
+  });
 });
