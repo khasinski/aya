@@ -163,6 +163,19 @@ export class PtyHostClient {
     return typeof result === "string" ? result : "";
   }
 
+  /** Live cwd of a PTY's child, or null when it can't be determined. A host
+   *  left over from a build that predates this request answers "unknown
+   *  request" — that rejection is a null here, not an error the caller has to
+   *  care about (the status bar just keeps using the spawn cwd). */
+  async getCwd(ptyId: string): Promise<string | null> {
+    try {
+      const result = await this.request({ id: 0, type: "cwd", ptyId });
+      return typeof result === "string" && result.length > 0 ? result : null;
+    } catch {
+      return null;
+    }
+  }
+
   private async request(
     request: PtyHostRequest,
     // Applied AFTER connect() resolves, right before the socket write - for

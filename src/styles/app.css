@@ -1075,6 +1075,72 @@ body {
 .aya-statusbar-item--agent-active { color: var(--fg-secondary); }
 .aya-statusbar-item--agent-done { color: var(--status-active); }
 .aya-statusbar-item--agent-error { color: var(--status-error); }
+.aya-statusbar-popover--checkouts {
+  width: min(380px, calc(100vw - 24px));
+}
+.aya-checkout-list {
+  overflow-y: auto;
+}
+.aya-checkout-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 10px;
+  background: transparent;
+  border: 0;
+  color: var(--fg-secondary);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.aya-checkout-row:hover {
+  background: var(--bg-tertiary);
+  color: var(--fg-primary);
+}
+.aya-checkout-row--current {
+  color: var(--fg-primary);
+  box-shadow: inset 2px 0 0 var(--accent, var(--border-strong));
+}
+.aya-checkout-icon {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+}
+.aya-checkout-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-checkout-branch {
+  flex-shrink: 0;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-tertiary);
+  font-family: var(--font-mono);
+}
+.aya-checkout-dirty {
+  flex-shrink: 0;
+  min-width: 52px;
+  text-align: right;
+  color: var(--fg-tertiary);
+}
+.aya-checkout-dirty--warn { color: var(--status-waiting); }
+.aya-statusbar-worktree {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--fg-tertiary);
+  font-size: 10px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .aya-statusbar-spacer { flex: 1; }
 .aya-statusbar-popover-host {
   position: relative;

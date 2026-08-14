@@ -11,6 +11,18 @@ export function projectBaseCwd(project: ProjectConfig): string {
   return project.remote ? project.remote.directory : project.directory;
 }
 
+/** The checkout the git surface (branch / dirty / diff / GitHub link) should
+ *  describe: the active terminal's worktree cwd when that tab is bound to one,
+ *  otherwise the project's own base directory. A plain tab spawns in the base
+ *  cwd, so this is a no-op for it — but a tab running in a worktree would
+ *  otherwise report the main checkout's branch and its (usually empty) diff. */
+export function gitContextCwd(
+  baseCwd: string,
+  terminalCwd: string | null | undefined,
+): string {
+  return terminalCwd && terminalCwd !== baseCwd ? terminalCwd : baseCwd;
+}
+
 /** Map a live terminal back to its persisted WorkingTab. Keeps the worktree cwd
  *  binding only when it differs from the project's own directory, so an ordinary
  *  main-dir tab stays cwd-free (and keeps following the project if its directory

@@ -20,6 +20,9 @@ export interface SeededEnv {
    *  project points at (so a test can assert MissingDirModal's "Create folder"
    *  created it, or "Use home" did not). */
   missingDirPath?: string;
+  /** Set only when `gitWorktree` is requested: the worktree the right tab runs
+   *  in (branch "wt/bar", one modified file). */
+  worktreeDir?: string;
 }
 
 export interface SeedOptions {
@@ -58,6 +61,10 @@ export interface SeedOptions {
    *  commit, then leave a modified tracked file + an untracked file so the
    *  StatusBar shows a branch + "2 dirty" + a diff. */
   gitRepo?: boolean;
+  /** Requires `gitRepo`. Add a git worktree on branch "wt/bar" with its own
+   *  dirty file, and bind the RIGHT tab to it (tab.cwd), so tests can check the
+   *  status bar follows the active terminal's checkout. Path: `worktreeDir`. */
+  gitWorktree?: boolean;
   /** Point the open project at a directory that does NOT exist, so the boot
    *  dir-check queues it and MissingDirModal appears. The path is exposed as
    *  `seeded.missingDirPath` so a test can assert "Create folder" made it. */
@@ -111,6 +118,7 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     );
   }
 
+  let worktreeDir: string | undefined;
   if (opts.gitRepo) {
     const git = (...args: string[]) =>
       execFileSync("git", args, { cwd: projectDir, stdio: "ignore" });
@@ -122,6 +130,15 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     // prefixes so test selectors don't collide on substrings.)
     writeFileSync(join(projectDir, "committed.txt"), "one\ntwoX\n");
     writeFileSync(join(projectDir, "added.txt"), "brand new\n");
+    if (opts.gitWorktree) {
+      // A second checkout with its OWN branch and its own single dirty file, so
+      // "which checkout is the status bar reading?" has an unambiguous answer.
+      worktreeDir = join(root, "wt-bar");
+      git("worktree", "add", "-q", "-b", "wt/bar", worktreeDir);
+      writeFileSync(join(worktreeDir, "committed.txt"), "one\ntwoWT\n");
+    }
+  } else if (opts.gitWorktree) {
+    throw new Error("seed: gitWorktree requires gitRepo");
   }
 
   if (opts.presets !== false) {
@@ -141,7 +158,12 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
         directory: effectiveProjectDir,
         tabs: [
           { id: left, presetId: "shell", name: "shell 1" },
-          { id: right, presetId: "shell", name: "shell 2" },
+          {
+            id: right,
+            presetId: "shell",
+            name: "shell 2",
+            ...(worktreeDir ? { cwd: worktreeDir } : {}),
+          },
         ],
         ...(split
           ? {
@@ -276,5 +298,6 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     launchEnv,
     tabIds: { left, right },
     missingDirPath,
+    worktreeDir,
   };
 }

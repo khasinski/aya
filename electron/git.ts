@@ -5,7 +5,7 @@
 import { exec, execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
-import type { ProjectGitInfo, Worktree } from "./types";
+import type { ProjectGitInfo, Worktree, WorktreeStatus } from "./types";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -201,6 +201,46 @@ export async function removeWorktree(
     return { ok: true, path };
   } catch (err) {
     return { ok: false, error: gitErrorMessage(err) };
+  }
+}
+
+/** Every worktree of the repo, each with its live branch and dirty count, for
+ *  the status bar's checkout picker. The per-worktree `git status` calls only
+ *  run when there is more than one worktree — with a single checkout there is
+ *  nothing to pick between, and the status bar already polls that one. */
+export async function listWorktreeStatus(
+  directory: string,
+): Promise<WorktreeStatus[]> {
+  const worktrees = await listWorktrees(directory);
+  if (worktrees.length < 2) {
+    return worktrees.map((w) => ({ ...w, dirty: 0 }));
+  }
+  return Promise.all(
+    worktrees.map(async (w) => {
+      // A prunable worktree's checkout is gone; running git there just fails.
+      if (w.prunable || w.bare) return { ...w, dirty: 0 };
+      const info = await getGitInfo(w.path);
+      return { ...w, branch: info.branch ?? w.branch, dirty: info.dirty };
+    }),
+  );
+}
+
+/** The root of the checkout containing `directory` (its own root for a git
+ *  worktree, not the main one), or null outside a repo. A live terminal cwd can
+ *  sit deep inside a worktree, and the rest of this file's callers assume a
+ *  checkout root: `git status --porcelain` reports paths from the root, so the
+ *  untracked-file diff synthesis would read them against the wrong base. */
+export async function getGitRoot(directory: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["--no-optional-locks", "rev-parse", "--show-toplevel"],
+      { cwd: directory, ...OPTS },
+    );
+    const root = stdout.trim();
+    return root.length > 0 ? root : null;
+  } catch {
+    return null;
   }
 }
 

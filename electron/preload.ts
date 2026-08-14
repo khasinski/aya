@@ -21,6 +21,7 @@ const api: AyaApi = {
     ipcRenderer.invoke("pty:resize", ptyId, cols, rows),
   ptyKill: (ptyId) => ipcRenderer.invoke("pty:kill", ptyId),
   ptyBuffer: (ptyId) => ipcRenderer.invoke("pty:buffer", ptyId),
+  ptyCwd: (ptyId) => ipcRenderer.invoke("pty:cwd", ptyId),
   ptySearch: (query) => ipcRenderer.invoke("pty:search", query),
   harnessSearch: (req) => ipcRenderer.invoke("harness:search", req),
   restartPtyHost: () => ipcRenderer.invoke("pty-host:restart"),
@@ -90,6 +91,9 @@ const api: AyaApi = {
   getGitDiff: (directory) => ipcRenderer.invoke("env:git-diff", directory),
   getGitWorktrees: (directory) =>
     ipcRenderer.invoke("env:git-worktrees", directory),
+  getGitRoot: (directory) => ipcRenderer.invoke("env:git-root", directory),
+  getGitWorktreeStatus: (directory) =>
+    ipcRenderer.invoke("env:git-worktree-status", directory),
   getGitHubLink: (directory) =>
     ipcRenderer.invoke("env:github-link", directory),
   createWorktree: (req) => ipcRenderer.invoke("env:git-worktree-add", req),

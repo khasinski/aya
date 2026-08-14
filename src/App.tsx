@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { detectApproval } from "./bell";
 import { commandWithAutoResume } from "./agentPreset";
-import { projectBaseCwd, tabFromTerminal } from "./worktree";
+import { gitContextCwd, projectBaseCwd, tabFromTerminal } from "./worktree";
 import { findStatusTarget } from "./control-status-target";
 import {
   clearedTerminalStatus,
@@ -93,6 +93,7 @@ import {
   type UsageAccount,
   type WorkingTab,
   type Worktree,
+  type WorktreeStatus,
 } from "./types";
 
 // Cadence for polling the active project's git branch/dirty count (no inotify watch).
@@ -481,17 +482,20 @@ function samePollPayload<T>(prev: T, next: T): boolean {
   return JSON.stringify(prev) === JSON.stringify(next);
 }
 
-/** setGit updater that no-ops (same reference back) when the slug's git info
- *  is unchanged — the common case for the 3s status-bar poll. */
+/** setGit updater that no-ops (same reference back) when that directory's git
+ *  info is unchanged — the common case for the 3s status-bar poll. Keyed by
+ *  directory, not project slug: a worktree tab reads its OWN checkout, so one
+ *  project can hold several entries and switching tabs must not show the
+ *  previous checkout's branch until the next poll lands. */
 function mergeGitInfo(
   g: Record<string, ProjectGitInfo>,
-  slug: string,
+  directory: string,
   info: ProjectGitInfo,
 ): Record<string, ProjectGitInfo> {
-  const cur = g[slug];
+  const cur = g[directory];
   return cur && cur.branch === info.branch && cur.dirty === info.dirty
     ? g
-    : { ...g, [slug]: info };
+    : { ...g, [directory]: info };
 }
 
 function shellQuote(s: string): string {
@@ -749,12 +753,25 @@ export function App() {
     CUSTOM_DONE_SOUND_STORAGE_KEY,
     SOUND_PATH_CODEC,
   );
-  // Git worktrees for the active (local) project, when the experimental flag is
-  // on. Drives the launcher's worktree target and the per-row branch chip.
-  const [worktrees, setWorktrees] = useState<Worktree[]>([]);
-  // Bumped after a create/remove so the list effect re-reads; without it a
-  // freshly created worktree would not appear until the project changed.
+  // Worktrees of the active (local) project, with branch + dirty count. Polled
+  // (not loaded once per project switch) because an agent asked to "work in a
+  // worktree" creates one mid-session — it has to show up without a restart.
+  // Feeds the status bar's checkout picker; the sidebar's worktree grouping and
+  // launcher target additionally require the experimental flag.
+  const [worktrees, setWorktrees] = useState<WorktreeStatus[]>([]);
+  // Bumped after a create/remove so the poll effect re-fires immediately;
+  // without it a freshly created worktree would wait out the poll interval.
   const [worktreeNudge, setWorktreeNudge] = useState(0);
+  // Checkout the user PINNED in the status bar (slug -> path), overriding the
+  // "follow the console" default. Session-only: a pin is a look-at-this-now
+  // decision, not a project setting.
+  const [pinnedCheckout, setPinnedCheckout] = useState<Record<string, string>>(
+    {},
+  );
+  // Checkout root the ACTIVE terminal is really in: its process cwd (which a
+  // `cd` moves) resolved to the enclosing git root. null until the first read,
+  // or when it can't be determined — then the spawn cwd stands in.
+  const [liveCheckout, setLiveCheckout] = useState<string | null>(null);
   const [railWidth, setRailWidth] = useState(DEFAULT_RAIL_WIDTH_PX);
   const [localSummariesEnabled, setLocalSummariesEnabled] =
     usePersistentPreference(LOCAL_SUMMARIES_STORAGE_KEY, LOCAL_SUMMARIES_CODEC);
@@ -802,25 +819,44 @@ export function App() {
     setShowSettings(true);
   }, []);
 
-  // Status-bar branch / dirty count goes stale once you `git checkout` in a
-  // shell or commit something — there's no inotify watch, just a small poll
-  // for the active project. ~50ms subprocess, 3s cadence; cancelled on
-  // project switch.
+  // Active terminal, derived early: the git surface below follows the checkout
+  // THIS terminal is in, so its id/cwd are needed before the poll effects.
+  const activeTabId = activeProjectId
+    ? (activeTabByProject[activeProjectId] ?? null)
+    : null;
+  const activeTerminal = activeTabId ? (terminals[activeTabId] ?? null) : null;
+
+  // The active project's own checkout — where a terminal with no worktree
+  // binding runs. null for remote projects (no local working tree).
+  const activeProjectCheckout = useMemo(() => {
+    if (!activeProjectId) return null;
+    const project = findProject(projects, activeProjectId);
+    if (!project || project.remote) return null;
+    const base = projectFallbacks[project.slug] ?? project.directory;
+    return gitContextCwd(base, activeTerminal?.cwd);
+  }, [activeProjectId, projects, projectFallbacks, activeTerminal?.cwd]);
+
+  // Follow the console: read the active terminal's REAL cwd (a `cd` — or an
+  // agent that made itself a worktree and moved into it — leaves the spawn cwd
+  // behind) and resolve it to the enclosing checkout root, since the cwd can be
+  // a subdirectory. Active terminal only, on the git cadence: ~70ms on macOS
+  // (lsof; there is no /proc), so this is not something to run per tab.
+  const liveCwdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!activeProjectId) return;
+    liveCwdRef.current = null;
+    setLiveCheckout(null);
+    if (!activeTabId || !activeProjectCheckout) return;
     let cancelled = false;
     const refresh = () => {
-      const project = projectsRef.current.find(
-        (p) => p.slug === activeProjectId,
-      );
-      if (!project || cancelled) return;
-      if (project.remote) {
-        setGit((g) => mergeGitInfo(g, project.slug, { branch: null, dirty: 0 }));
-        return;
-      }
-      void window.aya.getGitInfo(project.directory).then((info) => {
+      void window.aya.ptyCwd(activeTabId).then(async (cwd) => {
+        if (cancelled || !cwd) return;
+        // Same cwd as last tick — the resolved root can't have changed, so skip
+        // the `git rev-parse`. Only a cd (or the first read) pays for it.
+        if (cwd === liveCwdRef.current) return;
+        const root = await window.aya.getGitRoot(cwd);
         if (cancelled) return;
-        setGit((g) => mergeGitInfo(g, project.slug, info));
+        liveCwdRef.current = cwd;
+        setLiveCheckout(root);
       });
     };
     const stop = pollVisible(refresh, GIT_STATUS_POLL_INTERVAL_MS);
@@ -828,29 +864,78 @@ export function App() {
       cancelled = true;
       stop();
     };
-  }, [activeProjectId]);
+  }, [activeTabId, activeProjectCheckout]);
 
-  // Load the active local project's git worktrees when the experimental flag is
-  // on. The list changes rarely (add/remove worktree), so we load on project
-  // switch / flag toggle rather than polling.
+  // The checkout the status bar's git surface describes, in priority order:
+  // what the user pinned in the picker, else where the console actually is,
+  // else the terminal's spawn cwd (a worktree binding or the project dir).
+  // null = nothing to read (no project, or a remote one).
+  const activeGitDirectory = useMemo(() => {
+    if (!activeProjectCheckout) return null;
+    const pinned = activeProjectId ? pinnedCheckout[activeProjectId] : null;
+    return pinned ?? liveCheckout ?? activeProjectCheckout;
+  }, [activeProjectCheckout, activeProjectId, pinnedCheckout, liveCheckout]);
+
+  // Status-bar branch / dirty count goes stale once you `git checkout` in a
+  // shell or commit something — there's no inotify watch, just a small poll
+  // for the active checkout. ~50ms subprocess, 3s cadence; cancelled on
+  // project / worktree-tab switch.
   useEffect(() => {
-    if (!worktreesEnabled || !activeProjectId) {
-      setWorktrees([]);
-      return;
-    }
-    const project = projectsRef.current.find((p) => p.slug === activeProjectId);
-    if (!project || project.remote) {
+    if (!activeGitDirectory) return;
+    let cancelled = false;
+    const refresh = () => {
+      if (cancelled) return;
+      void window.aya.getGitInfo(activeGitDirectory).then((info) => {
+        if (cancelled) return;
+        setGit((g) => mergeGitInfo(g, activeGitDirectory, info));
+      });
+    };
+    const stop = pollVisible(refresh, GIT_STATUS_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      stop();
+    };
+  }, [activeGitDirectory]);
+
+  // Poll the active local project's worktrees (with branch + dirty count). It
+  // used to load once per project switch, which meant a worktree an agent
+  // created during the session stayed invisible until you switched away and
+  // back. `git worktree list` is ~8ms and the per-worktree status calls only
+  // run when there is more than one checkout to tell apart.
+  useEffect(() => {
+    if (!activeProjectCheckout) {
       setWorktrees([]);
       return;
     }
     let cancelled = false;
-    void window.aya.getGitWorktrees(project.directory).then((list) => {
-      if (!cancelled) setWorktrees(list);
-    });
+    const refresh = () => {
+      void window.aya.getGitWorktreeStatus(activeProjectCheckout).then((list) => {
+        if (cancelled) return;
+        setWorktrees((prev) => (samePollPayload(prev, list) ? prev : list));
+      });
+    };
+    const stop = pollVisible(refresh, GIT_STATUS_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
+      stop();
     };
-  }, [worktreesEnabled, activeProjectId, worktreeNudge]);
+  }, [activeProjectCheckout, worktreeNudge]);
+
+  // Drop a pin whose worktree is gone (removed, or the project now points at a
+  // different repo). Left in place it would aim the whole git surface at a dead
+  // path, and with no branch to render there would be no chip left to click to
+  // undo it. Only acts on a non-empty list, so a failed read doesn't unpin.
+  useEffect(() => {
+    if (!activeProjectId || worktrees.length === 0) return;
+    const pinned = pinnedCheckout[activeProjectId];
+    if (!pinned || worktrees.some((w) => w.path === pinned)) return;
+    setPinnedCheckout((prev) => {
+      if (!(activeProjectId in prev)) return prev;
+      const next = { ...prev };
+      delete next[activeProjectId];
+      return next;
+    });
+  }, [activeProjectId, worktrees, pinnedCheckout]);
 
   // Re-read the account-wide usage snapshot a user hook writes (~/.aya/usage.json).
   // Aya only reads the file — it never fetches usage or touches any token.
@@ -1571,7 +1656,7 @@ export function App() {
       for (const p of openProjects) {
         if (!p.remote && dirChecks[openProjects.indexOf(p)]) {
           void window.aya.getGitInfo(p.directory).then((info) => {
-            setGit((g) => mergeGitInfo(g, p.slug, info));
+            setGit((g) => mergeGitInfo(g, p.directory, info));
           });
         }
       }
@@ -2649,7 +2734,8 @@ export function App() {
       });
 
       if (project.remote) {
-        setGit((g) => mergeGitInfo(g, project.slug, { branch: null, dirty: 0 }));
+        // No git entry for remotes: activeGitDirectory is null for them, so the
+        // status bar has nothing to look up and renders no git strip.
         hydrateProjectTerminals(project, project.remote.directory);
         void window.aya
           .listRemotePresets(project.remote.sshTarget)
@@ -2666,7 +2752,7 @@ export function App() {
       if (exists) {
         hydrateProjectTerminals(project, project.directory);
         void window.aya.getGitInfo(project.directory).then((info) => {
-          setGit((g) => mergeGitInfo(g, project.slug, info));
+          setGit((g) => mergeGitInfo(g, project.directory, info));
         });
       } else {
         setMissingDirQueue((prev) => [
@@ -2722,7 +2808,7 @@ export function App() {
         }));
         setActiveProjectId(withTabs.slug);
         void window.aya.getGitInfo(withTabs.directory).then((info) =>
-          setGit((g) => mergeGitInfo(g, withTabs.slug, info)),
+          setGit((g) => mergeGitInfo(g, withTabs.directory, info)),
         );
         setNewProjectModal(null);
       } catch (err) {
@@ -2768,7 +2854,6 @@ export function App() {
             ...projectStateRef.current.recent,
           ]),
         });
-        setGit((g) => mergeGitInfo(g, localProject.slug, { branch: null, dirty: 0 }));
         setRemotePresetsByProject((prev) => ({
           ...prev,
           [localProject.slug]: result.presets,
@@ -3056,7 +3141,7 @@ export function App() {
     if (project) {
       hydrateProjectTerminals(project, project.directory);
       void window.aya.getGitInfo(project.directory).then((info) => {
-        setGit((g) => mergeGitInfo(g, project.slug, info));
+        setGit((g) => mergeGitInfo(g, project.directory, info));
       });
     }
     dequeueMissingDir();
@@ -3107,10 +3192,7 @@ export function App() {
     ),
     sameArrayItems,
   );
-  const activeTabId = activeProjectId
-    ? (activeTabByProject[activeProjectId] ?? null)
-    : null;
-  const activeTerminal = activeTabId ? (terminals[activeTabId] ?? null) : null;
+  // (activeTabId / activeTerminal are derived up with the git-surface effects.)
   const terminalSoundPrefs = useMemo(
     () => ({
       enabled: terminalSoundsEnabled,
@@ -3132,35 +3214,27 @@ export function App() {
   });
   const snippetsOpenForActiveTerminal =
     !!activeTerminal && snippetDrawerTerminalId === activeTerminal.id;
-  const activeGit = activeProjectId ? (git[activeProjectId] ?? null) : null;
-  const activeGithubLink = activeProjectId
-    ? (githubLinks[activeProjectId] ?? null)
+  // Git surface (branch, dirty, diff, GitHub link) reads the active terminal's
+  // checkout — see activeGitDirectory — so all of it is keyed by directory.
+  const activeGit = activeGitDirectory ? (git[activeGitDirectory] ?? null) : null;
+  const activeGithubLink = activeGitDirectory
+    ? (githubLinks[activeGitDirectory] ?? null)
     : null;
-  // Resolve the PR/branch link only when the active project or its branch
+  // Resolve the PR/branch link only when the active checkout or its branch
   // changes — `gh pr view` hits the GitHub API, so we deliberately keep it off
   // the 3s git poll. Local repos only; remote projects have no working tree.
   const activeBranch = activeGit?.branch ?? null;
-  const activeDirectory = activeProject?.directory ?? null;
-  const activeIsRemote = !!activeProject?.remote;
   useEffect(() => {
-    if (!showGitHubLink || !activeProjectId || activeIsRemote || !activeDirectory) {
-      return;
-    }
+    if (!showGitHubLink || !activeGitDirectory) return;
     let cancelled = false;
-    void window.aya.getGitHubLink(activeDirectory).then((link) => {
+    void window.aya.getGitHubLink(activeGitDirectory).then((link) => {
       if (cancelled) return;
-      setGithubLinks((prev) => ({ ...prev, [activeProjectId]: link }));
+      setGithubLinks((prev) => ({ ...prev, [activeGitDirectory]: link }));
     });
     return () => {
       cancelled = true;
     };
-  }, [
-    showGitHubLink,
-    activeProjectId,
-    activeDirectory,
-    activeIsRemote,
-    activeBranch,
-  ]);
+  }, [showGitHubLink, activeGitDirectory, activeBranch]);
   // Split panes are not supported in the experimental "projects-left" layout
   // (terminals live in a top tab strip there). Ignore any saved split so the
   // body shows a single terminal, and disable the split actions. The project's
@@ -3410,6 +3484,25 @@ export function App() {
     [allProjects, openKnownProject],
   );
   const openSearch = useCallback(() => setShowSearch(true), []);
+  // Status-bar checkout picker: pin a worktree, or go back to following the
+  // console. Pinning by path (not index) so a worktree added or removed between
+  // renders can't silently repoint the pin at a different checkout.
+  const pinCheckout = useCallback(
+    (path: string | null) => {
+      const slug = activeProjectIdRef.current;
+      if (!slug) return;
+      setPinnedCheckout((prev) => {
+        if (!path) {
+          if (!(slug in prev)) return prev;
+          const next = { ...prev };
+          delete next[slug];
+          return next;
+        }
+        return prev[slug] === path ? prev : { ...prev, [slug]: path };
+      });
+    },
+    [],
+  );
   const minimizeWindow = useCallback(
     () => void window.aya.minimizeWindow(),
     [],
@@ -3912,6 +4005,12 @@ export function App() {
       <StatusBar
         project={activeProject}
         git={activeGit}
+        gitDirectory={activeGitDirectory}
+        worktrees={worktrees}
+        checkoutPinned={
+          !!activeProjectId && !!pinnedCheckout[activeProjectId]
+        }
+        onPickCheckout={pinCheckout}
         githubLink={activeGithubLink}
         showGitHubLink={showGitHubLink}
         terminal={activeTerminal}
