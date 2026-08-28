@@ -6,12 +6,12 @@
     <title>Aya - workspace for long-lived coding agents</title>
     <meta
       name="description"
-      content="Aya is a free, open-source desktop workspace for long-lived Claude Code, Codex, Aider, and shell sessions organized by project."
+      content="A free, open-source desktop workspace for long-lived Claude Code, Codex, and other coding agents, organized by project, with tiling splits and a status rail."
     />
     <meta property="og:title" content="Aya - workspace for coding agents" />
     <meta
       property="og:description"
-      content="Project tabs, persistent agent terminals, usage chips, snippets, and local status for Claude Code, Codex, Aider, and shells."
+      content="Project tabs, tiling splits, a waiting-pane status rail, usage chips, snippets, and agent-to-agent pane control for Claude Code, Codex, and more."
     />
     <meta property="og:image" content="https://aya.codes/assets/aya-main.png" />
     <meta property="og:url" content="https://aya.codes/" />
@@ -939,9 +939,10 @@
               <span class="eyebrow">Project-first agent workspace</span>
               <h1 id="hero-title">Aya</h1>
               <p class="hero-lede">
-                A desktop home for long-lived Claude Code, Codex, Aider, and
-                shell sessions. Keep real PTYs alive, grouped by project, with
-                usage, snippets, diffs, and agent status close at hand.
+                A desktop home for long-lived Claude Code, Codex, and a dozen
+                more coding agents. Keep real PTYs alive, grouped by project and
+                split like a tiling terminal, with usage, snippets, diffs, and a
+                status rail that surfaces every waiting pane.
               </p>
               <div class="hero-actions" aria-label="Primary actions">
                 <a
@@ -958,7 +959,7 @@
                 </div>
                 <div class="hero-point">
                   <strong>Agents</strong>
-                  <span>Claude, Codex, Aider, Gemini, shell.</span>
+                  <span>Claude, Codex, Cursor, Copilot, Grok, and more.</span>
                 </div>
                 <div class="hero-point">
                   <strong>Local</strong>
@@ -988,7 +989,7 @@
           </div>
           <div class="strip-item">
             <b>02</b>
-            <span>Keep agent terminals alive across context switches.</span>
+            <span>Split panes like a tiling terminal, kept alive across switches.</span>
           </div>
           <div class="strip-item">
             <b>03</b>
@@ -996,7 +997,7 @@
           </div>
           <div class="strip-item">
             <b>04</b>
-            <span>Use one local CLI side channel for agent status.</span>
+            <span>Let agents read and drive each other's panes over a local CLI.</span>
           </div>
         </div>
       </section>
@@ -1092,8 +1093,9 @@
             <h2 id="control-title">Terminal-native from every side.</h2>
             <p>
               The <code>aya</code> helper opens projects from any shell, focuses
-              the desktop app, and lets agent harnesses report status without
-              scraping provider state.
+              the desktop app, lets agent harnesses report status, and lets one
+              agent read and drive another's pane, all without scraping provider
+              state.
             </p>
           </div>
         </div>
@@ -1108,11 +1110,14 @@
           <pre><code><span class="prompt">$</span> aya .
 <span class="comment">opens this repo as a project</span>
 
-<span class="prompt">$</span> aya status waiting "Needs approval"
-<span class="comment">marks the active agent as waiting</span>
+<span class="prompt">$</span> aya pane read "reviewer"
+<span class="comment">returns another pane's recent output</span>
 
-<span class="prompt">$</span> aya notify --title "Aya" "Tests passed"
-<span class="comment">sends a desktop notification from the current pane</span></code></pre>
+<span class="prompt">$</span> aya pane send "reviewer" "ship it" --submit
+<span class="comment">types into that pane and presses Enter</span>
+
+<span class="prompt">$</span> aya status waiting "Needs approval"
+<span class="comment">marks the active agent as waiting</span></code></pre>
         </div>
       </section>
 
