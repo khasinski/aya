@@ -1,9 +1,10 @@
 # Changelog
 
-## v0.7.10-beta - 2026-08-11
+## v0.8.0 - 2026-08-28
 
 Aya learns what its panes are actually doing, and lets agents work with each
-other instead of only reporting to you.
+other instead of only reporting to you. The terminal itself is calmer and
+faster too: no stale glyphs, no flicker, and a move to Electron 43.
 
 ### Features
 
@@ -66,6 +67,22 @@ other instead of only reporting to you.
   pane is live, the way a real terminal buffers type-ahead. Affected the CLIs
   that run a command-exists check first — Claude, Codex and the other agent
   presets — rather than plain shells.
+- **Stale or wrong glyphs in the terminal are gone.** Under heavy colored agent
+  output the GPU renderer could leave relocated glyphs on screen until you
+  selected the text; a repaint is now forced the moment the glyph atlas repacks,
+  so characters stay correct.
+- **No more flashing on focus, tab switch, or resize.** Those repaints no longer
+  throw away and rebuild the whole glyph cache — that expensive rebuild is now
+  reserved for a real GPU context loss.
+- **The terminal font is correct from the first frame**, instead of sticking
+  with a fallback until the web font finishes loading and is rebuilt.
+
+### Dependencies
+
+- Electron 43 (Chromium 150), with updated Playwright, React, Vite, and ws, plus
+  a node-pty bump that fixes macOS PTY crashes and file descriptor leaks.
+- macOS file pickers open in your home folder again, and frameless Linux windows
+  keep square corners, following Electron 43 default changes.
 
 ## v0.7.9 - 2026-08-02
 
