@@ -98,7 +98,11 @@ test("closing Search returns focus to the terminal", async ({ window, app }) => 
 
   await fireShortcut(app, "search");
   await expect(window.locator(".aya-modal--search")).toBeVisible();
-  // The search input holds focus, so Escape reaches the modal (not xterm).
+  // The modal closes from the input's own onKeyDown, and the input takes focus
+  // via a mount effect a frame after the modal becomes visible. Wait for that
+  // focus before pressing Escape: sent earlier, the key reached the terminal
+  // instead and left the modal open (flaky #focus-scenarios Escape race).
+  await expect(window.locator(".aya-search-input")).toBeFocused();
   await window.keyboard.press("Escape");
   await expect(window.locator(".aya-modal--search")).toHaveCount(0);
 
