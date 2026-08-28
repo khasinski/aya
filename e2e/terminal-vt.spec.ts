@@ -6,9 +6,10 @@ function shellSingleQuote(value: string): string {
 }
 
 async function writeTerminalOutput(window: Page, payload: string) {
-  const command = `printf %b ${shellSingleQuote(`\\033[2J\\033[H${payload}`)}\r`;
+  const command = `printf %b ${shellSingleQuote(`\\033[2J\\033[H${payload}`)}`;
   await window.locator(".aya-pane:visible .aya-xterm-host").first().click();
   await window.keyboard.insertText(command);
+  await window.keyboard.press("Enter");
 }
 
 async function renderedRows(window: Page) {

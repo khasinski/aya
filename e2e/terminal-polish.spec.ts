@@ -6,9 +6,10 @@ function shellSingleQuote(value: string): string {
 }
 
 async function writeTerminalOutput(window: Page, payload: string) {
-  const command = `printf %b ${shellSingleQuote(`\\033[2J\\033[H${payload}`)}\r`;
+  const command = `printf %b ${shellSingleQuote(`\\033[2J\\033[H${payload}`)}`;
   await window.getByTestId("xterm-host").first().click();
   await window.keyboard.insertText(command);
+  await window.keyboard.press("Enter");
 }
 
 test("terminal context menu can paste clipboard text", async ({ window, app }) => {
