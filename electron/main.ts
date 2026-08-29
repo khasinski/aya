@@ -1886,15 +1886,15 @@ async function handleStaleHost(): Promise<void> {
   }
 }
 
-/** Amber dot on the "Restart Aya" menu item - the manual reap affordance (#52).
+/** Red dot on the "Restart Aya" menu item - the manual reap affordance (#52).
  *  No-op until the application menu is installed. */
 function setStaleMenuIcon(): void {
   const item = Menu.getApplicationMenu()?.getMenuItemById("restart-aya");
   if (item) {
-    // 16x16 px amber dot at scaleFactor 2 = 8pt logical - renders as a
+    // 16x16 px red dot at scaleFactor 2 = 8pt logical - renders as a
     // small colored circle to the left of the label (standard macOS pattern).
     item.icon = nativeImage.createFromBuffer(
-      makeCirclePng(16, 224, 112, 0), // amber #e07000
+      makeCirclePng(16, 255, 59, 48), // red (macOS systemRed #ff3b30)
       { scaleFactor: 2 },
     );
   }
@@ -1974,7 +1974,7 @@ function registerIpc(): void {
   ipcMain.handle("pty-host:restart", async () => {
     await ptyHost.restart();
     // Clear only on success: if restart() throws, the stale state is still
-    // true and the amber icon must stay so the user can retry.
+    // true and the red icon must stay so the user can retry.
     staleHostDetected = false;
     const item = Menu.getApplicationMenu()?.getMenuItemById("restart-aya");
     if (item) item.icon = nativeImage.createEmpty();
@@ -2624,7 +2624,7 @@ app.whenReady().then(async () => {
   // raced this check could land on the stale host and be killed by the reap
   // (losing the user's first terminal). Fast path: no socket file, no host to
   // reconcile — don't pay a probe (which would spawn a host early) on a cold
-  // start. The amber fallback icon is applied after installApplicationMenu.
+  // start. The red fallback icon is applied after installApplicationMenu.
   if (await pathExists(PTY_HOST_SOCKET_PATH)) {
     await handleStaleHost();
   }
@@ -2696,7 +2696,7 @@ app.whenReady().then(async () => {
   installApplicationMenu();
 
   // The stale-host reconcile ran before the window (see above); the menu did
-  // not exist yet, so apply the amber "Restart Aya" affordance now if needed.
+  // not exist yet, so apply the red "Restart Aya" affordance now if needed.
   if (staleHostDetected) setStaleMenuIcon();
 
   // Phase-2 legacy sweep, deferred off the startup path: clean up what the
