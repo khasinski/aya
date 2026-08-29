@@ -1095,9 +1095,14 @@ body {
   text-align: left;
   cursor: pointer;
 }
-.aya-checkout-row:hover {
+.aya-checkout-row:hover:not(:disabled) {
   background: var(--bg-tertiary);
   color: var(--fg-primary);
+}
+/* A prunable/bare checkout is shown for context but can't be pinned. */
+.aya-checkout-row:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 .aya-checkout-row--current {
   color: var(--fg-primary);

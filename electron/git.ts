@@ -3,7 +3,7 @@
 // isn't installed or the dir isn't a repo, return nulls.
 
 import { exec, execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { ProjectGitInfo, Worktree, WorktreeStatus } from "./types";
 
@@ -124,7 +124,22 @@ export async function listWorktrees(directory: string): Promise<Worktree[]> {
       `${READ_ONLY_GIT} worktree list --porcelain`,
       { cwd: directory, ...OPTS },
     );
-    return parseWorktrees(stdout);
+    // `git worktree list` prints each path as it was recorded, which can differ
+    // from the symlink-resolved root `git rev-parse --show-toplevel` (i.e.
+    // getGitRoot) returns — macOS /tmp -> /private/tmp, or a symlinked projects
+    // dir. The status bar matches a worktree against the live checkout root, so
+    // canonicalize to the same shape here or the --current highlight and the
+    // pin tracking silently never match. A prunable/removed checkout can't be
+    // resolved; keep its recorded path.
+    return await Promise.all(
+      parseWorktrees(stdout).map(async (w) => {
+        try {
+          return { ...w, path: await realpath(w.path) };
+        } catch {
+          return w;
+        }
+      }),
+    );
   } catch {
     return [];
   }
@@ -219,8 +234,12 @@ export async function listWorktreeStatus(
     worktrees.map(async (w) => {
       // A prunable worktree's checkout is gone; running git there just fails.
       if (w.prunable || w.bare) return { ...w, dirty: 0 };
+      // Take only the dirty count from `git status`: the branch already comes
+      // from `git worktree list` (live, and null for a detached HEAD). Folding
+      // in getGitInfo's branch would overwrite that null with its "HEAD"
+      // sentinel, so the picker would show "HEAD" where it means "detached".
       const info = await getGitInfo(w.path);
-      return { ...w, branch: info.branch ?? w.branch, dirty: info.dirty };
+      return { ...w, dirty: info.dirty };
     }),
   );
 }

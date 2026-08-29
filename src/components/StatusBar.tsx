@@ -66,11 +66,18 @@ function StatusBarImpl({
   onOpenAttentionCenter,
 }: Props) {
   const waiting = terminal?.status === "waiting";
+  // The main checkout's (symlink-resolved) path — the same shape gitDirectory
+  // has, since both come from git. Compare against THIS, not project.directory:
+  // a project opened at a subdirectory of its repo still resolves its live
+  // checkout to the repo root, so project.directory would spuriously read as
+  // "a different checkout" and label the main checkout a worktree.
+  const mainCheckout =
+    worktrees.find((w) => w.isMain)?.path ?? project?.directory ?? null;
   // Non-null only while the git strip describes a checkout other than the
-  // project's own — then the branch chip says which one, so "main" read from a
+  // main one — then the branch chip says which one, so "main" read from a
   // worktree is never mistaken for the project directory's branch.
   const worktreeName =
-    gitDirectory && project && gitDirectory !== project.directory
+    gitDirectory && mainCheckout && gitDirectory !== mainCheckout
       ? checkoutName(gitDirectory)
       : null;
   // A single checkout is not a choice, so the picker only exists from 2 up.
@@ -270,14 +277,20 @@ function StatusBarImpl({
                 )}
               </div>
               <div className="aya-checkout-list">
-                {worktrees.map((w) => (
+                {worktrees.map((w) => {
+                  // A prunable/bare checkout has no branch to read, so pinning
+                  // it would blank the whole git strip (chip + this picker) with
+                  // no way back. Show the row for context, but don't let it pin.
+                  const pickable = !w.prunable && !w.bare;
+                  return (
                   <button
                     className={`aya-checkout-row ${
                       w.path === gitDirectory ? "aya-checkout-row--current" : ""
                     }`}
                     type="button"
                     key={w.path}
-                    title={w.path}
+                    title={pickable ? w.path : `${w.path} (unavailable)`}
+                    disabled={!pickable}
                     onClick={() => {
                       onPickCheckout(w.path);
                       setShowCheckouts(false);
@@ -301,7 +314,8 @@ function StatusBarImpl({
                       {w.prunable ? "stale" : w.dirty > 0 ? `${w.dirty} dirty` : "clean"}
                     </span>
                   </button>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

@@ -306,6 +306,24 @@ test("listWorktreeStatus reports each worktree's own branch and dirty count", as
   }
 });
 
+test("listWorktreeStatus keeps a detached worktree's branch null, not 'HEAD'", async () => {
+  // `git status` reports a detached HEAD as branch "HEAD"; folding that in would
+  // overwrite the null that tells the picker to render "detached". The branch
+  // must come from `git worktree list`, which reports null for a detached HEAD.
+  const root = makeRepo();
+  const detached = tmpWorktreePath("detached");
+  try {
+    execSync(`git worktree add --detach "${detached}" HEAD`, { cwd: root });
+    const list = await listWorktreeStatus(root);
+    const wt = list.find((w) => !w.isMain);
+    assert.ok(wt, "linked worktree present");
+    assert.equal(wt.branch, null);
+    assert.equal(wt.detached, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("listWorktreeStatus skips the status calls for a single checkout", async () => {
   const root = makeRepo();
   try {

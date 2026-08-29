@@ -177,6 +177,9 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     ptyResize: noopAsync,
     ptyKill: noopAsync,
     ptyBuffer: noopAsync,
+    // No live process to read a cwd from; the status bar falls back to the
+    // scenario's spawn cwd (its worktree binding or the project dir).
+    ptyCwd: async () => null as never,
     ptySearch: async () => [] as never,
     harnessSearch: async () => [] as never,
     restartPtyHost: noopAsync,
@@ -262,6 +265,10 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     getGitChangedFiles: async () => [] as never,
     getGitDiff: async () => null as never,
     getGitWorktrees: async () => [] as never,
+    // A scenario's directory is already its own checkout root, and it has no
+    // extra worktrees to pick between, so the picker never appears.
+    getGitRoot: async (directory: string) => directory as never,
+    getGitWorktreeStatus: async () => [] as never,
     getGitHubLink: async () => null as never,
     githubCliAvailable: async () => false as never,
     createWorktree: async () => ({ ok: false, error: "Not available in the emulator" }),

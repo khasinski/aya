@@ -928,7 +928,13 @@ export function App() {
   useEffect(() => {
     if (!activeProjectId || worktrees.length === 0) return;
     const pinned = pinnedCheckout[activeProjectId];
-    if (!pinned || worktrees.some((w) => w.path === pinned)) return;
+    if (!pinned) return;
+    // Keep the pin only while it still points at a live, branch-bearing
+    // checkout. A worktree that was removed (now absent from the list) or went
+    // prunable/bare (its gitdir is gone) resolves to branch null, which hides
+    // the branch chip AND its picker — leaving no control to un-pin with.
+    const match = worktrees.find((w) => w.path === pinned);
+    if (match && !match.prunable && !match.bare) return;
     setPinnedCheckout((prev) => {
       if (!(activeProjectId in prev)) return prev;
       const next = { ...prev };
