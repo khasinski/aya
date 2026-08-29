@@ -19,7 +19,7 @@ const lastWrittenHash = new Map<string, string>();
 export function hashConfig(content: string): string {
   // Not a password hash (see the note above); the suppression keeps CodeQL's
   // password-hash rule from re-flagging this content fingerprint on every edit.
-  return createHash("sha256").update(content).digest("hex"); // codeql[js/insufficient-password-hash]
+  return createHash("sha256").update(content).digest("hex"); // lgtm[js/insufficient-password-hash]
 }
 
 /** Remember the content we just wrote to `filePath`, so when the watcher sees
