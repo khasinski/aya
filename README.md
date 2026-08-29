@@ -119,7 +119,20 @@ chmod +x Aya-0.8.0.AppImage
 ./Aya-0.8.0.AppImage
 ```
 
-If AppImage complains about FUSE, use the DEB.
+The AppImage ships the statically linked AppImage runtime, so it does **not**
+need the obsolete `libfuse2`, which Ubuntu 24.04+ and Debian 13 no longer
+install. It uses `fusermount3` from the `fuse3` package, which those
+distributions do install by default.
+
+On a system with no FUSE at all, run the AppImage without mounting it:
+
+```sh
+APPIMAGE_EXTRACT_AND_RUN=1 ./Aya-0.7.7.AppImage
+```
+
+Older releases (0.7.9 and earlier) embedded the legacy runtime and failed with
+`dlopen(): error loading libfuse.so.2` / `AppImages require FUSE to run.`. Use
+`APPIMAGE_EXTRACT_AND_RUN=1`, install `libfuse2t64`, or use the DEB.
 
 ## Build from source
 
