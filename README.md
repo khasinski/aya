@@ -56,43 +56,47 @@ Aya is project-first: top tabs are projects, the sidebar is that project's
 terminals, and the search jumps across projects, terminals, recent output, and
 run commands.
 
-## Version 0.6 highlights
+## Highlights
 
-- **Desktop chrome polish.** Project tabs now own the window header on macOS
-  and Linux, including better macOS fullscreen behavior and Linux custom
-  draggable chrome.
-- **Long-lived PTYs.** Terminals stay alive across project switches, window
-  focus changes, and renderer remounts. A rolling buffer replays recent output
-  when the renderer reconnects.
-- **Agent-agnostic presets.** Aya auto-detects known harnesses on your
-  login-shell PATH and seeds usable presets. Custom commands can be added from
-  Settings.
-- **Interactive launch policy.** Built-in Claude Code and Codex presets are
-  plain `claude` and `codex`. Aya deliberately does not ship `-p`, `--print`,
-  `--headless`, or other non-interactive defaults, and tests enforce that.
-- **Project search.** `⇧⇧` or `⌘K` searches projects, terminal names, recent PTY
-  output, and `Run ...` actions with AND semantics.
-- **Splits and navigation.** Keep several agents or shells visible in one
-  project, then focus adjacent panes from the keyboard.
-- **Snippets.** Save prompts or commands in `~/.aya/snippets.json` and inject
-  them into the active terminal. Snippets live in Aya's editor-side storage, not
-  in any agent's conversation.
-- **Status and attention.** Aya detects common approval prompts, shows sidebar
-  attention dots, can badge the macOS dock, and can send native notifications
-  when a terminal needs attention.
-- **Usage chips.** Claude usage can be read from an explicit user-enabled hook
-  that writes `~/.aya/usage.json`; Codex usage is read from local Codex session
-  logs. Aya itself does not read Anthropic tokens or call Anthropic endpoints.
-- **Early remote support.** Aya includes SSH-backed remote project
-  opening and a local `aya remote --stdio` bridge. This is groundwork for fuller
-  remote session sync; remote control is still intentionally limited.
+- **Every agent gets a real, persistent terminal.** Terminals live in a
+  detached PTY host, so they survive project switches, window moves, app quits,
+  and disconnects. Restored tabs resume the exact conversation; a rolling buffer
+  replays recent output when the renderer reconnects.
+- **Tiling splits.** Splitting divides only the selected pane, so the rest of
+  the layout keeps its size. Layouts nest arbitrarily as a BSP tree, each
+  divider drags independently, and pane navigation follows what you see.
+- **One rail for attention.** A status rail lists every terminal that is waiting
+  or failed across all open projects, including ones you are not looking at. The
+  waiting state is read off each pane's real screen (a headless VT mirror), not
+  a fragile byte-stream heuristic, so it also clears when the agent repaints.
+- **Agents drive each other.** `aya pane read "reviewer"` returns another pane's
+  output and `aya pane send` types into it, so one agent hands work to another
+  and collects the result. Panes are addressed by tab name within a project.
+- **Apple Intelligence labels.** Aya reads each pane's output through Apple
+  Intelligence, or a local Ollama / OpenAI-compatible model, and writes a
+  one-line summary under every tab and project. On-device by default.
+- **Many agents.** Presets for Claude Code, Codex, Cursor Agent, GitHub Copilot,
+  Grok, Gemini, Aider, OpenCode, Kilo Code, Pi, Droid, Devin, and more, with
+  session-precise resume via OSC 9001.
+- **Usage in view.** Claude and Codex usage chips in the top bar, read from
+  local snapshots. Aya does not proxy provider APIs or read Anthropic tokens.
+- **Snippets, diffs, themes.** Inject saved prompts without spending agent
+  context, keep branch and changed-file context in the status bar, and run a
+  GPU-accelerated terminal with custom themes and a light or dark chrome.
+- **Multiple windows and worktrees.** Chrome-style project-tab tear-out across
+  windows; create, remove, and group git worktrees.
+- **Aya Web (experimental).** Serve the same UI over a local HTTP + WebSocket
+  bridge and reconnect to the same live sessions from a browser.
+- **Early remote support.** SSH-backed remote project opening and a local
+  `aya remote --stdio` bridge, as groundwork for fuller remote session sync.
 
 ## Install
 
-Download Aya 0.7.7 from the GitHub release:
+Download the [latest release](https://github.com/khasinski/aya/releases/latest)
+from GitHub (Aya 0.8.0):
 
-- macOS Apple Silicon: [DMG](https://github.com/khasinski/aya/releases/download/v0.7.7/Aya-0.7.7-arm64.dmg) or [zip](https://github.com/khasinski/aya/releases/download/v0.7.7/Aya-0.7.7-arm64-mac.zip)
-- Linux x64: [AppImage](https://github.com/khasinski/aya/releases/download/v0.7.7/Aya-0.7.7.AppImage) or [deb](https://github.com/khasinski/aya/releases/download/v0.7.7/aya_0.7.7_amd64.deb)
+- macOS Apple Silicon: [DMG](https://github.com/khasinski/aya/releases/download/v0.8.0/Aya-0.8.0-arm64.dmg) or [zip](https://github.com/khasinski/aya/releases/download/v0.8.0/Aya-0.8.0-arm64-mac.zip)
+- Linux x64: [AppImage](https://github.com/khasinski/aya/releases/download/v0.8.0/Aya-0.8.0.AppImage) or [deb](https://github.com/khasinski/aya/releases/download/v0.8.0/aya_0.8.0_amd64.deb)
 
 ### macOS
 
@@ -104,15 +108,15 @@ signed and Apple-notarized.
 On Ubuntu and Debian-like systems, prefer the DEB:
 
 ```sh
-sudo apt install ./aya_0.7.7_amd64.deb
+sudo apt install ./aya_0.8.0_amd64.deb
 /opt/Aya/aya
 ```
 
 The AppImage can be run directly:
 
 ```sh
-chmod +x Aya-0.7.7.AppImage
-./Aya-0.7.7.AppImage
+chmod +x Aya-0.8.0.AppImage
+./Aya-0.8.0.AppImage
 ```
 
 If AppImage complains about FUSE, use the DEB.
@@ -272,7 +276,7 @@ public CLI side channel.
 
 ### Open remote projects
 
-The v0.6 remote flow is SSH-based and early. From the new-project dialog, enter
+The remote flow is SSH-based and early. From the new-project dialog, enter
 an SSH target, browse directories on the remote host, create a remote project,
 and start remote terminals through `ssh -tt`.
 
@@ -333,7 +337,7 @@ scratch sessions, or isolated testing.
 ## Architecture
 
 - **Renderer:** React 19, TypeScript, Vite, and xterm.js.
-- **Main process:** Electron 42, `node-pty`, local sockets, config IO, git
+- **Main process:** Electron 43, `node-pty`, local sockets, config IO, git
   probes, remote bridge plumbing, and package integration.
 - **PTY host:** child process that owns terminal processes and survives
   renderer reconnects; stale host detection protects app updates.
