@@ -633,7 +633,8 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
         ptyId: req.ptyId,
         chunks: queued.length,
       });
-      for (const chunk of queued) child.write(chunk);
+      // PTY input is the user's own shell input; no code-injection boundary.
+      for (const chunk of queued) child.write(chunk); // codeql[js/code-injection]
     }
     // Mirror of the pane's screen, used to tell what it SHOWS (see vt-state.ts).
     // Fires on both edges, so a prompt appearing AND being answered both
@@ -729,7 +730,10 @@ export function writePty(ptyId: string, data: string): void {
     if (spawning.has(ptyId)) bufferPendingWrite(ptyId, data);
     return;
   }
-  p.write(data);
+  // Writing to the user's own PTY is the whole point of a terminal: the
+  // "user-provided value" is their own keystrokes going to their own shell, so
+  // there is no trust boundary to cross. Not exploitable code injection.
+  p.write(data); // codeql[js/code-injection]
 }
 
 /** Queue input for an in-flight spawn, capped at PENDING_WRITE_MAX_BYTES.
