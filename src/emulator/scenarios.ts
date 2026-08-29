@@ -1,5 +1,10 @@
 // Example scenarios for the Aya emulator. Add your own and select with
 // ?scenario=<name>. Each is a complete, screenshottable UI state.
+//
+// The emulator renders in dark mode by default (override with ?theme=light).
+// Tab/project `summary` fields simulate Apple Intelligence labels: they seed
+// the local-summary cache so the sidebar shows a one-line label under each tab
+// and the top-bar tab shows the project label in place of its path.
 
 import type { UsageAccount } from "../types";
 import type { EmScenario } from "./scenario";
@@ -62,121 +67,6 @@ const CODEX_OUTPUT = [
   "\x1b[32m●\x1b[0m Working on \x1b[36msrc/web/rate-limit.ts\x1b[0m…",
   "",
 ].join("\r\n");
-
-/** The default, well-populated state: two projects, the active one split into
- *  a Claude pane (waiting on approval) and a shell pane, usage chips, and a
- *  dirty git branch. */
-const defaultScenario: EmScenario = {
-  name: "default",
-  platform: "darwin",
-  homeDir: "/Users/you",
-  usage: claudeAccounts,
-  codexUsage: codexAccounts,
-  activeProjectSlug: "aya",
-  projects: [
-    {
-      slug: "aya",
-      name: "aya",
-      directory: "/Users/you/Projects/aya",
-      git: { branch: "feat/token-service", dirty: 5 },
-      activeTabId: "aya-claude",
-      tabs: [
-        {
-          id: "aya-claude",
-          presetId: "claude",
-          name: "Claude",
-          content: CLAUDE_OUTPUT,
-          status: "waiting",
-          statusText: "Run the auth test suite?",
-        },
-        {
-          id: "aya-shell",
-          presetId: "shell",
-          name: "Shell",
-          content: SHELL_OUTPUT,
-        },
-      ],
-    },
-    {
-      slug: "webapp",
-      name: "webapp",
-      directory: "/Users/you/Projects/webapp",
-      git: { branch: "main", dirty: 0 },
-      tabs: [
-        {
-          id: "web-codex",
-          presetId: "codex",
-          name: "Codex",
-          content: CODEX_OUTPUT,
-          status: "active",
-        },
-      ],
-    },
-  ],
-};
-
-/** A busier state: a 3-pane project with a waiting agent, a failed one, and a
- *  running one, so the status rail shows "1 waiting / 1 failed". */
-const busyScenario: EmScenario = {
-  name: "busy",
-  platform: "darwin",
-  homeDir: "/Users/you",
-  usage: claudeAccounts,
-  codexUsage: codexAccounts,
-  activeProjectSlug: "aya",
-  projects: [
-    {
-      slug: "aya",
-      name: "aya",
-      directory: "/Users/you/Projects/aya",
-      git: { branch: "feat/token-service", dirty: 5 },
-      activeTabId: "aya-claude",
-      tabs: [
-        {
-          id: "aya-claude",
-          presetId: "claude",
-          name: "Claude",
-          content: CLAUDE_OUTPUT,
-          status: "waiting",
-          statusText: "Approve edit to middleware.ts?",
-        },
-        {
-          id: "aya-codex",
-          presetId: "codex",
-          name: "Codex",
-          content:
-            "\x1b[38;2;16;163;127m◆\x1b[0m Codex\r\n\r\n\x1b[31m✖ command failed: eslint (exit 1)\x1b[0m\r\n",
-          status: "error",
-          statusText: "eslint failed",
-        },
-        {
-          id: "aya-shell",
-          presetId: "shell",
-          name: "Shell",
-          content: SHELL_OUTPUT,
-        },
-      ],
-    },
-    {
-      slug: "webapp",
-      name: "webapp",
-      directory: "/Users/you/Projects/webapp",
-      git: { branch: "main", dirty: 2 },
-      tabs: [
-        {
-          id: "web-grok",
-          presetId: "grok",
-          name: "Grok",
-          content: "\x1b[1m𝕏 Grok\x1b[0m\r\n\r\nReady.\r\n",
-        },
-      ],
-    },
-  ],
-};
-
-// ---------------------------------------------------------------------------
-// Feature-showcase scenarios
-// ---------------------------------------------------------------------------
 
 const CLAUDE_FOCUS = [
   "\x1b[38;2;215;119;87m✻\x1b[0m \x1b[1mClaude Code\x1b[0m",
@@ -247,6 +137,128 @@ const CODER_OUTPUT = [
   "",
 ].join("\r\n");
 
+/** The default, well-populated state: two projects, the active one split into
+ *  a Claude pane (waiting on approval) and a shell pane, usage chips, a dirty
+ *  git branch, and Apple Intelligence labels on the tabs and projects. */
+const defaultScenario: EmScenario = {
+  name: "default",
+  platform: "darwin",
+  homeDir: "/Users/you",
+  usage: claudeAccounts,
+  codexUsage: codexAccounts,
+  activeProjectSlug: "aya",
+  projects: [
+    {
+      slug: "aya",
+      name: "aya",
+      directory: "/Users/you/Projects/aya",
+      git: { branch: "feat/token-service", dirty: 5 },
+      summary: "Auth token-service refactor",
+      activeTabId: "aya-claude",
+      tabs: [
+        {
+          id: "aya-claude",
+          presetId: "claude",
+          name: "Claude",
+          content: CLAUDE_OUTPUT,
+          status: "waiting",
+          statusText: "Run the auth test suite?",
+          summary: "Refactoring the auth middleware",
+        },
+        {
+          id: "aya-shell",
+          presetId: "shell",
+          name: "Shell",
+          content: SHELL_OUTPUT,
+          summary: "Auth test suite — all green",
+        },
+      ],
+    },
+    {
+      slug: "webapp",
+      name: "webapp",
+      directory: "/Users/you/Projects/webapp",
+      git: { branch: "main", dirty: 0 },
+      summary: "Public API rate limiting",
+      tabs: [
+        {
+          id: "web-codex",
+          presetId: "codex",
+          name: "Codex",
+          content: CODEX_OUTPUT,
+          status: "active",
+          summary: "Adding an API rate limiter",
+        },
+      ],
+    },
+  ],
+};
+
+/** A busier state: a 3-pane project with a waiting agent, a failed one, and a
+ *  running one, so the status rail shows "1 waiting / 1 failed". */
+const busyScenario: EmScenario = {
+  name: "busy",
+  platform: "darwin",
+  homeDir: "/Users/you",
+  usage: claudeAccounts,
+  codexUsage: codexAccounts,
+  activeProjectSlug: "aya",
+  projects: [
+    {
+      slug: "aya",
+      name: "aya",
+      directory: "/Users/you/Projects/aya",
+      git: { branch: "feat/token-service", dirty: 5 },
+      summary: "Auth token-service refactor",
+      activeTabId: "aya-claude",
+      tabs: [
+        {
+          id: "aya-claude",
+          presetId: "claude",
+          name: "Claude",
+          content: CLAUDE_OUTPUT,
+          status: "waiting",
+          statusText: "Approve edit to middleware.ts?",
+          summary: "Refactoring the auth middleware",
+        },
+        {
+          id: "aya-codex",
+          presetId: "codex",
+          name: "Codex",
+          content:
+            "\x1b[38;2;16;163;127m◆\x1b[0m Codex\r\n\r\n\x1b[31m✖ command failed: eslint (exit 1)\x1b[0m\r\n",
+          status: "error",
+          statusText: "eslint failed",
+          summary: "eslint failing on the token module",
+        },
+        {
+          id: "aya-shell",
+          presetId: "shell",
+          name: "Shell",
+          content: SHELL_OUTPUT,
+          summary: "Auth test suite — all green",
+        },
+      ],
+    },
+    {
+      slug: "webapp",
+      name: "webapp",
+      directory: "/Users/you/Projects/webapp",
+      git: { branch: "main", dirty: 2 },
+      summary: "Public API rate limiting",
+      tabs: [
+        {
+          id: "web-grok",
+          presetId: "grok",
+          name: "Grok",
+          content: "\x1b[1m𝕏 Grok\x1b[0m\r\n\r\nReady.\r\n",
+          summary: "Idle — awaiting a task",
+        },
+      ],
+    },
+  ],
+};
+
 /** Tiling splits: one project, four agents in a 2x2 BSP grid. */
 const tilingScenario: EmScenario = {
   name: "tiling",
@@ -261,12 +273,38 @@ const tilingScenario: EmScenario = {
       name: "aya",
       directory: "/Users/you/Projects/aya",
       git: { branch: "feat/token-service", dirty: 3 },
+      summary: "Auth token-service refactor",
       activeTabId: "claude",
       tabs: [
-        { id: "claude", presetId: "claude", name: "Claude", content: CLAUDE_OUTPUT },
-        { id: "codex", presetId: "codex", name: "Codex", content: CODEX_OUTPUT, status: "active" },
-        { id: "gemini", presetId: "gemini", name: "Gemini", content: GEMINI_OUTPUT },
-        { id: "shell", presetId: "shell", name: "Shell", content: GIT_SHELL },
+        {
+          id: "claude",
+          presetId: "claude",
+          name: "Claude",
+          content: CLAUDE_OUTPUT,
+          summary: "Refactoring the auth middleware",
+        },
+        {
+          id: "codex",
+          presetId: "codex",
+          name: "Codex",
+          content: CODEX_OUTPUT,
+          status: "active",
+          summary: "Adding an API rate limiter",
+        },
+        {
+          id: "gemini",
+          presetId: "gemini",
+          name: "Gemini",
+          content: GEMINI_OUTPUT,
+          summary: "Reviewing the open PRs",
+        },
+        {
+          id: "shell",
+          presetId: "shell",
+          name: "Shell",
+          content: GIT_SHELL,
+          summary: "Checking git status",
+        },
       ],
     },
     {
@@ -274,6 +312,7 @@ const tilingScenario: EmScenario = {
       name: "webapp",
       directory: "/Users/you/Projects/webapp",
       git: { branch: "main", dirty: 0 },
+      summary: "Public API rate limiting",
       tabs: [{ id: "web-shell", presetId: "shell", name: "Shell", content: "\x1b[2m$\x1b[0m " }],
     },
   ],
@@ -294,6 +333,7 @@ const attentionScenario: EmScenario = {
       name: "aya",
       directory: "/Users/you/Projects/aya",
       git: { branch: "feat/token-service", dirty: 5 },
+      summary: "Auth token-service refactor",
       activeTabId: "claude",
       tabs: [
         {
@@ -303,8 +343,15 @@ const attentionScenario: EmScenario = {
           content: CLAUDE_OUTPUT,
           status: "waiting",
           statusText: "Run the auth test suite?",
+          summary: "Refactoring the auth middleware",
         },
-        { id: "shell", presetId: "shell", name: "Shell", content: SHELL_OUTPUT },
+        {
+          id: "shell",
+          presetId: "shell",
+          name: "Shell",
+          content: SHELL_OUTPUT,
+          summary: "Auth test suite — all green",
+        },
       ],
     },
     {
@@ -312,6 +359,7 @@ const attentionScenario: EmScenario = {
       name: "webapp",
       directory: "/Users/you/Projects/webapp",
       git: { branch: "main", dirty: 2 },
+      summary: "Public API rate limiting",
       activeTabId: "web-codex",
       tabs: [
         {
@@ -322,6 +370,7 @@ const attentionScenario: EmScenario = {
             "\x1b[38;2;16;163;127m◆\x1b[0m Codex\r\n\r\n\x1b[31m✖ build failed: type error in rate-limit.ts\x1b[0m\r\n",
           status: "error",
           statusText: "build failed",
+          summary: "Type error in rate-limit.ts",
         },
         {
           id: "web-cursor",
@@ -330,6 +379,7 @@ const attentionScenario: EmScenario = {
           content: "\x1b[1m▲ Cursor Agent\x1b[0m\r\n\r\n\x1b[33m▲ Apply 3 edits to api/routes.ts?\x1b[0m\r\n",
           status: "waiting",
           statusText: "Apply 3 edits?",
+          summary: "Proposing edits to api/routes.ts",
         },
       ],
     },
@@ -350,9 +400,16 @@ const orchestrationScenario: EmScenario = {
       name: "aya",
       directory: "/Users/you/Projects/aya",
       git: { branch: "feat/token-service", dirty: 4 },
+      summary: "Auth middleware review loop",
       activeTabId: "coder",
       tabs: [
-        { id: "coder", presetId: "claude", name: "coder", content: CODER_OUTPUT },
+        {
+          id: "coder",
+          presetId: "claude",
+          name: "coder",
+          content: CODER_OUTPUT,
+          summary: "Handed the diff to the reviewer",
+        },
         {
           id: "reviewer",
           presetId: "codex",
@@ -360,6 +417,7 @@ const orchestrationScenario: EmScenario = {
           content: REVIEWER_OUTPUT,
           status: "waiting",
           statusText: "2 notes on the diff",
+          summary: "Reviewing the token-service diff",
         },
       ],
     },
@@ -380,9 +438,16 @@ const focusScenario: EmScenario = {
       name: "aya",
       directory: "/Users/you/Projects/aya",
       git: { branch: "feat/upload-retry", dirty: 3 },
+      summary: "Upload retry & backoff",
       activeTabId: "claude",
       tabs: [
-        { id: "claude", presetId: "claude", name: "Claude", content: CLAUDE_FOCUS },
+        {
+          id: "claude",
+          presetId: "claude",
+          name: "Claude",
+          content: CLAUDE_FOCUS,
+          summary: "Adding upload retry with backoff",
+        },
       ],
     },
     {
@@ -390,6 +455,7 @@ const focusScenario: EmScenario = {
       name: "webapp",
       directory: "/Users/you/Projects/webapp",
       git: { branch: "main", dirty: 0 },
+      summary: "Public API rate limiting",
       tabs: [{ id: "web-shell", presetId: "shell", name: "Shell", content: "\x1b[2m$\x1b[0m " }],
     },
   ],

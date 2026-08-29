@@ -29,6 +29,20 @@ interface Derived {
   state: ProjectCollectionState;
   gitBySlug: Map<string, ProjectGitInfo>;
   tabsById: Map<string, { tab: EmTab; projectSlug: string; cwd: string }>;
+  /** First rendered line of a tab's content -> its Apple-Intelligence summary.
+   *  Used by summarizeLocal to re-apply a terminal summary after App's prune
+   *  effect (which wipes summaries for terminals absent at first render, before
+   *  hydration) has run. */
+  termSummaryByFirstLine: Map<string, string>;
+}
+
+const ANSI_SGR_RE = /\x1b\[[0-9;]*m/g;
+function firstRenderedLine(text: string): string {
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(ANSI_SGR_RE, "").trim();
+    if (line) return line;
+  }
+  return "";
 }
 
 function deriveSplit(project: EmScenario["projects"][number]): SplitNode | undefined {
@@ -46,6 +60,7 @@ function derive(scenario: EmScenario): Derived {
     string,
     { tab: EmTab; projectSlug: string; cwd: string }
   >();
+  const termSummaryByFirstLine = new Map<string, string>();
 
   const projects: ProjectConfig[] = scenario.projects.map((p) => {
     if (p.git) gitBySlug.set(p.slug, p.git);
@@ -55,6 +70,10 @@ function derive(scenario: EmScenario): Derived {
         projectSlug: p.slug,
         cwd: tab.cwd ?? p.directory,
       });
+      if (tab.summary && tab.content) {
+        const key = firstRenderedLine(tab.content);
+        if (key) termSummaryByFirstLine.set(key, tab.summary);
+      }
     }
     return {
       slug: p.slug,
@@ -91,7 +110,7 @@ function derive(scenario: EmScenario): Derived {
   };
 
   void homeDir;
-  return { projects, state, gitBySlug, tabsById };
+  return { projects, state, gitBySlug, tabsById, termSummaryByFirstLine };
 }
 
 export function createEmulatorAya(scenario: EmScenario): AyaApi {
@@ -112,7 +131,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     if (!entry) return;
     const { tab } = entry;
     if (tab.content) {
-      emit({ type: "data", ptyId, chunk: tab.content, replay: true });
+      emit({ type: "data", ptyId, chunk: tab.content });
     }
     if (tab.exitCode !== undefined && tab.exitCode !== null) {
       emit({ type: "exit", ptyId, exitCode: tab.exitCode });
@@ -203,7 +222,21 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     usageHookStatus: noopAsync,
     installUsageHook: noopAsync,
     uninstallUsageHook: noopAsync,
-    summarizeLocal: noopAsync,
+    // Apple Intelligence: App re-summarizes each terminal from its output after
+    // hydration (its prune effect wiped the seeded terminal summaries). Match
+    // the passed output lines back to the scenario tab and return its label, so
+    // the sidebar summary re-appears. Projects keep their seeded cache (they're
+    // never pruned), so a "not useful" result there is a harmless no-op.
+    summarizeLocal: async (req: { kind: "terminal" | "project"; lines: string[] }) => {
+      if (req.kind === "terminal") {
+        const first = req.lines.map((l) => l.replace(ANSI_SGR_RE, "").trim()).find(Boolean);
+        const summary = first ? d.termSummaryByFirstLine.get(first) : undefined;
+        if (summary) {
+          return { available: true, useful: true, summary } as never;
+        }
+      }
+      return { available: true, useful: false, summary: "" } as never;
+    },
     ollamaStatus: noopAsync,
     pullOllamaModel: noopAsync,
     listMonitoredSessions: async () => [] as never,

@@ -26,6 +26,10 @@ export interface EmTab {
   cwd?: string;
   /** ANSI/plain text written into the pane's xterm (as a replay data event). */
   content?: string;
+  /** Apple Intelligence (local summary): the AI-generated one-line label shown
+   *  under the tab name in the sidebar. Setting any summary in a scenario turns
+   *  the local-summaries feature on for that render. */
+  summary?: string;
   /** Drives the pane's external status pill, the project badge, and the rail. */
   status?: ControlStatusLevel;
   statusText?: string;
@@ -40,6 +44,9 @@ export interface EmProject {
   name: string;
   directory: string;
   git?: ProjectGitInfo;
+  /** Apple Intelligence (local summary): the AI-generated label shown in place
+   *  of the path under the project name in its top-bar tab. */
+  summary?: string;
   tabs: EmTab[];
   /** Active terminal id (default: first tab). */
   activeTabId?: string;
@@ -56,6 +63,9 @@ export interface EmScenario {
   homeDir?: string;
   cwd?: string;
   themeId?: string;
+  /** App chrome appearance. Defaults to "dark" for the emulator; overridable
+   *  per render with ?theme=light|dark|system. */
+  theme?: "light" | "dark" | "system";
   projects: EmProject[];
   activeProjectSlug?: string;
   /** Claude usage accounts → the Claude usage chip(s) in the top bar. */

@@ -22,13 +22,24 @@ const repoRoot = path.resolve(__dirname, "..");
 
 function parseArgs(argv) {
   const scenarios = [];
-  const opts = { out: "screenshots/emulator", width: 1440, height: 900, scale: 2 };
+  // settle defaults to 12s: Apple Intelligence tab/project summaries are
+  // produced by App's auto-summary effect, which is debounced ~10s, so a short
+  // wait would miss the sidebar/tab labels. Pass --settle 2000 for quick shots
+  // of scenarios without summaries.
+  const opts = {
+    out: "screenshots/emulator",
+    width: 1440,
+    height: 900,
+    scale: 2,
+    settle: 12000,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--out") opts.out = argv[++i];
     else if (a === "--width") opts.width = Number(argv[++i]);
     else if (a === "--height") opts.height = Number(argv[++i]);
     else if (a === "--scale") opts.scale = Number(argv[++i]);
+    else if (a === "--settle") opts.settle = Number(argv[++i]);
     else scenarios.push(a);
   }
   if (scenarios.length === 0) scenarios.push("default", "busy");
@@ -137,8 +148,9 @@ async function main() {
       const url = `http://localhost:${port}/emulator.html?scenario=${encodeURIComponent(name)}`;
       await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
       await page.waitForSelector(".aya-pane", { timeout: 15000 });
-      // Let terminal content + web fonts settle before the shot.
-      await page.waitForTimeout(1800);
+      // Let terminal content, web fonts, and the (debounced) Apple Intelligence
+      // summaries settle before the shot.
+      await page.waitForTimeout(opts.settle);
       const file = path.join(outDir, `${name}.png`);
       await page.screenshot({ path: file });
       console.log(`✔ ${name} → ${path.relative(repoRoot, file)}`);
