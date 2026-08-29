@@ -6,14 +6,18 @@
     <title>Aya - workspace for long-lived coding agents</title>
     <meta
       name="description"
-      content="Aya is a free, open-source desktop workspace for long-lived Claude Code, Codex, Aider, and shell sessions organized by project."
+      content="A free, open-source desktop workspace for long-lived Claude Code, Codex, and other coding agents, organized by project, with tiling splits and a status rail."
     />
     <meta property="og:title" content="Aya - workspace for coding agents" />
     <meta
       property="og:description"
-      content="Project tabs, persistent agent terminals, usage chips, snippets, and local status for Claude Code, Codex, Aider, and shells."
+      content="Project tabs, tiling splits, a waiting-pane status rail, usage chips, snippets, and agent-to-agent pane control for Claude Code, Codex, and more."
     />
-    <meta property="og:image" content="assets/aya-main.png" />
+    <meta property="og:image" content="https://aya.codes/assets/aya-tiling.png" />
+    <meta property="og:url" content="https://aya.codes/" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="canonical" href="https://aya.codes/" />
     <meta name="theme-color" content="#0a0d0c" />
     <link rel="icon" href="assets/aya-icon.png" />
     <link rel="apple-touch-icon" href="assets/aya-icon.png" />
@@ -274,7 +278,7 @@
 
       .screenshot-frame img {
         width: 100%;
-        aspect-ratio: 2784 / 1824;
+        aspect-ratio: 1440 / 900;
         object-fit: cover;
       }
 
@@ -408,6 +412,39 @@
         aspect-ratio: var(--shot-ratio, 16 / 9);
         object-fit: cover;
         object-position: var(--shot-position, center);
+      }
+
+      .mini-features {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 16px;
+        margin-top: 46px;
+      }
+
+      .mini-feature {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 20px;
+        background: var(--panel);
+      }
+
+      .mini-feature strong {
+        display: block;
+        font-size: 1.05rem;
+      }
+
+      .mini-feature span {
+        display: block;
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.45;
+      }
+
+      @media (max-width: 900px) {
+        .mini-features {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
       }
 
       .mock-topbar {
@@ -935,30 +972,31 @@
               <span class="eyebrow">Project-first agent workspace</span>
               <h1 id="hero-title">Aya</h1>
               <p class="hero-lede">
-                A desktop home for long-lived Claude Code, Codex, Aider, and
-                shell sessions. Keep real PTYs alive, grouped by project, with
-                usage, snippets, diffs, and agent status close at hand.
+                Run Claude Code, Codex, and a dozen more coding agents in real
+                terminals that never stop. Aya keeps them alive in a detached
+                host, organized by project and split like a tiling terminal, with
+                one rail that surfaces every agent waiting on you.
               </p>
               <div class="hero-actions" aria-label="Primary actions">
                 <a
                   class="button primary"
                   href="https://github.com/khasinski/aya/releases/latest"
-                  >Download v0.7.9</a
+                  >Download v0.8.0</a
                 >
                 <a class="button secondary" href="#workflows">See workflows</a>
               </div>
               <div class="hero-points" aria-label="Aya highlights">
                 <div class="hero-point">
-                  <strong>Projects</strong>
-                  <span>Switch repos without killing terminals.</span>
+                  <strong>Persistent</strong>
+                  <span>Agents survive quits, restarts, and disconnects.</span>
                 </div>
                 <div class="hero-point">
-                  <strong>Agents</strong>
-                  <span>Claude, Codex, Aider, Gemini, shell.</span>
+                  <strong>Attention</strong>
+                  <span>One rail flags every waiting or failed agent.</span>
                 </div>
                 <div class="hero-point">
-                  <strong>Local</strong>
-                  <span>Interactive PTYs, no proxy layer.</span>
+                  <strong>Agent-native</strong>
+                  <span>Read and drive any pane from the <code>aya</code> CLI.</span>
                 </div>
               </div>
             </div>
@@ -967,8 +1005,8 @@
               <img class="logo-mark" src="assets/aya-icon.png" alt="Aya logo" />
               <div class="screenshot-frame">
                 <img
-                  src="assets/aya-main.png"
-                  alt="Aya desktop app showing terminal sessions organized by project"
+                  src="assets/aya-tiling.png"
+                  alt="Aya running four coding agents (Claude, Codex, Gemini and a shell) tiled in one project window"
                 />
               </div>
             </div>
@@ -980,105 +1018,193 @@
         <div class="section-inner">
           <div class="strip-item">
             <b>01</b>
-            <span>Open each repo as a project workspace.</span>
+            <span>Every agent gets a real, persistent terminal.</span>
           </div>
           <div class="strip-item">
             <b>02</b>
-            <span>Keep agent terminals alive across context switches.</span>
+            <span>Grouped by project, split like a tiling terminal.</span>
           </div>
           <div class="strip-item">
             <b>03</b>
-            <span>Track usage, snippets, diffs, and waiting states.</span>
+            <span>One rail surfaces every waiting or failed agent.</span>
           </div>
           <div class="strip-item">
             <b>04</b>
-            <span>Use one local CLI side channel for agent status.</span>
+            <span>Read and drive any pane from the aya CLI.</span>
           </div>
         </div>
       </section>
 
       <section class="section-inner" id="workflows" aria-label="Aya workflows">
+        <div class="section-heading">
+          <h2>Built to run many agents at once.</h2>
+          <p>
+            Every terminal is real and persistent. Aya keeps them organized,
+            tells you which one is blocked, and lets them work together.
+          </p>
+        </div>
         <div class="feature-stack">
           <article class="feature-row">
             <div class="feature-copy">
-              <h3>Usage plans where you can see them.</h3>
+              <h3>Never hunt for the blocked agent.</h3>
               <p>
-                Claude and Codex usage chips sit in the top bar. Aya reads local
-                usage snapshots and rollout logs; it does not proxy provider
-                APIs or read Anthropic tokens.
+                The status rail lists every terminal that is waiting or failed
+                across all your open projects, even ones you are not looking at.
+                Click a row to jump straight to that pane.
               </p>
               <ul class="feature-list">
-                <li>Top-bar percent for quick scanning.</li>
-                <li>Account rows for work and personal limits.</li>
-                <li>Stale data dims instead of pretending to be live.</li>
+                <li>Waiting and failed counts at a glance.</li>
+                <li>Blocked panes in background projects still surface.</li>
+                <li>Project tabs badge the moment an agent needs you.</li>
               </ul>
             </div>
-
             <figure
               class="shot-frame"
-              style="--shot-ratio: 760 / 408; --shot-position: center"
-              aria-label="Aya usage chip screenshot"
+              style="--shot-ratio: 1440 / 900; --shot-position: center"
+              aria-label="Aya status rail screenshot"
             >
               <img
-                src="assets/aya-usage-chips.png"
-                alt="Aya top bar showing Claude and Codex usage chips with the Claude account-wide popover open"
+                src="assets/aya-attention.png"
+                alt="Aya with a status rail listing a waiting agent and a failed agent from another project"
               />
             </figure>
           </article>
 
           <article class="feature-row">
             <figure
-              class="shot-frame shot-frame--compact"
-              style="--shot-ratio: 600 / 530; --shot-position: center; --shot-max-width: 440px"
-              aria-label="Aya snippets drawer screenshot"
+              class="shot-frame"
+              style="--shot-ratio: 1440 / 900; --shot-position: center"
+              aria-label="Aya tiling splits screenshot"
             >
               <img
-                src="assets/aya-snippets-drawer.png"
-                alt="Aya snippets drawer open below a terminal with saved prompt snippets"
+                src="assets/aya-tiling.png"
+                alt="Four coding agents tiled in a 2x2 split inside one Aya project"
               />
             </figure>
-
             <div class="feature-copy">
-              <h3>Snippets without spending agent context.</h3>
+              <h3>Split like a real tiling terminal.</h3>
               <p>
-                Save the prompts and commands you reuse every day, then inject
-                them into the active terminal. They live in Aya, not inside the
-                model conversation.
+                Splitting divides only the selected pane, so the rest of the
+                layout keeps its size. Nest splits arbitrarily and watch several
+                agents work side by side in one project.
               </p>
               <ul class="feature-list">
-                <li>Type-only snippets for editable prompts.</li>
-                <li>Run-on-send snippets for commands.</li>
-                <li>Bracketed paste keeps multi-line snippets intact.</li>
+                <li>BSP splits, not a fixed grid.</li>
+                <li>Every divider drags independently.</li>
+                <li>Keyboard navigation follows what you see.</li>
               </ul>
             </div>
           </article>
 
           <article class="feature-row">
             <div class="feature-copy">
-              <h3>Diffs stay attached to the project.</h3>
+              <h3>Let agents hand work to each other.</h3>
               <p>
-                Aya keeps the active branch and changed-file context visible
-                around the agent terminal, so review loops stay grounded in the
-                repo you are actually working in.
+                <code>aya pane read "reviewer"</code> returns another pane's
+                output and <code>aya pane send</code> types into it. One agent
+                delegates to another and collects the result, with no copy-paste
+                between windows.
               </p>
               <ul class="feature-list">
-                <li>Dirty-file counts in the project status area.</li>
-                <li>Diff context for reviewing agent edits.</li>
-                <li>Project tabs keep unrelated repos separated.</li>
+                <li>Address panes by tab name within a project.</li>
+                <li><code>--submit</code> presses Enter for you.</li>
+                <li>Documented for agents in a bundled skill.</li>
               </ul>
             </div>
-
             <figure
               class="shot-frame"
-              style="--shot-ratio: 860 / 518; --shot-position: center"
-              aria-label="Aya diff popover screenshot"
+              style="--shot-ratio: 1440 / 900; --shot-position: center"
+              aria-label="Aya agent orchestration screenshot"
             >
               <img
-                src="assets/aya-diff.png"
-                alt="Aya status bar diff popover showing changed files and highlighted additions and deletions"
+                src="assets/aya-orchestration.png"
+                alt="A coder pane handing a diff to a reviewer pane via aya pane send"
               />
             </figure>
           </article>
+
+          <article class="feature-row">
+            <figure
+              class="shot-frame"
+              style="--shot-ratio: 1440 / 900; --shot-position: center"
+              aria-label="Aya Apple Intelligence labels screenshot"
+            >
+              <img
+                src="assets/aya-default.png"
+                alt="Aya sidebar and project tabs labelled with one-line summaries written by Apple Intelligence"
+              />
+            </figure>
+            <div class="feature-copy">
+              <h3>Your tabs and projects name themselves.</h3>
+              <p>
+                Aya reads each pane's output through Apple Intelligence (or a
+                local model) and writes a one-line label, so a wall of terminals
+                tells you what each one is actually doing.
+              </p>
+              <ul class="feature-list">
+                <li>On-device by default; nothing leaves your machine.</li>
+                <li>Labels under every tab and project.</li>
+                <li>Swap in Ollama or an OpenAI-compatible endpoint.</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="feature-row">
+            <div class="feature-copy">
+              <h3>Close the app. They keep running.</h3>
+              <p>
+                Terminals live in a detached PTY host, not the window. Quit and
+                relaunch, move a project between windows, or reconnect from Aya
+                Web, and the agents keep their context mid-conversation.
+              </p>
+              <ul class="feature-list">
+                <li>A background host owns every session.</li>
+                <li>Restored tabs resume the exact conversation.</li>
+                <li>Reach the same sessions from a browser.</li>
+              </ul>
+            </div>
+            <figure
+              class="shot-frame"
+              style="--shot-ratio: 1440 / 900; --shot-position: center"
+              aria-label="Aya single focused agent session screenshot"
+            >
+              <img
+                src="assets/aya-focus.png"
+                alt="A single focused Claude Code session in Aya"
+              />
+            </figure>
+          </article>
+        </div>
+
+        <div class="mini-features" aria-label="More in every window">
+          <div class="mini-feature">
+            <strong>Usage in view</strong>
+            <span
+              >Claude and Codex usage chips in the top bar, read from local
+              snapshots. No token proxying.</span
+            >
+          </div>
+          <div class="mini-feature">
+            <strong>Snippets</strong>
+            <span
+              >Save prompts and commands and inject them into the active
+              terminal, without spending agent context.</span
+            >
+          </div>
+          <div class="mini-feature">
+            <strong>Diffs in context</strong>
+            <span
+              >The active branch and changed-file counts stay visible around the
+              agent terminal.</span
+            >
+          </div>
+          <div class="mini-feature">
+            <strong>Yours to theme</strong>
+            <span
+              >A GPU-accelerated terminal, custom color themes, and a light or
+              dark chrome.</span
+            >
+          </div>
         </div>
       </section>
 
@@ -1088,8 +1214,9 @@
             <h2 id="control-title">Terminal-native from every side.</h2>
             <p>
               The <code>aya</code> helper opens projects from any shell, focuses
-              the desktop app, and lets agent harnesses report status without
-              scraping provider state.
+              the desktop app, lets agent harnesses report status, and lets one
+              agent read and drive another's pane, all without scraping provider
+              state.
             </p>
           </div>
         </div>
@@ -1104,11 +1231,14 @@
           <pre><code><span class="prompt">$</span> aya .
 <span class="comment">opens this repo as a project</span>
 
-<span class="prompt">$</span> aya status waiting "Needs approval"
-<span class="comment">marks the active agent as waiting</span>
+<span class="prompt">$</span> aya pane read "reviewer"
+<span class="comment">returns another pane's recent output</span>
 
-<span class="prompt">$</span> aya notify --title "Aya" "Tests passed"
-<span class="comment">sends a desktop notification from the current pane</span></code></pre>
+<span class="prompt">$</span> aya pane send "reviewer" "ship it" --submit
+<span class="comment">types into that pane and presses Enter</span>
+
+<span class="prompt">$</span> aya status waiting "Needs approval"
+<span class="comment">marks the active agent as waiting</span></code></pre>
         </div>
       </section>
 
@@ -1125,7 +1255,7 @@
               <a
                 class="button primary"
                 href="https://github.com/khasinski/aya/releases/latest"
-                >Download v0.7.9</a
+                >Download v0.8.0</a
               >
             </p>
           </div>
