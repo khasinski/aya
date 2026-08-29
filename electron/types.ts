@@ -13,6 +13,7 @@ import type { BufferSearchHit } from "./pty";
 import type { Theme, ThemesFile } from "./themes";
 import type { UsageAccount, UsageData } from "./usage";
 import type { UsageHookStatus } from "./usage-hook";
+import type { StatusHookStatus } from "./status-hook";
 
 export type {
   BufferSearchHit,
@@ -26,6 +27,7 @@ export type {
   UsageData,
   UsageAccount,
   UsageHookStatus,
+  StatusHookStatus,
 };
 
 import type { SplitNode } from "./split-tree";
@@ -537,6 +539,9 @@ export interface AyaApi {
   usageHookStatus(): Promise<UsageHookStatus>;
   installUsageHook(): Promise<UsageHookStatus>;
   uninstallUsageHook(): Promise<UsageHookStatus>;
+  statusHookStatus(): Promise<StatusHookStatus>;
+  installStatusHook(): Promise<StatusHookStatus>;
+  uninstallStatusHook(): Promise<StatusHookStatus>;
   summarizeLocal(req: LocalSummaryRequest): Promise<LocalSummaryResult>;
   ollamaStatus(model?: string): Promise<OllamaStatus>;
   pullOllamaModel(model: string): Promise<OllamaStatus>;

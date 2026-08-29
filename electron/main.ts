@@ -78,6 +78,11 @@ import {
   installUsageHook,
   uninstallUsageHook,
 } from "./usage-hook";
+import {
+  statusHookStatus,
+  installStatusHook,
+  uninstallStatusHook,
+} from "./status-hook";
 import { searchHarnessSessions } from "./harness-search";
 import { listMonitoredSessions } from "./session-monitor";
 import { normalizeLocalSummaryError, SUMMARY_TEXT_MAX_CHARS } from "./local-summary-errors";
@@ -2153,6 +2158,11 @@ function registerIpc(): void {
   ipcMain.handle("usage-hook:status", async () => usageHookStatus());
   ipcMain.handle("usage-hook:install", async () => installUsageHook());
   ipcMain.handle("usage-hook:uninstall", async () => uninstallUsageHook());
+  // Automatic agent status (#38): Claude Code lifecycle hooks -> `aya status`.
+  // Writes to ~/.claude/settings.json; the generated script no-ops outside Aya.
+  ipcMain.handle("status-hook:status", async () => statusHookStatus());
+  ipcMain.handle("status-hook:install", async () => installStatusHook());
+  ipcMain.handle("status-hook:uninstall", async () => uninstallStatusHook());
   ipcMain.handle("sessions:list-monitored", async () => listMonitoredSessions());
   ipcMain.handle("intelligence:ollama-status", async (_e, model: unknown) =>
     ollamaStatus(typeof model === "string" && model.trim() ? model.trim() : undefined),

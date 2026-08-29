@@ -81,6 +81,14 @@ export interface UsageHookStatus {
   settingsPath: string;
 }
 
+/** State of the optional automatic-status hook installer (#38, mirrors
+ *  electron/status-hook.ts). */
+export interface StatusHookStatus {
+  installed: boolean;
+  scriptPath: string;
+  settingsPath: string;
+}
+
 export interface ThemeColors {
   background: string;
   foreground: string;
@@ -642,6 +650,9 @@ export interface AyaApi {
   usageHookStatus(): Promise<UsageHookStatus>;
   installUsageHook(): Promise<UsageHookStatus>;
   uninstallUsageHook(): Promise<UsageHookStatus>;
+  statusHookStatus(): Promise<StatusHookStatus>;
+  installStatusHook(): Promise<StatusHookStatus>;
+  uninstallStatusHook(): Promise<StatusHookStatus>;
   summarizeLocal(req: LocalSummaryRequest): Promise<LocalSummaryResult>;
   ollamaStatus(model?: string): Promise<OllamaStatus>;
   pullOllamaModel(model: string): Promise<OllamaStatus>;

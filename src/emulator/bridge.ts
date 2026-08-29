@@ -222,6 +222,9 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     usageHookStatus: noopAsync,
     installUsageHook: noopAsync,
     uninstallUsageHook: noopAsync,
+    statusHookStatus: noopAsync,
+    installStatusHook: noopAsync,
+    uninstallStatusHook: noopAsync,
     // Apple Intelligence: App re-summarizes each terminal from its output after
     // hydration (its prune effect wiped the seeded terminal summaries). Match
     // the passed output lines back to the scenario tab and return its label, so

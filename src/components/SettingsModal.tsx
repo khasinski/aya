@@ -14,6 +14,7 @@ import {
   type Theme,
   type UpdateStatus,
   type UsageHookStatus,
+  type StatusHookStatus,
   type WebConfigureRequest,
   type WebServerStatus,
   looksNonInteractive,
@@ -343,6 +344,9 @@ export function SettingsModal({
   const [usageHook, setUsageHook] = useState<UsageHookStatus | null>(null);
   const [usageHookBusy, setUsageHookBusy] = useState(false);
   const [showUsageConsent, setShowUsageConsent] = useState(false);
+  const [statusHook, setStatusHook] = useState<StatusHookStatus | null>(null);
+  const [statusHookBusy, setStatusHookBusy] = useState(false);
+  const [showStatusConsent, setShowStatusConsent] = useState(false);
   const [notificationPermission, setNotificationPermission] =
     useState<NotificationPermission>(() =>
       typeof Notification === "undefined" ? "default" : Notification.permission,
@@ -394,6 +398,9 @@ export function SettingsModal({
     });
     void window.aya.usageHookStatus().then((status) => {
       if (!cancelled) setUsageHook(status);
+    });
+    void window.aya.statusHookStatus().then((status) => {
+      if (!cancelled) setStatusHook(status);
     });
     void window.aya.micStatus().then((status) => {
       if (!cancelled) setMicStatus(status);
@@ -505,6 +512,29 @@ export function SettingsModal({
       setUsageHook(await window.aya.uninstallUsageHook());
     } finally {
       setUsageHookBusy(false);
+    }
+  };
+
+  // Automatic status (#38): enabling writes Claude Code Notification/PostToolUse/
+  // Stop hooks + a script into ~/.claude (after consent); disabling removes both.
+  // The generated script only reports into the current Aya pane and no-ops in any
+  // Claude session run outside Aya.
+  const enableStatusHook = async () => {
+    setShowStatusConsent(false);
+    setStatusHookBusy(true);
+    try {
+      setStatusHook(await window.aya.installStatusHook());
+    } finally {
+      setStatusHookBusy(false);
+    }
+  };
+
+  const disableStatusHook = async () => {
+    setStatusHookBusy(true);
+    try {
+      setStatusHook(await window.aya.uninstallStatusHook());
+    } finally {
+      setStatusHookBusy(false);
     }
   };
 
@@ -1022,6 +1052,63 @@ export function SettingsModal({
             </div>
           </div>
         )}
+        {showStatusConsent && (
+          <div
+            className="aya-modal-backdrop"
+            style={{ zIndex: 10 }}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              markBackdropMouseDown(e);
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              closeFromBackdropClick(e, () => setShowStatusConsent(false));
+            }}
+          >
+            <div
+              className="aya-modal"
+              style={{ maxWidth: 460 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="aya-modal-title">Enable automatic status?</div>
+              <div className="aya-modal-hint" style={{ lineHeight: 1.6 }}>
+                This writes a small script and Claude Code{" "}
+                <code>Notification</code>, <code>PostToolUse</code> and{" "}
+                <code>Stop</code> hooks into{" "}
+                <code>~/.claude/settings.json</code>. Claude then reports its own
+                turn state into the Aya pane it runs in: waiting for your input,
+                running a tool, or done.
+                <br />
+                <br />
+                The hooks fire in every Claude Code session, but the script does
+                nothing outside an Aya terminal. Aya sends nothing anywhere; it
+                only sets the pane&apos;s status locally. You can turn it off here
+                anytime (it removes both).
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  justifyContent: "flex-end",
+                  marginTop: 16,
+                }}
+              >
+                <button
+                  className="aya-modal-btn"
+                  onClick={() => setShowStatusConsent(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="aya-modal-btn aya-modal-btn--primary"
+                  onClick={enableStatusHook}
+                >
+                  Enable
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="aya-settings-chrome">
           <div className="aya-settings-toolbar" role="tablist" aria-label="Settings">
             {tabItems.map((item) => (
@@ -1519,6 +1606,31 @@ export function SettingsModal({
             {usageHook?.installed
               ? "On. Updated by a Claude Code hook."
               : "Off. Shows Claude limits."}
+          </SettingsRow>
+          <SettingsRow
+            icon="sensors"
+            title="Automatic status"
+            control={(
+              <button
+              className="aya-modal-btn"
+              onClick={
+                statusHook?.installed
+                  ? disableStatusHook
+                  : () => setShowStatusConsent(true)
+              }
+              disabled={statusHookBusy || !statusHook}
+            >
+              {statusHookBusy
+                ? "Working..."
+                : statusHook?.installed
+                  ? "Disable"
+                  : "Enable"}
+            </button>
+            )}
+          >
+            {statusHook?.installed
+              ? "On. Claude Code reports waiting / active / done into its pane."
+              : "Off. Claude Code hooks set each pane's status automatically."}
           </SettingsRow>
           <SettingsRow
             icon="notifications"

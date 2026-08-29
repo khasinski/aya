@@ -52,7 +52,7 @@ function hookCommand(configDir: string): string {
   return `AYA_CLAUDE_CONFIG_DIR=${shellQuote(expandUserPath(configDir))} ${shellQuote(HOOK_SCRIPT_FILE)}`;
 }
 
-async function claudeConfigDirs(): Promise<string[]> {
+export async function claudeConfigDirs(): Promise<string[]> {
   if (process.env.AYA_CLAUDE_SETTINGS && process.env.AYA_CLAUDE_SETTINGS.trim()) {
     return [path.dirname(CLAUDE_SETTINGS_FILE)];
   }
@@ -69,7 +69,7 @@ async function claudeConfigDirs(): Promise<string[]> {
   return [...dirs];
 }
 
-function settingsFileForConfigDir(configDir: string): string {
+export function settingsFileForConfigDir(configDir: string): string {
   if (process.env.AYA_CLAUDE_SETTINGS && process.env.AYA_CLAUDE_SETTINGS.trim()) {
     return CLAUDE_SETTINGS_FILE;
   }
@@ -187,7 +187,7 @@ fi
 
 // ---- fs-bound install / uninstall / status ----------------------------------
 
-async function readSettingsFile(file: string): Promise<Record<string, unknown>> {
+export async function readSettingsFile(file: string): Promise<Record<string, unknown>> {
   try {
     const raw = await fs.readFile(file, "utf-8");
     const parsed = JSON.parse(raw);
