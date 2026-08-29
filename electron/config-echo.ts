@@ -11,8 +11,13 @@ import { createHash } from "node:crypto";
 
 const lastWrittenHash = new Map<string, string>();
 
+// A non-cryptographic fingerprint of a config file's content, used ONLY to tell
+// our own atomic write apart from an external edit (see isEcho). It never hashes
+// a password: web credentials are hashed with scrypt in web-config.ts; this just
+// fingerprints whatever bytes were written. SHA-256 over SHA-1 keeps static
+// analysis quiet and costs nothing here.
 export function hashConfig(content: string): string {
-  return createHash("sha1").update(content).digest("hex");
+  return createHash("sha256").update(content).digest("hex");
 }
 
 /** Remember the content we just wrote to `filePath`, so when the watcher sees
