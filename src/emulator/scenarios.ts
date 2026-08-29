@@ -248,10 +248,10 @@ const busyScenario: EmScenario = {
       summary: "Public API rate limiting",
       tabs: [
         {
-          id: "web-grok",
-          presetId: "grok",
-          name: "Grok",
-          content: "\x1b[1m𝕏 Grok\x1b[0m\r\n\r\nReady.\r\n",
+          id: "web-gemini",
+          presetId: "gemini",
+          name: "Gemini",
+          content: "\x1b[38;2;66;133;244mG\x1b[0m \x1b[1mGemini\x1b[0m\r\n\r\nReady.\r\n",
           summary: "Idle — awaiting a task",
         },
       ],
