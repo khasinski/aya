@@ -6,12 +6,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-const { parseWorktrees, listWorktrees, createWorktree, removeWorktree } =
-  await import("../dist-electron/git.js");
+const {
+  parseWorktrees,
+  listWorktrees,
+  createWorktree,
+  removeWorktree,
+  listWorktreeStatus,
+  getGitRoot,
+} = await import("../dist-electron/git.js");
 
 // --- parseWorktrees (pure) ---------------------------------------------------
 
@@ -273,4 +279,77 @@ test("the surfaced error is git's reason, not its progress chatter", async () =>
   assert.equal(again.ok, false);
   assert.doesNotMatch(again.error, /Preparing worktree/i);
   assert.match(again.error, /already exists/i);
+});
+
+// --- listWorktreeStatus / getGitRoot (integration, real git) -----------------
+
+test("listWorktreeStatus reports each worktree's own branch and dirty count", async () => {
+  const root = makeRepo();
+  const feature = tmpWorktreePath("feature");
+  try {
+    execSync(`git worktree add "${feature}" -b feature`, { cwd: root });
+    // Distinct states: main dirty by two files, the worktree by one.
+    writeFileSync(join(root, "a.txt"), "changed");
+    writeFileSync(join(root, "new.txt"), "untracked");
+    writeFileSync(join(feature, "a.txt"), "changed in worktree");
+
+    const list = await listWorktreeStatus(root);
+    assert.equal(list.length, 2);
+    const main = list.find((w) => w.isMain);
+    const wt = list.find((w) => !w.isMain);
+    assert.equal(main.branch, "main");
+    assert.equal(main.dirty, 2);
+    assert.equal(wt.branch, "feature");
+    assert.equal(wt.dirty, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("listWorktreeStatus skips the status calls for a single checkout", async () => {
+  const root = makeRepo();
+  try {
+    writeFileSync(join(root, "a.txt"), "changed");
+    const list = await listWorktreeStatus(root);
+    assert.equal(list.length, 1);
+    // Nothing to pick between, so dirty is not computed - the status bar polls
+    // this one checkout separately.
+    assert.equal(list[0].dirty, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("listWorktreeStatus returns [] outside a repo", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-wt-status-nonrepo-"));
+  try {
+    assert.deepEqual(await listWorktreeStatus(dir), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("getGitRoot resolves a subdirectory to its OWN checkout root", async () => {
+  const root = makeRepo();
+  const feature = tmpWorktreePath("feature");
+  try {
+    execSync(`git worktree add "${feature}" -b feature`, { cwd: root });
+    mkdirSync(join(feature, "deep", "nested"), { recursive: true });
+    // A live terminal cwd can sit anywhere under the checkout; the git surface
+    // needs the worktree's root, not the main repo's.
+    const resolved = await getGitRoot(join(feature, "deep", "nested"));
+    assert.equal(realpathSync(resolved), realpathSync(feature));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("getGitRoot returns null outside a repo and for a missing dir", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-root-nonrepo-"));
+  try {
+    assert.equal(await getGitRoot(dir), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  assert.equal(await getGitRoot("/no/such/dir/aya-xyz-123"), null);
 });

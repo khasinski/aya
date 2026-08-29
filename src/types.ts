@@ -274,6 +274,13 @@ export interface Worktree {
   prunable: boolean;
 }
 
+/** A worktree plus its live state, for the status bar's checkout picker.
+ *  `dirty` is 0 for a repo with a single worktree (nothing to pick between, so
+ *  the per-worktree status calls are skipped) and for prunable/bare ones. */
+export interface WorktreeStatus extends Worktree {
+  dirty: number;
+}
+
 export type SpawnFailureReason =
   | "cwd-missing"
   | "cwd-not-directory"
@@ -578,6 +585,10 @@ export interface AyaApi {
   ptyResize(ptyId: string, cols: number, rows: number): Promise<void>;
   ptyKill(ptyId: string): Promise<void>;
   ptyBuffer(ptyId: string): Promise<string>;
+  /** Live cwd of a terminal's process - where the console actually is after a
+   *  `cd`, not the cwd Aya spawned it with. null when it can't be read (old
+   *  PTY host, dead process, unsupported platform). */
+  ptyCwd(ptyId: string): Promise<string | null>;
   ptySearch(query: string): Promise<BufferSearchHit[]>;
   /** Experimental harness-aware search: scans the LOCAL Claude Code / Codex
    *  session transcripts for the tab's cwd (history, not terminal output). */
@@ -684,6 +695,12 @@ export interface AyaApi {
     path: string;
     force?: boolean;
   }): Promise<GitMutationResult>;
+  /** Root of the checkout containing `directory` (a worktree's own root), or
+   *  null outside a repo. */
+  getGitRoot(directory: string): Promise<string | null>;
+  /** Worktrees of the repo containing `directory`, each with branch + dirty
+   *  count (dirty is 0 when the repo has a single worktree). */
+  getGitWorktreeStatus(directory: string): Promise<WorktreeStatus[]>;
   getGitHubLink(directory: string): Promise<GitHubLink | null>;
   githubCliAvailable(): Promise<boolean>;
   pickDirectory(): Promise<string | null>;

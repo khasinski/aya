@@ -26,6 +26,7 @@ import {
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 import { COMMAND_NOT_FOUND_EXIT_CODE, COMMAND_PROBE_TIMEOUT_MS } from "./constants";
 import { userShell } from "./shell";
+import { getProcessCwd } from "./process-cwd";
 import { ptyLog } from "./pty-log";
 
 // Timeout for the shell `command -v` existence check during spawn preflight.
@@ -720,6 +721,16 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     // for it. On the success path the flush already emptied this.
     pendingWrites.delete(req.ptyId);
   }
+}
+
+/** The live cwd of a PTY's child process — where the console actually IS, as
+ *  opposed to the cwd it was spawned with (which a `cd`, typically into a fresh
+ *  git worktree, leaves behind). null when the PTY is gone or the platform /
+ *  environment can't answer; callers fall back to the spawn cwd. */
+export async function getPtyCwd(ptyId: string): Promise<string | null> {
+  const p = ptys.get(ptyId);
+  if (!p) return null;
+  return getProcessCwd(p.pid);
 }
 
 export function writePty(ptyId: string, data: string): void {

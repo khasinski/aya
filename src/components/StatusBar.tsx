@@ -5,6 +5,7 @@ import type {
   GitHubLink,
   ProjectConfig,
   TerminalState,
+  WorktreeStatus,
 } from "../types";
 import { diffFileLineIndex } from "../diff-navigation";
 
@@ -19,6 +20,17 @@ interface GitInfo {
 interface Props {
   project: ProjectConfig | null;
   git: GitInfo | null;
+  /** The checkout `git` describes and the changed files / diff are read from:
+   *  what the user pinned, else where the active terminal's console actually
+   *  is, else its spawn cwd. null for remote projects (no local working tree). */
+  gitDirectory: string | null;
+  /** Worktrees of the active project (branch + dirty count), for the checkout
+   *  picker. Fewer than 2 entries = nothing to pick, no picker. */
+  worktrees: WorktreeStatus[];
+  /** True while `gitDirectory` comes from a pin rather than from the console. */
+  checkoutPinned: boolean;
+  /** Pin a checkout by path, or null to go back to following the console. */
+  onPickCheckout: (path: string | null) => void;
   githubLink: GitHubLink | null;
   showGitHubLink: boolean;
   terminal: TerminalState | null;
@@ -30,9 +42,19 @@ interface Props {
   onOpenAttentionCenter: () => void;
 }
 
+/** Last path segment — how a worktree is named in the UI (git itself has no
+ *  name for one; the directory is its identity). */
+function checkoutName(path: string): string {
+  return path.replace(/\/+$/, "").split("/").pop() || path;
+}
+
 function StatusBarImpl({
   project,
   git,
+  gitDirectory,
+  worktrees,
+  checkoutPinned,
+  onPickCheckout,
   githubLink,
   showGitHubLink,
   terminal,
@@ -44,7 +66,18 @@ function StatusBarImpl({
   onOpenAttentionCenter,
 }: Props) {
   const waiting = terminal?.status === "waiting";
+  // Non-null only while the git strip describes a checkout other than the
+  // project's own — then the branch chip says which one, so "main" read from a
+  // worktree is never mistaken for the project directory's branch.
+  const worktreeName =
+    gitDirectory && project && gitDirectory !== project.directory
+      ? checkoutName(gitDirectory)
+      : null;
+  // A single checkout is not a choice, so the picker only exists from 2 up.
+  const canPickCheckout = worktrees.length > 1;
   const externalStatus = terminal?.externalStatus;
+  const checkoutRef = useRef<HTMLDivElement>(null);
+  const [showCheckouts, setShowCheckouts] = useState(false);
   const dirtyRef = useRef<HTMLDivElement>(null);
   const [showDirtyFiles, setShowDirtyFiles] = useState(false);
   const [dirtyFiles, setDirtyFiles] = useState<GitChangedFile[]>([]);
@@ -68,29 +101,49 @@ function StatusBarImpl({
   }, [showDirtyFiles]);
 
   useEffect(() => {
+    if (!showCheckouts) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!checkoutRef.current?.contains(event.target as Node)) {
+        setShowCheckouts(false);
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, [showCheckouts]);
+
+  // A picker that vanished (worktree removed, project switched) must not leave
+  // an orphaned dropdown floating over the status bar.
+  useEffect(() => {
+    if (!canPickCheckout) setShowCheckouts(false);
+  }, [canPickCheckout]);
+
+  // Reset on any checkout change, not just a project switch: moving to a tab
+  // bound to another worktree must not leave the previous worktree's file list
+  // and diff on screen.
+  useEffect(() => {
     setShowDirtyFiles(false);
     setDirtyFiles([]);
     setShowDiff(false);
     setDiffText("");
     setDiffQuery("");
     setScrollToPath(null);
-  }, [project?.directory]);
+  }, [gitDirectory]);
 
   const toggleDirtyFiles = () => {
-    if (!project) return;
+    if (!gitDirectory) return;
     setShowDirtyFiles((open) => !open);
     setDirtyFilesLoading(true);
-    void window.aya.getGitChangedFiles(project.directory).then((files) => {
+    void window.aya.getGitChangedFiles(gitDirectory).then((files) => {
       setDirtyFiles(files);
       setDirtyFilesLoading(false);
     });
   };
 
   const loadDiff = () => {
-    if (!project) return;
+    if (!gitDirectory) return;
     setShowDiff(true);
     setDiffLoading(true);
-    void window.aya.getGitDiff(project.directory).then((diff) => {
+    void window.aya.getGitDiff(gitDirectory).then((diff) => {
       setDiffText(diff);
       setDiffLoading(false);
     });
@@ -185,12 +238,74 @@ function StatusBarImpl({
         {attentionCount > 0 ? `${attentionCount} attention` : "activity"}
       </button>
       {git?.branch && (
-        <span className="aya-statusbar-item">
-          <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
-            fork_right
-          </span>
-          {git.branch}
-        </span>
+        <div className="aya-statusbar-popover-host" ref={checkoutRef}>
+          <BranchChip
+            branch={git.branch}
+            worktreeName={worktreeName}
+            directory={gitDirectory}
+            pinned={checkoutPinned}
+            canPick={canPickCheckout}
+            open={showCheckouts}
+            onToggle={() => setShowCheckouts((open) => !open)}
+          />
+          {showCheckouts && (
+            <div
+              className="aya-statusbar-popover aya-statusbar-popover--checkouts"
+              role="dialog"
+              aria-label="Checkouts"
+            >
+              <div className="aya-statusbar-popover-title">
+                <span>Worktrees</span>
+                {checkoutPinned && (
+                  <button
+                    className="aya-statusbar-popover-action"
+                    type="button"
+                    onClick={() => {
+                      onPickCheckout(null);
+                      setShowCheckouts(false);
+                    }}
+                  >
+                    Follow terminal
+                  </button>
+                )}
+              </div>
+              <div className="aya-checkout-list">
+                {worktrees.map((w) => (
+                  <button
+                    className={`aya-checkout-row ${
+                      w.path === gitDirectory ? "aya-checkout-row--current" : ""
+                    }`}
+                    type="button"
+                    key={w.path}
+                    title={w.path}
+                    onClick={() => {
+                      onPickCheckout(w.path);
+                      setShowCheckouts(false);
+                    }}
+                  >
+                    <span className="aya-checkout-icon">⑂</span>
+                    <span className="aya-checkout-name">
+                      {checkoutName(w.path)}
+                    </span>
+                    {w.isMain && (
+                      <span className="aya-worktree-header-tag">main</span>
+                    )}
+                    <span className="aya-checkout-branch">
+                      {w.branch ?? (w.detached ? "detached" : "-")}
+                    </span>
+                    <span
+                      className={`aya-checkout-dirty ${
+                        w.dirty > 0 ? "aya-checkout-dirty--warn" : ""
+                      }`}
+                    >
+                      {w.prunable ? "stale" : w.dirty > 0 ? `${w.dirty} dirty` : "clean"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       )}
       {showGitHubLink && githubLink && (
         <button
@@ -302,6 +417,77 @@ function StatusBarImpl({
         </span>
       ) : null}
     </footer>
+  );
+}
+
+/** The branch label. Static text with a single checkout; with more than one it
+ *  becomes the picker's trigger, and says whether what you see is pinned or is
+ *  following the console. */
+function BranchChip({
+  branch,
+  worktreeName,
+  directory,
+  pinned,
+  canPick,
+  open,
+  onToggle,
+}: {
+  branch: string;
+  worktreeName: string | null;
+  directory: string | null;
+  pinned: boolean;
+  canPick: boolean;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const where = worktreeName ? `Worktree ${directory}` : directory;
+  const title = canPick
+    ? `${where}\nBranch ${branch}\n${
+        pinned ? "Pinned - click to pick another checkout" : "Following the active terminal"
+      }`
+    : (where ?? undefined);
+  const body = (
+    <>
+      <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
+        fork_right
+      </span>
+      {branch}
+      {worktreeName && (
+        <span className="aya-statusbar-worktree">⑂ {worktreeName}</span>
+      )}
+      {pinned && (
+        <span
+          style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}
+          title="Pinned checkout"
+        >
+          push_pin
+        </span>
+      )}
+    </>
+  );
+  if (!canPick) {
+    return (
+      <span className="aya-statusbar-item" title={title}>
+        {body}
+      </span>
+    );
+  }
+  return (
+    <button
+      className="aya-statusbar-item aya-statusbar-button"
+      data-testid="checkout-picker"
+      type="button"
+      title={title}
+      // Inline dropdown — keep terminal focus (same as the other status-bar
+      // popovers).
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onToggle}
+    >
+      {body}
+      <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
+        {open ? "expand_more" : "expand_less"}
+      </span>
+    </button>
   );
 }
 

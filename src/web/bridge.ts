@@ -67,6 +67,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
     ptyResize: inv("pty:resize"),
     ptyKill: inv("pty:kill"),
     ptyBuffer: inv("pty:buffer"),
+    ptyCwd: inv("pty:cwd"),
     ptySearch: inv("pty:search"),
     harnessSearch: inv("harness:search"),
     restartPtyHost: inv("pty-host:restart"),
@@ -125,6 +126,8 @@ export function createWebAya(transport: WebTransport): AyaApi {
     getGitChangedFiles: inv("env:git-changed-files"),
     getGitDiff: inv("env:git-diff"),
     getGitWorktrees: inv("env:git-worktrees"),
+    getGitRoot: inv("env:git-root"),
+    getGitWorktreeStatus: inv("env:git-worktree-status"),
     getGitHubLink: inv("env:github-link"),
     githubCliAvailable: inv("env:github-cli-available"),
     // Repository mutations stay on the desktop app, where the user can see the

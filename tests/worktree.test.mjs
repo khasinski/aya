@@ -4,7 +4,11 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { projectBaseCwd, tabFromTerminal } from "../dist-test/worktree.js";
+import {
+  gitContextCwd,
+  projectBaseCwd,
+  tabFromTerminal,
+} from "../dist-test/worktree.js";
 
 const term = (over) => ({
   id: "t1",
@@ -66,6 +70,23 @@ test("tabFromTerminal omits cwd for a main-dir tab (equal to the base)", () => {
 test("tabFromTerminal omits cwd when the terminal has none", () => {
   const tab = tabFromTerminal(term({ cwd: "" }), "/home/me/repo");
   assert.equal(Object.prototype.hasOwnProperty.call(tab, "cwd"), false);
+});
+
+test("gitContextCwd follows a worktree tab, not the project directory", () => {
+  assert.equal(
+    gitContextCwd("/home/me/repo", "/home/me/repo-wt/feature"),
+    "/home/me/repo-wt/feature",
+  );
+});
+
+test("gitContextCwd stays on the base cwd for a plain tab", () => {
+  assert.equal(gitContextCwd("/home/me/repo", "/home/me/repo"), "/home/me/repo");
+});
+
+test("gitContextCwd falls back to the base cwd with no terminal cwd", () => {
+  assert.equal(gitContextCwd("/home/me/repo", null), "/home/me/repo");
+  assert.equal(gitContextCwd("/home/me/repo", undefined), "/home/me/repo");
+  assert.equal(gitContextCwd("/home/me/repo", ""), "/home/me/repo");
 });
 
 test("round-trip: a worktree binding survives terminal -> tab", () => {

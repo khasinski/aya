@@ -9,6 +9,9 @@ export type PtyHostRequest =
   | { id: number; type: "shutdown" }
   | { id: number; type: "search"; query: string }
   | { id: number; type: "buffer"; ptyId: string }
+  // Live cwd of a PTY's child. Added after 0.7.8: a host from an older build
+  // answers "unknown request", which the client turns back into null.
+  | { id: number; type: "cwd"; ptyId: string }
   | { id: number; type: "version" };
 
 export type PtyHostResponse =

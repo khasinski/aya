@@ -55,7 +55,14 @@ import {
   listRemotePresets,
   listRemoteDirectory,
 } from "./remote-client";
-import { getGitChangedFiles, getGitDiff, getGitInfo, listWorktrees } from "./git";
+import {
+  getGitChangedFiles,
+  getGitDiff,
+  getGitInfo,
+  getGitRoot,
+  listWorktrees,
+  listWorktreeStatus,
+} from "./git";
 import { getGitHubLink, isGitHubCliAvailable } from "./github";
 import {
   AYA_HOME,
@@ -1937,6 +1944,11 @@ function registerIpc(): void {
       throw err;
     }
   });
+  // Live cwd of a terminal's process (null when unavailable) - the client
+  // already turns an old host's "unknown request" into null.
+  ipcMain.handle("pty:cwd", async (_e, ptyId: unknown) =>
+    ptyHost.getCwd(requireString(ptyId, "pty:cwd.ptyId")),
+  );
   ipcMain.handle("pty:search", async (_e, query: unknown) =>
     ptyHost.search(requireString(query, "pty:search.query")),
   );
@@ -2225,6 +2237,12 @@ function registerIpc(): void {
   );
   ipcMain.handle("env:git-worktrees", async (_e, directory: unknown) =>
     listWorktrees(requireString(directory, "env:git-worktrees.directory")),
+  );
+  ipcMain.handle("env:git-root", async (_e, directory: unknown) =>
+    getGitRoot(requireString(directory, "env:git-root.directory")),
+  );
+  ipcMain.handle("env:git-worktree-status", async (_e, directory: unknown) =>
+    listWorktreeStatus(requireString(directory, "env:git-worktree-status.directory")),
   );
   ipcMain.handle("env:github-link", async (_e, directory: unknown) =>
     getGitHubLink(requireString(directory, "env:github-link.directory")),

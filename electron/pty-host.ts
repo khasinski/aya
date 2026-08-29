@@ -20,6 +20,7 @@ import { createPtyDataCoalescer } from "./pty-event-coalescer";
 import {
   activePtyCount,
   getBufferedOutput,
+  getPtyCwd,
   killPty,
   shutdownPtyChildren,
   resizePty,
@@ -140,6 +141,9 @@ async function handle(request: PtyHostRequest): Promise<unknown> {
   }
   if (request.type === "buffer") {
     return getBufferedOutput(request.ptyId);
+  }
+  if (request.type === "cwd") {
+    return getPtyCwd(request.ptyId);
   }
   if (request.type === "version") {
     // pid lets a client correlate the socket-connected host with a registry
