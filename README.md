@@ -127,7 +127,7 @@ distributions do install by default.
 On a system with no FUSE at all, run the AppImage without mounting it:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./Aya-0.7.7.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./Aya-0.8.0.AppImage
 ```
 
 Older releases (0.7.9 and earlier) embedded the legacy runtime and failed with
