@@ -28,6 +28,7 @@
     "test": "npm run typecheck:renderer && npm run build:electron && npm run build:test-src && node --test \"tests/**/*.test.mjs\"",
     "test:e2e": "npm run build && playwright test",
     "test:e2e:headed": "npm run build && playwright test --headed",
+    "emulator:shot": "node scripts/emulator-shot.cjs",
     "package": "npm run build && electron-builder --publish never",
     "postinstall": "electron-builder install-app-deps"
   },

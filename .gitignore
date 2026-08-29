@@ -47,3 +47,6 @@ blob-report/
 playwright/.cache/
 
 .claude/
+
+# Generated emulator screenshots (reproducible via npm run emulator:shot)
+screenshots/emulator/

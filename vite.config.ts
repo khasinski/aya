@@ -18,6 +18,9 @@ export default defineConfig({
       input: {
         main: "./index.html",
         web: "./web.html",
+        // Aya Emulator (emulator.html): the same renderer + CSS driven by a
+        // fully mocked window.aya, for screenshotting arbitrary UI states.
+        emulator: "./emulator.html",
       },
       output: {
         chunkFileNames: "assets/[name]-[hash].js",
