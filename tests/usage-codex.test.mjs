@@ -82,6 +82,75 @@ test("null only when NO window carries a finite used_percent", () => {
   );
 });
 
+test("premium credits: an exhausted balance (no percent window) reads as 100% used (#103)", () => {
+  const u = codexUsageFromRateLimit(
+    {
+      limit_id: "premium",
+      primary: null,
+      secondary: null,
+      credits: { has_credits: false, unlimited: false, balance: "0" },
+    },
+    0,
+  );
+  assert.equal(u.fiveHour, undefined);
+  assert.equal(u.sevenDay.pct, 100, "out of premium credits is 100% used");
+});
+
+test("premium credits: unlimited or still-available credits yield no window, never a fake 100%", () => {
+  assert.equal(
+    codexUsageFromRateLimit(
+      {
+        limit_id: "premium",
+        primary: null,
+        secondary: null,
+        credits: { has_credits: true, unlimited: false, balance: "42" },
+      },
+      0,
+    ),
+    null,
+  );
+  assert.equal(
+    codexUsageFromRateLimit(
+      {
+        limit_id: "premium",
+        primary: null,
+        secondary: null,
+        credits: { has_credits: false, unlimited: true },
+      },
+      0,
+    ),
+    null,
+  );
+});
+
+test("latestUsageFromLines: a trailing exhausted-premium event wins over an older percent snapshot (#103)", () => {
+  const lines = [
+    JSON.stringify({
+      timestamp: "2026-08-01T20:00:00Z",
+      payload: {
+        rate_limits: {
+          limit_id: "codex",
+          primary: { used_percent: 20, window_minutes: 10080, resets_at: 1786182650 },
+        },
+      },
+    }),
+    JSON.stringify({
+      timestamp: "2026-08-03T20:22:00Z",
+      payload: {
+        rate_limits: {
+          limit_id: "premium",
+          primary: null,
+          secondary: null,
+          credits: { has_credits: false, unlimited: false, balance: "0" },
+        },
+      },
+    }),
+  ];
+  const u = latestUsageFromLines(lines, 0);
+  assert.equal(u.sevenDay.pct, 100, "the newest (premium-exhausted) event wins, not the day-old 20%");
+  assert.equal(u.updatedAt, "2026-08-03T20:22:00.000Z");
+});
+
 test("REAL new-schema payload: secondary null, weekly primary -> week ring only", () => {
   // Verbatim shape observed live on 2026-08-01 (plan_type plus): the chip
   // disappeared because the old parser demanded a secondary window.

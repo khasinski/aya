@@ -120,7 +120,7 @@ export function codexUsageFromRateLimit(
   updatedAtMs: number,
 ): UsageData | null {
   if (typeof rl !== "object" || rl === null) return null;
-  const r = rl as { primary?: unknown; secondary?: unknown };
+  const r = rl as { primary?: unknown; secondary?: unknown; credits?: unknown };
 
   const toWindow = (
     raw: unknown,
@@ -158,6 +158,22 @@ export function codexUsageFromRateLimit(
     if (result[slot] !== undefined) return;
     result[slot] = { pct: win.pct, resetsAt: win.resetsAt };
   });
+  // Codex's newer "premium" limit_id carries no percent window — it reports a
+  // `credits` block instead. An exhausted balance (has_credits:false, and not
+  // unlimited) is a real, bindable limit, so surface it as 100% used. Without
+  // this the premium snapshot looks empty and the chip walks back to a stale,
+  // days-old percent snapshot from the separate "codex" limit (#103). Only the
+  // unambiguous exhausted case is mapped: a positive credit balance has no known
+  // maximum to turn into a percentage.
+  if (result.fiveHour === undefined && result.sevenDay === undefined) {
+    const credits = r.credits;
+    if (typeof credits === "object" && credits !== null) {
+      const c = credits as { has_credits?: unknown; unlimited?: unknown };
+      if (c.has_credits === false && c.unlimited !== true) {
+        result.sevenDay = { pct: 100 };
+      }
+    }
+  }
   if (result.fiveHour === undefined && result.sevenDay === undefined) return null;
   return result;
 }
