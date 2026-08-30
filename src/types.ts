@@ -752,6 +752,9 @@ export interface AyaApi {
   ): () => void;
   onControlStatus(handler: (update: ControlStatusUpdate) => void): () => void;
   onUpdateStatus(handler: (status: UpdateStatus) => void): () => void;
+  /** The GPU helper process died and Chromium is relaunching it (#79); fired a
+   *  beat later so visible terminals can re-run their WebGL/PTY repair. */
+  onGpuRelaunched(handler: () => void): () => void;
   onFullScreenChange(handler: (isFullScreen: boolean) => void): () => void;
   onMaximizedChange(handler: (isMaximized: boolean) => void): () => void;
 

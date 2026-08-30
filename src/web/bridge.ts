@@ -171,6 +171,8 @@ export function createWebAya(transport: WebTransport): AyaApi {
     onTerminalNotificationSelect: on("notification:select-terminal"),
     onControlStatus: on<ControlStatusUpdate>("control:status"),
     onUpdateStatus: on("updates:status"),
+    // No GPU helper process in a browser session (#79 is desktop-only).
+    onGpuRelaunched: noopSubscription,
     onFullScreenChange: noopSubscription,
     onMaximizedChange: noopSubscription,
     onConfigChange: on("config:changed"),

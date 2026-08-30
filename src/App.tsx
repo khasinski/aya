@@ -1063,6 +1063,16 @@ export function App() {
     };
   }, []);
 
+  // GPU helper relaunch (#79): the main process signals when Chromium's GPU
+  // process died and came back. Relay it as a window event so each visible
+  // TerminalView re-runs its WebGL/PTY repair (it already listens for the same
+  // kind of wake/focus events). One subscription for the whole renderer.
+  useEffect(() => {
+    return window.aya.onGpuRelaunched(() => {
+      window.dispatchEvent(new Event("aya:gpu-relaunched"));
+    });
+  }, []);
+
   // Reload config when one of the user-editable files under ~/.aya/ is edited while
   // Aya is running. Without this, an edit made by hand to snippets/presets/themes.json
   // would be overwritten by the next save in the app

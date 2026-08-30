@@ -653,6 +653,9 @@ export interface AyaApi {
   onControlStatus(handler: (update: ControlStatusUpdate) => void): () => void;
   listMonitoredSessions(): Promise<MonitoredSession[]>;
   onUpdateStatus(handler: (status: UpdateStatus) => void): () => void;
+  /** The GPU helper process died and Chromium is relaunching it (#79); fired a
+   *  beat later so visible terminals can re-run their WebGL/PTY repair. */
+  onGpuRelaunched(handler: () => void): () => void;
 
   /** Subscribe to keyboard shortcuts dispatched by the main process. Returns
    *  an unsubscribe function. Action strings: "new-shell", "close-tab",

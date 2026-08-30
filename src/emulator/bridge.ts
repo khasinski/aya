@@ -314,6 +314,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
       };
     },
     onUpdateStatus: noopSubscription,
+    onGpuRelaunched: noopSubscription,
     onFullScreenChange: noopSubscription,
     onMaximizedChange: noopSubscription,
     onConfigChange: noopSubscription,

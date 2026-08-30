@@ -1144,10 +1144,16 @@ function TerminalViewComponent({
     window.addEventListener("focus", onResumeRender);
     window.addEventListener("pageshow", onResumeRender);
     document.addEventListener("visibilitychange", onVisibilityChange);
+    // The GPU helper process died and Chromium relaunched it (#79): the DOM
+    // "focus"/"visibilitychange" beats above may never fire (the window kept
+    // focus the whole time), so App relays the main-process signal as this
+    // window event and we heal on it too.
+    window.addEventListener("aya:gpu-relaunched", onResumeRender);
     return () => {
       window.removeEventListener("focus", onResumeRender);
       window.removeEventListener("pageshow", onResumeRender);
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("aya:gpu-relaunched", onResumeRender);
     };
   }, [isVisible, healWebgl, repaintTerminal, forcePtyReassert]);
 

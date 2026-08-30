@@ -152,6 +152,11 @@ const api: AyaApi = {
     ipcRenderer.on("updates:status", listener);
     return () => ipcRenderer.removeListener("updates:status", listener);
   },
+  onGpuRelaunched: (handler) => {
+    const listener = () => handler();
+    ipcRenderer.on("gpu:relaunched", listener);
+    return () => ipcRenderer.removeListener("gpu:relaunched", listener);
+  },
   onFullScreenChange: (handler) => {
     const listener = (_e: unknown, isFullScreen: boolean) =>
       handler(isFullScreen);

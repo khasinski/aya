@@ -73,6 +73,14 @@ import {
   PTY_HOST_SOCKET_PATH,
   REMOTE_SOCKET_PATH,
 } from "./paths";
+import { createPtyLog } from "./pty-log";
+import {
+  diagnoseRelaunch,
+  readPendingUpdate,
+  markPendingUpdate,
+  clearPendingUpdate,
+  cleanShipItCache,
+} from "./update-recovery";
 import { scanHarnesses } from "./harnesses";
 import { isInternalNavigationUrl, parseExternalUrl } from "./navigation";
 import { createWorktree, removeWorktree } from "./git";
@@ -201,6 +209,12 @@ let updateStatus: UpdateStatus = {
 };
 let updateEventsConfigured = false;
 let updateCheckInFlight: Promise<UpdateStatus> | null = null;
+// True from the moment we hand off to ShipIt until we quit (#78). A second
+// install click must not spawn a second ShipIt - overlapping install requests
+// are a suspected cause of the silent-rollback failure.
+let updateInstalling = false;
+// Where to send a user whose auto-update silently failed (#78).
+const RELEASES_URL = "https://github.com/khasinski/aya/releases/latest";
 let macosWindowHack:
   | {
       apply(handle: Buffer): void;
@@ -909,6 +923,45 @@ function updateVersion(info: unknown): string | undefined {
     typeof (info as { version?: unknown }).version === "string"
     ? (info as { version: string }).version
     : undefined;
+}
+
+/** On launch, reconcile a previously-requested update against the version we
+ *  actually came back as (#78). A silent ShipIt rollback is otherwise
+ *  indistinguishable from success - the user reinstalls the same update for
+ *  days. When we detect it, we clean ShipIt's poisoned state, mark the update
+ *  status as errored, and point the user at the releases page. */
+async function reconcilePendingUpdate(win: BrowserWindow | null): Promise<void> {
+  const pending = await readPendingUpdate();
+  const diagnosis = diagnoseRelaunch(pending, app.getVersion());
+  if (diagnosis === "none") return;
+  await clearPendingUpdate();
+  updateInstalling = false;
+  if (diagnosis === "applied") return; // it worked; stay quiet
+  // Rolled back: the install silently failed and we relaunched the old bundle.
+  diagnosticsLog.append("update-rolled-back", {
+    target: pending?.targetVersion,
+    current: app.getVersion(),
+  });
+  await cleanShipItCache();
+  setUpdateStatus({
+    phase: "error",
+    message: `The update to ${pending?.targetVersion} didn't install - still on ${app.getVersion()}. Try the DMG from the releases page.`,
+  });
+  const message = `Update to ${pending?.targetVersion} didn't apply`;
+  const detail = `Aya is still on ${app.getVersion()}. The in-app update failed to install and rolled back to the current version. You can install the latest release manually.`;
+  const opts: Electron.MessageBoxOptions = {
+    type: "warning",
+    buttons: ["Open releases page", "Later"],
+    defaultId: 0,
+    cancelId: 1,
+    message,
+    detail,
+  };
+  const choice =
+    win && !win.isDestroyed()
+      ? await dialog.showMessageBox(win, opts)
+      : await dialog.showMessageBox(opts);
+  if (choice.response === 0) await shell.openExternal(RELEASES_URL);
 }
 
 function configureAutoUpdates(win: BrowserWindow): void {
@@ -2431,10 +2484,36 @@ function registerIpc(): void {
   ipcMain.handle("updates:status", async () => getUpdateStatus());
   ipcMain.handle("updates:check", async () => checkForUpdates());
   ipcMain.handle("updates:install", async () => {
-    if (getUpdateStatus().phase !== "downloaded") {
+    const status = getUpdateStatus();
+    if (status.phase !== "downloaded") {
       throw new Error("No downloaded update is ready to install.");
     }
-    autoUpdater.quitAndInstall(false, true);
+    // One ShipIt at a time (#78): a double-click used to be able to fire two
+    // quitAndInstall handoffs, and overlapping installs are a suspected cause
+    // of the silent rollback.
+    if (updateInstalling) return;
+    updateInstalling = true;
+    // Record what we're about to install so the NEXT launch can tell whether
+    // ShipIt actually applied it (see reconcilePendingUpdate). Written before
+    // the handoff, since quitAndInstall quits the app.
+    if (status.downloadedVersion) {
+      await markPendingUpdate(status.downloadedVersion);
+    }
+    try {
+      autoUpdater.quitAndInstall(false, true);
+    } catch (err) {
+      // A synchronous handoff failure IS observable - surface it instead of
+      // leaving the button dead. (The dangerous case is the async ShipIt
+      // failure, which this can't see; that one is caught on next launch.)
+      updateInstalling = false;
+      await clearPendingUpdate();
+      setUpdateStatus({
+        phase: "error",
+        message: `Couldn't start the update: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      });
+    }
   });
   ipcMain.handle("app:open-notification-settings", async () => {
     if (process.platform === "darwin") {
@@ -2667,6 +2746,9 @@ app.whenReady().then(async () => {
   mainWindow = createWindow(savedState);
   registerIpc();
   configureAutoUpdates(mainWindow);
+  // Before checking for a NEW update, surface a PREVIOUS one that silently
+  // failed to install and rolled back (#78).
+  void reconcilePendingUpdate(mainWindow);
   if (getUpdateStatus().supported) {
     setTimeout(() => {
       void checkForUpdates();
@@ -2814,4 +2896,31 @@ app.on("before-quit", () => {
   void ptyHost.shutdown().catch(() => {
     // Test-only cleanup. Normal app runs intentionally keep PTYs alive.
   });
+});
+
+// GPU-helper deaths (#79). The OS can quietly kill the GPU process under memory
+// pressure (jetsam); every GPU-composited surface of the window then goes white
+// until Chromium relaunches it (~1-2s). No renderer code can shorten that
+// window, so we do two things: (1) log the death with its reason so a future
+// white-flash report is correlated instantly instead of via `ps` archaeology
+// (the `reason` field confirms or refutes the memory-pressure theory), and (2)
+// once the replacement GPU process should be up, nudge renderers to re-run
+// their existing WebGL/PTY repair path - belt-and-suspenders over Chromium's
+// own repaint.
+const diagnosticsLog = createPtyLog(path.join(AYA_HOME, "diagnostics.log"));
+// Delays after a GPU death at which we ask renderers to heal. The first covers
+// the typical relaunch window; the second is a cheap safety net (the heal is a
+// no-op when the WebGL context is already live again).
+const GPU_HEAL_NUDGE_DELAYS_MS = [1200, 3000];
+app.on("child-process-gone", (_event, details) => {
+  if (details.type !== "GPU") return;
+  diagnosticsLog.append("gpu-process-gone", {
+    reason: details.reason, // killed | crashed | oom | clean-exit | ...
+    exitCode: details.exitCode,
+  });
+  for (const delay of GPU_HEAL_NUDGE_DELAYS_MS) {
+    setTimeout(() => {
+      eachAyaWindow((win) => win.webContents.send("gpu:relaunched"));
+    }, delay);
+  }
 });
