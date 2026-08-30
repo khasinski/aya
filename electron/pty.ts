@@ -702,7 +702,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       }
     });
 
-    child.onExit(({ exitCode }) => {
+    child.onExit(({ exitCode, signal }) => {
       if (ptys.get(req.ptyId) !== child) {
         return;
       }
@@ -710,7 +710,12 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       outputBuffers.delete(req.ptyId);
       oscCarryBuffers.delete(req.ptyId);
       closeVtPane(req.ptyId);
-      ptyLog.append("exit", { ptyId: req.ptyId, exitCode });
+      // Record the signal on this NON-host-initiated death (#83): when every
+      // console dies at once with the host alive, `signal: 9` (SIGKILL) points
+      // at an OS jetsam/memory-pressure kill, distinct from a graceful exit or
+      // a host-initiated kill. Absence of any exit line at all, meanwhile,
+      // means the renderer reloaded and cold-respawned rather than dying.
+      ptyLog.append("exit", { ptyId: req.ptyId, exitCode, signal });
       if (sink.isDestroyed()) return;
       sink.sendPtyEvent({ type: "exit", ptyId: req.ptyId, exitCode });
     });

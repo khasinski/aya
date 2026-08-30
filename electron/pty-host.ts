@@ -203,10 +203,18 @@ function start(): void {
 
   server = net.createServer((socket) => {
     clients.add(socket);
+    // Log the socket lifecycle (#83): a mass console reload with the host alive
+    // is expected to show a client-disconnect (the old renderer dropping its
+    // socket on reload) immediately followed by a client-connect and a burst of
+    // fresh `spawn` lines - the signature of a renderer reload cold-respawning
+    // every tab, as opposed to the children being killed (which would log
+    // `exit` lines with a signal instead).
+    ptyLog.append("client-connect", { clients: clients.size });
     let buffer = "";
     socket.setEncoding("utf8");
     socket.on("close", () => {
       clients.delete(socket);
+      ptyLog.append("client-disconnect", { clients: clients.size });
       scheduleIdleShutdown();
     });
     socket.on("data", (chunk) => {
