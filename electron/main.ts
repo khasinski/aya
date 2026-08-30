@@ -89,7 +89,14 @@ import {
   statusHookStatus,
   installStatusHook,
   uninstallStatusHook,
+  type StatusHookStatus,
 } from "./status-hook";
+import {
+  statusCodexHookStatus,
+  installStatusCodexHook,
+  uninstallStatusCodexHook,
+  type CodexStatusHookStatus,
+} from "./status-hook-codex";
 import { searchHarnessSessions } from "./harness-search";
 import { listMonitoredSessions } from "./session-monitor";
 import { normalizeLocalSummaryError, SUMMARY_TEXT_MAX_CHARS } from "./local-summary-errors";
@@ -2172,9 +2179,36 @@ function registerIpc(): void {
   ipcMain.handle("usage-hook:uninstall", async () => uninstallUsageHook());
   // Automatic agent status (#38): Claude Code lifecycle hooks -> `aya status`.
   // Writes to ~/.claude/settings.json; the generated script no-ops outside Aya.
-  ipcMain.handle("status-hook:status", async () => statusHookStatus());
-  ipcMain.handle("status-hook:install", async () => installStatusHook());
-  ipcMain.handle("status-hook:uninstall", async () => uninstallStatusHook());
+  // Automatic status (#38) covers both agents under one toggle: the Claude
+  // settings.json hooks and the Codex notify program. `installed` stays
+  // Claude-driven (unchanged contract); Codex rides along as a sub-status so
+  // the UI can disclose it (including the "you already have a notify" case).
+  const codexSub = (c: CodexStatusHookStatus): StatusHookStatus["codex"] => ({
+    configured: c.configured,
+    conflict: c.conflict,
+    configPath: c.configPath,
+  });
+  ipcMain.handle("status-hook:status", async () => {
+    const [claude, codex] = await Promise.all([
+      statusHookStatus(),
+      statusCodexHookStatus(),
+    ]);
+    return { ...claude, codex: codexSub(codex) };
+  });
+  ipcMain.handle("status-hook:install", async () => {
+    const [claude, codex] = await Promise.all([
+      installStatusHook(),
+      installStatusCodexHook(),
+    ]);
+    return { ...claude, codex: codexSub(codex) };
+  });
+  ipcMain.handle("status-hook:uninstall", async () => {
+    const [claude, codex] = await Promise.all([
+      uninstallStatusHook(),
+      uninstallStatusCodexHook(),
+    ]);
+    return { ...claude, codex: codexSub(codex) };
+  });
   ipcMain.handle("sessions:list-monitored", async () => listMonitoredSessions());
   ipcMain.handle("intelligence:ollama-status", async (_e, model: unknown) =>
     ollamaStatus(typeof model === "string" && model.trim() ? model.trim() : undefined),

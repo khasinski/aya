@@ -87,6 +87,14 @@ export interface StatusHookStatus {
   installed: boolean;
   scriptPath: string;
   settingsPath: string;
+  /** Codex half of the same toggle (#38): its `notify` program. Absent when the
+   *  main process couldn't determine it. `configured` = ours is set; `conflict`
+   *  = the user already has their own notify, which we left untouched. */
+  codex?: {
+    configured: boolean;
+    conflict: boolean;
+    configPath: string;
+  };
 }
 
 export interface ThemeColors {

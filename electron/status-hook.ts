@@ -46,6 +46,15 @@ export interface StatusHookStatus {
   scriptPath: string;
   /** Where the hooks are registered. */
   settingsPath: string;
+  /** Codex half of the same toggle (#38): its `notify` program. Filled in by
+   *  main.ts (this Claude-side module doesn't know about Codex). `configured` =
+   *  ours is set; `conflict` = the user already has their own notify, left
+   *  untouched. */
+  codex?: {
+    configured: boolean;
+    conflict: boolean;
+    configPath: string;
+  };
 }
 
 function shellQuote(s: string): string {

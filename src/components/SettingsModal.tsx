@@ -1080,10 +1080,16 @@ export function SettingsModal({
                 running a tool, or done.
                 <br />
                 <br />
-                The hooks fire in every Claude Code session, but the script does
-                nothing outside an Aya terminal. Aya sends nothing anywhere; it
-                only sets the pane&apos;s status locally. You can turn it off here
-                anytime (it removes both).
+                For Codex it sets a <code>notify</code> program in{" "}
+                <code>~/.codex/config.toml</code> so a finished turn shows{" "}
+                <em>done</em>. If you already have your own Codex{" "}
+                <code>notify</code>, Aya leaves it untouched.
+                <br />
+                <br />
+                The hooks fire in every Claude Code / Codex session, but the
+                script does nothing outside an Aya terminal. Aya sends nothing
+                anywhere; it only sets the pane&apos;s status locally. You can
+                turn it off here anytime (it removes both).
               </div>
               <div
                 style={{
@@ -1629,8 +1635,10 @@ export function SettingsModal({
             )}
           >
             {statusHook?.installed
-              ? "On. Claude Code reports waiting / active / done into its pane."
-              : "Off. Claude Code hooks set each pane's status automatically."}
+              ? statusHook.codex?.conflict
+                ? "On for Claude Code (waiting / active / done). Codex has its own notify, left untouched."
+                : "On. Claude Code and Codex report their turn state into each pane."
+              : "Off. Claude Code + Codex report each pane's status automatically."}
           </SettingsRow>
           <SettingsRow
             icon="notifications"
