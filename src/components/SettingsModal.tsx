@@ -15,6 +15,7 @@ import {
   type UpdateStatus,
   type UsageHookStatus,
   type StatusHookStatus,
+  type OmarchyStatus,
   type WebConfigureRequest,
   type WebServerStatus,
   looksNonInteractive,
@@ -35,8 +36,10 @@ interface Props {
   snippets: Snippet[];
   themes: Theme[];
   activeThemeId: string;
-  appThemePreference: "system" | "light" | "dark";
-  onAppThemePreferenceChange: (theme: "system" | "light" | "dark") => void;
+  appThemePreference: "system" | "light" | "dark" | "omarchy";
+  onAppThemePreferenceChange: (
+    theme: "system" | "light" | "dark" | "omarchy",
+  ) => void;
   terminalFontFamily: string;
   onTerminalFontFamilyChange: (fontFamily: string) => void;
   showUsageHarnessName: boolean;
@@ -347,6 +350,7 @@ export function SettingsModal({
   const [statusHook, setStatusHook] = useState<StatusHookStatus | null>(null);
   const [statusHookBusy, setStatusHookBusy] = useState(false);
   const [showStatusConsent, setShowStatusConsent] = useState(false);
+  const [omarchy, setOmarchy] = useState<OmarchyStatus | null>(null);
   const [notificationPermission, setNotificationPermission] =
     useState<NotificationPermission>(() =>
       typeof Notification === "undefined" ? "default" : Notification.permission,
@@ -401,6 +405,9 @@ export function SettingsModal({
     });
     void window.aya.statusHookStatus().then((status) => {
       if (!cancelled) setStatusHook(status);
+    });
+    void window.aya.omarchyStatus().then((status) => {
+      if (!cancelled) setOmarchy(status);
     });
     void window.aya.micStatus().then((status) => {
       if (!cancelled) setMicStatus(status);
@@ -1188,7 +1195,15 @@ export function SettingsModal({
             title="Appearance"
             control={(
               <div className="aya-settings-segmented" aria-label="Appearance">
-              {(["system", "light", "dark"] as const).map((theme) => (
+              {(
+                [
+                  "system",
+                  "light",
+                  "dark",
+                  // Only offered when Omarchy is installed with an active theme.
+                  ...(omarchy?.available ? (["omarchy"] as const) : []),
+                ] as const
+              ).map((theme) => (
                 <button
                   key={theme}
                   data-testid="appearance-segment"
@@ -1204,13 +1219,17 @@ export function SettingsModal({
                     ? "System"
                     : theme === "light"
                       ? "Light"
-                      : "Dark"}
+                      : theme === "dark"
+                        ? "Dark"
+                        : "Omarchy"}
                 </button>
               ))}
             </div>
             )}
           >
-            Follow system appearance or pin Aya.
+            {appThemePreference === "omarchy"
+              ? `Following Omarchy${omarchy?.themeName ? ` (${omarchy.themeName})` : ""} - chrome and terminal.`
+              : "Follow system appearance or pin Aya."}
           </SettingsRow>
           <SettingsRow
             icon="text_fields"

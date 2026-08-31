@@ -127,6 +127,48 @@ export interface ProjectGitInfo {
   dirty: number;
 }
 
+/** A semantic color palette, the shape of an Omarchy theme's colors.toml. Drives
+ *  BOTH the app chrome (CSS vars) and the terminal (ThemeColors) through one
+ *  mapping (see src/theme-skin.ts). Mirror of the interface in src/types.ts. */
+export interface OmarchyPalette {
+  mode: "dark" | "light";
+  accent: string;
+  selection?: string;
+  muted?: string;
+  background: string;
+  darkBackground?: string;
+  darkerBackground?: string;
+  lighterBackground?: string;
+  foreground: string;
+  darkForeground?: string;
+  lightForeground?: string;
+  brightForeground?: string;
+  red?: string;
+  yellow?: string;
+  orange?: string;
+  green?: string;
+  cyan?: string;
+  blue?: string;
+  magenta?: string;
+  brown?: string;
+  brightRed?: string;
+  brightYellow?: string;
+  brightGreen?: string;
+  brightCyan?: string;
+  brightBlue?: string;
+  brightMagenta?: string;
+}
+
+export interface OmarchyTheme {
+  name: string;
+  palette: OmarchyPalette;
+}
+
+export interface OmarchyStatus {
+  available: boolean;
+  themeName: string | null;
+}
+
 export type GitHubLinkKind = "pr" | "branch";
 
 /** A GitHub URL for the active project's current branch: its open PR, or the
@@ -656,6 +698,12 @@ export interface AyaApi {
   /** The GPU helper process died and Chromium is relaunching it (#79); fired a
    *  beat later so visible terminals can re-run their WebGL/PTY repair. */
   onGpuRelaunched(handler: () => void): () => void;
+  /** Whether Omarchy is installed with an active theme (chrome+terminal skin). */
+  omarchyStatus(): Promise<OmarchyStatus>;
+  /** The current Omarchy theme (name + palette), or null when unavailable. */
+  getOmarchyTheme(): Promise<OmarchyTheme | null>;
+  /** Fires when the active Omarchy theme changes (omarchy-theme-set). */
+  onOmarchyThemeChange(handler: () => void): () => void;
 
   /** Subscribe to keyboard shortcuts dispatched by the main process. Returns
    *  an unsubscribe function. Action strings: "new-shell", "close-tab",

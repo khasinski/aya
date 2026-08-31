@@ -97,6 +97,53 @@ export interface StatusHookStatus {
   };
 }
 
+/** A semantic color palette, the shape of an Omarchy theme's colors.toml. Drives
+ *  BOTH the app chrome (CSS vars) and the terminal (ThemeColors) through one
+ *  mapping (see src/theme-skin.ts). snake_case toml keys are normalized to
+ *  camelCase; only background/foreground/accent are guaranteed, the rest have
+ *  mapping fallbacks. */
+export interface OmarchyPalette {
+  mode: "dark" | "light";
+  accent: string;
+  selection?: string;
+  muted?: string;
+  background: string;
+  darkBackground?: string;
+  darkerBackground?: string;
+  lighterBackground?: string;
+  foreground: string;
+  darkForeground?: string;
+  lightForeground?: string;
+  brightForeground?: string;
+  red?: string;
+  yellow?: string;
+  orange?: string;
+  green?: string;
+  cyan?: string;
+  blue?: string;
+  magenta?: string;
+  brown?: string;
+  brightRed?: string;
+  brightYellow?: string;
+  brightGreen?: string;
+  brightCyan?: string;
+  brightBlue?: string;
+  brightMagenta?: string;
+}
+
+export interface OmarchyTheme {
+  name: string;
+  palette: OmarchyPalette;
+}
+
+export interface OmarchyStatus {
+  /** The current Omarchy theme's colors.toml exists (Omarchy installed and a
+   *  theme active). Always false off Linux. */
+  available: boolean;
+  /** Human-facing current theme name, or null when unavailable. */
+  themeName: string | null;
+}
+
 export interface ThemeColors {
   background: string;
   foreground: string;
@@ -755,6 +802,12 @@ export interface AyaApi {
   /** The GPU helper process died and Chromium is relaunching it (#79); fired a
    *  beat later so visible terminals can re-run their WebGL/PTY repair. */
   onGpuRelaunched(handler: () => void): () => void;
+  /** Whether Omarchy is installed with an active theme (chrome+terminal skin). */
+  omarchyStatus(): Promise<OmarchyStatus>;
+  /** The current Omarchy theme (name + palette), or null when unavailable. */
+  getOmarchyTheme(): Promise<OmarchyTheme | null>;
+  /** Fires when the active Omarchy theme changes (omarchy-theme-set). */
+  onOmarchyThemeChange(handler: () => void): () => void;
   onFullScreenChange(handler: (isFullScreen: boolean) => void): () => void;
   onMaximizedChange(handler: (isMaximized: boolean) => void): () => void;
 

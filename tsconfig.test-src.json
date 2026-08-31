@@ -30,6 +30,7 @@
     "src/terminal-keys.ts",
     "src/terminal-rendering.ts",
     "src/terminal-sound-prefs.ts",
+    "src/theme-skin.ts",
     "src/snippet-payload.ts",
     "src/split-tree.ts",
     "src/spawnSession.ts",

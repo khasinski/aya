@@ -37,6 +37,7 @@ import { useDoubleShiftSearch } from "./hooks/useDoubleShiftSearch";
 import { usePtyEventRouter } from "./hooks/usePtyEventRouter";
 import { useStable } from "./hooks/useStableIdentity";
 import { sameArrayItems, sameRecordValues } from "./stable-identity";
+import { paletteToChromeVars, paletteToThemeColors } from "./theme-skin";
 import { localSummaryUnavailableMessage } from "./local-summary-errors";
 import type { SettingsTab } from "./settings-tabs";
 import {
@@ -165,7 +166,7 @@ const LOCAL_SUMMARY_BUFFER_LINES = 80;
 const LOCAL_SUMMARY_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const SESSION_MONITOR_POLL_INTERVAL_MS = 5_000;
 
-type AppThemePreference = "system" | "light" | "dark";
+type AppThemePreference = "system" | "light" | "dark" | "omarchy";
 
 const DEFAULT_AYA_INTELLIGENCE: AyaIntelligenceConfig = {
   provider: "apple",
@@ -212,7 +213,7 @@ interface SummaryCache {
 
 // localStorage codecs for the simple preferences (see usePersistentPreference).
 const THEME_CODEC = enumPreference<AppThemePreference>(
-  ["system", "light", "dark"],
+  ["system", "light", "dark", "omarchy"],
   "system",
 );
 const MAC_OPTION_CODEC: PreferenceCodec<MacOptionKeyMode> = {
@@ -677,6 +678,12 @@ export function App() {
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [themes, setThemes] = useState<Theme[]>([]);
   const [activeThemeId, setActiveThemeId] = useState<string>("");
+  // Terminal colors from the active skin (Omarchy), or null when no skin is on.
+  // Takes precedence over the selected terminal theme, below the per-tab
+  // override.
+  const [skinThemeColors, setSkinThemeColors] = useState<ThemeColors | null>(
+    null,
+  );
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [warmProjectSlugs, setWarmProjectSlugs] = useState<string[]>([]);
   const [terminals, setTerminals] = useState<Record<string, TerminalState>>({});
@@ -2928,11 +2935,52 @@ export function App() {
 
   useEffect(() => {
     const root = document.documentElement;
+    // "omarchy" is not a light/dark mode; the skin effect below owns data-theme
+    // (it sets it to the Omarchy palette's own mode).
+    if (appThemePreference === "omarchy") return;
     if (appThemePreference === "system") {
       root.removeAttribute("data-theme");
     } else {
       root.dataset.theme = appThemePreference;
     }
+  }, [appThemePreference]);
+
+  // Omarchy skin: when selected, drive the app chrome (inline CSS vars over the
+  // base light/dark tokens) AND the terminal (skinThemeColors) from the current
+  // Omarchy palette, and re-apply live when the Omarchy theme is switched.
+  // Leaving the mode removes the inline vars, restoring the built-in theme.
+  useEffect(() => {
+    if (appThemePreference !== "omarchy") {
+      setSkinThemeColors(null);
+      return;
+    }
+    const root = document.documentElement;
+    let cancelled = false;
+    let applied: string[] = [];
+    const apply = async () => {
+      const theme = await window.aya.getOmarchyTheme();
+      if (cancelled) return;
+      if (!theme) {
+        // Omarchy went away: behave like "system", no skin.
+        root.removeAttribute("data-theme");
+        setSkinThemeColors(null);
+        return;
+      }
+      root.dataset.theme = theme.palette.mode;
+      const vars = paletteToChromeVars(theme.palette);
+      applied = Object.keys(vars);
+      for (const [key, value] of Object.entries(vars)) {
+        root.style.setProperty(key, value);
+      }
+      setSkinThemeColors(paletteToThemeColors(theme.palette));
+    };
+    void apply();
+    const unsubscribe = window.aya.onOmarchyThemeChange(() => void apply());
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      for (const key of applied) root.style.removeProperty(key);
+    };
   }, [appThemePreference]);
 
   /** Called by TerminalView when the user presses Shift+Enter in a
@@ -3791,7 +3839,7 @@ export function App() {
                 ? themes.find((th) => th.id === preset.themeId)
                 : null;
               const colorsForTerminal: ThemeColors =
-                overrideTheme?.colors ?? activeThemeColors;
+                overrideTheme?.colors ?? skinThemeColors ?? activeThemeColors;
               return (
                 <TerminalView
                   key={terminal.id}
@@ -3840,7 +3888,7 @@ export function App() {
                 ? themes.find((th) => th.id === preset.themeId)
                 : null;
               const colorsForTerminal: ThemeColors =
-                overrideTheme?.colors ?? activeThemeColors;
+                overrideTheme?.colors ?? skinThemeColors ?? activeThemeColors;
               return (
                 <TerminalView
                   key={t.id}

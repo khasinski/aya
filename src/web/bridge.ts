@@ -173,6 +173,10 @@ export function createWebAya(transport: WebTransport): AyaApi {
     onUpdateStatus: on("updates:status"),
     // No GPU helper process in a browser session (#79 is desktop-only).
     onGpuRelaunched: noopSubscription,
+    // Omarchy skinning is desktop/Linux-only.
+    omarchyStatus: async () => ({ available: false, themeName: null }),
+    getOmarchyTheme: async () => null,
+    onOmarchyThemeChange: noopSubscription,
     onFullScreenChange: noopSubscription,
     onMaximizedChange: noopSubscription,
     onConfigChange: on("config:changed"),

@@ -74,6 +74,8 @@ const api: AyaApi = {
   statusHookStatus: () => ipcRenderer.invoke("status-hook:status"),
   installStatusHook: () => ipcRenderer.invoke("status-hook:install"),
   uninstallStatusHook: () => ipcRenderer.invoke("status-hook:uninstall"),
+  omarchyStatus: () => ipcRenderer.invoke("omarchy:status"),
+  getOmarchyTheme: () => ipcRenderer.invoke("omarchy:read"),
   summarizeLocal: (req) => ipcRenderer.invoke("local-summary:summarize", req),
   ollamaStatus: (model) => ipcRenderer.invoke("intelligence:ollama-status", model),
   pullOllamaModel: (model) =>
@@ -156,6 +158,11 @@ const api: AyaApi = {
     const listener = () => handler();
     ipcRenderer.on("gpu:relaunched", listener);
     return () => ipcRenderer.removeListener("gpu:relaunched", listener);
+  },
+  onOmarchyThemeChange: (handler) => {
+    const listener = () => handler();
+    ipcRenderer.on("omarchy:changed", listener);
+    return () => ipcRenderer.removeListener("omarchy:changed", listener);
   },
   onFullScreenChange: (handler) => {
     const listener = (_e: unknown, isFullScreen: boolean) =>

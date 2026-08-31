@@ -81,6 +81,11 @@ import {
   clearPendingUpdate,
   cleanShipItCache,
 } from "./update-recovery";
+import {
+  readOmarchyStatus,
+  readOmarchyTheme,
+  watchOmarchyTheme,
+} from "./omarchy";
 import { scanHarnesses } from "./harnesses";
 import { isInternalNavigationUrl, parseExternalUrl } from "./navigation";
 import { createWorktree, removeWorktree } from "./git";
@@ -2262,6 +2267,10 @@ function registerIpc(): void {
     ]);
     return { ...claude, codex: codexSub(codex) };
   });
+  // Omarchy theme integration (Linux): the renderer skins chrome + terminal from
+  // the current Omarchy palette, and the watcher below pushes live switches.
+  ipcMain.handle("omarchy:status", async () => readOmarchyStatus());
+  ipcMain.handle("omarchy:read", async () => readOmarchyTheme());
   ipcMain.handle("sessions:list-monitored", async () => listMonitoredSessions());
   ipcMain.handle("intelligence:ollama-status", async (_e, model: unknown) =>
     ollamaStatus(typeof model === "string" && model.trim() ? model.trim() : undefined),
@@ -2749,6 +2758,11 @@ app.whenReady().then(async () => {
   // Before checking for a NEW update, surface a PREVIOUS one that silently
   // failed to install and rolled back (#78).
   void reconcilePendingUpdate(mainWindow);
+  // Live-follow Omarchy theme switches: re-broadcast so the renderer re-skins.
+  const stopOmarchyWatch = watchOmarchyTheme(() => {
+    eachAyaWindow((win) => win.webContents.send("omarchy:changed"));
+  });
+  app.once("before-quit", stopOmarchyWatch);
   if (getUpdateStatus().supported) {
     setTimeout(() => {
       void checkForUpdates();
