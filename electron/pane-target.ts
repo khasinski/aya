@@ -75,6 +75,67 @@ export function resolvePaneTarget(
   return { ok: true, match: matches[0] };
 }
 
+export interface PaneListEntry {
+  terminalId: string;
+  projectSlug: string;
+  projectName: string;
+  name: string;
+  /** The preset the pane runs (claude / codex / shell / ...) - the closest
+   *  thing to "which agent" the host knows without loading the preset list. */
+  presetId: string;
+  /** This is the caller's OWN pane. */
+  isSelf: boolean;
+}
+
+/** Every pane the caller can see, scoped to one project when a slug is given
+ *  (the same scoping pane-read/send use, so "my project" means the caller's),
+ *  else across all projects. `selfTerminalId` marks the caller's own pane so an
+ *  agent can tell itself apart from the ones it might read or drive. */
+export function listPanes(
+  projects: ProjectConfig[],
+  opts: { projectSlug?: string; selfTerminalId?: string } = {},
+): PaneListEntry[] {
+  const out: PaneListEntry[] = [];
+  for (const project of projects) {
+    if (opts.projectSlug && project.slug !== opts.projectSlug) continue;
+    for (const tab of project.tabs) {
+      out.push({
+        terminalId: tab.id,
+        projectSlug: project.slug,
+        projectName: project.name,
+        name: tab.name,
+        presetId: tab.presetId,
+        isSelf: !!opts.selfTerminalId && tab.id === opts.selfTerminalId,
+      });
+    }
+  }
+  return out;
+}
+
+/** Render a pane listing as an aligned table for `aya pane list`. The caller's
+ *  own pane is marked with `*` and "(this pane)". A project header is shown
+ *  only when the listing spans more than one project. */
+export function formatPaneList(entries: PaneListEntry[]): string {
+  if (entries.length === 0) return "No panes found.\n";
+  const multiProject = new Set(entries.map((e) => e.projectSlug)).size > 1;
+  const nameW = Math.max(4, ...entries.map((e) => e.name.length));
+  const presetW = Math.max(5, ...entries.map((e) => e.presetId.length));
+  const lines: string[] = [];
+  let lastProject: string | null = null;
+  for (const e of entries) {
+    if (multiProject && e.projectSlug !== lastProject) {
+      lines.push(`${e.projectName} (${e.projectSlug}):`);
+      lastProject = e.projectSlug;
+    }
+    const mark = e.isSelf ? "*" : " ";
+    const suffix = e.isSelf ? "  (this pane)" : "";
+    lines.push(
+      `${mark} ${e.name.padEnd(nameW)}  ${e.presetId.padEnd(presetW)}  ${e.terminalId}${suffix}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 // A read returns terminal scrollback to another process, which for an agent
 // pane can be a long transcript. Cap it so one request can't dump megabytes
 // through the socket; callers wanting more should read repeatedly.

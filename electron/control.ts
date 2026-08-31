@@ -3,7 +3,12 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import { parseControlRequest, type ControlRequest } from "./control-protocol";
-import { resolvePaneTarget, tailForPaneRead } from "./pane-target";
+import {
+  formatPaneList,
+  listPanes,
+  resolvePaneTarget,
+  tailForPaneRead,
+} from "./pane-target";
 import { CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
 import type { ControlStatusUpdate, ProjectConfig } from "./types";
 
@@ -88,6 +93,15 @@ async function handleRequest(
   if (request.type === "open") {
     options.openProject(path.resolve(request.path));
     return;
+  }
+  if (request.type === "pane-list") {
+    if (!options.listProjects) throw new Error("pane control is not available");
+    const projects = await options.listProjects();
+    const entries = listPanes(projects, {
+      projectSlug: request.projectSlug,
+      selfTerminalId: request.selfTerminalId,
+    });
+    return { output: formatPaneList(entries) };
   }
   if (request.type === "pane-read" || request.type === "pane-send") {
     return handlePaneRequest(request, options);

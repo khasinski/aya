@@ -17,6 +17,7 @@ Use Aya's CLI for user-visible coordination while working in an Aya terminal.
 - `aya notify --title "Aya" "Needs approval"`: show a native notification.
 - `aya open "$PWD"`: open or focus the current directory as an Aya project.
 - `aya focus`: focus the Aya window.
+- `aya pane list`: list the panes/agents in your project (your own is marked).
 - `aya pane read "reviewer"`: print another pane's recent output.
 - `aya pane send "reviewer" "run the tests"`: type text into another pane.
 - `aya pane send "reviewer" --submit "run the tests"`: type it and press Enter.
@@ -37,6 +38,10 @@ Use Aya's CLI for user-visible coordination while working in an Aya terminal.
 are running in. Panes are named by their Aya tab name and resolved within your
 own project; a name used by two panes is rejected rather than guessed, so pass
 a more specific name if that happens.
+
+- Use `aya pane list` first to see what other agents/panes share your project
+  and what they are named — the row marked `(this pane)` is you. This is how you
+  discover the names to pass to `pane read` / `pane send`.
 
 - Use `pane read` to check on work you handed to another agent, or to collect
   its result — it returns that pane's recent output, newest last.

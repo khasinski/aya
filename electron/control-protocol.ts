@@ -35,6 +35,13 @@ export type ControlRequest =
       projectSlug?: string;
       text: string;
       submit?: boolean;
+    }
+  // List the panes/agents in the caller's project (or all projects when no
+  // slug). `selfTerminalId` marks the caller's own pane in the output.
+  | {
+      type: "pane-list";
+      projectSlug?: string;
+      selfTerminalId?: string;
     };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -83,6 +90,13 @@ export function parseControlRequest(value: unknown): ControlRequest {
       terminalId: optionalString(value.terminalId),
       projectSlug: optionalString(value.projectSlug),
       cwd: optionalString(value.cwd),
+    };
+  }
+  if (type === "pane-list") {
+    return {
+      type,
+      projectSlug: optionalString(value.projectSlug),
+      selfTerminalId: optionalString(value.selfTerminalId),
     };
   }
   if (type === "pane-read" || type === "pane-send") {

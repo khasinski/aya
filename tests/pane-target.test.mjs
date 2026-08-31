@@ -7,6 +7,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   PANE_READ_MAX_CHARS,
+  formatPaneList,
+  listPanes,
   resolvePaneTarget,
   tailForPaneRead,
 } from "../dist-electron/pane-target.js";
@@ -15,7 +17,11 @@ const project = (slug, tabs) => ({
   slug,
   name: slug,
   directory: `/${slug}`,
-  tabs: tabs.map(([id, name]) => ({ id, presetId: "claude", name })),
+  tabs: tabs.map(([id, name, presetId]) => ({
+    id,
+    presetId: presetId ?? "claude",
+    name,
+  })),
 });
 
 const PROJECTS = [
@@ -81,6 +87,52 @@ test("neither name nor id is an error", () => {
 
 test("an empty project list resolves nothing", () => {
   assert.equal(resolvePaneTarget([], { name: "build" }).ok, false);
+});
+
+// --- listing panes ---------------------------------------------------------
+
+test("listPanes scoped to a project returns only that project's panes", () => {
+  const entries = listPanes(PROJECTS, { projectSlug: "alpha" });
+  assert.deepEqual(
+    entries.map((e) => e.name),
+    ["build", "reviewer"],
+  );
+  assert.ok(entries.every((e) => e.projectSlug === "alpha"));
+});
+
+test("listPanes across all projects when no slug is given", () => {
+  assert.equal(listPanes(PROJECTS).length, 4);
+});
+
+test("listPanes marks the caller's own pane and nothing else", () => {
+  const entries = listPanes(PROJECTS, { projectSlug: "alpha", selfTerminalId: "t2" });
+  assert.deepEqual(
+    entries.filter((e) => e.isSelf).map((e) => e.name),
+    ["reviewer"],
+  );
+});
+
+test("formatPaneList marks the caller and shows each pane's preset", () => {
+  const projects = [
+    project("alpha", [["t1", "build", "codex"], ["t2", "reviewer", "claude"]]),
+  ];
+  const out = formatPaneList(listPanes(projects, { selfTerminalId: "t1" }));
+  assert.match(out, /\* build .*codex.*\(this pane\)/);
+  assert.match(out, /reviewer .*claude/);
+  // The non-self row is not marked as this pane.
+  assert.doesNotMatch(out.split("\n").find((l) => l.includes("reviewer")), /this pane/);
+});
+
+test("formatPaneList shows a project header only when spanning projects", () => {
+  const single = formatPaneList(listPanes(PROJECTS, { projectSlug: "alpha" }));
+  assert.doesNotMatch(single, /alpha \(alpha\):/);
+  const both = formatPaneList(listPanes(PROJECTS));
+  assert.match(both, /alpha \(alpha\):/);
+  assert.match(both, /beta \(beta\):/);
+});
+
+test("formatPaneList on no panes says so", () => {
+  assert.match(formatPaneList([]), /No panes found/);
 });
 
 // --- read tail -------------------------------------------------------------

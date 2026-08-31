@@ -184,6 +184,63 @@ test("control server: focus without a window does NOT throw and still acks", asy
   }
 });
 
+test("control server: pane-list returns a formatted listing scoped to the project", async () => {
+  const { dir, socket } = mkSocketPath();
+  const { options } = recordingOptions();
+  options.listProjects = async () => [
+    {
+      slug: "demo",
+      name: "demo",
+      directory: "/demo",
+      tabs: [
+        { id: "t1", presetId: "codex", name: "builder" },
+        { id: "t2", presetId: "claude", name: "reviewer" },
+      ],
+    },
+    {
+      slug: "other",
+      name: "other",
+      directory: "/other",
+      tabs: [{ id: "t9", presetId: "shell", name: "scratch" }],
+    },
+  ];
+  const stop = startControlServerOn(socket, options);
+  try {
+    const res = await rpc(
+      socket,
+      `${JSON.stringify({
+        type: "pane-list",
+        projectSlug: "demo",
+        selfTerminalId: "t1",
+      })}\n`,
+    );
+    assert.equal(res.ok, true);
+    // Only the caller's project, with its own pane marked, and the unrelated
+    // project's pane absent.
+    assert.match(res.output, /builder/);
+    assert.match(res.output, /reviewer/);
+    assert.match(res.output, /\(this pane\)/);
+    assert.doesNotMatch(res.output, /scratch/);
+  } finally {
+    stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("control server: pane-list without listProjects reports it is unavailable", async () => {
+  const { dir, socket } = mkSocketPath();
+  const { options } = recordingOptions(); // no listProjects
+  const stop = startControlServerOn(socket, options);
+  try {
+    const res = await rpc(socket, `${JSON.stringify({ type: "pane-list" })}\n`);
+    assert.equal(res.ok, false);
+    assert.match(res.error, /not available/);
+  } finally {
+    stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("control server: data delivered in two chunks across the newline is parsed", async () => {
   const { dir, socket } = mkSocketPath();
   const { options, calls } = recordingOptions();

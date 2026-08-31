@@ -16,6 +16,7 @@ Usage:
   aya status done text               Mark this terminal as done
   aya status error text              Mark this terminal as errored
   aya status clear                   Clear agent status
+  aya pane list                      List the panes/agents in this project
   aya pane read name                 Print another pane's recent output
   aya pane send name [--submit] text Type text into another pane
 EOF
@@ -79,6 +80,13 @@ function requestFromArgs() {
       terminalId: optionalEnv("AYA_TERMINAL_ID"),
       projectSlug: optionalEnv("AYA_PROJECT_SLUG"),
       cwd: optionalEnv("AYA_PROJECT_DIR") || process.cwd(),
+    };
+  }
+  if (kind === "pane-list") {
+    return {
+      type: "pane-list",
+      projectSlug: optionalEnv("AYA_PROJECT_SLUG"),
+      selfTerminalId: optionalEnv("AYA_TERMINAL_ID"),
     };
   }
   // pane read/send target ANOTHER terminal, so the caller's own project scopes
@@ -271,6 +279,9 @@ case "$command" in
     action="${1:-}"
     shift || true
     case "$action" in
+      list|ls)
+        send_control pane-list
+        ;;
       read)
         target="${1:-}"
         if [ -z "$target" ]; then

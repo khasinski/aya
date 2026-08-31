@@ -86,6 +86,21 @@ test("pane-read requires a target or targetId", () => {
   assert.throws(() => parseControlRequest({ type: "pane-read" }), /target/);
 });
 
+test("pane-list needs no target and carries the caller's scope + self id", () => {
+  const req = parseControlRequest({
+    type: "pane-list",
+    projectSlug: "demo",
+    selfTerminalId: "t9",
+  });
+  assert.equal(req.type, "pane-list");
+  assert.equal(req.projectSlug, "demo");
+  assert.equal(req.selfTerminalId, "t9");
+});
+
+test("pane-list is valid with no fields at all (list everything)", () => {
+  assert.equal(parseControlRequest({ type: "pane-list" }).type, "pane-list");
+});
+
 test("pane-read accepts a name and carries the caller's project scope", () => {
   const req = parseControlRequest({
     type: "pane-read",
