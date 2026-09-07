@@ -30,6 +30,12 @@ import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
 import type { SeededEnv } from "./helpers/seed";
 
+// Each test boots the app AND waits for a login shell to bring up a program
+// (a node recorder, or the shell's own line editor). Under the full suite that
+// startup is far slower than in an isolated run, so these need more than the
+// project-wide 45 s.
+test.describe.configure({ timeout: 120_000 });
+
 const AYA_CLI = join(__dirname, "..", "bin", "aya");
 const RECORDER = join(__dirname, "helpers", "pty-recorder.cjs");
 // The pane command runs under the user's login shell, whose PATH is not the
@@ -52,16 +58,42 @@ function ayaPaneSend(ayaHome: string, args: string[]): void {
   });
 }
 
-/** Poll a pane's PTY buffer until it contains `needle`. Doubles as the
- *  readiness gate: bytes written to a program that has not started reading
- *  yet can be dropped, so tests wait for its own output first. */
+const paneBuffer = (window: Page, terminalId: string) =>
+  window.evaluate((id) => window.aya.ptyBuffer(id), terminalId);
+
+/** Poll a pane's PTY buffer until it contains `needle`. */
 async function paneShows(window: Page, terminalId: string, needle: string) {
   await expect
-    .poll(() => window.evaluate((id) => window.aya.ptyBuffer(id), terminalId), {
+    .poll(() => paneBuffer(window, terminalId), {
       message: `pane ${terminalId} never showed ${needle}`,
-      timeout: 20_000,
+      timeout: 60_000,
     })
     .toContain(needle);
+}
+
+/** Prove a shell pane is EXECUTING, not merely echoing. A shell that has not
+ *  finished starting swallows queued bytes, while the tty echoes the typed
+ *  line either way - so "the text is visible" is not readiness (that mistake
+ *  made this spec fail under full-suite load). Retype until the output of an
+ *  arithmetic expansion, which only execution can produce, shows up. */
+async function shellExecuting(window: Page, paneIndex: number, terminalId: string) {
+  await window.locator(".aya-pane").nth(paneIndex).locator(".xterm-screen").click();
+  await expect
+    .poll(
+      async () => {
+        const buffer = await paneBuffer(window, terminalId);
+        if (buffer.includes("ready-2")) return buffer;
+        await window.keyboard.insertText("echo ready-$((1+1))");
+        await window.keyboard.press("Enter");
+        return buffer;
+      },
+      {
+        message: `the shell in ${terminalId} never executed a command`,
+        timeout: 60_000,
+        intervals: [1_000],
+      },
+    )
+    .toContain("ready-2");
 }
 
 const recorderLog = (seeded: SeededEnv, terminalId: string) =>
@@ -73,7 +105,7 @@ async function recorderReady(seeded: SeededEnv, terminalId: string) {
   await expect
     .poll(() => existsSync(recorderLog(seeded, terminalId)), {
       message: `the recorder in ${terminalId} never started`,
-      timeout: 20_000,
+      timeout: 60_000,
     })
     .toBe(true);
 }
@@ -159,12 +191,7 @@ test("pane-send --submit runs the command in an ordinary shell pane", async ({
   window,
   seeded,
 }) => {
-  // Readiness by round-trip, not by sleep: a shell still bringing up its line
-  // editor discards queued bytes, so prove it echoes first.
-  await window.locator(".aya-pane").nth(1).locator(".xterm-screen").click();
-  await window.keyboard.insertText("echo READY_PANE_SEND");
-  await window.keyboard.press("Enter");
-  await paneShows(window, seeded.tabIds.right, "READY_PANE_SEND");
+  await shellExecuting(window, 1, seeded.tabIds.right);
 
   // Arithmetic expansion separates "typed" from "executed": the echoed line
   // shows the literal $((21+21)), only a real submit prints ok-42.
