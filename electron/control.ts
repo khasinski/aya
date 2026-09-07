@@ -15,6 +15,27 @@ import type { ControlStatusUpdate, ProjectConfig } from "./types";
 // Max control-socket message size before rejecting the request (bytes).
 export const CONTROL_REQUEST_MAX_SIZE_BYTES = 64_000;
 
+/** Idle gap between a pane-send's text and the Enter that submits it (ms).
+ *
+ *  pane-send used to write `${text}\r` as ONE chunk, and the agent TUIs did
+ *  not submit it: the Codex and Claude Code composers treat a burst of
+ *  characters arriving together as a paste, so the trailing carriage return
+ *  lands inside the pasted block and becomes a newline in the message box
+ *  instead of Enter. The text appeared in the composer and just sat there.
+ *
+ *  Letting the burst go idle before the CR is what makes it read as a real
+ *  keypress. Measured by driving both TUIs through a pty: one chunk never
+ *  submitted (Claude's composer even dropped characters from the burst),
+ *  while a separate CR submitted at every gap tried - 50 ms sufficed for
+ *  codex-cli 0.153.4 and 120 ms for Claude Code, so 150 ms leaves margin.
+ *
+ *  Bracketed paste is deliberately NOT used here, even though the snippet
+ *  drawer wraps its text that way: pane-send targets any pane, and a shell
+ *  without bracketed-paste support (macOS /bin/sh and /bin/bash are bash
+ *  3.2) inserts the markers as literal text - measured as
+ *  `bash: 00~echo: command not found`. Raw bytes type correctly everywhere. */
+export const PANE_SEND_SUBMIT_DELAY_MS = 150;
+
 /** Anywhere a status update can be delivered: real BrowserWindows plus the
  *  Aya Web server's virtual sink (which fans out to WebSocket clients). */
 export interface ControlStatusSink {
@@ -76,12 +97,17 @@ async function handlePaneRequest(
     const output = await options.readPane(terminalId);
     return { terminalId, projectSlug, name, output: tailForPaneRead(output) };
   }
-  // A carriage return is what a PTY sees when Enter is pressed; sending "\n"
-  // instead leaves some TUIs with an unsubmitted line.
-  await options.writePane(
-    terminalId,
-    request.submit ? `${request.text}\r` : request.text,
-  );
+  // Text first, then the Enter as its OWN write after an idle gap - see
+  // PANE_SEND_SUBMIT_DELAY_MS for why one combined chunk does not submit.
+  // "\r" is what a PTY sees when Enter is pressed; "\n" instead leaves some
+  // TUIs with an unsubmitted line.
+  await options.writePane(terminalId, request.text);
+  if (request.submit) {
+    await new Promise((resolve) =>
+      setTimeout(resolve, PANE_SEND_SUBMIT_DELAY_MS),
+    );
+    await options.writePane(terminalId, "\r");
+  }
   return { terminalId, projectSlug, name };
 }
 
