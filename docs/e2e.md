@@ -45,6 +45,11 @@ project".
 - `snippets.spec.ts` - the snippet drawer opens, shows the seeded default with
   its full text, collapses after sending; the closed drawer is `inert` (F14
   ghost-drawer regression guard).
+- `pane-send-submit.spec.ts` - `aya pane send --submit` really submits. Drives
+  the actual `bin/aya`, and seeds one pane with `helpers/pty-recorder.cjs` (a
+  program that logs the raw PTY chunks it receives) so the test can assert the
+  Enter arrives as its own, later chunk - the byte-level property the agent
+  TUIs need, pinned without running a real agent.
 
 ## CI
 

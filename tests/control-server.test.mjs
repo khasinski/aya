@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 const {
   startControlServerOn,
   CONTROL_REQUEST_MAX_SIZE_BYTES,
+  PANE_SEND_SUBMIT_DELAY_MS,
 } = await import("../dist-electron/control.js");
 
 function mkSocketPath() {
@@ -279,6 +280,84 @@ test("control server: only the first line of a frame is parsed (one-shot per con
       `${JSON.stringify({ type: "open", path: "/second" })}\n`;
     await rpc(socket, frame);
     assert.deepEqual(calls.openProject, ["/first"]);
+  } finally {
+    stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// pane-send must submit for real. Writing "text\r" as ONE chunk is read as a
+// paste burst by the Codex / Claude Code composers, which turns the carriage
+// return into a newline in the message box - the text appears but is never
+// sent. The CR therefore has to be its own write, after the burst goes idle.
+function paneOptions() {
+  const writes = [];
+  return {
+    writes,
+    options: {
+      getWindow: () => null,
+      openProject: () => {},
+      listProjects: async () => [
+        { slug: "aya", tabs: [{ id: "term-7", name: "Codex reviewer" }] },
+      ],
+      readPane: async () => "",
+      writePane: async (terminalId, data) =>
+        writes.push([terminalId, data, Date.now()]),
+    },
+  };
+}
+
+test("control server: pane-send --submit sends the CR as a separate, later write", async () => {
+  const { dir, socket } = mkSocketPath();
+  const { options, writes } = paneOptions();
+  const stop = startControlServerOn(socket, options);
+  try {
+    const res = await rpc(
+      socket,
+      `${JSON.stringify({
+        type: "pane-send",
+        target: "Codex reviewer",
+        text: "tekst",
+        submit: true,
+      })}\n`,
+    );
+    assert.equal(res.ok, true);
+    assert.deepEqual(
+      writes.map(([id, data]) => [id, data]),
+      [
+        ["term-7", "tekst"],
+        ["term-7", "\r"],
+      ],
+    );
+    // The gap is the whole point: a CR in the same burst is not an Enter.
+    // A few ms of timer slack keeps this from tripping on a scheduler that
+    // fires marginally early - it still proves the writes were not adjacent.
+    const gap = writes[1][2] - writes[0][2];
+    const floor = PANE_SEND_SUBMIT_DELAY_MS - 5;
+    assert.ok(gap >= floor, `CR followed after ${gap}ms, expected >= ${floor}`);
+  } finally {
+    stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("control server: pane-send without --submit types only, no CR", async () => {
+  const { dir, socket } = mkSocketPath();
+  const { options, writes } = paneOptions();
+  const stop = startControlServerOn(socket, options);
+  try {
+    await rpc(
+      socket,
+      `${JSON.stringify({
+        type: "pane-send",
+        target: "Codex reviewer",
+        text: "tekst",
+      })}\n`,
+    );
+    assert.deepEqual(
+      writes.map(([id, data]) => [id, data]),
+      [["term-7", "tekst"]],
+    );
   } finally {
     stop();
     rmSync(dir, { recursive: true, force: true });
