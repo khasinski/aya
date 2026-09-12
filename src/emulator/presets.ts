@@ -34,15 +34,3 @@ export const EMULATOR_PRESETS: Preset[] = SEEDS.map((s) => ({
   command: s.id === "shell" ? "$SHELL" : s.id,
   agent: s.agent,
 }));
-
-export function emulatorPreset(id: string): Preset {
-  return (
-    EMULATOR_PRESETS.find((p) => p.id === id) ?? {
-      id,
-      name: id,
-      icon: "$",
-      color: "",
-      command: id,
-    }
-  );
-}
