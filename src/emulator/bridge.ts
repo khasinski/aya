@@ -207,7 +207,6 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     checkRemoteHealth: noopAsync,
     createRemoteProjectOnHost: noopAsync,
     updateProject: noopAsync,
-    deleteProject: noopAsync,
     readRepoProjectConfig: async () => null as never,
 
     // presets
@@ -264,7 +263,6 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     },
     getGitChangedFiles: async () => [] as never,
     getGitDiff: async () => null as never,
-    getGitWorktrees: async () => [] as never,
     // A scenario's directory is already its own checkout root, and it has no
     // extra worktrees to pick between, so the picker never appears.
     getGitRoot: async (directory: string) => directory as never,
@@ -288,7 +286,6 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     isFullScreen: async () => false as never,
     isMaximized: async () => false as never,
     setDockBadge: noopAsync,
-    focusWindow: noopAsync,
     minimizeWindow: noopAsync,
     toggleMaximizeWindow: noopAsync,
     closeWindow: noopAsync,

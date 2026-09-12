@@ -38,8 +38,6 @@ const baseDeps = (over) => ({
   ...over,
 });
 
-// ---------- parseSnapshot ----------
-
 test("parseSnapshot parses valid rows and drops malformed lines", () => {
   const out = parseSnapshot(
     [
@@ -57,15 +55,11 @@ test("parseSnapshot parses valid rows and drops malformed lines", () => {
   ]);
 });
 
-// ---------- scopeFromEnvDump ----------
-
 test("scopeFromEnvDump: explicit AYA_HOME wins, AYA_DEV maps to .aya-dev, default .aya", () => {
   assert.equal(scopeFromEnvDump("cmd AYA_HOME=/tmp/x PATH=/bin", HOME), "/tmp/x");
   assert.equal(scopeFromEnvDump("cmd AYA_DEV=1 PATH=/bin", HOME), `${HOME}/.aya-dev`);
   assert.equal(scopeFromEnvDump("cmd PATH=/bin", HOME), `${HOME}/.aya`);
 });
-
-// ---------- isHostArgv: positional, not substring ----------
 
 test("isHostArgv: matches ONLY when the script is the second argv token", () => {
   assert.equal(isHostArgv(HOST_CMD), true);
@@ -77,7 +71,7 @@ test("isHostArgv: matches ONLY when the script is the second argv token", () => 
   assert.equal(isHostArgv("/bin/zsh"), false, "no second token");
 });
 
-// ---------- S1 candidate selection ----------
+// S1 candidate selection
 
 test("selectStrayHostCandidates: positional signature + uid + leader + exclusions", () => {
   const rows = [
@@ -96,7 +90,7 @@ test("selectStrayHostCandidates: positional signature + uid + leader + exclusion
   assert.deepEqual(got.map((r) => r.pid), [900]);
 });
 
-// ---------- S2 candidate selection ----------
+// S2 candidate selection
 
 test("selectOrphanCandidates: only dead-leader groups, never our group or hosts", () => {
   const rows = [
@@ -111,8 +105,6 @@ test("selectOrphanCandidates: only dead-leader groups, never our group or hosts"
   const got = selectOrphanCandidates(rows, { uid: 501, selfPid: 1000, selfPgid: 8888 });
   assert.deepEqual(got.map((r) => r.pid).sort((a, b) => a - b), [200, 204]);
 });
-
-// ---------- orchestration: S1 ----------
 
 test("sweep S1: a verified stray host gets ONE group kill; scope mismatch and probe failure are skipped", () => {
   const rows = [
@@ -195,8 +187,6 @@ test("sweep S1 disabled (current host unidentifiable) never kills hosts; S2 stil
   assert.deepEqual(summary.sweptOrphans, [200]);
   assert.deepEqual(killed, [200]);
 });
-
-// ---------- orchestration: S2 ----------
 
 test("sweep S2: kills ONLY confirmed-dead-leader members carrying BOTH safeEnv markers", () => {
   const rows = [

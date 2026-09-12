@@ -31,7 +31,6 @@ import {
   createProject,
   createRemoteProject,
   getOrCreateProject,
-  deleteProject,
   expandPath,
   listProjects,
   listProjectState,
@@ -60,7 +59,6 @@ import {
   getGitDiff,
   getGitInfo,
   getGitRoot,
-  listWorktrees,
   listWorktreeStatus,
 } from "./git";
 import { getGitHubLink, isGitHubCliAvailable } from "./github";
@@ -2198,9 +2196,6 @@ function registerIpc(): void {
   ipcMain.handle("projects:update", async (_e, project: unknown) =>
     updateProject(validateProjectConfig(project)),
   );
-  ipcMain.handle("projects:delete", async (_e, slug: unknown) =>
-    deleteProject(requireString(slug, "projects:delete.slug")),
-  );
   ipcMain.handle("projects:read-repo-config", async (_e, dir: unknown) =>
     readRepoProjectConfig(requireString(dir, "projects:read-repo-config.dir")),
   );
@@ -2353,9 +2348,6 @@ function registerIpc(): void {
   ipcMain.handle("env:git-diff", async (_e, directory: unknown) =>
     getGitDiff(requireString(directory, "env:git-diff.directory")),
   );
-  ipcMain.handle("env:git-worktrees", async (_e, directory: unknown) =>
-    listWorktrees(requireString(directory, "env:git-worktrees.directory")),
-  );
   ipcMain.handle("env:git-root", async (_e, directory: unknown) =>
     getGitRoot(requireString(directory, "env:git-root.directory")),
   );
@@ -2467,15 +2459,6 @@ function registerIpc(): void {
     const win = senderWindow(e);
     if (win) setAyaFullScreen(win, !!value);
   });
-  // Dock badge for unattended notifications (waiting terminals). Empty
-  // string clears. macOS only; no-op on Linux/Windows for now since their
-  // taskbar badge stories differ.
-  ipcMain.handle("app:focus-window", (e) => {
-    const win = senderWindow(e);
-    if (!win || win.isDestroyed()) return;
-    if (win.isMinimized()) win.restore();
-    win.focus();
-  });
   ipcMain.handle("app:notify-waiting", async (e, req: unknown) => {
     if (!Notification.isSupported()) return;
     // The notifying renderer owns the terminal - clicking the notification
@@ -2574,6 +2557,9 @@ function registerIpc(): void {
       );
     }
   });
+  // Dock badge for unattended notifications (waiting terminals). Empty
+  // string clears. macOS only; no-op on Linux/Windows for now since their
+  // taskbar badge stories differ.
   ipcMain.handle("app:set-dock-badge", async (_e, text: unknown) => {
     const badge = requireString(text, "app:set-dock-badge.text");
     if (process.platform === "darwin" && app.dock) {

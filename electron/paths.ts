@@ -4,7 +4,7 @@
 // state — otherwise running `npm run dev` while dogfooding the installed app
 // causes electronmon restarts to step on the user's real projects.
 //
-// AYA_DEV=1 is set by package.json's `dev:electron` script via cross-env.
+// AYA_DEV=1 is set by scripts/dev-electron.sh (`env AYA_DEV=1 electronmon .`).
 // The packaged app launches with that variable unset and therefore uses the
 // canonical ~/.aya/ directory.
 

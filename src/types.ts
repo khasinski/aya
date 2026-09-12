@@ -703,7 +703,6 @@ export interface AyaApi {
     name?: string,
   ): Promise<RemoteProjectCreateResult>;
   updateProject(project: ProjectConfig): Promise<void>;
-  deleteProject(slug: string): Promise<void>;
   readRepoProjectConfig(directory: string): Promise<RepoProjectConfig | null>;
 
   listPresets(): Promise<Preset[]>;
@@ -740,7 +739,6 @@ export interface AyaApi {
   getGitInfo(directory: string): Promise<ProjectGitInfo>;
   getGitChangedFiles(directory: string): Promise<GitChangedFile[]>;
   getGitDiff(directory: string): Promise<string>;
-  getGitWorktrees(directory: string): Promise<Worktree[]>;
   /** Create a git worktree. Errors are RETURNED, not thrown: the caller shows
    *  git's own message (e.g. "a branch named 'x' already exists"). */
   createWorktree(req: {
@@ -775,7 +773,6 @@ export interface AyaApi {
   isFullScreen(): Promise<boolean>;
   isMaximized(): Promise<boolean>;
   setDockBadge(text: string): Promise<void>;
-  focusWindow(): Promise<void>;
   /** Minimize the window (yellow traffic light). */
   minimizeWindow(): Promise<void>;
   /** Toggle maximized/restored window state. */

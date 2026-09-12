@@ -572,7 +572,6 @@ export interface AyaApi {
     name?: string,
   ): Promise<RemoteProjectCreateResult>;
   updateProject(project: ProjectConfig): Promise<void>;
-  deleteProject(slug: string): Promise<void>;
   readRepoProjectConfig(directory: string): Promise<RepoProjectConfig | null>;
 
   // Presets (terminal launchers)
@@ -619,8 +618,6 @@ export interface AyaApi {
   getGitInfo(directory: string): Promise<ProjectGitInfo>;
   getGitChangedFiles(directory: string): Promise<GitChangedFile[]>;
   getGitDiff(directory: string): Promise<string>;
-  /** Git worktrees for the repo containing `directory` ([] if not a repo). */
-  getGitWorktrees(directory: string): Promise<Worktree[]>;
   /** Create a git worktree. Errors are RETURNED, not thrown: the caller shows
    *  git's own message (e.g. "a branch named 'x' already exists"). */
   createWorktree(req: {
@@ -667,8 +664,6 @@ export interface AyaApi {
   onMaximizedChange(handler: (isMaximized: boolean) => void): () => void;
   /** Sets the macOS dock badge text. Empty string clears. No-op elsewhere. */
   setDockBadge(text: string): Promise<void>;
-  /** Brings the aya window to the foreground (restore if minimized). */
-  focusWindow(): Promise<void>;
   /** Minimize the window (yellow traffic light). */
   minimizeWindow(): Promise<void>;
   /** Toggle maximized/restored window state. */

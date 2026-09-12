@@ -1,4 +1,4 @@
-# Remote Aya Spike: `ssh darwine`
+# Remote Aya Spike: `ssh hostname`
 
 Status: exploratory spike, 2026-06-17.
 
@@ -7,29 +7,29 @@ Status: exploratory spike, 2026-06-17.
 Local machine can connect to the remote host with:
 
 ```bash
-ssh darwine
+ssh hostname
 ```
 
 Observed remote host:
 
-- Host: `darwine`
-- User: `hasik`
+- Host: `hostname`
+- User: `username`
 - OS: Linux x86_64, Ubuntu kernel `6.17.0-35-generic`
 - Node: `/usr/bin/node`, `v20.19.4`
 - npm: `/usr/bin/npm`, `9.2.0`
-- Aya CLI: `/usr/local/bin/aya -> /home/hasik/Projects/aya/bin/aya`
-- Aya home: `/home/hasik/.aya`
-- Aya repo: `/home/hasik/Projects/aya`
+- Aya CLI: `/usr/local/bin/aya -> /home/username/Projects/aya/bin/aya`
+- Aya home: `/home/username/.aya`
+- Aya repo: `/home/username/Projects/aya`
 
 The remote repo/CLI are older than current local `origin/main`; the remote CLI
 does not have an `aya remote` command yet.
 
 ## Current Remote State
 
-`~/.aya` on `darwine` contains normal project config:
+`~/.aya` on `hostname` contains normal project config:
 
 - `projects/aya.json`
-- `projects/hasik.json`
+- `projects/username.json`
 - `projects-state.json`
 - `presets.json`
 - `aya.sock`
@@ -37,7 +37,7 @@ does not have an `aya remote` command yet.
 The socket exists, but it is stale/unreachable:
 
 ```text
-connect ECONNREFUSED /home/hasik/.aya/aya.sock
+connect ECONNREFUSED /home/username/.aya/aya.sock
 ```
 
 No Aya/Electron/pty-host process was visible for the user during the spike.
@@ -49,7 +49,7 @@ is running.
 ## Prototype Probe
 
 We ran an ephemeral SSH command that did not install or modify anything on
-`darwine`. It read `~/.aya` and emitted a JSON snapshot over stdout.
+`hostname`. It read `~/.aya` and emitted a JSON snapshot over stdout.
 
 The shape worked:
 
@@ -58,12 +58,12 @@ The shape worked:
   "type": "hello",
   "protocol": 0,
   "host": {
-    "id": "darwine",
-    "name": "darwine",
+    "id": "hostname",
+    "name": "hostname",
     "platform": "linux",
-    "user": "hasik"
+    "user": "username"
   },
-  "ayaHome": "/home/hasik/.aya",
+  "ayaHome": "/home/username/.aya",
   "app": {
     "controlSocket": "present-not-proven"
   },
@@ -75,7 +75,7 @@ The shape worked:
 }
 ```
 
-The actual run returned two projects (`aya`, `hasik`) and the remote preset
+The actual run returned two projects (`aya`, `username`) and the remote preset
 list. This proves the SSH stdio path is viable for host identity and initial
 workspace metadata.
 
@@ -84,7 +84,7 @@ workspace metadata.
 Use SSH stdio as the first transport:
 
 ```bash
-ssh darwine aya remote --stdio
+ssh hostname aya remote --stdio
 ```
 
 The local app owns the SSH process. The remote `aya remote --stdio` command is a
@@ -124,10 +124,10 @@ Remote response:
   "type": "hello",
   "protocol": 1,
   "host": {
-    "id": "darwine",
-    "name": "darwine",
+    "id": "hostname",
+    "name": "hostname",
     "platform": "linux",
-    "user": "hasik"
+    "user": "username"
   },
   "permissions": {
     "mode": "read-only"
@@ -226,12 +226,12 @@ Remote projects should keep their host identity in every UI path:
    - PTY write/resize/restart commands.
    - Host-visible "remote client controlling" state.
 
-## Test Plan With `darwine`
+## Test Plan With `hostname`
 
 First testable milestone:
 
 ```bash
-ssh darwine aya remote --stdio
+ssh hostname aya remote --stdio
 ```
 
 Expected when remote Aya is not running:
@@ -240,7 +240,7 @@ Expected when remote Aya is not running:
 {
   "type": "error",
   "code": "app_unavailable",
-  "message": "Aya is not running on darwine"
+  "message": "Aya is not running on hostname"
 }
 ```
 
@@ -254,11 +254,11 @@ Expected when remote Aya is running and remote is enabled:
 
 Second milestone:
 
-1. Start a shell tab in Aya on `darwine`.
+1. Start a shell tab in Aya on `hostname`.
 2. Connect from local Aya.
 3. Verify buffered output appears locally.
 4. Type locally only after control mode is enabled.
-5. Verify the command runs on `darwine`, not locally.
+5. Verify the command runs on `hostname`, not locally.
 
 ## Open Questions
 
@@ -275,6 +275,6 @@ Second milestone:
 Build the read-only SSH stdio bridge first. Do not start with LAN sockets,
 multiple clients, or full write control.
 
-The `darwine` test shows SSH aliases and remote config discovery are already
+The `hostname` test shows SSH aliases and remote config discovery are already
 usable. The missing primitive is a real remote host-local API in Aya that can
 provide live snapshots and PTY events without direct config-file scraping.

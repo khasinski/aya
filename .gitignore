@@ -30,13 +30,6 @@ npm-debug.log*
 .env
 .env.*
 
-# Python TUI prototype
-tui-prototype/.venv/
-tui-prototype/__pycache__/
-tui-prototype/**/__pycache__/
-tui-prototype/.pytest_cache/
-*.pyc
-
 # Scratchpad design docs that live alongside the codebase but aren't shipped
 docs/onboarding.md
 
@@ -54,3 +47,10 @@ screenshots/emulator/
 # Screenshots captured during ship-gate verification runs - evidence for one
 # run, not documentation: nothing in the repo references them.
 screenshots/ship-gate/
+
+# Same rule, one directory that predates it: the WebGL white-terminal
+# before/after pair was a single bug-moment capture, never re-shot when the UI
+# moved, and the regression it documented is held by
+# e2e/webgl-context-loss.spec.ts. Contrast screenshots/projects-left-launcher/,
+# which IS tracked on purpose - those shots were re-taken as the UI changed.
+screenshots/webgl-white-terminal/

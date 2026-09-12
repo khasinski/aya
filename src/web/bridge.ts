@@ -90,7 +90,6 @@ export function createWebAya(transport: WebTransport): AyaApi {
     checkRemoteHealth: inv("remote:health"),
     createRemoteProjectOnHost: inv("remote:create-project"),
     updateProject: inv("projects:update"),
-    deleteProject: inv("projects:delete"),
     readRepoProjectConfig: inv("projects:read-repo-config"),
 
     listPresets: inv("presets:list"),
@@ -125,7 +124,6 @@ export function createWebAya(transport: WebTransport): AyaApi {
     getGitInfo: inv("env:git"),
     getGitChangedFiles: inv("env:git-changed-files"),
     getGitDiff: inv("env:git-diff"),
-    getGitWorktrees: inv("env:git-worktrees"),
     getGitRoot: inv("env:git-root"),
     getGitWorktreeStatus: inv("env:git-worktree-status"),
     getGitHubLink: inv("env:github-link"),
@@ -152,7 +150,6 @@ export function createWebAya(transport: WebTransport): AyaApi {
     isFullScreen: async () => false as never,
     isMaximized: async () => false as never,
     setDockBadge: noopAsync,
-    focusWindow: noopAsync,
     minimizeWindow: noopAsync,
     toggleMaximizeWindow: noopAsync,
     closeWindow: noopAsync,

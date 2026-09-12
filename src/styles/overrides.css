@@ -1743,11 +1743,6 @@
 .aya-settings-presets {
   gap: 12px;
 }
-.aya-settings-agent-help {
-  color: var(--fg-tertiary);
-  font-size: 12px;
-  line-height: 1.45;
-}
 .aya-preset-selector {
   min-width: 0;
 }
@@ -1810,47 +1805,6 @@
   border-radius: 6px;
   background: var(--bg-secondary);
 }
-.aya-preset-card-head {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) 28px;
-  align-items: center;
-  gap: 10px;
-}
-.aya-preset-card-icon {
-  width: 30px;
-  height: 30px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--fg-secondary);
-  font-family: var(--font-mono);
-  font-weight: 700;
-}
-.aya-preset-card-title {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.aya-preset-card-title strong,
-.aya-preset-card-title code {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.aya-preset-card-title strong {
-  color: var(--fg-primary);
-  font-size: 13px;
-}
-.aya-preset-card-title code {
-  color: var(--fg-tertiary);
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
 .aya-preset-section {
   min-width: 0;
   display: grid;
@@ -1867,28 +1821,22 @@
   display: grid;
   gap: 10px;
 }
-.aya-preset-grid--two {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
 .aya-preset-grid--account {
   grid-template-columns: minmax(110px, 0.45fr) minmax(130px, 0.7fr) minmax(190px, 1fr);
 }
 .aya-preset-grid--appearance {
   grid-template-columns: minmax(58px, 0.25fr) minmax(100px, 0.35fr) minmax(150px, 1fr);
 }
-.aya-preset-card label,
-.aya-preset-field {
+.aya-preset-card label {
   min-width: 0;
   display: grid;
   gap: 5px;
 }
-.aya-preset-card label > span,
-.aya-preset-field > span {
+.aya-preset-card label > span {
   color: var(--fg-secondary);
   font-size: 12px;
   font-weight: 600;
 }
-.aya-preset-field small,
 .aya-preset-toggle small {
   color: var(--fg-tertiary);
   font-size: 11px;
@@ -2319,15 +2267,6 @@
   align-items: flex-start;
   gap: 8px;
 }
-.aya-settings-row--head {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-weight: 600;
-  color: var(--fg-tertiary);
-  padding: 4px 4px 0;
-}
-.aya-settings-row--head span { padding-left: 2px; }
 .aya-settings-icon-input {
   text-align: center;
   font-family: var(--font-mono);
@@ -2536,11 +2475,6 @@ select.aya-modal-input {
   margin: 0 1px;
   border-radius: 2px;
 }
-.aya-settings-divider {
-  border: none;
-  border-top: 1px solid var(--border);
-  margin: 16px 0 12px;
-}
 
 /* Path hint inside the new-project modal — monospace so it reads as a path. */
 .aya-modal-hint--path {
@@ -2581,7 +2515,6 @@ select.aya-modal-input {
   background: color-mix(in oklab, var(--accent) 14%, transparent);
   border-color: color-mix(in oklab, var(--accent) 40%, transparent);
 }
-.aya-pane-snippettoggle-label { letter-spacing: 0.02em; }
 .aya-statusbar .aya-pane-snippettoggle {
   margin-left: 0;
   gap: 4px;
@@ -2821,7 +2754,6 @@ select.aya-modal-input {
   line-height: 1.5;
   resize: vertical;
 }
-.aya-snippet-inline-ico { font-weight: 700; }
 
 .aya-terminal-context-menu {
   position: fixed;

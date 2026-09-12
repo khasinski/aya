@@ -50,8 +50,6 @@ export interface ThemesFile {
   activeId: string;
 }
 
-// ----- Built-in themes -------------------------------------------------------
-
 /** "Aya Dark" — the tuned palette from the design (TerminalView.tsx previously
  *  hard-coded this). Kept as the default and as the seed for new installs. */
 export const AYA_DARK: Theme = {
@@ -209,8 +207,6 @@ export const DEFAULT_THEMES: readonly Theme[] = [
   GITHUB_LIGHT,
 ];
 
-// ----- Persistence -----------------------------------------------------------
-
 function isHexColor(s: unknown): s is string {
   return typeof s === "string" && /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(s);
 }
@@ -290,8 +286,6 @@ export async function saveThemes(file: ThemesFile): Promise<void> {
     JSON.stringify(sanitized, null, 2) + "\n",
   );
 }
-
-// ----- Parsers ---------------------------------------------------------------
 
 function toHex(n: number): string {
   const clamped = Math.max(0, Math.min(255, Math.round(n)));

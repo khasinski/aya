@@ -55,7 +55,6 @@ const api: AyaApi = {
   createRemoteProjectOnHost: (sshTarget, directory, name) =>
     ipcRenderer.invoke("remote:create-project", sshTarget, directory, name),
   updateProject: (project) => ipcRenderer.invoke("projects:update", project),
-  deleteProject: (slug) => ipcRenderer.invoke("projects:delete", slug),
   readRepoProjectConfig: (directory) =>
     ipcRenderer.invoke("projects:read-repo-config", directory),
 
@@ -94,8 +93,6 @@ const api: AyaApi = {
   getGitChangedFiles: (directory) =>
     ipcRenderer.invoke("env:git-changed-files", directory),
   getGitDiff: (directory) => ipcRenderer.invoke("env:git-diff", directory),
-  getGitWorktrees: (directory) =>
-    ipcRenderer.invoke("env:git-worktrees", directory),
   getGitRoot: (directory) => ipcRenderer.invoke("env:git-root", directory),
   getGitWorktreeStatus: (directory) =>
     ipcRenderer.invoke("env:git-worktree-status", directory),
@@ -116,7 +113,6 @@ const api: AyaApi = {
   isFullScreen: () => ipcRenderer.invoke("app:is-fullscreen"),
   isMaximized: () => ipcRenderer.invoke("app:is-maximized"),
   setDockBadge: (text) => ipcRenderer.invoke("app:set-dock-badge", text),
-  focusWindow: () => ipcRenderer.invoke("app:focus-window"),
   minimizeWindow: () => ipcRenderer.invoke("app:minimize"),
   toggleMaximizeWindow: () => ipcRenderer.invoke("app:toggle-maximize"),
   closeWindow: () => ipcRenderer.invoke("app:close"),
