@@ -375,15 +375,6 @@ export async function updateProject(project: ProjectConfig): Promise<void> {
   await writeFileAtomic(filePath, JSON.stringify(toDisk(project), null, 2) + "\n");
 }
 
-export async function deleteProject(slug: string): Promise<void> {
-  const filePath = path.join(PROJECTS_DIR, `${slug}.json`);
-  try {
-    await fs.unlink(filePath);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-  }
-}
-
 function toDisk(project: ProjectConfig): unknown {
   return {
     name: project.name,

@@ -703,7 +703,6 @@ export interface AyaApi {
     name?: string,
   ): Promise<RemoteProjectCreateResult>;
   updateProject(project: ProjectConfig): Promise<void>;
-  deleteProject(slug: string): Promise<void>;
   readRepoProjectConfig(directory: string): Promise<RepoProjectConfig | null>;
 
   listPresets(): Promise<Preset[]>;

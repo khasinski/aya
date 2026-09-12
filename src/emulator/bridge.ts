@@ -207,7 +207,6 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     checkRemoteHealth: noopAsync,
     createRemoteProjectOnHost: noopAsync,
     updateProject: noopAsync,
-    deleteProject: noopAsync,
     readRepoProjectConfig: async () => null as never,
 
     // presets

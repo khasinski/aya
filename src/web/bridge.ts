@@ -90,7 +90,6 @@ export function createWebAya(transport: WebTransport): AyaApi {
     checkRemoteHealth: inv("remote:health"),
     createRemoteProjectOnHost: inv("remote:create-project"),
     updateProject: inv("projects:update"),
-    deleteProject: inv("projects:delete"),
     readRepoProjectConfig: inv("projects:read-repo-config"),
 
     listPresets: inv("presets:list"),

@@ -55,7 +55,6 @@ const api: AyaApi = {
   createRemoteProjectOnHost: (sshTarget, directory, name) =>
     ipcRenderer.invoke("remote:create-project", sshTarget, directory, name),
   updateProject: (project) => ipcRenderer.invoke("projects:update", project),
-  deleteProject: (slug) => ipcRenderer.invoke("projects:delete", slug),
   readRepoProjectConfig: (directory) =>
     ipcRenderer.invoke("projects:read-repo-config", directory),
 

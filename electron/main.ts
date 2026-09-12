@@ -31,7 +31,6 @@ import {
   createProject,
   createRemoteProject,
   getOrCreateProject,
-  deleteProject,
   expandPath,
   listProjects,
   listProjectState,
@@ -2197,9 +2196,6 @@ function registerIpc(): void {
   );
   ipcMain.handle("projects:update", async (_e, project: unknown) =>
     updateProject(validateProjectConfig(project)),
-  );
-  ipcMain.handle("projects:delete", async (_e, slug: unknown) =>
-    deleteProject(requireString(slug, "projects:delete.slug")),
   );
   ipcMain.handle("projects:read-repo-config", async (_e, dir: unknown) =>
     readRepoProjectConfig(requireString(dir, "projects:read-repo-config.dir")),
