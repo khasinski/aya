@@ -21,7 +21,7 @@ const {
 
 // --- parseWorktrees (pure) ---------------------------------------------------
 
-const SAMPLE = `worktree /Users/hasik/Projects/aya
+const SAMPLE = `worktree /Users/username/Projects/aya
 HEAD 415f9ba5afe047ffdf272acf263fae7cba775e6b
 branch refs/heads/main
 
@@ -30,7 +30,7 @@ HEAD 0af9b5868ae1ca8a7f9ce274d7ccc1e00b92515a
 branch refs/heads/project-page-custom-domain
 prunable gitdir file points to non-existent location
 
-worktree /Users/hasik/Projects/aya-latest-build
+worktree /Users/username/Projects/aya-latest-build
 HEAD 21f8cbc3a01eb2a93ead6b8a84143e9e2dc80491
 detached
 `;
@@ -39,7 +39,7 @@ test("parseWorktrees returns one entry per block with branch + flags", () => {
   const wts = parseWorktrees(SAMPLE);
   assert.equal(wts.length, 3);
   assert.deepEqual(wts[0], {
-    path: "/Users/hasik/Projects/aya",
+    path: "/Users/username/Projects/aya",
     branch: "main",
     isMain: true,
     detached: false,

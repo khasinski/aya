@@ -45,7 +45,7 @@ test("remote server sends hello and read-only snapshot on connect", async () => 
       id: "host-1",
       name: "Host 1",
       platform: "linux",
-      user: "hasik",
+      user: "username",
     },
     getSnapshot: async () => ({
       projects: [
@@ -89,7 +89,7 @@ test("remote server sends hello and read-only snapshot on connect", async () => 
         id: "host-1",
         name: "Host 1",
         platform: "linux",
-        user: "hasik",
+        user: "username",
       },
       app: { version: "0.6.0-test" },
       permissions: { mode: "read-only" },
@@ -112,7 +112,7 @@ test("remote server reports read-only for control commands", async () => {
       id: "host-1",
       name: "Host 1",
       platform: "linux",
-      user: "hasik",
+      user: "username",
     },
     getSnapshot: async () => ({
       projects: [],
@@ -155,7 +155,7 @@ test("remote server lists directories for fs:list", async () => {
       id: "host-1",
       name: "Host 1",
       platform: "linux",
-      user: "hasik",
+      user: "username",
     },
     getSnapshot: async () => ({
       projects: [],
@@ -202,7 +202,7 @@ test("remote server creates a local project for project:create", async () => {
       id: "host-1",
       name: "Host 1",
       platform: "linux",
-      user: "hasik",
+      user: "username",
     },
     getSnapshot: async () => ({
       projects: [],

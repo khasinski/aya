@@ -20,20 +20,20 @@ const {
 // of updating the remote host. This keeps opening remote projects working
 // against remote hosts that haven't been upgraded.
 
-function existsErr(slug, projects, host = { id: "darwine", name: "darwine" }) {
+function existsErr(slug, projects, host = { id: "hostname", name: "hostname" }) {
   const err = new Error(`Project "${slug}" already exists.`);
   err.remoteContext = { host, presets: [{ id: "shell" }], projects };
   return err;
 }
 
 test("recovers the existing project named by an 'already exists' error", () => {
-  const pe = { slug: "pe", name: "pe", directory: "/home/hasik/pe", tabs: [] };
+  const pe = { slug: "pe", name: "pe", directory: "/home/username/pe", tabs: [] };
   const result = recoverExistingRemoteProject(
     existsErr("pe", [{ slug: "other", name: "o", directory: "/x", tabs: [] }, pe]),
   );
   assert.ok(result);
   assert.deepEqual(result.project, pe); // resolved absolute dir preserved
-  assert.equal(result.host.id, "darwine");
+  assert.equal(result.host.id, "hostname");
   assert.equal(result.presets.length, 1);
 });
 
@@ -43,7 +43,7 @@ test("returns null when the error carried no snapshot context", () => {
 });
 
 test("returns null for errors that are not 'already exists'", () => {
-  const err = new Error("Node is not available on darwine.");
+  const err = new Error("Node is not available on hostname.");
   err.remoteContext = { host: { id: "d" }, presets: [], projects: [] };
   assert.equal(recoverExistingRemoteProject(err), null);
 });
@@ -113,10 +113,10 @@ function remoteHello() {
     type: "hello",
     protocol: 1,
     host: {
-      id: "darwine",
-      name: "darwine",
+      id: "hostname",
+      name: "hostname",
       platform: "linux",
-      user: "hasik",
+      user: "username",
     },
     app: { version: "0.6.0-test" },
     permissions: { mode: "read-only" },
@@ -133,13 +133,13 @@ function remoteSnapshot() {
         {
           slug: "aya",
           name: "Aya",
-          directory: "/home/hasik/Projects/aya",
+          directory: "/home/username/Projects/aya",
           tabs: [{ id: "t1", presetId: "shell", name: "Shell" }],
         },
         {
           slug: "home",
           name: "Home",
-          directory: "/home/hasik",
+          directory: "/home/username",
           tabs: [],
         },
       ],
@@ -198,11 +198,11 @@ async function withMockRemote(testFn) {
             type: "fs:list-result",
             protocol: 1,
             id: request.id,
-            path: request.path ?? "/home/hasik",
+            path: request.path ?? "/home/username",
             entries: [
               {
                 name: "Projects",
-                path: "/home/hasik/Projects",
+                path: "/home/username/Projects",
                 kind: "directory",
               },
             ],
@@ -249,11 +249,11 @@ async function withMockRemote(testFn) {
 
 test("remote client waits for snapshot and returns recent projects with directory listing", async () => {
   await withMockRemote(async (mock) => {
-    const listing = await listRemoteDirectory("darwine", "/home/hasik");
+    const listing = await listRemoteDirectory("hostname", "/home/username");
 
     assert.equal(mock.requestBeforeSnapshot, false);
-    assert.equal(listing.host.name, "darwine");
-    assert.equal(listing.path, "/home/hasik");
+    assert.equal(listing.host.name, "hostname");
+    assert.equal(listing.path, "/home/username");
     assert.deepEqual(
       listing.entries.map((entry) => `${entry.kind}:${entry.name}`),
       ["directory:Projects"],
@@ -264,14 +264,14 @@ test("remote client waits for snapshot and returns recent projects with director
     );
     assert.deepEqual(
       listing.recentProjects.map((project) => `${project.slug}:${project.directory}`),
-      ["home:/home/hasik", "aya:/home/hasik/Projects/aya"],
+      ["home:/home/username", "aya:/home/username/Projects/aya"],
     );
   });
 });
 
 test("remote client exposes presets from the remote Aya snapshot", async () => {
   await withMockRemote(async () => {
-    const presets = await listRemotePresets("darwine");
+    const presets = await listRemotePresets("hostname");
 
     assert.deepEqual(
       presets.map((preset) => `${preset.id}:${preset.command}`),
@@ -283,20 +283,20 @@ test("remote client exposes presets from the remote Aya snapshot", async () => {
 test("remote client sends mkdir and project:create through the mocked ssh bridge", async () => {
   await withMockRemote(async () => {
     const created = await createRemoteDirectory(
-      "darwine",
-      "/home/hasik/Projects/new-project",
+      "hostname",
+      "/home/username/Projects/new-project",
     );
-    assert.equal(created, "/home/hasik/Projects/new-project");
+    assert.equal(created, "/home/username/Projects/new-project");
 
     const result = await createRemoteProjectOnHost(
-      "darwine",
-      "/home/hasik/Projects/new-project",
+      "hostname",
+      "/home/username/Projects/new-project",
       "New Project",
     );
-    assert.equal(result.host.id, "darwine");
+    assert.equal(result.host.id, "hostname");
     assert.equal(result.project.slug, "remote-project");
     assert.equal(result.project.name, "New Project");
-    assert.equal(result.project.directory, "/home/hasik/Projects/new-project");
+    assert.equal(result.project.directory, "/home/username/Projects/new-project");
     assert.deepEqual(
       result.presets.map((preset) => preset.id),
       ["shell", "claude-yolo"],
