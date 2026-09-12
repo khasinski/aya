@@ -1,5 +1,50 @@
 # Changelog
 
+## v0.9.0 - 2026-09-12
+
+Agents can now find and drive each other's panes, the status bar follows the
+checkout you are actually in, statuses report themselves automatically, and Aya
+can wear your system theme. Plus a round of reliability and observability work
+for the failures that used to leave no trace.
+
+### Features
+
+- **See and drive the other agents in a project.** `aya pane list` shows every
+  pane in your project (yours marked), and `aya pane send --submit` now really
+  presses Enter in Codex and Claude Code instead of leaving the text unsent, so
+  handing work from one agent to another actually lands.
+- **Worktree-aware status bar.** The branch chip reads the checkout the active
+  tab is in - not just the project's main checkout - with a picker over every
+  worktree (live branch + dirty count) that follows the terminal's real cwd.
+- **Automatic status.** An opt-in Settings toggle wires Claude Code's lifecycle
+  hooks and Codex's `notify` program to `aya status`, so each pane reports
+  waiting / active / done on its own. No-ops entirely outside an Aya terminal.
+- **Whole-app theming + Omarchy.** Theming now covers the app chrome, not just
+  the terminal; dark and light are built-in skins. On Omarchy, an "Omarchy"
+  appearance mode skins both the chrome and the terminal from the current theme
+  and live-follows `omarchy-theme-set`.
+
+### Fixes
+
+- **GPU-helper white flash.** A GPU-process death is logged with its reason and,
+  once Chromium relaunches it, visible terminals re-run their WebGL/PTY repair
+  (#79).
+- **Silent macOS auto-update rollback.** A ShipIt install that fails and
+  relaunches the old version is now detected on the next launch and surfaced,
+  instead of looking like success; overlapping installs are guarded (#78).
+- **The flaky e2e suite.** Detached PTY hosts (designed to outlive the app) were
+  never reaped in CI - dozens piled up per run and starved later specs. They are
+  now shut down and, on liveness, killed.
+- **Stale host** shows a red dot on the "Restart Aya" menu item (#52), and Codex
+  usage surfaces exhausted premium credits as full (#103).
+
+### Internal
+
+- PTY lifecycle log now records the exit signal and client socket connect /
+  disconnect, so a mass reload can be told apart from an OS kill (#83).
+- Decruft sweep: dead code, config, and CSS removed, and a private machine's
+  name taken out of the published site (#110). Dependency bumps.
+
 ## v0.8.0 - 2026-08-28
 
 Aya learns what its panes are actually doing, and lets agents work with each
