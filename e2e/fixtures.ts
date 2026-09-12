@@ -54,13 +54,45 @@ async function shutdownPtyHost(ayaHome: string): Promise<void> {
   ]);
 }
 
+/** Does this pid still exist? Signal 0 performs the permission/existence check
+ *  without delivering anything. */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function closeAndWait(app: ElectronApplication): Promise<void> {
   const proc = app.process();
+  const pid = proc.pid;
   const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
   const closed = app.close().catch(() => undefined);
   await Promise.race([closed, delay(APP_GRACEFUL_CLOSE_TIMEOUT_MS)]);
-  if (!proc.killed) proc.kill("SIGKILL");
-  await Promise.race([closed, exited, delay(APP_PROCESS_EXIT_TIMEOUT_MS)]);
+
+  // Escalate on LIVENESS, never on `proc.killed`. That flag means "a signal was
+  // sent", not "the process is gone" - and Playwright's close() sends one
+  // first, so gating SIGKILL on it skipped the kill whenever the app ignored
+  // the polite request. Measured: app instances from those runs were still
+  // alive 13 hours later, each holding its temp AYA_HOME and respawning its
+  // pty-host, which starved every later run in the same suite. SIGKILL cannot
+  // be caught, so a surviving process proves it was never sent.
+  if (pid !== undefined && isAlive(pid)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // already gone between the check and the signal
+    }
+  }
+  await Promise.race([exited, delay(APP_PROCESS_EXIT_TIMEOUT_MS)]);
+
+  // Do not leave quietly: a leak here is invisible in THIS test's result and
+  // only shows up as unrelated timeouts much later, so say so now.
+  if (pid !== undefined && isAlive(pid)) {
+    console.error(`[e2e] app pid ${pid} survived SIGKILL - it will disturb later tests`);
+  }
 }
 
 /** Fixtures that launch the built Aya app once per test against an isolated,
@@ -153,10 +185,15 @@ export const test = base.extend<{
     await use(app);
     await closeAndWait(app);
     await shutdownPtyHost(seeded.ayaHome);
-    if (preStartedHost && !preStartedHost.killed) {
-      // Belt: the socket shutdown above normally takes the host down; a hung
-      // one must not leak past the test.
-      preStartedHost.kill("SIGKILL");
+    // Belt: the socket shutdown above normally takes the host down; a hung one
+    // must not leak past the test. Gated on liveness, not on `.killed` - see
+    // closeAndWait for why that flag is the wrong question to ask.
+    if (preStartedHost?.pid !== undefined && isAlive(preStartedHost.pid)) {
+      try {
+        preStartedHost.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
     }
   },
 
