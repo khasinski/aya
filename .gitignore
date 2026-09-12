@@ -50,3 +50,7 @@ playwright/.cache/
 
 # Generated emulator screenshots (reproducible via npm run emulator:shot)
 screenshots/emulator/
+
+# Screenshots captured during ship-gate verification runs - evidence for one
+# run, not documentation: nothing in the repo references them.
+screenshots/ship-gate/
