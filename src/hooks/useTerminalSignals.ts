@@ -6,7 +6,6 @@ import {
 } from "react";
 import type { ProjectConfig, TerminalState } from "../types";
 
-// Poll interval (ms) for ticking recent-activity recomputation.
 const ACTIVITY_TICK_INTERVAL_MS = 800;
 // A terminal counts as "recently active" for this long after its last output.
 const ACTIVITY_WINDOW_MS = 3000;

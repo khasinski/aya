@@ -11,7 +11,6 @@ import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop"
 
 // Debounce delay (ms) applied to the search input before it becomes the active query.
 const SEARCH_DEBOUNCE_MS = 100;
-// Maximum number of ranked search results returned from a query.
 const SEARCH_MAX_RESULTS = 50;
 
 interface Props {

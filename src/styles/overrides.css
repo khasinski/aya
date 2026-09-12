@@ -1,6 +1,7 @@
-/* Aya-specific additions on top of the design CSS. Kept separate so the
-   ported armillary.css / app.css can stay pristine and diffable against the
-   handoff bundle. */
+/* Aya-specific additions on top of the design CSS. Kept separate so the ported
+   armillary.css stays close to the handoff bundle and diffable against it.
+   app.css is NOT pristine any more - it has carried Aya-only tokens and rules
+   for many releases, so only armillary.css is worth diffing. */
 
 /* xterm.js host — fills the pane body. The design uses simulated React divs;
    we replace that with the real terminal canvas. */

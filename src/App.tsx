@@ -105,7 +105,6 @@ const USAGE_POLL_INTERVAL_MS = 30_000;
 const MAX_PROJECT_EVENTS = 200;
 // Cap on preset suggestions offered during repo preset import.
 const MAX_SUGGESTED_PRESETS = 8;
-// Default sidebar width in pixels.
 const DEFAULT_SIDEBAR_WIDTH_PX = 240;
 const DEFAULT_RAIL_WIDTH_PX = 220;
 // Stable empty map handed to chrome when summaries are off, so the prop doesn't
@@ -130,7 +129,6 @@ function pollVisible(refresh: () => void, intervalMs: number): () => void {
     document.removeEventListener("visibilitychange", onVisible);
   };
 }
-// Default terminal font size in pixels.
 const TERMINAL_FONT_SIZE_PX = 13;
 // Persisted schema version for ProjectCollectionState.
 const PROJECT_STATE_VERSION = 1;
@@ -1525,9 +1523,6 @@ export function App() {
     [],
   );
 
-  // ---------------------------------------------------------------------------
-  // Boot
-  // ---------------------------------------------------------------------------
   useEffect(() => {
     (async () => {
       const [
@@ -1970,9 +1965,6 @@ export function App() {
     };
   }, [activeProjectId, didBootstrap]);
 
-  // ---------------------------------------------------------------------------
-  // Actions
-  // ---------------------------------------------------------------------------
   const persistProject = useCallback(
     (slug: string, nextTerminals: Record<string, TerminalState>) => {
       const project = projectsRef.current.find((p) => p.slug === slug);
@@ -3199,9 +3191,6 @@ export function App() {
     return window.aya.importTheme();
   }, []);
 
-  // ---------------------------------------------------------------------------
-  // Missing-dir modal handlers
-  // ---------------------------------------------------------------------------
   const dequeueMissingDir = useCallback(() => {
     setMissingDirQueue((q) => q.slice(1));
   }, []);
@@ -3231,9 +3220,6 @@ export function App() {
     dequeueMissingDir();
   }, [missingDirQueue, homeDir, hydrateProjectTerminals, dequeueMissingDir]);
 
-  // ---------------------------------------------------------------------------
-  // Derived
-  // ---------------------------------------------------------------------------
   const activeProject = activeProjectId
     ? findProject(projects, activeProjectId)
     : null;

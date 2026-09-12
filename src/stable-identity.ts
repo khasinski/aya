@@ -3,7 +3,8 @@
 // derived CONTENTS are unchanged (e.g. a background project's terminal
 // flipped, the active project's list is the same objects), reusing the
 // previous identity keeps memoized children (Sidebar/TopBar) from
-// re-rendering. Pure functions here; the useStable* hooks live in App.
+// re-rendering. Pure functions here; the useStable hook lives in
+// hooks/useStableIdentity.ts.
 
 /** Same length and same elements by reference (Object.is). */
 export function sameArrayItems<T>(a: readonly T[], b: readonly T[]): boolean {
