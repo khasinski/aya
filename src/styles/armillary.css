@@ -23,11 +23,6 @@
    ------------------------------------------------------------------------- */
 :root {
   --status-active:           #40c463;  /* GitHub green L3 — "recent commit" */
-
-  /* Heatmap empty cell (GitHub contributions — verbatim). Read by nothing in
-     CSS; src/theme-skin.ts recomputes it per skin. */
-  --heat-0:                  #ebedf0;
-
   --rich-red:                #c01c28;
 
   /* ---- Type scale (dashboard) --------------------------------------- */
@@ -85,24 +80,15 @@
   --fg-primary:              #31333f;    /* Streamlit body text */
   --fg-secondary:            #555867;
   --fg-tertiary:              #83889e;   /* st.caption */
-  --fg-inverse:              #ffffff;
 
   --border:                  #e6e9ef;
   --border-strong:           #d0d4e0;
-  --border-focus:            #ff4b4b;    /* Streamlit focus ring */
 
   --accent:                  #ff4b4b;    /* Streamlit primary red */
   --accent-hover:            #e03131;
 
-  /* Callout backgrounds — match Streamlit st.info/warning/success/error */
-  --callout-info-bg:         #e7f5ff;
-  --callout-info-fg:         #0b5394;
   --callout-warning-bg:      #fff4e6;
   --callout-warning-fg:      #8a5a00;
-  --callout-success-bg:      #ebfbee;
-  --callout-success-fg:      #2b8a3e;
-  --callout-error-bg:        #fff5f5;
-  --callout-error-fg:        #c92a2a;
 }
 
 
@@ -118,26 +104,15 @@
   --fg-primary:              #c9d1d9;   /* heatmap card fg — verbatim */
   --fg-secondary:            #b1bac4;
   --fg-tertiary:              #8b949e;   /* heatmap .sub */
-  --fg-inverse:              #0d1117;
 
   --border:                  #30363d;
   --border-strong:           #484f58;
-  --border-focus:            #58a6ff;
 
   --accent:                  #58a6ff;
   --accent-hover:            #79b8ff;
 
-  /* Invert the heatmap empty cell for dark backgrounds */
-  --heat-0:                  #161b22;
-
-  --callout-info-bg:         #0c2d6b;
-  --callout-info-fg:         #58a6ff;
   --callout-warning-bg:      #3a2d04;
   --callout-warning-fg:      #e3b341;
-  --callout-success-bg:      #0e2818;
-  --callout-success-fg:      #3fb950;
-  --callout-error-bg:        #3a0e0e;
-  --callout-error-fg:        #f85149;
 }
 
 /* Honor OS preference when no explicit [data-theme] attr is set. */
@@ -150,27 +125,18 @@
     --fg-primary:            #c9d1d9;
     --fg-secondary:          #b1bac4;
     --fg-tertiary:            #8b949e;
-    --fg-inverse:            #0d1117;
     --border:                #30363d;
     --border-strong:         #484f58;
-    --border-focus:          #58a6ff;
     --accent:                #58a6ff;
     --accent-hover:          #79b8ff;
-    --heat-0:                #161b22;
 
-    /* The callout pairs belong here too: this block mirrors
-       [data-theme="dark"], and without them the default "System" appearance on
+    /* The callout pair belongs here too: this block mirrors
+       [data-theme="dark"], and without it the default "System" appearance on
        a dark-mode OS resolves the LIGHT callout values - a near-white banner in
-       a dark UI. src/theme-skin.ts emits all eight, so a skin was already
-       overriding them; only the un-skinned system-dark path was short. */
-    --callout-info-bg:       #0c2d6b;
-    --callout-info-fg:       #58a6ff;
+       a dark UI. src/theme-skin.ts emits this pair, so a skin was already
+       overriding it; only the un-skinned system-dark path was short. */
     --callout-warning-bg:    #3a2d04;
     --callout-warning-fg:    #e3b341;
-    --callout-success-bg:    #0e2818;
-    --callout-success-fg:    #3fb950;
-    --callout-error-bg:      #3a0e0e;
-    --callout-error-fg:      #f85149;
   }
 }
 

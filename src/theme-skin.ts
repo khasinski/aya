@@ -34,22 +34,14 @@ export function paletteToChromeVars(p: OmarchyPalette): Record<string, string> {
     "--fg-primary": fg,
     "--fg-secondary": mix(fg, 82, bg),
     "--fg-tertiary": muted,
-    "--fg-inverse": bg,
     "--border": mix(bg, 62, muted),
     "--border-strong": muted,
-    "--border-focus": accent,
     "--accent": accent,
     "--accent-hover": mix(accent, 82, fg),
-    // Dark-only token in armillary; harmless to set in light.
-    "--heat-0": mix(bg, 92, fg),
-    "--callout-info-bg": mix(p.blue ?? accent, 15, bg),
-    "--callout-info-fg": p.blue ?? accent,
+    // Only the WARNING callout pair has a reader (overrides.css); the info,
+    // success and error triplets were computed and applied for nothing.
     "--callout-warning-bg": mix(p.yellow ?? accent, 15, bg),
     "--callout-warning-fg": p.yellow ?? accent,
-    "--callout-success-bg": mix(p.green ?? accent, 15, bg),
-    "--callout-success-fg": p.green ?? accent,
-    "--callout-error-bg": mix(p.red ?? accent, 15, bg),
-    "--callout-error-fg": p.red ?? accent,
   };
 }
 

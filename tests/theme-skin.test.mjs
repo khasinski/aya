@@ -44,21 +44,12 @@ const CHROME_KEYS = [
   "--fg-primary",
   "--fg-secondary",
   "--fg-tertiary",
-  "--fg-inverse",
   "--border",
   "--border-strong",
-  "--border-focus",
   "--accent",
   "--accent-hover",
-  "--heat-0",
-  "--callout-info-bg",
-  "--callout-info-fg",
   "--callout-warning-bg",
   "--callout-warning-fg",
-  "--callout-success-bg",
-  "--callout-success-fg",
-  "--callout-error-bg",
-  "--callout-error-fg",
 ];
 
 test("the chrome token set is exactly what the renderer applies", () => {
@@ -72,19 +63,15 @@ test("chrome vars map the palette's own colors onto Aya's source tokens", () => 
   const v = paletteToChromeVars(DARK);
   assert.equal(v["--bg"], "#1a1b26");
   assert.equal(v["--fg-primary"], "#a9b1d6");
-  assert.equal(v["--fg-inverse"], "#1a1b26");
   assert.equal(v["--accent"], "#bb9af7");
-  assert.equal(v["--border-focus"], "#bb9af7");
   assert.equal(v["--fg-tertiary"], "#414868"); // muted
   assert.equal(v["--border-strong"], "#414868"); // muted
-  assert.equal(v["--callout-error-fg"], "#f7768e"); // red
-  assert.equal(v["--callout-success-fg"], "#9ece6a"); // green
+  // The warning pair reads ANSI yellow, NOT the accent - hence the fixture
+  // keeps them distinct.
   assert.equal(v["--callout-warning-fg"], "#e0af68"); // yellow
-  // The info pair reads ANSI blue, NOT the accent - hence the split fixture.
-  assert.equal(v["--callout-info-fg"], "#7aa2f7");
   assert.equal(
-    v["--callout-info-bg"],
-    "color-mix(in oklab, #7aa2f7 15%, #1a1b26)",
+    v["--callout-warning-bg"],
+    "color-mix(in oklab, #e0af68 15%, #1a1b26)",
   );
 });
 
@@ -95,7 +82,6 @@ test("chrome tiers are derived by exact mixes, not merely 'some color-mix'", () 
   assert.equal(v["--bg-secondary"], "color-mix(in oklab, #1a1b26 92%, #a9b1d6)");
   assert.equal(v["--bg-tertiary"], "color-mix(in oklab, #1a1b26 86%, #a9b1d6)");
   assert.equal(v["--bg-code"], "color-mix(in oklab, #1a1b26 90%, #a9b1d6)");
-  assert.equal(v["--heat-0"], "color-mix(in oklab, #1a1b26 92%, #a9b1d6)");
   assert.equal(v["--fg-secondary"], "color-mix(in oklab, #a9b1d6 82%, #1a1b26)");
   assert.equal(v["--border"], "color-mix(in oklab, #1a1b26 62%, #414868)");
   assert.equal(v["--accent-hover"], "color-mix(in oklab, #bb9af7 82%, #a9b1d6)");
@@ -112,13 +98,10 @@ test("a partial palette still yields every chrome token, with the right fallback
   // muted absent -> derived from fg/bg at a SPECIFIC ratio.
   assert.equal(v["--fg-tertiary"], "color-mix(in oklab, #ffffff 55%, #000000)");
   assert.equal(v["--border-strong"], "color-mix(in oklab, #ffffff 55%, #000000)");
-  // Every ANSI-sourced callout falls back to the accent, not a literal.
-  assert.equal(v["--callout-info-fg"], "#ff0000");
+  // The ANSI-sourced callout falls back to the accent, not a literal.
   assert.equal(v["--callout-warning-fg"], "#ff0000");
-  assert.equal(v["--callout-success-fg"], "#ff0000");
-  assert.equal(v["--callout-error-fg"], "#ff0000");
   assert.equal(
-    v["--callout-error-bg"],
+    v["--callout-warning-bg"],
     "color-mix(in oklab, #ff0000 15%, #000000)",
   );
 });

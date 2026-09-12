@@ -11,15 +11,15 @@ body {
   overflow: hidden;
 }
 
-/* ---- accent overrides driven by Tweaks ---- */
+/* The accent picker these belonged to is gone; "green" is now the only value
+   anything sets (index/web/emulator.html on <html>, App.tsx on the app
+   container), so the purple and amber variants were unreachable.
+   NOTE: the copy on the app CONTAINER shadows the inherited --accent that
+   theme-skin.ts sets inline on <html>, so an Omarchy skin's accent does not
+   reach app descendants. Left as-is on purpose - changing that is a behavior
+   change, not decruft. */
 [data-accent="green"] { --accent: #40c463; --accent-hover: #34a853; }
-[data-accent="purple"] { --accent: #a371f7; --accent-hover: #8957e5; }
-[data-accent="amber"]  { --accent: #f0ad4e; --accent-hover: #d49434; }
-
-/* terminal-tinted accent text colors */
-[data-accent="green"]  { --accent-soft: #56d364; }
-[data-accent="purple"] { --accent-soft: #d2a8ff; }
-[data-accent="amber"]  { --accent-soft: #e3b341; }
+[data-accent="green"] { --accent-soft: #56d364; }
 
 /* App-specific theme tokens. The base is light; the media query below
    mirrors armillary.css so the shell follows the OS when no explicit theme

@@ -247,10 +247,6 @@ export function compactTree(tree: SplitNode): SplitNode | undefined {
   return assignedTerminalIds(tree).length === 0 ? undefined : tree;
 }
 
-export function singleLeafTree(leafId: string, terminalId: string | null): SplitNode {
-  return leaf(leafId, terminalId);
-}
-
 /** Geometry for every pane, as percentages of the container. Rendering uses
  *  this to place panes as absolutely-positioned FLAT siblings: nesting the DOM
  *  to match the tree would change each TerminalView's position in the React
