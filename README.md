@@ -199,6 +199,18 @@ npm run build    # renderer + Electron main build
 npm run package  # build and package with electron-builder
 ```
 
+To trace what a terminal actually receives on input — key sequences, modifier
+keys, application-mode escapes — set this in the renderer devtools console (the
+flag is read per keystroke, so it takes effect immediately):
+
+```js
+localStorage.setItem("aya:debug-terminal-input", "1"); // "0" or removed = off
+```
+
+Every keystroke then lands in the console as `[aya terminal input] <terminal>
+<preset>: <data>`. That includes anything you *paste*, so turn it off before
+pasting a token or password into a terminal.
+
 ## Daily use
 
 ### Open projects

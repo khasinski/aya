@@ -13,13 +13,13 @@ ssh darwine
 Observed remote host:
 
 - Host: `darwine`
-- User: `hasik`
+- User: `<user>`
 - OS: Linux x86_64, Ubuntu kernel `6.17.0-35-generic`
 - Node: `/usr/bin/node`, `v20.19.4`
 - npm: `/usr/bin/npm`, `9.2.0`
-- Aya CLI: `/usr/local/bin/aya -> /home/hasik/Projects/aya/bin/aya`
-- Aya home: `/home/hasik/.aya`
-- Aya repo: `/home/hasik/Projects/aya`
+- Aya CLI: `/usr/local/bin/aya -> /home/<user>/Projects/aya/bin/aya`
+- Aya home: `/home/<user>/.aya`
+- Aya repo: `/home/<user>/Projects/aya`
 
 The remote repo/CLI are older than current local `origin/main`; the remote CLI
 does not have an `aya remote` command yet.
@@ -29,7 +29,7 @@ does not have an `aya remote` command yet.
 `~/.aya` on `darwine` contains normal project config:
 
 - `projects/aya.json`
-- `projects/hasik.json`
+- `projects/<user>.json`
 - `projects-state.json`
 - `presets.json`
 - `aya.sock`
@@ -37,7 +37,7 @@ does not have an `aya remote` command yet.
 The socket exists, but it is stale/unreachable:
 
 ```text
-connect ECONNREFUSED /home/hasik/.aya/aya.sock
+connect ECONNREFUSED /home/<user>/.aya/aya.sock
 ```
 
 No Aya/Electron/pty-host process was visible for the user during the spike.
@@ -61,9 +61,9 @@ The shape worked:
     "id": "darwine",
     "name": "darwine",
     "platform": "linux",
-    "user": "hasik"
+    "user": "<user>"
   },
-  "ayaHome": "/home/hasik/.aya",
+  "ayaHome": "/home/<user>/.aya",
   "app": {
     "controlSocket": "present-not-proven"
   },
@@ -75,7 +75,7 @@ The shape worked:
 }
 ```
 
-The actual run returned two projects (`aya`, `hasik`) and the remote preset
+The actual run returned two projects (`aya`, `<user>`) and the remote preset
 list. This proves the SSH stdio path is viable for host identity and initial
 workspace metadata.
 
@@ -127,7 +127,7 @@ Remote response:
     "id": "darwine",
     "name": "darwine",
     "platform": "linux",
-    "user": "hasik"
+    "user": "<user>"
   },
   "permissions": {
     "mode": "read-only"
