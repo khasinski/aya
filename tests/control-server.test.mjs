@@ -201,13 +201,17 @@ test("control server: status is forwarded to every window sink", async () => {
   // regression to "deliver to the first one".
   options.getWindows = () => [sink("a"), sink("gone", true), sink("b")];
   await withServer(options, async (socket) => {
+    const before = Date.now();
     const res = await rpc(
       socket,
+      // Every field bin/aya sends, so a dropped one has somewhere to show up.
       `${JSON.stringify({
         type: "status",
         level: "active",
         text: "running",
         terminalId: "t1",
+        projectSlug: "aya",
+        cwd: "/tmp/aya-project",
       })}\n`,
     );
     assert.deepEqual(res, { ok: true });
@@ -220,9 +224,20 @@ test("control server: status is forwarded to every window sink", async () => {
     );
     const [, channel, update] = sent[0];
     assert.equal(channel, "control:status");
-    assert.equal(update.level, "active");
-    assert.equal(update.text, "running");
-    assert.equal(update.terminalId, "t1");
+    // Whole-object: a per-field spot check leaves the unasserted fields free to
+    // be deleted from the update the renderer consumes.
+    const { updatedAt, ...rest } = update;
+    assert.deepEqual(rest, {
+      level: "active",
+      text: "running",
+      terminalId: "t1",
+      projectSlug: "aya",
+      cwd: "/tmp/aya-project",
+    });
+    assert.ok(
+      Number.isInteger(updatedAt) && updatedAt >= before && updatedAt <= Date.now(),
+      `updatedAt ${updatedAt} must be a timestamp taken during the dispatch`,
+    );
   });
 });
 

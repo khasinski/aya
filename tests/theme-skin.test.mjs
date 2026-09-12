@@ -123,6 +123,32 @@ test("a partial palette still yields every chrome token, with the right fallback
   );
 });
 
+/** Every slot xterm reads from us. A slot that goes missing - or turns
+ *  conditional - silently hands that color back to xterm's own defaults. */
+const TERMINAL_KEYS = [
+  "background",
+  "foreground",
+  "cursor",
+  "cursorAccent",
+  "selectionBackground",
+  "black",
+  "red",
+  "green",
+  "yellow",
+  "blue",
+  "magenta",
+  "cyan",
+  "white",
+  "brightBlack",
+  "brightRed",
+  "brightGreen",
+  "brightYellow",
+  "brightBlue",
+  "brightMagenta",
+  "brightCyan",
+  "brightWhite",
+];
+
 test("terminal colors are concrete hex straight from the palette", () => {
   // The previous guard - no value matches /color-mix/ - was vacuous and left 14
   // of the 21 slots undefended: green and cyan could be swapped, still green.
@@ -160,13 +186,35 @@ test("a minimal palette fills every terminal slot from bg/fg/accent", () => {
     background: "#eff1f5",
     foreground: "#4c4f69",
   });
-  for (const [slot, value] of Object.entries(c)) {
-    assert.equal(typeof value, "string", `${slot} must be a string`);
-    assert.ok(value.length > 0, `${slot} must not be empty`);
-  }
-  assert.equal(c.blue, "#1e66f5"); // no ANSI blue -> the accent
-  assert.equal(c.black, "#eff1f5"); // no dark backgrounds -> the background
-  assert.equal(c.white, "#4c4f69"); // no light foreground -> the foreground
+  // The key SET, not a per-entry loop: Object.entries skips a missing key, so a
+  // slot made conditional walks straight past a typeof/length check.
+  assert.deepEqual(Object.keys(c).sort(), [...TERMINAL_KEYS].sort());
+  // Whole-object, so the literal fallbacks are pinned and cannot be swapped.
+  // Note: on this LIGHT palette black and selectionBackground both land on the
+  // background, and the ANSI literals are dark - that is today's behavior.
+  assert.deepStrictEqual(c, {
+    background: "#eff1f5",
+    foreground: "#4c4f69",
+    cursor: "#1e66f5",
+    cursorAccent: "#eff1f5",
+    selectionBackground: "#eff1f5",
+    black: "#eff1f5", // no dark backgrounds -> the background
+    red: "#cc6666",
+    green: "#b5bd68",
+    yellow: "#f0c674",
+    blue: "#1e66f5", // no ANSI blue -> the accent
+    magenta: "#b294bb",
+    cyan: "#8abeb7",
+    white: "#4c4f69", // no light foreground -> the foreground
+    brightBlack: "#4c4f69",
+    brightRed: "#cc6666",
+    brightGreen: "#b5bd68",
+    brightYellow: "#f0c674",
+    brightBlue: "#1e66f5",
+    brightMagenta: "#b294bb",
+    brightCyan: "#8abeb7",
+    brightWhite: "#4c4f69",
+  });
   // No color-mix can reach the terminal: xterm cannot parse it.
   for (const value of Object.values(c)) {
     assert.doesNotMatch(value, /color-mix/);
