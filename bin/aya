@@ -133,7 +133,7 @@ client.on("end", () => {
     process.exitCode = 1;
     return;
   }
-  // pane read is the one command whose payload IS the answer.
+  // pane read / pane list are the commands whose payload IS the answer.
   if (typeof parsed.output === "string") process.stdout.write(parsed.output);
 });
 NODE

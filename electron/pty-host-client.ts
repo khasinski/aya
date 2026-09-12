@@ -84,8 +84,12 @@ export class PtyHostClient {
     });
   }
 
-  async write(ptyId: string, data: string): Promise<void> {
-    await this.request({ id: 0, type: "write", ptyId, data });
+  /** Resolves false only when the host positively reports the data went
+   *  nowhere. A host from an older build answers null, which reads as
+   *  delivered - an unknown answer must not be turned into a failure. */
+  async write(ptyId: string, data: string): Promise<boolean> {
+    const result = await this.request({ id: 0, type: "write", ptyId, data });
+    return result !== false;
   }
 
   async resize(ptyId: string, cols: number, rows: number): Promise<void> {

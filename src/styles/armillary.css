@@ -217,6 +217,20 @@
     --accent:                #58a6ff;
     --accent-hover:          #79b8ff;
     --heat-0:                #161b22;
+
+    /* The callout pairs belong here too: this block mirrors
+       [data-theme="dark"], and without them the default "System" appearance on
+       a dark-mode OS resolves the LIGHT callout values - a near-white banner in
+       a dark UI. src/theme-skin.ts emits all eight, so a skin was already
+       overriding them; only the un-skinned system-dark path was short. */
+    --callout-info-bg:       #0c2d6b;
+    --callout-info-fg:       #58a6ff;
+    --callout-warning-bg:    #3a2d04;
+    --callout-warning-fg:    #e3b341;
+    --callout-success-bg:    #0e2818;
+    --callout-success-fg:    #3fb950;
+    --callout-error-bg:      #3a0e0e;
+    --callout-error-fg:      #f85149;
   }
 }
 

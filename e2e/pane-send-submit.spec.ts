@@ -41,8 +41,13 @@ const RECORDER = join(__dirname, "helpers", "pty-recorder.cjs");
 // The pane command runs under the user's login shell, whose PATH is not the
 // runner's - so spawn the recorder with the very node running this spec.
 const NODE = process.execPath;
-/** Smallest gap that still proves the CR left the text's burst behind. */
-const MIN_SUBMIT_GAP_MS = 50;
+/** The gap the agent TUIs need, restated independently of
+ *  PANE_SEND_SUBMIT_DELAY_MS so that shrinking that constant fails here instead
+ *  of moving both sides at once. Measurements: electron/control.ts. */
+const MIN_SUBMIT_GAP_MS = 120;
+/** Comfortably past the submit delay, so a regressed always-submit has
+ *  provably had its chance to deliver a CR before the negative leg asserts. */
+const SUBMIT_SETTLE_MS = 600;
 
 /** Run the real CLI against the TEST instance. Every AYA_* variable is dropped
  *  first: this suite is often run from inside an Aya pane, and an inherited
@@ -184,6 +189,15 @@ test.describe("pane-send into an agent-shaped program", () => {
         timeout: 15_000,
       })
       .toBe("tekst");
+
+    // The poll above resolves the instant the bytes first equal "tekst", so on
+    // its own it says nothing about "no Enter follows": an implementation that
+    // always appends a delayed CR satisfies it too. Settle past the submit
+    // window, then assert - that is what makes the always-submit regression
+    // die deterministically instead of by a race.
+    await window.waitForTimeout(SUBMIT_SETTLE_MS);
+    const chunks = recorded(seeded, seeded.tabIds.right);
+    expect(bytes(chunks), "an Enter arrived without --submit").toBe("tekst");
   });
 });
 

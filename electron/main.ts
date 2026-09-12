@@ -78,8 +78,10 @@ import {
   diagnoseRelaunch,
   readPendingUpdate,
   markPendingUpdate,
+  markPendingUpdateSync,
   clearPendingUpdate,
   cleanShipItCache,
+  shouldCleanShipItCache,
 } from "./update-recovery";
 import {
   readOmarchyStatus,
@@ -218,6 +220,11 @@ let updateCheckInFlight: Promise<UpdateStatus> | null = null;
 // install click must not spawn a second ShipIt - overlapping install requests
 // are a suspected cause of the silent-rollback failure.
 let updateInstalling = false;
+// Sticky warning for a previous update that silently rolled back (#78). Set by
+// reconcilePendingUpdate, merged into every status by updateStatusBase, and
+// cleared only when an install actually applies - the phase/message it used to
+// live in is replaced by the startup auto-check 12 s later.
+let rollbackNotice: string | null = null;
 // Where to send a user whose auto-update silently failed (#78).
 const RELEASES_URL = "https://github.com/khasinski/aya/releases/latest";
 let macosWindowHack:
@@ -885,10 +892,17 @@ function updatesSupportedMessage(): string {
   return "Automatic updates are not supported on this platform.";
 }
 
-function updateStatusBase(): Pick<UpdateStatus, "supported" | "currentVersion"> {
+function updateStatusBase(): Pick<
+  UpdateStatus,
+  "supported" | "currentVersion" | "rollbackNotice"
+> {
   return {
     supported: updatesSupportedMessage() === "",
     currentVersion: app.getVersion(),
+    // Merged into every status write, so the silent-rollback warning survives
+    // the auto-check that fires 12 s after reconcile replaced the status - and
+    // is therefore still there when Settings is opened minutes later.
+    ...(rollbackNotice ? { rollbackNotice } : {}),
   };
 }
 
@@ -941,16 +955,25 @@ async function reconcilePendingUpdate(win: BrowserWindow | null): Promise<void> 
   if (diagnosis === "none") return;
   await clearPendingUpdate();
   updateInstalling = false;
-  if (diagnosis === "applied") return; // it worked; stay quiet
+  if (diagnosis === "applied") {
+    rollbackNotice = null; // an install landed; retire any earlier warning
+    return; // it worked; stay quiet
+  }
   // Rolled back: the install silently failed and we relaunched the old bundle.
   diagnosticsLog.append("update-rolled-back", {
     target: pending?.targetVersion,
     current: app.getVersion(),
+    attempts: pending?.attempts,
   });
-  await cleanShipItCache();
+  // The notice is cheap and true either way; the recursive cache wipe is not,
+  // so it waits for a repeat failure. A first-attempt diagnosis can still land
+  // while ShipIt is doing something, and wiping its state underneath it would
+  // make the very problem we are reporting worse.
+  if (shouldCleanShipItCache(pending)) await cleanShipItCache();
+  rollbackNotice = `The update to ${pending?.targetVersion} didn't install - still on ${app.getVersion()}. Try the DMG from the releases page.`;
   setUpdateStatus({
     phase: "error",
-    message: `The update to ${pending?.targetVersion} didn't install - still on ${app.getVersion()}. Try the DMG from the releases page.`,
+    message: rollbackNotice,
   });
   const message = `Update to ${pending?.targetVersion} didn't apply`;
   const detail = `Aya is still on ${app.getVersion()}. The in-app update failed to install and rolled back to the current version. You can install the latest release manually.`;
@@ -1037,6 +1060,19 @@ function configureAutoUpdates(win: BrowserWindow): void {
     }
   });
   autoUpdater.on("error", (error) => {
+    // electron-updater reports a FAILED HANDOFF here, not by throwing out of
+    // quitAndInstall: BaseUpdater dispatches this event and returns, and
+    // MacUpdater can return without quitting at all. So this is the only place
+    // an async install failure can release the latch - without it the button
+    // stays dead for the rest of the session.
+    //
+    // The MARKER is deliberately NOT cleared. `error` is the single channel for
+    // checks, downloads and installs alike, so a network failure on an
+    // unrelated check would otherwise delete the one piece of evidence the #78
+    // detector depends on. A stale marker costs at most one spurious notice
+    // (and the grace window in diagnoseRelaunch absorbs the common case);
+    // losing it costs the whole detector.
+    updateInstalling = false;
     setUpdateStatus({
       phase: "error",
       message: error instanceof Error ? error.message : String(error),
@@ -2502,18 +2538,23 @@ function registerIpc(): void {
     // of the silent rollback.
     if (updateInstalling) return;
     updateInstalling = true;
-    // Record what we're about to install so the NEXT launch can tell whether
-    // ShipIt actually applied it (see reconcilePendingUpdate). Written before
-    // the handoff, since quitAndInstall quits the app.
-    if (status.downloadedVersion) {
-      await markPendingUpdate(status.downloadedVersion);
-    }
     try {
+      // Record what we're about to install so the NEXT launch can tell whether
+      // ShipIt actually applied it (see reconcilePendingUpdate). Written before
+      // the handoff, since quitAndInstall quits the app. It is INSIDE the try
+      // because a failed marker write (a full or read-only ~/.aya) must not
+      // strand the latch: the handoff never happens, no updater error fires,
+      // the phase stays "downloaded", and the button would stay enabled and
+      // permanently dead for the rest of the session.
+      if (status.downloadedVersion) {
+        await markPendingUpdate(status.downloadedVersion);
+      }
       autoUpdater.quitAndInstall(false, true);
     } catch (err) {
       // A synchronous handoff failure IS observable - surface it instead of
       // leaving the button dead. (The dangerous case is the async ShipIt
-      // failure, which this can't see; that one is caught on next launch.)
+      // failure, which this can't see; that one is caught on next launch, and
+      // the updater's own `error` event releases the latch meanwhile.)
       updateInstalling = false;
       await clearPendingUpdate();
       setUpdateStatus({
@@ -2775,9 +2816,10 @@ app.whenReady().then(async () => {
     // (if any) currently owns the target project.
     listProjects: () => listProjects(),
     readPane: (terminalId) => ptyHost.getBuffer(terminalId),
-    writePane: async (terminalId, data) => {
-      ptyHost.write(terminalId, data);
-    },
+    // Return the promise - do NOT fire and forget. Its boolean is how
+    // pane-send learns the pane had no live process, and dropping it also
+    // turned a rejected host write into an unhandled rejection.
+    writePane: (terminalId, data) => ptyHost.write(terminalId, data),
     // Status updates also reach Aya Web clients via a virtual window-like
     // sink (harness status dots must work in the browser too).
     getWindows: () => [
@@ -2902,10 +2944,33 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   appQuitting = true;
+  // A downloaded update installs on an ordinary quit too (autoInstallOnAppQuit
+  // is on, and the "update ready" notification tells the user to restart), and
+  // that path never touches the updates:install handler where the marker is
+  // written. Without this the #78 rollback detector is blind to the most
+  // common install path. Sync, because before-quit awaits nothing (the platform
+  // mechanics are in markPendingUpdateSync's docblock).
+  //
+  // EVERY such quit gets a marker, including the "Restart Aya" menu item: the
+  // immediate relaunch that follows is absorbed by the per-attempt grace window
+  // in diagnoseRelaunch, rather than by suppressing the evidence here. A quit
+  // that turns out to install nothing costs at most one "the update didn't
+  // install" notice, which is true anyway.
+  if (!updateInstalling) {
+    const pendingInstall = getUpdateStatus();
+    if (
+      pendingInstall.phase === "downloaded" &&
+      pendingInstall.downloadedVersion
+    ) {
+      markPendingUpdateSync(pendingInstall.downloadedVersion);
+    }
+  }
   if (legacySweepTimer) {
     clearTimeout(legacySweepTimer);
     legacySweepTimer = null;
   }
+  for (const timer of gpuHealTimers) clearTimeout(timer);
+  gpuHealTimers.clear();
   if (!IS_E2E_PTY_SHUTDOWN) return;
   void ptyHost.shutdown().catch(() => {
     // Test-only cleanup. Normal app runs intentionally keep PTYs alive.
@@ -2926,15 +2991,30 @@ const diagnosticsLog = createPtyLog(path.join(AYA_HOME, "diagnostics.log"));
 // the typical relaunch window; the second is a cheap safety net (the heal is a
 // no-op when the WebGL context is already live again).
 const GPU_HEAL_NUDGE_DELAYS_MS = [1200, 3000];
+// Live heal timers, so a burst of deaths doesn't accumulate them and quitting
+// doesn't leave them pending.
+const gpuHealTimers = new Set<NodeJS.Timeout>();
 app.on("child-process-gone", (_event, details) => {
   if (details.type !== "GPU") return;
-  diagnosticsLog.append("gpu-process-gone", {
-    reason: details.reason, // killed | crashed | oom | clean-exit | ...
-    exitCode: details.exitCode,
-  });
+  // A clean exit is usually shutdown, where the log line would only dilute the
+  // signal this block exists to capture (whether the reason is memory
+  // pressure). The HEAL still runs: a mid-session graceful GPU restart (a GPU
+  // switch, a display or sleep transition, a driver reload) also reports
+  // clean-exit and does lose the renderer's WebGL contexts. Shutdown is
+  // already covered - before-quit clears the timers and each one re-checks
+  // appQuitting.
+  if (details.reason !== "clean-exit") {
+    diagnosticsLog.append("gpu-process-gone", {
+      reason: details.reason, // killed | crashed | oom | ...
+      exitCode: details.exitCode,
+    });
+  }
   for (const delay of GPU_HEAL_NUDGE_DELAYS_MS) {
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      gpuHealTimers.delete(timer);
+      if (appQuitting) return;
       eachAyaWindow((win) => win.webContents.send("gpu:relaunched"));
     }, delay);
+    gpuHealTimers.add(timer);
   }
 });

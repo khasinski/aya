@@ -100,6 +100,21 @@ export const KILL_ESCALATE_MS = 750;
 // both spawn, orphaning the first. We mark an id as spawning across the await
 // so a racing call bails instead of starting a second process.
 const spawning = new Set<string>();
+// Resolvers for input parked on an in-flight spawn. Buffering is not delivery:
+// if the spawn fails (missing binary, node-pty throw, host shutdown) its
+// `finally` discards the queue, so a write that reported success would be the
+// very silent no-op `aya pane send` now exists to surface. Each waiter is
+// settled with the spawn's real outcome when the window closes.
+const spawnWaiters = new Map<string, ((delivered: boolean) => void)[]>();
+
+/** Settle everyone who parked input on this spawn. `delivered` is whether the
+ *  queue actually reached a live PTY. */
+function settleSpawnWaiters(ptyId: string, delivered: boolean): void {
+  const waiters = spawnWaiters.get(ptyId);
+  if (!waiters) return;
+  spawnWaiters.delete(ptyId);
+  for (const resolve of waiters) resolve(delivered);
+}
 // Keystrokes that arrived while a spawn was still in flight. A real tty buffers
 // what you type before the shell has read it; dropping it here instead meant a
 // command typed into a pane that looked ready vanished with no echo and no
@@ -725,6 +740,10 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     // shutdown): the spawn window is over, so nothing may keep holding input
     // for it. On the success path the flush already emptied this.
     pendingWrites.delete(req.ptyId);
+    // Tell anyone who parked input here what actually happened. A live PTY
+    // means the flush ran; anything else means the queue was just discarded,
+    // and a pane-send waiting on it must report failure rather than success.
+    settleSpawnWaiters(req.ptyId, ptys.has(req.ptyId));
   }
 }
 
@@ -738,25 +757,51 @@ export async function getPtyCwd(ptyId: string): Promise<string | null> {
   return getProcessCwd(p.pid);
 }
 
-export function writePty(ptyId: string, data: string): void {
+/** Write to a PTY. Resolves/returns false when the data went NOWHERE - an id
+ *  with no live process and no spawn in flight, a pending queue already at its
+ *  cap, or a spawn that was still in flight and then failed. A keystroke from
+ *  the user's own window has nobody to tell, but `aya pane send` does: without
+ *  this signal the control server acked a write it had silently dropped (the
+ *  pane looked driven, nothing was typed). Callers that don't care may ignore
+ *  it.
+ *
+ *  Async for one shape of answer rather than `boolean | Promise<boolean>`: the
+ *  sole caller awaits it either way, and the body still runs to completion
+ *  synchronously (there is no `await` in it), so `p.write` keeps its place in
+ *  the write order. */
+export async function writePty(ptyId: string, data: string): Promise<boolean> {
   const p = ptys.get(ptyId);
   if (!p) {
     // No PTY yet, but one is on its way: hold the input rather than discard it.
     // Anything else (an exited or unknown id) still drops, as before.
-    if (spawning.has(ptyId)) bufferPendingWrite(ptyId, data);
-    return;
+    if (spawning.has(ptyId)) {
+      if (!bufferPendingWrite(ptyId, data)) return false;
+      // Queued is not delivered. Answer only once the spawn settles, so a
+      // failed spawn (which discards the queue) reports failure.
+      return new Promise<boolean>((resolve) => {
+        const waiters = spawnWaiters.get(ptyId) ?? [];
+        waiters.push(resolve);
+        spawnWaiters.set(ptyId, waiters);
+      });
+    }
+    return false;
   }
   // Writing to the user's own PTY is the whole point of a terminal: the
   // "user-provided value" is their own keystrokes going to their own shell, so
   // there is no trust boundary to cross. Not exploitable code injection.
   p.write(data); // lgtm[js/code-injection]
+  return true;
 }
 
 /** Queue input for an in-flight spawn, capped at PENDING_WRITE_MAX_BYTES.
  *  Truncation drops the tail of the overflowing chunk: the earliest keystrokes
  *  are the ones the user most expects to survive, and a partial line is more
- *  recoverable than a silently reordered one. */
-function bufferPendingWrite(ptyId: string, data: string): void {
+ *  recoverable than a silently reordered one.
+ *
+ *  Returns false when the chunk was not queued WHOLE - dropped outright, or
+ *  cut down to fit. A partial queue is not a delivered write: pane-send would
+ *  otherwise ack a truncated message and, with --submit, press Enter on it. */
+function bufferPendingWrite(ptyId: string, data: string): boolean {
   const queued = pendingWrites.get(ptyId) ?? [];
   const used = queued.reduce((n, s) => n + Buffer.byteLength(s), 0);
   const room = PENDING_WRITE_MAX_BYTES - used;
@@ -765,9 +810,10 @@ function bufferPendingWrite(ptyId: string, data: string): void {
       ptyId,
       bytes: Buffer.byteLength(data),
     });
-    return;
+    return false;
   }
   let chunk = data;
+  let whole = true;
   if (Buffer.byteLength(chunk) > room) {
     // Back off the cut to a character boundary. Slicing mid-character and
     // decoding would hand the shell a U+FFFD it never typed, so walk back over
@@ -777,12 +823,18 @@ function bufferPendingWrite(ptyId: string, data: string): void {
     while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
     chunk = buf.subarray(0, end).toString("utf8");
     ptyLog.append("pending-write-truncated", { ptyId, keptBytes: end });
+    // Keep the head - the earliest keystrokes are the ones the user most
+    // expects to survive - but report the loss. Acking a partial write is the
+    // same silent-no-op class as acking a dropped one, only worse with
+    // --submit, which would press Enter on a half-typed command.
+    whole = false;
     // The remaining room was smaller than the first character, so nothing of
     // this chunk survives - queue no empty entry for the flush to write.
-    if (!chunk) return;
+    if (!chunk) return false;
   }
   queued.push(chunk);
   pendingWrites.set(ptyId, queued);
+  return whole;
 }
 
 export function resizePty(ptyId: string, cols: number, rows: number): void {

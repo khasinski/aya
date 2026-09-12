@@ -10,13 +10,16 @@
 import type { ProjectConfig } from "./types";
 
 export interface PaneQuery {
-  /** Exact terminal id. Wins outright when present. */
+  /** Exact terminal id. Beats a `name` when both are given, and an id that
+   *  matches nothing is an error rather than a fallback to name matching - but
+   *  it is still looked up WITHIN `projectSlug` when one is set, so a caller
+   *  scoped to its own project cannot reach into another one by id. */
   terminalId?: string;
   /** Human-facing terminal name, matched case-insensitively. */
   name?: string;
-  /** Restricts a name lookup to one project. The `aya` CLI fills this from
-   *  AYA_PROJECT_SLUG, so an agent's "reviewer" means the reviewer in ITS
-   *  project, not a same-named pane in an unrelated one. */
+  /** Restricts the lookup to one project - both by name and by id. The `aya`
+   *  CLI fills this from AYA_PROJECT_SLUG, so an agent's "reviewer" means the
+   *  reviewer in ITS project, not a same-named pane in an unrelated one. */
   projectSlug?: string;
 }
 

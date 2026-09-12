@@ -98,7 +98,28 @@ test("pane-list needs no target and carries the caller's scope + self id", () =>
 });
 
 test("pane-list is valid with no fields at all (list everything)", () => {
-  assert.equal(parseControlRequest({ type: "pane-list" }).type, "pane-list");
+  // The SHAPE is the contract, not the echoed discriminant: `listPanes` skips
+  // its project filter only when projectSlug is undefined, so a parser that
+  // substituted any default would silently scope a listing that should span
+  // every project. deepEqual compares own keys, including explicit undefined.
+  assert.deepEqual(parseControlRequest({ type: "pane-list" }), {
+    type: "pane-list",
+    projectSlug: undefined,
+    selfTerminalId: undefined,
+  });
+});
+
+test("pane-list normalizes blank scope fields to undefined", () => {
+  // What bin/aya actually sends when AYA_PROJECT_SLUG / AYA_TERMINAL_ID are
+  // unset or empty.
+  assert.deepEqual(
+    parseControlRequest({
+      type: "pane-list",
+      projectSlug: "  ",
+      selfTerminalId: "",
+    }),
+    { type: "pane-list", projectSlug: undefined, selfTerminalId: undefined },
+  );
 });
 
 test("pane-read accepts a name and carries the caller's project scope", () => {
@@ -144,11 +165,19 @@ test("pane-send submit is honored only for a literal true", () => {
 });
 
 test("pane-send accepts a target id instead of a name", () => {
-  const req = parseControlRequest({
-    type: "pane-send",
-    targetId: "t9",
-    text: "hi",
-  });
-  assert.equal(req.targetId, "t9");
-  assert.equal(req.target, undefined);
+  // One whole-object assertion instead of field spot checks: `target` being
+  // undefined is true because the INPUT omitted it, so on its own it would
+  // still pass if the parser stopped emitting the key at all. deepEqual also
+  // pins that `text` survived and that `submit` defaulted.
+  assert.deepEqual(
+    parseControlRequest({ type: "pane-send", targetId: "t9", text: "hi" }),
+    {
+      type: "pane-send",
+      target: undefined,
+      targetId: "t9",
+      projectSlug: undefined,
+      text: "hi",
+      submit: false,
+    },
+  );
 });

@@ -92,6 +92,99 @@ test("input for an id with no spawn in flight is still dropped", async () => {
   assert.deepEqual(__testPendingWrites(id), [0, 0]);
 });
 
+// Dropping the input is correct; doing it SILENTLY was not. `aya pane send`
+// resolves its target from the on-disk project config (and `aya pane list`
+// advertises exactly those panes), so a pane that has already exited is an
+// easy target - and the control server used to answer ok:true, exit 0, having
+// typed nothing at all. The boolean is what lets it answer honestly.
+test("a dropped write REPORTS that it went nowhere", async () => {
+  const id = uniqueId("pending-report");
+  assert.equal(
+    await writePty(id, "nobody is listening\r"),
+    false,
+    "an id with no live process and no spawn in flight must report false",
+  );
+});
+
+// Buffering is NOT delivery. The spawn's `finally` discards the queue on every
+// failure path, so answering "true" the moment the bytes are parked would be
+// the same silent no-op, just relocated: pane-send would ack a send that the
+// failing spawn then threw away. The answer therefore waits for the spawn.
+test("a write parked on a spawn that FAILS reports that it went nowhere", async () => {
+  const id = uniqueId("pending-report-failed-spawn");
+  const sink = fakeSink();
+  // req() points at a binary that does not exist, so this dies at the
+  // command-exists preflight - inside the spawn window, with input queued.
+  const spawn = spawnPty(req(id), sink);
+  const delivered = writePty(id, "typed into a spawn that will fail\r");
+  // It must DEFER: no answer while the spawn is still in flight. Sniffing for
+  // a `.then` cannot show that - writePty always returns a promise now, so
+  // that check would pass even if the deferral were deleted. Race it against a
+  // turn of the event loop instead: still pending means still deferring.
+  const STILL_PENDING = Symbol("still-pending");
+  const aTurn = new Promise((resolve) => setImmediate(() => resolve(STILL_PENDING)));
+  assert.equal(
+    await Promise.race([delivered, aTurn]),
+    STILL_PENDING,
+    "must defer, not answer yet",
+  );
+  await spawn.catch(() => {});
+  assert.equal(await delivered, false);
+  assert.ok(
+    sink.events.some((e) => e.type === "spawn-failed"),
+    "precondition: the spawn really did fail",
+  );
+});
+
+test("a write that overflows the pending cap reports failure immediately", async () => {
+  const id = uniqueId("pending-report-cap");
+  const sink = fakeSink();
+  const spawn = spawnPty(req(id), sink);
+  // Fill the queue, then try to add more: nothing of the second chunk fits.
+  writePty(id, "x".repeat(PENDING_WRITE_MAX_BYTES));
+  assert.equal(
+    await writePty(id, "not a byte more"),
+    false,
+    "a chunk that is entirely dropped must not report success",
+  );
+  await spawn.catch(() => {});
+});
+
+test("a PARTIALLY queued write reports failure too", async () => {
+  // The head is kept (earliest keystrokes matter most) but the caller must not
+  // be told the message got through: with --submit the control server would
+  // press Enter on a half-typed command.
+  const id = uniqueId("pending-report-partial");
+  const sink = fakeSink();
+  const spawn = spawnPty(req(id), sink);
+  writePty(id, "x".repeat(PENDING_WRITE_MAX_BYTES - 10));
+  assert.equal(
+    await writePty(id, "abcdefghijklmno"),
+    false,
+    "a chunk cut down to fit must not report success",
+  );
+  // The head really is kept - this is a truncation, not a drop.
+  const [, bytes] = __testPendingWrites(id);
+  assert.equal(bytes, PENDING_WRITE_MAX_BYTES);
+
+  await spawn.catch(() => {});
+
+  const lines = logLines().filter((l) => l.ptyId === id);
+  const truncated = lines.find((l) => l.ev === "pending-write-truncated");
+  assert.ok(truncated, "the truncation must leave a pending-write-truncated line");
+  assert.equal(truncated.keptBytes, 10, "only the bytes that fit are kept");
+});
+
+test("a chunk truncated to nothing reports failure", async () => {
+  const id = uniqueId("pending-report-truncated-empty");
+  const sink = fakeSink();
+  const spawn = spawnPty(req(id), sink);
+  writePty(id, "x".repeat(PENDING_WRITE_MAX_BYTES - 1));
+  // One byte of room, but the next character needs two - nothing survives.
+  assert.equal(await writePty(id, "é"), false);
+  await spawn.catch(() => {});
+});
+
 test("the queue is capped, and the overflow is logged rather than silent", async () => {
   const id = uniqueId("pending-cap");
   const sink = fakeSink();
