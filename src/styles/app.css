@@ -59,8 +59,6 @@ body {
   --aya-pane-strong: #0b0d12;
   --aya-pane-muted: #57606a;
   --aya-pane-subtle: #6e7781;
-  --aya-diff-bg: #f6f8fa;
-  --aya-diff-border: #d0d7de;
   --aya-diff-hunk-bg: rgba(9, 105, 218, 0.10);
   --aya-diff-hunk-fg: #0969da;
   --aya-diff-add-bg: rgba(26, 127, 55, 0.10);
@@ -75,17 +73,8 @@ body {
   --aya-syntax-comment: #6e7781;
   --aya-syntax-purple: #8250df;
 
-  --aya-term-dim: #6e7781;
-  --aya-term-sub: #57606a;
-  --aya-term-fg: #24292f;
-  --aya-term-strong: #0b0d12;
   --aya-term-green: #1a7f37;
   --aya-term-yellow: #9a6700;
-  --aya-term-red: #cf222e;
-  --aya-term-blue: #0969da;
-  --aya-term-purple: #8250df;
-  --aya-term-pink: #cf222e;
-  --aya-term-orange: #bc4c00;
 
   --aya-snippetbar-bg: linear-gradient(180deg, #ffffff 0%, #f6f8fa 100%);
   --aya-snippetbar-border: #d0d7de;
@@ -110,8 +99,6 @@ body {
   --aya-pane-strong: #f0f6fc;
   --aya-pane-muted: #6e7781;
   --aya-pane-subtle: #8b949e;
-  --aya-diff-bg: #0a0c10;
-  --aya-diff-border: #21262d;
   --aya-diff-hunk-bg: rgba(88, 166, 255, 0.12);
   --aya-diff-hunk-fg: #79c0ff;
   --aya-diff-add-bg: rgba(64,196,99,0.12);
@@ -126,17 +113,8 @@ body {
   --aya-syntax-comment: #8b949e;
   --aya-syntax-purple: #d2a8ff;
 
-  --aya-term-dim: #6e7781;
-  --aya-term-sub: #8b949e;
-  --aya-term-fg: #c9d1d9;
-  --aya-term-strong: #f0f6fc;
   --aya-term-green: #56d364;
   --aya-term-yellow: #e3b341;
-  --aya-term-red: #f85149;
-  --aya-term-blue: #79c0ff;
-  --aya-term-purple: #d2a8ff;
-  --aya-term-pink: #ff7b72;
-  --aya-term-orange: #ffa657;
 
   --aya-snippetbar-bg: linear-gradient(180deg, #161b22 0%, #12161d 100%);
   --aya-snippetbar-border: #30363d;
@@ -162,8 +140,6 @@ body {
     --aya-pane-strong: #f0f6fc;
     --aya-pane-muted: #6e7781;
     --aya-pane-subtle: #8b949e;
-    --aya-diff-bg: #0a0c10;
-    --aya-diff-border: #21262d;
     --aya-diff-hunk-bg: rgba(88, 166, 255, 0.12);
     --aya-diff-hunk-fg: #79c0ff;
     --aya-diff-add-bg: rgba(64,196,99,0.12);
@@ -178,17 +154,8 @@ body {
     --aya-syntax-comment: #8b949e;
     --aya-syntax-purple: #d2a8ff;
 
-    --aya-term-dim: #6e7781;
-    --aya-term-sub: #8b949e;
-    --aya-term-fg: #c9d1d9;
-    --aya-term-strong: #f0f6fc;
     --aya-term-green: #56d364;
     --aya-term-yellow: #e3b341;
-    --aya-term-red: #f85149;
-    --aya-term-blue: #79c0ff;
-    --aya-term-purple: #d2a8ff;
-    --aya-term-pink: #ff7b72;
-    --aya-term-orange: #ffa657;
 
     --aya-snippetbar-bg: linear-gradient(180deg, #161b22 0%, #12161d 100%);
     --aya-snippetbar-border: #30363d;
@@ -887,16 +854,6 @@ body {
 }
 @keyframes aya-blink { 50% { opacity: 0; } }
 
-/* diff blocks */
-.aya-diff {
-  background: var(--aya-diff-bg);
-  border: 1px solid var(--aya-diff-border);
-  border-radius: 4px;
-  padding: 6px 10px;
-  margin: 4px 0;
-  font-size: 12px;
-}
-
 /* ============================================================
    STATUS BAR
    ============================================================ */
@@ -1236,23 +1193,6 @@ body {
   background: var(--aya-mark-bg);
   color: var(--fg-primary);
 }
-
-/* ============================================================
-   COLORS used inside terminal output
-   ============================================================ */
-.t-dim   { color: var(--aya-term-dim); }
-.t-sub   { color: var(--aya-term-sub); }
-.t-fg    { color: var(--aya-term-fg); }
-.t-strong{ color: var(--aya-term-strong); font-weight: 600; }
-.t-green { color: var(--aya-term-green); }
-.t-yellow{ color: var(--aya-term-yellow); }
-.t-red   { color: var(--aya-term-red); }
-.t-blue  { color: var(--aya-term-blue); }
-.t-purple{ color: var(--aya-term-purple); }
-.t-pink  { color: var(--aya-term-pink); }
-.t-orange{ color: var(--aya-term-orange); }
-.t-claude{ color: var(--brand-claude); }
-.t-codex { color: var(--brand-codex); }
 
 /* faint scrollbars */
 .aya-sidebar-list::-webkit-scrollbar,
