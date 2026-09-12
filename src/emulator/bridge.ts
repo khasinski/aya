@@ -263,7 +263,6 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     },
     getGitChangedFiles: async () => [] as never,
     getGitDiff: async () => null as never,
-    getGitWorktrees: async () => [] as never,
     // A scenario's directory is already its own checkout root, and it has no
     // extra worktrees to pick between, so the picker never appears.
     getGitRoot: async (directory: string) => directory as never,

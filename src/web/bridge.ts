@@ -124,7 +124,6 @@ export function createWebAya(transport: WebTransport): AyaApi {
     getGitInfo: inv("env:git"),
     getGitChangedFiles: inv("env:git-changed-files"),
     getGitDiff: inv("env:git-diff"),
-    getGitWorktrees: inv("env:git-worktrees"),
     getGitRoot: inv("env:git-root"),
     getGitWorktreeStatus: inv("env:git-worktree-status"),
     getGitHubLink: inv("env:github-link"),

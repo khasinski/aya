@@ -59,7 +59,6 @@ import {
   getGitDiff,
   getGitInfo,
   getGitRoot,
-  listWorktrees,
   listWorktreeStatus,
 } from "./git";
 import { getGitHubLink, isGitHubCliAvailable } from "./github";
@@ -2348,9 +2347,6 @@ function registerIpc(): void {
   );
   ipcMain.handle("env:git-diff", async (_e, directory: unknown) =>
     getGitDiff(requireString(directory, "env:git-diff.directory")),
-  );
-  ipcMain.handle("env:git-worktrees", async (_e, directory: unknown) =>
-    listWorktrees(requireString(directory, "env:git-worktrees.directory")),
   );
   ipcMain.handle("env:git-root", async (_e, directory: unknown) =>
     getGitRoot(requireString(directory, "env:git-root.directory")),

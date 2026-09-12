@@ -93,8 +93,6 @@ const api: AyaApi = {
   getGitChangedFiles: (directory) =>
     ipcRenderer.invoke("env:git-changed-files", directory),
   getGitDiff: (directory) => ipcRenderer.invoke("env:git-diff", directory),
-  getGitWorktrees: (directory) =>
-    ipcRenderer.invoke("env:git-worktrees", directory),
   getGitRoot: (directory) => ipcRenderer.invoke("env:git-root", directory),
   getGitWorktreeStatus: (directory) =>
     ipcRenderer.invoke("env:git-worktree-status", directory),
