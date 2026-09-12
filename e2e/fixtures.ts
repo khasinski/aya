@@ -5,7 +5,7 @@ import {
   type Page,
 } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import * as net from "node:net";
 import { join } from "node:path";
 import { seedEnv, type SeededEnv, type SeedOptions } from "./helpers/seed";
@@ -14,6 +14,8 @@ const APP_ROOT = join(__dirname, "..");
 const REMOVE_RETRY_COUNT = 5;
 const REMOVE_RETRY_DELAY_MS = 100;
 export const PTY_HOST_SHUTDOWN_TIMEOUT_MS = 1_000;
+/** How long to wait for a host to actually exit before killing it. */
+export const PTY_HOST_EXIT_TIMEOUT_MS = 5_000;
 export const APP_GRACEFUL_CLOSE_TIMEOUT_MS = 1_000;
 export const APP_PROCESS_EXIT_TIMEOUT_MS = 2_000;
 
@@ -39,7 +41,19 @@ async function removeSeededRoot(root: string): Promise<void> {
   }
 }
 
-async function shutdownPtyHost(ayaHome: string): Promise<void> {
+/** Pids of the hosts registered under this AYA_HOME - the registry names each
+ *  record file after its pid. */
+function registeredHostPids(ayaHome: string): number[] {
+  try {
+    return readdirSync(join(ayaHome, "pty-hosts"))
+      .map((name) => Number.parseInt(name, 10))
+      .filter((pid) => Number.isInteger(pid) && pid > 0);
+  } catch {
+    return [];
+  }
+}
+
+async function shutdownPtyHost(ayaHome: string, pids: number[]): Promise<void> {
   const socketPath = join(ayaHome, "pty-host.sock");
   await Promise.race([
     new Promise<void>((resolve) => {
@@ -52,6 +66,20 @@ async function shutdownPtyHost(ayaHome: string): Promise<void> {
     }),
     delay(PTY_HOST_SHUTDOWN_TIMEOUT_MS),
   ]);
+
+  // A host is DESIGNED to outlive its app, so nothing else will collect it, and
+  // the race above regularly expires before it has finished draining children.
+  // Measured: one host per spec file survived, ~50 by the end of a run, and the
+  // contention made unrelated specs time out.
+  const deadline = Date.now() + PTY_HOST_EXIT_TIMEOUT_MS;
+  while (pids.some(isAlive) && Date.now() < deadline) await delay(50);
+  for (const pid of pids.filter(isAlive)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+  }
 }
 
 /** Signal 0 checks existence without delivering anything. */
@@ -168,8 +196,12 @@ export const test = base.extend<{
 
     const app = await electron.launch({ args: launchArgs, cwd: APP_ROOT, env });
     await use(app);
+    // Snapshot the host pids BEFORE closing: a graceful close already tells the
+    // host to go (AYA_E2E_PTY_SHUTDOWN), and it drops its registry record on the
+    // way out - so afterwards a host still draining children is unfindable.
+    const hostPids = registeredHostPids(seeded.ayaHome);
     await closeAndWait(app);
-    await shutdownPtyHost(seeded.ayaHome);
+    await shutdownPtyHost(seeded.ayaHome, hostPids);
     // Belt for a hung host. Liveness, not `.killed` - see closeAndWait.
     if (preStartedHost?.pid !== undefined && isAlive(preStartedHost.pid)) {
       try {
