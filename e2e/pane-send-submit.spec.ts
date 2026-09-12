@@ -1,27 +1,7 @@
-// `aya pane send <name> --submit <text>` must actually SUBMIT in the target
-// pane, not just type into it.
-//
-// The reported bug: the text appeared in the Codex/Claude composer and sat
-// there unsent. The cause was the byte shape, not the CLI parsing - pane-send
-// wrote `${text}\r` as ONE chunk, and those composers treat a burst arriving
-// together as a paste, so the carriage return became a newline in the message
-// box instead of Enter. The fix sends the Enter as its own chunk once the
-// burst has gone idle (electron/control.ts, PANE_SEND_SUBMIT_DELAY_MS).
-//
-// Two legs, because neither alone pins the fix:
-//  - the RECORDER leg pins the byte-level contract the agent TUIs depend on -
-//    the text arrives, then Enter as a separate, later chunk - without needing
-//    a real agent. Its exact-equality assertion is also what rules out the
-//    tempting wrong fix: wrapping the text in bracketed paste does submit in
-//    both agent TUIs, but bash 3.2 (macOS /bin/sh and /bin/bash) has no
-//    bracketed paste and turns the markers into literal command text
-//    (`bash: 00~echo: command not found`). A shell pane cannot pin that - the
-//    seed runs $SHELL, and zsh/bash 5 handle the markers fine.
-//  - the SHELL leg proves those bytes actually RUN a command end to end, which
-//    byte assertions alone never show.
-//
-// Both drive the real `bin/aya`, so the argument order the user types
-// (`--submit` between the pane name and the text) is covered too.
+// `aya pane send --submit` must SUBMIT, not just type. Recorder pane pins the
+// byte shape (text, then Enter as its own later chunk); shell pane proves those
+// bytes run a command. The exact-byte assertion is the ONLY guard against a
+// bracketed-paste "fix", which breaks bash 3.2 - no pane here runs bash 3.2.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -30,23 +10,20 @@ import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
 import type { SeededEnv } from "./helpers/seed";
 
-// Each test boots the app AND waits for a login shell to bring up a program
-// (a node recorder, or the shell's own line editor). Under the full suite that
-// startup is far slower than in an isolated run, so these need more than the
-// project-wide 45 s.
+// App boot plus a login shell starting a program; slower than the 45 s default.
 test.describe.configure({ timeout: 120_000 });
 
 const AYA_CLI = join(__dirname, "..", "bin", "aya");
 const RECORDER = join(__dirname, "helpers", "pty-recorder.cjs");
-// The pane command runs under the user's login shell, whose PATH is not the
-// runner's - so spawn the recorder with the very node running this spec.
+// The pane runs under a login shell whose PATH is not the runner's.
 const NODE = process.execPath;
-/** Smallest gap that still proves the CR left the text's burst behind. */
-const MIN_SUBMIT_GAP_MS = 50;
+/** Restated, not imported: shrinking PANE_SEND_SUBMIT_DELAY_MS must fail here. */
+const MIN_SUBMIT_GAP_MS = 120;
+/** Past the submit delay, so a regressed always-submit had its chance to fire. */
+const SUBMIT_SETTLE_MS = 600;
 
-/** Run the real CLI against the TEST instance. Every AYA_* variable is dropped
- *  first: this suite is often run from inside an Aya pane, and an inherited
- *  AYA_SOCKET would aim the command at the developer's live app instead. */
+/** Real CLI against the TEST instance: an inherited AYA_SOCKET would aim it at
+ *  the developer's live app, so every AYA_* is dropped. */
 function ayaPaneSend(ayaHome: string, args: string[]): void {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !key.startsWith("AYA_")),
@@ -71,11 +48,8 @@ async function paneShows(window: Page, terminalId: string, needle: string) {
     .toContain(needle);
 }
 
-/** Prove a shell pane is EXECUTING, not merely echoing. A shell that has not
- *  finished starting swallows queued bytes, while the tty echoes the typed
- *  line either way - so "the text is visible" is not readiness (that mistake
- *  made this spec fail under full-suite load). Retype until the output of an
- *  arithmetic expansion, which only execution can produce, shows up. */
+/** Readiness is EXECUTION, not echo: the tty echoes typed bytes a starting
+ *  shell will never run. Retype until the computed value appears. */
 async function shellExecuting(window: Page, paneIndex: number, terminalId: string) {
   await window.locator(".aya-pane").nth(paneIndex).locator(".xterm-screen").click();
   await expect
@@ -99,8 +73,7 @@ async function shellExecuting(window: Page, paneIndex: number, terminalId: strin
 const recorderLog = (seeded: SeededEnv, terminalId: string) =>
   join(seeded.projectDir, `rec-${terminalId}.jsonl`);
 
-/** The recorder creates its (empty) log file once it is reading stdin, so the
- *  file appearing is the readiness gate - bytes sent after it cannot be lost. */
+/** The log file appears once stdin is being read: bytes sent after cannot be lost. */
 async function recorderReady(seeded: SeededEnv, terminalId: string) {
   await expect
     .poll(() => existsSync(recorderLog(seeded, terminalId)), {
@@ -123,10 +96,8 @@ function recorded(seeded: SeededEnv, terminalId: string) {
 const bytes = (chunks: { b: string }[]) => chunks.map((c) => c.b).join("");
 
 test.describe("pane-send into an agent-shaped program", () => {
-  // Both seeded tabs run the recorder instead of a shell, so a test can read
-  // back the exact bytes - and their arrival times - that reached the PTY.
-  // (These tests take the `window` fixture without touching the DOM: asking
-  // for it is what launches the app the CLI then drives.)
+  // Recorder panes expose the exact bytes and arrival times reaching the PTY.
+  // `window` is taken to launch the app, not to touch the DOM.
   test.use({
     seedOptions: {
       presetList: [
@@ -135,8 +106,7 @@ test.describe("pane-send into an agent-shaped program", () => {
           name: "Recorder",
           icon: "$",
           color: "",
-          // The two panes share a project dir, so the terminal id keeps their
-          // logs apart.
+          // Shared project dir: the terminal id keeps the two logs apart.
           command: `'${NODE}' '${RECORDER}' "$AYA_PROJECT_DIR/rec-$AYA_TERMINAL_ID.jsonl"`,
         },
       ],
@@ -151,8 +121,7 @@ test.describe("pane-send into an agent-shaped program", () => {
 
     ayaPaneSend(seeded.ayaHome, ["shell 2", "--submit", "tekst"]);
 
-    // Exact equality also proves nothing extra is injected - bracketed-paste
-    // markers would show up right here.
+    // Exact equality also rules out injected bracketed-paste markers.
     await expect
       .poll(() => bytes(recorded(seeded, seeded.tabIds.right)), {
         message: "the pane never received the full text plus a CR",
@@ -160,8 +129,7 @@ test.describe("pane-send into an agent-shaped program", () => {
       })
       .toBe("tekst\r");
 
-    // The contract: the CR is NOT part of the text's burst. A combined
-    // "tekst\r" chunk is exactly what left the agent composers unsubmitted.
+    // The CR must not ride in the text chunk: that is what left it unsubmitted.
     const chunks = recorded(seeded, seeded.tabIds.right);
     const cr = chunks.at(-1)!;
     expect(cr.b, "the CR rode along in the text's chunk").toBe("\r");
@@ -184,6 +152,12 @@ test.describe("pane-send into an agent-shaped program", () => {
         timeout: 15_000,
       })
       .toBe("tekst");
+
+    // The poll alone would also pass for an always-append-a-delayed-CR bug.
+    // Settling past the submit window is what kills that deterministically.
+    await window.waitForTimeout(SUBMIT_SETTLE_MS);
+    const chunks = recorded(seeded, seeded.tabIds.right);
+    expect(bytes(chunks), "an Enter arrived without --submit").toBe("tekst");
   });
 });
 
@@ -193,8 +167,7 @@ test("pane-send --submit runs the command in an ordinary shell pane", async ({
 }) => {
   await shellExecuting(window, 1, seeded.tabIds.right);
 
-  // Arithmetic expansion separates "typed" from "executed": the echoed line
-  // shows the literal $((21+21)), only a real submit prints ok-42.
+  // Arithmetic expansion separates typed from executed: only a submit prints ok-42.
   ayaPaneSend(seeded.ayaHome, ["shell 2", "--submit", "echo ok-$((21+21))"]);
 
   await paneShows(window, seeded.tabIds.right, "ok-42");

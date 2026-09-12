@@ -100,6 +100,17 @@ export const KILL_ESCALATE_MS = 750;
 // both spawn, orphaning the first. We mark an id as spawning across the await
 // so a racing call bails instead of starting a second process.
 const spawning = new Set<string>();
+// Waiters for input parked on an in-flight spawn. Buffering is not delivery: a
+// failed spawn discards the queue, so each waiter gets the real outcome.
+const spawnWaiters = new Map<string, ((delivered: boolean) => void)[]>();
+
+/** Settle the parked waiters; `delivered` = the queue reached a live PTY. */
+function settleSpawnWaiters(ptyId: string, delivered: boolean): void {
+  const waiters = spawnWaiters.get(ptyId);
+  if (!waiters) return;
+  spawnWaiters.delete(ptyId);
+  for (const resolve of waiters) resolve(delivered);
+}
 // Keystrokes that arrived while a spawn was still in flight. A real tty buffers
 // what you type before the shell has read it; dropping it here instead meant a
 // command typed into a pane that looked ready vanished with no echo and no
@@ -725,38 +736,47 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     // shutdown): the spawn window is over, so nothing may keep holding input
     // for it. On the success path the flush already emptied this.
     pendingWrites.delete(req.ptyId);
+    // A live PTY means the flush ran; anything else discarded the queue.
+    settleSpawnWaiters(req.ptyId, ptys.has(req.ptyId));
   }
 }
 
-/** The live cwd of a PTY's child process — where the console actually IS, as
- *  opposed to the cwd it was spawned with (which a `cd`, typically into a fresh
- *  git worktree, leaves behind). null when the PTY is gone or the platform /
- *  environment can't answer; callers fall back to the spawn cwd. */
+/** The child's LIVE cwd, not the one it was spawned with (a `cd` moves it).
+ *  null when unanswerable; callers fall back to the spawn cwd. */
 export async function getPtyCwd(ptyId: string): Promise<string | null> {
   const p = ptys.get(ptyId);
   if (!p) return null;
   return getProcessCwd(p.pid);
 }
 
-export function writePty(ptyId: string, data: string): void {
+/** Write to a PTY; false means it went NOWHERE (dead id, queue at cap, failed
+ *  spawn). Async but holds NO `await`, so `p.write` keeps its place in order. */
+export async function writePty(ptyId: string, data: string): Promise<boolean> {
   const p = ptys.get(ptyId);
   if (!p) {
     // No PTY yet, but one is on its way: hold the input rather than discard it.
     // Anything else (an exited or unknown id) still drops, as before.
-    if (spawning.has(ptyId)) bufferPendingWrite(ptyId, data);
-    return;
+    if (spawning.has(ptyId)) {
+      if (!bufferPendingWrite(ptyId, data)) return false;
+      // Queued is not delivered: answer only once the spawn settles.
+      return new Promise<boolean>((resolve) => {
+        const waiters = spawnWaiters.get(ptyId) ?? [];
+        waiters.push(resolve);
+        spawnWaiters.set(ptyId, waiters);
+      });
+    }
+    return false;
   }
   // Writing to the user's own PTY is the whole point of a terminal: the
   // "user-provided value" is their own keystrokes going to their own shell, so
   // there is no trust boundary to cross. Not exploitable code injection.
   p.write(data); // lgtm[js/code-injection]
+  return true;
 }
 
-/** Queue input for an in-flight spawn, capped at PENDING_WRITE_MAX_BYTES.
- *  Truncation drops the tail of the overflowing chunk: the earliest keystrokes
- *  are the ones the user most expects to survive, and a partial line is more
- *  recoverable than a silently reordered one. */
-function bufferPendingWrite(ptyId: string, data: string): void {
+/** Queue input for an in-flight spawn, capped at PENDING_WRITE_MAX_BYTES;
+ *  truncation keeps the head. False when the chunk was not queued WHOLE. */
+function bufferPendingWrite(ptyId: string, data: string): boolean {
   const queued = pendingWrites.get(ptyId) ?? [];
   const used = queued.reduce((n, s) => n + Buffer.byteLength(s), 0);
   const room = PENDING_WRITE_MAX_BYTES - used;
@@ -765,9 +785,10 @@ function bufferPendingWrite(ptyId: string, data: string): void {
       ptyId,
       bytes: Buffer.byteLength(data),
     });
-    return;
+    return false;
   }
   let chunk = data;
+  let whole = true;
   if (Buffer.byteLength(chunk) > room) {
     // Back off the cut to a character boundary. Slicing mid-character and
     // decoding would hand the shell a U+FFFD it never typed, so walk back over
@@ -777,12 +798,16 @@ function bufferPendingWrite(ptyId: string, data: string): void {
     while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
     chunk = buf.subarray(0, end).toString("utf8");
     ptyLog.append("pending-write-truncated", { ptyId, keptBytes: end });
+    // Keep the head but report the loss: with --submit, acking a truncated
+    // write presses Enter on a half-typed command.
+    whole = false;
     // The remaining room was smaller than the first character, so nothing of
     // this chunk survives - queue no empty entry for the flush to write.
-    if (!chunk) return;
+    if (!chunk) return false;
   }
   queued.push(chunk);
   pendingWrites.set(ptyId, queued);
+  return whole;
 }
 
 export function resizePty(ptyId: string, cols: number, rows: number): void {
@@ -796,12 +821,8 @@ export function resizePty(ptyId: string, cols: number, rows: number): void {
   }
 }
 
-/** Kill a PTY child, escalating to SIGKILL after a grace period. The graceful
- *  signal lets a well-behaved process exit and clean up; the SIGKILL guarantees
- *  a signal-ignoring one (e.g. `claude --chrome`) actually dies, so it can't
- *  linger as an orphan after killPty removes it from the map (which would let a
- *  respawn of the same id create a second live process). Exported for tests;
- *  `schedule` is injectable so the escalation can be exercised synchronously. */
+/** Kill a PTY child, escalating to SIGKILL (`claude --chrome` ignores TERM and
+ *  would orphan). `schedule` is injectable so tests can drive that step. */
 export function terminatePtyChild(
   p: Pick<PtyModule.IPty, "kill">,
   schedule: (fn: () => void, ms: number) => void = setTimeout,

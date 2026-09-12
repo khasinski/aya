@@ -406,9 +406,15 @@ export function SettingsModal({
     void window.aya.statusHookStatus().then((status) => {
       if (!cancelled) setStatusHook(status);
     });
-    void window.aya.omarchyStatus().then((status) => {
-      if (!cancelled) setOmarchy(status);
-    });
+    // On mount AND on theme change: `omarchy-theme-set` can run with Settings
+    // open, leaving a mount-only read naming the previous theme.
+    const refreshOmarchy = () => {
+      void window.aya.omarchyStatus().then((status) => {
+        if (!cancelled) setOmarchy(status);
+      });
+    };
+    refreshOmarchy();
+    const stopOmarchyWatch = window.aya.onOmarchyThemeChange(refreshOmarchy);
     void window.aya.micStatus().then((status) => {
       if (!cancelled) setMicStatus(status);
     });
@@ -443,6 +449,7 @@ export function SettingsModal({
     }
     return () => {
       cancelled = true;
+      stopOmarchyWatch();
     };
   }, []);
 
@@ -1200,8 +1207,15 @@ export function SettingsModal({
                   "system",
                   "light",
                   "dark",
-                  // Only offered when Omarchy is installed with an active theme.
-                  ...(omarchy?.available ? (["omarchy"] as const) : []),
+                  // Omarchy is OFFERED only when it is installed with an active
+                  // theme - but it is always RENDERED while it is the selected
+                  // value, so the control can never show four unselected
+                  // buttons (which is what it did on the first paint, before
+                  // the async status resolved, and whenever the preference
+                  // outlived the Omarchy install).
+                  ...(omarchy?.available || appThemePreference === "omarchy"
+                    ? (["omarchy"] as const)
+                    : []),
                 ] as const
               ).map((theme) => (
                 <button
@@ -1227,9 +1241,17 @@ export function SettingsModal({
             </div>
             )}
           >
-            {appThemePreference === "omarchy"
-              ? `Following Omarchy${omarchy?.themeName ? ` (${omarchy.themeName})` : ""} - chrome and terminal.`
-              : "Follow system appearance or pin Aya."}
+            {appThemePreference !== "omarchy"
+              ? "Follow system appearance or pin Aya."
+              : omarchy?.available
+                ? `Following Omarchy${omarchy.themeName ? ` (${omarchy.themeName})` : ""} - chrome and terminal.`
+                : omarchy === null
+                  ? // Status still loading. Asserting a skin here would repeat,
+                    // in the copy, the first-paint bug fixed for the buttons.
+                    "Checking for an active Omarchy theme."
+                  : // Selected but unusable: say so rather than claim a skin
+                    // that is not being applied (App falls back to system).
+                    "Omarchy is not available here - following system appearance."}
           </SettingsRow>
           <SettingsRow
             icon="text_fields"
@@ -2039,6 +2061,15 @@ export function SettingsModal({
                     <div className="aya-settings-update-progress" aria-hidden="true">
                       <span style={{ width: `${Math.round(updateStatus.percent ?? 0)}%` }} />
                     </div>
+                  )}
+                  {/* A previous update that silently rolled back (#78). Shown
+                      separately from `message` because the phase/message pair
+                      is replaced by the next check - and this panel is usually
+                      opened long after that. */}
+                  {updateStatus?.rollbackNotice && (
+                    <p className="aya-settings-update-rollback" role="status">
+                      {updateStatus.rollbackNotice}
+                    </p>
                   )}
                 </div>
               </section>

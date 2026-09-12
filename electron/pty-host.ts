@@ -121,8 +121,11 @@ async function handle(request: PtyHostRequest): Promise<unknown> {
     return null;
   }
   if (request.type === "write") {
-    writePty(request.ptyId, request.data);
-    return null;
+    // The boolean IS the answer: false means the id had no live process, which
+    // the control server turns into a failed `aya pane send` instead of a
+    // silent no-op. An older host answers null here; the client reads any
+    // non-false result as "delivered", so it degrades to the old behaviour.
+    return writePty(request.ptyId, request.data);
   }
   if (request.type === "resize") {
     resizePty(request.ptyId, request.cols, request.rows);

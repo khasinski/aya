@@ -79,8 +79,7 @@ test("control protocol rejects malformed agent-facing requests", () => {
 });
 
 // --- pane-read / pane-send -------------------------------------------------
-// These let one terminal drive another, so the parser is the first gate on a
-// request that can type into someone else's agent.
+// The first gate on a request that can type into someone else's agent.
 
 test("pane-read requires a target or targetId", () => {
   assert.throws(() => parseControlRequest({ type: "pane-read" }), /target/);
@@ -98,7 +97,25 @@ test("pane-list needs no target and carries the caller's scope + self id", () =>
 });
 
 test("pane-list is valid with no fields at all (list everything)", () => {
-  assert.equal(parseControlRequest({ type: "pane-list" }).type, "pane-list");
+  // The SHAPE is the contract: listPanes skips its project filter only when
+  // projectSlug is undefined, so any substituted default scopes the listing.
+  assert.deepEqual(parseControlRequest({ type: "pane-list" }), {
+    type: "pane-list",
+    projectSlug: undefined,
+    selfTerminalId: undefined,
+  });
+});
+
+test("pane-list normalizes blank scope fields to undefined", () => {
+  // What bin/aya sends when AYA_PROJECT_SLUG / AYA_TERMINAL_ID are unset.
+  assert.deepEqual(
+    parseControlRequest({
+      type: "pane-list",
+      projectSlug: "  ",
+      selfTerminalId: "",
+    }),
+    { type: "pane-list", projectSlug: undefined, selfTerminalId: undefined },
+  );
 });
 
 test("pane-read accepts a name and carries the caller's project scope", () => {
@@ -124,8 +141,7 @@ test("pane-send requires non-empty text", () => {
 });
 
 test("pane-send defaults to NOT pressing Enter", () => {
-  // A stray Enter can accept whatever prompt is on screen in an agent pane,
-  // so submitting has to be opt-in.
+  // A stray Enter accepts whatever prompt is on screen in an agent pane.
   const req = parseControlRequest({ type: "pane-send", target: "x", text: "hi" });
   assert.equal(req.submit, false);
 });
@@ -144,11 +160,17 @@ test("pane-send submit is honored only for a literal true", () => {
 });
 
 test("pane-send accepts a target id instead of a name", () => {
-  const req = parseControlRequest({
-    type: "pane-send",
-    targetId: "t9",
-    text: "hi",
-  });
-  assert.equal(req.targetId, "t9");
-  assert.equal(req.target, undefined);
+  // Whole-object: `target === undefined` is true because the INPUT omitted it,
+  // so alone it would pass even if the parser stopped emitting the key.
+  assert.deepEqual(
+    parseControlRequest({ type: "pane-send", targetId: "t9", text: "hi" }),
+    {
+      type: "pane-send",
+      target: undefined,
+      targetId: "t9",
+      projectSlug: undefined,
+      text: "hi",
+      submit: false,
+    },
+  );
 });

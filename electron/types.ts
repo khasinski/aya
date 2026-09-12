@@ -420,6 +420,11 @@ export interface UpdateStatus {
   percent?: number;
   message?: string;
   checkedAt?: string;
+  /** A previous in-app update silently failed to install and rolled back
+   *  (#78). Sticky: it rides on EVERY status until an update actually applies,
+   *  because the startup auto-check replaces `phase`/`message` 12 s after the
+   *  reconcile wrote them, and Settings is usually opened long after that. */
+  rollbackNotice?: string;
 }
 
 /** macOS microphone authorization, surfaced read-only in Settings. Maps the

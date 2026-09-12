@@ -23,7 +23,24 @@ body {
 
 /* App-specific theme tokens. The base is light; the media query below
    mirrors armillary.css so the shell follows the OS when no explicit theme
-   attribute is set. */
+   attribute is set.
+
+   The two pane BACKGROUND tokens (--aya-pane-bg, --aya-pane-header-bg) are
+   defined in terms of armillary's source tokens rather than as hex, because a
+   skin (src/theme-skin.ts) sets those source tokens inline on :root.
+   Hard-coding them left every terminal's surround and header on the built-in
+   palette while the terminal itself took the skin's background - a permanent
+   seam around each pane. In dark mode the armillary values are byte-identical
+   to the hexes these used to carry (#0d1117 / #161b22), so this is a no-op
+   there; in light mode the header moves #f6f8fa -> #f0f2f6, which is the tone
+   the rest of the app chrome already uses.
+
+   The 1px BORDER tokens stay hard-coded on purpose: routing them through
+   --border would lighten every light-mode outline (#d0d7de -> #e6e9ef,
+   contrast 1.45:1 -> 1.22:1), and --border-strong would brighten the dark-mode
+   ones (#30363d -> #484f58). A hairline is not the seam that was reported, so
+   it is not worth either regression. Signal colors (status/brand/diff/syntax)
+   stay hard-coded too: they are semantic, not chrome. */
 :root,
 [data-theme="light"] {
   color-scheme: light;
@@ -35,8 +52,8 @@ body {
   --brand-claude: #d97757;
   --brand-codex: #10a37f;
 
-  --aya-pane-bg: #ffffff;
-  --aya-pane-header-bg: #f6f8fa;
+  --aya-pane-bg: var(--bg);
+  --aya-pane-header-bg: var(--bg-secondary);
   --aya-pane-header-border: #d0d7de;
   --aya-pane-fg: #24292f;
   --aya-pane-strong: #0b0d12;
@@ -88,8 +105,8 @@ body {
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --aya-pane-bg: #0d1117;
-  --aya-pane-header-bg: #161b22;
+  --aya-pane-bg: var(--bg);
+  --aya-pane-header-bg: var(--bg-secondary);
   --aya-pane-header-border: #30363d;
   --aya-pane-fg: #c9d1d9;
   --aya-pane-strong: #f0f6fc;
@@ -142,8 +159,8 @@ body {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
 
-    --aya-pane-bg: #0d1117;
-    --aya-pane-header-bg: #161b22;
+    --aya-pane-bg: var(--bg);
+    --aya-pane-header-bg: var(--bg-secondary);
     --aya-pane-header-border: #30363d;
     --aya-pane-fg: #c9d1d9;
     --aya-pane-strong: #f0f6fc;

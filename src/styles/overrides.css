@@ -2241,6 +2241,18 @@
   background: var(--accent);
   transition: width 160ms ease;
 }
+/* A previous update that silently failed to install (#78). Persistent, so it
+   outlives the status line it used to share - hence its own warning styling. */
+.aya-settings-update-rollback {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--callout-warning-fg, var(--border));
+  border-radius: 8px;
+  background: var(--callout-warning-bg, var(--bg-secondary));
+  color: var(--callout-warning-fg, var(--fg-primary));
+  font-size: 12px;
+  line-height: 1.45;
+}
 .aya-intelligence-frame {
   display: grid;
   gap: 10px;

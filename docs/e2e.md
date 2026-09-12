@@ -46,10 +46,8 @@ project".
   its full text, collapses after sending; the closed drawer is `inert` (F14
   ghost-drawer regression guard).
 - `pane-send-submit.spec.ts` - `aya pane send --submit` really submits. Drives
-  the actual `bin/aya`, and seeds one pane with `helpers/pty-recorder.cjs` (a
-  program that logs the raw PTY chunks it receives) so the test can assert the
-  Enter arrives as its own, later chunk - the byte-level property the agent
-  TUIs need, pinned without running a real agent.
+  the real `bin/aya` against a `helpers/pty-recorder.cjs` pane, which logs raw
+  PTY chunks, so the Enter can be shown to arrive as its own, later chunk.
 
 ## CI
 

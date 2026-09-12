@@ -2957,11 +2957,20 @@ export function App() {
     const root = document.documentElement;
     let cancelled = false;
     let applied: string[] = [];
+    // The ONE way out of "skinned": inline custom properties outrank every
+    // stylesheet rule, so a branch that skips this leaves stale chrome.
+    const clearSkin = () => {
+      for (const key of applied) root.style.removeProperty(key);
+      applied = [];
+    };
     const apply = async () => {
       const theme = await window.aya.getOmarchyTheme();
       if (cancelled) return;
       if (!theme) {
-        // Omarchy went away: behave like "system", no skin.
+        // Unskin, but KEEP the preference: a null here is often transient
+        // (omarchy-theme-set relinks current/ mid-read), and persisting
+        // "system" would lose the user's explicit choice permanently.
+        clearSkin();
         root.removeAttribute("data-theme");
         setSkinThemeColors(null);
         return;
@@ -2979,7 +2988,7 @@ export function App() {
     return () => {
       cancelled = true;
       unsubscribe();
-      for (const key of applied) root.style.removeProperty(key);
+      clearSkin();
     };
   }, [appThemePreference]);
 

@@ -15,25 +15,15 @@ import type { ControlStatusUpdate, ProjectConfig } from "./types";
 // Max control-socket message size before rejecting the request (bytes).
 export const CONTROL_REQUEST_MAX_SIZE_BYTES = 64_000;
 
-/** Idle gap between a pane-send's text and the Enter that submits it (ms).
- *
- *  pane-send used to write `${text}\r` as ONE chunk, and the agent TUIs did
- *  not submit it: the Codex and Claude Code composers treat a burst of
- *  characters arriving together as a paste, so the trailing carriage return
- *  lands inside the pasted block and becomes a newline in the message box
- *  instead of Enter. The text appeared in the composer and just sat there.
- *
- *  Letting the burst go idle before the CR is what makes it read as a real
- *  keypress. Measured by driving both TUIs through a pty: one chunk never
- *  submitted (Claude's composer even dropped characters from the burst),
- *  while a separate CR submitted at every gap tried - 50 ms sufficed for
- *  codex-cli 0.153.4 and 120 ms for Claude Code, so 150 ms leaves margin.
- *
- *  Bracketed paste is deliberately NOT used here, even though the snippet
- *  drawer wraps its text that way: pane-send targets any pane, and a shell
- *  without bracketed-paste support (macOS /bin/sh and /bin/bash are bash
- *  3.2) inserts the markers as literal text - measured as
- *  `bash: 00~echo: command not found`. Raw bytes type correctly everywhere. */
+/** Idle window before an unfinished request is reaped; a dispatched pane-send
+ *  is exempt, so this only drops peers that never finish a frame. */
+export const CONTROL_CONNECTION_IDLE_MS = 30_000;
+
+/** Backstop linger after our FIN, for a peer still writing. */
+export const CONTROL_LINGER_MS = 2_000;
+
+/** 150 ms idle gap before pane-send's Enter: in one chunk it reads as a paste and
+ *  never submits. Measured: codex-cli 0.153.4 needs 50 ms, Claude Code 120 ms. */
 export const PANE_SEND_SUBMIT_DELAY_MS = 150;
 
 /** Anywhere a status update can be delivered: real BrowserWindows plus the
@@ -48,20 +38,19 @@ export interface ControlStatusSink {
 export interface ControlServerOptions {
   /** Target for focus/notification actions (the focused/last-focused window). */
   getWindow: () => BrowserWindow | null;
-  /** Project configs, used to resolve a pane name to a terminal id. Reads the
-   *  on-disk configs, which is also what survives a window closing. Optional
-   *  so tests can omit the pane API entirely. */
+  /** On-disk project configs, for resolving a pane name to a terminal id. */
   listProjects?: () => Promise<ProjectConfig[]>;
   /** Recent output of one pane. Backed by the pty-host's rolling buffer. */
   readPane?: (terminalId: string) => Promise<string>;
-  /** Write bytes to one pane's PTY, exactly as if typed. */
-  writePane?: (terminalId: string, data: string) => Promise<void>;
-  /** All live windows (and window-like sinks) - status updates are broadcast,
-   *  because the terminal they describe may live in a window that is not
-   *  focused. Each renderer ignores updates for terminals it doesn't host.
-   *  Optional for tests. */
+  /** Write bytes to one pane's PTY. Only `false` means not delivered; anything
+   *  else - including `undefined` - counts as delivered. */
+  writePane?: (terminalId: string, data: string) => Promise<boolean | void>;
+  /** All live windows (and window-like sinks); status updates are broadcast
+   *  because the terminal they describe may be in an unfocused window. */
   getWindows?: () => ControlStatusSink[];
   openProject: (directory: string) => void;
+  /** Test-only override of the idle reap window. */
+  idleTimeoutMs?: number;
 }
 
 function focusWindow(win: BrowserWindow | null): void {
@@ -75,8 +64,7 @@ function sendJson(socket: net.Socket, value: unknown): void {
 }
 
 /** pane-read / pane-send: let one terminal observe or drive another. Both
- *  resolve their target the same way and fail loudly on an ambiguous name —
- *  writing into the wrong pane is not a recoverable mistake. */
+ *  resolve their target the same way and fail loudly on an ambiguous name. */
 async function handlePaneRequest(
   request: Extract<ControlRequest, { type: "pane-read" | "pane-send" }>,
   options: ControlServerOptions,
@@ -97,18 +85,47 @@ async function handlePaneRequest(
     const output = await options.readPane(terminalId);
     return { terminalId, projectSlug, name, output: tailForPaneRead(output) };
   }
-  // Text first, then the Enter as its OWN write after an idle gap - see
-  // PANE_SEND_SUBMIT_DELAY_MS for why one combined chunk does not submit.
-  // "\r" is what a PTY sees when Enter is pressed; "\n" instead leaves some
-  // TUIs with an unsubmitted line.
-  await options.writePane(terminalId, request.text);
-  if (request.submit) {
-    await new Promise((resolve) =>
-      setTimeout(resolve, PANE_SEND_SUBMIT_DELAY_MS),
-    );
-    await options.writePane(terminalId, "\r");
+  const writePane = options.writePane;
+  // Serialized per terminal: the 150 ms submit gap splits a send into two
+  // writes, so concurrent sends to one pane would interleave.
+  return withPaneLock(terminalId, async () => {
+    // Raw bytes, unlike the snippet drawer's bracketed paste: macOS bash 3.2 has
+    // none and would take the markers as command text. "\r" is Enter, not "\n".
+    if ((await writePane(terminalId, request.text)) === false) {
+      throw new Error(
+        `pane "${name}" did not accept the text - it may have exited, or be starting up with a full input queue. Nothing was submitted; check the pane before retrying.`,
+      );
+    }
+    if (request.submit) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, PANE_SEND_SUBMIT_DELAY_MS),
+      );
+      if ((await writePane(terminalId, "\r")) === false) {
+        throw new Error(`pane "${name}" exited before the text was submitted`);
+      }
+    }
+    return { terminalId, projectSlug, name };
+  });
+}
+
+/** One in-flight pane-send per terminal, chained so each completes its whole
+ *  text+gap+Enter sequence before the next begins. Dropped once the chain drains. */
+const paneLocks = new Map<string, Promise<unknown>>();
+
+async function withPaneLock<T>(
+  terminalId: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const prior = paneLocks.get(terminalId) ?? Promise.resolve();
+  // Ignore HOW the predecessor finished: a failed send must not cancel the queue.
+  const mine = prior.catch(() => {}).then(run);
+  paneLocks.set(terminalId, mine);
+  try {
+    return await mine;
+  } finally {
+    // Only the last sender in the chain clears the slot.
+    if (paneLocks.get(terminalId) === mine) paneLocks.delete(terminalId);
   }
-  return { terminalId, projectSlug, name };
 }
 
 async function handleRequest(
@@ -137,9 +154,7 @@ async function handleRequest(
     return;
   }
   if (request.type === "notify") {
-    // Keep Electron out of the module's eager dependency graph. The explicit
-    // socket-path server is also used by plain Node tests and must not require
-    // (or trigger installation of) the Electron runtime merely when imported.
+    // Lazy: plain Node tests import this module and must not load Electron.
     const { Notification } = require("electron") as typeof import("electron");
     if (!Notification.isSupported()) return;
     const notification = new Notification({
@@ -183,10 +198,8 @@ async function handleRequest(
   }
 }
 
-/** Boot the control server on an explicit socket path. Pure: takes no Electron
- *  lifecycle dependency (no app.once), so tests can drive framing/limit/dispatch
- *  against a tmp socket. The packaged startControlServer wraps this with the
- *  canonical CONTROL_SOCKET_PATH and an app before-quit hook. */
+/** Boot the control server on an explicit socket path, with no Electron
+ *  lifecycle dependency, so tests can drive it against a tmp socket. */
 export function startControlServerOn(
   socketPath: string,
   options: ControlServerOptions,
@@ -198,18 +211,49 @@ export function startControlServerOn(
     // best effort
   }
 
-  const server = net.createServer((socket) => {
+  // allowHalfOpen: a client that does `socket.end(frame)` FINs immediately, and
+  // without this its FIN ends our writable side and drops the reply 150 ms later.
+  const server = net.createServer({ allowHalfOpen: true }, (socket) => {
     let buffer = "";
+    // One request per connection; otherwise later bytes re-run the same request.
+    let handled = false;
+    // Answer written and our FIN sent; nothing more is owed.
+    let replied = false;
     socket.setEncoding("utf8");
+    // Unlistened "error" is an uncaught exception in the Electron main process.
+    socket.on("error", () => {
+      handled = true;
+    });
+    socket.on("end", () => {
+      // Destroy unless we still owe a reply - that window is why allowHalfOpen is on.
+      if (!handled || replied) socket.destroy();
+    });
+    socket.setTimeout(options.idleTimeoutMs ?? CONTROL_CONNECTION_IDLE_MS, () => {
+      if (!handled) socket.destroy();
+    });
+    /** Reply + FIN, then let the peer drain (destroying now would EPIPE a client
+     *  still pushing an oversized frame); linger backstops a peer that never ends. */
+    const finish = (): void => {
+      replied = true;
+      socket.end();
+      socket.setTimeout(CONTROL_LINGER_MS, () => socket.destroy());
+    };
     socket.on("data", (chunk) => {
+      if (handled) return;
       buffer += chunk;
       if (buffer.length > CONTROL_REQUEST_MAX_SIZE_BYTES) {
+        // handled FIRST: later chunks of the oversized frame would otherwise
+        // write onto the socket we just ended (ERR_STREAM_WRITE_AFTER_END).
+        handled = true;
+        buffer = "";
         sendJson(socket, { ok: false, error: "request too large" });
-        socket.end();
+        finish();
         return;
       }
       if (!buffer.includes("\n")) return;
       const line = buffer.slice(0, buffer.indexOf("\n")).trim();
+      handled = true;
+      buffer = "";
       void (async () => {
         try {
           const payload = await handleRequest(
@@ -223,7 +267,7 @@ export function startControlServerOn(
             error: err instanceof Error ? err.message : String(err),
           });
         } finally {
-          socket.end();
+          finish();
         }
       })();
     });

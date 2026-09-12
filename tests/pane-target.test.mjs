@@ -1,7 +1,6 @@
-// Resolving which pane a pane-read / pane-send request means. This is the
-// safety-critical half of the pane API: a wrong match means an agent types
-// into a terminal the user never pointed it at, so ambiguity must be an error
-// rather than a best guess.
+// Resolving which pane a pane-read / pane-send request means. A wrong match has
+// an agent typing into a terminal nobody pointed it at, so ambiguity is an
+// error rather than a best guess.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -31,11 +30,29 @@ const PROJECTS = [
 
 // --- by id -----------------------------------------------------------------
 
-test("an exact terminal id resolves regardless of project scope", () => {
+test("an unscoped terminal id resolves across every project", () => {
   const r = resolvePaneTarget(PROJECTS, { terminalId: "t4" });
   assert.equal(r.ok, true);
   assert.equal(r.match.name, "deploy");
   assert.equal(r.match.projectSlug, "beta");
+});
+
+test("a scoped id is looked up inside that project only", () => {
+  // The shipped shape: control.ts always fills projectSlug from the CLI's
+  // AYA_PROJECT_SLUG. The scope applies to ids too.
+  const inScope = resolvePaneTarget(PROJECTS, {
+    terminalId: "t2",
+    projectSlug: "alpha",
+  });
+  assert.equal(inScope.ok, true);
+  assert.equal(inScope.match.name, "reviewer");
+
+  const crossProject = resolvePaneTarget(PROJECTS, {
+    terminalId: "t4",
+    projectSlug: "alpha",
+  });
+  assert.equal(crossProject.ok, false);
+  assert.match(crossProject.error, /no pane with id t4/);
 });
 
 test("an unknown id is an error, not a fallback to name matching", () => {
@@ -86,7 +103,11 @@ test("neither name nor id is an error", () => {
 });
 
 test("an empty project list resolves nothing", () => {
-  assert.equal(resolvePaneTarget([], { name: "build" }).ok, false);
+  const r = resolvePaneTarget([], { name: "build" });
+  assert.equal(r.ok, false);
+  // The REASON, not just the discriminant: "nothing configured" and "no name or
+  // id given" are different failures that ok:false cannot tell apart.
+  assert.match(r.error, /no pane named "build"/);
 });
 
 // --- listing panes ---------------------------------------------------------
@@ -100,8 +121,22 @@ test("listPanes scoped to a project returns only that project's panes", () => {
   assert.ok(entries.every((e) => e.projectSlug === "alpha"));
 });
 
-test("listPanes across all projects when no slug is given", () => {
-  assert.equal(listPanes(PROJECTS).length, 4);
+test("listPanes across all projects enumerates each one exactly once", () => {
+  // Identity, not arity: emitting the first project's panes twice is also 4.
+  assert.deepEqual(
+    listPanes(PROJECTS).map((e) => `${e.projectSlug}/${e.name}/${e.terminalId}`),
+    ["alpha/build/t1", "alpha/reviewer/t2", "beta/build/t3", "beta/deploy/t4"],
+  );
+});
+
+test("listPanes carries each pane's preset", () => {
+  const projects = [
+    project("alpha", [["t1", "build", "codex"], ["t2", "reviewer", "claude"]]),
+  ];
+  assert.deepEqual(
+    listPanes(projects).map((e) => e.presetId),
+    ["codex", "claude"],
+  );
 });
 
 test("listPanes marks the caller's own pane and nothing else", () => {
@@ -112,23 +147,36 @@ test("listPanes marks the caller's own pane and nothing else", () => {
   );
 });
 
-test("formatPaneList marks the caller and shows each pane's preset", () => {
+test("formatPaneList renders name, preset and id, and marks only the caller", () => {
   const projects = [
     project("alpha", [["t1", "build", "codex"], ["t2", "reviewer", "claude"]]),
   ];
   const out = formatPaneList(listPanes(projects, { selfTerminalId: "t1" }));
-  assert.match(out, /\* build .*codex.*\(this pane\)/);
-  assert.match(out, /reviewer .*claude/);
-  // The non-self row is not marked as this pane.
-  assert.doesNotMatch(out.split("\n").find((l) => l.includes("reviewer")), /this pane/);
+  // Whole rows: loose fragments left the id column undefended, and the id is the
+  // only unambiguous handle for pane read/send, so dropping it shipped green.
+  assert.equal(
+    out,
+    "* build     codex   t1  (this pane)\n  reviewer  claude  t2\n",
+  );
 });
 
 test("formatPaneList shows a project header only when spanning projects", () => {
-  const single = formatPaneList(listPanes(PROJECTS, { projectSlug: "alpha" }));
-  assert.doesNotMatch(single, /alpha \(alpha\):/);
-  const both = formatPaneList(listPanes(PROJECTS));
-  assert.match(both, /alpha \(alpha\):/);
-  assert.match(both, /beta \(beta\):/);
+  // A display name distinct from the slug: the shared PROJECTS fixture sets
+  // name === slug, which cannot tell WHICH field is printed.
+  const named = [
+    { slug: "alpha", name: "Alpha Project", directory: "/alpha",
+      tabs: [{ id: "t1", presetId: "codex", name: "build" }] },
+    { slug: "beta", name: "Beta Project", directory: "/beta",
+      tabs: [{ id: "t2", presetId: "claude", name: "deploy" }] },
+  ];
+  const single = formatPaneList(listPanes(named, { projectSlug: "alpha" }));
+  assert.doesNotMatch(single, /Alpha Project/);
+
+  const both = formatPaneList(listPanes(named));
+  assert.match(both, /Alpha Project \(alpha\):/);
+  assert.match(both, /Beta Project \(beta\):/);
+  // Exactly one header per project - not one before every row.
+  assert.equal(both.split("\n").filter((l) => l.endsWith(":")).length, 2);
 });
 
 test("formatPaneList on no panes says so", () => {
@@ -149,6 +197,11 @@ test("a long buffer is trimmed to its most recent slice", () => {
 });
 
 test("the default cap is applied when no size is passed", () => {
-  const out = tailForPaneRead("x".repeat(PANE_READ_MAX_CHARS + 500));
-  assert.equal(out.length, PANE_READ_MAX_CHARS);
+  // The literal, not the constant: comparing against PANE_READ_MAX_CHARS moves
+  // both sides together and stays green for any cap.
+  assert.equal(PANE_READ_MAX_CHARS, 64_000);
+  const out = tailForPaneRead("x".repeat(PANE_READ_MAX_CHARS) + "TAIL");
+  assert.equal(out.length, 64_000);
+  // The DEFAULT path keeps the tail too, not just the explicit-size one.
+  assert.ok(out.endsWith("TAIL"), "must keep the END, not the start");
 });
