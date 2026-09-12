@@ -1,14 +1,6 @@
-// The one mapping that turns a semantic palette into the whole app's look:
-// app-chrome CSS vars and terminal ThemeColors. These pin the contract the
-// renderer relies on (which tokens exist, that ANSI slots come straight from
-// the palette, and that chrome tiers are derived so a partial palette still
-// yields a full set).
-//
-// Assertions here are whole-object or value-equality on purpose. Truthiness
-// checks and loose /color-mix/ substring matches cannot see a token silently
-// dropped or a fallback pointed at the wrong source - and App.tsx applies
-// exactly the keys this returns, so a dropped key leaves the built-in palette
-// in place with nothing to signal it.
+// A semantic palette mapped to app-chrome CSS vars and terminal ThemeColors.
+// Assertions are whole-object or value-equality: truthiness and loose
+// /color-mix/ matches cannot see a dropped token or a misdirected fallback.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -17,18 +9,16 @@ import {
   paletteToThemeColors,
 } from "../dist-test/theme-skin.js";
 
-// `accent` is deliberately DIFFERENT from `blue`: when they share a value the
-// `p.blue ?? accent` fallbacks are indistinguishable, and removing the ANSI
-// source branch entirely still passes.
+// `accent` is deliberately DIFFERENT from `blue`: sharing a value makes the
+// `p.blue ?? accent` fallbacks indistinguishable.
 const DARK = {
   mode: "dark",
   accent: "#bb9af7",
   selection: "#292e42",
   muted: "#414868",
   background: "#1a1b26",
-  // darkerBackground is absent on purpose, so ANSI black exercises the second
-  // link of its fallback chain (darker -> dark -> background) with a value
-  // distinct from the background.
+  // darkerBackground absent on purpose: ANSI black exercises the second link of
+  // its chain (darker -> dark -> background), distinct from the background.
   darkBackground: "#13141c",
   lighterBackground: "#24283b",
   foreground: "#a9b1d6",
@@ -44,9 +34,8 @@ const DARK = {
   brightRed: "#ff7a93",
 };
 
-/** Every chrome token the skin owns. App.tsx sets exactly these on :root and
- *  removes exactly these when the skin is cleared, so the SET is a contract in
- *  its own right - a token dropped here silently keeps its stylesheet value. */
+/** Every chrome token the skin owns. App.tsx sets and clears exactly these, so
+ *  a token dropped here silently keeps its stylesheet value. */
 const CHROME_KEYS = [
   "--bg",
   "--bg-secondary",
@@ -91,9 +80,7 @@ test("chrome vars map the palette's own colors onto Aya's source tokens", () => 
   assert.equal(v["--callout-error-fg"], "#f7768e"); // red
   assert.equal(v["--callout-success-fg"], "#9ece6a"); // green
   assert.equal(v["--callout-warning-fg"], "#e0af68"); // yellow
-  // The info pair reads ANSI blue, NOT the accent. With accent === blue this
-  // assertion cannot tell the two apart, which is why the fixture separates
-  // them.
+  // The info pair reads ANSI blue, NOT the accent - hence the split fixture.
   assert.equal(v["--callout-info-fg"], "#7aa2f7");
   assert.equal(
     v["--callout-info-bg"],
@@ -103,8 +90,8 @@ test("chrome vars map the palette's own colors onto Aya's source tokens", () => 
 
 test("chrome tiers are derived by exact mixes, not merely 'some color-mix'", () => {
   const v = paletteToChromeVars(DARK);
-  // Equality, not a substring: a mix with the wrong percentage or the wrong
-  // direction is still a color-mix() and would pass a regex.
+  // Equality, not a substring: a wrong percentage or direction is still a
+  // color-mix() and would pass a regex.
   assert.equal(v["--bg-secondary"], "color-mix(in oklab, #1a1b26 92%, #a9b1d6)");
   assert.equal(v["--bg-tertiary"], "color-mix(in oklab, #1a1b26 86%, #a9b1d6)");
   assert.equal(v["--bg-code"], "color-mix(in oklab, #1a1b26 90%, #a9b1d6)");
@@ -121,12 +108,11 @@ test("a partial palette still yields every chrome token, with the right fallback
     background: "#000000",
     foreground: "#ffffff",
   });
-  // The whole set is present - not a hand-picked sample of it.
   assert.deepEqual(Object.keys(v).sort(), [...CHROME_KEYS].sort());
   // muted absent -> derived from fg/bg at a SPECIFIC ratio.
   assert.equal(v["--fg-tertiary"], "color-mix(in oklab, #ffffff 55%, #000000)");
   assert.equal(v["--border-strong"], "color-mix(in oklab, #ffffff 55%, #000000)");
-  // Every ANSI-sourced callout falls back to the accent, not to some literal.
+  // Every ANSI-sourced callout falls back to the accent, not a literal.
   assert.equal(v["--callout-info-fg"], "#ff0000");
   assert.equal(v["--callout-warning-fg"], "#ff0000");
   assert.equal(v["--callout-success-fg"], "#ff0000");
@@ -138,11 +124,8 @@ test("a partial palette still yields every chrome token, with the right fallback
 });
 
 test("terminal colors are concrete hex straight from the palette", () => {
-  // One whole-object assertion against hand-written literals. The previous
-  // guard - a loop asserting no value matches /color-mix/ - was vacuously true
-  // (paletteToThemeColors never calls mix at all) and left 14 of the 21 slots
-  // undefended: green and cyan could be swapped, or blue wired to the
-  // background, with the suite still green.
+  // The previous guard - no value matches /color-mix/ - was vacuous and left 14
+  // of the 21 slots undefended: green and cyan could be swapped, still green.
   assert.deepStrictEqual(paletteToThemeColors(DARK), {
     background: "#1a1b26",
     foreground: "#a9b1d6",
@@ -169,8 +152,8 @@ test("terminal colors are concrete hex straight from the palette", () => {
 });
 
 test("a minimal palette fills every terminal slot from bg/fg/accent", () => {
-  // Nothing may come back undefined: xterm would fall back to ITS defaults,
-  // which is how a light theme ends up with a black terminal.
+  // Nothing may be undefined: xterm falls back to ITS defaults, which is how a
+  // light theme ends up with a black terminal.
   const c = paletteToThemeColors({
     mode: "light",
     accent: "#1e66f5",

@@ -1,10 +1,5 @@
-// A pane program that records the RAW bytes its PTY receives, one JSON line
-// per chunk: {"t": <ms>, "b": <chunk>}. Raw mode is what makes it useful - the
-// tty line discipline would otherwise hold input until a newline and hide the
-// chunk boundaries, and chunk boundaries are exactly what the pane-send
-// submit contract is about (the Enter must not ride along in the text's
-// burst, or the agent TUIs read it as a pasted newline).
-//
+// A pane program that logs the raw PTY chunks it receives, one JSON line each.
+// Raw mode keeps the chunk boundaries the pane-send submit contract is about.
 // Usage: node pty-recorder.cjs <outfile>
 const fs = require("node:fs");
 
@@ -23,7 +18,5 @@ process.stdin.on("data", (chunk) => {
 });
 process.stdin.resume();
 
-// Readiness is signalled by creating the log file, not by printing: the spec
-// polls for the file. Written only after stdin is being read, so a test never
-// writes into a pane that would drop the bytes.
+// Creating the file IS the readiness signal, and only after stdin is read.
 fs.writeFileSync(out, "");

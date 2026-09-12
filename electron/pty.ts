@@ -100,15 +100,11 @@ export const KILL_ESCALATE_MS = 750;
 // both spawn, orphaning the first. We mark an id as spawning across the await
 // so a racing call bails instead of starting a second process.
 const spawning = new Set<string>();
-// Resolvers for input parked on an in-flight spawn. Buffering is not delivery:
-// if the spawn fails (missing binary, node-pty throw, host shutdown) its
-// `finally` discards the queue, so a write that reported success would be the
-// very silent no-op `aya pane send` now exists to surface. Each waiter is
-// settled with the spawn's real outcome when the window closes.
+// Waiters for input parked on an in-flight spawn. Buffering is not delivery: a
+// failed spawn discards the queue, so each waiter gets the real outcome.
 const spawnWaiters = new Map<string, ((delivered: boolean) => void)[]>();
 
-/** Settle everyone who parked input on this spawn. `delivered` is whether the
- *  queue actually reached a live PTY. */
+/** Settle the parked waiters; `delivered` = the queue reached a live PTY. */
 function settleSpawnWaiters(ptyId: string, delivered: boolean): void {
   const waiters = spawnWaiters.get(ptyId);
   if (!waiters) return;
@@ -740,35 +736,21 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     // shutdown): the spawn window is over, so nothing may keep holding input
     // for it. On the success path the flush already emptied this.
     pendingWrites.delete(req.ptyId);
-    // Tell anyone who parked input here what actually happened. A live PTY
-    // means the flush ran; anything else means the queue was just discarded,
-    // and a pane-send waiting on it must report failure rather than success.
+    // A live PTY means the flush ran; anything else discarded the queue.
     settleSpawnWaiters(req.ptyId, ptys.has(req.ptyId));
   }
 }
 
-/** The live cwd of a PTY's child process — where the console actually IS, as
- *  opposed to the cwd it was spawned with (which a `cd`, typically into a fresh
- *  git worktree, leaves behind). null when the PTY is gone or the platform /
- *  environment can't answer; callers fall back to the spawn cwd. */
+/** The child's LIVE cwd, not the one it was spawned with (a `cd` moves it).
+ *  null when unanswerable; callers fall back to the spawn cwd. */
 export async function getPtyCwd(ptyId: string): Promise<string | null> {
   const p = ptys.get(ptyId);
   if (!p) return null;
   return getProcessCwd(p.pid);
 }
 
-/** Write to a PTY. Resolves/returns false when the data went NOWHERE - an id
- *  with no live process and no spawn in flight, a pending queue already at its
- *  cap, or a spawn that was still in flight and then failed. A keystroke from
- *  the user's own window has nobody to tell, but `aya pane send` does: without
- *  this signal the control server acked a write it had silently dropped (the
- *  pane looked driven, nothing was typed). Callers that don't care may ignore
- *  it.
- *
- *  Async for one shape of answer rather than `boolean | Promise<boolean>`: the
- *  sole caller awaits it either way, and the body still runs to completion
- *  synchronously (there is no `await` in it), so `p.write` keeps its place in
- *  the write order. */
+/** Write to a PTY; false means it went NOWHERE (dead id, queue at cap, failed
+ *  spawn). Async but holds NO `await`, so `p.write` keeps its place in order. */
 export async function writePty(ptyId: string, data: string): Promise<boolean> {
   const p = ptys.get(ptyId);
   if (!p) {
@@ -776,8 +758,7 @@ export async function writePty(ptyId: string, data: string): Promise<boolean> {
     // Anything else (an exited or unknown id) still drops, as before.
     if (spawning.has(ptyId)) {
       if (!bufferPendingWrite(ptyId, data)) return false;
-      // Queued is not delivered. Answer only once the spawn settles, so a
-      // failed spawn (which discards the queue) reports failure.
+      // Queued is not delivered: answer only once the spawn settles.
       return new Promise<boolean>((resolve) => {
         const waiters = spawnWaiters.get(ptyId) ?? [];
         waiters.push(resolve);
@@ -793,14 +774,8 @@ export async function writePty(ptyId: string, data: string): Promise<boolean> {
   return true;
 }
 
-/** Queue input for an in-flight spawn, capped at PENDING_WRITE_MAX_BYTES.
- *  Truncation drops the tail of the overflowing chunk: the earliest keystrokes
- *  are the ones the user most expects to survive, and a partial line is more
- *  recoverable than a silently reordered one.
- *
- *  Returns false when the chunk was not queued WHOLE - dropped outright, or
- *  cut down to fit. A partial queue is not a delivered write: pane-send would
- *  otherwise ack a truncated message and, with --submit, press Enter on it. */
+/** Queue input for an in-flight spawn, capped at PENDING_WRITE_MAX_BYTES;
+ *  truncation keeps the head. False when the chunk was not queued WHOLE. */
 function bufferPendingWrite(ptyId: string, data: string): boolean {
   const queued = pendingWrites.get(ptyId) ?? [];
   const used = queued.reduce((n, s) => n + Buffer.byteLength(s), 0);
@@ -823,10 +798,8 @@ function bufferPendingWrite(ptyId: string, data: string): boolean {
     while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
     chunk = buf.subarray(0, end).toString("utf8");
     ptyLog.append("pending-write-truncated", { ptyId, keptBytes: end });
-    // Keep the head - the earliest keystrokes are the ones the user most
-    // expects to survive - but report the loss. Acking a partial write is the
-    // same silent-no-op class as acking a dropped one, only worse with
-    // --submit, which would press Enter on a half-typed command.
+    // Keep the head but report the loss: with --submit, acking a truncated
+    // write presses Enter on a half-typed command.
     whole = false;
     // The remaining room was smaller than the first character, so nothing of
     // this chunk survives - queue no empty entry for the flush to write.
@@ -848,12 +821,8 @@ export function resizePty(ptyId: string, cols: number, rows: number): void {
   }
 }
 
-/** Kill a PTY child, escalating to SIGKILL after a grace period. The graceful
- *  signal lets a well-behaved process exit and clean up; the SIGKILL guarantees
- *  a signal-ignoring one (e.g. `claude --chrome`) actually dies, so it can't
- *  linger as an orphan after killPty removes it from the map (which would let a
- *  respawn of the same id create a second live process). Exported for tests;
- *  `schedule` is injectable so the escalation can be exercised synchronously. */
+/** Kill a PTY child, escalating to SIGKILL (`claude --chrome` ignores TERM and
+ *  would orphan). `schedule` is injectable so tests can drive that step. */
 export function terminatePtyChild(
   p: Pick<PtyModule.IPty, "kill">,
   schedule: (fn: () => void, ms: number) => void = setTimeout,

@@ -1,8 +1,6 @@
-// Tests for the control-socket server: framing, size limit, JSON tolerance,
-// per-connection one-shot semantics, and dispatch into the injected options.
-// Drives startControlServerOn against a tmp Unix socket so it doesn't need
-// Electron at all. parseControlRequest's payload-level rules are covered
-// separately in control-protocol.test.mjs.
+// Control-socket server: framing, size limit, JSON tolerance, one-shot
+// semantics, dispatch. Drives startControlServerOn against a tmp Unix socket.
+// parseControlRequest's payload rules live in control-protocol.test.mjs.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -22,9 +20,7 @@ function mkSocketPath() {
   return { dir, socket: join(dir, "aya.sock") };
 }
 
-/** Boot a server on a throwaway socket, run the body against it, then always
- *  tear the server AND its tmp dir down. Every test here needs that same
- *  three-line prologue and four-line epilogue; only the body differs. */
+/** Boot a server on a throwaway socket, run the body, then tear down both. */
 async function withServer(options, body) {
   const { dir, socket } = mkSocketPath();
   const stop = startControlServerOn(socket, options);
@@ -36,8 +32,7 @@ async function withServer(options, body) {
   }
 }
 
-/** Send one frame (JSON + "\n") over a unix socket, read until close, parse
- *  the single JSON response the server is expected to write. */
+/** Send one frame (JSON + "\n"), read until close, parse the single reply. */
 function rpc(socketPath, frame) {
   return new Promise((resolve, reject) => {
     const c = net.createConnection(socketPath);
@@ -63,8 +58,7 @@ function rpc(socketPath, frame) {
   });
 }
 
-/** Send raw bytes (no JSON framing) — used to drive the size-limit and
- *  malformed-JSON paths. */
+/** Send raw bytes (no JSON framing): the size-limit and malformed paths. */
 function rawSend(socketPath, bytes) {
   return new Promise((resolve, reject) => {
     const c = net.createConnection(socketPath);
@@ -79,9 +73,8 @@ function rawSend(socketPath, bytes) {
   });
 }
 
-/** Build an options bag that records every dispatched call so tests can
- *  assert on it. getWindow returns null by default so the focus/status paths
- *  early-exit without trying to use the Electron BrowserWindow. */
+/** Options bag recording every dispatched call. getWindow returns null so the
+ *  focus/status paths early-exit without an Electron BrowserWindow. */
 function recordingOptions() {
   const calls = { openProject: [] };
   return {
@@ -96,8 +89,7 @@ function recordingOptions() {
 test("control server: open dispatches the resolved path and acknowledges", async () => {
   const { options, calls } = recordingOptions();
   await withServer(options, async (socket) => {
-    // A RELATIVE path, because "resolved" is the contract: `aya open .` is the
-    // common invocation. An absolute fixture makes path.resolve the identity
+    // A RELATIVE path: an absolute fixture makes path.resolve the identity
     // function, so its removal would go unnoticed.
     const res = await rpc(
       socket,
@@ -113,8 +105,8 @@ test("control server: malformed JSON returns ok:false with the parser error", as
   await withServer(options, async (socket) => {
     const res = await rpc(socket, "{ not json\n");
     assert.equal(res.ok, false);
-    // The MESSAGE is the contract, not merely "some non-empty string": a catch
-    // that stops forwarding err.message would still satisfy a length check.
+    // The MESSAGE is the contract: a catch that stops forwarding err.message
+    // would still satisfy a length check.
     assert.match(res.error, /JSON|Unexpected token/i);
   });
 });
@@ -127,8 +119,7 @@ test("control server: an unknown request type is rejected by the protocol parser
       `${JSON.stringify({ type: "spaceship" })}\n`,
     );
     assert.equal(res.ok, false);
-    // Pin the message the PARSER owns, so this cannot be satisfied by a crash
-    // somewhere else in the socket handler.
+    // Pin the message the PARSER owns, so a crash elsewhere cannot satisfy it.
     assert.match(res.error, /unknown control request type/i);
   });
 });
@@ -136,16 +127,13 @@ test("control server: an unknown request type is rejected by the protocol parser
 test("control server: the size limit rejects at limit+1 and accepts at the limit", async () => {
   const { options, calls } = recordingOptions();
   await withServer(options, async (socket) => {
-    // Just over: rejected. Sent without a "\n" so the per-chunk size check is
-    // what triggers, not the parser.
+    // No "\n", so the per-chunk size check triggers rather than the parser.
     const over = "x".repeat(CONTROL_REQUEST_MAX_SIZE_BYTES + 1);
     assert.match(await rawSend(socket, over), /request too large/);
     assert.deepEqual(calls.openProject, []);
 
-    // A frame whose whole buffered size - payload PLUS the framing newline -
-    // is exactly the limit must NOT be rejected. This is the half that a
-    // far-over-the-limit payload can never pin: an off-by-one in the
-    // comparison still rejects the huge one.
+    // Payload PLUS newline exactly at the limit must NOT be rejected: this is
+    // the half an off-by-one survives, since it still rejects the huge one.
     const empty = JSON.stringify({ type: "open", path: "/tmp/x", pad: "" });
     const atLimit = JSON.stringify({
       type: "open",
@@ -161,12 +149,8 @@ test("control server: the size limit rejects at limit+1 and accepts at the limit
 });
 
 test("control server: a MUCH-too-large frame is rejected once and does not crash", async () => {
-  // The limit+1 case above arrives in a single read, so it only ever enters the
-  // over-size branch once. A payload several times the limit is split by the
-  // kernel: without the one-shot guard on that branch, every later chunk
-  // re-enters it and writes onto the socket we already ended -
-  // ERR_STREAM_WRITE_AFTER_END, uncaught, in the Electron main process.
-  // `aya pane send <pane> "<~70 KB>"` reaches this from the shipped CLI.
+  // limit+1 arrives in one read; a much larger payload is split by the kernel, so
+  // without the one-shot guard later chunks write after end (uncaught, main).
   const { options } = recordingOptions();
   await withServer(options, async (socket) => {
     const response = await rawSend(
@@ -178,7 +162,6 @@ test("control server: a MUCH-too-large frame is rejected once and does not crash
       response.split("\n").filter(Boolean).map((l) => JSON.parse(l)),
       [{ ok: false, error: "request too large" }],
     );
-    // The server is still alive and still answering afterwards.
     assert.deepEqual(
       await rpc(socket, `${JSON.stringify({ type: "focus" })}\n`),
       { ok: true },
@@ -187,13 +170,8 @@ test("control server: a MUCH-too-large frame is rejected once and does not crash
 });
 
 test("control server: a client that half-closes still gets its reply", async () => {
-  // `socket.end(frame)` is the textbook request/response shape. pane-send holds
-  // the connection open across the submit gap, so without allowHalfOpen the
-  // incoming FIN ends our writable side and the reply 150 ms later is dropped -
-  // turning the new "fail loudly" contract back into a silent success.
-  // A SUCCEEDING submit, so the reply really is written one full
-  // PANE_SEND_SUBMIT_DELAY_MS after the client's FIN. A failing send answers
-  // immediately and would sail through even without allowHalfOpen.
+  // Without allowHalfOpen the FIN ends our writable side and the reply 150 ms
+  // later is dropped. Must SUCCEED: a failing send replies at once and passes.
   const { options } = paneOptions();
   await withServer(options, async (socket) => {
     const reply = await new Promise((resolve, reject) => {
@@ -219,10 +197,8 @@ test("control server: status is forwarded to every window sink", async () => {
     isDestroyed: () => destroyed,
     webContents: { send: (channel, update) => sent.push([tag, channel, update]) },
   });
-  // TWO live sinks plus a destroyed one. In production getWindows returns every
-  // window plus the Aya Web virtual sink, so a single-sink fixture cannot see a
-  // regression to "deliver to the first one" - which would silently strip
-  // status dots from every other window and from the browser client.
+  // Two live sinks plus a destroyed one: a single-sink fixture cannot see a
+  // regression to "deliver to the first one".
   options.getWindows = () => [sink("a"), sink("gone", true), sink("b")];
   await withServer(options, async (socket) => {
     const res = await rpc(
@@ -235,8 +211,8 @@ test("control server: status is forwarded to every window sink", async () => {
       })}\n`,
     );
     assert.deepEqual(res, { ok: true });
-    // The ack alone proves nothing: the whole status branch can be deleted and
-    // the frame is still acked. The forwarded payload is the contract.
+    // The ack alone proves nothing: the status branch can be deleted and the
+    // frame is still acked. The forwarded payload is the contract.
     assert.deepEqual(
       sent.map(([tag]) => tag),
       ["a", "b"],
@@ -284,8 +260,7 @@ test("control server: focus restores and focuses the window", async () => {
   await withServer(options, async (socket) => {
     const res = await rpc(socket, `${JSON.stringify({ type: "focus" })}\n`);
     assert.deepEqual(res, { ok: true });
-    // Without this the whole focusWindow body could be a no-op: every other
-    // focus test asserts only the generic envelope.
+    // Without this the whole focusWindow body could be a no-op.
     assert.deepEqual(acts, ["restore", "focus"]);
   });
 });
@@ -330,9 +305,8 @@ test("control server: pane-list returns a formatted listing scoped to the projec
       })}\n`,
     );
     assert.equal(res.ok, true);
-    // Whole rows, not loose substrings: the preset and terminal-id columns are
-    // the handles an agent passes back to pane read/send, and "(this pane)"
-    // matching ANYWHERE would still pass if every row were marked as self.
+    // Whole rows: the id column is the handle for pane read/send, and
+    // "(this pane)" matching anywhere passes even if every row is marked self.
     assert.deepEqual(res.output.split("\n").filter(Boolean), [
       "* builder   codex   t1  (this pane)",
       "  reviewer  claude  t2",
@@ -347,8 +321,7 @@ test("control server: pane-list without listProjects reports it is unavailable",
   await withServer(options, async (socket) => {
     const res = await rpc(socket, `${JSON.stringify({ type: "pane-list" })}\n`);
     assert.equal(res.ok, false);
-    // Exact, so a TypeError from calling an undefined listProjects cannot pass
-    // for the guard firing.
+    // Exact, so a TypeError from an undefined listProjects cannot pass for it.
     assert.equal(res.error, "pane control is not available");
   });
 });
@@ -377,8 +350,7 @@ test("control server: data delivered in two chunks across the newline is parsed"
 test("control server: only the first line of a frame is parsed (one-shot per connection)", async () => {
   const { options, calls } = recordingOptions();
   await withServer(options, async (socket) => {
-    // Two valid frames on one connection. The server closes after the first,
-    // so only the first dispatch happens.
+    // Two valid frames on one connection; the server closes after the first.
     const frame =
       `${JSON.stringify({ type: "open", path: "/first" })}\n` +
       `${JSON.stringify({ type: "open", path: "/second" })}\n`;
@@ -387,13 +359,10 @@ test("control server: only the first line of a frame is parsed (one-shot per con
   });
 });
 
-// pane-send must submit for real. Writing "text\r" as ONE chunk is read as a
-// paste burst by the Codex / Claude Code composers, which turns the carriage
-// return into a newline in the message box - the text appears but is never
-// sent. The CR therefore has to be its own write, after the burst goes idle.
-/** The gap the AGENT TUIs need, restated independently of the constant the
- *  server uses so that shrinking that constant fails here instead of moving
- *  both sides at once. Measurements: electron/control.ts. */
+// "text\r" as ONE chunk reads as a paste burst in the Codex / Claude Code
+// composers: the CR becomes a newline in the box and nothing is ever sent.
+/** The gap the agent TUIs need, restated independently of the server's constant
+ *  so shrinking that constant fails here. Measurements: electron/control.ts. */
 const REQUIRED_SUBMIT_GAP_MS = 120;
 
 function paneOptions({ delivered = true } = {}) {
@@ -415,14 +384,12 @@ function paneOptions({ delivered = true } = {}) {
   };
 }
 
-/** The pane-send frame every test here sends, with only the bits that differ
- *  spelled out at the call site. */
+/** The pane-send frame every test here sends; call sites override the rest. */
 const paneSendFrame = (over = {}) =>
   `${JSON.stringify({ type: "pane-send", target: "Codex reviewer", text: "tekst", ...over })}\n`;
 
 test("control server: the shipped submit delay clears what the agent TUIs need", () => {
-  // A separate guard, because the test below deliberately does not read the
-  // constant: something still has to fail when someone lowers it.
+  // The test below deliberately ignores the constant, so this guards lowering it.
   assert.ok(
     PANE_SEND_SUBMIT_DELAY_MS >= REQUIRED_SUBMIT_GAP_MS,
     `PANE_SEND_SUBMIT_DELAY_MS is ${PANE_SEND_SUBMIT_DELAY_MS}ms; Claude Code's composer needed ${REQUIRED_SUBMIT_GAP_MS}ms to read the CR as Enter`,
@@ -444,10 +411,8 @@ test("control server: pane-send --submit sends the CR as a separate, later write
         ["term-7", "\r"],
       ],
     );
-    // The gap is the whole point: a CR in the same burst is not an Enter.
-    // The floor is the independently-recorded TUI requirement, NOT the SUT's
-    // own constant - otherwise shrinking the constant moves both sides and the
-    // regression ships green.
+    // The floor is the independently-recorded TUI requirement, NOT the SUT's own
+    // constant - otherwise shrinking it moves both sides and ships green.
     const gap = writes[1][2] - writes[0][2];
     assert.ok(
       gap >= REQUIRED_SUBMIT_GAP_MS,
@@ -470,11 +435,8 @@ test("control server: pane-send without --submit types only, no CR", async () =>
   });
 });
 
-// A pane-send that types into nothing must SAY so. The pty sink drops writes
-// for any id with no live process, and pane targets are resolved from the
-// on-disk project config - which `pane list` also enumerates - so a stale pane
-// name is easy to reach. Acking it as success made `aya pane send` exit 0
-// having typed nothing.
+// The pty sink drops writes for an id with no live process, and `pane list`
+// advertises stale panes, so acking made `aya pane send` exit 0 typing nothing.
 test("control server: pane-send fails when the pane has no live process", async () => {
   const { options, writes } = paneOptions({ delivered: false });
   await withServer(options, async (socket) => {
@@ -483,12 +445,11 @@ test("control server: pane-send fails when the pane has no live process", async 
       paneSendFrame({ submit: true }),
     );
     assert.equal(res.ok, false);
-    // The message names the OUTCOME, not a guessed cause: the same false also
-    // comes back when a starting pane's input queue could only take part of the
-    // text, and "no running process" would be wrong there.
+    // The message names the OUTCOME, not a cause: the same false comes back when
+    // a starting pane's queue took only part of the text.
     assert.match(res.error, /pane "Codex reviewer" did not accept the text/);
     assert.match(res.error, /Nothing was submitted/);
-    // And it must not go on to send an Enter into the same void.
+    // And no Enter into the same void.
     assert.deepEqual(
       writes.map(([, data]) => data),
       ["tekst"],
@@ -515,8 +476,8 @@ test("control server: a pane that dies during the submit gap is reported", async
 
 test("control server: a writePane that cannot report delivery still succeeds", async () => {
   const { options, writes } = paneOptions();
-  // Resolves undefined, like a host too old to answer the question. Only an
-  // explicit false may be turned into an error - an unknown answer must not.
+  // Resolves undefined, like a host too old to answer: only an explicit false
+  // may become an error.
   options.writePane = async (terminalId, data) => {
     writes.push([terminalId, data, Date.now()]);
   };
@@ -533,10 +494,8 @@ test("control server: a writePane that cannot report delivery still succeeds", a
   });
 });
 
-// The submit gap makes one pane-send span two writes with 150 ms of yield in
-// between. Without a per-terminal lock two concurrent sends interleave into a
-// single merged line plus a stray Enter - and `pane list` exists precisely so
-// several agents can drive each other's panes.
+// One pane-send spans two writes with 150 ms of yield between them: without a
+// per-terminal lock, two sends interleave into one line plus a stray Enter.
 test("control server: concurrent pane-sends to one pane do not interleave", async () => {
   const { options, writes } = paneOptions();
   await withServer(options, async (socket) => {
@@ -549,7 +508,7 @@ test("control server: concurrent pane-sends to one pane do not interleave", asyn
     assert.equal(a.ok, true);
     assert.equal(b.ok, true);
     const data = writes.map(([, d]) => d);
-    // Whichever won the race, each text is immediately followed by ITS Enter.
+    // Whichever won the race, each text is followed by ITS own Enter.
     assert.ok(
       JSON.stringify(data) === JSON.stringify(["alpha", "\r", "beta", "\r"]) ||
         JSON.stringify(data) === JSON.stringify(["beta", "\r", "alpha", "\r"]),
@@ -558,18 +517,12 @@ test("control server: concurrent pane-sends to one pane do not interleave", asyn
   });
 });
 
-// The other half of the per-pane lock: the queue must survive a failure. A
-// send that throws (a dead pane, mid-sequence) is chained ahead of whatever is
-// already queued behind it, so if the failure propagated down the chain it
-// would cancel sends that have nothing to do with it - one agent's dead pane
-// would silently swallow another agent's message.
+// The queue must survive a failure: a throwing send is chained ahead of what is
+// queued behind it, so propagating would swallow another agent's message.
 test("control server: a failing pane-send does not cancel the one queued behind it", async () => {
   const { options, writes } = paneOptions();
-  // Fail the CR, not the text: the doomed send then holds the lock for the
-  // whole submit gap, which is what gives the second send time to QUEUE behind
-  // it. Failing the first write instead makes the sequence collapse before the
-  // second request even arrives - measured: that version left a chain-breaking
-  // `prior.then(run)` green, because nothing was ever queued.
+  // Fail the CR, not the text: failing the first write collapses the send before
+  // anything can queue behind it - measured, that left `prior.then(run)` green.
   const realWritePane = options.writePane;
   let writeCount = 0;
   options.writePane = async (terminalId, data) => {
@@ -588,8 +541,7 @@ test("control server: a failing pane-send does not cancel the one queued behind 
     const succeeded = results.filter((r) => r.ok);
     assert.equal(failed.length, 1, `expected exactly one failure: ${JSON.stringify(results)}`);
     assert.equal(succeeded.length, 1, `expected one send to survive: ${JSON.stringify(results)}`);
-    // And the survivor really ran, in full, after the doomed one died: its
-    // text AND its own Enter reached the pane.
+    // The survivor ran in full after the doomed one died: text AND its Enter.
     assert.deepEqual(
       writes.map(([, data]) => data),
       ["doomed", "survivor", "\r"],
@@ -597,9 +549,8 @@ test("control server: a failing pane-send does not cancel the one queued behind 
   });
 });
 
-// The read buffer used to keep the dispatched line, so a second data event
-// re-ran the SAME request. pane-send now holds the connection open across the
-// submit gap, which widened that window from a microtask to 150 ms.
+// The read buffer used to keep the dispatched line, so a second data event re-ran
+// the SAME request; the submit gap widened that window to 150 ms.
 test("control server: a late second chunk does not re-run the request", async () => {
   const { options, writes } = paneOptions();
   await withServer(options, async (socket) => {
@@ -607,18 +558,15 @@ test("control server: a late second chunk does not re-run the request", async ()
     await new Promise((resolve, reject) => {
       const c = net.createConnection(socket);
       c.setEncoding("utf8");
-      // A socket with no "data" listener stays paused and never observes the
-      // server's FIN, so "close" would never fire and this would hang.
+      // A socket with no "data" listener stays paused and never sees the FIN,
+      // so "close" would never fire and this would hang.
       c.on("data", () => {});
       c.on("error", reject);
       c.on("close", resolve);
       c.on("connect", () => {
         c.write(frame);
-        // A COMPLETE second frame, not a stray byte. A byte with no newline is
-        // absorbed by the buffer reset alone, so it cannot tell whether the
-        // one-shot `handled` guard exists - measured: deleting that guard left
-        // this test green until the stimulus became a real frame, at which
-        // point the pane gets typed into and Entered twice on one connection.
+        // A COMPLETE second frame: a newline-less byte is absorbed by the buffer
+        // reset - measured, deleting the `handled` guard stayed green until this.
         setTimeout(() => c.write(frame), 40);
       });
     });
@@ -630,9 +578,8 @@ test("control server: a late second chunk does not re-run the request", async ()
 });
 
 test("control server: a half-close WITHOUT a complete frame is not retained", async () => {
-  // allowHalfOpen stops Node ending our side on the peer's FIN, which is what
-  // lets a delayed reply through - but it also means a connection that dies
-  // mid-frame would be kept for the life of the main process unless we reap it.
+  // allowHalfOpen keeps our side open past the peer's FIN, so a connection that
+  // dies mid-frame is held for the life of the main process unless reaped.
   const { options } = recordingOptions();
   await withServer(options, async (socket) => {
     const closed = await new Promise((resolve, reject) => {
@@ -651,9 +598,8 @@ test("control server: a half-close WITHOUT a complete frame is not retained", as
 });
 
 test("control server: a silent connection is reaped after the idle window", async () => {
-  // The other reaper (socket "end") only covers a peer that FINs. A peer that
-  // connects, writes a partial frame and then just sits there sends no FIN at
-  // all - that is what the idle timeout is for, and nothing covered it.
+  // The "end" reaper only covers a peer that FINs; one that writes a partial
+  // frame and then sits there sends none. That is what the idle timeout is for.
   const { options } = recordingOptions();
   options.idleTimeoutMs = 150;
   await withServer(options, async (socket) => {
@@ -672,20 +618,17 @@ test("control server: a silent connection is reaped after the idle window", asyn
       });
       assert.equal(closed, true, "a silent half-written connection was retained");
     } finally {
-      // Without a reaper the server keeps its side open, and a lingering client
-      // handle would turn this test's FAILURE into a hung suite - a stalled CI
-      // job instead of a red one.
+      // A lingering client handle would turn a FAILURE here into a hung suite.
       client?.destroy();
     }
   });
 });
 
 test("control server: the idle reaper never touches a dispatched request", async () => {
-  // The direction that matters more: a pane-send is idle on the wire for the
-  // whole submit gap. Reaping it would destroy the socket before its reply.
+  // A pane-send is idle on the wire for the whole submit gap; reaping it would
+  // destroy the socket before its reply.
   const { options, writes } = paneOptions();
-  // Far shorter than PANE_SEND_SUBMIT_DELAY_MS, so the timeout definitely fires
-  // while the handler is sleeping.
+  // Far below PANE_SEND_SUBMIT_DELAY_MS, so it fires while the handler sleeps.
   options.idleTimeoutMs = 40;
   await withServer(options, async (socket) => {
     const res = await rpc(
@@ -711,13 +654,11 @@ test("control server: stop() removes the socket file so reboot is clean", async 
   const stop = startControlServerOn(socket, options);
   // Give listen() a tick to chmod the socket file.
   await new Promise((resolve) => setTimeout(resolve, 20));
-  // Use rpc once so we know the socket exists/works.
   await rpc(socket, `${JSON.stringify({ type: "focus" })}\n`);
   assert.ok(existsSync(socket), "the socket file should exist while serving");
   stop();
-  // The filesystem IS the contract here. Asserting only that a SECOND server
-  // can boot proves nothing: startControlServerOn unlinks the path itself on
-  // boot, so that succeeds even when stop() removes nothing.
+  // Asserting only that a SECOND server can boot proves nothing:
+  // startControlServerOn unlinks the path itself on boot.
   assert.equal(
     existsSync(socket),
     false,

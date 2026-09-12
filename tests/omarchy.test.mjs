@@ -1,9 +1,6 @@
 // Parsing an Omarchy theme's colors.toml into the palette Aya skins from.
-// Real dark (tokyo-night) and light (catppuccin-latte) samples, the mode
-// precedence, the "not enough to skin from" guard, and the value-shape rules -
-// because BOTH sinks downstream (CSSOM setProperty for the chrome vars, xterm's
-// own color parser for the terminal) discard an unparsable color in silence.
-// Anything this parser lets through unchecked disappears without a trace.
+// Value-shape rules matter because both sinks (CSSOM setProperty, xterm's color
+// parser) discard an unparsable color in silence.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -52,10 +49,8 @@ const FG = 'foreground = "#eee"';
 const AC = 'accent = "#f00"';
 
 test("parses a full dark palette with all tiers and ANSI slots", () => {
-  // The WHOLE palette, not spot checks: every optional field here has a `??`
-  // fallback in src/theme-skin.ts, so a key silently dropped from FIELD_MAP
-  // yields a plausible-looking color rather than a visible failure. A strict
-  // deep-equal also catches a key renamed or added.
+  // The WHOLE palette: every optional field has a `??` fallback in
+  // theme-skin.ts, so a key dropped from FIELD_MAP yields a plausible color.
   assert.deepStrictEqual(parseOmarchyColors(TOKYO_NIGHT), {
     mode: "dark",
     accent: "#7aa2f7",
@@ -81,9 +76,8 @@ test("parses a full dark palette with all tiers and ANSI slots", () => {
 });
 
 test("the file's own mode wins over the caller's fallback", () => {
-  // Passing the OPPOSITE fallback is what makes this falsifiable: asserting
-  // "dark" while the default fallback is also "dark" passes even when the mode
-  // key is never read at all.
+  // The OPPOSITE fallback makes this falsifiable: asserting "dark" against a
+  // "dark" default passes even when the mode key is never read.
   assert.equal(parseOmarchyColors(TOKYO_NIGHT, "light").mode, "dark");
   assert.equal(parseOmarchyColors(CATPPUCCIN_LATTE, "dark").mode, "light");
 });
@@ -92,8 +86,7 @@ test("parses a light palette and carries its mode", () => {
   const p = parseOmarchyColors(CATPPUCCIN_LATTE);
   assert.equal(p.mode, "light");
   assert.equal(p.accent, "#1e66f5");
-  // The light fixture's own ANSI keys, so FIELD_MAP is exercised on this path
-  // too rather than only on the dark one.
+  // The light fixture's own ANSI keys, so FIELD_MAP is exercised here too.
   assert.equal(p.red, "#d20f39");
   assert.equal(p.green, "#40a02b");
 });
@@ -111,12 +104,9 @@ test("the legacy theme_type key is honored when mode is absent", () => {
   );
 });
 
-// The comment case that is actually load-bearing. A full-line "#" comment is
-// already rejected by the key regex, so a fixture built only from those cannot
-// distinguish guard-present from guard-absent - it is a tautology. A TRAILING
-// comment is different: it used to defeat the starts-and-ends-with-a-quote test
-// and yield the literal `"#f00" # my accent`, which both sinks then threw away
-// while Settings still claimed the theme was being followed.
+// A full-line "#" comment is already rejected by the key regex, so it cannot
+// tell guard-present from guard-absent. A TRAILING comment used to defeat the
+// quote test and yield the literal `"#f00" # my accent`, silently discarded.
 test("a trailing comment is stripped, not carried into the color", () => {
   const p = parseOmarchyColors(toml(BG, FG, 'accent = "#f00" # my accent'));
   assert.equal(p.accent, "#f00");
@@ -131,17 +121,15 @@ test("an unquoted value keeps its leading # but loses a trailing comment", () =>
 });
 
 test("keys under a [section] do not overwrite the top-level palette", () => {
-  // Reading a sectioned file flat would let `[bright] red` win by last-key-wins
-  // and hand the terminal the wrong red, with nothing to signal it.
+  // Read flat, `[bright] red` would win by last-key-wins and reach the terminal.
   const p = parseOmarchyColors(
     toml(BG, FG, AC, 'red = "#ff0000"', "[bright]", 'red = "#00ff00"'),
   );
   assert.equal(p.red, "#ff0000");
 });
 
-// The test above uses `[bright]`, which is not a palette table at all, so it
-// cannot tell top-level PRECEDENCE from mere table-filtering: both readings
-// agree there. Measured: flipping the lookup to prefer tables left it green.
+// `[bright]` above is not a palette table, so it cannot tell PRECEDENCE from
+// table-filtering. Measured: flipping the lookup to prefer tables left it green.
 test("a top-level key beats the same key under a palette table", () => {
   const p = parseOmarchyColors(
     toml(BG, FG, AC, 'red = "#ff0000"', "[colors]", 'red = "#00ff00"'),
@@ -149,9 +137,8 @@ test("a top-level key beats the same key under a palette table", () => {
   assert.equal(p.red, "#ff0000", "the top-level value is the declared one");
 });
 
-// Two palette tables offering the same key: the first one read wins, so adding
-// a table lower in the file cannot silently restyle a key already resolved
-// above it. Measured: without this, dropping the first-wins guard stayed green.
+// First table read wins, so a later table cannot restyle a resolved key.
+// Measured: without this, dropping the first-wins guard stayed green.
 test("when two palette tables offer a key, the first one read wins", () => {
   const p = parseOmarchyColors(
     toml(BG, FG, AC, "[colors]", 'red = "#ff0000"', "[palette]", 'red = "#00ff00"'),
@@ -160,9 +147,8 @@ test("when two palette tables offer a key, the first one read wins", () => {
 });
 
 test("essentials living under a table are still resolved", () => {
-  // A latch that simply dropped everything after the first header would reject
-  // this file outright - a regression against the pre-existing flat parser,
-  // which would have picked these keys up.
+  // Dropping everything after the first header would reject this file - a
+  // regression against the old flat parser, which resolved these keys.
   const p = parseOmarchyColors(
     toml('mode = "dark"', "[primary]", BG, FG, AC, "[normal]", 'red = "#ff0000"'),
   );
@@ -173,10 +159,8 @@ test("essentials living under a table are still resolved", () => {
 });
 
 test("a DOTTED table header resolves like a plain one", () => {
-  // `[colors.primary]` is the canonical Alacritty spelling, and the old flat
-  // parser resolved such a file. Matching the whole table path against the
-  // nested-section list instead of its last segment would reject it - Omarchy
-  // silently reported unavailable and the skin dropped app-wide.
+  // `[colors.primary]` is the canonical Alacritty spelling. Matching the whole
+  // path instead of its last segment rejected it and dropped the skin app-wide.
   const p = parseOmarchyColors(
     toml("[colors.primary]", BG, FG, AC, "[colors.normal]", 'red = "#ff0000"'),
   );
@@ -188,8 +172,7 @@ test("a DOTTED table header resolves like a plain one", () => {
 });
 
 test("a dotted table that is NOT a palette table cannot supply essentials", () => {
-  // The whole point of namespacing: an unrelated table must not stand in for
-  // the palette. `[ui.chrome]` is neither top level nor a known palette table.
+  // `[ui.chrome]` is neither top level nor a known palette table.
   assert.equal(
     parseOmarchyColors(toml("[ui.chrome]", BG, FG, AC)),
     null,
@@ -197,10 +180,8 @@ test("a dotted table that is NOT a palette table cannot supply essentials", () =
 });
 
 test("a sectioned file's own mode is honored, not just its colors", () => {
-  // The namespacing has to apply to `mode` too: a sectioned file is precisely
-  // the shape it exists for, and reading mode only at the top level would make
-  // such a theme silently fall back to the caller's default - a light Omarchy
-  // theme rendering as dark.
+  // Reading mode only at the top level makes a sectioned file fall back to the
+  // caller's default - a light Omarchy theme rendering as dark.
   const p = parseOmarchyColors(
     toml("[primary]", 'mode = "light"', BG, FG, AC),
     "dark",
@@ -215,9 +196,7 @@ test("a value that is not a color is dropped rather than passed on", () => {
 
 test("hex-ish values of an illegal length are rejected", () => {
   // CSS hex is 3, 4, 6 or 8 digits. A 5- or 7-digit value passes a naive
-  // /#[0-9a-f]{3,8}/ but resolves nowhere: xterm switches on those exact
-  // lengths and CSSOM drops the declaration - the silent discard this gate
-  // exists to stop.
+  // /#[0-9a-f]{3,8}/ but resolves in neither sink.
   assert.equal(parseOmarchyColors(toml(BG, FG, 'accent = "#12345"')), null);
   assert.equal(parseOmarchyColors(toml(BG, FG, 'accent = "#1234567"')), null);
   assert.ok(parseOmarchyColors(toml(BG, FG, 'accent = "#1234"')), "4-digit hex is legal");
@@ -228,8 +207,7 @@ test("hex-ish values of an illegal length are rejected", () => {
 });
 
 test("an arbitrary word is not treated as a color", () => {
-  // "mauve", "notacolor", "currentColor" all match /[a-zA-Z]+/ and none of them
-  // resolves in either sink.
+  // All match /[a-zA-Z]+/ and none resolves in either sink.
   for (const word of ["mauve", "notacolor", "currentColor", "transparent"]) {
     assert.equal(
       parseOmarchyColors(toml(BG, FG, `accent = "${word}"`)),
@@ -248,13 +226,11 @@ test("functional color notations and real CSS keywords are accepted", () => {
 });
 
 test("an essential that is not a color makes the file unusable (null)", () => {
-  // Reporting "available" for a file we cannot skin from is what let Settings
-  // offer - and claim - a theme that neither sink would apply.
+  // Reporting "available" let Settings offer a theme neither sink would apply.
   assert.equal(parseOmarchyColors(toml(BG, FG, 'accent = "rgb(1,2"')), null);
 });
 
-// One fixture per clause, so each half of the guard is individually
-// falsifiable: a fixture that omits two fields at once only proves that SOME
+// One fixture per clause: omitting two fields at once proves only that SOME
 // emptiness check exists, not which fields it covers.
 test("each of background/foreground/accent is individually required", () => {
   assert.equal(parseOmarchyColors(toml(FG, AC)), null, "background missing");
@@ -265,6 +241,15 @@ test("each of background/foreground/accent is individually required", () => {
 
 test("an empty value is as unusable as a missing one", () => {
   assert.equal(parseOmarchyColors(toml(BG, FG, 'accent = ""')), null);
+});
+
+// The test above has no table to fall through TO, so it passes either way.
+// Measured: `??` instead of `||` in the lookup returns null here.
+test("an empty top-level value falls through to a palette table", () => {
+  const p = parseOmarchyColors(
+    toml(BG, FG, 'accent = ""', "[colors]", 'accent = "#f00"'),
+  );
+  assert.equal(p.accent, "#f00");
 });
 
 test("a file with nothing in it is unusable (null)", () => {

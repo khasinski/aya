@@ -2957,10 +2957,8 @@ export function App() {
     const root = document.documentElement;
     let cancelled = false;
     let applied: string[] = [];
-    // The ONE way out of "skinned". Both exits below go through it, because
-    // inline custom properties outrank every stylesheet rule: a branch that
-    // returns without removing them leaves the chrome painted with a palette
-    // that is no longer in effect while the terminals fall back.
+    // The ONE way out of "skinned": inline custom properties outrank every
+    // stylesheet rule, so a branch that skips this leaves stale chrome.
     const clearSkin = () => {
       for (const key of applied) root.style.removeProperty(key);
       applied = [];
@@ -2969,16 +2967,9 @@ export function App() {
       const theme = await window.aya.getOmarchyTheme();
       if (cancelled) return;
       if (!theme) {
-        // Omarchy went away, or the active theme's colors.toml is one we can't
-        // skin from: fall back to the system appearance, unskinned.
-        //
-        // The PREFERENCE is deliberately left alone. A null here is often
-        // transient - `omarchy-theme-set` relinks the current/ symlink while
-        // the watcher's debounced re-read is already in flight - and persisting
-        // "system" would turn one unlucky read into a permanent loss of the
-        // user's explicit choice, with the Settings segment disappearing too.
-        // Keeping the preference means the next theme change re-skins by
-        // itself; SettingsModal says "not available here" meanwhile.
+        // Unskin, but KEEP the preference: a null here is often transient
+        // (omarchy-theme-set relinks current/ mid-read), and persisting
+        // "system" would lose the user's explicit choice permanently.
         clearSkin();
         root.removeAttribute("data-theme");
         setSkinThemeColors(null);

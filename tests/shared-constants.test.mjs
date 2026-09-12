@@ -13,6 +13,10 @@ import {
 } from "../dist-electron/constants.js";
 import { PS_LSTART_WIDTH } from "../dist-electron/pty-host-registry.js";
 import { SUMMARY_TEXT_MAX_CHARS } from "../dist-electron/local-summary-errors.js";
+import {
+  CONTROL_CONNECTION_IDLE_MS,
+  CONTROL_LINGER_MS,
+} from "../dist-electron/control.js";
 
 test("control/pty-host sockets are owner-only (rw-------)", () => {
   assert.equal(SOCKET_FILE_PERMISSIONS, 0o600);
@@ -39,4 +43,16 @@ test("ps lstart field width matches the C-locale ctime format (24 chars)", () =>
 
 test("summary text cap is 160 chars", () => {
   assert.equal(SUMMARY_TEXT_MAX_CHARS, 160);
+});
+
+// Every reaper test overrides idleTimeoutMs, so nothing exercised the SHIPPED
+// value. socket.setTimeout(0) DISABLES the timer, so a 0 here silently restores
+// the socket leak while the whole suite stays green.
+test("the control socket reaps idle peers after 30s and lingers 2s", () => {
+  assert.equal(CONTROL_CONNECTION_IDLE_MS, 30_000);
+  assert.ok(CONTROL_LINGER_MS > 0, "a 0 linger disables the timer, never fires");
+  assert.ok(
+    CONTROL_LINGER_MS < CONTROL_CONNECTION_IDLE_MS,
+    "the linger backstop must expire before the idle reaper",
+  );
 });

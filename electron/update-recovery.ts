@@ -1,17 +1,6 @@
-// Detecting a SILENTLY-FAILED macOS auto-update (#78).
-//
-// Squirrel.Mac / ShipIt installs the downloaded update in a SEPARATE process
-// after Aya calls quitAndInstall() and quits. When that install fails (the
-// observed case: the extracted bundle is missing, ShipIt gives up after "too
-// many attempts" and relaunches the OLD bundle), nothing in-process ever sees
-// an error - the app just comes back up on the old version, looking like a
-// successful update. electron-updater's `error` event does not fire for it.
-//
-// We can't catch the failure where it happens, but we CAN detect it on the next
-// launch: write a marker naming the version we asked ShipIt to install just
-// before we quit, then on startup compare it to the version we actually came
-// back as. Same version -> it worked; different -> it silently rolled back, and
-// we surface that (instead of the user reinstalling the same update for days).
+// Detecting a SILENTLY-FAILED macOS auto-update (#78). ShipIt installs in a
+// SEPARATE process after we quit, and a failure there fires no electron-updater
+// `error` - so we mark the target version before quitting and compare on launch.
 
 import { promises as fs } from "node:fs";
 import * as fsSync from "node:fs";
@@ -23,9 +12,8 @@ import { AYA_HOME } from "./paths";
 /** Marker written right before quitAndInstall and cleared once reconciled. */
 export const PENDING_UPDATE_FILE = path.join(AYA_HOME, "pending-update.json");
 
-/** ShipIt's working/cache dir (macOS). A failed attempt can leave poisoned
- *  "attempt N" state here that the issue reports blocking later attempts; we
- *  clear it after a detected rollback so the next try starts fresh. */
+/** ShipIt's cache dir (macOS). Wiping it after a rollback is a SUSPECTED fix:
+ *  the blocking "attempt N" state is reported upstream, not reproduced here. */
 export const SHIPIT_CACHE_DIR = path.join(
   os.homedir(),
   "Library",
@@ -38,19 +26,14 @@ export interface PendingUpdate {
   targetVersion: string;
   /** When THIS attempt was requested (ISO). Anchors the grace window below. */
   requestedAt: string;
-  /** How many times we have quit with this version pending, counting this one.
-   *  The marker only survives a launch that did NOT come back on the target
-   *  version, so a count above 1 is itself evidence that an earlier attempt
-   *  failed - which is what lets the grace window stay per-attempt without
-   *  deferring the diagnosis forever. */
+  /** Quits with this version pending, counting this one. The marker only
+   *  survives a failed launch, so >1 is evidence an earlier attempt failed. */
   attempts: number;
 }
 
 export type RelaunchDiagnosis = "none" | "applied" | "rolled-back";
 
-/** The marker's schema, applied to whatever JSON.parse produced. Both readers
- *  (the async one and the sync quit-path one) go through here so the two can
- *  never validate the same file differently. */
+/** The marker's schema. Both readers go through here so they cannot diverge. */
 function normalizePendingUpdate(parsed: unknown): PendingUpdate | null {
   if (typeof parsed !== "object" || parsed === null) return null;
   const raw = parsed as Partial<PendingUpdate>;
@@ -63,37 +46,24 @@ function normalizePendingUpdate(parsed: unknown): PendingUpdate | null {
   };
 }
 
-/** How many attempts a marker represents. Normalization guarantees at least 1,
- *  so in production this only ever reads the field back - it is the one place
- *  that decides what a missing or nonsensical count means, rather than three
- *  call sites deciding it slightly differently. */
+/** How many attempts a marker represents; the one place a missing or
+ *  nonsensical count is interpreted (as 1). */
 function attemptsOf(marker: Partial<PendingUpdate>): number {
   return typeof marker.attempts === "number" && marker.attempts >= 1
     ? marker.attempts
     : 1;
 }
 
-/** How soon after an install request a relaunch is still "too early to judge".
- *  ShipIt installs in a separate process AFTER we quit; if we are already back
- *  up on the old version within this window the install is most likely still
- *  running, not failed. Declaring a rollback there would be wrong twice over -
- *  a false warning, and a recursive wipe of ShipIt's cache underneath a live
- *  install. */
+/** Too early to judge: a relaunch within 90 s most likely means ShipIt's
+ *  separate install process is still running, not that it failed. */
 export const ROLLBACK_GRACE_MS = 90_000;
 
-/** Attempts at which we stop extending the benefit of the doubt. The FIRST
- *  attempt gets its grace window; a second quit with the same version still
- *  pending means the first one demonstrably did not land, so a quick relaunch
- *  is no longer ambiguous. Without this the window would slide forever (every
- *  quit re-stamps it); with a frozen stamp instead, retries would get NO window
- *  at all and we would wipe ShipIt's cache under a live install. */
+/** Only the FIRST attempt gets the grace window - a second quit with the same
+ *  version pending is proof the first did not land. */
 export const ROLLBACK_GRACE_MAX_ATTEMPTS = 1;
 
-/** Pure: given the marker (or null), the version we actually launched as, and
- *  the current time, decide what happened. No marker -> a normal launch. Same
- *  version -> the update applied. Different version -> ShipIt rolled us back,
- *  unless this is the first attempt and it is so recent that the install
- *  cannot have finished yet. */
+/** Pure: no marker -> normal launch, same version -> applied, otherwise
+ *  rolled-back unless it is a first attempt still inside the grace window. */
 export function diagnoseRelaunch(
   pending: PendingUpdate | null,
   currentVersion: string,
@@ -101,17 +71,11 @@ export function diagnoseRelaunch(
 ): RelaunchDiagnosis {
   if (!pending || !pending.targetVersion) return "none";
   if (pending.targetVersion === currentVersion) return "applied";
-  // A repeat attempt is already proof the previous one failed - judge it now
-  // rather than granting another window this marker would keep renewing.
   if (attemptsOf(pending) <= ROLLBACK_GRACE_MAX_ATTEMPTS) {
-    // `requestedAt` is what makes the grace window possible; an unparsable or
-    // absent stamp falls back to judging immediately, as before.
     const requestedAt = Date.parse(pending.requestedAt || "");
     const age = nowMs - requestedAt;
-    // Bounded on BOTH sides: a negative age means the wall clock moved
-    // backwards (NTP correction, dual-boot RTC, VM resume), and a one-sided
-    // `age <` test would then suppress the diagnosis on every launch until the
-    // clock caught up. A nonsensical age falls through to the judgement.
+    // Bounded on BOTH sides: a backwards wall clock (NTP, RTC, VM resume) would
+    // otherwise suppress the diagnosis on every launch until it caught up.
     if (!Number.isNaN(requestedAt) && age >= 0 && age < ROLLBACK_GRACE_MS) {
       return "none";
     }
@@ -119,11 +83,8 @@ export function diagnoseRelaunch(
   return "rolled-back";
 }
 
-/** Whether a rollback is established firmly enough to justify the DESTRUCTIVE
- *  half of the response - recursively removing ShipIt's cache. The notice is
- *  cheap and truthful either way ("the update did not install"), but the wipe
- *  can land underneath a live install, so it waits for a repeat failure, which
- *  is also the only case the poisoned-cache theory is about. */
+/** Gate on the DESTRUCTIVE half (wiping ShipIt's cache): it waits for a repeat
+ *  failure, because a wipe can land underneath a live install. */
 export function shouldCleanShipItCache(pending: PendingUpdate | null): boolean {
   if (!pending) return false;
   return attemptsOf(pending) > ROLLBACK_GRACE_MAX_ATTEMPTS;
@@ -139,10 +100,8 @@ export async function readPendingUpdate(): Promise<PendingUpdate | null> {
   }
 }
 
-/** The marker to write for a new install request. Each attempt gets its OWN
- *  timestamp, so each gets its own grace window; the COUNT is what stops that
- *  window renewing indefinitely, because a marker only survives a launch that
- *  failed to bring us back on the target version. Exported for tests. */
+/** The marker for a new install request: fresh timestamp per attempt, with the
+ *  count stopping the grace window from renewing forever. Exported for tests. */
 export function nextAttempt(
   targetVersion: string,
   prior: PendingUpdate | null,
@@ -159,18 +118,8 @@ export async function markPendingUpdate(targetVersion: string): Promise<void> {
   await writeFileAtomic(PENDING_UPDATE_FILE, JSON.stringify(marker) + "\n");
 }
 
-/** The same marker, written synchronously, for the quit path.
- *
- *  On macOS this is NOT electron-updater's doing: MacUpdater extends AppUpdater,
- *  not BaseUpdater, so `autoInstallOnAppQuit` there only makes it hand the zip
- *  to Squirrel.Mac eagerly - it registers no quit handler. Squirrel applies the
- *  staged bundle when the app exits. On Windows/Linux BaseUpdater's real
- *  addQuitHandler does the install. Either way an ordinary quit can install,
- *  which is what the app's own "Restart Aya to install" notification asks for -
- *  and Electron's `before-quit` awaits nothing, so the async version would lose
- *  the race with app exit.
- *
- *  Best-effort: a marker we fail to write only costs us the diagnosis. */
+/** Sync marker for the quit path (`before-quit` awaits nothing). On macOS
+ *  electron-updater registers NO quit handler: Squirrel applies on exit. */
 export function markPendingUpdateSync(targetVersion: string): void {
   try {
     fsSync.mkdirSync(path.dirname(PENDING_UPDATE_FILE), { recursive: true });
@@ -189,7 +138,7 @@ export function markPendingUpdateSync(targetVersion: string): void {
     );
     fsSync.renameSync(tmp, PENDING_UPDATE_FILE);
   } catch {
-    // best-effort; a quit-path install just stays undiagnosable, as before
+    // best-effort; a quit-path install just stays undiagnosable
   }
 }
 

@@ -1,18 +1,7 @@
-// Input typed while a spawn is still in flight must be held, not dropped.
-//
-// writePty resolves the PTY out of the `ptys` map, but spawnPty registers it
-// only AFTER an async command-exists preflight. Anything typed in that window
-// used to hit `if (!p) return` and vanish with no echo and no error - a real
-// tty buffers what you type before the shell reads it, so the drop was the
-// anomaly. These tests drive the queue directly: spawnPty runs synchronously up
-// to the preflight (marking the id in-flight), so calling writePty before
-// awaiting lands squarely inside the spawn window.
-//
-// The command below is a valid binary NAME that does not exist, so every spawn
-// here fails at the preflight and never reaches node-pty (whose native module
-// is built for Electron's ABI, not the plain node running this suite). That
-// covers queueing, the cap and cleanup; the flush into a live PTY needs a real
-// process and is exercised by the e2e suite.
+// Input typed while a spawn is in flight must be held, not dropped: spawnPty
+// registers the PTY only after an async preflight, so writePty before the await
+// lands in that window. MISSING_BINARY fails the preflight so node-pty is never
+// reached: its native module targets Electron's ABI, not this node. Flush is e2e.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -21,9 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnPty, writePty, __testPendingWrites } from "../dist-electron/pty.js";
 
-// pty.ts logs lifecycle events to $AYA_HOME/pty-events.log (resolved lazily at
-// the first append), so redirect it before any spawnPty call - otherwise unit
-// runs write into the user's real ~/.aya.
+// pty.ts resolves $AYA_HOME lazily at the first log append, so redirect it
+// before any spawnPty call or unit runs write into the user's real ~/.aya.
 process.env.AYA_HOME = mkdtempSync(join(tmpdir(), "aya-pending-write-test-"));
 
 const MISSING_BINARY = "aya-no-such-binary-zzz";
@@ -53,8 +41,7 @@ test("input typed during the spawn window is queued in order, not dropped", asyn
   const id = uniqueId("pending");
   const sink = fakeSink();
 
-  // Deliberately not awaited: the spawn is now parked on the async preflight
-  // with the id marked in-flight and no PTY registered yet.
+  // Not awaited: parked on the preflight, id in-flight, no PTY registered yet.
   const spawn = spawnPty(req(id), sink);
   writePty(id, "echo ");
   writePty(id, "HELLO\r");
@@ -74,9 +61,8 @@ test("a settled spawn holds nothing, whatever its outcome", async () => {
   writePty(id, "typed into a spawn that is about to fail\r");
   await spawn;
 
-  // This spawn failed at the preflight, so the queue was never flushed into a
-  // PTY - the finally still has to clear it, or the host would hold that input
-  // (and its memory) until the id was reused.
+  // The queue was never flushed, so the finally still has to clear it or the
+  // host holds that input until the id is reused.
   assert.ok(
     sink.events.some((e) => e.type === "spawn-failed"),
     "precondition: the spawn failed at the command-exists preflight",
@@ -85,18 +71,15 @@ test("a settled spawn holds nothing, whatever its outcome", async () => {
 });
 
 test("input for an id with no spawn in flight is still dropped", async () => {
-  // Only the spawn window buffers. An unknown id - or one whose PTY already
-  // exited - must not accumulate input for a process that will never read it.
+  // Only the spawn window buffers: an unknown or exited id must not accumulate
+  // input for a process that will never read it.
   const id = uniqueId("pending-unknown");
   writePty(id, "nobody is listening\r");
   assert.deepEqual(__testPendingWrites(id), [0, 0]);
 });
 
-// Dropping the input is correct; doing it SILENTLY was not. `aya pane send`
-// resolves its target from the on-disk project config (and `aya pane list`
-// advertises exactly those panes), so a pane that has already exited is an
-// easy target - and the control server used to answer ok:true, exit 0, having
-// typed nothing at all. The boolean is what lets it answer honestly.
+// Dropping is correct; doing it SILENTLY was not - `aya pane list` advertises
+// exited panes, and pane-send used to answer ok:true having typed nothing.
 test("a dropped write REPORTS that it went nowhere", async () => {
   const id = uniqueId("pending-report");
   assert.equal(
@@ -106,21 +89,15 @@ test("a dropped write REPORTS that it went nowhere", async () => {
   );
 });
 
-// Buffering is NOT delivery. The spawn's `finally` discards the queue on every
-// failure path, so answering "true" the moment the bytes are parked would be
-// the same silent no-op, just relocated: pane-send would ack a send that the
-// failing spawn then threw away. The answer therefore waits for the spawn.
+// Buffering is NOT delivery: the spawn's `finally` discards the queue on every
+// failure path, so the answer has to wait for the spawn to settle.
 test("a write parked on a spawn that FAILS reports that it went nowhere", async () => {
   const id = uniqueId("pending-report-failed-spawn");
   const sink = fakeSink();
-  // req() points at a binary that does not exist, so this dies at the
-  // command-exists preflight - inside the spawn window, with input queued.
   const spawn = spawnPty(req(id), sink);
   const delivered = writePty(id, "typed into a spawn that will fail\r");
-  // It must DEFER: no answer while the spawn is still in flight. Sniffing for
-  // a `.then` cannot show that - writePty always returns a promise now, so
-  // that check would pass even if the deferral were deleted. Race it against a
-  // turn of the event loop instead: still pending means still deferring.
+  // Must DEFER. Sniffing for a `.then` cannot show that - writePty always
+  // returns a promise - so race a turn of the loop: pending means deferring.
   const STILL_PENDING = Symbol("still-pending");
   const aTurn = new Promise((resolve) => setImmediate(() => resolve(STILL_PENDING)));
   assert.equal(
@@ -140,7 +117,7 @@ test("a write that overflows the pending cap reports failure immediately", async
   const id = uniqueId("pending-report-cap");
   const sink = fakeSink();
   const spawn = spawnPty(req(id), sink);
-  // Fill the queue, then try to add more: nothing of the second chunk fits.
+  // Fill the queue: nothing of the second chunk fits.
   writePty(id, "x".repeat(PENDING_WRITE_MAX_BYTES));
   assert.equal(
     await writePty(id, "not a byte more"),
@@ -151,9 +128,8 @@ test("a write that overflows the pending cap reports failure immediately", async
 });
 
 test("a PARTIALLY queued write reports failure too", async () => {
-  // The head is kept (earliest keystrokes matter most) but the caller must not
-  // be told the message got through: with --submit the control server would
-  // press Enter on a half-typed command.
+  // The head is kept, but reporting success would let --submit press Enter on a
+  // half-typed command.
   const id = uniqueId("pending-report-partial");
   const sink = fakeSink();
   const spawn = spawnPty(req(id), sink);
@@ -163,7 +139,7 @@ test("a PARTIALLY queued write reports failure too", async () => {
     false,
     "a chunk cut down to fit must not report success",
   );
-  // The head really is kept - this is a truncation, not a drop.
+  // A truncation, not a drop.
   const [, bytes] = __testPendingWrites(id);
   assert.equal(bytes, PENDING_WRITE_MAX_BYTES);
 
@@ -190,8 +166,8 @@ test("the queue is capped, and the overflow is logged rather than silent", async
   const sink = fakeSink();
 
   const spawn = spawnPty(req(id), sink);
-  // Half the cap at a time: the third write crosses it, so it is truncated to
-  // the remaining room and the fourth finds no room at all.
+  // Half the cap at a time: the third write is truncated, the fourth finds no
+  // room at all.
   const half = "x".repeat(PENDING_WRITE_MAX_BYTES / 2);
   writePty(id, half);
   writePty(id, half);
@@ -215,9 +191,8 @@ test("a truncated chunk is cut on a character boundary", async () => {
   const sink = fakeSink();
 
   const spawn = spawnPty(req(id), sink);
-  // Fill to one byte short of the cap, then write a 2-byte character across the
-  // boundary. Slicing mid-character and decoding would hand the shell a U+FFFD
-  // it never typed, so the whole character is dropped instead.
+  // One byte short of the cap, then a 2-byte character: slicing mid-character
+  // would hand the shell a U+FFFD it never typed.
   writePty(id, "x".repeat(PENDING_WRITE_MAX_BYTES - 1));
   writePty(id, "é");
 

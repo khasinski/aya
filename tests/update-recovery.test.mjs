@@ -1,8 +1,6 @@
-// A macOS auto-update can fail in a separate ShipIt process AFTER the app
-// quits, silently rolling back to the old version (#78). We can't catch it
-// where it happens, only diagnose it on the next launch by comparing the
-// version we asked ShipIt to install against the one we came back as. This
-// pins that pure decision.
+// A macOS auto-update can fail in a separate ShipIt process after the app quits,
+// silently rolling back (#78). The only diagnosis is on the next launch: the
+// version we asked ShipIt for vs the one we came back as.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -40,10 +38,8 @@ test("still on the old version means ShipIt silently rolled back", () => {
   );
 });
 
-// ShipIt installs in a separate process after we quit. If we are already back
-// up on the old version seconds later, the install is most likely still
-// RUNNING - and declaring a rollback there is wrong twice: a false warning, and
-// a recursive wipe of ShipIt's cache underneath a live install.
+// Back on the old version seconds later usually means the install is still
+// RUNNING: declaring a rollback there wipes ShipIt's cache under a live install.
 test("a just-requested install is too early to call a rollback", () => {
   assert.equal(diagnoseRelaunch(markerAged(1_000), "0.8.0", NOW), "none");
   assert.equal(
@@ -69,9 +65,8 @@ test("the grace window never masks a SUCCESSFUL install", () => {
 });
 
 test("a clock that moved backwards does not suppress the diagnosis forever", () => {
-  // A negative age (NTP correction, dual-boot RTC, VM resume) is nonsensical,
-  // not "too early". A one-sided `age < GRACE` test would answer "none" on
-  // every launch until the wall clock caught up.
+  // A negative age (NTP, dual-boot RTC, VM resume) is not "too early": a
+  // one-sided `age < GRACE` answers "none" until the wall clock catches up.
   assert.equal(
     diagnoseRelaunch(markerAged(-6 * 60 * 60 * 1000), "0.8.0", NOW),
     "rolled-back",
@@ -94,11 +89,8 @@ test("an unusable timestamp falls back to judging immediately", () => {
   );
 });
 
-// The grace window is PER ATTEMPT, and the attempt count is what stops it
-// renewing forever. Each quit re-stamps the marker, so time alone would slide
-// the window indefinitely for anyone who follows the app's "Restart Aya to
-// install" prompt; freezing the stamp instead would deny every retry a window
-// and wipe ShipIt's cache under a live install. The count separates the two.
+// The window is PER ATTEMPT: each quit re-stamps the marker, so time alone would
+// slide it forever, while a frozen stamp would deny every retry its window.
 test("a REPEAT attempt is judged immediately, however fresh its stamp", () => {
   assert.equal(
     diagnoseRelaunch(markerAged(1_000, { attempts: 2 }), "0.8.0", NOW),
@@ -130,9 +122,8 @@ test("a marker from before attempts existed counts as the first", () => {
   );
 });
 
-// A five-minute-old marker must be judgeable. Anchored to a literal duration,
-// not to ROLLBACK_GRACE_MS, so widening the constant to hours - which would
-// reinstate the never-diagnosed failure - turns this red.
+// A literal 5 minutes, not ROLLBACK_GRACE_MS: widening the constant to hours
+// would reinstate the never-diagnosed failure, and must turn this red.
 test("the grace window is minutes, not hours", () => {
   assert.equal(
     diagnoseRelaunch(markerAged(5 * 60 * 1000), "0.8.0", NOW),
@@ -140,10 +131,8 @@ test("the grace window is minutes, not hours", () => {
   );
 });
 
-// The production call site (electron/main.ts) uses the 2-arg form and relies on
-// the default clock. Every other test here passes `nowMs` explicitly, so none
-// of them would notice that default becoming a monotonic clock - under which
-// every real marker yields a negative age and EVERY launch reports a rollback.
+// main.ts uses the 2-arg form; every other test passes `nowMs`, so none would
+// notice the default becoming monotonic - under which EVERY launch rolls back.
 test("the default clock is the same wall clock the marker is stamped with", () => {
   const justNow = {
     targetVersion: "0.8.1",
@@ -170,7 +159,7 @@ test("nextAttempt starts at one and increments for the same version", () => {
   });
   const second = nextAttempt("0.8.1", first, "2026-01-01T12:30:00.000Z");
   assert.equal(second.attempts, 2);
-  // Each attempt carries its OWN stamp - that is what gives it its own window.
+  // Each attempt carries its OWN stamp, which is what gives it its own window.
   assert.equal(second.requestedAt, "2026-01-01T12:30:00.000Z");
 });
 
@@ -180,8 +169,8 @@ test("a different target version restarts the count", () => {
 });
 
 test("the destructive cache wipe waits for a repeat failure", () => {
-  // The notice is cheap and true either way; rm -rf of ShipIt's cache can land
-  // underneath a live install, so it needs firmer evidence than one attempt.
+  // rm -rf of ShipIt's cache can land under a live install, so it needs firmer
+  // evidence than one attempt.
   assert.equal(shouldCleanShipItCache(null), false);
   assert.equal(shouldCleanShipItCache(markerAged(0, { attempts: 1 })), false);
   assert.equal(shouldCleanShipItCache(markerAged(0, { attempts: 2 })), true);

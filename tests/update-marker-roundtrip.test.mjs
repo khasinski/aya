@@ -1,11 +1,6 @@
-// The marker FILE, end to end. update-recovery.test.mjs pins the pure
-// decisions against hand-built objects; nothing pinned the bytes that actually
-// reach disk, so the writer could emit a shape readPendingUpdate normalizes
-// away (a numeric requestedAt becomes "", which kills the grace window in
-// production) with the whole suite green.
-//
-// AYA_HOME must be redirected BEFORE importing the module - paths.ts resolves
-// it once at load - otherwise this would write into the user's real ~/.aya.
+// The marker FILE end to end: the writer can emit a shape readPendingUpdate
+// normalizes away (a numeric requestedAt becomes "", killing the grace window).
+// AYA_HOME must be redirected BEFORE the import - paths.ts resolves it at load.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -33,14 +28,13 @@ test("the quit-path writer produces a marker the reader accepts", async () => {
   const marker = await readPendingUpdate();
   assert.equal(marker.targetVersion, "0.8.1");
   assert.equal(marker.attempts, 1);
-  // The stamp must survive the round trip as a PARSEABLE date. readPendingUpdate
-  // normalizes a non-string to "", which would silently disable the grace
-  // window - the bug this file exists to catch.
+  // A PARSEABLE date: readPendingUpdate normalizes a non-string to "", which
+  // silently disables the grace window.
   assert.ok(
     !Number.isNaN(Date.parse(marker.requestedAt)),
     `requestedAt must round-trip as a parseable date, got ${JSON.stringify(marker.requestedAt)}`,
   );
-  // ...and the grace window really engages on those bytes.
+  // ...and the grace window engages on those bytes.
   assert.equal(diagnoseRelaunch(marker, "0.8.0"), "none");
 });
 
@@ -48,14 +42,22 @@ test("a second quit for the same version counts as a second attempt", async () =
   await clearPendingUpdate();
   markPendingUpdateSync("0.8.1");
   const first = onDisk();
+  // Past a clock tick: two sync calls land in the same millisecond, so a frozen
+  // stamp would satisfy `>=` against itself and the mutant would survive.
+  await new Promise((resolve) => setTimeout(resolve, 5));
   markPendingUpdateSync("0.8.1");
   const second = onDisk();
   assert.equal(first.attempts, 1);
   assert.equal(second.attempts, 2);
-  // Each attempt is stamped for itself - freezing the stamp instead would deny
-  // every retry its window and wipe ShipIt's cache under a live install.
-  assert.ok(Date.parse(second.requestedAt) >= Date.parse(first.requestedAt));
-  // And the count is what makes the retry judgeable despite the fresh stamp.
+  // Each attempt is stamped for itself - a frozen stamp would deny every retry
+  // its window and wipe ShipIt's cache under a live install.
+  assert.notEqual(
+    second.requestedAt,
+    first.requestedAt,
+    "a retry must be stamped for itself",
+  );
+  assert.ok(Date.parse(second.requestedAt) > Date.parse(first.requestedAt));
+  // The count is what makes the retry judgeable despite the fresh stamp.
   assert.equal(
     diagnoseRelaunch(await readPendingUpdate(), "0.8.0"),
     "rolled-back",

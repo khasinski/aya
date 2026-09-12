@@ -1,12 +1,6 @@
-// Omarchy theme integration (Linux). Omarchy publishes the active theme as a
-// flat, semantic colors.toml under ~/.local/state/omarchy/current/theme/ (a
-// symlink it relinks on `omarchy-theme-set`), with the theme name in a sibling
-// theme.name. We read that palette and let the renderer skin BOTH the app chrome
-// and the terminal from it (see src/theme-skin.ts), and watch for switches so
-// Aya re-themes live like every other Omarchy-aware app.
-//
-// Desktop/Linux only and fully opt-in: off Linux, or with no Omarchy install,
-// everything here reports "unavailable" and Aya's built-in themes are untouched.
+// Omarchy theme integration (Linux). Omarchy publishes the active theme as a flat
+// colors.toml under ~/.local/state/omarchy/current/theme/ (a symlink it relinks on
+// `omarchy-theme-set`); we skin from it (src/theme-skin.ts) and watch for switches.
 
 import { promises as fs } from "node:fs";
 import * as fsSync from "node:fs";
@@ -55,12 +49,8 @@ const FIELD_MAP: Record<string, keyof OmarchyPalette> = {
   bright_magenta: "brightMagenta",
 };
 
-/** Unwrap a TOML scalar: take the quoted span when quoted, otherwise drop a
- *  trailing ` # comment`. Both matter because the result is handed to CSSOM and
- *  to xterm, and BOTH of those discard an unparsable color in silence - so
- *  `accent = "#f00" # brand` used to skin nothing while Settings still claimed
- *  the theme was being followed. A leading '#' is kept: that is a hex color,
- *  not a comment. */
+/** Unwrap a TOML scalar: quoted span when quoted, else drop a trailing
+ *  ` # comment`. A leading '#' is kept - that is a hex color, not a comment. */
 function tomlScalar(raw: string): string {
   const value = raw.trim();
   const quote = value[0];
@@ -72,10 +62,8 @@ function tomlScalar(raw: string): string {
   return comment === -1 ? value : value.slice(0, comment).trim();
 }
 
-/** CSS named colors Omarchy palettes plausibly use. An open `[a-zA-Z]+` branch
- *  would accept "mauve", "notacolor" or "currentColor" - none of which either
- *  sink can resolve - which would leave exactly the silent discard this gate
- *  exists to prevent. Omarchy itself emits hex; the list is a courtesy. */
+/** CSS named colors Omarchy palettes plausibly use. A whitelist, not
+ *  `[a-zA-Z]+`, which would admit "mauve"/"currentColor" that neither sink resolves. */
 const NAMED_COLORS = new Set([
   "black", "silver", "gray", "grey", "white", "maroon", "red", "purple",
   "fuchsia", "magenta", "green", "lime", "olive", "yellow", "navy", "blue",
@@ -84,14 +72,13 @@ const NAMED_COLORS = new Set([
   "lavender", "plum", "orchid", "crimson", "tomato", "chocolate", "rebeccapurple",
 ]);
 
-/** Hex in the lengths CSS actually defines - 3, 4, 6 or 8 digits. A 5- or
- *  7-digit value looks hex-ish but resolves nowhere: xterm's parser switches on
- *  those exact lengths and CSSOM drops the declaration. */
+/** Hex in the lengths CSS defines - 3, 4, 6 or 8 digits; xterm and CSSOM both
+ *  drop a 5- or 7-digit value. */
 const HEX_RE = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 const FUNCTIONAL_RE = /^(?:rgb|rgba|hsl|hsla|oklch|oklab)\([^()]*\)$/;
 
-/** Values we are willing to hand to CSSOM and xterm. Anything else is dropped
- *  at the parse boundary rather than discarded silently two layers down. */
+/** Values CSSOM and xterm can resolve; anything else is dropped at the parse
+ *  boundary rather than silently discarded two layers down. */
 function isColor(value: string): boolean {
   return (
     HEX_RE.test(value) ||
@@ -100,28 +87,18 @@ function isColor(value: string): boolean {
   );
 }
 
-/** Parse a colors.toml (flat `key = "value"`). Pure and exported for tests.
- *  `fallbackMode` is used only when the file names no mode - callers derive it
- *  from a sibling `light.mode` file. Returns null when the essentials
- *  (background/foreground/accent) are absent OR are not usable colors - either
- *  way it is a file we can't skin from. */
+/** Parse a colors.toml. `fallbackMode` applies only when the file names no mode.
+ *  Null when background/foreground/accent are absent or unusable. */
 export function parseOmarchyColors(
   toml: string,
   fallbackMode: "dark" | "light" = "dark",
 ): OmarchyPalette | null {
-  /** Tables a palette plausibly nests its values under. Matched on the LAST
-   *  segment of the table path, because `[colors.primary]` is the canonical
-   *  Alacritty spelling and a whole-path whitelist would miss it - the old flat
-   *  parser resolved such a file, so anything narrower is a regression that
-   *  silently reports Omarchy unavailable. */
+  /** Tables a palette may nest values under. Matched on the LAST path segment,
+   *  since `[colors.primary]` is the canonical Alacritty spelling. */
   const NESTED_SECTIONS = new Set(["primary", "colors", "palette", "normal"]);
 
-  // Two views, filled as we read: keys written at the top level, and keys
-  // written under one of the tables above. Sectioned keys are kept rather than
-  // discarded (a file whose essentials live under a table is still skinnable),
-  // but they stay in their own map so `[bright] red` can never overwrite the
-  // top-level `red` by last-wins. A table key is taken from the FIRST table
-  // that offers it; a top-level key always wins outright.
+  // Separate maps so `[bright] red` cannot last-wins over top-level `red`: a
+  // table key is taken from the FIRST table offering it, top level always wins.
   const top = new Map<string, string>();
   const nested = new Map<string, string>();
   let section = "";
@@ -147,8 +124,7 @@ export function parseOmarchyColors(
     }
   }
 
-  // An empty top-level value is no value: fall through to the tables, exactly
-  // as the previous scan did.
+  // An empty top-level value is no value: fall through to the tables.
   const lookup = (key: string): string | undefined =>
     top.get(key) || nested.get(key);
   const color = (key: string): string | undefined => {
@@ -161,18 +137,14 @@ export function parseOmarchyColors(
   const accent = color("accent");
   if (!background || !foreground || !accent) return null;
 
-  // Through the same lookup as the colors: a sectioned file is exactly the kind
-  // that namespaces its keys, so reading `mode` only at the top level would
-  // lose the declared mode on the one shape the namespacing exists for.
+  // Same lookup as the colors: a sectioned file namespaces `mode` too.
   const modeKey = lookup("mode") ?? lookup("theme_type");
   const mode: "dark" | "light" =
     modeKey === "light" ? "light" : modeKey === "dark" ? "dark" : fallbackMode;
 
   const palette: OmarchyPalette = { mode, background, foreground, accent };
   for (const [tomlKey, field] of Object.entries(FIELD_MAP)) {
-    // Same gate as the essentials: an unusable optional color is dropped, so
-    // theme-skin falls back to a color that works instead of emitting one that
-    // CSSOM and xterm will each quietly throw away.
+    // Same gate as the essentials: drop unusable optionals so theme-skin falls back.
     const v = color(tomlKey);
     if (v) (palette[field] as string) = v;
   }
@@ -188,10 +160,8 @@ async function exists(file: string): Promise<boolean> {
   }
 }
 
-/** True when Omarchy is installed with an active theme we can actually skin
- *  from. File existence is not enough: a colors.toml we cannot parse into a
- *  usable palette would have us claim a skin that neither CSSOM nor xterm
- *  applies. */
+/** True when Omarchy has an active theme we can skin from - file existence is
+ *  not enough, the colors.toml must parse into a usable palette. */
 export async function omarchyAvailable(): Promise<boolean> {
   return (await readOmarchyTheme()) !== null;
 }
@@ -234,11 +204,8 @@ export function watchOmarchyTheme(onChange: () => void): () => void {
       if (timer) clearTimeout(timer);
       timer = setTimeout(onChange, 150);
     });
-    // The try/catch above only covers the SYNCHRONOUS construction. A watch
-    // that dies later (the state dir removed, an inotify watch dropped) emits
-    // "error", and an unhandled "error" on an EventEmitter is thrown as an
-    // uncaught exception - here, in the main process. Degrade to "no live
-    // re-skin" instead.
+    // The try/catch only covers synchronous construction; an unhandled later
+    // "error" would be an uncaught exception in the main process.
     watcher.on("error", () => {
       watcher?.close();
       watcher = null;

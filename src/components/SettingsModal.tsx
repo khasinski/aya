@@ -406,11 +406,8 @@ export function SettingsModal({
     void window.aya.statusHookStatus().then((status) => {
       if (!cancelled) setStatusHook(status);
     });
-    // Read on mount, and again whenever the active Omarchy theme changes:
-    // `omarchy-theme-set` can run with Settings open, and a mount-only read
-    // would leave this panel naming the previous theme - or claiming a skin
-    // that just became unavailable - for as long as the modal stays open. One
-    // function for both so the two reads cannot drift apart.
+    // On mount AND on theme change: `omarchy-theme-set` can run with Settings
+    // open, leaving a mount-only read naming the previous theme.
     const refreshOmarchy = () => {
       void window.aya.omarchyStatus().then((status) => {
         if (!cancelled) setOmarchy(status);

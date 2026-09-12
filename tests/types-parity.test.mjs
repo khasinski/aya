@@ -1,16 +1,6 @@
-// The IPC contract is declared twice: src/types.ts (renderer) and
-// electron/types.ts (main process). They are separate files on purpose -
-// electron/ never imports from src/ - and the overlapping declarations are
-// kept in sync by hand. Nothing checks that by itself: each TS project
-// compiles against its OWN copy, so a field added on one side and forgotten
-// on the other type-checks cleanly on both and only misbehaves at runtime,
-// on the IPC boundary. This is the same reason split-tree-parity.test.mjs
-// exists, applied to the types instead of the layout algebra.
-//
-// Member ORDER is deliberately not compared. TypeScript types are structural,
-// so a reordered interface is the same type; the two copies of AyaApi already
-// differ that way and it has never meant anything. Comparing printed text
-// would fail on it and teach the next reader to ignore this test.
+// The IPC contract is declared twice (src/types.ts, electron/types.ts) and kept
+// in sync by hand: each project compiles against its OWN copy, so drift only
+// misbehaves at runtime. Member ORDER is not compared - types are structural.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -25,15 +15,20 @@ const MAIN = "electron/types.ts";
 
 const printer = ts.createPrinter({ removeComments: true });
 
-/** One declaration, reduced to what actually defines the type. `parts` is what
- *  gets compared: an interface contributes its members (sorted, so ordering
- *  can't fail the test), anything else contributes its whole printed form. */
+/** One declaration reduced to comparable parts: an interface contributes its
+ *  members, its heritage and its type parameters (sorted), anything else its
+ *  whole printed form. `node.members` alone would miss `extends`, and
+ *  `WorktreeStatus extends Worktree` exists in both copies. */
 function declarationShape(node, sourceFile) {
   const print = (n) =>
     printer.printNode(ts.EmitHint.Unspecified, n, sourceFile).replace(/\s+/g, " ").trim();
-  return ts.isInterfaceDeclaration(node)
-    ? node.members.map(print).sort()
-    : [print(node)];
+  if (!ts.isInterfaceDeclaration(node)) return [print(node)];
+  // Tagged, so a heritage clause can never collide with a member of the same text.
+  const head = [
+    ...(node.typeParameters ?? []).map((n) => `<param> ${print(n)}`),
+    ...(node.heritageClauses ?? []).map((n) => `<heritage> ${print(n)}`),
+  ];
+  return [...head, ...node.members.map(print)].sort();
 }
 
 /** Every exported interface / type alias in a file, by name. */
@@ -62,15 +57,15 @@ function exportedTypes(relativePath) {
 const renderer = exportedTypes(RENDERER);
 const main = exportedTypes(MAIN);
 
-// Guard the guard: every assertion below is "for each thing we found", so a
-// parser that silently finds nothing would pass all of them.
+// Every assertion below is "for each thing we found", so a parser that finds
+// nothing would pass them all.
 test("types parity: both type files parse into declarations", () => {
   assert.ok(renderer.size > 0, `no exported types parsed out of ${RENDERER}`);
   assert.ok(main.size > 0, `no exported types parsed out of ${MAIN}`);
 });
 
-// Without this, renaming a type on one side only would quietly shrink the
-// compared set and every remaining check would still pass.
+// Without this, a one-sided rename shrinks the compared set and every remaining
+// check still passes.
 test("types parity: every main-process type has a renderer counterpart", () => {
   const orphans = [...main.keys()].filter((name) => !renderer.has(name));
   assert.deepEqual(
