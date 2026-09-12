@@ -36,10 +36,8 @@ async function clickFirstSnippet(window: Page) {
   await drawer.locator(".aya-snippet").first().click();
 }
 
-// ---------------------------------------------------------------------------
 // 1. Expected behaviour: a genuinely-exited terminal blocks the snippet and
 //    tells the user why. This documents the guard and is correct.
-// ---------------------------------------------------------------------------
 test("snippet on a genuinely exited terminal shows the 'has exited' notice", async ({
   window,
 }) => {
@@ -60,11 +58,9 @@ test("snippet on a genuinely exited terminal shows the 'has exited' notice", asy
   );
 });
 
-// ---------------------------------------------------------------------------
 // 2. Regression guard for #23: after right-click -> Restart, the terminal is
 //    alive and accepts input, so clicking a snippet must send it rather than
 //    being blocked as "exited".
-// ---------------------------------------------------------------------------
 test("snippet on a restarted (alive) terminal is not blocked as 'exited'", async ({
   window,
 }) => {
