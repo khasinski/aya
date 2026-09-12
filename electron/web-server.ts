@@ -91,7 +91,6 @@ const CHANNEL_OVERRIDES: Record<
   "app:toggle-maximize": async () => undefined,
   "app:close": async () => undefined,
   "app:set-fullscreen": async () => undefined,
-  "app:focus-window": async () => undefined,
   "app:notify-waiting": async () => undefined,
   "app:set-dock-badge": async () => undefined,
 };

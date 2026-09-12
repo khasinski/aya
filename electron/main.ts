@@ -2459,15 +2459,6 @@ function registerIpc(): void {
     const win = senderWindow(e);
     if (win) setAyaFullScreen(win, !!value);
   });
-  // Dock badge for unattended notifications (waiting terminals). Empty
-  // string clears. macOS only; no-op on Linux/Windows for now since their
-  // taskbar badge stories differ.
-  ipcMain.handle("app:focus-window", (e) => {
-    const win = senderWindow(e);
-    if (!win || win.isDestroyed()) return;
-    if (win.isMinimized()) win.restore();
-    win.focus();
-  });
   ipcMain.handle("app:notify-waiting", async (e, req: unknown) => {
     if (!Notification.isSupported()) return;
     // The notifying renderer owns the terminal - clicking the notification
@@ -2566,6 +2557,9 @@ function registerIpc(): void {
       );
     }
   });
+  // Dock badge for unattended notifications (waiting terminals). Empty
+  // string clears. macOS only; no-op on Linux/Windows for now since their
+  // taskbar badge stories differ.
   ipcMain.handle("app:set-dock-badge", async (_e, text: unknown) => {
     const badge = requireString(text, "app:set-dock-badge.text");
     if (process.platform === "darwin" && app.dock) {

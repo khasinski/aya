@@ -664,8 +664,6 @@ export interface AyaApi {
   onMaximizedChange(handler: (isMaximized: boolean) => void): () => void;
   /** Sets the macOS dock badge text. Empty string clears. No-op elsewhere. */
   setDockBadge(text: string): Promise<void>;
-  /** Brings the aya window to the foreground (restore if minimized). */
-  focusWindow(): Promise<void>;
   /** Minimize the window (yellow traffic light). */
   minimizeWindow(): Promise<void>;
   /** Toggle maximized/restored window state. */

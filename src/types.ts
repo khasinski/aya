@@ -773,7 +773,6 @@ export interface AyaApi {
   isFullScreen(): Promise<boolean>;
   isMaximized(): Promise<boolean>;
   setDockBadge(text: string): Promise<void>;
-  focusWindow(): Promise<void>;
   /** Minimize the window (yellow traffic light). */
   minimizeWindow(): Promise<void>;
   /** Toggle maximized/restored window state. */

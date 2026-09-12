@@ -113,7 +113,6 @@ const api: AyaApi = {
   isFullScreen: () => ipcRenderer.invoke("app:is-fullscreen"),
   isMaximized: () => ipcRenderer.invoke("app:is-maximized"),
   setDockBadge: (text) => ipcRenderer.invoke("app:set-dock-badge", text),
-  focusWindow: () => ipcRenderer.invoke("app:focus-window"),
   minimizeWindow: () => ipcRenderer.invoke("app:minimize"),
   toggleMaximizeWindow: () => ipcRenderer.invoke("app:toggle-maximize"),
   closeWindow: () => ipcRenderer.invoke("app:close"),

@@ -286,7 +286,6 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     isFullScreen: async () => false as never,
     isMaximized: async () => false as never,
     setDockBadge: noopAsync,
-    focusWindow: noopAsync,
     minimizeWindow: noopAsync,
     toggleMaximizeWindow: noopAsync,
     closeWindow: noopAsync,
