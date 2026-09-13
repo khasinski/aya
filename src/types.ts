@@ -914,14 +914,28 @@ export function getPreset(presets: Preset[], id: string): Preset {
   return MISSING_PRESET;
 }
 
-/** Slugify a name into a preset id. */
-export function presetSlug(name: string): string {
-  const s = name
+/** Normalize a display name into a URL/id-safe slug, falling back to `fallback`
+ *  when the name reduces to nothing usable (a name made only of characters
+ *  outside [a-z0-9_-], e.g. "###" or CJK/diacritics).
+ *
+ *  DUPLICATE of electron/text.ts slugifyName, and it MUST stay identical
+ *  including the fallback argument: the renderer predicts the slug the main
+ *  process will assign (see uniqueProjectName in App.tsx), so a divergence
+ *  makes the renderer offer a name createProject then rejects. electron/ never
+ *  imports from src/, so tests/slug-parity.test.mjs pins the two together. */
+export function slugifyName(name: string, fallback: string): string {
+  const slug = name
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  return s || "preset";
+  return slug || fallback;
+}
+
+/** Slugify a name into a preset id. Thin wrapper kept for the call sites that
+ *  mint preset/snippet ids, mirroring electron/config.ts's `slugify`. */
+export function presetSlug(name: string): string {
+  return slugifyName(name, "preset");
 }
 
 /** Match heuristic for commands that look like they've been switched to
