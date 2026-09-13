@@ -238,7 +238,6 @@ export function latestUsageAccountsFromLines(
   return [...byId.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
-// ---- Poll-to-poll caches ---------------------------------------------------
 //
 // The renderer polls usage every 30s. Without caching, each poll re-walks the
 // whole sharded sessions tree (readdir per YYYY/MM/DD dir), re-stats every

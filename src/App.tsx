@@ -1480,11 +1480,9 @@ export function App() {
     singleViewByProject,
   ]);
 
-  // ---------------------------------------------------------------------------
   // Hydration helper — instantiates TerminalStates for a project's saved tabs.
   // Pulled out of bootstrap so the missing-dir modal can defer hydration until
   // the user decides what to do.
-  // ---------------------------------------------------------------------------
   const hydrateProjectTerminals = useCallback(
     (project: ProjectConfig, effectiveCwd: string) => {
       setTerminals((prev) => {
