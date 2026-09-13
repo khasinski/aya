@@ -418,26 +418,6 @@ async function parseRollout(
   return parsed;
 }
 
-/** Read Codex's account-wide usage from its newest rollout that carries a
- *  snapshot. Returns null if Codex isn't present or none of the recent rollouts
- *  has a rate-limit event yet. */
-export async function readCodexUsage(): Promise<UsageData | null> {
-  for (const f of await recentRolloutFiles()) {
-    const parsed = await parseRollout(f.file, f.mtimeMs);
-    if (parsed?.usage) return parsed.usage;
-  }
-  return null;
-}
-
-/** Read all Codex account-wide usage snapshots discoverable in recent rollouts.
- *  When Codex logs do not expose an account id, this returns at most one
- *  "Account" entry, preserving the previous single-chip behavior. */
-export async function readCodexUsageAccounts(): Promise<UsageAccount[]> {
-  return readCodexUsageAccountsFromSources([
-    { id: "codex", label: "Codex", home: DEFAULT_CODEX_HOME },
-  ]);
-}
-
 export async function readCodexUsageAccountsFromSources(
   sources: CodexUsageSource[],
 ): Promise<UsageAccount[]> {
