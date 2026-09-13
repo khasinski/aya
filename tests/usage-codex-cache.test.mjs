@@ -57,7 +57,6 @@ const codexUsage = async () => {
   return accounts.length ? accounts[0].usage : null;
 };
 
-
 test("unchanged mtime returns the cached parse (content not re-read)", async () => {
   writeFileSync(fileA, snapshotLine(10, 20));
   utimesSync(fileA, T1, T1);

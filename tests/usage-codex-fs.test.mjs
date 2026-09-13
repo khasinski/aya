@@ -40,15 +40,14 @@ const snapshotLine = (p, s, accountId = undefined, accountLabel = undefined) =>
       },
     },
   }) + "\n";
-const noSnapshotLine = JSON.stringify({ payload: { type: "agent_message" } }) + "\n";
+const noSnapshotLine =
+  JSON.stringify({ payload: { type: "agent_message" } }) + "\n";
 
 const older = join(sessions, "rollout-old.jsonl");
 const newer = join(sessions, "rollout-new.jsonl");
 
-const {
-  DEFAULT_CODEX_HOME,
-  readCodexUsageAccountsFromSources,
-} = await import("../dist-electron/usage-codex.js");
+const { DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } =
+  await import("../dist-electron/usage-codex.js");
 
 // What main.ts calls, with the single-source fallback it inlines.
 const SOURCES = [{ id: "codex", label: "Codex", home: DEFAULT_CODEX_HOME }];
@@ -56,7 +55,6 @@ const codexUsage = async () => {
   const accounts = await readCodexUsageAccountsFromSources(SOURCES);
   return accounts.length ? accounts[0].usage : null;
 };
-
 
 test("falls back to an older rollout when the newest has no snapshot", async () => {
   writeFileSync(older, snapshotLine(3, 12)); // older HAS a snapshot
@@ -94,7 +92,10 @@ test("returns one newest snapshot per account across recent rollouts", async () 
 test("uses source ids when separate CODEX_HOME logs do not expose account ids", async () => {
   writeFileSync(older, snapshotLine(3, 12));
   writeFileSync(newer, noSnapshotLine);
-  writeFileSync(join(secondSessions, "rollout-second.jsonl"), snapshotLine(8, 20));
+  writeFileSync(
+    join(secondSessions, "rollout-second.jsonl"),
+    snapshotLine(8, 20),
+  );
 
   const out = await readCodexUsageAccountsFromSources([
     { id: "codex", label: "Codex", home: root },

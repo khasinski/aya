@@ -2,8 +2,8 @@
 // target. POSIX rename is atomic, so a crash during the write leaves either
 // the old or new contents intact (never a truncated half-written file).
 //
-// Used for every config Aya rewrites in place - its own ~/.aya/ state and,
-// via the hook installers, ~/.claude/settings.json and ~/.codex/config.toml.
+// Used for every config Aya rewrites in place, including other tools' files via
+// the hook installers. All are small (<10kb), so the extra disk I/O is cheap.
 
 import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";

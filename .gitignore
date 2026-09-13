@@ -51,3 +51,6 @@ screenshots/ship-gate/
 # e2e/webgl-context-loss.spec.ts. Contrast screenshots/projects-left-launcher/,
 # which IS tracked on purpose - those shots were re-taken as the UI changed.
 screenshots/webgl-white-terminal/
+
+# recall-loop audit scratch state (absolute local paths, session ids)
+.recall-decruft-state.json

@@ -74,7 +74,6 @@ interface SessionFile {
   size: number;
 }
 
-
 /** Claude Code's project-directory name for a cwd: every non-alphanumeric
  *  character becomes "-" (e.g. /Users/x/proj → -Users-x-proj). */
 export function claudeProjectDirName(cwd: string): string {
@@ -179,7 +178,6 @@ export function extractCodexMessages(lines: string[]): HarnessMessage[] {
   }
   return out;
 }
-
 
 async function claudeSessionFiles(
   cwd: string,
@@ -295,7 +293,6 @@ async function codexSessionFiles(
   return matched;
 }
 
-
 interface ParsedTranscript {
   mtimeMs: number;
   size: number;
@@ -349,7 +346,6 @@ async function transcriptMessages(
   return messages;
 }
 
-
 interface MessageMatch {
   snippet: string;
   matchStart: number;
@@ -389,7 +385,6 @@ export function matchMessage(
     matchLength: earliestLength,
   };
 }
-
 
 export async function searchHarnessSessions(
   req: HarnessSearchRequest,

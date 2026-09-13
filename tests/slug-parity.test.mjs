@@ -5,14 +5,15 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { slugifyName as rendererSlugify } from "../dist-test/types.js";
 import { slugifyName as mainSlugify } from "../dist-electron/text.js";
 
-process.env.AYA_HOME = mkdtempSync(join(tmpdir(), "aya-slug-parity-"));
+const AYA_HOME = mkdtempSync(join(tmpdir(), "aya-slug-parity-"));
+process.env.AYA_HOME = AYA_HOME;
 const { createProject } = await import("../dist-electron/config.js");
 
 const EMPTY_NORMALIZING = ["###", "---", "...", "ąę", "日本語", "", "   "];
@@ -56,4 +57,8 @@ test("two different empty-normalizing names collide on one project slug", async 
     /already exists/,
     "a second empty-normalizing name must collide on the same slug",
   );
+});
+
+test.after(() => {
+  rmSync(AYA_HOME, { recursive: true, force: true });
 });

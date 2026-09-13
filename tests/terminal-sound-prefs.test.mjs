@@ -14,7 +14,7 @@ import {
 
 const BUNDLED = { waiting: "/bundled/waiting.wav", done: "/bundled/done.wav" };
 
-// A fresh install, mirroring App.tsx's four persisted-preference codecs.
+// A fresh install, mirroring App.tsx's four persisted sound preferences.
 const FRESH_PREFS = {
   enabled: true,
   overrides: {},
