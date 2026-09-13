@@ -14,9 +14,7 @@ import {
 
 const BUNDLED = { waiting: "/bundled/waiting.wav", done: "/bundled/done.wav" };
 
-// A fresh install, as App.tsx assembles it from the four persisted-preference
-// codecs (TERMINAL_SOUNDS_CODEC=true, SOUND_OVERRIDES_CODEC={}, SOUND_PATH_CODEC
-// x2 = null). Those codecs are the real defaults; this is the test's fixture.
+// A fresh install, mirroring App.tsx's four persisted-preference codecs.
 const FRESH_PREFS = {
   enabled: true,
   overrides: {},

@@ -50,8 +50,7 @@ const {
   resetCodexUsageCaches,
 } = await import("../dist-electron/usage-codex.js");
 
-// Exactly what electron/main.ts:2238 calls, including the single-source
-// fallback it inlines - so these tests exercise the production path.
+// What main.ts calls, with the single-source fallback it inlines.
 const SOURCES = [{ id: "codex", label: "Codex", home: DEFAULT_CODEX_HOME }];
 const codexUsage = async () => {
   const accounts = await readCodexUsageAccountsFromSources(SOURCES);

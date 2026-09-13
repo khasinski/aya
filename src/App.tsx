@@ -530,9 +530,7 @@ function uniqueProjectName(projects: ProjectConfig[], directory: string): string
   const root = base || "project";
   let name = root;
   let idx = 2;
-  // slugifyName with the SAME "project" fallback electron/config.ts uses, so
-  // this predicts the slug createProject will actually assign. presetSlug's
-  // "preset" fallback made a name like "###" look unique and then get rejected.
+  // Main's "project" fallback, so this predicts the slug createProject assigns.
   while (used.has(slugifyName(name, "project"))) {
     name = `${root} ${idx}`;
     idx += 1;
