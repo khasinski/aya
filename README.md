@@ -134,6 +134,27 @@ Older releases (0.7.9 and earlier) embedded the legacy runtime and failed with
 `dlopen(): error loading libfuse.so.2` / `AppImages require FUSE to run.`. Use
 `APPIMAGE_EXTRACT_AND_RUN=1`, install `libfuse2t64`, or use the DEB.
 
+### Desktop entry and icon (AppImage only)
+
+An AppImage does not register itself, so the `.desktop` entry and the icons it
+ships stay sealed inside the image. Until they are installed there is no Aya
+entry in the menu, and the taskbar shows a generic placeholder instead of the
+icon: on Wayland a window is associated with an application by matching its
+`app_id` against installed `.desktop` files, and nothing else stands in for
+that. (`StartupWMClass` does not - it is an X11 `WM_CLASS` hint, and Wayland has
+no `WM_CLASS`.)
+
+```sh
+./scripts/install-desktop-entry.sh ./Aya-0.8.0.AppImage
+```
+
+That writes `~/.local/share/applications/aya.desktop` plus every icon size to
+`~/.local/share/icons/hicolor/`, then refreshes the desktop and icon caches.
+Re-run it after moving the AppImage, since the entry records an absolute path.
+`--uninstall` removes both again.
+
+DEB installs get this from dpkg and need none of it.
+
 ## Build from source
 
 Requirements:
