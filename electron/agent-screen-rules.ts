@@ -105,7 +105,8 @@ export function rulesForAgent(agent: AgentKind | undefined): readonly ScreenRule
 }
 
 /** True when this agent has rules of its own rather than the generic set —
- *  used by tests and diagnostics, not by the hot path. */
+ *  used only by tests, not by the hot path and not by any production caller.
+ *  Kept as a named predicate so the rules table has a queryable shape. */
 export function hasAgentRules(agent: AgentKind | undefined): boolean {
   return !!agent && !!RULES_BY_AGENT[agent];
 }
