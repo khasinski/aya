@@ -52,5 +52,7 @@ screenshots/ship-gate/
 # which IS tracked on purpose - those shots were re-taken as the UI changed.
 screenshots/webgl-white-terminal/
 
-# recall-loop audit scratch state (absolute local paths, session ids)
-.recall-decruft-state.json
+# recall-loop audit scratch state (absolute local paths, session ids). Globbed,
+# not per-profile: the decruft file was committed by accident in e5dda86 because
+# only its own name was listed, and every other profile writes a sibling.
+.recall-*-state.json
