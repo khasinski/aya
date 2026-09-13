@@ -1,6 +1,8 @@
-// omarchyAvailable() against a real home dir: a colors.toml that EXISTS but
-// yields no usable palette is not availability. os.homedir() honours $HOME on
-// POSIX and omarchy.js resolves its paths at load, so HOME is set before import.
+// readOmarchyStatus().available against a real home dir: a colors.toml that
+// EXISTS but yields no usable palette is not availability. os.homedir() honours
+// $HOME on POSIX and omarchy.js resolves its paths at load, so HOME is set
+// before import. Asserted through readOmarchyStatus because that is the
+// function main.ts actually calls.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -21,9 +23,11 @@ const skip = process.platform === "win32" ? "the $HOME redirect is POSIX-only" :
 const HOME = mkdtempSync(join(tmpdir(), "aya-omarchy-home-"));
 process.env.HOME = HOME;
 
-const { OMARCHY_COLORS_FILE, omarchyAvailable } = await import(
+const { OMARCHY_COLORS_FILE, readOmarchyStatus } = await import(
   "../dist-electron/omarchy.js"
 );
+
+const available = async () => (await readOmarchyStatus()).available;
 
 const THEME_DIR = dirname(OMARCHY_COLORS_FILE);
 
@@ -42,7 +46,7 @@ const AC = 'accent = "#7aa2f7"';
 
 test("no Omarchy install at all reports unavailable", { skip }, async () => {
   setColors(null);
-  assert.equal(await omarchyAvailable(), false);
+  assert.equal(await available(), false);
 });
 
 test("a colors.toml we cannot skin from is NOT availability", { skip }, async () => {
@@ -55,14 +59,14 @@ test("a colors.toml we cannot skin from is NOT availability", { skip }, async ()
   for (const [why, body] of unusable) {
     setColors(body);
     assert.ok(existsSync(OMARCHY_COLORS_FILE), `${why}: fixture must exist`);
-    assert.equal(await omarchyAvailable(), false, why);
+    assert.equal(await available(), false, why);
   }
 });
 
 test("a complete, skinnable palette reports available", { skip }, async () => {
   // The other direction, so a mutant that always answers false cannot survive.
   setColors(toml('mode = "dark"', BG, FG, AC));
-  assert.equal(await omarchyAvailable(), true);
+  assert.equal(await available(), true);
 });
 
 test.after(() => {
