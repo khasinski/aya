@@ -8,6 +8,7 @@ usage() {
 Usage:
   aya [path]                         Open a project directory
   aya open [path]                    Open a project directory
+  aya project open [path]            Open a project directory (alias)
   aya focus                          Focus the Aya window
   aya notify [--title title] body    Show an Aya notification
   aya remote --stdio                 Bridge remote Aya over stdio

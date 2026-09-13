@@ -145,6 +145,9 @@ export function screenTail(
     .join("\n");
 }
 
+/** Whether the pane's screen currently shows an approval prompt. No production
+ *  caller - this is the tests' observation window onto evaluateScreen, which the
+ *  live path reaches through scanPane. */
 export function screenShowsApproval(
   terminal: Terminal,
   agent?: AgentKind,
