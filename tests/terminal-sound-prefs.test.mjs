@@ -6,7 +6,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  DEFAULT_TERMINAL_SOUND_PREFS,
   isWatchingTerminal,
   normalizeSoundOverrides,
   shouldPlayTerminalSound,
@@ -15,8 +14,18 @@ import {
 
 const BUNDLED = { waiting: "/bundled/waiting.wav", done: "/bundled/done.wav" };
 
+// A fresh install, as App.tsx assembles it from the four persisted-preference
+// codecs (TERMINAL_SOUNDS_CODEC=true, SOUND_OVERRIDES_CODEC={}, SOUND_PATH_CODEC
+// x2 = null). Those codecs are the real defaults; this is the test's fixture.
+const FRESH_PREFS = {
+  enabled: true,
+  overrides: {},
+  customWaitingPath: null,
+  customDonePath: null,
+};
+
 function prefs(overrides = {}) {
-  return { ...DEFAULT_TERMINAL_SOUND_PREFS, ...overrides };
+  return { ...FRESH_PREFS, ...overrides };
 }
 
 // --- shouldPlayTerminalSound ----------------------------------------------

@@ -15,13 +15,6 @@ export interface TerminalSoundPrefs {
   customDonePath: string | null;
 }
 
-export const DEFAULT_TERMINAL_SOUND_PREFS: TerminalSoundPrefs = {
-  enabled: true,
-  overrides: {},
-  customWaitingPath: null,
-  customDonePath: null,
-};
-
 export function shouldPlayTerminalSound(
   prefs: TerminalSoundPrefs,
   presetId: string,
