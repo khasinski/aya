@@ -163,12 +163,6 @@ export function effectiveAutoResume(preset: Preset): boolean {
   return preset.autoResume ?? isAgentPreset(preset);
 }
 
-/** The per-agent "continue latest session" CLI arguments. Wrong string =
- *  silently lost agent sessions, so they are named and pinned by tests (which
- *  also assert commandHasResumeFlag recognizes each one). */
-export const CODEX_RESUME_ARG = "resume --last";
-export const CLAUDE_RESUME_ARG = "--continue";
-
 /** The argument that continues the MOST RECENT session for the cwd, or null
  *  for agents with no such form (they can only resume a known session id). A
  *  bare `--resume` (claude) / `resume` (codex) opens an interactive picker

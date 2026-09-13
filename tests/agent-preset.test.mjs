@@ -127,26 +127,18 @@ test("the e2e respawn-resume marker preset appends onto tee's operand list", () 
   assert.equal(commandWithAutoResume(p, false), command);
 });
 
-// --- pinned resume-arg vocabulary (cross-checked against its own detector) ---
-import {
-  CODEX_RESUME_ARG,
-  CLAUDE_RESUME_ARG,
-} from "../dist-test/agentPreset.js";
 import { PRESET_ID_CODEX, PRESET_ID_GEMINI } from "../dist-test/preset-ids.js";
 import { DEFAULT_PRESETS } from "../dist-electron/presets.js";
-
-test("resume args are the pinned CLI vocabulary", () => {
-  assert.equal(CODEX_RESUME_ARG, "resume --last");
-  assert.equal(CLAUDE_RESUME_ARG, "--continue");
-});
 
 test("commandHasResumeFlag recognizes exactly the args resumeArg appends", () => {
   // If the arg and its detector ever drift apart, a restored tab would either
   // double-append the flag or never resume - the bug the module guards against.
-  const claude = { id: "claude", name: "c", icon: "", color: "", command: "claude" };
-  const codex = { id: "codex", name: "x", icon: "", color: "", command: "codex" };
-  assert.equal(commandHasResumeFlag(claude, `claude ${CLAUDE_RESUME_ARG}`), true);
-  assert.equal(commandHasResumeFlag(codex, `codex ${CODEX_RESUME_ARG}`), true);
+  // Fed from resumeArg() itself, so this pins the LIVE AGENT_SPECS values: a
+  // wrong continueLatest breaks the pairing here instead of passing silently.
+  const claude = preset({ id: "claude", command: "claude" });
+  const codex = preset({ id: "codex", command: "codex" });
+  assert.equal(commandHasResumeFlag(claude, `claude ${resumeArg(claude)}`), true);
+  assert.equal(commandHasResumeFlag(codex, `codex ${resumeArg(codex)}`), true);
   assert.equal(commandHasResumeFlag(claude, "claude"), false);
   assert.equal(commandHasResumeFlag(codex, "codex"), false);
 });
