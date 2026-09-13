@@ -13,8 +13,8 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     rolldownOptions: {
-      // Two entry points: the desktop renderer (index.html, loaded by
-      // Electron) and Aya Web (web.html, served by electron/web-server.ts).
+      // Three entry points: the Electron renderer, Aya Web (served by
+      // electron/web-server.ts) and the emulator.
       input: {
         main: "./index.html",
         web: "./web.html",

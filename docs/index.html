@@ -267,7 +267,6 @@
       }
 
       .screenshot-frame,
-      .ui-panel,
       .terminal-window {
         border: 1px solid var(--line);
         border-radius: 8px;
@@ -386,12 +385,6 @@
         background: var(--green);
       }
 
-      .ui-panel {
-        min-width: 0;
-        background:
-          linear-gradient(180deg, rgba(233, 229, 213, 0.035), transparent 44px),
-          #0b0f0e;
-      }
 
       .shot-frame {
         min-width: 0;
@@ -402,10 +395,6 @@
         box-shadow: 0 34px 90px var(--shadow);
       }
 
-      .shot-frame--compact {
-        width: min(100%, var(--shot-max-width, 620px));
-        justify-self: center;
-      }
 
       .shot-frame img {
         width: 100%;
@@ -447,191 +436,30 @@
         }
       }
 
-      .mock-topbar {
-        min-height: 48px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        border-bottom: 1px solid var(--line);
-        padding: 0 16px;
-        background: #151b19;
-      }
 
-      .mock-tabs,
-      .mock-actions {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        min-width: 0;
-      }
 
-      .mock-tab {
-        max-width: 150px;
-        overflow: hidden;
-        border: 1px solid rgba(233, 229, 213, 0.1);
-        border-radius: 7px;
-        padding: 6px 10px;
-        color: var(--muted);
-        font-size: 0.82rem;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
 
-      .mock-tab.active {
-        color: var(--text);
-        border-color: rgba(132, 219, 155, 0.38);
-        background: rgba(132, 219, 155, 0.08);
-      }
 
-      .usage-chip {
-        height: 30px;
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        border: 1px solid rgba(233, 229, 213, 0.16);
-        border-radius: 999px;
-        padding: 0 10px;
-        background: rgba(233, 229, 213, 0.055);
-        color: var(--text);
-        font-size: 0.8rem;
-        white-space: nowrap;
-      }
 
-      .usage-dot {
-        width: 16px;
-        height: 16px;
-        border-radius: 999px;
-        background:
-          conic-gradient(var(--green) var(--pct), rgba(233, 229, 213, 0.14) 0),
-          #0b0f0e;
-      }
 
-      .usage-dot.codex {
-        background:
-          conic-gradient(var(--cyan) var(--pct), rgba(233, 229, 213, 0.14) 0),
-          #0b0f0e;
-      }
 
-      .usage-body {
-        display: grid;
-        grid-template-columns: minmax(0, 0.9fr) minmax(250px, 1.1fr);
-        gap: 1px;
-        background: var(--line);
-      }
 
-      .usage-summary,
-      .usage-detail {
-        min-width: 0;
-        padding: 18px;
-        background: #0d1211;
-      }
 
-      .usage-summary {
-        display: grid;
-        gap: 14px;
-      }
 
-      .meter-row {
-        display: grid;
-        gap: 7px;
-      }
 
-      .meter-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        color: var(--muted);
-        font-size: 0.82rem;
-      }
 
-      .meter {
-        height: 8px;
-        overflow: hidden;
-        border-radius: 999px;
-        background: rgba(233, 229, 213, 0.12);
-      }
 
-      .meter span {
-        display: block;
-        width: var(--value);
-        height: 100%;
-        border-radius: inherit;
-        background: var(--color, var(--green));
-      }
 
-      .account-list {
-        display: grid;
-        gap: 10px;
-      }
 
-      .account-row {
-        display: grid;
-        grid-template-columns: 1fr auto;
-        gap: 10px;
-        border: 1px solid rgba(233, 229, 213, 0.1);
-        border-radius: 8px;
-        padding: 10px;
-        background: rgba(233, 229, 213, 0.04);
-      }
 
-      .account-row strong,
-      .snippet-item strong {
-        font-size: 0.88rem;
-      }
 
-      .account-row span,
-      .snippet-item span {
-        display: block;
-        color: var(--muted);
-        font-size: 0.78rem;
-      }
 
-      .snippet-ui {
-        display: grid;
-        grid-template-columns: minmax(170px, 0.44fr) minmax(0, 0.56fr);
-        min-height: 330px;
-      }
 
-      .snippet-sidebar {
-        border-right: 1px solid var(--line);
-        padding: 16px;
-        background: #101615;
-      }
 
-      .snippet-title {
-        color: var(--muted);
-        font-size: 0.76rem;
-        font-weight: 760;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
 
-      .snippet-list {
-        display: grid;
-        gap: 10px;
-        margin-top: 14px;
-      }
 
-      .snippet-item {
-        border: 1px solid rgba(233, 229, 213, 0.1);
-        border-radius: 8px;
-        padding: 10px;
-        background: rgba(233, 229, 213, 0.04);
-      }
 
-      .snippet-item.active {
-        border-color: rgba(132, 219, 155, 0.42);
-        background: rgba(132, 219, 155, 0.09);
-      }
 
-      .snippet-terminal {
-        display: flex;
-        flex-direction: column;
-        min-width: 0;
-        background: #090d0c;
-      }
 
       .terminal-bar {
         min-height: 42px;
@@ -684,114 +512,22 @@
         color: var(--dim);
       }
 
-      .snippet-bar {
-        display: flex;
-        gap: 8px;
-        margin: auto 14px 14px;
-        padding-top: 12px;
-      }
 
-      .snippet-pill {
-        border: 1px solid rgba(233, 229, 213, 0.12);
-        border-radius: 999px;
-        padding: 6px 10px;
-        color: var(--text);
-        background: rgba(233, 229, 213, 0.06);
-        font-size: 0.78rem;
-      }
 
-      .diff-ui {
-        display: grid;
-        grid-template-columns: 190px minmax(0, 1fr);
-        min-height: 350px;
-      }
 
-      .diff-files {
-        border-right: 1px solid var(--line);
-        padding: 14px;
-        background: #101615;
-      }
 
-      .file-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        border-radius: 7px;
-        padding: 8px 9px;
-        color: var(--muted);
-        font-size: 0.8rem;
-      }
 
-      .file-row.active {
-        color: var(--text);
-        background: rgba(132, 219, 155, 0.1);
-      }
 
-      .file-badge {
-        color: var(--green);
-        font-size: 0.74rem;
-      }
 
-      .diff-code {
-        min-width: 0;
-        background: #090d0c;
-      }
 
-      .diff-header {
-        min-height: 42px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        border-bottom: 1px solid var(--line);
-        padding: 0 16px;
-        color: var(--muted);
-        font-size: 0.82rem;
-      }
 
-      .diff-lines {
-        padding: 12px 0;
-        font-size: 0.8rem;
-      }
 
-      .line {
-        display: grid;
-        grid-template-columns: 46px 1fr;
-        min-width: 0;
-      }
 
-      .line-no {
-        padding-right: 12px;
-        color: var(--dim);
-        text-align: right;
-        user-select: none;
-      }
 
-      .line-code {
-        min-width: 0;
-        overflow: hidden;
-        padding: 0 16px 0 12px;
-        color: #cbd5d0;
-        white-space: pre;
-        text-overflow: ellipsis;
-      }
 
-      .line.add {
-        background: rgba(72, 194, 116, 0.12);
-      }
 
-      .line.add .line-code {
-        color: #bff1cf;
-      }
 
-      .line.remove {
-        background: var(--red-soft);
-      }
 
-      .line.remove .line-code {
-        color: #ffc5c7;
-      }
 
       .terminal-section {
         display: grid;
@@ -881,10 +617,6 @@
           order: 0;
         }
 
-        .feature-row:nth-child(even) .ui-panel {
-          order: 1;
-        }
-
         .strip .section-inner {
           grid-template-columns: repeat(2, minmax(0, 1fr));
         }
@@ -904,18 +636,10 @@
         }
 
         .hero-points,
-        .strip .section-inner,
-        .usage-body,
-        .snippet-ui,
-        .diff-ui {
+        .strip .section-inner {
           grid-template-columns: 1fr;
         }
 
-        .snippet-sidebar,
-        .diff-files {
-          border-right: 0;
-          border-bottom: 1px solid var(--line);
-        }
 
         .hero-actions {
           flex-direction: column;
@@ -926,15 +650,7 @@
           width: 100%;
         }
 
-        .mock-topbar {
-          align-items: flex-start;
-          flex-direction: column;
-          padding-block: 12px;
-        }
 
-        .mock-actions {
-          flex-wrap: wrap;
-        }
 
         pre {
           white-space: pre-wrap;

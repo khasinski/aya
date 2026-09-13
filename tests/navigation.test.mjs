@@ -3,16 +3,7 @@ import { test } from "node:test";
 import {
   isInternalNavigationUrl,
   parseExternalUrl,
-  parseHttpUrl,
 } from "../dist-electron/navigation.js";
-
-test("parseHttpUrl accepts only http and https URLs", () => {
-  assert.equal(parseHttpUrl("https://example.com/a?b=c")?.toString(), "https://example.com/a?b=c");
-  assert.equal(parseHttpUrl("http://example.com/")?.toString(), "http://example.com/");
-  assert.equal(parseHttpUrl("file:///Applications/Aya.app/Contents/index.html"), null);
-  assert.equal(parseHttpUrl("javascript:alert(1)"), null);
-  assert.equal(parseHttpUrl("not a url"), null);
-});
 
 test("parseExternalUrl accepts browser, file, and editor links only", () => {
   assert.equal(parseExternalUrl("https://example.com/a?b=c")?.protocol, "https:");

@@ -1,4 +1,5 @@
 import { test, expect } from "./fixtures";
+import { enableProjectsLeftLayout } from "./helpers/layout";
 import { fireShortcut } from "./helpers/shortcut";
 import type { ElectronApplication, Page } from "@playwright/test";
 
@@ -14,20 +15,6 @@ import type { ElectronApplication, Page } from "@playwright/test";
 // still works). A plain Playwright `.click()` would mask the bug by scrolling
 // the overflow:hidden strip, so we assert the way a user's cursor sees it:
 // the preset row must be the topmost element where it is drawn.
-
-async function enableProjectsLeftLayout(window: Page, app: ElectronApplication) {
-  await fireShortcut(app, "open-settings");
-  const settings = window.locator(".aya-modal--settings");
-  await expect(settings).toBeVisible();
-  await settings
-    .locator('.aya-settings-segmented[aria-label="Window layout"] button', {
-      hasText: "Projects on left",
-    })
-    .click();
-  await window.keyboard.press("Escape");
-  await expect(settings).toBeHidden();
-  await expect(window.locator(".aya-topbar--alt")).toBeVisible();
-}
 
 /** Open the "+" menu and report whether the first preset row is genuinely
  *  reachable: the element under the cursor at the row's drawn centre is the row

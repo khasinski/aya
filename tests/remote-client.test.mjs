@@ -73,9 +73,8 @@ function mkFakeSsh() {
   writeFileSync(
     sshPath,
     `#!/bin/sh
-target="$1"
 shift
-AYA_FAKE_SSH_TARGET="$target" exec sh -c "$1"
+exec sh -c "$1"
 `,
   );
   chmodSync(sshPath, 0o755);

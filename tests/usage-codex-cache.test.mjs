@@ -44,22 +44,33 @@ const snapshotLine = (p, s) =>
 const fileA = join(sessions, "rollout-a.jsonl");
 const fileB = join(sessions, "rollout-b.jsonl");
 
-const { readCodexUsage, readCodexUsageAccounts, resetCodexUsageCaches } =
-  await import("../dist-electron/usage-codex.js");
+const {
+  DEFAULT_CODEX_HOME,
+  readCodexUsageAccountsFromSources,
+  resetCodexUsageCaches,
+} = await import("../dist-electron/usage-codex.js");
+
+// SOURCES mirrors the fallback main.ts inlines; accounts[0] is this test's
+// own adapter, standing in for the removed single-snapshot reader.
+const SOURCES = [{ id: "codex", label: "Codex", home: DEFAULT_CODEX_HOME }];
+const codexUsage = async () => {
+  const accounts = await readCodexUsageAccountsFromSources(SOURCES);
+  return accounts.length ? accounts[0].usage : null;
+};
 
 test("unchanged mtime returns the cached parse (content not re-read)", async () => {
   writeFileSync(fileA, snapshotLine(10, 20));
   utimesSync(fileA, T1, T1);
-  assert.equal((await readCodexUsage()).fiveHour.pct, 10);
+  assert.equal((await codexUsage()).fiveHour.pct, 10);
 
   // Rewrite the content but restore the exact mtime: a cached poll must NOT
   // see the new numbers — proving the file wasn't re-read.
   writeFileSync(fileA, snapshotLine(50, 60));
   utimesSync(fileA, T1, T1);
-  assert.equal((await readCodexUsage()).fiveHour.pct, 10);
+  assert.equal((await codexUsage()).fiveHour.pct, 10);
 
   // Both read paths share the parse cache.
-  const accounts = await readCodexUsageAccounts();
+  const accounts = await readCodexUsageAccountsFromSources(SOURCES);
   assert.equal(accounts[0].usage.fiveHour.pct, 10);
 });
 
@@ -67,26 +78,26 @@ test("an mtime change invalidates the cached parse", async () => {
   // Same content as before, only the mtime moves — must re-read and surface
   // the rewritten numbers.
   utimesSync(fileA, T2, T2);
-  assert.equal((await readCodexUsage()).fiveHour.pct, 50);
+  assert.equal((await codexUsage()).fiveHour.pct, 50);
 });
 
 test("a NEW rollout file is discovered within one poll", async () => {
   writeFileSync(fileB, snapshotLine(70, 80));
   utimesSync(fileB, T3, T3);
-  assert.equal((await readCodexUsage()).fiveHour.pct, 70);
+  assert.equal((await codexUsage()).fiveHour.pct, 70);
 });
 
 test("a deleted rollout drops out of the cache", async () => {
   rmSync(fileB);
   // Falls back to the remaining (cached) rollout, not the deleted one.
-  assert.equal((await readCodexUsage()).fiveHour.pct, 50);
+  assert.equal((await codexUsage()).fiveHour.pct, 50);
 });
 
 test("resetCodexUsageCaches forces a full re-read", async () => {
   writeFileSync(fileA, snapshotLine(90, 95));
   utimesSync(fileA, T2, T2); // restored mtime — cached without a reset
   resetCodexUsageCaches();
-  assert.equal((await readCodexUsage()).fiveHour.pct, 90);
+  assert.equal((await codexUsage()).fiveHour.pct, 90);
 });
 
 test.after(() => {

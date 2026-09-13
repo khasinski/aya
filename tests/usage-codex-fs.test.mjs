@@ -40,13 +40,22 @@ const snapshotLine = (p, s, accountId = undefined, accountLabel = undefined) =>
       },
     },
   }) + "\n";
-const noSnapshotLine = JSON.stringify({ payload: { type: "agent_message" } }) + "\n";
+const noSnapshotLine =
+  JSON.stringify({ payload: { type: "agent_message" } }) + "\n";
 
 const older = join(sessions, "rollout-old.jsonl");
 const newer = join(sessions, "rollout-new.jsonl");
 
-const { readCodexUsage, readCodexUsageAccounts, readCodexUsageAccountsFromSources } =
+const { DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } =
   await import("../dist-electron/usage-codex.js");
+
+// SOURCES mirrors the fallback main.ts inlines; accounts[0] is this test's
+// own adapter, standing in for the removed single-snapshot reader.
+const SOURCES = [{ id: "codex", label: "Codex", home: DEFAULT_CODEX_HOME }];
+const codexUsage = async () => {
+  const accounts = await readCodexUsageAccountsFromSources(SOURCES);
+  return accounts.length ? accounts[0].usage : null;
+};
 
 test("falls back to an older rollout when the newest has no snapshot", async () => {
   writeFileSync(older, snapshotLine(3, 12)); // older HAS a snapshot
@@ -55,7 +64,7 @@ test("falls back to an older rollout when the newest has no snapshot", async () 
   utimesSync(older, t - 100, t - 100);
   utimesSync(newer, t, t);
 
-  const u = await readCodexUsage();
+  const u = await codexUsage();
   assert.equal(u.fiveHour.pct, 3); // from the older file's snapshot
   assert.equal(u.sevenDay.pct, 12);
 });
@@ -63,7 +72,7 @@ test("falls back to an older rollout when the newest has no snapshot", async () 
 test("returns null when no recent rollout has a snapshot", async () => {
   writeFileSync(older, noSnapshotLine);
   writeFileSync(newer, noSnapshotLine);
-  assert.equal(await readCodexUsage(), null);
+  assert.equal(await codexUsage(), null);
 });
 
 test("returns one newest snapshot per account across recent rollouts", async () => {
@@ -73,7 +82,7 @@ test("returns one newest snapshot per account across recent rollouts", async () 
   utimesSync(older, t - 100, t - 100);
   utimesSync(newer, t, t);
 
-  const out = await readCodexUsageAccounts();
+  const out = await readCodexUsageAccountsFromSources(SOURCES);
   assert.equal(out.length, 2);
   assert.equal(out[0].id, "personal");
   assert.equal(out[0].usage.sevenDay.pct, 22);
@@ -84,7 +93,10 @@ test("returns one newest snapshot per account across recent rollouts", async () 
 test("uses source ids when separate CODEX_HOME logs do not expose account ids", async () => {
   writeFileSync(older, snapshotLine(3, 12));
   writeFileSync(newer, noSnapshotLine);
-  writeFileSync(join(secondSessions, "rollout-second.jsonl"), snapshotLine(8, 20));
+  writeFileSync(
+    join(secondSessions, "rollout-second.jsonl"),
+    snapshotLine(8, 20),
+  );
 
   const out = await readCodexUsageAccountsFromSources([
     { id: "codex", label: "Codex", home: root },

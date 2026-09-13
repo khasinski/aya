@@ -20,8 +20,6 @@ const {
 
 beforeEach(() => resetHarnessSearchCaches());
 
-// ---- Claude extraction -------------------------------------------------------
-
 const claudeLine = (obj) => JSON.stringify(obj);
 
 test("claudeProjectDirName mirrors Claude Code's cwd slugging", () => {
@@ -88,8 +86,6 @@ test("extractClaudeMessages keeps real prose, drops noise", () => {
   assert.equal(messages[0].timestamp, "2026-07-01T10:00:00.000Z");
 });
 
-// ---- Codex extraction --------------------------------------------------------
-
 const codexLine = (obj) => JSON.stringify(obj);
 const codexMessage = (role, text, timestamp = "2026-07-01T10:00:00.000Z") =>
   codexLine({
@@ -127,8 +123,6 @@ test("extractCodexMessages keeps user/assistant prose, drops the rest", () => {
   );
 });
 
-// ---- Matching ----------------------------------------------------------------
-
 const asMessage = (text) => ({
   role: "user",
   text,
@@ -164,8 +158,6 @@ test("matchMessage snippet offsets point at the earliest token", () => {
     "permission",
   );
 });
-
-// ---- End-to-end: Claude ------------------------------------------------------
 
 const CWD = "/Users/test/proj";
 
@@ -266,8 +258,6 @@ test("searchHarnessSessions notices appended Claude transcript lines", async () 
   utimesSync(file, t, t);
   assert.equal((await searchHarnessSessions(req)).length, 1);
 });
-
-// ---- End-to-end: Codex -------------------------------------------------------
 
 test("searchHarnessSessions filters Codex rollouts by session_meta cwd", async () => {
   const root = mkdtempSync(join(tmpdir(), "aya-hsearch-codex-"));

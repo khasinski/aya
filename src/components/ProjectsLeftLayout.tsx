@@ -137,7 +137,6 @@ function ProjectsLeftLayoutImpl({
   showUsageHarnessName,
   body,
 }: Props) {
-  // ---- Project rail: rename / vertical drag-reorder ----
   const [renamingSlug, setRenamingSlug] = useState<string | null>(null);
   const [projectDraft, setProjectDraft] = useState("");
   const projectInputRef = useRef<HTMLInputElement>(null);
@@ -176,7 +175,6 @@ function ProjectsLeftLayoutImpl({
     setRenamingSlug(null);
   };
 
-  // ---- Terminal top tabs: rename / horizontal drag-reorder / context menu ----
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [termDraft, setTermDraft] = useState("");
   const termInputRef = useRef<HTMLInputElement>(null);
@@ -322,7 +320,6 @@ function ProjectsLeftLayoutImpl({
     setRenamingId(null);
   };
 
-  // ---- Project rail resize ----
   const resizing = useRef(false);
   useEffect(() => {
     const move = (e: MouseEvent) => {
@@ -345,7 +342,6 @@ function ProjectsLeftLayoutImpl({
     };
   }, [onRailResize]);
 
-  // ---- Recent projects dropdown ----
   const [showRecent, setShowRecent] = useState(false);
   const recentRef = useRef<HTMLDivElement>(null);
   useEffect(() => {

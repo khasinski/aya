@@ -1,14 +1,3 @@
-export function parseHttpUrl(raw: string): URL | null {
-  try {
-    const parsed = new URL(raw);
-    return parsed.protocol === "http:" || parsed.protocol === "https:"
-      ? parsed
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 const EXTERNAL_URL_PROTOCOLS = new Set([
   "http:",
   "https:",

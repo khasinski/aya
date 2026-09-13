@@ -238,7 +238,6 @@ export function latestUsageAccountsFromLines(
   return [...byId.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
-// ---- Poll-to-poll caches ---------------------------------------------------
 //
 // The renderer polls usage every 30s. Without caching, each poll re-walks the
 // whole sharded sessions tree (readdir per YYYY/MM/DD dir), re-stats every
@@ -396,7 +395,7 @@ async function recentRolloutFiles(
 
 /** Read + parse a rollout, or reuse the cached parse when its mtime hasn't
  *  moved. Both the single-usage and per-account results are derived in one
- *  pass so either caller warms the cache for the other. */
+ *  pass. */
 async function parseRollout(
   file: string,
   mtimeMs: number,
@@ -417,26 +416,6 @@ async function parseRollout(
   };
   rolloutParseCache.set(file, parsed);
   return parsed;
-}
-
-/** Read Codex's account-wide usage from its newest rollout that carries a
- *  snapshot. Returns null if Codex isn't present or none of the recent rollouts
- *  has a rate-limit event yet. */
-export async function readCodexUsage(): Promise<UsageData | null> {
-  for (const f of await recentRolloutFiles()) {
-    const parsed = await parseRollout(f.file, f.mtimeMs);
-    if (parsed?.usage) return parsed.usage;
-  }
-  return null;
-}
-
-/** Read all Codex account-wide usage snapshots discoverable in recent rollouts.
- *  When Codex logs do not expose an account id, this returns at most one
- *  "Account" entry, preserving the previous single-chip behavior. */
-export async function readCodexUsageAccounts(): Promise<UsageAccount[]> {
-  return readCodexUsageAccountsFromSources([
-    { id: "codex", label: "Codex", home: DEFAULT_CODEX_HOME },
-  ]);
 }
 
 export async function readCodexUsageAccountsFromSources(

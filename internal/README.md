@@ -9,4 +9,7 @@ here is meant for that audience, and one of these (the remote-sessions spike)
 was publicly reachable for a while with a real hostname and username in it.
 
 So: if a file is written for a reader of aya.codes, it goes in `docs/`. If it is
-written for whoever works on Aya, it goes here.
+written for whoever works on Aya, it goes here - including forward-looking plans
+(`search.md`), not just finished reports. The repo root is for documents the code
+itself points at, like `integrations.md`, which source comments cite as the
+OSC 9001 spec.

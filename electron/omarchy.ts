@@ -160,13 +160,8 @@ async function exists(file: string): Promise<boolean> {
   }
 }
 
-/** True when Omarchy has an active theme we can skin from - file existence is
- *  not enough, the colors.toml must parse into a usable palette. */
-export async function omarchyAvailable(): Promise<boolean> {
-  return (await readOmarchyTheme()) !== null;
-}
-
-/** The current Omarchy theme (name + palette), or null when unavailable. */
+/** The current Omarchy theme (name + palette), or null when unavailable -
+ *  file existence is not enough, colors.toml must parse into a usable palette. */
 export async function readOmarchyTheme(): Promise<OmarchyTheme | null> {
   let toml: string;
   try {

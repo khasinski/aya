@@ -914,14 +914,20 @@ export function getPreset(presets: Preset[], id: string): Preset {
   return MISSING_PRESET;
 }
 
-/** Slugify a name into a preset id. */
-export function presetSlug(name: string): string {
-  const s = name
+/** Must stay identical to electron/text.ts slugifyName, fallback included:
+ *  the renderer predicts main's slug. Pinned by tests/slug-parity.test.mjs. */
+export function slugifyName(name: string, fallback: string): string {
+  const slug = name
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "");
-  return s || "preset";
+  return slug || fallback;
+}
+
+/** Slugify a name into a preset id. */
+export function presetSlug(name: string): string {
+  return slugifyName(name, "preset");
 }
 
 /** Match heuristic for commands that look like they've been switched to

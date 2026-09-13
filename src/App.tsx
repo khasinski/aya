@@ -84,6 +84,7 @@ import {
   type Preset,
   type PtyEvent,
   presetSlug,
+  slugifyName,
   type ProjectCollectionState,
   type ProjectConfig,
   type ProjectGitInfo,
@@ -529,7 +530,8 @@ function uniqueProjectName(projects: ProjectConfig[], directory: string): string
   const root = base || "project";
   let name = root;
   let idx = 2;
-  while (used.has(presetSlug(name))) {
+  // Main's "project" fallback, so this predicts the slug createProject assigns.
+  while (used.has(slugifyName(name, "project"))) {
     name = `${root} ${idx}`;
     idx += 1;
   }
@@ -1480,11 +1482,9 @@ export function App() {
     singleViewByProject,
   ]);
 
-  // ---------------------------------------------------------------------------
   // Hydration helper — instantiates TerminalStates for a project's saved tabs.
   // Pulled out of bootstrap so the missing-dir modal can defer hydration until
   // the user decides what to do.
-  // ---------------------------------------------------------------------------
   const hydrateProjectTerminals = useCallback(
     (project: ProjectConfig, effectiveCwd: string) => {
       setTerminals((prev) => {

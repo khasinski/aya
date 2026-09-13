@@ -1,16 +1,22 @@
 # Screenshots
 
-`hero.png` is the image referenced from the project README. It is a
-vertical stack of `main.png` (the workspace) above `snippets-drawer.png`
-(the snippets drawer open). Both shots share the same width, so stacking
-needs no padding. Built with:
+`hero.png` is the image referenced from the project README. Since 1ff1d11
+(0.8.0) it is NOT a composite of `main.png` + `snippets-drawer.png` any more -
+it is the emulator's `tiling` scenario, byte-identical to
+`docs/assets/aya-tiling.png`. Regenerate it with:
 
 ```sh
-magick main.png snippets-drawer.png -append hero.png
+npm run emulator:shot -- tiling --out screenshots
+mv screenshots/tiling.png screenshots/hero.png
 ```
 
-To regenerate the source shots `main.png` / `snippets-drawer.png` with
-mocked data (no real project names or paths from your machine):
+`main.png` and `snippets-drawer.png` are archived source captures, kept on
+purpose: they are the only shots in the repo of the REAL app (every current
+`docs/assets/aya-*.png` is an emulator shot). Nothing references them - the
+`-append` recipe that once combined them into `hero.png` is gone.
+
+To re-capture them with mocked data (no real project names or paths from your
+machine):
 
 ```sh
 ./scripts/seed-screenshot.sh

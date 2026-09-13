@@ -30,9 +30,6 @@ npm-debug.log*
 .env
 .env.*
 
-# Scratchpad design docs that live alongside the codebase but aren't shipped
-docs/onboarding.md
-
 # Playwright E2E artifacts
 test-results/
 playwright-report/
@@ -54,3 +51,8 @@ screenshots/ship-gate/
 # e2e/webgl-context-loss.spec.ts. Contrast screenshots/projects-left-launcher/,
 # which IS tracked on purpose - those shots were re-taken as the UI changed.
 screenshots/webgl-white-terminal/
+
+# recall-loop audit scratch state (absolute local paths, session ids). Globbed,
+# not per-profile: the decruft file was committed by accident in e5dda86 because
+# only its own name was listed, and every other profile writes a sibling.
+.recall-*-state.json
