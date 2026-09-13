@@ -1,26 +1,10 @@
 import { KILL_ESCALATE_MS } from "../dist-electron/pty.js";
 import { test, expect } from "./fixtures";
+import { enableProjectsLeftLayout } from "./helpers/layout";
 import { fireShortcut } from "./helpers/shortcut";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import type { ElectronApplication, Page } from "@playwright/test";
-
-// Switch to the experimental "Projects on left" layout (split disabled) via the
-// Settings segmented control - mirrors projects-left-no-split.spec.ts (no shared
-// helper exists).
-async function enableProjectsLeftLayout(window: Page, app: ElectronApplication) {
-  await fireShortcut(app, "open-settings");
-  const settings = window.locator(".aya-modal--settings");
-  await expect(settings).toBeVisible();
-  await settings
-    .locator('.aya-settings-segmented[aria-label="Window layout"] button', {
-      hasText: "Projects on left",
-    })
-    .click();
-  await window.keyboard.press("Escape");
-  await expect(settings).toBeHidden();
-  await expect(window.locator(".aya-topbar--alt")).toBeVisible();
-}
 
 // End-to-end reproduction of BUG-11 through the real app, in BOTH layouts: a tab
 // whose process traps/ignores SIGHUP (like `claude --chrome`) must actually die
