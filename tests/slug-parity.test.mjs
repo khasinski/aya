@@ -17,17 +17,21 @@ process.env.AYA_HOME = AYA_HOME;
 const { createProject } = await import("../dist-electron/config.js");
 
 const EMPTY_NORMALIZING = ["###", "---", "...", "ąę", "日本語", "", "   "];
-const NAMES = [
-  "My Project",
-  "aya",
-  "  spaced  ",
-  "a-b_c",
-  "2026",
-  "UPPER Case",
-  "trailing---",
-  "---leading",
-  ...EMPTY_NORMALIZING,
+
+// Absolute expectations, not just cross-copy agreement: a differential check
+// alone passes when BOTH copies are edited the same wrong way.
+const EXPECTED = [
+  ["My Project", "my-project"],
+  ["aya", "aya"],
+  ["  spaced  ", "spaced"],
+  ["a-b_c", "a-b_c"],
+  ["2026", "2026"],
+  ["UPPER Case", "upper-case"],
+  ["trailing---", "trailing"],
+  ["---leading", "leading"],
+  ["a  b", "a-b"],
 ];
+const NAMES = [...EXPECTED.map(([name]) => name), ...EMPTY_NORMALIZING];
 
 test("renderer and main slugify identically, fallback included", () => {
   for (const name of NAMES) {
@@ -38,6 +42,13 @@ test("renderer and main slugify identically, fallback included", () => {
         `slug drift for ${JSON.stringify(name)} with fallback "${fallback}"`,
       );
     }
+  }
+});
+
+test("both copies produce the documented slug, not merely the same one", () => {
+  for (const [name, slug] of EXPECTED) {
+    assert.equal(rendererSlugify(name, "project"), slug, `renderer: ${name}`);
+    assert.equal(mainSlugify(name, "project"), slug, `main: ${name}`);
   }
 });
 

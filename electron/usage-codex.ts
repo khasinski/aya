@@ -395,7 +395,7 @@ async function recentRolloutFiles(
 
 /** Read + parse a rollout, or reuse the cached parse when its mtime hasn't
  *  moved. Both the single-usage and per-account results are derived in one
- *  pass so either caller warms the cache for the other. */
+ *  pass. */
 async function parseRollout(
   file: string,
   mtimeMs: number,
