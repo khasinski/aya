@@ -97,6 +97,13 @@ jobs:
             /etc/apt/sources.list.d/*vscode*
           npx playwright install-deps
           sudo apt-get install -y xvfb
+          # Every other spec drives Electron, which carries its own Chromium, so
+          # the runner never needed a standalone browser. e2e/web-mode.spec.ts is
+          # the first that does - it drives a real browser against the web server
+          # - and without this it fails with "Executable doesn't exist at
+          # ~/.cache/ms-playwright/chromium_headless_shell-*". Browser only: the
+          # system libs came from install-deps above.
+          npx playwright install chromium
 
       - name: Run Playwright E2E
         run: xvfb-run -a npm run test:e2e
