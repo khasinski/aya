@@ -4,6 +4,11 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   hasStopHook,
   withStopHook,
@@ -92,4 +97,43 @@ test("hookScriptSource bakes the out path, throttle, and curl timeout in", () =>
   assert.match(s, /-lt 300\b/); // 5-min throttle from HOOK_THROTTLE_SECONDS
   assert.match(s, /-m 10\b/); // curl timeout from HOOK_FETCH_TIMEOUT_SECONDS
   assert.match(s, /oauth\/usage/); // queries the usage endpoint
+});
+
+// GNU stat has to be tried before the BSD spelling, not after: "stat -f %m" on
+// coreutils reads %m as a filename, prints a filesystem dump and only then fails,
+// so an `|| stat -c %Y` fallback appends the mtime to that dump instead of
+// replacing it. Cheap to assert, and it is the half that regressed.
+test("hookScriptSource asks GNU stat first, BSD stat second", () => {
+  const s = hookScriptSource("/tmp/aya/usage.json");
+  assert.match(s, /stat -c %Y[\s\S]*stat -f %m/);
+});
+
+const hasBinary = (name) =>
+  spawnSync("sh", ["-c", `command -v ${name}`], { stdio: "ignore" }).status === 0;
+
+// The script runs under `set -euo pipefail`, so a non-numeric $mod is fatal rather
+// than cosmetic: the hook dies in the throttle arithmetic before it ever fetches,
+// and the usage chip freezes at whatever it last wrote with no visible complaint.
+// Only running it for real catches that, because which stat spelling misbehaves is
+// a property of the host. HOME is redirected at the temp dir so the credential
+// probe finds nothing and the test can never reach the network.
+test("generated hook survives its own throttle branch on this platform", (t) => {
+  if (!hasBinary("jq") || !hasBinary("curl")) {
+    t.skip("script exits early without jq and curl, leaving nothing to exercise");
+    return;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "aya-usage-hook-"));
+  const configDir = join(dir, "claude");
+  const hash = createHash("sha256").update(configDir).digest("hex");
+  // Written now, so the throttle must short-circuit on this very file.
+  writeFileSync(join(dir, `usage-claude-${hash}.json`), "{}");
+  const script = join(dir, "hook.sh");
+  writeFileSync(script, hookScriptSource(join(dir, "usage.json")), { mode: 0o755 });
+
+  const run = spawnSync("bash", [script], {
+    env: { ...process.env, HOME: dir, AYA_CLAUDE_CONFIG_DIR: configDir },
+    encoding: "utf8",
+  });
+  assert.doesNotMatch(run.stderr ?? "", /unbound variable|arithmetic/);
+  assert.equal(run.status, 0, `hook exited ${run.status}: ${run.stderr}`);
 });

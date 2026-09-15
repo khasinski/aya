@@ -155,7 +155,12 @@ ACCOUNT_OUT="$(dirname "$OUT")/usage-claude-$HASH.json"
 # Throttle per account: skip if this config dir was written in the last 5 minutes.
 if [ -f "$ACCOUNT_OUT" ]; then
   now=$(date +%s)
-  mod=$(stat -f %m "$ACCOUNT_OUT" 2>/dev/null || stat -c %Y "$ACCOUNT_OUT" 2>/dev/null || echo 0)
+  # GNU stat must come first. With coreutils, "stat -f %m" reads %m as a FILENAME,
+  # prints a filesystem dump to stdout and only THEN fails, so the fallback appends
+  # the real mtime to that dump and mod stops being a number - which then explodes
+  # in the arithmetic below under set -u. BSD stat has no -c, so it falls through.
+  mod=$(stat -c %Y "$ACCOUNT_OUT" 2>/dev/null || stat -f %m "$ACCOUNT_OUT" 2>/dev/null || true)
+  case "$mod" in ''|*[!0-9]*) mod=0 ;; esac
   [ $((now - mod)) -lt ${HOOK_THROTTLE_SECONDS} ] && exit 0
 fi
 # Claude Code OAuth token: macOS Keychain, else Linux credentials file.
