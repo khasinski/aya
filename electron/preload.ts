@@ -2,6 +2,8 @@
 // contextBridge. The renderer has no direct Node access.
 
 import { contextBridge, ipcRenderer } from "electron";
+import { installWheelZoom } from "./zoom-preload";
+
 import type {
   AyaApi,
   ConfigChange,
@@ -9,6 +11,8 @@ import type {
   PtyEvent,
   UpdateStatus,
 } from "./types";
+
+installWheelZoom();
 
 const isDev = process.env.AYA_DEV === "1";
 

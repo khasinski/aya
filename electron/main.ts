@@ -15,6 +15,7 @@ import {
   type MenuItemConstructorOptions,
 } from "electron";
 import { autoUpdater } from "electron-updater";
+import { installWindowZoom } from "./zoom";
 import {
   accessSync,
   constants as fsConstants,
@@ -1873,6 +1874,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   // even while xterm.js has focus (otherwise xterm would forward them to the
   // PTY). Calling event.preventDefault() prevents both the page and the
   // default menu from receiving the keystroke.
+  installWindowZoom(win.webContents);
   win.webContents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown") return;
     const isMac = process.platform === "darwin";
