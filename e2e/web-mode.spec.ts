@@ -27,6 +27,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import type { ProjectCollectionState } from "../src/types";
 
 const PASSWORD = "web-mode-e2e-password";
 const USER = "webtester";
@@ -65,7 +66,13 @@ async function startServedApp(): Promise<{ base: string; stop: () => Promise<voi
     "env:cwd": projectDir,
     "env:home": projectDir,
     "projects:list": [project],
-    "projects:state": { version: 1, openSlugs: ["web-probe"], activeSlug: "web-probe" },
+    "projects:state": {
+      version: 1,
+      order: ["web-probe"],
+      open: ["web-probe"],
+      recent: ["web-probe"],
+      activeProject: "web-probe",
+    } satisfies ProjectCollectionState,
     "presets:list": [{ id: "shell", name: "Shell", icon: "$", color: "", command: "$SHELL" }],
     "themes:list": { themes: [], activeId: null },
     "snippets:list": [],
