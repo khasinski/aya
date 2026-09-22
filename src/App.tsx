@@ -93,6 +93,7 @@ import {
   type Theme,
   type ThemeColors,
   type UsageAccount,
+  type GrokUsage,
   type WorkingTab,
   type Worktree,
   type WorktreeStatus,
@@ -708,6 +709,7 @@ export function App() {
   const [codexUsageAccounts, setCodexUsageAccounts] = useState<
     UsageAccount[]
   >([]);
+  const [grokUsage, setGrokUsage] = useState<GrokUsage | null>(null);
   const [newProjectModal, setNewProjectModal] =
     useState<NewProjectModalState | null>(null);
   const [missingDirQueue, setMissingDirQueue] = useState<MissingDirEntry[]>([]);
@@ -965,6 +967,11 @@ export function App() {
           setCodexUsageAccounts((prev) =>
             samePollPayload(prev, u) ? prev : u,
           );
+        }
+      });
+      void window.aya.getGrokUsage().then((u) => {
+        if (!cancelled) {
+          setGrokUsage((prev) => (samePollPayload(prev, u) ? prev : u));
         }
       });
     };
@@ -3964,6 +3971,7 @@ export function App() {
               projectSummaries={localSummariesEnabled ? projectSummaries : EMPTY_SUMMARIES}
               usageAccounts={usageAccounts}
               codexUsageAccounts={codexUsageAccounts}
+              grokUsage={grokUsage}
               showUsageHarnessName={showUsageHarnessName}
               terminals={projectTerminals}
               activeTerminalId={activeTabId}
@@ -4010,6 +4018,7 @@ export function App() {
               projectSummaries={localSummariesEnabled ? projectSummaries : EMPTY_SUMMARIES}
               usageAccounts={usageAccounts}
               codexUsageAccounts={codexUsageAccounts}
+              grokUsage={grokUsage}
               showUsageHarnessName={showUsageHarnessName}
             />
             {body ?? (

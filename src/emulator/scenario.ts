@@ -13,6 +13,7 @@ import type { SplitNode } from "../split-tree";
 import { leaf } from "../split-tree";
 import type {
   ControlStatusLevel,
+  GrokUsage,
   ProjectGitInfo,
   UsageAccount,
 } from "../types";
@@ -72,6 +73,8 @@ export interface EmScenario {
   usage?: UsageAccount[];
   /** Codex usage accounts → the Codex usage chip in the top bar. */
   codexUsage?: UsageAccount[];
+  /** Grok usage (tokens + cost) → the Grok usage chip in the top bar. */
+  grokUsage?: GrokUsage | null;
 }
 
 /** Build a balanced BSP tree over the given terminal ids so all panes are

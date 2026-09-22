@@ -101,6 +101,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
 
     getUsage: inv("usage:get"),
     getCodexUsage: inv("usage:get-codex"),
+    getGrokUsage: inv("usage:get-grok"),
     usageHookStatus: inv("usage-hook:status"),
     installUsageHook: inv("usage-hook:install"),
     uninstallUsageHook: inv("usage-hook:uninstall"),

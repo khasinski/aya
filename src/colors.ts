@@ -6,3 +6,5 @@
 export const CLAUDE_BRAND_COLOR = "#d97757";
 /** Codex/OpenAI brand green. */
 export const CODEX_BRAND_COLOR = "#10a37f";
+/** Grok/xAI mark. xAI's brand is monochrome; a mid slate reads on both themes. */
+export const GROK_BRAND_COLOR = "#71717a";

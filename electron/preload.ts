@@ -71,6 +71,7 @@ const api: AyaApi = {
 
   getUsage: () => ipcRenderer.invoke("usage:get"),
   getCodexUsage: () => ipcRenderer.invoke("usage:get-codex"),
+  getGrokUsage: () => ipcRenderer.invoke("usage:get-grok"),
   usageHookStatus: () => ipcRenderer.invoke("usage-hook:status"),
   installUsageHook: () => ipcRenderer.invoke("usage-hook:install"),
   uninstallUsageHook: () => ipcRenderer.invoke("usage-hook:uninstall"),

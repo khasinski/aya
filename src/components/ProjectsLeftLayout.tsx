@@ -4,9 +4,10 @@ import {
   MENU_ANCHOR_GAP_PX,
 } from "../ui-constants";
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
-import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
+import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR, GROK_BRAND_COLOR } from "../colors";
 import {
   getPreset,
+  type GrokUsage,
   type Preset,
   type ProjectConfig,
   type TerminalState,
@@ -14,7 +15,7 @@ import {
 } from "../types";
 import type { SettingsTab } from "../settings-tabs";
 import { useDragReorder } from "../hooks/useDragReorder";
-import { UsageChip } from "./UsageChip";
+import { GrokUsageChip, UsageChip } from "./UsageChip";
 import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
 
 // Project rail width bounds (px) for the drag-resize handle.
@@ -77,6 +78,7 @@ interface Props {
   onCloseWindow: () => void;
   usageAccounts?: UsageAccount[];
   codexUsageAccounts?: UsageAccount[];
+  grokUsage?: GrokUsage | null;
   showUsageHarnessName: boolean;
 
   // The shared terminal-panes / empty / loading body.
@@ -134,6 +136,7 @@ function ProjectsLeftLayoutImpl({
   onCloseWindow,
   usageAccounts = [],
   codexUsageAccounts = [],
+  grokUsage = null,
   showUsageHarnessName,
   body,
 }: Props) {
@@ -529,6 +532,14 @@ function ProjectsLeftLayoutImpl({
               accounts={codexUsageAccounts}
               label="Codex"
               accent={CODEX_BRAND_COLOR}
+              showHarnessName={showUsageHarnessName}
+            />
+          )}
+          {grokUsage && (
+            <GrokUsageChip
+              usage={grokUsage}
+              label="Grok"
+              accent={GROK_BRAND_COLOR}
               showHarnessName={showUsageHarnessName}
             />
           )}

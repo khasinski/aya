@@ -12,6 +12,7 @@ import type { AgentKind, Preset } from "./presets";
 import type { BufferSearchHit } from "./pty";
 import type { Theme, ThemesFile } from "./themes";
 import type { UsageAccount, UsageData } from "./usage";
+import type { GrokUsage } from "./usage-grok";
 import type { UsageHookStatus } from "./usage-hook";
 import type { StatusHookStatus } from "./status-hook";
 
@@ -26,6 +27,7 @@ export type {
   ThemesFile,
   UsageData,
   UsageAccount,
+  GrokUsage,
   UsageHookStatus,
   StatusHookStatus,
 };
@@ -590,6 +592,7 @@ export interface AyaApi {
   getUsage(): Promise<UsageAccount[]>;
   /** Read-only Codex usage parsed from its local rollout logs. */
   getCodexUsage(): Promise<UsageAccount[]>;
+  getGrokUsage(): Promise<GrokUsage | null>;
 
   // Optional usage-hook installer (writes ~/.claude/settings.json + a fetch
   // script). The Aya process never reads a token or calls the endpoint.

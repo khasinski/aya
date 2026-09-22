@@ -94,6 +94,7 @@ import { listPresets, savePresets } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
 import { expandUserPath, readClaudeUsageAccounts } from "./usage";
 import { DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } from "./usage-codex";
+import { DEFAULT_GROK_HOME, readGrokUsage } from "./usage-grok";
 import {
   usageHookStatus,
   installUsageHook,
@@ -2247,6 +2248,16 @@ function registerIpc(): void {
         }),
       ),
     );
+  });
+  // Read-only: Grok usage from its own local session logs. Grok records no
+  // rate-limit % or reset locally (only tokens + cost per turn), so this returns
+  // a 7-day tokens+cost aggregate, not a percent window.
+  ipcMain.handle("usage:get-grok", async () => {
+    const presets = await listPresets();
+    const grokDirs = presets
+      .filter((p) => p.agent === "grok" && p.configDir)
+      .map((p) => expandUserPath(p.configDir as string));
+    return readGrokUsage(grokDirs.length > 0 ? grokDirs : [DEFAULT_GROK_HOME]);
   });
   // Optional, user-enabled usage hook installer (writes ~/.claude/settings.json
   // + a fetch script). The Aya process never reads a token or calls the

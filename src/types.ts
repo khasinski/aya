@@ -74,6 +74,23 @@ export interface UsageAccount {
   usage: UsageData;
 }
 
+/** Grok usage over a rolling 7-day window, account-wide across all sessions.
+ *  Grok records no rate-limit % or reset locally, so this is tokens + cost, not
+ *  a percent ring. Mirror of the interface in electron/usage-grok.ts. */
+export interface GrokUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedReadTokens: number;
+  cacheCreationTokens: number;
+  reasoningTokens: number;
+  totalTokens: number;
+  /** Cost in Grok's own unit: 1e-10 USD ("ticks"). USD = ticks * 1e-10. */
+  costUsdTicks: number;
+  turns: number;
+  models: string[];
+  updatedAt: string;
+}
+
 /** State of the optional usage-hook installer (mirrors electron/usage-hook.ts). */
 export interface UsageHookStatus {
   installed: boolean;
@@ -716,6 +733,8 @@ export interface AyaApi {
   getUsage(): Promise<UsageAccount[]>;
   /** Read-only Codex usage from its local rollout logs. */
   getCodexUsage(): Promise<UsageAccount[]>;
+  /** Grok usage (tokens + cost, last 7 days, account-wide), or null when none. */
+  getGrokUsage(): Promise<GrokUsage | null>;
 
   usageHookStatus(): Promise<UsageHookStatus>;
   installUsageHook(): Promise<UsageHookStatus>;

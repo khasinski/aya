@@ -1,4 +1,4 @@
-import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
+import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR, GROK_BRAND_COLOR } from "../colors";
 import {
   memo,
   useEffect,
@@ -8,9 +8,14 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { useDragReorder } from "../hooks/useDragReorder";
-import type { MonitoredSession, ProjectConfig, UsageAccount } from "../types";
+import type {
+  GrokUsage,
+  MonitoredSession,
+  ProjectConfig,
+  UsageAccount,
+} from "../types";
 import type { SettingsTab } from "../settings-tabs";
-import { UsageChip } from "./UsageChip";
+import { GrokUsageChip, UsageChip } from "./UsageChip";
 import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
 
 // Project tab width bounds (px): tabs shrink to min, then overflow the strip.
@@ -63,6 +68,8 @@ interface Props {
   usageAccounts?: UsageAccount[];
   /** Account-wide Codex usage snapshots. Read-only. */
   codexUsageAccounts?: UsageAccount[];
+  /** Account-wide Grok usage (tokens + cost, last 7 days). Read-only. */
+  grokUsage?: GrokUsage | null;
   showUsageHarnessName: boolean;
 }
 
@@ -102,6 +109,7 @@ function TopBarImpl({
   projectSummaries = {},
   usageAccounts = [],
   codexUsageAccounts = [],
+  grokUsage = null,
   showUsageHarnessName,
 }: Props) {
   const [renamingSlug, setRenamingSlug] = useState<string | null>(null);
@@ -461,6 +469,14 @@ function TopBarImpl({
             accounts={codexUsageAccounts}
             label="Codex"
             accent={CODEX_BRAND_COLOR}
+            showHarnessName={showUsageHarnessName}
+          />
+        )}
+        {grokUsage && (
+          <GrokUsageChip
+            usage={grokUsage}
+            label="Grok"
+            accent={GROK_BRAND_COLOR}
             showHarnessName={showUsageHarnessName}
           />
         )}

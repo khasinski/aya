@@ -221,6 +221,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     // usage + intelligence
     getUsage: async () => (scenario.usage ?? []) as never,
     getCodexUsage: async () => (scenario.codexUsage ?? []) as never,
+    getGrokUsage: async () => (scenario.grokUsage ?? null) as never,
     usageHookStatus: noopAsync,
     installUsageHook: noopAsync,
     uninstallUsageHook: noopAsync,
