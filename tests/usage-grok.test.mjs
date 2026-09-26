@@ -109,7 +109,7 @@ test("distinct models across rows are merged and sorted", () => {
 
 // The weekly limit comes from the "billing: fetched credits config" line Grok
 // 1.0.41 writes to logs/unified.jsonl; the chip's ring shows it.
-import { appendFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -248,6 +248,32 @@ test("readGrokUsage without a limit or turns stays null (the chip hides)", async
   try {
     assert.equal(await readGrokUsage([home], NOW), null);
   } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("readGrokLimit rereads a log replaced by a file at least as big", async () => {
+  const home = grokHome([creditsLine(80, END), "x".repeat(2000)]);
+  const log = join(home, "logs", "unified.jsonl");
+  try {
+    assert.equal((await readGrokLimit(home, NOW)).pct, 80);
+    writeFileSync(`${log}.new`, `${creditsLine(5, END)}\n${"y".repeat(3000)}\n`);
+    renameSync(`${log}.new`, log);
+    assert.equal((await readGrokLimit(home, NOW)).pct, 5);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("readGrokLimit keeps the last limit through a passing read error", async () => {
+  const home = grokHome([creditsLine(80, END)]);
+  const log = join(home, "logs", "unified.jsonl");
+  try {
+    assert.equal((await readGrokLimit(home, NOW)).pct, 80);
+    chmodSync(log, 0o000);
+    assert.equal((await readGrokLimit(home, NOW)).pct, 80);
+  } finally {
+    chmodSync(log, 0o644);
     rmSync(home, { recursive: true, force: true });
   }
 });

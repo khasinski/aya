@@ -72,6 +72,7 @@ export function extractGrokLimit(line: string): GrokLimit | null {
 // Grok can go a day between credits lines while the log grows ~200 KB/h, so a
 // fixed tail loses the line; read the append-only log incrementally instead.
 interface LimitScan {
+  ino: number;
   size: number;
   partial: string;
   limit: GrokLimit | null;
@@ -79,30 +80,32 @@ interface LimitScan {
 const limitScans = new Map<string, LimitScan>();
 
 async function newestLoggedLimit(file: string): Promise<GrokLimit | null> {
+  const known = limitScans.get(file);
+  let scan: LimitScan;
   let chunk: string;
-  let size: number;
-  let scan = limitScans.get(file);
   try {
     const handle = await fs.open(file, "r");
     try {
-      size = (await handle.stat()).size;
-      // Smaller than last time: rotated or truncated, so start over.
-      if (!scan || size < scan.size) scan = { size: 0, partial: "", limit: null };
+      const { ino, size } = await handle.stat();
+      // Another file, or shorter than what was read: rotated or truncated.
+      const fresh = !known || known.ino !== ino || size < known.size;
+      scan = fresh ? { ino, size: 0, partial: "", limit: null } : known;
       const buffer = Buffer.alloc(size - scan.size);
-      await handle.read(buffer, 0, buffer.length, scan.size);
-      chunk = buffer.toString("utf-8");
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, scan.size);
+      chunk = buffer.toString("utf-8", 0, bytesRead);
+      scan = { ...scan, size: scan.size + bytesRead };
     } finally {
       await handle.close();
     }
   } catch {
-    limitScans.delete(file);
-    return null;
+    // A passing read error keeps the last known limit instead of blanking it.
+    return known?.limit ?? null;
   }
   const lines = (scan.partial + chunk).split("\n");
   const partial = lines.pop() ?? "";
   let limit = scan.limit;
   for (const line of lines) limit = extractGrokLimit(line) ?? limit;
-  limitScans.set(file, { size, partial, limit });
+  limitScans.set(file, { ...scan, partial, limit });
   return limit;
 }
 

@@ -54,3 +54,17 @@ test.describe("a snapshot from yesterday", () => {
     await expect(window.getByRole("menu").filter({ hasText: "Grok" })).toContainText(`updated ${day}`);
   });
 });
+
+test.describe("a fresh snapshot nobody refreshes", () => {
+  test.use({ seedOptions: { grokCredits: { pct: 47, end: END, ts: new Date().toISOString() } } });
+
+  test("dims on its own once it is 15 minutes old", async ({ window }) => {
+    await window.clock.install();
+    await window.reload();
+    const chip = window.getByRole("button", { name: "Grok usage, account-wide" });
+    await expect(chip).toContainText("47%", { timeout: 30_000 });
+    await expect(chip).toHaveCSS("opacity", "1");
+    await window.clock.fastForward("20:00");
+    await expect(chip).toHaveCSS("opacity", "0.5");
+  });
+});

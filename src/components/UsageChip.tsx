@@ -7,6 +7,16 @@ const USAGE_STALE_AFTER_MS = 15 * 60 * 1000;
 const CHIP_MUTED_COLOR = "var(--fg-tertiary)";
 const CHIP_BORDER_COLOR = "var(--border)";
 
+/** Re-renders every minute, so a snapshot dims on time even when no poll
+ *  brings new data. */
+function useMinuteTick(): void {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((n) => n + 1), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+}
+
 function isStale(updatedAt: string): boolean {
   const t = Date.parse(updatedAt);
   return !Number.isFinite(t) || Date.now() - t > USAGE_STALE_AFTER_MS;
@@ -167,6 +177,7 @@ export function UsageChip({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  useMinuteTick();
 
   useEffect(() => {
     if (!open) return;
@@ -340,6 +351,7 @@ export function GrokUsageChip({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  useMinuteTick();
 
   useEffect(() => {
     if (!open) return;
