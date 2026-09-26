@@ -1,0 +1,38 @@
+import { expect, test } from "@playwright/test";
+import { PER_TEST_TIMEOUT_MS, globalTimeout } from "./timeouts";
+
+const CI_CEILING = 10 * 60_000;
+const LOCAL_CEILING = 20 * 60_000;
+
+test("the runner's effective deadline is the one this helper returns", () => {
+  expect(test.info().config.globalTimeout).toBe(
+    globalTimeout(process.env) ?? 0,
+  );
+});
+
+test("CI gets the tighter ceiling", () => {
+  expect(globalTimeout({ CI: "true" })).toBe(CI_CEILING);
+});
+
+test("local gets the looser one", () => {
+  expect(globalTimeout({})).toBe(LOCAL_CEILING);
+});
+
+test("both ceilings outlast a single test, and local outlasts CI", () => {
+  expect(globalTimeout({})!).toBeGreaterThan(globalTimeout({ CI: "1" })!);
+  expect(globalTimeout({ CI: "1" })!).toBeGreaterThan(PER_TEST_TIMEOUT_MS);
+});
+
+test("CI is read for truthiness, like forbidOnly and retries beside it", () => {
+  expect(globalTimeout({ CI: "" })).toBe(LOCAL_CEILING);
+  expect(globalTimeout({ CI: "false" })).toBe(CI_CEILING);
+});
+
+test("PWDEBUG removes the deadline, and outranks CI", () => {
+  expect(globalTimeout({ PWDEBUG: "1" }) ?? 0).toBe(0);
+  expect(globalTimeout({ PWDEBUG: "1", CI: "true" }) ?? 0).toBe(0);
+});
+
+test("the config uses these constants, not its own copies", () => {
+  expect(test.info().timeout).toBe(PER_TEST_TIMEOUT_MS);
+});
