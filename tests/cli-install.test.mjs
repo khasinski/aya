@@ -109,6 +109,31 @@ test("the current shim and the pre-#39 one-liner are ours; a foreign wrapper is 
   assert.deepEqual(ayaShimTargets("#!/bin/sh\necho hi\n"), []);
 });
 
+test("a user's wrapper that merely ends in an aya exec line is not ours", () => {
+  // Accepting any matching LINE let startup repair / Reinstall overwrite, or
+  // delete, a hand-written wrapper like this one (#120 review).
+  const wrapper =
+    '#!/bin/bash\nexport FOO=1\nsource ~/.secrets\nexec "/opt/aya-fork/bin/aya" "$@"\n';
+  assert.deepEqual(ayaShimTargets(wrapper), []);
+  // Same exec line under a different interpreter is not the legacy shim either.
+  assert.deepEqual(ayaShimTargets('#!/bin/bash\nexec "/x/bin/aya" "$@"\n'), []);
+});
+
+test("bin dirs that version managers regenerate or prune count as managed", () => {
+  for (const dir of [
+    `${HOME}/Library/Caches/fnm_multishells/123_456/bin`,
+    `${HOME}/.local/share/fnm/node-versions/v24/installation/bin`,
+    `${HOME}/.local/share/mise/shims`,
+    `${HOME}/.nodenv/shims`,
+    `${HOME}/.rubies/ruby-3.4.4/bin`,
+    `${HOME}/miniconda3/bin`,
+    `${HOME}/anaconda3/bin`,
+    `${HOME}/.conda/envs/x/bin`,
+  ]) {
+    assert.equal(isVersionManagedDir(dir), true, dir);
+  }
+});
+
 const gemsetCopy = { path: `${HOME}/.rvm/gems/ruby-3.4.4/bin/aya`, ours: true, broken: false };
 const deadLocalCopy = { path: `${LOCAL_BIN}/aya`, ours: true, broken: true };
 const LOCAL_CHOICE = { dir: LOCAL_BIN, onPath: true };

@@ -217,3 +217,33 @@ test("antigravity on: a user's own aya-brief.md is never overwritten", () => {
   assert.ok(refreshed.startsWith("---\ntrigger: always_on\n---\n"));
   assert.ok(refreshed.includes("my note") && refreshed.includes("new") && !refreshed.includes("old"));
 });
+
+// --- #122 review regressions ------------------------------------------------
+
+test("a deleted end marker leaves AGENTS.md untouched instead of eating user text", async () => {
+  const { withBriefSection, withoutBriefSection, briefMarkersIntact, BRIEF_BEGIN, BRIEF_END } =
+    await import("../dist-electron/agent-brief.js");
+  // The user deleted our end marker, then kept writing.
+  const damaged = `# mine\n\n${BRIEF_BEGIN}\nold brief\n\n## user notes added later\nkeep me\n`;
+  assert.equal(briefMarkersIntact(damaged), false);
+  assert.equal(withBriefSection(damaged, "new brief"), damaged, "ensure must not touch it");
+  assert.equal(withoutBriefSection(damaged), damaged, "remove must not touch it");
+  // A second begin before any end (the old repro) is damaged too.
+  const doubled = `${BRIEF_BEGIN}\na\n${BRIEF_BEGIN}\nb\n${BRIEF_END}\nkeep me\n`;
+  assert.equal(briefMarkersIntact(doubled), false);
+  assert.ok(withoutBriefSection(doubled).includes("keep me"));
+  // Intact files still work.
+  const ok = withBriefSection("# mine\n", "brief");
+  assert.equal(briefMarkersIntact(ok), true);
+  assert.equal(withoutBriefSection(ok).trim(), "# mine");
+});
+
+test("files Aya wrote to that no codex preset wants any more are orphans", async () => {
+  const { orphanedBriefFiles } = await import("../dist-electron/agent-brief.js");
+  const plan = { ensure: ["/h/a/AGENTS.md"], remove: ["/h/b/AGENTS.md"] };
+  assert.deepEqual(
+    orphanedBriefFiles(["/h/a/AGENTS.md", "/h/b/AGENTS.md", "/h/gone/AGENTS.md", "/h/gone/AGENTS.md"], plan),
+    ["/h/gone/AGENTS.md"],
+  );
+  assert.deepEqual(orphanedBriefFiles([], plan), []);
+});

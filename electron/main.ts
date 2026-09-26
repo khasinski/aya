@@ -65,6 +65,9 @@ import {
   withOwnedBrief,
   withoutOwnedBrief,
   withBriefSection,
+  briefMarkersIntact,
+  orphanedBriefFiles,
+  BRIEF_BEGIN,
   withoutBriefSection,
 } from "./agent-brief";
 import { startRemoteServer } from "./remote-server";
@@ -121,12 +124,14 @@ import {
   uninstallUsageHook,
 } from "./usage-hook";
 import {
+  refreshStatusHookScript,
   statusHookStatus,
   installStatusHook,
   uninstallStatusHook,
   type StatusHookStatus,
 } from "./status-hook";
 import {
+  refreshStatusCodexHookScript,
   statusCodexHookStatus,
   installStatusCodexHook,
   uninstallStatusCodexHook,
@@ -690,7 +695,9 @@ async function pullOllamaModel(model: string): Promise<OllamaStatus> {
 function pathEntries(): string[] {
   return (process.env.PATH ?? "")
     .split(path.delimiter)
-    .filter((entry) => entry.trim().length > 0);
+    // Relative entries (`node_modules/.bin`, `.`) depend on the cwd, so an
+    // `aya` found or written there means nothing to a shell elsewhere.
+    .filter((entry) => entry.trim().length > 0 && path.isAbsolute(entry));
 }
 
 function findExecutableOnPath(name: string): string | null {
@@ -760,6 +767,14 @@ async function ayaCopiesOnPath(): Promise<AyaCopy[]> {
     } catch {
       continue;
     }
+    // A symlink (e.g. into a dotfiles repo) is the user's arrangement: listed,
+    // but never ours to rewrite, repair or remove (#120 review).
+    let symlink = false;
+    try {
+      symlink = (await fs.lstat(candidate)).isSymbolicLink();
+    } catch {
+      // vanished between access and lstat: treat as a plain file
+    }
     let targets: string[] = [];
     try {
       targets = ayaShimTargets(await fs.readFile(candidate, "utf-8"));
@@ -768,7 +783,7 @@ async function ayaCopiesOnPath(): Promise<AyaCopy[]> {
     }
     // A shim can be on PATH yet dead: it bakes an absolute path into Aya.app,
     // and moving/renaming the app kills it (follow-up on #42).
-    const ours = targets.length > 0;
+    const ours = targets.length > 0 && !symlink;
     copies.push({
       path: candidate,
       ours,
@@ -809,8 +824,17 @@ function freshCliShim(): string {
 }
 
 async function writeCliShim(target: string, script: string): Promise<void> {
-  await fs.writeFile(target, script, { mode: CLI_EXECUTABLE_MODE });
-  await fs.chmod(target, CLI_EXECUTABLE_MODE);
+  // Temp file + rename: a failed write can't leave a truncated, dead shim, and
+  // rename replaces the entry itself instead of writing through a link.
+  const tmp = `${target}.aya-${process.pid}.tmp`;
+  try {
+    await fs.writeFile(tmp, script, { mode: CLI_EXECUTABLE_MODE });
+    await fs.chmod(tmp, CLI_EXECUTABLE_MODE);
+    await fs.rename(tmp, target);
+  } catch (err) {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    throw err;
+  }
 }
 
 async function installCli(): Promise<CliStatus> {
@@ -842,7 +866,11 @@ async function installCli(): Promise<CliStatus> {
   await fs.mkdir(installDir, { recursive: true });
   const script = freshCliShim();
   await writeCliShim(target, script);
-  const plan = planCliInstall(await ayaCopiesOnPath(), target);
+  // Aya Dev writes a shim aimed at this checkout; spreading it to the user's
+  // other copies would repoint their production `aya` (#120 review).
+  const plan = IS_DEV
+    ? { rewrite: [] as string[], remove: [] as string[] }
+    : planCliInstall(await ayaCopiesOnPath(), target);
   const failed: string[] = [];
   for (const copy of plan.rewrite) {
     await writeCliShim(copy, script).catch(() => failed.push(copy));
@@ -872,25 +900,63 @@ async function codexBriefTargets() {
     }));
 }
 
-/** Rewrite `file` only when `change` alters it. `null` content = no file. */
+/** Rewrite `file` only when `change` alters it. `null` content = no file.
+ *  A symlinked file (e.g. AGENTS.md kept in a dotfiles repo) is edited at its
+ *  target, so the link survives (#122 review). */
 async function rewriteIfChanged(
   file: string,
   change: (content: string) => string,
 ): Promise<void> {
-  let content: string | null = null;
+  let linked = false;
   try {
-    content = await fs.readFile(file, "utf-8");
+    linked = (await fs.lstat(file)).isSymbolicLink();
   } catch {
     // no file yet
+  }
+  const real = linked ? await fs.realpath(file).catch(() => file) : file;
+  let content: string | null = null;
+  try {
+    content = await fs.readFile(real, "utf-8");
+  } catch {
+    // no file yet
+  }
+  if (content !== null && content.includes(BRIEF_BEGIN) && !briefMarkersIntact(content)) {
+    console.warn(
+      `[aya] left ${file} untouched: its aya brief markers are damaged; delete the aya:brief lines to reset`,
+    );
+    return;
   }
   const next = change(content ?? "");
   if (next === (content ?? "")) return;
   if (!next && content !== null) {
-    // The file held nothing but our section: we created it, so it goes.
-    await fs.rm(file, { force: true });
+    // The file held nothing but our section: we created it, so it goes -
+    // unless it is a link's target, which the user owns; empty it instead.
+    if (linked) await fs.writeFile(real, "");
+    else await fs.rm(file, { force: true });
     return;
   }
-  await writeFileAtomic(file, next);
+  if (linked) await fs.writeFile(real, next);
+  else await writeFileAtomic(file, next);
+}
+
+/** Every AGENTS.md Aya has put a codex brief into, so a deleted or re-homed
+ *  codex preset still gets its section removed (#122 review). */
+const CODEX_BRIEF_REGISTRY = path.join(AYA_HOME, "agent-brief-files.json");
+
+async function readBriefRegistry(): Promise<string[]> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(CODEX_BRIEF_REGISTRY, "utf-8")) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((f): f is string => typeof f === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+async function updateBriefRegistry(add: string[], drop: string[]): Promise<void> {
+  const current = new Set(await readBriefRegistry());
+  for (const f of add) current.add(f);
+  for (const f of drop) current.delete(f);
+  await writeFileAtomic(CODEX_BRIEF_REGISTRY, `${JSON.stringify([...current].sort(), null, 2)}\n`);
 }
 
 /** Only files a codex preset points at are touched, and only the brief section
@@ -908,17 +974,21 @@ async function syncAntigravityBrief(): Promise<void> {
 
 async function syncCodexBriefs(): Promise<void> {
   const plan = planCodexBriefs(await codexBriefTargets());
+  const orphans = orphanedBriefFiles(await readBriefRegistry(), plan);
   const brief = briefText(true);
+  const added: string[] = [];
+  const dropped: string[] = [];
   for (const file of plan.ensure) {
-    await rewriteIfChanged(file, (c) => withBriefSection(c, brief)).catch((err) =>
-      console.warn(`[aya] could not add the aya brief to ${file}:`, err),
-    );
+    await rewriteIfChanged(file, (c) => withBriefSection(c, brief))
+      .then(() => added.push(file))
+      .catch((err) => console.warn(`[aya] could not add the aya brief to ${file}:`, err));
   }
-  for (const file of plan.remove) {
-    await rewriteIfChanged(file, withoutBriefSection).catch((err) =>
-      console.warn(`[aya] could not remove the aya brief from ${file}:`, err),
-    );
+  for (const file of [...plan.remove, ...orphans]) {
+    await rewriteIfChanged(file, withoutBriefSection)
+      .then(() => dropped.push(file))
+      .catch((err) => console.warn(`[aya] could not remove the aya brief from ${file}:`, err));
   }
+  await updateBriefRegistry(added, dropped).catch(() => {});
 }
 
 /** Deliver the brief for a fresh (not re-attached) pane whose preset opted
@@ -961,9 +1031,9 @@ async function withAgentBrief(spawn: SpawnRequest): Promise<SpawnRequest> {
   if (channel.kind === "file") {
     // Re-assert on launch: the user may have edited the file since the save.
     const file = codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath);
-    await rewriteIfChanged(file, (c) => withBriefSection(c, briefText(true))).catch(
-      (err) => console.warn(`[aya] could not add the aya brief to ${file}:`, err),
-    );
+    await rewriteIfChanged(file, (c) => withBriefSection(c, briefText(true)))
+      .then(() => updateBriefRegistry([file], []))
+      .catch((err) => console.warn(`[aya] could not add the aya brief to ${file}:`, err));
   }
   return spawn;
 }
@@ -972,6 +1042,9 @@ async function withAgentBrief(spawn: SpawnRequest): Promise<SpawnRequest> {
  *  Packaged only: in dev the fresh shim would aim at this checkout. */
 async function healDeadCliShims(): Promise<void> {
   if (IS_DEV || !app.isPackaged) return;
+  // An AppImage mounts under a fresh /tmp/.mount_* each launch: a "repaired"
+  // shim would aim at a path that dies when the app quits.
+  if (process.env.APPIMAGE) return;
   try {
     await fs.access(bundledAyaCliPath(__dirname), fsConstants.X_OK);
   } catch {
@@ -2952,6 +3025,10 @@ app.whenReady().then(async () => {
   // Needs the repaired PATH to see the user's shims; not awaited - it only
   // touches files and nothing below depends on it.
   void healDeadCliShims();
+  // Installed status-hook scripts from older builds lack the AYA_VIA=hook tag
+  // and would count as agent adoption; refresh them in place (never install).
+  void refreshStatusHookScript().catch(() => {});
+  void refreshStatusCodexHookScript().catch(() => {});
 
   // In dev, replace Electron's default dock icon with ours so the running
   // instance is visually distinguishable. In packaged builds the bundle's
@@ -3035,7 +3112,9 @@ app.whenReady().then(async () => {
     // pane was dead, and dropping it made host rejections unhandled.
     writePane: (terminalId, data) => ptyHost.write(terminalId, data),
     onRequest: (request, caller) => {
-      if (!caller.terminalId) return;
+      // Aya's own automatic-status hooks call `aya status` from inside every
+      // Claude/Codex pane; counting them would read as ~100% adoption (#121).
+      if (!caller.terminalId || caller.via === "hook") return;
       void cliAdoption
         .called({
           terminalId: caller.terminalId,

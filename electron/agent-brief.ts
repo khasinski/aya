@@ -84,9 +84,30 @@ function sectionPattern(): RegExp {
   return new RegExp(`\\n*${esc(BRIEF_BEGIN)}[\\s\\S]*?${esc(BRIEF_END)}\\n*`, "g");
 }
 
+/** Every begin marker closed by an end marker before the next begin. A user
+ *  who deleted or duplicated a marker line breaks this; a non-greedy match
+ *  would then span their own text and delete it (#122 review), so callers
+ *  leave such a file untouched. */
+export function briefMarkersIntact(content: string): boolean {
+  let open = false;
+  for (const line of content.split(/\r?\n/)) {
+    const t = line.trim();
+    if (t === BRIEF_BEGIN) {
+      if (open) return false;
+      open = true;
+    } else if (t === BRIEF_END) {
+      if (!open) return false;
+      open = false;
+    }
+  }
+  return !open;
+}
+
 /** `content` with exactly one brief section, at the end; the rest untouched.
- *  Equal to `content` when the section is already current. */
+ *  Equal to `content` when the section is already current, or when the
+ *  markers are damaged (see briefMarkersIntact). */
 export function withBriefSection(content: string, brief: string): string {
+  if (!briefMarkersIntact(content)) return content;
   const section = `${BRIEF_BEGIN}\n${brief}\n${BRIEF_END}\n`;
   const rest = withoutBriefSection(content).replace(/\n+$/, "");
   return rest ? `${rest}\n\n${section}` : section;
@@ -94,7 +115,7 @@ export function withBriefSection(content: string, brief: string): string {
 
 /** `content` without the brief section; only the newlines next to it change. */
 export function withoutBriefSection(content: string): string {
-  if (!content.includes(BRIEF_BEGIN)) return content;
+  if (!content.includes(BRIEF_BEGIN) || !briefMarkersIntact(content)) return content;
   const rest = content.replace(sectionPattern(), (match, at: number) =>
     at === 0 ? "" : at + match.length === content.length ? "\n" : "\n\n",
   );
@@ -140,6 +161,15 @@ export function planCodexBriefs(
     presets.filter((p) => !p.agentBrief && !on.has(p.file)).map((p) => p.file),
   );
   return { ensure: [...on].sort(), remove: [...off].sort() };
+}
+
+/** Files Aya once put a codex brief into that no current codex preset opts in
+ *  to any more (preset deleted, or its home moved): their section must go,
+ *  or it would stay in that AGENTS.md forever (#122 review). */
+export function orphanedBriefFiles(recorded: string[], plan: CodexBriefPlan): string[] {
+  const wanted = new Set(plan.ensure);
+  const planned = new Set(plan.remove);
+  return [...new Set(recorded)].filter((f) => !wanted.has(f) && !planned.has(f)).sort();
 }
 
 /** Measured on agy 1.2.11: only config/rules/ with always_on frontmatter

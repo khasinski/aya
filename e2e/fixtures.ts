@@ -180,6 +180,9 @@ export const test = base.extend<{
     }
     // Empty CODEX_HOME: never read the real machine's rollout logs.
     env.CODEX_HOME = join(seeded.root, "codex-home");
+    // Same isolation for Grok: its usage chip reads ~/.grok/sessions, and a dev
+    // machine with real Grok usage would add a chip the specs do not expect.
+    env.GROK_HOME = join(seeded.root, "grok-home");
     Object.assign(env, seeded.launchEnv);
 
     // The built main entry, not the app root: a bare directory arg reads as

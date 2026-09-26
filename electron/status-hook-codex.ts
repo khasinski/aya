@@ -148,7 +148,7 @@ AYA=$(command -v aya 2>/dev/null || true)
 TYPE=$(printf '%s' "$PAYLOAD" | jq -r '.type // empty')
 case "$TYPE" in
   agent-turn-complete)
-    "$AYA" status done "Turn finished" >/dev/null 2>&1 || true ;;
+    AYA_VIA=hook "$AYA" status done "Turn finished" >/dev/null 2>&1 || true ;;
 esac
 exit 0
 `;
@@ -213,4 +213,19 @@ export async function uninstallStatusCodexHook(): Promise<CodexStatusHookStatus>
   }
   await fs.rm(scriptPath, { force: true });
   return statusCodexHookStatus();
+}
+
+/** Rewrite an ALREADY-installed Codex notify script whose content is out of
+ *  date (see refreshStatusHookScript). Never installs. */
+export async function refreshStatusCodexHookScript(): Promise<void> {
+  let current: string;
+  try {
+    current = await fs.readFile(STATUS_HOOK_CODEX_SCRIPT_FILE, "utf8");
+  } catch {
+    return;
+  }
+  const next = codexNotifyScriptSource(bundledAyaCliPath(__dirname));
+  if (current === next) return;
+  await writeFileAtomic(STATUS_HOOK_CODEX_SCRIPT_FILE, next);
+  await fs.chmod(STATUS_HOOK_CODEX_SCRIPT_FILE, HOOK_SCRIPT_MODE);
 }

@@ -97,3 +97,14 @@ test("the generated script maps each event to the right aya status level and no-
   // The bundled CLI path is baked as the PATH fallback.
   assert.match(src, /app\.asar\.unpacked\/bin\/aya/);
 });
+
+test("every aya call from the hook script is tagged AYA_VIA=hook", async () => {
+  // Untagged, auto-status would count every Claude pane as adopting the CLI (#121).
+  const src = statusHookScriptSource("/x/bin/aya");
+  const calls = src.split("\n").filter((l) => l.includes('"$AYA" status'));
+  assert.ok(calls.length >= 3);
+  for (const line of calls) assert.match(line, /AYA_VIA=hook "\$AYA" status/);
+  const { codexNotifyScriptSource } = await import("../dist-electron/status-hook-codex.js");
+  const codex = codexNotifyScriptSource("/x/bin/aya");
+  assert.match(codex, /AYA_VIA=hook "\$AYA" status done/);
+});

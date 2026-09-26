@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -319,7 +319,19 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     const homeBin = join(home, "bin");
     const localBin = join(home, ".local", "bin");
     const toolsBin = join(home, "tools");
-    for (const dir of [gemset, homeBin, localBin, toolsBin]) mkdirSync(dir, { recursive: true });
+    // A dotfiles-managed copy: PATH holds a SYMLINK to a dead legacy shim kept
+    // in a repo. It must never be written through or removed (#120 review).
+    const linkBin = join(home, "link-bin");
+    const dotfiles = join(home, "dotfiles");
+    for (const dir of [gemset, homeBin, localBin, toolsBin, linkBin, dotfiles]) {
+      mkdirSync(dir, { recursive: true });
+    }
+    writeFileSync(
+      join(dotfiles, "aya"),
+      '#!/bin/sh\nexec "/Applications/Aya.app/Contents/Resources/app.asar/bin/aya" "$@"\n',
+      { mode: 0o755 },
+    );
+    symlinkSync(join(dotfiles, "aya"), join(linkBin, "aya"));
     writeFileSync(join(toolsBin, "aya"), "#!/bin/sh\nexec /usr/bin/true\n", { mode: 0o755 });
     // Healthy: execs this checkout's CLI, which exists.
     writeFileSync(
@@ -357,7 +369,7 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
         "/bin",
         "/usr/sbin",
         "/sbin",
-        ...(opts.cliInstallHarness === "off-path" ? [] : [homeBin, localBin, toolsBin]),
+        ...(opts.cliInstallHarness === "off-path" ? [] : [homeBin, localBin, toolsBin, linkBin]),
       ].join(":"),
       SHELL: quietShell,
     };

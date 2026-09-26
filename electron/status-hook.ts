@@ -177,12 +177,12 @@ EVENT=$(printf '%s' "$INPUT" | jq -r '.hook_event_name // empty')
 case "$EVENT" in
   Notification)
     MSG=$(printf '%s' "$INPUT" | jq -r '.message // "Needs your input"')
-    "$AYA" status waiting "$MSG" >/dev/null 2>&1 || true ;;
+    AYA_VIA=hook "$AYA" status waiting "$MSG" >/dev/null 2>&1 || true ;;
   PostToolUse)
     TOOL=$(printf '%s' "$INPUT" | jq -r '.tool_name // "a tool"')
-    "$AYA" status active "running $TOOL" >/dev/null 2>&1 || true ;;
+    AYA_VIA=hook "$AYA" status active "running $TOOL" >/dev/null 2>&1 || true ;;
   Stop)
-    "$AYA" status done "Turn finished" >/dev/null 2>&1 || true ;;
+    AYA_VIA=hook "$AYA" status done "Turn finished" >/dev/null 2>&1 || true ;;
 esac
 exit 0
 `;
@@ -252,4 +252,20 @@ export async function uninstallStatusHook(): Promise<StatusHookStatus> {
   }
   await fs.rm(STATUS_HOOK_SCRIPT_FILE, { force: true });
   return statusHookStatus();
+}
+
+/** Rewrite an ALREADY-installed hook script whose content is out of date (e.g.
+ *  written before hook calls were tagged AYA_VIA=hook, #121). Never installs:
+ *  a missing script stays missing. */
+export async function refreshStatusHookScript(): Promise<void> {
+  let current: string;
+  try {
+    current = await fs.readFile(STATUS_HOOK_SCRIPT_FILE, "utf8");
+  } catch {
+    return;
+  }
+  const next = statusHookScriptSource(bundledAyaCliPath(__dirname));
+  if (current === next) return;
+  await writeFileAtomic(STATUS_HOOK_SCRIPT_FILE, next);
+  await fs.chmod(STATUS_HOOK_SCRIPT_FILE, HOOK_SCRIPT_MODE);
 }

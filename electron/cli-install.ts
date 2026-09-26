@@ -15,6 +15,14 @@ const VERSION_MANAGED = [
   "/.fnm/",
   "/.gem/",
   "/mise/installs/",
+  "/mise/shims/",
+  "/fnm_multishells/",
+  "/.local/share/fnm/",
+  "/.nodenv/",
+  "/.rubies/",
+  "/miniconda3/",
+  "/anaconda3/",
+  "/.conda/",
   "/node_modules/.bin/",
 ];
 

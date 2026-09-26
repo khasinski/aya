@@ -174,3 +174,12 @@ test("pane-send accepts a target id instead of a name", () => {
     },
   );
 });
+
+test("the caller's via tag survives parsing, so hook traffic can be told apart", async () => {
+  const { parseControlCaller } = await import("../dist-electron/control-protocol.js");
+  assert.deepEqual(
+    parseControlCaller({ caller: { terminalId: "t1", presetId: "claude", via: "hook" } }),
+    { terminalId: "t1", presetId: "claude", via: "hook" },
+  );
+  assert.deepEqual(parseControlCaller({ caller: { terminalId: "t1" } }), { terminalId: "t1" });
+});

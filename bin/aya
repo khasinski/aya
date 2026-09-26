@@ -122,6 +122,9 @@ const request = {
   caller: {
     terminalId: optionalEnv("AYA_TERMINAL_ID"),
     presetId: optionalEnv("AYA_PRESET_ID"),
+    // Set by Aya's own automatic-status hooks, so their calls don't read as
+    // the agent adopting the CLI.
+    via: optionalEnv("AYA_VIA"),
   },
 };
 const client = net.createConnection(socketPath);

@@ -1,7 +1,7 @@
 // #117: the brief reaches the agent through its harness's channel, only for
 // presets that opt in, on the real launch path.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect } from "./fixtures";
 import { fireShortcut } from "./helpers/shortcut";
@@ -225,6 +225,59 @@ test("codex AGENTS.md: saving the preset adds the section, turning it off remove
   expect(existsSync(bareMd)).toBe(true);
   await save(false, join(seeded.root, "codex-bare-home"));
   expect(existsSync(bareMd)).toBe(false);
+});
+
+test("codex AGENTS.md: a deleted preset's section is removed, and a symlinked file stays a link", async ({
+  window,
+  seeded,
+}) => {
+  // #122 review: the section outlived a deleted preset, and an atomic rename
+  // replaced a dotfiles symlink with a plain file.
+  const home = join(seeded.root, "codex-link-home");
+  const dotfiles = join(seeded.root, "dotfiles");
+  mkdirSync(home, { recursive: true });
+  mkdirSync(dotfiles, { recursive: true });
+  const realMd = join(dotfiles, "AGENTS.md");
+  const linkMd = join(home, "AGENTS.md");
+  const userText = "# Dotfiles rules\n";
+  writeFileSync(realMd, userText);
+  symlinkSync(realMd, linkMd);
+
+  const setPreset = (present: boolean) =>
+    window.evaluate(
+      async ({ configDir, present }) => {
+        const presets = (await window.aya.listPresets()).filter((p) => p.id !== "codex-link");
+        await window.aya.savePresets(
+          present
+            ? [
+                ...presets,
+                {
+                  id: "codex-link",
+                  name: "Codex",
+                  icon: "C",
+                  color: "",
+                  agent: "codex",
+                  configDir,
+                  command: "codex",
+                  agentBrief: true,
+                },
+              ]
+            : presets,
+        );
+      },
+      { configDir: home, present },
+    );
+
+  await setPreset(true);
+  expect(lstatSync(linkMd).isSymbolicLink(), "the symlink was replaced by a plain file").toBe(true);
+  expect(readFileSync(realMd, "utf8")).toContain("aya:brief:begin");
+
+  // Deleting the preset (not just turning the toggle off) must clean up too.
+  await setPreset(false);
+  await expect
+    .poll(() => readFileSync(realMd, "utf8"), { message: "section outlived the deleted preset" })
+    .toBe(userText);
+  expect(lstatSync(linkMd).isSymbolicLink()).toBe(true);
 });
 
 test("a broken presets.json does not stop a pane from spawning", async ({ window, seeded }) => {

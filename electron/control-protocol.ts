@@ -50,6 +50,8 @@ export type ControlRequest =
 export interface ControlCaller {
   terminalId?: string;
   presetId?: string;
+  /** "hook" when the call comes from Aya's automatic-status hook, not the agent. */
+  via?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -64,9 +66,11 @@ export function parseControlCaller(value: unknown): ControlCaller {
   if (!isRecord(value) || !isRecord(value.caller)) return {};
   const terminalId = optionalString(value.caller.terminalId);
   const presetId = optionalString(value.caller.presetId);
+  const via = optionalString(value.caller.via);
   return {
     ...(terminalId ? { terminalId } : {}),
     ...(presetId ? { presetId } : {}),
+    ...(via ? { via } : {}),
   };
 }
 

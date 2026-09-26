@@ -66,7 +66,9 @@ export function parseShimTargets(content: string): string[] {
     }
   }
   if (targets.length === 0) {
-    const legacy = content.match(/^exec ("(?:[^"\\]|\\.)*") "\$@"$/m);
+    // The WHOLE file must be the two-line legacy shim: a user's own wrapper
+    // that merely ends in a similar exec line is not ours (#120 review).
+    const legacy = content.match(/^#!\/bin\/sh\nexec ("(?:[^"\\]|\\.)*") "\$@"\n?$/);
     if (legacy) {
       try {
         targets.push(JSON.parse(legacy[1]) as string);
