@@ -49,6 +49,11 @@ test("WebGL is dropped while hidden and comes back fresh on visibility - nothing
   app,
 }) => {
   await window.emulateMedia({ colorScheme: "dark" }); // match the reporter's setup
+  // Before reload(): its context teardown lets V8 collect the pending promise of
+  // a main-process evaluate ("Resulting promise was garbage collected" on CI).
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.show();
+  });
   // The app force-disables WebGL under automation (navigator.webdriver); mask
   // it so the REAL user's render path runs. Make visibilityState drivable -
   // the harness gets no native occlusion signals.
@@ -60,13 +65,6 @@ test("WebGL is dropped while hidden and comes back fresh on visibility - nothing
     });
   });
   await window.reload();
-  // Let the reload settle before reaching into the main process, and return
-  // nothing from it: evaluating right after reload() raced Playwright's handle
-  // bookkeeping and failed with "Resulting promise was garbage collected".
-  await window.waitForLoadState("domcontentloaded");
-  await app.evaluate(({ BrowserWindow }) => {
-    BrowserWindow.getAllWindows()[0]?.show();
-  });
 
   // Skip ONLY when the ENVIRONMENT has no WebGL at all (probed independently
   // of the app) - if the env has GL but the terminal didn't attach, that is a
