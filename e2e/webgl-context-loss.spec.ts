@@ -60,7 +60,13 @@ test("WebGL is dropped while hidden and comes back fresh on visibility - nothing
     });
   });
   await window.reload();
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.show());
+  // Let the reload settle before reaching into the main process, and return
+  // nothing from it: evaluating right after reload() raced Playwright's handle
+  // bookkeeping and failed with "Resulting promise was garbage collected".
+  await window.waitForLoadState("domcontentloaded");
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.show();
+  });
 
   // Skip ONLY when the ENVIRONMENT has no WebGL at all (probed independently
   // of the app) - if the env has GL but the terminal didn't attach, that is a
