@@ -1,13 +1,5 @@
-// Grok usage, read from its own local session logs.
-//
-// Unlike Claude (a user hook writes percentages) and Codex (its rollouts carry
-// rate-limit percentages), the Grok Build CLI records NO rate-limit % or reset
-// locally - only a per-turn token + cost breakdown in
-// ~/.grok/sessions/<enc-cwd>/<uuid>/updates.jsonl. Grok's weekly pool lives
-// server-side and is never written to disk. So Aya cannot show a "% of limit"
-// ring for Grok; it shows what IS local and account-wide: tokens and cost used
-// over a rolling 7-day window, summed across every session. Read-only: no token,
-// no endpoint, no fetch - same as the Codex path.
+// Read-only (no token, no endpoint): spend and tokens from session logs, the
+// weekly limit % from the credits line Grok 1.0.41+ writes to logs/unified.jsonl.
 
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
@@ -41,6 +33,90 @@ export interface GrokUsage {
   /** ISO time of the newest turn counted. Stable between polls (unlike "now"),
    *  so an unchanged week doesn't churn the renderer. */
   updatedAt: string;
+  limit?: GrokLimit;
+}
+
+export interface GrokLimit {
+  pct: number;
+  resetsAt: string;
+  /** When Grok logged it; Grok logs it irregularly, so it can be old. */
+  updatedAt: string;
+}
+
+const CREDITS_MSG = "billing: fetched credits config";
+
+const isIsoTime = (v: unknown): v is string =>
+  typeof v === "string" && Number.isFinite(Date.parse(v));
+
+/** Null for any other line, or one whose shape is not what 1.0.41 logs. */
+export function extractGrokLimit(line: string): GrokLimit | null {
+  if (!line.includes(CREDITS_MSG)) return null;
+  let entry: {
+    msg?: unknown;
+    ts?: unknown;
+    ctx?: { config?: { creditUsagePercent?: unknown; currentPeriod?: { end?: unknown } } };
+  };
+  try {
+    entry = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  const config = entry.ctx?.config;
+  const pct = config?.creditUsagePercent;
+  const end = config?.currentPeriod?.end;
+  if (entry.msg !== CREDITS_MSG || typeof pct !== "number" || !Number.isFinite(pct)) return null;
+  if (!isIsoTime(end) || !isIsoTime(entry.ts)) return null;
+  return { pct, resetsAt: end, updatedAt: entry.ts };
+}
+
+// Grok can go a day between credits lines while the log grows ~200 KB/h, so a
+// fixed tail loses the line; read the append-only log incrementally instead.
+interface LimitScan {
+  ino: number;
+  size: number;
+  partial: string;
+  limit: GrokLimit | null;
+}
+const limitScans = new Map<string, LimitScan>();
+
+async function newestLoggedLimit(file: string): Promise<GrokLimit | null> {
+  const known = limitScans.get(file);
+  let scan: LimitScan;
+  let chunk: string;
+  try {
+    const handle = await fs.open(file, "r");
+    try {
+      const { ino, size } = await handle.stat();
+      // Another file, or shorter than what was read: rotated or truncated.
+      const fresh = !known || known.ino !== ino || size < known.size;
+      scan = fresh ? { ino, size: 0, partial: "", limit: null } : known;
+      const buffer = Buffer.alloc(size - scan.size);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, scan.size);
+      chunk = buffer.toString("utf-8", 0, bytesRead);
+      scan = { ...scan, size: scan.size + bytesRead };
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    // A passing read error keeps the last known limit instead of blanking it.
+    return known?.limit ?? null;
+  }
+  const lines = (scan.partial + chunk).split("\n");
+  const partial = lines.pop() ?? "";
+  let limit = scan.limit;
+  for (const line of lines) limit = extractGrokLimit(line) ?? limit;
+  limitScans.set(file, { ...scan, partial, limit });
+  return limit;
+}
+
+/** The newest logged limit, or null when none is found or its week is over
+ *  (last week's % says nothing about this one). */
+export async function readGrokLimit(
+  home: string,
+  nowMs: number = Date.now(),
+): Promise<GrokLimit | null> {
+  const limit = await newestLoggedLimit(path.join(expandUserPath(home), "logs", "unified.jsonl"));
+  return limit && Date.parse(limit.resetsAt) > nowMs ? limit : null;
 }
 
 /** One turn's usage, extracted from a log line. Pure, exported for tests. The
@@ -114,14 +190,8 @@ export function extractGrokUsageRow(line: string): GrokUsageRow | null {
   };
 }
 
-/** Sum the rows that fall inside [nowMs - windowMs, nowMs]. Pure, tested. */
-export function sumGrokUsage(
-  rows: GrokUsageRow[],
-  nowMs: number,
-  windowMs: number = GROK_USAGE_WINDOW_MS,
-): GrokUsage | null {
-  const sinceMs = nowMs - windowMs;
-  const acc: GrokUsage = {
+function emptyGrokUsage(updatedAt: string): GrokUsage {
+  return {
     inputTokens: 0,
     outputTokens: 0,
     cachedReadTokens: 0,
@@ -131,8 +201,18 @@ export function sumGrokUsage(
     costUsdTicks: 0,
     turns: 0,
     models: [],
-    updatedAt: "",
+    updatedAt,
   };
+}
+
+/** Sum the rows that fall inside [nowMs - windowMs, nowMs]. Pure, tested. */
+export function sumGrokUsage(
+  rows: GrokUsageRow[],
+  nowMs: number,
+  windowMs: number = GROK_USAGE_WINDOW_MS,
+): GrokUsage | null {
+  const sinceMs = nowMs - windowMs;
+  const acc = emptyGrokUsage("");
   const models = new Set<string>();
   let maxTs = 0;
   for (const r of rows) {
@@ -242,12 +322,17 @@ export async function readGrokUsage(
   const sinceMs = nowMs - GROK_USAGE_WINDOW_MS;
   const seen = new Set<string>();
   const allRows: GrokUsageRow[] = [];
+  let limit: GrokLimit | null = null;
   for (const home of homes.length > 0 ? homes : [DEFAULT_GROK_HOME]) {
     for (const file of await recentSessionLogs(home, sinceMs)) {
       if (seen.has(file)) continue;
       seen.add(file);
       allRows.push(...(await rowsForFile(file)));
     }
+    const found = await readGrokLimit(home, nowMs);
+    if (found && (!limit || found.updatedAt > limit.updatedAt)) limit = found;
   }
-  return sumGrokUsage(allRows, nowMs);
+  const usage = sumGrokUsage(allRows, nowMs);
+  if (!limit) return usage;
+  return { ...(usage ?? emptyGrokUsage(limit.updatedAt)), limit };
 }

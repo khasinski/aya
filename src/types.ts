@@ -77,9 +77,13 @@ export interface UsageAccount {
   usage: UsageData;
 }
 
-/** Grok usage over a rolling 7-day window, account-wide across all sessions.
- *  Grok records no rate-limit % or reset locally, so this is tokens + cost, not
- *  a percent ring. Mirror of the interface in electron/usage-grok.ts. */
+/** Mirror of electron/usage-grok.ts. */
+export interface GrokLimit {
+  pct: number;
+  resetsAt: string;
+  updatedAt: string;
+}
+
 export interface GrokUsage {
   inputTokens: number;
   outputTokens: number;
@@ -92,6 +96,7 @@ export interface GrokUsage {
   turns: number;
   models: string[];
   updatedAt: string;
+  limit?: GrokLimit;
 }
 
 /** State of the optional usage-hook installer (mirrors electron/usage-hook.ts). */

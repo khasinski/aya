@@ -7,15 +7,69 @@ const USAGE_STALE_AFTER_MS = 15 * 60 * 1000;
 const CHIP_MUTED_COLOR = "var(--fg-tertiary)";
 const CHIP_BORDER_COLOR = "var(--border)";
 
-function isUsageStale(u: UsageData): boolean {
-  const t = Date.parse(u.updatedAt);
+/** Re-renders every minute, so a snapshot dims on time even when no poll
+ *  brings new data. */
+function useMinuteTick(): void {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((n) => n + 1), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+}
+
+function isStale(updatedAt: string): boolean {
+  const t = Date.parse(updatedAt);
   return !Number.isFinite(t) || Date.now() - t > USAGE_STALE_AFTER_MS;
 }
 
+const isUsageStale = (u: UsageData) => isStale(u.updatedAt);
+
+const updatedText = (iso: string, stale: boolean) =>
+  `${stale ? "stale · " : ""}updated ${fmtClock(iso)}`;
+
+function HarnessDot({ accent }: { accent: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{ width: 8, height: 8, borderRadius: "50%", background: accent, flex: "0 0 auto" }}
+    />
+  );
+}
+
+function UsageRing({ pct, accent }: { pct: number; accent: string }) {
+  const filled = Math.max(0, Math.min(100, pct));
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        width: 19,
+        height: 19,
+        borderRadius: "50%",
+        background: `conic-gradient(${accent} ${filled}%, ${CHIP_BORDER_COLOR} 0)`,
+        position: "relative",
+        flex: "0 0 auto",
+      }}
+    >
+      <span
+        style={{
+          position: "absolute",
+          inset: 4,
+          borderRadius: "50%",
+          background: "var(--bg-secondary)",
+        }}
+      />
+    </span>
+  );
+}
+
+/** Time alone reads as today, so an older snapshot also gets its date. */
 function fmtClock(iso: string): string {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return "?";
-  return new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const when = new Date(t);
+  const time = when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (when.toDateString() === new Date().toDateString()) return time;
+  return `${when.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
 }
 
 function fmtReset(iso?: string): string {
@@ -123,6 +177,7 @@ export function UsageChip({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  useMinuteTick();
 
   useEffect(() => {
     if (!open) return;
@@ -137,7 +192,6 @@ export function UsageChip({
 
   const stale = allUsageStale(accounts);
   const { pct: weeklyPct, ring: avgRing } = averageUsagePct(accounts);
-  const ringPct = Math.max(0, Math.min(100, weeklyPct));
   const accountText =
     accounts.length === 1 ? "1 account" : `${accounts.length} accounts`;
 
@@ -169,39 +223,11 @@ export function UsageChip({
       >
         {showHarnessName ? (
           <>
-            <span
-              aria-hidden="true"
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: accent,
-                flex: "0 0 auto",
-              }}
-            />
+            <HarnessDot accent={accent} />
             <span style={{ color: CHIP_MUTED_COLOR, fontSize: 11 }}>{label}</span>
           </>
         ) : (
-          <span
-            aria-hidden="true"
-            style={{
-              width: 19,
-              height: 19,
-              borderRadius: "50%",
-              background: `conic-gradient(${accent} ${ringPct}%, ${CHIP_BORDER_COLOR} 0)`,
-              position: "relative",
-              flex: "0 0 auto",
-            }}
-          >
-            <span
-              style={{
-                position: "absolute",
-                inset: 4,
-                borderRadius: "50%",
-                background: "var(--bg-secondary)",
-              }}
-            />
-          </span>
+          <UsageRing pct={weeklyPct} accent={accent} />
         )}
         <span
           style={{
@@ -264,8 +290,7 @@ export function UsageChip({
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {accountStale ? "stale · " : ""}updated{" "}
-                    {fmtClock(account.usage.updatedAt)}
+                    {updatedText(account.usage.updatedAt, accountStale)}
                   </span>
                 </div>
                 {account.usage.fiveHour && (
@@ -301,10 +326,6 @@ export function UsageChip({
 }
 
 // ---- Grok --------------------------------------------------------------------
-// Grok records no rate-limit % or reset locally (see electron/usage-grok.ts),
-// so its chip can't be a percent ring like Claude/Codex. It shows what IS local
-// and account-wide: spend + tokens over the last 7 days. Same chrome so it sits
-// naturally beside the ring chips.
 
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
@@ -317,8 +338,6 @@ function fmtUsd(ticks: number): string {
   return `$${(ticks * 1e-10).toFixed(2)}`;
 }
 
-/** Account-wide Grok usage (spend + tokens, last 7 days). No ring: Grok exposes
- *  no limit locally, so the headline is spend (or tokens on a no-cost plan). */
 export function GrokUsageChip({
   usage,
   label,
@@ -332,6 +351,7 @@ export function GrokUsageChip({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  useMinuteTick();
 
   useEffect(() => {
     if (!open) return;
@@ -342,10 +362,16 @@ export function GrokUsageChip({
     return () => window.removeEventListener("pointerdown", onPointerDown, true);
   }, [open]);
 
-  if (!usage || usage.turns === 0) return null;
+  if (!usage || (usage.turns === 0 && !usage.limit)) return null;
 
+  const { limit } = usage;
   const hasCost = usage.costUsdTicks > 0;
-  const headline = hasCost ? fmtUsd(usage.costUsdTicks) : `${fmtTokens(usage.totalTokens)} tok`;
+  const headline = limit
+    ? `${Math.round(limit.pct)}%`
+    : hasCost
+      ? fmtUsd(usage.costUsdTicks)
+      : `${fmtTokens(usage.totalTokens)} tok`;
+  const stale = limit ? isStale(limit.updatedAt) : false;
 
   const row = (name: string, value: string) => (
     <div
@@ -366,7 +392,11 @@ export function GrokUsageChip({
     <div className="aya-recent-projects" ref={ref}>
       <button
         className="aya-iconbtn"
-        title={`${label} usage — last 7 days, account-wide (all sessions, not this project)`}
+        title={
+          limit
+            ? `${label} usage - ${Math.round(limit.pct)}% of the weekly limit, account-wide`
+            : `${label} usage - last 7 days, account-wide (all sessions, not this project)`
+        }
         aria-label={`${label} usage, account-wide`}
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => setOpen((v) => !v)}
@@ -376,20 +406,16 @@ export function GrokUsageChip({
           width: "auto",
           gap: showHarnessName ? 7 : 6,
           padding: showHarnessName ? "0 9px" : "0 7px",
+          opacity: stale ? 0.5 : 1,
           background: showHarnessName ? "var(--bg-tertiary)" : undefined,
           fontFamily: "var(--font-sans)",
         }}
       >
-        <span
-          aria-hidden="true"
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: "50%",
-            background: accent,
-            flex: "0 0 auto",
-          }}
-        />
+        {limit && !showHarnessName ? (
+          <UsageRing pct={limit.pct} accent={accent} />
+        ) : (
+          <HarnessDot accent={accent} />
+        )}
         {showHarnessName && (
           <span style={{ color: CHIP_MUTED_COLOR, fontSize: 11 }}>{label}</span>
         )}
@@ -409,28 +435,42 @@ export function GrokUsageChip({
       {open && (
         <div className="aya-recent-menu" role="menu" style={{ width: RECENT_MENU_WIDTH_PX, padding: 12 }}>
           <div className="aya-recent-menu-title">{label} — account-wide</div>
-          <div style={{ color: CHIP_MUTED_COLOR, fontSize: 12, marginBottom: 10 }}>
-            Last 7 days, all sessions, not this project
-          </div>
-          {hasCost && row("Spend", fmtUsd(usage.costUsdTicks))}
-          {row("Tokens", fmtTokens(usage.totalTokens))}
-          {row("  Input", fmtTokens(usage.inputTokens))}
-          {row("  Output", fmtTokens(usage.outputTokens))}
-          {usage.cachedReadTokens > 0 && row("  Cache read", fmtTokens(usage.cachedReadTokens))}
-          {usage.reasoningTokens > 0 && row("  Reasoning", fmtTokens(usage.reasoningTokens))}
-          {row("Turns", `${usage.turns}`)}
-          <div
-            style={{
-              color: CHIP_MUTED_COLOR,
-              fontSize: 11,
-              marginTop: 10,
-              borderTop: `1px solid ${CHIP_BORDER_COLOR}`,
-              paddingTop: 8,
-            }}
-          >
-            {usage.models.length > 0 ? usage.models.join(", ") : "Grok"}
-            {" · no account limit shown (Grok exposes none locally)"}
-          </div>
+          {limit && (
+            <>
+              <UsageRow label="week" win={limit} accent={accent} />
+              <div style={{ color: CHIP_MUTED_COLOR, fontSize: 11, marginBottom: 10 }}>
+                {updatedText(limit.updatedAt, stale)}
+              </div>
+            </>
+          )}
+          {usage.turns > 0 && (
+            <>
+              <div style={{ color: CHIP_MUTED_COLOR, fontSize: 12, marginBottom: 10 }}>
+                Last 7 days, all sessions, not this project
+              </div>
+              {hasCost && row("Spend", fmtUsd(usage.costUsdTicks))}
+              {row("Tokens", fmtTokens(usage.totalTokens))}
+              {row("  Input", fmtTokens(usage.inputTokens))}
+              {row("  Output", fmtTokens(usage.outputTokens))}
+              {usage.cachedReadTokens > 0 && row("  Cache read", fmtTokens(usage.cachedReadTokens))}
+              {usage.reasoningTokens > 0 && row("  Reasoning", fmtTokens(usage.reasoningTokens))}
+              {row("Turns", `${usage.turns}`)}
+            </>
+          )}
+          {(usage.models.length > 0 || !limit) && (
+            <div
+              style={{
+                color: CHIP_MUTED_COLOR,
+                fontSize: 11,
+                marginTop: 10,
+                borderTop: `1px solid ${CHIP_BORDER_COLOR}`,
+                paddingTop: 8,
+              }}
+            >
+              {usage.models.length > 0 ? usage.models.join(", ") : "Grok"}
+              {!limit && " · no weekly limit logged by Grok yet"}
+            </div>
+          )}
         </div>
       )}
     </div>
