@@ -79,22 +79,24 @@ export const BRIEF_END = "<!-- aya:brief:end -->";
 
 function sectionPattern(): RegExp {
   const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`\\n?${esc(BRIEF_BEGIN)}[\\s\\S]*?${esc(BRIEF_END)}\\n?`, "g");
+  return new RegExp(`\\n*${esc(BRIEF_BEGIN)}[\\s\\S]*?${esc(BRIEF_END)}\\n*`, "g");
 }
 
 /** `content` with exactly one brief section, at the end; the rest untouched.
  *  Equal to `content` when the section is already current. */
 export function withBriefSection(content: string, brief: string): string {
   const section = `${BRIEF_BEGIN}\n${brief}\n${BRIEF_END}\n`;
-  const rest = content.replace(sectionPattern(), "\n").replace(/\n+$/, "");
+  const rest = withoutBriefSection(content).replace(/\n+$/, "");
   return rest ? `${rest}\n\n${section}` : section;
 }
 
-/** `content` without the brief section; equal to `content` when there is none. */
+/** `content` without the brief section; only the newlines next to it change. */
 export function withoutBriefSection(content: string): string {
   if (!content.includes(BRIEF_BEGIN)) return content;
-  const rest = content.replace(sectionPattern(), "\n").replace(/\n{3,}/g, "\n\n");
-  return rest.trim() ? `${rest.replace(/\n+$/, "")}\n` : "";
+  const rest = content.replace(sectionPattern(), (match, at: number) =>
+    at === 0 ? "" : at + match.length === content.length ? "\n" : "\n\n",
+  );
+  return rest.trim() ? rest : "";
 }
 
 /** A leading `CODEX_HOME=...` assignment in a preset command, unquoted, with
@@ -141,7 +143,6 @@ export function planCodexBriefs(
 /** Append `dir` to a PATH value unless it is already there: an installed
  *  shim earlier on PATH keeps winning, the bundled CLI is the fallback. */
 export function pathWithFallbackDir(value: string | undefined, dir: string): string {
-  const entries = (value ?? "").split(path.delimiter).filter(Boolean);
-  if (entries.includes(dir)) return entries.join(path.delimiter);
-  return [...entries, dir].join(path.delimiter);
+  if (!value) return dir;
+  return value.split(path.delimiter).includes(dir) ? value : `${value}${path.delimiter}${dir}`;
 }

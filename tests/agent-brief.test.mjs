@@ -133,6 +133,14 @@ test("section: user text written AFTER our section survives removal", () => {
   assert.equal(withoutBriefSection(edited), `${USER}\n## Added later\n`);
 });
 
+test("section: removal leaves the user's own blank lines elsewhere alone", () => {
+  const spaced = "# A\n\n\n\n# B\n";
+  assert.equal(withoutBriefSection(withBriefSection(spaced, "b")), spaced);
+  const first = `${withBriefSection("", "b")}\n# Mine\n\n\n\nend`;
+  assert.equal(withoutBriefSection(first), "# Mine\n\n\n\nend");
+  assert.equal(withoutBriefSection(`\n\nlead\n\n${withBriefSection("", "b")}`), "\n\nlead\n");
+});
+
 test("agentBrief survives the preset roundtrip; a non-boolean is rejected", () => {
   const base = { id: "c", name: "C", icon: "C", color: "", agent: "codex", command: "codex" };
   assert.equal(normalizePreset({ ...base, agentBrief: true }).agentBrief, true);
@@ -171,4 +179,6 @@ test("the bundled CLI is appended to PATH, never ahead of an installed shim", ()
   assert.equal(pathWithFallbackDir("/a:/b", "/app/bin"), "/a:/b:/app/bin");
   assert.equal(pathWithFallbackDir("/app/bin:/a", "/app/bin"), "/app/bin:/a");
   assert.equal(pathWithFallbackDir(undefined, "/app/bin"), "/app/bin");
+  // Empty entries mean the cwd; the user's PATH is kept as it was.
+  assert.equal(pathWithFallbackDir("/a::/b:", "/app/bin"), "/a::/b::/app/bin");
 });

@@ -171,3 +171,21 @@ test("codex AGENTS.md: saving the preset adds the section, turning it off remove
   await save(false, join(seeded.root, "codex-bare-home"));
   expect(existsSync(bareMd)).toBe(false);
 });
+
+test("a broken presets.json does not stop a pane from spawning", async ({ window, seeded }) => {
+  writeFileSync(join(seeded.ayaHome, "presets.json"), "{");
+  const marker = join(seeded.projectDir, "spawned.txt");
+  await window.evaluate(
+    ({ cwd, marker }) =>
+      window.aya.ptySpawn({
+        ptyId: "broken-presets",
+        presetId: "shell",
+        command: `echo ok > '${marker}'`,
+        cwd,
+        cols: 80,
+        rows: 24,
+      }),
+    { cwd: seeded.projectDir, marker },
+  );
+  await expect.poll(() => existsSync(marker), { timeout: 30_000 }).toBe(true);
+});
