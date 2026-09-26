@@ -1,5 +1,4 @@
-// A pane program that records how it was launched: its argv and whether `aya`
-// resolves on its PATH. Then it idles, like an agent waiting for input.
+// Records how the pane was launched, then idles like an agent waiting for input.
 // Usage: node argv-dump.cjs <outfile> [args...]
 const fs = require("node:fs");
 const path = require("node:path");

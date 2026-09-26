@@ -1,6 +1,5 @@
-// The aya brief (#117): per-harness channel, the launch argument, and the
-// marked section in codex's AGENTS.md - idempotent, and never touching the
-// rest of the user's file.
+// The aya brief (#117): the codex AGENTS.md section must be idempotent and
+// never touch the rest of the user's file.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -18,14 +17,14 @@ import {
   withBriefSection,
   withoutBriefSection,
 } from "../dist-electron/agent-brief.js";
-import { AGENT_KINDS } from "../dist-electron/presets.js";
+import { AGENT_KINDS, isPreset, normalizePreset } from "../dist-electron/presets.js";
 import { agentBriefHint } from "../dist-test/agentPreset.js";
 
 test("channels: claude/grok by argument, opencode by env, codex by file, rest none", () => {
   assert.deepEqual(briefChannel("claude"), { kind: "arg", flag: "--append-system-prompt" });
   assert.deepEqual(briefChannel("grok"), { kind: "arg", flag: "--rules" });
   assert.deepEqual(briefChannel("opencode"), { kind: "env", name: "OPENCODE_CONFIG_CONTENT" });
-  assert.deepEqual(briefChannel("codex"), { kind: "file", file: "codex-agents-md" });
+  assert.deepEqual(briefChannel("codex"), { kind: "file" });
   assert.deepEqual(briefChannel("pi"), { kind: "none" });
   assert.deepEqual(briefChannel(undefined), { kind: "none" });
 });
@@ -124,16 +123,20 @@ test("section: an updated brief replaces the old one instead of stacking", () =>
 test("section: removal restores the user's file byte for byte", () => {
   assert.equal(withoutBriefSection(withBriefSection(USER, "b")), USER);
   assert.equal(withoutBriefSection(USER), USER);
+  assert.equal(withoutBriefSection("a\n\n\nb"), "a\n\n\nb");
   // A file that held only our section becomes empty (main.ts deletes it).
   assert.equal(withoutBriefSection(withBriefSection("", "b")), "");
 });
 
 test("section: user text written AFTER our section survives removal", () => {
   const edited = `${withBriefSection(USER, "b")}\n## Added later\n`;
-  const removed = withoutBriefSection(edited);
-  assert.ok(removed.includes("# My rules"));
-  assert.ok(removed.includes("## Added later"));
-  assert.ok(!removed.includes(BRIEF_BEGIN));
+  assert.equal(withoutBriefSection(edited), `${USER}\n## Added later\n`);
+});
+
+test("agentBrief survives the preset roundtrip; a non-boolean is rejected", () => {
+  const base = { id: "c", name: "C", icon: "C", color: "", agent: "codex", command: "codex" };
+  assert.equal(normalizePreset({ ...base, agentBrief: true }).agentBrief, true);
+  assert.equal(isPreset({ ...base, agentBrief: "yes" }), false);
 });
 
 const expand = (p) => p.replace(/^~/, "/Users/dev");

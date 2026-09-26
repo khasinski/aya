@@ -827,9 +827,8 @@ async function rewriteIfChanged(
   await writeFileAtomic(file, next);
 }
 
-/** Keep the brief section in every codex AGENTS.md whose preset opts in, and
- *  out of every one whose presets all opted out. Only files a codex preset
- *  points at are ever touched; the rest of each file is left as it was. */
+/** Only files a codex preset points at are touched, and only the brief section
+ *  in them. */
 async function syncCodexBriefs(): Promise<void> {
   const plan = planCodexBriefs(await codexBriefTargets());
   const brief = briefText(true);
