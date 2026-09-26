@@ -816,7 +816,9 @@ export function SettingsModal({
 
   /** Add a harness suggestion as a new preset row. */
   const addSuggestion = (h: HarnessDef) => {
-    const agent = h.id === "claude" || h.id === "codex" ? h.id : "custom";
+    // Inferred, not "custom": an explicit custom hides the brief toggle and
+    // auto-resume for every agent CLI but claude and codex.
+    const agent = inferAgent({ command: h.command });
     const configDir =
       agent === "claude"
         ? DEFAULT_CLAUDE_CONFIG_DIR
@@ -831,7 +833,7 @@ export function SettingsModal({
       command: configDir ? agentCommand(agent, configDir, false) : h.command,
       agent,
       configDir,
-      autoResume: agent === "claude" || agent === "codex",
+      autoResume: agent !== "custom",
       themeId: undefined,
     });
   };

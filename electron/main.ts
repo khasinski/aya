@@ -56,6 +56,9 @@ import {
   commandWithBriefArg,
   commandWithBriefEnv,
   planCodexBriefs,
+  antigravityBriefFile,
+  withOwnedBrief,
+  withoutOwnedBrief,
   withBriefSection,
   withoutBriefSection,
 } from "./agent-brief";
@@ -829,6 +832,17 @@ async function rewriteIfChanged(
 
 /** Only files a codex preset points at are touched, and only the brief section
  *  in them. */
+/** One Aya-owned rules file for every antigravity preset: present while any
+ *  of them opts in, deleted once none does (or none is left). */
+async function syncAntigravityBrief(): Promise<void> {
+  const presets = (await listPresets()).filter((p) => p.agent === "antigravity");
+  const file = antigravityBriefFile(os.homedir());
+  const on = presets.some((p) => p.agentBrief === true);
+  await rewriteIfChanged(file, (c) =>
+    on ? withOwnedBrief(c, briefText(true)) : withoutOwnedBrief(c),
+  ).catch((err) => console.warn(`[aya] could not sync the aya brief at ${file}:`, err));
+}
+
 async function syncCodexBriefs(): Promise<void> {
   const plan = planCodexBriefs(await codexBriefTargets());
   const brief = briefText(true);
@@ -2335,6 +2349,7 @@ function registerIpc(): void {
   ipcMain.handle("presets:save", async (_e, presets: unknown) => {
     await savePresets(validatePresetArray(presets));
     await syncCodexBriefs();
+    await syncAntigravityBrief();
   });
   ipcMain.handle("presets:scan-harnesses", async () => scanHarnesses());
 
@@ -2849,6 +2864,7 @@ app.whenReady().then(async () => {
   // Presets can change on disk without a save through Settings; a file-only
   // pass that writes nothing unless a codex preset's opt-in disagrees with it.
   void syncCodexBriefs();
+  void syncAntigravityBrief();
 
   // In dev, replace Electron's default dock icon with ours so the running
   // instance is visually distinguishable. In packaged builds the bundle's

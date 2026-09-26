@@ -37,6 +37,38 @@ async function paneLaunch(seeded: { projectDir: string; tabIds: { right: string 
   return JSON.parse(readFileSync(dump, "utf8"));
 }
 
+test.describe("antigravity preset with the brief on", () => {
+  test.use({ seedOptions: { ...fakeAgent("antigravity").seedOptions, fakeHome: true } });
+
+  test("launch writes Aya's always-on rule; turning it off deletes it", async ({
+    window,
+    seeded,
+  }) => {
+    const rule = join(seeded.root, "home", ".gemini", "config", "rules", "aya-brief.md");
+    await paneLaunch(seeded);
+    const content = readFileSync(rule, "utf8");
+    expect(content.startsWith("---\ntrigger: always_on\n---\n")).toBe(true);
+    expect(content).toContain("aya capabilities");
+
+    await window.evaluate(async () => {
+      const presets = await window.aya.listPresets();
+      await window.aya.savePresets(presets.map((p) => ({ ...p, agentBrief: false })));
+    });
+    expect(existsSync(rule)).toBe(false);
+  });
+
+  test("deleting the last antigravity preset deletes the rule too", async ({ window, seeded }) => {
+    const rule = join(seeded.root, "home", ".gemini", "config", "rules", "aya-brief.md");
+    await paneLaunch(seeded);
+    expect(existsSync(rule)).toBe(true);
+    await window.evaluate(async () => {
+      const presets = await window.aya.listPresets();
+      await window.aya.savePresets(presets.filter((p) => p.agent !== "antigravity"));
+    });
+    expect(existsSync(rule)).toBe(false);
+  });
+});
+
 test.describe("claude preset with the brief on", () => {
   test.use(fakeAgent("claude"));
 
@@ -66,6 +98,29 @@ test.describe("claude preset with the brief off (the default)", () => {
     void window;
     const { args } = await paneLaunch(seeded);
     expect(args).not.toContain("--append-system-prompt");
+  });
+});
+
+test.describe("Antigravity added from Suggested", () => {
+  test.use({ seedOptions: { fakeHome: true, fakeBins: ["agy"] } });
+
+  // Suggested harnesses used to be saved as "custom", hiding the toggle.
+  test("shows the brief toggle, and opting in writes the rule", async ({ window, app, seeded }) => {
+    await fireShortcut(app, "open-settings");
+    const settings = window.locator(".aya-modal--settings");
+    await settings.getByTestId("settings-tab").filter({ hasText: "Presets" }).click();
+    await settings.locator(".aya-settings-suggested-btn", { hasText: "Antigravity" }).click();
+    await settings
+      .locator(".aya-preset-toggle", { hasText: "Tell the agent about aya" })
+      .locator('input[type="checkbox"]')
+      .check();
+    await settings.locator(".aya-modal-btn--primary", { hasText: "Save" }).click();
+    await expect(settings).toBeHidden();
+    const rule = join(seeded.root, "home", ".gemini", "config", "rules", "aya-brief.md");
+    await expect.poll(() => existsSync(rule)).toBe(true);
+    const saved = JSON.parse(readFileSync(join(seeded.ayaHome, "presets.json"), "utf8"))
+      .presets.find((p: { command: string }) => p.command === "agy");
+    expect(saved).toMatchObject({ agent: "antigravity", autoResume: true, agentBrief: true });
   });
 });
 
