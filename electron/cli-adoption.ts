@@ -1,9 +1,5 @@
-// Does any agent actually use `aya`? (#117 point 4.) Every pane Aya launches
-// is recorded with its harness, and every control request carrying that
-// pane's AYA_TERMINAL_ID marks it as a caller. Per harness this gives "panes
-// launched" vs "panes that ever called aya", so each way of telling an agent
-// about the CLI becomes a number instead of an assumption. Only the first
-// sighting of a pane or command is written, so the file changes rarely.
+// Per harness: panes launched vs panes that ever called `aya` (#117 point 4).
+// Only first sightings are written, so the file changes rarely.
 
 import { promises as fs } from "node:fs";
 import { writeFileAtomic } from "./atomic-write";

@@ -1,6 +1,5 @@
-// `aya capabilities` (#117): the real CLI against the real control server on a
-// tmp socket, so the list an agent reads and the caller Aya counts are both
-// checked end to end. Plus parity: `aya help` and the list cannot drift.
+// The real CLI against the real control server on a tmp socket (#117), so the
+// list an agent reads and the caller Aya counts are checked end to end.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -16,7 +15,7 @@ const cli = resolve("bin/aya");
 
 /** Run the CLI against a live control server; resolve with its output and
  *  every (request, caller) the server saw. */
-async function runAgainstServer(args, env) {
+async function runAgainstServer(args, env, onRequest) {
   const dir = mkdtempSync(join(tmpdir(), "aya-caps-"));
   const socket = join(dir, "aya.sock");
   const seen = [];
@@ -24,7 +23,7 @@ async function runAgainstServer(args, env) {
     getWindow: () => null,
     openProject: () => {},
     listProjects: async () => [],
-    onRequest: (request, caller) => seen.push({ request, caller }),
+    onRequest: onRequest ?? ((request, caller) => seen.push({ request, caller })),
   });
   try {
     const result = await new Promise((done, fail) => {
@@ -86,7 +85,14 @@ test("every command carries its pane, not just capabilities", async () => {
   assert.deepEqual(seen[0].caller, { terminalId: "term-2", presetId: "codex" });
 });
 
-/** The usage column of `aya help`, one entry per command. */
+test("a throwing adoption hook never fails the command", async () => {
+  const { status, stdout } = await runAgainstServer(["capabilities"], {}, () => {
+    throw new Error("disk full");
+  });
+  assert.equal(status, 0);
+  assert.equal(JSON.parse(stdout).insideAya, false);
+});
+
 function helpUsages() {
   const { stderr } = spawnSync(cli, ["help"], { encoding: "utf8" });
   return stderr

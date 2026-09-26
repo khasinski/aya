@@ -1,6 +1,5 @@
-// #117: an agent in a pane runs `aya capabilities` and Aya counts that pane
-// as adopting the CLI. Typed into a real shell pane, so the PTY's own
-// AYA_TERMINAL_ID / AYA_SOCKET carry the call - nothing is set by the test.
+// Typed into a real shell pane (#117), so the PTY's own AYA_TERMINAL_ID /
+// AYA_SOCKET carry the call - nothing is set by the test.
 
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";

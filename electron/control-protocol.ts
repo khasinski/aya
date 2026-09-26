@@ -43,12 +43,10 @@ export type ControlRequest =
       projectSlug?: string;
       selfTerminalId?: string;
     }
-  // The command list for agents (`aya capabilities`).
   | { type: "capabilities" };
 
-/** The pane a request came from, as bin/aya reads it from AYA_TERMINAL_ID /
- *  AYA_PRESET_ID. Sent with every request so adoption can be measured per
- *  harness (#117); absent outside Aya. */
+/** The calling pane (AYA_TERMINAL_ID / AYA_PRESET_ID), sent with every request
+ *  to measure adoption per harness (#117); absent outside Aya. */
 export interface ControlCaller {
   terminalId?: string;
   presetId?: string;

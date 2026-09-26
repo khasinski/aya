@@ -1,6 +1,5 @@
-// Per-harness adoption of the `aya` CLI (#117 point 4): panes launched vs
-// panes that ever called it. Reducers are pure; the store is checked against a
-// real file, including two updates racing the first load.
+// Reducers are pure; the store is checked against a real file, including
+// updates racing the first load (#117).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -36,7 +35,30 @@ test("repeat sightings change nothing, so the file is not rewritten", () => {
   assert.equal(recordLaunch(s, { terminalId: "a", agent: "claude" }, 2), null);
   s = recordCall(s, { terminalId: "a", command: "status" }, 3);
   assert.equal(recordCall(s, { terminalId: "a", command: "status" }, 4), null);
+  s = recordCall(s, { terminalId: "a", command: "capabilities" }, 5);
   assert.equal(s.panes.a.firstCallAt, 3);
+});
+
+test("first sightings stick: launch time, and a launch's presetId over a call's", () => {
+  let s = recordLaunch(emptyCliAdoption(), { terminalId: "a", agent: "claude", presetId: "p1" }, 1);
+  s = recordLaunch(s, { terminalId: "a", agent: "codex" }, 2);
+  s = recordCall(s, { terminalId: "a", presetId: "p2", command: "status" }, 3);
+  assert.deepEqual(s.panes.a, {
+    agent: "codex", presetId: "p1", launchedAt: 1, firstCallAt: 3, commands: ["status"],
+  });
+});
+
+test("a pane that called before its launch was recorded still counts as launched", () => {
+  let s = recordCall(emptyCliAdoption(), { terminalId: "x", command: "status" }, 1);
+  s = recordLaunch(s, { terminalId: "x" }, 2);
+  assert.equal(s.panes.x.launchedAt, 2);
+});
+
+test("harnesses are listed by panes launched, most first", () => {
+  let s = recordLaunch(emptyCliAdoption(), { terminalId: "a", agent: "amp" }, 1);
+  s = recordLaunch(s, { terminalId: "b", agent: "zed" }, 2);
+  s = recordLaunch(s, { terminalId: "c", agent: "zed" }, 3);
+  assert.deepEqual(summarizeCliAdoption(s).map((row) => row.agent), ["zed", "amp"]);
 });
 
 test("a caller Aya never saw launch is counted under unknown", () => {
@@ -84,6 +106,16 @@ test("store: updates racing the first load are all kept and flushed to disk", as
       { agent: "claude", panesLaunched: 2, panesThatCalledAya: 1, panesThatRanCapabilities: 1 },
       { agent: "codex", panesLaunched: 1, panesThatCalledAya: 0, panesThatRanCapabilities: 0 },
     ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("store: a missing file starts empty", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-adoption-"));
+  try {
+    const store = createCliAdoptionStore(join(dir, "none.json"), 60_000);
+    assert.deepEqual(await store.summary(), []);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

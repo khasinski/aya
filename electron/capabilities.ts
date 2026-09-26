@@ -1,9 +1,5 @@
-// What `aya capabilities` answers (#117): the one machine-readable list of the
-// commands an agent inside Aya can run. Agents are told only "run
-// `aya capabilities`", so this list - not a skill file copied into some
-// harness's config - is what they learn from, and it cannot go stale against
-// the CLI it ships with. tests/aya-capabilities.test.mjs holds `aya help` to
-// the same list.
+// Agents learn the CLI from this list, not a copied skill file, so it ships with
+// the CLI it describes (#117); tests/aya-capabilities.test.mjs pins `aya help` to it.
 
 export interface Capability {
   /** The subcommand words, e.g. "pane send". */
