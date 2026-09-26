@@ -58,8 +58,8 @@ export interface SeedOptions {
   fakeHome?: boolean;
   /** Stub executables put first on PATH, so harness detection finds them. */
   fakeBins?: string[];
-  /** #115's machine: a fake HOME whose PATH puts an rvm gemset first, holding
-   *  a working Aya shim, with a dead pre-#39 shim in ~/.local/bin below it. */
+  /** #115's machine: an rvm gemset first on PATH with a working Aya shim, dead
+   *  pre-#39 shims below it in ~/bin and ~/.local/bin, and a foreign `aya` last. */
   cliInstallHarness?: boolean;
   /** Names of extra projects that are known + recent but NOT open, so the
    *  recent-projects menu lists them as closed projects. */
@@ -315,9 +315,11 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
   if (opts.cliInstallHarness) {
     const home = join(root, "cli-home");
     const gemset = join(home, ".rvm", "gems", "ruby-3.4.4", "bin");
+    const homeBin = join(home, "bin");
     const localBin = join(home, ".local", "bin");
-    mkdirSync(gemset, { recursive: true });
-    mkdirSync(localBin, { recursive: true });
+    const toolsBin = join(home, "tools");
+    for (const dir of [gemset, homeBin, localBin, toolsBin]) mkdirSync(dir, { recursive: true });
+    writeFileSync(join(toolsBin, "aya"), "#!/bin/sh\nexec /usr/bin/true\n", { mode: 0o755 });
     // Healthy: execs this checkout's CLI, which exists.
     writeFileSync(
       join(gemset, "aya"),
@@ -325,11 +327,13 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
       { mode: 0o755 },
     );
     // Dead: the pre-#39 shim from #115, execing into the asar archive.
-    writeFileSync(
-      join(localBin, "aya"),
-      '#!/bin/sh\nexec "/Applications/Aya.app/Contents/Resources/app.asar/bin/aya" "$@"\n',
-      { mode: 0o755 },
-    );
+    for (const dir of [homeBin, localBin]) {
+      writeFileSync(
+        join(dir, "aya"),
+        '#!/bin/sh\nexec "/Applications/Aya.app/Contents/Resources/app.asar/bin/aya" "$@"\n',
+        { mode: 0o755 },
+      );
+    }
     // A login shell that adds nothing, so PATH repair leaves this PATH alone.
     const quietShell = join(root, "quiet-login-shell");
     writeFileSync(
@@ -346,7 +350,7 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     launchEnv = {
       ...launchEnv,
       HOME: home,
-      PATH: [gemset, "/usr/bin", "/bin", "/usr/sbin", "/sbin", localBin].join(":"),
+      PATH: [gemset, "/usr/bin", "/bin", "/usr/sbin", "/sbin", homeBin, localBin, toolsBin].join(":"),
       SHELL: quietShell,
     };
   }

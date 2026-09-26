@@ -1,7 +1,5 @@
-// Where the `aya` shim is installed and how every copy on PATH is judged
-// (#115): the first writable PATH entry was an rvm gemset, so the shim
-// vanished on `rvm use`, and a dead pre-#39 shim further down took over
-// while Settings still reported a healthy install.
+// #115: the shim went to an rvm gemset and vanished on `rvm use`, while a dead
+// copy further down PATH took over and Settings still said healthy.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -58,10 +56,10 @@ test("only version-managed dirs are writable: ~/.local/bin, flagged off PATH", (
 });
 
 test("a trailing slash on the PATH entry still counts as ~/.local/bin", () => {
-  assert.equal(
-    chooseCliInstallDir([`${LOCAL_BIN}/`], HOME, everyDirWritable).onPath,
-    true,
-  );
+  assert.deepEqual(chooseCliInstallDir([`${LOCAL_BIN}/`], HOME, everyDirWritable), {
+    dir: LOCAL_BIN,
+    onPath: true,
+  });
 });
 
 test("version-manager dirs are recognised; stable dirs are not", () => {
@@ -71,6 +69,7 @@ test("version-manager dirs are recognised; stable dirs are not", () => {
     `${HOME}/.pyenv/shims`,
     `${HOME}/.nvm/versions/node/v20.1.0/bin`,
     `${HOME}/.asdf/shims`,
+    `${HOME}/.fnm/node-versions/v22.0.0/installation/bin`,
     `${HOME}/.local/share/mise/installs/node/22/bin`,
     `${HOME}/.gem/ruby/3.4.0/bin`,
     "/repo/node_modules/.bin",
@@ -114,8 +113,12 @@ test("one healthy shim in a stable dir: no message, Settings shows the plain pat
   );
 });
 
-test("a dead first copy asks for Reinstall", () => {
-  assert.match(describeCliStatus([deadLocalCopy], LOCAL_CHOICE), /moved or renamed.*Reinstall/);
+test("a dead first copy asks for Reinstall; healthy copies below are not called dead", () => {
+  const healthyBelow = { path: "/usr/local/bin/aya", ours: true, broken: false };
+  assert.equal(
+    describeCliStatus([deadLocalCopy, healthyBelow], LOCAL_CHOICE),
+    `Installed at ${deadLocalCopy.path}, but it points at a moved or renamed Aya.app - click Reinstall to repair.`,
+  );
 });
 
 test("a foreign aya first on PATH is named, not judged", () => {

@@ -1,15 +1,11 @@
-// Where the `aya` shim goes, and what every `aya` already on PATH is (#115).
-// The installer used to take the FIRST writable PATH entry, which on a machine
-// with rvm/rbenv/nvm/asdf is a version-pinned dir: the shim vanished on the
-// next `rvm use`, and a dead pre-#39 shim further down PATH took over, unseen
-// because status only ever looked at the first hit. Pure: main.ts does the IO.
+// #115: the first writable PATH dir was an rvm gemset, so the shim vanished on
+// `rvm use` and a dead copy further down PATH took over unseen.
 
 import * as path from "node:path";
 import { parseShimTargets } from "./cli-shim";
 
-/** Dirs a version manager prepends and swaps per version (or regenerates:
- *  `rbenv rehash` wipes its shims dir). A shim there drops off PATH on the next
- *  version switch, so it is never an install target. */
+/** Dirs a version manager swaps or regenerates per version (`rbenv rehash`
+ *  wipes its shims), so a shim there drops off PATH on the next switch. */
 const VERSION_MANAGED = [
   "/.rvm/",
   "/.rbenv/",
@@ -22,29 +18,27 @@ const VERSION_MANAGED = [
   "/node_modules/.bin",
 ];
 
+const normalizeDir = (dir: string) => path.normalize(dir).replace(/\/+$/, "");
+
 export function isVersionManagedDir(dir: string): boolean {
-  const normalized = `${path.normalize(dir).replace(/\/+$/, "")}/`;
+  const normalized = `${normalizeDir(dir)}/`;
   return VERSION_MANAGED.some((marker) => normalized.includes(marker));
 }
-
-const sameDir = (a: string, b: string) =>
-  path.normalize(a).replace(/\/+$/, "") === path.normalize(b).replace(/\/+$/, "");
 
 export interface InstallDirChoice {
   dir: string;
   onPath: boolean;
 }
 
-/** ~/.local/bin when PATH has it (created on install if missing); else the
- *  first writable PATH dir a version manager does not own; else ~/.local/bin
- *  anyway, flagged off-PATH so the status can say so. */
+/** ~/.local/bin when PATH has it; else the first writable PATH dir no version
+ *  manager owns; else ~/.local/bin flagged off-PATH. */
 export function chooseCliInstallDir(
   pathEntries: string[],
   home: string,
   isWritableDir: (dir: string) => boolean,
 ): InstallDirChoice {
   const preferred = path.join(home, ".local", "bin");
-  if (pathEntries.some((entry) => sameDir(entry, preferred))) {
+  if (pathEntries.some((entry) => normalizeDir(entry) === preferred)) {
     return { dir: preferred, onPath: true };
   }
   const stable = pathEntries.find(
@@ -62,9 +56,8 @@ export interface AyaCopy {
   broken: boolean;
 }
 
-/** Targets of an Aya-generated shim; [] for anything else. The legacy
- *  one-line `exec "<path>" "$@"` form carries no marker, so it only counts
- *  when it execs an `aya` - a foreign wrapper stays foreign. */
+/** The legacy `exec "<path>" "$@"` shim has no marker, so it only counts as
+ *  ours when it execs an `aya` - a foreign wrapper stays foreign. */
 export function ayaShimTargets(content: string): string[] {
   const targets = parseShimTargets(content);
   return targets.every((target) => path.basename(target) === "aya")
@@ -72,9 +65,8 @@ export function ayaShimTargets(content: string): string[] {
     : [];
 }
 
-/** True for a path INSIDE an .asar archive. The OS cannot exec those (the #39
- *  shim died with "Not a directory"), but Electron's patched fs reads into
- *  archives, so an X_OK probe from the app says they are fine. */
+/** The OS cannot exec inside .asar (#39: "Not a directory"), but Electron's
+ *  patched fs reads into archives, so an X_OK probe from the app passes. */
 export function insideAsarArchive(target: string): boolean {
   return path
     .normalize(target)
@@ -84,14 +76,12 @@ export function insideAsarArchive(target: string): boolean {
 }
 
 export interface CliInstallPlan {
-  /** Our copies to rewrite in place with a fresh shim. */
   rewrite: string[];
-  /** Our copies to delete: they live in a version-managed dir. */
   remove: string[];
 }
 
-/** What Reinstall does to the copies already on PATH besides writing
- *  `target`. Foreign scripts are never touched. */
+/** Our other copies: removed from version-managed dirs (they only shadow the
+ *  stable install), rewritten elsewhere. Foreign scripts are never touched. */
 export function planCliInstall(copies: AyaCopy[], target: string): CliInstallPlan {
   const plan: CliInstallPlan = { rewrite: [], remove: [] };
   for (const copy of copies) {
@@ -102,18 +92,17 @@ export function planCliInstall(copies: AyaCopy[], target: string): CliInstallPla
   return plan;
 }
 
+export const offPathNote = (choice: InstallDirChoice) =>
+  choice.onPath ? "" : ` - ${choice.dir} is not on your PATH, add it to use the command`;
+
 /** The Settings line for the `aya` command. `copies` is in PATH order, so the
  *  first one is what a shell runs; the rest are shadowed. */
 export function describeCliStatus(
   copies: AyaCopy[],
   choice: InstallDirChoice,
 ): string | undefined {
-  const target = path.join(choice.dir, "aya");
-  const offPath = choice.onPath
-    ? ""
-    : ` - ${choice.dir} is not on your PATH, add it to use the command`;
   const active = copies[0];
-  if (!active) return `Install to ${target}${offPath}`;
+  if (!active) return `Install to ${path.join(choice.dir, "aya")}${offPathNote(choice)}`;
 
   const notes: string[] = [];
   if (active.broken) {

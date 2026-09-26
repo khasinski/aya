@@ -46,6 +46,7 @@ import {
   chooseCliInstallDir,
   describeCliStatus,
   insideAsarArchive,
+  offPathNote,
   planCliInstall,
 } from "./cli-install";
 import { startConfigWatcher } from "./config-watcher";
@@ -745,7 +746,7 @@ async function ayaCopiesOnPath(): Promise<AyaCopy[]> {
     try {
       targets = ayaShimTargets(await fs.readFile(candidate, "utf-8"));
     } catch {
-      // unreadable or not a script - not ours
+      // unreadable: treat as not ours
     }
     // A shim can be on PATH yet dead: it bakes an absolute path into Aya.app,
     // and moving/renaming the app kills it (follow-up on #42).
@@ -817,9 +818,6 @@ async function installCli(): Promise<CliStatus> {
   const target = path.join(installDir, "aya");
   const script = freshCliShim();
   await writeCliShim(target, script);
-  // Older copies of our shim elsewhere on PATH: refresh them so none can come
-  // back dead, and drop the ones in version-managed dirs, which only shadow
-  // the stable install until the next version switch. Foreign scripts stay.
   const plan = planCliInstall(await ayaCopiesOnPath(), target);
   const failed: string[] = [];
   for (const copy of plan.rewrite) {
@@ -829,9 +827,7 @@ async function installCli(): Promise<CliStatus> {
     await fs.rm(copy, { force: true }).catch(() => failed.push(copy));
   }
   const status = await cliStatus();
-  const installedMessage = `Installed at ${target}${
-    choice.onPath ? "" : ` - ${installDir} is not on your PATH, add it to use the command`
-  }`;
+  const installedMessage = `Installed at ${target}${offPathNote(choice)}`;
   return {
     ...status,
     message: failed.length
@@ -946,10 +942,8 @@ async function withAgentBrief(spawn: SpawnRequest): Promise<SpawnRequest> {
   return spawn;
 }
 
-/** Startup repair for shims that point at a moved/renamed/pre-#39 Aya.app, so
- *  a user who never reopens Settings does not keep a dead `aya` (#115).
- *  Packaged only: in dev the fresh shim would aim at this checkout. Rewrites
- *  in place and never installs anything new. */
+/** Rewrites dead shims at startup for users who never reopen Settings (#115).
+ *  Packaged only: in dev the fresh shim would aim at this checkout. */
 async function healDeadCliShims(): Promise<void> {
   if (IS_DEV || !app.isPackaged) return;
   try {
