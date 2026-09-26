@@ -2948,7 +2948,11 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   appQuitting = true;
-  void cliAdoption.flush().catch(() => {});
+  try {
+    cliAdoption.flush();
+  } catch {
+    // quitting anyway
+  }
   // An ordinary quit installs too (see markPendingUpdateSync) and never reaches
   // the updates:install handler, so every one is marked here; diagnoseRelaunch's
   // grace window absorbs the relaunch that follows.

@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -98,7 +98,7 @@ test("store: updates racing the first load are all kept and flushed to disk", as
       store.called({ terminalId: "a", command: "capabilities" }),
       store.launched({ terminalId: "b", agent: "claude" }),
     ]);
-    await store.flush();
+    store.flush();
     const onDisk = JSON.parse(readFileSync(file, "utf8"));
     assert.deepEqual(Object.keys(onDisk.panes).sort(), ["a", "b", "old"]);
     assert.deepEqual(onDisk.panes.a.commands, ["capabilities"]);
@@ -111,11 +111,14 @@ test("store: updates racing the first load are all kept and flushed to disk", as
   }
 });
 
-test("store: a missing file starts empty", async () => {
+test("store: a missing file starts empty, and nothing to save writes nothing", async () => {
   const dir = mkdtempSync(join(tmpdir(), "aya-adoption-"));
+  const file = join(dir, "none.json");
   try {
-    const store = createCliAdoptionStore(join(dir, "none.json"), 60_000);
+    const store = createCliAdoptionStore(file, 60_000);
     assert.deepEqual(await store.summary(), []);
+    store.flush();
+    assert.equal(existsSync(file), false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

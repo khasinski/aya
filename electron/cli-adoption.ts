@@ -1,8 +1,8 @@
 // Per harness: panes launched vs panes that ever called `aya` (#117 point 4).
 // Only first sightings are written, so the file changes rarely.
 
-import { promises as fs } from "node:fs";
-import { writeFileAtomic } from "./atomic-write";
+import { mkdirSync, promises as fs, renameSync, writeFileSync } from "node:fs";
+import * as path from "node:path";
 
 /** Oldest panes are dropped past this, so the file stays small forever. */
 export const CLI_ADOPTION_MAX_PANES = 2000;
@@ -150,10 +150,15 @@ export function createCliAdoptionStore(file: string, debounceMs = 2_000) {
       .then((loaded) => (state ??= loaded));
     return loading;
   };
-  const flush = async () => {
-    if (timer) clearTimeout(timer);
+  // Sync, because before-quit does not wait for a promise. No-op when clean.
+  const flush = () => {
+    if (!timer || !state) return;
+    clearTimeout(timer);
     timer = null;
-    if (state) await writeFileAtomic(file, `${JSON.stringify(state, null, 2)}\n`);
+    const tmp = `${file}.${process.pid}.tmp`;
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
+    renameSync(tmp, file);
   };
   const apply = async (
     change: (current: CliAdoptionState) => CliAdoptionState | null,
@@ -166,7 +171,11 @@ export function createCliAdoptionStore(file: string, debounceMs = 2_000) {
     state = next;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
-      void flush().catch((err) => console.warn("[aya] cli-adoption write failed:", err));
+      try {
+        flush();
+      } catch (err) {
+        console.warn("[aya] cli-adoption write failed:", err);
+      }
     }, debounceMs);
     timer.unref?.();
   };
