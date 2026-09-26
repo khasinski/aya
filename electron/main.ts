@@ -39,11 +39,16 @@ import {
   updateProject,
 } from "./config";
 import { bundledAyaCliPath, bundledDistElectronHelperPath } from "./cli-path";
+import { defaultInstallAyaCliPath, renderCliShim } from "./cli-shim";
 import {
-  defaultInstallAyaCliPath,
-  parseShimTargets,
-  renderCliShim,
-} from "./cli-shim";
+  type AyaCopy,
+  ayaShimTargets,
+  chooseCliInstallDir,
+  describeCliStatus,
+  insideAsarArchive,
+  offPathNote,
+  planCliInstall,
+} from "./cli-install";
 import { startConfigWatcher } from "./config-watcher";
 import { isHostStale } from "./pty-host-staleness";
 import { startControlServer } from "./control";
@@ -713,64 +718,104 @@ async function anyExecutable(paths: string[]): Promise<boolean> {
   return false;
 }
 
-function writableDirOnPath(): string | null {
-  for (const entry of pathEntries()) {
-    try {
-      const stat = statSync(entry);
-      if (!stat.isDirectory()) continue;
-      accessSync(entry, fsConstants.W_OK);
-      return entry;
-    } catch {
-      // keep looking
-    }
+/** A missing dir counts when its nearest existing ancestor is writable, since
+ *  install creates it (a fresh ~/.local/bin). */
+function isWritableDir(dir: string): boolean {
+  try {
+    if (!statSync(dir).isDirectory()) return false;
+    accessSync(dir, fsConstants.W_OK);
+    return true;
+  } catch (err) {
+    const parent = path.dirname(dir);
+    return (
+      (err as NodeJS.ErrnoException).code === "ENOENT" &&
+      parent !== dir &&
+      isWritableDir(parent)
+    );
   }
-  return null;
+}
+
+/** Something at `target` that Reinstall must not write through: a symlink, or
+ *  a file that is not our shim. */
+async function foreignFileAt(target: string): Promise<boolean> {
+  try {
+    if ((await fs.lstat(target)).isSymbolicLink()) return true;
+    return ayaShimTargets(await fs.readFile(target, "utf-8")).length === 0;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== "ENOENT";
+  }
+}
+
+/** Every `aya` on PATH, in PATH order - not just the one a shell runs, so a
+ *  dead copy waiting below it is visible too (#115). */
+async function ayaCopiesOnPath(): Promise<AyaCopy[]> {
+  const copies: AyaCopy[] = [];
+  const seen = new Set<string>();
+  for (const entry of pathEntries()) {
+    const candidate = path.join(entry, "aya");
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    try {
+      accessSync(candidate, fsConstants.X_OK);
+    } catch {
+      continue;
+    }
+    let targets: string[] = [];
+    try {
+      targets = ayaShimTargets(await fs.readFile(candidate, "utf-8"));
+    } catch {
+      // unreadable: treat as not ours
+    }
+    // A shim can be on PATH yet dead: it bakes an absolute path into Aya.app,
+    // and moving/renaming the app kills it (follow-up on #42).
+    const ours = targets.length > 0;
+    copies.push({
+      path: candidate,
+      ours,
+      broken:
+        ours &&
+        !(await anyExecutable(
+          targets.filter((target) => !insideAsarArchive(target)),
+        )),
+    });
+  }
+  return copies;
+}
+
+function cliInstallDir() {
+  return chooseCliInstallDir(pathEntries(), os.homedir(), isWritableDir);
 }
 
 async function cliStatus(): Promise<CliStatus> {
-  const installed = findExecutableOnPath("aya");
-  const installDir =
-    writableDirOnPath() ?? path.join(os.homedir(), ".local", "bin");
-  // A shim can be on PATH yet dead: it bakes an absolute path into Aya.app,
-  // and moving/renaming the app kills it. Report that as "needs reinstall"
-  // instead of a healthy "Installed at ..." (follow-up on #42).
-  let broken = false;
-  if (installed) {
-    try {
-      const targets = parseShimTargets(await fs.readFile(installed, "utf-8"));
-      broken = targets.length > 0 && !(await anyExecutable(targets));
-    } catch {
-      // unreadable or not our script - leave it alone
-    }
-  }
+  const copies = await ayaCopiesOnPath();
+  const choice = cliInstallDir();
+  const active = copies[0] ?? null;
+  const message = describeCliStatus(copies, choice);
   return {
-    installed: installed !== null,
-    path: installed,
-    installDir,
+    installed: active !== null,
+    path: active?.path ?? null,
+    installDir: choice.dir,
     installable: true,
-    ...(installed
-      ? broken
-        ? {
-            message: `Installed at ${installed}, but it points at a moved or renamed Aya.app - click Reinstall to repair.`,
-          }
-        : {}
-      : { message: `Install to ${path.join(installDir, "aya")}` }),
+    copies,
+    ...(message ? { message } : {}),
   };
 }
 
+function freshCliShim(): string {
+  return renderCliShim(
+    bundledAyaCliPath(__dirname),
+    defaultInstallAyaCliPath(process.platform),
+  );
+}
+
+async function writeCliShim(target: string, script: string): Promise<void> {
+  await fs.writeFile(target, script, { mode: CLI_EXECUTABLE_MODE });
+  await fs.chmod(target, CLI_EXECUTABLE_MODE);
+}
+
 async function installCli(): Promise<CliStatus> {
-  const status = await cliStatus();
-  const installDir = status.installDir;
-  if (!installDir) {
-    return {
-      installed: false,
-      path: null,
-      installDir: null,
-      installable: false,
-      message: "No install directory available.",
-    };
-  }
-  await fs.mkdir(installDir, { recursive: true });
+  const choice = cliInstallDir();
+  const installDir = choice.dir;
   const source = bundledAyaCliPath(__dirname);
   // Refuse to install a shim that cannot work. The asar path bug (#39) made
   // Install report success while the written shim exec'd a file inside the
@@ -788,14 +833,32 @@ async function installCli(): Promise<CliStatus> {
     };
   }
   const target = path.join(installDir, "aya");
-  const script = renderCliShim(source, defaultInstallAyaCliPath(process.platform));
-  await fs.writeFile(target, script, { mode: CLI_EXECUTABLE_MODE });
-  await fs.chmod(target, CLI_EXECUTABLE_MODE);
+  if (await foreignFileAt(target)) {
+    return {
+      ...(await cliStatus()),
+      message: `${target} exists and was not installed by Aya - move it away, then click Reinstall.`,
+    };
+  }
+  await fs.mkdir(installDir, { recursive: true });
+  const script = freshCliShim();
+  await writeCliShim(target, script);
+  const plan = planCliInstall(await ayaCopiesOnPath(), target);
+  const failed: string[] = [];
+  for (const copy of plan.rewrite) {
+    await writeCliShim(copy, script).catch(() => failed.push(copy));
+  }
+  for (const copy of plan.remove) {
+    await fs.rm(copy, { force: true }).catch(() => failed.push(copy));
+  }
+  const status = await cliStatus();
+  const installedMessage = `Installed at ${target}${offPathNote(choice)}`;
   return {
-    ...(await cliStatus()),
-    path: target,
-    installed: true,
-    message: `Installed at ${target}`,
+    ...status,
+    message: failed.length
+      ? `${installedMessage}. Could not update ${failed.join(", ")}.`
+      : choice.onPath
+        ? (status.message ?? installedMessage)
+        : installedMessage,
   };
 }
 
@@ -903,6 +966,27 @@ async function withAgentBrief(spawn: SpawnRequest): Promise<SpawnRequest> {
     );
   }
   return spawn;
+}
+
+/** Rewrites dead shims at startup for users who never reopen Settings (#115).
+ *  Packaged only: in dev the fresh shim would aim at this checkout. */
+async function healDeadCliShims(): Promise<void> {
+  if (IS_DEV || !app.isPackaged) return;
+  try {
+    await fs.access(bundledAyaCliPath(__dirname), fsConstants.X_OK);
+  } catch {
+    return;
+  }
+  const script = freshCliShim();
+  for (const copy of await ayaCopiesOnPath()) {
+    if (!copy.broken) continue;
+    try {
+      await writeCliShim(copy.path, script);
+      console.log(`[aya] repaired dead aya shim at ${copy.path}`);
+    } catch (err) {
+      console.warn(`[aya] could not repair dead aya shim at ${copy.path}:`, err);
+    }
+  }
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -2865,6 +2949,9 @@ app.whenReady().then(async () => {
   // pass that writes nothing unless a codex preset's opt-in disagrees with it.
   void syncCodexBriefs();
   void syncAntigravityBrief();
+  // Needs the repaired PATH to see the user's shims; not awaited - it only
+  // touches files and nothing below depends on it.
+  void healDeadCliShims();
 
   // In dev, replace Electron's default dock icon with ours so the running
   // instance is visually distinguishable. In packaged builds the bundle's

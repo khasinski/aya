@@ -58,6 +58,10 @@ export interface SeedOptions {
   fakeHome?: boolean;
   /** Stub executables put first on PATH, so harness detection finds them. */
   fakeBins?: string[];
+  /** #115's machine: an rvm gemset first on PATH with a working Aya shim, dead
+   *  pre-#39 shims below it in ~/bin and ~/.local/bin, and a foreign `aya` last.
+   *  "off-path": only the gemset and system dirs are on PATH. */
+  cliInstallHarness?: boolean | "off-path";
   /** Names of extra projects that are known + recent but NOT open, so the
    *  recent-projects menu lists them as closed projects. */
   closedProjects?: string[];
@@ -307,6 +311,56 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     const home = join(root, "home");
     mkdirSync(home, { recursive: true });
     launchEnv = { ...launchEnv, HOME: home };
+  }
+
+  if (opts.cliInstallHarness) {
+    const home = join(root, "cli-home");
+    const gemset = join(home, ".rvm", "gems", "ruby-3.4.4", "bin");
+    const homeBin = join(home, "bin");
+    const localBin = join(home, ".local", "bin");
+    const toolsBin = join(home, "tools");
+    for (const dir of [gemset, homeBin, localBin, toolsBin]) mkdirSync(dir, { recursive: true });
+    writeFileSync(join(toolsBin, "aya"), "#!/bin/sh\nexec /usr/bin/true\n", { mode: 0o755 });
+    // Healthy: execs this checkout's CLI, which exists.
+    writeFileSync(
+      join(gemset, "aya"),
+      `#!/bin/sh\nexec ${JSON.stringify(join(__dirname, "..", "..", "bin", "aya"))} "$@"\n`,
+      { mode: 0o755 },
+    );
+    // Dead: the pre-#39 shim from #115, execing into the asar archive.
+    for (const dir of [homeBin, localBin]) {
+      writeFileSync(
+        join(dir, "aya"),
+        '#!/bin/sh\nexec "/Applications/Aya.app/Contents/Resources/app.asar/bin/aya" "$@"\n',
+        { mode: 0o755 },
+      );
+    }
+    // A login shell that adds nothing, so PATH repair leaves this PATH alone.
+    const quietShell = join(root, "quiet-login-shell");
+    writeFileSync(
+      quietShell,
+      [
+        "#!/bin/sh",
+        'while [ "$#" -gt 0 ]; do',
+        '  case "$1" in -c) shift; exec /bin/sh -c "$1" ;; *) shift ;; esac',
+        "done",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    launchEnv = {
+      ...launchEnv,
+      HOME: home,
+      PATH: [
+        gemset,
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+        ...(opts.cliInstallHarness === "off-path" ? [] : [homeBin, localBin, toolsBin]),
+      ].join(":"),
+      SHELL: quietShell,
+    };
   }
 
   return {
