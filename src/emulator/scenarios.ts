@@ -132,7 +132,7 @@ const CODER_OUTPUT = [
   "",
   "\x1b[32m✔\x1b[0m Edited \x1b[36msrc/auth/middleware.ts\x1b[0m \x1b[2m(+18 -24)\x1b[0m",
   "",
-  "\x1b[2m$ aya pane send \"reviewer\" \"review the diff on feat/token-service\" --submit\x1b[0m",
+  "\x1b[2m$ aya pane send \"reviewer\" \"review the diff on feat/token-service\"\x1b[0m",
   "\x1b[32m●\x1b[0m Handed the diff to \x1b[1mreviewer\x1b[0m. Waiting for notes…",
   "",
 ].join("\r\n");

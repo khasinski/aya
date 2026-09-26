@@ -310,12 +310,14 @@ aya status clear
 # Read or drive another pane (resolved by tab name within your project)
 aya pane read "reviewer"
 aya pane send "reviewer" "run the tests"
-aya pane send "reviewer" --submit "run the tests"
+aya pane send "reviewer" --no-submit "draft for review"
 ```
 
 `aya pane` is how one agent hands work to another and collects the result. A
 pane name that is ambiguous within the project is rejected rather than guessed,
-and `--submit` (press Enter) is always opt-in.
+and `pane send` presses Enter after the text unless you pass `--no-submit`
+(type only, for a prompt a human should review first). `--submit` is still
+accepted, in any position, and changes nothing.
 
 The companion skill lives in `skills/aya-control/SKILL.md` and uses only this
 public CLI side channel.

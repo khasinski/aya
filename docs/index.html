@@ -823,7 +823,7 @@
               </p>
               <ul class="feature-list">
                 <li>Address panes by tab name within a project.</li>
-                <li><code>--submit</code> presses Enter for you.</li>
+                <li>Presses Enter for you; <code>--no-submit</code> only types.</li>
                 <li>Documented for agents in a bundled skill.</li>
               </ul>
             </div>
@@ -950,7 +950,7 @@
 <span class="prompt">$</span> aya pane read "reviewer"
 <span class="comment">returns another pane's recent output</span>
 
-<span class="prompt">$</span> aya pane send "reviewer" "ship it" --submit
+<span class="prompt">$</span> aya pane send "reviewer" "ship it"
 <span class="comment">types into that pane and presses Enter</span>
 
 <span class="prompt">$</span> aya status waiting "Needs approval"

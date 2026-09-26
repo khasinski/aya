@@ -1,4 +1,4 @@
-// `aya pane send --submit` must SUBMIT, not just type. Recorder pane pins the
+// `aya pane send` must SUBMIT by default, not just type. Recorder pane pins the
 // byte shape (text, then Enter as its own later chunk); shell pane proves those
 // bytes run a command. The exact-byte assertion is the ONLY guard against a
 // bracketed-paste "fix", which breaks bash 3.2 - no pane here runs bash 3.2.
@@ -113,13 +113,15 @@ test.describe("pane-send into an agent-shaped program", () => {
     },
   });
 
-  test("--submit delivers Enter as its own chunk, after the text", async ({
+  // The website's form (#116): a trailing flag used to arrive as literal text.
+  // No flag at all is covered by the shell-pane test below.
+  test("--submit after the text delivers Enter as its own chunk", async ({
     window,
     seeded,
   }) => {
     await recorderReady(seeded, seeded.tabIds.right);
 
-    ayaPaneSend(seeded.ayaHome, ["shell 2", "--submit", "tekst"]);
+    ayaPaneSend(seeded.ayaHome, ["shell 2", "tekst", "--submit"]);
 
     // Exact equality also rules out injected bracketed-paste markers.
     await expect
@@ -138,13 +140,13 @@ test.describe("pane-send into an agent-shaped program", () => {
     );
   });
 
-  test("without --submit the text is typed but no Enter follows", async ({
+  test("--no-submit types the text but no Enter follows", async ({
     window,
     seeded,
   }) => {
     await recorderReady(seeded, seeded.tabIds.right);
 
-    ayaPaneSend(seeded.ayaHome, ["shell 2", "tekst"]);
+    ayaPaneSend(seeded.ayaHome, ["shell 2", "--no-submit", "tekst"]);
 
     await expect
       .poll(() => bytes(recorded(seeded, seeded.tabIds.right)), {
@@ -157,18 +159,18 @@ test.describe("pane-send into an agent-shaped program", () => {
     // Settling past the submit window is what kills that deterministically.
     await window.waitForTimeout(SUBMIT_SETTLE_MS);
     const chunks = recorded(seeded, seeded.tabIds.right);
-    expect(bytes(chunks), "an Enter arrived without --submit").toBe("tekst");
+    expect(bytes(chunks), "an Enter arrived despite --no-submit").toBe("tekst");
   });
 });
 
-test("pane-send --submit runs the command in an ordinary shell pane", async ({
+test("pane-send with no flag runs the command in an ordinary shell pane", async ({
   window,
   seeded,
 }) => {
   await shellExecuting(window, 1, seeded.tabIds.right);
 
   // Arithmetic expansion separates typed from executed: only a submit prints ok-42.
-  ayaPaneSend(seeded.ayaHome, ["shell 2", "--submit", "echo ok-$((21+21))"]);
+  ayaPaneSend(seeded.ayaHome, ["shell 2", "echo ok-$((21+21))"]);
 
   await paneShows(window, seeded.tabIds.right, "ok-42");
 });
