@@ -1,6 +1,5 @@
-// How `aya pane send` turns argv into the pane-send request (#116). The real
-// CLI talks to a stub control socket, so the assertion is on the JSON the app
-// would receive - the level where a trailing `--submit` used to become text.
+// The real CLI talks to a stub control socket, so the assertion is on the JSON
+// the app receives - the level where a trailing `--submit` became text (#116).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -65,10 +64,11 @@ test("--submit after the text is a flag, not literal text (website form)", async
   assert.equal(request.submit, true);
 });
 
-test("--no-submit types without Enter, in either position", async () => {
+test("--no-submit types without Enter, in any position, whatever --submit says", async () => {
   for (const args of [
     ["reviewer", "--no-submit", "draft"],
     ["reviewer", "draft", "--no-submit"],
+    ["reviewer", "--no-submit", "draft", "--submit"],
   ]) {
     const { request } = await paneSend(args);
     assert.equal(request.text, "draft", args.join(" "));

@@ -48,7 +48,8 @@ a more specific name if that happens.
 - Use `pane send` only for a pane the user has explicitly asked you to drive.
 - `pane send` presses Enter, so the other agent acts on the text immediately.
   Pass `--no-submit` when the text is a prompt the user may want to review
-  first. (`--submit` is still accepted and changes nothing.)
+  first. (`--submit` is still accepted and changes nothing; `--` ends the
+  flags, so text after it is sent as is.)
 - There is no "wait until done" — poll with `pane read` if you need to see a
   result, and give the other agent time between reads.
 

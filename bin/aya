@@ -296,17 +296,15 @@ case "$command" in
       send)
         target="${1:-}"
         shift || true
-        # Submitting is the default: a handoff left sitting unsent in the other
-        # pane's input gets glued onto whatever is typed there next (#116).
-        # The flags count in any position, so `send name text --submit` does not
-        # type a literal "--submit"; `--` ends flag parsing for such text.
+        # Submit by default: an unsent handoff gets glued onto the next input (#116).
+        # Flags count in any position; `--` ends flag parsing.
         submit="submit"
         text=""
         literal=""
         for arg do
           if [ -z "$literal" ]; then
             case "$arg" in
-              --submit) submit="submit"; continue ;;
+              --submit) continue ;;
               --no-submit) submit=""; continue ;;
               --) literal=1; continue ;;
             esac
