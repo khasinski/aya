@@ -47,6 +47,7 @@ import {
 import { startConfigWatcher } from "./config-watcher";
 import { isHostStale } from "./pty-host-staleness";
 import { startControlServer } from "./control";
+import { createCliAdoptionStore } from "./cli-adoption";
 import { startRemoteServer } from "./remote-server";
 import {
   createRemoteDirectory,
@@ -162,6 +163,10 @@ const WINDOW_TITLE = IS_DEV ? "Aya Dev" : "Aya";
 
 // Filesystem mode for the installed CLI executable (rwxr-xr-x)
 const CLI_EXECUTABLE_MODE = 0o755;
+
+// Per-harness count of panes that ever called `aya` (#117); shown in
+// Settings -> Diagnostics.
+const cliAdoption = createCliAdoptionStore(path.join(AYA_HOME, "cli-adoption.json"));
 // Maximum number of entries returned by path completion
 const MAX_PATH_COMPLETION_ENTRIES = 100;
 // Maximum number of keyboard-navigable projects (Cmd/Ctrl+1..9)
@@ -811,7 +816,7 @@ const EXPECTED_HOST_VERSION: string = (() => {
 })();
 
 async function diagnosticsReport(): Promise<DiagnosticsReport> {
-  const [presets, projects, projectState, usageHook, cli, hostStatus] =
+  const [presets, projects, projectState, usageHook, cli, hostStatus, adoption] =
     await Promise.all([
       listPresets(),
       listProjects(),
@@ -819,6 +824,7 @@ async function diagnosticsReport(): Promise<DiagnosticsReport> {
       usageHookStatus(),
       cliStatus(),
       ptyHost.hostStatus(),
+      cliAdoption.summary(),
     ]);
   const expected = ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION);
   return {
@@ -845,6 +851,7 @@ async function diagnosticsReport(): Promise<DiagnosticsReport> {
       pathEntries: pathEntries().slice(0, MAX_PATH_ENTRIES_RETURNED),
     },
     cli,
+    cliAdoption: adoption,
     ptyHost: {
       expected,
       actual: hostStatus.identity,
@@ -1999,7 +2006,15 @@ function registerIpc(): void {
     e: Electron.IpcMainInvokeEvent,
   ): BrowserWindow | null => BrowserWindow.fromWebContents(e.sender);
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
-    await ptyHost.spawn(validateSpawnRequest(req));
+    const spawn = validateSpawnRequest(req);
+    await ptyHost.spawn(spawn);
+    void cliAdoption
+      .launched({
+        terminalId: spawn.ptyId,
+        agent: spawn.agent,
+        presetId: spawn.presetId,
+      })
+      .catch(() => {});
   });
   ipcMain.handle("pty:write", async (_e, ptyId: unknown, data: unknown) =>
     ptyHost.write(
@@ -2799,6 +2814,16 @@ app.whenReady().then(async () => {
     // Returned, not fire-and-forget: the boolean is how pane-send learns the
     // pane was dead, and dropping it made host rejections unhandled.
     writePane: (terminalId, data) => ptyHost.write(terminalId, data),
+    onRequest: (request, caller) => {
+      if (!caller.terminalId) return;
+      void cliAdoption
+        .called({
+          terminalId: caller.terminalId,
+          presetId: caller.presetId,
+          command: request.type,
+        })
+        .catch(() => {});
+    },
     // Status updates also reach Aya Web clients via a virtual window-like
     // sink (harness status dots must work in the browser too).
     getWindows: () => [
@@ -2923,6 +2948,7 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   appQuitting = true;
+  void cliAdoption.flush().catch(() => {});
   // An ordinary quit installs too (see markPendingUpdateSync) and never reaches
   // the updates:install handler, so every one is marked here; diagnoseRelaunch's
   // grace window absorbs the relaunch that follows.

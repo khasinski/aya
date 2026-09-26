@@ -497,6 +497,13 @@ export interface DiagnosticsReport {
     pathEntries: string[];
   };
   cli: CliStatus;
+  /** Per harness: panes Aya launched vs panes that ever called `aya` (#117). */
+  cliAdoption: Array<{
+    agent: string;
+    panesLaunched: number;
+    panesThatCalledAya: number;
+    panesThatRanCapabilities: number;
+  }>;
   ptyHost: {
     expected: { version: string; scriptHash: string };
     actual: { version: string; scriptHash: string } | null;

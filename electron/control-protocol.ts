@@ -42,7 +42,17 @@ export type ControlRequest =
       type: "pane-list";
       projectSlug?: string;
       selfTerminalId?: string;
-    };
+    }
+  // The command list for agents (`aya capabilities`).
+  | { type: "capabilities" };
+
+/** The pane a request came from, as bin/aya reads it from AYA_TERMINAL_ID /
+ *  AYA_PRESET_ID. Sent with every request so adoption can be measured per
+ *  harness (#117); absent outside Aya. */
+export interface ControlCaller {
+  terminalId?: string;
+  presetId?: string;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -50,6 +60,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+export function parseControlCaller(value: unknown): ControlCaller {
+  if (!isRecord(value) || !isRecord(value.caller)) return {};
+  const terminalId = optionalString(value.caller.terminalId);
+  const presetId = optionalString(value.caller.presetId);
+  return {
+    ...(terminalId ? { terminalId } : {}),
+    ...(presetId ? { presetId } : {}),
+  };
 }
 
 export function parseControlRequest(value: unknown): ControlRequest {
@@ -61,6 +81,7 @@ export function parseControlRequest(value: unknown): ControlRequest {
     return { type, path: target };
   }
   if (type === "focus") return { type };
+  if (type === "capabilities") return { type };
   if (type === "notify") {
     const body = optionalString(value.body);
     if (!body) throw new Error("notify.body is required");

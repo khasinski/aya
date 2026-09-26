@@ -17,6 +17,7 @@ Use Aya's CLI for user-visible coordination while working in an Aya terminal.
 - `aya notify --title "Aya" "Needs approval"`: show a native notification.
 - `aya open "$PWD"`: open or focus the current directory as an Aya project.
 - `aya focus`: focus the Aya window.
+- `aya capabilities`: every command below as JSON, straight from the installed CLI.
 - `aya pane list`: list the panes/agents in your project (your own is marked).
 - `aya pane read "reviewer"`: print another pane's recent output.
 - `aya pane send "reviewer" "run the tests"`: type text into another pane and press Enter.
