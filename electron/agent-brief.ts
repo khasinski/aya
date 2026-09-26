@@ -7,6 +7,7 @@ export type BriefChannel =
   | { kind: "arg"; flag: string }
   | { kind: "env"; name: "OPENCODE_CONFIG_CONTENT" }
   | { kind: "file" }
+  | { kind: "ownedFile" }
   | { kind: "none" };
 
 /** Checked against the real CLIs 2026-09-26: grok's --rules reached the model;
@@ -16,6 +17,7 @@ export function briefChannel(agent: string | undefined): BriefChannel {
   if (agent === "grok") return { kind: "arg", flag: "--rules" };
   if (agent === "opencode") return { kind: "env", name: "OPENCODE_CONFIG_CONTENT" };
   if (agent === "codex") return { kind: "file" };
+  if (agent === "antigravity") return { kind: "ownedFile" };
   return { kind: "none" };
 }
 
@@ -138,6 +140,30 @@ export function planCodexBriefs(
     presets.filter((p) => !p.agentBrief && !on.has(p.file)).map((p) => p.file),
   );
   return { ensure: [...on].sort(), remove: [...off].sort() };
+}
+
+/** Measured on agy 1.2.11: only config/rules/ with always_on frontmatter
+ *  reached the model; the documented antigravity-cli/rules/ did not. */
+export function antigravityBriefFile(home: string): string {
+  return path.join(home, ".gemini", "config", "rules", "aya-brief.md");
+}
+
+export function ownedBriefContent(brief: string): string {
+  return `---\ntrigger: always_on\n---\n${BRIEF_BEGIN}\n${brief}\n${BRIEF_END}\n`;
+}
+
+/** Ours (or absent): refreshed in place, keeping user text. A same-named file
+ *  without our marker is the user's and stays untouched. */
+export function withOwnedBrief(content: string, brief: string): string {
+  if (!content) return ownedBriefContent(brief);
+  return content.includes(BRIEF_BEGIN) ? withBriefSection(content, brief) : content;
+}
+
+/** "" (delete) when nothing but our rule is left; user text added to the
+ *  file survives with just our section cut out. */
+export function withoutOwnedBrief(content: string): string {
+  const rest = withoutBriefSection(content);
+  return rest.replace(/^---\ntrigger: always_on\n---\n?/, "").trim() ? rest : "";
 }
 
 /** Append `dir` to a PATH value unless it is already there: an installed

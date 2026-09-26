@@ -54,6 +54,10 @@ export interface SeedOptions {
   launchEnv?: Record<string, string>;
   /** Create a fake shell/bin setup where interactive shell PATH reveals claude. */
   pathRepairHarness?: boolean;
+  /** HOME = <root>/home, for code that writes under the user's home. */
+  fakeHome?: boolean;
+  /** Stub executables put first on PATH, so harness detection finds them. */
+  fakeBins?: string[];
   /** Names of extra projects that are known + recent but NOT open, so the
    *  recent-projects menu lists them as closed projects. */
   closedProjects?: string[];
@@ -288,6 +292,21 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
       PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
       SHELL: fakeShell,
     };
+  }
+
+  if (opts.fakeBins?.length) {
+    const bin = join(root, "fake-bin");
+    mkdirSync(bin, { recursive: true });
+    for (const name of opts.fakeBins) {
+      writeFileSync(join(bin, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    }
+    launchEnv = { ...launchEnv, PATH: `${bin}:${launchEnv?.PATH ?? process.env.PATH}` };
+  }
+
+  if (opts.fakeHome) {
+    const home = join(root, "home");
+    mkdirSync(home, { recursive: true });
+    launchEnv = { ...launchEnv, HOME: home };
   }
 
   return {

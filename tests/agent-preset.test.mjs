@@ -177,7 +177,7 @@ test("inferAgent does not match a binary that merely starts with an agent name",
 test("agents without a continue-latest form append nothing on a bare restore", () => {
   // The dangerous failure would be inventing a flag: it would break every
   // restore of that CLI. No id, no flag.
-  for (const command of ["cursor-agent", "grok", "kimi", "agy"]) {
+  for (const command of ["cursor-agent", "grok", "kimi"]) {
     assert.equal(resumeArg(preset({ command })), null);
     assert.equal(commandWithAutoResume(preset({ command }), true), command);
   }
@@ -288,4 +288,14 @@ test("opencode-family binaries are matched exactly, not by prefix", () => {
   assert.equal(inferAgent({ command: "pip install x" }), "custom");
   assert.equal(inferAgent({ command: "kilobyte" }), "custom");
   assert.equal(inferAgent({ command: "opencoder" }), "custom");
+});
+
+test("antigravity continues the latest conversation on restore, once", () => {
+  assert.equal(commandWithAutoResume(preset({ command: "agy" }), true), "agy --continue");
+  assert.equal(commandWithAutoResume(preset({ command: "agy" }), false), "agy");
+  assert.equal(commandWithAutoResume(preset({ command: "agy -c" }), true), "agy -c");
+  assert.equal(
+    commandWithAutoResume(preset({ command: "agy" }), true, "c-42"),
+    "agy --conversation c-42",
+  );
 });

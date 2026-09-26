@@ -13,7 +13,7 @@ type Agent = NonNullable<Preset["agent"]>;
  *  `continueLatest` is the "just pick up the most recent session for this cwd"
  *  form — no session id needed, so it fires on any restore. It is only set for
  *  agents whose flags were VERIFIED against the installed CLI (claude, codex,
- *  opencode, kilo, pi). Getting one of these wrong breaks every restore of
+ *  opencode, kilo, pi, antigravity). Getting one of these wrong breaks every restore of
  *  that agent, so an unverified guess must never land here.
  *
  *  `sessionResume` needs a concrete session id, which Aya only learns when the
@@ -116,8 +116,11 @@ const AGENT_SPECS: Record<Exclude<Agent, "custom">, AgentSpec> = {
     sessionResume: (id) => `--resume ${id}`,
     resumeFlag: GENERIC_RESUME_FLAG,
   },
+  // Verified on agy 1.2.11: --continue is per directory and starts fresh when
+  // there is no earlier conversation.
   antigravity: {
     binary: /^agy(?:\s|$)/,
+    continueLatest: "--continue",
     sessionResume: (id) => `--conversation ${id}`,
     resumeFlag: GENERIC_RESUME_FLAG,
   },
@@ -234,6 +237,9 @@ export function agentBriefHint(agent: Agent | undefined): string | null {
   }
   if (agent === "opencode") {
     return "Adds a short note to opencode's instructions for Aya panes only (OPENCODE_CONFIG_CONTENT).";
+  }
+  if (agent === "antigravity") {
+    return "Adds one always-on Antigravity rule, shared by all agy presets (deleted when none opts in).";
   }
   return null;
 }

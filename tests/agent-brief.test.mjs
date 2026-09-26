@@ -7,15 +7,19 @@ import { spawnSync } from "node:child_process";
 import {
   BRIEF_BEGIN,
   BRIEF_END,
+  antigravityBriefFile,
   briefChannel,
   briefText,
   codexAgentsFile,
   commandWithBriefArg,
   commandWithBriefEnv,
   pathWithFallbackDir,
+  ownedBriefContent,
   planCodexBriefs,
   withBriefSection,
   withoutBriefSection,
+  withOwnedBrief,
+  withoutOwnedBrief,
 } from "../dist-electron/agent-brief.js";
 import { AGENT_KINDS, isPreset, normalizePreset } from "../dist-electron/presets.js";
 import { agentBriefHint } from "../dist-test/agentPreset.js";
@@ -25,6 +29,7 @@ test("channels: claude/grok by argument, opencode by env, codex by file, rest no
   assert.deepEqual(briefChannel("grok"), { kind: "arg", flag: "--rules" });
   assert.deepEqual(briefChannel("opencode"), { kind: "env", name: "OPENCODE_CONFIG_CONTENT" });
   assert.deepEqual(briefChannel("codex"), { kind: "file" });
+  assert.deepEqual(briefChannel("antigravity"), { kind: "ownedFile" });
   assert.deepEqual(briefChannel("pi"), { kind: "none" });
   assert.deepEqual(briefChannel(undefined), { kind: "none" });
 });
@@ -181,4 +186,34 @@ test("the bundled CLI is appended to PATH, never ahead of an installed shim", ()
   assert.equal(pathWithFallbackDir(undefined, "/app/bin"), "/app/bin");
   // Empty entries mean the cwd; the user's PATH is kept as it was.
   assert.equal(pathWithFallbackDir("/a::/b:", "/app/bin"), "/a::/b::/app/bin");
+});
+
+// agy 1.2.11 only loaded config/rules/ files whose frontmatter opens the file.
+test("antigravity: Aya's own always-on rule file, frontmatter first", () => {
+  assert.equal(antigravityBriefFile("/Users/dev"), "/Users/dev/.gemini/config/rules/aya-brief.md");
+  const content = ownedBriefContent("b");
+  assert.ok(content.startsWith("---\ntrigger: always_on\n---\n"));
+  assert.ok(content.includes("\nb\n"));
+});
+
+test("antigravity off: our file is deleted, a user's file of that name is kept", () => {
+  assert.equal(withoutOwnedBrief(ownedBriefContent("b")), "");
+  const mine = "---\ntrigger: always_on\n---\nmy own rule\n";
+  assert.equal(withoutOwnedBrief(mine), mine);
+});
+
+test("antigravity off: text a user added to our file survives, our section goes", () => {
+  const edited = `${ownedBriefContent("b")}my own rule\n`;
+  const after = withoutOwnedBrief(edited);
+  assert.ok(after.includes("my own rule"));
+  assert.ok(!after.includes("aya:brief"));
+});
+
+test("antigravity on: a user's own aya-brief.md is never overwritten", () => {
+  const mine = "---\ntrigger: always_on\n---\nmy own rule\n";
+  assert.equal(withOwnedBrief(mine, "b"), mine);
+  assert.equal(withOwnedBrief("", "b"), ownedBriefContent("b"));
+  const refreshed = withOwnedBrief(`${ownedBriefContent("old")}my note\n`, "new");
+  assert.ok(refreshed.startsWith("---\ntrigger: always_on\n---\n"));
+  assert.ok(refreshed.includes("my note") && refreshed.includes("new") && !refreshed.includes("old"));
 });
