@@ -77,8 +77,7 @@ export interface UsageAccount {
   usage: UsageData;
 }
 
-/** Mirror of electron/usage-grok.ts: 7-day spend and tokens, account-wide, plus
- *  the weekly limit when Grok logged one. */
+/** Mirror of electron/usage-grok.ts. */
 export interface GrokLimit {
   pct: number;
   resetsAt: string;

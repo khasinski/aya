@@ -14,6 +14,18 @@ function isStale(updatedAt: string): boolean {
 
 const isUsageStale = (u: UsageData) => isStale(u.updatedAt);
 
+const updatedText = (iso: string, stale: boolean) =>
+  `${stale ? "stale · " : ""}updated ${fmtClock(iso)}`;
+
+function HarnessDot({ accent }: { accent: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{ width: 8, height: 8, borderRadius: "50%", background: accent, flex: "0 0 auto" }}
+    />
+  );
+}
+
 function UsageRing({ pct, accent }: { pct: number; accent: string }) {
   const filled = Math.max(0, Math.min(100, pct));
   return (
@@ -200,16 +212,7 @@ export function UsageChip({
       >
         {showHarnessName ? (
           <>
-            <span
-              aria-hidden="true"
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: accent,
-                flex: "0 0 auto",
-              }}
-            />
+            <HarnessDot accent={accent} />
             <span style={{ color: CHIP_MUTED_COLOR, fontSize: 11 }}>{label}</span>
           </>
         ) : (
@@ -276,8 +279,7 @@ export function UsageChip({
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {accountStale ? "stale · " : ""}updated{" "}
-                    {fmtClock(account.usage.updatedAt)}
+                    {updatedText(account.usage.updatedAt, accountStale)}
                   </span>
                 </div>
                 {account.usage.fiveHour && (
@@ -313,7 +315,6 @@ export function UsageChip({
 }
 
 // ---- Grok --------------------------------------------------------------------
-// A ring when Grok has logged its weekly limit, else spend (or tokens) alone.
 
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
@@ -326,8 +327,6 @@ function fmtUsd(ticks: number): string {
   return `$${(ticks * 1e-10).toFixed(2)}`;
 }
 
-/** Account-wide Grok usage: the weekly limit ring when known, spend and tokens
- *  over the last 7 days in the popover. */
 export function GrokUsageChip({
   usage,
   label,
@@ -403,16 +402,7 @@ export function GrokUsageChip({
         {limit && !showHarnessName ? (
           <UsageRing pct={limit.pct} accent={accent} />
         ) : (
-          <span
-            aria-hidden="true"
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              background: accent,
-              flex: "0 0 auto",
-            }}
-          />
+          <HarnessDot accent={accent} />
         )}
         {showHarnessName && (
           <span style={{ color: CHIP_MUTED_COLOR, fontSize: 11 }}>{label}</span>
@@ -437,7 +427,7 @@ export function GrokUsageChip({
             <>
               <UsageRow label="week" win={limit} accent={accent} />
               <div style={{ color: CHIP_MUTED_COLOR, fontSize: 11, marginBottom: 10 }}>
-                {stale ? "stale · " : ""}updated {fmtClock(limit.updatedAt)}
+                {updatedText(limit.updatedAt, stale)}
               </div>
             </>
           )}

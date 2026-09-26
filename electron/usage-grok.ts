@@ -36,7 +36,6 @@ export interface GrokUsage {
   limit?: GrokLimit;
 }
 
-/** The account's weekly allowance as Grok last logged it. */
 export interface GrokLimit {
   pct: number;
   resetsAt: string;
@@ -45,6 +44,9 @@ export interface GrokLimit {
 }
 
 const CREDITS_MSG = "billing: fetched credits config";
+
+const isIsoTime = (v: unknown): v is string =>
+  typeof v === "string" && Number.isFinite(Date.parse(v));
 
 /** Null for any other line, or one whose shape is not what 1.0.41 logs. */
 export function extractGrokLimit(line: string): GrokLimit | null {
@@ -62,11 +64,8 @@ export function extractGrokLimit(line: string): GrokLimit | null {
   const config = entry.ctx?.config;
   const pct = config?.creditUsagePercent;
   const end = config?.currentPeriod?.end;
-  if (entry.msg !== CREDITS_MSG || typeof pct !== "number" || !Number.isFinite(pct)) {
-    return null;
-  }
-  if (typeof end !== "string" || !Number.isFinite(Date.parse(end))) return null;
-  if (typeof entry.ts !== "string" || !Number.isFinite(Date.parse(entry.ts))) return null;
+  if (entry.msg !== CREDITS_MSG || typeof pct !== "number" || !Number.isFinite(pct)) return null;
+  if (!isIsoTime(end) || !isIsoTime(entry.ts)) return null;
   return { pct, resetsAt: end, updatedAt: entry.ts };
 }
 
@@ -78,11 +77,6 @@ interface LimitScan {
   limit: GrokLimit | null;
 }
 const limitScans = new Map<string, LimitScan>();
-
-/** Test hook: forget what has been read of each log. */
-export function resetGrokLimitCache(): void {
-  limitScans.clear();
-}
 
 async function newestLoggedLimit(file: string): Promise<GrokLimit | null> {
   let chunk: string;
