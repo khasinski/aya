@@ -2,7 +2,13 @@ import type { BrowserWindow } from "electron";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
-import { parseControlRequest, type ControlRequest } from "./control-protocol";
+import { capabilitiesDocument } from "./capabilities";
+import {
+  parseControlCaller,
+  parseControlRequest,
+  type ControlCaller,
+  type ControlRequest,
+} from "./control-protocol";
 import {
   formatPaneList,
   listPanes,
@@ -49,6 +55,8 @@ export interface ControlServerOptions {
    *  because the terminal they describe may be in an unfocused window. */
   getWindows?: () => ControlStatusSink[];
   openProject: (directory: string) => void;
+  /** Every parsed request, with the pane it came from (adoption, #117). */
+  onRequest?: (request: ControlRequest, caller: ControlCaller) => void;
   /** Test-only override of the idle reap window. */
   idleTimeoutMs?: number;
 }
@@ -130,9 +138,20 @@ async function withPaneLock<T>(
 
 async function handleRequest(
   request: ControlRequest,
+  caller: ControlCaller,
   options: ControlServerOptions,
 ): Promise<Record<string, unknown> | void> {
+  try {
+    options.onRequest?.(request, caller);
+  } catch {
+    // measurement must never fail a command
+  }
   const win = options.getWindow();
+  if (request.type === "capabilities") {
+    return {
+      output: `${JSON.stringify(capabilitiesDocument(caller), null, 2)}\n`,
+    };
+  }
   if (request.type === "open") {
     options.openProject(path.resolve(request.path));
     return;
@@ -256,8 +275,10 @@ export function startControlServerOn(
       buffer = "";
       void (async () => {
         try {
+          const raw: unknown = JSON.parse(line);
           const payload = await handleRequest(
-            parseControlRequest(JSON.parse(line)),
+            parseControlRequest(raw),
+            parseControlCaller(raw),
             options,
           );
           sendJson(socket, { ok: true, ...(payload ?? {}) });

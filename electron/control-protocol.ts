@@ -42,7 +42,15 @@ export type ControlRequest =
       type: "pane-list";
       projectSlug?: string;
       selfTerminalId?: string;
-    };
+    }
+  | { type: "capabilities" };
+
+/** The calling pane (AYA_TERMINAL_ID / AYA_PRESET_ID), sent with every request
+ *  to measure adoption per harness (#117); absent outside Aya. */
+export interface ControlCaller {
+  terminalId?: string;
+  presetId?: string;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -50,6 +58,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+export function parseControlCaller(value: unknown): ControlCaller {
+  if (!isRecord(value) || !isRecord(value.caller)) return {};
+  const terminalId = optionalString(value.caller.terminalId);
+  const presetId = optionalString(value.caller.presetId);
+  return {
+    ...(terminalId ? { terminalId } : {}),
+    ...(presetId ? { presetId } : {}),
+  };
 }
 
 export function parseControlRequest(value: unknown): ControlRequest {
@@ -61,6 +79,7 @@ export function parseControlRequest(value: unknown): ControlRequest {
     return { type, path: target };
   }
   if (type === "focus") return { type };
+  if (type === "capabilities") return { type };
   if (type === "notify") {
     const body = optionalString(value.body);
     if (!body) throw new Error("notify.body is required");

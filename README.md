@@ -311,6 +311,9 @@ aya status clear
 aya pane read "reviewer"
 aya pane send "reviewer" "run the tests"
 aya pane send "reviewer" --no-submit "draft for review"
+
+# Every command above, as JSON, for an agent to read
+aya capabilities
 ```
 
 `aya pane` is how one agent hands work to another and collects the result. A
@@ -318,6 +321,11 @@ pane name that is ambiguous within the project is rejected rather than guessed,
 and `pane send` presses Enter after the text unless you pass `--no-submit`
 (type only, for a prompt a human should review first). `--submit` is still
 accepted, in any position, and changes nothing.
+
+`aya capabilities` is the machine-readable form of this list, so an agent can
+learn the commands from the CLI itself instead of from a copied skill file.
+Aya also counts, per harness, how many panes ever called `aya` at all; the
+numbers are under `cliAdoption` in Settings -> Diagnostics.
 
 The companion skill lives in `skills/aya-control/SKILL.md` and uses only this
 public CLI side channel.
