@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.11.0 - 2026-09-27
+
+Agents inside Aya can now learn the `aya` command on their own, handoffs
+between panes actually submit, the Grok chip shows its weekly limit, and the
+`aya` command survives version managers.
+
+### Features
+
+- **Tell the agent about aya.** An opt-in per-preset toggle gives the agent a
+  short brief pointing at `aya capabilities`: Claude via
+  `--append-system-prompt`, Grok via `--rules`, opencode via
+  `OPENCODE_CONFIG_CONTENT`, Codex via a marked section in its `AGENTS.md`, and
+  Antigravity via an always-on rule. `aya` now works in every pane, even without
+  the Settings shim (#117).
+- **`aya capabilities`** prints every command as JSON, and Settings ->
+  Diagnostics counts, per harness, how many panes actually use the CLI (#117).
+- **Grok weekly limit.** The Grok chip is now a ring with the weekly percent
+  used, read from Grok's own log (1.0.41+), with reset time and staleness.
+  Claude and Codex chips now also dim when their data goes stale (#125).
+- **Antigravity** gets auto-resume (`--continue`, scoped to the folder), and
+  agents added from "Suggested" keep their type instead of becoming "custom".
+
+### Changes
+
+- **`aya pane send` submits by default.** The text is typed and Enter pressed;
+  `--no-submit` types only. `--submit` is still accepted, flags work in any
+  position, and `--` ends them (#116).
+
+### Fixes
+
+- **`aya` command install.** Installs to `~/.local/bin` (or the first writable
+  PATH dir no version manager owns), never into an rvm gemset or similar.
+  Settings audits every `aya` on PATH, Reinstall repairs Aya's old copies, and
+  startup repairs dead ones. User wrappers and symlinks are never touched (#115).
+
+### Internal
+
+- E2E: the WebGL context-loss test no longer races the reload, and local
+  Playwright runs are bounded by a timeout.
+
 ## v0.10.0 - 2026-09-26
 
 Grok joins the usage chips, the Linux AppImage finally looks like Aya on the
