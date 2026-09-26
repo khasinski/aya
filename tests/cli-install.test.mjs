@@ -55,6 +55,14 @@ test("only version-managed dirs are writable: ~/.local/bin, flagged off PATH", (
   });
 });
 
+test("~/.local/bin on PATH but not writable: the next stable writable dir", () => {
+  const writable = (dir) => dir !== LOCAL_BIN;
+  assert.deepEqual(chooseCliInstallDir([LOCAL_BIN, "/opt/homebrew/bin"], HOME, writable), {
+    dir: "/opt/homebrew/bin",
+    onPath: true,
+  });
+});
+
 test("a trailing slash on the PATH entry still counts as ~/.local/bin", () => {
   assert.deepEqual(chooseCliInstallDir([`${LOCAL_BIN}/`], HOME, everyDirWritable), {
     dir: LOCAL_BIN,
@@ -76,7 +84,13 @@ test("version-manager dirs are recognised; stable dirs are not", () => {
   ]) {
     assert.equal(isVersionManagedDir(dir), true, dir);
   }
-  for (const dir of [LOCAL_BIN, "/opt/homebrew/bin", "/usr/local/bin", `${HOME}/bin`]) {
+  for (const dir of [
+    LOCAL_BIN,
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    `${HOME}/bin`,
+    "/repo/node_modules/.binaries",
+  ]) {
     assert.equal(isVersionManagedDir(dir), false, dir);
   }
 });
@@ -121,12 +135,16 @@ test("a dead first copy asks for Reinstall; healthy copies below are not called 
   );
 });
 
-test("a foreign aya first on PATH is named, not judged", () => {
-  const message = describeCliStatus(
-    [{ path: "/opt/homebrew/bin/aya", ours: false, broken: false }],
-    LOCAL_CHOICE,
+test("a foreign aya first on PATH is named, not judged; a dead copy below it still shows", () => {
+  const foreignFirst = { path: "/opt/homebrew/bin/aya", ours: false, broken: false };
+  assert.equal(
+    describeCliStatus([foreignFirst], LOCAL_CHOICE),
+    "/opt/homebrew/bin/aya comes first on PATH and was not installed by Aya.",
   );
-  assert.match(message, /not installed by Aya/);
+  assert.match(
+    describeCliStatus([foreignFirst, deadLocalCopy], LOCAL_CHOICE),
+    new RegExp(`not installed by Aya\\. Also, a dead copy.*${deadLocalCopy.path}.*Reinstall`),
+  );
 });
 
 test("nothing installed: the target, plus a warning when it is off PATH", () => {
@@ -137,17 +155,29 @@ test("nothing installed: the target, plus a warning when it is off PATH", () => 
   );
 });
 
+const foreignCopy = { path: "/opt/homebrew/bin/aya", ours: false, broken: false };
+const deadElsewhere = { path: "/usr/local/bin/aya", ours: true, broken: true };
+
 test("#115 reinstall: gemset copy removed, dead copy elsewhere rewritten, foreign untouched", () => {
-  const foreign = { path: "/opt/homebrew/bin/aya", ours: false, broken: false };
-  const deadElsewhere = { path: "/usr/local/bin/aya", ours: true, broken: true };
   const plan = planCliInstall(
-    [gemsetCopy, foreign, deadElsewhere, deadLocalCopy],
+    [gemsetCopy, deadElsewhere, deadLocalCopy, foreignCopy],
     `${LOCAL_BIN}/aya`,
   );
   assert.deepEqual(plan, {
     rewrite: ["/usr/local/bin/aya"],
     remove: [gemsetCopy.path],
   });
+});
+
+test("reinstall keeps the gemset copy when removing it would not hand PATH to the new shim", () => {
+  const rewriteGemset = { rewrite: [gemsetCopy.path], remove: [] };
+  // Target off PATH: removing would leave no aya at all.
+  assert.deepEqual(planCliInstall([gemsetCopy], `${LOCAL_BIN}/aya`), rewriteGemset);
+  // A foreign aya between them would become the one the shell runs.
+  assert.deepEqual(
+    planCliInstall([gemsetCopy, foreignCopy, deadLocalCopy], `${LOCAL_BIN}/aya`),
+    rewriteGemset,
+  );
 });
 
 // Electron's fs reads into archives, so from inside the app an X_OK probe of

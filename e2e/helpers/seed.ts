@@ -59,8 +59,9 @@ export interface SeedOptions {
   /** Stub executables put first on PATH, so harness detection finds them. */
   fakeBins?: string[];
   /** #115's machine: an rvm gemset first on PATH with a working Aya shim, dead
-   *  pre-#39 shims below it in ~/bin and ~/.local/bin, and a foreign `aya` last. */
-  cliInstallHarness?: boolean;
+   *  pre-#39 shims below it in ~/bin and ~/.local/bin, and a foreign `aya` last.
+   *  "off-path": only the gemset and system dirs are on PATH. */
+  cliInstallHarness?: boolean | "off-path";
   /** Names of extra projects that are known + recent but NOT open, so the
    *  recent-projects menu lists them as closed projects. */
   closedProjects?: string[];
@@ -350,7 +351,14 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     launchEnv = {
       ...launchEnv,
       HOME: home,
-      PATH: [gemset, "/usr/bin", "/bin", "/usr/sbin", "/sbin", homeBin, localBin, toolsBin].join(":"),
+      PATH: [
+        gemset,
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+        ...(opts.cliInstallHarness === "off-path" ? [] : [homeBin, localBin, toolsBin]),
+      ].join(":"),
       SHELL: quietShell,
     };
   }

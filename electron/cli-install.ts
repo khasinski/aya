@@ -15,7 +15,7 @@ const VERSION_MANAGED = [
   "/.fnm/",
   "/.gem/",
   "/mise/installs/",
-  "/node_modules/.bin",
+  "/node_modules/.bin/",
 ];
 
 const normalizeDir = (dir: string) => path.normalize(dir).replace(/\/+$/, "");
@@ -30,15 +30,18 @@ export interface InstallDirChoice {
   onPath: boolean;
 }
 
-/** ~/.local/bin when PATH has it; else the first writable PATH dir no version
- *  manager owns; else ~/.local/bin flagged off-PATH. */
+/** ~/.local/bin when PATH has it and it is writable; else the first writable
+ *  PATH dir no version manager owns; else ~/.local/bin flagged off-PATH. */
 export function chooseCliInstallDir(
   pathEntries: string[],
   home: string,
   isWritableDir: (dir: string) => boolean,
 ): InstallDirChoice {
   const preferred = path.join(home, ".local", "bin");
-  if (pathEntries.some((entry) => normalizeDir(entry) === preferred)) {
+  if (
+    pathEntries.some((entry) => normalizeDir(entry) === preferred) &&
+    isWritableDir(preferred)
+  ) {
     return { dir: preferred, onPath: true };
   }
   const stable = pathEntries.find(
@@ -80,13 +83,18 @@ export interface CliInstallPlan {
   remove: string[];
 }
 
-/** Our other copies: removed from version-managed dirs (they only shadow the
- *  stable install), rewritten elsewhere. Foreign scripts are never touched. */
+/** Our other copies, after `target` is written: removed from version-managed
+ *  dirs, rewritten elsewhere. Foreign scripts are never touched. */
 export function planCliInstall(copies: AyaCopy[], target: string): CliInstallPlan {
+  // Removing only helps when the shell then runs `target`; otherwise it would
+  // leave no aya on PATH, or hand PATH to a foreign one (#120 review).
+  const targetAt = copies.findIndex((copy) => copy.path === target);
+  const targetWins =
+    targetAt >= 0 && copies.slice(0, targetAt).every((copy) => copy.ours);
   const plan: CliInstallPlan = { rewrite: [], remove: [] };
   for (const copy of copies) {
     if (!copy.ours || copy.path === target) continue;
-    if (isVersionManagedDir(path.dirname(copy.path))) plan.remove.push(copy.path);
+    if (targetWins && isVersionManagedDir(path.dirname(copy.path))) plan.remove.push(copy.path);
     else plan.rewrite.push(copy.path);
   }
   return plan;
@@ -104,24 +112,26 @@ export function describeCliStatus(
   const active = copies[0];
   if (!active) return `Install to ${path.join(choice.dir, "aya")}${offPathNote(choice)}`;
 
+  const staleBelow = copies.slice(1).filter((copy) => copy.broken);
+  const staleNote =
+    staleBelow.length > 0
+      ? `a dead copy further down PATH takes over if it disappears (${staleBelow
+          .map((copy) => copy.path)
+          .join(", ")})`
+      : undefined;
+  if (!active.ours) {
+    const foreign = `${active.path} comes first on PATH and was not installed by Aya.`;
+    return staleNote ? `${foreign} Also, ${staleNote} - click Reinstall to repair.` : foreign;
+  }
   const notes: string[] = [];
   if (active.broken) {
     notes.push("it points at a moved or renamed Aya.app");
-  } else if (active.ours && isVersionManagedDir(path.dirname(active.path))) {
+  } else if (isVersionManagedDir(path.dirname(active.path))) {
     notes.push(
       "that directory belongs to a version manager and drops off PATH when you switch versions",
     );
-  } else if (!active.ours) {
-    return `${active.path} comes first on PATH and was not installed by Aya.`;
   }
-  const staleBelow = copies.slice(1).filter((copy) => copy.broken);
-  if (staleBelow.length > 0) {
-    notes.push(
-      `a dead copy further down PATH takes over if it disappears (${staleBelow
-        .map((copy) => copy.path)
-        .join(", ")})`,
-    );
-  }
+  if (staleNote) notes.push(staleNote);
   if (notes.length === 0) return undefined;
   return `Installed at ${active.path}, but ${notes.join("; and ")} - click Reinstall to repair.`;
 }

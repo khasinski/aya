@@ -718,13 +718,31 @@ async function anyExecutable(paths: string[]): Promise<boolean> {
   return false;
 }
 
+/** A missing dir counts when its nearest existing ancestor is writable, since
+ *  install creates it (a fresh ~/.local/bin). */
 function isWritableDir(dir: string): boolean {
   try {
     if (!statSync(dir).isDirectory()) return false;
     accessSync(dir, fsConstants.W_OK);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    const parent = path.dirname(dir);
+    return (
+      (err as NodeJS.ErrnoException).code === "ENOENT" &&
+      parent !== dir &&
+      isWritableDir(parent)
+    );
+  }
+}
+
+/** Something at `target` that Reinstall must not write through: a symlink, or
+ *  a file that is not our shim. */
+async function foreignFileAt(target: string): Promise<boolean> {
+  try {
+    if ((await fs.lstat(target)).isSymbolicLink()) return true;
+    return ayaShimTargets(await fs.readFile(target, "utf-8")).length === 0;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== "ENOENT";
   }
 }
 
@@ -814,8 +832,14 @@ async function installCli(): Promise<CliStatus> {
       message: `Bundled aya CLI is not executable at ${source}`,
     };
   }
-  await fs.mkdir(installDir, { recursive: true });
   const target = path.join(installDir, "aya");
+  if (await foreignFileAt(target)) {
+    return {
+      ...(await cliStatus()),
+      message: `${target} exists and was not installed by Aya - move it away, then click Reinstall.`,
+    };
+  }
+  await fs.mkdir(installDir, { recursive: true });
   const script = freshCliShim();
   await writeCliShim(target, script);
   const plan = planCliInstall(await ayaCopiesOnPath(), target);
@@ -832,7 +856,9 @@ async function installCli(): Promise<CliStatus> {
     ...status,
     message: failed.length
       ? `${installedMessage}. Could not update ${failed.join(", ")}.`
-      : (status.message ?? installedMessage),
+      : choice.onPath
+        ? (status.message ?? installedMessage)
+        : installedMessage,
   };
 }
 
