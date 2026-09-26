@@ -79,6 +79,23 @@ interface LimitScan {
 }
 const limitScans = new Map<string, LimitScan>();
 
+/** Most of the log one poll may read. The first poll of a session starts from
+ *  offset 0, and the log grows ~200 KB/h with no rotation we can rely on, so an
+ *  unbounded read would pull a weeks-old log (tens of MB) into the main process
+ *  at once. 32 MB is ~a week at that rate - older than the limit's own week, so
+ *  nothing useful is skipped. */
+export const GROK_LIMIT_SCAN_MAX_BYTES = 32 * 1024 * 1024;
+
+/** Where to start reading: from `from`, unless that leaves more than `max`
+ *  bytes, then the tail - flagging that the first line may be cut. Pure. */
+export function limitScanWindow(
+  from: number,
+  size: number,
+  max: number = GROK_LIMIT_SCAN_MAX_BYTES,
+): { start: number; cut: boolean } {
+  return size - from > max ? { start: size - max, cut: true } : { start: from, cut: false };
+}
+
 async function newestLoggedLimit(file: string): Promise<GrokLimit | null> {
   const known = limitScans.get(file);
   let scan: LimitScan;
@@ -90,10 +107,18 @@ async function newestLoggedLimit(file: string): Promise<GrokLimit | null> {
       // Another file, or shorter than what was read: rotated or truncated.
       const fresh = !known || known.ino !== ino || size < known.size;
       scan = fresh ? { ino, size: 0, partial: "", limit: null } : known;
-      const buffer = Buffer.alloc(size - scan.size);
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, scan.size);
+      const { start, cut } = limitScanWindow(scan.size, size);
+      const buffer = Buffer.alloc(size - start);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
       chunk = buffer.toString("utf-8", 0, bytesRead);
-      scan = { ...scan, size: scan.size + bytesRead };
+      if (cut) {
+        // Started mid-file: the carried partial belongs to skipped bytes, and
+        // the first line read is probably cut too - drop both.
+        const nl = chunk.indexOf("\n");
+        chunk = nl === -1 ? "" : chunk.slice(nl + 1);
+        scan = { ...scan, partial: "" };
+      }
+      scan = { ...scan, size: start + bytesRead };
     } finally {
       await handle.close();
     }

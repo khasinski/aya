@@ -277,3 +277,16 @@ test("readGrokLimit keeps the last limit through a passing read error", async ()
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("a huge or long-unread log is read from its tail, never whole", async () => {
+  // The first poll starts at offset 0; a weeks-old unified.jsonl must not be
+  // pulled into the main process in one read.
+  const { limitScanWindow, GROK_LIMIT_SCAN_MAX_BYTES } = await import(
+    "../dist-electron/usage-grok.js"
+  );
+  assert.deepEqual(limitScanWindow(0, 1000, 4096), { start: 0, cut: false });
+  assert.deepEqual(limitScanWindow(500, 1000, 4096), { start: 500, cut: false });
+  assert.deepEqual(limitScanWindow(0, 10_000, 4096), { start: 10_000 - 4096, cut: true });
+  // Default cap is bounded (tens of MB, not unbounded).
+  assert.ok(GROK_LIMIT_SCAN_MAX_BYTES > 0 && GROK_LIMIT_SCAN_MAX_BYTES <= 64 * 1024 * 1024);
+});
