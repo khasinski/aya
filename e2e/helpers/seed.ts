@@ -62,6 +62,8 @@ export interface SeedOptions {
    *  pre-#39 shims below it in ~/bin and ~/.local/bin, and a foreign `aya` last.
    *  "off-path": only the gemset and system dirs are on PATH. */
   cliInstallHarness?: boolean | "off-path";
+  /** GROK_HOME with a logs/unified.jsonl holding one credits-config line. */
+  grokCredits?: { pct: number; end: string; ts: string };
   /** Names of extra projects that are known + recent but NOT open, so the
    *  recent-projects menu lists them as closed projects. */
   closedProjects?: string[];
@@ -373,6 +375,21 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
       ].join(":"),
       SHELL: quietShell,
     };
+  }
+
+  if (opts.grokCredits) {
+    const grokHome = join(root, "grok-home");
+    mkdirSync(join(grokHome, "logs"), { recursive: true });
+    const { pct, end, ts } = opts.grokCredits;
+    writeFileSync(
+      join(grokHome, "logs", "unified.jsonl"),
+      `${JSON.stringify({
+        ts,
+        msg: "billing: fetched credits config",
+        ctx: { config: { creditUsagePercent: pct, currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", end } } },
+      })}\n`,
+    );
+    launchEnv = { ...launchEnv, GROK_HOME: grokHome };
   }
 
   return {

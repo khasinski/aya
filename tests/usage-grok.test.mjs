@@ -106,3 +106,148 @@ test("distinct models across rows are merged and sorted", () => {
   );
   assert.deepEqual(sumGrokUsage([a, b], TS).models, ["grok-4-fast", "grok-4.6-build"]);
 });
+
+// The weekly limit comes from the "billing: fetched credits config" line Grok
+// 1.0.41 writes to logs/unified.jsonl; the chip's ring shows it.
+import { appendFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  extractGrokLimit,
+  readGrokLimit,
+  readGrokUsage,
+} from "../dist-electron/usage-grok.js";
+
+const creditsLine = (pct, end, ts = "2026-09-26T19:48:33.830Z") =>
+  JSON.stringify({
+    ts,
+    src: "shell",
+    lvl: "info",
+    msg: "billing: fetched credits config",
+    ctx: {
+      config: {
+        creditUsagePercent: pct,
+        currentPeriod: {
+          type: "USAGE_PERIOD_TYPE_WEEKLY",
+          start: "2026-09-23T14:18:08.811132+00:00",
+          end,
+        },
+        onDemandCap: { val: 0 },
+      },
+    },
+  });
+const END = "2026-09-30T14:18:08.811132+00:00";
+const NOW = Date.parse("2026-09-26T20:00:00Z");
+
+test("extractGrokLimit reads percent, reset and log time from a credits line", () => {
+  assert.deepEqual(extractGrokLimit(creditsLine(47, END)), {
+    pct: 47,
+    resetsAt: END,
+    updatedAt: "2026-09-26T19:48:33.830Z",
+  });
+});
+
+test("extractGrokLimit rejects other lines and changed shapes", () => {
+  assert.equal(extractGrokLimit('{"msg":"slash.advertise","ctx":{}}'), null);
+  assert.equal(extractGrokLimit("billing: fetched credits config (not json)"), null);
+  assert.equal(extractGrokLimit(creditsLine("47", END)), null);
+  assert.equal(extractGrokLimit(creditsLine(47, "soon")), null);
+  assert.equal(extractGrokLimit(creditsLine(47, END, "later")), null);
+  const moved = JSON.parse(creditsLine(47, END));
+  moved.msg = "billing: fetched something else, mentioning billing: fetched credits config";
+  assert.equal(extractGrokLimit(JSON.stringify(moved)), null);
+});
+
+function grokHome(lines) {
+  const home = mkdtempSync(join(tmpdir(), "aya-grok-"));
+  mkdirSync(join(home, "logs"), { recursive: true });
+  writeFileSync(join(home, "logs", "unified.jsonl"), `${lines.join("\n")}\n`);
+  return home;
+}
+
+test("readGrokLimit takes the newest credits line", async () => {
+  const home = grokHome([creditsLine(30, END, "2026-09-25T14:06:44Z"), creditsLine(47, END)]);
+  try {
+    assert.equal((await readGrokLimit(home, NOW)).pct, 47);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("readGrokLimit: a finished week is not this week's usage", async () => {
+  const home = grokHome([creditsLine(99, "2026-09-23T14:18:08Z")]);
+  try {
+    assert.equal(await readGrokLimit(home, NOW), null);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("readGrokLimit: no log, or no credits line, is null", async () => {
+  const empty = mkdtempSync(join(tmpdir(), "aya-grok-"));
+  const other = grokHome(['{"msg":"slash.advertise"}']);
+  try {
+    assert.equal(await readGrokLimit(empty, NOW), null);
+    assert.equal(await readGrokLimit(other, NOW), null);
+  } finally {
+    rmSync(empty, { recursive: true, force: true });
+    rmSync(other, { recursive: true, force: true });
+  }
+});
+
+test("readGrokLimit finds a credits line far back in a big log", async () => {
+  const home = grokHome([creditsLine(12, END), "x".repeat(3 * 1024 * 1024)]);
+  try {
+    assert.equal((await readGrokLimit(home, NOW)).pct, 12);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("readGrokLimit reads appended lines, including one split across polls", async () => {
+  const home = grokHome([creditsLine(30, END, "2026-09-25T14:06:44Z")]);
+  const log = join(home, "logs", "unified.jsonl");
+  try {
+    assert.equal((await readGrokLimit(home, NOW)).pct, 30);
+    const next = `${creditsLine(47, END)}\n`;
+    appendFileSync(log, next.slice(0, 40));
+    assert.equal((await readGrokLimit(home, NOW)).pct, 30);
+    appendFileSync(log, next.slice(40));
+    assert.equal((await readGrokLimit(home, NOW)).pct, 47);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("readGrokLimit starts over when the log is rotated", async () => {
+  const home = grokHome([creditsLine(80, END), "x".repeat(2000)]);
+  const log = join(home, "logs", "unified.jsonl");
+  try {
+    assert.equal((await readGrokLimit(home, NOW)).pct, 80);
+    writeFileSync(log, `${creditsLine(5, END)}\n`);
+    assert.equal((await readGrokLimit(home, NOW)).pct, 5);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("readGrokUsage carries the limit even with no turns in the window", async () => {
+  const home = grokHome([creditsLine(47, END)]);
+  try {
+    const usage = await readGrokUsage([home], NOW);
+    assert.equal(usage.turns, 0);
+    assert.deepEqual(usage.limit, { pct: 47, resetsAt: END, updatedAt: "2026-09-26T19:48:33.830Z" });
+    assert.equal(usage.updatedAt, "2026-09-26T19:48:33.830Z");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("readGrokUsage without a limit or turns stays null (the chip hides)", async () => {
+  const home = grokHome(['{"msg":"other"}']);
+  try {
+    assert.equal(await readGrokUsage([home], NOW), null);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

@@ -2550,9 +2550,7 @@ function registerIpc(): void {
       ),
     );
   });
-  // Read-only: Grok usage from its own local session logs. Grok records no
-  // rate-limit % or reset locally (only tokens + cost per turn), so this returns
-  // a 7-day tokens+cost aggregate, not a percent window.
+  // Read-only: 7-day spend and tokens, plus the weekly limit when Grok logged one.
   ipcMain.handle("usage:get-grok", async () => {
     const presets = await listPresets();
     const grokDirs = presets
