@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.10.0 - 2026-09-26
+
+Grok joins the usage chips, the Linux AppImage finally looks like Aya on the
+desktop, and a round of cleanup and fixes.
+
+### Features
+
+- **Grok usage chip.** A chip beside the Claude and Codex rings shows Grok's
+  spend and tokens over the last 7 days, summed across every session in
+  `~/.grok/sessions`. Grok records no rate-limit percentage locally, so it is
+  spend + tokens rather than a ring. Read-only: no token, no endpoint.
+
+### Fixes
+
+- **Linux AppImage desktop integration.** The app ships its desktop entry and
+  icon, so launchers and docks stop showing a generic icon (#113).
+- **Usage hook on Linux.** The throttle now tries GNU `stat` first, so it no
+  longer kills the hook on Linux (#112).
+- **Zoom with the terminal focused.** Keyboard and Ctrl+wheel zoom work while a
+  terminal has focus.
+- **Project slug mismatch** fixed as part of a cleanup pass (#114).
+
+### Internal
+
+- Decruft: dead code, ~285 lines of dead CSS and inert skin tokens removed (#114).
+- CI installs the Chromium browser for the web E2E suite.
+
 ## v0.9.0 - 2026-09-12
 
 Agents can now find and drive each other's panes, the status bar follows the
