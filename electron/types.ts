@@ -348,6 +348,8 @@ export interface CliStatus {
   installDir: string | null;
   installable: boolean;
   message?: string;
+  /** Every `aya` on PATH in PATH order; `path` is the first. */
+  copies?: { path: string; ours: boolean; broken: boolean }[];
 }
 
 export interface DiagnosticsReport {

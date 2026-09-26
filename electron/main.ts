@@ -39,11 +39,15 @@ import {
   updateProject,
 } from "./config";
 import { bundledAyaCliPath, bundledDistElectronHelperPath } from "./cli-path";
+import { defaultInstallAyaCliPath, renderCliShim } from "./cli-shim";
 import {
-  defaultInstallAyaCliPath,
-  parseShimTargets,
-  renderCliShim,
-} from "./cli-shim";
+  type AyaCopy,
+  ayaShimTargets,
+  chooseCliInstallDir,
+  describeCliStatus,
+  insideAsarArchive,
+  planCliInstall,
+} from "./cli-install";
 import { startConfigWatcher } from "./config-watcher";
 import { isHostStale } from "./pty-host-staleness";
 import { startControlServer } from "./control";
@@ -713,64 +717,86 @@ async function anyExecutable(paths: string[]): Promise<boolean> {
   return false;
 }
 
-function writableDirOnPath(): string | null {
-  for (const entry of pathEntries()) {
-    try {
-      const stat = statSync(entry);
-      if (!stat.isDirectory()) continue;
-      accessSync(entry, fsConstants.W_OK);
-      return entry;
-    } catch {
-      // keep looking
-    }
+function isWritableDir(dir: string): boolean {
+  try {
+    if (!statSync(dir).isDirectory()) return false;
+    accessSync(dir, fsConstants.W_OK);
+    return true;
+  } catch {
+    return false;
   }
-  return null;
+}
+
+/** Every `aya` on PATH, in PATH order - not just the one a shell runs, so a
+ *  dead copy waiting below it is visible too (#115). */
+async function ayaCopiesOnPath(): Promise<AyaCopy[]> {
+  const copies: AyaCopy[] = [];
+  const seen = new Set<string>();
+  for (const entry of pathEntries()) {
+    const candidate = path.join(entry, "aya");
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    try {
+      accessSync(candidate, fsConstants.X_OK);
+    } catch {
+      continue;
+    }
+    let targets: string[] = [];
+    try {
+      targets = ayaShimTargets(await fs.readFile(candidate, "utf-8"));
+    } catch {
+      // unreadable or not a script - not ours
+    }
+    // A shim can be on PATH yet dead: it bakes an absolute path into Aya.app,
+    // and moving/renaming the app kills it (follow-up on #42).
+    const ours = targets.length > 0;
+    copies.push({
+      path: candidate,
+      ours,
+      broken:
+        ours &&
+        !(await anyExecutable(
+          targets.filter((target) => !insideAsarArchive(target)),
+        )),
+    });
+  }
+  return copies;
+}
+
+function cliInstallDir() {
+  return chooseCliInstallDir(pathEntries(), os.homedir(), isWritableDir);
 }
 
 async function cliStatus(): Promise<CliStatus> {
-  const installed = findExecutableOnPath("aya");
-  const installDir =
-    writableDirOnPath() ?? path.join(os.homedir(), ".local", "bin");
-  // A shim can be on PATH yet dead: it bakes an absolute path into Aya.app,
-  // and moving/renaming the app kills it. Report that as "needs reinstall"
-  // instead of a healthy "Installed at ..." (follow-up on #42).
-  let broken = false;
-  if (installed) {
-    try {
-      const targets = parseShimTargets(await fs.readFile(installed, "utf-8"));
-      broken = targets.length > 0 && !(await anyExecutable(targets));
-    } catch {
-      // unreadable or not our script - leave it alone
-    }
-  }
+  const copies = await ayaCopiesOnPath();
+  const choice = cliInstallDir();
+  const active = copies[0] ?? null;
+  const message = describeCliStatus(copies, choice);
   return {
-    installed: installed !== null,
-    path: installed,
-    installDir,
+    installed: active !== null,
+    path: active?.path ?? null,
+    installDir: choice.dir,
     installable: true,
-    ...(installed
-      ? broken
-        ? {
-            message: `Installed at ${installed}, but it points at a moved or renamed Aya.app - click Reinstall to repair.`,
-          }
-        : {}
-      : { message: `Install to ${path.join(installDir, "aya")}` }),
+    copies,
+    ...(message ? { message } : {}),
   };
 }
 
+function freshCliShim(): string {
+  return renderCliShim(
+    bundledAyaCliPath(__dirname),
+    defaultInstallAyaCliPath(process.platform),
+  );
+}
+
+async function writeCliShim(target: string, script: string): Promise<void> {
+  await fs.writeFile(target, script, { mode: CLI_EXECUTABLE_MODE });
+  await fs.chmod(target, CLI_EXECUTABLE_MODE);
+}
+
 async function installCli(): Promise<CliStatus> {
-  const status = await cliStatus();
-  const installDir = status.installDir;
-  if (!installDir) {
-    return {
-      installed: false,
-      path: null,
-      installDir: null,
-      installable: false,
-      message: "No install directory available.",
-    };
-  }
-  await fs.mkdir(installDir, { recursive: true });
+  const choice = cliInstallDir();
+  const installDir = choice.dir;
   const source = bundledAyaCliPath(__dirname);
   // Refuse to install a shim that cannot work. The asar path bug (#39) made
   // Install report success while the written shim exec'd a file inside the
@@ -787,15 +813,30 @@ async function installCli(): Promise<CliStatus> {
       message: `Bundled aya CLI is not executable at ${source}`,
     };
   }
+  await fs.mkdir(installDir, { recursive: true });
   const target = path.join(installDir, "aya");
-  const script = renderCliShim(source, defaultInstallAyaCliPath(process.platform));
-  await fs.writeFile(target, script, { mode: CLI_EXECUTABLE_MODE });
-  await fs.chmod(target, CLI_EXECUTABLE_MODE);
+  const script = freshCliShim();
+  await writeCliShim(target, script);
+  // Older copies of our shim elsewhere on PATH: refresh them so none can come
+  // back dead, and drop the ones in version-managed dirs, which only shadow
+  // the stable install until the next version switch. Foreign scripts stay.
+  const plan = planCliInstall(await ayaCopiesOnPath(), target);
+  const failed: string[] = [];
+  for (const copy of plan.rewrite) {
+    await writeCliShim(copy, script).catch(() => failed.push(copy));
+  }
+  for (const copy of plan.remove) {
+    await fs.rm(copy, { force: true }).catch(() => failed.push(copy));
+  }
+  const status = await cliStatus();
+  const installedMessage = `Installed at ${target}${
+    choice.onPath ? "" : ` - ${installDir} is not on your PATH, add it to use the command`
+  }`;
   return {
-    ...(await cliStatus()),
-    path: target,
-    installed: true,
-    message: `Installed at ${target}`,
+    ...status,
+    message: failed.length
+      ? `${installedMessage}. Could not update ${failed.join(", ")}.`
+      : (status.message ?? installedMessage),
   };
 }
 
@@ -903,6 +944,29 @@ async function withAgentBrief(spawn: SpawnRequest): Promise<SpawnRequest> {
     );
   }
   return spawn;
+}
+
+/** Startup repair for shims that point at a moved/renamed/pre-#39 Aya.app, so
+ *  a user who never reopens Settings does not keep a dead `aya` (#115).
+ *  Packaged only: in dev the fresh shim would aim at this checkout. Rewrites
+ *  in place and never installs anything new. */
+async function healDeadCliShims(): Promise<void> {
+  if (IS_DEV || !app.isPackaged) return;
+  try {
+    await fs.access(bundledAyaCliPath(__dirname), fsConstants.X_OK);
+  } catch {
+    return;
+  }
+  const script = freshCliShim();
+  for (const copy of await ayaCopiesOnPath()) {
+    if (!copy.broken) continue;
+    try {
+      await writeCliShim(copy.path, script);
+      console.log(`[aya] repaired dead aya shim at ${copy.path}`);
+    } catch (err) {
+      console.warn(`[aya] could not repair dead aya shim at ${copy.path}:`, err);
+    }
+  }
 }
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -2865,6 +2929,9 @@ app.whenReady().then(async () => {
   // pass that writes nothing unless a codex preset's opt-in disagrees with it.
   void syncCodexBriefs();
   void syncAntigravityBrief();
+  // Needs the repaired PATH to see the user's shims; not awaited - it only
+  // touches files and nothing below depends on it.
+  void healDeadCliShims();
 
   // In dev, replace Electron's default dock icon with ours so the running
   // instance is visually distinguishable. In packaged builds the bundle's

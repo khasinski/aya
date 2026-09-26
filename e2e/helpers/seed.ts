@@ -58,6 +58,9 @@ export interface SeedOptions {
   fakeHome?: boolean;
   /** Stub executables put first on PATH, so harness detection finds them. */
   fakeBins?: string[];
+  /** #115's machine: a fake HOME whose PATH puts an rvm gemset first, holding
+   *  a working Aya shim, with a dead pre-#39 shim in ~/.local/bin below it. */
+  cliInstallHarness?: boolean;
   /** Names of extra projects that are known + recent but NOT open, so the
    *  recent-projects menu lists them as closed projects. */
   closedProjects?: string[];
@@ -307,6 +310,45 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     const home = join(root, "home");
     mkdirSync(home, { recursive: true });
     launchEnv = { ...launchEnv, HOME: home };
+  }
+
+  if (opts.cliInstallHarness) {
+    const home = join(root, "cli-home");
+    const gemset = join(home, ".rvm", "gems", "ruby-3.4.4", "bin");
+    const localBin = join(home, ".local", "bin");
+    mkdirSync(gemset, { recursive: true });
+    mkdirSync(localBin, { recursive: true });
+    // Healthy: execs this checkout's CLI, which exists.
+    writeFileSync(
+      join(gemset, "aya"),
+      `#!/bin/sh\nexec ${JSON.stringify(join(__dirname, "..", "..", "bin", "aya"))} "$@"\n`,
+      { mode: 0o755 },
+    );
+    // Dead: the pre-#39 shim from #115, execing into the asar archive.
+    writeFileSync(
+      join(localBin, "aya"),
+      '#!/bin/sh\nexec "/Applications/Aya.app/Contents/Resources/app.asar/bin/aya" "$@"\n',
+      { mode: 0o755 },
+    );
+    // A login shell that adds nothing, so PATH repair leaves this PATH alone.
+    const quietShell = join(root, "quiet-login-shell");
+    writeFileSync(
+      quietShell,
+      [
+        "#!/bin/sh",
+        'while [ "$#" -gt 0 ]; do',
+        '  case "$1" in -c) shift; exec /bin/sh -c "$1" ;; *) shift ;; esac',
+        "done",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    launchEnv = {
+      ...launchEnv,
+      HOME: home,
+      PATH: [gemset, "/usr/bin", "/bin", "/usr/sbin", "/sbin", localBin].join(":"),
+      SHELL: quietShell,
+    };
   }
 
   return {
