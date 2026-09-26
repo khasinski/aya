@@ -19,8 +19,8 @@ Use Aya's CLI for user-visible coordination while working in an Aya terminal.
 - `aya focus`: focus the Aya window.
 - `aya pane list`: list the panes/agents in your project (your own is marked).
 - `aya pane read "reviewer"`: print another pane's recent output.
-- `aya pane send "reviewer" "run the tests"`: type text into another pane.
-- `aya pane send "reviewer" --submit "run the tests"`: type it and press Enter.
+- `aya pane send "reviewer" "run the tests"`: type text into another pane and press Enter.
+- `aya pane send "reviewer" --no-submit "run the tests"`: type it without pressing Enter.
 
 ## When To Use
 
@@ -46,9 +46,9 @@ a more specific name if that happens.
 - Use `pane read` to check on work you handed to another agent, or to collect
   its result — it returns that pane's recent output, newest last.
 - Use `pane send` only for a pane the user has explicitly asked you to drive.
-- Prefer `pane send` WITHOUT `--submit` when the text is a prompt the user may
-  want to review; `--submit` presses Enter and the other agent acts on it
-  immediately.
+- `pane send` presses Enter, so the other agent acts on the text immediately.
+  Pass `--no-submit` when the text is a prompt the user may want to review
+  first. (`--submit` is still accepted and changes nothing.)
 - There is no "wait until done" — poll with `pane read` if you need to see a
   result, and give the other agent time between reads.
 

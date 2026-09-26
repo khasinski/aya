@@ -19,7 +19,9 @@ Usage:
   aya status clear                   Clear agent status
   aya pane list                      List the panes/agents in this project
   aya pane read name                 Print another pane's recent output
-  aya pane send name [--submit] text Type text into another pane
+  aya pane send name [--no-submit] text
+                                     Type text into another pane and press
+                                     Enter (--no-submit: type only)
 EOF
 }
 
@@ -294,12 +296,23 @@ case "$command" in
       send)
         target="${1:-}"
         shift || true
-        submit=""
-        if [ "${1:-}" = "--submit" ]; then
-          submit="submit"
-          shift || true
-        fi
-        text="$*"
+        # Submitting is the default: a handoff left sitting unsent in the other
+        # pane's input gets glued onto whatever is typed there next (#116).
+        # The flags count in any position, so `send name text --submit` does not
+        # type a literal "--submit"; `--` ends flag parsing for such text.
+        submit="submit"
+        text=""
+        literal=""
+        for arg do
+          if [ -z "$literal" ]; then
+            case "$arg" in
+              --submit) submit="submit"; continue ;;
+              --no-submit) submit=""; continue ;;
+              --) literal=1; continue ;;
+            esac
+          fi
+          text="${text:+$text }$arg"
+        done
         if [ -z "$target" ] || [ -z "$text" ]; then
           usage
           exit 1

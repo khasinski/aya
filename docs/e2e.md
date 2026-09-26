@@ -45,7 +45,8 @@ project".
 - `snippets.spec.ts` - the snippet drawer opens, shows the seeded default with
   its full text, collapses after sending; the closed drawer is `inert` (F14
   ghost-drawer regression guard).
-- `pane-send-submit.spec.ts` - `aya pane send --submit` really submits. Drives
+- `pane-send-submit.spec.ts` - `aya pane send` really submits (flag in any
+  position, `--no-submit` types only). Drives
   the real `bin/aya` against a `helpers/pty-recorder.cjs` pane, which logs raw
   PTY chunks, so the Enter can be shown to arrive as its own, later chunk.
 
