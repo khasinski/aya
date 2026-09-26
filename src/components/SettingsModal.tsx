@@ -1,4 +1,4 @@
-import { effectiveAutoResume, inferAgent } from "../agentPreset";
+import { agentBriefHint, effectiveAutoResume, inferAgent } from "../agentPreset";
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
 import { useEffect, useState, type ReactNode } from "react";
 import {
@@ -130,6 +130,7 @@ function fromDraft(p: DraftPreset): Preset {
     // Persist autoResume explicitly (incl. false) so a deliberate opt-out
     // survives - absence is treated as "default on" for agent presets.
     ...(typeof p.autoResume === "boolean" ? { autoResume: p.autoResume } : {}),
+    ...(p.agentBrief ? { agentBrief: true } : {}),
     ...(themeId ? { themeId } : {}),
   };
 }
@@ -2407,6 +2408,21 @@ export function SettingsModal({
                         }
                       />
                     </label>
+                    {agentBriefHint(row.agent) && (
+                      <label className="aya-preset-toggle">
+                        <span>
+                          <strong>Tell the agent about aya</strong>
+                          <small>{agentBriefHint(row.agent)}</small>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={!!row.agentBrief}
+                          onChange={(e) =>
+                            updateRow(row.__key, { agentBrief: e.target.checked })
+                          }
+                        />
+                      </label>
+                    )}
                     {isAgent && (
                       <label className="aya-preset-toggle">
                         <span>

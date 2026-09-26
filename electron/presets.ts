@@ -43,6 +43,9 @@ export interface Preset {
   configDir?: string;
   unsafeMode?: boolean;
   autoResume?: boolean;
+  /** Opt-in: tell the agent that `aya` exists, through its harness's channel
+   *  (electron/agent-brief.ts). Harnesses without a channel ignore it. */
+  agentBrief?: boolean;
   /** Optional override. If set, terminals spawned from this preset render
    *  with the matching theme instead of the global active theme. Empty
    *  string and undefined both mean "use the default". */
@@ -76,7 +79,7 @@ export const DEFAULT_PRESETS: readonly Preset[] = [
   },
 ];
 
-const AGENT_KINDS: readonly AgentKind[] = [
+export const AGENT_KINDS: readonly AgentKind[] = [
   "claude",
   "codex",
   "opencode",
@@ -127,6 +130,9 @@ export function isPreset(x: unknown): x is Preset {
   if (r.autoResume !== undefined && typeof r.autoResume !== "boolean") {
     return false;
   }
+  if (r.agentBrief !== undefined && typeof r.agentBrief !== "boolean") {
+    return false;
+  }
   return true;
 }
 
@@ -153,6 +159,7 @@ export function normalizePreset(raw: unknown): Preset | null {
     // Preserve an explicit autoResume:false (deliberate opt-out); absence is
     // treated as "default on" for agent presets by the renderer.
     ...(typeof raw.autoResume === "boolean" ? { autoResume: raw.autoResume } : {}),
+    ...(raw.agentBrief ? { agentBrief: true } : {}),
     ...(themeId ? { themeId } : {}),
   };
 }
