@@ -83,6 +83,60 @@ test.describe("claude preset with the brief off (the default)", () => {
   });
 });
 
+/** A preset whose pane records its argv/env instead of running `agent`. */
+const fakeAgent = (agent: string) => ({
+  seedOptions: {
+    presetList: [
+      {
+        id: "shell",
+        name: `Fake ${agent}`,
+        icon: "$",
+        color: "",
+        agent,
+        agentBrief: true,
+        command: `'${NODE}' '${ARGV_DUMP}' "$AYA_PROJECT_DIR/argv-$AYA_TERMINAL_ID.json"`,
+      },
+    ],
+  },
+});
+
+async function paneLaunch(seeded: { projectDir: string; tabIds: { right: string } }) {
+  const dump = join(seeded.projectDir, `argv-${seeded.tabIds.right}.json`);
+  await expect
+    .poll(() => existsSync(dump), { message: "the pane never started", timeout: 60_000 })
+    .toBe(true);
+  return JSON.parse(readFileSync(dump, "utf8"));
+}
+
+test.describe("grok preset with the brief on", () => {
+  test.use(fakeAgent("grok"));
+
+  test("the pane is launched with --rules carrying the brief", async ({ window, seeded }) => {
+    void window;
+    const { args } = await paneLaunch(seeded);
+    const flag = args.indexOf("--rules");
+    expect(flag).toBeGreaterThanOrEqual(0);
+    expect(args[flag + 1]).toContain("aya capabilities");
+    expect(args).toHaveLength(flag + 2);
+  });
+});
+
+test.describe("opencode preset with the brief on", () => {
+  test.use(fakeAgent("opencode"));
+
+  test("the pane gets OPENCODE_CONFIG_CONTENT naming a brief file in AYA_HOME", async ({
+    window,
+    seeded,
+  }) => {
+    void window;
+    const { args, opencodeConfigContent } = await paneLaunch(seeded);
+    expect(args).not.toContain("--rules");
+    const { instructions } = JSON.parse(opencodeConfigContent);
+    expect(instructions).toEqual([join(seeded.ayaHome, "agent-brief.md")]);
+    expect(readFileSync(instructions[0], "utf8")).toContain("aya capabilities");
+  });
+});
+
 test("codex AGENTS.md: saving the preset adds the section, turning it off removes only it", async ({
   window,
   seeded,

@@ -54,6 +54,7 @@ import {
   briefText,
   codexAgentsFile,
   commandWithBriefArg,
+  commandWithBriefEnv,
   planCodexBriefs,
   withBriefSection,
   withoutBriefSection,
@@ -855,6 +856,28 @@ async function withAgentBrief(spawn: SpawnRequest): Promise<SpawnRequest> {
     const command = commandWithBriefArg(spawn.command, channel, briefText(false));
     if (!command) {
       console.warn(`[aya] aya brief skipped for preset ${preset.id}: its command is not a single simple command, or already sets ${channel.flag}`);
+      return spawn;
+    }
+    return { ...spawn, command };
+  }
+  if (channel.kind === "env") {
+    // A file Aya owns, so nothing of the user's is touched; only Aya panes
+    // get the variable, so the text needs no "if inside Aya".
+    const briefFile = path.join(AYA_HOME, "agent-brief.md");
+    const command = commandWithBriefEnv(
+      spawn.command,
+      channel,
+      briefFile,
+      process.env[channel.name],
+    );
+    if (!command) {
+      console.warn(`[aya] aya brief skipped for preset ${preset.id}: its command is not a single simple command, or ${channel.name} is already set`);
+      return spawn;
+    }
+    try {
+      await rewriteIfChanged(briefFile, () => `${briefText(false)}\n`);
+    } catch (err) {
+      console.warn(`[aya] could not write ${briefFile}:`, err);
       return spawn;
     }
     return { ...spawn, command };

@@ -330,8 +330,10 @@ numbers are under `cliAdoption` in Settings -> Diagnostics.
 To tell an agent the CLI exists, turn on "Tell the agent about aya" on its
 preset (Settings -> Presets; off by default). It adds a five-line note that
 points at `aya capabilities`, through whatever channel the harness has:
-Claude gets it via `--append-system-prompt` at launch, and Codex via a marked
-section in that account's `AGENTS.md`, removed again when you turn it off.
+Claude gets it via `--append-system-prompt` and Grok via `--rules` at launch,
+opencode via `OPENCODE_CONFIG_CONTENT` (added to your own instructions, in Aya
+panes only), and Codex via a marked section in that account's `AGENTS.md`,
+removed again when you turn it off.
 Harnesses without a channel do not show the toggle. The bundled `aya` is
 also on every pane's PATH, after any shim you installed.
 

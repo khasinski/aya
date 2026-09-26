@@ -2,19 +2,25 @@
 // lines that say "you are in Aya, run `aya capabilities`", so the context cost
 // is flat and the command list can never go stale (the CLI answers it). There
 // is no universal channel, so each harness declares one: an argument at launch,
-// a marked section in a global instructions file, or none - a first-class
-// answer, not a gap. Opt-in per preset (`agentBrief`). Pure: main.ts does IO.
+// an environment variable pointing at a file Aya owns, a marked section in a
+// global instructions file, or none - a first-class answer, not a gap. Opt-in per preset (`agentBrief`). Pure: main.ts does IO.
 
 import * as path from "node:path";
 
 export type BriefChannel =
   | { kind: "arg"; flag: string }
+  | { kind: "env"; name: "OPENCODE_CONFIG_CONTENT" }
   | { kind: "file"; file: "codex-agents-md" }
   | { kind: "none" };
 
-/** Per harness. Unknown and unlisted harnesses get none. */
+/** Per harness. Unknown and unlisted harnesses get none. Each was checked
+ *  against the real CLI (2026-09-26): grok's --rules reached the model;
+ *  opencode appended an OPENCODE_CONFIG_CONTENT `instructions` entry to the
+ *  user's own instead of replacing them (`opencode debug config`, 1.18.30). */
 export function briefChannel(agent: string | undefined): BriefChannel {
   if (agent === "claude") return { kind: "arg", flag: "--append-system-prompt" };
+  if (agent === "grok") return { kind: "arg", flag: "--rules" };
+  if (agent === "opencode") return { kind: "env", name: "OPENCODE_CONFIG_CONTENT" };
   if (agent === "codex") return { kind: "file", file: "codex-agents-md" };
   return { kind: "none" };
 }
@@ -41,18 +47,40 @@ function shellQuote(value: string): string {
 /** The launch command with the brief appended as an argument, or null when
  *  appending is not safe: the command is more than one simple command (the
  *  argument would land on the wrong one), or it already sets the flag. */
+/** One simple command we can safely extend, trimmed; null otherwise. */
+function simpleCommand(command: string): string | null {
+  const trimmed = command.trim();
+  if (!trimmed || /[;&|`\n]|\$\(/.test(trimmed)) return null;
+  return trimmed;
+}
+
 export function commandWithBriefArg(
   command: string,
   channel: Extract<BriefChannel, { kind: "arg" }>,
   brief: string,
 ): string | null {
-  const trimmed = command.trim();
+  const trimmed = simpleCommand(command);
   if (!trimmed) return null;
-  if (/[;&|`\n]|\$\(/.test(trimmed)) return null;
   if (` ${trimmed} `.includes(` ${channel.flag} `) || trimmed.includes(`${channel.flag}=`)) {
     return null;
   }
   return `${trimmed} ${channel.flag} ${shellQuote(brief)}`;
+}
+
+/** The launch command with the env assignment that points the harness at
+ *  `briefFile` (a file under AYA_HOME), or null when not safe: a compound
+ *  command, a command that already sets the variable, or one inherited from
+ *  the environment - overriding it would drop the user's own inline config. */
+export function commandWithBriefEnv(
+  command: string,
+  channel: Extract<BriefChannel, { kind: "env" }>,
+  briefFile: string,
+  inherited: string | undefined,
+): string | null {
+  const trimmed = simpleCommand(command);
+  if (!trimmed || inherited || trimmed.includes(`${channel.name}=`)) return null;
+  const value = JSON.stringify({ instructions: [briefFile] });
+  return `${channel.name}=${shellQuote(value)} ${trimmed}`;
 }
 
 export const BRIEF_BEGIN =

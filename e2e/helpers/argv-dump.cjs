@@ -22,6 +22,7 @@ fs.writeFileSync(
     args,
     ayaOnPath: ayaOnPath || null,
     pathEntries: (process.env.PATH || "").split(path.delimiter),
+    opencodeConfigContent: process.env.OPENCODE_CONFIG_CONTENT ?? null,
   }),
 );
 setInterval(() => {}, 60_000);

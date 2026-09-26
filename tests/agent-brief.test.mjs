@@ -12,6 +12,7 @@ import {
   briefText,
   codexAgentsFile,
   commandWithBriefArg,
+  commandWithBriefEnv,
   pathWithFallbackDir,
   planCodexBriefs,
   withBriefSection,
@@ -20,11 +21,41 @@ import {
 import { AGENT_KINDS } from "../dist-electron/presets.js";
 import { agentBriefHint } from "../dist-test/agentPreset.js";
 
-test("channels: claude by argument, codex by file, everyone else none", () => {
+test("channels: claude/grok by argument, opencode by env, codex by file, rest none", () => {
   assert.deepEqual(briefChannel("claude"), { kind: "arg", flag: "--append-system-prompt" });
+  assert.deepEqual(briefChannel("grok"), { kind: "arg", flag: "--rules" });
+  assert.deepEqual(briefChannel("opencode"), { kind: "env", name: "OPENCODE_CONFIG_CONTENT" });
   assert.deepEqual(briefChannel("codex"), { kind: "file", file: "codex-agents-md" });
-  assert.deepEqual(briefChannel("grok"), { kind: "none" });
+  assert.deepEqual(briefChannel("pi"), { kind: "none" });
   assert.deepEqual(briefChannel(undefined), { kind: "none" });
+});
+
+test("grok: the brief goes in as --rules, one argument", () => {
+  assert.equal(
+    commandWithBriefArg("grok --continue", briefChannel("grok"), "b"),
+    "grok --continue --rules 'b'",
+  );
+  assert.equal(commandWithBriefArg("grok --rules 'mine'", briefChannel("grok"), "b"), null);
+});
+
+const ENV = briefChannel("opencode");
+const BRIEF_FILE = "/Users/dev/.aya/it's here/agent-brief.md";
+
+test("opencode: the variable reaches the process as JSON naming Aya's brief file", () => {
+  const command = commandWithBriefEnv("opencode", ENV, BRIEF_FILE, undefined);
+  // Swap the program for one that prints the variable, keep the prefix as built.
+  const probe = command.replace(/ opencode$/, ` /bin/sh -c 'printf %s "$OPENCODE_CONFIG_CONTENT"'`);
+  const seen = spawnSync("/bin/sh", ["-c", probe], { encoding: "utf8" }).stdout;
+  assert.deepEqual(JSON.parse(seen), { instructions: [BRIEF_FILE] });
+});
+
+test("opencode: no env where it would clobber the user's own inline config", () => {
+  assert.equal(commandWithBriefEnv("opencode", ENV, BRIEF_FILE, '{"model":"x"}'), null);
+  assert.equal(
+    commandWithBriefEnv(`OPENCODE_CONFIG_CONTENT='{}' opencode`, ENV, BRIEF_FILE, undefined),
+    null,
+  );
+  assert.equal(commandWithBriefEnv("opencode; echo hi", ENV, BRIEF_FILE, undefined), null);
 });
 
 test("the Settings toggle shows for exactly the harnesses with a channel", () => {
