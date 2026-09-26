@@ -455,18 +455,20 @@ export function GrokUsageChip({
               {row("Turns", `${usage.turns}`)}
             </>
           )}
-          <div
-            style={{
-              color: CHIP_MUTED_COLOR,
-              fontSize: 11,
-              marginTop: 10,
-              borderTop: `1px solid ${CHIP_BORDER_COLOR}`,
-              paddingTop: 8,
-            }}
-          >
-            {usage.models.length > 0 ? usage.models.join(", ") : "Grok"}
-            {!limit && " · no weekly limit logged by Grok yet"}
-          </div>
+          {(usage.models.length > 0 || !limit) && (
+            <div
+              style={{
+                color: CHIP_MUTED_COLOR,
+                fontSize: 11,
+                marginTop: 10,
+                borderTop: `1px solid ${CHIP_BORDER_COLOR}`,
+                paddingTop: 8,
+              }}
+            >
+              {usage.models.length > 0 ? usage.models.join(", ") : "Grok"}
+              {!limit && " · no weekly limit logged by Grok yet"}
+            </div>
+          )}
         </div>
       )}
     </div>

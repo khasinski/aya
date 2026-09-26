@@ -19,6 +19,8 @@ test("the Grok chip shows the logged weekly percent and its reset", async ({ win
   await expect(menu).toContainText("week");
   await expect(menu).toContainText("resets");
   await expect(menu).not.toContainText("stale");
+  // No turns in the week, so no model list: no bare "Grok" footer either.
+  await expect(menu.getByText("Grok", { exact: true })).toHaveCount(0);
 });
 
 test.describe("an hour-old snapshot", () => {
