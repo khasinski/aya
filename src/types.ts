@@ -30,6 +30,9 @@ export interface Preset {
   configDir?: string;
   unsafeMode?: boolean;
   autoResume?: boolean;
+  /** Opt-in: tell the agent that `aya` exists, through its harness's channel
+   *  (electron/agent-brief.ts). Harnesses without a channel ignore it. */
+  agentBrief?: boolean;
   /** Optional per-preset theme override. Empty/undefined means use the
    *  global active theme. */
   themeId?: string;
@@ -518,6 +521,7 @@ export interface DiagnosticsReport {
     configDir?: string;
     autoResume?: boolean;
     unsafeMode?: boolean;
+    agentBrief?: boolean;
   }>;
   projects: {
     total: number;

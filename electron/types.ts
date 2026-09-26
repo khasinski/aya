@@ -395,6 +395,7 @@ export interface DiagnosticsReport {
     configDir?: string;
     autoResume?: boolean;
     unsafeMode?: boolean;
+    agentBrief?: boolean;
   }>;
   projects: {
     total: number;

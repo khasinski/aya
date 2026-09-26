@@ -28,6 +28,8 @@ import { COMMAND_NOT_FOUND_EXIT_CODE, COMMAND_PROBE_TIMEOUT_MS } from "./constan
 import { userShell } from "./shell";
 import { getProcessCwd } from "./process-cwd";
 import { ptyLog } from "./pty-log";
+import { pathWithFallbackDir } from "./agent-brief";
+import { bundledAyaCliPath } from "./cli-path";
 
 // Timeout for the shell `command -v` existence check during spawn preflight.
 
@@ -455,6 +457,9 @@ function safeEnv(req: SpawnRequest, cwd: string): { [key: string]: string } {
   out.COLORTERM = "truecolor";
   if (!out.LANG) out.LANG = "en_US.UTF-8";
   if (!out.LC_ALL) out.LC_ALL = out.LANG;
+  // The bundled CLI as a PATH fallback, so `aya` works in every pane even
+  // without the Settings shim; an installed shim earlier on PATH still wins.
+  out.PATH = pathWithFallbackDir(out.PATH, path.dirname(bundledAyaCliPath(__dirname)));
   out.AYA_HOME = AYA_HOME;
   out.AYA_SOCKET = CONTROL_SOCKET_PATH;
   out.AYA_TERMINAL_ID = req.ptyId;

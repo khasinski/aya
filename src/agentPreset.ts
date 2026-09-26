@@ -219,3 +219,16 @@ export function commandWithAutoResume(
     resumeArg(preset);
   return arg ? `${command} ${arg}` : preset.command;
 }
+
+/** How the "Tell the agent about aya" toggle delivers the brief for this
+ *  agent, or null when its harness has no channel (the toggle is hidden).
+ *  Mirrors briefChannel in electron/agent-brief.ts; a test holds them equal. */
+export function agentBriefHint(agent: Agent | undefined): string | null {
+  if (agent === "claude") {
+    return "Adds a short note via --append-system-prompt when the pane starts.";
+  }
+  if (agent === "codex") {
+    return "Adds a marked section to this account's AGENTS.md (removed when off).";
+  }
+  return null;
+}

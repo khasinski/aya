@@ -327,6 +327,14 @@ learn the commands from the CLI itself instead of from a copied skill file.
 Aya also counts, per harness, how many panes ever called `aya` at all; the
 numbers are under `cliAdoption` in Settings -> Diagnostics.
 
+To tell an agent the CLI exists, turn on "Tell the agent about aya" on its
+preset (Settings -> Presets; off by default). It adds a five-line note that
+points at `aya capabilities`, through whatever channel the harness has:
+Claude gets it via `--append-system-prompt` at launch, and Codex via a marked
+section in that account's `AGENTS.md`, removed again when you turn it off.
+Harnesses without a channel do not show the toggle. The bundled `aya` is
+also on every pane's PATH, after any shim you installed.
+
 The companion skill lives in `skills/aya-control/SKILL.md` and uses only this
 public CLI side channel.
 

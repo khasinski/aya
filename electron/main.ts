@@ -48,6 +48,16 @@ import { startConfigWatcher } from "./config-watcher";
 import { isHostStale } from "./pty-host-staleness";
 import { startControlServer } from "./control";
 import { createCliAdoptionStore } from "./cli-adoption";
+import { writeFileAtomic } from "./atomic-write";
+import {
+  briefChannel,
+  briefText,
+  codexAgentsFile,
+  commandWithBriefArg,
+  planCodexBriefs,
+  withBriefSection,
+  withoutBriefSection,
+} from "./agent-brief";
 import { startRemoteServer } from "./remote-server";
 import {
   createRemoteDirectory,
@@ -150,6 +160,7 @@ import type {
   AyaIntelligenceConfig,
   CliStatus,
   DiagnosticsReport,
+  SpawnRequest,
   LocalSummaryRequest,
   LocalSummaryResult,
   OllamaStatus,
@@ -784,6 +795,80 @@ async function installCli(): Promise<CliStatus> {
   };
 }
 
+/** The codex AGENTS.md each codex preset reads, with its opt-in. */
+async function codexBriefTargets() {
+  return (await listPresets())
+    .filter((preset) => preset.agent === "codex")
+    .map((preset) => ({
+      file: codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath),
+      agentBrief: preset.agentBrief === true,
+    }));
+}
+
+/** Rewrite `file` only when `change` alters it. `null` content = no file. */
+async function rewriteIfChanged(
+  file: string,
+  change: (content: string) => string,
+): Promise<void> {
+  let content: string | null = null;
+  try {
+    content = await fs.readFile(file, "utf-8");
+  } catch {
+    // no file yet
+  }
+  const next = change(content ?? "");
+  if (next === (content ?? "")) return;
+  if (!next && content !== null) {
+    // The file held nothing but our section: we created it, so it goes.
+    await fs.rm(file, { force: true });
+    return;
+  }
+  await writeFileAtomic(file, next);
+}
+
+/** Keep the brief section in every codex AGENTS.md whose preset opts in, and
+ *  out of every one whose presets all opted out. Only files a codex preset
+ *  points at are ever touched; the rest of each file is left as it was. */
+async function syncCodexBriefs(): Promise<void> {
+  const plan = planCodexBriefs(await codexBriefTargets());
+  const brief = briefText(true);
+  for (const file of plan.ensure) {
+    await rewriteIfChanged(file, (c) => withBriefSection(c, brief)).catch((err) =>
+      console.warn(`[aya] could not add the aya brief to ${file}:`, err),
+    );
+  }
+  for (const file of plan.remove) {
+    await rewriteIfChanged(file, withoutBriefSection).catch((err) =>
+      console.warn(`[aya] could not remove the aya brief from ${file}:`, err),
+    );
+  }
+}
+
+/** Deliver the brief for a fresh (not re-attached) pane whose preset opted
+ *  in: as an argument, or by making sure the harness's file carries it. */
+async function withAgentBrief(spawn: SpawnRequest): Promise<SpawnRequest> {
+  if (spawn.attachOnly || !spawn.presetId) return spawn;
+  const preset = (await listPresets()).find((p) => p.id === spawn.presetId);
+  if (!preset?.agentBrief) return spawn;
+  const channel = briefChannel(spawn.agent ?? preset.agent);
+  if (channel.kind === "arg") {
+    const command = commandWithBriefArg(spawn.command, channel, briefText(false));
+    if (!command) {
+      console.warn(`[aya] aya brief skipped for preset ${preset.id}: its command is not a single simple command, or already sets ${channel.flag}`);
+      return spawn;
+    }
+    return { ...spawn, command };
+  }
+  if (channel.kind === "file") {
+    // Re-assert on launch: the user may have edited the file since the save.
+    const file = codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath);
+    await rewriteIfChanged(file, (c) => withBriefSection(c, briefText(true))).catch(
+      (err) => console.warn(`[aya] could not add the aya brief to ${file}:`, err),
+    );
+  }
+  return spawn;
+}
+
 async function pathExists(filePath: string): Promise<boolean> {
   try {
     await fs.access(filePath);
@@ -870,6 +955,7 @@ async function diagnosticsReport(): Promise<DiagnosticsReport> {
       ...(typeof preset.unsafeMode === "boolean"
         ? { unsafeMode: preset.unsafeMode }
         : {}),
+      ...(preset.agentBrief ? { agentBrief: true } : {}),
     })),
     projects: {
       total: projects.length,
@@ -2006,7 +2092,7 @@ function registerIpc(): void {
     e: Electron.IpcMainInvokeEvent,
   ): BrowserWindow | null => BrowserWindow.fromWebContents(e.sender);
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
-    const spawn = validateSpawnRequest(req);
+    const spawn = await withAgentBrief(validateSpawnRequest(req));
     await ptyHost.spawn(spawn);
     void cliAdoption
       .launched({
@@ -2219,9 +2305,10 @@ function registerIpc(): void {
   );
 
   ipcMain.handle("presets:list", async () => listPresets());
-  ipcMain.handle("presets:save", async (_e, presets: unknown) =>
-    savePresets(validatePresetArray(presets)),
-  );
+  ipcMain.handle("presets:save", async (_e, presets: unknown) => {
+    await savePresets(validatePresetArray(presets));
+    await syncCodexBriefs();
+  });
   ipcMain.handle("presets:scan-harnesses", async () => scanHarnesses());
 
   ipcMain.handle("snippets:list", async () => listSnippets());
@@ -2732,6 +2819,9 @@ app.whenReady().then(async () => {
   // probe self-bounds (SIGKILL + guard timer), so a slow rc delays first paint
   // by at most the probe timeout; a failed probe is a no-op.
   await repairProcessPath();
+  // Presets can change on disk without a save through Settings; a file-only
+  // pass that writes nothing unless a codex preset's opt-in disagrees with it.
+  void syncCodexBriefs();
 
   // In dev, replace Electron's default dock icon with ours so the running
   // instance is visually distinguishable. In packaged builds the bundle's
