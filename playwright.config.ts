@@ -1,4 +1,9 @@
 import { defineConfig } from "@playwright/test";
+import {
+  EXPECT_TIMEOUT_MS,
+  PER_TEST_TIMEOUT_MS,
+  globalTimeout,
+} from "./e2e/timeouts";
 
 // Electron end-to-end tests. Each test launches the built app (dist-electron +
 // dist) through Playwright's Electron driver against an isolated, seeded
@@ -12,15 +17,9 @@ export default defineConfig({
   workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  // Hard ceiling for the WHOLE suite on CI. Size it with real headroom: the
-  // suite already ran ~4.6m before the respawn/boot-reuse specs (real PTY
-  // flows) joined, and a single genuine failure adds a retried app launch on
-  // top. At 5m the overrun killed whichever tests were in flight around the
-  // deadline - alphabetical-tail specs (search, snippet-*) "failed" with
-  // assertion timeouts that had nothing to do with their content.
-  globalTimeout: process.env.CI ? 10 * 60_000 : undefined,
-  timeout: 45_000,
-  expect: { timeout: 10_000 },
+  globalTimeout: globalTimeout(process.env),
+  timeout: PER_TEST_TIMEOUT_MS,
+  expect: { timeout: EXPECT_TIMEOUT_MS },
   reporter: process.env.CI
     ? [["github"], ["html", { open: "never" }]]
     : [["list"], ["html", { open: "never" }]],
