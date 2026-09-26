@@ -56,3 +56,6 @@ screenshots/webgl-white-terminal/
 # not per-profile: the decruft file was committed by accident in e5dda86 because
 # only its own name was listed, and every other profile writes a sibling.
 .recall-*-state.json
+
+# Generated capability inventory (featuring / capability-audit), kept local
+_FEATURES.md
