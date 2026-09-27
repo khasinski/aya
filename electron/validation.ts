@@ -83,6 +83,9 @@ export function validateSpawnRequest(value: unknown): SpawnRequest {
       ? { presetId: value.presetId as string }
       : {}),
     ...(isAgentKind(value.agent) ? { agent: value.agent } : {}),
+    ...(optionalString(value.agentConfigDir, "pty:spawn.agentConfigDir")
+      ? { agentConfigDir: value.agentConfigDir as string }
+      : {}),
     command: requireString(value.command, "pty:spawn.command"),
     cwd: requireString(value.cwd, "pty:spawn.cwd"),
     cols: requirePositiveInt(value.cols, "pty:spawn.cols"),

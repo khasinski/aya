@@ -30,6 +30,7 @@ import { getProcessCwd } from "./process-cwd";
 import { ptyLog } from "./pty-log";
 import { pathWithFallbackDir } from "./agent-brief";
 import { bundledAyaCliPath } from "./cli-path";
+import { CLAUDE_SESSION_POLL_MS, readClaudeSessionId } from "./claude-session";
 
 // Timeout for the shell `command -v` existence check during spawn preflight.
 
@@ -718,7 +719,10 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       }
     });
 
+    const stopSessionWatch = req.agent === "claude" ? watchClaudeSession(req, child.pid, sink) : null;
+
     child.onExit(({ exitCode, signal }) => {
+      stopSessionWatch?.();
       if (ptys.get(req.ptyId) !== child) {
         return;
       }
@@ -744,6 +748,20 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     // A live PTY means the flush ran; anything else discarded the queue.
     settleSpawnWaiters(req.ptyId, ptys.has(req.ptyId));
   }
+}
+
+/** Reports the conversation a claude pane is in whenever it changes (a new
+ *  session, /clear, /resume), so a restart resumes that pane's own one. */
+function watchClaudeSession(req: SpawnRequest, pid: number, sink: PtyEventSink): () => void {
+  let reported: string | null = null;
+  const timer = setInterval(async () => {
+    const sessionId = await readClaudeSessionId(req.agentConfigDir, pid);
+    if (!sessionId || sessionId === reported || sink.isDestroyed()) return;
+    reported = sessionId;
+    sink.sendPtyEvent({ type: "osc-session", ptyId: req.ptyId, sessionId });
+  }, CLAUDE_SESSION_POLL_MS);
+  timer.unref();
+  return () => clearInterval(timer);
 }
 
 /** The child's LIVE cwd, not the one it was spawned with (a `cd` moves it).

@@ -971,6 +971,7 @@ function TerminalViewComponent({
         presetId: terminal.presetId,
         // The host uses this to pick the agent's own screen-detection rules.
         agent: presetAgent,
+        agentConfigDir: preset.configDir,
         command,
         cwd,
         cols: Math.max(cols, TERMINAL_FALLBACK_COLS),

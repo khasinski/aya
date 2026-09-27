@@ -65,6 +65,19 @@ test("validateSpawnRequest passes the attach flags through (regression: they wer
   );
 });
 
+test("validateSpawnRequest passes agentConfigDir through, where claude registers its session", () => {
+  const base = { ptyId: "abc", command: "claude", cwd: "/tmp", cols: 80, rows: 24 };
+  assert.equal(
+    validateSpawnRequest({ ...base, agentConfigDir: "~/.claude_chris" }).agentConfigDir,
+    "~/.claude_chris",
+  );
+  assert.equal(validateSpawnRequest(base).agentConfigDir, undefined);
+  assert.throws(
+    () => validateSpawnRequest({ ...base, agentConfigDir: 7 }),
+    /pty:spawn\.agentConfigDir/,
+  );
+});
+
 test("validateSpawnRequest rejects missing or invalid dimensions", () => {
   assert.throws(
     () =>
