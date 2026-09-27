@@ -47,7 +47,7 @@ items the model sees without and with the setting:
 | Bundled Claude Code skills | no list on disk | `disableBundledSkills: true` (one switch) | 4 sampled -> 0 |
 
 `<profile>` is each distinct `CLAUDE_CONFIG_DIR` used by a preset (for example
-`~/.claude` and `~/.claude_chris`). Hooks are out of scope: turning them off
+`~/.claude` and a second profile dir). Hooks are out of scope: turning them off
 would also turn off Aya's own status and usage hooks.
 
 ## UX
@@ -61,11 +61,11 @@ Right-click a project in the left sidebar. The menu today only has "Move to
  PROJECTS
  ┌──────────────────────────┐
  │ ● aya                    │  right-click
- │   b2b          ⊘ 26 off  │ ┌──────────────────────────────┐
- │   alligent               │ │ Agent tools...               │
+ │   game         ⊘ 26 off  │ ┌──────────────────────────────┐
+ │   ruby_llm-contract      │ │ Agent tools...               │
  │   blog                   │ │ ──────────────────────────── │
  └──────────────────────────┘ │ Move to New Window           │
-                              │ Move to Window: alligent     │
+                              │ Move to Window: game         │
                               └──────────────────────────────┘
 ```
 
@@ -75,7 +75,7 @@ missing skill is never a mystery.
 ### Panel: Agent tools for one project
 
 ```
-┌─ Agent tools - b2b ─────────────────────────────────────────── [x] ─┐
+┌─ Agent tools - game ────────────────────────────────────────── [x] ─┐
 │                                                                     │
 │  Claude sessions in this project start with these turned off.       │
 │  Changes apply to the next start or resume of a session.            │
@@ -85,11 +85,11 @@ missing skill is never a mystery.
 │  Inventory refreshed today 09:14    [Refresh now]                   │
 │                                                                     │
 │  ▾ Skills (19)                                   17 on · 2 off      │
-│    [■] anti-facade-pre-claim         ~/.claude_chris                │
-│    [■] bounded-sink-audit            ~/.claude_chris                │
-│    [ ] grok                          ~/.claude_chris                │
-│    [■] ship-gate                     ~/.claude_chris, ~/.claude     │
-│    [ ] spec-checker                  ~/.claude_chris                │
+│    [■] anti-facade-pre-claim         ~/.claude                      │
+│    [■] bounded-sink-audit            ~/.claude                      │
+│    [ ] grok                          ~/.claude                      │
+│    [■] ship-gate                     ~/.claude                      │
+│    [ ] spec-checker                  ~/.claude                      │
 │    [■] weekly-summary      NEW       ~/.claude                      │
 │    ...                                                              │
 │                                                                     │
@@ -140,7 +140,7 @@ back) and is shown as `GONE` with a button to drop it. It is still passed to
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Saved. 2 Claude sessions in b2b still run with the old     │
+│  Saved. 2 Claude sessions in game still run with the old    │
 │  set. They pick up the change when restarted or resumed.    │
 │                                         [Restart them] [OK] │
 └─────────────────────────────────────────────────────────────┘
