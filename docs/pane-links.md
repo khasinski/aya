@@ -1,44 +1,44 @@
 # Pane links (design)
 
 A link joins panes into a working pair: each pane gets a role, and Aya carries
-the messages between them. Neither the agent CLI nor the model matters.
+the messages between them, whatever the agent CLI or model.
 
 ## Why
 
-A 22-round UX review in one project (a reviewer pane plus an implementer pane)
-hit these problems again and again:
+A 22-round UX review (reviewer and implementer panes) hit these problems:
 
-1. The reviewer's role was lost after rotation or `/resume`. It edited
-   `src/` about 20 times, and the user had to restate the role.
-2. Agents forgot the recipient's tab name. They sent reports to their own
-   pane, got "no pane named Tester" after a rename, and ran
-   `aya pane list` 20 times.
-3. The user had to tell agents to pass reports on at least 10 times.
+1. After rotation or `/resume`, the reviewer lost its role and edited `src/`
+   about 20 times.
+2. Agents forgot the recipient's tab name: they sent to their own pane, hit
+   "no pane named Tester" after a rename, and ran `aya pane list` 20 times.
+3. The user had to nudge reports along at least 10 times.
 4. `aya pane read` returned 64 KB of spinner noise.
 
 ## v1
 
-- **Definition**: `.aya/links/<name>.md` lists the roles and the pane
-  bound to each one, then the protocol in prose. Settings edits the same
-  file.
-- **Roles bound to panes**: the pane's role, peers and protocol are
-  injected on every spawn through the agent-brief channels, so they survive
-  `/clear`, compaction and `/resume`. `aya link whoami` prints them.
-- **Addressing by role**: `aya link send <role> "text"` and
-  `aya link reply`. They resolve by pane id, so renaming a tab breaks
-  nothing. A send to your own pane is refused. Each send reports
-  "delivered to tester (pane X)".
-- **Exchange log**: `.aya/links/<name>.log.jsonl` records sender,
-  recipient, time, the sender's commit and the text.
-  `aya link inbox` prints clean messages instead of screen scrapes.
+- **Definition**: `.aya/links/<name>.md` in the repo lists roles, their
+  panes and the protocol in prose.
+- **Identity**: `aya link whoami` resolves the pane from `AYA_TERMINAL_ID`
+  and prints its role, peers and protocol. This works for any CLI.
+- **Role at spawn**: every linked pane gets a note telling it to run
+  `aya link whoami` after a start, `/clear` or `/resume`. It gets this
+  whether or not the preset opted into the brief. Claude and Grok get it
+  per process; Codex and Antigravity only have shared files, so the note
+  stays generic. Whether each channel survives compaction and `/resume`
+  is unmeasured and must be checked per CLI.
+- **Send by role**: `aya link send <role> "text"` resolves to a pane id
+  (`targetId`), so renaming a tab breaks nothing. A send to your own pane
+  or to a dead pane fails with a clear error. On success it reports
+  "written to tester's pane", which is not proof the agent read it.
+- **Log**: Aya's main process appends every message to
+  `~/.aya/links/<project>/<name>.jsonl` with an id, sender, recipient,
+  time, sender commit and text. The log is kept outside the repo because
+  messages may hold secrets. `aya link inbox` prints unread messages.
 
 The protocol template keeps what worked: "hypothesis, not fact" plus a
-measurement request, `[reported -> confirmed]` round numbers, and
-"one-way, do not reply".
+measurement request, `[reported -> confirmed]`, and "one-way, do not reply".
 
 ## Later
 
-- **Rounds on a cadence**: the cron lived in one session and died with it.
-- **Write/measure lock**: a rebuild reset the reviewer mid-round.
-- **Item states**: open, rejected with a reason, or closed. One item was
-  reported for 7 rounds because the rejection never reached the reviewer.
+Settings editor, cadence, write/measure lock, item states (open, rejected
+with reason, closed), and log retention.
