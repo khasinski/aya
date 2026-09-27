@@ -363,7 +363,10 @@ function expandConfigDir(value: string): string {
   );
 }
 
-export function agentConfigDirsFromCommand(command: string): string[] {
+export function agentConfigDirsFromCommand(
+  command: string,
+  keys: readonly string[] = ["CODEX_HOME", "CLAUDE_CONFIG_DIR"],
+): string[] {
   const dirs: string[] = [];
   let pos = command.search(/\S/);
   if (pos < 0) return dirs;
@@ -374,7 +377,7 @@ export function agentConfigDirsFromCommand(command: string): string[] {
     const match = token.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
     if (!match) break;
     const key = match[1];
-    if (key === "CODEX_HOME" || key === "CLAUDE_CONFIG_DIR") {
+    if (keys.includes(key)) {
       const dir = expandConfigDir(match[2]);
       if (dir) dirs.push(dir);
     }
@@ -722,7 +725,8 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     const stopSessionWatch =
       req.agent === "claude"
         ? watchClaudeSession(
-            req.agentConfigDir ?? agentConfigDirsFromCommand(req.command)[0],
+            // The shell keeps the last assignment.
+            req.agentConfigDir ?? agentConfigDirsFromCommand(req.command, ["CLAUDE_CONFIG_DIR"]).at(-1),
             child.pid,
             (sessionId) => sink.sendPtyEvent({ type: "osc-session", ptyId: req.ptyId, sessionId }),
           )

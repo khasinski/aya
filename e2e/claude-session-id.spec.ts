@@ -94,7 +94,8 @@ test.describe("a preset that sets its config dir only in the command", () => {
           color: "",
           agent: "claude",
           autoResume: true,
-          command: `CLAUDE_CONFIG_DIR="$HOME/claude-config" '${NODE}' '${FAKE_CLAUDE}' "$AYA_PROJECT_DIR/claude-$AYA_TERMINAL_ID.jsonl"`,
+          // The shell keeps the last CLAUDE_CONFIG_DIR; CODEX_HOME is not claude's.
+          command: `CODEX_HOME="$HOME/codex" CLAUDE_CONFIG_DIR="$HOME/stale" CLAUDE_CONFIG_DIR="$HOME/claude-config" '${NODE}' '${FAKE_CLAUDE}' "$AYA_PROJECT_DIR/claude-$AYA_TERMINAL_ID.jsonl"`,
         },
       ],
     },
