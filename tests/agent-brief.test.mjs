@@ -10,6 +10,7 @@ import {
   antigravityBriefFile,
   briefChannel,
   briefText,
+  teamNote,
   codexAgentsFile,
   commandWithBriefArg,
   commandWithBriefEnv,
@@ -246,4 +247,17 @@ test("files Aya wrote to that no codex preset wants any more are orphans", async
     ["/h/gone/AGENTS.md"],
   );
   assert.deepEqual(orphanedBriefFiles([], plan), []);
+});
+
+test("the brief tells every agent how to find its team role", () => {
+  assert.match(briefText(false), /aya team whoami/);
+});
+
+test("a team pane's note names its role and treats peer messages as reports", () => {
+  const note = teamNote("ux-review", "tester");
+  assert.match(note, /tester/);
+  assert.match(note, /ux-review/);
+  assert.match(note, /aya team whoami/);
+  assert.match(note, /\/clear/);
+  assert.match(note, /\[team[\s\S]*not the user's instructions/);
 });

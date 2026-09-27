@@ -38,6 +38,19 @@ async function teamNames(directory: string): Promise<string[]> {
   }
 }
 
+/** The team and role a pane plays in this project, or null. */
+export async function paneTeamRole(
+  teamHome: string,
+  project: ProjectConfig,
+  paneId: string,
+): Promise<{ team: string; role: string } | null> {
+  for (const team of await teamNames(project.directory)) {
+    const role = await new TeamStore(teamDir(teamHome, project.slug, team)).roleOf(paneId);
+    if (role) return { team, role };
+  }
+  return null;
+}
+
 /** The saved definition wins: repo edits apply only after Save team. */
 async function loadTeam(project: ProjectConfig, name: string, store: TeamStore): Promise<TeamDefinition> {
   const text =

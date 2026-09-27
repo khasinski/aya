@@ -69,7 +69,9 @@ import {
   orphanedBriefFiles,
   BRIEF_BEGIN,
   withoutBriefSection,
+  teamNote,
 } from "./agent-brief";
+import { paneTeamRole } from "./team-control";
 import { startRemoteServer } from "./remote-server";
 import {
   createRemoteDirectory,
@@ -992,21 +994,33 @@ async function syncCodexBriefs(): Promise<void> {
   await updateBriefRegistry(added, dropped).catch(() => {});
 }
 
+/** The role note for a pane with a team role, else null. */
+async function paneTeamNote(spawn: SpawnRequest): Promise<string | null> {
+  const project = (await listProjects()).find((p) => p.slug === spawn.projectSlug);
+  const membership = project ? await paneTeamRole(AYA_HOME, project, spawn.ptyId) : null;
+  return membership ? teamNote(membership.team, membership.role) : null;
+}
+
 /** Deliver the brief for a fresh (not re-attached) pane whose preset opted
- *  in: as an argument, or by making sure the harness's file carries it. */
+ *  in, and a team pane's role note either way: as an argument, or by making
+ *  sure the harness's file carries it. Shared files take no per-pane note. */
 async function withAgentBrief(spawn: SpawnRequest): Promise<SpawnRequest> {
   if (spawn.attachOnly || !spawn.presetId) return spawn;
   const preset = (await listPresets()).find((p) => p.id === spawn.presetId);
-  if (!preset?.agentBrief) return spawn;
+  if (!preset) return spawn;
+  const note = await paneTeamNote(spawn);
+  if (!preset.agentBrief && !note) return spawn;
   const channel = briefChannel(spawn.agent ?? preset.agent);
   if (channel.kind === "arg") {
-    const command = commandWithBriefArg(spawn.command, channel, briefText(false));
+    const text = [preset.agentBrief ? briefText(false) : null, note].filter(Boolean).join("\n\n");
+    const command = commandWithBriefArg(spawn.command, channel, text);
     if (!command) {
       console.warn(`[aya] aya brief skipped for preset ${preset.id}: its command is not a single simple command, or already sets ${channel.flag}`);
       return spawn;
     }
     return { ...spawn, command };
   }
+  if (!preset.agentBrief) return spawn;
   if (channel.kind === "env") {
     // A file Aya owns, so nothing of the user's is touched; only Aya panes
     // get the variable, so the text needs no "if inside Aya".

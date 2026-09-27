@@ -297,3 +297,47 @@ test("a broken presets.json does not stop a pane from spawning", async ({ window
   );
   await expect.poll(() => existsSync(marker), { timeout: 30_000 }).toBe(true);
 });
+
+const TEAM = `# ux-review
+
+## Role: implementer
+Sends to: tester
+Must not: skip a report
+
+## Role: tester
+Sends to: implementer
+Must not: edit code
+`;
+const teamSeed = (agent: string, agentBrief: boolean) => ({
+  seedOptions: {
+    ...fakeAgent(agent, agentBrief).seedOptions,
+    projectFiles: { ".aya/teams/ux-review.md": TEAM },
+    ayaHomeFiles: {
+      "teams/e2e-proj/ux-review/assignments.json": JSON.stringify({ tester: "tab-right" }),
+    },
+  },
+});
+
+test.describe("a team pane without the brief opt-in", () => {
+  test.use(teamSeed("claude", false));
+
+  test("still starts with its role note", async ({ window, seeded }) => {
+    await expect(window.getByTestId("xterm-host").first()).toBeVisible();
+    const { args } = await paneLaunch(seeded);
+    const note = args[args.indexOf("--append-system-prompt") + 1];
+    expect(note).toMatch(/tester in the Aya team ux-review/);
+    expect(note).not.toMatch(/aya capabilities/);
+  });
+});
+
+test.describe("a team pane with the brief on", () => {
+  test.use(teamSeed("grok", true));
+
+  test("gets the brief and its role note in one flag", async ({ window, seeded }) => {
+    await expect(window.getByTestId("xterm-host").first()).toBeVisible();
+    const { args } = await paneLaunch(seeded);
+    const flag = args.indexOf("--rules");
+    expect(args.lastIndexOf("--rules")).toBe(flag);
+    expect(args[flag + 1]).toMatch(/aya capabilities[\s\S]*tester in the Aya team ux-review/);
+  });
+});
