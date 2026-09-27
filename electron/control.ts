@@ -106,7 +106,7 @@ async function handlePaneRequest(
 
 /** Types text into a pane, then Enter when `submit`. Serialized per terminal:
  *  the 150 ms submit gap splits a send into two writes that must not interleave. */
-function deliverToPane(
+export function deliverToPane(
   writePane: NonNullable<ControlServerOptions["writePane"]>,
   terminalId: string,
   name: string,

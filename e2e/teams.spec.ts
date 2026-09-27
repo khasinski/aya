@@ -99,3 +99,30 @@ test.describe("an implementer pane that runs a plain shell", () => {
     expect(existsSync(join(seeded.projectDir, "should-not-exist"))).toBe(false);
   });
 });
+
+test.describe("Start team", () => {
+  test.use({
+    seedOptions: {
+      presetList: [
+        { id: "shell", name: "Agent", icon: "a", color: "", agent: "claude", command: `'${NODE}' '${AGENT}' '${AYA}' quiet` },
+      ],
+      projectFiles: { ".aya/teams/ux-review.md": TEAM },
+      ayaHomeFiles: {
+        "teams/e2e-proj/ux-review/assignments.json": JSON.stringify({ tester: "tab-left", implementer: "tab-right" }),
+      },
+    },
+  });
+
+  test("sends every role a delivery test naming its peer", async ({ window, seeded }) => {
+    await expect(window.getByTestId("xterm-host").first()).toBeVisible();
+    const read = (pane: string) => {
+      const file = join(seeded.projectDir, `team-${pane}.log`);
+      return existsSync(file) ? readFileSync(file, "utf8") : "";
+    };
+    await expect.poll(() => read("tab-right"), { timeout: 30_000 }).toBe("");
+    const result = await window.evaluate(() => window.aya.teamStart("e2e-proj", "ux-review"));
+    expect(result.delivered.sort()).toEqual(["implementer", "tester"]);
+    await expect.poll(() => read("tab-left"), { timeout: 15_000 }).toMatch(/from aya .*Delivery test.*aya team send implementer/);
+    await expect.poll(() => read("tab-right"), { timeout: 15_000 }).toMatch(/Delivery test.*aya team send tester/);
+  });
+});

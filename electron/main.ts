@@ -51,7 +51,7 @@ import {
 } from "./cli-install";
 import { startConfigWatcher } from "./config-watcher";
 import { isHostStale } from "./pty-host-staleness";
-import { startControlServer } from "./control";
+import { deliverToPane, startControlServer } from "./control";
 import { createCliAdoptionStore } from "./cli-adoption";
 import { writeFileAtomic } from "./atomic-write";
 import {
@@ -72,6 +72,7 @@ import {
   teamNote,
 } from "./agent-brief";
 import { paneTeamRole } from "./team-control";
+import { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
 import {
   createRemoteDirectory,
@@ -2299,6 +2300,28 @@ function registerIpc(): void {
   const senderWindow = (
     e: Electron.IpcMainInvokeEvent,
   ): BrowserWindow | null => BrowserWindow.fromWebContents(e.sender);
+  const teamRunner = new TeamRunner({
+    teamHome: AYA_HOME,
+    listProjects: () => listProjects(),
+    deliver: (terminalId, text) =>
+      deliverToPane((id, data) => ptyHost.write(id, data), terminalId, terminalId, text, true),
+    holdReason: (terminalId) => ptyHost.holdReason(terminalId),
+    headCommit,
+  });
+  app.once("before-quit", () => teamRunner.stopAll());
+  const teamArgs = (slug: unknown, team: unknown, channel: string): [string, string] => [
+    requireString(slug, `${channel}.projectSlug`),
+    requireString(team, `${channel}.team`),
+  ];
+  ipcMain.handle("teams:start", (_e, slug: unknown, team: unknown) =>
+    teamRunner.start(...teamArgs(slug, team, "teams:start")),
+  );
+  ipcMain.handle("teams:pause", (_e, slug: unknown, team: unknown) =>
+    teamRunner.pause(...teamArgs(slug, team, "teams:pause")),
+  );
+  ipcMain.handle("teams:resume", (_e, slug: unknown, team: unknown) =>
+    teamRunner.resume(...teamArgs(slug, team, "teams:resume")),
+  );
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
     const request = validateSpawnRequest(req);
     // A broken presets.json must not stop panes from spawning.

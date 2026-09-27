@@ -16,7 +16,7 @@ process.stdin.on("data", (chunk) => fs.appendFileSync(log, chunk));
 if (mode === "ask" && me === "tab-right") {
   process.stdout.write("Do you want to proceed?\r\n❯ 1. Yes\r\n  2. No\r\n");
 }
-if (me === "tab-left") {
+if (me === "tab-left" && mode !== "quiet") {
   setTimeout(() => {
     try {
       const out = execFileSync(aya, ["team", "send", "implementer", "round 5 ready"], { encoding: "utf8" });

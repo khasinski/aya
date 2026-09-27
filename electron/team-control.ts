@@ -52,7 +52,7 @@ export async function paneTeamRole(
 }
 
 /** The saved definition wins: repo edits apply only after Save team. */
-async function loadTeam(project: ProjectConfig, name: string, store: TeamStore): Promise<TeamDefinition> {
+export async function loadTeam(project: ProjectConfig, name: string, store: TeamStore): Promise<TeamDefinition> {
   const text =
     (await store.savedDefinition()) ??
     (await fs.readFile(path.join(project.directory, ".aya", "teams", `${name}.md`), "utf-8"));
@@ -92,11 +92,12 @@ function clock(iso: string): string {
 }
 
 /** Marks a message as a peer's dated report, not the user's instruction. */
-function header(team: string, from: string, time: string, commit: string | null): string {
+export function teamHeader(team: string, from: string, time: string, commit: string | null): string {
   return `[team ${team} | from ${from} | ${clock(time)}${commit ? ` | ${commit}` : ""}]`;
 }
 
 async function send(m: Membership, to: string, text: string, deps: TeamControlDeps): Promise<string> {
+  if (await m.store.paused()) throw new Error(`team ${m.team.name} is paused; nothing was sent`);
   if (!m.role.sendsTo.includes(to)) {
     throw new Error(`${m.role.id} does not send to ${to}; sends to: ${m.role.sendsTo.join(", ") || "nobody"}`);
   }
@@ -108,7 +109,7 @@ async function send(m: Membership, to: string, text: string, deps: TeamControlDe
   if (held) failure = `${to}'s pane ${held}, so nothing was typed`;
   if (pane && !held) {
     try {
-      await deps.deliver(pane, `${header(m.team.name, m.role.id, time, commit)} ${text}`);
+      await deps.deliver(pane, `${teamHeader(m.team.name, m.role.id, time, commit)} ${text}`);
     } catch (err) {
       failure = err instanceof Error ? err.message : String(err);
     }
@@ -120,7 +121,7 @@ async function send(m: Membership, to: string, text: string, deps: TeamControlDe
 
 function formatInbox(team: string, messages: TeamMessage[]): string {
   if (messages.length === 0) return "no unread messages\n";
-  return messages.map((m) => `#${m.id} ${header(team, m.from, m.time, m.commit)} ${m.text}\n`).join("");
+  return messages.map((m) => `#${m.id} ${teamHeader(team, m.from, m.time, m.commit)} ${m.text}\n`).join("");
 }
 
 export async function handleTeamRequest(

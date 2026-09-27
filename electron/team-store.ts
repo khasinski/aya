@@ -79,6 +79,15 @@ export class TeamStore {
     return entry ? entry[0] : null;
   }
 
+  /** A paused team takes no sends and no rounds. */
+  setPaused(paused: boolean): Promise<void> {
+    return this.serial(() => writeFileAtomic(this.file("state.json"), JSON.stringify({ paused })));
+  }
+
+  async paused(): Promise<boolean> {
+    return (await readJson<{ paused?: boolean }>(this.file("state.json"), {})).paused === true;
+  }
+
   /** The definition as the user last saved it; outside edits wait for Save. */
   saveDefinition(text: string): Promise<void> {
     return this.serial(() => writeFileAtomic(this.file("saved.md"), text));

@@ -753,6 +753,10 @@ export interface AyaApi {
   getCodexUsage(): Promise<UsageAccount[]>;
   /** Grok usage (tokens + cost, last 7 days, account-wide), or null when none. */
   getGrokUsage(): Promise<GrokUsage | null>;
+  /** Start a team: unpause, send every role a delivery test, arm its rounds. */
+  teamStart(projectSlug: string, team: string): Promise<TeamStartResult>;
+  teamPause(projectSlug: string, team: string): Promise<void>;
+  teamResume(projectSlug: string, team: string): Promise<void>;
 
   usageHookStatus(): Promise<UsageHookStatus>;
   installUsageHook(): Promise<UsageHookStatus>;
@@ -973,4 +977,10 @@ export function looksNonInteractive(command: string): boolean {
   return /(?:^|\s)(-p|--print|--headless|--non-interactive|--no-interactive)(?:\s|$|=)/.test(
     command,
   );
+}
+
+/** Which roles got Start team's delivery test, and why the others did not. */
+export interface TeamStartResult {
+  delivered: string[];
+  held: { role: string; reason: string }[];
 }
