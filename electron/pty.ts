@@ -753,15 +753,22 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
 /** Reports the conversation a claude pane is in whenever it changes (a new
  *  session, /clear, /resume), so a restart resumes that pane's own one. */
 function watchClaudeSession(req: SpawnRequest, pid: number, sink: PtyEventSink): () => void {
+  const configDir = req.agentConfigDir ?? agentConfigDirsFromCommand(req.command)[0];
   let reported: string | null = null;
+  let stopped = false;
   const timer = setInterval(async () => {
-    const sessionId = await readClaudeSessionId(req.agentConfigDir, pid);
-    if (!sessionId || sessionId === reported || sink.isDestroyed()) return;
+    const sessionId = await readClaudeSessionId(configDir, pid);
+    // A restart reuses the pty id: a read still in flight must not report
+    // the old process's session over the new one's.
+    if (stopped || !sessionId || sessionId === reported || sink.isDestroyed()) return;
     reported = sessionId;
     sink.sendPtyEvent({ type: "osc-session", ptyId: req.ptyId, sessionId });
   }, CLAUDE_SESSION_POLL_MS);
   timer.unref();
-  return () => clearInterval(timer);
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
 }
 
 /** The child's LIVE cwd, not the one it was spawned with (a `cd` moves it).

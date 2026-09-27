@@ -21,7 +21,7 @@ test.use({
         agent: "claude",
         autoResume: true,
         configDir: "~/claude-config",
-        command: `CLAUDE_CONFIG_DIR="$HOME/claude-config" exec '${NODE}' '${FAKE_CLAUDE}' "$AYA_PROJECT_DIR/claude-$AYA_TERMINAL_ID.jsonl"`,
+        command: `CLAUDE_CONFIG_DIR="$HOME/claude-config" '${NODE}' '${FAKE_CLAUDE}' "$AYA_PROJECT_DIR/claude-$AYA_TERMINAL_ID.jsonl"`,
       },
     ],
   },
@@ -70,5 +70,45 @@ test("each claude pane keeps its own session id and resumes it", async ({ window
   await row.click({ button: "right" });
   await window.locator(".aya-context-menu").getByText("Restart terminal").click();
   await expect.poll(() => launches(projectDir, tabIds.right).length, { timeout: 30_000 }).toBe(2);
-  expect(launches(projectDir, tabIds.right)[1].args).toEqual(["--resume", first[tabIds.right]]);
+  const restarted = launches(projectDir, tabIds.right)[1];
+  expect(restarted.args).toEqual(["--resume", first[tabIds.right]]);
+
+  // The restarted process is watched too: its next /clear still reaches Aya.
+  const afterRestart = "7c8d9e0f-2222-4333-8444-a55566667777";
+  writeFileSync(
+    join(seeded.root, "home", "claude-config", "sessions", `${restarted.pid}.json`),
+    JSON.stringify({ pid: restarted.pid, sessionId: afterRestart }),
+  );
+  await expect.poll(saved, { timeout: 30_000 }).toMatchObject({ [tabIds.right]: afterRestart });
+});
+
+test.describe("a preset that sets its config dir only in the command", () => {
+  test.use({
+    seedOptions: {
+      fakeHome: true,
+      presetList: [
+        {
+          id: "shell",
+          name: "Claude",
+          icon: "c",
+          color: "",
+          agent: "claude",
+          autoResume: true,
+          command: `CLAUDE_CONFIG_DIR="$HOME/claude-config" '${NODE}' '${FAKE_CLAUDE}' "$AYA_PROJECT_DIR/claude-$AYA_TERMINAL_ID.jsonl"`,
+        },
+      ],
+    },
+  });
+
+  test("still has each pane's session id saved", async ({ window, seeded }) => {
+    const { projectDir, ayaHome, tabIds } = seeded;
+    await expect(window.getByTestId("xterm-host").first()).toBeVisible();
+    await expect.poll(() => launches(projectDir, tabIds.left).length, { timeout: 30_000 }).toBe(1);
+    const id = launches(projectDir, tabIds.left)[0].sessionId;
+    const saved = () =>
+      (JSON.parse(readFileSync(join(ayaHome, "projects", "e2e-proj.json"), "utf8")) as {
+        tabs: { id: string; sessionId?: string }[];
+      }).tabs.find((t) => t.id === tabIds.left)?.sessionId;
+    await expect.poll(saved, { timeout: 30_000 }).toBe(id);
+  });
 });

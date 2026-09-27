@@ -1210,12 +1210,14 @@ function TerminalViewComponent({
       ptyId: terminal.id,
       projectSlug: terminal.projectSlug,
       presetId: terminal.presetId,
+      agent: presetAgent,
+      agentConfigDir: preset.configDir,
       command: commandRef.current,
       cwd: cwdRef.current,
       cols: Math.max(term.cols, TERMINAL_FALLBACK_COLS),
       rows: Math.max(term.rows, TERMINAL_FALLBACK_ROWS),
     });
-  }, [restartTrigger, terminal.id]);
+  }, [restartTrigger, terminal.id, presetAgent, preset.configDir]);
 
   useEffect(() => {
     markRestoring(true);
