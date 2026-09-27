@@ -12,6 +12,8 @@ export type PtyHostRequest =
   // Live cwd of a PTY's child. Added after 0.7.8: a host from an older build
   // answers "unknown request", which the client turns back into null.
   | { id: number; type: "cwd"; ptyId: string }
+  // Why a message must not be typed into the pane now (vt-state paneHold).
+  | { id: number; type: "hold"; ptyId: string }
   | { id: number; type: "version" };
 
 export type PtyHostResponse =

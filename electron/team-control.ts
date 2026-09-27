@@ -18,6 +18,8 @@ export interface TeamControlDeps {
   /** Types text into a pane and presses Enter; throws when the pane refuses. */
   deliver: (terminalId: string, text: string) => Promise<void>;
   headCommit: (directory: string) => Promise<string | null>;
+  /** Set when Enter would do something else there; the message then waits. */
+  holdReason: (terminalId: string) => Promise<string | null>;
 }
 
 interface Membership {
@@ -89,7 +91,9 @@ async function send(m: Membership, to: string, text: string, deps: TeamControlDe
   const time = new Date().toISOString();
   const pane = await m.store.paneOf(to);
   let failure: string | null = pane ? null : `${to} has no pane`;
-  if (pane) {
+  const held = pane ? await deps.holdReason(pane) : null;
+  if (held) failure = `${to}'s pane ${held}, so nothing was typed`;
+  if (pane && !held) {
     try {
       await deps.deliver(pane, `${header(m.team.name, m.role.id, time, commit)} ${text}`);
     } catch (err) {

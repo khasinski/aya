@@ -60,6 +60,8 @@ export interface ControlServerOptions {
   onRequest?: (request: ControlRequest, caller: ControlCaller) => void;
   /** Aya home whose teams/ holds assignments and logs; teams are off without it. */
   teamHome?: string;
+  /** Why a pane must not be typed into now (approval prompt, draft, shell). */
+  holdReason?: (terminalId: string) => Promise<string | null>;
   /** The project's current commit, stamped on team messages. */
   headCommit?: (directory: string) => Promise<string | null>;
   /** Test-only override of the idle reap window. */
@@ -190,6 +192,7 @@ async function handleRequest(
       listProjects,
       deliver: (terminalId, text) => deliverToPane(writePane, terminalId, terminalId, text, true),
       headCommit: options.headCommit ?? (async () => null),
+      holdReason: options.holdReason ?? (async () => null),
     });
   }
   if (request.type === "focus") {

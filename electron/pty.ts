@@ -384,6 +384,11 @@ export function agentConfigDirsFromCommand(command: string): string[] {
   return dirs;
 }
 
+/** A plain interactive shell, not an agent: Enter would run typed text. */
+export function isShellCommand(command: string): boolean {
+  return /^(?:\$SHELL|(?:\S*\/)?(?:bash|zsh|sh|fish))(?:\s+-l)?\s*$/.test(command.trim());
+}
+
 /** Build the shell argv for a given command + cwd. Uses the user's login +
  *  interactive shell so PATH/env/functions from their rc files (zsh, fish,
  *  bash, etc.) flow through. Many user launchers are shell functions or PATH
@@ -665,6 +670,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
         sink.sendPtyEvent({ type: "vt-status", ptyId: req.ptyId, waiting });
       },
       req.agent,
+      isShellCommand(req.command),
     );
     // The command is logged verbatim: it is the single most diagnostic field
     // (e.g. did this respawn carry --continue?), and it is already stored in

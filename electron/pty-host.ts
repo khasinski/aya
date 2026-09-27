@@ -29,6 +29,7 @@ import {
   writePty,
   type PtyEventSink,
 } from "./pty";
+import { paneHold } from "./vt-state";
 import type { PtyEvent } from "./types";
 import { ptyLog } from "./pty-log";
 
@@ -147,6 +148,9 @@ async function handle(request: PtyHostRequest): Promise<unknown> {
   }
   if (request.type === "cwd") {
     return getPtyCwd(request.ptyId);
+  }
+  if (request.type === "hold") {
+    return paneHold(request.ptyId);
   }
   if (request.type === "version") {
     // pid lets a client correlate the socket-connected host with a registry

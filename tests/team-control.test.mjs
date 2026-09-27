@@ -33,7 +33,7 @@ One round every 30 minutes.
 `;
 
 /** A project with the team file, tester on pane-t, implementer on pane-i. */
-async function setup({ writePane, assign = true } = {}) {
+async function setup({ writePane, assign = true, holdReason } = {}) {
   const root = mkdtempSync(join(tmpdir(), "aya-team-ctl-"));
   const projectDir = join(root, "game");
   mkdirSync(join(projectDir, ".aya", "teams"), { recursive: true });
@@ -65,6 +65,7 @@ async function setup({ writePane, assign = true } = {}) {
     writePane: writePane ?? (async (id, data) => void writes.push({ id, data })),
     teamHome: ayaHome,
     headCommit: async () => "a1b2c3d",
+    holdReason: holdReason ?? (async () => null),
   });
   const aya = (pane, ...args) =>
     new Promise((done, fail) => {
@@ -182,6 +183,19 @@ test("the definition the user saved wins over later edits to the repo file", asy
       TEAM.replace("Must not: edit code", "Must not: nothing at all"),
     );
     assert.match((await t.aya("pane-t", "whoami")).stdout, /must not\s+edit code/);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a pane Aya must not type into keeps the message and says why", async () => {
+  const t = await setup({ holdReason: async (id) => (id === "pane-i" ? "shows an approval prompt" : null) });
+  try {
+    const sent = await t.aya("pane-t", "send", "implementer", "round 6");
+    assert.notEqual(sent.status, 0);
+    assert.match(sent.stderr, /implementer's pane shows an approval prompt.*inbox/);
+    assert.equal(t.writes.length, 0);
+    assert.equal((await t.store.unread("implementer")).length, 1);
   } finally {
     t.cleanup();
   }

@@ -33,6 +33,8 @@ export interface VtPane {
    *  a plain shell or an agent we have no rules for — those fall back to the
    *  generic rule set. */
   agent: AgentKind | undefined;
+  /** A plain shell: typed text would run as a command. */
+  shell: boolean;
   lastWaiting: boolean;
   /** Pending trailing scan, so a pane that goes quiet right after painting a
    *  prompt still gets scanned once more. */
@@ -48,6 +50,7 @@ export function openVtPane(
   rows: number,
   onChange: (waiting: boolean) => void,
   agent?: AgentKind,
+  shell = false,
 ): void {
   panes.set(ptyId, {
     terminal: new Terminal({
@@ -57,6 +60,7 @@ export function openVtPane(
       allowProposedApi: true,
     }),
     agent,
+    shell,
     lastWaiting: false,
     timer: null,
     onChange,
@@ -153,6 +157,39 @@ export function screenShowsApproval(
   agent?: AgentKind,
 ): boolean {
   return evaluateScreen(screenRows(terminal), agent) === "waiting";
+}
+
+// The composer prompt: Claude and Grok draw "❯", Codex "›", Grok inside a box.
+const COMPOSER_RE = /^\s*(?:│\s*)?[❯›]\s/;
+const FRAME_RE = /[─│╭╮╰╯\s]/g;
+
+/** True when the lowest prompt row holds text the user typed. Placeholders
+ *  are dim, and the box is drawn with frame characters, so both are skipped. */
+function composerHasDraft(terminal: Terminal): boolean {
+  const buffer = terminal.buffer.active;
+  for (let y = buffer.length - 1; y >= 0; y -= 1) {
+    const line = buffer.getLine(y);
+    const text = line?.translateToString(true) ?? "";
+    const prompt = text.match(COMPOSER_RE);
+    if (!line || !prompt) continue;
+    let typed = "";
+    for (let x = prompt[0].length; x < line.length; x += 1) {
+      const cell = line.getCell(x);
+      if (cell && !cell.isDim()) typed += cell.getChars();
+    }
+    return typed.replace(FRAME_RE, "") !== "";
+  }
+  return false;
+}
+
+/** Why a message must not be typed into this pane now, or null. */
+export function paneHold(ptyId: string): string | null {
+  const pane = panes.get(ptyId);
+  if (!pane) return null;
+  if (pane.shell) return "runs a shell";
+  if (evaluateScreen(screenRows(pane.terminal), pane.agent) === "waiting") return "shows an approval prompt";
+  if (composerHasDraft(pane.terminal)) return "has text the user is typing";
+  return null;
 }
 
 export function __testVtPane(ptyId: string): VtPane | undefined {

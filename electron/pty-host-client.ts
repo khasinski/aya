@@ -167,6 +167,17 @@ export class PtyHostClient {
     return typeof result === "string" ? result : "";
   }
 
+  /** Why a message must not be typed into the pane now, or null. A host from
+   *  an older build does not know the request; that also reads as null. */
+  async holdReason(ptyId: string): Promise<string | null> {
+    try {
+      const result = await this.request({ id: 0, type: "hold", ptyId });
+      return typeof result === "string" ? result : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Live cwd of a PTY's child, or null when it can't be determined. A host
    *  left over from a build that predates this request answers "unknown
    *  request" — that rejection is a null here, not an error the caller has to

@@ -3112,6 +3112,7 @@ app.whenReady().then(async () => {
     writePane: (terminalId, data) => ptyHost.write(terminalId, data),
     teamHome: AYA_HOME,
     headCommit,
+    holdReason: (terminalId) => ptyHost.holdReason(terminalId),
     onRequest: (request, caller) => {
       // Aya's own automatic-status hooks call `aya status` from inside every
       // Claude/Codex pane; counting them would read as ~100% adoption (#121).
