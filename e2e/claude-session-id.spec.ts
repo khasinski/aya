@@ -112,3 +112,38 @@ test.describe("a preset that sets its config dir only in the command", () => {
     await expect.poll(saved, { timeout: 30_000 }).toBe(id);
   });
 });
+
+test.describe("after an update or reboot", () => {
+  const left = "a37e123d-4752-436a-8c1a-595a45fbf5cf";
+  const right = "bce5be79-626a-40ca-8944-b26218faa687";
+  test.use({
+    seedOptions: {
+      fakeHome: true,
+      tabSessionIds: { left, right },
+      presetList: [
+        {
+          id: "shell",
+          name: "Claude",
+          icon: "c",
+          color: "",
+          agent: "claude",
+          autoResume: true,
+          configDir: "~/claude-config",
+          command: `CLAUDE_CONFIG_DIR="$HOME/claude-config" '${NODE}' '${FAKE_CLAUDE}' "$AYA_PROJECT_DIR/claude-$AYA_TERMINAL_ID.jsonl"`,
+        },
+      ],
+    },
+  });
+
+  test("each pane starts in the conversation saved for it", async ({ window, seeded }) => {
+    const { projectDir, tabIds } = seeded;
+    await expect(window.getByTestId("xterm-host").first()).toBeVisible();
+    for (const [tab, id] of [
+      [tabIds.left, left],
+      [tabIds.right, right],
+    ]) {
+      await expect.poll(() => launches(projectDir, tab).length, { timeout: 30_000 }).toBe(1);
+      expect(launches(projectDir, tab)[0].args).toEqual(["--resume", id]);
+    }
+  });
+});

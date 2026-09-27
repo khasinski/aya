@@ -25,3 +25,25 @@ export async function readClaudeSessionId(
     return null;
   }
 }
+
+/** Reports the conversation a claude process is in on every poll, not only on
+ *  change: an event sent while no Aya window is connected is lost. */
+export function watchClaudeSession(
+  configDir: string | undefined,
+  pid: number,
+  report: (sessionId: string) => void,
+  intervalMs: number = CLAUDE_SESSION_POLL_MS,
+): () => void {
+  let stopped = false;
+  const timer = setInterval(async () => {
+    const sessionId = await readClaudeSessionId(configDir, pid);
+    // A restart reuses the pty id: a read still in flight must not report
+    // the old process's session over the new one's.
+    if (!stopped && sessionId) report(sessionId);
+  }, intervalMs);
+  timer.unref();
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
+}

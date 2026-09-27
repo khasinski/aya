@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { claudeConfigDir, readClaudeSessionId } from "../dist-electron/claude-session.js";
+import { claudeConfigDir, readClaudeSessionId, watchClaudeSession } from "../dist-electron/claude-session.js";
 
 function configDir(sessions) {
   const dir = mkdtempSync(join(tmpdir(), "aya-claude-"));
@@ -55,4 +55,28 @@ test("claudeConfigDir: the preset's dir, else CLAUDE_CONFIG_DIR, else ~/.claude"
     if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR;
     else process.env.CLAUDE_CONFIG_DIR = saved;
   }
+});
+
+test("watchClaudeSession reports the id on every poll, so a window that missed one still gets it", async () => {
+  const dir = configDir({ 7: JSON.stringify({ pid: 7, sessionId: "8c57e24a-75d4-41b9-85e7-6465b1cae474" }) });
+  const seen = [];
+  const stop = watchClaudeSession(dir, 7, (id) => seen.push(id), 10);
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  } finally {
+    stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+  assert.ok(seen.length >= 2, `reported ${seen.length} time(s)`);
+  assert.ok(seen.every((id) => id === "8c57e24a-75d4-41b9-85e7-6465b1cae474"));
+});
+
+test("watchClaudeSession stays quiet once stopped", async () => {
+  const dir = configDir({ 7: JSON.stringify({ pid: 7, sessionId: "8c57e24a-75d4-41b9-85e7-6465b1cae474" }) });
+  const seen = [];
+  const stop = watchClaudeSession(dir, 7, (id) => seen.push(id), 10);
+  stop();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  rmSync(dir, { recursive: true, force: true });
+  assert.equal(seen.length, 0);
 });

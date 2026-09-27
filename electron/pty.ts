@@ -30,7 +30,7 @@ import { getProcessCwd } from "./process-cwd";
 import { ptyLog } from "./pty-log";
 import { pathWithFallbackDir } from "./agent-brief";
 import { bundledAyaCliPath } from "./cli-path";
-import { CLAUDE_SESSION_POLL_MS, readClaudeSessionId } from "./claude-session";
+import { watchClaudeSession } from "./claude-session";
 
 // Timeout for the shell `command -v` existence check during spawn preflight.
 
@@ -719,7 +719,14 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       }
     });
 
-    const stopSessionWatch = req.agent === "claude" ? watchClaudeSession(req, child.pid, sink) : null;
+    const stopSessionWatch =
+      req.agent === "claude"
+        ? watchClaudeSession(
+            req.agentConfigDir ?? agentConfigDirsFromCommand(req.command)[0],
+            child.pid,
+            (sessionId) => sink.sendPtyEvent({ type: "osc-session", ptyId: req.ptyId, sessionId }),
+          )
+        : null;
 
     child.onExit(({ exitCode, signal }) => {
       stopSessionWatch?.();
@@ -748,27 +755,6 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     // A live PTY means the flush ran; anything else discarded the queue.
     settleSpawnWaiters(req.ptyId, ptys.has(req.ptyId));
   }
-}
-
-/** Reports the conversation a claude pane is in whenever it changes (a new
- *  session, /clear, /resume), so a restart resumes that pane's own one. */
-function watchClaudeSession(req: SpawnRequest, pid: number, sink: PtyEventSink): () => void {
-  const configDir = req.agentConfigDir ?? agentConfigDirsFromCommand(req.command)[0];
-  let reported: string | null = null;
-  let stopped = false;
-  const timer = setInterval(async () => {
-    const sessionId = await readClaudeSessionId(configDir, pid);
-    // A restart reuses the pty id: a read still in flight must not report
-    // the old process's session over the new one's.
-    if (stopped || !sessionId || sessionId === reported || sink.isDestroyed()) return;
-    reported = sessionId;
-    sink.sendPtyEvent({ type: "osc-session", ptyId: req.ptyId, sessionId });
-  }, CLAUDE_SESSION_POLL_MS);
-  timer.unref();
-  return () => {
-    stopped = true;
-    clearInterval(timer);
-  };
 }
 
 /** The child's LIVE cwd, not the one it was spawned with (a `cd` moves it).

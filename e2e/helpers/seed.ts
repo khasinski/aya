@@ -56,6 +56,8 @@ export interface SeedOptions {
   pathRepairHarness?: boolean;
   /** HOME = <root>/home, for code that writes under the user's home. */
   fakeHome?: boolean;
+  /** Session ids already saved on the tabs, as a previous run left them. */
+  tabSessionIds?: { left?: string; right?: string };
   /** Stub executables put first on PATH, so harness detection finds them. */
   fakeBins?: string[];
   /** #115's machine: an rvm gemset first on PATH with a working Aya shim, dead
@@ -167,11 +169,17 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
         name: "e2e",
         directory: effectiveProjectDir,
         tabs: [
-          { id: left, presetId: "shell", name: "shell 1" },
+          {
+            id: left,
+            presetId: "shell",
+            name: "shell 1",
+            ...(opts.tabSessionIds?.left ? { sessionId: opts.tabSessionIds.left } : {}),
+          },
           {
             id: right,
             presetId: "shell",
             name: "shell 2",
+            ...(opts.tabSessionIds?.right ? { sessionId: opts.tabSessionIds.right } : {}),
             ...(worktreeDir ? { cwd: worktreeDir } : {}),
           },
         ],
