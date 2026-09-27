@@ -1,67 +1,145 @@
 # Per-project agent toggles (design)
 
-Status: proposal, nothing implemented yet.
+Status: proposal, not implemented. Reviewed with Codex (2 rounds).
+Measurements: Claude Code 2.1.283, fresh `claude -p` sessions (haiku).
 
 ## Why
 
-Global Claude skills, plugins and MCP servers are useful in most projects, but
-in some projects I want them gone: they cost context, they trigger where they
-do not belong, and a project may need a clean agent. Claude Code has no switch
-for "disable all global skills in this project". `skillOverrides` takes exact
-names only (no wildcard), and per-project `enabledPlugins` is written by hand.
-Listing every name per project, and keeping those lists current when a new
-global skill appears, is exactly the chore Aya can do.
-
-## What exists upstream (checked 2026-09-27)
-
-- anthropics/claude-code#37463 (per-project enable/disable of skills) was
-  closed as completed with `skillOverrides`, which is keyed by exact name.
-- #17685 (disable global skills per project) closed as a duplicate, #30355
-  (disable auto-triggering per project) is open, #62174 (per-project
-  `enabledPlugins`) closed as not planned.
-- Claude Code 2.1.283 schema: `skillOverrides` values are `on`, `name-only`,
-  `user-invocable-only`, `off`; plugin skills are not affected by it.
+- Global skills, plugins and MCP servers are wanted in most projects, not all.
+- Claude Code has no "disable all global skills here" switch.
+- `skillOverrides` is keyed by exact name, no wildcard.
+- Upstream: anthropics/claude-code#37463 closed with `skillOverrides`,
+  #17685 duplicate, #30355 open, #62174 (per-project `enabledPlugins`) not
+  planned.
 
 ## Rules
 
-1. A project stores **exclusions only**. Anything not excluded is on.
-2. A global item added later is therefore **on by default** in every project
-   and shows up in each project's list as on.
-3. Aya refreshes the inventory **once a day** and whenever the panel opens.
-4. Nothing is written into the project's repo. Exclusions are passed at spawn
-   time with `claude --settings '<json>'`.
-5. A change applies to the next start or resume of a session. Running sessions
-   keep what they started with (that is how Claude Code loads settings).
+1. A project stores exclusions only. Not excluded = allowed by Aya.
+2. A global item added later is allowed in every project by default.
+3. Inventory refresh: once a day, on panel open, on "Refresh now".
+4. Spawn never depends on the inventory. Stored exclusions are enough.
+5. Nothing is written into the project's repo.
+6. Scope: `claude` presets on local projects only. Remote (ssh) projects and
+   other agents: toggles disabled with a reason, and spawn skips them too.
+7. Not a security boundary. Skill files stay readable; other CLIs unaffected.
 
-## What can be toggled
+## Mechanisms (measured)
 
-Every row was verified on a fresh `claude -p` session (haiku), counting the
-items the model sees without and with the setting:
-
-| Kind | Where Aya reads the list | How it is turned off | Measured |
+| Kind | Inventory source | Overlay key | Measured |
 |---|---|---|---|
-| User skills | `<profile>/skills/*/` | `skillOverrides: {name: "off"}` | 53 skills -> 13 (only bundled left) |
-| Skills synced from claude.ai | `<profile>/skills/synced/*/*/` | `skillOverrides: {name: "off"}` | `pdf`, `docx`, `morning` ... gone |
+| User skills | `<profile>/skills/*/` | `skillOverrides: {name: "off"}` | 53 skills -> 13 |
+| Skills synced from claude.ai | `<profile>/skills/synced/*/*/` | `skillOverrides: {name: "off"}` | `pdf`, `docx`, `morning` gone |
 | Plugins | `<profile>/plugins/installed_plugins.json` | `enabledPlugins: {id: false}` | 14 `recall-loop:*` skills -> 0 |
-| MCP servers | `<profile>/.claude.json` `mcpServers` | `permissions.deny: ["mcp__<name>"]` | 30 `chrome-devtools` tools -> 0 |
-| Bundled Claude Code skills | no list on disk | `disableBundledSkills: true` (one switch) | 4 sampled -> 0 |
+| MCP servers, global | `~/.claude.json` (default profile) or `<profile>/.claude.json`, key `mcpServers` | `permissions.deny: ["mcp__<name>"]` | 30 `chrome-devtools` tools -> 0 |
+| MCP servers, per project | same file, `projects[<dir>].mcpServers` | same | not measured separately |
+| Bundled skills | none on disk | `disableBundledSkills: true` | 4 sampled -> 0 |
 
-`<profile>` is each distinct `CLAUDE_CONFIG_DIR` used by a preset (for example
-`~/.claude` and a second profile dir). Hooks are out of scope: turning them off
-would also turn off Aya's own status and usage hooks.
+## Claude Code behavior the design depends on (measured)
+
+| Behavior | Result | Consequence |
+|---|---|---|
+| `skillOverrides {"grok":"off"}` with a project skill `.claude/skills/grok` | project skill hidden too | exclusion is name-wide; row shows a collision warning |
+| user and project skill with the same name | only one listed | inventory keeps source per row |
+| two `--settings` flags | last one wins entirely, no merge | Aya must merge with the preset's own `--settings` |
+| `--resume <id>` with a new exclusion | skill still listed (transcript snapshot), invocation returns "disabled ... in skillOverrides settings" | resume = blocked, not hidden; fresh session to drop it from context |
+| `skillOverrides` on plugin skills | no effect | plugins only via `enabledPlugins` |
+| disabling a plugin | disables the whole plugin, incl. its hooks | shown in the panel; Aya's hooks live in user settings, unaffected |
+
+## Storage
+
+- Field on `ProjectConfig`, saved in `~/.aya/projects/<slug>.json`:
+
+  ```json
+  "agentExclusions": {
+    "claude": {
+      "skills": ["grok", "spec-checker"],
+      "plugins": ["recall-loop@claude-code-recall-loop"],
+      "mcpServers": ["chrome-devtools"],
+      "bundledSkills": false
+    }
+  }
+  ```
+
+- Must be added at every explicit field list, or it is silently dropped:
+  - `electron/types.ts` `ProjectConfig`
+  - `src/types.ts` renderer `ProjectConfig`
+  - `electron/config.ts` read path (`listProjects`) and `toDisk`
+  - `electron/validation.ts` `projects:update`
+- Missing field = no exclusions. Malformed field = no exclusions + logged.
+- Optional additive field, no schema bump. Older Aya drops it on next save.
+- Round-trip test: write, reload, update, reload.
+
+## Inventory
+
+- One scan per distinct profile dir used by presets.
+- Row identity: `kind + name`. Row keeps provenance: profiles, source path,
+  project path (per-project MCP), affected presets.
+- Plugin skills keep their `plugin:skill` namespace; the `synced` container
+  dir is not a skill.
+- Cache: `~/.aya/agent-inventory.json` with `refreshedAt`, per-source errors,
+  last good result kept on error.
+- Daily refresh: one-shot timer re-armed while Aya runs; stale cache
+  refreshed at startup, async, never during spawn.
+- `NEW` = not in the last-seen set. Last-seen advances only on Save or on
+  explicit dismiss, not on refresh, not on Cancel.
+
+## Spawn pipeline
+
+Current order: renderer `commandWithAutoResume` (`src/App.tsx:523`) ->
+`pty:spawn` (`electron/main.ts:2287`) -> `withAgentBrief` -> pty host ->
+`shellArgv` (`electron/pty.ts:396`).
+
+Change, in main, after request validation, before `withAgentBrief`:
+
+1. Resolve agent from the preset, not the request (restart omits `agent`,
+   `src/components/TerminalView.tsx:1208`).
+2. If not claude, remote, or no exclusions: pass the command unchanged.
+3. Tokenize the command. Find `--settings X` / `--settings=X`, ignoring
+   text inside quoted values.
+4. Base settings = last occurrence only (measured: last wins).
+   - inline JSON: parse
+   - literal path: resolve against `request.cwd`, read, parse
+   - `$VAR`, `$(...)`, unreadable, invalid JSON: status "not applied",
+     launch with the original command
+5. Merge: base keys kept, Aya keys win, `permissions.deny` unioned.
+   Only base + overlay, never the flattened effective config.
+6. Write to `~/.aya/agent-settings/<sha256>.json`, content-addressed,
+   atomic, mode 0600. Await the write before spawn.
+7. Remove all `--settings` occurrences, append one `--settings '<abs path>'`.
+   Keep resume args already added.
+8. Continue to `withAgentBrief`. Its punctuation guard runs before brief
+   injection, as today.
+
+- No JSON in the shell string, so no quoting of user data.
+- Content-addressed files: concurrent restores with different presets never
+  overwrite each other.
+- Cleanup: path registered per PTY. GC deletes only files not referenced
+  by any PTY the host reports alive (the host outlives the app,
+  `electron/pty-host-client.ts:254`). Never on app quit or project close.
+
+## Per-tab status
+
+| Status | Meaning |
+|---|---|
+| applied | process started with the current revision |
+| pending restart | exclusions changed after this process started |
+| resumed | started with `--resume`/`--continue`: blocked, may still be listed |
+| not applied | merge failed; reason shown |
+| n/a | not claude, or remote |
+
+- Stored per process: revision, settings path, reason.
+- Reattached PTYs keep their recorded status (the host ignores a new spawn
+  for an existing PTY, `electron/pty.ts:487`).
 
 ## UX
 
 ### Entry point: project context menu
 
-Right-click a project in the left sidebar. The menu today only has "Move to
-..." entries; one item is added.
-
 ```
  PROJECTS
  ┌──────────────────────────┐
  │ ● aya                    │  right-click
- │   game         ⊘ 26 off  │ ┌──────────────────────────────┐
+ │   game         ⊘ 26 excl │ ┌──────────────────────────────┐
  │   ruby_llm-contract      │ │ Agent tools...               │
  │   blog                   │ │ ──────────────────────────── │
  └──────────────────────────┘ │ Move to New Window           │
@@ -69,125 +147,99 @@ Right-click a project in the left sidebar. The menu today only has "Move to
                               └──────────────────────────────┘
 ```
 
-A project with exclusions gets a quiet `⊘ N off` badge in the sidebar, so a
-missing skill is never a mystery.
+- Badge counts exclusions of items currently installed (not `GONE`).
 
-### Panel: Agent tools for one project
-
-```
-┌─ Agent tools - game ────────────────────────────────────────── [x] ─┐
-│                                                                     │
-│  Claude sessions in this project start with these turned off.       │
-│  Changes apply to the next start or resume of a session.            │
-│                                                                     │
-│  [ Filter...                   ]   [All on]  [All off]              │
-│                                                                     │
-│  Inventory refreshed today 09:14    [Refresh now]                   │
-│                                                                     │
-│  ▾ Skills (19)                                   17 on · 2 off      │
-│    [■] anti-facade-pre-claim         ~/.claude                      │
-│    [■] bounded-sink-audit            ~/.claude                      │
-│    [ ] grok                          ~/.claude                      │
-│    [■] ship-gate                     ~/.claude                      │
-│    [ ] spec-checker                  ~/.claude                      │
-│    [■] weekly-summary      NEW       ~/.claude                      │
-│    ...                                                              │
-│                                                                     │
-│  ▾ Skills from claude.ai (9)                      9 on              │
-│    [■] docs  [■] docx  [■] pdf  [■] pptx  [■] xlsx  ...             │
-│                                                                     │
-│  ▾ Plugins (7)                                    6 on · 1 off      │
-│    [ ] recall-loop           claude-code-recall-loop   14 skills    │
-│    [■] atlassian             claude-plugins-official    4 skills    │
-│    [■] rotate-context        claude-code-rotate-context 1 skill     │
-│    ...                                                              │
-│                                                                     │
-│  ▸ MCP servers (1)                                1 on              │
-│                                                                     │
-│  ▸ Built-in Claude Code skills                    on                │
-│    [■] code-review, simplify, loop, init, ... (one switch)          │
-│                                                                     │
-│  ─────────────────────────────────────────────────────────────────  │
-│  Preview: what the next session gets                  [Copy JSON]   │
-│  claude --settings '{"skillOverrides":{"grok":"off",...}}'          │
-│                                                                     │
-│                                           [Cancel]  [Save]          │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-- `[■]` on, `[ ]` off. Sections are collapsible; the counts stay visible.
-- `NEW` marks an item that appeared since the last refresh. It is on, per
-  rule 2. The mark clears after the panel is opened once.
-- The profile column shows which config dir the item comes from; a name found
-  in several profiles is one row (the override is keyed by name).
-- "All off" is the one-click answer to "no global tools in this project".
-  It stores the current names; a later new item still arrives on.
-- The preview shows the exact flag the next session gets, so the effect can
-  be checked by hand.
-
-### Item that disappeared from the inventory
+### Panel
 
 ```
-│  ▾ Skills (19)                                                      │
-│    [ ] old-audit           GONE   excluded, no longer installed [×] │
+┌─ Agent tools - game (Claude) ─────────────────────────────────── [x] ─┐
+│                                                                       │
+│  Excluded by Aya in new Claude sessions of this project.              │
+│  Resumed sessions: excluded skills are blocked but may stay listed.   │
+│                                                                       │
+│  [ Filter...                ]  [Allow listed]  [Exclude listed]       │
+│  Inventory: today 09:14  (~/.claude)                  [Refresh now]   │
+│                                                                       │
+│  ▾ Skills (19)                          17 allowed · 2 excluded       │
+│    [✓] anti-facade-pre-claim     ~/.claude                            │
+│    [ ] grok                      ~/.claude                            │
+│        ! also hides this project's .claude/skills/grok                │
+│    [✓] ship-gate                 ~/.claude                            │
+│    [ ] spec-checker              ~/.claude                            │
+│    [✓] weekly-summary   NEW      ~/.claude                            │
+│    [ ] old-audit        GONE     not installed anymore          [×]   │
+│                                                                       │
+│  ▾ Skills from claude.ai (9)                   9 allowed              │
+│    [✓] docs  [✓] docx  [✓] pdf  [✓] pptx  [✓] xlsx  ...               │
+│                                                                       │
+│  ▾ Plugins (7)                          6 allowed · 1 excluded        │
+│    [ ] recall-loop     14 skills, 1 hook   whole plugin is disabled   │
+│    [✓] atlassian        4 skills                                      │
+│                                                                       │
+│  ▸ MCP servers (2)                      2 allowed                     │
+│      chrome-devtools (global) · conftrace (this project)              │
+│                                                                       │
+│  ▸ Built-in Claude Code skills          allowed (one switch)          │
+│                                                                       │
+│  ───────────────────────────────────────────────────────────────────  │
+│  Overlay passed to the next session                  [Copy JSON]      │
+│  {"skillOverrides":{"grok":"off","spec-checker":"off"},...}           │
+│  ! preset "claude-work" has its own --settings: merged, Aya wins      │
+│                                                                       │
+│                                               [Cancel]  [Save]        │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
-An exclusion whose item is no longer installed stays stored (it may come
-back) and is shown as `GONE` with a button to drop it. It is still passed to
-`--settings`; an override for a missing name is harmless.
+- `[✓]` allowed by Aya, `[ ]` excluded by Aya. Allowed does not override
+  managed or other settings that disable an item.
+- `[Allow listed]` / `[Exclude listed]` act on rows matching the filter.
+  Items installed later still arrive allowed.
+- `GONE`: excluded, no longer installed. Kept (may come back), still passed,
+  `[×]` drops it.
+- Remote project or non-claude preset: panel read-only with the reason.
 
-### Running sessions after Save
+### After Save
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Saved. 2 Claude sessions in game still run with the old    │
-│  set. They pick up the change when restarted or resumed.    │
-│                                         [Restart them] [OK] │
+│  Saved. 2 Claude tabs in game: pending restart.             │
+│    Tab 1  claude   working   pending restart                │
+│    Tab 3  claude   idle      pending restart                │
+│  Restarting a tab with auto-resume blocks the new           │
+│  exclusions but keeps old skill names in its context.       │
+│                                                       [OK]  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## How it works
+- No bulk restart in v1 (would interrupt running work).
 
-```
- once a day / panel open                     tab spawn (pty:spawn)
- ─────────────────────────                   ─────────────────────
- for each preset profile dir:                project = tab's project
-   skills/*, skills/synced/*/*               excl = project.agentExclusions
-   plugins/installed_plugins.json            if agent is claude and excl != {}:
-   .claude.json mcpServers                     json = buildSettings(excl)
-        │                                      cmd += --settings '<json>'
-        ▼                                            │
- ~/.aya/agent-inventory.json                         ▼
- { refreshedAt, items[{kind,name,profiles}] }   spawnPty(...)
-```
+## Tests
 
-- Storage: a new optional field on `ProjectConfig` (`electron/types.ts`),
-  saved in `~/.aya/projects/<slug>.json`:
+- Fake agent from `e2e/agent-brief.spec.ts` (records argv/env):
+  - no exclusions: command unchanged
+  - exclusions: one `--settings <path>`, file content, mode 0600
+  - preset with inline / `=` / relative-path `--settings`: merged, last wins
+  - dynamic or unreadable `--settings`: original command, status not applied
+  - resume args and brief still present, order unchanged
+  - restart without `agent` in the request
+  - two presets restored at once: two files, no overwrite
+  - remote project, non-claude preset: unchanged
+- Unit: `ProjectConfig` round-trip, validation of malformed field.
+- Pinned real-Claude acceptance matrix (manual or nightly, not CI):
+  project-skill collision, last-`--settings`-wins, resume behavior for
+  skills, plugins, bundled skills and MCP.
 
-  ```json
-  "agentExclusions": {
-    "skills": ["grok", "spec-checker"],
-    "plugins": ["recall-loop@claude-code-recall-loop"],
-    "mcpServers": [],
-    "bundledSkills": false
-  }
-  ```
+## Unverified
 
-- Spawn: next to `withAgentBrief` in the `pty:spawn` handler, only for
-  commands detected as `claude` (same detection as `src/agentPreset.ts`).
-- Inventory: read-only scan in main, cached with its timestamp. A one-shot
-  timer re-arms itself for the next day while Aya runs; a stale cache is
-  refreshed at startup.
+- Resume behavior for plugin skills, bundled skills and MCP tools.
+- A copied settings file behaving the same as the original (watching,
+  relative values inside).
+- `--dangerously-skip-permissions` presets vs MCP deny rules.
+- Late reads of the settings file by the claude process after start.
 
 ## Out of scope for v1
 
-- Codex, Grok, opencode and other agents (each has its own mechanism).
-- Remote (ssh) projects: the inventory would have to come from the remote
-  host.
-- Subagents (`Agent(name)` deny) and hooks.
-
-## Open questions
-
-- If a preset's command already has its own `--settings`, merge the two or
-  skip and warn? My lean: skip and show a warning in the panel.
-- Should "Restart them" exist in v1, or is the notice enough?
+- Codex, Grok, opencode and other agents.
+- Remote (ssh) projects.
+- Subagents (`Agent(name)` deny) and settings hooks.
+- Bulk restart of running tabs.
