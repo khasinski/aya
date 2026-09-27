@@ -78,8 +78,8 @@ test("the saved definition is kept verbatim", async () => {
 test("messages get increasing ids and the log is private", async () => {
   const store = fresh();
   try {
-    const a = await store.append({ from: "tester", to: "implementer", commit: "a1b2c3d", text: "one" });
-    const b = await store.append({ from: "implementer", to: "tester", commit: null, text: "two" });
+    const a = await store.append({ from: "tester", to: "implementer", commit: "a1b2c3d", text: "one", delivered: false });
+    const b = await store.append({ from: "implementer", to: "tester", commit: null, text: "two", delivered: false });
     assert.equal(a.id, 1);
     assert.equal(b.id, 2);
     assert.match(a.time, /^\d{4}-\d\d-\d\dT/);
@@ -92,9 +92,9 @@ test("messages get increasing ids and the log is private", async () => {
 test("inbox shows a role's unread messages until it marks them read", async () => {
   const store = fresh();
   try {
-    await store.append({ from: "tester", to: "implementer", commit: null, text: "one" });
-    await store.append({ from: "implementer", to: "tester", commit: null, text: "not yours" });
-    await store.append({ from: "tester", to: "implementer", commit: null, text: "two" });
+    await store.append({ from: "tester", to: "implementer", commit: null, text: "one", delivered: false });
+    await store.append({ from: "implementer", to: "tester", commit: null, text: "not yours", delivered: false });
+    await store.append({ from: "tester", to: "implementer", commit: null, text: "two", delivered: false });
     const unread = await store.unread("implementer");
     assert.deepEqual(unread.map((m) => m.text), ["one", "two"]);
     await store.markRead("implementer", unread.at(-1).id);
@@ -105,12 +105,23 @@ test("inbox shows a role's unread messages until it marks them read", async () =
   }
 });
 
+test("a message typed into the pane is not repeated by the inbox", async () => {
+  const store = fresh();
+  try {
+    await store.append({ from: "tester", to: "implementer", commit: null, text: "typed", delivered: true });
+    await store.append({ from: "tester", to: "implementer", commit: null, text: "waiting", delivered: false });
+    assert.deepEqual((await store.unread("implementer")).map((m) => m.text), ["waiting"]);
+  } finally {
+    done(store);
+  }
+});
+
 test("concurrent appends never share an id", async () => {
   const store = fresh();
   try {
     const sent = await Promise.all(
       Array.from({ length: 20 }, (_, i) =>
-        store.append({ from: "tester", to: "implementer", commit: null, text: `m${i}` }),
+        store.append({ from: "tester", to: "implementer", commit: null, text: `m${i}`, delivered: false }),
       ),
     );
     assert.equal(new Set(sent.map((m) => m.id)).size, 20);

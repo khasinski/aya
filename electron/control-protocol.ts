@@ -1,3 +1,4 @@
+import type { TeamRequest } from "./team-control";
 import type { ControlStatusUpdate } from "./types";
 
 export type ControlRequest =
@@ -43,7 +44,8 @@ export type ControlRequest =
       projectSlug?: string;
       selfTerminalId?: string;
     }
-  | { type: "capabilities" };
+  | { type: "capabilities" }
+  | TeamRequest;
 
 /** The calling pane (AYA_TERMINAL_ID / AYA_PRESET_ID), sent with every request
  *  to measure adoption per harness (#117); absent outside Aya. */
@@ -83,6 +85,13 @@ export function parseControlRequest(value: unknown): ControlRequest {
     return { type, path: target };
   }
   if (type === "focus") return { type };
+  if (type === "team-whoami" || type === "team-inbox") return { type };
+  if (type === "team-send") {
+    const role = optionalString(value.role);
+    const text = typeof value.text === "string" ? value.text : "";
+    if (!role || !text) throw new Error("team-send needs a role and text");
+    return { type, role, text };
+  }
   if (type === "capabilities") return { type };
   if (type === "notify") {
     const body = optionalString(value.body);

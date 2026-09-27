@@ -22,6 +22,9 @@ Usage:
   aya pane send name [--no-submit] text
                                      Type text into another pane and press
                                      Enter (--no-submit: type only)
+  aya team whoami                    Print this pane's team role and protocol
+  aya team send role text            Send a message to the pane playing role
+  aya team inbox                     Print messages that could not be typed in
   aya capabilities                   Print these commands as JSON, for agents
 EOF
 }
@@ -111,6 +114,10 @@ function requestFromArgs() {
       submit: process.argv[6] === "submit",
       projectSlug: optionalEnv("AYA_PROJECT_SLUG"),
     };
+  }
+  if (kind === "team-whoami" || kind === "team-inbox") return { type: kind };
+  if (kind === "team-send") {
+    return { type: "team-send", role: process.argv[4], text: process.argv[5] };
   }
   throw new Error(`unknown command: ${kind}`);
 }
@@ -332,6 +339,29 @@ case "$command" in
           exit 1
         fi
         send_control pane-send "$target" "$text" "$submit"
+        ;;
+      *)
+        usage
+        exit 1
+        ;;
+    esac
+    ;;
+  team)
+    shift || true
+    action="${1:-}"
+    shift || true
+    case "$action" in
+      whoami) send_control team-whoami ;;
+      inbox) send_control team-inbox ;;
+      send)
+        role="${1:-}"
+        shift || true
+        text="$*"
+        if [ -z "$role" ] || [ -z "$text" ]; then
+          usage
+          exit 1
+        fi
+        send_control team-send "$role" "$text"
         ;;
       *)
         usage

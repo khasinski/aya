@@ -263,6 +263,20 @@ export async function getGitRoot(directory: string): Promise<string | null> {
   }
 }
 
+/** Short hash of HEAD; null outside a repo or before the first commit. */
+export async function headCommit(directory: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["--no-optional-locks", "rev-parse", "--short", "HEAD"],
+      { cwd: directory, ...OPTS },
+    );
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 export interface GitChangedFile {
   status: string;
   path: string;

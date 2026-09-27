@@ -13,6 +13,8 @@ export interface TeamMessage {
   to: string;
   commit: string | null;
   text: string;
+  /** Typed into the recipient's pane; the rest wait for its inbox. */
+  delivered: boolean;
 }
 
 export function teamDir(ayaHome: string, project: string, team: string): string {
@@ -117,7 +119,7 @@ export class TeamStore {
 
   async unread(role: string): Promise<TeamMessage[]> {
     const read = (await readJson<Record<string, number>>(this.file("read.json"), {}))[role] ?? 0;
-    return (await this.messages()).filter((m) => m.to === role && m.id > read);
+    return (await this.messages()).filter((m) => m.to === role && !m.delivered && m.id > read);
   }
 
   markRead(role: string, id: number): Promise<void> {

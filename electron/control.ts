@@ -16,6 +16,7 @@ import {
   tailForPaneRead,
 } from "./pane-target";
 import { CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
+import { handleTeamRequest } from "./team-control";
 import type { ControlStatusUpdate, ProjectConfig } from "./types";
 
 // Max control-socket message size before rejecting the request (bytes).
@@ -57,6 +58,10 @@ export interface ControlServerOptions {
   openProject: (directory: string) => void;
   /** Every parsed request, with the pane it came from (adoption, #117). */
   onRequest?: (request: ControlRequest, caller: ControlCaller) => void;
+  /** Aya home whose teams/ holds assignments and logs; teams are off without it. */
+  teamHome?: string;
+  /** The project's current commit, stamped on team messages. */
+  headCommit?: (directory: string) => Promise<string | null>;
   /** Test-only override of the idle reap window. */
   idleTimeoutMs?: number;
 }
@@ -93,18 +98,28 @@ async function handlePaneRequest(
     const output = await options.readPane(terminalId);
     return { terminalId, projectSlug, name, output: tailForPaneRead(output) };
   }
-  const writePane = options.writePane;
-  // Serialized per terminal: the 150 ms submit gap splits a send into two
-  // writes, so concurrent sends to one pane would interleave.
+  await deliverToPane(options.writePane, terminalId, name, request.text, request.submit === true);
+  return { terminalId, projectSlug, name };
+}
+
+/** Types text into a pane, then Enter when `submit`. Serialized per terminal:
+ *  the 150 ms submit gap splits a send into two writes that must not interleave. */
+function deliverToPane(
+  writePane: NonNullable<ControlServerOptions["writePane"]>,
+  terminalId: string,
+  name: string,
+  text: string,
+  submit: boolean,
+): Promise<void> {
   return withPaneLock(terminalId, async () => {
     // Raw bytes, unlike the snippet drawer's bracketed paste: macOS bash 3.2 has
     // none and would take the markers as command text. "\r" is Enter, not "\n".
-    if ((await writePane(terminalId, request.text)) === false) {
+    if ((await writePane(terminalId, text)) === false) {
       throw new Error(
         `pane "${name}" did not accept the text - it may have exited, or be starting up with a full input queue. Nothing was submitted; check the pane before retrying.`,
       );
     }
-    if (request.submit) {
+    if (submit) {
       await new Promise((resolve) =>
         setTimeout(resolve, PANE_SEND_SUBMIT_DELAY_MS),
       );
@@ -112,7 +127,6 @@ async function handlePaneRequest(
         throw new Error(`pane "${name}" exited before the text was submitted`);
       }
     }
-    return { terminalId, projectSlug, name };
   });
 }
 
@@ -167,6 +181,16 @@ async function handleRequest(
   }
   if (request.type === "pane-read" || request.type === "pane-send") {
     return handlePaneRequest(request, options);
+  }
+  if (request.type === "team-whoami" || request.type === "team-send" || request.type === "team-inbox") {
+    const { listProjects, writePane, teamHome } = options;
+    if (!listProjects || !writePane || !teamHome) throw new Error("teams are not available");
+    return handleTeamRequest(request, caller.terminalId, {
+      teamHome,
+      listProjects,
+      deliver: (terminalId, text) => deliverToPane(writePane, terminalId, terminalId, text, true),
+      headCommit: options.headCommit ?? (async () => null),
+    });
   }
   if (request.type === "focus") {
     focusWindow(win);

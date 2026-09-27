@@ -83,6 +83,7 @@ import {
   getGitDiff,
   getGitInfo,
   getGitRoot,
+  headCommit,
   listWorktreeStatus,
 } from "./git";
 import { getGitHubLink, isGitHubCliAvailable } from "./github";
@@ -3109,6 +3110,8 @@ app.whenReady().then(async () => {
     // Returned, not fire-and-forget: the boolean is how pane-send learns the
     // pane was dead, and dropping it made host rejections unhandled.
     writePane: (terminalId, data) => ptyHost.write(terminalId, data),
+    teamHome: AYA_HOME,
+    headCommit,
     onRequest: (request, caller) => {
       // Aya's own automatic-status hooks call `aya status` from inside every
       // Claude/Codex pane; counting them would read as ~100% adoption (#121).
