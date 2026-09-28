@@ -32,10 +32,12 @@ async function membership(callerId: string | undefined, deps: TeamControlDeps): 
   if (!callerId) throw new Error("run aya team inside an Aya pane");
   const project = (await deps.listProjects()).find((p) => p.tabs.some((t) => t.id === callerId));
   if (!project) throw new Error("this pane belongs to no open project");
+  const noRole = "this pane has no team role; assign one from the tab menu";
   const plays = await paneTeamRole(deps.teamHome, project, callerId);
-  const team = plays && (await loadTeam(project, plays.team, plays.store));
-  const role = team?.roles.find((r) => r.id === plays?.role);
-  if (!plays || !team || !role) throw new Error("this pane has no team role; assign one from the tab menu");
+  if (!plays) throw new Error(noRole);
+  const team = await loadTeam(project, plays.team, plays.store);
+  const role = team.roles.find((r) => r.id === plays.role);
+  if (!role) throw new Error(noRole);
   return { project, team, role, store: plays.store };
 }
 
