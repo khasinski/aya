@@ -167,7 +167,7 @@ test("a pane that does not accept the text keeps the message for its inbox", asy
   try {
     const sent = await t.aya("pane-t", "send", "implementer", "hello");
     assert.notEqual(sent.status, 0);
-    assert.match(sent.stderr, /did not accept.*inbox/);
+    assert.match(sent.stderr, /implementer: did not take the text \(it may have exited\); nothing was typed.*inbox/);
     assert.equal((await t.store.unread("implementer")).length, 1);
   } finally {
     t.cleanup();
