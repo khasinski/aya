@@ -5,7 +5,7 @@ import { listTeams } from "./team-admin";
 import { NO_PANE_HOLD, deliverAndLog, typedTeamMessage, type TeamControlDeps } from "./team-control";
 import { loadTeam, projectBySlug, teamNames } from "./team-files";
 import { openTeamStore, type TeamStore } from "./team-store";
-import type { TeamDefinition } from "./teams";
+import { TEAM_SYSTEM_SENDER, type TeamDefinition } from "./teams";
 import type { ProjectConfig, TeamStartResult } from "./types";
 
 export type TeamRunnerDeps = TeamControlDeps;
@@ -36,7 +36,7 @@ export class TeamRunner {
 
   /** A message from Aya; returns why it was not typed, or null. */
   private async fromAya(project: ProjectConfig, store: TeamStore, team: TeamDefinition, to: string, text: string) {
-    return (await deliverAndLog(this.deps, project, store, { team: team.name, from: "aya", to, text })).failure;
+    return (await deliverAndLog(this.deps, project, store, { team: team.name, from: TEAM_SYSTEM_SENDER, to, text })).failure;
   }
 
   /** The delivery test: the role reads itself back and pings its first peer. */
@@ -125,7 +125,7 @@ export class TeamRunner {
           const pane = waiting.length ? await store.paneOf(role.id) : null;
           if (!pane) continue;
           // Aya's own rounds and delivery tests go stale; a later one replaces them.
-          for (const m of waiting.filter((w) => w.from !== "aya")) {
+          for (const m of waiting.filter((w) => w.from !== TEAM_SYSTEM_SENDER)) {
             // Each delivery can raise an approval prompt the next would type into.
             if (await this.deps.holdReason(pane)) break;
             try {

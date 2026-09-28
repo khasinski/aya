@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MUST_NOT_FIELD, SECTION_MARKER, SENDS_TO_FIELD, parseTeamFile, serializeTeam } from "../dist-electron/teams.js";
+import { MUST_NOT_FIELD, SECTION_MARKER, SENDS_TO_FIELD, TEAM_SYSTEM_SENDER, parseTeamFile, serializeTeam } from "../dist-electron/teams.js";
 
 const UX_REVIEW = `# ux-review
 
@@ -112,4 +112,8 @@ test("the file's field names and section marker are the ones the format reads", 
   assert.equal(SENDS_TO_FIELD, "Sends to");
   assert.equal(MUST_NOT_FIELD, "Must not");
   assert.equal(SECTION_MARKER, "## ");
+});
+
+test("Aya's own messages are sent as aya", () => {
+  assert.equal(TEAM_SYSTEM_SENDER, "aya");
 });

@@ -5,7 +5,7 @@ import { promises as fs } from "node:fs";
 import { writeFileAtomic } from "./atomic-write";
 import { teamFile, teamNames } from "./team-files";
 import { openTeamStore } from "./team-store";
-import { MUST_NOT_FIELD, SECTION_MARKER, SENDS_TO_FIELD, parseTeamFile, serializeTeam } from "./teams";
+import { MUST_NOT_FIELD, SECTION_MARKER, SENDS_TO_FIELD, TEAM_SYSTEM_SENDER, parseTeamFile, serializeTeam } from "./teams";
 import type { ProjectConfig, TeamDefinition, TeamSummary } from "./types";
 
 const LOG_TAIL = 50;
@@ -55,7 +55,7 @@ export async function listTeams(teamHome: string, project: ProjectConfig): Promi
         // A held message the receiver has since had (inbox or typed later) reached it.
         log: await (async () => {
           const read = await store.readMarks();
-          return (await store.log()).slice(-LOG_TAIL).map((m) => ({ ...m, delivered: m.delivered || (m.from !== "aya" && m.id <= (read[m.to] ?? 0)) }));
+          return (await store.log()).slice(-LOG_TAIL).map((m) => ({ ...m, delivered: m.delivered || (m.from !== TEAM_SYSTEM_SENDER && m.id <= (read[m.to] ?? 0)) }));
         })(),
       };
     }),
