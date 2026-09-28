@@ -22,7 +22,7 @@ import type { BufferSearchHit } from "./pty";
 import type { PtyEvent, SpawnRequest } from "./types";
 
 // Deadline waiting for the pty host to create its socket (ms).
-const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
+export const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
 // Interval between socket-existence polls while waiting (ms).
 const PTY_HOST_SOCKET_POLL_INTERVAL_MS = 50;
 
