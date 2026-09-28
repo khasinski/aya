@@ -1,21 +1,9 @@
-import net from "node:net";
-import { join } from "node:path";
 import { test, expect } from "./fixtures";
+import { sendControl } from "./helpers/control";
 import type { Page } from "@playwright/test";
 
 // StatusRail — the sidebar counterpart to the AttentionCenter modal. It must
 // appear below New Terminal without taking height from the terminal viewport.
-
-function sendControl(ayaHome: string, payload: Record<string, unknown>): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const socket = net.createConnection(join(ayaHome, "aya.sock"));
-    socket.setEncoding("utf8");
-    socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n`));
-    socket.on("data", () => resolve());
-    socket.on("error", reject);
-    socket.on("close", () => resolve());
-  });
-}
 
 const rail = (window: Page) => window.locator(".aya-status-rail");
 

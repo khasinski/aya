@@ -7,11 +7,9 @@ test.use({ seedOptions: { gitRepo: true } });
 
 test("StatusBar shows the branch, dirty count, changed files and a diff", async ({ window }) => {
   // Branch + dirty appear after the initial git read (polls every ~3s).
-  await expect(window.locator(".aya-statusbar-item", { hasText: "feature/foo" })).toBeVisible({
-    timeout: 10000,
-  });
+  await expect(window.locator(".aya-statusbar-item", { hasText: "feature/foo" })).toBeVisible();
   const dirtyBtn = window.locator(".aya-statusbar-button", { hasText: "dirty" });
-  await expect(dirtyBtn).toContainText("2 dirty", { timeout: 10000 });
+  await expect(dirtyBtn).toContainText("2 dirty");
 
   // Open the changed-files popover - both files listed (modified + untracked).
   await dirtyBtn.click();

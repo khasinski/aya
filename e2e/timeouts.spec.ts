@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { PER_TEST_TIMEOUT_MS, globalTimeout } from "./timeouts";
+import { AGENT_START_TIMEOUT_MS, AGENT_TEST_TIMEOUT_MS, PER_TEST_TIMEOUT_MS, globalTimeout } from "./timeouts";
 
 const CI_CEILING = 10 * 60_000;
 const LOCAL_CEILING = 20 * 60_000;
@@ -21,6 +21,11 @@ test("local gets the looser one", () => {
 test("both ceilings outlast a single test, and local outlasts CI", () => {
   expect(globalTimeout({})!).toBeGreaterThan(globalTimeout({ CI: "1" })!);
   expect(globalTimeout({ CI: "1" })!).toBeGreaterThan(PER_TEST_TIMEOUT_MS);
+});
+
+test("an agent test outlasts a plain one, and its agent's start", () => {
+  expect(AGENT_TEST_TIMEOUT_MS).toBeGreaterThan(PER_TEST_TIMEOUT_MS);
+  expect(AGENT_TEST_TIMEOUT_MS).toBeGreaterThan(AGENT_START_TIMEOUT_MS);
 });
 
 test("CI is read for truthiness, like forbidOnly and retries beside it", () => {

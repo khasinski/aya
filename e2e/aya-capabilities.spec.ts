@@ -4,9 +4,10 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect } from "./fixtures";
+import { AGENT_START_TIMEOUT_MS, AGENT_TEST_TIMEOUT_MS } from "./timeouts";
 
 // App boot plus a login shell; slower than the 45 s default.
-test.describe.configure({ timeout: 120_000 });
+test.describe.configure({ timeout: AGENT_TEST_TIMEOUT_MS });
 
 const AYA_CLI = join(__dirname, "..", "bin", "aya");
 
@@ -25,7 +26,7 @@ test("a pane's `aya capabilities` answers and shows up in Diagnostics", async ({
         await window.keyboard.press("Enter");
         return false;
       },
-      { message: "the pane never ran aya capabilities", timeout: 60_000, intervals: [1_000] },
+      { message: "the pane never ran aya capabilities", timeout: AGENT_START_TIMEOUT_MS, intervals: [1_000] },
     )
     .toBe(true);
 

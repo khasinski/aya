@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 /** Wait until the visible pane's shell has drawn something - its prompt - and is
  *  therefore reading input.
@@ -24,4 +24,16 @@ export async function waitForShellReady(window: Page) {
       { message: `shell in ${terminalId} never produced a prompt` },
     )
     .toBeGreaterThan(0);
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/** Clears the screen of the pane `host` belongs to and prints `payload` (printf %b escapes). */
+export async function writeTerminalOutput(host: Locator, payload: string) {
+  const command = `printf %b ${shellSingleQuote(`\\033[2J\\033[H${payload}`)}`;
+  await host.click();
+  await host.page().keyboard.insertText(command);
+  await host.page().keyboard.press("Enter");
 }

@@ -8,10 +8,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
+import { AGENT_START_TIMEOUT_MS, AGENT_TEST_TIMEOUT_MS } from "./timeouts";
 import type { SeededEnv } from "./helpers/seed";
 
 // App boot plus a login shell starting a program; slower than the 45 s default.
-test.describe.configure({ timeout: 120_000 });
+test.describe.configure({ timeout: AGENT_TEST_TIMEOUT_MS });
 
 const AYA_CLI = join(__dirname, "..", "bin", "aya");
 const RECORDER = join(__dirname, "helpers", "pty-recorder.cjs");
@@ -43,7 +44,7 @@ async function paneShows(window: Page, terminalId: string, needle: string) {
   await expect
     .poll(() => paneBuffer(window, terminalId), {
       message: `pane ${terminalId} never showed ${needle}`,
-      timeout: 60_000,
+      timeout: AGENT_START_TIMEOUT_MS,
     })
     .toContain(needle);
 }
@@ -63,7 +64,7 @@ async function shellExecuting(window: Page, paneIndex: number, terminalId: strin
       },
       {
         message: `the shell in ${terminalId} never executed a command`,
-        timeout: 60_000,
+        timeout: AGENT_START_TIMEOUT_MS,
         intervals: [1_000],
       },
     )
@@ -78,7 +79,7 @@ async function recorderReady(seeded: SeededEnv, terminalId: string) {
   await expect
     .poll(() => existsSync(recorderLog(seeded, terminalId)), {
       message: `the recorder in ${terminalId} never started`,
-      timeout: 60_000,
+      timeout: AGENT_START_TIMEOUT_MS,
     })
     .toBe(true);
 }

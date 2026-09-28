@@ -2,6 +2,8 @@
 
 import { test, expect } from "./fixtures";
 
+/** From app boot to the chip showing the first read of Grok's log. */
+const CHIP_TIMEOUT_MS = 30_000;
 const END = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
 
 test.use({
@@ -10,7 +12,7 @@ test.use({
 
 test("the Grok chip shows the logged weekly percent and its reset", async ({ window }) => {
   const chip = window.getByRole("button", { name: "Grok usage, account-wide" });
-  await expect(chip).toContainText("47%", { timeout: 30_000 });
+  await expect(chip).toContainText("47%", { timeout: CHIP_TIMEOUT_MS });
   await expect(chip).toHaveAttribute("title", /47% of the weekly limit/);
   await expect(chip).toHaveCSS("opacity", "1");
 
@@ -32,7 +34,7 @@ test.describe("an hour-old snapshot", () => {
 
   test("is dimmed and labelled stale, since Grok logs it irregularly", async ({ window }) => {
     const chip = window.getByRole("button", { name: "Grok usage, account-wide" });
-    await expect(chip).toContainText("47%", { timeout: 30_000 });
+    await expect(chip).toContainText("47%", { timeout: CHIP_TIMEOUT_MS });
     await expect(chip).toHaveCSS("opacity", "0.5");
     await chip.click();
     await expect(window.getByRole("menu").filter({ hasText: "Grok" })).toContainText("stale");
@@ -45,7 +47,7 @@ test.describe("a snapshot from yesterday", () => {
 
   test("says which day, not just a clock time that reads as today", async ({ window }) => {
     const chip = window.getByRole("button", { name: "Grok usage, account-wide" });
-    await expect(chip).toContainText("47%", { timeout: 30_000 });
+    await expect(chip).toContainText("47%", { timeout: CHIP_TIMEOUT_MS });
     await chip.click();
     const day = await window.evaluate(
       (iso) => new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" }),
@@ -62,7 +64,7 @@ test.describe("a fresh snapshot nobody refreshes", () => {
     await window.clock.install();
     await window.reload();
     const chip = window.getByRole("button", { name: "Grok usage, account-wide" });
-    await expect(chip).toContainText("47%", { timeout: 30_000 });
+    await expect(chip).toContainText("47%", { timeout: CHIP_TIMEOUT_MS });
     await expect(chip).toHaveCSS("opacity", "1");
     await window.clock.fastForward("20:00");
     await expect(chip).toHaveCSS("opacity", "0.5");

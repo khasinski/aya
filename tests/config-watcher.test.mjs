@@ -20,12 +20,6 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// WATCH_DEBOUNCE_MS is 200; leave enough margin for the burst of file events
-// plus the debounce before we read `received`. Under the full test suite macOS
-// fs.watch can deliver the event noticeably later than when this file runs alone.
-const SETTLE_MS = 1000;
-const waitForDebounce = () => new Promise((r) => setTimeout(r, SETTLE_MS));
-
 // Two different JSON payloads so each write differs from the last (the watcher
 // reads and hashes the content, so writing the same bytes wouldn't count as an
 // edit).
@@ -46,9 +40,12 @@ test("config watcher emits external edits, skips echoes, catches reverts, and st
 
   let stop = () => {};
   try {
-    const { startConfigWatcher } = await import(
+    const { startConfigWatcher, WATCH_DEBOUNCE_MS } = await import(
       "../dist-electron/config-watcher.js"
     );
+    // Five debounce windows before reading `received`: under the full suite macOS
+    // fs.watch can deliver the event noticeably later than when this file runs alone.
+    const waitForDebounce = () => new Promise((r) => setTimeout(r, 5 * WATCH_DEBOUNCE_MS));
     const { writeFileAtomic } = await import("../dist-electron/atomic-write.js");
 
     const file = join(home, "snippets.json");

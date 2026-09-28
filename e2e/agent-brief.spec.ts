@@ -4,9 +4,10 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect } from "./fixtures";
+import { AGENT_START_TIMEOUT_MS, AGENT_TEST_TIMEOUT_MS } from "./timeouts";
 import { fireShortcut } from "./helpers/shortcut";
 
-test.describe.configure({ timeout: 120_000 });
+test.describe.configure({ timeout: AGENT_TEST_TIMEOUT_MS });
 
 const NODE = process.execPath;
 const ARGV_DUMP = join(__dirname, "helpers", "argv-dump.cjs");
@@ -32,7 +33,7 @@ const fakeAgent = (agent: string, agentBrief = true) => ({
 async function paneLaunch(seeded: { projectDir: string; tabIds: { right: string } }) {
   const dump = join(seeded.projectDir, `argv-${seeded.tabIds.right}.json`);
   await expect
-    .poll(() => existsSync(dump), { message: "the pane never started", timeout: 60_000 })
+    .poll(() => existsSync(dump), { message: "the pane never started", timeout: AGENT_START_TIMEOUT_MS })
     .toBe(true);
   return JSON.parse(readFileSync(dump, "utf8"));
 }

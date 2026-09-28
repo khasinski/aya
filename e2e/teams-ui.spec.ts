@@ -5,24 +5,9 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
+import { TEAM_DELIVERY_TIMEOUT_MS, agentPreset, openTeams, teamLog, teamLogFile } from "./helpers/team";
 
-const NODE = process.execPath;
-const AGENT = join(__dirname, "helpers", "team-agent.cjs");
-const AYA = join(__dirname, "..", "bin", "aya");
-
-test.use({
-  seedOptions: {
-    presetList: [
-      { id: "shell", name: "Agent", icon: "a", color: "", agent: "claude", command: `'${NODE}' '${AGENT}' '${AYA}' quiet` },
-    ],
-  },
-});
-
-async function openTeams(window: Page) {
-  await expect(window.getByTestId("xterm-host").first()).toBeVisible();
-  await window.getByTestId("teams-toggle").click();
-  return window.getByRole("dialog", { name: "Teams" });
-}
+test.use({ seedOptions: { presetList: [agentPreset("quiet", "claude")] } });
 
 async function defineFromTemplate(window: Page, name: string) {
   const dialog = await openTeams(window);
@@ -53,8 +38,8 @@ test("assign panes, Start sends the delivery test, Pause marks the team, Resume 
   const dialog = await defineFromTemplate(window, "ux-review");
   const card = dialog.getByTestId("team-ux-review");
   await card.getByLabel("Pane for reviewer").selectOption({ label: "shell 1" });
-  const file = (pane: string) => join(seeded.projectDir, `team-${pane}.log`);
-  const log = (pane: string) => (existsSync(file(pane)) ? readFileSync(file(pane), "utf8") : "");
+  const file = (pane: string) => teamLogFile(seeded.projectDir, pane);
+  const log = teamLog(seeded.projectDir);
   // Each agent creates its log on start; Start before that finds it still starting.
   await expect.poll(() => existsSync(file("tab-left")) && existsSync(file("tab-right")), { timeout: 30_000 }).toBe(true);
   // One role without a pane: Start sends nothing to anyone and says why.
@@ -66,13 +51,13 @@ test("assign panes, Start sends the delivery test, Pause marks the team, Resume 
   await card.getByLabel("Pane for implementer").selectOption({ label: "shell 2" });
   await expect(card.getByRole("button", { name: "Pause", exact: true })).toHaveCount(0);
   await card.getByRole("button", { name: "Start", exact: true }).click();
-  await expect.poll(() => log("tab-left"), { timeout: 15_000 }).toMatch(/Delivery test/);
-  await expect(card.getByLabel("ux-review messages")).toContainText("aya → implementer", { timeout: 10_000 });
+  await expect.poll(() => log("tab-left"), { timeout: TEAM_DELIVERY_TIMEOUT_MS }).toMatch(/Delivery test/);
+  await expect(card.getByLabel("ux-review messages")).toContainText("aya → implementer");
   // A pane given a role while the team runs is told its role at once.
   const before = log("tab-right").match(/Delivery test/g)?.length ?? 0;
   await card.getByLabel("Pane for implementer").selectOption({ label: "No pane" });
   await card.getByLabel("Pane for implementer").selectOption({ label: "shell 2" });
-  await expect.poll(() => log("tab-right").match(/Delivery test/g)?.length ?? 0, { timeout: 15_000 }).toBe(before + 1);
+  await expect.poll(() => log("tab-right").match(/Delivery test/g)?.length ?? 0, { timeout: TEAM_DELIVERY_TIMEOUT_MS }).toBe(before + 1);
   await card.getByRole("button", { name: "Pause", exact: true }).click();
   await expect(card.getByText("paused", { exact: true })).toBeVisible();
   await expect(card.getByRole("button", { name: "Start", exact: true })).toBeVisible();
@@ -86,7 +71,7 @@ test("a repo edit shows as changed and can be adopted", async ({ window, seeded 
   const file = join(seeded.projectDir, ".aya", "teams", "ux-review.md");
   writeFileSync(file, readFileSync(file, "utf8").replace("Must not: edit code", "Must not: touch the database"));
   const card = dialog.getByTestId("team-ux-review");
-  await expect(card.getByText(/repo file changed/)).toBeVisible({ timeout: 10_000 });
+  await expect(card.getByText(/repo file changed/)).toBeVisible();
   await card.getByRole("button", { name: "Use the repo version" }).click();
   await expect(card.getByText("must not touch the database")).toBeVisible();
   await expect(card.getByText(/repo file changed/)).toHaveCount(0);
