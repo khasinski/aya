@@ -19,7 +19,6 @@ const everyInterval: Schedule = (fn, ms) => {
 
 export class TeamRunner {
   private cancels = new Map<string, () => void>();
-  private rounds = new Map<string, number>();
   private redelivering: Promise<number> | null = null;
 
   constructor(
@@ -167,10 +166,10 @@ export class TeamRunner {
         try {
           const { project, store, team: current } = await this.open(slug, name);
           if ((await store.state()).paused) return;
-          const round = (this.rounds.get(key) ?? 0) + 1;
+          const round = (await store.lastRound()) + 1;
           const text = `Round ${round}: run your round as the team protocol says.`;
           // A held pane skips the round rather than queueing it: it would be stale.
-          if (!(await this.fromAya(project, store, current, cadence.role, text))) this.rounds.set(key, round);
+          if (!(await this.fromAya(project, store, current, cadence.role, text))) await store.setLastRound(round);
         } catch (err) {
           // A timer has no caller to report to: skip this round, try the next.
           console.warn(`[aya] team ${slug}/${name} round skipped:`, err);

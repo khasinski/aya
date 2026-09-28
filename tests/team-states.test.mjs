@@ -3,6 +3,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { teamProject } from "./helpers/team.mjs";
 
 const { TeamRunner } = await import("../dist-electron/team-runner.js");
@@ -35,6 +37,16 @@ const PANE_STATES = {
 };
 const TEAM_STATES = ["never started", "running", "paused"];
 
+/** What an earlier session left in state.json: its last round was `round`. */
+function seedLastRound(store, round) {
+  const file = join(store.dir, "state.json");
+  let state = {};
+  try {
+    state = JSON.parse(readFileSync(file, "utf-8"));
+  } catch {}
+  writeFileSync(file, JSON.stringify({ ...state, lastRound: round }));
+}
+
 async function world(teamState, paneState) {
   const { teamHome, project, cleanup } = teamProject("aya-states-", { teamFile: TEAM });
   const store = new TeamStore(teamDir(teamHome, "game", "ux-review"));
@@ -42,23 +54,30 @@ async function world(teamState, paneState) {
   if (paneState !== "no pane") await store.assign("implementer", "pane-i");
   if (teamState === "running") await store.setPaused(false);
   if (teamState === "paused") await store.setPaused(true);
+  const w = { paneState };
   const typed = [];
   const scheduled = [];
   const deps = {
     teamHome,
     listProjects: async () => [project],
     deliver: async (pane, text) => void typed.push({ pane, text }),
-    holdReason: async (pane) => (pane === "pane-i" ? PANE_STATES[paneState] : null),
+    holdReason: async (pane) => (pane === "pane-i" ? PANE_STATES[w.paneState] : null),
     headCommit: async () => null,
   };
-  const runner = new TeamRunner(deps, (fn, ms) => {
+  const schedule = (fn, ms) => {
     const job = { fn, ms };
     scheduled.push(job);
     return () => {};
-  });
-  const toImplementer = () => typed.filter((w) => w.pane === "pane-i");
+  };
+  // A relaunch: a new runner over the same files; the old one's timers are gone.
+  const restart = async () => {
+    scheduled.length = 0;
+    w.runner = new TeamRunner(deps, schedule);
+    await w.runner.restore();
+  };
+  const toImplementer = () => typed.filter((t) => t.pane === "pane-i");
   const lastLog = async () => (await store.log()).at(-1);
-  return { store, deps, runner, typed, scheduled, toImplementer, lastLog, cleanup };
+  return Object.assign(w, { store, deps, runner: new TeamRunner(deps, schedule), restart, typed, scheduled, toImplementer, lastLog, cleanup });
 }
 
 const reason = (paneState) => PANE_STATES[paneState];
@@ -131,6 +150,7 @@ for (const teamState of TEAM_STATES) {
     test(`restore after a restart, then a round | ${label}`, async () => {
       const w = await world(teamState, paneState);
       try {
+        seedLastRound(w.store, 4);
         await w.runner.restore();
         if (teamState !== "running") {
           assert.equal(w.scheduled.length, 0, "only a running team gets its rounds back");
@@ -139,10 +159,14 @@ for (const teamState of TEAM_STATES) {
         assert.equal(w.scheduled.length, 1);
         await w.scheduled[0].fn();
         if (paneState === "free") {
-          assert.match(w.toImplementer()[0].text, /Round 1:/);
+          assert.match(w.toImplementer()[0].text, /Round 5:/, "numbering goes on from the last session");
         } else {
           assert.equal(w.typed.length, 0, "a held pane skips the round");
           assert.deepEqual([(await w.lastLog()).from, (await w.lastLog()).held], ["aya", reason(paneState)]);
+          w.paneState = "free";
+          if (paneState === "no pane") await w.store.assign("implementer", "pane-i");
+          await w.scheduled[0].fn();
+          assert.match(w.toImplementer()[0].text, /Round 5:/, "a skipped round keeps its number");
         }
       } finally {
         w.cleanup();
@@ -185,6 +209,59 @@ test("pause stops rounds and sends; resume brings rounds back without resending 
     assert.equal(w.typed.length, 0, "resume sends no delivery tests");
     await w.scheduled.at(-1).fn();
     assert.equal(w.toImplementer().length, 1);
+  } finally {
+    w.cleanup();
+  }
+});
+
+// Round numbers across actions: only Aya's own count is kept, so a restart,
+// Resume or Start after Pause goes on from the last round typed.
+const ROUND_ACTIONS = {
+  start: (w) => w.runner.start("game", "ux-review"),
+  pause: (w) => w.runner.pause("game", "ux-review"),
+  resume: (w) => w.runner.resume("game", "ux-review"),
+  restart: (w) => w.restart(),
+  round: (w) => w.scheduled.at(-1).fn(),
+  "held round": async (w) => {
+    w.paneState = "approval prompt";
+    await w.scheduled.at(-1).fn();
+    w.paneState = "free";
+  },
+};
+const ROUND_CASES = [
+  [["start", "round", "round"], [1, 2]],
+  [["start", "round", "restart", "round"], [1, 2]],
+  [["start", "round", "round", "restart", "restart", "round"], [1, 2, 3]],
+  [["start", "round", "pause", "resume", "round"], [1, 2]],
+  [["start", "round", "pause", "start", "round"], [1, 2]],
+  [["start", "round", "pause", "restart", "resume", "round"], [1, 2]],
+  [["start", "round", "pause", "restart", "start", "round"], [1, 2]],
+  [["start", "round", "restart", "pause", "resume", "restart", "round"], [1, 2]],
+  [["start", "held round", "restart", "round"], [1]],
+  [["start", "round", "held round", "restart", "round"], [1, 2]],
+];
+
+for (const [actions, rounds] of ROUND_CASES) {
+  test(`round numbers | ${actions.join(" > ")}`, async () => {
+    const w = await world("never started", "free");
+    try {
+      for (const action of actions) await ROUND_ACTIONS[action](w);
+      const typed = w.toImplementer().flatMap((t) => t.text.match(/Round (\d+):/)?.[1] ?? []);
+      assert.deepEqual(typed.map(Number), rounds);
+    } finally {
+      w.cleanup();
+    }
+  });
+}
+
+test("a state.json from before round numbers were kept starts at Round 1", async () => {
+  const w = await world("never started", "free");
+  try {
+    writeFileSync(join(w.store.dir, "state.json"), JSON.stringify({ paused: false, started: true }));
+    await w.restart();
+    await w.scheduled[0].fn();
+    assert.match(w.toImplementer()[0].text, /^.*Round 1:/);
+    assert.deepEqual(JSON.parse(readFileSync(join(w.store.dir, "state.json"), "utf-8")), { paused: false, started: true, lastRound: 1 });
   } finally {
     w.cleanup();
   }
