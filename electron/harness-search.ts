@@ -15,7 +15,7 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { expandUserPath } from "./usage";
+import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath } from "./usage";
 
 export interface HarnessSearchRequest {
   agent: "claude" | "codex";
@@ -183,7 +183,7 @@ async function claudeSessionFiles(
   cwd: string,
   configDir: string | undefined,
 ): Promise<SessionFile[]> {
-  const base = expandUserPath(configDir?.trim() || "~/.claude");
+  const base = expandUserPath(configDir?.trim() || DEFAULT_CLAUDE_CONFIG_DIR);
   const dir = path.join(base, "projects", claudeProjectDirName(cwd));
   let names: string[];
   try {

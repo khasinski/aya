@@ -91,6 +91,15 @@ test("withoutStopHook is a no-op when our hook isn't present", () => {
   assert.equal(after.hooks.Stop[0].hooks[0].command, "/keep.sh");
 });
 
+test("the generated hook script is byte-identical (sha256 pin)", () => {
+  // Pinned before the ~/.claude literals became DEFAULT_CLAUDE_CONFIG_DIR.
+  const s = hookScriptSource("/x/usage.json");
+  assert.equal(
+    createHash("sha256").update(s).digest("hex"),
+    "1e2d98ff16e3bf3e55ffd59dd68cc6badd45313d3ae08dbca2fd7ae52c885131",
+  );
+});
+
 test("hookScriptSource bakes the out path, throttle, and curl timeout in", () => {
   const s = hookScriptSource("/tmp/aya/usage.json");
   assert.match(s, /OUT="\/tmp\/aya\/usage\.json"/); // writes the file Aya reads

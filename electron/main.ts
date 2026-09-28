@@ -132,7 +132,7 @@ import { isInternalNavigationUrl, parseExternalUrl } from "./navigation";
 import { createWorktree, removeWorktree } from "./git";
 import { listPresets, savePresets } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
-import { expandUserPath, readClaudeUsageAccounts } from "./usage";
+import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath, readClaudeUsageAccounts } from "./usage";
 import { DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } from "./usage-codex";
 import { DEFAULT_GROK_HOME, readGrokUsage } from "./usage-grok";
 import {
@@ -2493,7 +2493,7 @@ function registerIpc(): void {
         .map((p) => ({
           id: p.id,
           label: p.name,
-          configDir: p.configDir || "~/.claude",
+          configDir: p.configDir || DEFAULT_CLAUDE_CONFIG_DIR,
         })),
     );
   });
