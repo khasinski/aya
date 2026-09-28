@@ -64,7 +64,7 @@ function FlowGraph({ ids, edges }: { ids: string[]; edges: FlowEdge[] }) {
 export function TeamFlow({ team }: { team: TeamDefinition }) {
   const ids = team.roles.map((r) => r.id).filter(Boolean);
   const edges = flowEdges(team.roles);
-  const gaps = ids.length > 1 ? flowGaps(team.roles) : { unreached: [], silent: [], unsaid: [] };
+  const gaps = ids.length > 1 ? flowGaps(team.roles) : { unreached: [], silent: [] };
 
   return (
     <section className="aya-teams-flow" aria-label="Flow preview">
