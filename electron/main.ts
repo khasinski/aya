@@ -133,7 +133,7 @@ import { createWorktree, removeWorktree } from "./git";
 import { listPresets, savePresets } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
 import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath, readClaudeUsageAccounts } from "./usage";
-import { DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } from "./usage-codex";
+import { CODEX_DEFAULT_DIR, DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } from "./usage-codex";
 import { DEFAULT_GROK_HOME, readGrokUsage } from "./usage-grok";
 import {
   usageHookStatus,
@@ -2509,10 +2509,12 @@ function registerIpc(): void {
         (p) => ({
           id: p.id,
           label: p.name,
+          // A preset without configDir ignores CODEX_HOME, unlike
+          // DEFAULT_CODEX_HOME (known bug B8).
           home:
             "configDir" in p && typeof p.configDir === "string" && p.configDir
               ? expandUserPath(p.configDir)
-              : expandUserPath("~/.codex"),
+              : expandUserPath(CODEX_DEFAULT_DIR),
         }),
       ),
     );

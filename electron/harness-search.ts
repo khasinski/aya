@@ -16,6 +16,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath } from "./usage";
+import { CODEX_DEFAULT_DIR } from "./usage-codex";
 
 export interface HarnessSearchRequest {
   agent: "claude" | "codex";
@@ -247,7 +248,8 @@ async function codexSessionFiles(
   cwd: string,
   configDir: string | undefined,
 ): Promise<SessionFile[]> {
-  const home = expandUserPath(configDir?.trim() || "~/.codex");
+  // Ignores CODEX_HOME, unlike DEFAULT_CODEX_HOME (known bug B8).
+  const home = expandUserPath(configDir?.trim() || CODEX_DEFAULT_DIR);
   const root = path.join(home, "sessions");
   const all: { file: string; mtimeMs: number; size: number }[] = [];
   async function walk(dir: string): Promise<void> {
