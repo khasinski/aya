@@ -17,11 +17,7 @@ import { spawnPty } from "../dist-electron/pty.js";
 // the first append), so redirect it before any spawnPty call - otherwise unit
 // runs write into the user's real ~/.aya.
 process.env.AYA_HOME = mkdtempSync(join(tmpdir(), "aya-pty-test-"));
-
-function fakeSink() {
-  const events = [];
-  return { events, sendPtyEvent: (e) => events.push(e), isDestroyed: () => false };
-}
+const { fakeSink } = await import("./helpers/pty-host.mjs");
 
 test("a concurrent spawn for the same id is suppressed (no second process)", async () => {
   const sink1 = fakeSink();

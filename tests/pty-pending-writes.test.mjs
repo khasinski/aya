@@ -20,6 +20,7 @@ import {
 // pty.ts resolves $AYA_HOME lazily at the first log append, so redirect it
 // before any spawnPty call or unit runs write into the user's real ~/.aya.
 process.env.AYA_HOME = mkdtempSync(join(tmpdir(), "aya-pending-write-test-"));
+const { fakeSink } = await import("./helpers/pty-host.mjs");
 
 const MISSING_BINARY = "aya-no-such-binary-zzz";
 
@@ -29,11 +30,6 @@ test("pty limits and defaults keep their values", () => {
   assert.equal(SPAWN_LOG_COMMAND_MAX_CHARS, 4096);
   assert.equal(DEFAULT_LANG, "en_US.UTF-8");
 });
-
-function fakeSink() {
-  const events = [];
-  return { events, sendPtyEvent: (e) => events.push(e), isDestroyed: () => false };
-}
 
 function req(ptyId) {
   return { ptyId, command: MISSING_BINARY, cwd: "/tmp", cols: 80, rows: 24 };
