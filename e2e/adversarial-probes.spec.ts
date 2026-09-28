@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import { fireShortcut } from "./helpers/shortcut";
+import { renameInline } from "./helpers/rename";
 import type { Page } from "@playwright/test";
 
 // Adversarial probes - they assert the CORRECT expected behaviour in tricky
@@ -33,13 +34,7 @@ test.describe("no split seed", () => {
     // Stable row reference by attribute - filtering by text breaks once the
     // inline editor replaces the name text.
     const row = window.locator('[data-testid="sidebar-terminal"][data-terminal-name="shell 1"]');
-    const input = row.locator(".aya-sidebar-rename");
-    // Robustly open the inline editor (cold-start can swallow the first dblclick).
-    await expect(async () => {
-      await row.locator(".aya-sidebar-name").dblclick();
-      await input.fill("   ", { timeout: 800 });
-      await input.press("Enter", { timeout: 800 });
-    }).toPass({ timeout: 15000 });
+    await renameInline(row.locator(".aya-sidebar-name"), row.locator(".aya-sidebar-rename"), "   ");
     // blank rename must be rejected - the name stays "shell 1"
     await expect(
       window.locator('[data-testid="sidebar-terminal"][data-terminal-name="shell 1"]'),
