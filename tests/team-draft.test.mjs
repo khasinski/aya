@@ -3,7 +3,15 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ROLE_DRAFT_CHAT, draftRole, parseRoleDraft, roleDraftPrompt } from "../dist-electron/team-draft.js";
+import {
+  MUST_NOT_MAX,
+  RESPONSIBILITIES_MAX,
+  ROLE_DRAFT_CHAT,
+  WHAT_MAX,
+  draftRole,
+  parseRoleDraft,
+  roleDraftPrompt,
+} from "../dist-electron/team-draft.js";
 
 const role = (id, sends = [], responsibilities = "", mustNot = "") => ({
   id,
@@ -75,9 +83,10 @@ test("fields are capped so a rambling model cannot flood the team file", () => {
   const long = "word ".repeat(400);
   const t = team([role("a", [["b"]]), role("b")]);
   const draft = parseRoleDraft(JSON.stringify({ responsibilities: long, mustNot: long, sendsTo: { b: long } }), t, "a");
-  assert.ok(draft.responsibilities.length <= 400);
-  assert.ok(draft.mustNot.length <= 120);
-  assert.ok(draft.sendsTo[0].what.length <= 60);
+  assert.deepEqual([RESPONSIBILITIES_MAX, MUST_NOT_MAX, WHAT_MAX], [400, 120, 60]);
+  assert.ok(draft.responsibilities.length <= RESPONSIBILITIES_MAX);
+  assert.ok(draft.mustNot.length <= MUST_NOT_MAX);
+  assert.ok(draft.sendsTo[0].what.length <= WHAT_MAX);
 });
 
 test("draftRole asks the chat once and returns the normalized draft", async () => {

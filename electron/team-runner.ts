@@ -7,6 +7,8 @@ import { openTeamStore, type TeamStore } from "./team-store";
 import { TEAM_SYSTEM_SENDER } from "./teams";
 import type { ProjectConfig, TeamDefinition, TeamStartResult } from "./types";
 
+const MS_PER_MINUTE = 60 * 1000;
+
 /** Runs `fn` every `ms`; returns a cancel. Injected so tests need no clock. */
 export type Schedule = (fn: () => Promise<void>, ms: number) => () => void;
 
@@ -172,7 +174,7 @@ export class TeamRunner {
           // A timer has no caller to report to: skip this round, try the next.
           console.warn(`[aya] team ${slug}/${name} round skipped:`, err);
         }
-      }, cadence.minutes * 60 * 1000),
+      }, cadence.minutes * MS_PER_MINUTE),
     );
   }
 }
