@@ -166,16 +166,19 @@ export function withoutStatusHooks(
   );
 }
 
-/** Our old `legacy` command swapped for `command` under every status event; the
- *  same object back when `legacy` is not registered, so nothing is installed. */
+/** Our old `legacy` command swapped for `command` under each event that has it;
+ *  the same object back when none does, so nothing is ever installed. */
 export function withMigratedStatusHooks(
   settings: Record<string, unknown>,
   legacy: string,
   command: string,
 ): Record<string, unknown> {
   if (legacy === command) return settings;
-  if (!STATUS_HOOK_EVENTS.some((event) => hasEventHook(settings, event, legacy))) return settings;
-  return withStatusHooks(withoutStatusHooks(settings, legacy), command);
+  return STATUS_HOOK_EVENTS.reduce(
+    (acc, event) =>
+      hasEventHook(acc, event, legacy) ? withEventHook(withoutEventHook(acc, event, legacy), event, command) : acc,
+    settings,
+  );
 }
 
 // ---- the generated hook script ----------------------------------------------

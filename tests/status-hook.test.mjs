@@ -141,3 +141,10 @@ test("migrating settings without the quoted command returns them unchanged", () 
   const none = { hooks: { Stop: [{ hooks: [{ type: "command", command: "/other.sh" }] }] } };
   assert.equal(withMigratedStatusHooks(none, CMD, bare), none, "never installs");
 });
+
+test("migrating a partial install swaps only the events that had the quoted command", () => {
+  const bare = "/Users/x/.aya/aya-status-hook.sh";
+  const onlyStop = withEventHook({}, "Stop", CMD);
+  const after = withMigratedStatusHooks(onlyStop, CMD, bare);
+  assert.deepEqual(after, withEventHook({}, "Stop", bare));
+});
