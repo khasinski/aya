@@ -122,3 +122,33 @@ test("whatever is typed as a role name becomes an id the team file accepts, or n
 test("a new cadence runs every 30 minutes until changed", () => {
   assert.equal(DEFAULT_CADENCE_MINUTES, 30);
 });
+
+test("a hand-written link or cadence to a role the file lacks never enters the editor", () => {
+  const t = toEditor({
+    ...TEAM,
+    roles: [{ ...TEAM.roles[0], sendsTo: [{ to: "ghost", what: "x" }, ...TEAM.roles[0].sendsTo] }, ...TEAM.roles.slice(1)],
+    cadence: { role: "ghost", minutes: 30 },
+  });
+  assert.deepEqual(t.roles[0].sendsTo.map((s) => s.key), [keyOf(t, "implementer"), keyOf(t, "tester")]);
+  assert.equal(t.cadence, null);
+});
+
+test("rows added one after another each get their own key", () => {
+  const t = addRole(addRole(toEditor(TEAM)));
+  const keys = t.roles.map((r) => r.key);
+  assert.equal(new Set(keys).size, keys.length);
+});
+
+test("ticking an already ticked route without new text keeps its what", () => {
+  let t = toEditor(TEAM);
+  const [rev, imp] = [keyOf(t, "reviewer"), keyOf(t, "implementer")];
+  t = setSend(t, rev, imp, true);
+  assert.equal(t.roles[0].sendsTo.find((s) => s.key === imp).what, "findings");
+});
+
+test("a draft route to an empty name does not land on an unnamed row", () => {
+  let t = addRole(toEditor(TEAM));
+  const tes = keyOf(t, "tester");
+  t = applyDraft(t, tes, { responsibilities: "", mustNot: "x", sendsTo: [{ to: "", what: "?" }] });
+  assert.deepEqual(t.roles.find((r) => r.key === tes).sendsTo, []);
+});

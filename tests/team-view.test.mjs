@@ -32,6 +32,10 @@ test("each assigned pane gets its team, role and unread count", () => {
   });
 });
 
+test("a role with no unread entry shows zero, not undefined", () => {
+  assert.deepEqual(paneRoles([team("t", { tester: "p1" }, {})]), { p1: { team: "t", role: "tester", unread: 0 } });
+});
+
 test("unread messages add up across a project's teams", () => {
   assert.equal(unreadTotal([team("a", {}, { x: 2, y: 1 }), team("b", {}, { z: 4 })]), 7);
 });
