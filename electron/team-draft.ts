@@ -4,8 +4,6 @@
 
 import type { RoleDraft, SendRoute, TeamDefinition, TeamRole } from "./types";
 
-export type { RoleDraft };
-
 /** Sends one system + user message and returns the reply text. */
 export type Chat = (system: string, user: string) => Promise<string>;
 

@@ -5,10 +5,8 @@ import { listTeams } from "./team-admin";
 import { NO_PANE_HOLD, deliverAndLog, typedTeamMessage, type TeamControlDeps } from "./team-control";
 import { loadTeam, projectBySlug, teamNames } from "./team-files";
 import { openTeamStore, type TeamStore } from "./team-store";
-import { TEAM_SYSTEM_SENDER, type TeamDefinition } from "./teams";
-import type { ProjectConfig, TeamStartResult } from "./types";
-
-export type TeamRunnerDeps = TeamControlDeps;
+import { TEAM_SYSTEM_SENDER } from "./teams";
+import type { ProjectConfig, TeamDefinition, TeamStartResult } from "./types";
 
 /** Runs `fn` every `ms`; returns a cancel. Injected so tests need no clock. */
 export type Schedule = (fn: () => Promise<void>, ms: number) => () => void;
@@ -24,7 +22,7 @@ export class TeamRunner {
   private redelivering: Promise<number> | null = null;
 
   constructor(
-    private deps: TeamRunnerDeps,
+    private deps: TeamControlDeps,
     private schedule: Schedule = everyInterval,
   ) {}
 

@@ -4,8 +4,8 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { openTeamStore, type TeamStore } from "./team-store";
-import { parseTeamFile, type TeamDefinition } from "./teams";
-import type { ProjectConfig } from "./types";
+import { parseTeamFile } from "./teams";
+import type { ProjectConfig, TeamDefinition } from "./types";
 
 export function teamsDir(project: ProjectConfig): string {
   return path.join(project.directory, ".aya", "teams");

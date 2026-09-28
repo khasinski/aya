@@ -3,8 +3,6 @@
 
 import type { SendRoute, TeamCadence, TeamDefinition, TeamRole } from "./types";
 
-export type { SendRoute, TeamCadence, TeamDefinition, TeamRole };
-
 export const ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 /** The sender of Aya's own messages: delivery tests and rounds. */
 export const TEAM_SYSTEM_SENDER = "aya";

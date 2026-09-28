@@ -2,9 +2,8 @@
 // by the local assignments, and the team by the definition the user saved.
 
 import { loadTeam, paneTeamRole } from "./team-files";
-import type { TeamDefinition, TeamRole } from "./teams";
 import type { TeamStore, TeamMessage } from "./team-store";
-import type { ProjectConfig } from "./types";
+import type { ProjectConfig, TeamDefinition, TeamRole } from "./types";
 
 export type TeamRequest =
   | { type: "team-whoami" }
