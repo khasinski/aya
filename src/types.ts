@@ -205,6 +205,7 @@ export interface ThemesFile {
 }
 
 import type { SplitNode } from "./split-tree";
+import { PRESET_ID_SHELL } from "./preset-ids";
 
 export interface WorkingTab {
   id: string;
@@ -949,7 +950,7 @@ export const MISSING_PRESET: Preset = {
 // their own "shell" preset but the Cmd+T shortcut still needs to open a
 // shell terminal. Same shape as the shipped default; not persisted.
 export const BUILTIN_SHELL: Preset = {
-  id: "shell",
+  id: PRESET_ID_SHELL,
   name: "Shell",
   icon: "$",
   color: "",
@@ -961,7 +962,7 @@ export function getPreset(presets: Preset[], id: string): Preset {
   if (found) return found;
   // Special-case "shell" so terminals created via Cmd+T always render with a
   // sensible icon/name even if the user deleted their shell preset.
-  if (id === "shell") return BUILTIN_SHELL;
+  if (id === PRESET_ID_SHELL) return BUILTIN_SHELL;
   return MISSING_PRESET;
 }
 

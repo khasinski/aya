@@ -1,5 +1,6 @@
 import { agentBriefHint, effectiveAutoResume, inferAgent } from "../agentPreset";
 import { OLLAMA_OPENAI_BASE_URL, RECOMMENDED_OLLAMA_MODEL } from "../ollama-defaults";
+import { PRESET_ID_SHELL } from "../preset-ids";
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
 import { useEffect, useState, type ReactNode } from "react";
 import {
@@ -1769,7 +1770,7 @@ export function SettingsModal({
                     Play for these presets
                   </span>
                   {presets
-                    .filter((preset) => preset.id !== "shell")
+                    .filter((preset) => preset.id !== PRESET_ID_SHELL)
                     .map((preset) => (
                       <label className="aya-sound-preset" key={preset.id}>
                         <input

@@ -50,6 +50,7 @@ import {
 import { useTerminalSounds } from "./hooks/useTerminalSounds";
 import { useTeams } from "./hooks/useTeams";
 import { OLLAMA_OPENAI_BASE_URL, RECOMMENDED_OLLAMA_MODEL } from "./ollama-defaults";
+import { PRESET_ID_SHELL } from "./preset-ids";
 import { normalizeSoundOverrides } from "./terminal-sound-prefs";
 import {
   MAX_SPLIT_LEAVES,
@@ -511,7 +512,7 @@ function remoteTerminalCommand(project: ProjectConfig, preset: Preset): string {
   if (!project.remote) return preset.command;
   const remoteShell = '"${SHELL:-/bin/sh}"';
   const remoteCommand =
-    preset.id === "shell" || preset.command.trim() === "$SHELL"
+    preset.id === PRESET_ID_SHELL || preset.command.trim() === "$SHELL"
       ? `cd ${shellQuote(project.remote.directory)} && exec ${remoteShell} -l`
       : `cd ${shellQuote(project.remote.directory)} && exec ${remoteShell} -l -i -c ${shellQuote(`exec ${preset.command}`)}`;
   return `ssh -tt ${shellQuote(project.remote.sshTarget)} ${shellQuote(remoteCommand)}`;
@@ -3144,7 +3145,7 @@ export function App() {
         ? (remotePresetsByProjectRef.current[slug] ?? presetsRef.current)
         : presetsRef.current;
     const shellPreset =
-      sourcePresets.find((p) => p.id === "shell") ?? sourcePresets[0] ?? BUILTIN_SHELL;
+      sourcePresets.find((p) => p.id === PRESET_ID_SHELL) ?? sourcePresets[0] ?? BUILTIN_SHELL;
     launchTerminal(shellPreset);
   }, [launchTerminal]);
 

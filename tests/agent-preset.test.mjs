@@ -127,7 +127,7 @@ test("the e2e respawn-resume marker preset appends onto tee's operand list", () 
   assert.equal(commandWithAutoResume(p, false), command);
 });
 
-import { PRESET_ID_CODEX, PRESET_ID_GEMINI } from "../dist-test/preset-ids.js";
+import { PRESET_ID_CODEX, PRESET_ID_GEMINI, PRESET_ID_SHELL } from "../dist-test/preset-ids.js";
 import { DEFAULT_PRESETS } from "../dist-electron/presets.js";
 
 test("commandHasResumeFlag recognizes exactly the args resumeArg appends", () => {
@@ -146,6 +146,8 @@ test("commandHasResumeFlag recognizes exactly the args resumeArg appends", () =>
 test("behavior-keyed preset ids match the electron built-ins (cross-boundary tripwire)", () => {
   const ids = DEFAULT_PRESETS.map((p) => p.id);
   assert.ok(ids.includes(PRESET_ID_CODEX), "codex built-in id drifted from PRESET_ID_CODEX");
+  assert.ok(ids.includes(PRESET_ID_SHELL), "shell built-in id drifted from PRESET_ID_SHELL");
+  assert.equal(PRESET_ID_SHELL, "shell");
   // gemini is intentionally NOT a built-in - it matches a user-named preset.
   assert.equal(ids.includes(PRESET_ID_GEMINI), false);
   assert.equal(PRESET_ID_GEMINI, "gemini");

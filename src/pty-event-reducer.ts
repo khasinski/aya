@@ -7,6 +7,7 @@
 // returns the same map reference so React's shallow check can skip a re-render.
 
 import { detectApproval, looksBusy } from "./bell";
+import { PRESET_ID_SHELL } from "./preset-ids";
 import type { ControlStatusLevel, PtyEvent, TerminalState, TerminalStatus } from "./types";
 
 /** Map an agent-reported status level — from the control socket or an inline
@@ -45,7 +46,7 @@ export function isTerminalDone(
 ): boolean {
   return (
     t.externalStatus?.level === "done" ||
-    (t.status === "idle" && t.exitCode === 0 && t.presetId !== "shell")
+    (t.status === "idle" && t.exitCode === 0 && t.presetId !== PRESET_ID_SHELL)
   );
 }
 

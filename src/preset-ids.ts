@@ -6,3 +6,5 @@
 export const PRESET_ID_CODEX = "codex";
 /** Not a built-in: matches a user-added Gemini preset by conventional id. */
 export const PRESET_ID_GEMINI = "gemini";
+/** The plain shell: Cmd+T's fallback, and a clean exit is not a failure. */
+export const PRESET_ID_SHELL = "shell";
