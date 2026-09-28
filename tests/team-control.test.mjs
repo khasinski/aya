@@ -4,10 +4,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { envWithoutAya } from "./helpers/env.mjs";
+import { teamProject } from "./helpers/team.mjs";
 
 const { deliverTeamMessage, startControlServerOn } = await import("../dist-electron/control.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
@@ -36,30 +37,20 @@ One round every 30 minutes.
 
 /** A project with the team file, tester on pane-t, implementer on pane-i. */
 async function setup({ writePane, assign = true, holdReason } = {}) {
-  const root = mkdtempSync(join(tmpdir(), "aya-team-ctl-"));
-  const projectDir = join(root, "game");
-  mkdirSync(join(projectDir, ".aya", "teams"), { recursive: true });
-  writeFileSync(join(projectDir, ".aya", "teams", "ux-review.md"), TEAM);
-  const ayaHome = join(root, "aya-home");
-  const store = new TeamStore(teamDir(ayaHome, "game", "ux-review"));
+  const tabs = [
+    { id: "pane-t", presetId: "claude", name: "Tester" },
+    { id: "pane-i", presetId: "claude", name: "Claude Account" },
+    { id: "pane-x", presetId: "claude", name: "Other" },
+  ];
+  const { root, directory: projectDir, teamHome, project, cleanup: removeRoot } = teamProject("aya-team-ctl-", { teamFile: TEAM, tabs });
+  const store = new TeamStore(teamDir(teamHome, "game", "ux-review"));
   if (assign) {
     await store.assign("tester", "pane-t");
     await store.assign("implementer", "pane-i");
   }
   const writes = [];
   const socket = join(root, "aya.sock");
-  const listProjects = async () => [
-    {
-      slug: "game",
-      name: "game",
-      directory: projectDir,
-      tabs: [
-        { id: "pane-t", presetId: "claude", name: "Tester" },
-        { id: "pane-i", presetId: "claude", name: "Claude Account" },
-        { id: "pane-x", presetId: "claude", name: "Other" },
-      ],
-    },
-  ];
+  const listProjects = async () => [project];
   const write = writePane ?? (async (id, data) => void writes.push({ id, data }));
   const stop = startControlServerOn(socket, {
     getWindow: () => null,
@@ -68,7 +59,7 @@ async function setup({ writePane, assign = true, holdReason } = {}) {
     readPane: async () => "",
     writePane: write,
     team: {
-      teamHome: ayaHome,
+      teamHome,
       listProjects,
       deliver: (terminalId, text) => deliverTeamMessage(write, terminalId, text),
       headCommit: async () => "a1b2c3d",
@@ -93,7 +84,7 @@ async function setup({ writePane, assign = true, holdReason } = {}) {
     });
   const cleanup = () => {
     stop();
-    rmSync(root, { recursive: true, force: true });
+    removeRoot();
   };
   return { aya, writes, store, projectDir, cleanup };
 }
@@ -258,14 +249,9 @@ test("a typed team message is its header and text on one line; a role with no pa
 });
 
 test("a pane with no role, or a role the saved team no longer has, gets the one message", async () => {
-  const root = mkdtempSync(join(tmpdir(), "aya-team-member-"));
+  const { teamHome, project, cleanup } = teamProject("aya-team-member-", { teamFile: TEAM, tabs: [{ id: "pane-x" }, { id: "pane-g" }] });
   try {
-    const directory = join(root, "game");
-    mkdirSync(join(directory, ".aya", "teams"), { recursive: true });
-    writeFileSync(join(directory, ".aya", "teams", "ux-review.md"), TEAM);
-    const teamHome = join(root, "aya-home");
     await new TeamStore(teamDir(teamHome, "game", "ux-review")).assign("ghost", "pane-g");
-    const project = { slug: "game", name: "game", directory, tabs: [{ id: "pane-x" }, { id: "pane-g" }] };
     const deps = { teamHome, listProjects: async () => [project] };
     const message = "this pane has no team role; assign one from the tab menu";
     await assert.rejects(handleTeamRequest({ type: "team-whoami" }, "pane-x", deps), { message });
@@ -273,6 +259,6 @@ test("a pane with no role, or a role the saved team no longer has, gets the one 
     await assert.rejects(handleTeamRequest({ type: "team-whoami" }, "pane-y", deps), { message: "this pane belongs to no open project" });
     await assert.rejects(handleTeamRequest({ type: "team-whoami" }, undefined, deps), { message: "run aya team inside an Aya pane" });
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    cleanup();
   }
 });

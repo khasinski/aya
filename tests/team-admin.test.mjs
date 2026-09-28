@@ -3,9 +3,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { teamProject } from "./helpers/team.mjs";
 
 const { listTeams, saveTeam, assignRole, releasePaneEverywhere } = await import("../dist-electron/team-admin.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
@@ -21,14 +21,7 @@ const TEAM = {
   protocol: "One round every 30 minutes.",
 };
 
-function setup() {
-  const root = mkdtempSync(join(tmpdir(), "aya-admin-"));
-  const directory = join(root, "game");
-  mkdirSync(directory, { recursive: true });
-  const project = { slug: "game", name: "game", directory, tabs: [{ id: "pane-t" }, { id: "pane-i" }] };
-  const teamHome = join(root, "aya");
-  return { root, project, teamHome, cleanup: () => rmSync(root, { recursive: true, force: true }) };
-}
+const setup = () => teamProject("aya-admin-");
 
 test("Save team writes the repo file and the snapshot Aya runs on", async () => {
   const t = setup();
