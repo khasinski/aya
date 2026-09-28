@@ -95,7 +95,9 @@ import {
 import { getGitHubLink, isGitHubCliAvailable } from "./github";
 import {
   AYA_HOME,
+  CLI_ADOPTION_FILE,
   CONTROL_SOCKET_PATH,
+  DIAGNOSTICS_LOG_FILE,
   IS_DEV,
   IS_E2E_HEADLESS,
   IS_E2E_PTY_SHUTDOWN,
@@ -169,7 +171,9 @@ import { loadWindowState, trackWindowState } from "./window-state";
 import { resolveDropTarget, WindowProjectSlices } from "./window-slices";
 import {
   generateWebPassword,
+  isWildcardHost,
   loadWebConfig,
+  LOOPBACK_HOST,
   normalizeWebPort,
   saveWebConfig,
   webCredentials,
@@ -198,7 +202,7 @@ const CLI_EXECUTABLE_MODE = 0o755;
 
 // Per-harness count of panes that ever called `aya` (#117); shown in
 // Settings -> Diagnostics.
-const cliAdoption = createCliAdoptionStore(path.join(AYA_HOME, "cli-adoption.json"));
+const cliAdoption = createCliAdoptionStore(CLI_ADOPTION_FILE);
 // Maximum number of entries returned by path completion
 const MAX_PATH_COMPLETION_ENTRIES = 100;
 // Maximum number of keyboard-navigable projects (Cmd/Ctrl+1..9)
@@ -217,6 +221,16 @@ const LOCAL_SUMMARY_TIMEOUT_MS = 20_000;
 const LOCAL_SUMMARY_MAX_LINES = 30;
 const LOCAL_SUMMARY_MAX_STDOUT_BYTES = 32 * 1024;
 const RECOMMENDED_OLLAMA_MODEL = "gemma4:e4b";
+// Cascade offset for a window opened from another window (File > New Window,
+// tab tear-out), so it doesn't cover its parent exactly.
+const NEW_WINDOW_CASCADE_OFFSET_PX = 28;
+// Tear-out: the cursor lands this far into the new window, on its tab strip.
+const TEAR_OUT_CURSOR_OFFSET_X_PX = 80;
+const TEAR_OUT_CURSOR_OFFSET_Y_PX = 20;
+// Delays after a GPU death at which we ask renderers to heal. The first covers
+// the typical relaunch window; the second is a cheap safety net (the heal is a
+// no-op when the WebGL context is already live again).
+const GPU_HEAL_NUDGE_DELAYS_MS = [1200, 3000];
 
 const ptyHost = new PtyHostClient(path.join(__dirname, "pty-host.js"));
 // One set of team deps for the team runner and the control server's aya team.
@@ -367,11 +381,16 @@ function validateLocalSummaryRequest(value: unknown): LocalSummaryRequest {
   };
 }
 
+/** The bundled Apple Foundation Models helper (no e2e override). */
+function appleHelperPath(): string {
+  return bundledDistElectronHelperPath(__dirname, "aya-local-summary");
+}
+
 async function summarizeWithApple(
   req: LocalSummaryRequest,
 ): Promise<LocalSummaryResult> {
   if (process.platform !== "darwin") return unavailableLocalSummary("unsupported-platform");
-  const helper = bundledDistElectronHelperPath(__dirname, "aya-local-summary");
+  const helper = appleHelperPath();
   try {
     await fs.access(helper, fsConstants.X_OK);
   } catch {
@@ -1598,7 +1617,7 @@ async function applyWebServerState(): Promise<void> {
 /** Reachable URLs for the settings UI: the pinned address, or every
  *  non-internal IPv4 when listening on all interfaces. */
 function webServerUrls(config: WebConfig): string[] {
-  if (config.host !== "0.0.0.0" && config.host !== "::") {
+  if (!isWildcardHost(config.host)) {
     return [`http://${config.host}:${config.port}`];
   }
   const hosts: string[] = [];
@@ -1607,7 +1626,7 @@ function webServerUrls(config: WebConfig): string[] {
       if (info.family === "IPv4" && !info.internal) hosts.push(info.address);
     }
   }
-  if (hosts.length === 0) hosts.push("127.0.0.1");
+  if (hosts.length === 0) hosts.push(LOOPBACK_HOST);
   return hosts.map((host) => `http://${host}:${config.port}`);
 }
 
@@ -1880,10 +1899,6 @@ interface WindowGeometry {
   isMaximized: boolean;
 }
 
-// Cascade offset for a window opened from another window (File > New Window,
-// tab tear-out), so it doesn't cover its parent exactly.
-const NEW_WINDOW_CASCADE_OFFSET_PX = 28;
-
 /** Open an additional (empty) Aya window, cascaded from the focused one - or,
  *  for a tab tear-out, positioned at the release point so the new window
  *  appears under the cursor like a Chrome tab drag. New windows own no
@@ -1899,7 +1914,7 @@ async function openNewWindow(at?: {
     : { ...(await loadWindowState()), x: undefined, y: undefined };
   const position = at
     ? // Nudge so the cursor lands on the new window's tab strip, not its corner.
-      { x: Math.max(0, at.x - 80), y: Math.max(0, at.y - 20) }
+      { x: Math.max(0, at.x - TEAR_OUT_CURSOR_OFFSET_X_PX), y: Math.max(0, at.y - TEAR_OUT_CURSOR_OFFSET_Y_PX) }
     : anchor
       ? {
           x: anchor.getBounds().x + NEW_WINDOW_CASCADE_OFFSET_PX,
@@ -2205,7 +2220,7 @@ function registerIpc(): void {
         intelligence.provider === "apple"
           ? await appleChat(
               // e2e swaps in a stand-in: the real model is slow and not on every Mac.
-              process.env.AYA_E2E_APPLE_HELPER || bundledDistElectronHelperPath(__dirname, "aya-local-summary"),
+              process.env.AYA_E2E_APPLE_HELPER || appleHelperPath(),
               system,
               user,
               opts,
@@ -3227,11 +3242,7 @@ app.on("before-quit", () => {
 // once the replacement GPU process should be up, nudge renderers to re-run
 // their existing WebGL/PTY repair path - belt-and-suspenders over Chromium's
 // own repaint.
-const diagnosticsLog = createPtyLog(path.join(AYA_HOME, "diagnostics.log"));
-// Delays after a GPU death at which we ask renderers to heal. The first covers
-// the typical relaunch window; the second is a cheap safety net (the heal is a
-// no-op when the WebGL context is already live again).
-const GPU_HEAL_NUDGE_DELAYS_MS = [1200, 3000];
+const diagnosticsLog = createPtyLog(DIAGNOSTICS_LOG_FILE);
 // Live heal timers: a burst of deaths must not accumulate them.
 const gpuHealTimers = new Set<NodeJS.Timeout>();
 app.on("child-process-gone", (_event, details) => {
