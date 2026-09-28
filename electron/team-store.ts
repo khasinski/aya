@@ -30,6 +30,15 @@ const TEAM_FILES = {
 // One write queue per team directory, shared by every store opened on it.
 const queues = new Map<string, Promise<unknown>>();
 
+/** The file's text, or null when it cannot be read. */
+export async function readText(file: string): Promise<string | null> {
+  try {
+    return await fs.readFile(file, "utf-8");
+  } catch {
+    return null;
+  }
+}
+
 async function readJson<T>(file: string, fallback: T): Promise<T> {
   try {
     return JSON.parse(await fs.readFile(file, "utf-8")) as T;
@@ -101,22 +110,12 @@ export class TeamStore {
     return this.serial(() => writeFileAtomic(this.file(TEAM_FILES.saved), text));
   }
 
-  async savedDefinition(): Promise<string | null> {
-    try {
-      return await fs.readFile(this.file(TEAM_FILES.saved), "utf-8");
-    } catch {
-      return null;
-    }
+  savedDefinition(): Promise<string | null> {
+    return readText(this.file(TEAM_FILES.saved));
   }
 
   async log(): Promise<TeamMessage[]> {
-    let raw: string;
-    try {
-      raw = await fs.readFile(this.file(TEAM_FILES.log), "utf-8");
-    } catch {
-      return [];
-    }
-    return raw
+    return ((await readText(this.file(TEAM_FILES.log))) ?? "")
       .split("\n")
       .filter(Boolean)
       .map((line) => JSON.parse(line) as TeamMessage);
