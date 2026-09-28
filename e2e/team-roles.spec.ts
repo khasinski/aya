@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { test, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
 import { TEAMS_REFRESH_MS } from "../src/hooks/useTeams";
+import { LAYOUT_MODE_STORAGE_KEY } from "../src/storage-keys";
 
 const TEAM = `# ux-review
 
@@ -70,7 +71,7 @@ test.describe("experimental layout", () => {
   test.use(withTeam({ tester: "tab-left", implementer: "tab-right" }, { "teams/e2e-proj/ux-review/log.jsonl": WAITING }));
 
   test("tabs show the role and the project rail sums waiting messages", async ({ window }) => {
-    await window.evaluate(() => localStorage.setItem("aya:layout-mode", "projects-left"));
+    await window.evaluate((k) => localStorage.setItem(k, "projects-left"), LAYOUT_MODE_STORAGE_KEY);
     await window.reload();
     await ready(window);
     await expect(window.locator(".aya-termtab-main").filter({ hasText: "shell 1" })).toContainText("tester · ux-review");
