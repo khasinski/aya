@@ -132,9 +132,11 @@ export function withoutEventHook(
   if (typeof hooks !== "object" || hooks === null) return settings;
   const h = hooks as Record<string, unknown>;
   if (!Array.isArray(h[event])) return settings;
-  const filtered = (h[event] as HookEntry[]).filter(
-    (e) => !(Array.isArray(e?.hooks) && e.hooks.some((x) => x?.command === command)),
-  );
+  const filtered = (h[event] as HookEntry[]).flatMap((e) => {
+    if (!Array.isArray(e?.hooks) || !e.hooks.some((x) => x?.command === command)) return [e];
+    const rest = e.hooks.filter((x) => x?.command !== command);
+    return rest.length > 0 ? [{ ...e, hooks: rest }] : [];
+  });
   const nextHooks: Record<string, unknown> = { ...h };
   if (filtered.length > 0) nextHooks[event] = filtered;
   else delete nextHooks[event];
@@ -218,6 +220,14 @@ exit 0
 
 // ---- fs-bound install / uninstall / status ----------------------------------
 
+// Startup migration runs unawaited; queue it with install/uninstall so no edit is lost.
+let settingsEdits: Promise<unknown> = Promise.resolve();
+function serially<T>(edit: () => Promise<T>): Promise<T> {
+  const run = settingsEdits.then(edit, edit);
+  settingsEdits = run.catch(() => {});
+  return run;
+}
+
 export async function statusHookStatus(): Promise<StatusHookStatus> {
   const command = statusHookCommand();
   let registered = true;
@@ -247,7 +257,7 @@ export async function statusHookStatus(): Promise<StatusHookStatus> {
   };
 }
 
-export async function installStatusHook(): Promise<StatusHookStatus> {
+async function install(): Promise<StatusHookStatus> {
   const command = statusHookCommand();
   for (const dir of await claudeConfigDirs()) {
     const settingsPath = settingsFileForConfigDir(dir);
@@ -264,7 +274,7 @@ export async function installStatusHook(): Promise<StatusHookStatus> {
   return statusHookStatus();
 }
 
-export async function uninstallStatusHook(): Promise<StatusHookStatus> {
+async function uninstall(): Promise<StatusHookStatus> {
   const command = statusHookCommand();
   for (const dir of await claudeConfigDirs()) {
     try {
@@ -296,9 +306,7 @@ export async function refreshStatusHookScript(): Promise<void> {
   await fs.chmod(STATUS_HOOK_SCRIPT_FILE, HOOK_SCRIPT_MODE);
 }
 
-/** Rewrite an installed quoted command to the current one (see hookCommandFor).
- *  Never installs: settings without our old command are left as they are. */
-export async function migrateStatusHookCommand(): Promise<void> {
+async function migrate(): Promise<void> {
   const [legacy, command] = [legacyStatusHookCommand(), statusHookCommand()];
   for (const dir of await claudeConfigDirs()) {
     const settingsPath = settingsFileForConfigDir(dir);
@@ -312,3 +320,9 @@ export async function migrateStatusHookCommand(): Promise<void> {
     if (next !== settings) await writeFileAtomic(settingsPath, JSON.stringify(next, null, 2) + "\n");
   }
 }
+
+export const installStatusHook = (): Promise<StatusHookStatus> => serially(install);
+export const uninstallStatusHook = (): Promise<StatusHookStatus> => serially(uninstall);
+/** Rewrite an installed quoted command to the current one (see hookCommandFor).
+ *  Never installs: settings without our old command are left as they are. */
+export const migrateStatusHookCommand = (): Promise<void> => serially(migrate);

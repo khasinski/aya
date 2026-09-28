@@ -148,3 +148,8 @@ test("migrating a partial install swaps only the events that had the quoted comm
   const after = withMigratedStatusHooks(onlyStop, CMD, bare);
   assert.deepEqual(after, withEventHook({}, "Stop", bare));
 });
+
+test("removing our command keeps other hooks that share its entry", () => {
+  const shared = { hooks: { Stop: [{ matcher: "", hooks: [{ type: "command", command: CMD }, { type: "command", command: "/mine.sh" }] }] } };
+  assert.deepEqual(withoutEventHook(shared, "Stop", CMD), { hooks: { Stop: [{ matcher: "", hooks: [{ type: "command", command: "/mine.sh" }] }] } });
+});

@@ -62,3 +62,11 @@ test("uninstall removes both the bare and the quoted command", async () => {
   await uninstallStatusHook();
   assert.deepEqual(read(), { env: { FOO: "1" }, hooks: { Stop: [other] } });
 });
+
+test("an uninstall racing the startup migration stays uninstalled", async () => {
+  for (let i = 0; i < 20; i++) {
+    seedQuoted();
+    await Promise.all([migrateStatusHookCommand(), uninstallStatusHook()]);
+    assert.deepEqual(read(), { env: { FOO: "1" }, hooks: { Stop: [other] } }, `run ${i}`);
+  }
+});
