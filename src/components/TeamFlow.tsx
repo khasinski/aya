@@ -4,9 +4,13 @@ import type { TeamDefinition } from "../types";
 const WIDTH = 340;
 const HEIGHT = 220;
 const NODE_H = 22;
+// A role's box fits its label: about NODE_CHAR_W px per character plus padding.
+const NODE_MIN_W = 48;
+const NODE_CHAR_W = 7;
+const NODE_PAD_X = 16;
 
 function nodeWidth(id: string): number {
-  return Math.max(48, id.length * 7 + 16);
+  return Math.max(NODE_MIN_W, id.length * NODE_CHAR_W + NODE_PAD_X);
 }
 
 /** From the edge of one role's box to the other's; a two-way pair is split. */
