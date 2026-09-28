@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const {
+  checkRemoteHealth,
   createRemoteDirectory,
   createRemoteProjectOnHost,
   listRemoteDirectory,
@@ -301,4 +302,83 @@ test("remote client sends mkdir and project:create through the mocked ssh bridge
       ["shell", "claude-yolo"],
     );
   });
+});
+
+// --- timeouts ----------------------------------------------------------------
+// The remote bridge gives up first and says the remote Aya is silent; the local
+// ssh kill is only a backstop for an ssh that never gets the bridge running.
+
+const FAST = { bridgeMs: 300, sshKillMs: 3_000 };
+
+function mkHungSsh() {
+  const dir = mkdtempSync(join(tmpdir(), "aya-hung-ssh-"));
+  writeFileSync(join(dir, "ssh"), "#!/bin/sh\nexec sleep 30\n");
+  chmodSync(join(dir, "ssh"), 0o755);
+  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+async function withEnv(vars, fn) {
+  const previous = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, vars);
+  try {
+    return await fn();
+  } finally {
+    for (const [k, v] of Object.entries(previous)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+function failedCheck(result) {
+  assert.equal(result.ok, false);
+  const failed = result.checks.filter((check) => !check.ok);
+  assert.equal(failed.length, 1);
+  return failed[0];
+}
+
+test("a silent remote Aya fails at the bridge timeout, before the ssh kill", async () => {
+  const fake = mkFakeSsh();
+  const remote = await startRemoteSocket((socket) => send(socket, remoteHello()));
+  try {
+    const started = Date.now();
+    const result = await withEnv(
+      { PATH: fake.env.PATH, AYA_REMOTE_SOCKET: remote.socket },
+      () => checkRemoteHealth("hostname", FAST),
+    );
+    const elapsed = Date.now() - started;
+    const failed = failedCheck(result);
+    assert.equal(failed.stage, "aya-remote");
+    assert.equal(failed.message, "Remote Aya did not respond within 0.3s.");
+    assert.ok(elapsed >= FAST.bridgeMs && elapsed < FAST.sshKillMs, `took ${elapsed}ms`);
+    assert.deepEqual(
+      result.checks.map((check) => `${check.stage}:${check.ok}`),
+      ["ssh:true", "node:true", "aya-remote:false"],
+    );
+  } finally {
+    fake.cleanup();
+    await remote.cleanup();
+  }
+});
+
+test("an ssh that never starts the bridge is killed at the backstop and blamed on ssh", async () => {
+  const hung = mkHungSsh();
+  try {
+    const started = Date.now();
+    const result = await withEnv({ PATH: `${hung.dir}:${process.env.PATH}` }, () =>
+      checkRemoteHealth("hostname", FAST),
+    );
+    const elapsed = Date.now() - started;
+    const failed = failedCheck(result);
+    assert.equal(failed.stage, "ssh");
+    assert.equal(failed.message, "ssh hostname did not finish within 3s.");
+    assert.ok(elapsed >= FAST.sshKillMs, `took ${elapsed}ms`);
+  } finally {
+    hung.cleanup();
+  }
+});
+
+test("the ssh kill backstop leaves the bridge timeout room to report first", async () => {
+  const { REMOTE_TIMEOUTS } = await import("../dist-electron/remote-client.js");
+  assert.ok(REMOTE_TIMEOUTS.sshKillMs - REMOTE_TIMEOUTS.bridgeMs >= 5_000);
 });
