@@ -15,3 +15,24 @@ export function withCliFirst(command: string, dir: string): string {
 export function isShellCommand(command: string): boolean {
   return /^(?:\$SHELL|(?:\S*\/)?(?:bash|zsh|sh|fish))(?:\s+-[a-z]+)*\s*$/.test(command.trim());
 }
+
+// Set by a running Claude Code session for its own children. Aya started from
+// such a session must not hand them to its panes: Claude would then save no
+// transcript (nothing for --continue) and each pane would get its token.
+const SESSION_MARKERS = new Set([
+  "CLAUDECODE",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_EXECPATH",
+  "CLAUDE_CODE_MESSAGING_SOCKET",
+  "CLAUDE_CODE_MESSAGING_TOKEN",
+  "CLAUDE_CODE_SESSION_ATTENDED",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_PID",
+]);
+
+/** The environment without another session's markers; the user's own
+ *  settings (CLAUDE_CONFIG_DIR, CLAUDE_CODE_USE_BEDROCK, ...) stay. */
+export function withoutSessionMarkers(env: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !SESSION_MARKERS.has(key)));
+}

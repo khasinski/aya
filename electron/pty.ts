@@ -23,7 +23,7 @@ import {
   resizeVtPane,
   writeVtPane,
 } from "./vt-state";
-import { isShellCommand, shellQuote } from "./pane-command";
+import { isShellCommand, shellQuote, withoutSessionMarkers } from "./pane-command";
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 import { COMMAND_NOT_FOUND_EXIT_CODE, COMMAND_PROBE_TIMEOUT_MS } from "./constants";
 import { userShell } from "./shell";
@@ -448,10 +448,11 @@ async function commandExists(binary: string): Promise<boolean> {
 }
 
 function safeEnv(req: SpawnRequest, cwd: string): { [key: string]: string } {
-  const out: { [key: string]: string } = {};
+  const inherited: { [key: string]: string } = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (typeof v === "string") out[k] = v;
+    if (typeof v === "string") inherited[k] = v;
   }
+  const out = withoutSessionMarkers(inherited);
   out.TERM = "xterm-256color";
   out.COLORTERM = "truecolor";
   if (!out.LANG) out.LANG = "en_US.UTF-8";

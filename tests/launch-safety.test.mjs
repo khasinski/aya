@@ -141,3 +141,28 @@ test("in Aya Dev an agent pane finds the branch's aya first, even after the shel
   const out = execFileSync("/bin/sh", ["-c", `PATH=/usr/bin:/bin; ${script}`], { encoding: "utf8" });
   assert.equal(out.trim(), "branch-aya");
 });
+
+test("a pane does not inherit the Claude Code session that launched Aya, only the user's settings", async () => {
+  const { withoutSessionMarkers } = await import("../dist-electron/pane-command.js");
+  const parent = {
+    PATH: "/usr/bin",
+    CLAUDECODE: "1",
+    CLAUDE_CODE_CHILD_SESSION: "1",
+    CLAUDE_CODE_ENTRYPOINT: "cli",
+    CLAUDE_CODE_EXECPATH: "/x/claude",
+    CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/s.sock",
+    CLAUDE_CODE_MESSAGING_TOKEN: "secret",
+    CLAUDE_CODE_SESSION_ATTENDED: "1",
+    CLAUDE_CODE_SESSION_ID: "abc",
+    CLAUDE_PID: "123",
+    CLAUDE_CONFIG_DIR: "/Users/me/.claude-work",
+    CLAUDE_EFFORT: "high",
+    CLAUDE_CODE_USE_BEDROCK: "1",
+  };
+  assert.deepEqual(withoutSessionMarkers(parent), {
+    PATH: "/usr/bin",
+    CLAUDE_CONFIG_DIR: "/Users/me/.claude-work",
+    CLAUDE_EFFORT: "high",
+    CLAUDE_CODE_USE_BEDROCK: "1",
+  });
+});
