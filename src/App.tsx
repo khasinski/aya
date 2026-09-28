@@ -173,6 +173,10 @@ const PROJECT_STATE_SAVE_DEBOUNCE_MS = 150;
 const LOCAL_SUMMARY_MIN_UPDATE_MS = 2 * 60 * 1000;
 const LOCAL_SUMMARY_MIN_NEW_LINES = 8;
 const LOCAL_SUMMARY_MAX_LINES = 30;
+// Fewer output lines than this are "not enough output" to summarize.
+const LOCAL_SUMMARY_MIN_LINES = 2;
+// Cleaned output lines shorter than this (prompts, stray glyphs) are dropped.
+const LOCAL_SUMMARY_MIN_LINE_CHARS = 3;
 const LOCAL_SUMMARY_BUFFER_LINES = 80;
 const LOCAL_SUMMARY_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const SESSION_MONITOR_POLL_INTERVAL_MS = 5_000;
@@ -378,7 +382,7 @@ function cleanTerminalOutput(chunk: string): string[] {
         .replace(/\s+/g, " ")
         .trim(),
     )
-    .filter((line) => line.length >= 3);
+    .filter((line) => line.length >= LOCAL_SUMMARY_MIN_LINE_CHARS);
 }
 
 function summaryHash(lines: string[]): string {
@@ -1218,7 +1222,7 @@ export function App() {
         return;
       }
       const recent = lines.slice(-LOCAL_SUMMARY_MAX_LINES);
-      if (recent.length < 2) {
+      if (recent.length < LOCAL_SUMMARY_MIN_LINES) {
         setAutoSummaryStatus((prev) => ({
           ...prev,
           lastEvent: `${kind}: not enough output (${recent.length} line${recent.length === 1 ? "" : "s"}).`,
@@ -1766,7 +1770,7 @@ export function App() {
       apply: (summary: string) => void,
     ) => {
       const recent = lines.slice(-LOCAL_SUMMARY_MAX_LINES);
-      if (recent.length < 2) {
+      if (recent.length < LOCAL_SUMMARY_MIN_LINES) {
         setAutoSummaryStatus((prev) => ({
           ...prev,
           lastEvent: `${kind}: not enough output (${recent.length} line${recent.length === 1 ? "" : "s"}).`,
@@ -1838,7 +1842,7 @@ export function App() {
 
     const linesForTerminal = async (terminalId: string): Promise<string[]> => {
       const existing = terminalOutputRef.current[terminalId] ?? [];
-      if (existing.length >= 2) return existing;
+      if (existing.length >= LOCAL_SUMMARY_MIN_LINES) return existing;
       try {
         const buffered = await window.aya.ptyBuffer(terminalId);
         const lines = cleanTerminalOutput(buffered);
