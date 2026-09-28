@@ -39,6 +39,9 @@ export async function listTeams(teamHome: string, project: ProjectConfig): Promi
       } catch (err) {
         error = err instanceof Error ? err.message : String(err);
       }
+      // A held message the receiver has since had (inbox or typed later) reached it.
+      const read = await store.readMarks();
+      const log = (await store.log()).slice(-LOG_TAIL).map((m) => ({ ...m, delivered: m.delivered || (m.from !== TEAM_SYSTEM_SENDER && m.id <= (read[m.to] ?? 0)) }));
       return {
         name,
         definition,
@@ -52,11 +55,7 @@ export async function listTeams(teamHome: string, project: ProjectConfig): Promi
             (definition?.roles ?? []).map(async (r) => [r.id, (await store.unread(r.id)).length] as const),
           ),
         ),
-        // A held message the receiver has since had (inbox or typed later) reached it.
-        log: await (async () => {
-          const read = await store.readMarks();
-          return (await store.log()).slice(-LOG_TAIL).map((m) => ({ ...m, delivered: m.delivered || (m.from !== TEAM_SYSTEM_SENDER && m.id <= (read[m.to] ?? 0)) }));
-        })(),
+        log,
       };
     }),
   );
