@@ -2,6 +2,7 @@
 // rename, a cleared name or a removed row never leaves a stale link; role ids
 // are resolved only when the team is built for Save or the preview.
 
+import { MAX_CADENCE_MINUTES } from "./main-mirrors";
 import type { RoleDraft, TeamDefinition } from "./types";
 
 export interface EditorRole {
@@ -24,6 +25,11 @@ export interface EditorTeam {
 export const ROLE_ID_MAX_LEN = 40;
 // A new cadence (template or editor) runs this often until the user changes it.
 export const DEFAULT_CADENCE_MINUTES = 30;
+
+/** Why the team file would refuse this many round minutes, or null. */
+export function cadenceProblem(minutes: number): string | null {
+  return Number.isInteger(minutes) && minutes >= 1 && minutes <= MAX_CADENCE_MINUTES ? null : `Rounds run every 1-${MAX_CADENCE_MINUTES} min`;
+}
 
 /** What the team file accepts as a role id: typing "Senior UX" gives "senior-ux". */
 export function roleId(typed: string): string {

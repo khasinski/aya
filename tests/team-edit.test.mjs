@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import {
   addRole,
   applyDraft,
+  cadenceProblem,
   DEFAULT_CADENCE_MINUTES,
   fromEditor,
   removeRole,
@@ -15,7 +16,7 @@ import {
   toEditor,
   updateRole,
 } from "../dist-test/team-edit.js";
-import { ID_RE } from "../dist-electron/teams.js";
+import { ID_RE, parseTeamFile, serializeTeam } from "../dist-electron/teams.js";
 
 const TEAM = {
   name: "trio",
@@ -151,4 +152,19 @@ test("a draft route to an empty name does not land on an unnamed row", () => {
   const tes = keyOf(t, "tester");
   t = applyDraft(t, tes, { responsibilities: "", mustNot: "x", sendsTo: [{ to: "", what: "?" }] });
   assert.deepEqual(t.roles.find((r) => r.key === tes).sendsTo, []);
+});
+
+test("the editor flags a cadence exactly when the saved file would refuse it", () => {
+  const saves = (minutes) => {
+    try {
+      parseTeamFile("trio", serializeTeam({ ...TEAM, cadence: { role: "tester", minutes } }));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  for (const minutes of [NaN, -1, 0, 0.5, 1, 2.5, 30, 1439, 1440, 1441, 5000]) {
+    assert.equal(cadenceProblem(minutes) === null, saves(minutes), `${minutes} min`);
+  }
+  assert.match(cadenceProblem(5000), /1-1440/);
 });
