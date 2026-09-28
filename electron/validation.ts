@@ -3,6 +3,7 @@ import type {
   ProjectConfig,
   SplitLayout,
   SpawnRequest,
+  TeamDefinition,
   Theme,
   ThemesFile,
   WorkingTab,
@@ -336,5 +337,29 @@ export function validateThemesFile(value: unknown): ThemesFile {
       validateTheme(theme, `themes:save.themes[${idx}]`),
     ),
     activeId: requireString(value.activeId, "themes:save.activeId"),
+  };
+}
+
+/** Shape only; team rules (must-not, send-to, cadence) are the parser's job. */
+export function validateTeamDefinition(value: unknown): TeamDefinition {
+  const team = requireRecord(value, "teams:save.team");
+  const roles = Array.isArray(team.roles) ? team.roles : fail("teams:save.team.roles", "array");
+  const cadence = team.cadence === null || team.cadence === undefined ? null : requireRecord(team.cadence, "teams:save.team.cadence");
+  return {
+    name: requireString(team.name, "teams:save.team.name"),
+    roles: roles.map((raw, i) => {
+      const role = requireRecord(raw, `teams:save.team.roles[${i}]`);
+      return {
+        id: requireString(role.id, `teams:save.team.roles[${i}].id`),
+        sendsTo: requireStringArray(role.sendsTo, `teams:save.team.roles[${i}].sendsTo`),
+        mustNot: requireString(role.mustNot, `teams:save.team.roles[${i}].mustNot`),
+        responsibilities: requireString(role.responsibilities, `teams:save.team.roles[${i}].responsibilities`),
+      };
+    }),
+    cadence: cadence && {
+      role: requireString(cadence.role, "teams:save.team.cadence.role"),
+      minutes: typeof cadence.minutes === "number" ? cadence.minutes : fail("teams:save.team.cadence.minutes", "number"),
+    },
+    protocol: requireString(team.protocol, "teams:save.team.protocol"),
   };
 }

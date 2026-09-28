@@ -73,6 +73,7 @@ import {
 } from "./agent-brief";
 import { paneTeamRole } from "./team-control";
 import { TeamRunner } from "./team-runner";
+import { assignRole, listTeams, saveTeam } from "./team-admin";
 import { startRemoteServer } from "./remote-server";
 import {
   createRemoteDirectory,
@@ -153,6 +154,7 @@ import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
 import {
   requirePositiveInt,
   requireString,
+  validateTeamDefinition,
   validateSnippetArray,
   validatePresetArray,
   validateProjectCollectionState,
@@ -183,6 +185,7 @@ import type {
   LocalSummaryResult,
   OllamaStatus,
   ProjectCollectionState,
+  ProjectConfig,
   UpdateStatus,
   WebServerStatus,
 } from "./types";
@@ -2321,6 +2324,27 @@ function registerIpc(): void {
   );
   ipcMain.handle("teams:resume", (_e, slug: unknown, team: unknown) =>
     teamRunner.resume(...teamArgs(slug, team, "teams:resume")),
+  );
+  const teamProject = async (slug: unknown, channel: string): Promise<ProjectConfig> => {
+    const wanted = requireString(slug, `${channel}.projectSlug`);
+    const project = (await listProjects()).find((p) => p.slug === wanted);
+    if (!project) throw new Error(`project ${wanted} is not open`);
+    return project;
+  };
+  ipcMain.handle("teams:list", async (_e, slug: unknown) =>
+    listTeams(AYA_HOME, await teamProject(slug, "teams:list")),
+  );
+  ipcMain.handle("teams:save", async (_e, slug: unknown, team: unknown) =>
+    saveTeam(AYA_HOME, await teamProject(slug, "teams:save"), validateTeamDefinition(team)),
+  );
+  ipcMain.handle("teams:assign", async (_e, slug: unknown, team: unknown, role: unknown, paneId: unknown) =>
+    assignRole(
+      AYA_HOME,
+      await teamProject(slug, "teams:assign"),
+      requireString(team, "teams:assign.team"),
+      requireString(role, "teams:assign.role"),
+      paneId === null ? null : requireString(paneId, "teams:assign.paneId"),
+    ),
   );
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
     const request = validateSpawnRequest(req);

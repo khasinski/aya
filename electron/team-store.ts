@@ -5,17 +5,9 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
 import { OWNER_ONLY_FILE_MODE } from "./paths";
+import type { TeamMessage } from "./types";
 
-export interface TeamMessage {
-  id: number;
-  time: string;
-  from: string;
-  to: string;
-  commit: string | null;
-  text: string;
-  /** Typed into the recipient's pane; the rest wait for its inbox. */
-  delivered: boolean;
-}
+export type { TeamMessage };
 
 export function teamDir(ayaHome: string, project: string, team: string): string {
   return path.join(ayaHome, "teams", project, team);
@@ -68,6 +60,14 @@ export class TeamStore {
       const next = Object.fromEntries(Object.entries(current).filter(([, p]) => p !== paneId));
       await writeFileAtomic(this.file("assignments.json"), JSON.stringify(next, null, 2));
     });
+  }
+
+  assignmentsSnapshot(): Promise<Record<string, string>> {
+    return this.assignments();
+  }
+
+  log(): Promise<TeamMessage[]> {
+    return this.messages();
   }
 
   async paneOf(role: string): Promise<string | null> {

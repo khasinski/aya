@@ -11,6 +11,7 @@ import {
   validateProjectCollectionState,
   validateProjectConfig,
   validateSpawnRequest,
+  validateTeamDefinition,
   validateThemesFile,
 } from "../dist-electron/validation.js";
 import { AYA_DARK } from "../dist-electron/themes.js";
@@ -428,4 +429,20 @@ test("a session id that could alter a command line is rejected at the boundary",
       `should reject: ${JSON.stringify(sessionId)}`,
     );
   }
+});
+
+test("validateTeamDefinition keeps a well-formed team and refuses wrong shapes", () => {
+  const team = {
+    name: "ux-review",
+    roles: [{ id: "tester", sendsTo: ["implementer"], mustNot: "edit code", responsibilities: "" }],
+    cadence: { role: "tester", minutes: 30 },
+    protocol: "",
+    extra: "dropped",
+  };
+  const { extra, ...clean } = team;
+  assert.deepEqual(validateTeamDefinition(team), clean);
+  assert.equal(validateTeamDefinition({ ...team, cadence: null }).cadence, null);
+  assert.throws(() => validateTeamDefinition({ ...team, roles: "x" }), /teams:save\.team\.roles/);
+  assert.throws(() => validateTeamDefinition({ ...team, roles: [{ ...team.roles[0], sendsTo: "implementer" }] }), /sendsTo/);
+  assert.throws(() => validateTeamDefinition({ ...team, cadence: { role: "tester", minutes: "30" } }), /minutes/);
 });

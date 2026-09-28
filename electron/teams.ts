@@ -1,24 +1,9 @@
 // A team, as defined in the repo at .aya/teams/<name>.md. Plain markdown
 // sections instead of YAML, so people and agents can read and edit it.
 
-export interface TeamRole {
-  id: string;
-  sendsTo: string[];
-  mustNot: string;
-  responsibilities: string;
-}
+import type { TeamCadence, TeamDefinition, TeamRole } from "./types";
 
-export interface TeamCadence {
-  role: string;
-  minutes: number;
-}
-
-export interface TeamDefinition {
-  name: string;
-  roles: TeamRole[];
-  cadence: TeamCadence | null;
-  protocol: string;
-}
+export type { TeamCadence, TeamDefinition, TeamRole };
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const MAX_CADENCE_MINUTES = 24 * 60;

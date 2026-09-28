@@ -606,6 +606,11 @@ export interface AyaApi {
   /** Start a team: unpause, send every role a delivery test, arm its rounds. */
   teamStart(projectSlug: string, team: string): Promise<TeamStartResult>;
   teamPause(projectSlug: string, team: string): Promise<void>;
+  teamList(projectSlug: string): Promise<TeamSummary[]>;
+  /** Save team: writes .aya/teams/<name>.md and the snapshot Aya runs on. */
+  teamSave(projectSlug: string, team: TeamDefinition): Promise<void>;
+  /** Give a role to a pane of the project, or free it with null. */
+  teamAssign(projectSlug: string, team: string, role: string, paneId: string | null): Promise<void>;
   teamResume(projectSlug: string, team: string): Promise<void>;
 
   // Optional usage-hook installer (writes ~/.claude/settings.json + a fetch
@@ -753,4 +758,48 @@ declare global {
 export interface TeamStartResult {
   delivered: string[];
   held: { role: string; reason: string }[];
+}
+
+/** A team from .aya/teams/<name>.md (see electron/teams.ts). */
+export interface TeamRole {
+  id: string;
+  sendsTo: string[];
+  mustNot: string;
+  responsibilities: string;
+}
+
+export interface TeamCadence {
+  role: string;
+  minutes: number;
+}
+
+export interface TeamDefinition {
+  name: string;
+  roles: TeamRole[];
+  cadence: TeamCadence | null;
+  protocol: string;
+}
+
+export interface TeamMessage {
+  id: number;
+  time: string;
+  from: string;
+  to: string;
+  commit: string | null;
+  text: string;
+  /** Typed into the recipient's pane; the rest wait for its inbox. */
+  delivered: boolean;
+}
+
+/** One team as the teams window shows it. `definition` is what Aya runs on:
+ *  the saved snapshot, else the repo file; null when that does not parse. */
+export interface TeamSummary {
+  name: string;
+  definition: TeamDefinition | null;
+  error: string | null;
+  /** The repo file differs from what the user last saved. */
+  repoChanged: boolean;
+  paused: boolean;
+  assignments: Record<string, string>;
+  log: TeamMessage[];
 }
