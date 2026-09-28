@@ -20,9 +20,14 @@ export interface EditorTeam {
   nextKey: number;
 }
 
+// The longest id electron/teams.ts ID_RE accepts; a test holds them equal.
+export const ROLE_ID_MAX_LEN = 40;
+// A new cadence (template or editor) runs this often until the user changes it.
+export const DEFAULT_CADENCE_MINUTES = 30;
+
 /** What the team file accepts as a role id: typing "Senior UX" gives "senior-ux". */
 export function roleId(typed: string): string {
-  return typed.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+/, "").slice(0, 40);
+  return typed.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+/, "").slice(0, ROLE_ID_MAX_LEN);
 }
 
 export function toEditor(team: TeamDefinition): EditorTeam {

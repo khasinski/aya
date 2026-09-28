@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   addRole,
   applyDraft,
+  DEFAULT_CADENCE_MINUTES,
   fromEditor,
   removeRole,
   roleId,
@@ -78,7 +79,7 @@ export function TeamEditor({
           onChange={(e) =>
             setTeam({
               ...team,
-              cadence: e.target.value ? { key: Number(e.target.value), minutes: team.cadence?.minutes ?? 30 } : null,
+              cadence: e.target.value ? { key: Number(e.target.value), minutes: team.cadence?.minutes ?? DEFAULT_CADENCE_MINUTES } : null,
             })
           }
         >

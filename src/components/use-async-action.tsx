@@ -1,5 +1,10 @@
 import { useCallback, useState } from "react";
-import { ipcMessage } from "./ipc-message";
+
+/** The error text without Electron's "Error invoking remote method" wrapper. */
+function ipcMessage(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err);
+  return text.replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
+}
 
 /** Runs one IPC action at a time: busy while it runs, its error (without
  *  Electron's wrapper) after it fails, and its result when it succeeds. */

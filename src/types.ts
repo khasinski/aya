@@ -205,6 +205,7 @@ export interface ThemesFile {
 }
 
 import type { SplitNode } from "./split-tree";
+import { PRESET_ID_SHELL } from "./preset-ids";
 
 export interface WorkingTab {
   id: string;
@@ -757,10 +758,9 @@ export interface AyaApi {
   teamStart(projectSlug: string, team: string): Promise<TeamStartResult>;
   teamPause(projectSlug: string, team: string): Promise<void>;
   teamList(projectSlug: string): Promise<TeamSummary[]>;
-  /** Save team: writes .aya/teams/<name>.md and the snapshot Aya runs on. */
-  /** `create`: refuse when a team with this name already exists. */
+  /** Save team: writes .aya/teams/<name>.md and the snapshot Aya runs on.
+   *  `create`: refuse when a team with this name already exists. */
   teamSave(projectSlug: string, team: TeamDefinition, create?: boolean): Promise<void>;
-  /** Give a role to a pane of the project, or free it with null. */
   /** Gives a role a pane (null frees it) and tells the agent; returns why it was not told. */
   teamAssign(projectSlug: string, team: string, role: string, paneId: string | null): Promise<string | null>;
   /** A closed tab gives up its roles in every team of the project. */
@@ -950,7 +950,7 @@ export const MISSING_PRESET: Preset = {
 // their own "shell" preset but the Cmd+T shortcut still needs to open a
 // shell terminal. Same shape as the shipped default; not persisted.
 export const BUILTIN_SHELL: Preset = {
-  id: "shell",
+  id: PRESET_ID_SHELL,
   name: "Shell",
   icon: "$",
   color: "",
@@ -962,7 +962,7 @@ export function getPreset(presets: Preset[], id: string): Preset {
   if (found) return found;
   // Special-case "shell" so terminals created via Cmd+T always render with a
   // sensible icon/name even if the user deleted their shell preset.
-  if (id === "shell") return BUILTIN_SHELL;
+  if (id === PRESET_ID_SHELL) return BUILTIN_SHELL;
   return MISSING_PRESET;
 }
 
@@ -998,7 +998,6 @@ export interface TeamStartResult {
   held: { role: string; reason: string }[];
 }
 
-/** A team from .aya/teams/<name>.md (see electron/teams.ts). */
 /** A role this one sends to, and what it sends there (may be empty). */
 export interface SendRoute {
   to: string;
@@ -1017,6 +1016,7 @@ export interface TeamCadence {
   minutes: number;
 }
 
+/** A team from .aya/teams/<name>.md (see electron/teams.ts). */
 export interface TeamDefinition {
   name: string;
   roles: TeamRole[];

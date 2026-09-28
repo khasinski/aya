@@ -2839,7 +2839,7 @@ select.aya-modal-input {
   gap: 8px;
   font-size: 12px;
   margin: 6px 0;
-  color: var(--warn, #b7791f);
+  color: var(--danger, #c0392b);
 }
 .aya-teams-roles {
   width: 100%;
@@ -2936,10 +2936,6 @@ select.aya-modal-input {
   font-size: 12px;
   display: grid;
   gap: 2px;
-}
-.aya-teams-warning {
-  color: var(--danger, #c0392b);
-  font-size: 12px;
 }
 .aya-teams-role-alert {
   margin-top: 4px;

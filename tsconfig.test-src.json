@@ -25,6 +25,7 @@
     "src/double-shift.ts",
     "src/focus-reporting.ts",
     "src/hooks/usePersistentPreference.ts",
+    "src/ollama-defaults.ts",
     "src/project-reload.ts",
     "src/preset-ids.ts",
     "src/ptyEventBus.ts",
@@ -36,10 +37,13 @@
     "src/theme-skin.ts",
     "src/snippet-payload.ts",
     "src/split-tree.ts",
+    "src/storage-keys.ts",
     "src/spawnSession.ts",
     "src/stable-identity.ts",
     "src/types.ts",
+    "src/uuid.ts",
     "src/web/protocol.ts",
+    "src/window-events.ts",
     "src/web/shortcuts.ts",
     "src/worktree.ts"
   ]

@@ -6,13 +6,14 @@ import type { GrokUsage, UsageAccount, UsageData, UsageWindow } from "../types";
 const USAGE_STALE_AFTER_MS = 15 * 60 * 1000;
 const CHIP_MUTED_COLOR = "var(--fg-tertiary)";
 const CHIP_BORDER_COLOR = "var(--border)";
+const STALE_TICK_MS = 60_000;
 
 /** Re-renders every minute, so a snapshot dims on time even when no poll
  *  brings new data. */
 function useMinuteTick(): void {
   const [, setTick] = useState(0);
   useEffect(() => {
-    const id = window.setInterval(() => setTick((n) => n + 1), 60_000);
+    const id = window.setInterval(() => setTick((n) => n + 1), STALE_TICK_MS);
     return () => window.clearInterval(id);
   }, []);
 }

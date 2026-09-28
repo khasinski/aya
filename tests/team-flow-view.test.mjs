@@ -20,13 +20,12 @@ test("nodes sit apart inside the box", () => {
     for (let j = i + 1; j < points.length; j++) assert.ok(Math.hypot(points[i].x - points[j].x, points[i].y - points[j].y) > 60);
 });
 
-test("gaps: nobody sends to a role, a role sends to nobody, a route says nothing", () => {
+test("gaps: nobody sends to a role, a role sends to nobody", () => {
   // team1 as saved by hand: the implementer never hears from anyone.
   const team1 = [role("reviewer", [["tester", "fixes"]]), role("implementer", [["reviewer", "changes"]]), role("tester", [["reviewer"]]), role("", [["x"]])];
   assert.deepEqual(flowGaps(team1), {
     unreached: ["implementer"],
     silent: [],
-    unsaid: [{ from: "tester", to: "reviewer", what: "" }],
   });
-  assert.deepEqual(flowGaps([role("a", [["b", "x"]]), role("b", [["ghost", "y"], ["b", "z"]])]), { unreached: ["a"], silent: ["b"], unsaid: [] });
+  assert.deepEqual(flowGaps([role("a", [["b", "x"]]), role("b", [["ghost", "y"], ["b", "z"]])]), { unreached: ["a"], silent: ["b"] });
 });

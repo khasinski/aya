@@ -28,13 +28,12 @@ export function flowLayout(ids: string[], width: number, height: number): Record
   return at;
 }
 
-/** Roles no route reaches, roles with no route out, and routes without a what. */
-export function flowGaps(roles: TeamRole[]): { unreached: string[]; silent: string[]; unsaid: FlowEdge[] } {
+/** Roles no route reaches, and roles with no route out. */
+export function flowGaps(roles: TeamRole[]): { unreached: string[]; silent: string[] } {
   const edges = flowEdges(roles);
   const ids = roles.map((r) => r.id).filter(Boolean);
   return {
     unreached: ids.filter((id) => !edges.some((e) => e.to === id)),
     silent: ids.filter((id) => !edges.some((e) => e.from === id)),
-    unsaid: edges.filter((e) => !e.what),
   };
 }

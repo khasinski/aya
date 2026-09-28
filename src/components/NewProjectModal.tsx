@@ -40,6 +40,8 @@ interface Props {
 
 type DirectoryStatus = "unknown" | "checking" | "exists" | "missing";
 const DIRECTORY_CHECK_DEBOUNCE_MS = 500;
+// How many of a remote host's recent projects the modal offers.
+const REMOTE_RECENT_LIMIT = 6;
 
 function basename(p: string): string {
   const parts = p.replace(/\/+$/, "").split("/");
@@ -471,7 +473,7 @@ export function NewProjectModal({
                       Recent projects on {remoteListing.host.name}
                     </div>
                     <div className="aya-remote-recent-list">
-                      {remoteListing.recentProjects.slice(0, 6).map((project) => (
+                      {remoteListing.recentProjects.slice(0, REMOTE_RECENT_LIMIT).map((project) => (
                         <button
                           key={project.slug}
                           className="aya-remote-project-row"

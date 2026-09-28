@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ProjectConfig, TeamDefinition, TeamSummary } from "../types";
+import { messageDeliveryText, startSummary, TEAM_LOG_VISIBLE } from "../team-view";
 import { ErrorLine, useAsyncAction } from "./use-async-action";
 
 /** One team in the teams window: its state, pane per role, recent messages. */
@@ -31,43 +32,39 @@ export function TeamCard({
         {team.paused && <span className="aya-teams-badge">paused</span>}
         <span className="aya-teams-spacer" />
         {definition && (
-          <button className="aya-modal-btn" onClick={() => onEdit(definition)}>
-            Edit
-          </button>
-        )}
-        {definition && team.running && (
-          <button className="aya-modal-btn" disabled={busy} onClick={() => act(() => window.aya.teamPause(project.slug, team.name))}>
-            Pause
-          </button>
-        )}
-        {definition && team.paused && (
-          <button
-            className="aya-modal-btn aya-modal-btn--primary"
-            disabled={busy}
-            onClick={() => act(() => window.aya.teamResume(project.slug, team.name))}
-          >
-            Resume
-          </button>
-        )}
-        {definition && !team.running && (
-          <button
-            className="aya-modal-btn aya-modal-btn--primary"
-            disabled={busy}
-            onClick={async () => {
-              const result = await act(() => window.aya.teamStart(project.slug, team.name));
-              if (!result) return;
-              setNotReached(Object.fromEntries(result.held.map((h) => [h.role, h.reason])));
-              setSummary(
-                !result.started
-                  ? "Not started, nothing was sent: fix the roles marked below, then Start again."
-                  : result.held.length
-                    ? "Started; the roles marked below did not get the delivery test."
-                    : null,
-              );
-            }}
-          >
-            Start
-          </button>
+          <>
+            <button className="aya-modal-btn" onClick={() => onEdit(definition)}>
+              Edit
+            </button>
+            {team.running && (
+              <button className="aya-modal-btn" disabled={busy} onClick={() => act(() => window.aya.teamPause(project.slug, team.name))}>
+                Pause
+              </button>
+            )}
+            {team.paused && (
+              <button
+                className="aya-modal-btn aya-modal-btn--primary"
+                disabled={busy}
+                onClick={() => act(() => window.aya.teamResume(project.slug, team.name))}
+              >
+                Resume
+              </button>
+            )}
+            {!team.running && (
+              <button
+                className="aya-modal-btn aya-modal-btn--primary"
+                disabled={busy}
+                onClick={async () => {
+                  const result = await act(() => window.aya.teamStart(project.slug, team.name));
+                  if (!result) return;
+                  setNotReached(Object.fromEntries(result.held.map((h) => [h.role, h.reason])));
+                  setSummary(startSummary(result));
+                }}
+              >
+                Start
+              </button>
+            )}
+          </>
         )}
       </div>
       <ErrorLine error={error ?? team.error} />
@@ -132,20 +129,14 @@ export function TeamCard({
       {team.log.length > 0 && (
         <div className="aya-teams-log" aria-label={`${team.name} messages`}>
           {team.log
-            .slice(-8)
+            .slice(-TEAM_LOG_VISIBLE)
             .reverse()
             .map((m) => (
               <div key={m.id} className="aya-teams-log-row">
                 <span className="aya-teams-muted">
                   {new Date(m.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {m.from} → {m.to}
                   {m.commit ? ` · ${m.commit}` : ""} ·{" "}
-                  {m.delivered
-                    ? m.held
-                      ? `written later (was held: ${m.held})`
-                      : "written"
-                    : m.from === "aya"
-                      ? `not typed: ${m.held ?? "held"}`
-                      : `waiting in inbox: ${m.held ?? "held"}`}
+                  {messageDeliveryText(m)}
                 </span>
                 <span>{m.text}</span>
               </div>
