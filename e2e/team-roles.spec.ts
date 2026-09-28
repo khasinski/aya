@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
+import { TEAMS_REFRESH_MS } from "../src/hooks/useTeams";
 
 const TEAM = `# ux-review
 
@@ -98,7 +99,8 @@ test.describe("a project that brings a team with no panes", () => {
     const prompt = window.getByRole("dialog", { name: "Assign team roles" });
     await prompt.getByRole("button", { name: "Not now" }).click();
     await expect(prompt).toHaveCount(0);
-    await window.waitForTimeout(6000);
+    // Long enough for a full teams refresh, which would bring the prompt back.
+    await window.waitForTimeout(TEAMS_REFRESH_MS + 1_000);
     await expect(prompt).toHaveCount(0);
   });
 });

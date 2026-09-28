@@ -3,7 +3,7 @@ import { teamPromptKey, unassignedTeams } from "../team-view";
 import type { ProjectConfig, TeamSummary } from "../types";
 
 // Teams of every open project are re-read this often, for chips and badges.
-const TEAMS_REFRESH_MS = 5000;
+export const TEAMS_REFRESH_MS = 5000;
 const EMPTY_TEAMS: TeamSummary[] = [];
 
 interface TeamsOptions {
