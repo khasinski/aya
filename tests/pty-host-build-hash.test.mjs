@@ -3,14 +3,17 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { hostBuildHash, hostModuleFiles } from "../dist-electron/pty-host-staleness.js";
 
 function build(files) {
   const dir = mkdtempSync(join(tmpdir(), "aya-host-hash-"));
-  for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
+  for (const [name, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(dir, name)), { recursive: true });
+    writeFileSync(join(dir, name), text);
+  }
   return dir;
 }
 
@@ -39,6 +42,27 @@ test("a change in a required module changes the hash; a change elsewhere does no
     assert.notEqual(hostBuildHash(dir, "host.js"), before);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("requires into a subfolder and back up are followed, relative to the requiring file", () => {
+  const dir = build({ "host.js": 'require("./sub/a.js");', "sub/a.js": 'require("../c");', "c.js": "1", "sub/c.js": "1" });
+  try {
+    assert.deepEqual(hostModuleFiles(dir, "host.js"), ["c.js", "host.js", "sub/a.js"]);
+    const before = hostBuildHash(dir, "host.js");
+    writeFileSync(join(dir, "sub/a.js"), 'require("../c"); // 2');
+    assert.notEqual(hostBuildHash(dir, "host.js"), before);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a require that resolves outside the host's dir is ignored", () => {
+  const root = build({ "outside.js": "", "host/host.js": 'require("../outside"); require("./sub/../../outside");' });
+  try {
+    assert.deepEqual(hostModuleFiles(join(root, "host"), "host.js"), ["host.js"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

@@ -38,15 +38,19 @@ export function isHostStale(
   );
 }
 
-/** Every file the host runs from `dir`: its entry and the local modules it
- *  requires, followed through, sorted. Read from the built CommonJS. */
+/** Every file the host runs from `dir`: its entry and the relative modules it
+ *  requires inside `dir`, followed through, sorted. Read from the built CommonJS. */
 export function hostModuleFiles(dir: string, entry: string): string[] {
   const seen = new Set<string>();
   const visit = (file: string) => {
     if (seen.has(file)) return;
     seen.add(file);
     const source = fs.readFileSync(path.join(dir, file), "utf-8");
-    for (const m of source.matchAll(/require\("\.\/([\w.-]+?)(?:\.js)?"\)/g)) visit(`${m[1]}.js`);
+    for (const m of source.matchAll(/require\("(\.\.?\/[\w./-]+?)(?:\.js)?"\)/g)) {
+      // Resolved against the requiring file; a module outside `dir` is not the host's.
+      const rel = path.relative(dir, path.resolve(dir, path.dirname(file), m[1]));
+      if (rel.split(path.sep)[0] !== "..") visit(`${rel}.js`);
+    }
   };
   visit(entry);
   return [...seen].sort();
