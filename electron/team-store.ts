@@ -127,8 +127,13 @@ export class TeamStore {
   }
 
   async unread(role: string): Promise<TeamMessage[]> {
-    const read = (await readJson<Record<string, number>>(this.file("read.json"), {}))[role] ?? 0;
+    const read = (await this.readMarks())[role] ?? 0;
     return (await this.log()).filter((m) => m.to === role && !m.delivered && m.id > read);
+  }
+
+  /** Per role, the last message id it has had: read from its inbox or typed later. */
+  readMarks(): Promise<Record<string, number>> {
+    return readJson<Record<string, number>>(this.file("read.json"), {});
   }
 
   markRead(role: string, id: number): Promise<void> {

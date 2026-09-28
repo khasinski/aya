@@ -2,8 +2,8 @@
 // cadence, and the team pause. Rounds live in Aya, not in one agent session.
 
 import { listTeams } from "./team-admin";
-import { deliverAndLog, type TeamControlDeps } from "./team-control";
-import { loadTeam, projectBySlug } from "./team-files";
+import { deliverAndLog, oneLine, teamHeader, type TeamControlDeps } from "./team-control";
+import { loadTeam, projectBySlug, teamNames } from "./team-files";
 import { TeamStore, teamDir } from "./team-store";
 import type { TeamDefinition } from "./teams";
 import type { ProjectConfig, TeamStartResult } from "./types";
@@ -101,6 +101,35 @@ export class TeamRunner {
     if (!this.cancels.has(`${slug}/${name}`)) return;
     const { team } = await this.open(slug, name);
     this.arm(slug, name, team);
+  }
+
+  /** Types the messages that waited in an inbox into panes that are free now,
+   *  in order and with their own headers; returns how many. A paused team is
+   *  skipped: it takes no messages, as aya team send refuses them. */
+  async redeliverWaiting(): Promise<number> {
+    let typed = 0;
+    for (const project of await this.deps.listProjects()) {
+      for (const name of await teamNames(project)) {
+        const store = new TeamStore(teamDir(this.deps.teamHome, project.slug, name));
+        if ((await store.state()).paused) continue;
+        const team = await loadTeam(project, name, store);
+        for (const role of team.roles) {
+          const waiting = await store.unread(role.id);
+          const pane = waiting.length ? await store.paneOf(role.id) : null;
+          if (!pane || (await this.deps.holdReason(pane))) continue;
+          for (const m of waiting) {
+            try {
+              await this.deps.deliver(pane, `${teamHeader(team.name, m.from, m.time, m.commit)} ${oneLine(m.text)}`);
+            } catch {
+              break;
+            }
+            await store.markRead(role.id, m.id);
+            typed++;
+          }
+        }
+      }
+    }
+    return typed;
   }
 
   stopAll(): void {

@@ -36,6 +36,8 @@ export interface VtPane {
   /** A plain shell: typed text would run as a command. */
   shell: boolean;
   lastWaiting: boolean;
+  /** The agent's composer has been on screen once: it has finished starting. */
+  composerSeen: boolean;
   /** Pending trailing scan, so a pane that goes quiet right after painting a
    *  prompt still gets scanned once more. */
   timer: ReturnType<typeof setTimeout> | null;
@@ -62,6 +64,7 @@ export function openVtPane(
     agent,
     shell,
     lastWaiting: false,
+    composerSeen: false,
     timer: null,
     onChange,
   });
@@ -115,6 +118,10 @@ export function writeVtPane(ptyId: string, chunk: string): void {
 function scanPane(ptyId: string): void {
   const pane = panes.get(ptyId);
   if (!pane) return;
+  // Only until first seen: the search walks the scrollback when none is there.
+  if (!pane.composerSeen && COMPOSER_AGENTS.has(pane.agent) && composerState(pane.terminal) !== "absent") {
+    pane.composerSeen = true;
+  }
   const verdict = evaluateScreen(screenRows(pane.terminal), pane.agent);
   // No opinion: say nothing rather than assert a state change, so a weaker
   // signal (src/bell.ts) keeps whatever it had.
@@ -166,7 +173,10 @@ const COMPOSER_RE = /^\s*(?:│\s*)?[❯›]\s/;
 const NUMBERED_OPTION_RE = /^\s*(?:│\s*)?[❯›]\s*\d+[.)]\s/;
 const FRAME_RE = /[─│╭╮╰╯\s]/g;
 
-type ComposerState = "draft" | "numbered-choice" | "empty";
+type ComposerState = "draft" | "numbered-choice" | "empty" | "absent";
+
+// Agents whose composer COMPOSER_RE knows; others are never "starting up".
+const COMPOSER_AGENTS: ReadonlySet<AgentKind | undefined> = new Set(["claude", "codex", "grok"]);
 
 /** Classify the lowest prompt row. Placeholders are dim, and the box is drawn
  * with frame characters, so both are skipped. Numbered options are a hold,
@@ -186,7 +196,7 @@ function composerState(terminal: Terminal): ComposerState {
     }
     return typed.replace(FRAME_RE, "") !== "" ? "draft" : "empty";
   }
-  return "empty";
+  return "absent";
 }
 
 /** Why a message must not be typed into this pane now, or null. */
@@ -197,6 +207,9 @@ export function paneHold(ptyId: string): string | null {
   if (pane.shell) return "runs a shell";
   if (evaluateScreen(screenRows(pane.terminal), pane.agent) === "waiting") return "shows an approval prompt";
   const composer = composerState(pane.terminal);
+  if (composer !== "absent") pane.composerSeen = true;
+  // Measured: a message typed before the composer is drawn goes nowhere.
+  if (!pane.composerSeen && COMPOSER_AGENTS.has(pane.agent)) return "is still starting up";
   if (composer === "numbered-choice") return "shows a numbered choice";
   if (composer === "draft") return "has text the user is typing";
   return null;

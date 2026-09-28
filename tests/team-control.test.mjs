@@ -125,7 +125,10 @@ test("send types a dated, attributed message into the role's pane and presses En
     assert.match(stdout, /written to implementer's pane/);
     assert.equal(t.writes.length, 2);
     assert.equal(t.writes[0].id, "pane-i");
-    assert.match(t.writes[0].data, /^\[team ux-review \| from tester \| \d\d:\d\d \| a1b2c3d\] round 5 ready$/);
+    // A bracketed paste: Codex takes fast raw typing for a paste and swallows the
+    // Enter that follows a long one (measured: 600+ chars at 150 ms).
+    assert.match(t.writes[0].data, /^\x1b\[200~\[team ux-review \| from tester \| \d\d:\d\d \| a1b2c3d\] round 5 ready\x1b\[201~$/);
+    assert.equal(t.writes[1].data, "\r");
     assert.deepEqual(t.writes[1], { id: "pane-i", data: "\r" });
     assert.deepEqual(await t.store.unread("implementer"), []);
   } finally {
@@ -152,6 +155,7 @@ test("a role with no pane keeps the message for its inbox", async () => {
     const sent = await t.aya("pane-t", "send", "implementer", "please retest");
     assert.notEqual(sent.status, 0);
     assert.match(sent.stderr, /implementer: no pane assigned; nothing was typed.*inbox/);
+    assert.equal((await t.store.log()).at(-1).held, "no pane assigned");
     assert.equal(t.writes.length, 0);
     await t.store.assign("implementer", "pane-i");
     const inbox = await t.aya("pane-i", "inbox");
@@ -206,8 +210,9 @@ test("line breaks in a message cannot submit a second, unattributed turn", async
   try {
     await t.aya("pane-t", "send", "implementer", "line one\rrm -rf /tmp/x\nline three");
     assert.equal(t.writes.length, 2);
-    assert.doesNotMatch(t.writes[0].data, /[\r\n\x00-\x1f]/);
-    assert.match(t.writes[0].data, /line one rm -rf \/tmp\/x line three$/);
+    const body = t.writes[0].data.replace(/^\x1b\[200~|\x1b\[201~$/g, "");
+    assert.doesNotMatch(body, /[\r\n\x00-\x1f]/);
+    assert.match(body, /line one rm -rf \/tmp\/x line three$/);
   } finally {
     t.cleanup();
   }

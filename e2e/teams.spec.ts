@@ -71,6 +71,37 @@ test.describe("an implementer on an approval prompt", () => {
   });
 });
 
+test.describe("an implementer that answers its prompt later", () => {
+  test.use({
+    seedOptions: {
+      presetList: [
+        { id: "shell", name: "Agent", icon: "a", color: "", agent: "claude", command: `'${NODE}' '${AGENT}' '${AYA}' ask-briefly` },
+      ],
+      projectFiles: { ".aya/teams/ux-review.md": TEAM },
+      ayaHomeFiles: {
+        "teams/e2e-proj/ux-review/assignments.json": JSON.stringify({ tester: "tab-left", implementer: "tab-right" }),
+      },
+    },
+  });
+
+  test("gets the held message once the prompt is gone, and the window says it was held", async ({ window, seeded }) => {
+    await expect(window.getByTestId("xterm-host").first()).toBeVisible();
+    const read = (pane: string) => {
+      const file = join(seeded.projectDir, `team-${pane}.log`);
+      return existsSync(file) ? readFileSync(file, "utf8") : "";
+    };
+    await expect.poll(() => read("tab-left"), { timeout: 30_000 }).toMatch(/FAIL .*implementer: shows an approval prompt/);
+    // Retried every 15 s; the prompt clears after 6 s.
+    await expect
+      .poll(() => read("tab-right"), { timeout: 40_000 })
+      .toMatch(/\[team ux-review \| from tester \| \d\d:\d\d\] round 5 ready/);
+    await window.getByTestId("teams-toggle").click();
+    await expect(window.getByRole("dialog", { name: "Teams" }).getByLabel("ux-review messages")).toContainText(
+      "written later (was held: shows an approval prompt)",
+    );
+  });
+});
+
 test.describe("an implementer pane that runs a plain shell", () => {
   test.use({
     seedOptions: {
@@ -119,8 +150,13 @@ test.describe("Start team", () => {
       const file = join(seeded.projectDir, `team-${pane}.log`);
       return existsSync(file) ? readFileSync(file, "utf8") : "";
     };
-    await expect.poll(() => read("tab-right"), { timeout: 30_000 }).toBe("");
-    const result = await window.evaluate(() => window.aya.teamStart("e2e-proj", "ux-review"));
+    // Start refuses (and sends nothing) until every agent has drawn its composer.
+    let result = { started: false, delivered: [] as string[] };
+    await expect
+      .poll(async () => (result = await window.evaluate(() => window.aya.teamStart("e2e-proj", "ux-review"))).started, {
+        timeout: 30_000,
+      })
+      .toBe(true);
     expect(result.delivered.sort()).toEqual(["implementer", "tester"]);
     await expect.poll(() => read("tab-left"), { timeout: 15_000 }).toMatch(/from aya .*Delivery test.*aya team send implementer/);
     await expect.poll(() => read("tab-right"), { timeout: 15_000 }).toMatch(/Delivery test.*aya team send tester/);

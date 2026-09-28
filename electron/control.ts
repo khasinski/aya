@@ -104,6 +104,17 @@ async function handlePaneRequest(
   return { terminalId, projectSlug, name };
 }
 
+/** A team message into an agent's pane: as a bracketed paste, then Enter.
+ *  Raw typing let Codex swallow the Enter after 600+ characters (measured);
+ *  team messages never go to a shell, which is held, so paste is safe here. */
+export function deliverTeamMessage(
+  writePane: NonNullable<ControlServerOptions["writePane"]>,
+  terminalId: string,
+  text: string,
+): Promise<void> {
+  return deliverToPane(writePane, terminalId, terminalId, `\x1b[200~${text}\x1b[201~`, true);
+}
+
 /** Types text into a pane, then Enter when `submit`. Serialized per terminal:
  *  the 150 ms submit gap splits a send into two writes that must not interleave. */
 export function deliverToPane(
@@ -190,7 +201,7 @@ async function handleRequest(
     return handleTeamRequest(request, caller.terminalId, {
       teamHome,
       listProjects,
-      deliver: (terminalId, text) => deliverToPane(writePane, terminalId, terminalId, text, true),
+      deliver: (terminalId, text) => deliverTeamMessage(writePane, terminalId, text),
       headCommit: options.headCommit ?? (async () => null),
       holdReason: options.holdReason ?? (async () => null),
     });

@@ -52,7 +52,11 @@ export async function listTeams(teamHome: string, project: ProjectConfig): Promi
             (definition?.roles ?? []).map(async (r) => [r.id, (await store.unread(r.id)).length] as const),
           ),
         ),
-        log: (await store.log()).slice(-LOG_TAIL),
+        // A held message the receiver has since had (inbox or typed later) reached it.
+        log: await (async () => {
+          const read = await store.readMarks();
+          return (await store.log()).slice(-LOG_TAIL).map((m) => ({ ...m, delivered: m.delivered || m.id <= (read[m.to] ?? 0) }));
+        })(),
       };
     }),
   );

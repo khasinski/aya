@@ -88,7 +88,14 @@ export async function deliverAndLog(
       failure = "did not take the text (it may have exited)";
     }
   }
-  const entry = await store.append({ from: message.from, to: message.to, commit, text: message.text, delivered: !failure });
+  const entry = await store.append({
+    from: message.from,
+    to: message.to,
+    commit,
+    text: message.text,
+    delivered: !failure,
+    ...(failure ? { held: failure } : {}),
+  });
   return { entry, failure };
 }
 

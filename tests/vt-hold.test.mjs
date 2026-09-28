@@ -82,7 +82,7 @@ test("claude: the real startup trust dialog (unboxed, unnumbered) holds as a pro
 });
 
 // A numbered menu is a live choice waiting for an answer, in every agent's
-// composer area. No rule's wording covers it, so paneHold must still hold it —
+// composer area. No rule's wording covers it, so paneHold must still hold it -
 // and must say so with a reason that is not "the user is typing". One test per
 // agent, so one broken agent cannot hide behind another's failure.
 
@@ -145,4 +145,24 @@ test("a pane that exited or never started is held: typing into it would fail", a
   openVtPane("gone", 80, 24, () => {}, "claude", false);
   closeVtPane("gone");
   assert.match(paneHold("gone"), /not running/);
+});
+
+test("an agent that has not drawn its composer yet is still starting up; once seen, it stays known", async () => {
+  // Measured: Claude drew its composer after about 1 s, Codex after 0.5 s; text
+  // typed before that goes nowhere.
+  openVtPane("boot", 80, 24, () => {}, "claude", false);
+  try {
+    writeVtPane("boot", " ✻ Welcome to Claude Code\r\n");
+    await settle();
+    assert.match(paneHold("boot"), /starting up/);
+    writeVtPane("boot", `${RULE}\r\n${DIM('❯ Try "edit <filepath> to..."')}\r\n${RULE}\r\n`);
+    await settle();
+    assert.equal(paneHold("boot"), null);
+    writeVtPane("boot", "\x1b[2J\x1b[H⏺ a long answer that pushed the composer off screen\r\n");
+    await settle();
+    assert.equal(paneHold("boot"), null);
+  } finally {
+    closeVtPane("boot");
+  }
+  assert.equal(await hold(["┃  Ask anything"], { agent: "opencode" }), null, "no composer rule for opencode: never 'starting'");
 });

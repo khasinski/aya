@@ -1033,6 +1033,8 @@ export interface TeamMessage {
   text: string;
   /** Typed into the recipient's pane; the rest wait for its inbox. */
   delivered: boolean;
+  /** Why it was not typed when sent, e.g. "shows an approval prompt". */
+  held?: string;
 }
 
 /** One team as the teams window shows it. `definition` is what Aya runs on:

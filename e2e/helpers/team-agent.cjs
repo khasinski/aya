@@ -7,14 +7,20 @@ const path = require("node:path");
 // The branch's own CLI: an older installed `aya` may come first on PATH.
 const aya = process.argv[2];
 // "ask": the implementer sits on an approval prompt, like a real agent would.
-const mode = process.argv[3];
+const mode = process.argv[3] ?? "";
 const me = process.env.AYA_TERMINAL_ID;
 const log = path.join(process.env.AYA_PROJECT_DIR, `team-${me}.log`);
 fs.writeFileSync(log, "");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => fs.appendFileSync(log, chunk));
-if (mode === "ask" && me === "tab-right") {
+// A Claude-like empty composer: Aya holds an agent pane until it has one.
+const composer = () => process.stdout.write(`${"─".repeat(40)}\r\n❯ \r\n${"─".repeat(40)}\r\n`);
+if (mode.startsWith("ask") && me === "tab-right") {
   process.stdout.write("Do you want to proceed?\r\n❯ 1. Yes\r\n  2. No\r\n");
+  // "ask-briefly": the prompt is answered after a while, freeing the pane.
+  if (mode === "ask-briefly") setTimeout(() => (process.stdout.write("\x1b[2J\x1b[H"), composer()), 6000);
+} else {
+  composer();
 }
 if (me === "tab-left" && mode !== "quiet") {
   setTimeout(() => {

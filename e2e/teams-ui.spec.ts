@@ -53,6 +53,10 @@ test("assign panes, Start sends the delivery test, Pause marks the team, Resume 
   const dialog = await defineFromTemplate(window, "ux-review");
   const card = dialog.getByTestId("team-ux-review");
   await card.getByLabel("Pane for reviewer").selectOption({ label: "shell 1" });
+  const file = (pane: string) => join(seeded.projectDir, `team-${pane}.log`);
+  const log = (pane: string) => (existsSync(file(pane)) ? readFileSync(file(pane), "utf8") : "");
+  // Each agent creates its log on start; Start before that finds it still starting.
+  await expect.poll(() => existsSync(file("tab-left")) && existsSync(file("tab-right")), { timeout: 30_000 }).toBe(true);
   // One role without a pane: Start sends nothing to anyone and says why.
   await card.getByRole("button", { name: "Start", exact: true }).click();
   await expect(card.locator(".aya-teams-warning")).toContainText("Not started, nothing was sent");
@@ -61,10 +65,6 @@ test("assign panes, Start sends the delivery test, Pause marks the team, Resume 
   await expect(card.getByLabel("ux-review messages")).toHaveCount(0);
   await card.getByLabel("Pane for implementer").selectOption({ label: "shell 2" });
   await expect(card.getByRole("button", { name: "Pause", exact: true })).toHaveCount(0);
-  const file = (pane: string) => join(seeded.projectDir, `team-${pane}.log`);
-  const log = (pane: string) => (existsSync(file(pane)) ? readFileSync(file(pane), "utf8") : "");
-  // Each agent creates its log on start; Start before that types into a bare shell.
-  await expect.poll(() => existsSync(file("tab-left")) && existsSync(file("tab-right")), { timeout: 30_000 }).toBe(true);
   await card.getByRole("button", { name: "Start", exact: true }).click();
   await expect.poll(() => log("tab-left"), { timeout: 15_000 }).toMatch(/Delivery test/);
   await expect(card.getByLabel("ux-review messages")).toContainText("aya → implementer", { timeout: 10_000 });

@@ -52,7 +52,7 @@ import {
 } from "./cli-install";
 import { startConfigWatcher } from "./config-watcher";
 import { isHostStale } from "./pty-host-staleness";
-import { deliverToPane, startControlServer } from "./control";
+import { deliverTeamMessage, startControlServer } from "./control";
 import { createCliAdoptionStore } from "./cli-adoption";
 import { writeFileAtomic } from "./atomic-write";
 import {
@@ -216,6 +216,8 @@ const COLOR_LIGHT_TEXT = "#f0f6fc";
 const ABOUT_DIALOG_SIZE = 360;
 // About dialog icon dimensions (square, px)
 const ABOUT_ICON_SIZE = 128;
+// How often held team messages are retried; a pane frees up within seconds.
+const TEAM_REDELIVERY_MS = 15_000;
 const LOCAL_SUMMARY_TIMEOUT_MS = 20_000;
 const LOCAL_SUMMARY_MAX_LINES = 30;
 const LOCAL_SUMMARY_MAX_STDOUT_BYTES = 32 * 1024;
@@ -2195,12 +2197,19 @@ function registerIpc(): void {
   const teamRunner = new TeamRunner({
     teamHome: AYA_HOME,
     listProjects: () => listProjects(),
-    deliver: (terminalId, text) =>
-      deliverToPane((id, data) => ptyHost.write(id, data), terminalId, terminalId, text, true),
+    deliver: (terminalId, text) => deliverTeamMessage((id, data) => ptyHost.write(id, data), terminalId, text),
     holdReason: (terminalId) => ptyHost.holdReason(terminalId),
     headCommit,
   });
-  app.once("before-quit", () => teamRunner.stopAll());
+  // Messages held for a busy or missing pane go out once it is free again.
+  const redelivery = setInterval(
+    () => void teamRunner.redeliverWaiting().catch((err) => console.warn("[aya] held team messages not retried:", err)),
+    TEAM_REDELIVERY_MS,
+  );
+  app.once("before-quit", () => {
+    clearInterval(redelivery);
+    teamRunner.stopAll();
+  });
   void teamRunner.restore().catch((err) => console.warn("[aya] team rounds not restored:", err));
   const teamArgs = (slug: unknown, team: unknown, channel: string): [string, string] => [
     requireString(slug, `${channel}.projectSlug`),

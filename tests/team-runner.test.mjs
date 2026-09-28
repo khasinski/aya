@@ -276,3 +276,57 @@ test("introducing a held pane says why and keeps the message", async () => {
     t.cleanup();
   }
 });
+
+test("a held message is typed once the receiving pane is free, with its own header and time", async () => {
+  const t = await setup({ cadence: false });
+  try {
+    // Never started, not paused: aya team send works, so held messages go out too.
+    const waiting = await t.store.append({ from: "tester", to: "implementer", commit: "abc1234", text: "round 3 fixed\nsee test", delivered: false });
+    t.deps.holdReason = async (pane) => (pane === "pane-i" ? "shows an approval prompt" : null);
+    assert.equal(await t.runner.redeliverWaiting(), 0);
+    assert.equal(t.typed.length, 0);
+    t.deps.holdReason = async () => null;
+    assert.equal(await t.runner.redeliverWaiting(), 1);
+    assert.equal(t.typed.length, 1);
+    assert.equal(t.typed[0].pane, "pane-i");
+    assert.match(t.typed[0].text, /^\[team ux-review \| from tester \| \d\d:\d\d \| abc1234\] round 3 fixed see test$/);
+    assert.equal((await t.store.unread("implementer")).length, 0);
+    assert.equal(await t.runner.redeliverWaiting(), 0, "typed once");
+    assert.ok(waiting.id > 0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("held messages wait while the team is paused or the role has no pane", async () => {
+  const t = await setup({ cadence: false });
+  try {
+    await t.store.append({ from: "tester", to: "implementer", commit: null, text: "x", delivered: false });
+    await t.store.setPaused(true);
+    assert.equal(await t.runner.redeliverWaiting(), 0);
+    await t.store.setPaused(false);
+    await t.store.releasePane("pane-i");
+    assert.equal(await t.runner.redeliverWaiting(), 0);
+    assert.equal(t.typed.length, 0);
+    assert.equal((await t.store.unread("implementer")).length, 1);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a pane that refuses a waiting message keeps it and the ones after it", async () => {
+  const t = await setup({ cadence: false });
+  try {
+    await t.store.setPaused(false);
+    await t.store.append({ from: "tester", to: "implementer", commit: null, text: "first", delivered: false });
+    await t.store.append({ from: "tester", to: "implementer", commit: null, text: "second", delivered: false });
+    let calls = 0;
+    t.deps.deliver = async () => {
+      if (++calls === 2) throw new Error("pane gone");
+    };
+    assert.equal(await t.runner.redeliverWaiting(), 1);
+    assert.deepEqual((await t.store.unread("implementer")).map((m) => m.text), ["second"]);
+  } finally {
+    t.cleanup();
+  }
+});
