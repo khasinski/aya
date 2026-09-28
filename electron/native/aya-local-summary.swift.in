@@ -1,6 +1,8 @@
 import Foundation
 import FoundationModels
 
+let summaryMaxChars = @SUMMARY_MAX_CHARS@
+
 struct SummaryRequest: Decodable {
   let kind: String
   let lines: [String]
@@ -33,8 +35,8 @@ func boundedSummary(_ value: String?) -> String {
     .replacingOccurrences(of: "\n", with: " ")
     .replacingOccurrences(of: "\r", with: " ")
     .trimmingCharacters(in: .whitespacesAndNewlines)
-  if cleaned.count <= 140 { return cleaned }
-  return String(cleaned.prefix(137)).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
+  if cleaned.count <= summaryMaxChars { return cleaned }
+  return String(cleaned.prefix(summaryMaxChars - 3)).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
 }
 
 func decodeModelResult(_ text: String) -> ModelResult? {
@@ -74,7 +76,7 @@ func summarize(_ request: SummaryRequest) async -> SummaryResult {
   Return only strict JSON: {"useful": boolean, "summary": string}.
   Write \(target). Use present tense. Do not invent intent, names, services, or progress.
   If the output is just prompts, logs with no clear task, noise, errors without context, or not enough information, return {"useful":false,"summary":""}.
-  Keep summary under 140 characters, no markdown, no code fences.
+  Keep summary under \(summaryMaxChars) characters, no markdown, no code fences.
 
   Recent output:
   \(lines)
