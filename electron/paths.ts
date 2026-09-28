@@ -15,13 +15,17 @@ export const IS_DEV = process.env.AYA_DEV === "1";
 export const IS_E2E_HEADLESS = process.env.AYA_E2E_HEADLESS === "1";
 export const IS_E2E_PTY_SHUTDOWN = process.env.AYA_E2E_PTY_SHUTDOWN === "1";
 
+// Home-relative config dirs; the legacy sweep maps a process's env to these too.
+export const AYA_HOME_DIRNAME = ".aya";
+export const AYA_DEV_HOME_DIRNAME = ".aya-dev";
+
 // AYA_HOME env var lets you point a single launch at an arbitrary config
 // directory (e.g. /tmp/aya-demo for screenshots, or a per-task scratch dir).
 // When unset we fall back to the dev/prod split.
 export const AYA_HOME =
   process.env.AYA_HOME && process.env.AYA_HOME.trim()
     ? path.resolve(process.env.AYA_HOME)
-    : path.join(os.homedir(), IS_DEV ? ".aya-dev" : ".aya");
+    : path.join(os.homedir(), IS_DEV ? AYA_DEV_HOME_DIRNAME : AYA_HOME_DIRNAME);
 
 export const PROJECTS_DIR = path.join(AYA_HOME, "projects");
 export const PRESETS_FILE = path.join(AYA_HOME, "presets.json");

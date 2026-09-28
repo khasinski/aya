@@ -23,7 +23,7 @@
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
-import { AYA_HOME } from "./paths";
+import { AYA_DEV_HOME_DIRNAME, AYA_HOME, AYA_HOME_DIRNAME } from "./paths";
 import { PTY_HOST_SCRIPT_NAME, RUN_AS_NODE_VALUE, RUN_AS_NODE_VAR } from "./pty-host-staleness";
 
 /** One row of the system process snapshot. */
@@ -79,8 +79,8 @@ export const PS_ENV_PROBE_MAX_BUFFER_BYTES = 4 * 1024 * 1024;
 export function scopeFromEnvDump(commandWithEnv: string, homedir: string): string {
   const m = commandWithEnv.match(/ AYA_HOME=([^ ]+)/);
   if (m) return path.resolve(m[1]);
-  if (commandWithEnv.includes(" AYA_DEV=1")) return path.join(homedir, ".aya-dev");
-  return path.join(homedir, ".aya");
+  if (commandWithEnv.includes(" AYA_DEV=1")) return path.join(homedir, AYA_DEV_HOME_DIRNAME);
+  return path.join(homedir, AYA_HOME_DIRNAME);
 }
 
 /** Parse `ps -Axo uid=,pid=,ppid=,pgid=,command=` output. Malformed lines are

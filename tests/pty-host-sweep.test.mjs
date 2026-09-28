@@ -13,6 +13,7 @@ import {
   sweepLegacyAyaProcesses,
   MAX_ORPHAN_PROBES,
 } from "../dist-electron/pty-host-sweep.js";
+import { AYA_DEV_HOME_DIRNAME, AYA_HOME_DIRNAME } from "../dist-electron/paths.js";
 
 const HOME = "/Users/u";
 const AYA = "/Users/u/.aya";
@@ -59,6 +60,11 @@ test("scopeFromEnvDump: explicit AYA_HOME wins, AYA_DEV maps to .aya-dev, defaul
   assert.equal(scopeFromEnvDump("cmd AYA_HOME=/tmp/x PATH=/bin", HOME), "/tmp/x");
   assert.equal(scopeFromEnvDump("cmd AYA_DEV=1 PATH=/bin", HOME), `${HOME}/.aya-dev`);
   assert.equal(scopeFromEnvDump("cmd PATH=/bin", HOME), `${HOME}/.aya`);
+});
+
+test("the sweep's scope dirnames are the ones paths.ts resolves AYA_HOME with", () => {
+  assert.equal(AYA_HOME_DIRNAME, ".aya");
+  assert.equal(AYA_DEV_HOME_DIRNAME, ".aya-dev");
 });
 
 test("isHostArgv: matches ONLY when the script is the second argv token", () => {
