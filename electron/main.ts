@@ -77,6 +77,7 @@ import {
   appleChat,
   type ChatOptions,
   type ChatResult,
+  APPLE_HELPER_STDOUT_MAX_BYTES,
   OLLAMA_BASE_URL,
   providerChat,
   RECOMMENDED_OLLAMA_MODEL,
@@ -233,7 +234,6 @@ const ABOUT_ICON_SIZE = 128;
 const STALE_MENU_DOT_PX = 16;
 const STALE_MENU_DOT_SCALE_FACTOR = 2;
 const LOCAL_SUMMARY_TIMEOUT_MS = 20_000;
-const LOCAL_SUMMARY_MAX_STDOUT_BYTES = 32 * 1024;
 // Cascade offset for a window opened from another window (File > New Window,
 // tab tear-out), so it doesn't cover its parent exactly.
 const NEW_WINDOW_CASCADE_OFFSET_PX = 28;
@@ -430,11 +430,11 @@ async function summarizeWithApple(
 
     child.stdout.setEncoding("utf-8");
     child.stdout.on("data", (chunk: string) => {
-      if (stdout.length < LOCAL_SUMMARY_MAX_STDOUT_BYTES) stdout += chunk;
+      if (stdout.length < APPLE_HELPER_STDOUT_MAX_BYTES) stdout += chunk;
     });
     child.stderr.setEncoding("utf-8");
     child.stderr.on("data", (chunk: string) => {
-      if (stderr.length < LOCAL_SUMMARY_MAX_STDOUT_BYTES) stderr += chunk;
+      if (stderr.length < APPLE_HELPER_STDOUT_MAX_BYTES) stderr += chunk;
     });
     child.on("error", (error) => finish(unavailableLocalSummary(error.message)));
     child.on("close", (code) => {

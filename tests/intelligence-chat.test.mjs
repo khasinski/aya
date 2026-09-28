@@ -12,6 +12,7 @@ import {
   OLLAMA_BASE_URL,
   OLLAMA_OPENAI_BASE_URL,
   RECOMMENDED_OLLAMA_MODEL,
+  APPLE_HELPER_STDOUT_MAX_BYTES,
   appleChat,
   ollamaChat,
   openAiChat,
@@ -68,10 +69,10 @@ test("openai without a base URL or model is a config error, not a request", asyn
 
 // Apple Intelligence runs through the bundled Swift helper; a script stands in.
 // `stdout` is what it prints; null means it never answers.
-function fakeHelper(stdout) {
+function fakeHelper(stdout, code = null) {
   const dir = mkdtempSync(join(tmpdir(), "aya-apple-"));
   const file = join(dir, "helper");
-  const answer = stdout === null ? "setInterval(()=>{},1000);" : `process.stdout.write(${JSON.stringify(stdout)});`;
+  const answer = code ?? (stdout === null ? "setInterval(()=>{},1000);" : `process.stdout.write(${JSON.stringify(stdout)});`);
   writeFileSync(
     file,
     `#!${process.execPath}\nlet s="";process.stdin.on("data",c=>s+=c).on("end",()=>{require("fs").writeFileSync(${JSON.stringify(join(dir, "req.json"))},s);${answer}});\n`,
@@ -122,6 +123,30 @@ test("apple: a helper that never answers is killed at the timeout", async () => 
     assert.deepEqual(await appleChat(h.file, "s", "u", { ...OPTS, timeoutMs: 300 }), { ok: false, error: "timeout" });
     assert.ok(Date.now() - started < 3000);
     assert.throws(() => execFileSync("pgrep", ["-f", h.file]), "the helper still runs");
+  } finally {
+    h.done();
+  }
+});
+
+test("apple: a helper that floods stdout is stopped at the cap, not read to the end", async () => {
+  const h = fakeHelper(null, `const b="x".repeat(${APPLE_HELPER_STDOUT_MAX_BYTES});const w=()=>process.stdout.write(b,w);w();`);
+  try {
+    assert.deepEqual(await appleChat(h.file, "s", "u", OPTS), { ok: false, error: "helper-output-too-large" });
+    assert.throws(() => execFileSync("pgrep", ["-f", h.file]), "the helper still runs");
+  } finally {
+    h.done();
+  }
+});
+
+test("the Apple helper output cap is 32 KB, the summary helper's limit", () => {
+  assert.equal(APPLE_HELPER_STDOUT_MAX_BYTES, 32 * 1024);
+});
+
+test("apple: an answer just under the cap is read whole", async () => {
+  const text = "y".repeat(APPLE_HELPER_STDOUT_MAX_BYTES - 64);
+  const h = fakeHelper(JSON.stringify({ available: true, text, error: null }));
+  try {
+    assert.deepEqual(await appleChat(h.file, "s", "u", OPTS), { ok: true, content: text });
   } finally {
     h.done();
   }

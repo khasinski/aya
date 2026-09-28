@@ -134,6 +134,9 @@ export function providerChat(
 }
 
 /** Apple Intelligence through the bundled Swift helper's "chat" request. */
+/** How much of the Apple helper's stdout is read; a chat or summary reply is a few KB. */
+export const APPLE_HELPER_STDOUT_MAX_BYTES = 32 * 1024;
+
 export function appleChat(helper: string, system: string, user: string, opts: ChatOptions): Promise<ChatResult> {
   return new Promise((resolve) => {
     let stdout = "";
@@ -150,7 +153,12 @@ export function appleChat(helper: string, system: string, user: string, opts: Ch
       finish({ ok: false, error: "timeout" });
     }, opts.timeoutMs);
     child.stdout.setEncoding("utf-8");
-    child.stdout.on("data", (chunk: string) => (stdout += chunk));
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      if (stdout.length <= APPLE_HELPER_STDOUT_MAX_BYTES) return;
+      child.kill("SIGKILL");
+      finish({ ok: false, error: "helper-output-too-large" });
+    });
     child.on("error", (err) => finish({ ok: false, error: err.message }));
     child.on("close", () => {
       try {
