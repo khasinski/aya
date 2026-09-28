@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -406,6 +406,13 @@ test("a real spawned host writes its record, and SIGTERM shuts it down cleanly (
     assert.equal(recs[0].pid, host.pid);
     assert.equal(recs[0].pgid, recs[0].pid, "host verified it leads its own group");
     assert.ok(recs[0].startTime.length > 0, "record carries a verifiable start time");
+    assert.match(recs[0].nonce, /^[0-9a-f]{16}$/, "an 8-byte hex nonce");
+    const start = readFileSync(join(home, "pty-events.log"), "utf-8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .find((e) => e.ev === "host-start");
+    assert.equal(start?.scriptHash, recs[0].scriptHash.slice(0, 8), "the log keeps an 8-char hash prefix");
 
     // SIGTERM must now do a REAL graceful shutdown (not leave a socketless
     // zombie): host exits and removes its record (children confirmed dead -

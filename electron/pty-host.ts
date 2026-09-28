@@ -35,6 +35,10 @@ import { ptyLog } from "./pty-log";
 
 // Wait before shutting down the idle pty host with no clients or ptys (ms).
 const IDLE_SHUTDOWN_TIMEOUT_MS = 30_000;
+// Random bytes in a registry record's nonce (hex-encoded, so twice as many chars).
+const HOST_NONCE_BYTES = 8;
+// The host-start log line keeps only this much of the script hash.
+const LOG_HASH_PREFIX_CHARS = 8;
 
 const clients = new Set<net.Socket>();
 let idleTimer: NodeJS.Timeout | null = null;
@@ -267,7 +271,7 @@ function start(): void {
     // writeHostRecord itself refuses an empty startTime (unverifiable record).
     ptyLog.append("host-start", {
       version: HOST_IDENTITY.version,
-      scriptHash: HOST_IDENTITY.scriptHash.slice(0, 8),
+      scriptHash: HOST_IDENTITY.scriptHash.slice(0, LOG_HASH_PREFIX_CHARS),
     });
     const pgid = ownPgid();
     if (pgid === process.pid) {
@@ -277,7 +281,7 @@ function start(): void {
         version: HOST_IDENTITY.version,
         scriptHash: HOST_IDENTITY.scriptHash,
         startTime: ownStartTime(),
-        nonce: crypto.randomBytes(8).toString("hex"),
+        nonce: crypto.randomBytes(HOST_NONCE_BYTES).toString("hex"),
       });
     }
   });
