@@ -259,16 +259,16 @@ case "$command" in
     usage
     ;;
   open)
-    shift || true
+    [ "$#" -eq 0 ] || shift
     open_project "${1:-.}"
     ;;
   project)
-    shift || true
+    [ "$#" -eq 0 ] || shift
     if [ "${1:-}" != "open" ]; then
       usage
       exit 1
     fi
-    shift || true
+    [ "$#" -eq 0 ] || shift
     open_project "${1:-.}"
     ;;
   focus)
@@ -278,12 +278,12 @@ case "$command" in
     send_control capabilities
     ;;
   notify)
-    shift || true
+    [ "$#" -eq 0 ] || shift
     title=""
     if [ "${1:-}" = "--title" ]; then
-      shift || true
+      [ "$#" -eq 0 ] || shift
       title="${1:-}"
-      shift || true
+      [ "$#" -eq 0 ] || shift
     fi
     body="$*"
     if [ -z "$body" ]; then
@@ -293,7 +293,7 @@ case "$command" in
     send_control notify "$title" "$body"
     ;;
   remote)
-    shift || true
+    [ "$#" -eq 0 ] || shift
     if [ "${1:-}" != "--stdio" ]; then
       usage
       exit 1
@@ -301,9 +301,9 @@ case "$command" in
     remote_stdio
     ;;
   pane)
-    shift || true
+    [ "$#" -eq 0 ] || shift
     action="${1:-}"
-    shift || true
+    [ "$#" -eq 0 ] || shift
     case "$action" in
       list|ls)
         send_control pane-list
@@ -318,7 +318,7 @@ case "$command" in
         ;;
       send)
         target="${1:-}"
-        shift || true
+        [ "$#" -eq 0 ] || shift
         # Submit by default: an unsent handoff gets glued onto the next input (#116).
         # Flags count in any position; `--` ends flag parsing.
         submit="submit"
@@ -347,15 +347,15 @@ case "$command" in
     esac
     ;;
   team)
-    shift || true
+    [ "$#" -eq 0 ] || shift
     action="${1:-}"
-    shift || true
+    [ "$#" -eq 0 ] || shift
     case "$action" in
       whoami) send_control team-whoami ;;
       inbox) send_control team-inbox ;;
       send)
         role="${1:-}"
-        shift || true
+        [ "$#" -eq 0 ] || shift
         text="$*"
         if [ -z "$role" ] || [ -z "$text" ]; then
           usage
@@ -370,9 +370,9 @@ case "$command" in
     esac
     ;;
   status)
-    shift || true
+    [ "$#" -eq 0 ] || shift
     level="${1:-}"
-    shift || true
+    [ "$#" -eq 0 ] || shift
     case "$level" in
       set|active) level="active" ;;
       waiting|done|error|clear) ;;

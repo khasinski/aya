@@ -4,14 +4,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import * as net from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 const cli = resolve("bin/aya");
+// Linux runs /bin/sh as dash, where a failed shift ends the script.
+const SHELLS = ["/bin/sh", "/bin/dash"].filter(existsSync);
 
-async function teamSend(args) {
+async function teamSend(args, shell = "/bin/sh") {
   const dir = mkdtempSync(join(tmpdir(), "aya-team-send-"));
   const socket = join(dir, "aya.sock");
   let request = null;
@@ -29,7 +31,7 @@ async function teamSend(args) {
   await new Promise((done) => server.listen(socket, done));
   try {
     const status = await new Promise((done, fail) => {
-      const child = spawn(cli, ["team", "send", ...args], {
+      const child = spawn(shell, [cli, "team", "send", ...args], {
         env: { ...process.env, AYA_SOCKET: socket },
         stdio: ["ignore", "ignore", "ignore"],
       });
@@ -51,10 +53,12 @@ test("unquoted words after the role are one message", async () => {
   assert.equal(request.text, "round 5 ready");
 });
 
-test("a send without text is refused before anything reaches the app", async () => {
-  for (const args of [["implementer"], ["implementer", ""], []]) {
-    const { status, request } = await teamSend(args);
-    assert.equal(status, 1, JSON.stringify(args));
-    assert.equal(request, null, JSON.stringify(args));
-  }
-});
+for (const shell of SHELLS) {
+  test(`a send without text is refused before anything reaches the app (${shell})`, async () => {
+    for (const args of [["implementer"], ["implementer", ""], []]) {
+      const { status, request } = await teamSend(args, shell);
+      assert.equal(status, 1, JSON.stringify(args));
+      assert.equal(request, null, JSON.stringify(args));
+    }
+  });
+}

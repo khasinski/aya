@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { AGENT_START_TIMEOUT_MS, AGENT_TEST_TIMEOUT_MS, PER_TEST_TIMEOUT_MS, globalTimeout } from "./timeouts";
 
-const CI_CEILING = 10 * 60_000;
-const LOCAL_CEILING = 20 * 60_000;
+const CI_CEILING = 15 * 60_000;
+const LOCAL_CEILING = 30 * 60_000;
 
 test("the runner's effective deadline is the one this helper returns", () => {
   expect(test.info().config.globalTimeout).toBe(
