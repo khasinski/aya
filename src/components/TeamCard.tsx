@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ProjectConfig, TeamDefinition, TeamSummary } from "../types";
-import { messageDeliveryText, startSummary } from "../team-view";
+import { messageDeliveryText, startSummary, TEAM_LOG_VISIBLE } from "../team-view";
 import { ErrorLine, useAsyncAction } from "./use-async-action";
 
 /** One team in the teams window: its state, pane per role, recent messages. */
@@ -129,7 +129,7 @@ export function TeamCard({
       {team.log.length > 0 && (
         <div className="aya-teams-log" aria-label={`${team.name} messages`}>
           {team.log
-            .slice(-8)
+            .slice(-TEAM_LOG_VISIBLE)
             .reverse()
             .map((m) => (
               <div key={m.id} className="aya-teams-log-row">

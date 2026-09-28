@@ -2,6 +2,11 @@
 
 import type { TeamMessage, TeamStartResult, TeamSummary } from "./types";
 
+// The sender electron/team-runner.ts logs Aya's own messages under.
+export const AYA_SENDER = "aya";
+// How many of the latest logged messages a team card shows.
+export const TEAM_LOG_VISIBLE = 8;
+
 export interface PaneRole {
   team: string;
   role: string;
@@ -35,7 +40,7 @@ export function teamPromptKey(slug: string, team: string): string {
 /** How far a logged message got: typed into the pane, or why not yet. */
 export function messageDeliveryText(m: Pick<TeamMessage, "from" | "delivered" | "held">): string {
   if (m.delivered) return m.held ? `written later (was held: ${m.held})` : "written";
-  return m.from === "aya" ? `not typed: ${m.held ?? "held"}` : `waiting in inbox: ${m.held ?? "held"}`;
+  return m.from === AYA_SENDER ? `not typed: ${m.held ?? "held"}` : `waiting in inbox: ${m.held ?? "held"}`;
 }
 
 /** The line under a team after Start; null when every role got the test. */
