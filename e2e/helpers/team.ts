@@ -1,8 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import type { SeedOptions } from "./seed";
 import { TEAM_REDELIVERY_MS } from "../timeouts";
+import { firstTerminalShown } from "./terminal";
 
 export const NODE = process.execPath;
 export const AGENT = join(__dirname, "team-agent.cjs");
@@ -26,19 +27,33 @@ export function agentPreset(args = "", agent?: string): Preset {
   return { id: "shell", name: "Agent", icon: "a", color: "", ...(agent ? { agent } : {}), command };
 }
 
-/** Seeds `team` as ux-review with tester on tab-left and implementer on tab-right. */
-export function teamSeed(team: string, presetList: Preset[], ayaHomeFiles: Record<string, string> = {}) {
+/** Where the seeded ux-review team keeps its local state, relative to AYA_HOME. */
+export const TEAM_STATE_DIR = "teams/e2e-proj/ux-review";
+
+/** Seeds `team` as ux-review; `assignments` null gives its roles no panes. */
+export function teamSeed(
+  team: string,
+  {
+    presetList,
+    assignments = { tester: "tab-left", implementer: "tab-right" },
+    ayaHomeFiles = {},
+  }: { presetList?: Preset[]; assignments?: Record<string, string> | null; ayaHomeFiles?: Record<string, string> } = {},
+) {
   return {
     seedOptions: {
-      presetList,
+      ...(presetList ? { presetList } : {}),
       projectFiles: { ".aya/teams/ux-review.md": team },
       ayaHomeFiles: {
-        "teams/e2e-proj/ux-review/assignments.json": JSON.stringify({ tester: "tab-left", implementer: "tab-right" }),
+        ...(assignments ? { [`${TEAM_STATE_DIR}/assignments.json`]: JSON.stringify(assignments) } : {}),
         ...ayaHomeFiles,
       },
     },
   };
 }
+
+/** The seeded team's assignments as the app last wrote them. */
+export const readAssignments = (ayaHome: string) =>
+  JSON.parse(readFileSync(join(ayaHome, TEAM_STATE_DIR, "assignments.json"), "utf8"));
 
 /** The file team-agent.cjs records a pane's input in. */
 export const teamLogFile = (projectDir: string, pane: string) => join(projectDir, `team-${pane}.log`);
@@ -52,7 +67,14 @@ export function teamLog(projectDir: string) {
 }
 
 export async function openTeams(window: Page) {
-  await expect(window.getByTestId("xterm-host").first()).toBeVisible();
+  await firstTerminalShown(window);
   await window.getByTestId("teams-toggle").click();
   return window.getByRole("dialog", { name: "Teams" });
+}
+
+/** The Teams window with a new team's editor open on the template. */
+export async function openNewTeam(window: Page) {
+  const dialog = await openTeams(window);
+  await dialog.getByRole("button", { name: "New team" }).click();
+  return dialog;
 }

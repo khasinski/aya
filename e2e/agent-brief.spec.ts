@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { test, expect } from "./fixtures";
 import { AGENT_START_TIMEOUT_MS, AGENT_TEST_TIMEOUT_MS } from "./timeouts";
 import { fireShortcut } from "./helpers/shortcut";
+import { teamSeed } from "./helpers/team";
+import { firstTerminalShown } from "./helpers/terminal";
 
 test.describe.configure({ timeout: AGENT_TEST_TIMEOUT_MS });
 
@@ -309,21 +311,14 @@ Must not: skip a report
 Sends to: implementer
 Must not: edit code
 `;
-const teamSeed = (agent: string, agentBrief: boolean) => ({
-  seedOptions: {
-    ...fakeAgent(agent, agentBrief).seedOptions,
-    projectFiles: { ".aya/teams/ux-review.md": TEAM },
-    ayaHomeFiles: {
-      "teams/e2e-proj/ux-review/assignments.json": JSON.stringify({ tester: "tab-right" }),
-    },
-  },
-});
+const teamPane = (agent: string, agentBrief: boolean) =>
+  teamSeed(TEAM, { presetList: fakeAgent(agent, agentBrief).seedOptions.presetList, assignments: { tester: "tab-right" } });
 
 test.describe("a team pane without the brief opt-in", () => {
-  test.use(teamSeed("claude", false));
+  test.use(teamPane("claude", false));
 
   test("still starts with its role note", async ({ window, seeded }) => {
-    await expect(window.getByTestId("xterm-host").first()).toBeVisible();
+    await firstTerminalShown(window);
     const { args } = await paneLaunch(seeded);
     const note = args[args.indexOf("--append-system-prompt") + 1];
     expect(note).toMatch(/tester in the Aya team ux-review/);
@@ -332,10 +327,10 @@ test.describe("a team pane without the brief opt-in", () => {
 });
 
 test.describe("a team pane with the brief on", () => {
-  test.use(teamSeed("grok", true));
+  test.use(teamPane("grok", true));
 
   test("gets the brief and its role note in one flag", async ({ window, seeded }) => {
-    await expect(window.getByTestId("xterm-host").first()).toBeVisible();
+    await firstTerminalShown(window);
     const { args } = await paneLaunch(seeded);
     const flag = args.indexOf("--rules");
     expect(args.lastIndexOf("--rules")).toBe(flag);

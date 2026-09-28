@@ -57,3 +57,6 @@ export const focusedTerminalName = (window: Page) =>
         ?.closest('[data-testid="terminal-pane"]')
         ?.getAttribute("data-terminal-name") ?? null,
   );
+
+/** The app has drawn its first terminal host. */
+export const firstTerminalShown = (window: Page) => expect(window.getByTestId("xterm-host").first()).toBeVisible();
