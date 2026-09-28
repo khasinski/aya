@@ -19,6 +19,15 @@ export function teamDir(ayaHome: string, project: string, team: string): string 
   return path.join(ayaHome, "teams", project, team);
 }
 
+// A team directory's files, one name per purpose.
+const TEAM_FILES = {
+  assignments: "assignments.json",
+  state: "state.json",
+  saved: "saved.md",
+  log: "log.jsonl",
+  read: "read.json",
+} as const;
+
 // One write queue per team directory, shared by every store opened on it.
 const queues = new Map<string, Promise<unknown>>();
 
@@ -44,7 +53,7 @@ export class TeamStore {
   }
 
   assignments(): Promise<Record<string, string>> {
-    return readJson(this.file("assignments.json"), {});
+    return readJson(this.file(TEAM_FILES.assignments), {});
   }
 
   /** One pane per role and one role per pane; taking one gives up the other. */
@@ -60,7 +69,7 @@ export class TeamStore {
     return this.serial(async () => {
       const next = Object.fromEntries(Object.entries(await this.assignments()).filter(([, p]) => p !== paneId));
       if (role) next[role] = paneId;
-      await writeFileAtomic(this.file("assignments.json"), JSON.stringify(next, null, 2));
+      await writeFileAtomic(this.file(TEAM_FILES.assignments), JSON.stringify(next, null, 2));
     });
   }
 
@@ -76,26 +85,26 @@ export class TeamStore {
   /** A paused team takes no sends and no rounds. Unpausing marks it started. */
   setPaused(paused: boolean): Promise<void> {
     return this.serial(async () => {
-      const state = await readJson<{ started?: boolean }>(this.file("state.json"), {});
+      const state = await readJson<{ started?: boolean }>(this.file(TEAM_FILES.state), {});
       const started = state.started === true || !paused;
-      await writeFileAtomic(this.file("state.json"), JSON.stringify({ paused, started }));
+      await writeFileAtomic(this.file(TEAM_FILES.state), JSON.stringify({ paused, started }));
     });
   }
 
   /** running: started with Start team and not paused since. */
   async state(): Promise<{ paused: boolean; running: boolean }> {
-    const state = await readJson<{ paused?: boolean; started?: boolean }>(this.file("state.json"), {});
+    const state = await readJson<{ paused?: boolean; started?: boolean }>(this.file(TEAM_FILES.state), {});
     return { paused: state.paused === true, running: state.started === true && state.paused !== true };
   }
 
   /** The definition as the user last saved it; outside edits wait for Save. */
   saveDefinition(text: string): Promise<void> {
-    return this.serial(() => writeFileAtomic(this.file("saved.md"), text));
+    return this.serial(() => writeFileAtomic(this.file(TEAM_FILES.saved), text));
   }
 
   async savedDefinition(): Promise<string | null> {
     try {
-      return await fs.readFile(this.file("saved.md"), "utf-8");
+      return await fs.readFile(this.file(TEAM_FILES.saved), "utf-8");
     } catch {
       return null;
     }
@@ -104,7 +113,7 @@ export class TeamStore {
   async log(): Promise<TeamMessage[]> {
     let raw: string;
     try {
-      raw = await fs.readFile(this.file("log.jsonl"), "utf-8");
+      raw = await fs.readFile(this.file(TEAM_FILES.log), "utf-8");
     } catch {
       return [];
     }
@@ -119,7 +128,7 @@ export class TeamStore {
       const last = (await this.log()).at(-1);
       const entry: TeamMessage = { id: (last?.id ?? 0) + 1, time: new Date().toISOString(), ...message };
       await fs.mkdir(this.dir, { recursive: true });
-      await fs.appendFile(this.file("log.jsonl"), `${JSON.stringify(entry)}\n`, {
+      await fs.appendFile(this.file(TEAM_FILES.log), `${JSON.stringify(entry)}\n`, {
         mode: OWNER_ONLY_FILE_MODE,
       });
       return entry;
@@ -133,14 +142,14 @@ export class TeamStore {
 
   /** Per role, the last message id it has had: read from its inbox or typed later. */
   readMarks(): Promise<Record<string, number>> {
-    return readJson<Record<string, number>>(this.file("read.json"), {});
+    return readJson<Record<string, number>>(this.file(TEAM_FILES.read), {});
   }
 
   markRead(role: string, id: number): Promise<void> {
     return this.serial(async () => {
       const read = await this.readMarks();
       read[role] = Math.max(read[role] ?? 0, id);
-      await writeFileAtomic(this.file("read.json"), JSON.stringify(read, null, 2));
+      await writeFileAtomic(this.file(TEAM_FILES.read), JSON.stringify(read, null, 2));
     });
   }
 }

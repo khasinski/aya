@@ -10,11 +10,21 @@ import {
   isProjectConfigFilename,
   sliceForFilename,
 } from "../dist-electron/config-watcher-pure.js";
+import { PRESETS_FILE, SNIPPETS_FILE, THEMES_FILE } from "../dist-electron/paths.js";
+import path from "node:path";
 
 test("maps each watched config file to its slice", () => {
   assert.equal(sliceForFilename("snippets.json"), "snippets");
   assert.equal(sliceForFilename("presets.json"), "presets");
   assert.equal(sliceForFilename("themes.json"), "themes");
+});
+
+test("watched filenames are exactly the files paths.ts writes", () => {
+  assert.deepEqual(WATCHED_CONFIG_FILES, {
+    [path.basename(SNIPPETS_FILE)]: "snippets",
+    [path.basename(PRESETS_FILE)]: "presets",
+    [path.basename(THEMES_FILE)]: "themes",
+  });
 });
 
 test("ignores the .tmp scratch files written by atomic-write", () => {

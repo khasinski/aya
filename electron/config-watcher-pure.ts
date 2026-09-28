@@ -9,15 +9,17 @@
 // purpose: it is app-owned live state and needs separate conflict semantics
 // (see #4).
 
+import * as path from "node:path";
+import { PRESETS_FILE, SNIPPETS_FILE, THEMES_FILE } from "./paths";
 import type { ConfigSlice } from "./types";
 
 /** Filename to slice, for the files we watch and reload. The keys are exact
  *  filenames, so the temporary `<file>.<pid>.<rand>.tmp` files that atomic
  *  writes create never match and are skipped automatically. */
 export const WATCHED_CONFIG_FILES: Readonly<Record<string, ConfigSlice>> = {
-  "snippets.json": "snippets",
-  "presets.json": "presets",
-  "themes.json": "themes",
+  [path.basename(SNIPPETS_FILE)]: "snippets",
+  [path.basename(PRESETS_FILE)]: "presets",
+  [path.basename(THEMES_FILE)]: "themes",
 };
 
 /** The slice to reload for a changed filename, or null if it's not a file we

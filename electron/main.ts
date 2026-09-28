@@ -54,7 +54,7 @@ import { startConfigWatcher } from "./config-watcher";
 import { isHostStale } from "./pty-host-staleness";
 import { deliverTeamMessage, startControlServer } from "./control";
 import { createCliAdoptionStore } from "./cli-adoption";
-import { writeFileAtomic } from "./atomic-write";
+import { TMP_SUFFIX, writeFileAtomic } from "./atomic-write";
 import {
   briefChannel,
   briefText,
@@ -132,8 +132,8 @@ import { isInternalNavigationUrl, parseExternalUrl } from "./navigation";
 import { createWorktree, removeWorktree } from "./git";
 import { listPresets, savePresets } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
-import { expandUserPath, readClaudeUsageAccounts } from "./usage";
-import { DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } from "./usage-codex";
+import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath, readClaudeUsageAccounts } from "./usage";
+import { CODEX_DEFAULT_DIR, DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } from "./usage-codex";
 import { DEFAULT_GROK_HOME, readGrokUsage } from "./usage-grok";
 import {
   usageHookStatus,
@@ -224,6 +224,9 @@ const COLOR_LIGHT_TEXT = "#f0f6fc";
 const ABOUT_DIALOG_SIZE = 360;
 // About dialog icon dimensions (square, px)
 const ABOUT_ICON_SIZE = 128;
+// Stale-host menu dot: 16x16 px at scaleFactor 2 = 8pt logical.
+const STALE_MENU_DOT_PX = 16;
+const STALE_MENU_DOT_SCALE_FACTOR = 2;
 const LOCAL_SUMMARY_TIMEOUT_MS = 20_000;
 const LOCAL_SUMMARY_MAX_LINES = 30;
 const LOCAL_SUMMARY_MAX_STDOUT_BYTES = 32 * 1024;
@@ -752,7 +755,7 @@ function freshCliShim(): string {
 async function writeCliShim(target: string, script: string): Promise<void> {
   // Temp file + rename: a failed write can't leave a truncated, dead shim, and
   // rename replaces the entry itself instead of writing through a link.
-  const tmp = `${target}.aya-${process.pid}.tmp`;
+  const tmp = `${target}.aya-${process.pid}${TMP_SUFFIX}`;
   try {
     await fs.writeFile(tmp, script, { mode: EXECUTABLE_FILE_MODE });
     await fs.chmod(tmp, EXECUTABLE_FILE_MODE);
@@ -2141,7 +2144,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     if (!win.isDestroyed()) win.webContents.send("shortcut", action);
   });
 
-  if (process.env.AYA_DEV === "1") {
+  if (IS_DEV) {
     win.loadURL(DEV_SERVER_URL);
     win.webContents.openDevTools({ mode: "detach" });
   } else {
@@ -2202,8 +2205,8 @@ function setStaleMenuIcon(): void {
     // 16x16 px red dot at scaleFactor 2 = 8pt logical - renders as a
     // small colored circle to the left of the label (standard macOS pattern).
     item.icon = nativeImage.createFromBuffer(
-      makeCirclePng(16, 255, 59, 48), // red (macOS systemRed #ff3b30)
-      { scaleFactor: 2 },
+      makeCirclePng(STALE_MENU_DOT_PX, 255, 59, 48), // red (macOS systemRed #ff3b30)
+      { scaleFactor: STALE_MENU_DOT_SCALE_FACTOR },
     );
   }
 }
@@ -2490,7 +2493,7 @@ function registerIpc(): void {
         .map((p) => ({
           id: p.id,
           label: p.name,
-          configDir: p.configDir || "~/.claude",
+          configDir: p.configDir || DEFAULT_CLAUDE_CONFIG_DIR,
         })),
     );
   });
@@ -2506,10 +2509,12 @@ function registerIpc(): void {
         (p) => ({
           id: p.id,
           label: p.name,
+          // A preset without configDir ignores CODEX_HOME, unlike
+          // DEFAULT_CODEX_HOME (known bug B8).
           home:
             "configDir" in p && typeof p.configDir === "string" && p.configDir
               ? expandUserPath(p.configDir)
-              : expandUserPath("~/.codex"),
+              : expandUserPath(CODEX_DEFAULT_DIR),
         }),
       ),
     );

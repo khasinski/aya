@@ -14,12 +14,16 @@ import * as path from "node:path";
 import type { UsageAccount, UsageData } from "./usage";
 import { expandUserPath, usageAccountFromData } from "./usage";
 
+// Codex's home when neither CODEX_HOME nor a preset names one.
+export const CODEX_DIRNAME = ".codex";
+export const CODEX_DEFAULT_DIR = `~/${CODEX_DIRNAME}`;
+
 /** The default Codex home — the env override, else ~/.codex. Additional homes
  *  (second accounts) are derived from preset commands and passed in explicitly. */
 export const DEFAULT_CODEX_HOME =
   process.env.CODEX_HOME && process.env.CODEX_HOME.trim()
     ? path.resolve(process.env.CODEX_HOME)
-    : path.join(os.homedir(), ".codex");
+    : path.join(os.homedir(), CODEX_DIRNAME);
 
 // Bound the per-poll work: only the few most-recent rollouts are read/parsed.
 const MAX_ROLLOUTS_SCANNED = 20;

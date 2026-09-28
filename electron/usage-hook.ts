@@ -16,7 +16,7 @@ import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
 import { AYA_HOME, EXECUTABLE_FILE_MODE, USAGE_FILE } from "./paths";
 import { listPresets } from "./presets";
-import { expandUserPath } from "./usage";
+import { CLAUDE_CONFIG_DIRNAME, DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath } from "./usage";
 
 // Claude Code's global settings. AYA_CLAUDE_SETTINGS overrides it so tests can
 // run the install/uninstall round-trip against a throwaway file instead of the
@@ -24,7 +24,7 @@ import { expandUserPath } from "./usage";
 const CLAUDE_SETTINGS_FILE =
   process.env.AYA_CLAUDE_SETTINGS && process.env.AYA_CLAUDE_SETTINGS.trim()
     ? path.resolve(process.env.AYA_CLAUDE_SETTINGS)
-    : path.join(os.homedir(), ".claude", "settings.json");
+    : path.join(os.homedir(), CLAUDE_CONFIG_DIRNAME, "settings.json");
 // The generated fetch script lives in Aya's own dir (always exists), referenced
 // by absolute path from the hook entry.
 export const HOOK_SCRIPT_FILE = path.join(AYA_HOME, "aya-usage-hook.sh");
@@ -58,12 +58,12 @@ export async function claudeConfigDirs(): Promise<string[]> {
   try {
     for (const preset of await listPresets()) {
       if (preset.agent !== "claude") continue;
-      dirs.add(expandUserPath(preset.configDir || "~/.claude"));
+      dirs.add(expandUserPath(preset.configDir || DEFAULT_CLAUDE_CONFIG_DIR));
     }
   } catch {
     // fall through to default
   }
-  if (dirs.size === 0) dirs.add(path.join(os.homedir(), ".claude"));
+  if (dirs.size === 0) dirs.add(path.join(os.homedir(), CLAUDE_CONFIG_DIRNAME));
   return [...dirs];
 }
 
@@ -130,6 +130,9 @@ export function withoutStopHook(
 
 // ---- the generated fetch script ---------------------------------------------
 
+// The default Claude dir as the generated shell script spells it.
+const SH_HOME_CLAUDE_DIR = `$HOME/${CLAUDE_CONFIG_DIRNAME}`;
+
 /** The shell script the hook runs. Throttled; reads the token from the OS
  *  credential store; calls the usage endpoint; writes Aya's file shape. Exits
  *  quietly on any missing dependency or failure so it never breaks a session. */
@@ -142,7 +145,7 @@ set -euo pipefail
 OUT=${JSON.stringify(outFile)}
 command -v jq >/dev/null 2>&1 || exit 0
 command -v curl >/dev/null 2>&1 || exit 0
-CONFIG_DIR="\${AYA_CLAUDE_CONFIG_DIR:-\${CLAUDE_CONFIG_DIR:-$HOME/.claude}}"
+CONFIG_DIR="\${AYA_CLAUDE_CONFIG_DIR:-\${CLAUDE_CONFIG_DIR:-${SH_HOME_CLAUDE_DIR}}}"
 mkdir -p "$(dirname "$OUT")"
 if command -v shasum >/dev/null 2>&1; then
   HASH=$(printf '%s' "$CONFIG_DIR" | shasum -a 256 | awk '{print $1}')
@@ -166,10 +169,10 @@ if [ -f "$CONFIG_DIR/.credentials.json" ]; then
   RAW=$(cat "$CONFIG_DIR/.credentials.json")
 elif RAW=$(security find-generic-password -s "Claude Code-credentials-\${HASH:0:8}" -w 2>/dev/null); then
   :
-elif [ "$CONFIG_DIR" = "$HOME/.claude" ] && RAW=$(security find-generic-password -s 'Claude Code-credentials' -w 2>/dev/null); then
+elif [ "$CONFIG_DIR" = "${SH_HOME_CLAUDE_DIR}" ] && RAW=$(security find-generic-password -s 'Claude Code-credentials' -w 2>/dev/null); then
   :
-elif [ -f "$HOME/.claude/.credentials.json" ]; then
-  RAW=$(cat "$HOME/.claude/.credentials.json")
+elif [ -f "${SH_HOME_CLAUDE_DIR}/.credentials.json" ]; then
+  RAW=$(cat "${SH_HOME_CLAUDE_DIR}/.credentials.json")
 else
   exit 0
 fi
@@ -182,7 +185,7 @@ printf '%s' "$RESP" | jq \\
   '{fiveHour:{pct:.five_hour.utilization, resetsAt:.five_hour.resets_at},
     sevenDay:{pct:.seven_day.utilization, resetsAt:.seven_day.resets_at},
     updatedAt:$ts}' > "$ACCOUNT_OUT.tmp" && mv "$ACCOUNT_OUT.tmp" "$ACCOUNT_OUT"
-if [ "$CONFIG_DIR" = "$HOME/.claude" ]; then
+if [ "$CONFIG_DIR" = "${SH_HOME_CLAUDE_DIR}" ]; then
   cp "$ACCOUNT_OUT" "$OUT"
 fi
 `;

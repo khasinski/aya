@@ -8,7 +8,14 @@ import {
   codexUsageFromRateLimit,
   latestUsageAccountsFromLines,
   latestUsageFromLines,
+  CODEX_DIRNAME,
+  CODEX_DEFAULT_DIR,
 } from "../dist-electron/usage-codex.js";
+
+test("Codex's default home is ~/.codex", () => {
+  assert.equal(CODEX_DIRNAME, ".codex");
+  assert.equal(CODEX_DEFAULT_DIR, "~/.codex");
+});
 
 // The real shape captured from ~/.codex/sessions/.../rollout-*.jsonl.
 const SAMPLE = {
