@@ -310,14 +310,13 @@ async function migrate(): Promise<void> {
   const [legacy, command] = [legacyStatusHookCommand(), statusHookCommand()];
   for (const dir of await claudeConfigDirs()) {
     const settingsPath = settingsFileForConfigDir(dir);
-    let settings: Record<string, unknown>;
     try {
-      settings = await readSettingsFile(settingsPath);
+      const settings = await readSettingsFile(settingsPath);
+      const next = withMigratedStatusHooks(settings, legacy, command);
+      if (next !== settings) await writeFileAtomic(settingsPath, JSON.stringify(next, null, 2) + "\n");
     } catch {
-      continue;
+      /* malformed or unwritable settings: leave this dir, migrate the rest */
     }
-    const next = withMigratedStatusHooks(settings, legacy, command);
-    if (next !== settings) await writeFileAtomic(settingsPath, JSON.stringify(next, null, 2) + "\n");
   }
 }
 

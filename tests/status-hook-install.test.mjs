@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -76,4 +76,22 @@ test("a quoted install not yet migrated still reads as installed", async () => {
   mkdirSync(dirname(STATUS_HOOK_SCRIPT_FILE), { recursive: true });
   writeFileSync(STATUS_HOOK_SCRIPT_FILE, "#!/bin/sh\n");
   assert.equal((await statusHookStatus()).installed, true);
+});
+
+test("an install racing the startup migration stays installed, in either order", async () => {
+  for (const [first, second] of [[migrateStatusHookCommand, installStatusHook], [installStatusHook, migrateStatusHookCommand]]) {
+    writeFileSync(settingsPath, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: quoted }] }] } }));
+    await Promise.all([first(), second()]);
+    for (const event of STATUS_HOOK_EVENTS) assert.deepEqual(commands(read(), event), [STATUS_HOOK_SCRIPT_FILE], event);
+  }
+});
+
+test("a settings file that cannot be written does not fail the startup migration", async () => {
+  seedQuoted();
+  chmodSync(root, 0o500);
+  try {
+    await migrateStatusHookCommand();
+  } finally {
+    chmodSync(root, 0o700);
+  }
 });
