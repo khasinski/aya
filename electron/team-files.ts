@@ -7,14 +7,18 @@ import { openTeamStore, type TeamStore } from "./team-store";
 import { parseTeamFile, type TeamDefinition } from "./teams";
 import type { ProjectConfig } from "./types";
 
+export function teamsDir(project: ProjectConfig): string {
+  return path.join(project.directory, ".aya", "teams");
+}
+
 export function teamFile(project: ProjectConfig, name: string): string {
-  return path.join(project.directory, ".aya", "teams", `${name}.md`);
+  return path.join(teamsDir(project), `${name}.md`);
 }
 
 /** The project's team names, sorted; none when the folder is missing. */
 export async function teamNames(project: ProjectConfig): Promise<string[]> {
   try {
-    const files = await fs.readdir(path.dirname(teamFile(project, "x")));
+    const files = await fs.readdir(teamsDir(project));
     return files.filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)).sort();
   } catch {
     return [];
