@@ -1,6 +1,6 @@
-// How the tab list shows teams: each pane's role and its unread count.
+// How the tab list and the teams window show teams: roles, unread, log lines.
 
-import type { TeamSummary } from "./types";
+import type { TeamMessage, TeamStartResult, TeamSummary } from "./types";
 
 export interface PaneRole {
   team: string;
@@ -30,4 +30,16 @@ export function unassignedTeams(teams: TeamSummary[]): TeamSummary[] {
 /** The key a dismissed "assign roles?" prompt is remembered under. */
 export function teamPromptKey(slug: string, team: string): string {
   return `${slug}/${team}`;
+}
+
+/** How far a logged message got: typed into the pane, or why not yet. */
+export function messageDeliveryText(m: Pick<TeamMessage, "from" | "delivered" | "held">): string {
+  if (m.delivered) return m.held ? `written later (was held: ${m.held})` : "written";
+  return m.from === "aya" ? `not typed: ${m.held ?? "held"}` : `waiting in inbox: ${m.held ?? "held"}`;
+}
+
+/** The line under a team after Start; null when every role got the test. */
+export function startSummary(result: TeamStartResult): string | null {
+  if (!result.started) return "Not started, nothing was sent: fix the roles marked below, then Start again.";
+  return result.held.length ? "Started; the roles marked below did not get the delivery test." : null;
 }
