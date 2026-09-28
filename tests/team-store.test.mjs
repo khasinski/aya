@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TeamStore, openTeamStore, teamDir } from "../dist-electron/team-store.js";
@@ -158,6 +158,22 @@ test("a team runs only after Start and until Pause", async () => {
     assert.equal((await store.state()).running, true);
     await store.setPaused(true);
     assert.deepEqual(await store.state(), { paused: true, running: false });
+  } finally {
+    done(store);
+  }
+});
+
+test("the last round survives a new store and a pause; a hand-edited one that is not a count reads as none", async () => {
+  const store = fresh();
+  try {
+    assert.equal(await store.lastRound(), 0);
+    await store.setLastRound(3);
+    await store.setPaused(true);
+    assert.equal(await new TeamStore(store.dir).lastRound(), 3);
+    for (const bad of ["4", 2.5, -1, 0, null, 1e300]) {
+      writeFileSync(join(store.dir, "state.json"), JSON.stringify({ paused: false, started: true, lastRound: bad }));
+      assert.equal(await store.lastRound(), 0, `lastRound ${JSON.stringify(bad)}`);
+    }
   } finally {
     done(store);
   }

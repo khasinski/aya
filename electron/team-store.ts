@@ -27,6 +27,8 @@ const TEAM_FILES = {
   read: "read.json",
 } as const;
 
+type StateFile = { paused?: boolean; started?: boolean; lastRound?: unknown };
+
 // One write queue per team directory, shared by every store opened on it.
 const queues = new Map<string, Promise<unknown>>();
 
@@ -90,19 +92,35 @@ export class TeamStore {
     return entry ? entry[0] : null;
   }
 
+  private readState(): Promise<StateFile> {
+    return readJson<StateFile>(this.file(TEAM_FILES.state), {});
+  }
+
+  private updateState(change: (state: StateFile) => StateFile): Promise<void> {
+    return this.serial(async () => {
+      await writeFileAtomic(this.file(TEAM_FILES.state), JSON.stringify(change(await this.readState())));
+    });
+  }
+
   /** A paused team takes no sends and no rounds. Unpausing marks it started. */
   setPaused(paused: boolean): Promise<void> {
-    return this.serial(async () => {
-      const state = await readJson<{ started?: boolean }>(this.file(TEAM_FILES.state), {});
-      const started = state.started === true || !paused;
-      await writeFileAtomic(this.file(TEAM_FILES.state), JSON.stringify({ paused, started }));
-    });
+    return this.updateState((state) => ({ ...state, paused, started: state.started === true || !paused }));
   }
 
   /** running: started with Start team and not paused since. */
   async state(): Promise<{ paused: boolean; running: boolean }> {
-    const state = await readJson<{ paused?: boolean; started?: boolean }>(this.file(TEAM_FILES.state), {});
+    const state = await this.readState();
     return { paused: state.paused === true, running: state.started === true && state.paused !== true };
+  }
+
+  /** The number of the last round Aya typed; 0 before the first. */
+  async lastRound(): Promise<number> {
+    const { lastRound } = await this.readState();
+    return typeof lastRound === "number" && Number.isSafeInteger(lastRound) && lastRound > 0 ? lastRound : 0;
+  }
+
+  setLastRound(lastRound: number): Promise<void> {
+    return this.updateState((state) => ({ ...state, lastRound }));
   }
 
   /** The definition as the user last saved it; outside edits wait for Save. */
