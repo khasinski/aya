@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   addRole,
   applyDraft,
+  cadenceProblem,
   DEFAULT_CADENCE_MINUTES,
   fromEditor,
   removeRole,
@@ -13,6 +14,7 @@ import {
   type EditorRole,
   type EditorTeam,
 } from "../team-edit";
+import { MAX_CADENCE_MINUTES } from "../main-mirrors";
 import type { AyaIntelligenceConfig, TeamDefinition } from "../types";
 import { TeamFlow } from "./TeamFlow";
 import { ErrorLine, useAsyncAction } from "./use-async-action";
@@ -35,6 +37,8 @@ export function TeamEditor({
   const [drafting, setDrafting] = useState<number | null>(null);
   const save = useAsyncAction();
   const built = fromEditor(team);
+  const cadenceError = team.cadence && cadenceProblem(team.cadence.minutes);
+  const invalid = Boolean(cadenceError) || team.roles.some((r) => roleIdProblem(r.id));
   const draftRole = async (role: EditorRole) => {
     setDrafting(role.key);
     try {
@@ -101,6 +105,7 @@ export function TeamEditor({
               className="aya-modal-input aya-teams-minutes"
               type="number"
               min={1}
+              max={MAX_CADENCE_MINUTES}
               aria-label="Round minutes"
               value={team.cadence.minutes}
               onChange={(e) => setTeam({ ...team, cadence: team.cadence && { ...team.cadence, minutes: Number(e.target.value) } })}
@@ -109,6 +114,7 @@ export function TeamEditor({
           </>
         )}
       </label>
+      <ErrorLine error={cadenceError} />
       <textarea
         className="aya-modal-input"
         aria-label="Protocol"
@@ -122,7 +128,7 @@ export function TeamEditor({
         <button className="aya-modal-btn" onClick={onCancel}>
           Cancel
         </button>
-        <button className="aya-modal-btn aya-modal-btn--primary" disabled={save.busy || team.roles.some((r) => roleIdProblem(r.id))} onClick={() => save.run(() => onSave(built))}>
+        <button className="aya-modal-btn aya-modal-btn--primary" disabled={save.busy || invalid} onClick={() => save.run(() => onSave(built))}>
           Save team
         </button>
       </div>

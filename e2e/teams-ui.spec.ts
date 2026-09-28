@@ -45,6 +45,24 @@ test("a role named aya is flagged in the editor and Save is off until it is rena
   await expect(save).toBeEnabled();
 });
 
+test("round minutes out of range are flagged before Save, which stays off until fixed", async ({ window, seeded }) => {
+  const dialog = await openNewTeam(window);
+  await dialog.getByLabel("Team name").fill("slow");
+  const minutes = dialog.getByLabel("Round minutes");
+  const save = dialog.getByRole("button", { name: "Save team" });
+  await expect(minutes).toHaveAttribute("max", "1440");
+  for (const typed of ["5000", "", "0"]) {
+    await minutes.fill(typed);
+    await expect(dialog.getByText(/every 1-1440 min/)).toBeVisible();
+    await expect(save).toBeDisabled();
+  }
+  await minutes.fill("1440");
+  await expect(dialog.getByText(/every 1-1440 min/)).toBeHidden();
+  await save.click();
+  await expect(dialog.getByTestId("team-slow")).toBeVisible();
+  expect(readFileSync(join(seeded.projectDir, ".aya", "teams", "slow.md"), "utf8")).toMatch(/every 1440 min/);
+});
+
 test("assign panes, Start sends the delivery test, Pause marks the team, Resume clears it", async ({ window, seeded }) => {
   const dialog = await defineFromTemplate(window, "ux-review");
   const card = dialog.getByTestId("team-ux-review");
