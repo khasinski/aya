@@ -162,3 +162,37 @@ test.describe("Start team", () => {
     await expect.poll(() => read("tab-right"), { timeout: 15_000 }).toMatch(/Delivery test.*aya team send tester/);
   });
 });
+
+test.describe("a running team restored after a restart", () => {
+  test.use({
+    seedOptions: {
+      presetList: [
+        { id: "shell", name: "Agent", icon: "a", color: "", agent: "claude", command: `'${NODE}' '${AGENT}' '${AYA}' quiet` },
+      ],
+      projectFiles: { ".aya/teams/ux-review.md": TEAM },
+      ayaHomeFiles: {
+        "teams/e2e-proj/ux-review/assignments.json": JSON.stringify({ tester: "tab-left", implementer: "tab-right" }),
+        "teams/e2e-proj/ux-review/state.json": JSON.stringify({ paused: false, started: true }),
+        // Left by an earlier session: Aya's own round and delivery test, and a peer report.
+        "teams/e2e-proj/ux-review/log.jsonl": [
+          { id: 1, from: "aya", text: "Round 1: old round", held: "shows an approval prompt" },
+          { id: 2, from: "aya", text: "Delivery test: old test", held: "no pane assigned" },
+          { id: 3, from: "tester", text: "peer report from before", held: "shows an approval prompt" },
+        ]
+          .map((m) => JSON.stringify({ ...m, time: "2026-09-28T09:00:00Z", to: "implementer", commit: null, delivered: false }))
+          .join("\n") + "\n",
+      },
+    },
+  });
+
+  test("types the peer's held report but never Aya's stale round or delivery test", async ({ window, seeded }) => {
+    await expect(window.getByTestId("xterm-host").first()).toBeVisible();
+    const read = (pane: string) => {
+      const file = join(seeded.projectDir, `team-${pane}.log`);
+      return existsSync(file) ? readFileSync(file, "utf8") : "";
+    };
+    // Redelivery runs every 15 s once the pane is up.
+    await expect.poll(() => read("tab-right"), { timeout: 45_000 }).toMatch(/peer report from before/);
+    expect(read("tab-right")).not.toMatch(/old round|old test/);
+  });
+});

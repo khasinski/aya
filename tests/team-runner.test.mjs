@@ -389,3 +389,16 @@ test("when the pane is held mid-pass, later messages wait even if it frees again
     t.cleanup();
   }
 });
+
+test("Aya's own held messages (rounds, delivery tests) are never typed later: they go stale", async () => {
+  const t = await setup({ cadence: false });
+  try {
+    await t.store.append({ from: "aya", to: "implementer", commit: null, text: "Round 1: run your round", delivered: false });
+    await t.store.append({ from: "tester", to: "implementer", commit: null, text: "peer report", delivered: false });
+    assert.equal(await t.runner.redeliverWaiting(), 1);
+    assert.deepEqual(t.typed.map((w) => w.text.replace(/^.*\] /, "")), ["peer report"]);
+  } finally {
+    t.cleanup();
+  }
+});
+

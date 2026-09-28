@@ -139,7 +139,13 @@ export function TeamCard({
                 <span className="aya-teams-muted">
                   {new Date(m.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {m.from} → {m.to}
                   {m.commit ? ` · ${m.commit}` : ""} ·{" "}
-                  {m.delivered ? (m.held ? `written later (was held: ${m.held})` : "written") : `waiting in inbox: ${m.held ?? "held"}`}
+                  {m.delivered
+                    ? m.held
+                      ? `written later (was held: ${m.held})`
+                      : "written"
+                    : m.from === "aya"
+                      ? `not typed: ${m.held ?? "held"}`
+                      : `waiting in inbox: ${m.held ?? "held"}`}
                 </span>
                 <span>{m.text}</span>
               </div>

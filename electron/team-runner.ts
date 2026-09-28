@@ -124,7 +124,8 @@ export class TeamRunner {
           const waiting = await store.unread(role.id);
           const pane = waiting.length ? await store.paneOf(role.id) : null;
           if (!pane) continue;
-          for (const m of waiting) {
+          // Aya's own rounds and delivery tests go stale; a later one replaces them.
+          for (const m of waiting.filter((w) => w.from !== "aya")) {
             // Each delivery can raise an approval prompt the next would type into.
             if (await this.deps.holdReason(pane)) break;
             try {
