@@ -24,6 +24,7 @@ import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
 import { AYA_DEV_HOME_DIRNAME, AYA_HOME, AYA_HOME_DIRNAME } from "./paths";
+import { PS_ENV } from "./pty-host-registry";
 import { PTY_HOST_SCRIPT_NAME, RUN_AS_NODE_VALUE, RUN_AS_NODE_VAR } from "./pty-host-staleness";
 
 /** One row of the system process snapshot. */
@@ -273,8 +274,6 @@ export function sweepLegacyAyaProcesses(
 }
 
 // --- Impure OS probes (injected in tests) ----------------------------------
-
-const PS_ENV = { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" };
 
 /** Full system snapshot: uid, pid, ppid, pgid, command per process. */
 export function readSnapshot(): ProcRow[] {

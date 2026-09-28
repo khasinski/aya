@@ -19,6 +19,7 @@ import {
   removeHostRecord,
   reapStaleHostRecords,
   classifyRecord,
+  PS_ENV,
 } from "../dist-electron/pty-host-registry.js";
 
 const SCRIPT = "/Applications/Aya.app/Contents/Resources/app.asar/dist-electron/pty-host.js";
@@ -447,4 +448,8 @@ test("readHostRecords sweeps aged .tmp leftovers and spares young ones", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("PS_ENV (shared with the sweep): process env pinned to C locale + UTC", () => {
+  assert.deepEqual(PS_ENV, { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" });
 });
