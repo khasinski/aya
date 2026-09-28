@@ -10,7 +10,13 @@ import {
   type PtyHostRequest,
   type PtyHostResponse,
 } from "./pty-host-protocol";
-import { hostBuildHash, UNKNOWN_SCRIPT_HASH, type HostIdentity } from "./pty-host-staleness";
+import {
+  hostBuildHash,
+  RUN_AS_NODE_VALUE,
+  RUN_AS_NODE_VAR,
+  UNKNOWN_SCRIPT_HASH,
+  type HostIdentity,
+} from "./pty-host-staleness";
 import { coalesceAdjacentData } from "./pty-event-coalescer";
 import type { BufferSearchHit } from "./pty";
 import type { PtyEvent, SpawnRequest } from "./types";
@@ -263,7 +269,7 @@ export class PtyHostClient {
       stdio: "ignore",
       env: {
         ...process.env,
-        ELECTRON_RUN_AS_NODE: "1",
+        [RUN_AS_NODE_VAR]: RUN_AS_NODE_VALUE,
       },
     });
     child.unref();
