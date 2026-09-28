@@ -662,6 +662,7 @@ function ProjectsLeftLayoutImpl({
                   ? "aya-railtab--drop-before"
                   : "aya-railtab--drop-after"
                 : "";
+              const teamUnread = unreadTotal(teamsByProject[p.slug] ?? []);
               return (
                 <div
                   key={p.slug}
@@ -722,9 +723,9 @@ function ProjectsLeftLayoutImpl({
                           </span>
                         )}
                         {p.name}
-                        {unreadTotal(teamsByProject[p.slug] ?? []) > 0 && (
+                        {teamUnread > 0 && (
                           <span className="aya-team-unread" aria-label={`${p.name} team messages waiting`}>
-                            ✉ {unreadTotal(teamsByProject[p.slug] ?? [])}
+                            ✉ {teamUnread}
                           </span>
                         )}
                       </span>
