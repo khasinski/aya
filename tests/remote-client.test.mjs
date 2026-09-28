@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as net from "node:net";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -86,14 +86,16 @@ exec sh -c "$1"
   };
 }
 
-function startRemoteSocket(handler) {
+function startRemoteSocket(handler, subdir = "") {
   const dir = mkdtempSync(join(tmpdir(), "aya-remote-client-"));
-  const socket = join(dir, "aya-remote.sock");
+  mkdirSync(join(dir, subdir), { recursive: true });
+  const socket = join(dir, subdir, "aya-remote.sock");
   const server = net.createServer(handler);
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(socket, () => {
       resolve({
+        dir,
         socket,
         cleanup: async () => {
           await new Promise((closeResolve) => server.close(closeResolve));
@@ -169,11 +171,11 @@ function remoteSnapshot() {
   };
 }
 
-async function withMockRemote(testFn) {
+async function withMockRemote(
+  testFn,
+  { subdir = "", envFor = (remote) => ({ AYA_REMOTE_SOCKET: remote.socket }) } = {},
+) {
   const fake = mkFakeSsh();
-  const previousPath = process.env.PATH;
-  const previousSocket = process.env.AYA_REMOTE_SOCKET;
-  process.env.PATH = fake.env.PATH;
   let requestBeforeSnapshot = false;
   let snapshotSent = false;
   const remote = await startRemoteSocket((socket) => {
@@ -229,19 +231,16 @@ async function withMockRemote(testFn) {
         }
       }
     });
-  });
-  process.env.AYA_REMOTE_SOCKET = remote.socket;
+  }, subdir);
   try {
-    await testFn({
-      get requestBeforeSnapshot() {
-        return requestBeforeSnapshot;
-      },
-    });
+    await withEnv({ PATH: fake.env.PATH, ...envFor(remote) }, () =>
+      testFn({
+        get requestBeforeSnapshot() {
+          return requestBeforeSnapshot;
+        },
+      }),
+    );
   } finally {
-    if (previousPath === undefined) delete process.env.PATH;
-    else process.env.PATH = previousPath;
-    if (previousSocket === undefined) delete process.env.AYA_REMOTE_SOCKET;
-    else process.env.AYA_REMOTE_SOCKET = previousSocket;
     fake.cleanup();
     await remote.cleanup();
   }
@@ -319,7 +318,10 @@ function mkHungSsh() {
 
 async function withEnv(vars, fn) {
   const previous = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
-  Object.assign(process.env, vars);
+  for (const [k, v] of Object.entries(vars)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
   try {
     return await fn();
   } finally {
@@ -381,4 +383,33 @@ test("an ssh that never starts the bridge is killed at the backstop and blamed o
 test("the ssh kill backstop leaves the bridge timeout room to report first", async () => {
   const { REMOTE_TIMEOUTS } = await import("../dist-electron/remote-client.js");
   assert.ok(REMOTE_TIMEOUTS.sshKillMs - REMOTE_TIMEOUTS.bridgeMs >= 5_000);
+});
+
+// --- socket fallback ---------------------------------------------------------
+// Without AYA_REMOTE_SOCKET the bridge uses $AYA_HOME, else the installed Aya's
+// ~/.aya - AYA_DEV never reaches an ssh session (docs/remote-sessions.md).
+
+async function presetsViaFallback(subdir, envFor) {
+  let ids = [];
+  await withMockRemote(
+    async () => {
+      ids = (await listRemotePresets("hostname")).map((preset) => preset.id);
+    },
+    { subdir, envFor: (remote) => ({ AYA_REMOTE_SOCKET: undefined, ...envFor(remote.dir) }) },
+  );
+  return ids;
+}
+
+test("the bridge falls back to $AYA_HOME/aya-remote.sock", async () => {
+  const ids = await presetsViaFallback("", (dir) => ({ AYA_HOME: dir, HOME: "/nonexistent" }));
+  assert.deepEqual(ids, ["shell", "claude-yolo"]);
+});
+
+test("without AYA_HOME the bridge reaches ~/.aya even when AYA_DEV=1", async () => {
+  const ids = await presetsViaFallback(".aya", (dir) => ({
+    AYA_HOME: undefined,
+    AYA_DEV: "1",
+    HOME: dir,
+  }));
+  assert.deepEqual(ids, ["shell", "claude-yolo"]);
 });
