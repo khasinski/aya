@@ -77,6 +77,24 @@ test("a field line inside free text is refused, not read back as that field", as
   }
 });
 
+test("a field line inside free text is refused with the exact message", async () => {
+  const t = setup();
+  try {
+    const cases = [
+      [{ responsibilities: "x\nMust not: push" }, null, 'role "tester": a Responsibilities line starts with "Must not:"; put that in its own field'],
+      [{ responsibilities: "Sends to: implementer" }, null, 'role "tester": a Responsibilities line starts with "Sends to:"; put that in its own field'],
+      [{ responsibilities: "## Role: sneaky" }, null, 'role "tester": a Responsibilities line starts with "##"; put that in its own field'],
+      [{}, "Rounds.\n## Role: sneaky", 'protocol: a line starts with "##"; the team file would read it as a new section'],
+    ];
+    for (const [role, protocol, message] of cases) {
+      const team = { ...TEAM, roles: [{ ...TEAM.roles[0], ...role }, TEAM.roles[1]], protocol: protocol ?? TEAM.protocol };
+      await assert.rejects(saveTeam(t.teamHome, t.project, team), { message });
+    }
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("a new team with the name of an existing one is refused and the old one stays", async () => {
   const t = setup();
   try {

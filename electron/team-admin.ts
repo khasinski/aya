@@ -5,7 +5,7 @@ import { promises as fs } from "node:fs";
 import { writeFileAtomic } from "./atomic-write";
 import { teamFile, teamNames } from "./team-files";
 import { TeamStore, teamDir } from "./team-store";
-import { parseTeamFile, serializeTeam } from "./teams";
+import { MUST_NOT_FIELD, SECTION_MARKER, SENDS_TO_FIELD, parseTeamFile, serializeTeam } from "./teams";
 import type { ProjectConfig, TeamDefinition, TeamSummary } from "./types";
 
 const LOG_TAIL = 50;
@@ -63,7 +63,7 @@ export async function listTeams(teamHome: string, project: ProjectConfig): Promi
 }
 
 // A line the team file reads as a field or section, where only free text belongs.
-const FIELD_LINE = /^(Sends to:|Must not:|## )/m;
+const FIELD_LINE = new RegExp(`^(${SENDS_TO_FIELD}:|${MUST_NOT_FIELD}:|${SECTION_MARKER})`, "m");
 
 function refuseFieldLines(team: TeamDefinition): void {
   for (const role of team.roles) {
@@ -73,7 +73,7 @@ function refuseFieldLines(team: TeamDefinition): void {
     }
   }
   const line = team.protocol.match(FIELD_LINE);
-  if (line?.[1] === "## ") throw new Error('protocol: a line starts with "##"; the team file would read it as a new section');
+  if (line?.[1] === SECTION_MARKER) throw new Error('protocol: a line starts with "##"; the team file would read it as a new section');
 }
 
 /** Validates by round-tripping through the parser, so the file on disk is

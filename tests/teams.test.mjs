@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseTeamFile, serializeTeam } from "../dist-electron/teams.js";
+import { MUST_NOT_FIELD, SECTION_MARKER, SENDS_TO_FIELD, parseTeamFile, serializeTeam } from "../dist-electron/teams.js";
 
 const UX_REVIEW = `# ux-review
 
@@ -106,4 +106,10 @@ test("a what with parentheses, or a route listed twice, is refused", () => {
   assert.throws(() => parseTeamFile("t", base("b (x")), /parenthes/);
   assert.throws(() => parseTeamFile("t", base("b (x), b (y)")), /twice/);
   assert.deepEqual(parseTeamFile("t", base("b (x), ")).roles[0].sendsTo, [{ to: "b", what: "x" }]);
+});
+
+test("the file's field names and section marker are the ones the format reads", () => {
+  assert.equal(SENDS_TO_FIELD, "Sends to");
+  assert.equal(MUST_NOT_FIELD, "Must not");
+  assert.equal(SECTION_MARKER, "## ");
 });
