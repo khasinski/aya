@@ -24,6 +24,16 @@ export function TeamCard({
     await onChanged();
     return result;
   };
+  const start = async () => {
+    const result = await act(() => window.aya.teamStart(project.slug, team.name));
+    if (!result) return;
+    setNotReached(Object.fromEntries(result.held.map((h) => [h.role, h.reason])));
+    setSummary(startSummary(result));
+  };
+  const assign = async (role: string, paneId: string | null) => {
+    const why = await act(() => window.aya.teamAssign(project.slug, team.name, role, paneId));
+    setNotReached(({ [role]: _, ...rest }) => (why ? { ...rest, [role]: why } : rest));
+  };
   const definition = team.definition;
   return (
     <div className="aya-teams-card" data-testid={`team-${team.name}`}>
@@ -51,16 +61,7 @@ export function TeamCard({
               </button>
             )}
             {!team.running && (
-              <button
-                className="aya-modal-btn aya-modal-btn--primary"
-                disabled={busy}
-                onClick={async () => {
-                  const result = await act(() => window.aya.teamStart(project.slug, team.name));
-                  if (!result) return;
-                  setNotReached(Object.fromEntries(result.held.map((h) => [h.role, h.reason])));
-                  setSummary(startSummary(result));
-                }}
-              >
+              <button className="aya-modal-btn aya-modal-btn--primary" disabled={busy} onClick={start}>
                 Start
               </button>
             )}
@@ -108,10 +109,7 @@ export function TeamCard({
                   <select
                     aria-label={`Pane for ${role.id}`}
                     value={team.assignments[role.id] ?? ""}
-                    onChange={async (e) => {
-                      const why = await act(() => window.aya.teamAssign(project.slug, team.name, role.id, e.target.value || null));
-                      setNotReached(({ [role.id]: _, ...rest }) => (why ? { ...rest, [role.id]: why } : rest));
-                    }}
+                    onChange={(e) => assign(role.id, e.target.value || null)}
                   >
                     <option value="">No pane</option>
                     {project.tabs.map((tab) => (
