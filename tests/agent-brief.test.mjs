@@ -11,6 +11,7 @@ import {
   briefChannel,
   briefText,
   codexAgentsFile,
+  codexHomeFor,
   commandWithBriefArg,
   commandWithBriefEnv,
   pathWithFallbackDir,
@@ -152,7 +153,7 @@ test("agentBrief survives the preset roundtrip; a non-boolean is rejected", () =
   assert.equal(isPreset({ ...base, agentBrief: "yes" }), false);
 });
 
-const expand = (p) => p.replace(/^~/, "/Users/dev");
+const expand = (p) => p.replace(/^(~|\$HOME)(?=\/|$)/, "/Users/dev");
 
 test("codex file: configDir, else inline CODEX_HOME, else the default home", () => {
   assert.equal(
@@ -166,6 +167,27 @@ test("codex file: configDir, else inline CODEX_HOME, else the default home", () 
   assert.equal(
     codexAgentsFile({ command: "codex" }, "/Users/dev/.codex", expand),
     "/Users/dev/.codex/AGENTS.md",
+  );
+});
+
+test("codex home: the stock ~/.codex configDir defers to the command, then CODEX_HOME", () => {
+  const envHome = "/env/codex-home";
+  assert.equal(codexHomeFor({ configDir: "~/.codex", command: "codex" }, envHome, expand), envHome);
+  assert.equal(codexHomeFor({ configDir: "$HOME/.codex", command: "codex" }, envHome, expand), envHome);
+  assert.equal(codexHomeFor({ configDir: "  ", command: "codex" }, envHome, expand), envHome);
+  assert.equal(codexHomeFor({}, envHome, expand), envHome);
+  assert.equal(
+    codexHomeFor({ configDir: "~/.codex", command: 'CODEX_HOME="$HOME/.codex" codex' }, envHome, expand),
+    "/Users/dev/.codex",
+  );
+  assert.equal(
+    codexHomeFor({ configDir: "~/.codex-work", command: 'CODEX_HOME="$HOME/.codex-b" codex' }, envHome, expand),
+    "/Users/dev/.codex-work",
+  );
+  assert.equal(codexHomeFor({ configDir: "~/.codex-work" }, envHome, expand), "/Users/dev/.codex-work");
+  assert.equal(
+    codexAgentsFile({ configDir: "~/.codex", command: "codex" }, envHome, expand),
+    `${envHome}/AGENTS.md`,
   );
 });
 

@@ -133,15 +133,28 @@ export function inlineCodexHome(command: string): string | undefined {
     .replace(/^\$HOME(?=\/|$)/, "~");
 }
 
-/** Which AGENTS.md a codex preset reads: its configDir, else a CODEX_HOME set
- *  inline in its command, else the default home. */
+/** The home a codex preset runs in: its configDir unless that is the stock
+ *  ~/.codex, else a CODEX_HOME inline in its command, else `defaultHome`. */
+export function codexHomeFor(
+  preset: { configDir?: string; command?: string },
+  defaultHome: string,
+  expand: (p: string) => string,
+): string {
+  const configDir = preset.configDir?.trim();
+  const dir =
+    configDir && expand(configDir) !== expand("~/.codex")
+      ? configDir
+      : inlineCodexHome(preset.command ?? "");
+  return dir ? expand(dir) : defaultHome;
+}
+
+/** Which AGENTS.md a codex preset reads. */
 export function codexAgentsFile(
   preset: { configDir?: string; command: string },
   defaultHome: string,
   expand: (p: string) => string,
 ): string {
-  const dir = preset.configDir?.trim() || inlineCodexHome(preset.command);
-  return path.join(dir ? expand(dir) : defaultHome, "AGENTS.md");
+  return path.join(codexHomeFor(preset, defaultHome, expand), "AGENTS.md");
 }
 
 export interface CodexBriefPlan {

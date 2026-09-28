@@ -116,7 +116,11 @@ import { createWorktree, removeWorktree } from "./git";
 import { listPresets, savePresets } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
 import { expandUserPath, readClaudeUsageAccounts } from "./usage";
-import { DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } from "./usage-codex";
+import {
+  DEFAULT_CODEX_HOME,
+  codexUsageSources,
+  readCodexUsageAccountsFromSources,
+} from "./usage-codex";
 import { DEFAULT_GROK_HOME, readGrokUsage } from "./usage-grok";
 import {
   usageHookStatus,
@@ -2489,22 +2493,7 @@ function registerIpc(): void {
   // Read-only: Codex usage, parsed from its own local rollout logs (Codex
   // writes its rate-limit % there, so no token/endpoint/hook is needed).
   ipcMain.handle("usage:get-codex", async () => {
-    const presets = await listPresets();
-    const codexPresets = presets.filter((p) => p.agent === "codex");
-    return readCodexUsageAccountsFromSources(
-      (codexPresets.length > 0
-        ? codexPresets
-        : [{ id: "codex", name: "Codex", configDir: DEFAULT_CODEX_HOME }]).map(
-        (p) => ({
-          id: p.id,
-          label: p.name,
-          home:
-            "configDir" in p && typeof p.configDir === "string" && p.configDir
-              ? expandUserPath(p.configDir)
-              : expandUserPath("~/.codex"),
-        }),
-      ),
-    );
+    return readCodexUsageAccountsFromSources(codexUsageSources(await listPresets()));
   });
   // Read-only: 7-day spend and tokens, plus the weekly limit when Grok logged one.
   ipcMain.handle("usage:get-grok", async () => {
