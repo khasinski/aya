@@ -13,6 +13,8 @@ import {
   withoutStatusHooks,
   statusHookScriptSource,
   STATUS_HOOK_EVENTS,
+  hookCommandFor,
+  withMigratedStatusHooks,
 } from "../dist-electron/status-hook.js";
 
 const CMD = "'/Users/x/.aya/aya-status-hook.sh'";
@@ -107,4 +109,37 @@ test("every aya call from the hook script is tagged AYA_VIA=hook", async () => {
   const { codexNotifyScriptSource } = await import("../dist-electron/status-hook-codex.js");
   const codex = codexNotifyScriptSource("/x/bin/aya");
   assert.match(codex, /AYA_VIA=hook "\$AYA" status done/);
+});
+
+// Grok reads these hooks too, but runs a command with no space as a file path,
+// quotes included; measured on Grok 1.0.41: "command not found: ~/.claude/'/…/aya-status-hook.sh'".
+test("the hook command is the bare path unless the path needs quoting", () => {
+  assert.equal(hookCommandFor("/Users/x/.aya/aya-status-hook.sh"), "/Users/x/.aya/aya-status-hook.sh");
+  assert.equal(hookCommandFor("/Users/x y/.aya/aya-status-hook.sh"), "'/Users/x y/.aya/aya-status-hook.sh'");
+  assert.equal(hookCommandFor("/Users/o'neil/h.sh"), "'/Users/o'\\''neil/h.sh'");
+  assert.equal(hookCommandFor("/a$b/h.sh"), "'/a$b/h.sh'");
+});
+
+test("migrating replaces the quoted command under every event and keeps other hooks", () => {
+  const legacy = CMD;
+  const bare = "/Users/x/.aya/aya-status-hook.sh";
+  const other = { hooks: [{ type: "command", command: "/other.sh" }] };
+  const before = { env: { A: "1" }, hooks: { Stop: [other] } };
+  const installed = withStatusHooks(before, legacy);
+  const after = withMigratedStatusHooks(installed, legacy, bare);
+  for (const event of STATUS_HOOK_EVENTS) {
+    assert.equal(hasEventHook(after, event, bare), true, event);
+    assert.equal(hasEventHook(after, event, legacy), false, event);
+  }
+  assert.deepEqual(after.env, { A: "1" });
+  assert.deepEqual(after.hooks.Stop[0], other);
+  assert.equal(after.hooks.Stop.length, 2, "one of ours, no duplicate");
+});
+
+test("migrating settings without the quoted command returns them unchanged", () => {
+  const bare = "/Users/x/.aya/aya-status-hook.sh";
+  const current = withStatusHooks({}, bare);
+  assert.equal(withMigratedStatusHooks(current, CMD, bare), current);
+  const none = { hooks: { Stop: [{ hooks: [{ type: "command", command: "/other.sh" }] }] } };
+  assert.equal(withMigratedStatusHooks(none, CMD, bare), none, "never installs");
 });

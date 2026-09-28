@@ -125,6 +125,7 @@ import {
 } from "./usage-hook";
 import {
   refreshStatusHookScript,
+  migrateStatusHookCommand,
   statusHookStatus,
   installStatusHook,
   uninstallStatusHook,
@@ -3026,6 +3027,7 @@ app.whenReady().then(async () => {
   // Installed status-hook scripts from older builds lack the AYA_VIA=hook tag
   // and would count as agent adoption; refresh them in place (never install).
   void refreshStatusHookScript().catch(() => {});
+  void migrateStatusHookCommand().catch(() => {});
   void refreshStatusCodexHookScript().catch(() => {});
 
   // In dev, replace Electron's default dock icon with ours so the running
