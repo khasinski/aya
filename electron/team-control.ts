@@ -1,14 +1,10 @@
 // `aya team whoami|send|inbox`: the caller is known by its pane id, its role
 // by the local assignments, and the team by the definition the user saved.
 
+import type { TeamRequest } from "./control-protocol";
 import { loadTeam, paneTeamRole } from "./team-files";
 import type { TeamStore, TeamMessage } from "./team-store";
 import type { ProjectConfig, TeamDefinition, TeamRole } from "./types";
-
-export type TeamRequest =
-  | { type: "team-whoami" }
-  | { type: "team-inbox" }
-  | { type: "team-send"; role: string; text: string };
 
 export interface TeamControlDeps {
   teamHome: string;
