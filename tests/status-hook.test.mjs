@@ -111,8 +111,6 @@ test("every aya call from the hook script is tagged AYA_VIA=hook", async () => {
   assert.match(codex, /AYA_VIA=hook "\$AYA" status done/);
 });
 
-// Grok reads these hooks too, but runs a command with no space as a file path,
-// quotes included; measured on Grok 1.0.41: "command not found: ~/.claude/'/…/aya-status-hook.sh'".
 test("the hook command is the bare path unless the path needs quoting", () => {
   assert.equal(hookCommandFor("/Users/x/.aya/aya-status-hook.sh"), "/Users/x/.aya/aya-status-hook.sh");
   assert.equal(hookCommandFor("/Users/x y/.aya/aya-status-hook.sh"), "'/Users/x y/.aya/aya-status-hook.sh'");
