@@ -117,3 +117,14 @@ test("the file's field names and section marker are the ones the format reads", 
 test("Aya's own messages are sent as aya", () => {
   assert.equal(TEAM_SYSTEM_SENDER, "aya");
 });
+
+test("cadence runs from 1 min up to a day, both ends included", () => {
+  const every = (n) => parseTeamFile("ux-review", UX_REVIEW.replace("every 30 min", `every ${n} min`)).cadence;
+  assert.deepEqual(every(1), { role: "tester", minutes: 1 });
+  assert.deepEqual(every(24 * 60), { role: "tester", minutes: 24 * 60 });
+  assert.throws(() => every(24 * 60 + 1), /cadence/);
+});
+
+test("a file saved with Windows line endings reads the same", () => {
+  assert.deepEqual(parseTeamFile("ux-review", UX_REVIEW.replace(/\n/g, "\r\n")), parseTeamFile("ux-review", UX_REVIEW));
+});

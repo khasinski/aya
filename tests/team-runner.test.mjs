@@ -416,3 +416,32 @@ test("Aya's own held messages (rounds, delivery tests) are never typed later: th
   }
 });
 
+
+test("refresh leaves a team that is not running unarmed", async () => {
+  const t = await setup();
+  try {
+    await t.runner.refresh("game", "ux-review");
+    assert.equal(t.scheduled.length, 0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a pane that refuses the first waiting message gets none of the later ones", async () => {
+  const t = await setup({ cadence: false });
+  try {
+    await t.store.setPaused(false);
+    for (const text of ["first", "second", "third"]) {
+      await t.store.append({ from: "tester", to: "implementer", commit: null, text, delivered: false });
+    }
+    let calls = 0;
+    t.deps.deliver = async () => {
+      if (++calls === 1) throw new Error("pane gone");
+    };
+    assert.equal(await t.runner.redeliverWaiting(), 0);
+    assert.equal(calls, 1);
+    assert.deepEqual((await t.store.unread("implementer")).map((m) => m.text), ["first", "second", "third"]);
+  } finally {
+    t.cleanup();
+  }
+});
