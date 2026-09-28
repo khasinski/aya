@@ -133,3 +133,19 @@ test("the recommended Ollama model and Ollama's URLs have one electron-side defi
   assert.equal(m.OLLAMA_OPENAI_BASE_URL, "http://localhost:11434/v1");
   assert.equal(openAiBaseUrl(m.OLLAMA_BASE_URL), m.OLLAMA_OPENAI_BASE_URL);
 });
+
+test("openai: an empty content falls back to the reasoning, a legacy choice to its text; a blank model is a config error", async () => {
+  const replies = [
+    [200, { choices: [{ message: { content: "", reasoning: "thought" } }] }],
+    [200, { choices: [{ text: "legacy" }] }],
+  ];
+  const s = await fake(() => replies.shift());
+  try {
+    assert.deepEqual(await openAiChat({ baseUrl: s.url, model: "m" }, "s", "u", OPTS), { ok: true, content: "thought" });
+    assert.deepEqual(await openAiChat({ baseUrl: s.url, model: "m" }, "s", "u", OPTS), { ok: true, content: "legacy" });
+    assert.deepEqual(await openAiChat({ baseUrl: s.url, model: "  " }, "s", "u", OPTS), { ok: false, error: "missing-api-config" });
+    assert.equal(s.seen.length, 2);
+  } finally {
+    s.close();
+  }
+});

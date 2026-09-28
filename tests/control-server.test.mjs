@@ -702,3 +702,12 @@ test("deliverTeamMessage types the text as a bracketed paste, then Enter", async
     ["pane-1", "\r"],
   ]);
 });
+
+test("control server: aya team without the team deps reports teams are unavailable", async () => {
+  const { options } = recordingOptions();
+  await withServer(options, async (socket) => {
+    const res = await rpc(socket, `${JSON.stringify({ type: "team-whoami" })}\n`);
+    assert.equal(res.ok, false);
+    assert.equal(res.error, "teams are not available");
+  });
+});
