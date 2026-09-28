@@ -9,6 +9,12 @@ export const PER_TEST_TIMEOUT_MS = 45_000;
 /** A single `expect` poll inside a test. */
 export const EXPECT_TIMEOUT_MS = 10_000;
 
+/** A test that boots the app and waits on a real program in a pane. */
+export const AGENT_TEST_TIMEOUT_MS = 120_000;
+
+/** That program, typically under a login shell, starting in its pane. */
+export const AGENT_START_TIMEOUT_MS = 60_000;
+
 /** Held team messages are retried this often; the value lives in
  *  electron/team-ipc.ts, and tests/e2e-timeouts-parity.test.mjs pins this copy to it. */
 export const TEAM_REDELIVERY_MS = 15_000;
