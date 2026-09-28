@@ -122,15 +122,15 @@ export function withoutBriefSection(content: string): string {
   return rest.trim() ? rest : "";
 }
 
-/** A leading `CODEX_HOME=...` assignment in a preset command, unquoted, with
- *  $HOME turned into ~ for the caller's expander. */
+/** A `CODEX_HOME=...` assignment anywhere in a preset command, unquoted, with
+ *  $HOME / ${HOME} turned into ~ for the caller's expander. */
 export function inlineCodexHome(command: string): string | undefined {
   const value = command.match(/(?:^|\s)CODEX_HOME=("[^"]*"|'[^']*'|\S+)/)?.[1];
   if (!value) return undefined;
   return value
     .replace(/^"|"$/g, "")
     .replace(/^'|'$/g, "")
-    .replace(/^\$HOME(?=\/|$)/, "~");
+    .replace(/^\$(?:HOME|\{HOME\})(?=\/|$)/, "~");
 }
 
 /** The home a codex preset runs in: its configDir unless that is the stock
