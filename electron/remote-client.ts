@@ -9,17 +9,20 @@ import type {
   RemoteHostInfo,
   RemoteProjectCreateResult,
 } from "./types";
-import type { RemoteMessage } from "./remote-protocol";
+import { REMOTE_SOCKET_NAME } from "./paths";
+import { REMOTE_PROTOCOL_VERSION, type RemoteMessage } from "./remote-protocol";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 // Cap on the base64 bridge child's stdout - bounds the remote snapshot size.
 const REMOTE_BRIDGE_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
-const REMOTE_NODE_BRIDGE = `
+// The bridge's grace after client.end() for stdout to flush before it exits.
+const EXIT_FLUSH_DELAY_MS = 250;
+export const REMOTE_NODE_BRIDGE = `
 const net = require("node:net");
 const id = process.argv[1];
 const payload = Buffer.from(process.argv[2], "base64").toString("utf8");
 const socketPath = process.env.AYA_REMOTE_SOCKET ||
-  (process.env.AYA_HOME ? process.env.AYA_HOME + "/aya-remote.sock" : process.env.HOME + "/.aya/aya-remote.sock");
+  (process.env.AYA_HOME ? process.env.AYA_HOME + "/${REMOTE_SOCKET_NAME}" : process.env.HOME + "/.aya/${REMOTE_SOCKET_NAME}");
 const client = net.createConnection(socketPath);
 let buffer = "";
 let settled = false;
@@ -36,7 +39,7 @@ function finish(code) {
   if (settled) return;
   settled = true;
   client.end();
-  setTimeout(() => process.exit(code), 250);
+  setTimeout(() => process.exit(code), ${EXIT_FLUSH_DELAY_MS});
 }
 client.setEncoding("utf8");
 client.on("data", (chunk) => {
@@ -62,7 +65,7 @@ client.on("data", (chunk) => {
 client.on("error", (err) => {
   write({
     type: "error",
-    protocol: 1,
+    protocol: ${REMOTE_PROTOCOL_VERSION},
     id,
     code: "app_unavailable",
     message: "Aya is not accepting remote connections at " + socketPath,
@@ -73,7 +76,7 @@ client.on("error", (err) => {
 setTimeout(() => {
   write({
     type: "error",
-    protocol: 1,
+    protocol: ${REMOTE_PROTOCOL_VERSION},
     id,
     code: "timeout",
     message: "Remote Aya timed out.",

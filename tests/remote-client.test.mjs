@@ -302,3 +302,17 @@ test("remote client sends mkdir and project:create through the mocked ssh bridge
     );
   });
 });
+
+// The bridge runs on the remote host as `node -e <script>`; its text is pinned
+// byte for byte so constants embedded into it cannot drift the generated code.
+test("the remote node bridge script text is unchanged", async () => {
+  const { createHash } = await import("node:crypto");
+  const { REMOTE_NODE_BRIDGE } = await import("../dist-electron/remote-client.js");
+  assert.match(REMOTE_NODE_BRIDGE, /process\.env\.AYA_HOME \+ "\/aya-remote\.sock" : process\.env\.HOME \+ "\/\.aya\/aya-remote\.sock"/);
+  assert.match(REMOTE_NODE_BRIDGE, /setTimeout\(\(\) => process\.exit\(code\), 250\);/);
+  assert.equal(REMOTE_NODE_BRIDGE.match(/protocol: 1,/g).length, 2);
+  assert.equal(
+    createHash("sha256").update(REMOTE_NODE_BRIDGE).digest("hex"),
+    "dafe77b8e35d76761af9f2bc9b7b86c7054980fbea8ad7fe1df3794620976488",
+  );
+});
