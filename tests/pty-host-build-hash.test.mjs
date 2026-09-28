@@ -71,3 +71,21 @@ test("the real host requires vt-state and the screen rules", async () => {
   for (const f of ["pty-host.js", "pty.js", "vt-state.js", "agent-screen-rules.js", "pane-command.js"]) assert.ok(files.includes(f), f);
   assert.ok(!files.includes("main.js"));
 });
+
+test("modules that require each other are listed once, and the walk ends", () => {
+  const dir = build({ "host.js": 'require("./a");', "a.js": 'require("./b");', "b.js": 'require("./a"); require("./host");' });
+  try {
+    assert.deepEqual(hostModuleFiles(dir, "host.js"), ["a.js", "b.js", "host.js"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the hash covers each file's name, not only its bytes", () => {
+  const dir = build({ "host.js": "same", "main.js": "same" });
+  try {
+    assert.notEqual(hostBuildHash(dir, "host.js"), hostBuildHash(dir, "main.js"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
