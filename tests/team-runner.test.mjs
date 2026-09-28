@@ -89,6 +89,7 @@ test("Start lists every role that is not ready, including one with no pane", asy
     t.cleanup();
   }
 });
+
 test("rounds go to the cadence role on its interval and are numbered", async () => {
   const t = await setup();
   try {
@@ -387,7 +388,6 @@ test("when the pane is held mid-pass, later messages wait even if it frees again
     for (const text of ["first", "second", "third"]) {
       await t.store.append({ from: "tester", to: "implementer", commit: null, text, delivered: false });
     }
-    // Free, then held (a prompt after the first), then free again.
     const states = [null, "shows an approval prompt", null];
     t.deps.holdReason = async () => (states.length ? states.shift() : null);
     await t.runner.redeliverWaiting();

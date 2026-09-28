@@ -1,6 +1,5 @@
-// A team message must not be typed where Enter would do something else: an
-// approval prompt, the user's half-typed text, or a plain shell. Screens here
-// mirror what real Claude, Codex and Grok drew (recorded 2026-09-28).
+// A team message must not be typed where Enter would do something else. The screens
+// mirror what real Claude, Codex and Grok drew.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -81,10 +80,8 @@ test("claude: the real startup trust dialog (unboxed, unnumbered) holds as a pro
   assert.match(reason, /prompt/, `paneHold said: ${JSON.stringify(reason)}`);
 });
 
-// A numbered menu is a live choice waiting for an answer, in every agent's
-// composer area. No rule's wording covers it, so paneHold must still hold it -
-// and must say so with a reason that is not "the user is typing". One test per
-// agent, so one broken agent cannot hide behind another's failure.
+// No rule's wording covers a numbered menu, so paneHold must hold it on its own, and not as
+// "typing". One test per agent, so one broken agent cannot hide behind another's failure.
 
 test("a numbered choice holds delivery: claude", async () => {
   const reason = await hold(["❯ ", "", "● Pick one", "❯ 1. Alpha", "  2. Beta"]);

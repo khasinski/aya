@@ -94,7 +94,6 @@ test("withoutStopHook is a no-op when our hook isn't present", () => {
 });
 
 test("the generated hook script is byte-identical (sha256 pin)", () => {
-  // Pinned before the ~/.claude literals became DEFAULT_CLAUDE_CONFIG_DIR.
   const s = hookScriptSource("/x/usage.json");
   assert.equal(
     createHash("sha256").update(s).digest("hex"),

@@ -1,7 +1,5 @@
-// Every team state x every receiving-pane state x every action, with the
-// expected outcome spelled out. Teams are state machines; a bug on
-// 2026-09-28 lived in a combination (running team + restart + old held
-// rounds) that each single-state test passed.
+// Every team state x receiving-pane state x action, outcome spelled out: a bug hid in
+// one combination (running team + restart + old held rounds) each single-state test passed.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

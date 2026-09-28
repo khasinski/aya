@@ -41,7 +41,6 @@ test("only valid teams with no pane assigned are offered on project open", () =>
   assert.deepEqual(unassignedTeams(teams).map((t) => t.name), ["new"]);
 });
 
-
 test("a dismissed team prompt is keyed by project slug and team name", () => {
   assert.equal(teamPromptKey("my-app", "review"), "my-app/review");
 });

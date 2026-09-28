@@ -1,6 +1,5 @@
-// Generated status-hook scripts: their text is pinned byte for byte, and the
-// startup refresh rewrites only an installed, outdated script (then chmods it).
-// AYA_HOME is set BEFORE importing so the script paths land in a temp dir.
+// The startup refresh rewrites only an installed, outdated hook script. AYA_HOME is
+// set BEFORE importing: the script paths are resolved at module load.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

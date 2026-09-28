@@ -38,10 +38,8 @@ export async function writeTerminalOutput(host: Locator, payload: string) {
   await host.page().keyboard.press("Enter");
 }
 
-/** Every terminal pane currently shown. */
 export const visiblePanes = (window: Page) => window.locator('[data-testid="terminal-pane"]:visible');
 
-/** The shown pane of terminal `name`. */
 export const visiblePane = (window: Page, name: string) =>
   window.locator(`[data-testid="terminal-pane"][data-terminal-name="${name}"]:visible`);
 
@@ -58,5 +56,4 @@ export const focusedTerminalName = (window: Page) =>
         ?.getAttribute("data-terminal-name") ?? null,
   );
 
-/** The app has drawn its first terminal host. */
 export const firstTerminalShown = (window: Page) => expect(window.getByTestId("xterm-host").first()).toBeVisible();

@@ -24,7 +24,6 @@ const { fakeSink } = await import("./helpers/pty-host.mjs");
 
 const MISSING_BINARY = "aya-no-such-binary-zzz";
 
-// Pinned so a refactor of pty.ts cannot shift these limits unnoticed.
 test("pty limits and defaults keep their values", () => {
   assert.equal(PENDING_WRITE_MAX_BYTES, 64 * 1024);
   assert.equal(SPAWN_LOG_COMMAND_MAX_CHARS, 4096);
