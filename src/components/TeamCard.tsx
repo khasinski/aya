@@ -47,7 +47,7 @@ export function TeamCard({
             Resume
           </button>
         )}
-        {definition && !team.running && !team.paused && (
+        {definition && !team.running && (
           <button
             className="aya-modal-btn aya-modal-btn--primary"
             disabled={busy}
@@ -96,7 +96,10 @@ export function TeamCard({
                   <select
                     aria-label={`Pane for ${role.id}`}
                     value={team.assignments[role.id] ?? ""}
-                    onChange={(e) => act(() => window.aya.teamAssign(project.slug, team.name, role.id, e.target.value || null))}
+                    onChange={async (e) => {
+                      const why = await act(() => window.aya.teamAssign(project.slug, team.name, role.id, e.target.value || null));
+                      setHeld(why ? `${role.id} was not told its role (${why}); it waits in its inbox` : null);
+                    }}
                   >
                     <option value="">No pane</option>
                     {project.tabs.map((tab) => (

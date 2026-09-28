@@ -38,19 +38,32 @@ export class TeamRunner {
     return (await deliverAndLog(this.deps, project, store, { team: team.name, from: "aya", to, text })).failure;
   }
 
+  /** The delivery test: the role reads itself back and pings its first peer. */
+  private deliveryTest(project: ProjectConfig, store: TeamStore, team: TeamDefinition, roleId: string) {
+    const peer = team.roles.find((r) => r.id === roleId)?.sendsTo[0]?.to;
+    const reply = peer ? `, then send one word to ${peer} with: aya team send ${peer} "ok"` : "";
+    return this.fromAya(project, store, team, roleId, `Delivery test: run aya team whoami${reply}.`);
+  }
+
   async start(slug: string, name: string): Promise<TeamStartResult> {
     const { project, store, team } = await this.open(slug, name);
     await store.setPaused(false);
     const result: TeamStartResult = { delivered: [], held: [] };
     for (const role of team.roles) {
-      const peer = role.sendsTo[0]?.to;
-      const reply = peer ? `, then send one word to ${peer} with: aya team send ${peer} "ok"` : "";
-      const held = await this.fromAya(project, store, team, role.id, `Delivery test: run aya team whoami${reply}.`);
+      const held = await this.deliveryTest(project, store, team, role.id);
       if (held) result.held.push({ role: role.id, reason: held });
       else result.delivered.push(role.id);
     }
     this.arm(slug, name, team);
     return result;
+  }
+
+  /** A pane given a role in a running team learns it now, as Start would have
+   *  told it; returns why it was not typed. Otherwise Start tells it. */
+  async introduce(slug: string, name: string, roleId: string): Promise<string | null> {
+    const { project, store, team } = await this.open(slug, name);
+    if (!(await store.state()).running) return null;
+    return this.deliveryTest(project, store, team, roleId);
   }
 
   async pause(slug: string, name: string): Promise<void> {

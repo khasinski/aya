@@ -62,9 +62,14 @@ test("assign panes, Start sends the delivery test, Pause marks the team, Resume 
   await card.getByRole("button", { name: "Start", exact: true }).click();
   await expect.poll(() => log("tab-left"), { timeout: 15_000 }).toMatch(/Delivery test/);
   await expect(card.getByLabel("ux-review messages")).toContainText("aya → implementer", { timeout: 10_000 });
+  // A pane given a role while the team runs is told its role at once.
+  const before = log("tab-right").match(/Delivery test/g)?.length ?? 0;
+  await card.getByLabel("Pane for implementer").selectOption({ label: "No pane" });
+  await card.getByLabel("Pane for implementer").selectOption({ label: "shell 2" });
+  await expect.poll(() => log("tab-right").match(/Delivery test/g)?.length ?? 0, { timeout: 15_000 }).toBe(before + 1);
   await card.getByRole("button", { name: "Pause", exact: true }).click();
   await expect(card.getByText("paused", { exact: true })).toBeVisible();
-  await expect(card.getByRole("button", { name: "Start", exact: true })).toHaveCount(0);
+  await expect(card.getByRole("button", { name: "Start", exact: true })).toBeVisible();
   await card.getByRole("button", { name: "Resume", exact: true }).click();
   await expect(card.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
   await expect(card.getByText("paused", { exact: true })).toHaveCount(0);

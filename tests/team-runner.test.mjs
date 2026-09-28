@@ -227,3 +227,32 @@ test("Aya's messages carry the commit in the header, as the log does", async () 
     t.cleanup();
   }
 });
+
+test("a role given to a pane in a running team is introduced at once, as Start would", async () => {
+  const t = await setup({ cadence: false });
+  try {
+    assert.equal(await t.runner.introduce("game", "ux-review", "implementer"), null);
+    assert.equal(t.typed.length, 0, "before Start, Start tells it");
+    await t.runner.start("game", "ux-review");
+    t.typed.length = 0;
+    assert.equal(await t.runner.introduce("game", "ux-review", "implementer"), null);
+    assert.deepEqual(t.typed.map((w) => w.pane), ["pane-i"]);
+    assert.match(t.typed[0].text, /Delivery test: run aya team whoami, then send one word to tester/);
+    await t.store.setPaused(true);
+    assert.equal(await t.runner.introduce("game", "ux-review", "tester"), null);
+    assert.equal(t.typed.length, 1);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("introducing a held pane says why and keeps the message", async () => {
+  const t = await setup({ cadence: false, held: { "pane-t": "shows an approval prompt" } });
+  try {
+    await t.runner.start("game", "ux-review");
+    assert.equal(await t.runner.introduce("game", "ux-review", "tester"), "shows an approval prompt");
+    assert.equal((await t.store.log()).filter((m) => m.to === "tester" && !m.delivered).length, 2);
+  } finally {
+    t.cleanup();
+  }
+});

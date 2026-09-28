@@ -611,7 +611,8 @@ export interface AyaApi {
   /** `create`: refuse when a team with this name already exists. */
   teamSave(projectSlug: string, team: TeamDefinition, create?: boolean): Promise<void>;
   /** Give a role to a pane of the project, or free it with null. */
-  teamAssign(projectSlug: string, team: string, role: string, paneId: string | null): Promise<void>;
+  /** Gives a role a pane (null frees it) and tells the agent; returns why it was not told. */
+  teamAssign(projectSlug: string, team: string, role: string, paneId: string | null): Promise<string | null>;
   /** A closed tab gives up its roles in every team of the project. */
   teamReleasePane(projectSlug: string, paneId: string): Promise<void>;
   /** Drafts a role of the team as the editor holds it, with Aya Intelligence. */

@@ -2232,15 +2232,14 @@ function registerIpc(): void {
       requireString(paneId, "teams:release-pane.paneId"),
     ),
   );
-  ipcMain.handle("teams:assign", async (_e, slug: unknown, team: unknown, role: unknown, paneId: unknown) =>
-    assignRole(
-      AYA_HOME,
-      await teamProject(slug, "teams:assign"),
-      requireString(team, "teams:assign.team"),
-      requireString(role, "teams:assign.role"),
-      paneId === null ? null : requireString(paneId, "teams:assign.paneId"),
-    ),
-  );
+  // Returns why the newly assigned pane was not told its role, or null.
+  ipcMain.handle("teams:assign", async (_e, slug: unknown, team: unknown, role: unknown, paneId: unknown) => {
+    const project = await teamProject(slug, "teams:assign");
+    const [teamName, roleId] = [requireString(team, "teams:assign.team"), requireString(role, "teams:assign.role")];
+    const pane = paneId === null ? null : requireString(paneId, "teams:assign.paneId");
+    await assignRole(AYA_HOME, project, teamName, roleId, pane);
+    return pane ? teamRunner.introduce(project.slug, teamName, roleId) : null;
+  });
   /** A chat with the configured Aya Intelligence; no config means Apple, the default. */
   const intelligenceChat = (config: unknown, opts: ChatOptions) => {
     const intelligence = normalizeAyaIntelligenceConfig(config) ?? normalizeAyaIntelligenceConfig({})!;
