@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import { sendControl } from "./helpers/control";
+import { STATUS_RAIL_COLLAPSED_STORAGE_KEY } from "../src/storage-keys";
 import type { Page } from "@playwright/test";
 
 // StatusRail — the sidebar counterpart to the AttentionCenter modal. It must
@@ -103,6 +104,6 @@ test("the rail collapses to just its counts and the choice persists", async ({
 
   // The preference is stored so a reload doesn't re-expand it in the user's face.
   await expect
-    .poll(() => window.evaluate(() => localStorage.getItem("aya:status-rail-collapsed")))
+    .poll(() => window.evaluate((k) => localStorage.getItem(k), STATUS_RAIL_COLLAPSED_STORAGE_KEY))
     .toBe("1");
 });

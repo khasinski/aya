@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { test, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
 import { openTeams } from "./helpers/team";
+import { AYA_INTELLIGENCE_STORAGE_KEY } from "../src/storage-keys";
 
 let server: Server;
 let baseUrl = "";
@@ -38,8 +39,8 @@ test.afterAll(() => server.close());
 async function editorWithIntelligence(window: Page, config: Record<string, string> | null) {
   await expect(window.getByTestId("xterm-host").first()).toBeVisible();
   await window.evaluate(
-    (c) => (c ? localStorage.setItem("aya:intelligence", JSON.stringify(c)) : localStorage.removeItem("aya:intelligence")),
-    config,
+    ({ k, c }) => (c ? localStorage.setItem(k, JSON.stringify(c)) : localStorage.removeItem(k)),
+    { k: AYA_INTELLIGENCE_STORAGE_KEY, c: config },
   );
   await window.reload();
   const dialog = await openTeams(window);

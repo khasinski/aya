@@ -29,6 +29,12 @@ export function fakeWebContents() {
   };
 }
 
+/** A PTY event sink that records every event it is sent. */
+export function fakeSink() {
+  const events = [];
+  return { events, sendPtyEvent: (e) => events.push(e), isDestroyed: () => false };
+}
+
 export function ptyEventsFor(wc, ptyId) {
   return wc._events
     .filter((e) => e.channel === "pty:event")

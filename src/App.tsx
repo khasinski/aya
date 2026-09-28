@@ -74,6 +74,7 @@ import {
 } from "./storage-keys";
 import { GPU_RELAUNCHED_EVENT } from "./window-events";
 import { uuid } from "./uuid";
+import { GIT_STATUS_POLL_INTERVAL_MS } from "./ui-timing";
 import { normalizeSoundOverrides } from "./terminal-sound-prefs";
 import {
   MAX_SPLIT_LEAVES,
@@ -127,8 +128,6 @@ import {
   type WorktreeStatus,
 } from "./types";
 
-// Cadence for polling the active project's git branch/dirty count (no inotify watch).
-const GIT_STATUS_POLL_INTERVAL_MS = 3000;
 // Cadence for re-reading the account-wide usage snapshot a user hook writes.
 const USAGE_POLL_INTERVAL_MS = 30_000;
 // Cap on retained entries in the project event timeline.

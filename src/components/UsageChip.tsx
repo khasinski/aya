@@ -2,9 +2,8 @@ import { RECENT_MENU_WIDTH_PX } from "../ui-constants";
 import { useEffect, useRef, useState } from "react";
 import type { GrokUsage, UsageAccount, UsageData, UsageWindow } from "../types";
 import { GROK_USAGE_WINDOW_DAYS, USD_PER_GROK_TICK } from "../main-mirrors";
+import { USAGE_STALE_AFTER_MS } from "../ui-timing";
 
-// A usage snapshot older than this means the source stopped updating — dim it.
-const USAGE_STALE_AFTER_MS = 15 * 60 * 1000;
 const CHIP_MUTED_COLOR = "var(--fg-tertiary)";
 const CHIP_BORDER_COLOR = "var(--border)";
 const STALE_TICK_MS = 60_000;

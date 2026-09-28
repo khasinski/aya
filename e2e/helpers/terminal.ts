@@ -37,3 +37,23 @@ export async function writeTerminalOutput(host: Locator, payload: string) {
   await host.page().keyboard.insertText(command);
   await host.page().keyboard.press("Enter");
 }
+
+/** Every terminal pane currently shown. */
+export const visiblePanes = (window: Page) => window.locator('[data-testid="terminal-pane"]:visible');
+
+/** The shown pane of terminal `name`. */
+export const visiblePane = (window: Page, name: string) =>
+  window.locator(`[data-testid="terminal-pane"][data-terminal-name="${name}"]:visible`);
+
+/** The split cell of terminal `name`, if it carries the active-cell marker. */
+export const activeSplitPane = (window: Page, name: string) =>
+  window.locator(`.aya-pane--active-split[data-terminal-name="${name}"]`);
+
+/** The name of the terminal pane holding keyboard focus, or null. */
+export const focusedTerminalName = (window: Page) =>
+  window.evaluate(
+    () =>
+      document.activeElement
+        ?.closest('[data-testid="terminal-pane"]')
+        ?.getAttribute("data-terminal-name") ?? null,
+  );

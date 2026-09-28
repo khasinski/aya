@@ -9,8 +9,7 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, statSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+import { waitFor } from "./helpers/pty-host.mjs";
 import {
   isReapableHost,
   collectDescendants,
@@ -396,13 +395,10 @@ test("a real spawned host writes its record, and SIGTERM shuts it down cleanly (
     // Wait for the record (written after listen) - proves pid/pgid verification
     // passed and startTime was non-empty on a real process.
     const regDir = join(home, "pty-hosts");
-    const deadline = Date.now() + 5000;
-    let recs = [];
-    while (Date.now() < deadline) {
-      recs = readHostRecords(regDir);
-      if (recs.length > 0) break;
-      await sleep(50);
-    }
+    const recs = await waitFor(() => {
+      const found = readHostRecords(regDir);
+      return found.length > 0 && found;
+    });
     assert.equal(recs.length, 1, "host published its registry record");
     assert.equal(recs[0].pid, host.pid);
     assert.equal(recs[0].pgid, recs[0].pid, "host verified it leads its own group");
@@ -419,10 +415,9 @@ test("a real spawned host writes its record, and SIGTERM shuts it down cleanly (
     // zombie): host exits and removes its record (children confirmed dead -
     // there are none here).
     host.kill("SIGTERM");
-    const exitDeadline = Date.now() + 5000;
-    while (Date.now() < exitDeadline && !exited) await sleep(50);
+    await waitFor(() => exited);
     assert.equal(exited, true, "SIGTERM terminates the host (no suppressed-default zombie)");
-    await sleep(100); // let the record removal land
+    await waitFor(() => readHostRecords(regDir).length === 0);
     assert.deepEqual(readHostRecords(regDir), [], "clean shutdown removed the record");
   } finally {
     try {

@@ -5,7 +5,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
-import { TEAM_DELIVERY_TIMEOUT_MS, agentPreset, openTeams, teamLog, teamLogFile } from "./helpers/team";
+import { LAYOUT_MODE_STORAGE_KEY } from "../src/storage-keys";
+import { TEAM_AGENT_READY_TIMEOUT_MS, TEAM_DELIVERY_TIMEOUT_MS, agentPreset, openTeams, teamLog, teamLogFile } from "./helpers/team";
 
 test.use({ seedOptions: { presetList: [agentPreset("quiet", "claude")] } });
 
@@ -41,7 +42,7 @@ test("assign panes, Start sends the delivery test, Pause marks the team, Resume 
   const file = (pane: string) => teamLogFile(seeded.projectDir, pane);
   const log = teamLog(seeded.projectDir);
   // Each agent creates its log on start; Start before that finds it still starting.
-  await expect.poll(() => existsSync(file("tab-left")) && existsSync(file("tab-right")), { timeout: 30_000 }).toBe(true);
+  await expect.poll(() => existsSync(file("tab-left")) && existsSync(file("tab-right")), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toBe(true);
   // One role without a pane: Start sends nothing to anyone and says why.
   await card.getByRole("button", { name: "Start", exact: true }).click();
   await expect(card.locator(".aya-teams-warning")).toContainText("Not started, nothing was sent");
@@ -79,7 +80,7 @@ test("a repo edit shows as changed and can be adopted", async ({ window, seeded 
 
 test.describe("experimental layout", () => {
   test("the teams button opens the same window", async ({ window }) => {
-    await window.evaluate(() => localStorage.setItem("aya:layout-mode", "projects-left"));
+    await window.evaluate((k) => localStorage.setItem(k, "projects-left"), LAYOUT_MODE_STORAGE_KEY);
     await window.reload();
     const dialog = await openTeams(window);
     await expect(dialog.getByRole("button", { name: "New team" })).toBeVisible();
