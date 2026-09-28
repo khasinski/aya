@@ -11,7 +11,10 @@
 import * as os from "node:os";
 import * as path from "node:path";
 
-export const IS_DEV = process.env.AYA_DEV === "1";
+// The dev-build switch; the legacy sweep matches the same pair in a process env.
+export const AYA_DEV_VAR = "AYA_DEV";
+export const AYA_DEV_ON = "1";
+export const IS_DEV = process.env[AYA_DEV_VAR] === AYA_DEV_ON;
 export const IS_E2E_HEADLESS = process.env.AYA_E2E_HEADLESS === "1";
 export const IS_E2E_PTY_SHUTDOWN = process.env.AYA_E2E_PTY_SHUTDOWN === "1";
 

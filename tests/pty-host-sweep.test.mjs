@@ -14,7 +14,7 @@ import {
   sweepLegacyAyaProcesses,
   MAX_ORPHAN_PROBES,
 } from "../dist-electron/pty-host-sweep.js";
-import { AYA_DEV_HOME_DIRNAME, AYA_HOME_DIRNAME } from "../dist-electron/paths.js";
+import { AYA_DEV_HOME_DIRNAME, AYA_DEV_ON, AYA_DEV_VAR, AYA_HOME_DIRNAME } from "../dist-electron/paths.js";
 
 const HOME = "/Users/u";
 const AYA = "/Users/u/.aya";
@@ -80,6 +80,11 @@ test("scopeFromEnvDump: marker needs its leading space, value stops at a space, 
 test("the sweep's scope dirnames are the ones paths.ts resolves AYA_HOME with", () => {
   assert.equal(AYA_HOME_DIRNAME, ".aya");
   assert.equal(AYA_DEV_HOME_DIRNAME, ".aya-dev");
+});
+
+test("the sweep's dev marker is the AYA_DEV=1 that paths.ts reads IS_DEV from", () => {
+  assert.equal(AYA_DEV_VAR, "AYA_DEV");
+  assert.equal(AYA_DEV_ON, "1");
 });
 
 test("isHostArgv: matches ONLY when the script is the second argv token", () => {

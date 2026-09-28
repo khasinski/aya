@@ -23,7 +23,7 @@
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
-import { AYA_DEV_HOME_DIRNAME, AYA_HOME, AYA_HOME_DIRNAME } from "./paths";
+import { AYA_DEV_HOME_DIRNAME, AYA_DEV_ON, AYA_DEV_VAR, AYA_HOME, AYA_HOME_DIRNAME } from "./paths";
 import { PS_ENV } from "./pty-host-registry";
 import { PTY_HOST_SCRIPT_NAME, RUN_AS_NODE_VALUE, RUN_AS_NODE_VAR } from "./pty-host-staleness";
 
@@ -56,6 +56,8 @@ const AYA_HOME_VALUE_RE = new RegExp(`${AYA_HOME_MARKER.replace(/[.*+?^${}()|[\]
  *  ELECTRON_RUN_AS_NODE=1. An editor/grep/test-runner that merely mentions the
  *  host script path in its ARGUMENTS does not run as-node. */
 const HOST_ENV_MARKER = ` ${RUN_AS_NODE_VAR}=${RUN_AS_NODE_VALUE}`;
+/** Env marker of a dev-build process (paths.ts IS_DEV): scope ~/.aya-dev. */
+const DEV_ENV_MARKER = ` ${AYA_DEV_VAR}=${AYA_DEV_ON}`;
 
 /** Does this command line LOOK like a PTY host's argv? The host is spawned as
  *  exactly [execPath, hostScript], so the script path must be the SECOND
@@ -82,7 +84,7 @@ export const PS_ENV_PROBE_MAX_BUFFER_BYTES = 4 * 1024 * 1024;
 export function scopeFromEnvDump(commandWithEnv: string, homedir: string): string {
   const m = commandWithEnv.match(AYA_HOME_VALUE_RE);
   if (m) return path.resolve(m[1]);
-  if (commandWithEnv.includes(" AYA_DEV=1")) return path.join(homedir, AYA_DEV_HOME_DIRNAME);
+  if (commandWithEnv.includes(DEV_ENV_MARKER)) return path.join(homedir, AYA_DEV_HOME_DIRNAME);
   return path.join(homedir, AYA_HOME_DIRNAME);
 }
 
