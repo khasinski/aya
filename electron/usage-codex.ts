@@ -17,6 +17,8 @@ import { expandUserPath, usageAccountFromData } from "./usage";
 // Codex's home when neither CODEX_HOME nor a preset names one.
 export const CODEX_DIRNAME = ".codex";
 export const CODEX_DEFAULT_DIR = `~/${CODEX_DIRNAME}`;
+// Rollout JSONL root inside a Codex home (also walked by transcript search).
+export const CODEX_SESSIONS_SUBDIR = "sessions";
 
 /** The default Codex home — the env override, else ~/.codex. Additional homes
  *  (second accounts) are derived from preset commands and passed in explicitly. */
@@ -303,7 +305,7 @@ export function resetCodexUsageCaches(): void {
 async function recentRolloutFiles(
   home = DEFAULT_CODEX_HOME,
 ): Promise<{ file: string; mtimeMs: number }[]> {
-  const root = path.join(expandUserPath(home), "sessions");
+  const root = path.join(expandUserPath(home), CODEX_SESSIONS_SUBDIR);
   let cache = walkCaches.get(root);
   if (!cache) {
     cache = {
