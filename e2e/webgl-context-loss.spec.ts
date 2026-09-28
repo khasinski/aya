@@ -70,7 +70,6 @@ test("WebGL is dropped while hidden and comes back fresh on visibility - nothing
   // of the app) - if the env has GL but the terminal didn't attach, that is a
   // mount-attach regression and must FAIL, not skip (test-honesty audit: the
   // old app-derived skip swallowed exactly that mutation).
-  await window.waitForTimeout(2000);
   const envHasGl = await window.evaluate(() => {
     const probe = document.createElement("canvas");
     const gl = probe.getContext("webgl2");
@@ -80,8 +79,7 @@ test("WebGL is dropped while hidden and comes back fresh on visibility - nothing
     return ok;
   });
   test.skip(!envHasGl, "no WebGL in this environment");
-  const initial = await webglState(window);
-  expect(initial).toBe("healthy");
+  await expect.poll(() => webglState(window)).toBe("healthy");
 
   // Going hidden (browser covers/hides Aya) must DROP the WebGL addon - a
   // context that does not exist cannot be evicted into a white quad.
