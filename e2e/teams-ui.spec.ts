@@ -55,9 +55,9 @@ test("assign panes, Start sends the delivery test, Pause marks the team, Resume 
   await card.getByLabel("Pane for reviewer").selectOption({ label: "shell 1" });
   // One role without a pane: Start sends nothing to anyone and says why.
   await card.getByRole("button", { name: "Start", exact: true }).click();
-  await expect(card.locator(".aya-teams-warning")).toContainText(
-    "Not started, nothing was sent. Not ready: implementer: no pane assigned",
-  );
+  await expect(card.locator(".aya-teams-warning")).toContainText("Not started, nothing was sent");
+  await expect(card.getByRole("status", { name: "implementer not reached" })).toHaveText("⚠ Not reached: no pane assigned");
+  await expect(card.getByRole("status", { name: "reviewer not reached" })).toHaveCount(0);
   await expect(card.getByLabel("ux-review messages")).toHaveCount(0);
   await card.getByLabel("Pane for implementer").selectOption({ label: "shell 2" });
   await expect(card.getByRole("button", { name: "Pause", exact: true })).toHaveCount(0);

@@ -2941,6 +2941,16 @@ select.aya-modal-input {
   color: var(--danger, #c0392b);
   font-size: 12px;
 }
+.aya-teams-role-alert {
+  margin-top: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger, #c0392b);
+  background: color-mix(in oklab, var(--danger, #c0392b) 14%, transparent);
+  border: 1px solid color-mix(in oklab, var(--danger, #c0392b) 45%, transparent);
+}
 .aya-team-chip {
   display: inline-flex;
   align-items: center;

@@ -26,10 +26,3 @@ export function unreadTotal(teams: TeamSummary[]): number {
 export function unassignedTeams(teams: TeamSummary[]): TeamSummary[] {
   return teams.filter((t) => t.definition && Object.keys(t.assignments).length === 0);
 }
-
-/** "reviewer, implementer: did not take the text; tester: runs a shell". */
-export function heldList(held: { role: string; reason: string }[]): string {
-  const byReason = new Map<string, string[]>();
-  for (const h of held) byReason.set(h.reason, [...(byReason.get(h.reason) ?? []), h.role]);
-  return [...byReason].map(([reason, roles]) => `${roles.join(", ")}: ${reason}`).join("; ");
-}

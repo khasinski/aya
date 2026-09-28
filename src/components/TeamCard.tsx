@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { heldList } from "../team-view";
 import type { ProjectConfig, TeamDefinition, TeamSummary } from "../types";
 import { ErrorLine, useAsyncAction } from "./use-async-action";
 
@@ -16,7 +15,9 @@ export function TeamCard({
   onChanged: () => Promise<void>;
 }) {
   const { run, busy, error } = useAsyncAction();
-  const [held, setHeld] = useState<string | null>(null);
+  // Why a role's pane was not reached by the last Start or assignment, per role.
+  const [notReached, setNotReached] = useState<Record<string, string>>({});
+  const [summary, setSummary] = useState<string | null>(null);
   const act = async <T,>(work: () => Promise<T>) => {
     const result = await run(work);
     await onChanged();
@@ -54,13 +55,14 @@ export function TeamCard({
             disabled={busy}
             onClick={async () => {
               const result = await act(() => window.aya.teamStart(project.slug, team.name));
-              const list = heldList(result?.held ?? []);
-              setHeld(
-                !result || !list
-                  ? null
-                  : result.started
-                    ? `Started, but not delivered: ${list}`
-                    : `Not started, nothing was sent. Not ready: ${list}. Fix these panes and press Start again.`,
+              if (!result) return;
+              setNotReached(Object.fromEntries(result.held.map((h) => [h.role, h.reason])));
+              setSummary(
+                !result.started
+                  ? "Not started, nothing was sent: fix the roles marked below, then Start again."
+                  : result.held.length
+                    ? "Started; the roles marked below did not get the delivery test."
+                    : null,
               );
             }}
           >
@@ -69,7 +71,7 @@ export function TeamCard({
         )}
       </div>
       <ErrorLine error={error ?? team.error} />
-      {held && <div className="aya-teams-warning">{held}</div>}
+      {summary && <div className="aya-teams-warning">{summary}</div>}
       {team.repoChanged && (
         <div className="aya-teams-warning">
           The repo file changed since this team was saved. Aya keeps running the saved version.
@@ -91,6 +93,11 @@ export function TeamCard({
                 <td>
                   <strong>{role.id}</strong>
                   <div className="aya-teams-muted">must not {role.mustNot}</div>
+                  {notReached[role.id] && (
+                    <div className="aya-teams-role-alert" role="status" aria-label={`${role.id} not reached`}>
+                      ⚠ Not reached: {notReached[role.id]}
+                    </div>
+                  )}
                 </td>
                 <td className="aya-teams-muted">
                   {role.sendsTo.map((r) => (
@@ -106,7 +113,7 @@ export function TeamCard({
                     value={team.assignments[role.id] ?? ""}
                     onChange={async (e) => {
                       const why = await act(() => window.aya.teamAssign(project.slug, team.name, role.id, e.target.value || null));
-                      setHeld(why ? `${role.id} was not told its role (${why}); it waits in its inbox` : null);
+                      setNotReached(({ [role.id]: _, ...rest }) => (why ? { ...rest, [role.id]: why } : rest));
                     }}
                   >
                     <option value="">No pane</option>
