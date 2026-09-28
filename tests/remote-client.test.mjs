@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import * as net from "node:net";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -11,6 +12,7 @@ const {
   listRemoteDirectory,
   listRemotePresets,
   recoverExistingRemoteProject,
+  REMOTE_NODE_BRIDGE,
 } = await import("../dist-electron/remote-client.js");
 
 // --- recoverExistingRemoteProject --------------------------------------------
@@ -305,9 +307,7 @@ test("remote client sends mkdir and project:create through the mocked ssh bridge
 
 // The bridge runs on the remote host as `node -e <script>`; its text is pinned
 // byte for byte so constants embedded into it cannot drift the generated code.
-test("the remote node bridge script text is unchanged", async () => {
-  const { createHash } = await import("node:crypto");
-  const { REMOTE_NODE_BRIDGE } = await import("../dist-electron/remote-client.js");
+test("the remote node bridge script text is unchanged", () => {
   assert.match(REMOTE_NODE_BRIDGE, /process\.env\.AYA_HOME \+ "\/aya-remote\.sock" : process\.env\.HOME \+ "\/\.aya\/aya-remote\.sock"/);
   assert.match(REMOTE_NODE_BRIDGE, /setTimeout\(\(\) => process\.exit\(code\), 250\);/);
   assert.equal(REMOTE_NODE_BRIDGE.match(/protocol: 1,/g).length, 2);

@@ -8,6 +8,7 @@ import {
   extractGrokUsageRow,
   sumGrokUsage,
   GROK_USAGE_WINDOW_MS,
+  SECONDS_EPOCH_CEILING,
 } from "../dist-electron/usage-grok.js";
 
 const TS = Date.parse("2026-09-20T12:00:00.000Z");
@@ -291,7 +292,6 @@ test("a huge or long-unread log is read from its tail, never whole", async () =>
   assert.ok(GROK_LIMIT_SCAN_MAX_BYTES > 0 && GROK_LIMIT_SCAN_MAX_BYTES <= 64 * 1024 * 1024);
 });
 
-test("timestamps below 1e12 are read as seconds", async () => {
-  const { SECONDS_EPOCH_CEILING } = await import("../dist-electron/usage-grok.js");
+test("timestamps below 1e12 are read as seconds", () => {
   assert.equal(SECONDS_EPOCH_CEILING, 1e12);
 });

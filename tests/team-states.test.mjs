@@ -1,13 +1,9 @@
-// Every team state x every receiving-pane state x every action, with the
-// expected outcome spelled out. Teams are state machines; a bug on
-// 2026-09-28 lived in a combination (running team + restart + old held
-// rounds) that each single-state test passed.
+// Every team state x receiving-pane state x action, outcome spelled out: a bug hid in
+// one combination (running team + restart + old held rounds) each single-state test passed.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { teamProject } from "./helpers/team.mjs";
 
 const { TeamRunner } = await import("../dist-electron/team-runner.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
@@ -40,17 +36,12 @@ const PANE_STATES = {
 const TEAM_STATES = ["never started", "running", "paused"];
 
 async function world(teamState, paneState) {
-  const root = mkdtempSync(join(tmpdir(), "aya-states-"));
-  const directory = join(root, "game");
-  mkdirSync(join(directory, ".aya", "teams"), { recursive: true });
-  writeFileSync(join(directory, ".aya", "teams", "ux-review.md"), TEAM);
-  const teamHome = join(root, "aya");
+  const { teamHome, project, cleanup } = teamProject("aya-states-", { teamFile: TEAM });
   const store = new TeamStore(teamDir(teamHome, "game", "ux-review"));
   await store.assign("tester", "pane-t");
   if (paneState !== "no pane") await store.assign("implementer", "pane-i");
   if (teamState === "running") await store.setPaused(false);
   if (teamState === "paused") await store.setPaused(true);
-  const project = { slug: "game", name: "game", directory, tabs: [{ id: "pane-t" }, { id: "pane-i" }] };
   const typed = [];
   const scheduled = [];
   const deps = {
@@ -67,7 +58,7 @@ async function world(teamState, paneState) {
   });
   const toImplementer = () => typed.filter((w) => w.pane === "pane-i");
   const lastLog = async () => (await store.log()).at(-1);
-  return { store, deps, runner, typed, scheduled, toImplementer, lastLog, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  return { store, deps, runner, typed, scheduled, toImplementer, lastLog, cleanup };
 }
 
 const reason = (paneState) => PANE_STATES[paneState];

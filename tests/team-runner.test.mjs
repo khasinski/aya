@@ -2,9 +2,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { teamProject } from "./helpers/team.mjs";
 
 const { TeamRunner } = await import("../dist-electron/team-runner.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
@@ -22,15 +22,10 @@ Must not: skip a report
 ${cadence ? "\n## Cadence\ntester every 30 min\n" : ""}`;
 
 async function setup({ cadence = true, held = {} } = {}) {
-  const root = mkdtempSync(join(tmpdir(), "aya-runner-"));
-  const directory = join(root, "game");
-  mkdirSync(join(directory, ".aya", "teams"), { recursive: true });
-  writeFileSync(join(directory, ".aya", "teams", "ux-review.md"), TEAM(cadence));
-  const teamHome = join(root, "aya");
+  const { teamHome, project, cleanup } = teamProject("aya-runner-", { teamFile: TEAM(cadence) });
   const store = new TeamStore(teamDir(teamHome, "game", "ux-review"));
   await store.assign("tester", "pane-t");
   await store.assign("implementer", "pane-i");
-  const project = { slug: "game", name: "game", directory, tabs: [{ id: "pane-t" }, { id: "pane-i" }] };
   const typed = [];
   const scheduled = [];
   const deps = {
@@ -45,7 +40,6 @@ async function setup({ cadence = true, held = {} } = {}) {
     scheduled.push(job);
     return () => (job.cancelled = true);
   });
-  const cleanup = () => rmSync(root, { recursive: true, force: true });
   return { runner, typed, scheduled, store, deps, cleanup };
 }
 
@@ -95,6 +89,7 @@ test("Start lists every role that is not ready, including one with no pane", asy
     t.cleanup();
   }
 });
+
 test("rounds go to the cadence role on its interval and are numbered", async () => {
   const t = await setup();
   try {
@@ -393,7 +388,6 @@ test("when the pane is held mid-pass, later messages wait even if it frees again
     for (const text of ["first", "second", "third"]) {
       await t.store.append({ from: "tester", to: "implementer", commit: null, text, delivered: false });
     }
-    // Free, then held (a prompt after the first), then free again.
     const states = [null, "shows an approval prompt", null];
     t.deps.holdReason = async () => (states.length ? states.shift() : null);
     await t.runner.redeliverWaiting();

@@ -124,7 +124,6 @@ test("parseAyaOscStatus: missing colon or empty text is ignored", () => {
 // is a security boundary, not just a format check: anything that could change
 // the shape of that command line must be rejected outright.
 
-// Exported so validation.ts can share it; pinned by what it accepts.
 test("SESSION_ID_RE: 1-200 shell-safe characters", () => {
   assert.equal(SESSION_ID_RE.test("claude-abc_1.2:3/x"), true);
   assert.equal(SESSION_ID_RE.test("a".repeat(200)), true);

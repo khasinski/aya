@@ -13,6 +13,9 @@ const {
   startControlServerOn,
   CONTROL_REQUEST_MAX_SIZE_BYTES,
   PANE_SEND_SUBMIT_DELAY_MS,
+  PASTE_END,
+  PASTE_START,
+  deliverTeamMessage,
 } = await import("../dist-electron/control.js");
 
 function mkSocketPath() {
@@ -692,7 +695,6 @@ test("control server: stop() removes the socket file so reboot is clean", async 
 });
 
 test("deliverTeamMessage types the text as a bracketed paste, then Enter", async () => {
-  const { deliverTeamMessage, PASTE_START, PASTE_END } = await import("../dist-electron/control.js");
   assert.equal(PASTE_START, "\x1b[200~");
   assert.equal(PASTE_END, "\x1b[201~");
   const writes = [];

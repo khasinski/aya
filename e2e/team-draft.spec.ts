@@ -8,7 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
-import { openTeams } from "./helpers/team";
+import { openNewTeam } from "./helpers/team";
+import { firstTerminalShown } from "./helpers/terminal";
 import { AYA_INTELLIGENCE_STORAGE_KEY } from "../src/storage-keys";
 
 let server: Server;
@@ -37,14 +38,13 @@ test.afterAll(() => server.close());
 
 /** `config` null: nothing chosen in Settings, so Aya's default provider. */
 async function editorWithIntelligence(window: Page, config: Record<string, string> | null) {
-  await expect(window.getByTestId("xterm-host").first()).toBeVisible();
+  await firstTerminalShown(window);
   await window.evaluate(
     ({ k, c }) => (c ? localStorage.setItem(k, JSON.stringify(c)) : localStorage.removeItem(k)),
     { k: AYA_INTELLIGENCE_STORAGE_KEY, c: config },
   );
   await window.reload();
-  const dialog = await openTeams(window);
-  await dialog.getByRole("button", { name: "New team" }).click();
+  const dialog = await openNewTeam(window);
   await dialog.getByLabel("Role 1 name").fill("senior UX game designer");
   await expect(dialog.getByLabel("Role 1 name")).toHaveValue("senior-ux-game-designer");
   return dialog;

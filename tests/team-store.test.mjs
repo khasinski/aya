@@ -1,6 +1,5 @@
-// Local, per-machine state of a team in ~/.aya/teams/<project>/<team>/:
-// which pane plays which role, the definition the user last saved, and the
-// message log with each role's read position.
+// A team's per-machine state in ~/.aya/teams/<project>/<team>/: role panes, the saved
+// definition, and the message log with each role's read position.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

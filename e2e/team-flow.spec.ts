@@ -4,17 +4,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect } from "./fixtures";
-import type { Page } from "@playwright/test";
-import { openTeams } from "./helpers/team";
-
-async function editor(window: Page) {
-  const dialog = await openTeams(window);
-  await dialog.getByRole("button", { name: "New team" }).click();
-  return dialog;
-}
+import { openNewTeam } from "./helpers/team";
 
 test("the graph and routes follow the Sends to boxes as you tick them", async ({ window }) => {
-  const dialog = await editor(window);
+  const dialog = await openNewTeam(window);
   const routes = dialog.getByLabel("Flow routes");
   await expect(routes).toContainText("reviewer → implementer: findings with the screen state as proof");
   await expect(routes).toContainText("implementer → reviewer: answers and the commit to check");
@@ -25,7 +18,7 @@ test("the graph and routes follow the Sends to boxes as you tick them", async ({
 });
 
 test("the what typed for a route labels it, and Save writes it into the team file", async ({ window, seeded }) => {
-  const dialog = await editor(window);
+  const dialog = await openNewTeam(window);
   await dialog.getByRole("button", { name: "Add role" }).click();
   await dialog.getByLabel("Role 3 name").fill("tester");
   await dialog.getByLabel("Role 3 must not").fill("fix bugs itself");
@@ -45,7 +38,7 @@ test("the what typed for a route labels it, and Save writes it into the team fil
 });
 
 test("a role nobody sends to, or that sends to nobody, is flagged", async ({ window }) => {
-  const dialog = await editor(window);
+  const dialog = await openNewTeam(window);
   await dialog.getByRole("button", { name: "Add role" }).click();
   await dialog.getByLabel("Role 3 name").fill("tester");
   await dialog.getByLabel("Round role").selectOption("implementer");

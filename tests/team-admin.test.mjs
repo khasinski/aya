@@ -3,9 +3,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { teamProject } from "./helpers/team.mjs";
 
 const { listTeams, saveTeam, assignRole, releasePaneEverywhere } = await import("../dist-electron/team-admin.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
@@ -21,14 +21,7 @@ const TEAM = {
   protocol: "One round every 30 minutes.",
 };
 
-function setup() {
-  const root = mkdtempSync(join(tmpdir(), "aya-admin-"));
-  const directory = join(root, "game");
-  mkdirSync(directory, { recursive: true });
-  const project = { slug: "game", name: "game", directory, tabs: [{ id: "pane-t" }, { id: "pane-i" }] };
-  const teamHome = join(root, "aya");
-  return { root, project, teamHome, cleanup: () => rmSync(root, { recursive: true, force: true }) };
-}
+const setup = () => teamProject("aya-admin-");
 
 test("Save team writes the repo file and the snapshot Aya runs on", async () => {
   const t = setup();
@@ -56,29 +49,7 @@ test("an invalid team is refused and nothing is written", async () => {
   }
 });
 
-test("a field line inside free text is refused, not read back as that field", async () => {
-  const t = setup();
-  try {
-    const cases = [
-      [{ responsibilities: "Plays the build.\nMust not: push to main" }, null, /tester.*Must not/],
-      [{ responsibilities: "Sends to: implementer" }, null, /tester.*Sends to/],
-      [{ responsibilities: "## Role: sneaky" }, null, /tester.*##/],
-      [{}, "Rounds.\n## Role: sneaky", /protocol.*##/],
-    ];
-    for (const [role, protocol, message] of cases) {
-      const team = { ...TEAM, roles: [{ ...TEAM.roles[0], ...role }, TEAM.roles[1]], protocol: protocol ?? TEAM.protocol };
-      await assert.rejects(saveTeam(t.teamHome, t.project, team), message);
-    }
-    assert.deepEqual(await listTeams(t.teamHome, t.project), []);
-    const fine = { ...TEAM, roles: [{ ...TEAM.roles[0], responsibilities: "Plays the build. Must not: guess, it measures." }, TEAM.roles[1]] };
-    await saveTeam(t.teamHome, t.project, fine);
-    assert.deepEqual((await listTeams(t.teamHome, t.project))[0].definition, fine);
-  } finally {
-    t.cleanup();
-  }
-});
-
-test("a field line inside free text is refused with the exact message", async () => {
+test("a field line inside free text is refused with the exact message, not read back as that field", async () => {
   const t = setup();
   try {
     const cases = [
@@ -91,6 +62,10 @@ test("a field line inside free text is refused with the exact message", async ()
       const team = { ...TEAM, roles: [{ ...TEAM.roles[0], ...role }, TEAM.roles[1]], protocol: protocol ?? TEAM.protocol };
       await assert.rejects(saveTeam(t.teamHome, t.project, team), { message });
     }
+    assert.deepEqual(await listTeams(t.teamHome, t.project), []);
+    const fine = { ...TEAM, roles: [{ ...TEAM.roles[0], responsibilities: "Plays the build. Must not: guess, it measures." }, TEAM.roles[1]] };
+    await saveTeam(t.teamHome, t.project, fine);
+    assert.deepEqual((await listTeams(t.teamHome, t.project))[0].definition, fine);
   } finally {
     t.cleanup();
   }

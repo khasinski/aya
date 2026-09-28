@@ -7,6 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PASSWORD, startTestServer, wsOpen } from "./helpers/web-server.mjs";
+import { IMMUTABLE_MAX_AGE_S, SESSION_TOKEN_BYTES } from "../dist-electron/web-server.js";
 
 async function login(base, user = "tester", password = PASSWORD, headers = {}) {
   const res = await fetch(`${base}/api/login`, {
@@ -147,8 +148,7 @@ test("websocket requires a session and speaks the bridge protocol", async () => 
   }
 });
 
-test("session tokens are 32 random bytes; hashed assets cache for a year", async () => {
-  const m = await import("../dist-electron/web-server.js");
-  assert.equal(m.SESSION_TOKEN_BYTES, 32);
-  assert.equal(m.IMMUTABLE_MAX_AGE_S, 31_536_000);
+test("session tokens are 32 random bytes; hashed assets cache for a year", () => {
+  assert.equal(SESSION_TOKEN_BYTES, 32);
+  assert.equal(IMMUTABLE_MAX_AGE_S, 31_536_000);
 });
