@@ -41,6 +41,7 @@ test("grok: the brief goes in as --rules, one argument", () => {
     "grok --continue --rules 'b'",
   );
   assert.equal(commandWithBriefArg("grok --rules 'mine'", briefChannel("grok"), "b"), null);
+  assert.equal(commandWithBriefArg("grok", briefChannel("grok"), "it's"), "grok --rules 'it'\\''s'");
 });
 
 const ENV = briefChannel("opencode");

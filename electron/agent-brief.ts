@@ -2,6 +2,7 @@
 // is flat and cannot go stale (#117). Pure; main.ts does the IO.
 
 import * as path from "node:path";
+import { shellQuote } from "./pane-command";
 
 export type BriefChannel =
   | { kind: "arg"; flag: string }
@@ -46,10 +47,6 @@ export function briefText(conditional: boolean): string {
     ? "If the AYA_TERMINAL_ID environment variable is set, you are running inside Aya, a terminal workspace for coding agents. There,"
     : "You are running inside Aya, a terminal workspace for coding agents;";
   return [lead, ...BRIEF_BODY].join("\n");
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 /** Null for a compound command: an added argument would land on the wrong one. */
