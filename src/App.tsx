@@ -17,7 +17,6 @@ import {
 import { AttentionCenter } from "./components/AttentionCenter";
 import { TeamsModal } from "./components/TeamsModal";
 import { TeamAssignPrompt } from "./components/TeamRole";
-import { unassignedTeams } from "./team-view";
 import { StatusRail } from "./components/StatusRail";
 import { EmptyState } from "./components/EmptyState";
 import { MissingDirModal } from "./components/MissingDirModal";
@@ -49,6 +48,7 @@ import {
   useTerminalNotifications,
 } from "./hooks/useTerminalSignals";
 import { useTerminalSounds } from "./hooks/useTerminalSounds";
+import { useTeams } from "./hooks/useTeams";
 import { normalizeSoundOverrides } from "./terminal-sound-prefs";
 import {
   MAX_SPLIT_LEAVES,
@@ -90,7 +90,6 @@ import {
   slugifyName,
   type ProjectCollectionState,
   type ProjectConfig,
-  type TeamSummary,
   type ProjectGitInfo,
   type RemoteProjectCreateResult,
   type TerminalState,
@@ -141,9 +140,6 @@ const PROJECT_STATE_VERSION = 1;
 const APP_THEME_STORAGE_KEY = "aya:app-theme";
 const MAC_OPTION_KEY_STORAGE_KEY = "aya:mac-option-key";
 const TERMINAL_FONT_FAMILY_STORAGE_KEY = "aya:terminal-font-family";
-// Teams of every open project are re-read this often, for chips and badges.
-const TEAMS_REFRESH_MS = 5000;
-const EMPTY_TEAMS: TeamSummary[] = [];
 const USAGE_HARNESS_NAME_STORAGE_KEY = "aya:usage-show-harness-name";
 const STATUSBAR_GITHUB_LINK_STORAGE_KEY = "aya:statusbar-github-link";
 const LAYOUT_MODE_STORAGE_KEY = "aya:layout-mode";
@@ -818,8 +814,6 @@ export function App() {
   >(null);
   const [showAttentionCenter, setShowAttentionCenter] = useState(false);
   const [showTeams, setShowTeams] = useState(false);
-  const [teamsByProject, setTeamsByProject] = useState<Record<string, TeamSummary[]>>({});
-  const [dismissedTeamPrompts, setDismissedTeamPrompts] = useState<Set<string>>(() => new Set());
   const [pendingRepoImport, setPendingRepoImport] =
     useState<PendingRepoImport | null>(null);
   const [findInPaneFor, setFindInPaneFor] = useState<string | null>(null);
@@ -3649,39 +3643,18 @@ export function App() {
 
   const currentMissingDir = missingDirQueue[0] ?? null;
   const chromeBlocked = !!currentMissingDir || !!newProjectModal;
+  const {
+    teamsByProject,
+    activeTeams,
+    teamToPrompt,
+    onAssignTeamRole,
+    dismissTeamPrompt,
+    onTeamsWindowClosed,
+  } = useTeams({ projects, activeProjectId, activeProjectRemote: !!activeProject?.remote });
+
   // Any overlay that should hold focus instead of the terminal. While one is
   // open, no terminal is "active" for focus purposes; closing the last one
   // hands focus back to the active terminal (via TerminalView's isActive effect).
-  const projectSlugsKey = projects.map((p) => p.slug).join("\n");
-  const refreshTeams = useCallback(async () => {
-    const slugs = projectSlugsKey ? projectSlugsKey.split("\n") : [];
-    const entries = await Promise.all(
-      slugs.map(async (slug) => [slug, await window.aya.teamList(slug).catch(() => [])] as const),
-    );
-    const next = Object.fromEntries(entries);
-    // Same data, same object: the memoized tab lists skip the render.
-    setTeamsByProject((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
-  }, [projectSlugsKey]);
-  useEffect(() => {
-    void refreshTeams();
-    const id = window.setInterval(() => void refreshTeams(), TEAMS_REFRESH_MS);
-    return () => window.clearInterval(id);
-  }, [refreshTeams]);
-  const assignTeamRole = useCallback(
-    (team: string, role: string, paneId: string | null) => {
-      if (!activeProjectId) return;
-      void window.aya
-        .teamAssign(activeProjectId, team, role, paneId)
-        .catch((err) => console.warn("[aya] team role not assigned:", err))
-        .then(() => refreshTeams());
-    },
-    [activeProjectId, refreshTeams],
-  );
-  const activeTeams = (activeProjectId && teamsByProject[activeProjectId]) || EMPTY_TEAMS;
-  const teamToPrompt = activeProject?.remote
-    ? undefined
-    : unassignedTeams(activeTeams).find((t) => !dismissedTeamPrompts.has(`${activeProjectId}/${t.name}`));
-
   const anyOverlayOpen =
     chromeBlocked ||
     showSettings ||
@@ -3988,7 +3961,7 @@ export function App() {
           return (
             <ProjectsLeftLayout
               teamsByProject={teamsByProject}
-              onAssignTeamRole={activeProject?.remote ? undefined : assignTeamRole}
+              onAssignTeamRole={onAssignTeamRole}
               projects={projects}
               closedProjects={closedProjects}
               activeProjectId={activeProjectId}
@@ -4074,7 +4047,7 @@ export function App() {
               >
                 <Sidebar
                   teams={activeTeams}
-                  onAssignTeamRole={activeProject?.remote ? undefined : assignTeamRole}
+                  onAssignTeamRole={onAssignTeamRole}
                   terminals={projectTerminals}
                   activeId={activeTabId}
                   sidebarWidth={sidebarWidth}
@@ -4204,15 +4177,7 @@ export function App() {
           intelligence={ayaIntelligence}
           onClose={() => {
             setShowTeams(false);
-            // Teams seen in the window need no "assign roles?" prompt after it.
-            const slug = activeProject.slug;
-            void window.aya
-              .teamList(slug)
-              .catch(() => [])
-              .then((seen) =>
-                setDismissedTeamPrompts((prev) => new Set([...prev, ...seen.map((t) => `${slug}/${t.name}`)])),
-              )
-              .then(() => refreshTeams());
+            onTeamsWindowClosed(activeProject.slug);
           }}
         />
       )}
@@ -4221,12 +4186,10 @@ export function App() {
           project={activeProject}
           team={teamToPrompt}
           onOpenTeams={() => {
-            setDismissedTeamPrompts((prev) => new Set(prev).add(`${activeProject.slug}/${teamToPrompt.name}`));
+            dismissTeamPrompt(activeProject.slug, teamToPrompt.name);
             setShowTeams(true);
           }}
-          onDismiss={() =>
-            setDismissedTeamPrompts((prev) => new Set(prev).add(`${activeProject.slug}/${teamToPrompt.name}`))
-          }
+          onDismiss={() => dismissTeamPrompt(activeProject.slug, teamToPrompt.name)}
         />
       )}
       {showAttentionCenter && (

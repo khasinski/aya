@@ -26,3 +26,8 @@ export function unreadTotal(teams: TeamSummary[]): number {
 export function unassignedTeams(teams: TeamSummary[]): TeamSummary[] {
   return teams.filter((t) => t.definition && Object.keys(t.assignments).length === 0);
 }
+
+/** The key a dismissed "assign roles?" prompt is remembered under. */
+export function teamPromptKey(slug: string, team: string): string {
+  return `${slug}/${team}`;
+}

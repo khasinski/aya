@@ -2,7 +2,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { paneRoles, unassignedTeams, unreadTotal } from "../dist-test/team-view.js";
+import { paneRoles, teamPromptKey, unassignedTeams, unreadTotal } from "../dist-test/team-view.js";
 
 const team = (name, assignments, unread, definition = {}) => ({
   name,
@@ -34,3 +34,7 @@ test("only valid teams with no pane assigned are offered on project open", () =>
   assert.deepEqual(unassignedTeams(teams).map((t) => t.name), ["new"]);
 });
 
+
+test("a dismissed team prompt is keyed by project slug and team name", () => {
+  assert.equal(teamPromptKey("my-app", "review"), "my-app/review");
+});
