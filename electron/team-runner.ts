@@ -21,6 +21,7 @@ const everyInterval: Schedule = (fn, ms) => {
 export class TeamRunner {
   private cancels = new Map<string, () => void>();
   private rounds = new Map<string, number>();
+  private redelivering: Promise<number> | null = null;
 
   constructor(
     private deps: TeamRunnerDeps,
@@ -106,7 +107,13 @@ export class TeamRunner {
   /** Types the messages that waited in an inbox into panes that are free now,
    *  in order and with their own headers; returns how many. A paused team is
    *  skipped: it takes no messages, as aya team send refuses them. */
-  async redeliverWaiting(): Promise<number> {
+  redeliverWaiting(): Promise<number> {
+    // A call during a pass shares it: two passes would both read and type one message.
+    this.redelivering ??= this.redeliverPass().finally(() => (this.redelivering = null));
+    return this.redelivering;
+  }
+
+  private async redeliverPass(): Promise<number> {
     let typed = 0;
     for (const project of await this.deps.listProjects()) {
       for (const name of await teamNames(project)) {
@@ -116,10 +123,12 @@ export class TeamRunner {
         for (const role of team.roles) {
           const waiting = await store.unread(role.id);
           const pane = waiting.length ? await store.paneOf(role.id) : null;
-          if (!pane || (await this.deps.holdReason(pane))) continue;
+          if (!pane) continue;
           for (const m of waiting) {
+            // Each delivery can raise an approval prompt the next would type into.
+            if (await this.deps.holdReason(pane)) break;
             try {
-              await this.deps.deliver(pane, `${teamHeader(team.name, m.from, m.time, m.commit)} ${oneLine(m.text)}`);
+              await this.deps.deliver(pane, oneLine(`${teamHeader(team.name, m.from, m.time, m.commit)} ${m.text}`));
             } catch {
               break;
             }

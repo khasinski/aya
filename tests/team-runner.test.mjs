@@ -330,3 +330,45 @@ test("a pane that refuses a waiting message keeps it and the ones after it", asy
     t.cleanup();
   }
 });
+
+test("overlapping redelivery passes type each held message once", async () => {
+  const t = await setup({ cadence: false });
+  try {
+    await t.store.append({ from: "tester", to: "implementer", commit: null, text: "first", delivered: false });
+    await t.store.append({ from: "tester", to: "implementer", commit: null, text: "second", delivered: false });
+    t.deps.deliver = async (pane, text) => {
+      await new Promise((r) => setTimeout(r, 20));
+      t.typed.push({ pane, text });
+    };
+    await Promise.all([t.runner.redeliverWaiting(), t.runner.redeliverWaiting()]);
+    assert.deepEqual(t.typed.map((w) => w.text.split("] ")[1]), ["first", "second"]);
+    assert.equal((await t.store.unread("implementer")).length, 0);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a pane that becomes held mid-redelivery keeps the rest waiting", async () => {
+  const t = await setup({ cadence: false });
+  try {
+    await t.store.append({ from: "tester", to: "implementer", commit: null, text: "first", delivered: false });
+    await t.store.append({ from: "tester", to: "implementer", commit: null, text: "second", delivered: false });
+    t.deps.holdReason = async () => (t.typed.length ? "shows an approval prompt" : null);
+    assert.equal(await t.runner.redeliverWaiting(), 1);
+    assert.deepEqual(t.typed.map((w) => w.text.split("] ")[1]), ["first"]);
+    assert.deepEqual((await t.store.unread("implementer")).map((m) => m.text), ["second"]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a redelivered line carries no control bytes, header included", async () => {
+  const t = await setup({ cadence: false });
+  try {
+    await t.store.append({ from: "tester\x1b[201~\r", to: "implementer", commit: null, text: "x", delivered: false });
+    assert.equal(await t.runner.redeliverWaiting(), 1);
+    assert.doesNotMatch(t.typed[0].text, /[\x00-\x1f\x7f]/);
+  } finally {
+    t.cleanup();
+  }
+});

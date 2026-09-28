@@ -81,7 +81,7 @@ export async function deliverAndLog(
   if (pane && !failure) {
     const header = teamHeader(message.team, message.from, new Date().toISOString(), commit);
     try {
-      await deps.deliver(pane, `${header} ${oneLine(message.text)}`);
+      await deps.deliver(pane, oneLine(`${header} ${message.text}`));
     } catch (err) {
       // The write error is written for the CLI; the team log and window get the gist.
       console.warn(`[aya] team message to ${message.to} not typed:`, err);

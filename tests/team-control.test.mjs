@@ -217,3 +217,29 @@ test("line breaks in a message cannot submit a second, unattributed turn", async
     t.cleanup();
   }
 });
+
+test("the pasted line carries no control bytes, header included", async () => {
+  const { deliverAndLog } = await import("../dist-electron/team-control.js");
+  const root = mkdtempSync(join(tmpdir(), "aya-team-ctl-"));
+  try {
+    const store = new TeamStore(join(root, "team"));
+    await store.assign("implementer", "pane-i");
+    const typed = [];
+    const deps = {
+      deliver: async (_pane, text) => void typed.push(text),
+      holdReason: async () => null,
+      headCommit: async () => "abc\x1b[201~\r",
+    };
+    const { failure } = await deliverAndLog(deps, { directory: root }, store, {
+      team: "ux\x1b[201~\rrm -rf ~\r",
+      from: "tester\x07",
+      to: "implementer",
+      text: "hi",
+    });
+    assert.equal(failure, null);
+    assert.equal(typed.length, 1);
+    assert.doesNotMatch(typed[0], /[\x00-\x1f\x7f]/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
