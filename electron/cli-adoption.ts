@@ -7,6 +7,9 @@ import * as path from "node:path";
 /** Oldest panes are dropped past this, so the file stays small forever. */
 export const CLI_ADOPTION_MAX_PANES = 2000;
 
+/** Quiet time after the last change before the snapshot is written. */
+export const CLI_ADOPTION_SAVE_DEBOUNCE_MS = 2_000;
+
 export interface PaneAdoption {
   agent?: string;
   presetId?: string;
@@ -137,7 +140,7 @@ export function summarizeCliAdoption(state: CliAdoptionState): HarnessAdoption[]
 }
 
 /** File-backed store: loads once, writes a debounced atomic snapshot. */
-export function createCliAdoptionStore(file: string, debounceMs = 2_000) {
+export function createCliAdoptionStore(file: string, debounceMs = CLI_ADOPTION_SAVE_DEBOUNCE_MS) {
   let state: CliAdoptionState | null = null;
   let loading: Promise<CliAdoptionState> | null = null;
   let timer: NodeJS.Timeout | null = null;

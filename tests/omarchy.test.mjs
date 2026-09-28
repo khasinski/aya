@@ -255,3 +255,8 @@ test("an empty top-level value falls through to a palette table", () => {
 test("a file with nothing in it is unusable (null)", () => {
   assert.equal(parseOmarchyColors(""), null);
 });
+
+test("theme switches are debounced by 150 ms", async () => {
+  const { OMARCHY_WATCH_DEBOUNCE_MS } = await import("../dist-electron/omarchy.js");
+  assert.equal(OMARCHY_WATCH_DEBOUNCE_MS, 150);
+});

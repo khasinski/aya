@@ -97,3 +97,14 @@ test("isWildcardHost: 0.0.0.0 and :: listen everywhere, anything else is pinned"
   }
   assert.equal(LOOPBACK_HOST, "127.0.0.1");
 });
+
+test("secret sizes and the port ceiling are pinned", async () => {
+  const m = await import("../dist-electron/web-config.js");
+  assert.equal(m.PASSWORD_BYTES, 10);
+  assert.equal(m.SALT_BYTES, 16);
+  assert.equal(m.MAX_TCP_PORT, 65535);
+  assert.equal(generateWebPassword().length, Math.ceil((m.PASSWORD_BYTES * 8) / 6));
+  assert.equal(webCredentials("pw", false).passwordSalt.length, m.SALT_BYTES * 2);
+  assert.equal(normalizeWebPort(65535), 65535);
+  assert.equal(normalizeWebPort(65536), DEFAULT_WEB_PORT);
+});

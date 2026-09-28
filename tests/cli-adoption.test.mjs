@@ -123,3 +123,8 @@ test("store: a missing file starts empty, and nothing to save writes nothing", a
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("adoption snapshots are saved 2 s after the last change", async () => {
+  const { CLI_ADOPTION_SAVE_DEBOUNCE_MS } = await import("../dist-electron/cli-adoption.js");
+  assert.equal(CLI_ADOPTION_SAVE_DEBOUNCE_MS, 2_000);
+});

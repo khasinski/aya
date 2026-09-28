@@ -19,6 +19,8 @@ const THEME_DIR = path.join(OMARCHY_STATE_DIR, "theme");
 export const OMARCHY_COLORS_FILE = path.join(THEME_DIR, "colors.toml");
 const OMARCHY_LIGHT_MODE_FILE = path.join(THEME_DIR, "light.mode");
 const OMARCHY_THEME_NAME_FILE = path.join(OMARCHY_STATE_DIR, "theme.name");
+// One theme switch touches several files; coalesce their watch events.
+export const OMARCHY_WATCH_DEBOUNCE_MS = 150;
 
 /** snake_case colors.toml key -> camelCase OmarchyPalette field. */
 const FIELD_MAP: Record<string, keyof OmarchyPalette> = {
@@ -197,7 +199,7 @@ export function watchOmarchyTheme(onChange: () => void): () => void {
   try {
     watcher = fsSync.watch(OMARCHY_STATE_DIR, () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(onChange, 150);
+      timer = setTimeout(onChange, OMARCHY_WATCH_DEBOUNCE_MS);
     });
     // The try/catch only covers synchronous construction; an unhandled later
     // "error" would be an uncaught exception in the main process.

@@ -290,3 +290,8 @@ test("a huge or long-unread log is read from its tail, never whole", async () =>
   // Default cap is bounded (tens of MB, not unbounded).
   assert.ok(GROK_LIMIT_SCAN_MAX_BYTES > 0 && GROK_LIMIT_SCAN_MAX_BYTES <= 64 * 1024 * 1024);
 });
+
+test("timestamps below 1e12 are read as seconds", async () => {
+  const { SECONDS_EPOCH_CEILING } = await import("../dist-electron/usage-grok.js");
+  assert.equal(SECONDS_EPOCH_CEILING, 1e12);
+});
