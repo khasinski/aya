@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import * as mirrors from "../dist-test/main-mirrors.js";
 import * as localSummary from "../dist-electron/local-summary-errors.js";
 import * as validation from "../dist-electron/validation.js";
+import * as teams from "../dist-electron/teams.js";
 
 test("the renderer summarizes the same number of trailing lines as main", () => {
   assert.equal(mirrors.LOCAL_SUMMARY_MAX_LINES, 30);
@@ -16,4 +17,9 @@ test("the renderer summarizes the same number of trailing lines as main", () => 
 test("the renderer writes the project-state version main validates", () => {
   assert.equal(mirrors.PROJECT_STATE_VERSION, 1);
   assert.equal(mirrors.PROJECT_STATE_VERSION, validation.PROJECT_STATE_VERSION);
+});
+
+test("the renderer's cadence ceiling is the one main's team parser enforces", () => {
+  assert.equal(mirrors.MAX_CADENCE_MINUTES, 24 * 60);
+  assert.equal(mirrors.MAX_CADENCE_MINUTES, teams.MAX_CADENCE_MINUTES);
 });

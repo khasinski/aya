@@ -6,3 +6,6 @@ export const LOCAL_SUMMARY_MAX_LINES = 30;
 
 /** Persisted schema version for ProjectCollectionState; electron/validation.ts. */
 export const PROJECT_STATE_VERSION = 1;
+
+/** Largest team cadence electron/teams.ts accepts. No UI input uses it yet. */
+export const MAX_CADENCE_MINUTES = 24 * 60;
