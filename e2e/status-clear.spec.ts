@@ -1,7 +1,6 @@
-import net from "node:net";
-import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
+import { sendControl } from "./helpers/control";
 
 // Regression for #34 (Part 0): `aya status clear` must actually clear a red
 // `error` dot. The control-status handler used to delete externalStatus but keep
@@ -15,20 +14,6 @@ import { test, expect } from "./fixtures";
 
 // Send one control-socket request (newline-delimited JSON), resolve on the
 // server's `{ ok }` reply. Mirrors what `bin/aya status ...` writes.
-function sendControl(
-  ayaHome: string,
-  payload: Record<string, unknown>,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const socket = net.createConnection(join(ayaHome, "aya.sock"));
-    socket.setEncoding("utf8");
-    socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n`));
-    socket.on("data", () => resolve());
-    socket.on("error", reject);
-    socket.on("close", () => resolve());
-  });
-}
-
 // --- deterministic readiness helpers ----------------------------------------
 
 /** Bootstrap is settled once the sidebar marks shell 1 active: the active-tab
