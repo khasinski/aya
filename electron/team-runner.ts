@@ -1,7 +1,6 @@
 // Start team (a delivery test to every role), Aya-owned rounds on the team's
 // cadence, and the team pause. Rounds live in Aya, not in one agent session.
 
-import { listTeams } from "./team-admin";
 import { NO_PANE_HOLD, deliverAndLog, typedTeamMessage, type TeamControlDeps } from "./team-control";
 import { loadTeam, projectBySlug, teamNames } from "./team-files";
 import { openTeamStore, type TeamStore } from "./team-store";
@@ -89,8 +88,16 @@ export class TeamRunner {
   /** After a relaunch: rounds for every team that was running. */
   async restore(): Promise<void> {
     for (const project of await this.deps.listProjects()) {
-      for (const summary of await listTeams(this.deps.teamHome, project)) {
-        if (summary.running && summary.definition) this.arm(project.slug, summary.name, summary.definition);
+      for (const name of await teamNames(project)) {
+        const store = openTeamStore(this.deps.teamHome, project.slug, name);
+        if (!(await store.state()).running) continue;
+        let team: TeamDefinition;
+        try {
+          team = await loadTeam(project, name, store);
+        } catch {
+          continue; // The teams window shows why it does not parse; the other teams still run.
+        }
+        this.arm(project.slug, name, team);
       }
     }
   }

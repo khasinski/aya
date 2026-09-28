@@ -206,6 +206,20 @@ test("after a relaunch, restore re-arms the teams that were running", async () =
   }
 });
 
+test("restore skips a running team whose file does not parse and re-arms the others", async () => {
+  const t = await setup();
+  try {
+    const project = (await t.deps.listProjects())[0];
+    writeFileSync(join(project.directory, ".aya", "teams", "alpha.md"), "# alpha\n\n## Role: solo\n");
+    await new TeamStore(teamDir(t.deps.teamHome, "game", "alpha")).setPaused(false);
+    await t.store.setPaused(false);
+    await t.runner.restore();
+    assert.deepEqual(t.scheduled.map((job) => job.ms), [30 * 60 * 1000]);
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("saving a running team re-arms its rounds from the new definition", async () => {
   const t = await setup();
   try {
