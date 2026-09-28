@@ -51,3 +51,22 @@ test("a spaced display name is the same role as its dashed id", () => {
   const draft = parseRoleDraft('{"mustNot":"x","sendsTo":["ux-designer","implementer"]}', "ux designer", ["implementer", "ux-designer"]);
   assert.deepEqual(draft.sendsTo, ["implementer"]);
 });
+
+test("roles the user already ticked go into the prompt and win over the model's pick", async () => {
+  const prompt = roleDraftPrompt("reviewer", ["implementer", "tester", "reviewer"], ["tester"]);
+  assert.match(prompt, /It sends to: tester\./);
+  let sent = "";
+  const draft = await draftRole("reviewer", ["implementer", "tester", "reviewer"], async (_system, user) => {
+    sent = user;
+    return '{"responsibilities":"Reviews.","mustNot":"edit code","sendsTo":["implementer"]}';
+  }, ["tester", "gone"]);
+  assert.deepEqual(draft.sendsTo, ["tester"]);
+  assert.match(sent, /It sends to: tester\./);
+});
+
+test("with nothing ticked, the model's pick stands", async () => {
+  assert.doesNotMatch(roleDraftPrompt("reviewer", ["implementer", "reviewer"], []), /It sends to/);
+  const draft = await draftRole("reviewer", ["implementer", "reviewer"], async () =>
+    '{"mustNot":"edit code","sendsTo":["implementer"]}', []);
+  assert.deepEqual(draft.sendsTo, ["implementer"]);
+});

@@ -313,6 +313,7 @@ function TeamEditor({
                   const draft = await window.aya.teamDraftRole(
                     role.id.replace(/-/g, " "),
                     team.roles.map((r) => r.id.trim()).filter(Boolean),
+                    role.sendsTo,
                     intelligence,
                   );
                   setRole(index, draft);

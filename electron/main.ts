@@ -2260,7 +2260,7 @@ function registerIpc(): void {
       paneId === null ? null : requireString(paneId, "teams:assign.paneId"),
     ),
   );
-  ipcMain.handle("teams:draft-role", async (_e, role: unknown, teamRoles: unknown, config: unknown) => {
+  ipcMain.handle("teams:draft-role", async (_e, role: unknown, teamRoles: unknown, sendsTo: unknown, config: unknown) => {
     // No config means Aya's default provider, Apple.
     const intelligence = normalizeAyaIntelligenceConfig(config) ?? normalizeAyaIntelligenceConfig({})!;
     const chat = async (system: string, user: string) => {
@@ -2282,6 +2282,7 @@ function registerIpc(): void {
       requireString(role, "teams:draft-role.role"),
       requireStringArray(teamRoles, "teams:draft-role.teamRoles"),
       chat,
+      requireStringArray(sendsTo, "teams:draft-role.sendsTo"),
     );
   });
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {

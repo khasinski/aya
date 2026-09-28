@@ -60,3 +60,16 @@ test("a provider that does not answer shows the reason next to the role", async 
   await dialog.getByRole("button", { name: "Draft role 1" }).click();
   await expect(dialog.locator(".aya-teams-role").first().locator(".aya-teams-error")).toContainText(/did not answer/);
 });
+
+test("roles ticked under Sends to before Draft stay ticked and reach the prompt", async ({ window }) => {
+  const dialog = await editorWithIntelligence(window, { provider: "openai", openAiBaseUrl: baseUrl, openAiModel: "fake" });
+  await dialog.getByRole("button", { name: "Add role" }).click();
+  await dialog.getByLabel("Role 3 name").fill("tester");
+  await dialog.getByLabel("Role 1 sends to implementer").uncheck();
+  await dialog.getByLabel("Role 1 sends to tester").check();
+  await dialog.getByRole("button", { name: "Draft role 1" }).click();
+  await expect(dialog.getByLabel("Role 1 must not")).toHaveValue("edit code");
+  await expect(dialog.getByLabel("Role 1 sends to tester")).toBeChecked();
+  await expect(dialog.getByLabel("Role 1 sends to implementer")).not.toBeChecked();
+  expect(lastPrompt).toMatch(/It sends to: tester\./);
+});
