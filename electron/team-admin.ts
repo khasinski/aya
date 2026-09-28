@@ -75,10 +75,8 @@ function refuseFieldLines(team: TeamDefinition): void {
   if (line?.[1] === SECTION_MARKER) throw new Error('protocol: a line starts with "##"; the team file would read it as a new section');
 }
 
-/** Validates by round-tripping through the parser, so the file on disk is
- *  always one the parser accepts. */
-/** Throws unless the roles parse back the same, up to whitespace the format
- *  trims; a line break inside a one-line field would not. */
+/** Throws unless the text parses and every role reads back the same, up to
+ *  trimmed whitespace; a line break inside a one-line field would not. */
 function refuseLossy(team: TeamDefinition, text: string): void {
   const back = parseTeamFile(team.name, text);
   const flat = (s: string) => s.trim();
