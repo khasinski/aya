@@ -70,8 +70,8 @@ run commands.
   waiting state is read off each pane's real screen (a headless VT mirror), not
   a fragile byte-stream heuristic, so it also clears when the agent repaints.
 - **Agents drive each other.** `aya pane read "reviewer"` returns another pane's
-  output and `aya pane send` types into it, so one agent hands work to another
-  and collects the result. Panes are addressed by tab name within a project.
+  output as plain text, as its screen shows it, and `aya pane send` types into
+  it, so one agent hands work to another and collects the result. Panes are addressed by tab name within a project.
 - **Apple Intelligence labels.** Aya reads each pane's output through Apple
   Intelligence, or a local Ollama / OpenAI-compatible model, and writes a
   one-line summary under every tab and project. On-device by default.

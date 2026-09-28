@@ -143,6 +143,7 @@ import { listMonitoredSessions } from "./session-monitor";
 import { normalizeLocalSummaryError, SUMMARY_TEXT_MAX_CHARS } from "./local-summary-errors";
 import { readRepoProjectConfig } from "./project-local";
 import { repairProcessPath } from "./shell-path";
+import { paneReadText } from "./pane-render";
 import { PtyHostClient } from "./pty-host-client";
 import { reapStaleHostRecords } from "./pty-host-registry";
 import { COMMAND_PROBE_TIMEOUT_MS } from "./constants";
@@ -3107,7 +3108,15 @@ app.whenReady().then(async () => {
     // and act through the pty host, so they work regardless of which window
     // (if any) currently owns the target project.
     listProjects: () => listProjects(),
-    readPane: (terminalId) => ptyHost.getBuffer(terminalId),
+    // Rendered here, not in the pty host: up to ~50 ms per 1 MB would stall every
+    // pane's output there.
+    readPane: async (terminalId) => {
+      const [buffer, size] = await Promise.all([
+        ptyHost.getBuffer(terminalId),
+        ptyHost.getSize(terminalId),
+      ]);
+      return paneReadText(buffer, size);
+    },
     // Returned, not fire-and-forget: the boolean is how pane-send learns the
     // pane was dead, and dropping it made host rejections unhandled.
     writePane: (terminalId, data) => ptyHost.write(terminalId, data),
