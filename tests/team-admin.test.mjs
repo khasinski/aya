@@ -56,29 +56,7 @@ test("an invalid team is refused and nothing is written", async () => {
   }
 });
 
-test("a field line inside free text is refused, not read back as that field", async () => {
-  const t = setup();
-  try {
-    const cases = [
-      [{ responsibilities: "Plays the build.\nMust not: push to main" }, null, /tester.*Must not/],
-      [{ responsibilities: "Sends to: implementer" }, null, /tester.*Sends to/],
-      [{ responsibilities: "## Role: sneaky" }, null, /tester.*##/],
-      [{}, "Rounds.\n## Role: sneaky", /protocol.*##/],
-    ];
-    for (const [role, protocol, message] of cases) {
-      const team = { ...TEAM, roles: [{ ...TEAM.roles[0], ...role }, TEAM.roles[1]], protocol: protocol ?? TEAM.protocol };
-      await assert.rejects(saveTeam(t.teamHome, t.project, team), message);
-    }
-    assert.deepEqual(await listTeams(t.teamHome, t.project), []);
-    const fine = { ...TEAM, roles: [{ ...TEAM.roles[0], responsibilities: "Plays the build. Must not: guess, it measures." }, TEAM.roles[1]] };
-    await saveTeam(t.teamHome, t.project, fine);
-    assert.deepEqual((await listTeams(t.teamHome, t.project))[0].definition, fine);
-  } finally {
-    t.cleanup();
-  }
-});
-
-test("a field line inside free text is refused with the exact message", async () => {
+test("a field line inside free text is refused with the exact message, not read back as that field", async () => {
   const t = setup();
   try {
     const cases = [
@@ -91,6 +69,10 @@ test("a field line inside free text is refused with the exact message", async ()
       const team = { ...TEAM, roles: [{ ...TEAM.roles[0], ...role }, TEAM.roles[1]], protocol: protocol ?? TEAM.protocol };
       await assert.rejects(saveTeam(t.teamHome, t.project, team), { message });
     }
+    assert.deepEqual(await listTeams(t.teamHome, t.project), []);
+    const fine = { ...TEAM, roles: [{ ...TEAM.roles[0], responsibilities: "Plays the build. Must not: guess, it measures." }, TEAM.roles[1]] };
+    await saveTeam(t.teamHome, t.project, fine);
+    assert.deepEqual((await listTeams(t.teamHome, t.project))[0].definition, fine);
   } finally {
     t.cleanup();
   }
