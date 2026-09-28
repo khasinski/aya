@@ -2,8 +2,10 @@ import type {
   ProjectCollectionState,
   ProjectConfig,
   SplitLayout,
+  SendRoute,
   SpawnRequest,
   TeamDefinition,
+  TeamRole,
   Theme,
   ThemesFile,
   WorkingTab,
@@ -340,35 +342,35 @@ export function validateThemesFile(value: unknown): ThemesFile {
   };
 }
 
-/** Shape only; team rules (must-not, send-to, cadence) are the parser's job. */
-/** `channel` names the IPC call in errors, e.g. teams:save. */
-export function validateTeamDefinition(value: unknown, channel = "teams:save"): TeamDefinition {
-  const team = requireRecord(value, `${channel}.team`);
-  const roles = Array.isArray(team.roles) ? team.roles : fail(`${channel}.team.roles`, "array");
-  const cadence = team.cadence === null || team.cadence === undefined ? null : requireRecord(team.cadence, `${channel}.team.cadence`);
+function validateRoute(value: unknown, at: string): SendRoute {
+  const route = requireRecord(value, at);
+  return { to: requireString(route.to, `${at}.to`), what: requireString(route.what, `${at}.what`) };
+}
+
+function validateRole(value: unknown, at: string): TeamRole {
+  const role = requireRecord(value, at);
   return {
-    name: requireString(team.name, `${channel}.team.name`),
-    roles: roles.map((raw, i) => {
-      const role = requireRecord(raw, `${channel}.team.roles[${i}]`);
-      return {
-        id: requireString(role.id, `${channel}.team.roles[${i}].id`),
-        sendsTo: (Array.isArray(role.sendsTo) ? role.sendsTo : fail(`${channel}.team.roles[${i}].sendsTo`, "array")).map(
-          (raw, j) => {
-            const route = requireRecord(raw, `${channel}.team.roles[${i}].sendsTo[${j}]`);
-            return {
-              to: requireString(route.to, `${channel}.team.roles[${i}].sendsTo[${j}].to`),
-              what: requireString(route.what, `${channel}.team.roles[${i}].sendsTo[${j}].what`),
-            };
-          },
-        ),
-        mustNot: requireString(role.mustNot, `${channel}.team.roles[${i}].mustNot`),
-        responsibilities: requireString(role.responsibilities, `${channel}.team.roles[${i}].responsibilities`),
-      };
-    }),
+    id: requireString(role.id, `${at}.id`),
+    sendsTo: (Array.isArray(role.sendsTo) ? role.sendsTo : fail(`${at}.sendsTo`, "array")).map((raw, j) => validateRoute(raw, `${at}.sendsTo[${j}]`)),
+    mustNot: requireString(role.mustNot, `${at}.mustNot`),
+    responsibilities: requireString(role.responsibilities, `${at}.responsibilities`),
+  };
+}
+
+/** Shape only; team rules (must-not, send-to, cadence) are the parser's job.
+ *  `channel` names the IPC call in errors, e.g. teams:save. */
+export function validateTeamDefinition(value: unknown, channel = "teams:save"): TeamDefinition {
+  const at = `${channel}.team`;
+  const team = requireRecord(value, at);
+  const roles = Array.isArray(team.roles) ? team.roles : fail(`${at}.roles`, "array");
+  const cadence = team.cadence === null || team.cadence === undefined ? null : requireRecord(team.cadence, `${at}.cadence`);
+  return {
+    name: requireString(team.name, `${at}.name`),
+    roles: roles.map((raw, i) => validateRole(raw, `${at}.roles[${i}]`)),
     cadence: cadence && {
-      role: requireString(cadence.role, `${channel}.team.cadence.role`),
-      minutes: typeof cadence.minutes === "number" ? cadence.minutes : fail(`${channel}.team.cadence.minutes`, "number"),
+      role: requireString(cadence.role, `${at}.cadence.role`),
+      minutes: typeof cadence.minutes === "number" ? cadence.minutes : fail(`${at}.cadence.minutes`, "number"),
     },
-    protocol: requireString(team.protocol, `${channel}.team.protocol`),
+    protocol: requireString(team.protocol, `${at}.protocol`),
   };
 }

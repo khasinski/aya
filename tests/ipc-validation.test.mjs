@@ -431,6 +431,28 @@ test("a session id that could alter a command line is rejected at the boundary",
   }
 });
 
+test("validateTeamDefinition error texts name the exact path, first problem first", () => {
+  const role = { id: "tester", sendsTo: [{ to: "implementer", what: "" }], mustNot: "edit code", responsibilities: "" };
+  const team = { name: "ux-review", roles: [role, role], cadence: { role: "tester", minutes: 30 }, protocol: "" };
+  const refuses = (value, text, channel) =>
+    assert.throws(() => validateTeamDefinition(value, channel), { message: `Invalid IPC payload for ${text}.` });
+  refuses("x", "teams:save.team: expected object");
+  refuses({ ...team, roles: "x", cadence: "y" }, "teams:save.team.roles: expected array");
+  refuses({ ...team, name: 5, cadence: "y" }, "teams:save.team.cadence: expected object");
+  refuses({ ...team, name: 5, roles: [5] }, "teams:save.team.name: expected string");
+  refuses({ ...team, roles: [role, 5] }, "teams:save.team.roles[1]: expected object");
+  refuses({ ...team, roles: [role, { ...role, id: 5, sendsTo: 5 }] }, "teams:save.team.roles[1].id: expected string");
+  refuses({ ...team, roles: [role, { ...role, sendsTo: 5, mustNot: 5 }] }, "teams:save.team.roles[1].sendsTo: expected array");
+  refuses({ ...team, roles: [role, { ...role, sendsTo: [role.sendsTo[0], 5] }] }, "teams:save.team.roles[1].sendsTo[1]: expected object");
+  refuses({ ...team, roles: [role, { ...role, sendsTo: [{ to: 5, what: 5 }] }] }, "teams:save.team.roles[1].sendsTo[0].to: expected string");
+  refuses({ ...team, roles: [role, { ...role, sendsTo: [{ to: "a", what: 5 }] }] }, "teams:draft-role.team.roles[1].sendsTo[0].what: expected string", "teams:draft-role");
+  refuses({ ...team, roles: [role, { ...role, mustNot: 5, responsibilities: 5 }] }, "teams:save.team.roles[1].mustNot: expected string");
+  refuses({ ...team, roles: [role, { ...role, responsibilities: 5 }], cadence: { role: 5 } }, "teams:save.team.roles[1].responsibilities: expected string");
+  refuses({ ...team, cadence: { role: 5, minutes: "30" }, protocol: 5 }, "teams:save.team.cadence.role: expected string");
+  refuses({ ...team, cadence: { role: "tester", minutes: "30" }, protocol: 5 }, "teams:save.team.cadence.minutes: expected number");
+  refuses({ ...team, protocol: 5 }, "teams:save.team.protocol: expected string");
+});
+
 test("validateTeamDefinition keeps a well-formed team and refuses wrong shapes", () => {
   const team = {
     name: "ux-review",
