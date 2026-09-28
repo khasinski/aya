@@ -79,9 +79,19 @@ export class TeamStore {
     return entry ? entry[0] : null;
   }
 
-  /** A paused team takes no sends and no rounds. */
+  /** A paused team takes no sends and no rounds. Unpausing marks it started. */
   setPaused(paused: boolean): Promise<void> {
-    return this.serial(() => writeFileAtomic(this.file("state.json"), JSON.stringify({ paused })));
+    return this.serial(async () => {
+      const state = await readJson<{ started?: boolean }>(this.file("state.json"), {});
+      const started = state.started === true || !paused;
+      await writeFileAtomic(this.file("state.json"), JSON.stringify({ paused, started }));
+    });
+  }
+
+  /** Started with Start team and not paused since. */
+  async running(): Promise<boolean> {
+    const state = await readJson<{ paused?: boolean; started?: boolean }>(this.file("state.json"), {});
+    return state.started === true && state.paused !== true;
   }
 
   async paused(): Promise<boolean> {

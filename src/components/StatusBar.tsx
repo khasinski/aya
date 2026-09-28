@@ -40,6 +40,7 @@ interface Props {
   onOpenProjectDirectory: (directory: string) => void;
   onToggleSnippets: () => void;
   onOpenAttentionCenter: () => void;
+  onOpenTeams: () => void;
 }
 
 /** Last path segment — how a worktree is named in the UI (git itself has no
@@ -64,6 +65,7 @@ function StatusBarImpl({
   onOpenProjectDirectory,
   onToggleSnippets,
   onOpenAttentionCenter,
+  onOpenTeams,
 }: Props) {
   const waiting = terminal?.status === "waiting";
   // The main checkout's (symlink-resolved) path — the same shape gitDirectory
@@ -230,6 +232,20 @@ function StatusBarImpl({
         <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
           {snippetsOpen ? "expand_more" : "expand_less"}
         </span>
+      </button>
+      <button
+        data-testid="teams-toggle"
+        className="aya-statusbar-item aya-statusbar-button"
+        type="button"
+        title="Teams: roles and messages between panes"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onOpenTeams}
+        disabled={!project}
+      >
+        <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
+          groups
+        </span>
+        teams
       </button>
       <button
         className={`aya-statusbar-item aya-statusbar-button ${

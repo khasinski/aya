@@ -799,7 +799,11 @@ export interface TeamSummary {
   error: string | null;
   /** The repo file differs from what the user last saved. */
   repoChanged: boolean;
+  /** The repo file parsed, to adopt with one Save; null when it does not parse. */
+  repoDefinition: TeamDefinition | null;
   paused: boolean;
+  /** Started with Start team and not paused since. */
+  running: boolean;
   assignments: Record<string, string>;
   log: TeamMessage[];
 }

@@ -64,6 +64,7 @@ test("a repo edit after Save shows as changed; Aya keeps using the saved one", a
     const [team] = await listTeams(t.teamHome, t.project);
     assert.equal(team.repoChanged, true);
     assert.equal(team.definition.roles[0].mustNot, "edit code");
+    assert.equal(team.repoDefinition.roles[0].mustNot, "nothing");
   } finally {
     t.cleanup();
   }

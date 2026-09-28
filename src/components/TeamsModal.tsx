@@ -1,0 +1,393 @@
+import { useCallback, useEffect, useState } from "react";
+import type { ProjectConfig, TeamDefinition, TeamRole, TeamSummary } from "../types";
+import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
+
+// While open, the log and assignments refresh at this pace.
+const REFRESH_MS = 3000;
+
+/** The pair that ran the game project's 22-round UX review. */
+export const TWO_ROLE_TEMPLATE: TeamDefinition = {
+  name: "review",
+  roles: [
+    {
+      id: "reviewer",
+      sendsTo: ["implementer"],
+      mustNot: "edit code",
+      responsibilities:
+        "Checks the running app each round and reports what a user would get wrong, with the screen state as proof.",
+    },
+    {
+      id: "implementer",
+      sendsTo: ["reviewer"],
+      mustNot: "leave a report unanswered",
+      responsibilities: "Fixes findings, answers every report, and names the commit to check.",
+    },
+  ],
+  cadence: { role: "reviewer", minutes: 30 },
+  protocol:
+    "Findings are hypotheses with a measurement request, not facts. Number rounds and mark items [reported -> confirmed]. Reports are one-way unless a question is asked.",
+};
+
+const EMPTY_ROLE: TeamRole = { id: "", sendsTo: [], mustNot: "", responsibilities: "" };
+
+interface Props {
+  project: ProjectConfig;
+  onClose: () => void;
+}
+
+export function TeamsModal({ project, onClose }: Props) {
+  const [teams, setTeams] = useState<TeamSummary[]>([]);
+  const [editing, setEditing] = useState<{ team: TeamDefinition; isNew: boolean } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    try {
+      setTeams(await window.aya.teamList(project.slug));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [project.slug]);
+
+  useEffect(() => {
+    void reload();
+    const id = window.setInterval(() => void reload(), REFRESH_MS);
+    return () => window.clearInterval(id);
+  }, [reload]);
+
+  const act = async (work: () => Promise<unknown>) => {
+    setError(null);
+    try {
+      await work();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+    await reload();
+  };
+
+  return (
+    <div
+      className="aya-modal-backdrop"
+      onMouseDown={markBackdropMouseDown}
+      onClick={(e) => closeFromBackdropClick(e, onClose)}
+    >
+      <section
+        className="aya-modal aya-teams-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Teams"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {editing ? (
+          <TeamEditor
+            initial={editing.team}
+            isNew={editing.isNew}
+            onCancel={() => setEditing(null)}
+            onSave={async (team) => {
+              await window.aya.teamSave(project.slug, team);
+              setEditing(null);
+              await reload();
+            }}
+          />
+        ) : (
+          <>
+            <div className="aya-modal-title">Teams · {project.name}</div>
+            <div className="aya-modal-hint">
+              Defined in .aya/teams/ in the repo. Which pane plays which role stays on this machine.
+            </div>
+            {error && <div className="aya-teams-error">{error}</div>}
+            {teams.length === 0 && <div className="aya-modal-hint">No team yet.</div>}
+            {teams.map((team) => (
+              <TeamCard
+                key={team.name}
+                team={team}
+                project={project}
+                onEdit={(definition) => setEditing({ team: definition, isNew: false })}
+                onAct={act}
+              />
+            ))}
+            <div className="aya-modal-actions">
+              <button
+                className="aya-modal-btn"
+                onClick={() => setEditing({ team: { ...TWO_ROLE_TEMPLATE, name: "" }, isNew: true })}
+              >
+                New team
+              </button>
+              <button className="aya-modal-btn aya-modal-btn--primary" onClick={onClose}>
+                Close
+              </button>
+            </div>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function TeamCard({
+  team,
+  project,
+  onEdit,
+  onAct,
+}: {
+  team: TeamSummary;
+  project: ProjectConfig;
+  onEdit: (definition: TeamDefinition) => void;
+  onAct: (work: () => Promise<unknown>) => Promise<void>;
+}) {
+  const definition = team.definition;
+  return (
+    <div className="aya-teams-card" data-testid={`team-${team.name}`}>
+      <div className="aya-teams-card-head">
+        <strong>{team.name}</strong>
+        {team.paused && <span className="aya-teams-badge">paused</span>}
+        <span className="aya-teams-spacer" />
+        {definition && (
+          <button className="aya-modal-btn" onClick={() => onEdit(definition)}>
+            Edit
+          </button>
+        )}
+        {definition && team.running && (
+          <button className="aya-modal-btn" onClick={() => onAct(() => window.aya.teamPause(project.slug, team.name))}>
+            Pause
+          </button>
+        )}
+        {definition && !team.running && (
+          <button
+            className="aya-modal-btn aya-modal-btn--primary"
+            onClick={() => onAct(() => window.aya.teamStart(project.slug, team.name))}
+          >
+            Start
+          </button>
+        )}
+      </div>
+      {team.error && <div className="aya-teams-error">{team.error}</div>}
+      {team.repoChanged && (
+        <div className="aya-teams-warning">
+          The repo file changed since this team was saved. Aya keeps running the saved version.
+          {team.repoDefinition && (
+            <button
+              className="aya-modal-btn"
+              onClick={() => onAct(() => window.aya.teamSave(project.slug, team.repoDefinition as TeamDefinition))}
+            >
+              Use the repo version
+            </button>
+          )}
+        </div>
+      )}
+      {definition && (
+        <table className="aya-teams-roles">
+          <tbody>
+            {definition.roles.map((role) => (
+              <tr key={role.id}>
+                <td>
+                  <strong>{role.id}</strong>
+                  <div className="aya-teams-muted">must not {role.mustNot}</div>
+                </td>
+                <td className="aya-teams-muted">{role.sendsTo.length ? `sends to ${role.sendsTo.join(", ")}` : ""}</td>
+                <td>
+                  <select
+                    aria-label={`Pane for ${role.id}`}
+                    value={team.assignments[role.id] ?? ""}
+                    onChange={(e) =>
+                      onAct(() =>
+                        window.aya.teamAssign(project.slug, team.name, role.id, e.target.value || null),
+                      )
+                    }
+                  >
+                    <option value="">No pane</option>
+                    {project.tabs.map((tab) => (
+                      <option key={tab.id} value={tab.id}>
+                        {tab.name}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {team.log.length > 0 && (
+        <div className="aya-teams-log" aria-label={`${team.name} messages`}>
+          {team.log
+            .slice(-8)
+            .reverse()
+            .map((m) => (
+              <div key={m.id} className="aya-teams-log-row">
+                <span className="aya-teams-muted">
+                  {new Date(m.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {m.from} →{" "}
+                  {m.to}
+                  {m.commit ? ` · ${m.commit}` : ""} · {m.delivered ? "written" : "waiting in inbox"}
+                </span>
+                <span>{m.text}</span>
+              </div>
+            ))}
+          <div className="aya-teams-muted">"written" means it reached the pane, not that it was read.</div>
+        </div>
+      )}
+      {definition && Object.keys(team.assignments).length === 0 && (
+        <div className="aya-modal-hint">Give each role a pane, then Start.</div>
+      )}
+    </div>
+  );
+}
+
+function TeamEditor({
+  initial,
+  isNew,
+  onSave,
+  onCancel,
+}: {
+  initial: TeamDefinition;
+  isNew: boolean;
+  onSave: (team: TeamDefinition) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [team, setTeam] = useState<TeamDefinition>(initial);
+  const [error, setError] = useState<string | null>(null);
+  const setRole = (index: number, patch: Partial<TeamRole>) =>
+    setTeam((t) => ({ ...t, roles: t.roles.map((r, i) => (i === index ? { ...r, ...patch } : r)) }));
+
+  return (
+    <div className="aya-teams-editor">
+      <div className="aya-modal-title">{isNew ? "Define team" : `Edit ${initial.name}`}</div>
+      <label className="aya-teams-field">
+        <span>Team name</span>
+        <input
+          className="aya-modal-input"
+          aria-label="Team name"
+          value={team.name}
+          disabled={!isNew}
+          placeholder="ux-review"
+          onChange={(e) => setTeam({ ...team, name: e.target.value })}
+        />
+      </label>
+      {team.roles.map((role, index) => (
+        <div className="aya-teams-role" key={index}>
+          <div className="aya-teams-role-head">
+            <span className="aya-teams-muted">Role</span>
+            <input
+              className="aya-modal-input"
+              aria-label={`Role ${index + 1} name`}
+              placeholder="role"
+              value={role.id}
+              onChange={(e) => setRole(index, { id: e.target.value })}
+            />
+            <button
+              className="aya-modal-btn"
+              aria-label={`Remove role ${index + 1}`}
+              onClick={() => setTeam({ ...team, roles: team.roles.filter((_, i) => i !== index) })}
+            >
+              Remove
+            </button>
+          </div>
+          <span className="aya-teams-muted">Responsibilities</span>
+          <textarea
+            className="aya-modal-input"
+            aria-label={`Role ${index + 1} responsibilities`}
+            placeholder="Responsibilities"
+            value={role.responsibilities}
+            onChange={(e) => setRole(index, { responsibilities: e.target.value })}
+          />
+          <span className="aya-teams-muted">Must not</span>
+          <input
+            className="aya-modal-input"
+            aria-label={`Role ${index + 1} must not`}
+            placeholder="Must not (required)"
+            value={role.mustNot}
+            onChange={(e) => setRole(index, { mustNot: e.target.value })}
+          />
+          <div className="aya-teams-sends">
+            <span className="aya-teams-muted">Sends to</span>
+            {team.roles
+              .filter((other, i) => i !== index && other.id)
+              .map((other) => (
+                <label key={other.id}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Role ${index + 1} sends to ${other.id}`}
+                    checked={role.sendsTo.includes(other.id)}
+                    onChange={(e) =>
+                      setRole(index, {
+                        sendsTo: e.target.checked
+                          ? [...role.sendsTo, other.id]
+                          : role.sendsTo.filter((id) => id !== other.id),
+                      })
+                    }
+                  />
+                  {other.id}
+                </label>
+              ))}
+          </div>
+        </div>
+      ))}
+      <button className="aya-modal-btn" onClick={() => setTeam({ ...team, roles: [...team.roles, { ...EMPTY_ROLE }] })}>
+        Add role
+      </button>
+      <label className="aya-teams-field">
+        <span>Rounds</span>
+        <select
+          aria-label="Round role"
+          value={team.cadence?.role ?? ""}
+          onChange={(e) =>
+            setTeam({
+              ...team,
+              cadence: e.target.value ? { role: e.target.value, minutes: team.cadence?.minutes ?? 30 } : null,
+            })
+          }
+        >
+          <option value="">No rounds</option>
+          {team.roles
+            .filter((r) => r.id)
+            .map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.id}
+              </option>
+            ))}
+        </select>
+        {team.cadence && (
+          <>
+            every
+            <input
+              className="aya-modal-input aya-teams-minutes"
+              type="number"
+              min={1}
+              aria-label="Round minutes"
+              value={team.cadence.minutes}
+              onChange={(e) =>
+                setTeam({ ...team, cadence: { ...(team.cadence as NonNullable<TeamDefinition["cadence"]>), minutes: Number(e.target.value) } })
+              }
+            />
+            min
+          </>
+        )}
+      </label>
+      <textarea
+        className="aya-modal-input"
+        aria-label="Protocol"
+        placeholder="Protocol: how the roles work together"
+        value={team.protocol}
+        onChange={(e) => setTeam({ ...team, protocol: e.target.value })}
+      />
+      {error && <div className="aya-teams-error">{error}</div>}
+      <div className="aya-modal-actions">
+        <button className="aya-modal-btn" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          className="aya-modal-btn aya-modal-btn--primary"
+          onClick={async () => {
+            setError(null);
+            try {
+              await onSave(team);
+            } catch (err) {
+              setError(err instanceof Error ? err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "") : String(err));
+            }
+          }}
+        >
+          Save team
+        </button>
+      </div>
+    </div>
+  );
+}

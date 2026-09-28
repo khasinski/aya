@@ -22,6 +22,14 @@ async function readText(file: string): Promise<string | null> {
   }
 }
 
+function repoParsed(name: string, repo: string | null): TeamDefinition | null {
+  try {
+    return repo === null ? null : parseTeamFile(name, repo);
+  } catch {
+    return null;
+  }
+}
+
 export async function listTeams(teamHome: string, project: ProjectConfig): Promise<TeamSummary[]> {
   let files: string[] = [];
   try {
@@ -47,7 +55,9 @@ export async function listTeams(teamHome: string, project: ProjectConfig): Promi
         definition,
         error,
         repoChanged: saved !== null && repo !== saved,
+        repoDefinition: repoParsed(name, repo),
         paused: await store.paused(),
+        running: await store.running(),
         assignments: await store.assignmentsSnapshot(),
         log: (await store.log()).slice(-LOG_TAIL),
       };

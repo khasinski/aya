@@ -15,6 +15,7 @@ import {
   mergeProjectsFromDisk,
 } from "./project-reload";
 import { AttentionCenter } from "./components/AttentionCenter";
+import { TeamsModal } from "./components/TeamsModal";
 import { StatusRail } from "./components/StatusRail";
 import { EmptyState } from "./components/EmptyState";
 import { MissingDirModal } from "./components/MissingDirModal";
@@ -810,6 +811,7 @@ export function App() {
     string | null
   >(null);
   const [showAttentionCenter, setShowAttentionCenter] = useState(false);
+  const [showTeams, setShowTeams] = useState(false);
   const [pendingRepoImport, setPendingRepoImport] =
     useState<PendingRepoImport | null>(null);
   const [findInPaneFor, setFindInPaneFor] = useState<string | null>(null);
@@ -3645,6 +3647,7 @@ export function App() {
     showSettings ||
     showSearch ||
     showAttentionCenter ||
+    showTeams ||
     !!pendingRepoImport;
   const closeFindPane = useCallback(() => setFindInPaneFor(null), []);
   const ignoreSnippetsOpenChange = useCallback(() => undefined, []);
@@ -4087,6 +4090,7 @@ export function App() {
         snippetsDisabled={!activeTerminal}
         onToggleSnippets={toggleSnippetsDrawer}
         onOpenAttentionCenter={openAttentionCenter}
+        onOpenTeams={() => setShowTeams(true)}
         onOpenProjectDirectory={openProjectDirectory}
       />
       {currentMissingDir && (
@@ -4148,6 +4152,9 @@ export function App() {
           }}
           onClose={() => setShowSearch(false)}
         />
+      )}
+      {showTeams && activeProject && (
+        <TeamsModal project={activeProject} onClose={() => setShowTeams(false)} />
       )}
       {showAttentionCenter && (
         <AttentionCenter
