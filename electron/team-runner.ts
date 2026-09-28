@@ -63,7 +63,7 @@ export class TeamRunner {
     await store.setPaused(false);
     const result: TeamStartResult = { delivered: [], held: [] };
     for (const role of team.roles) {
-      const peer = role.sendsTo[0];
+      const peer = role.sendsTo[0]?.to;
       const reply = peer ? `, then send one word to ${peer} with: aya team send ${peer} "ok"` : "";
       const held = await this.fromAya(project, store, team, role.id, `Delivery test: run aya team whoami${reply}.`);
       if (held) result.held.push({ role: role.id, reason: held });

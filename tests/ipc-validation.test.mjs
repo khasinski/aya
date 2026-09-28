@@ -434,7 +434,7 @@ test("a session id that could alter a command line is rejected at the boundary",
 test("validateTeamDefinition keeps a well-formed team and refuses wrong shapes", () => {
   const team = {
     name: "ux-review",
-    roles: [{ id: "tester", sendsTo: ["implementer"], mustNot: "edit code", responsibilities: "" }],
+    roles: [{ id: "tester", sendsTo: [{ to: "implementer", what: "" }], mustNot: "edit code", responsibilities: "" }],
     cadence: { role: "tester", minutes: 30 },
     protocol: "",
     extra: "dropped",
@@ -444,5 +444,7 @@ test("validateTeamDefinition keeps a well-formed team and refuses wrong shapes",
   assert.equal(validateTeamDefinition({ ...team, cadence: null }).cadence, null);
   assert.throws(() => validateTeamDefinition({ ...team, roles: "x" }), /teams:save\.team\.roles/);
   assert.throws(() => validateTeamDefinition({ ...team, roles: [{ ...team.roles[0], sendsTo: "implementer" }] }), /sendsTo/);
+  assert.throws(() => validateTeamDefinition({ ...team, roles: [{ ...team.roles[0], sendsTo: ["implementer"] }] }), /sendsTo\[0\]/);
+  assert.throws(() => validateTeamDefinition({ ...team, roles: [{ ...team.roles[0], sendsTo: [{ to: "implementer", what: 5 }] }] }), /sendsTo\[0\]\.what/);
   assert.throws(() => validateTeamDefinition({ ...team, cadence: { role: "tester", minutes: "30" } }), /minutes/);
 });

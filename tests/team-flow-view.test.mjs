@@ -1,23 +1,14 @@
-// The flow graph drawn from the Sends to checkboxes, before any model runs.
+// The flow graph drawn from the Sends to boxes and their whats; no model.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { flowEdges, flowKey, flowLayout } from "../dist-test/team-flow.js";
+import { flowEdges, flowGaps, flowLayout } from "../dist-test/team-flow.js";
 
-const role = (id, sendsTo, responsibilities = "") => ({ id, sendsTo, responsibilities, mustNot: "x" });
+const role = (id, sends) => ({ id, sendsTo: sends.map(([to, what = ""]) => ({ to, what })), responsibilities: "", mustNot: "x" });
 
-test("edges follow the checkboxes: named roles only, no self, once each", () => {
-  const roles = [role("a", ["b", "a", "b", "gone"]), role("b", []), role("", ["a"])];
-  assert.deepEqual(flowEdges(roles), [{ from: "a", to: "b" }]);
-});
-
-test("the key changes with text or ticks, not with the name or the cadence", () => {
-  const team = { name: "t", roles: [role("a", ["b"]), role("b", [])], cadence: null, protocol: "p" };
-  const key = flowKey(team);
-  assert.equal(flowKey({ ...team, name: "other", cadence: { role: "a", minutes: 5 } }), key);
-  assert.notEqual(flowKey({ ...team, protocol: "q" }), key);
-  assert.notEqual(flowKey({ ...team, roles: [role("a", []), role("b", [])] }), key);
-  assert.notEqual(flowKey({ ...team, roles: [role("a", ["b"], "new text"), role("b", [])] }), key);
+test("edges follow the boxes with their whats: named roles only, no self, once each", () => {
+  const roles = [role("a", [["b", " findings "], ["a"], ["b", "again"], ["gone"]]), role("b", []), role("", [["a"]])];
+  assert.deepEqual(flowEdges(roles), [{ from: "a", to: "b", what: "findings" }]);
 });
 
 test("nodes sit apart inside the box", () => {
@@ -29,10 +20,13 @@ test("nodes sit apart inside the box", () => {
     for (let j = i + 1; j < points.length; j++) assert.ok(Math.hypot(points[i].x - points[j].x, points[i].y - points[j].y) > 60);
 });
 
-test("gaps: a role nobody sends to, and a role that sends to nobody", async () => {
-  const { flowGaps } = await import("../dist-test/team-flow.js");
+test("gaps: nobody sends to a role, a role sends to nobody, a route says nothing", () => {
   // team1 as saved by hand: the implementer never hears from anyone.
-  const roles = [role("reviewer", ["tester"]), role("implementer", ["reviewer"]), role("tester", ["reviewer"]), role("", ["x"])];
-  assert.deepEqual(flowGaps(roles), { unreached: ["implementer"], silent: [] });
-  assert.deepEqual(flowGaps([role("a", ["b"]), role("b", ["ghost", "b"])]), { unreached: ["a"], silent: ["b"] });
+  const team1 = [role("reviewer", [["tester", "fixes"]]), role("implementer", [["reviewer", "changes"]]), role("tester", [["reviewer"]]), role("", [["x"]])];
+  assert.deepEqual(flowGaps(team1), {
+    unreached: ["implementer"],
+    silent: [],
+    unsaid: [{ from: "tester", to: "reviewer", what: "" }],
+  });
+  assert.deepEqual(flowGaps([role("a", [["b", "x"]]), role("b", [["ghost", "y"], ["b", "z"]])]), { unreached: ["a"], silent: ["b"], unsaid: [] });
 });

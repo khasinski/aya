@@ -110,7 +110,6 @@ export function createWebAya(transport: WebTransport): AyaApi {
     teamAssign: inv("teams:assign"),
     teamReleasePane: inv("teams:release-pane"),
     teamDraftRole: inv("teams:draft-role"),
-    teamPreviewFlow: inv("teams:preview-flow"),
     usageHookStatus: inv("usage-hook:status"),
     installUsageHook: inv("usage-hook:install"),
     uninstallUsageHook: inv("usage-hook:uninstall"),

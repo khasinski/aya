@@ -76,7 +76,6 @@ import { appleChat, type ChatOptions, type ChatResult, OLLAMA_BASE_URL, ollamaCh
 import { TeamRunner } from "./team-runner";
 import { assignRole, listTeams, releasePaneEverywhere, saveTeam } from "./team-admin";
 import { draftRole, ROLE_DRAFT_CHAT, type RolePeer } from "./team-draft";
-import { FLOW_PREVIEW_CHAT, previewFlow } from "./team-flow";
 import { startRemoteServer } from "./remote-server";
 import {
   createRemoteDirectory,
@@ -2299,9 +2298,6 @@ function registerIpc(): void {
       requireStringArray(sendsTo, "teams:draft-role.sendsTo"),
       requireRolePeers(peers),
     ),
-  );
-  ipcMain.handle("teams:preview-flow", async (_e, team: unknown, config: unknown) =>
-    previewFlow(validateTeamDefinition(team), intelligenceChat(config, FLOW_PREVIEW_CHAT)),
   );
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
     const request = validateSpawnRequest(req);

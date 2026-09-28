@@ -1,29 +1,21 @@
-// The team's message routes as the Sends to checkboxes define them, and where
-// to draw each role; no model involved.
+// The team's message routes as the Sends to boxes define them, where to draw
+// each role, and what is missing; no model involved.
 
-import type { TeamDefinition, TeamRole } from "./types";
+import type { TeamRole } from "./types";
 
-export type FlowEdge = { from: string; to: string };
+export type FlowEdge = { from: string; to: string; what: string };
 
 export function flowEdges(roles: TeamRole[]): FlowEdge[] {
   const ids = new Set(roles.map((r) => r.id).filter(Boolean));
-  const seen = new Set<string>();
   const edges: FlowEdge[] = [];
   for (const role of roles) {
     if (!role.id) continue;
-    for (const to of role.sendsTo) {
-      const key = `${role.id}>${to}`;
-      if (to === role.id || !ids.has(to) || seen.has(key)) continue;
-      seen.add(key);
-      edges.push({ from: role.id, to });
+    for (const { to, what } of role.sendsTo) {
+      if (to === role.id || !ids.has(to) || edges.some((e) => e.from === role.id && e.to === to)) continue;
+      edges.push({ from: role.id, to, what: what.trim() });
     }
   }
   return edges;
-}
-
-/** What the explanation was read from; it goes stale when this changes. */
-export function flowKey(team: TeamDefinition): string {
-  return JSON.stringify([team.roles.map((r) => [r.id, r.sendsTo, r.responsibilities, r.mustNot]), team.protocol]);
 }
 
 /** Roles on an ellipse, the first at the top, clockwise. */
@@ -36,12 +28,13 @@ export function flowLayout(ids: string[], width: number, height: number): Record
   return at;
 }
 
-/** Roles no route reaches, and roles with no route out; drawn from the boxes. */
-export function flowGaps(roles: TeamRole[]): { unreached: string[]; silent: string[] } {
+/** Roles no route reaches, roles with no route out, and routes without a what. */
+export function flowGaps(roles: TeamRole[]): { unreached: string[]; silent: string[]; unsaid: FlowEdge[] } {
   const edges = flowEdges(roles);
   const ids = roles.map((r) => r.id).filter(Boolean);
   return {
     unreached: ids.filter((id) => !edges.some((e) => e.to === id)),
     silent: ids.filter((id) => !edges.some((e) => e.from === id)),
+    unsaid: edges.filter((e) => !e.what),
   };
 }

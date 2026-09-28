@@ -32,14 +32,14 @@ test("parses roles, send-to, must-not, cadence and protocol", () => {
     roles: [
       {
         id: "tester",
-        sendsTo: ["implementer"],
+        sendsTo: [{ to: "implementer", what: "" }],
         mustNot: "edit code",
         responsibilities:
           "Plays the build in the browser each round.\nReports findings as hypotheses with a measurement request.",
       },
       {
         id: "implementer",
-        sendsTo: ["tester"],
+        sendsTo: [{ to: "tester", what: "" }],
         mustNot: "skip a report",
         responsibilities: "Fixes findings and names the commit to test.",
       },
@@ -75,3 +75,35 @@ bad("cadence that is not N min", UX_REVIEW.replace("tester every 30 min", "teste
 bad("cadence of zero", UX_REVIEW.replace("every 30 min", "every 0 min"));
 bad("a file name that is not a slug", UX_REVIEW, "UX Review!");
 bad("an unknown section", `${UX_REVIEW}\n## Budget\n10 dollars\n`);
+
+test("a route carries what is sent in parentheses; the old bare form still parses", () => {
+  const text = `# trio
+
+## Role: reviewer
+Sends to: implementer (findings to fix, with proof), tester
+Must not: edit code
+
+## Role: implementer
+Sends to: reviewer (the commit to check)
+Must not: merge unreviewed
+
+## Role: tester
+Must not: fix bugs itself
+`;
+  const team = parseTeamFile("trio", text);
+  assert.deepEqual(team.roles[0].sendsTo, [
+    { to: "implementer", what: "findings to fix, with proof" },
+    { to: "tester", what: "" },
+  ]);
+  assert.deepEqual(team.roles[1].sendsTo, [{ to: "reviewer", what: "the commit to check" }]);
+  assert.match(serializeTeam(team), /Sends to: implementer \(findings to fix, with proof\), tester\n/);
+  assert.deepEqual(parseTeamFile("trio", serializeTeam(team)), team);
+});
+
+test("a what with parentheses, or a route listed twice, is refused", () => {
+  const base = (sends) => `# t\n\n## Role: a\nSends to: ${sends}\nMust not: x\n\n## Role: b\nMust not: y\n`;
+  assert.throws(() => parseTeamFile("t", base("b (notes (draft))")), /parenthes/);
+  assert.throws(() => parseTeamFile("t", base("b (x")), /parenthes/);
+  assert.throws(() => parseTeamFile("t", base("b (x), b (y)")), /twice/);
+  assert.deepEqual(parseTeamFile("t", base("b (x), ")).roles[0].sendsTo, [{ to: "b", what: "x" }]);
+});

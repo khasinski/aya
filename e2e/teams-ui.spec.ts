@@ -36,7 +36,7 @@ async function defineFromTemplate(window: Page, name: string) {
 test("New team from the template writes the repo file", async ({ window, seeded }) => {
   await defineFromTemplate(window, "ux-review");
   const file = join(seeded.projectDir, ".aya", "teams", "ux-review.md");
-  expect(readFileSync(file, "utf8")).toMatch(/## Role: reviewer\nSends to: implementer\nMust not: edit code/);
+  expect(readFileSync(file, "utf8")).toMatch(/## Role: reviewer\nSends to: implementer \(findings with the screen state as proof\)\nMust not: edit code/);
 });
 
 test("a role without must-not is refused with the reason, and nothing is written", async ({ window, seeded }) => {
@@ -55,11 +55,11 @@ test("assign panes, Start sends the delivery test, Pause marks the team", async 
   await card.getByLabel("Pane for reviewer").selectOption({ label: "shell 1" });
   await card.getByLabel("Pane for implementer").selectOption({ label: "shell 2" });
   await expect(card.getByRole("button", { name: "Pause", exact: true })).toHaveCount(0);
+  const file = (pane: string) => join(seeded.projectDir, `team-${pane}.log`);
+  const log = (pane: string) => (existsSync(file(pane)) ? readFileSync(file(pane), "utf8") : "");
+  // Each agent creates its log on start; Start before that types into a bare shell.
+  await expect.poll(() => existsSync(file("tab-left")) && existsSync(file("tab-right")), { timeout: 30_000 }).toBe(true);
   await card.getByRole("button", { name: "Start", exact: true }).click();
-  const log = (pane: string) => {
-    const file = join(seeded.projectDir, `team-${pane}.log`);
-    return existsSync(file) ? readFileSync(file, "utf8") : "";
-  };
   await expect.poll(() => log("tab-left"), { timeout: 15_000 }).toMatch(/Delivery test/);
   await expect(card.getByLabel("ux-review messages")).toContainText("aya → implementer", { timeout: 10_000 });
   await card.getByRole("button", { name: "Pause", exact: true }).click();

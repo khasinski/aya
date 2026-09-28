@@ -1,11 +1,11 @@
 // A team, as defined in the repo at .aya/teams/<name>.md. Plain markdown
 // sections instead of YAML, so people and agents can read and edit it.
 
-import type { TeamCadence, TeamDefinition, TeamRole } from "./types";
+import type { SendRoute, TeamCadence, TeamDefinition, TeamRole } from "./types";
 
-export type { TeamCadence, TeamDefinition, TeamRole };
+export type { SendRoute, TeamCadence, TeamDefinition, TeamRole };
 
-const ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+export const ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const MAX_CADENCE_MINUTES = 24 * 60;
 
 export class TeamFileError extends Error {
@@ -14,17 +14,34 @@ export class TeamFileError extends Error {
   }
 }
 
+/** "implementer (findings to fix), tester": commas inside parentheses are the what's. */
+function parseSends(team: string, id: string, text: string): SendRoute[] {
+  const routes: SendRoute[] = [];
+  const re = /\s*([^,(]+?)\s*(?:\(([^()]*)\))?\s*(?:,|$)/y;
+  const list = text.trim().replace(/,\s*$/, "");
+  let at = 0;
+  while (at < list.length) {
+    re.lastIndex = at;
+    const m = re.exec(list);
+    if (!m) throw new TeamFileError(team, `role "${id}": unbalanced parentheses in "Sends to:"`);
+    at = re.lastIndex;
+    if (routes.some((r) => r.to === m[1])) throw new TeamFileError(team, `role "${id}" lists "${m[1]}" twice in "Sends to:"`);
+    routes.push({ to: m[1], what: (m[2] ?? "").trim() });
+  }
+  return routes;
+}
+
 function parseRole(team: string, id: string, body: string): TeamRole {
   if (!ID_RE.test(id)) {
     throw new TeamFileError(team, `role "${id}" must be lowercase letters, digits and dashes`);
   }
-  let sendsTo: string[] = [];
+  let sendsTo: SendRoute[] = [];
   let mustNot = "";
   const rest: string[] = [];
   for (const line of body.split("\n")) {
     const field = line.match(/^(Sends to|Must not):\s*(.*)$/);
     if (!field) rest.push(line);
-    else if (field[1] === "Sends to") sendsTo = field[2].split(",").map((s) => s.trim()).filter(Boolean);
+    else if (field[1] === "Sends to") sendsTo = parseSends(team, id, field[2]);
     else mustNot = field[2].trim();
   }
   if (!mustNot) throw new TeamFileError(team, `role "${id}" needs a "Must not:" line`);
@@ -64,7 +81,7 @@ export function parseTeamFile(name: string, text: string): TeamDefinition {
   const duplicate = ids.find((id, i) => ids.indexOf(id) !== i);
   if (duplicate) throw new TeamFileError(name, `role "${duplicate}" is defined twice`);
   for (const role of roles) {
-    for (const to of role.sendsTo) {
+    for (const { to } of role.sendsTo) {
       if (to === role.id) throw new TeamFileError(name, `role "${role.id}" sends to itself`);
       if (!ids.includes(to)) throw new TeamFileError(name, `role "${role.id}" sends to unknown role "${to}"`);
     }
@@ -79,7 +96,9 @@ export function serializeTeam(team: TeamDefinition): string {
   const parts = [`# ${team.name}`];
   for (const role of team.roles) {
     const lines = [`## Role: ${role.id}`];
-    if (role.sendsTo.length) lines.push(`Sends to: ${role.sendsTo.join(", ")}`);
+    if (role.sendsTo.length) {
+      lines.push(`Sends to: ${role.sendsTo.map((r) => (r.what ? `${r.to} (${r.what})` : r.to)).join(", ")}`);
+    }
     lines.push(`Must not: ${role.mustNot}`);
     if (role.responsibilities) lines.push(role.responsibilities);
     parts.push(lines.join("\n"));

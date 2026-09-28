@@ -128,7 +128,7 @@ test.describe("with Apple Intelligence", () => {
       await dialog.getByRole("button", { name: "Save team" }).click();
       await expect(dialog.getByTestId("team-design-review")).toBeVisible();
       const saved = readFileSync(join(seeded.projectDir, ".aya", "teams", "design-review.md"), "utf8");
-      expect(saved).toMatch(/## Role: senior-ux-game-designer\nSends to: implementer\nMust not: edit code\nReviews each screen/);
+      expect(saved).toMatch(/## Role: senior-ux-game-designer\nSends to: implementer \(findings with the screen state as proof\)\nMust not: edit code\nReviews each screen/);
     });
   }
 });

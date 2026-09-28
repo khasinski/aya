@@ -771,8 +771,6 @@ export interface AyaApi {
     peers: Pick<TeamRole, "id" | "responsibilities" | "mustNot">[],
     intelligence: AyaIntelligenceConfig,
   ): Promise<RoleDraft>;
-  /** Explains what the team's text sends along each ticked route. */
-  teamPreviewFlow(team: TeamDefinition, intelligence: AyaIntelligenceConfig): Promise<FlowPreview>;
   teamResume(projectSlug: string, team: string): Promise<void>;
 
   usageHookStatus(): Promise<UsageHookStatus>;
@@ -1003,9 +1001,15 @@ export interface TeamStartResult {
 }
 
 /** A team from .aya/teams/<name>.md (see electron/teams.ts). */
+/** A role this one sends to, and what it sends there (may be empty). */
+export interface SendRoute {
+  to: string;
+  what: string;
+}
+
 export interface TeamRole {
   id: string;
-  sendsTo: string[];
+  sendsTo: SendRoute[];
   mustNot: string;
   responsibilities: string;
 }
@@ -1052,24 +1056,9 @@ export interface TeamSummary {
   log: TeamMessage[];
 }
 
-/** One message route and what the team's text says travels along it. */
-export interface FlowRoute {
-  from: string;
-  to: string;
-  /** null: the text does not say. */
-  carries: string | null;
-}
-
-/** Aya Intelligence's reading of a team: every ticked route, and routes the
- *  text describes that are not ticked. */
-export interface FlowPreview {
-  routes: FlowRoute[];
-  unlisted: FlowRoute[];
-}
-
 /** A role drafted by Aya Intelligence from its name, for the user to edit. */
 export interface RoleDraft {
   responsibilities: string;
   mustNot: string;
-  sendsTo: string[];
+  sendsTo: SendRoute[];
 }

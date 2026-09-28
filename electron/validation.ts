@@ -351,7 +351,15 @@ export function validateTeamDefinition(value: unknown): TeamDefinition {
       const role = requireRecord(raw, `teams:save.team.roles[${i}]`);
       return {
         id: requireString(role.id, `teams:save.team.roles[${i}].id`),
-        sendsTo: requireStringArray(role.sendsTo, `teams:save.team.roles[${i}].sendsTo`),
+        sendsTo: (Array.isArray(role.sendsTo) ? role.sendsTo : fail(`teams:save.team.roles[${i}].sendsTo`, "array")).map(
+          (raw, j) => {
+            const route = requireRecord(raw, `teams:save.team.roles[${i}].sendsTo[${j}]`);
+            return {
+              to: requireString(route.to, `teams:save.team.roles[${i}].sendsTo[${j}].to`),
+              what: requireString(route.what, `teams:save.team.roles[${i}].sendsTo[${j}].what`),
+            };
+          },
+        ),
         mustNot: requireString(role.mustNot, `teams:save.team.roles[${i}].mustNot`),
         responsibilities: requireString(role.responsibilities, `teams:save.team.roles[${i}].responsibilities`),
       };

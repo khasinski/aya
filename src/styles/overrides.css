@@ -2881,14 +2881,23 @@ select.aya-modal-input {
   margin: 8px 0;
 }
 .aya-teams-sends {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
+  display: grid;
+  gap: 4px;
   font-size: 12px;
 }
 .aya-teams-minutes {
   width: 64px;
+}
+.aya-teams-send {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.aya-teams-send label {
+  min-width: 120px;
+}
+.aya-teams-send .aya-modal-input {
+  flex: 1;
 }
 .aya-teams-flow {
   display: grid;
@@ -2907,15 +2916,11 @@ select.aya-modal-input {
   stroke: var(--fg-secondary);
   stroke-width: 1.4;
 }
-.aya-flow-edge--unlisted {
-  stroke: var(--danger, #c0392b);
+.aya-flow-edge--unsaid {
   stroke-dasharray: 4 3;
 }
 .aya-flow-head {
   fill: var(--fg-secondary);
-}
-.aya-flow-head--unlisted {
-  fill: var(--danger, #c0392b);
 }
 .aya-flow-node {
   fill: var(--bg-tertiary);

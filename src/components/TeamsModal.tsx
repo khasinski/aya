@@ -13,14 +13,14 @@ const TWO_ROLE_TEMPLATE: TeamDefinition = {
   roles: [
     {
       id: "reviewer",
-      sendsTo: ["implementer"],
+      sendsTo: [{ to: "implementer", what: "findings with the screen state as proof" }],
       mustNot: "edit code",
       responsibilities:
         "Checks the running app each round and reports what a user would get wrong, with the screen state as proof.",
     },
     {
       id: "implementer",
-      sendsTo: ["reviewer"],
+      sendsTo: [{ to: "reviewer", what: "answers and the commit to check" }],
       mustNot: "leave a report unanswered",
       responsibilities: "Fixes findings, answers every report, and names the commit to check.",
     },
@@ -41,7 +41,9 @@ function renameRole(team: TeamDefinition, index: number, id: string): TeamDefini
   const swap = (r: string) => (old && r === old ? id : r);
   return {
     ...team,
-    roles: team.roles.map((r, i) => (i === index ? { ...r, id } : { ...r, sendsTo: r.sendsTo.map(swap) })),
+    roles: team.roles.map((r, i) =>
+      i === index ? { ...r, id } : { ...r, sendsTo: r.sendsTo.map((s) => ({ ...s, to: swap(s.to) })) },
+    ),
     cadence: team.cadence && { ...team.cadence, role: swap(team.cadence.role) },
   };
 }
@@ -203,7 +205,7 @@ function TeamCard({
                   <strong>{role.id}</strong>
                   <div className="aya-teams-muted">must not {role.mustNot}</div>
                 </td>
-                <td className="aya-teams-muted">{role.sendsTo.length ? `sends to ${role.sendsTo.join(", ")}` : ""}</td>
+                <td className="aya-teams-muted">{role.sendsTo.length ? `sends to ${role.sendsTo.map((r) => r.to).join(", ")}` : ""}</td>
                 <td>
                   <select
                     aria-label={`Pane for ${role.id}`}
@@ -309,11 +311,16 @@ function TeamEditor({
                   const draft = await window.aya.teamDraftRole(
                     role.id.replace(/-/g, " "),
                     team.roles.map((r) => r.id.trim()).filter(Boolean),
-                    role.sendsTo,
+                    role.sendsTo.map((r) => r.to),
                     team.roles.map(({ id, responsibilities, mustNot }) => ({ id, responsibilities, mustNot })),
                     intelligence,
                   );
-                  setRole(index, draft);
+                  // The draft picks the routes; a what typed for a route it keeps stays.
+                  const typed = new Map(role.sendsTo.map((r) => [r.to, r.what]));
+                  setRole(index, {
+                    ...draft,
+                    sendsTo: draft.sendsTo.map((r) => ({ to: r.to, what: r.what || typed.get(r.to) || "" })),
+                  });
                 } catch (err) {
                   setDraftError({ index, message: ipcMessage(err) });
                 } finally {
@@ -352,23 +359,43 @@ function TeamEditor({
             <span className="aya-teams-muted">Sends to</span>
             {team.roles
               .filter((other, i) => i !== index && other.id)
-              .map((other) => (
-                <label key={other.id}>
-                  <input
-                    type="checkbox"
-                    aria-label={`Role ${index + 1} sends to ${other.id}`}
-                    checked={role.sendsTo.includes(other.id)}
-                    onChange={(e) =>
-                      setRole(index, {
-                        sendsTo: e.target.checked
-                          ? [...role.sendsTo, other.id]
-                          : role.sendsTo.filter((id) => id !== other.id),
-                      })
-                    }
-                  />
-                  {other.id}
-                </label>
-              ))}
+              .map((other) => {
+                const route = role.sendsTo.find((r) => r.to === other.id);
+                return (
+                  <div className="aya-teams-send" key={other.id}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        aria-label={`Role ${index + 1} sends to ${other.id}`}
+                        checked={Boolean(route)}
+                        onChange={(e) =>
+                          setRole(index, {
+                            sendsTo: e.target.checked
+                              ? [...role.sendsTo, { to: other.id, what: "" }]
+                              : role.sendsTo.filter((r) => r.to !== other.id),
+                          })
+                        }
+                      />
+                      {other.id}
+                    </label>
+                    {route && (
+                      <input
+                        className="aya-modal-input"
+                        aria-label={`What goes from role ${index + 1} to ${other.id}`}
+                        placeholder="what it sends"
+                        value={route.what}
+                        onChange={(e) =>
+                          setRole(index, {
+                            sendsTo: role.sendsTo.map((r) =>
+                              r.to === other.id ? { ...r, what: e.target.value.replace(/[()\n]/g, "") } : r,
+                            ),
+                          })
+                        }
+                      />
+                    )}
+                  </div>
+                );
+              })}
           </div>
         </div>
       ))}
@@ -420,7 +447,7 @@ function TeamEditor({
         value={team.protocol}
         onChange={(e) => setTeam({ ...team, protocol: e.target.value })}
       />
-      <TeamFlow team={team} intelligence={intelligence} />
+      <TeamFlow team={team} />
       {error && <div className="aya-teams-error">{error}</div>}
       <div className="aya-modal-actions">
         <button className="aya-modal-btn" onClick={onCancel}>

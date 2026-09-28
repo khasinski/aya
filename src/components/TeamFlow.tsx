@@ -1,7 +1,5 @@
-import { useState } from "react";
-import { flowEdges, flowGaps, flowKey, flowLayout, type FlowEdge } from "../team-flow";
-import type { AyaIntelligenceConfig, FlowPreview, TeamDefinition } from "../types";
-import { ipcMessage } from "./ipc-message";
+import { flowEdges, flowGaps, flowLayout, type FlowEdge } from "../team-flow";
+import type { TeamDefinition } from "../types";
 
 const WIDTH = 340;
 const HEIGHT = 220;
@@ -30,32 +28,25 @@ function segment(a: { x: number; y: number }, b: { x: number; y: number }, twoWa
   };
 }
 
-function FlowGraph({ ids, edges, unlisted }: { ids: string[]; edges: FlowEdge[]; unlisted: FlowEdge[] }) {
+function FlowGraph({ ids, edges }: { ids: string[]; edges: FlowEdge[] }) {
   const at = flowLayout(ids, WIDTH, HEIGHT);
-  const has = new Set([...edges, ...unlisted].map((e) => `${e.from}>${e.to}`));
-  const line = (e: FlowEdge, dashed: boolean) => {
-    const s = segment(at[e.from], at[e.to], has.has(`${e.to}>${e.from}`), e.from, e.to);
-    return (
-      <line
-        key={`${e.from}>${e.to}`}
-        {...s}
-        className={dashed ? "aya-flow-edge aya-flow-edge--unlisted" : "aya-flow-edge"}
-        markerEnd={dashed ? "url(#aya-flow-arrow-warn)" : "url(#aya-flow-arrow)"}
-      />
-    );
-  };
+  const has = new Set(edges.map((e) => `${e.from}>${e.to}`));
   const label = edges.map((e) => `${e.from} to ${e.to}`).join(", ") || "no routes";
   return (
     <svg className="aya-flow-graph" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label={`Team flow: ${label}`}>
       <defs>
-        {["aya-flow-arrow", "aya-flow-arrow-warn"].map((id) => (
-          <marker key={id} id={id} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" className={id === "aya-flow-arrow" ? "aya-flow-head" : "aya-flow-head aya-flow-head--unlisted"} />
-          </marker>
-        ))}
+        <marker id="aya-flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" className="aya-flow-head" />
+        </marker>
       </defs>
-      {edges.map((e) => line(e, false))}
-      {unlisted.map((e) => line(e, true))}
+      {edges.map((e) => (
+        <line
+          key={`${e.from}>${e.to}`}
+          {...segment(at[e.from], at[e.to], has.has(`${e.to}>${e.from}`), e.from, e.to)}
+          className={e.what ? "aya-flow-edge" : "aya-flow-edge aya-flow-edge--unsaid"}
+          markerEnd="url(#aya-flow-arrow)"
+        />
+      ))}
       {ids.map((id) => (
         <g key={id} transform={`translate(${at[id].x}, ${at[id].y})`}>
           <rect className="aya-flow-node" x={-nodeWidth(id) / 2} y={-NODE_H / 2} width={nodeWidth(id)} height={NODE_H} rx={6} />
@@ -68,56 +59,25 @@ function FlowGraph({ ids, edges, unlisted }: { ids: string[]; edges: FlowEdge[];
   );
 }
 
-/** The routes the checkboxes allow, drawn live; ✨ adds what the text sends
- *  along each, and routes the text describes that are not ticked. */
-export function TeamFlow({ team, intelligence }: { team: TeamDefinition; intelligence: AyaIntelligenceConfig }) {
-  const [explained, setExplained] = useState<{ key: string; preview: FlowPreview } | null>(null);
-  const [running, setRunning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+/** The routes the Sends to boxes allow, drawn live with what each carries,
+ *  and what is missing. */
+export function TeamFlow({ team }: { team: TeamDefinition }) {
   const ids = team.roles.map((r) => r.id).filter(Boolean);
   const edges = flowEdges(team.roles);
-  const gaps = ids.length > 1 ? flowGaps(team.roles) : { unreached: [], silent: [] };
-  const fresh = explained && explained.key === flowKey(team) ? explained.preview : null;
-  const says = new Map(fresh?.routes.map((r) => [`${r.from}>${r.to}`, r.carries]) ?? []);
+  const gaps = ids.length > 1 ? flowGaps(team.roles) : { unreached: [], silent: [], unsaid: [] };
 
   return (
     <section className="aya-teams-flow" aria-label="Flow preview">
-      <div className="aya-teams-role-head">
-        <span className="aya-teams-muted">Flow preview</span>
-        <span className="aya-teams-spacer" />
-        <button
-          className="aya-modal-btn"
-          aria-label="Explain flow"
-          title="Ask Aya Intelligence what your text sends along each route; edit the text if it reads it wrong"
-          disabled={running || edges.length === 0}
-          onClick={async () => {
-            setError(null);
-            setRunning(true);
-            const key = flowKey(team);
-            try {
-              setExplained({ key, preview: await window.aya.teamPreviewFlow(team, intelligence) });
-            } catch (err) {
-              setError(ipcMessage(err));
-            } finally {
-              setRunning(false);
-            }
-          }}
-        >
-          {running ? "Reading… (up to a minute)" : "✨ Explain flow"}
-        </button>
-      </div>
-      {ids.length > 1 && <FlowGraph ids={ids} edges={edges} unlisted={fresh?.unlisted ?? []} />}
+      <span className="aya-teams-muted">Flow preview</span>
+      {ids.length > 1 && <FlowGraph ids={ids} edges={edges} />}
       <ul className="aya-flow-routes" aria-label="Flow routes">
         {edges.length === 0 && <li className="aya-teams-muted">No routes: tick Sends to under a role.</li>}
-        {edges.map((e) => {
-          const carries = says.get(`${e.from}>${e.to}`);
-          return (
-            <li key={`${e.from}>${e.to}`}>
-              <strong>{e.from}</strong> → <strong>{e.to}</strong>
-              {fresh && (carries ? `: ${carries}` : <span className="aya-teams-muted">: not described in the text</span>)}
-            </li>
-          );
-        })}
+        {edges.map((e) => (
+          <li key={`${e.from}>${e.to}`}>
+            <strong>{e.from}</strong> → <strong>{e.to}</strong>
+            {e.what ? `: ${e.what}` : <span className="aya-teams-muted">: what it sends is not filled in</span>}
+          </li>
+        ))}
       </ul>
       {gaps.unreached.map((id) => (
         <div key={`to-${id}`} className="aya-teams-warning">
@@ -130,13 +90,6 @@ export function TeamFlow({ team, intelligence }: { team: TeamDefinition; intelli
           {id} sends to nobody, so its work reaches no one.
         </div>
       ))}
-      {fresh?.unlisted.map((e) => (
-        <div key={`${e.from}>${e.to}`} className="aya-teams-warning">
-          The text has {e.from} → {e.to} ({e.carries}), but {e.from} does not send to {e.to}. Tick it, or change the text.
-        </div>
-      ))}
-      {explained && !fresh && <div className="aya-teams-muted">Edited since the explanation; explain again.</div>}
-      {error && <div className="aya-teams-error">{error}</div>}
     </section>
   );
 }

@@ -13,8 +13,8 @@ const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
 const TEAM = {
   name: "ux-review",
   roles: [
-    { id: "tester", sendsTo: ["implementer"], mustNot: "edit code", responsibilities: "Plays the build." },
-    { id: "implementer", sendsTo: ["tester"], mustNot: "skip a report", responsibilities: "" },
+    { id: "tester", sendsTo: [{ to: "implementer", what: "" }], mustNot: "edit code", responsibilities: "Plays the build." },
+    { id: "implementer", sendsTo: [{ to: "tester", what: "" }], mustNot: "skip a report", responsibilities: "" },
   ],
   cadence: { role: "tester", minutes: 30 },
   protocol: "One round every 30 minutes.",
@@ -166,7 +166,7 @@ test("Save team drops the pane of a role that no longer exists (a rename)", asyn
   try {
     await saveTeam(t.teamHome, t.project, TEAM);
     await assignRole(t.teamHome, t.project, "ux-review", "tester", "pane-t");
-    const renamed = { ...TEAM, roles: [{ ...TEAM.roles[0], id: "reviewer" }, { ...TEAM.roles[1], sendsTo: ["reviewer"] }], cadence: null };
+    const renamed = { ...TEAM, roles: [{ ...TEAM.roles[0], id: "reviewer" }, { ...TEAM.roles[1], sendsTo: [{ to: "reviewer", what: "" }] }], cadence: null };
     await saveTeam(t.teamHome, t.project, renamed);
     const [team] = await listTeams(t.teamHome, t.project);
     assert.deepEqual(team.assignments, {});

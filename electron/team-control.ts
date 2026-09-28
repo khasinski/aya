@@ -75,10 +75,11 @@ async function membership(callerId: string | undefined, deps: TeamControlDeps): 
 }
 
 function whoami({ team, role }: Membership): string {
+  const sends = role.sendsTo.map((r) => (r.what ? `${r.to}: ${r.what}` : r.to));
   const lines = [
     `team      ${team.name}`,
     `you       ${role.id}`,
-    `sends to  ${role.sendsTo.join(", ") || "(nobody)"}`,
+    ...(sends.length ? sends.map((line, i) => `${i ? "         " : "sends to"}  ${line}`) : ["sends to  (nobody)"]),
     `must not  ${role.mustNot}`,
   ];
   if (role.responsibilities) lines.push("", role.responsibilities);
@@ -103,8 +104,8 @@ export function teamHeader(team: string, from: string, time: string, commit: str
 
 async function send(m: Membership, to: string, text: string, deps: TeamControlDeps): Promise<string> {
   if (await m.store.paused()) throw new Error(`team ${m.team.name} is paused; nothing was sent`);
-  if (!m.role.sendsTo.includes(to)) {
-    throw new Error(`${m.role.id} does not send to ${to}; sends to: ${m.role.sendsTo.join(", ") || "nobody"}`);
+  if (!m.role.sendsTo.some((r) => r.to === to)) {
+    throw new Error(`${m.role.id} does not send to ${to}; sends to: ${m.role.sendsTo.map((r) => r.to).join(", ") || "nobody"}`);
   }
   const commit = await deps.headCommit(m.project.directory);
   const time = new Date().toISOString();

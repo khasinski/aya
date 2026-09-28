@@ -15,7 +15,7 @@ const cli = resolve("bin/aya");
 const TEAM = `# ux-review
 
 ## Role: tester
-Sends to: implementer
+Sends to: implementer (findings with proof)
 Must not: edit code
 Plays the build each round.
 
@@ -97,7 +97,7 @@ test("whoami prints the caller's role, peers, must-not and protocol", async () =
     assert.equal(status, 0);
     assert.match(stdout, /team\s+ux-review/);
     assert.match(stdout, /you\s+tester/);
-    assert.match(stdout, /sends to\s+implementer/);
+    assert.match(stdout, /sends to\s+implementer: findings with proof/);
     assert.match(stdout, /must not\s+edit code/);
     assert.match(stdout, /Plays the build each round\./);
     assert.match(stdout, /One round every 30 minutes\./);

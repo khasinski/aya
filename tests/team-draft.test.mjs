@@ -19,7 +19,7 @@ test("a good answer becomes a draft; unknown or self targets are dropped", () =>
     "designer",
     ["implementer", "tester", "designer"],
   );
-  assert.deepEqual(draft, { responsibilities: "Plays the build each round.", mustNot: "edit code", sendsTo: ["implementer"] });
+  assert.deepEqual(draft, { responsibilities: "Plays the build each round.", mustNot: "edit code", sendsTo: [{ to: "implementer", what: "" }] });
 });
 
 test("an answer without a must-not, or not JSON, is no draft", () => {
@@ -49,7 +49,7 @@ test("a spaced display name is the same role as its dashed id", () => {
   const prompt = roleDraftPrompt("ux designer", ["implementer", "ux-designer"]);
   assert.match(prompt, /other roles in the team: implementer\./);
   const draft = parseRoleDraft('{"mustNot":"x","sendsTo":["ux-designer","implementer"]}', "ux designer", ["implementer", "ux-designer"]);
-  assert.deepEqual(draft.sendsTo, ["implementer"]);
+  assert.deepEqual(draft.sendsTo, [{ to: "implementer", what: "" }]);
 });
 
 test("roles the user already ticked go into the prompt and win over the model's pick", async () => {
@@ -60,7 +60,7 @@ test("roles the user already ticked go into the prompt and win over the model's 
     sent = user;
     return '{"responsibilities":"Reviews.","mustNot":"edit code","sendsTo":["implementer"]}';
   }, ["tester", "gone"]);
-  assert.deepEqual(draft.sendsTo, ["tester"]);
+  assert.deepEqual(draft.sendsTo, [{ to: "tester", what: "" }]);
   assert.match(sent, /It sends to: tester\./);
 });
 
@@ -68,7 +68,7 @@ test("with nothing ticked, the model's pick stands", async () => {
   assert.doesNotMatch(roleDraftPrompt("reviewer", ["implementer", "reviewer"], []), /It sends to/);
   const draft = await draftRole("reviewer", ["implementer", "reviewer"], async () =>
     '{"mustNot":"edit code","sendsTo":["implementer"]}', []);
-  assert.deepEqual(draft.sendsTo, ["implementer"]);
+  assert.deepEqual(draft.sendsTo, [{ to: "implementer", what: "" }]);
 });
 
 test("the draft waits long enough for Apple's on-device model (13-44 s measured)", () => {

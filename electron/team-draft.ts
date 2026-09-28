@@ -65,7 +65,7 @@ export function parseRoleDraft(reply: string, role: string, teamRoles: string[],
   const sendsTo = [...new Set(sends.filter((r): r is string => typeof r === "string" && allowed.has(r)))];
   const responsibilities =
     typeof raw.responsibilities === "string" ? clip(raw.responsibilities, RESPONSIBILITIES_MAX) : "";
-  return { responsibilities, mustNot, sendsTo };
+  return { responsibilities, mustNot, sendsTo: sendsTo.map((to) => ({ to, what: "" })) };
 }
 
 export async function draftRole(

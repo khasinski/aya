@@ -230,7 +230,6 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     teamAssign: noopAsync,
     teamReleasePane: noopAsync,
     teamDraftRole: noopAsync,
-    teamPreviewFlow: noopAsync,
     usageHookStatus: noopAsync,
     installUsageHook: noopAsync,
     uninstallUsageHook: noopAsync,
