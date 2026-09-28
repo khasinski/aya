@@ -72,6 +72,7 @@ import {
   repoConfigIgnoredKey,
 } from "./storage-keys";
 import { GPU_RELAUNCHED_EVENT } from "./window-events";
+import { uuid } from "./uuid";
 import { normalizeSoundOverrides } from "./terminal-sound-prefs";
 import {
   MAX_SPLIT_LEAVES,
@@ -461,15 +462,6 @@ interface MissingDirEntry {
 interface PendingRepoImport {
   project: ProjectConfig;
   presets: Preset[];
-}
-
-function uuid(): string {
-  // Cryptographically secure source — CodeQL flags Math.random() ids as
-  // insecure. getRandomValues works in every context (incl. the file://
-  // production page, where crypto.randomUUID is unavailable).
-  const bytes = new Uint8Array(8);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function findProject(

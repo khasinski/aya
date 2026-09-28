@@ -41,6 +41,7 @@
     "src/spawnSession.ts",
     "src/stable-identity.ts",
     "src/types.ts",
+    "src/uuid.ts",
     "src/web/protocol.ts",
     "src/window-events.ts",
     "src/web/shortcuts.ts",

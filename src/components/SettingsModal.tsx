@@ -1,6 +1,7 @@
 import { agentBriefHint, effectiveAutoResume, inferAgent } from "../agentPreset";
 import { OLLAMA_OPENAI_BASE_URL, RECOMMENDED_OLLAMA_MODEL } from "../ollama-defaults";
 import { PRESET_ID_SHELL } from "../preset-ids";
+import { uuid } from "../uuid";
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
 import { useEffect, useState, type ReactNode } from "react";
 import {
@@ -86,14 +87,6 @@ interface Props {
    *  button confirms first. */
   onRestartPtyHost: () => Promise<void> | void;
   initialTab?: SettingsTab;
-}
-
-function uuid(): string {
-  // Secure RNG (CodeQL flags Math.random() ids); getRandomValues is available
-  // even on the file:// production page, unlike crypto.randomUUID.
-  const bytes = new Uint8Array(8);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 interface DraftPreset extends Preset {
