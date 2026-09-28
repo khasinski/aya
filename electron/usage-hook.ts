@@ -31,7 +31,7 @@ export const HOOK_SCRIPT_FILE = path.join(AYA_HOME, "aya-usage-hook.sh");
 
 // Generated-script tuning: skip a fetch if the file was written within the
 // throttle window, and bound the network call so a hung endpoint can't stall.
-const HOOK_THROTTLE_SECONDS = 300;
+export const HOOK_THROTTLE_SECONDS = 300;
 const HOOK_FETCH_TIMEOUT_SECONDS = 10;
 
 export interface UsageHookStatus {

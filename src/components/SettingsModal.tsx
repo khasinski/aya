@@ -29,6 +29,7 @@ import { localSummaryUnavailableMessage } from "../local-summary-errors";
 import type { MacOptionKeyMode } from "../terminal-option-key";
 import type { TerminalSoundCue } from "../terminal-sound-prefs";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
+import { HOOK_THROTTLE_MINUTES } from "../main-mirrors";
 
 const DEFAULT_CLAUDE_CONFIG_DIR = "~/.claude";
 const DEFAULT_CODEX_CONFIG_DIR = "~/.codex";
@@ -1030,7 +1031,7 @@ export function SettingsModal({
               <div className="aya-modal-hint" style={{ lineHeight: 1.6 }}>
                 This writes a small script and a <code>Stop</code> hook into{" "}
                 <code>~/.claude/settings.json</code>. After each Claude Code
-                response (throttled to every 5&nbsp;min) the hook queries
+                response (throttled to every {HOOK_THROTTLE_MINUTES}&nbsp;min) the hook queries
                 Anthropic&apos;s <strong>undocumented</strong> usage endpoint with
                 your own token and saves the result locally for the chip.
                 <br />

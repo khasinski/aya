@@ -41,6 +41,7 @@ import { useStable } from "./hooks/useStableIdentity";
 import { sameArrayItems, sameRecordValues } from "./stable-identity";
 import { paletteToChromeVars, paletteToThemeColors } from "./theme-skin";
 import { localSummaryUnavailableMessage } from "./local-summary-errors";
+import { LOCAL_SUMMARY_MAX_LINES, PROJECT_STATE_VERSION } from "./main-mirrors";
 import type { SettingsTab } from "./settings-tabs";
 import {
   useDockBadge,
@@ -159,8 +160,6 @@ function pollVisible(refresh: () => void, intervalMs: number): () => void {
   };
 }
 const TERMINAL_FONT_SIZE_PX = 13;
-// Persisted schema version for ProjectCollectionState.
-const PROJECT_STATE_VERSION = 1;
 /** Leaf id for the synthetic one-pane tree used when a project has no stored
  *  split (or is showing a single terminal). Constant so React keys and focus
  *  stay stable across renders. */
@@ -172,7 +171,6 @@ const LOCAL_SUMMARY_DEBOUNCE_MS = 10_000;
 const PROJECT_STATE_SAVE_DEBOUNCE_MS = 150;
 const LOCAL_SUMMARY_MIN_UPDATE_MS = 2 * 60 * 1000;
 const LOCAL_SUMMARY_MIN_NEW_LINES = 8;
-const LOCAL_SUMMARY_MAX_LINES = 30;
 // Fewer output lines than this are "not enough output" to summarize.
 const LOCAL_SUMMARY_MIN_LINES = 2;
 // Cleaned output lines shorter than this (prompts, stray glyphs) are dropped.

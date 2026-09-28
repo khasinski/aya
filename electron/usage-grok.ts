@@ -15,6 +15,8 @@ export const DEFAULT_GROK_HOME =
 /** Rolling window the chip sums over. Grok's paid pool is weekly; 7 days is the
  *  honest local proxy (we don't know the server-side reset boundary). */
 export const GROK_USAGE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+// Grok bills in ticks of 1e-10 USD (GrokUsage.costUsdTicks).
+export const USD_PER_GROK_TICK = 1e-10;
 // Epoch values below this are seconds (1e12 ms is 2001; 1e12 s is year 33658).
 export const SECONDS_EPOCH_CEILING = 1e12;
 

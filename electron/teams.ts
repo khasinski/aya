@@ -12,7 +12,7 @@ export const MUST_NOT_FIELD = "Must not";
 export const SECTION_MARKER = "## ";
 const FIELD_RE = new RegExp(`^(${SENDS_TO_FIELD}|${MUST_NOT_FIELD}):\\s*(.*)$`);
 const SECTION_RE = new RegExp(`^${SECTION_MARKER}`, "m");
-const MAX_CADENCE_MINUTES = 24 * 60;
+export const MAX_CADENCE_MINUTES = 24 * 60;
 
 export class TeamFileError extends Error {
   constructor(name: string, problem: string) {
