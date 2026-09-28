@@ -174,6 +174,7 @@ test("a composer seen only by the background scan still counts as started", asyn
   openVtPane("scan", 80, 24, () => {}, "claude", false);
   try {
     writeVtPane("scan", `${RULE}\r\n❯ \r\n${RULE}\r\n`);
+    // Set after the 250 ms scan timer, so it fires after the scan however late both run.
     await new Promise((r) => setTimeout(r, 400));
     writeVtPane("scan", "\x1b[2J\x1b[H⏺ a long answer that pushed the composer off screen\r\n");
     await settle();
