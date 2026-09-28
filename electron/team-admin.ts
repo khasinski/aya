@@ -59,6 +59,11 @@ export async function listTeams(teamHome: string, project: ProjectConfig): Promi
         paused: await store.paused(),
         running: await store.running(),
         assignments: await store.assignmentsSnapshot(),
+        unread: Object.fromEntries(
+          await Promise.all(
+            (definition?.roles ?? []).map(async (r) => [r.id, (await store.unread(r.id)).length] as const),
+          ),
+        ),
         log: (await store.log()).slice(-LOG_TAIL),
       };
     }),
@@ -87,6 +92,7 @@ export async function assignRole(
     if (held) await store.releasePane(held);
     return;
   }
+  if (project.remote) throw new Error("teams work only on local panes");
   if (!project.tabs.some((t) => t.id === paneId)) throw new Error(`pane ${paneId} is not in this project`);
   await store.assign(role, paneId);
 }

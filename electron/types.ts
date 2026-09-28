@@ -805,5 +805,7 @@ export interface TeamSummary {
   /** Started with Start team and not paused since. */
   running: boolean;
   assignments: Record<string, string>;
+  /** Messages per role that are waiting in its inbox. */
+  unread: Record<string, number>;
   log: TeamMessage[];
 }

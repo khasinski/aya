@@ -2890,3 +2890,21 @@ select.aya-modal-input {
 .aya-teams-minutes {
   width: 64px;
 }
+.aya-team-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--fg-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.aya-team-unread {
+  margin-left: 6px;
+  font-size: 11px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent, #4caf50);
+  color: var(--bg-primary, #fff);
+}

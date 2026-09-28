@@ -113,3 +113,28 @@ test("a pane from another project cannot take a role", async () => {
     t.cleanup();
   }
 });
+
+test("each role's unread count comes with the team", async () => {
+  const t = setup();
+  try {
+    await saveTeam(t.teamHome, t.project, TEAM);
+    const store = new TeamStore(teamDir(t.teamHome, "game", "ux-review"));
+    await store.append({ from: "tester", to: "implementer", commit: null, text: "waiting", delivered: false });
+    await store.append({ from: "tester", to: "implementer", commit: null, text: "typed", delivered: true });
+    const [team] = await listTeams(t.teamHome, t.project);
+    assert.deepEqual(team.unread, { tester: 0, implementer: 1 });
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a remote project's panes cannot take a role", async () => {
+  const t = setup();
+  try {
+    await saveTeam(t.teamHome, t.project, TEAM);
+    const remote = { ...t.project, remote: { hostId: "h", label: "box", sshTarget: "box", directory: "/srv" } };
+    await assert.rejects(assignRole(t.teamHome, remote, "ux-review", "tester", "pane-t"), /only on local panes/);
+  } finally {
+    t.cleanup();
+  }
+});

@@ -10,6 +10,7 @@ import {
   type GrokUsage,
   type Preset,
   type ProjectConfig,
+  type TeamSummary,
   type TerminalState,
   type UsageAccount,
 } from "../types";
@@ -17,6 +18,8 @@ import type { SettingsTab } from "../settings-tabs";
 import { useDragReorder } from "../hooks/useDragReorder";
 import { GrokUsageChip, UsageChip } from "./UsageChip";
 import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
+import { paneRoles, unreadTotal } from "../team-view";
+import { TeamRoleChip, TeamRoleMenuItems } from "./TeamRole";
 
 // Project rail width bounds (px) for the drag-resize handle.
 const RAIL_MIN_WIDTH_PX = 160;
@@ -26,6 +29,8 @@ interface ProjectAttention {
   count: number;
   level: "active" | "done" | "waiting" | "error";
 }
+
+const NO_TEAMS_BY_PROJECT: Record<string, TeamSummary[]> = {};
 
 interface Props {
   // Projects (left rail)
@@ -63,6 +68,9 @@ interface Props {
   onLaunchTerminal: (preset: Preset) => void;
   onReorderTerminals: (orderedIds: string[]) => void;
   onRestartTerminal: (id: string) => void;
+  /** Teams per project slug: role chips, rail unread sums, Team role items. */
+  teamsByProject?: Record<string, TeamSummary[]>;
+  onAssignTeamRole?: (team: string, role: string, paneId: string | null) => void;
 
   // App chrome
   isDev: boolean;
@@ -123,6 +131,8 @@ function ProjectsLeftLayoutImpl({
   onLaunchTerminal,
   onReorderTerminals,
   onRestartTerminal,
+  teamsByProject = NO_TEAMS_BY_PROJECT,
+  onAssignTeamRole,
   isDev,
   platform,
   isFullScreen,
@@ -140,6 +150,8 @@ function ProjectsLeftLayoutImpl({
   showUsageHarnessName,
   body,
 }: Props) {
+  const activeTeams = (activeProjectId && teamsByProject[activeProjectId]) || [];
+  const roles = paneRoles(activeTeams);
   const [renamingSlug, setRenamingSlug] = useState<string | null>(null);
   const [projectDraft, setProjectDraft] = useState("");
   const projectInputRef = useRef<HTMLInputElement>(null);
@@ -445,6 +457,7 @@ function ProjectsLeftLayoutImpl({
                   {!isRenaming && summary && (
                     <span className="aya-termtab-summary">{summary}</span>
                   )}
+                  {roles[t.id] && <TeamRoleChip role={roles[t.id]} />}
                 </span>
                 {t.bell && <span className="aya-bell aya-bell--alert" />}
                 <span
@@ -709,6 +722,11 @@ function ProjectsLeftLayoutImpl({
                           </span>
                         )}
                         {p.name}
+                        {unreadTotal(teamsByProject[p.slug] ?? []) > 0 && (
+                          <span className="aya-team-unread" aria-label={`${p.name} team messages waiting`}>
+                            ✉ {unreadTotal(teamsByProject[p.slug] ?? [])}
+                          </span>
+                        )}
                       </span>
                     )}
                     <span
@@ -815,6 +833,15 @@ function ProjectsLeftLayoutImpl({
           </button>
           {/* Split actions are intentionally absent: this layout does not
               support split panes (see App's layoutMode gating). */}
+          {onAssignTeamRole && (
+            <TeamRoleMenuItems
+              paneId={menu.id}
+              teams={activeTeams}
+              current={roles[menu.id]}
+              onAssign={onAssignTeamRole}
+              onDone={() => setMenu(null)}
+            />
+          )}
           <button
             className="aya-context-menu-item aya-context-menu-item--danger"
             onClick={() => {
