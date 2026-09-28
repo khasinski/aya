@@ -272,6 +272,7 @@ function TeamEditor({
   const [team, setTeam] = useState<TeamDefinition>(initial);
   const [error, setError] = useState<string | null>(null);
   const [drafting, setDrafting] = useState<number | null>(null);
+  const [draftError, setDraftError] = useState<{ index: number; message: string } | null>(null);
   const setRole = (index: number, patch: Partial<TeamRole>) =>
     setTeam((t) => ({ ...t, roles: t.roles.map((r, i) => (i === index ? { ...r, ...patch } : r)) }));
 
@@ -306,7 +307,7 @@ function TeamEditor({
               title="Draft this role from its name with Aya Intelligence; edit before saving"
               disabled={!role.id.trim() || drafting !== null}
               onClick={async () => {
-                setError(null);
+                setDraftError(null);
                 setDrafting(index);
                 try {
                   const draft = await window.aya.teamDraftRole(
@@ -316,13 +317,13 @@ function TeamEditor({
                   );
                   setRole(index, draft);
                 } catch (err) {
-                  setError(ipcMessage(err));
+                  setDraftError({ index, message: ipcMessage(err) });
                 } finally {
                   setDrafting(null);
                 }
               }}
             >
-              {drafting === index ? "Drafting…" : "✨ Draft"}
+              {drafting === index ? "Drafting… (up to a minute)" : "✨ Draft"}
             </button>
             <button
               className="aya-modal-btn"
@@ -332,6 +333,7 @@ function TeamEditor({
               Remove
             </button>
           </div>
+          {draftError?.index === index && <div className="aya-teams-error">{draftError.message}</div>}
           <span className="aya-teams-muted">Responsibilities</span>
           <textarea
             className="aya-modal-input"

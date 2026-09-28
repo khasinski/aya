@@ -355,10 +355,11 @@ public CLI side channel.
 Open **teams** in the status bar and choose **New team**. A team lists roles;
 each role has responsibilities, one thing it must not do, and the roles it
 sends to. Add a protocol (how the roles work together) and, if you want rounds,
-which role gets them and how often. **Draft** fills a role from its name with an
-Ollama or OpenAI-compatible model; edit it before **Save team**. The team is
-saved to `.aya/teams/<name>.md`, so it travels with the repo. Edits made to that
-file outside the teams window take effect only after you save them in Aya.
+which role gets them and how often. **Draft** fills a role from its name with
+your Aya Intelligence model (Apple on-device can take up to a minute); edit it
+before **Save team**. The team is saved to `.aya/teams/<name>.md`, so it
+travels with the repo. Edits made to that file outside the teams window take
+effect only after you save them in Aya.
 
 Give each role a pane, in the teams window or from a tab's menu (**Team
 role**), then press **Start**. Every role gets a delivery test. Pane roles, the

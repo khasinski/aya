@@ -72,7 +72,7 @@ import {
   teamNote,
 } from "./agent-brief";
 import { paneTeamRole } from "./team-control";
-import { type ChatResult, OLLAMA_BASE_URL, ollamaChat, openAiChat } from "./intelligence-chat";
+import { appleChat, type ChatResult, OLLAMA_BASE_URL, ollamaChat, openAiChat } from "./intelligence-chat";
 import { TeamRunner } from "./team-runner";
 import { assignRole, listTeams, releasePaneEverywhere, saveTeam } from "./team-admin";
 import { draftRole } from "./team-draft";
@@ -226,8 +226,9 @@ const UPDATE_AUTO_CHECK_DELAY_MS = 12_000;
 // Summarizer sampling knobs, shared by BOTH backends (OpenAI-compatible and
 // Ollama) - the two request builders must stay in sync.
 const SUMMARY_TEMPERATURE = 0.2;
-// A role draft is three short fields; room for them, not for an essay.
-const ROLE_DRAFT_CHAT = { temperature: 0.2, maxTokens: 400, timeoutMs: 30_000 };
+// A role draft is three short fields; room for them, not for an essay. Apple's
+// on-device model took 13-44 s per draft when measured, so the wait is long.
+const ROLE_DRAFT_CHAT = { temperature: 0.2, maxTokens: 400, timeoutMs: 90_000 };
 const SUMMARY_MAX_TOKENS = 64;
 // Title fallback caps (first-line words / chars) for the local summary.
 const SUMMARY_TITLE_MAX_WORDS = 8;
@@ -2260,13 +2261,13 @@ function registerIpc(): void {
     ),
   );
   ipcMain.handle("teams:draft-role", async (_e, role: unknown, teamRoles: unknown, config: unknown) => {
-    const intelligence = normalizeAyaIntelligenceConfig(config);
-    if (!intelligence || intelligence.provider === "apple") {
-      throw new Error("Drafting a role needs Ollama or an OpenAI-compatible model; choose one in Settings > Intelligence.");
-    }
+    // No config means Aya's default provider, Apple.
+    const intelligence = normalizeAyaIntelligenceConfig(config) ?? normalizeAyaIntelligenceConfig({})!;
     const chat = async (system: string, user: string) => {
       const result =
-        intelligence.provider === "ollama"
+        intelligence.provider === "apple"
+          ? await appleChat(bundledDistElectronHelperPath(__dirname, "aya-local-summary"), system, user, ROLE_DRAFT_CHAT)
+          : intelligence.provider === "ollama"
           ? await ollamaChat(intelligence.ollamaModel, system, user, ROLE_DRAFT_CHAT)
           : await openAiChat(
               { baseUrl: intelligence.openAiBaseUrl, apiKey: intelligence.openAiApiKey, model: intelligence.openAiModel },

@@ -4,6 +4,15 @@ import FoundationModels
 struct SummaryRequest: Decodable {
   let kind: String
   let lines: [String]
+  // kind "chat": one free prompt (team role drafts), answered as plain text.
+  let system: String?
+  let prompt: String?
+}
+
+struct ChatResult: Codable {
+  let available: Bool
+  let text: String
+  let error: String?
 }
 
 struct SummaryResult: Codable {
@@ -103,6 +112,25 @@ func summarize(_ request: SummaryRequest) async -> SummaryResult {
   }
 }
 
+@available(macOS 26.0, *)
+func chat(_ request: SummaryRequest) async -> ChatResult {
+  do {
+    let session = LanguageModelSession(model: SystemLanguageModel.default, instructions: request.system ?? "")
+    let response = try await session.respond(to: request.prompt ?? "")
+    return ChatResult(available: true, text: response.content, error: nil)
+  } catch {
+    return ChatResult(available: false, text: "", error: String(describing: error))
+  }
+}
+
+func emitChat(_ result: ChatResult) {
+  if let data = try? JSONEncoder().encode(result), let text = String(data: data, encoding: .utf8) {
+    print(text)
+  } else {
+    print(#"{"available":false,"text":"","error":"encode-failed"}"#)
+  }
+}
+
 @main
 struct AyaLocalSummary {
   static func main() async {
@@ -112,6 +140,14 @@ struct AyaLocalSummary {
       return
     }
 
+    if request.kind == "chat" {
+      if #available(macOS 26.0, *) {
+        emitChat(await chat(request))
+      } else {
+        emitChat(ChatResult(available: false, text: "", error: "unsupported-macos"))
+      }
+      return
+    }
     if #available(macOS 26.0, *) {
       emit(await summarize(request))
     } else {

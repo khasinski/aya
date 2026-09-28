@@ -55,8 +55,8 @@ test("Draft fills a role from its name; targets outside the team are dropped", a
   await expect(dialog.getByTestId("team-design-review")).toContainText("senior-ux-game-designer");
 });
 
-test("with Apple Intelligence, Draft says which providers can do it", async ({ window }) => {
-  const dialog = await editorWithIntelligence(window, { provider: "apple" });
+test("a provider that does not answer shows the reason next to the role", async ({ window }) => {
+  const dialog = await editorWithIntelligence(window, { provider: "openai", openAiBaseUrl: "http://127.0.0.1:9", openAiModel: "fake" });
   await dialog.getByRole("button", { name: "Draft role 1" }).click();
-  await expect(dialog.getByText(/needs Ollama or an OpenAI-compatible model/)).toBeVisible();
+  await expect(dialog.locator(".aya-teams-role").first().locator(".aya-teams-error")).toContainText(/did not answer/);
 });

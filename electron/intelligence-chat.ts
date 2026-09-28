@@ -1,6 +1,8 @@
 // One chat call to Aya Intelligence over HTTP (Ollama or OpenAI-compatible),
 // shared by terminal summaries and team role drafts.
 
+import { spawn } from "node:child_process";
+
 export const OLLAMA_BASE_URL = "http://localhost:11434";
 
 export type ChatResult = { ok: true; content: string } | { ok: false; error: string };
@@ -106,4 +108,37 @@ export async function openAiChat(
         ? choice.text
         : "";
   return { ok: true, content };
+}
+
+/** Apple Intelligence through the bundled Swift helper's "chat" request. */
+export function appleChat(helper: string, system: string, user: string, opts: ChatOptions): Promise<ChatResult> {
+  return new Promise((resolve) => {
+    let stdout = "";
+    let settled = false;
+    const finish = (result: ChatResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const child = spawn(helper, [], { stdio: ["pipe", "pipe", "ignore"] });
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish({ ok: false, error: "timeout" });
+    }, opts.timeoutMs);
+    child.stdout.setEncoding("utf-8");
+    child.stdout.on("data", (chunk: string) => (stdout += chunk));
+    child.on("error", (err) => finish({ ok: false, error: err.message }));
+    child.on("close", () => {
+      try {
+        const reply = JSON.parse(stdout) as { available?: unknown; text?: unknown; error?: unknown };
+        if (reply.available === true && typeof reply.text === "string") finish({ ok: true, content: reply.text });
+        else finish({ ok: false, error: typeof reply.error === "string" && reply.error ? reply.error : "unavailable" });
+      } catch {
+        finish({ ok: false, error: "invalid-helper-json" });
+      }
+    });
+    child.stdin.on("error", () => undefined);
+    child.stdin.end(JSON.stringify({ kind: "chat", lines: [], system, prompt: user }));
+  });
 }
