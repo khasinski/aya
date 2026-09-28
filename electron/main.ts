@@ -72,11 +72,10 @@ import {
   withoutBriefSection,
   teamNote,
 } from "./agent-brief";
-import { paneTeamRole, projectBySlug } from "./team-files";
+import { paneTeamRole } from "./team-files";
 import { appleChat, type ChatOptions, type ChatResult, OLLAMA_BASE_URL, providerChat } from "./intelligence-chat";
-import { TeamRunner } from "./team-runner";
-import { assignRole, listTeams, releasePaneEverywhere, saveTeam } from "./team-admin";
-import { draftRole, ROLE_DRAFT_CHAT } from "./team-draft";
+import type { TeamControlDeps } from "./team-control";
+import { registerTeamIpc } from "./team-ipc";
 import { startRemoteServer } from "./remote-server";
 import {
   createRemoteDirectory,
@@ -157,7 +156,6 @@ import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
 import {
   requirePositiveInt,
   requireString,
-  validateTeamDefinition,
   validateSnippetArray,
   validatePresetArray,
   validateProjectCollectionState,
@@ -188,7 +186,6 @@ import type {
   LocalSummaryResult,
   OllamaStatus,
   ProjectCollectionState,
-  ProjectConfig,
   UpdateStatus,
   WebServerStatus,
 } from "./types";
@@ -216,14 +213,20 @@ const COLOR_LIGHT_TEXT = "#f0f6fc";
 const ABOUT_DIALOG_SIZE = 360;
 // About dialog icon dimensions (square, px)
 const ABOUT_ICON_SIZE = 128;
-// How often held team messages are retried; a pane frees up within seconds.
-const TEAM_REDELIVERY_MS = 15_000;
 const LOCAL_SUMMARY_TIMEOUT_MS = 20_000;
 const LOCAL_SUMMARY_MAX_LINES = 30;
 const LOCAL_SUMMARY_MAX_STDOUT_BYTES = 32 * 1024;
 const RECOMMENDED_OLLAMA_MODEL = "gemma4:e4b";
 
 const ptyHost = new PtyHostClient(path.join(__dirname, "pty-host.js"));
+// One set of team deps for the team runner and the control server's aya team.
+const teamDeps: TeamControlDeps = {
+  teamHome: AYA_HOME,
+  listProjects: () => listProjects(),
+  deliver: (terminalId, text) => deliverTeamMessage((id, data) => ptyHost.write(id, data), terminalId, text),
+  holdReason: (terminalId) => ptyHost.holdReason(terminalId),
+  headCommit,
+};
 const UPDATE_AUTO_CHECK_DELAY_MS = 12_000;
 // Summarizer sampling knobs, shared by BOTH backends (OpenAI-compatible and
 // Ollama) - the two request builders must stay in sync.
@@ -2194,62 +2197,6 @@ function registerIpc(): void {
   const senderWindow = (
     e: Electron.IpcMainInvokeEvent,
   ): BrowserWindow | null => BrowserWindow.fromWebContents(e.sender);
-  const teamRunner = new TeamRunner({
-    teamHome: AYA_HOME,
-    listProjects: () => listProjects(),
-    deliver: (terminalId, text) => deliverTeamMessage((id, data) => ptyHost.write(id, data), terminalId, text),
-    holdReason: (terminalId) => ptyHost.holdReason(terminalId),
-    headCommit,
-  });
-  // Messages held for a busy or missing pane go out once it is free again.
-  const redelivery = setInterval(
-    () => void teamRunner.redeliverWaiting().catch((err) => console.warn("[aya] held team messages not retried:", err)),
-    TEAM_REDELIVERY_MS,
-  );
-  app.once("before-quit", () => {
-    clearInterval(redelivery);
-    teamRunner.stopAll();
-  });
-  void teamRunner.restore().catch((err) => console.warn("[aya] team rounds not restored:", err));
-  const teamArgs = (slug: unknown, team: unknown, channel: string): [string, string] => [
-    requireString(slug, `${channel}.projectSlug`),
-    requireString(team, `${channel}.team`),
-  ];
-  ipcMain.handle("teams:start", (_e, slug: unknown, team: unknown) =>
-    teamRunner.start(...teamArgs(slug, team, "teams:start")),
-  );
-  ipcMain.handle("teams:pause", (_e, slug: unknown, team: unknown) =>
-    teamRunner.pause(...teamArgs(slug, team, "teams:pause")),
-  );
-  ipcMain.handle("teams:resume", (_e, slug: unknown, team: unknown) =>
-    teamRunner.resume(...teamArgs(slug, team, "teams:resume")),
-  );
-  const teamProject = async (slug: unknown, channel: string): Promise<ProjectConfig> =>
-    projectBySlug(await listProjects(), requireString(slug, `${channel}.projectSlug`));
-  ipcMain.handle("teams:list", async (_e, slug: unknown) =>
-    listTeams(AYA_HOME, await teamProject(slug, "teams:list")),
-  );
-  ipcMain.handle("teams:save", async (_e, slug: unknown, team: unknown, create: unknown) => {
-    const project = await teamProject(slug, "teams:save");
-    const definition = validateTeamDefinition(team);
-    await saveTeam(AYA_HOME, project, definition, { create: create === true });
-    await teamRunner.refresh(project.slug, definition.name);
-  });
-  ipcMain.handle("teams:release-pane", async (_e, slug: unknown, paneId: unknown) =>
-    releasePaneEverywhere(
-      AYA_HOME,
-      await teamProject(slug, "teams:release-pane"),
-      requireString(paneId, "teams:release-pane.paneId"),
-    ),
-  );
-  // Returns why the newly assigned pane was not told its role, or null.
-  ipcMain.handle("teams:assign", async (_e, slug: unknown, team: unknown, role: unknown, paneId: unknown) => {
-    const project = await teamProject(slug, "teams:assign");
-    const [teamName, roleId] = [requireString(team, "teams:assign.team"), requireString(role, "teams:assign.role")];
-    const pane = paneId === null ? null : requireString(paneId, "teams:assign.paneId");
-    await assignRole(AYA_HOME, project, teamName, roleId, pane);
-    return pane ? teamRunner.introduce(project.slug, teamName, roleId) : null;
-  });
   /** A chat with the configured Aya Intelligence; no config means Apple, the default. */
   const intelligenceChat = (config: unknown, opts: ChatOptions) => {
     const intelligence = normalizeAyaIntelligenceConfig(config) ?? normalizeAyaIntelligenceConfig({})!;
@@ -2268,13 +2215,12 @@ function registerIpc(): void {
       return result.content;
     };
   };
-  ipcMain.handle("teams:draft-role", async (_e, team: unknown, roleId: unknown, config: unknown) =>
-    draftRole(
-      validateTeamDefinition(team, "teams:draft-role"),
-      requireString(roleId, "teams:draft-role.roleId"),
-      intelligenceChat(config, ROLE_DRAFT_CHAT),
-    ),
-  );
+  registerTeamIpc({
+    ipcMain,
+    onBeforeQuit: (teardown) => app.once("before-quit", teardown),
+    team: teamDeps,
+    intelligenceChat,
+  });
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
     const request = validateSpawnRequest(req);
     // A broken presets.json must not stop panes from spawning.
@@ -3106,9 +3052,7 @@ app.whenReady().then(async () => {
     // Returned, not fire-and-forget: the boolean is how pane-send learns the
     // pane was dead, and dropping it made host rejections unhandled.
     writePane: (terminalId, data) => ptyHost.write(terminalId, data),
-    teamHome: AYA_HOME,
-    headCommit,
-    holdReason: (terminalId) => ptyHost.holdReason(terminalId),
+    team: teamDeps,
     onRequest: (request, caller) => {
       // Aya's own automatic-status hooks call `aya status` from inside every
       // Claude/Codex pane; counting them would read as ~100% adoption (#121).

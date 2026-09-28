@@ -16,7 +16,7 @@ import {
   tailForPaneRead,
 } from "./pane-target";
 import { CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
-import { handleTeamRequest } from "./team-control";
+import { handleTeamRequest, type TeamControlDeps } from "./team-control";
 import type { ControlStatusUpdate, ProjectConfig } from "./types";
 
 // Max control-socket message size before rejecting the request (bytes).
@@ -58,12 +58,8 @@ export interface ControlServerOptions {
   openProject: (directory: string) => void;
   /** Every parsed request, with the pane it came from (adoption, #117). */
   onRequest?: (request: ControlRequest, caller: ControlCaller) => void;
-  /** Aya home whose teams/ holds assignments and logs; teams are off without it. */
-  teamHome?: string;
-  /** Why a pane must not be typed into now (approval prompt, draft, shell). */
-  holdReason?: (terminalId: string) => Promise<string | null>;
-  /** The project's current commit, stamped on team messages. */
-  headCommit?: (directory: string) => Promise<string | null>;
+  /** What `aya team` runs on (the same deps as the team runner); teams are off without it. */
+  team?: TeamControlDeps;
   /** Test-only override of the idle reap window. */
   idleTimeoutMs?: number;
 }
@@ -196,15 +192,8 @@ async function handleRequest(
     return handlePaneRequest(request, options);
   }
   if (request.type === "team-whoami" || request.type === "team-send" || request.type === "team-inbox") {
-    const { listProjects, writePane, teamHome } = options;
-    if (!listProjects || !writePane || !teamHome) throw new Error("teams are not available");
-    return handleTeamRequest(request, caller.terminalId, {
-      teamHome,
-      listProjects,
-      deliver: (terminalId, text) => deliverTeamMessage(writePane, terminalId, text),
-      headCommit: options.headCommit ?? (async () => null),
-      holdReason: options.holdReason ?? (async () => null),
-    });
+    if (!options.team) throw new Error("teams are not available");
+    return handleTeamRequest(request, caller.terminalId, options.team);
   }
   if (request.type === "focus") {
     focusWindow(win);
