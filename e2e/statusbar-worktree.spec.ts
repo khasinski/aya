@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures";
-import type { Page } from "@playwright/test";
+import { sidebarRow } from "./helpers/sidebar";
 
 // The status bar's git surface describes the ACTIVE TERMINAL's checkout. With a
 // tab bound to a git worktree, the project directory's branch and diff are the
@@ -7,12 +7,6 @@ import type { Page } from "@playwright/test";
 // checkout, so the diff for the work happening in the worktree was invisible.
 
 test.use({ seedOptions: { gitRepo: true, gitWorktree: true, split: false } });
-
-function sidebarRow(window: Page, name: string) {
-  return window.locator(".aya-sidebar-row", {
-    has: window.locator(".aya-sidebar-name", { hasText: new RegExp(`^${name}$`) }),
-  });
-}
 
 test("status bar git follows the active terminal's worktree", async ({ window }) => {
   const statusbar = window.locator(".aya-statusbar");
