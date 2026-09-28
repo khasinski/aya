@@ -8,6 +8,7 @@ import { test, expect } from "./fixtures";
 import {
   ASK_BRIEFLY_MS,
   AYA,
+  TEAM_AGENT_READY_TIMEOUT_MS,
   TEAM_DELIVERY_TIMEOUT_MS,
   agentPreset,
   openTeams,
@@ -34,7 +35,7 @@ test.use(teamSeed(TEAM, [agentPreset()]));
 test("tester's aya team send reaches the implementer's pane with the team header", async ({ window, seeded }) => {
   await expect(window.getByTestId("xterm-host").first()).toBeVisible();
   const read = teamLog(seeded.projectDir);
-  await expect.poll(() => read("tab-left"), { timeout: 30_000 }).toMatch(/SENT written to implementer's pane/);
+  await expect.poll(() => read("tab-left"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/SENT written to implementer's pane/);
   await expect
     .poll(() => read("tab-right"), { timeout: TEAM_DELIVERY_TIMEOUT_MS })
     .toMatch(/\[team ux-review \| from tester \| \d\d:\d\d\] round 5 ready/);
@@ -46,7 +47,7 @@ test.describe("an implementer on an approval prompt", () => {
   test("is not typed into: Enter would answer the prompt", async ({ window, seeded }) => {
     await expect(window.getByTestId("xterm-host").first()).toBeVisible();
     const read = teamLog(seeded.projectDir);
-    await expect.poll(() => read("tab-left"), { timeout: 30_000 }).toMatch(/FAIL .*implementer: shows an approval prompt; nothing was typed/);
+    await expect.poll(() => read("tab-left"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/FAIL .*implementer: shows an approval prompt; nothing was typed/);
     expect(read("tab-right")).not.toMatch(/round 5 ready/);
   });
 });
@@ -57,7 +58,7 @@ test.describe("an implementer that answers its prompt later", () => {
   test("gets the held message once the prompt is gone, and the window says it was held", async ({ window, seeded }) => {
     await expect(window.getByTestId("xterm-host").first()).toBeVisible();
     const read = teamLog(seeded.projectDir);
-    await expect.poll(() => read("tab-left"), { timeout: 30_000 }).toMatch(/FAIL .*implementer: shows an approval prompt/);
+    await expect.poll(() => read("tab-left"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/FAIL .*implementer: shows an approval prompt/);
     // Retried every redelivery period once the prompt clears; a retry may land just before it does.
     await expect
       .poll(() => read("tab-right"), { timeout: ASK_BRIEFLY_MS + 2 * TEAM_REDELIVERY_MS + 5_000 })
@@ -85,7 +86,7 @@ test.describe("an implementer pane that runs a plain shell", () => {
         return String((err as { stderr?: Buffer }).stderr ?? err);
       }
     };
-    await expect.poll(send, { timeout: 30_000 }).toMatch(/implementer: runs a shell; nothing was typed/);
+    await expect.poll(send, { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/implementer: runs a shell; nothing was typed/);
     expect(existsSync(join(seeded.projectDir, "should-not-exist"))).toBe(false);
   });
 });
@@ -100,7 +101,7 @@ test.describe("Start team", () => {
     let result = { started: false, delivered: [] as string[] };
     await expect
       .poll(async () => (result = await window.evaluate(() => window.aya.teamStart("e2e-proj", "ux-review"))).started, {
-        timeout: 30_000,
+        timeout: TEAM_AGENT_READY_TIMEOUT_MS,
       })
       .toBe(true);
     expect(result.delivered.sort()).toEqual(["implementer", "tester"]);

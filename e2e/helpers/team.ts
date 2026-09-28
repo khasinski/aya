@@ -12,6 +12,9 @@ export const AYA = join(__dirname, "..", "..", "bin", "aya");
 /** How long team-agent's "ask-briefly" mode keeps its approval prompt up. */
 export const ASK_BRIEFLY_MS = 6_000;
 
+/** The team's panes are up and team-agent.cjs has made its first send. */
+export const TEAM_AGENT_READY_TIMEOUT_MS = 30_000;
+
 /** A first attempt that is held gets one retry before this runs out. */
 export const TEAM_DELIVERY_TIMEOUT_MS = TEAM_REDELIVERY_MS + 5_000;
 

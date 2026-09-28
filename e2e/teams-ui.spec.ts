@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
 import { LAYOUT_MODE_STORAGE_KEY } from "../src/storage-keys";
-import { TEAM_DELIVERY_TIMEOUT_MS, agentPreset, openTeams, teamLog, teamLogFile } from "./helpers/team";
+import { TEAM_AGENT_READY_TIMEOUT_MS, TEAM_DELIVERY_TIMEOUT_MS, agentPreset, openTeams, teamLog, teamLogFile } from "./helpers/team";
 
 test.use({ seedOptions: { presetList: [agentPreset("quiet", "claude")] } });
 
@@ -42,7 +42,7 @@ test("assign panes, Start sends the delivery test, Pause marks the team, Resume 
   const file = (pane: string) => teamLogFile(seeded.projectDir, pane);
   const log = teamLog(seeded.projectDir);
   // Each agent creates its log on start; Start before that finds it still starting.
-  await expect.poll(() => existsSync(file("tab-left")) && existsSync(file("tab-right")), { timeout: 30_000 }).toBe(true);
+  await expect.poll(() => existsSync(file("tab-left")) && existsSync(file("tab-right")), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toBe(true);
   // One role without a pane: Start sends nothing to anyone and says why.
   await card.getByRole("button", { name: "Start", exact: true }).click();
   await expect(card.locator(".aya-teams-warning")).toContainText("Not started, nothing was sent");
