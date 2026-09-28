@@ -314,6 +314,7 @@ function TeamEditor({
                     role.id.replace(/-/g, " "),
                     team.roles.map((r) => r.id.trim()).filter(Boolean),
                     role.sendsTo,
+                    team.roles.map(({ id, responsibilities, mustNot }) => ({ id, responsibilities, mustNot })),
                     intelligence,
                   );
                   setRole(index, draft);

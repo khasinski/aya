@@ -80,8 +80,8 @@ const api: AyaApi = {
   teamAssign: (projectSlug, team, role, paneId) =>
     ipcRenderer.invoke("teams:assign", projectSlug, team, role, paneId),
   teamReleasePane: (projectSlug, paneId) => ipcRenderer.invoke("teams:release-pane", projectSlug, paneId),
-  teamDraftRole: (role, teamRoles, sendsTo, intelligence) =>
-    ipcRenderer.invoke("teams:draft-role", role, teamRoles, sendsTo, intelligence),
+  teamDraftRole: (role, teamRoles, sendsTo, peers, intelligence) =>
+    ipcRenderer.invoke("teams:draft-role", role, teamRoles, sendsTo, peers, intelligence),
   usageHookStatus: () => ipcRenderer.invoke("usage-hook:status"),
   installUsageHook: () => ipcRenderer.invoke("usage-hook:install"),
   uninstallUsageHook: () => ipcRenderer.invoke("usage-hook:uninstall"),

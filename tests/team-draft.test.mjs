@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { draftRole, parseRoleDraft, roleDraftPrompt } from "../dist-electron/team-draft.js";
+import { ROLE_DRAFT_CHAT, draftRole, parseRoleDraft, roleDraftPrompt } from "../dist-electron/team-draft.js";
 
 test("the prompt names the role, lists only the team's other roles, and asks for JSON fields", () => {
   const prompt = roleDraftPrompt("senior UX game designer", ["implementer", "tester", "senior UX game designer"]);
@@ -69,4 +69,31 @@ test("with nothing ticked, the model's pick stands", async () => {
   const draft = await draftRole("reviewer", ["implementer", "reviewer"], async () =>
     '{"mustNot":"edit code","sendsTo":["implementer"]}', []);
   assert.deepEqual(draft.sendsTo, ["implementer"]);
+});
+
+test("the draft waits long enough for Apple's on-device model (13-44 s measured)", () => {
+  assert.ok(ROLE_DRAFT_CHAT.timeoutMs >= 60_000, `timeout ${ROLE_DRAFT_CHAT.timeoutMs} ms`);
+});
+
+test("the prompt gives no example must-not for the model to copy onto every role", () => {
+  const prompt = roleDraftPrompt("implementer", ["reviewer", "implementer"]);
+  assert.doesNotMatch(prompt, /edit code/);
+  assert.match(prompt, /Never forbid the work its name says it does/);
+});
+
+test("what the other roles already do goes into the prompt, so the draft does not repeat them", async () => {
+  const peers = [
+    { id: "reviewer", responsibilities: "Reviews each change.", mustNot: "edit code" },
+    { id: "tester", responsibilities: "", mustNot: "" },
+    { id: "implementer", responsibilities: "Old text of this role.", mustNot: "x" },
+  ];
+  let sent = "";
+  await draftRole("implementer", ["reviewer", "tester", "implementer"], async (_s, user) => {
+    sent = user;
+    return '{"mustNot":"merge its own change"}';
+  }, [], peers);
+  assert.match(sent, /reviewer: Reviews each change\. Must not: edit code\./);
+  assert.doesNotMatch(sent, /tester:/);
+  assert.doesNotMatch(sent, /Old text of this role/);
+  assert.match(sent, /do not repeat it/);
 });

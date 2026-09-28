@@ -75,7 +75,7 @@ import { paneTeamRole } from "./team-control";
 import { appleChat, type ChatResult, OLLAMA_BASE_URL, ollamaChat, openAiChat } from "./intelligence-chat";
 import { TeamRunner } from "./team-runner";
 import { assignRole, listTeams, releasePaneEverywhere, saveTeam } from "./team-admin";
-import { draftRole } from "./team-draft";
+import { draftRole, ROLE_DRAFT_CHAT, type RolePeer } from "./team-draft";
 import { startRemoteServer } from "./remote-server";
 import {
   createRemoteDirectory,
@@ -226,9 +226,6 @@ const UPDATE_AUTO_CHECK_DELAY_MS = 12_000;
 // Summarizer sampling knobs, shared by BOTH backends (OpenAI-compatible and
 // Ollama) - the two request builders must stay in sync.
 const SUMMARY_TEMPERATURE = 0.2;
-// A role draft is three short fields; room for them, not for an essay. Apple's
-// on-device model took 13-44 s per draft when measured, so the wait is long.
-const ROLE_DRAFT_CHAT = { temperature: 0.2, maxTokens: 400, timeoutMs: 90_000 };
 const SUMMARY_MAX_TOKENS = 64;
 // Title fallback caps (first-line words / chars) for the local summary.
 const SUMMARY_TITLE_MAX_WORDS = 8;
@@ -2260,13 +2257,27 @@ function registerIpc(): void {
       paneId === null ? null : requireString(paneId, "teams:assign.paneId"),
     ),
   );
-  ipcMain.handle("teams:draft-role", async (_e, role: unknown, teamRoles: unknown, sendsTo: unknown, config: unknown) => {
+  const requireRolePeers = (value: unknown): RolePeer[] => {
+    if (!Array.isArray(value)) throw new Error("teams:draft-role.peers must be an array");
+    return value.map((p, i) => ({
+      id: requireString(p?.id, `teams:draft-role.peers[${i}].id`),
+      responsibilities: requireString(p?.responsibilities, `teams:draft-role.peers[${i}].responsibilities`),
+      mustNot: requireString(p?.mustNot, `teams:draft-role.peers[${i}].mustNot`),
+    }));
+  };
+  ipcMain.handle("teams:draft-role", async (_e, role: unknown, teamRoles: unknown, sendsTo: unknown, peers: unknown, config: unknown) => {
     // No config means Aya's default provider, Apple.
     const intelligence = normalizeAyaIntelligenceConfig(config) ?? normalizeAyaIntelligenceConfig({})!;
     const chat = async (system: string, user: string) => {
       const result =
         intelligence.provider === "apple"
-          ? await appleChat(bundledDistElectronHelperPath(__dirname, "aya-local-summary"), system, user, ROLE_DRAFT_CHAT)
+          ? await appleChat(
+              // e2e swaps in a stand-in: the real model is slow and not on every Mac.
+              process.env.AYA_E2E_APPLE_HELPER || bundledDistElectronHelperPath(__dirname, "aya-local-summary"),
+              system,
+              user,
+              ROLE_DRAFT_CHAT,
+            )
           : intelligence.provider === "ollama"
           ? await ollamaChat(intelligence.ollamaModel, system, user, ROLE_DRAFT_CHAT)
           : await openAiChat(
@@ -2283,6 +2294,7 @@ function registerIpc(): void {
       requireStringArray(teamRoles, "teams:draft-role.teamRoles"),
       chat,
       requireStringArray(sendsTo, "teams:draft-role.sendsTo"),
+      requireRolePeers(peers),
     );
   });
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {

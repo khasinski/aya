@@ -66,9 +66,24 @@ export async function listTeams(teamHome: string, project: ProjectConfig): Promi
   );
 }
 
+// A line the team file reads as a field or section, where only free text belongs.
+const FIELD_LINE = /^(Sends to:|Must not:|## )/m;
+
+function refuseFieldLines(team: TeamDefinition): void {
+  for (const role of team.roles) {
+    const line = role.responsibilities.match(FIELD_LINE);
+    if (line) {
+      throw new Error(`role "${role.id}": a Responsibilities line starts with "${line[1].trim()}"; put that in its own field`);
+    }
+  }
+  const line = team.protocol.match(FIELD_LINE);
+  if (line?.[1] === "## ") throw new Error('protocol: a line starts with "##"; the team file would read it as a new section');
+}
+
 /** Validates by round-tripping through the parser, so the file on disk is
  *  always one the parser accepts. */
 export async function saveTeam(teamHome: string, project: ProjectConfig, team: TeamDefinition): Promise<void> {
+  refuseFieldLines(team);
   const text = serializeTeam(team);
   parseTeamFile(team.name, text);
   await writeFileAtomic(teamFile(project, team.name), text);

@@ -764,7 +764,13 @@ export interface AyaApi {
   /** A closed tab gives up its roles in every team of the project. */
   teamReleasePane(projectSlug: string, paneId: string): Promise<void>;
   /** Drafts a role's fields from its name with the configured Aya Intelligence. */
-  teamDraftRole(role: string, teamRoles: string[], sendsTo: string[], intelligence: AyaIntelligenceConfig): Promise<RoleDraft>;
+  teamDraftRole(
+    role: string,
+    teamRoles: string[],
+    sendsTo: string[],
+    peers: Pick<TeamRole, "id" | "responsibilities" | "mustNot">[],
+    intelligence: AyaIntelligenceConfig,
+  ): Promise<RoleDraft>;
   teamResume(projectSlug: string, team: string): Promise<void>;
 
   usageHookStatus(): Promise<UsageHookStatus>;
