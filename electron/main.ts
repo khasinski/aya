@@ -208,6 +208,9 @@ import type {
 } from "./types";
 
 const DEV_SERVER_URL = "http://localhost:5183";
+// The built renderer (vite output) the packaged app and the web server serve.
+const RENDERER_DIST_DIR = path.join(__dirname, "..", "dist");
+const RENDERER_INDEX_FILE = "index.html";
 const WINDOW_TITLE = IS_DEV ? "Aya Dev" : "Aya";
 
 
@@ -1617,7 +1620,7 @@ async function applyWebServerState(): Promise<void> {
     webServer = await startWebServer({
       appVersion: app.getVersion(),
       isDev: IS_DEV,
-      distDir: path.join(__dirname, "..", "dist"),
+      distDir: RENDERER_DIST_DIR,
       getConfig: () => webConfig ?? config,
     });
     ptyHost.attachWebContents(webPtySink);
@@ -2064,7 +2067,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
       isInternalNavigationUrl(url, {
         isDev: IS_DEV,
         devServerUrl: DEV_SERVER_URL,
-        appIndexPath: path.join(__dirname, "..", "dist", "index.html"),
+        appIndexPath: path.join(RENDERER_DIST_DIR, RENDERER_INDEX_FILE),
       })
     ) {
       return;
@@ -2151,7 +2154,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     win.loadURL(DEV_SERVER_URL);
     win.webContents.openDevTools({ mode: "detach" });
   } else {
-    win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+    win.loadFile(path.join(RENDERER_DIST_DIR, RENDERER_INDEX_FILE));
   }
 
   return win;
