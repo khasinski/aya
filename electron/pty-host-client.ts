@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
@@ -11,7 +10,7 @@ import {
   type PtyHostRequest,
   type PtyHostResponse,
 } from "./pty-host-protocol";
-import type { HostIdentity } from "./pty-host-staleness";
+import { hostBuildHash, type HostIdentity } from "./pty-host-staleness";
 import { coalesceAdjacentData } from "./pty-event-coalescer";
 import type { BufferSearchHit } from "./pty";
 import type { PtyEvent, SpawnRequest } from "./types";
@@ -135,10 +134,7 @@ export class PtyHostClient {
   expectedHostIdentity(appVersion: string): HostIdentity {
     let scriptHash = "unknown";
     try {
-      scriptHash = crypto
-        .createHash("sha256")
-        .update(fs.readFileSync(this.hostScript))
-        .digest("hex");
+      scriptHash = hostBuildHash(path.dirname(this.hostScript), path.basename(this.hostScript));
     } catch {
       // leave "unknown"; a mismatch on version still flags staleness
     }

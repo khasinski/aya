@@ -5,7 +5,11 @@
 // Anything baked into the host (entitlements) or needing a fresh process then
 // silently keeps using the old version (#28).
 //
-// Pure module so the comparison can be unit-tested without spawning anything.
+// The comparison is pure; the build hash reads the built files, nothing spawned.
+
+import * as crypto from "node:crypto";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 /** Identity a host reports about the build it was launched from. Reported via
  *  the `version` handshake; an old host that predates the handshake returns an
@@ -32,4 +36,28 @@ export function isHostStale(
     actual.version !== expected.version ||
     actual.scriptHash !== expected.scriptHash
   );
+}
+
+/** Every file the host runs from `dir`: its entry and the local modules it
+ *  requires, followed through, sorted. Read from the built CommonJS. */
+export function hostModuleFiles(dir: string, entry: string): string[] {
+  const seen = new Set<string>();
+  const visit = (file: string) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    const source = fs.readFileSync(path.join(dir, file), "utf-8");
+    for (const m of source.matchAll(/require\("\.\/([\w.-]+?)(?:\.js)?"\)/g)) visit(`${m[1]}.js`);
+  };
+  visit(entry);
+  return [...seen].sort();
+}
+
+/** One hash over the host's own files, so a change in any module it runs
+ *  (not only its entry) marks a running host as another build. */
+export function hostBuildHash(dir: string, entry: string): string {
+  const hash = crypto.createHash("sha256");
+  for (const file of hostModuleFiles(dir, entry)) {
+    hash.update(file).update("\0").update(fs.readFileSync(path.join(dir, file))).update("\0");
+  }
+  return hash.digest("hex");
 }

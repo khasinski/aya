@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import { PTY_HOST_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
-import type { HostIdentity } from "./pty-host-staleness";
+import { hostBuildHash, type HostIdentity } from "./pty-host-staleness";
 import {
   writeHostRecord,
   removeHostRecord,
@@ -178,10 +178,7 @@ function computeHostIdentity(): HostIdentity {
   }
   let scriptHash = "unknown";
   try {
-    scriptHash = crypto
-      .createHash("sha256")
-      .update(fs.readFileSync(__filename))
-      .digest("hex");
+    scriptHash = hostBuildHash(__dirname, path.basename(__filename));
   } catch {
     // leave "unknown"
   }
