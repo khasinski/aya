@@ -2808,7 +2808,9 @@ select.aya-modal-input {
   margin: 10px 0;
 }
 .aya-teams-card-head,
-.aya-teams-role-head {
+.aya-teams-role-head,
+.aya-teams-field,
+.aya-teams-send {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2867,12 +2869,10 @@ select.aya-modal-input {
   resize: vertical;
 }
 .aya-teams-field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   margin: 8px 0;
 }
-.aya-teams-role {
+.aya-teams-role,
+.aya-teams-flow {
   display: grid;
   gap: 6px;
   border: 1px solid var(--border);
@@ -2888,24 +2888,11 @@ select.aya-modal-input {
 .aya-teams-minutes {
   width: 64px;
 }
-.aya-teams-send {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 .aya-teams-send label {
   min-width: 120px;
 }
 .aya-teams-send .aya-modal-input {
   flex: 1;
-}
-.aya-teams-flow {
-  display: grid;
-  gap: 6px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px;
-  margin: 8px 0;
 }
 .aya-flow-graph {
   width: 100%;
