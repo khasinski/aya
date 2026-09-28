@@ -11,6 +11,7 @@ import {
   CODEX_DIRNAME,
   CODEX_DEFAULT_DIR,
   CODEX_SESSIONS_SUBDIR,
+  MAX_DATE_MS,
 } from "../dist-electron/usage-codex.js";
 
 test("Codex's default home is ~/.codex", () => {
@@ -356,8 +357,7 @@ test("latestUsageAccountsFromLines reads id/label from a nested payload.account"
   assert.equal(out[0].label, "Team");
 });
 
-test("MAX_DATE_MS is the ECMAScript Date range limit", async () => {
-  const { MAX_DATE_MS } = await import("../dist-electron/usage-codex.js");
+test("MAX_DATE_MS is the ECMAScript Date range limit", () => {
   assert.equal(MAX_DATE_MS, 8.64e15);
   assert.doesNotThrow(() => new Date(MAX_DATE_MS).toISOString());
   assert.throws(() => new Date(MAX_DATE_MS + 1).toISOString(), RangeError);

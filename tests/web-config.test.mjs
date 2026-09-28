@@ -6,8 +6,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 const {
+  DEFAULT_WEB_HOST,
   DEFAULT_WEB_PORT,
+  IPV4_WILDCARD_HOST,
+  IPV6_WILDCARD_HOST,
+  LOOPBACK_HOST,
+  MAX_TCP_PORT,
+  PASSWORD_BYTES,
+  SALT_BYTES,
   defaultWebConfig,
+  isWildcardHost,
   generateWebPassword,
   normalizeWebConfig,
   normalizeWebPort,
@@ -88,8 +96,7 @@ test("normalizeWebConfig backfills defaults for optional fields", () => {
   assert.equal(parsed.generatedPassword, undefined);
 });
 
-test("isWildcardHost: 0.0.0.0 and :: listen everywhere, anything else is pinned", async () => {
-  const { isWildcardHost, LOOPBACK_HOST } = await import("../dist-electron/web-config.js");
+test("isWildcardHost: 0.0.0.0 and :: listen everywhere, anything else is pinned", () => {
   assert.equal(isWildcardHost("0.0.0.0"), true);
   assert.equal(isWildcardHost("::"), true);
   for (const host of ["127.0.0.1", "100.64.0.1", "localhost", "", "::1"]) {
@@ -98,21 +105,19 @@ test("isWildcardHost: 0.0.0.0 and :: listen everywhere, anything else is pinned"
   assert.equal(LOOPBACK_HOST, "127.0.0.1");
 });
 
-test("wildcard host constants: the default listen host is the IPv4 wildcard", async () => {
-  const m = await import("../dist-electron/web-config.js");
-  assert.equal(m.IPV4_WILDCARD_HOST, "0.0.0.0");
-  assert.equal(m.IPV6_WILDCARD_HOST, "::");
-  assert.equal(m.DEFAULT_WEB_HOST, "0.0.0.0");
-  assert.equal(m.defaultWebConfig().host, "0.0.0.0");
+test("wildcard host constants: the default listen host is the IPv4 wildcard", () => {
+  assert.equal(IPV4_WILDCARD_HOST, "0.0.0.0");
+  assert.equal(IPV6_WILDCARD_HOST, "::");
+  assert.equal(DEFAULT_WEB_HOST, "0.0.0.0");
+  assert.equal(defaultWebConfig().host, "0.0.0.0");
 });
 
-test("secret sizes and the port ceiling are pinned", async () => {
-  const m = await import("../dist-electron/web-config.js");
-  assert.equal(m.PASSWORD_BYTES, 10);
-  assert.equal(m.SALT_BYTES, 16);
-  assert.equal(m.MAX_TCP_PORT, 65535);
-  assert.equal(generateWebPassword().length, Math.ceil((m.PASSWORD_BYTES * 8) / 6));
-  assert.equal(webCredentials("pw", false).passwordSalt.length, m.SALT_BYTES * 2);
+test("secret sizes and the port ceiling are pinned", () => {
+  assert.equal(PASSWORD_BYTES, 10);
+  assert.equal(SALT_BYTES, 16);
+  assert.equal(MAX_TCP_PORT, 65535);
+  assert.equal(generateWebPassword().length, Math.ceil((PASSWORD_BYTES * 8) / 6));
+  assert.equal(webCredentials("pw", false).passwordSalt.length, SALT_BYTES * 2);
   assert.equal(normalizeWebPort(65535), 65535);
   assert.equal(normalizeWebPort(65536), DEFAULT_WEB_PORT);
 });

@@ -11,7 +11,7 @@ import { envWithoutAya } from "./helpers/env.mjs";
 
 const { deliverTeamMessage, startControlServerOn } = await import("../dist-electron/control.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
-const { NO_PANE_HOLD, handleTeamRequest, typedTeamMessage } = await import("../dist-electron/team-control.js");
+const { NO_PANE_HOLD, deliverAndLog, handleTeamRequest, typedTeamMessage } = await import("../dist-electron/team-control.js");
 
 const cli = resolve("bin/aya");
 const TEAM = `# ux-review
@@ -136,7 +136,6 @@ test("send types a dated, attributed message into the role's pane and presses En
     // A bracketed paste: Codex takes fast raw typing for a paste and swallows the
     // Enter that follows a long one (measured: 600+ chars at 150 ms).
     assert.match(t.writes[0].data, /^\x1b\[200~\[team ux-review \| from tester \| \d\d:\d\d \| a1b2c3d\] round 5 ready\x1b\[201~$/);
-    assert.equal(t.writes[1].data, "\r");
     assert.deepEqual(t.writes[1], { id: "pane-i", data: "\r" });
     assert.deepEqual(await t.store.unread("implementer"), []);
   } finally {
@@ -227,7 +226,6 @@ test("line breaks in a message cannot submit a second, unattributed turn", async
 });
 
 test("the pasted line carries no control bytes, header included", async () => {
-  const { deliverAndLog } = await import("../dist-electron/team-control.js");
   const root = mkdtempSync(join(tmpdir(), "aya-team-ctl-"));
   try {
     const store = new TeamStore(join(root, "team"));

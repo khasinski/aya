@@ -8,7 +8,16 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appleChat, ollamaChat, openAiChat, openAiBaseUrl, providerChat } from "../dist-electron/intelligence-chat.js";
+import {
+  OLLAMA_BASE_URL,
+  OLLAMA_OPENAI_BASE_URL,
+  RECOMMENDED_OLLAMA_MODEL,
+  appleChat,
+  ollamaChat,
+  openAiChat,
+  openAiBaseUrl,
+  providerChat,
+} from "../dist-electron/intelligence-chat.js";
 
 const OPTS = { temperature: 0.2, maxTokens: 50, timeoutMs: 5000 };
 
@@ -126,10 +135,9 @@ test("providerChat goes to the provider the config names", async () => {
   assert.notEqual(ollama.ok === false && ollama.error, "missing-api-config");
 });
 
-test("the recommended Ollama model and Ollama's URLs have one electron-side definition", async () => {
-  const m = await import("../dist-electron/intelligence-chat.js");
-  assert.equal(m.RECOMMENDED_OLLAMA_MODEL, "gemma4:e4b");
-  assert.equal(m.OLLAMA_BASE_URL, "http://localhost:11434");
-  assert.equal(m.OLLAMA_OPENAI_BASE_URL, "http://localhost:11434/v1");
-  assert.equal(openAiBaseUrl(m.OLLAMA_BASE_URL), m.OLLAMA_OPENAI_BASE_URL);
+test("the recommended Ollama model and Ollama's URLs have one electron-side definition", () => {
+  assert.equal(RECOMMENDED_OLLAMA_MODEL, "gemma4:e4b");
+  assert.equal(OLLAMA_BASE_URL, "http://localhost:11434");
+  assert.equal(OLLAMA_OPENAI_BASE_URL, "http://localhost:11434/v1");
+  assert.equal(openAiBaseUrl(OLLAMA_BASE_URL), OLLAMA_OPENAI_BASE_URL);
 });

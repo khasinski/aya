@@ -8,9 +8,13 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
+import { join } from "node:path";
 import { DEFAULT_PRESETS } from "../dist-electron/presets.js";
 import { agentConfigDirsFromCommand, shellArgv } from "../dist-electron/pty.js";
+import { pathWithFallbackDir, withCliFirst, withoutSessionMarkers } from "../dist-electron/pane-command.js";
 
 const FORBIDDEN = [
   /(?<!\w)-p(?!\w)/,
@@ -127,11 +131,7 @@ test("agent config dirs are extracted from leading env assignments", () => {
   );
 });
 
-test("in Aya Dev an agent pane finds the branch's aya first, even after the shell's rc files", async () => {
-  const { withCliFirst } = await import("../dist-electron/pane-command.js");
-  const { execFileSync } = await import("node:child_process");
-  const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
-  const { join } = await import("node:path");
+test("in Aya Dev an agent pane finds the branch's aya first, even after the shell's rc files", () => {
   const dir = mkdtempSync(join(os.tmpdir(), "aya dev bin-"));
   writeFileSync(join(dir, "aya"), "#!/bin/sh\necho branch-aya\n");
   chmodSync(join(dir, "aya"), 0o755);
@@ -142,8 +142,7 @@ test("in Aya Dev an agent pane finds the branch's aya first, even after the shel
   assert.equal(out.trim(), "branch-aya");
 });
 
-test("the bundled CLI is appended to PATH, never ahead of an installed shim", async () => {
-  const { pathWithFallbackDir } = await import("../dist-electron/pane-command.js");
+test("the bundled CLI is appended to PATH, never ahead of an installed shim", () => {
   assert.equal(pathWithFallbackDir("/a:/b", "/app/bin"), "/a:/b:/app/bin");
   assert.equal(pathWithFallbackDir("/app/bin:/a", "/app/bin"), "/app/bin:/a");
   assert.equal(pathWithFallbackDir(undefined, "/app/bin"), "/app/bin");
@@ -151,8 +150,7 @@ test("the bundled CLI is appended to PATH, never ahead of an installed shim", as
   assert.equal(pathWithFallbackDir("/a::/b:", "/app/bin"), "/a::/b::/app/bin");
 });
 
-test("a pane does not inherit the Claude Code session that launched Aya, only the user's settings", async () => {
-  const { withoutSessionMarkers } = await import("../dist-electron/pane-command.js");
+test("a pane does not inherit the Claude Code session that launched Aya, only the user's settings", () => {
   const parent = {
     PATH: "/usr/bin",
     CLAUDECODE: "1",
