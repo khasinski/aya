@@ -18,6 +18,9 @@ import type { AgentKind } from "./presets";
 // Only the visible screen matters for "what is on screen right now", and
 // scrollback would grow a buffer per pane in the host process for no gain.
 const VT_SCROLLBACK_LINES = 0;
+// Smallest mirror size. Not the PTY's MIN_PTY_COLS x MIN_PTY_ROWS (4x2): the
+// two differ today and this only names the mirror's own clamp.
+const MIN_MIRROR_SIZE = 1;
 // The screen is scanned at most this often per pane. Writes are applied
 // immediately; only the (comparatively expensive) scan is rate-limited, so a
 // firehose of output costs one scan per interval rather than one per chunk.
@@ -52,8 +55,8 @@ export function openVtPane(
 ): void {
   panes.set(ptyId, {
     terminal: new Terminal({
-      cols: Math.max(cols, 1),
-      rows: Math.max(rows, 1),
+      cols: Math.max(cols, MIN_MIRROR_SIZE),
+      rows: Math.max(rows, MIN_MIRROR_SIZE),
       scrollback: VT_SCROLLBACK_LINES,
       allowProposedApi: true,
     }),
@@ -70,7 +73,7 @@ export function resizeVtPane(ptyId: string, cols: number, rows: number): void {
   const pane = panes.get(ptyId);
   if (!pane) return;
   try {
-    pane.terminal.resize(Math.max(cols, 1), Math.max(rows, 1));
+    pane.terminal.resize(Math.max(cols, MIN_MIRROR_SIZE), Math.max(rows, MIN_MIRROR_SIZE));
   } catch {
     // A resize can race the pane closing; the next write just lands on the
     // old geometry, which only affects wrapping in the detector's input.
