@@ -2,6 +2,7 @@
 // rename, a cleared name or a removed row never leaves a stale link; role ids
 // are resolved only when the team is built for Save or the preview.
 
+import { AYA_SENDER } from "./team-view";
 import type { RoleDraft, TeamDefinition } from "./types";
 
 export interface EditorRole {
@@ -28,6 +29,11 @@ export const DEFAULT_CADENCE_MINUTES = 30;
 /** What the team file accepts as a role id: typing "Senior UX" gives "senior-ux". */
 export function roleId(typed: string): string {
   return typed.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+/, "").slice(0, ROLE_ID_MAX_LEN);
+}
+
+/** Why main would refuse the role id, or null; a test holds the words equal. */
+export function roleIdProblem(id: string): string | null {
+  return id === AYA_SENDER ? `"${AYA_SENDER}" is reserved for Aya's own messages; name the role something else` : null;
 }
 
 export function toEditor(team: TeamDefinition): EditorTeam {

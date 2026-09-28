@@ -11,6 +11,7 @@ import {
   removeRole,
   ROLE_ID_MAX_LEN,
   roleId,
+  roleIdProblem,
   setSend,
   toEditor,
   updateRole,
@@ -151,4 +152,9 @@ test("a draft route to an empty name does not land on an unnamed row", () => {
   const tes = keyOf(t, "tester");
   t = applyDraft(t, tes, { responsibilities: "", mustNot: "x", sendsTo: [{ to: "", what: "?" }] });
   assert.deepEqual(t.roles.find((r) => r.key === tes).sendsTo, []);
+});
+
+test("the editor flags only the role id aya, before Save", () => {
+  assert.equal(roleIdProblem("aya"), '"aya" is reserved for Aya\'s own messages; name the role something else');
+  for (const id of ["", "ay", "ayaa", "aya-helper", "reviewer"]) assert.equal(roleIdProblem(id), null, id);
 });

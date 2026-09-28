@@ -5,7 +5,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { AYA_SENDER, TEAM_LOG_VISIBLE } from "../dist-test/team-view.js";
-import { TEAM_SYSTEM_SENDER } from "../dist-electron/teams.js";
+import { roleIdProblem } from "../dist-test/team-edit.js";
+import { RESERVED_ROLE_PROBLEM, TEAM_SYSTEM_SENDER } from "../dist-electron/teams.js";
 import { LOG_TAIL } from "../dist-electron/team-admin.js";
 
 test("the renderer's name for Aya as a sender is the one the runner logs", () => {
@@ -16,4 +17,8 @@ test("the renderer's name for Aya as a sender is the one the runner logs", () =>
 test("the teams window shows the last 8 logged messages, within what main returns", () => {
   assert.equal(TEAM_LOG_VISIBLE, 8);
   assert.ok(TEAM_LOG_VISIBLE <= LOG_TAIL);
+});
+
+test("the editor refuses a role named aya with the words main refuses it with", () => {
+  assert.equal(roleIdProblem(TEAM_SYSTEM_SENDER), RESERVED_ROLE_PROBLEM);
 });

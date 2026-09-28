@@ -6,6 +6,7 @@ import {
   fromEditor,
   removeRole,
   roleId,
+  roleIdProblem,
   setSend,
   toEditor,
   updateRole,
@@ -121,7 +122,7 @@ export function TeamEditor({
         <button className="aya-modal-btn" onClick={onCancel}>
           Cancel
         </button>
-        <button className="aya-modal-btn aya-modal-btn--primary" disabled={save.busy} onClick={() => save.run(() => onSave(built))}>
+        <button className="aya-modal-btn aya-modal-btn--primary" disabled={save.busy || team.roles.some((r) => roleIdProblem(r.id))} onClick={() => save.run(() => onSave(built))}>
           Save team
         </button>
       </div>
@@ -171,6 +172,7 @@ function RoleEditor({
           Remove
         </button>
       </div>
+      <ErrorLine error={roleIdProblem(role.id)} />
       <ErrorLine error={draft.error} />
       <span className="aya-teams-muted">Responsibilities</span>
       <textarea

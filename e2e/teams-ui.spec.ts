@@ -33,6 +33,18 @@ test("a role without must-not is refused with the reason, and nothing is written
   expect(existsSync(join(seeded.projectDir, ".aya", "teams", "broken.md"))).toBe(false);
 });
 
+test("a role named aya is flagged in the editor and Save is off until it is renamed", async ({ window }) => {
+  const dialog = await openNewTeam(window);
+  const save = dialog.getByRole("button", { name: "Save team" });
+  const reserved = dialog.getByText(`"aya" is reserved for Aya's own messages; name the role something else`);
+  await dialog.getByLabel("Role 1 name").fill("aya");
+  await expect(reserved).toBeVisible();
+  await expect(save).toBeDisabled();
+  await dialog.getByLabel("Role 1 name").fill("aya-helper");
+  await expect(reserved).toBeHidden();
+  await expect(save).toBeEnabled();
+});
+
 test("assign panes, Start sends the delivery test, Pause marks the team, Resume clears it", async ({ window, seeded }) => {
   const dialog = await defineFromTemplate(window, "ux-review");
   const card = dialog.getByTestId("team-ux-review");
