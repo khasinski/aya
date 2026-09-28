@@ -748,6 +748,13 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
 
 /** The child's LIVE cwd, not the one it was spawned with (a `cd` moves it).
  *  null when unanswerable; callers fall back to the spawn cwd. */
+export function getPtySize(
+  ptyId: string,
+): { cols: number; rows: number } | null {
+  const p = ptys.get(ptyId);
+  return p ? { cols: p.cols, rows: p.rows } : null;
+}
+
 export async function getPtyCwd(ptyId: string): Promise<string | null> {
   const p = ptys.get(ptyId);
   if (!p) return null;

@@ -1,3 +1,4 @@
+import type { PaneSize } from "./pane-render";
 import type { BufferSearchHit } from "./pty";
 import type { PtyEvent, SpawnRequest } from "./types";
 
@@ -12,6 +13,9 @@ export type PtyHostRequest =
   // Live cwd of a PTY's child. Added after 0.7.8: a host from an older build
   // answers "unknown request", which the client turns back into null.
   | { id: number; type: "cwd"; ptyId: string }
+  // Live cols x rows, for `aya pane read`'s render. Added after 0.11.0; an
+  // older host answers "unknown request", which the client turns into null.
+  | { id: number; type: "size"; ptyId: string }
   | { id: number; type: "version" };
 
 export type PtyHostResponse =
@@ -26,6 +30,13 @@ export function isPtyHostRequest(value: unknown): value is PtyHostRequest {
   if (!value || typeof value !== "object") return false;
   const r = value as Partial<PtyHostRequest>;
   return typeof r.id === "number" && typeof r.type === "string";
+}
+
+export function asPaneSize(value: unknown): PaneSize | null {
+  const v = value as Partial<PaneSize> | null;
+  return typeof v?.cols === "number" && typeof v.rows === "number"
+    ? { cols: v.cols, rows: v.rows }
+    : null;
 }
 
 export function asSearchResult(value: unknown): BufferSearchHit[] {

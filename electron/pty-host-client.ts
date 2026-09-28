@@ -5,7 +5,9 @@ import * as net from "node:net";
 import * as path from "node:path";
 import type { WebContents } from "electron";
 import { PTY_HOST_SOCKET_PATH } from "./paths";
+import type { PaneSize } from "./pane-render";
 import {
+  asPaneSize,
   asSearchResult,
   type PtyHostMessage,
   type PtyHostRequest,
@@ -165,6 +167,16 @@ export class PtyHostClient {
   async getBuffer(ptyId: string): Promise<string> {
     const result = await this.request({ id: 0, type: "buffer", ptyId });
     return typeof result === "string" ? result : "";
+  }
+
+  /** A live pane's size, or null when the pane is gone or the host predates
+   *  the request (it answers "unknown request"). */
+  async getSize(ptyId: string): Promise<PaneSize | null> {
+    try {
+      return asPaneSize(await this.request({ id: 0, type: "size", ptyId }));
+    } catch {
+      return null;
+    }
   }
 
   /** Live cwd of a PTY's child, or null when it can't be determined. A host
