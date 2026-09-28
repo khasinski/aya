@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TeamStore, openTeamStore, teamDir } from "../dist-electron/team-store.js";
@@ -15,6 +15,26 @@ const done = (store) => rmSync(store.dir, { recursive: true, force: true });
 test("teamDir keeps each project's team apart under the aya home", () => {
   assert.equal(teamDir("/h/.aya", "game", "ux-review"), "/h/.aya/teams/game/ux-review");
   assert.equal(teamDir("/h/.aya", "e2e-proj", "ux-review"), "/h/.aya/teams/e2e-proj/ux-review");
+});
+
+test("a team's files on disk keep their names", async () => {
+  const store = fresh();
+  try {
+    await store.assign("tester", "pane-a");
+    await store.setPaused(true);
+    await store.saveDefinition("# team");
+    await store.append({ from: "user", to: "tester", text: "hi" });
+    await store.markRead("tester", 1);
+    assert.deepEqual(readdirSync(store.dir).sort(), [
+      "assignments.json",
+      "log.jsonl",
+      "read.json",
+      "saved.md",
+      "state.json",
+    ]);
+  } finally {
+    done(store);
+  }
 });
 
 test("one pane per role; assigning a held role moves it", async () => {
