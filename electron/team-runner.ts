@@ -115,12 +115,17 @@ export class TeamRunner {
     this.cancels.set(
       key,
       this.schedule(async () => {
-        const { project, store, team: current } = await this.open(slug, name);
-        if (await store.paused()) return;
-        const round = (this.rounds.get(key) ?? 0) + 1;
-        const text = `Round ${round}: run your round as the team protocol says.`;
-        // A held pane skips the round rather than queueing it: it would be stale.
-        if (!(await this.fromAya(project, store, current, cadence.role, text))) this.rounds.set(key, round);
+        try {
+          const { project, store, team: current } = await this.open(slug, name);
+          if (await store.paused()) return;
+          const round = (this.rounds.get(key) ?? 0) + 1;
+          const text = `Round ${round}: run your round as the team protocol says.`;
+          // A held pane skips the round rather than queueing it: it would be stale.
+          if (!(await this.fromAya(project, store, current, cadence.role, text))) this.rounds.set(key, round);
+        } catch (err) {
+          // A timer has no caller to report to: skip this round, try the next.
+          console.warn(`[aya] team ${slug}/${name} round skipped:`, err);
+        }
       }, cadence.minutes * 60 * 1000),
     );
   }

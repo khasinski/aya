@@ -1,99 +1,101 @@
-// Draft a role from its name with Aya Intelligence. The model returns fields;
-// the code normalizes them, so a bad answer never reaches the team file.
+// Draft a role with Aya Intelligence. The model returns fields; the code
+// normalizes them, so a bad answer never reaches the team file.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ROLE_DRAFT_CHAT, draftRole, parseRoleDraft, roleDraftPrompt } from "../dist-electron/team-draft.js";
 
-test("the prompt names the role, lists only the team's other roles, and asks for JSON fields", () => {
-  const prompt = roleDraftPrompt("senior UX game designer", ["implementer", "tester", "senior UX game designer"]);
-  assert.match(prompt, /senior UX game designer/);
-  assert.match(prompt, /implementer, tester/);
-  assert.doesNotMatch(prompt, /implementer, tester, senior UX/);
+const role = (id, sends = [], responsibilities = "", mustNot = "") => ({
+  id,
+  sendsTo: sends.map(([to, what = ""]) => ({ to, what })),
+  responsibilities,
+  mustNot,
+});
+const team = (roles, protocol = "") => ({ name: "t", roles, cadence: null, protocol });
+
+const TRIO = team(
+  [
+    role("reviewer", [["implementer", "findings to fix"], ["tester", "measurement requests"]], "Reviews each change.", "edit code"),
+    role("senior-ux-designer", [["tester"]]),
+    role("tester", [["reviewer", "measured results"]], "", ""),
+  ],
+  "The reviewer keeps the list.",
+);
+
+test("the prompt names the role by its words, lists the others, and asks for JSON fields", () => {
+  const prompt = roleDraftPrompt(TRIO, "senior-ux-designer");
+  assert.match(prompt, /"senior ux designer"/);
+  assert.match(prompt, /other roles in the team: reviewer, tester\./);
   for (const field of ['"responsibilities"', '"mustNot"', '"sendsTo"']) assert.ok(prompt.includes(field), field);
+  assert.doesNotMatch(prompt, /edit code"|e\.g\./);
+  assert.match(prompt, /Never forbid the work its name says it does/);
 });
 
-test("a good answer becomes a draft; unknown or self targets are dropped", () => {
+test("what the others do and send to this role goes into the prompt; empty roles and itself do not", () => {
+  const prompt = roleDraftPrompt(TRIO, "senior-ux-designer");
+  assert.match(prompt, /- reviewer: Reviews each change\. Must not: edit code\./);
+  assert.doesNotMatch(prompt, /- tester:/);
+  const tester = roleDraftPrompt(TRIO, "tester");
+  assert.match(tester, /It receives: measurement requests from reviewer\./);
+  assert.doesNotMatch(tester, /- tester:/);
+});
+
+test("ticked routes go into the prompt and win; a typed what stays, the model fills the empty ones", () => {
+  const t = team([role("a", [["b", "typed by hand"], ["c"]]), role("b"), role("c"), role("d")]);
+  assert.match(roleDraftPrompt(t, "a"), /It sends to: b, c\. For each, say what it sends\./);
   const draft = parseRoleDraft(
-    'Sure! {"responsibilities":"  Plays the build each round.  ","mustNot":"edit code","sendsTo":["implementer","nobody","designer","implementer"]}',
-    "designer",
-    ["implementer", "tester", "designer"],
+    JSON.stringify({ mustNot: "x", sendsTo: { b: "model's b", c: "  the build  (to test)", d: "not ticked" } }),
+    t,
+    "a",
   );
-  assert.deepEqual(draft, { responsibilities: "Plays the build each round.", mustNot: "edit code", sendsTo: [{ to: "implementer", what: "" }] });
+  assert.deepEqual(draft.sendsTo, [
+    { to: "b", what: "typed by hand" },
+    { to: "c", what: "the build to test" },
+  ]);
+});
+
+test("with nothing ticked the model picks routes, only among the other named roles, once each", () => {
+  const t = team([role("a"), role("b"), role("c")]);
+  assert.match(roleDraftPrompt(t, "a"), /choose only from the other roles/);
+  const asObject = parseRoleDraft('{"mustNot":"x","sendsTo":{"b":"notes","a":"self","ghost":"y"}}', t, "a");
+  assert.deepEqual(asObject.sendsTo, [{ to: "b", what: "notes" }]);
+  const asList = parseRoleDraft('{"mustNot":"x","sendsTo":["c","c","b"]}', t, "a");
+  assert.deepEqual(asList.sendsTo, [{ to: "c", what: "" }, { to: "b", what: "" }]);
+  const asPairs = parseRoleDraft('{"mustNot":"x","sendsTo":[{"to":"b","what":"plans"},{"role":"c","what":"tasks"},{"to":"b","what":"again"}]}', t, "a");
+  assert.deepEqual(asPairs.sendsTo, [{ to: "b", what: "plans" }, { to: "c", what: "tasks" }]);
 });
 
 test("an answer without a must-not, or not JSON, is no draft", () => {
-  assert.throws(() => parseRoleDraft('{"responsibilities":"x","mustNot":"  ","sendsTo":[]}', "a", ["b"]), /no usable draft/);
-  assert.throws(() => parseRoleDraft("I cannot help with that.", "a", ["b"]), /no usable draft/);
+  const t = team([role("a"), role("b")]);
+  assert.throws(() => parseRoleDraft('{"responsibilities":"x","mustNot":"  "}', t, "a"), /no usable draft/);
+  assert.throws(() => parseRoleDraft("I cannot help with that.", t, "a"), /no usable draft/);
 });
 
 test("fields are capped so a rambling model cannot flood the team file", () => {
   const long = "word ".repeat(400);
-  const draft = parseRoleDraft(JSON.stringify({ responsibilities: long, mustNot: long, sendsTo: [] }), "a", []);
+  const t = team([role("a", [["b"]]), role("b")]);
+  const draft = parseRoleDraft(JSON.stringify({ responsibilities: long, mustNot: long, sendsTo: { b: long } }), t, "a");
   assert.ok(draft.responsibilities.length <= 400);
   assert.ok(draft.mustNot.length <= 120);
+  assert.ok(draft.sendsTo[0].what.length <= 60);
 });
 
 test("draftRole asks the chat once and returns the normalized draft", async () => {
   const calls = [];
-  const draft = await draftRole("tester", ["implementer"], async (system, user) => {
+  const draft = await draftRole(TRIO, "tester", async (system, user) => {
     calls.push({ system, user });
-    return '{"responsibilities":"Checks each build.","mustNot":"edit code","sendsTo":["implementer"]}';
+    return '```json\n{"responsibilities":"Checks each build.","mustNot":"fix bugs itself","sendsTo":{"reviewer":"pass or fail"}}\n```';
   });
   assert.equal(calls.length, 1);
   assert.match(calls[0].system, /JSON only/);
-  assert.equal(draft.mustNot, "edit code");
+  assert.match(calls[0].user, /"tester"/);
+  assert.deepEqual(draft, { responsibilities: "Checks each build.", mustNot: "fix bugs itself", sendsTo: [{ to: "reviewer", what: "measured results" }] });
 });
 
-test("a spaced display name is the same role as its dashed id", () => {
-  const prompt = roleDraftPrompt("ux designer", ["implementer", "ux-designer"]);
-  assert.match(prompt, /other roles in the team: implementer\./);
-  const draft = parseRoleDraft('{"mustNot":"x","sendsTo":["ux-designer","implementer"]}', "ux designer", ["implementer", "ux-designer"]);
-  assert.deepEqual(draft.sendsTo, [{ to: "implementer", what: "" }]);
-});
-
-test("roles the user already ticked go into the prompt and win over the model's pick", async () => {
-  const prompt = roleDraftPrompt("reviewer", ["implementer", "tester", "reviewer"], ["tester"]);
-  assert.match(prompt, /It sends to: tester\./);
-  let sent = "";
-  const draft = await draftRole("reviewer", ["implementer", "tester", "reviewer"], async (_system, user) => {
-    sent = user;
-    return '{"responsibilities":"Reviews.","mustNot":"edit code","sendsTo":["implementer"]}';
-  }, ["tester", "gone"]);
-  assert.deepEqual(draft.sendsTo, [{ to: "tester", what: "" }]);
-  assert.match(sent, /It sends to: tester\./);
-});
-
-test("with nothing ticked, the model's pick stands", async () => {
-  assert.doesNotMatch(roleDraftPrompt("reviewer", ["implementer", "reviewer"], []), /It sends to/);
-  const draft = await draftRole("reviewer", ["implementer", "reviewer"], async () =>
-    '{"mustNot":"edit code","sendsTo":["implementer"]}', []);
-  assert.deepEqual(draft.sendsTo, [{ to: "implementer", what: "" }]);
+test("an unknown role id is refused", () => {
+  assert.throws(() => roleDraftPrompt(TRIO, "ghost"), /no role "ghost"/);
 });
 
 test("the draft waits long enough for Apple's on-device model (13-44 s measured)", () => {
   assert.ok(ROLE_DRAFT_CHAT.timeoutMs >= 60_000, `timeout ${ROLE_DRAFT_CHAT.timeoutMs} ms`);
-});
-
-test("the prompt gives no example must-not for the model to copy onto every role", () => {
-  const prompt = roleDraftPrompt("implementer", ["reviewer", "implementer"]);
-  assert.doesNotMatch(prompt, /edit code/);
-  assert.match(prompt, /Never forbid the work its name says it does/);
-});
-
-test("what the other roles already do goes into the prompt, so the draft does not repeat them", async () => {
-  const peers = [
-    { id: "reviewer", responsibilities: "Reviews each change.", mustNot: "edit code" },
-    { id: "tester", responsibilities: "", mustNot: "" },
-    { id: "implementer", responsibilities: "Old text of this role.", mustNot: "x" },
-  ];
-  let sent = "";
-  await draftRole("implementer", ["reviewer", "tester", "implementer"], async (_s, user) => {
-    sent = user;
-    return '{"mustNot":"merge its own change"}';
-  }, [], peers);
-  assert.match(sent, /reviewer: Reviews each change\. Must not: edit code\./);
-  assert.doesNotMatch(sent, /tester:/);
-  assert.doesNotMatch(sent, /Old text of this role/);
-  assert.match(sent, /do not repeat it/);
 });

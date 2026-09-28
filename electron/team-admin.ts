@@ -82,11 +82,37 @@ function refuseFieldLines(team: TeamDefinition): void {
 
 /** Validates by round-tripping through the parser, so the file on disk is
  *  always one the parser accepts. */
-export async function saveTeam(teamHome: string, project: ProjectConfig, team: TeamDefinition): Promise<void> {
+/** Throws unless the roles parse back the same, up to whitespace the format
+ *  trims; a line break inside a one-line field would not. */
+function refuseLossy(team: TeamDefinition, text: string): void {
+  const back = parseTeamFile(team.name, text);
+  const flat = (s: string) => s.trim();
+  for (const [i, role] of team.roles.entries()) {
+    const read = back.roles[i];
+    const same =
+      read?.id === role.id &&
+      read.mustNot === flat(role.mustNot) &&
+      read.responsibilities === flat(role.responsibilities) &&
+      JSON.stringify(read.sendsTo) === JSON.stringify(role.sendsTo.map((s) => ({ to: s.to, what: flat(s.what) })));
+    if (!same) throw new Error(`role "${role.id}" would not read back the same from the team file; check for line breaks or parentheses`);
+  }
+}
+
+/** `create`: a new team, refused when one with its name already exists. */
+export async function saveTeam(
+  teamHome: string,
+  project: ProjectConfig,
+  team: TeamDefinition,
+  { create = false }: { create?: boolean } = {},
+): Promise<void> {
   refuseFieldLines(team);
   const text = serializeTeam(team);
-  parseTeamFile(team.name, text);
-  await writeFileAtomic(teamFile(project, team.name), text);
+  refuseLossy(team, text);
+  const file = teamFile(project, team.name);
+  if (create && (await fs.stat(file).then(() => true, () => false))) {
+    throw new Error(`team "${team.name}" already exists; edit it instead`);
+  }
+  await writeFileAtomic(file, text);
   const store = new TeamStore(teamDir(teamHome, project.slug, team.name));
   await store.saveDefinition(text);
   // A renamed or removed role would keep a pane no role id matches.

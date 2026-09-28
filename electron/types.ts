@@ -608,19 +608,14 @@ export interface AyaApi {
   teamPause(projectSlug: string, team: string): Promise<void>;
   teamList(projectSlug: string): Promise<TeamSummary[]>;
   /** Save team: writes .aya/teams/<name>.md and the snapshot Aya runs on. */
-  teamSave(projectSlug: string, team: TeamDefinition): Promise<void>;
+  /** `create`: refuse when a team with this name already exists. */
+  teamSave(projectSlug: string, team: TeamDefinition, create?: boolean): Promise<void>;
   /** Give a role to a pane of the project, or free it with null. */
   teamAssign(projectSlug: string, team: string, role: string, paneId: string | null): Promise<void>;
   /** A closed tab gives up its roles in every team of the project. */
   teamReleasePane(projectSlug: string, paneId: string): Promise<void>;
-  /** Drafts a role's fields from its name with the configured Aya Intelligence. */
-  teamDraftRole(
-    role: string,
-    teamRoles: string[],
-    sendsTo: string[],
-    peers: Pick<TeamRole, "id" | "responsibilities" | "mustNot">[],
-    intelligence: AyaIntelligenceConfig,
-  ): Promise<RoleDraft>;
+  /** Drafts a role of the team as the editor holds it, with Aya Intelligence. */
+  teamDraftRole(team: TeamDefinition, roleId: string, intelligence: AyaIntelligenceConfig): Promise<RoleDraft>;
   teamResume(projectSlug: string, team: string): Promise<void>;
 
   // Optional usage-hook installer (writes ~/.claude/settings.json + a fetch

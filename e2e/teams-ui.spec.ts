@@ -49,7 +49,7 @@ test("a role without must-not is refused with the reason, and nothing is written
   expect(existsSync(join(seeded.projectDir, ".aya", "teams", "broken.md"))).toBe(false);
 });
 
-test("assign panes, Start sends the delivery test, Pause marks the team", async ({ window, seeded }) => {
+test("assign panes, Start sends the delivery test, Pause marks the team, Resume clears it", async ({ window, seeded }) => {
   const dialog = await defineFromTemplate(window, "ux-review");
   const card = dialog.getByTestId("team-ux-review");
   await card.getByLabel("Pane for reviewer").selectOption({ label: "shell 1" });
@@ -64,7 +64,10 @@ test("assign panes, Start sends the delivery test, Pause marks the team", async 
   await expect(card.getByLabel("ux-review messages")).toContainText("aya → implementer", { timeout: 10_000 });
   await card.getByRole("button", { name: "Pause", exact: true }).click();
   await expect(card.getByText("paused", { exact: true })).toBeVisible();
-  await expect(card.getByRole("button", { name: "Start", exact: true })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Start", exact: true })).toHaveCount(0);
+  await card.getByRole("button", { name: "Resume", exact: true }).click();
+  await expect(card.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+  await expect(card.getByText("paused", { exact: true })).toHaveCount(0);
 });
 
 test("a repo edit shows as changed and can be adopted", async ({ window, seeded }) => {

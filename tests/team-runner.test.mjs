@@ -199,3 +199,19 @@ test("saving a running team re-arms its rounds from the new definition", async (
     t.cleanup();
   }
 });
+
+test("a round tick never rejects: a closed project or a failing pane only skips the round", async () => {
+  const t = await setup();
+  try {
+    await t.runner.start("game", "ux-review");
+    t.deps.listProjects = async () => [];
+    await t.scheduled[0].fn();
+    t.deps.listProjects = async () => [{ slug: "game", name: "game", directory: "/nonexistent", tabs: [] }];
+    t.deps.deliver = async () => {
+      throw new Error("pane gone");
+    };
+    await t.scheduled[0].fn();
+  } finally {
+    t.cleanup();
+  }
+});

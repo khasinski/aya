@@ -77,6 +77,35 @@ test("a field line inside free text is refused, not read back as that field", as
   }
 });
 
+test("a new team with the name of an existing one is refused and the old one stays", async () => {
+  const t = setup();
+  try {
+    await saveTeam(t.teamHome, t.project, TEAM);
+    const other = { ...TEAM, protocol: "Something else." };
+    await assert.rejects(saveTeam(t.teamHome, t.project, other, { create: true }), /team "ux-review" already exists/);
+    assert.equal((await listTeams(t.teamHome, t.project))[0].definition.protocol, TEAM.protocol);
+    await saveTeam(t.teamHome, t.project, other);
+    assert.equal((await listTeams(t.teamHome, t.project))[0].definition.protocol, "Something else.");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a team that would not read back the same from its file is refused", async () => {
+  const t = setup();
+  try {
+    const broken = { ...TEAM, roles: [{ ...TEAM.roles[0], mustNot: "edit\ncode" }, TEAM.roles[1]] };
+    await assert.rejects(saveTeam(t.teamHome, t.project, broken), /tester.*would not read back/);
+    const twice = { ...TEAM, roles: [{ ...TEAM.roles[0], mustNot: "a\nMust not: b", responsibilities: "" }, TEAM.roles[1]] };
+    await assert.rejects(saveTeam(t.teamHome, t.project, twice), /tester.*would not read back/);
+    const spaced = { ...TEAM, protocol: "  One round every 30 minutes.  " };
+    await saveTeam(t.teamHome, t.project, spaced);
+    assert.deepEqual((await listTeams(t.teamHome, t.project))[0].definition.protocol, "One round every 30 minutes.");
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("a repo edit after Save shows as changed; Aya keeps using the saved one", async () => {
   const t = setup();
   try {

@@ -76,12 +76,11 @@ const api: AyaApi = {
   teamPause: (projectSlug, team) => ipcRenderer.invoke("teams:pause", projectSlug, team),
   teamResume: (projectSlug, team) => ipcRenderer.invoke("teams:resume", projectSlug, team),
   teamList: (projectSlug) => ipcRenderer.invoke("teams:list", projectSlug),
-  teamSave: (projectSlug, team) => ipcRenderer.invoke("teams:save", projectSlug, team),
+  teamSave: (projectSlug, team, create) => ipcRenderer.invoke("teams:save", projectSlug, team, create),
   teamAssign: (projectSlug, team, role, paneId) =>
     ipcRenderer.invoke("teams:assign", projectSlug, team, role, paneId),
   teamReleasePane: (projectSlug, paneId) => ipcRenderer.invoke("teams:release-pane", projectSlug, paneId),
-  teamDraftRole: (role, teamRoles, sendsTo, peers, intelligence) =>
-    ipcRenderer.invoke("teams:draft-role", role, teamRoles, sendsTo, peers, intelligence),
+  teamDraftRole: (team, roleId, intelligence) => ipcRenderer.invoke("teams:draft-role", team, roleId, intelligence),
   usageHookStatus: () => ipcRenderer.invoke("usage-hook:status"),
   installUsageHook: () => ipcRenderer.invoke("usage-hook:install"),
   uninstallUsageHook: () => ipcRenderer.invoke("usage-hook:uninstall"),

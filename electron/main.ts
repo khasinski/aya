@@ -75,7 +75,7 @@ import { paneTeamRole } from "./team-control";
 import { appleChat, type ChatOptions, type ChatResult, OLLAMA_BASE_URL, ollamaChat, openAiChat } from "./intelligence-chat";
 import { TeamRunner } from "./team-runner";
 import { assignRole, listTeams, releasePaneEverywhere, saveTeam } from "./team-admin";
-import { draftRole, ROLE_DRAFT_CHAT, type RolePeer } from "./team-draft";
+import { draftRole, ROLE_DRAFT_CHAT } from "./team-draft";
 import { startRemoteServer } from "./remote-server";
 import {
   createRemoteDirectory,
@@ -156,7 +156,6 @@ import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
 import {
   requirePositiveInt,
   requireString,
-  requireStringArray,
   validateTeamDefinition,
   validateSnippetArray,
   validatePresetArray,
@@ -2235,10 +2234,10 @@ function registerIpc(): void {
   ipcMain.handle("teams:list", async (_e, slug: unknown) =>
     listTeams(AYA_HOME, await teamProject(slug, "teams:list")),
   );
-  ipcMain.handle("teams:save", async (_e, slug: unknown, team: unknown) => {
+  ipcMain.handle("teams:save", async (_e, slug: unknown, team: unknown, create: unknown) => {
     const project = await teamProject(slug, "teams:save");
     const definition = validateTeamDefinition(team);
-    await saveTeam(AYA_HOME, project, definition);
+    await saveTeam(AYA_HOME, project, definition, { create: create === true });
     await teamRunner.refresh(project.slug, definition.name);
   });
   ipcMain.handle("teams:release-pane", async (_e, slug: unknown, paneId: unknown) =>
@@ -2257,14 +2256,6 @@ function registerIpc(): void {
       paneId === null ? null : requireString(paneId, "teams:assign.paneId"),
     ),
   );
-  const requireRolePeers = (value: unknown): RolePeer[] => {
-    if (!Array.isArray(value)) throw new Error("teams:draft-role.peers must be an array");
-    return value.map((p, i) => ({
-      id: requireString(p?.id, `teams:draft-role.peers[${i}].id`),
-      responsibilities: requireString(p?.responsibilities, `teams:draft-role.peers[${i}].responsibilities`),
-      mustNot: requireString(p?.mustNot, `teams:draft-role.peers[${i}].mustNot`),
-    }));
-  };
   /** A chat with the configured Aya Intelligence; no config means Apple, the default. */
   const intelligenceChat = (config: unknown, opts: ChatOptions) => {
     const intelligence = normalizeAyaIntelligenceConfig(config) ?? normalizeAyaIntelligenceConfig({})!;
@@ -2290,13 +2281,11 @@ function registerIpc(): void {
       return result.content;
     };
   };
-  ipcMain.handle("teams:draft-role", async (_e, role: unknown, teamRoles: unknown, sendsTo: unknown, peers: unknown, config: unknown) =>
+  ipcMain.handle("teams:draft-role", async (_e, team: unknown, roleId: unknown, config: unknown) =>
     draftRole(
-      requireString(role, "teams:draft-role.role"),
-      requireStringArray(teamRoles, "teams:draft-role.teamRoles"),
+      validateTeamDefinition(team),
+      requireString(roleId, "teams:draft-role.roleId"),
       intelligenceChat(config, ROLE_DRAFT_CHAT),
-      requireStringArray(sendsTo, "teams:draft-role.sendsTo"),
-      requireRolePeers(peers),
     ),
   );
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
