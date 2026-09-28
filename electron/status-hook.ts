@@ -229,15 +229,15 @@ function serially<T>(edit: () => Promise<T>): Promise<T> {
 }
 
 export async function statusHookStatus(): Promise<StatusHookStatus> {
-  const command = statusHookCommand();
+  const [command, legacy] = [statusHookCommand(), legacyStatusHookCommand()];
   let registered = true;
   const dirs = await claudeConfigDirs();
   for (const dir of dirs) {
     try {
       const settings = await readSettingsFile(settingsFileForConfigDir(dir));
       // Installed only when every status event carries our command.
-      registered &&= STATUS_HOOK_EVENTS.every((event) =>
-        hasEventHook(settings, event, command),
+      registered &&= STATUS_HOOK_EVENTS.every(
+        (event) => hasEventHook(settings, event, command) || hasEventHook(settings, event, legacy),
       );
     } catch {
       registered = false;

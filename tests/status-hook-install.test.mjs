@@ -3,9 +3,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const root = mkdtempSync(join(tmpdir(), "aya-status-hook-test-"));
 const settingsPath = join(root, "settings.json");
@@ -14,7 +14,7 @@ process.env.AYA_CLAUDE_SETTINGS = settingsPath;
 process.env.HOME = join(root, "home");
 delete process.env.CLAUDE_CONFIG_DIR;
 
-const { installStatusHook, migrateStatusHookCommand, uninstallStatusHook, STATUS_HOOK_EVENTS, STATUS_HOOK_SCRIPT_FILE } =
+const { installStatusHook, migrateStatusHookCommand, statusHookStatus, uninstallStatusHook, STATUS_HOOK_EVENTS, STATUS_HOOK_SCRIPT_FILE } =
   await import("../dist-electron/status-hook.js");
 
 const quoted = `'${STATUS_HOOK_SCRIPT_FILE}'`;
@@ -69,4 +69,11 @@ test("an uninstall racing the startup migration stays uninstalled", async () => 
     await Promise.all([migrateStatusHookCommand(), uninstallStatusHook()]);
     assert.deepEqual(read(), { env: { FOO: "1" }, hooks: { Stop: [other] } }, `run ${i}`);
   }
+});
+
+test("a quoted install not yet migrated still reads as installed", async () => {
+  seedQuoted();
+  mkdirSync(dirname(STATUS_HOOK_SCRIPT_FILE), { recursive: true });
+  writeFileSync(STATUS_HOOK_SCRIPT_FILE, "#!/bin/sh\n");
+  assert.equal((await statusHookStatus()).installed, true);
 });
