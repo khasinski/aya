@@ -17,6 +17,7 @@ import { isAgentKind, isPreset } from "./presets";
 import { isStorableSplitTree, MAX_SPLIT_COLS, MAX_SPLIT_ROWS, type SplitNode } from "./split-tree";
 import { SESSION_ID_RE } from "./osc-extractor";
 import { isSnippet, SNIPPET_TEXT_MAX } from "./snippets";
+import { RESERVED_ROLE_PROBLEM, TEAM_SYSTEM_SENDER } from "./teams";
 
 /** Hard IPC ceiling on the number of snippets accepted in one save. Well above
  *  the 200 persistence cap so normal saves pass; rejects only clearly hostile
@@ -343,15 +344,17 @@ function validateRoute(value: unknown, at: string): SendRoute {
 
 function validateRole(value: unknown, at: string): TeamRole {
   const role = requireRecord(value, at);
+  const id = requireString(role.id, `${at}.id`);
+  if (id === TEAM_SYSTEM_SENDER) throw new Error(`Invalid IPC payload for ${at}.id: ${RESERVED_ROLE_PROBLEM}.`);
   return {
-    id: requireString(role.id, `${at}.id`),
+    id,
     sendsTo: requireArray(role.sendsTo, `${at}.sendsTo`).map((raw, j) => validateRoute(raw, `${at}.sendsTo[${j}]`)),
     mustNot: requireString(role.mustNot, `${at}.mustNot`),
     responsibilities: requireString(role.responsibilities, `${at}.responsibilities`),
   };
 }
 
-/** Shape only; team rules (must-not, send-to, cadence) are the parser's job.
+/** Shape and the reserved role id; other team rules are the parser's job.
  *  `channel` names the IPC call in errors, e.g. teams:save. */
 export function validateTeamDefinition(value: unknown, channel = "teams:save"): TeamDefinition {
   const at = `${channel}.team`;

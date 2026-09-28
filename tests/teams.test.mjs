@@ -118,6 +118,13 @@ test("Aya's own messages are sent as aya", () => {
   assert.equal(TEAM_SYSTEM_SENDER, "aya");
 });
 
+test("a role named aya is refused, since its messages would read as Aya's own", () => {
+  assert.throws(() => parseTeamFile("ux-review", UX_REVIEW.replaceAll("implementer", "aya")), {
+    message: 'team "ux-review": "aya" is reserved for Aya\'s own messages; name the role something else',
+  });
+  assert.equal(parseTeamFile("ux-review", UX_REVIEW.replaceAll("implementer", "aya-helper")).roles[1].id, "aya-helper");
+});
+
 test("cadence runs from 1 min up to a day, both ends included", () => {
   const every = (n) => parseTeamFile("ux-review", UX_REVIEW.replace("every 30 min", `every ${n} min`)).cadence;
   assert.deepEqual(every(1), { role: "tester", minutes: 1 });

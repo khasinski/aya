@@ -473,3 +473,13 @@ test("validateTeamDefinition keeps a well-formed team and refuses wrong shapes",
   assert.throws(() => validateTeamDefinition({ ...team, roles: [{ ...team.roles[0], sendsTo: [{ to: "implementer", what: 5 }] }] }), /sendsTo\[0\]\.what/);
   assert.throws(() => validateTeamDefinition({ ...team, cadence: { role: "tester", minutes: "30" } }), /minutes/);
 });
+
+test("validateTeamDefinition refuses a role named aya on both channels", () => {
+  const role = { id: "aya", sendsTo: [], mustNot: "edit code", responsibilities: "" };
+  const team = { name: "ux-review", roles: [{ ...role, id: "tester" }, role], cadence: null, protocol: "" };
+  for (const channel of ["teams:save", "teams:draft-role"]) {
+    assert.throws(() => validateTeamDefinition(team, channel), {
+      message: `Invalid IPC payload for ${channel}.team.roles[1].id: "aya" is reserved for Aya's own messages; name the role something else.`,
+    });
+  }
+});

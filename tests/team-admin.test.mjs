@@ -49,6 +49,17 @@ test("an invalid team is refused and nothing is written", async () => {
   }
 });
 
+test("a role named aya is refused on Save and nothing is written", async () => {
+  const t = setup();
+  try {
+    const team = { ...TEAM, roles: [{ ...TEAM.roles[0], id: "aya" }, { ...TEAM.roles[1], sendsTo: [] }], cadence: null };
+    await assert.rejects(saveTeam(t.teamHome, t.project, team), /"aya" is reserved for Aya's own messages/);
+    assert.deepEqual(await listTeams(t.teamHome, t.project), []);
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("a field line inside free text is refused with the exact message, not read back as that field", async () => {
   const t = setup();
   try {

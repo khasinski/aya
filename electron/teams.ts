@@ -6,6 +6,7 @@ import type { SendRoute, TeamCadence, TeamDefinition, TeamRole } from "./types";
 export const ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 /** The sender of Aya's own messages: delivery tests and rounds. */
 export const TEAM_SYSTEM_SENDER = "aya";
+export const RESERVED_ROLE_PROBLEM = `"${TEAM_SYSTEM_SENDER}" is reserved for Aya's own messages; name the role something else`;
 export const SENDS_TO_FIELD = "Sends to";
 export const MUST_NOT_FIELD = "Must not";
 export const SECTION_MARKER = "## ";
@@ -40,6 +41,7 @@ function parseRole(team: string, id: string, body: string): TeamRole {
   if (!ID_RE.test(id)) {
     throw new TeamFileError(team, `role "${id}" must be lowercase letters, digits and dashes`);
   }
+  if (id === TEAM_SYSTEM_SENDER) throw new TeamFileError(team, RESERVED_ROLE_PROBLEM);
   let sendsTo: SendRoute[] = [];
   let mustNot = "";
   const rest: string[] = [];
