@@ -15,3 +15,6 @@ export const HOOK_THROTTLE_MINUTES = 5;
 
 /** electron/usage-grok.ts GROK_USAGE_WINDOW_MS, in the days the UI shows. */
 export const GROK_USAGE_WINDOW_DAYS = 7;
+
+/** electron/usage-grok.ts USD_PER_GROK_TICK: Grok cost ticks are 1e-10 USD. */
+export const USD_PER_GROK_TICK = 1e-10;

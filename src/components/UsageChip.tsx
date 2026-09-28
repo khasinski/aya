@@ -1,7 +1,7 @@
 import { RECENT_MENU_WIDTH_PX } from "../ui-constants";
 import { useEffect, useRef, useState } from "react";
 import type { GrokUsage, UsageAccount, UsageData, UsageWindow } from "../types";
-import { GROK_USAGE_WINDOW_DAYS } from "../main-mirrors";
+import { GROK_USAGE_WINDOW_DAYS, USD_PER_GROK_TICK } from "../main-mirrors";
 
 // A usage snapshot older than this means the source stopped updating — dim it.
 const USAGE_STALE_AFTER_MS = 15 * 60 * 1000;
@@ -337,7 +337,7 @@ function fmtTokens(n: number): string {
 
 /** Grok cost is stored as 1e-10 USD "ticks". */
 function fmtUsd(ticks: number): string {
-  return `$${(ticks * 1e-10).toFixed(2)}`;
+  return `$${(ticks * USD_PER_GROK_TICK).toFixed(2)}`;
 }
 
 export function GrokUsageChip({

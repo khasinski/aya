@@ -35,3 +35,8 @@ test("the Grok chip's day count is main's usage window", () => {
   assert.equal(mirrors.GROK_USAGE_WINDOW_DAYS, 7);
   assert.equal(mirrors.GROK_USAGE_WINDOW_DAYS * 24 * 60 * 60 * 1000, usageGrok.GROK_USAGE_WINDOW_MS);
 });
+
+test("the Grok chip prices a tick as main documents it", () => {
+  assert.equal(mirrors.USD_PER_GROK_TICK, 1e-10);
+  assert.equal(mirrors.USD_PER_GROK_TICK, usageGrok.USD_PER_GROK_TICK);
+});
