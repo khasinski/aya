@@ -105,6 +105,7 @@ import {
   CLI_ADOPTION_FILE,
   CONTROL_SOCKET_PATH,
   DIAGNOSTICS_LOG_FILE,
+  EXECUTABLE_FILE_MODE,
   IS_DEV,
   IS_E2E_HEADLESS,
   IS_E2E_PTY_SHUTDOWN,
@@ -160,7 +161,7 @@ import { readRepoProjectConfig } from "./project-local";
 import { repairProcessPath } from "./shell-path";
 import { PtyHostClient } from "./pty-host-client";
 import { reapStaleHostRecords } from "./pty-host-registry";
-import { COMMAND_PROBE_TIMEOUT_MS } from "./constants";
+import { COMMAND_PROBE_TIMEOUT_MS, HOOK_VIA } from "./constants";
 import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
 import {
   requirePositiveInt,
@@ -204,8 +205,6 @@ import type {
 const DEV_SERVER_URL = "http://localhost:5183";
 const WINDOW_TITLE = IS_DEV ? "Aya Dev" : "Aya";
 
-// Filesystem mode for the installed CLI executable (rwxr-xr-x)
-const CLI_EXECUTABLE_MODE = 0o755;
 
 // Per-harness count of panes that ever called `aya` (#117); shown in
 // Settings -> Diagnostics.
@@ -754,8 +753,8 @@ async function writeCliShim(target: string, script: string): Promise<void> {
   // rename replaces the entry itself instead of writing through a link.
   const tmp = `${target}.aya-${process.pid}.tmp`;
   try {
-    await fs.writeFile(tmp, script, { mode: CLI_EXECUTABLE_MODE });
-    await fs.chmod(tmp, CLI_EXECUTABLE_MODE);
+    await fs.writeFile(tmp, script, { mode: EXECUTABLE_FILE_MODE });
+    await fs.chmod(tmp, EXECUTABLE_FILE_MODE);
     await fs.rename(tmp, target);
   } catch (err) {
     await fs.rm(tmp, { force: true }).catch(() => {});
@@ -3077,7 +3076,7 @@ app.whenReady().then(async () => {
     onRequest: (request, caller) => {
       // Aya's own automatic-status hooks call `aya status` from inside every
       // Claude/Codex pane; counting them would read as ~100% adoption (#121).
-      if (!caller.terminalId || caller.via === "hook") return;
+      if (!caller.terminalId || caller.via === HOOK_VIA) return;
       void cliAdoption
         .called({
           terminalId: caller.terminalId,

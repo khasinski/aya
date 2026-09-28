@@ -13,3 +13,7 @@ export const COMMAND_NOT_FOUND_EXIT_CODE = 127;
  *  harness scans, the Ollama /api/tags reachability probe). Long enough for a
  *  cold disk hit, short enough not to stall spawning noticeably. */
 export const COMMAND_PROBE_TIMEOUT_MS = 2_500;
+
+/** `caller.via` of an `aya` call made by Aya's own status hooks (AYA_VIA in the
+ *  generated scripts); main skips these when counting CLI adoption (#121). */
+export const HOOK_VIA = "hook";

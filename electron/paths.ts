@@ -48,4 +48,6 @@ export const DIAGNOSTICS_LOG_FILE = path.join(AYA_HOME, "diagnostics.log");
 // remote bridge traffic, and host-registry records name kill targets - none
 // of it may be readable/writable by other users. One definition for both.
 export const OWNER_ONLY_FILE_MODE = 0o600;
+// rwxr-xr-x: the installed CLI and the generated hook scripts.
+export const EXECUTABLE_FILE_MODE = 0o755;
 export const SOCKET_FILE_PERMISSIONS = OWNER_ONLY_FILE_MODE;
