@@ -8,7 +8,7 @@ import { openTeamStore } from "./team-store";
 import { MUST_NOT_FIELD, SECTION_MARKER, SENDS_TO_FIELD, TEAM_SYSTEM_SENDER, parseTeamFile, serializeTeam } from "./teams";
 import type { ProjectConfig, TeamDefinition, TeamSummary } from "./types";
 
-const LOG_TAIL = 50;
+export const LOG_TAIL = 50;
 
 async function readText(file: string): Promise<string | null> {
   try {

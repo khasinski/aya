@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { isSplitNode as rendererIsSplitNode } from "../dist-test/split-tree.js";
-import { MAX_SPLIT_COLS, MAX_SPLIT_ROWS } from "../dist-electron/validation.js";
+import { MAX_SPLIT_COLS, MAX_SPLIT_ROWS } from "../dist-electron/split-tree.js";
 import {
   MAX_SPLIT_DEPTH as electronMaxDepth,
   MAX_SPLIT_LEAVES as electronMaxLeaves,

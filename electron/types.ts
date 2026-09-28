@@ -607,10 +607,9 @@ export interface AyaApi {
   teamStart(projectSlug: string, team: string): Promise<TeamStartResult>;
   teamPause(projectSlug: string, team: string): Promise<void>;
   teamList(projectSlug: string): Promise<TeamSummary[]>;
-  /** Save team: writes .aya/teams/<name>.md and the snapshot Aya runs on. */
-  /** `create`: refuse when a team with this name already exists. */
+  /** Save team: writes .aya/teams/<name>.md and the snapshot Aya runs on.
+   *  `create`: refuse when a team with this name already exists. */
   teamSave(projectSlug: string, team: TeamDefinition, create?: boolean): Promise<void>;
-  /** Give a role to a pane of the project, or free it with null. */
   /** Gives a role a pane (null frees it) and tells the agent; returns why it was not told. */
   teamAssign(projectSlug: string, team: string, role: string, paneId: string | null): Promise<string | null>;
   /** A closed tab gives up its roles in every team of the project. */
@@ -768,7 +767,6 @@ export interface TeamStartResult {
   held: { role: string; reason: string }[];
 }
 
-/** A team from .aya/teams/<name>.md (see electron/teams.ts). */
 /** A role this one sends to, and what it sends there (may be empty). */
 export interface SendRoute {
   to: string;
@@ -787,6 +785,7 @@ export interface TeamCadence {
   minutes: number;
 }
 
+/** A team from .aya/teams/<name>.md (see electron/teams.ts). */
 export interface TeamDefinition {
   name: string;
   roles: TeamRole[];

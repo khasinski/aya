@@ -160,6 +160,7 @@ import { normalizeLocalSummaryError, SUMMARY_TEXT_MAX_CHARS } from "./local-summ
 import { readRepoProjectConfig } from "./project-local";
 import { repairProcessPath } from "./shell-path";
 import { PtyHostClient } from "./pty-host-client";
+import { PTY_HOST_SCRIPT_NAME } from "./pty-host-staleness";
 import { reapStaleHostRecords } from "./pty-host-registry";
 import { COMMAND_PROBE_TIMEOUT_MS, HOOK_VIA } from "./constants";
 import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
@@ -237,7 +238,7 @@ const TEAR_OUT_CURSOR_OFFSET_Y_PX = 20;
 // no-op when the WebGL context is already live again).
 const GPU_HEAL_NUDGE_DELAYS_MS = [1200, 3000];
 
-const ptyHost = new PtyHostClient(path.join(__dirname, "pty-host.js"));
+const ptyHost = new PtyHostClient(path.join(__dirname, PTY_HOST_SCRIPT_NAME));
 // One set of team deps for the team runner and the control server's aya team.
 const teamDeps: TeamControlDeps = {
   teamHome: AYA_HOME,
@@ -3017,7 +3018,7 @@ app.whenReady().then(async () => {
   try {
     const summary = reapStaleHostRecords(
       ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION),
-      path.join(__dirname, "pty-host.js"),
+      path.join(__dirname, PTY_HOST_SCRIPT_NAME),
     );
     keptCompatibleHosts = summary.keptCompatible;
     if (summary.reaped.length > 0) {

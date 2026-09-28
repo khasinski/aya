@@ -1,25 +1,19 @@
-// The teams window tells Aya's own messages apart by their sender. The main
-// process logs them under a literal (no exported constant yet), so both sides
-// are pinned to that literal here.
+// The teams window tells Aya's own messages apart by their sender, and shows
+// the tail of the log main returns.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
 
 import { AYA_SENDER, TEAM_LOG_VISIBLE } from "../dist-test/team-view.js";
-
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const source = (file) => readFileSync(path.join(root, file), "utf8");
+import { TEAM_SYSTEM_SENDER } from "../dist-electron/teams.js";
+import { LOG_TAIL } from "../dist-electron/team-admin.js";
 
 test("the renderer's name for Aya as a sender is the one the runner logs", () => {
   assert.equal(AYA_SENDER, "aya");
-  assert.match(source("electron/team-runner.ts"), /from: "aya", to, text/);
-  assert.match(source("electron/team-runner.ts"), /w\.from !== "aya"/);
-  assert.match(source("electron/team-admin.ts"), /m\.from !== "aya"/);
+  assert.equal(AYA_SENDER, TEAM_SYSTEM_SENDER);
 });
 
-test("the teams window shows the last 8 logged messages", () => {
+test("the teams window shows the last 8 logged messages, within what main returns", () => {
   assert.equal(TEAM_LOG_VISIBLE, 8);
+  assert.ok(TEAM_LOG_VISIBLE <= LOG_TAIL);
 });

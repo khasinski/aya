@@ -1,7 +1,7 @@
 // Runtime validation for renderer -> main IPC payloads. TypeScript covers the
 // happy path, but malformed IPC messages still arrive as unknown at runtime.
 
-import { MAX_SPLIT_ROWS, MAX_SPLIT_COLS } from "../dist-electron/validation.js";
+import { MAX_SPLIT_ROWS, MAX_SPLIT_COLS } from "../dist-electron/split-tree.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {

@@ -14,7 +14,8 @@ import type { Preset } from "./presets";
 import type { Snippet } from "./snippets";
 import type { ThemeColors } from "./themes";
 import { isAgentKind, isPreset } from "./presets";
-import { isStorableSplitTree, type SplitNode } from "./split-tree";
+import { isStorableSplitTree, MAX_SPLIT_COLS, MAX_SPLIT_ROWS, type SplitNode } from "./split-tree";
+import { SESSION_ID_RE } from "./osc-extractor";
 import { isSnippet, SNIPPET_TEXT_MAX } from "./snippets";
 
 /** Hard IPC ceiling on the number of snippets accepted in one save. Well above
@@ -24,12 +25,6 @@ const SNIPPETS_IPC_MAX = 1_000;
 
 /** Persisted schema version for projects-state.json. */
 export const PROJECT_STATE_VERSION = 1;
-
-/** Maximum split-grid dimensions (rows x cols). Single source of truth for the
- *  split-layout limit — imported by config.ts so the clamp and this validator
- *  enforce the same rule. */
-export const MAX_SPLIT_ROWS = 5;
-export const MAX_SPLIT_COLS = 5;
 
 function fail(name: string, expected: string): never {
   throw new Error(`Invalid IPC payload for ${name}: expected ${expected}.`);
@@ -117,7 +112,6 @@ function optionalFlag(value: unknown, name: string): boolean | undefined {
 // boundary re-checks its shape rather than trusting the renderer: the same
 // charset the OSC parser enforces (electron/osc-extractor.ts), no shell
 // metacharacters, no whitespace.
-const SESSION_ID_RE = /^[A-Za-z0-9_.:/-]{1,200}$/;
 
 function validateWorkingTab(value: unknown, name: string): WorkingTab {
   if (!isRecord(value)) fail(name, "WorkingTab object");
