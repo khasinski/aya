@@ -771,6 +771,8 @@ export interface AyaApi {
     peers: Pick<TeamRole, "id" | "responsibilities" | "mustNot">[],
     intelligence: AyaIntelligenceConfig,
   ): Promise<RoleDraft>;
+  /** Explains what the team's text sends along each ticked route. */
+  teamPreviewFlow(team: TeamDefinition, intelligence: AyaIntelligenceConfig): Promise<FlowPreview>;
   teamResume(projectSlug: string, team: string): Promise<void>;
 
   usageHookStatus(): Promise<UsageHookStatus>;
@@ -1048,6 +1050,21 @@ export interface TeamSummary {
   /** Messages per role that are waiting in its inbox. */
   unread: Record<string, number>;
   log: TeamMessage[];
+}
+
+/** One message route and what the team's text says travels along it. */
+export interface FlowRoute {
+  from: string;
+  to: string;
+  /** null: the text does not say. */
+  carries: string | null;
+}
+
+/** Aya Intelligence's reading of a team: every ticked route, and routes the
+ *  text describes that are not ticked. */
+export interface FlowPreview {
+  routes: FlowRoute[];
+  unlisted: FlowRoute[];
 }
 
 /** A role drafted by Aya Intelligence from its name, for the user to edit. */

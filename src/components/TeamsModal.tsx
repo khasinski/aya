@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AyaIntelligenceConfig, ProjectConfig, TeamDefinition, TeamRole, TeamSummary } from "../types";
+import { ipcMessage } from "./ipc-message";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
+import { TeamFlow } from "./TeamFlow";
 
 // While open, the log and assignments refresh at this pace.
 const REFRESH_MS = 3000;
@@ -42,12 +44,6 @@ function renameRole(team: TeamDefinition, index: number, id: string): TeamDefini
     roles: team.roles.map((r, i) => (i === index ? { ...r, id } : { ...r, sendsTo: r.sendsTo.map(swap) })),
     cadence: team.cadence && { ...team.cadence, role: swap(team.cadence.role) },
   };
-}
-
-/** The error text without Electron's "Error invoking remote method" wrapper. */
-function ipcMessage(err: unknown): string {
-  const text = err instanceof Error ? err.message : String(err);
-  return text.replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
 }
 
 const EMPTY_ROLE: TeamRole = { id: "", sendsTo: [], mustNot: "", responsibilities: "" };
@@ -424,6 +420,7 @@ function TeamEditor({
         value={team.protocol}
         onChange={(e) => setTeam({ ...team, protocol: e.target.value })}
       />
+      <TeamFlow team={team} intelligence={intelligence} />
       {error && <div className="aya-teams-error">{error}</div>}
       <div className="aya-modal-actions">
         <button className="aya-modal-btn" onClick={onCancel}>

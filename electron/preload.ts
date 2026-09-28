@@ -82,6 +82,7 @@ const api: AyaApi = {
   teamReleasePane: (projectSlug, paneId) => ipcRenderer.invoke("teams:release-pane", projectSlug, paneId),
   teamDraftRole: (role, teamRoles, sendsTo, peers, intelligence) =>
     ipcRenderer.invoke("teams:draft-role", role, teamRoles, sendsTo, peers, intelligence),
+  teamPreviewFlow: (team, intelligence) => ipcRenderer.invoke("teams:preview-flow", team, intelligence),
   usageHookStatus: () => ipcRenderer.invoke("usage-hook:status"),
   installUsageHook: () => ipcRenderer.invoke("usage-hook:install"),
   uninstallUsageHook: () => ipcRenderer.invoke("usage-hook:uninstall"),

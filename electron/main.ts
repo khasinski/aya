@@ -72,10 +72,11 @@ import {
   teamNote,
 } from "./agent-brief";
 import { paneTeamRole } from "./team-control";
-import { appleChat, type ChatResult, OLLAMA_BASE_URL, ollamaChat, openAiChat } from "./intelligence-chat";
+import { appleChat, type ChatOptions, type ChatResult, OLLAMA_BASE_URL, ollamaChat, openAiChat } from "./intelligence-chat";
 import { TeamRunner } from "./team-runner";
 import { assignRole, listTeams, releasePaneEverywhere, saveTeam } from "./team-admin";
 import { draftRole, ROLE_DRAFT_CHAT, type RolePeer } from "./team-draft";
+import { FLOW_PREVIEW_CHAT, previewFlow } from "./team-flow";
 import { startRemoteServer } from "./remote-server";
 import {
   createRemoteDirectory,
@@ -2265,10 +2266,10 @@ function registerIpc(): void {
       mustNot: requireString(p?.mustNot, `teams:draft-role.peers[${i}].mustNot`),
     }));
   };
-  ipcMain.handle("teams:draft-role", async (_e, role: unknown, teamRoles: unknown, sendsTo: unknown, peers: unknown, config: unknown) => {
-    // No config means Aya's default provider, Apple.
+  /** A chat with the configured Aya Intelligence; no config means Apple, the default. */
+  const intelligenceChat = (config: unknown, opts: ChatOptions) => {
     const intelligence = normalizeAyaIntelligenceConfig(config) ?? normalizeAyaIntelligenceConfig({})!;
-    const chat = async (system: string, user: string) => {
+    return async (system: string, user: string) => {
       const result =
         intelligence.provider === "apple"
           ? await appleChat(
@@ -2276,27 +2277,32 @@ function registerIpc(): void {
               process.env.AYA_E2E_APPLE_HELPER || bundledDistElectronHelperPath(__dirname, "aya-local-summary"),
               system,
               user,
-              ROLE_DRAFT_CHAT,
+              opts,
             )
           : intelligence.provider === "ollama"
-          ? await ollamaChat(intelligence.ollamaModel, system, user, ROLE_DRAFT_CHAT)
+          ? await ollamaChat(intelligence.ollamaModel, system, user, opts)
           : await openAiChat(
               { baseUrl: intelligence.openAiBaseUrl, apiKey: intelligence.openAiApiKey, model: intelligence.openAiModel },
               system,
               user,
-              ROLE_DRAFT_CHAT,
+              opts,
             );
       if (!result.ok) throw new Error(`Aya Intelligence did not answer (${result.error})`);
       return result.content;
     };
-    return draftRole(
+  };
+  ipcMain.handle("teams:draft-role", async (_e, role: unknown, teamRoles: unknown, sendsTo: unknown, peers: unknown, config: unknown) =>
+    draftRole(
       requireString(role, "teams:draft-role.role"),
       requireStringArray(teamRoles, "teams:draft-role.teamRoles"),
-      chat,
+      intelligenceChat(config, ROLE_DRAFT_CHAT),
       requireStringArray(sendsTo, "teams:draft-role.sendsTo"),
       requireRolePeers(peers),
-    );
-  });
+    ),
+  );
+  ipcMain.handle("teams:preview-flow", async (_e, team: unknown, config: unknown) =>
+    previewFlow(validateTeamDefinition(team), intelligenceChat(config, FLOW_PREVIEW_CHAT)),
+  );
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
     const request = validateSpawnRequest(req);
     // A broken presets.json must not stop panes from spawning.

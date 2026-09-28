@@ -2890,6 +2890,52 @@ select.aya-modal-input {
 .aya-teams-minutes {
   width: 64px;
 }
+.aya-teams-flow {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  margin: 8px 0;
+}
+.aya-flow-graph {
+  width: 100%;
+  max-width: 420px;
+  justify-self: center;
+}
+.aya-flow-edge {
+  stroke: var(--fg-secondary);
+  stroke-width: 1.4;
+}
+.aya-flow-edge--unlisted {
+  stroke: var(--danger, #c0392b);
+  stroke-dasharray: 4 3;
+}
+.aya-flow-head {
+  fill: var(--fg-secondary);
+}
+.aya-flow-head--unlisted {
+  fill: var(--danger, #c0392b);
+}
+.aya-flow-node {
+  fill: var(--bg-tertiary);
+  stroke: var(--accent);
+}
+.aya-flow-node-label {
+  fill: var(--fg-primary, currentColor);
+  font-size: 12px;
+}
+.aya-flow-routes {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12px;
+  display: grid;
+  gap: 2px;
+}
+.aya-teams-warning {
+  color: var(--danger, #c0392b);
+  font-size: 12px;
+}
 .aya-team-chip {
   display: inline-flex;
   align-items: center;
