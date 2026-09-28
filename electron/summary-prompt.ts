@@ -1,7 +1,7 @@
 import type { LocalSummaryRequest, LocalSummaryResult } from "./types";
 
-// Title fallback caps (first-line words / chars) for the local summary.
-const SUMMARY_TITLE_MAX_WORDS = 8;
+// One word limit for the prompt and the cut, so the two cannot drift apart.
+const SUMMARY_MAX_WORDS = 6;
 const SUMMARY_TITLE_MAX_CHARS = 80;
 
 function cleanSummary(value: string): string {
@@ -9,7 +9,7 @@ function cleanSummary(value: string): string {
     .replace(/\s+/g, " ")
     .replace(/^["'`]+|["'`.]+$/g, "")
     .trim();
-  const words = oneLine.split(/\s+/).filter(Boolean).slice(0, SUMMARY_TITLE_MAX_WORDS).join(" ");
+  const words = oneLine.split(/\s+/).filter(Boolean).slice(0, SUMMARY_MAX_WORDS).join(" ");
   return words.slice(0, SUMMARY_TITLE_MAX_CHARS);
 }
 
@@ -19,10 +19,10 @@ export function summaryPrompt(req: LocalSummaryRequest): string {
   return [
     `Summarize recent ${subject} for a compact app label.`,
     "Return strict JSON only, with shape:",
-    '{"useful":true,"summary":"2-6 word label"}',
+    `{"useful":true,"summary":"2-${SUMMARY_MAX_WORDS} word label"}`,
     "If the output is too noisy, generic, idle, or not meaningful, return:",
     '{"useful":false,"summary":""}',
-    "Do not invent context. No full sentences. No punctuation. Max 6 words.",
+    `Do not invent context. No full sentences. No punctuation. Max ${SUMMARY_MAX_WORDS} words.`,
     "",
     "Recent output:",
     req.lines.join("\n"),
