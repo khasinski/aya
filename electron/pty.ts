@@ -23,6 +23,7 @@ import {
   resizeVtPane,
   writeVtPane,
 } from "./vt-state";
+import { isShellCommand, shellQuote } from "./pane-command";
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 import { COMMAND_NOT_FOUND_EXIT_CODE, COMMAND_PROBE_TIMEOUT_MS } from "./constants";
 import { userShell } from "./shell";
@@ -281,9 +282,7 @@ export function searchPtyOutputs(query: string): BufferSearchHit[] {
   return hits;
 }
 
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
-}
+
 
 function endOfShellToken(s: string, start: number): number {
   let quote: "'" | '"' | null = null;
@@ -382,11 +381,6 @@ export function agentConfigDirsFromCommand(command: string): string[] {
   }
 
   return dirs;
-}
-
-/** A plain interactive shell, not an agent: Enter would run typed text. */
-export function isShellCommand(command: string): boolean {
-  return /^(?:\$SHELL|(?:\S*\/)?(?:bash|zsh|sh|fish))(?:\s+-[a-z]+)*\s*$/.test(command.trim());
 }
 
 /** Build the shell argv for a given command + cwd. Uses the user's login +

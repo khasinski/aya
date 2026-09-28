@@ -126,3 +126,18 @@ test("agent config dirs are extracted from leading env assignments", () => {
     [`${os.homedir()}/.claude-secondary`],
   );
 });
+
+test("in Aya Dev an agent pane finds the branch's aya first, even after the shell's rc files", async () => {
+  const { withCliFirst } = await import("../dist-electron/pane-command.js");
+  const { execFileSync } = await import("node:child_process");
+  const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(os.tmpdir(), "aya dev bin-"));
+  writeFileSync(join(dir, "aya"), "#!/bin/sh\necho branch-aya\n");
+  chmodSync(join(dir, "aya"), 0o755);
+  // The command runs after the rc files, so an rc that reorders PATH cannot undo it.
+  const argv = shellArgv(withCliFirst("sh -c 'aya'", dir), os.tmpdir());
+  const script = argv.at(-1);
+  const out = execFileSync("/bin/sh", ["-c", `PATH=/usr/bin:/bin; ${script}`], { encoding: "utf8" });
+  assert.equal(out.trim(), "branch-aya");
+});

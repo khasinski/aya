@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isShellCommand } from "../dist-electron/pty.js";
+import { isShellCommand } from "../dist-electron/pane-command.js";
 
 test("plain shells are shells; agents and shell-wrapped agents are not", () => {
   for (const c of ["$SHELL", "zsh", "/bin/bash -l", "fish", "sh"]) assert.equal(isShellCommand(c), true, c);

@@ -39,6 +39,7 @@ import {
   updateProject,
 } from "./config";
 import { bundledAyaCliPath, bundledDistElectronHelperPath } from "./cli-path";
+import { isShellCommand, withCliFirst } from "./pane-command";
 import { defaultInstallAyaCliPath, renderCliShim } from "./cli-shim";
 import {
   type AyaCopy,
@@ -2268,10 +2269,16 @@ function registerIpc(): void {
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
     const request = validateSpawnRequest(req);
     // A broken presets.json must not stop panes from spawning.
-    const spawn = await withAgentBrief(request).catch((err) => {
+    const briefed = await withAgentBrief(request).catch((err) => {
       console.warn("[aya] aya brief skipped:", err);
       return request;
     });
+    // Aya Dev: agents get this branch's aya, not an older installed one that
+    // the shell's rc files put first. Shell panes stay plain shells.
+    const spawn =
+      IS_DEV && !isShellCommand(briefed.command)
+        ? { ...briefed, command: withCliFirst(briefed.command, path.dirname(bundledAyaCliPath(__dirname))) }
+        : briefed;
     await ptyHost.spawn(spawn);
     void cliAdoption
       .launched({
