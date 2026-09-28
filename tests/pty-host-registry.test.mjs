@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, statSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -430,5 +430,21 @@ test("a real spawned host writes its record, and SIGTERM shuts it down cleanly (
       // already dead
     }
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("readHostRecords sweeps aged .tmp leftovers and spares young ones", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-reg-tmp-"));
+  try {
+    const aged = join(dir, "4242.json.1.abcdef12.tmp");
+    const young = join(dir, "4243.json.1.abcdef12.tmp");
+    writeFileSync(aged, "{}");
+    writeFileSync(young, "{}");
+    const old = new Date(Date.now() - 120_000);
+    utimesSync(aged, old, old);
+    assert.deepEqual(readHostRecords(dir), []);
+    assert.deepEqual(readdirSync(dir), ["4243.json.1.abcdef12.tmp"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

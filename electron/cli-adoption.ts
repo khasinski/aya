@@ -3,6 +3,7 @@
 
 import { mkdirSync, promises as fs, renameSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
+import { TMP_SUFFIX } from "./atomic-write";
 
 /** Oldest panes are dropped past this, so the file stays small forever. */
 export const CLI_ADOPTION_MAX_PANES = 2000;
@@ -158,7 +159,7 @@ export function createCliAdoptionStore(file: string, debounceMs = CLI_ADOPTION_S
     if (!timer || !state) return;
     clearTimeout(timer);
     timer = null;
-    const tmp = `${file}.${process.pid}.tmp`;
+    const tmp = `${file}.${process.pid}${TMP_SUFFIX}`;
     mkdirSync(path.dirname(file), { recursive: true });
     writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
     renameSync(tmp, file);

@@ -6,7 +6,7 @@ import { promises as fs } from "node:fs";
 import * as fsSync from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { writeFileAtomic } from "./atomic-write";
+import { TMP_SUFFIX, writeFileAtomic } from "./atomic-write";
 import { AYA_HOME } from "./paths";
 
 /** Marker written right before quitAndInstall and cleared once reconciled. */
@@ -131,7 +131,7 @@ export function markPendingUpdateSync(targetVersion: string): void {
     } catch {
       // no usable prior marker; this is attempt one
     }
-    const tmp = `${PENDING_UPDATE_FILE}.tmp`;
+    const tmp = `${PENDING_UPDATE_FILE}${TMP_SUFFIX}`;
     fsSync.writeFileSync(
       tmp,
       JSON.stringify(nextAttempt(targetVersion, prior)) + "\n",

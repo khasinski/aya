@@ -54,7 +54,7 @@ import { startConfigWatcher } from "./config-watcher";
 import { isHostStale } from "./pty-host-staleness";
 import { deliverTeamMessage, startControlServer } from "./control";
 import { createCliAdoptionStore } from "./cli-adoption";
-import { writeFileAtomic } from "./atomic-write";
+import { TMP_SUFFIX, writeFileAtomic } from "./atomic-write";
 import {
   briefChannel,
   briefText,
@@ -755,7 +755,7 @@ function freshCliShim(): string {
 async function writeCliShim(target: string, script: string): Promise<void> {
   // Temp file + rename: a failed write can't leave a truncated, dead shim, and
   // rename replaces the entry itself instead of writing through a link.
-  const tmp = `${target}.aya-${process.pid}.tmp`;
+  const tmp = `${target}.aya-${process.pid}${TMP_SUFFIX}`;
   try {
     await fs.writeFile(tmp, script, { mode: EXECUTABLE_FILE_MODE });
     await fs.chmod(tmp, EXECUTABLE_FILE_MODE);

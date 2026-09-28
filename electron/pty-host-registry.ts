@@ -14,9 +14,9 @@
 // still looks like our host script. All three must hold.
 
 import { execFileSync } from "node:child_process";
-import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { atomicTempPath, TMP_SUFFIX } from "./atomic-write";
 import { AYA_HOME, OWNER_ONLY_FILE_MODE } from "./paths";
 import { UNKNOWN_SCRIPT_HASH } from "./pty-host-staleness";
 
@@ -67,7 +67,7 @@ const recordPath = (dir: string, pid: number): string =>
  *  Best-effort beyond that. */
 export function writeHostRecord(rec: HostRecord, dir: string = HOST_REGISTRY_DIR): void {
   if (!rec.startTime) return;
-  const tmp = `${recordPath(dir, rec.pid)}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`;
+  const tmp = atomicTempPath(recordPath(dir, rec.pid));
   try {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(tmp, JSON.stringify(rec), { mode: OWNER_ONLY_FILE_MODE });
@@ -95,7 +95,7 @@ export function readHostRecords(dir: string = HOST_REGISTRY_DIR): HostRecord[] {
   const out: HostRecord[] = [];
   for (const name of names) {
     const full = path.join(dir, name);
-    if (name.endsWith(".tmp")) {
+    if (name.endsWith(TMP_SUFFIX)) {
       try {
         if (Date.now() - fs.statSync(full).mtimeMs > TMP_SWEEP_AGE_MS) {
           fs.rmSync(full, { force: true });
