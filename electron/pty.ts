@@ -450,6 +450,7 @@ async function commandExists(binary: string): Promise<boolean> {
 }
 
 export const DEFAULT_LANG = "en_US.UTF-8";
+const PANE_TERM = "xterm-256color";
 // The spawn log clamps the command: it is unbounded user input, and one line past
 // the log cap would blow straight through it (#89); 4 KB keeps real commands whole.
 export const SPAWN_LOG_COMMAND_MAX_CHARS = 4096;
@@ -460,7 +461,7 @@ function safeEnv(req: SpawnRequest, cwd: string): { [key: string]: string } {
     if (typeof v === "string") inherited[k] = v;
   }
   const out = withoutSessionMarkers(inherited);
-  out.TERM = "xterm-256color";
+  out.TERM = PANE_TERM;
   out.COLORTERM = "truecolor";
   if (!out.LANG) out.LANG = DEFAULT_LANG;
   if (!out.LC_ALL) out.LC_ALL = out.LANG;
@@ -612,7 +613,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     let child: PtyModule.IPty;
     try {
       child = loadNodePty().spawn(file, args, {
-        name: "xterm-256color",
+        name: PANE_TERM,
         cols: Math.max(req.cols, MIN_PTY_COLS),
         rows: Math.max(req.rows, MIN_PTY_ROWS),
         cwd,

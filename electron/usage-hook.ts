@@ -23,12 +23,16 @@ import {
   expandUserPath,
 } from "./usage";
 
+function hasSettingsOverride(): boolean {
+  return !!process.env.AYA_CLAUDE_SETTINGS?.trim();
+}
+
 // Claude Code's global settings. AYA_CLAUDE_SETTINGS overrides it so tests can
 // run the install/uninstall round-trip against a throwaway file instead of the
 // real ~/.claude/settings.json.
 const CLAUDE_SETTINGS_FILE =
-  process.env.AYA_CLAUDE_SETTINGS && process.env.AYA_CLAUDE_SETTINGS.trim()
-    ? path.resolve(process.env.AYA_CLAUDE_SETTINGS)
+  hasSettingsOverride()
+    ? path.resolve(process.env.AYA_CLAUDE_SETTINGS!)
     : path.join(os.homedir(), CLAUDE_CONFIG_DIRNAME, CLAUDE_SETTINGS_FILENAME);
 // The generated fetch script lives in Aya's own dir (always exists), referenced
 // by absolute path from the hook entry.
@@ -56,7 +60,7 @@ function hookCommand(configDir: string): string {
 }
 
 export async function claudeConfigDirs(): Promise<string[]> {
-  if (process.env.AYA_CLAUDE_SETTINGS && process.env.AYA_CLAUDE_SETTINGS.trim()) {
+  if (hasSettingsOverride()) {
     return [path.dirname(CLAUDE_SETTINGS_FILE)];
   }
   const dirs = new Set<string>();
@@ -73,7 +77,7 @@ export async function claudeConfigDirs(): Promise<string[]> {
 }
 
 export function settingsFileForConfigDir(configDir: string): string {
-  if (process.env.AYA_CLAUDE_SETTINGS && process.env.AYA_CLAUDE_SETTINGS.trim()) {
+  if (hasSettingsOverride()) {
     return CLAUDE_SETTINGS_FILE;
   }
   return path.join(expandUserPath(configDir), CLAUDE_SETTINGS_FILENAME);
