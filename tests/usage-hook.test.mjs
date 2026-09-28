@@ -14,7 +14,9 @@ import {
   withStopHook,
   withoutStopHook,
   hookScriptSource,
+  settingsFileForConfigDir,
 } from "../dist-electron/usage-hook.js";
+import { CLAUDE_SETTINGS_FILENAME } from "../dist-electron/usage.js";
 
 const CMD = "/Users/x/.aya/aya-usage-hook.sh";
 
@@ -145,4 +147,15 @@ test("generated hook survives its own throttle branch on this platform", (t) => 
   });
   assert.doesNotMatch(run.stderr ?? "", /unbound variable|arithmetic/);
   assert.equal(run.status, 0, `hook exited ${run.status}: ${run.stderr}`);
+});
+
+test("settingsFileForConfigDir: <configDir>/settings.json when AYA_CLAUDE_SETTINGS is unset", () => {
+  const saved = process.env.AYA_CLAUDE_SETTINGS;
+  delete process.env.AYA_CLAUDE_SETTINGS;
+  try {
+    assert.equal(CLAUDE_SETTINGS_FILENAME, "settings.json");
+    assert.equal(settingsFileForConfigDir("/Users/x/.claude-work"), "/Users/x/.claude-work/settings.json");
+  } finally {
+    if (saved !== undefined) process.env.AYA_CLAUDE_SETTINGS = saved;
+  }
 });

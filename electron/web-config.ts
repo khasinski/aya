@@ -17,12 +17,14 @@ export const WEB_CONFIG_FILE = path.join(AYA_HOME, "web.json");
 
 // Unassigned-ish default; deliberately not 7681 (ttyd) or common dev ports.
 export const DEFAULT_WEB_PORT = 7683;
-export const DEFAULT_WEB_HOST = "0.0.0.0";
+export const IPV4_WILDCARD_HOST = "0.0.0.0";
+export const IPV6_WILDCARD_HOST = "::";
+export const DEFAULT_WEB_HOST = IPV4_WILDCARD_HOST;
 export const LOOPBACK_HOST = "127.0.0.1";
 
 /** True for a listen address that binds every interface (IPv4 or IPv6). */
 export function isWildcardHost(host: string): boolean {
-  return host === "0.0.0.0" || host === "::";
+  return host === IPV4_WILDCARD_HOST || host === IPV6_WILDCARD_HOST;
 }
 
 const SCRYPT_KEYLEN = 32;

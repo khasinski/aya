@@ -235,7 +235,7 @@ export function collectDescendants(
 // Without TZ pinning a DST transition between record and probe would shift the
 // rendered hour and silently unverify every record (empirically confirmed:
 // the same pid renders 08:52 under TZ=UTC and 10:52 under Europe/Warsaw).
-const PS_ENV = { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" };
+export const PS_ENV = { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" };
 
 /** `ps` fields for one pid. alive:false when ps ran and the pid is gone;
  *  probeFailed:true when ps itself could not run (fork pressure, sandbox) -

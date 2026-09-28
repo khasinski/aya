@@ -4,6 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as path from "node:path";
 import {
   parseSnapshot,
   scopeFromEnvDump,
@@ -13,7 +14,7 @@ import {
   sweepLegacyAyaProcesses,
   MAX_ORPHAN_PROBES,
 } from "../dist-electron/pty-host-sweep.js";
-import { AYA_DEV_HOME_DIRNAME, AYA_HOME_DIRNAME } from "../dist-electron/paths.js";
+import { AYA_DEV_HOME_DIRNAME, AYA_DEV_ON, AYA_DEV_VAR, AYA_HOME_DIRNAME } from "../dist-electron/paths.js";
 
 const HOME = "/Users/u";
 const AYA = "/Users/u/.aya";
@@ -62,9 +63,28 @@ test("scopeFromEnvDump: explicit AYA_HOME wins, AYA_DEV maps to .aya-dev, defaul
   assert.equal(scopeFromEnvDump("cmd PATH=/bin", HOME), `${HOME}/.aya`);
 });
 
+test("scopeFromEnvDump: marker needs its leading space, value stops at a space, first wins", () => {
+  assert.equal(scopeFromEnvDump("AYA_HOME=/tmp/x PATH=/bin", HOME), `${HOME}/.aya`, "no leading space");
+  assert.equal(scopeFromEnvDump("cmd XAYA_HOME=/tmp/x", HOME), `${HOME}/.aya`, "prefixed name");
+  assert.equal(scopeFromEnvDump("cmd AYA_HOME= PATH=/bin", HOME), `${HOME}/.aya`, "empty value");
+  assert.equal(scopeFromEnvDump("cmd AYA_HOME=/a AYA_HOME=/b", HOME), "/a");
+  assert.equal(scopeFromEnvDump("cmd AYA_HOME=/tmp/x AYA_DEV=1", HOME), "/tmp/x", "AYA_HOME beats AYA_DEV");
+  assert.equal(scopeFromEnvDump("cmd AYA_HOME=rel/dir", HOME), path.resolve("rel/dir"));
+  assert.equal(scopeFromEnvDump("cmd AYA_HOME=/tmp/x.y+z", HOME), "/tmp/x.y+z");
+  assert.equal(scopeFromEnvDump("cmd AYA_DEV=10", HOME), `${HOME}/.aya-dev`, "substring check, as today");
+  assert.equal(scopeFromEnvDump("cmd AYA_DEV=0", HOME), `${HOME}/.aya`);
+  assert.equal(scopeFromEnvDump("AYA_DEV=1 cmd", HOME), `${HOME}/.aya`, "no leading space");
+  assert.equal(scopeFromEnvDump("cmd XAYA_DEV=1", HOME), `${HOME}/.aya`);
+});
+
 test("the sweep's scope dirnames are the ones paths.ts resolves AYA_HOME with", () => {
   assert.equal(AYA_HOME_DIRNAME, ".aya");
   assert.equal(AYA_DEV_HOME_DIRNAME, ".aya-dev");
+});
+
+test("the sweep's dev marker is the AYA_DEV=1 that paths.ts reads IS_DEV from", () => {
+  assert.equal(AYA_DEV_VAR, "AYA_DEV");
+  assert.equal(AYA_DEV_ON, "1");
 });
 
 test("isHostArgv: matches ONLY when the script is the second argv token", () => {

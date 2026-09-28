@@ -10,11 +10,16 @@ import {
   latestUsageFromLines,
   CODEX_DIRNAME,
   CODEX_DEFAULT_DIR,
+  CODEX_SESSIONS_SUBDIR,
 } from "../dist-electron/usage-codex.js";
 
 test("Codex's default home is ~/.codex", () => {
   assert.equal(CODEX_DIRNAME, ".codex");
   assert.equal(CODEX_DEFAULT_DIR, "~/.codex");
+});
+
+test("Codex rollouts live under <home>/sessions (usage chip and transcript search)", () => {
+  assert.equal(CODEX_SESSIONS_SUBDIR, "sessions");
 });
 
 // The real shape captured from ~/.codex/sessions/.../rollout-*.jsonl.
