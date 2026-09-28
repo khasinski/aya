@@ -115,7 +115,6 @@ export async function openAiChat(
   return { ok: true, content };
 }
 
-/** Apple Intelligence through the bundled Swift helper's "chat" request. */
 /** One chat with the HTTP provider a config names: Ollama or OpenAI-compatible. */
 export function providerChat(
   intelligence: AyaIntelligenceConfig,
@@ -133,6 +132,7 @@ export function providerChat(
       );
 }
 
+/** Apple Intelligence through the bundled Swift helper's "chat" request. */
 export function appleChat(helper: string, system: string, user: string, opts: ChatOptions): Promise<ChatResult> {
   return new Promise((resolve) => {
     let stdout = "";
