@@ -171,6 +171,7 @@ import {
 } from "./web-config";
 import { captureIpcHandlers } from "./web-ipc";
 import { startWebServer, type WebServerHandle } from "./web-server";
+import { parseSummaryResponse, summaryPrompt } from "./summary-prompt";
 import type {
   AyaIntelligenceConfig,
   CliStatus,
@@ -220,9 +221,6 @@ const OLLAMA_BASE_URL = "http://localhost:11434";
 // Ollama) - the two request builders must stay in sync.
 const SUMMARY_TEMPERATURE = 0.2;
 const SUMMARY_MAX_TOKENS = 64;
-// Title fallback caps (first-line words / chars) for the local summary.
-const SUMMARY_TITLE_MAX_WORDS = 8;
-const SUMMARY_TITLE_MAX_CHARS = 80;
 // Bound captured `ollama pull` stderr so a chatty child can't balloon memory.
 const OLLAMA_PULL_STDERR_MAX_BYTES = 8192;
 // Max accepted Ollama model-name length (IPC input-validation cap).
@@ -422,54 +420,10 @@ async function summarizeWithApple(
   });
 }
 
-function cleanSummary(value: string): string {
-  const oneLine = value
-    .replace(/\s+/g, " ")
-    .replace(/^["'`]+|["'`.]+$/g, "")
-    .trim();
-  const words = oneLine.split(/\s+/).filter(Boolean).slice(0, SUMMARY_TITLE_MAX_WORDS).join(" ");
-  return words.slice(0, SUMMARY_TITLE_MAX_CHARS);
-}
-
-function summaryPrompt(req: LocalSummaryRequest): string {
-  const subject =
-    req.kind === "project" ? "project activity" : "terminal output";
-  return [
-    `Summarize recent ${subject} for a compact app label.`,
-    "Return strict JSON only, with shape:",
-    '{"useful":true,"summary":"2-6 word label"}',
-    "If the output is too noisy, generic, idle, or not meaningful, return:",
-    '{"useful":false,"summary":""}',
-    "Do not invent context. No full sentences. No punctuation. Max 6 words.",
-    "",
-    "Recent output:",
-    req.lines.join("\n"),
-  ].join("\n");
-}
-
 function openAiBaseUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim().replace(/\/+$/, "");
   if (!trimmed) return "";
   return /\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/v1`;
-}
-
-function parseSummaryResponse(content: string): LocalSummaryResult {
-  const trimmed = content.trim();
-  const jsonText =
-    trimmed.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1]?.trim() ?? trimmed;
-  try {
-    const parsed = JSON.parse(jsonText) as Partial<LocalSummaryResult>;
-    const summary =
-      typeof parsed.summary === "string" ? cleanSummary(parsed.summary) : "";
-    return {
-      available: true,
-      useful: parsed.useful === true && summary.length > 0,
-      summary: parsed.useful === true ? summary : "",
-    };
-  } catch {
-    const summary = cleanSummary(trimmed);
-    return { available: true, useful: summary.length > 0, summary };
-  }
 }
 
 async function summarizeWithOpenAiCompatible(args: {
