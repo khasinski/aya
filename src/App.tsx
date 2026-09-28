@@ -51,6 +51,27 @@ import { useTerminalSounds } from "./hooks/useTerminalSounds";
 import { useTeams } from "./hooks/useTeams";
 import { OLLAMA_OPENAI_BASE_URL, RECOMMENDED_OLLAMA_MODEL } from "./ollama-defaults";
 import { PRESET_ID_SHELL } from "./preset-ids";
+import {
+  APP_THEME_STORAGE_KEY,
+  AYA_INTELLIGENCE_STORAGE_KEY,
+  CUSTOM_DONE_SOUND_STORAGE_KEY,
+  CUSTOM_WAITING_SOUND_STORAGE_KEY,
+  HARNESS_SEARCH_STORAGE_KEY,
+  LAYOUT_MODE_STORAGE_KEY,
+  LOCAL_SUMMARIES_STORAGE_KEY,
+  LOCAL_SUMMARY_CACHE_STORAGE_KEY,
+  MAC_OPTION_KEY_STORAGE_KEY,
+  NO_HARNESS_HINT_DISMISSED_STORAGE_KEY,
+  SOUND_OVERRIDES_STORAGE_KEY,
+  STATUSBAR_GITHUB_LINK_STORAGE_KEY,
+  STATUS_RAIL_COLLAPSED_STORAGE_KEY,
+  TERMINAL_FONT_FAMILY_STORAGE_KEY,
+  TERMINAL_SOUNDS_STORAGE_KEY,
+  USAGE_HARNESS_NAME_STORAGE_KEY,
+  WORKTREES_STORAGE_KEY,
+  repoConfigIgnoredKey,
+} from "./storage-keys";
+import { GPU_RELAUNCHED_EVENT } from "./window-events";
 import { normalizeSoundOverrides } from "./terminal-sound-prefs";
 import {
   MAX_SPLIT_LEAVES,
@@ -139,26 +160,10 @@ function pollVisible(refresh: () => void, intervalMs: number): () => void {
 const TERMINAL_FONT_SIZE_PX = 13;
 // Persisted schema version for ProjectCollectionState.
 const PROJECT_STATE_VERSION = 1;
-const APP_THEME_STORAGE_KEY = "aya:app-theme";
-const MAC_OPTION_KEY_STORAGE_KEY = "aya:mac-option-key";
-const TERMINAL_FONT_FAMILY_STORAGE_KEY = "aya:terminal-font-family";
-const USAGE_HARNESS_NAME_STORAGE_KEY = "aya:usage-show-harness-name";
-const STATUSBAR_GITHUB_LINK_STORAGE_KEY = "aya:statusbar-github-link";
-const LAYOUT_MODE_STORAGE_KEY = "aya:layout-mode";
-const WORKTREES_STORAGE_KEY = "aya:worktrees";
-const HARNESS_SEARCH_STORAGE_KEY = "aya:harness-search";
-const TERMINAL_SOUNDS_STORAGE_KEY = "aya:terminal-sounds";
-const STATUS_RAIL_COLLAPSED_STORAGE_KEY = "aya:status-rail-collapsed";
 /** Leaf id for the synthetic one-pane tree used when a project has no stored
  *  split (or is showing a single terminal). Constant so React keys and focus
  *  stay stable across renders. */
 const SINGLE_VIEW_LEAF_ID = "single";
-const SOUND_OVERRIDES_STORAGE_KEY = "aya:terminal-sound-overrides";
-const CUSTOM_WAITING_SOUND_STORAGE_KEY = "aya:terminal-sound-waiting";
-const CUSTOM_DONE_SOUND_STORAGE_KEY = "aya:terminal-sound-done";
-const LOCAL_SUMMARIES_STORAGE_KEY = "aya:local-summaries";
-const LOCAL_SUMMARY_CACHE_STORAGE_KEY = "aya:local-summary-cache";
-const AYA_INTELLIGENCE_STORAGE_KEY = "aya:intelligence";
 const WARM_PROJECT_TERMINAL_CACHE_SIZE = 4;
 const LOCAL_SUMMARY_REFRESH_MS = 30 * 60 * 1000;
 const LOCAL_SUMMARY_DEBOUNCE_MS = 10_000;
@@ -826,7 +831,7 @@ export function App() {
   const [harnessScanDone, setHarnessScanDone] = useState(false);
   const [foundHarnessCount, setFoundHarnessCount] = useState(0);
   const [hideNoHarnessHint, setHideNoHarnessHint] = useState(
-    () => localStorage.getItem("aya:no-harness-hint-dismissed") === "1",
+    () => localStorage.getItem(NO_HARNESS_HINT_DISMISSED_STORAGE_KEY) === "1",
   );
   const fontSize = TERMINAL_FONT_SIZE_PX;
   const openSettings = useCallback((tab: SettingsTab = "general") => {
@@ -1089,7 +1094,7 @@ export function App() {
   // kind of wake/focus events). One subscription for the whole renderer.
   useEffect(() => {
     return window.aya.onGpuRelaunched(() => {
-      window.dispatchEvent(new Event("aya:gpu-relaunched"));
+      window.dispatchEvent(new Event(GPU_RELAUNCHED_EVENT));
     });
   }, []);
 
@@ -1951,7 +1956,7 @@ export function App() {
     const project = projectsRef.current.find((p) => p.slug === activeProjectId);
     if (!project) return;
     if (project.remote) return;
-    const ignoredKey = `aya:repo-config-ignored:${project.directory}`;
+    const ignoredKey = repoConfigIgnoredKey(project.directory);
     if (localStorage.getItem(ignoredKey) === "1") return;
     let cancelled = false;
     void window.aya.readRepoProjectConfig(project.directory).then((config) => {
@@ -3783,7 +3788,7 @@ export function App() {
             onOpenProject={showNewProjectModal}
             onOpenSettings={openSettings}
             onDismissNoHarnessHint={() => {
-              localStorage.setItem("aya:no-harness-hint-dismissed", "1");
+              localStorage.setItem(NO_HARNESS_HINT_DISMISSED_STORAGE_KEY, "1");
               setHideNoHarnessHint(true);
             }}
           />
@@ -4210,10 +4215,7 @@ export function App() {
           project={pendingRepoImport.project}
           presets={pendingRepoImport.presets}
           onIgnore={() => {
-            localStorage.setItem(
-              `aya:repo-config-ignored:${pendingRepoImport.project.directory}`,
-              "1",
-            );
+            localStorage.setItem(repoConfigIgnoredKey(pendingRepoImport.project.directory), "1");
             setPendingRepoImport(null);
           }}
           onImport={() => {
@@ -4230,10 +4232,7 @@ export function App() {
             const next = base;
             void window.aya.savePresets(next).then(() => {
               setPresets(next);
-              localStorage.setItem(
-                `aya:repo-config-ignored:${project.directory}`,
-                "1",
-              );
+              localStorage.setItem(repoConfigIgnoredKey(project.directory), "1");
               appendProjectEvent({
                 projectSlug: project.slug,
                 level: "info",

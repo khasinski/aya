@@ -37,10 +37,12 @@
     "src/theme-skin.ts",
     "src/snippet-payload.ts",
     "src/split-tree.ts",
+    "src/storage-keys.ts",
     "src/spawnSession.ts",
     "src/stable-identity.ts",
     "src/types.ts",
     "src/web/protocol.ts",
+    "src/window-events.ts",
     "src/web/shortcuts.ts",
     "src/worktree.ts"
   ]

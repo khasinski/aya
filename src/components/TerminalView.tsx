@@ -38,6 +38,8 @@ import {
   stripScrollbackErase,
 } from "../terminal-rendering";
 import { snippetPtyPayload } from "../snippet-payload";
+import { DEBUG_TERMINAL_INPUT_STORAGE_KEY } from "../storage-keys";
+import { GPU_RELAUNCHED_EVENT } from "../window-events";
 import {
   hadNoSession,
   markMountDecided,
@@ -926,7 +928,7 @@ function TerminalViewComponent({
     const onDataDisposable = term.onData((data) => {
       if (replayingOutputRef.current > 0) return;
       if (data.length > 0) setIsScrollbarHidden(true);
-      if (localStorage.getItem("aya:debug-terminal-input") === "1") {
+      if (localStorage.getItem(DEBUG_TERMINAL_INPUT_STORAGE_KEY) === "1") {
         console.debug(
           `[aya terminal input] ${terminal.id} ${preset.id}: ${printableControlData(data)}`,
         );
@@ -1148,12 +1150,12 @@ function TerminalViewComponent({
     // "focus"/"visibilitychange" beats above may never fire (the window kept
     // focus the whole time), so App relays the main-process signal as this
     // window event and we heal on it too.
-    window.addEventListener("aya:gpu-relaunched", onResumeRender);
+    window.addEventListener(GPU_RELAUNCHED_EVENT, onResumeRender);
     return () => {
       window.removeEventListener("focus", onResumeRender);
       window.removeEventListener("pageshow", onResumeRender);
       document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("aya:gpu-relaunched", onResumeRender);
+      window.removeEventListener(GPU_RELAUNCHED_EVENT, onResumeRender);
     };
   }, [isVisible, healWebgl, repaintTerminal, forcePtyReassert]);
 
