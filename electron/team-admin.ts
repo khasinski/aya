@@ -4,7 +4,7 @@
 import { promises as fs } from "node:fs";
 import { writeFileAtomic } from "./atomic-write";
 import { teamFile, teamNames } from "./team-files";
-import { TeamStore, teamDir } from "./team-store";
+import { openTeamStore } from "./team-store";
 import { MUST_NOT_FIELD, SECTION_MARKER, SENDS_TO_FIELD, parseTeamFile, serializeTeam } from "./teams";
 import type { ProjectConfig, TeamDefinition, TeamSummary } from "./types";
 
@@ -29,7 +29,7 @@ function repoParsed(name: string, repo: string | null): TeamDefinition | null {
 export async function listTeams(teamHome: string, project: ProjectConfig): Promise<TeamSummary[]> {
   return Promise.all(
     (await teamNames(project)).map(async (name): Promise<TeamSummary> => {
-      const store = new TeamStore(teamDir(teamHome, project.slug, name));
+      const store = openTeamStore(teamHome, project.slug, name);
       const repo = await readText(teamFile(project, name));
       const saved = await store.savedDefinition();
       let definition: TeamDefinition | null = null;
@@ -109,7 +109,7 @@ export async function saveTeam(
     throw new Error(`team "${team.name}" already exists; edit it instead`);
   }
   await writeFileAtomic(file, text);
-  const store = new TeamStore(teamDir(teamHome, project.slug, team.name));
+  const store = openTeamStore(teamHome, project.slug, team.name);
   await store.saveDefinition(text);
   // A renamed or removed role would keep a pane no role id matches.
   const roles = new Set(team.roles.map((r) => r.id));
@@ -121,7 +121,7 @@ export async function saveTeam(
 /** A closed tab plays no role anywhere. */
 export async function releasePaneEverywhere(teamHome: string, project: ProjectConfig, paneId: string): Promise<void> {
   for (const name of await teamNames(project)) {
-    await new TeamStore(teamDir(teamHome, project.slug, name)).releasePane(paneId);
+    await openTeamStore(teamHome, project.slug, name).releasePane(paneId);
   }
 }
 
@@ -132,7 +132,7 @@ export async function assignRole(
   role: string,
   paneId: string | null,
 ): Promise<void> {
-  const store = new TeamStore(teamDir(teamHome, project.slug, team));
+  const store = openTeamStore(teamHome, project.slug, team);
   if (paneId === null) {
     const held = await store.paneOf(role);
     if (held) await store.releasePane(held);

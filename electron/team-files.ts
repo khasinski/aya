@@ -3,7 +3,7 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { TeamStore, teamDir } from "./team-store";
+import { openTeamStore, type TeamStore } from "./team-store";
 import { parseTeamFile, type TeamDefinition } from "./teams";
 import type { ProjectConfig } from "./types";
 
@@ -34,7 +34,7 @@ export async function paneTeamRole(
   paneId: string,
 ): Promise<{ team: string; role: string; store: TeamStore } | null> {
   for (const team of await teamNames(project)) {
-    const store = new TeamStore(teamDir(teamHome, project.slug, team));
+    const store = openTeamStore(teamHome, project.slug, team);
     const role = await store.roleOf(paneId);
     if (role) return { team, role, store };
   }

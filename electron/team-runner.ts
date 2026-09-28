@@ -4,7 +4,7 @@
 import { listTeams } from "./team-admin";
 import { NO_PANE_HOLD, deliverAndLog, typedTeamMessage, type TeamControlDeps } from "./team-control";
 import { loadTeam, projectBySlug, teamNames } from "./team-files";
-import { TeamStore, teamDir } from "./team-store";
+import { openTeamStore, type TeamStore } from "./team-store";
 import type { TeamDefinition } from "./teams";
 import type { ProjectConfig, TeamStartResult } from "./types";
 
@@ -30,7 +30,7 @@ export class TeamRunner {
 
   private async open(slug: string, name: string) {
     const project = projectBySlug(await this.deps.listProjects(), slug);
-    const store = new TeamStore(teamDir(this.deps.teamHome, slug, name));
+    const store = openTeamStore(this.deps.teamHome, slug, name);
     return { project, store, team: await loadTeam(project, name, store) };
   }
 
@@ -79,7 +79,7 @@ export class TeamRunner {
   async pause(slug: string, name: string): Promise<void> {
     this.cancels.get(`${slug}/${name}`)?.();
     this.cancels.delete(`${slug}/${name}`);
-    await new TeamStore(teamDir(this.deps.teamHome, slug, name)).setPaused(true);
+    await openTeamStore(this.deps.teamHome, slug, name).setPaused(true);
   }
 
   async resume(slug: string, name: string): Promise<void> {
@@ -117,7 +117,7 @@ export class TeamRunner {
     let typed = 0;
     for (const project of await this.deps.listProjects()) {
       for (const name of await teamNames(project)) {
-        const store = new TeamStore(teamDir(this.deps.teamHome, project.slug, name));
+        const store = openTeamStore(this.deps.teamHome, project.slug, name);
         if ((await store.state()).paused) continue;
         const team = await loadTeam(project, name, store);
         for (const role of team.roles) {
