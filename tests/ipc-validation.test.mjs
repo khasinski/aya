@@ -11,6 +11,7 @@ import {
   validateProjectCollectionState,
   validateProjectConfig,
   validateSpawnRequest,
+  validateSnippetArray,
   validateThemesFile,
 } from "../dist-electron/validation.js";
 import { AYA_DARK } from "../dist-electron/themes.js";
@@ -428,4 +429,14 @@ test("a session id that could alter a command line is rejected at the boundary",
       `should reject: ${JSON.stringify(sessionId)}`,
     );
   }
+});
+
+test("validateSnippetArray takes the stored cap and refuses one more by name", () => {
+  const make = (n) =>
+    Array.from({ length: n }, (_, i) => ({ id: `s${i}`, name: `s${i}`, text: `echo ${i}`, autoRun: false }));
+  assert.equal(validateSnippetArray(make(200)).length, 200);
+  assert.throws(
+    () => validateSnippetArray(make(201)),
+    { message: "Too many snippets: 201. Aya keeps at most 200 - delete some and save again." },
+  );
 });
