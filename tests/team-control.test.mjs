@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { envWithoutAya } from "./helpers/env.mjs";
 
 const { deliverTeamMessage, startControlServerOn } = await import("../dist-electron/control.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
@@ -78,7 +79,7 @@ async function setup({ writePane, assign = true, holdReason } = {}) {
     new Promise((done, fail) => {
       const child = spawn(cli, ["team", ...args], {
         env: {
-          ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("AYA_"))),
+          ...envWithoutAya(),
           AYA_SOCKET: socket,
           AYA_TERMINAL_ID: pane,
         },
