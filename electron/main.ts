@@ -2144,7 +2144,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     if (!win.isDestroyed()) win.webContents.send("shortcut", action);
   });
 
-  if (process.env.AYA_DEV === "1") {
+  if (IS_DEV) {
     win.loadURL(DEV_SERVER_URL);
     win.webContents.openDevTools({ mode: "detach" });
   } else {
