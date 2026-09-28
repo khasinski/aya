@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ProjectConfig, TeamDefinition, TeamRole, TeamSummary } from "../types";
+import type { AyaIntelligenceConfig, ProjectConfig, TeamDefinition, TeamRole, TeamSummary } from "../types";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 
 // While open, the log and assignments refresh at this pace.
@@ -28,14 +28,37 @@ export const TWO_ROLE_TEMPLATE: TeamDefinition = {
     "Findings are hypotheses with a measurement request, not facts. Number rounds and mark items [reported -> confirmed]. Reports are one-way unless a question is asked.",
 };
 
+/** What the team file accepts as a role id: typing "Senior UX" gives "senior-ux". */
+export function roleId(typed: string): string {
+  return typed.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+/, "").slice(0, 40);
+}
+
+/** Renames a role and every send-to and cadence entry that pointed at it. */
+export function renameRole(team: TeamDefinition, index: number, id: string): TeamDefinition {
+  const old = team.roles[index].id;
+  const swap = (r: string) => (old && r === old ? id : r);
+  return {
+    ...team,
+    roles: team.roles.map((r, i) => (i === index ? { ...r, id } : { ...r, sendsTo: r.sendsTo.map(swap) })),
+    cadence: team.cadence && { ...team.cadence, role: swap(team.cadence.role) },
+  };
+}
+
+/** The error text without Electron's "Error invoking remote method" wrapper. */
+function ipcMessage(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err);
+  return text.replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
+}
+
 const EMPTY_ROLE: TeamRole = { id: "", sendsTo: [], mustNot: "", responsibilities: "" };
 
 interface Props {
   project: ProjectConfig;
+  intelligence: AyaIntelligenceConfig;
   onClose: () => void;
 }
 
-export function TeamsModal({ project, onClose }: Props) {
+export function TeamsModal({ project, intelligence, onClose }: Props) {
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [editing, setEditing] = useState<{ team: TeamDefinition; isNew: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +104,7 @@ export function TeamsModal({ project, onClose }: Props) {
           <TeamEditor
             initial={editing.team}
             isNew={editing.isNew}
+            intelligence={intelligence}
             onCancel={() => setEditing(null)}
             onSave={async (team) => {
               await window.aya.teamSave(project.slug, team);
@@ -235,16 +259,19 @@ function TeamCard({
 function TeamEditor({
   initial,
   isNew,
+  intelligence,
   onSave,
   onCancel,
 }: {
   initial: TeamDefinition;
   isNew: boolean;
+  intelligence: AyaIntelligenceConfig;
   onSave: (team: TeamDefinition) => Promise<void>;
   onCancel: () => void;
 }) {
   const [team, setTeam] = useState<TeamDefinition>(initial);
   const [error, setError] = useState<string | null>(null);
+  const [drafting, setDrafting] = useState<number | null>(null);
   const setRole = (index: number, patch: Partial<TeamRole>) =>
     setTeam((t) => ({ ...t, roles: t.roles.map((r, i) => (i === index ? { ...r, ...patch } : r)) }));
 
@@ -271,8 +298,32 @@ function TeamEditor({
               aria-label={`Role ${index + 1} name`}
               placeholder="role"
               value={role.id}
-              onChange={(e) => setRole(index, { id: e.target.value })}
+              onChange={(e) => setTeam((t) => renameRole(t, index, roleId(e.target.value)))}
             />
+            <button
+              className="aya-modal-btn"
+              aria-label={`Draft role ${index + 1}`}
+              title="Draft this role from its name with Aya Intelligence; edit before saving"
+              disabled={!role.id.trim() || drafting !== null}
+              onClick={async () => {
+                setError(null);
+                setDrafting(index);
+                try {
+                  const draft = await window.aya.teamDraftRole(
+                    role.id.replace(/-/g, " "),
+                    team.roles.map((r) => r.id.trim()).filter(Boolean),
+                    intelligence,
+                  );
+                  setRole(index, draft);
+                } catch (err) {
+                  setError(ipcMessage(err));
+                } finally {
+                  setDrafting(null);
+                }
+              }}
+            >
+              {drafting === index ? "Drafting…" : "✨ Draft"}
+            </button>
             <button
               className="aya-modal-btn"
               aria-label={`Remove role ${index + 1}`}
@@ -381,7 +432,7 @@ function TeamEditor({
             try {
               await onSave(team);
             } catch (err) {
-              setError(err instanceof Error ? err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "") : String(err));
+              setError(ipcMessage(err));
             }
           }}
         >

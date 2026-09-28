@@ -4199,6 +4199,7 @@ export function App() {
       {showTeams && activeProject && (
         <TeamsModal
           project={activeProject}
+          intelligence={ayaIntelligence}
           onClose={() => {
             setShowTeams(false);
             // Teams seen in the window need no "assign roles?" prompt after it.

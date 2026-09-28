@@ -761,6 +761,8 @@ export interface AyaApi {
   teamSave(projectSlug: string, team: TeamDefinition): Promise<void>;
   /** Give a role to a pane of the project, or free it with null. */
   teamAssign(projectSlug: string, team: string, role: string, paneId: string | null): Promise<void>;
+  /** Drafts a role's fields from its name with the configured Aya Intelligence. */
+  teamDraftRole(role: string, teamRoles: string[], intelligence: AyaIntelligenceConfig): Promise<RoleDraft>;
   teamResume(projectSlug: string, team: string): Promise<void>;
 
   usageHookStatus(): Promise<UsageHookStatus>;
@@ -1038,4 +1040,11 @@ export interface TeamSummary {
   /** Messages per role that are waiting in its inbox. */
   unread: Record<string, number>;
   log: TeamMessage[];
+}
+
+/** A role drafted by Aya Intelligence from its name, for the user to edit. */
+export interface RoleDraft {
+  responsibilities: string;
+  mustNot: string;
+  sendsTo: string[];
 }

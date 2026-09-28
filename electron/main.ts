@@ -72,8 +72,10 @@ import {
   teamNote,
 } from "./agent-brief";
 import { paneTeamRole } from "./team-control";
+import { type ChatResult, OLLAMA_BASE_URL, ollamaChat, openAiChat } from "./intelligence-chat";
 import { TeamRunner } from "./team-runner";
 import { assignRole, listTeams, saveTeam } from "./team-admin";
+import { draftRole } from "./team-draft";
 import { startRemoteServer } from "./remote-server";
 import {
   createRemoteDirectory,
@@ -154,6 +156,7 @@ import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
 import {
   requirePositiveInt,
   requireString,
+  requireStringArray,
   validateTeamDefinition,
   validateSnippetArray,
   validatePresetArray,
@@ -220,11 +223,11 @@ const RECOMMENDED_OLLAMA_MODEL = "gemma4:e4b";
 
 const ptyHost = new PtyHostClient(path.join(__dirname, "pty-host.js"));
 const UPDATE_AUTO_CHECK_DELAY_MS = 12_000;
-// Local Ollama daemon endpoint (fixed default port) - chat + tags probes.
-const OLLAMA_BASE_URL = "http://localhost:11434";
 // Summarizer sampling knobs, shared by BOTH backends (OpenAI-compatible and
 // Ollama) - the two request builders must stay in sync.
 const SUMMARY_TEMPERATURE = 0.2;
+// A role draft is three short fields; room for them, not for an essay.
+const ROLE_DRAFT_CHAT = { temperature: 0.2, maxTokens: 400, timeoutMs: 30_000 };
 const SUMMARY_MAX_TOKENS = 64;
 // Title fallback caps (first-line words / chars) for the local summary.
 const SUMMARY_TITLE_MAX_WORDS = 8;
@@ -453,12 +456,6 @@ function summaryPrompt(req: LocalSummaryRequest): string {
   ].join("\n");
 }
 
-function openAiBaseUrl(baseUrl: string): string {
-  const trimmed = baseUrl.trim().replace(/\/+$/, "");
-  if (!trimmed) return "";
-  return /\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/v1`;
-}
-
 function parseSummaryResponse(content: string): LocalSummaryResult {
   const trimmed = content.trim();
   const jsonText =
@@ -478,112 +475,17 @@ function parseSummaryResponse(content: string): LocalSummaryResult {
   }
 }
 
-async function summarizeWithOpenAiCompatible(args: {
-  req: LocalSummaryRequest;
-  baseUrl: string;
-  apiKey?: string;
-  model: string;
-}): Promise<LocalSummaryResult> {
-  const baseUrl = openAiBaseUrl(args.baseUrl);
-  const model = args.model.trim();
-  if (!baseUrl || !model) return unavailableLocalSummary("missing-api-config");
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), LOCAL_SUMMARY_TIMEOUT_MS);
-  try {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        ...(args.apiKey ? { Authorization: `Bearer ${args.apiKey}` } : {}),
-      },
-      body: JSON.stringify({
-        model,
-        temperature: SUMMARY_TEMPERATURE,
-        max_tokens: SUMMARY_MAX_TOKENS,
-        think: false,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You summarize terminal output for a developer tool. Return JSON only.",
-          },
-          { role: "user", content: summaryPrompt(args.req) },
-        ],
-      }),
-    });
-    if (!response.ok) {
-      return unavailableLocalSummary(`api-http-${response.status}`);
-    }
-    const json = (await response.json()) as {
-      choices?: Array<{
-        message?: { content?: unknown; reasoning?: unknown };
-        text?: unknown;
-      }>;
-    };
-    const content =
-      typeof json.choices?.[0]?.message?.content === "string"
-        ? json.choices[0].message.content ||
-          (typeof json.choices[0].message.reasoning === "string"
-            ? json.choices[0].message.reasoning
-            : "")
-        : typeof json.choices?.[0]?.text === "string"
-          ? json.choices[0].text
-          : "";
-    if (!content) return { available: true, useful: false, summary: "" };
-    return parseSummaryResponse(content);
-  } catch (err) {
-    return unavailableLocalSummary(err instanceof Error ? err.message : String(err));
-  } finally {
-    clearTimeout(timeout);
-  }
-}
+const SUMMARY_SYSTEM = "You summarize terminal output for a developer tool. Return JSON only.";
+const SUMMARY_CHAT = {
+  temperature: SUMMARY_TEMPERATURE,
+  maxTokens: SUMMARY_MAX_TOKENS,
+  timeoutMs: LOCAL_SUMMARY_TIMEOUT_MS,
+};
 
-async function summarizeWithOllama(
-  req: LocalSummaryRequest,
-  model: string,
-): Promise<LocalSummaryResult> {
-  const selectedModel = model.trim() || RECOMMENDED_OLLAMA_MODEL;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), LOCAL_SUMMARY_TIMEOUT_MS);
-  try {
-    const response = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
-      method: "POST",
-      signal: controller.signal,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: selectedModel,
-        stream: false,
-        think: false,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You summarize terminal output for a developer tool. Return JSON only.",
-          },
-          { role: "user", content: summaryPrompt(req) },
-        ],
-        options: {
-          temperature: SUMMARY_TEMPERATURE,
-          num_predict: SUMMARY_MAX_TOKENS,
-        },
-      }),
-    });
-    if (!response.ok) {
-      return unavailableLocalSummary(`ollama-http-${response.status}`);
-    }
-    const json = (await response.json()) as {
-      message?: { content?: unknown };
-    };
-    const content =
-      typeof json.message?.content === "string" ? json.message.content : "";
-    if (!content) return { available: true, useful: false, summary: "" };
-    return parseSummaryResponse(content);
-  } catch (err) {
-    return unavailableLocalSummary(err instanceof Error ? err.message : String(err));
-  } finally {
-    clearTimeout(timeout);
-  }
+function summaryFromChat(result: ChatResult): LocalSummaryResult {
+  if (!result.ok) return unavailableLocalSummary(result.error);
+  if (!result.content) return { available: true, useful: false, summary: "" };
+  return parseSummaryResponse(result.content);
 }
 
 async function summarizeLocal(
@@ -594,17 +496,17 @@ async function summarizeLocal(
     return summarizeWithApple(req);
   }
   if (intelligence.provider === "ollama") {
-    return summarizeWithOllama(
-      req,
-      intelligence.ollamaModel || RECOMMENDED_OLLAMA_MODEL,
-    );
+    const model = intelligence.ollamaModel.trim() || RECOMMENDED_OLLAMA_MODEL;
+    return summaryFromChat(await ollamaChat(model, SUMMARY_SYSTEM, summaryPrompt(req), SUMMARY_CHAT));
   }
-  return summarizeWithOpenAiCompatible({
-    req,
-    baseUrl: intelligence.openAiBaseUrl,
-    apiKey: intelligence.openAiApiKey,
-    model: intelligence.openAiModel,
-  });
+  return summaryFromChat(
+    await openAiChat(
+      { baseUrl: intelligence.openAiBaseUrl, apiKey: intelligence.openAiApiKey, model: intelligence.openAiModel },
+      SUMMARY_SYSTEM,
+      summaryPrompt(req),
+      SUMMARY_CHAT,
+    ),
+  )
 }
 
 async function ollamaStatus(
@@ -2346,6 +2248,30 @@ function registerIpc(): void {
       paneId === null ? null : requireString(paneId, "teams:assign.paneId"),
     ),
   );
+  ipcMain.handle("teams:draft-role", async (_e, role: unknown, teamRoles: unknown, config: unknown) => {
+    const intelligence = normalizeAyaIntelligenceConfig(config);
+    if (!intelligence || intelligence.provider === "apple") {
+      throw new Error("Drafting a role needs Ollama or an OpenAI-compatible model; choose one in Settings > Intelligence.");
+    }
+    const chat = async (system: string, user: string) => {
+      const result =
+        intelligence.provider === "ollama"
+          ? await ollamaChat(intelligence.ollamaModel, system, user, ROLE_DRAFT_CHAT)
+          : await openAiChat(
+              { baseUrl: intelligence.openAiBaseUrl, apiKey: intelligence.openAiApiKey, model: intelligence.openAiModel },
+              system,
+              user,
+              ROLE_DRAFT_CHAT,
+            );
+      if (!result.ok) throw new Error(`Aya Intelligence did not answer (${result.error})`);
+      return result.content;
+    };
+    return draftRole(
+      requireString(role, "teams:draft-role.role"),
+      requireStringArray(teamRoles, "teams:draft-role.teamRoles"),
+      chat,
+    );
+  });
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
     const request = validateSpawnRequest(req);
     // A broken presets.json must not stop panes from spawning.
