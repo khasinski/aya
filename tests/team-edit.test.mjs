@@ -3,7 +3,18 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addRole, applyDraft, fromEditor, removeRole, roleId, setSend, toEditor, updateRole } from "../dist-test/team-edit.js";
+import {
+  addRole,
+  applyDraft,
+  DEFAULT_CADENCE_MINUTES,
+  fromEditor,
+  removeRole,
+  ROLE_ID_MAX_LEN,
+  roleId,
+  setSend,
+  toEditor,
+  updateRole,
+} from "../dist-test/team-edit.js";
 import { ID_RE } from "../dist-electron/teams.js";
 
 const TEAM = {
@@ -101,4 +112,13 @@ test("whatever is typed as a role name becomes an id the team file accepts, or n
     assert.ok(id === "" || ID_RE.test(id), `${JSON.stringify(t)} -> ${JSON.stringify(id)}`);
   }
   assert.equal(roleId("Senior UX Game Designer"), "senior-ux-game-designer");
+  // The longest id the editor makes is the longest the file parser accepts.
+  assert.equal(ROLE_ID_MAX_LEN, 40);
+  assert.equal(roleId("a".repeat(60)).length, ROLE_ID_MAX_LEN);
+  assert.ok(ID_RE.test("a".repeat(ROLE_ID_MAX_LEN)));
+  assert.ok(!ID_RE.test("a".repeat(ROLE_ID_MAX_LEN + 1)));
+});
+
+test("a new cadence runs every 30 minutes until changed", () => {
+  assert.equal(DEFAULT_CADENCE_MINUTES, 30);
 });

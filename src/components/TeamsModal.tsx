@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { DEFAULT_CADENCE_MINUTES } from "../team-edit";
 import type { AyaIntelligenceConfig, ProjectConfig, TeamDefinition, TeamSummary } from "../types";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 import { TeamCard } from "./TeamCard";
@@ -26,7 +27,7 @@ const TWO_ROLE_TEMPLATE: TeamDefinition = {
       responsibilities: "Fixes findings, answers every report, and names the commit to check.",
     },
   ],
-  cadence: { role: "reviewer", minutes: 30 },
+  cadence: { role: "reviewer", minutes: DEFAULT_CADENCE_MINUTES },
   protocol:
     "Findings are hypotheses with a measurement request, not facts. Number rounds and mark items [reported -> confirmed]. Reports are one-way unless a question is asked.",
 };
