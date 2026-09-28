@@ -12,16 +12,15 @@
 // whether or not any window is open, and it costs one extra VT parse per pane.
 
 import { Terminal } from "@xterm/headless";
-import { evaluateScreen } from "./agent-screen-rules";
+import { evaluateScreen, TAIL_REGION_LINES } from "./agent-screen-rules";
 import type { AgentKind } from "./presets";
 
 // Only the visible screen matters for "what is on screen right now", and
 // scrollback would grow a buffer per pane in the host process for no gain.
 const VT_SCROLLBACK_LINES = 0;
-// How many non-empty screen lines from the bottom the detector considers.
-// An approval prompt is always near the cursor; scanning the whole screen
-// would match a prompt the agent has already scrolled past within one screen.
-const SCAN_TAIL_LINES = 12;
+// Smallest mirror size. Not the PTY's MIN_PTY_COLS x MIN_PTY_ROWS (4x2): the
+// two differ today and this only names the mirror's own clamp.
+const MIN_MIRROR_SIZE = 1;
 // The screen is scanned at most this often per pane. Writes are applied
 // immediately; only the (comparatively expensive) scan is rate-limited, so a
 // firehose of output costs one scan per interval rather than one per chunk.
@@ -56,8 +55,8 @@ export function openVtPane(
 ): void {
   panes.set(ptyId, {
     terminal: new Terminal({
-      cols: Math.max(cols, 1),
-      rows: Math.max(rows, 1),
+      cols: Math.max(cols, MIN_MIRROR_SIZE),
+      rows: Math.max(rows, MIN_MIRROR_SIZE),
       scrollback: VT_SCROLLBACK_LINES,
       allowProposedApi: true,
     }),
@@ -74,7 +73,7 @@ export function resizeVtPane(ptyId: string, cols: number, rows: number): void {
   const pane = panes.get(ptyId);
   if (!pane) return;
   try {
-    pane.terminal.resize(Math.max(cols, 1), Math.max(rows, 1));
+    pane.terminal.resize(Math.max(cols, MIN_MIRROR_SIZE), Math.max(rows, MIN_MIRROR_SIZE));
   } catch {
     // A resize can race the pane closing; the next write just lands on the
     // old geometry, which only affects wrapping in the detector's input.
@@ -144,11 +143,11 @@ export function screenRows(terminal: Terminal): string[] {
   return rows;
 }
 
-/** The last `SCAN_TAIL_LINES` non-empty rows as one string. Kept for tests and
+/** The last `TAIL_REGION_LINES` non-empty rows as one string. Kept for tests and
  *  for any future screen-derived signal. */
 export function screenTail(
   terminal: Terminal,
-  maxLines: number = SCAN_TAIL_LINES,
+  maxLines: number = TAIL_REGION_LINES,
 ): string {
   return screenRows(terminal)
     .filter((row) => row.trim())

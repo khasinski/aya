@@ -11,6 +11,14 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+// The host's entry script, as the client launches it and the sweep recognises it.
+export const PTY_HOST_SCRIPT_NAME = "pty-host.js";
+// The client runs the host with ELECTRON_RUN_AS_NODE=1; the sweep checks for it.
+export const RUN_AS_NODE_VAR = "ELECTRON_RUN_AS_NODE";
+export const RUN_AS_NODE_VALUE = "1";
+// A scriptHash that could not be read. The reaper never kills on it.
+export const UNKNOWN_SCRIPT_HASH = "unknown";
+
 /** Identity a host reports about the build it was launched from. Reported via
  *  the `version` handshake; an old host that predates the handshake returns an
  *  error, which the client maps to `null` (treated as stale below). */

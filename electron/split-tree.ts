@@ -23,7 +23,8 @@ export type SplitNode =
     };
 
 export const MAX_SPLIT_LEAVES = 25;
-export const MAX_SPLIT_DEPTH = 24;
+// A fully-degenerate tree of MAX_SPLIT_LEAVES leaves is one level per extra leaf.
+export const MAX_SPLIT_DEPTH = MAX_SPLIT_LEAVES - 1;
 
 export function isSplitNode(value: unknown, depth = 0): value is SplitNode {
   if (depth > MAX_SPLIT_DEPTH) return false;

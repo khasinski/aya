@@ -1,6 +1,8 @@
 // What a pane's command is, and how to run it; pure, so the app and the pty
 // host share it without the app loading the host's terminal code.
 
+import * as path from "node:path";
+
 export function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
@@ -9,6 +11,13 @@ export function shellQuote(s: string): string {
  *  itself it applies after the shell's rc files, which may reorder PATH. */
 export function withCliFirst(command: string, dir: string): string {
   return `PATH=${shellQuote(dir)}:"$PATH" ${command}`;
+}
+
+/** Append `dir` to a PATH value unless it is already there: an installed
+ *  shim earlier on PATH keeps winning, the bundled CLI is the fallback. */
+export function pathWithFallbackDir(value: string | undefined, dir: string): string {
+  if (!value) return dir;
+  return value.split(path.delimiter).includes(dir) ? value : `${value}${path.delimiter}${dir}`;
 }
 
 /** A plain interactive shell, not an agent: Enter would run typed text. */

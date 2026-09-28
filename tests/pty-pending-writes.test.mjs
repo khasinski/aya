@@ -8,14 +8,27 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnPty, writePty, __testPendingWrites } from "../dist-electron/pty.js";
+import {
+  DEFAULT_LANG,
+  PENDING_WRITE_MAX_BYTES,
+  SPAWN_LOG_COMMAND_MAX_CHARS,
+  spawnPty,
+  writePty,
+  __testPendingWrites,
+} from "../dist-electron/pty.js";
 
 // pty.ts resolves $AYA_HOME lazily at the first log append, so redirect it
 // before any spawnPty call or unit runs write into the user's real ~/.aya.
 process.env.AYA_HOME = mkdtempSync(join(tmpdir(), "aya-pending-write-test-"));
 
 const MISSING_BINARY = "aya-no-such-binary-zzz";
-const PENDING_WRITE_MAX_BYTES = 64 * 1024;
+
+// Pinned so a refactor of pty.ts cannot shift these limits unnoticed.
+test("pty limits and defaults keep their values", () => {
+  assert.equal(PENDING_WRITE_MAX_BYTES, 64 * 1024);
+  assert.equal(SPAWN_LOG_COMMAND_MAX_CHARS, 4096);
+  assert.equal(DEFAULT_LANG, "en_US.UTF-8");
+});
 
 function fakeSink() {
   const events = [];

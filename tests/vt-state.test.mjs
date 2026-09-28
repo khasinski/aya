@@ -92,6 +92,28 @@ test("screenTail is bounded by its line limit", async () => {
   close();
 });
 
+test("screenTail defaults to the last 12 non-empty rows", async () => {
+  const close = open("p7b");
+  writeVtPane("p7b", Array.from({ length: 20 }, (_, i) => `row ${i + 1}`).join("\r\n"));
+  await settle();
+  const rows = screenTail(__testVtPane("p7b").terminal).split("\n");
+  assert.equal(rows.length, 12);
+  assert.equal(rows[0], "row 9");
+  close();
+});
+
+// The mirror clamps to 1x1, not the PTY's 4x2 minimum; pinned as it is.
+// xterm itself floors cols at 2, so only the row clamp is observable.
+test("the mirror clamps a zero or negative size to one row", () => {
+  openVtPane("p7c", 0, -3, () => {});
+  const { terminal } = __testVtPane("p7c");
+  assert.equal(terminal.rows, 1);
+  resizeVtPane("p7c", 5, 5);
+  resizeVtPane("p7c", -1, 0);
+  assert.equal(terminal.rows, 1);
+  closeVtPane("p7c");
+});
+
 // --- change notification ---------------------------------------------------
 
 test("the change callback fires on BOTH edges, once per transition", async () => {

@@ -18,6 +18,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { AYA_HOME, OWNER_ONLY_FILE_MODE } from "./paths";
+import { UNKNOWN_SCRIPT_HASH } from "./pty-host-staleness";
 
 export interface HostRecord {
   /** Host process pid (also its process-group leader: spawned detached). */
@@ -194,7 +195,7 @@ export function classifyRecord(
   expected: { version: string; scriptHash: string },
 ): "compatible" | "stale" | "indeterminate" {
   if (rec.version !== expected.version) return "stale";
-  if (rec.scriptHash === "unknown" || expected.scriptHash === "unknown") {
+  if (rec.scriptHash === UNKNOWN_SCRIPT_HASH || expected.scriptHash === UNKNOWN_SCRIPT_HASH) {
     return "indeterminate";
   }
   return rec.scriptHash === expected.scriptHash ? "compatible" : "stale";

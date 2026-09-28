@@ -8,6 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { isSplitNode as rendererIsSplitNode } from "../dist-test/split-tree.js";
+import { MAX_SPLIT_COLS, MAX_SPLIT_ROWS } from "../dist-electron/validation.js";
 import {
   MAX_SPLIT_DEPTH as electronMaxDepth,
   MAX_SPLIT_LEAVES as electronMaxLeaves,
@@ -75,6 +76,15 @@ test("both validators reject the same excessive nesting", () => {
 test("the two limit constants stay in step", () => {
   assert.equal(rendererMaxLeaves, electronMaxLeaves);
   assert.equal(rendererMaxDepth, electronMaxDepth);
+});
+
+// The pane cap is the old grid's rows x cols; the depth bound is one level per
+// extra leaf, the fully-degenerate tree.
+test("the limits keep their values and the rule they come from", () => {
+  assert.equal(electronMaxLeaves, 25);
+  assert.equal(electronMaxLeaves, MAX_SPLIT_ROWS * MAX_SPLIT_COLS);
+  assert.equal(electronMaxDepth, 24);
+  assert.equal(electronMaxDepth, electronMaxLeaves - 1);
 });
 
 test("both sides count panes identically", () => {

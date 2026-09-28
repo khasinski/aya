@@ -2,6 +2,7 @@
 // is flat and cannot go stale (#117). Pure; main.ts does the IO.
 
 import * as path from "node:path";
+import { shellQuote } from "./pane-command";
 
 export type BriefChannel =
   | { kind: "arg"; flag: string }
@@ -46,10 +47,6 @@ export function briefText(conditional: boolean): string {
     ? "If the AYA_TERMINAL_ID environment variable is set, you are running inside Aya, a terminal workspace for coding agents. There,"
     : "You are running inside Aya, a terminal workspace for coding agents;";
   return [lead, ...BRIEF_BODY].join("\n");
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 /** Null for a compound command: an added argument would land on the wrong one. */
@@ -206,11 +203,4 @@ export function withOwnedBrief(content: string, brief: string): string {
 export function withoutOwnedBrief(content: string): string {
   const rest = withoutBriefSection(content);
   return rest.replace(/^---\ntrigger: always_on\n---\n?/, "").trim() ? rest : "";
-}
-
-/** Append `dir` to a PATH value unless it is already there: an installed
- *  shim earlier on PATH keeps winning, the bundled CLI is the fallback. */
-export function pathWithFallbackDir(value: string | undefined, dir: string): string {
-  if (!value) return dir;
-  return value.split(path.delimiter).includes(dir) ? value : `${value}${path.delimiter}${dir}`;
 }

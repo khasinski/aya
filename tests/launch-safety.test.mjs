@@ -142,6 +142,15 @@ test("in Aya Dev an agent pane finds the branch's aya first, even after the shel
   assert.equal(out.trim(), "branch-aya");
 });
 
+test("the bundled CLI is appended to PATH, never ahead of an installed shim", async () => {
+  const { pathWithFallbackDir } = await import("../dist-electron/pane-command.js");
+  assert.equal(pathWithFallbackDir("/a:/b", "/app/bin"), "/a:/b:/app/bin");
+  assert.equal(pathWithFallbackDir("/app/bin:/a", "/app/bin"), "/app/bin:/a");
+  assert.equal(pathWithFallbackDir(undefined, "/app/bin"), "/app/bin");
+  // Empty entries mean the cwd; the user's PATH is kept as it was.
+  assert.equal(pathWithFallbackDir("/a::/b:", "/app/bin"), "/a::/b::/app/bin");
+});
+
 test("a pane does not inherit the Claude Code session that launched Aya, only the user's settings", async () => {
   const { withoutSessionMarkers } = await import("../dist-electron/pane-command.js");
   const parent = {

@@ -23,13 +23,17 @@ import {
   resizeVtPane,
   writeVtPane,
 } from "./vt-state";
-import { isShellCommand, shellQuote, withoutSessionMarkers } from "./pane-command";
+import {
+  isShellCommand,
+  pathWithFallbackDir,
+  shellQuote,
+  withoutSessionMarkers,
+} from "./pane-command";
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 import { COMMAND_NOT_FOUND_EXIT_CODE, COMMAND_PROBE_TIMEOUT_MS } from "./constants";
 import { userShell } from "./shell";
 import { getProcessCwd } from "./process-cwd";
 import { ptyLog } from "./pty-log";
-import { pathWithFallbackDir } from "./agent-brief";
 import { bundledAyaCliPath } from "./cli-path";
 
 // Timeout for the shell `command -v` existence check during spawn preflight.
@@ -123,7 +127,7 @@ const pendingWrites = new Map<string, string[]>();
 // Bound per id, so a spawn that never completes (or a paste into a pane whose
 // command hangs in preflight) cannot grow the host's memory without limit.
 // Well above any realistic burst of typing; a paste past it is truncated.
-const PENDING_WRITE_MAX_BYTES = 64 * 1024;
+export const PENDING_WRITE_MAX_BYTES = 64 * 1024;
 // Set once the host begins shutting down. shutdownPtyChildren snapshots the live
 // PTYs and the host then lingers up to KILL_ESCALATE_MS to deliver SIGKILL; a
 // spawn that registered a PTY in that window would escape the snapshot and be
@@ -281,8 +285,6 @@ export function searchPtyOutputs(query: string): BufferSearchHit[] {
   }
   return hits;
 }
-
-
 
 function endOfShellToken(s: string, start: number): number {
   let quote: "'" | '"' | null = null;
@@ -447,6 +449,12 @@ async function commandExists(binary: string): Promise<boolean> {
   return found;
 }
 
+// The locale a pane gets when the app's environment sets no LANG.
+export const DEFAULT_LANG = "en_US.UTF-8";
+// The spawn log clamps the command: it is unbounded user input, and one line past
+// the log cap would blow straight through it (#89); 4 KB keeps real commands whole.
+export const SPAWN_LOG_COMMAND_MAX_CHARS = 4096;
+
 function safeEnv(req: SpawnRequest, cwd: string): { [key: string]: string } {
   const inherited: { [key: string]: string } = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -455,7 +463,7 @@ function safeEnv(req: SpawnRequest, cwd: string): { [key: string]: string } {
   const out = withoutSessionMarkers(inherited);
   out.TERM = "xterm-256color";
   out.COLORTERM = "truecolor";
-  if (!out.LANG) out.LANG = "en_US.UTF-8";
+  if (!out.LANG) out.LANG = DEFAULT_LANG;
   if (!out.LC_ALL) out.LC_ALL = out.LANG;
   // The bundled CLI as a PATH fallback, so `aya` works in every pane even
   // without the Settings shim; an installed shim earlier on PATH still wins.
@@ -676,10 +684,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       projectSlug: req.projectSlug,
       presetId: req.presetId,
       cwd,
-      // Clamped: the command is unbounded user input, and a single line
-      // larger than the log cap would blow straight past it (#89). 4 KB
-      // keeps every realistic command (and its resume arg) intact.
-      command: req.command.slice(0, 4096),
+      command: req.command.slice(0, SPAWN_LOG_COMMAND_MAX_CHARS),
     });
 
     child.onData((chunk) => {
