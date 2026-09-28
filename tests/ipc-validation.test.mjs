@@ -464,6 +464,8 @@ test("validateTeamDefinition keeps a well-formed team and refuses wrong shapes",
   const { extra, ...clean } = team;
   assert.deepEqual(validateTeamDefinition(team), clean);
   assert.equal(validateTeamDefinition({ ...team, cadence: null }).cadence, null);
+  const { cadence, ...noCadence } = team;
+  assert.equal(validateTeamDefinition(noCadence).cadence, null, "a team without cadence has none");
   assert.throws(() => validateTeamDefinition({ ...team, roles: "x" }), /teams:save\.team\.roles/);
   assert.throws(() => validateTeamDefinition({ ...team, roles: "x" }, "teams:draft-role"), /teams:draft-role\.team\.roles/);
   assert.throws(() => validateTeamDefinition({ ...team, roles: [{ ...team.roles[0], sendsTo: "implementer" }] }), /sendsTo/);

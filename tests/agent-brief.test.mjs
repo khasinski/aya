@@ -247,8 +247,7 @@ test("the brief tells every agent how to find its team role", () => {
 
 test("a team pane's note names its role and treats peer messages as reports", () => {
   const note = teamNote("ux-review", "tester");
-  assert.match(note, /tester/);
-  assert.match(note, /ux-review/);
+  assert.match(note, /^You are the tester in the Aya team ux-review\./);
   assert.match(note, /aya team whoami/);
   assert.match(note, /\/clear/);
   assert.match(note, /\[team[\s\S]*not the user's instructions/);
