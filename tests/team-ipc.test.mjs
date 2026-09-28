@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 const { registerTeamIpc, TEAM_REDELIVERY_MS } = await import("../dist-electron/team-ipc.js");
+const { ROLE_DRAFT_CHAT } = await import("../dist-electron/team-draft.js");
 
 function register({ listProjects = async () => [] } = {}) {
   const handlers = new Map();
@@ -86,7 +87,7 @@ test("teams:draft-role asks the configured chat with the role-draft options", as
     const draft = await t.invoke("teams:draft-role", team, "tester", { provider: "apple" });
     assert.equal(draft.mustNot, "edit code");
     assert.deepEqual(t.chats, [
-      { config: { provider: "apple" }, opts: { temperature: 0.2, maxTokens: 400, timeoutMs: 90_000 } },
+      { config: { provider: "apple" }, opts: ROLE_DRAFT_CHAT },
     ]);
   } finally {
     t.teardowns.forEach((fn) => fn());

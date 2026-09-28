@@ -108,3 +108,7 @@ test("an unknown role id is refused", () => {
 test("the draft waits long enough for Apple's on-device model (13-44 s measured)", () => {
   assert.ok(ROLE_DRAFT_CHAT.timeoutMs >= 60_000, `timeout ${ROLE_DRAFT_CHAT.timeoutMs} ms`);
 });
+
+test("a role draft asks for a short, low-temperature answer", () => {
+  assert.deepEqual(ROLE_DRAFT_CHAT, { temperature: 0.2, maxTokens: 400, timeoutMs: 90_000 });
+});

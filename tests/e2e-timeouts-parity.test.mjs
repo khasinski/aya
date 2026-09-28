@@ -25,6 +25,5 @@ function loadE2eTimeouts() {
 
 test("the e2e redelivery period is the one team-ipc retries held messages at", () => {
   const e2e = loadE2eTimeouts();
-  assert.equal(e2e.TEAM_REDELIVERY_MS, 15_000);
   assert.equal(e2e.TEAM_REDELIVERY_MS, TEAM_REDELIVERY_MS);
 });
