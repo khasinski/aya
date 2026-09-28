@@ -282,8 +282,6 @@ export function searchPtyOutputs(query: string): BufferSearchHit[] {
   return hits;
 }
 
-
-
 function endOfShellToken(s: string, start: number): number {
   let quote: "'" | '"' | null = null;
   for (let i = start; i < s.length; i += 1) {
