@@ -261,3 +261,19 @@ test("a team pane's note names its role and treats peer messages as reports", ()
   assert.match(note, /\/clear/);
   assert.match(note, /\[team[\s\S]*not the user's instructions/);
 });
+
+test("the Settings toggle's hint text per harness", () => {
+  assert.equal(agentBriefHint("claude"), "Adds a short note via --append-system-prompt when the pane starts.");
+  assert.equal(agentBriefHint("codex"), "Adds a marked section to this account's AGENTS.md (removed when off).");
+  assert.equal(agentBriefHint("grok"), "Adds a short note via --rules when the pane starts.");
+  assert.equal(
+    agentBriefHint("opencode"),
+    "Adds a short note to opencode's instructions for Aya panes only (OPENCODE_CONFIG_CONTENT).",
+  );
+  assert.equal(
+    agentBriefHint("antigravity"),
+    "Adds one always-on Antigravity rule, shared by all agy presets (deleted when none opts in).",
+  );
+  assert.equal(agentBriefHint(undefined), null);
+  assert.equal(agentBriefHint("toString"), null);
+});

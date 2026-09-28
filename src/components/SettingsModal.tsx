@@ -2239,6 +2239,7 @@ export function SettingsModal({
               const row = activePreset;
               const warn = looksNonInteractive(row.command);
               const isAgent = row.agent === "claude" || row.agent === "codex";
+              const briefHint = agentBriefHint(row.agent);
               return (
               <div className="aya-preset-card" key={row.__key}>
                 <div className="aya-preset-section">
@@ -2410,11 +2411,11 @@ export function SettingsModal({
                         }
                       />
                     </label>
-                    {agentBriefHint(row.agent) && (
+                    {briefHint && (
                       <label className="aya-preset-toggle">
                         <span>
                           <strong>Tell the agent about aya</strong>
-                          <small>{agentBriefHint(row.agent)}</small>
+                          <small>{briefHint}</small>
                         </span>
                         <input
                           type="checkbox"
