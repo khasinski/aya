@@ -185,7 +185,8 @@ function composerHasDraft(terminal: Terminal): boolean {
 /** Why a message must not be typed into this pane now, or null. */
 export function paneHold(ptyId: string): string | null {
   const pane = panes.get(ptyId);
-  if (!pane) return null;
+  // Every live PTY has a mirror; none means it exited or never started.
+  if (!pane) return "is not running (exited, or its tab was not opened yet)";
   if (pane.shell) return "runs a shell";
   if (evaluateScreen(screenRows(pane.terminal), pane.agent) === "waiting") return "shows an approval prompt";
   if (composerHasDraft(pane.terminal)) return "has text the user is typing";

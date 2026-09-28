@@ -59,6 +59,9 @@ test("a shell pane always holds delivery", async () => {
   assert.match(await hold(["user@host ~ %"], { agent: undefined, shell: true }), /shell/);
 });
 
-test("an unknown pane has no opinion", () => {
-  assert.equal(paneHold("nope"), null);
+test("a pane that exited or never started is held: typing into it would fail", async () => {
+  assert.match(paneHold("never-opened"), /not running/);
+  openVtPane("gone", 80, 24, () => {}, "claude", false);
+  closeVtPane("gone");
+  assert.match(paneHold("gone"), /not running/);
 });

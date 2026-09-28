@@ -53,6 +53,7 @@ test("start sends every role a delivery test that names its peer", async () => {
   const t = await setup({ cadence: false });
   try {
     const result = await t.runner.start("game", "ux-review");
+    assert.equal(result.started, true);
     assert.deepEqual(result.delivered.sort(), ["implementer", "tester"]);
     const toTester = t.typed.find((w) => w.pane === "pane-t").text;
     assert.match(toTester, /^\[team ux-review \| from aya \| \d\d:\d\d\]/);
@@ -64,18 +65,36 @@ test("start sends every role a delivery test that names its peer", async () => {
   }
 });
 
-test("a held pane is reported, not typed into", async () => {
-  const t = await setup({ cadence: false, held: { "pane-i": "shows an approval prompt" } });
+test("Start checks every pane first: one not ready means nothing is sent and no rounds run", async () => {
+  const t = await setup({ held: { "pane-i": "shows an approval prompt" } });
   try {
     const result = await t.runner.start("game", "ux-review");
-    assert.deepEqual(result.delivered, ["tester"]);
+    assert.equal(result.started, false);
+    assert.deepEqual(result.delivered, []);
     assert.deepEqual(result.held, [{ role: "implementer", reason: "shows an approval prompt" }]);
-    assert.equal(t.typed.filter((w) => w.pane === "pane-i").length, 0);
+    assert.equal(t.typed.length, 0);
+    assert.equal(t.scheduled.length, 0);
+    assert.equal((await t.store.state()).running, false);
+    assert.equal((await t.store.log()).length, 0);
   } finally {
     t.cleanup();
   }
 });
 
+test("Start lists every role that is not ready, including one with no pane", async () => {
+  const t = await setup({ cadence: false, held: { "pane-t": "is not running" } });
+  try {
+    await t.store.releasePane("pane-i");
+    const result = await t.runner.start("game", "ux-review");
+    assert.equal(result.started, false);
+    assert.deepEqual(result.held, [
+      { role: "tester", reason: "is not running" },
+      { role: "implementer", reason: "no pane assigned" },
+    ]);
+  } finally {
+    t.cleanup();
+  }
+});
 test("rounds go to the cadence role on its interval and are numbered", async () => {
   const t = await setup();
   try {
@@ -247,11 +266,12 @@ test("a role given to a pane in a running team is introduced at once, as Start w
 });
 
 test("introducing a held pane says why and keeps the message", async () => {
-  const t = await setup({ cadence: false, held: { "pane-t": "shows an approval prompt" } });
+  const t = await setup({ cadence: false });
   try {
     await t.runner.start("game", "ux-review");
+    t.deps.holdReason = async (pane) => (pane === "pane-t" ? "shows an approval prompt" : null);
     assert.equal(await t.runner.introduce("game", "ux-review", "tester"), "shows an approval prompt");
-    assert.equal((await t.store.log()).filter((m) => m.to === "tester" && !m.delivered).length, 2);
+    assert.equal((await t.store.log()).filter((m) => m.to === "tester" && !m.delivered).length, 1);
   } finally {
     t.cleanup();
   }

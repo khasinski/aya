@@ -45,10 +45,19 @@ export class TeamRunner {
     return this.fromAya(project, store, team, roleId, `Delivery test: run aya team whoami${reply}.`);
   }
 
+  /** Checks every pane first: with one missing, not running or held, nothing
+   *  is sent and no rounds run, so one broken pane cannot waste the rest. */
   async start(slug: string, name: string): Promise<TeamStartResult> {
     const { project, store, team } = await this.open(slug, name);
+    const notReady: TeamStartResult["held"] = [];
+    for (const role of team.roles) {
+      const pane = await store.paneOf(role.id);
+      const reason = pane ? await this.deps.holdReason(pane) : "no pane assigned";
+      if (reason) notReady.push({ role: role.id, reason });
+    }
+    if (notReady.length) return { started: false, delivered: [], held: notReady };
     await store.setPaused(false);
-    const result: TeamStartResult = { delivered: [], held: [] };
+    const result: TeamStartResult = { started: true, delivered: [], held: [] };
     for (const role of team.roles) {
       const held = await this.deliveryTest(project, store, team, role.id);
       if (held) result.held.push({ role: role.id, reason: held });

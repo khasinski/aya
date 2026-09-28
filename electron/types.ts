@@ -762,6 +762,8 @@ declare global {
 
 /** Which roles got Start team's delivery test, and why the others did not. */
 export interface TeamStartResult {
+  /** false: a pane was not ready, so nothing was sent; `held` says which. */
+  started: boolean;
   delivered: string[];
   held: { role: string; reason: string }[];
 }

@@ -53,7 +53,14 @@ export function TeamCard({
             disabled={busy}
             onClick={async () => {
               const result = await act(() => window.aya.teamStart(project.slug, team.name));
-              setHeld(result?.held.length ? `Not delivered: ${result.held.map((h) => `${h.role} (${h.reason})`).join(", ")}` : null);
+              const list = result?.held.map((h) => `${h.role} (${h.reason})`).join(", ");
+              setHeld(
+                !result || !list
+                  ? null
+                  : result.started
+                    ? `Started, but not delivered: ${list}`
+                    : `Not started, nothing was sent. Not ready: ${list}. Fix these panes and press Start again.`,
+              );
             }}
           >
             Start
