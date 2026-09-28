@@ -224,6 +224,9 @@ const COLOR_LIGHT_TEXT = "#f0f6fc";
 const ABOUT_DIALOG_SIZE = 360;
 // About dialog icon dimensions (square, px)
 const ABOUT_ICON_SIZE = 128;
+// Stale-host menu dot: 16x16 px at scaleFactor 2 = 8pt logical.
+const STALE_MENU_DOT_PX = 16;
+const STALE_MENU_DOT_SCALE_FACTOR = 2;
 const LOCAL_SUMMARY_TIMEOUT_MS = 20_000;
 const LOCAL_SUMMARY_MAX_LINES = 30;
 const LOCAL_SUMMARY_MAX_STDOUT_BYTES = 32 * 1024;
@@ -2202,8 +2205,8 @@ function setStaleMenuIcon(): void {
     // 16x16 px red dot at scaleFactor 2 = 8pt logical - renders as a
     // small colored circle to the left of the label (standard macOS pattern).
     item.icon = nativeImage.createFromBuffer(
-      makeCirclePng(16, 255, 59, 48), // red (macOS systemRed #ff3b30)
-      { scaleFactor: 2 },
+      makeCirclePng(STALE_MENU_DOT_PX, 255, 59, 48), // red (macOS systemRed #ff3b30)
+      { scaleFactor: STALE_MENU_DOT_SCALE_FACTOR },
     );
   }
 }
