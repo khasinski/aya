@@ -3,9 +3,15 @@
 
 import type { SendRoute, TeamCadence, TeamDefinition, TeamRole } from "./types";
 
-export type { SendRoute, TeamCadence, TeamDefinition, TeamRole };
-
 export const ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+/** The sender of Aya's own messages: delivery tests and rounds. */
+export const TEAM_SYSTEM_SENDER = "aya";
+/** The one-line role fields and the section marker the file format reads. */
+export const SENDS_TO_FIELD = "Sends to";
+export const MUST_NOT_FIELD = "Must not";
+export const SECTION_MARKER = "## ";
+const FIELD_RE = new RegExp(`^(${SENDS_TO_FIELD}|${MUST_NOT_FIELD}):\\s*(.*)$`);
+const SECTION_RE = new RegExp(`^${SECTION_MARKER}`, "m");
 const MAX_CADENCE_MINUTES = 24 * 60;
 
 export class TeamFileError extends Error {
@@ -39,9 +45,9 @@ function parseRole(team: string, id: string, body: string): TeamRole {
   let mustNot = "";
   const rest: string[] = [];
   for (const line of body.split("\n")) {
-    const field = line.match(/^(Sends to|Must not):\s*(.*)$/);
+    const field = line.match(FIELD_RE);
     if (!field) rest.push(line);
-    else if (field[1] === "Sends to") sendsTo = parseSends(team, id, field[2]);
+    else if (field[1] === SENDS_TO_FIELD) sendsTo = parseSends(team, id, field[2]);
     else mustNot = field[2].trim();
   }
   if (!mustNot) throw new TeamFileError(team, `role "${id}" needs a "Must not:" line`);
@@ -65,7 +71,7 @@ export function parseTeamFile(name: string, text: string): TeamDefinition {
   let cadence: TeamCadence | null = null;
   let protocol = "";
   // The first chunk is the title and anything before the first section.
-  for (const section of text.replace(/\r\n/g, "\n").split(/^## /m).slice(1)) {
+  for (const section of text.replace(/\r\n/g, "\n").split(SECTION_RE).slice(1)) {
     const newline = section.indexOf("\n");
     const heading = (newline < 0 ? section : section.slice(0, newline)).trim();
     const body = newline < 0 ? "" : section.slice(newline + 1);

@@ -4,8 +4,8 @@
 import { promises as fs } from "node:fs";
 import { writeFileAtomic } from "./atomic-write";
 import { teamFile, teamNames } from "./team-files";
-import { TeamStore, teamDir } from "./team-store";
-import { parseTeamFile, serializeTeam } from "./teams";
+import { openTeamStore } from "./team-store";
+import { MUST_NOT_FIELD, SECTION_MARKER, SENDS_TO_FIELD, TEAM_SYSTEM_SENDER, parseTeamFile, serializeTeam } from "./teams";
 import type { ProjectConfig, TeamDefinition, TeamSummary } from "./types";
 
 const LOG_TAIL = 50;
@@ -29,7 +29,7 @@ function repoParsed(name: string, repo: string | null): TeamDefinition | null {
 export async function listTeams(teamHome: string, project: ProjectConfig): Promise<TeamSummary[]> {
   return Promise.all(
     (await teamNames(project)).map(async (name): Promise<TeamSummary> => {
-      const store = new TeamStore(teamDir(teamHome, project.slug, name));
+      const store = openTeamStore(teamHome, project.slug, name);
       const repo = await readText(teamFile(project, name));
       const saved = await store.savedDefinition();
       let definition: TeamDefinition | null = null;
@@ -39,6 +39,9 @@ export async function listTeams(teamHome: string, project: ProjectConfig): Promi
       } catch (err) {
         error = err instanceof Error ? err.message : String(err);
       }
+      // A held message the receiver has since had (inbox or typed later) reached it.
+      const read = await store.readMarks();
+      const log = (await store.log()).slice(-LOG_TAIL).map((m) => ({ ...m, delivered: m.delivered || (m.from !== TEAM_SYSTEM_SENDER && m.id <= (read[m.to] ?? 0)) }));
       return {
         name,
         definition,
@@ -52,18 +55,14 @@ export async function listTeams(teamHome: string, project: ProjectConfig): Promi
             (definition?.roles ?? []).map(async (r) => [r.id, (await store.unread(r.id)).length] as const),
           ),
         ),
-        // A held message the receiver has since had (inbox or typed later) reached it.
-        log: await (async () => {
-          const read = await store.readMarks();
-          return (await store.log()).slice(-LOG_TAIL).map((m) => ({ ...m, delivered: m.delivered || (m.from !== "aya" && m.id <= (read[m.to] ?? 0)) }));
-        })(),
+        log,
       };
     }),
   );
 }
 
 // A line the team file reads as a field or section, where only free text belongs.
-const FIELD_LINE = /^(Sends to:|Must not:|## )/m;
+const FIELD_LINE = new RegExp(`^(${SENDS_TO_FIELD}:|${MUST_NOT_FIELD}:|${SECTION_MARKER})`, "m");
 
 function refuseFieldLines(team: TeamDefinition): void {
   for (const role of team.roles) {
@@ -73,13 +72,11 @@ function refuseFieldLines(team: TeamDefinition): void {
     }
   }
   const line = team.protocol.match(FIELD_LINE);
-  if (line?.[1] === "## ") throw new Error('protocol: a line starts with "##"; the team file would read it as a new section');
+  if (line?.[1] === SECTION_MARKER) throw new Error('protocol: a line starts with "##"; the team file would read it as a new section');
 }
 
-/** Validates by round-tripping through the parser, so the file on disk is
- *  always one the parser accepts. */
-/** Throws unless the roles parse back the same, up to whitespace the format
- *  trims; a line break inside a one-line field would not. */
+/** Throws unless the text parses and every role reads back the same, up to
+ *  trimmed whitespace; a line break inside a one-line field would not. */
 function refuseLossy(team: TeamDefinition, text: string): void {
   const back = parseTeamFile(team.name, text);
   const flat = (s: string) => s.trim();
@@ -109,7 +106,7 @@ export async function saveTeam(
     throw new Error(`team "${team.name}" already exists; edit it instead`);
   }
   await writeFileAtomic(file, text);
-  const store = new TeamStore(teamDir(teamHome, project.slug, team.name));
+  const store = openTeamStore(teamHome, project.slug, team.name);
   await store.saveDefinition(text);
   // A renamed or removed role would keep a pane no role id matches.
   const roles = new Set(team.roles.map((r) => r.id));
@@ -121,7 +118,7 @@ export async function saveTeam(
 /** A closed tab plays no role anywhere. */
 export async function releasePaneEverywhere(teamHome: string, project: ProjectConfig, paneId: string): Promise<void> {
   for (const name of await teamNames(project)) {
-    await new TeamStore(teamDir(teamHome, project.slug, name)).releasePane(paneId);
+    await openTeamStore(teamHome, project.slug, name).releasePane(paneId);
   }
 }
 
@@ -132,7 +129,7 @@ export async function assignRole(
   role: string,
   paneId: string | null,
 ): Promise<void> {
-  const store = new TeamStore(teamDir(teamHome, project.slug, team));
+  const store = openTeamStore(teamHome, project.slug, team);
   if (paneId === null) {
     const held = await store.paneOf(role);
     if (held) await store.releasePane(held);

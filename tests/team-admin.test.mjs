@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 
 const { listTeams, saveTeam, assignRole, releasePaneEverywhere } = await import("../dist-electron/team-admin.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
+const { teamFile, teamsDir } = await import("../dist-electron/team-files.js");
 
 const TEAM = {
   name: "ux-review",
@@ -72,6 +73,24 @@ test("a field line inside free text is refused, not read back as that field", as
     const fine = { ...TEAM, roles: [{ ...TEAM.roles[0], responsibilities: "Plays the build. Must not: guess, it measures." }, TEAM.roles[1]] };
     await saveTeam(t.teamHome, t.project, fine);
     assert.deepEqual((await listTeams(t.teamHome, t.project))[0].definition, fine);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a field line inside free text is refused with the exact message", async () => {
+  const t = setup();
+  try {
+    const cases = [
+      [{ responsibilities: "x\nMust not: push" }, null, 'role "tester": a Responsibilities line starts with "Must not:"; put that in its own field'],
+      [{ responsibilities: "Sends to: implementer" }, null, 'role "tester": a Responsibilities line starts with "Sends to:"; put that in its own field'],
+      [{ responsibilities: "## Role: sneaky" }, null, 'role "tester": a Responsibilities line starts with "##"; put that in its own field'],
+      [{}, "Rounds.\n## Role: sneaky", 'protocol: a line starts with "##"; the team file would read it as a new section'],
+    ];
+    for (const [role, protocol, message] of cases) {
+      const team = { ...TEAM, roles: [{ ...TEAM.roles[0], ...role }, TEAM.roles[1]], protocol: protocol ?? TEAM.protocol };
+      await assert.rejects(saveTeam(t.teamHome, t.project, team), { message });
+    }
   } finally {
     t.cleanup();
   }
@@ -241,4 +260,10 @@ test("closing a pane frees its role in every team", async () => {
   } finally {
     t.cleanup();
   }
+});
+
+test("a project's teams live in .aya/teams, one <name>.md each", () => {
+  const project = { slug: "game", name: "game", directory: "/work/game", tabs: [] };
+  assert.equal(teamsDir(project), join("/work/game", ".aya", "teams"));
+  assert.equal(teamFile(project, "ux-review"), join("/work/game", ".aya", "teams", "ux-review.md"));
 });

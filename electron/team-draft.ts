@@ -4,8 +4,6 @@
 
 import type { RoleDraft, SendRoute, TeamDefinition, TeamRole } from "./types";
 
-export type { RoleDraft };
-
 /** Sends one system + user message and returns the reply text. */
 export type Chat = (system: string, user: string) => Promise<string>;
 
@@ -13,9 +11,9 @@ export type Chat = (system: string, user: string) => Promise<string>;
 // on-device model took 13-44 s per draft when measured, so the wait is long.
 export const ROLE_DRAFT_CHAT = { temperature: 0.2, maxTokens: 400, timeoutMs: 90_000 };
 
-const RESPONSIBILITIES_MAX = 400;
-const MUST_NOT_MAX = 120;
-const WHAT_MAX = 60;
+export const RESPONSIBILITIES_MAX = 400;
+export const MUST_NOT_MAX = 120;
+export const WHAT_MAX = 60;
 const SYSTEM = "You define roles for a team of coding agents working in terminal panes. Return JSON only.";
 
 function clip(text: string, max: number): string {

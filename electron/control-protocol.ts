@@ -1,5 +1,9 @@
-import type { TeamRequest } from "./team-control";
 import type { ControlStatusUpdate } from "./types";
+
+export type TeamRequest =
+  | { type: "team-whoami" }
+  | { type: "team-inbox" }
+  | { type: "team-send"; role: string; text: string };
 
 export type ControlRequest =
   | { type: "open"; path: string }

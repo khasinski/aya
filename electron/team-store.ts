@@ -138,9 +138,14 @@ export class TeamStore {
 
   markRead(role: string, id: number): Promise<void> {
     return this.serial(async () => {
-      const read = await readJson<Record<string, number>>(this.file("read.json"), {});
+      const read = await this.readMarks();
       read[role] = Math.max(read[role] ?? 0, id);
       await writeFileAtomic(this.file("read.json"), JSON.stringify(read, null, 2));
     });
   }
+}
+
+/** The store of one team of a project, under ~/.aya/teams. */
+export function openTeamStore(ayaHome: string, project: string, team: string): TeamStore {
+  return new TeamStore(teamDir(ayaHome, project, team));
 }

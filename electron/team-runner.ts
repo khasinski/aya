@@ -1,14 +1,13 @@
 // Start team (a delivery test to every role), Aya-owned rounds on the team's
 // cadence, and the team pause. Rounds live in Aya, not in one agent session.
 
-import { listTeams } from "./team-admin";
-import { deliverAndLog, oneLine, teamHeader, type TeamControlDeps } from "./team-control";
+import { NO_PANE_HOLD, deliverAndLog, typedTeamMessage, type TeamControlDeps } from "./team-control";
 import { loadTeam, projectBySlug, teamNames } from "./team-files";
-import { TeamStore, teamDir } from "./team-store";
-import type { TeamDefinition } from "./teams";
-import type { ProjectConfig, TeamStartResult } from "./types";
+import { openTeamStore, type TeamStore } from "./team-store";
+import { TEAM_SYSTEM_SENDER } from "./teams";
+import type { ProjectConfig, TeamDefinition, TeamStartResult } from "./types";
 
-export type TeamRunnerDeps = TeamControlDeps;
+const MS_PER_MINUTE = 60 * 1000;
 
 /** Runs `fn` every `ms`; returns a cancel. Injected so tests need no clock. */
 export type Schedule = (fn: () => Promise<void>, ms: number) => () => void;
@@ -24,19 +23,19 @@ export class TeamRunner {
   private redelivering: Promise<number> | null = null;
 
   constructor(
-    private deps: TeamRunnerDeps,
+    private deps: TeamControlDeps,
     private schedule: Schedule = everyInterval,
   ) {}
 
   private async open(slug: string, name: string) {
     const project = projectBySlug(await this.deps.listProjects(), slug);
-    const store = new TeamStore(teamDir(this.deps.teamHome, slug, name));
+    const store = openTeamStore(this.deps.teamHome, slug, name);
     return { project, store, team: await loadTeam(project, name, store) };
   }
 
   /** A message from Aya; returns why it was not typed, or null. */
   private async fromAya(project: ProjectConfig, store: TeamStore, team: TeamDefinition, to: string, text: string) {
-    return (await deliverAndLog(this.deps, project, store, { team: team.name, from: "aya", to, text })).failure;
+    return (await deliverAndLog(this.deps, project, store, { team: team.name, from: TEAM_SYSTEM_SENDER, to, text })).failure;
   }
 
   /** The delivery test: the role reads itself back and pings its first peer. */
@@ -53,7 +52,7 @@ export class TeamRunner {
     const notReady: TeamStartResult["held"] = [];
     for (const role of team.roles) {
       const pane = await store.paneOf(role.id);
-      const reason = pane ? await this.deps.holdReason(pane) : "no pane assigned";
+      const reason = pane ? await this.deps.holdReason(pane) : NO_PANE_HOLD;
       if (reason) notReady.push({ role: role.id, reason });
     }
     if (notReady.length) return { started: false, delivered: [], held: notReady };
@@ -79,7 +78,7 @@ export class TeamRunner {
   async pause(slug: string, name: string): Promise<void> {
     this.cancels.get(`${slug}/${name}`)?.();
     this.cancels.delete(`${slug}/${name}`);
-    await new TeamStore(teamDir(this.deps.teamHome, slug, name)).setPaused(true);
+    await openTeamStore(this.deps.teamHome, slug, name).setPaused(true);
   }
 
   async resume(slug: string, name: string): Promise<void> {
@@ -91,8 +90,16 @@ export class TeamRunner {
   /** After a relaunch: rounds for every team that was running. */
   async restore(): Promise<void> {
     for (const project of await this.deps.listProjects()) {
-      for (const summary of await listTeams(this.deps.teamHome, project)) {
-        if (summary.running && summary.definition) this.arm(project.slug, summary.name, summary.definition);
+      for (const name of await teamNames(project)) {
+        const store = openTeamStore(this.deps.teamHome, project.slug, name);
+        if (!(await store.state()).running) continue;
+        let team: TeamDefinition;
+        try {
+          team = await loadTeam(project, name, store);
+        } catch {
+          continue; // The teams window shows why it does not parse; the other teams still run.
+        }
+        this.arm(project.slug, name, team);
       }
     }
   }
@@ -117,7 +124,7 @@ export class TeamRunner {
     let typed = 0;
     for (const project of await this.deps.listProjects()) {
       for (const name of await teamNames(project)) {
-        const store = new TeamStore(teamDir(this.deps.teamHome, project.slug, name));
+        const store = openTeamStore(this.deps.teamHome, project.slug, name);
         if ((await store.state()).paused) continue;
         const team = await loadTeam(project, name, store);
         for (const role of team.roles) {
@@ -125,11 +132,11 @@ export class TeamRunner {
           const pane = waiting.length ? await store.paneOf(role.id) : null;
           if (!pane) continue;
           // Aya's own rounds and delivery tests go stale; a later one replaces them.
-          for (const m of waiting.filter((w) => w.from !== "aya")) {
+          for (const m of waiting.filter((w) => w.from !== TEAM_SYSTEM_SENDER)) {
             // Each delivery can raise an approval prompt the next would type into.
             if (await this.deps.holdReason(pane)) break;
             try {
-              await this.deps.deliver(pane, oneLine(`${teamHeader(team.name, m.from, m.time, m.commit)} ${m.text}`));
+              await this.deps.deliver(pane, typedTeamMessage(team.name, m.from, m.time, m.commit, m.text));
             } catch {
               break;
             }
@@ -167,7 +174,7 @@ export class TeamRunner {
           // A timer has no caller to report to: skip this round, try the next.
           console.warn(`[aya] team ${slug}/${name} round skipped:`, err);
         }
-      }, cadence.minutes * 60 * 1000),
+      }, cadence.minutes * MS_PER_MINUTE),
     );
   }
 }

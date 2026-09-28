@@ -1,15 +1,10 @@
 // `aya team whoami|send|inbox`: the caller is known by its pane id, its role
 // by the local assignments, and the team by the definition the user saved.
 
+import type { TeamRequest } from "./control-protocol";
 import { loadTeam, paneTeamRole } from "./team-files";
-import type { TeamDefinition, TeamRole } from "./teams";
 import type { TeamStore, TeamMessage } from "./team-store";
-import type { ProjectConfig } from "./types";
-
-export type TeamRequest =
-  | { type: "team-whoami" }
-  | { type: "team-inbox" }
-  | { type: "team-send"; role: string; text: string };
+import type { ProjectConfig, TeamDefinition, TeamRole } from "./types";
 
 export interface TeamControlDeps {
   teamHome: string;
@@ -32,10 +27,12 @@ async function membership(callerId: string | undefined, deps: TeamControlDeps): 
   if (!callerId) throw new Error("run aya team inside an Aya pane");
   const project = (await deps.listProjects()).find((p) => p.tabs.some((t) => t.id === callerId));
   if (!project) throw new Error("this pane belongs to no open project");
+  const noRole = "this pane has no team role; assign one from the tab menu";
   const plays = await paneTeamRole(deps.teamHome, project, callerId);
-  const team = plays && (await loadTeam(project, plays.team, plays.store));
-  const role = team?.roles.find((r) => r.id === plays?.role);
-  if (!plays || !team || !role) throw new Error("this pane has no team role; assign one from the tab menu");
+  if (!plays) throw new Error(noRole);
+  const team = await loadTeam(project, plays.team, plays.store);
+  const role = team.roles.find((r) => r.id === plays.role);
+  if (!role) throw new Error(noRole);
   return { project, team, role, store: plays.store };
 }
 
@@ -57,14 +54,22 @@ function clock(iso: string): string {
   return `${String(time.getHours()).padStart(2, "0")}:${String(time.getMinutes()).padStart(2, "0")}`;
 }
 
+/** Why a message to a role with no pane waits in its inbox. */
+export const NO_PANE_HOLD = "no pane assigned";
+
 /** Control bytes would submit extra turns without the header; flatten them. */
-export function oneLine(text: string): string {
+function oneLine(text: string): string {
   return text.replace(/[\x00-\x1f\x7f]+/g, " ").trim();
 }
 
 /** Marks a message as a peer's dated report, not the user's instruction. */
-export function teamHeader(team: string, from: string, time: string, commit: string | null): string {
+function teamHeader(team: string, from: string, time: string, commit: string | null): string {
   return `[team ${team} | from ${from} | ${clock(time)}${commit ? ` | ${commit}` : ""}]`;
+}
+
+/** A message as it is typed into the receiver's pane. */
+export function typedTeamMessage(team: string, from: string, time: string, commit: string | null, text: string): string {
+  return oneLine(`${teamHeader(team, from, time, commit)} ${text}`);
 }
 
 /** Types a message into the receiver's pane unless it is held, and logs it
@@ -77,11 +82,10 @@ export async function deliverAndLog(
 ): Promise<{ entry: TeamMessage; failure: string | null }> {
   const commit = await deps.headCommit(project.directory);
   const pane = await store.paneOf(message.to);
-  let failure = pane ? await deps.holdReason(pane) : "no pane assigned";
+  let failure = pane ? await deps.holdReason(pane) : NO_PANE_HOLD;
   if (pane && !failure) {
-    const header = teamHeader(message.team, message.from, new Date().toISOString(), commit);
     try {
-      await deps.deliver(pane, oneLine(`${header} ${message.text}`));
+      await deps.deliver(pane, typedTeamMessage(message.team, message.from, new Date().toISOString(), commit, message.text));
     } catch (err) {
       // The write error is written for the CLI; the team log and window get the gist.
       console.warn(`[aya] team message to ${message.to} not typed:`, err);

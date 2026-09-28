@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 
 const { startControlServerOn } = await import("../dist-electron/control.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
+const { NO_PANE_HOLD, handleTeamRequest, typedTeamMessage } = await import("../dist-electron/team-control.js");
 
 const cli = resolve("bin/aya");
 const TEAM = `# ux-review
@@ -239,6 +240,33 @@ test("the pasted line carries no control bytes, header included", async () => {
     assert.equal(failure, null);
     assert.equal(typed.length, 1);
     assert.doesNotMatch(typed[0], /[\x00-\x1f\x7f]/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a typed team message is its header and text on one line; a role with no pane is held", () => {
+  const at = new Date(2026, 0, 2, 9, 5).toISOString();
+  assert.equal(typedTeamMessage("ux-review", "tester", at, "abc1234", "a\nb\x1b c "), "[team ux-review | from tester | 09:05 | abc1234] a b  c");
+  assert.equal(typedTeamMessage("ux-review", "aya", at, null, "hi"), "[team ux-review | from aya | 09:05] hi");
+  assert.equal(NO_PANE_HOLD, "no pane assigned");
+});
+
+test("a pane with no role, or a role the saved team no longer has, gets the one message", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aya-team-member-"));
+  try {
+    const directory = join(root, "game");
+    mkdirSync(join(directory, ".aya", "teams"), { recursive: true });
+    writeFileSync(join(directory, ".aya", "teams", "ux-review.md"), TEAM);
+    const teamHome = join(root, "aya-home");
+    await new TeamStore(teamDir(teamHome, "game", "ux-review")).assign("ghost", "pane-g");
+    const project = { slug: "game", name: "game", directory, tabs: [{ id: "pane-x" }, { id: "pane-g" }] };
+    const deps = { teamHome, listProjects: async () => [project] };
+    const message = "this pane has no team role; assign one from the tab menu";
+    await assert.rejects(handleTeamRequest({ type: "team-whoami" }, "pane-x", deps), { message });
+    await assert.rejects(handleTeamRequest({ type: "team-whoami" }, "pane-g", deps), { message });
+    await assert.rejects(handleTeamRequest({ type: "team-whoami" }, "pane-y", deps), { message: "this pane belongs to no open project" });
+    await assert.rejects(handleTeamRequest({ type: "team-whoami" }, undefined, deps), { message: "run aya team inside an Aya pane" });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

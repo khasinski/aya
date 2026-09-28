@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TeamStore, teamDir } from "../dist-electron/team-store.js";
+import { TeamStore, openTeamStore, teamDir } from "../dist-electron/team-store.js";
 
 const fresh = () => new TeamStore(mkdtempSync(join(tmpdir(), "aya-team-")));
 const done = (store) => rmSync(store.dir, { recursive: true, force: true });
@@ -174,4 +174,9 @@ test("a slower inbox never moves the read position back", async () => {
 test("a team name that is not a slug never becomes a path", () => {
   assert.throws(() => teamDir("/h/.aya", "game", "../../etc"), /team name/);
   assert.throws(() => teamDir("/h/.aya", "../x", "ux"), /project/);
+});
+
+test("openTeamStore opens the store in the team's directory, refusing a bad name", () => {
+  assert.equal(openTeamStore("/home/aya", "game", "ux-review").dir, teamDir("/home/aya", "game", "ux-review"));
+  assert.throws(() => openTeamStore("/home/aya", "game", "../x"), /bad team name "\.\.\/x"/);
 });
