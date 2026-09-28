@@ -1,4 +1,5 @@
 import { agentBriefHint, effectiveAutoResume, inferAgent } from "../agentPreset";
+import { OLLAMA_OPENAI_BASE_URL, RECOMMENDED_OLLAMA_MODEL } from "../ollama-defaults";
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
 import { useEffect, useState, type ReactNode } from "react";
 import {
@@ -1905,7 +1906,7 @@ export function SettingsModal({
                           onChange={(e) =>
                             patchAyaIntelligence({ ollamaModel: e.target.value })
                           }
-                          placeholder="gemma4:e4b"
+                          placeholder={RECOMMENDED_OLLAMA_MODEL}
                           spellCheck={false}
                         />
                       </div>
@@ -1953,7 +1954,7 @@ export function SettingsModal({
                           onChange={(e) =>
                             patchAyaIntelligence({ openAiBaseUrl: e.target.value })
                           }
-                          placeholder="http://localhost:11434/v1"
+                          placeholder={OLLAMA_OPENAI_BASE_URL}
                           spellCheck={false}
                         />
                       </div>

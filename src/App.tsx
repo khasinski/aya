@@ -49,6 +49,7 @@ import {
 } from "./hooks/useTerminalSignals";
 import { useTerminalSounds } from "./hooks/useTerminalSounds";
 import { useTeams } from "./hooks/useTeams";
+import { OLLAMA_OPENAI_BASE_URL, RECOMMENDED_OLLAMA_MODEL } from "./ollama-defaults";
 import { normalizeSoundOverrides } from "./terminal-sound-prefs";
 import {
   MAX_SPLIT_LEAVES,
@@ -173,10 +174,10 @@ type AppThemePreference = "system" | "light" | "dark" | "omarchy";
 
 const DEFAULT_AYA_INTELLIGENCE: AyaIntelligenceConfig = {
   provider: "apple",
-  ollamaModel: "gemma4:e4b",
-  openAiBaseUrl: "http://localhost:11434/v1",
+  ollamaModel: RECOMMENDED_OLLAMA_MODEL,
+  openAiBaseUrl: OLLAMA_OPENAI_BASE_URL,
   openAiApiKey: "",
-  openAiModel: "gemma4:e4b",
+  openAiModel: RECOMMENDED_OLLAMA_MODEL,
 };
 
 interface AutoSummaryStatus {

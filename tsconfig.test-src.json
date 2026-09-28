@@ -25,6 +25,7 @@
     "src/double-shift.ts",
     "src/focus-reporting.ts",
     "src/hooks/usePersistentPreference.ts",
+    "src/ollama-defaults.ts",
     "src/project-reload.ts",
     "src/preset-ids.ts",
     "src/ptyEventBus.ts",
