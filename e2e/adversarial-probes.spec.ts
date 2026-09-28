@@ -1,14 +1,10 @@
 import { test, expect } from "./fixtures";
+import { visiblePane, visiblePanes } from "./helpers/terminal";
 import { fireShortcut } from "./helpers/shortcut";
 import { renameInline } from "./helpers/rename";
-import type { Page } from "@playwright/test";
 
 // Adversarial probes - they assert the CORRECT expected behaviour in tricky
 // states. A failure here is a hidden-bug candidate, not a test to paper over.
-
-const visiblePanes = (window: Page) => window.locator('[data-testid="terminal-pane"]:visible');
-const visiblePane = (window: Page, name: string) =>
-  window.locator(`[data-testid="terminal-pane"][data-terminal-name="${name}"]:visible`);
 
 // P1 - "Split below" should behave like "Split right": a second cell appears and
 // can be filled. Only "Split right" was exercised.
