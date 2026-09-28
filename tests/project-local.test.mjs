@@ -4,6 +4,13 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { readRepoProjectConfig } from "../dist-electron/project-local.js";
+import { teamsDir } from "../dist-electron/team-files.js";
+import { PROJECT_AYA_DIRNAME } from "../dist-electron/paths.js";
+
+test("a repo's own Aya dir is .aya, for project.json and teams alike", () => {
+  assert.equal(PROJECT_AYA_DIRNAME, ".aya");
+  assert.equal(teamsDir({ directory: "/r" }), join("/r", PROJECT_AYA_DIRNAME, "teams"));
+});
 
 test("reads valid repo-local preset suggestions", async () => {
   const dir = await mkdtemp(join(tmpdir(), "aya-project-local-"));

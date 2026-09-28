@@ -18,6 +18,8 @@ export const IS_E2E_PTY_SHUTDOWN = process.env.AYA_E2E_PTY_SHUTDOWN === "1";
 // Home-relative config dirs; the legacy sweep maps a process's env to these too.
 export const AYA_HOME_DIRNAME = ".aya";
 export const AYA_DEV_HOME_DIRNAME = ".aya-dev";
+// A repo's own Aya dir (.aya/project.json, .aya/teams), not the config home.
+export const PROJECT_AYA_DIRNAME = ".aya";
 
 // AYA_HOME env var lets you point a single launch at an arbitrary config
 // directory (e.g. /tmp/aya-demo for screenshots, or a per-task scratch dir).
