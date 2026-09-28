@@ -41,7 +41,7 @@ import { useStable } from "./hooks/useStableIdentity";
 import { sameArrayItems, sameRecordValues } from "./stable-identity";
 import { paletteToChromeVars, paletteToThemeColors } from "./theme-skin";
 import { localSummaryUnavailableMessage } from "./local-summary-errors";
-import { LOCAL_SUMMARY_MAX_LINES } from "./main-mirrors";
+import { LOCAL_SUMMARY_MAX_LINES, PROJECT_STATE_VERSION } from "./main-mirrors";
 import type { SettingsTab } from "./settings-tabs";
 import {
   useDockBadge,
@@ -160,8 +160,6 @@ function pollVisible(refresh: () => void, intervalMs: number): () => void {
   };
 }
 const TERMINAL_FONT_SIZE_PX = 13;
-// Persisted schema version for ProjectCollectionState.
-const PROJECT_STATE_VERSION = 1;
 /** Leaf id for the synthetic one-pane tree used when a project has no stored
  *  split (or is showing a single terminal). Constant so React keys and focus
  *  stay stable across renders. */
