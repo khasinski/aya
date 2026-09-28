@@ -83,7 +83,9 @@ export async function deliverAndLog(
     try {
       await deps.deliver(pane, `${header} ${oneLine(message.text)}`);
     } catch (err) {
-      failure = err instanceof Error ? err.message : String(err);
+      // The write error is written for the CLI; the team log and window get the gist.
+      console.warn(`[aya] team message to ${message.to} not typed:`, err);
+      failure = "did not take the text (it may have exited)";
     }
   }
   const entry = await store.append({ from: message.from, to: message.to, commit, text: message.text, delivered: !failure });

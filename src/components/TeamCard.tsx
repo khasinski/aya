@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { heldList } from "../team-view";
 import type { ProjectConfig, TeamDefinition, TeamSummary } from "../types";
 import { ErrorLine, useAsyncAction } from "./use-async-action";
 
@@ -53,7 +54,7 @@ export function TeamCard({
             disabled={busy}
             onClick={async () => {
               const result = await act(() => window.aya.teamStart(project.slug, team.name));
-              const list = result?.held.map((h) => `${h.role} (${h.reason})`).join(", ");
+              const list = heldList(result?.held ?? []);
               setHeld(
                 !result || !list
                   ? null

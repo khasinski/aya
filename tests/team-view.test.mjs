@@ -2,7 +2,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { paneRoles, unassignedTeams, unreadTotal } from "../dist-test/team-view.js";
+import { heldList, paneRoles, unassignedTeams, unreadTotal } from "../dist-test/team-view.js";
 
 const team = (name, assignments, unread, definition = {}) => ({
   name,
@@ -32,4 +32,13 @@ test("unread messages add up across a project's teams", () => {
 test("only valid teams with no pane assigned are offered on project open", () => {
   const teams = [team("new", {}, {}), team("busy", { x: "p1" }, {}), team("broken", {}, {}, null)];
   assert.deepEqual(unassignedTeams(teams).map((t) => t.name), ["new"]);
+});
+
+test("roles that were not reached are grouped by reason, so a long reason shows once", () => {
+  const why = "did not take the text (it may have exited)";
+  assert.equal(
+    heldList([{ role: "reviewer", reason: why }, { role: "tester", reason: "runs a shell" }, { role: "implementer", reason: why }]),
+    `reviewer, implementer: ${why}; tester: runs a shell`,
+  );
+  assert.equal(heldList([]), "");
 });

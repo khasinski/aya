@@ -182,7 +182,7 @@ test("Start with a pane that refuses the text reports it and still arms the roun
       if (pane === "pane-i") throw new Error("pane did not accept the text");
     };
     const result = await t.runner.start("game", "ux-review");
-    assert.deepEqual(result.held, [{ role: "implementer", reason: "pane did not accept the text" }]);
+    assert.deepEqual(result.held, [{ role: "implementer", reason: "did not take the text (it may have exited)" }]);
     assert.equal(t.scheduled.length, 1);
     assert.equal((await t.store.unread("implementer")).length, 1);
   } finally {
