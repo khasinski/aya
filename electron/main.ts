@@ -73,7 +73,14 @@ import {
   teamNote,
 } from "./agent-brief";
 import { paneTeamRole } from "./team-files";
-import { appleChat, type ChatOptions, type ChatResult, OLLAMA_BASE_URL, providerChat } from "./intelligence-chat";
+import {
+  appleChat,
+  type ChatOptions,
+  type ChatResult,
+  OLLAMA_BASE_URL,
+  providerChat,
+  RECOMMENDED_OLLAMA_MODEL,
+} from "./intelligence-chat";
 import type { TeamControlDeps } from "./team-control";
 import { registerTeamIpc } from "./team-ipc";
 import { startRemoteServer } from "./remote-server";
@@ -220,7 +227,6 @@ const ABOUT_ICON_SIZE = 128;
 const LOCAL_SUMMARY_TIMEOUT_MS = 20_000;
 const LOCAL_SUMMARY_MAX_LINES = 30;
 const LOCAL_SUMMARY_MAX_STDOUT_BYTES = 32 * 1024;
-const RECOMMENDED_OLLAMA_MODEL = "gemma4:e4b";
 // Cascade offset for a window opened from another window (File > New Window,
 // tab tear-out), so it doesn't cover its parent exactly.
 const NEW_WINDOW_CASCADE_OFFSET_PX = 28;
