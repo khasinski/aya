@@ -14,7 +14,6 @@ import {
   codexAgentsFile,
   commandWithBriefArg,
   commandWithBriefEnv,
-  pathWithFallbackDir,
   ownedBriefContent,
   planCodexBriefs,
   withBriefSection,
@@ -180,14 +179,6 @@ test("a shared codex home keeps the section while any preset opts in", () => {
     ]),
     { ensure: ["/h/a/AGENTS.md"], remove: ["/h/b/AGENTS.md"] },
   );
-});
-
-test("the bundled CLI is appended to PATH, never ahead of an installed shim", () => {
-  assert.equal(pathWithFallbackDir("/a:/b", "/app/bin"), "/a:/b:/app/bin");
-  assert.equal(pathWithFallbackDir("/app/bin:/a", "/app/bin"), "/app/bin:/a");
-  assert.equal(pathWithFallbackDir(undefined, "/app/bin"), "/app/bin");
-  // Empty entries mean the cwd; the user's PATH is kept as it was.
-  assert.equal(pathWithFallbackDir("/a::/b:", "/app/bin"), "/a::/b::/app/bin");
 });
 
 // agy 1.2.11 only loaded config/rules/ files whose frontmatter opens the file.

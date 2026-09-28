@@ -23,13 +23,17 @@ import {
   resizeVtPane,
   writeVtPane,
 } from "./vt-state";
-import { isShellCommand, shellQuote, withoutSessionMarkers } from "./pane-command";
+import {
+  isShellCommand,
+  pathWithFallbackDir,
+  shellQuote,
+  withoutSessionMarkers,
+} from "./pane-command";
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 import { COMMAND_NOT_FOUND_EXIT_CODE, COMMAND_PROBE_TIMEOUT_MS } from "./constants";
 import { userShell } from "./shell";
 import { getProcessCwd } from "./process-cwd";
 import { ptyLog } from "./pty-log";
-import { pathWithFallbackDir } from "./agent-brief";
 import { bundledAyaCliPath } from "./cli-path";
 
 // Timeout for the shell `command -v` existence check during spawn preflight.

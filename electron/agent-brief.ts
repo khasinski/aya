@@ -204,10 +204,3 @@ export function withoutOwnedBrief(content: string): string {
   const rest = withoutBriefSection(content);
   return rest.replace(/^---\ntrigger: always_on\n---\n?/, "").trim() ? rest : "";
 }
-
-/** Append `dir` to a PATH value unless it is already there: an installed
- *  shim earlier on PATH keeps winning, the bundled CLI is the fallback. */
-export function pathWithFallbackDir(value: string | undefined, dir: string): string {
-  if (!value) return dir;
-  return value.split(path.delimiter).includes(dir) ? value : `${value}${path.delimiter}${dir}`;
-}
