@@ -5,11 +5,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
+import { openTeams } from "./helpers/team";
 
 async function editor(window: Page) {
-  await expect(window.getByTestId("xterm-host").first()).toBeVisible();
-  await window.getByTestId("teams-toggle").click();
-  const dialog = window.getByRole("dialog", { name: "Teams" });
+  const dialog = await openTeams(window);
   await dialog.getByRole("button", { name: "New team" }).click();
   return dialog;
 }

@@ -17,8 +17,12 @@ process.stdin.on("data", (chunk) => fs.appendFileSync(log, chunk));
 const composer = () => process.stdout.write(`${"─".repeat(40)}\r\n❯ \r\n${"─".repeat(40)}\r\n`);
 if (mode.startsWith("ask") && me === "tab-right") {
   process.stdout.write("Do you want to proceed?\r\n❯ 1. Yes\r\n  2. No\r\n");
-  // "ask-briefly": the prompt is answered after a while, freeing the pane.
-  if (mode === "ask-briefly") setTimeout(() => (process.stdout.write("\x1b[2J\x1b[H"), composer()), 6000);
+  // "ask-briefly <ms>": the prompt is answered after ms (team.ts ASK_BRIEFLY_MS), freeing the pane.
+  if (mode === "ask-briefly") {
+    const askMs = Number(process.argv[4]);
+    if (!Number.isFinite(askMs)) throw new Error("ask-briefly needs its delay in ms");
+    setTimeout(() => (process.stdout.write("\x1b[2J\x1b[H"), composer()), askMs);
+  }
 } else {
   composer();
 }

@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
+import { openTeams } from "./helpers/team";
 
 let server: Server;
 let baseUrl = "";
@@ -41,9 +42,7 @@ async function editorWithIntelligence(window: Page, config: Record<string, strin
     config,
   );
   await window.reload();
-  await expect(window.getByTestId("xterm-host").first()).toBeVisible();
-  await window.getByTestId("teams-toggle").click();
-  const dialog = window.getByRole("dialog", { name: "Teams" });
+  const dialog = await openTeams(window);
   await dialog.getByRole("button", { name: "New team" }).click();
   await dialog.getByLabel("Role 1 name").fill("senior UX game designer");
   await expect(dialog.getByLabel("Role 1 name")).toHaveValue("senior-ux-game-designer");
