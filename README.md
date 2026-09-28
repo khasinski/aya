@@ -401,6 +401,11 @@ and project JSON files are watched and reloaded while Aya is running.
 Set `AYA_HOME=/path/to/dir` to use a separate state directory for screenshots,
 scratch sessions, or isolated testing.
 
+A remote host answers with its installed Aya (`~/.aya/aya-remote.sock`), even
+when an Aya Dev also runs there. To reach the dev build over ssh, set
+`AYA_HOME="$HOME/.aya-dev"` or `AYA_REMOTE_SOCKET` on the host - see
+[docs/remote-sessions.md](docs/remote-sessions.md#which-aya-on-the-host-answers).
+
 ## Architecture
 
 - **Renderer:** React 19, TypeScript, Vite, and xterm.js.
