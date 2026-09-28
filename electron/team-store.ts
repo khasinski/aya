@@ -9,9 +9,18 @@ import type { TeamMessage } from "./types";
 
 export type { TeamMessage };
 
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+const PROJECT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/** Names come over IPC: only a slug may become a path under ~/.aya/teams. */
 export function teamDir(ayaHome: string, project: string, team: string): string {
+  if (!PROJECT_RE.test(project) || project.includes("..")) throw new Error(`bad project slug "${project}"`);
+  if (!SLUG_RE.test(team)) throw new Error(`bad team name "${team}"`);
   return path.join(ayaHome, "teams", project, team);
 }
+
+// One write queue per team directory, shared by every store opened on it.
+const queues = new Map<string, Promise<unknown>>();
 
 async function readJson<T>(file: string, fallback: T): Promise<T> {
   try {
@@ -22,10 +31,6 @@ async function readJson<T>(file: string, fallback: T): Promise<T> {
 }
 
 export class TeamStore {
-  // Every write goes through this chain: one process owns a team, and ids
-  // and read positions must not interleave.
-  private queue: Promise<unknown> = Promise.resolve();
-
   constructor(readonly dir: string) {}
 
   private file(name: string): string {
@@ -33,8 +38,8 @@ export class TeamStore {
   }
 
   private serial<T>(work: () => Promise<T>): Promise<T> {
-    const next = this.queue.then(work, work);
-    this.queue = next.catch(() => {});
+    const next = (queues.get(this.dir) ?? Promise.resolve()).then(work, work);
+    queues.set(this.dir, next.catch(() => {}));
     return next;
   }
 
@@ -144,7 +149,7 @@ export class TeamStore {
   markRead(role: string, id: number): Promise<void> {
     return this.serial(async () => {
       const read = await readJson<Record<string, number>>(this.file("read.json"), {});
-      read[role] = id;
+      read[role] = Math.max(read[role] ?? 0, id);
       await writeFileAtomic(this.file("read.json"), JSON.stringify(read, null, 2));
     });
   }

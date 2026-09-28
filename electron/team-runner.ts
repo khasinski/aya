@@ -1,7 +1,8 @@
 // Start team (a delivery test to every role), Aya-owned rounds on the team's
 // cadence, and the team pause. Rounds live in Aya, not in one agent session.
 
-import { loadTeam, teamHeader, type TeamControlDeps } from "./team-control";
+import { loadTeam, oneLine, teamHeader, type TeamControlDeps } from "./team-control";
+import { listTeams } from "./team-admin";
 import { TeamStore, teamDir } from "./team-store";
 import type { TeamDefinition } from "./teams";
 import type { ProjectConfig, TeamStartResult } from "./types";
@@ -43,9 +44,15 @@ export class TeamRunner {
     text: string,
   ): Promise<string | null> {
     const pane = await store.paneOf(role);
-    const held = pane ? await this.deps.holdReason(pane) : "has no pane";
+    let held = pane ? await this.deps.holdReason(pane) : "has no pane";
     const time = new Date().toISOString();
-    if (pane && !held) await this.deps.deliver(pane, `${teamHeader(team.name, "aya", time, null)} ${text}`);
+    if (pane && !held) {
+      try {
+        await this.deps.deliver(pane, `${teamHeader(team.name, "aya", time, null)} ${oneLine(text)}`);
+      } catch (err) {
+        held = err instanceof Error ? err.message : String(err);
+      }
+    }
     const commit = (await this.deps.headCommit?.(project.directory)) ?? null;
     await store.append({ from: "aya", to: role, commit, text, delivered: !held });
     return held;
@@ -75,6 +82,22 @@ export class TeamRunner {
   async resume(slug: string, name: string): Promise<void> {
     const { store, team } = await this.open(slug, name);
     await store.setPaused(false);
+    this.arm(slug, name, team);
+  }
+
+  /** After a relaunch: rounds for every team that was running. */
+  async restore(): Promise<void> {
+    for (const project of await this.deps.listProjects()) {
+      for (const summary of await listTeams(this.deps.teamHome, project)) {
+        if (summary.running && summary.definition) this.arm(project.slug, summary.name, summary.definition);
+      }
+    }
+  }
+
+  /** After Save team: a running team's rounds follow the new definition. */
+  async refresh(slug: string, name: string): Promise<void> {
+    if (!this.cancels.has(`${slug}/${name}`)) return;
+    const { team } = await this.open(slug, name);
     this.arm(slug, name, team);
   }
 

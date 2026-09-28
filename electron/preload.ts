@@ -79,6 +79,7 @@ const api: AyaApi = {
   teamSave: (projectSlug, team) => ipcRenderer.invoke("teams:save", projectSlug, team),
   teamAssign: (projectSlug, team, role, paneId) =>
     ipcRenderer.invoke("teams:assign", projectSlug, team, role, paneId),
+  teamReleasePane: (projectSlug, paneId) => ipcRenderer.invoke("teams:release-pane", projectSlug, paneId),
   teamDraftRole: (role, teamRoles, intelligence) =>
     ipcRenderer.invoke("teams:draft-role", role, teamRoles, intelligence),
   usageHookStatus: () => ipcRenderer.invoke("usage-hook:status"),

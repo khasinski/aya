@@ -386,7 +386,7 @@ export function agentConfigDirsFromCommand(command: string): string[] {
 
 /** A plain interactive shell, not an agent: Enter would run typed text. */
 export function isShellCommand(command: string): boolean {
-  return /^(?:\$SHELL|(?:\S*\/)?(?:bash|zsh|sh|fish))(?:\s+-l)?\s*$/.test(command.trim());
+  return /^(?:\$SHELL|(?:\S*\/)?(?:bash|zsh|sh|fish))(?:\s+-[a-z]+)*\s*$/.test(command.trim());
 }
 
 /** Build the shell argv for a given command + cwd. Uses the user's login +

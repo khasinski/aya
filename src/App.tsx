@@ -2183,6 +2183,8 @@ export function App() {
     (id: string) => {
       const t = terminalsRef.current[id];
       if (!t) return;
+    // A closed tab plays no team role; a restart keeps it (same tab).
+    void window.aya.teamReleasePane(t.projectSlug, id).catch(() => {});
     // Drop the confirmed-session marker so the id doesn't linger (and can't be
     // mistaken for a re-mount if the id were ever reused).
     forgetSpawn(id);

@@ -11,3 +11,7 @@ test("plain shells are shells; agents and shell-wrapped agents are not", () => {
     assert.equal(isShellCommand(c), false, c);
   }
 });
+
+test("a shell with flags is still a shell", () => {
+  for (const c of ["zsh -i", "bash -l -i", "/bin/zsh -il"]) assert.equal(isShellCommand(c), true, c);
+});

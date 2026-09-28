@@ -74,7 +74,7 @@ import {
 import { paneTeamRole } from "./team-control";
 import { type ChatResult, OLLAMA_BASE_URL, ollamaChat, openAiChat } from "./intelligence-chat";
 import { TeamRunner } from "./team-runner";
-import { assignRole, listTeams, saveTeam } from "./team-admin";
+import { assignRole, listTeams, releasePaneEverywhere, saveTeam } from "./team-admin";
 import { draftRole } from "./team-draft";
 import { startRemoteServer } from "./remote-server";
 import {
@@ -2214,6 +2214,7 @@ function registerIpc(): void {
     headCommit,
   });
   app.once("before-quit", () => teamRunner.stopAll());
+  void teamRunner.restore().catch((err) => console.warn("[aya] team rounds not restored:", err));
   const teamArgs = (slug: unknown, team: unknown, channel: string): [string, string] => [
     requireString(slug, `${channel}.projectSlug`),
     requireString(team, `${channel}.team`),
@@ -2236,8 +2237,18 @@ function registerIpc(): void {
   ipcMain.handle("teams:list", async (_e, slug: unknown) =>
     listTeams(AYA_HOME, await teamProject(slug, "teams:list")),
   );
-  ipcMain.handle("teams:save", async (_e, slug: unknown, team: unknown) =>
-    saveTeam(AYA_HOME, await teamProject(slug, "teams:save"), validateTeamDefinition(team)),
+  ipcMain.handle("teams:save", async (_e, slug: unknown, team: unknown) => {
+    const project = await teamProject(slug, "teams:save");
+    const definition = validateTeamDefinition(team);
+    await saveTeam(AYA_HOME, project, definition);
+    await teamRunner.refresh(project.slug, definition.name);
+  });
+  ipcMain.handle("teams:release-pane", async (_e, slug: unknown, paneId: unknown) =>
+    releasePaneEverywhere(
+      AYA_HOME,
+      await teamProject(slug, "teams:release-pane"),
+      requireString(paneId, "teams:release-pane.paneId"),
+    ),
   );
   ipcMain.handle("teams:assign", async (_e, slug: unknown, team: unknown, role: unknown, paneId: unknown) =>
     assignRole(

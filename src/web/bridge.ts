@@ -108,6 +108,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
     teamList: inv("teams:list"),
     teamSave: inv("teams:save"),
     teamAssign: inv("teams:assign"),
+    teamReleasePane: inv("teams:release-pane"),
     teamDraftRole: inv("teams:draft-role"),
     usageHookStatus: inv("usage-hook:status"),
     installUsageHook: inv("usage-hook:install"),

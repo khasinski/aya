@@ -14,6 +14,7 @@ const done = (store) => rmSync(store.dir, { recursive: true, force: true });
 
 test("teamDir keeps each project's team apart under the aya home", () => {
   assert.equal(teamDir("/h/.aya", "game", "ux-review"), "/h/.aya/teams/game/ux-review");
+  assert.equal(teamDir("/h/.aya", "e2e-proj", "ux-review"), "/h/.aya/teams/e2e-proj/ux-review");
 });
 
 test("one pane per role; assigning a held role moves it", async () => {
@@ -142,4 +143,36 @@ test("a team runs only after Start and until Pause", async () => {
   } finally {
     done(store);
   }
+});
+
+test("two stores on one team share one write queue: ids never repeat", async () => {
+  const a = fresh();
+  const b = new TeamStore(a.dir);
+  try {
+    const sent = await Promise.all(
+      Array.from({ length: 10 }, (_, i) =>
+        (i % 2 ? a : b).append({ from: "t", to: "i", commit: null, text: `m${i}`, delivered: false }),
+      ),
+    );
+    assert.equal(new Set(sent.map((m) => m.id)).size, 10);
+  } finally {
+    done(a);
+  }
+});
+
+test("a slower inbox never moves the read position back", async () => {
+  const store = fresh();
+  try {
+    for (const text of ["a", "b", "c"]) await store.append({ from: "t", to: "i", commit: null, text, delivered: false });
+    await store.markRead("i", 3);
+    await store.markRead("i", 1);
+    assert.deepEqual(await store.unread("i"), []);
+  } finally {
+    done(store);
+  }
+});
+
+test("a team name that is not a slug never becomes a path", () => {
+  assert.throws(() => teamDir("/h/.aya", "game", "../../etc"), /team name/);
+  assert.throws(() => teamDir("/h/.aya", "../x", "ux"), /project/);
 });

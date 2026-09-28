@@ -51,6 +51,20 @@ test.describe("classic layout", () => {
   });
 });
 
+test.describe("closing a tab", () => {
+  test.use(withTeam({ tester: "tab-left", implementer: "tab-right" }));
+
+  test("frees its role", async ({ window, seeded }) => {
+    await ready(window);
+    const row = window.locator('.aya-sidebar-row[data-terminal-name="shell 2"]');
+    await expect(row).toContainText("implementer", { timeout: 10_000 });
+    await row.click({ button: "right" });
+    await window.locator(".aya-context-menu").getByText("Close terminal").click();
+    const file = join(seeded.ayaHome, "teams", "e2e-proj", "ux-review", "assignments.json");
+    await expect.poll(() => JSON.parse(readFileSync(file, "utf8")), { timeout: 10_000 }).toEqual({ tester: "tab-left" });
+  });
+});
+
 test.describe("experimental layout", () => {
   test.use(withTeam({ tester: "tab-left", implementer: "tab-right" }, { "teams/e2e-proj/ux-review/log.jsonl": WAITING }));
 

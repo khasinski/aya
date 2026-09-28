@@ -92,6 +92,11 @@ function clock(iso: string): string {
 }
 
 /** Marks a message as a peer's dated report, not the user's instruction. */
+/** Control bytes would submit extra turns without the header; flatten them. */
+export function oneLine(text: string): string {
+  return text.replace(/[\x00-\x1f\x7f]+/g, " ").trim();
+}
+
 export function teamHeader(team: string, from: string, time: string, commit: string | null): string {
   return `[team ${team} | from ${from} | ${clock(time)}${commit ? ` | ${commit}` : ""}]`;
 }
@@ -109,7 +114,7 @@ async function send(m: Membership, to: string, text: string, deps: TeamControlDe
   if (held) failure = `${to}'s pane ${held}, so nothing was typed`;
   if (pane && !held) {
     try {
-      await deps.deliver(pane, `${teamHeader(m.team.name, m.role.id, time, commit)} ${text}`);
+      await deps.deliver(pane, `${teamHeader(m.team.name, m.role.id, time, commit)} ${oneLine(text)}`);
     } catch (err) {
       failure = err instanceof Error ? err.message : String(err);
     }

@@ -6,7 +6,7 @@ import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop"
 const REFRESH_MS = 3000;
 
 /** The pair that ran the game project's 22-round UX review. */
-export const TWO_ROLE_TEMPLATE: TeamDefinition = {
+const TWO_ROLE_TEMPLATE: TeamDefinition = {
   name: "review",
   roles: [
     {
@@ -29,12 +29,12 @@ export const TWO_ROLE_TEMPLATE: TeamDefinition = {
 };
 
 /** What the team file accepts as a role id: typing "Senior UX" gives "senior-ux". */
-export function roleId(typed: string): string {
+function roleId(typed: string): string {
   return typed.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+/, "").slice(0, 40);
 }
 
 /** Renames a role and every send-to and cadence entry that pointed at it. */
-export function renameRole(team: TeamDefinition, index: number, id: string): TeamDefinition {
+function renameRole(team: TeamDefinition, index: number, id: string): TeamDefinition {
   const old = team.roles[index].id;
   const swap = (r: string) => (old && r === old ? id : r);
   return {

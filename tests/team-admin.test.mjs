@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-const { listTeams, saveTeam, assignRole } = await import("../dist-electron/team-admin.js");
+const { listTeams, saveTeam, assignRole, releasePaneEverywhere } = await import("../dist-electron/team-admin.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
 
 const TEAM = {
@@ -134,6 +134,48 @@ test("a remote project's panes cannot take a role", async () => {
     await saveTeam(t.teamHome, t.project, TEAM);
     const remote = { ...t.project, remote: { hostId: "h", label: "box", sshTarget: "box", directory: "/srv" } };
     await assert.rejects(assignRole(t.teamHome, remote, "ux-review", "tester", "pane-t"), /only on local panes/);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("Save team drops the pane of a role that no longer exists (a rename)", async () => {
+  const t = setup();
+  try {
+    await saveTeam(t.teamHome, t.project, TEAM);
+    await assignRole(t.teamHome, t.project, "ux-review", "tester", "pane-t");
+    const renamed = { ...TEAM, roles: [{ ...TEAM.roles[0], id: "reviewer" }, { ...TEAM.roles[1], sendsTo: ["reviewer"] }], cadence: null };
+    await saveTeam(t.teamHome, t.project, renamed);
+    const [team] = await listTeams(t.teamHome, t.project);
+    assert.deepEqual(team.assignments, {});
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a pane plays one role in one team: taking a role elsewhere frees the old one", async () => {
+  const t = setup();
+  try {
+    await saveTeam(t.teamHome, t.project, TEAM);
+    await saveTeam(t.teamHome, t.project, { ...TEAM, name: "night-shift" });
+    await assignRole(t.teamHome, t.project, "ux-review", "tester", "pane-t");
+    await assignRole(t.teamHome, t.project, "night-shift", "implementer", "pane-t");
+    const teams = await listTeams(t.teamHome, t.project);
+    assert.deepEqual(teams.find((x) => x.name === "ux-review").assignments, {});
+    assert.deepEqual(teams.find((x) => x.name === "night-shift").assignments, { implementer: "pane-t" });
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("closing a pane frees its role in every team", async () => {
+  const t = setup();
+  try {
+    await saveTeam(t.teamHome, t.project, TEAM);
+    await assignRole(t.teamHome, t.project, "ux-review", "tester", "pane-t");
+    await releasePaneEverywhere(t.teamHome, t.project, "pane-t");
+    const [team] = await listTeams(t.teamHome, t.project);
+    assert.deepEqual(team.assignments, {});
   } finally {
     t.cleanup();
   }

@@ -31,12 +31,8 @@ function repoParsed(name: string, repo: string | null): TeamDefinition | null {
 }
 
 export async function listTeams(teamHome: string, project: ProjectConfig): Promise<TeamSummary[]> {
-  let files: string[] = [];
-  try {
-    files = await fs.readdir(path.join(project.directory, ".aya", "teams"));
-  } catch {
-    return [];
-  }
+  const files = (await teamNamesOf(project)).map((n) => `${n}.md`);
+  if (files.length === 0) return [];
   const names = files.filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)).sort();
   return Promise.all(
     names.map(async (name): Promise<TeamSummary> => {
@@ -76,7 +72,30 @@ export async function saveTeam(teamHome: string, project: ProjectConfig, team: T
   const text = serializeTeam(team);
   parseTeamFile(team.name, text);
   await writeFileAtomic(teamFile(project, team.name), text);
-  await new TeamStore(teamDir(teamHome, project.slug, team.name)).saveDefinition(text);
+  const store = new TeamStore(teamDir(teamHome, project.slug, team.name));
+  await store.saveDefinition(text);
+  // A renamed or removed role would keep a pane no role id matches.
+  const roles = new Set(team.roles.map((r) => r.id));
+  for (const [role, pane] of Object.entries(await store.assignmentsSnapshot())) {
+    if (!roles.has(role)) await store.releasePane(pane);
+  }
+}
+
+async function teamNamesOf(project: ProjectConfig): Promise<string[]> {
+  try {
+    return (await fs.readdir(path.join(project.directory, ".aya", "teams")))
+      .filter((f) => f.endsWith(".md"))
+      .map((f) => f.slice(0, -3));
+  } catch {
+    return [];
+  }
+}
+
+/** A closed tab plays no role anywhere. */
+export async function releasePaneEverywhere(teamHome: string, project: ProjectConfig, paneId: string): Promise<void> {
+  for (const name of await teamNamesOf(project)) {
+    await new TeamStore(teamDir(teamHome, project.slug, name)).releasePane(paneId);
+  }
 }
 
 export async function assignRole(
@@ -94,5 +113,7 @@ export async function assignRole(
   }
   if (project.remote) throw new Error("teams work only on local panes");
   if (!project.tabs.some((t) => t.id === paneId)) throw new Error(`pane ${paneId} is not in this project`);
+  // One role in one team per pane: whoami and the tab chip must agree.
+  await releasePaneEverywhere(teamHome, project, paneId);
   await store.assign(role, paneId);
 }

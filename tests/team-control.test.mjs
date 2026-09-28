@@ -200,3 +200,15 @@ test("a pane Aya must not type into keeps the message and says why", async () =>
     t.cleanup();
   }
 });
+
+test("line breaks in a message cannot submit a second, unattributed turn", async () => {
+  const t = await setup();
+  try {
+    await t.aya("pane-t", "send", "implementer", "line one\rrm -rf /tmp/x\nline three");
+    assert.equal(t.writes.length, 2);
+    assert.doesNotMatch(t.writes[0].data, /[\r\n\x00-\x1f]/);
+    assert.match(t.writes[0].data, /line one rm -rf \/tmp\/x line three$/);
+  } finally {
+    t.cleanup();
+  }
+});

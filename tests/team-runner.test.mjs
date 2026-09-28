@@ -155,3 +155,47 @@ test("Start team after a pause takes messages again", async () => {
     t.cleanup();
   }
 });
+
+test("Start with a pane that refuses the text reports it and still arms the rounds", async () => {
+  const t = await setup();
+  try {
+    t.deps.deliver = async (pane) => {
+      if (pane === "pane-i") throw new Error("pane did not accept the text");
+    };
+    const result = await t.runner.start("game", "ux-review");
+    assert.deepEqual(result.held, [{ role: "implementer", reason: "pane did not accept the text" }]);
+    assert.equal(t.scheduled.length, 1);
+    assert.equal((await t.store.unread("implementer")).length, 1);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("after a relaunch, restore re-arms the teams that were running", async () => {
+  const t = await setup();
+  try {
+    await t.runner.start("game", "ux-review");
+    const fresh = new TeamRunner(t.deps, (fn, ms) => {
+      t.scheduled.push({ fn, ms, cancelled: false });
+      return () => {};
+    });
+    const before = t.scheduled.length;
+    await fresh.restore();
+    assert.equal(t.scheduled.length, before + 1);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("saving a running team re-arms its rounds from the new definition", async () => {
+  const t = await setup();
+  try {
+    await t.runner.start("game", "ux-review");
+    await t.store.saveDefinition(TEAM(true).replace("tester every 30 min", "implementer every 5 min"));
+    await t.runner.refresh("game", "ux-review");
+    assert.equal(t.scheduled[0].cancelled, true);
+    assert.equal(t.scheduled.at(-1).ms, 5 * 60 * 1000);
+  } finally {
+    t.cleanup();
+  }
+});
