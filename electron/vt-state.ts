@@ -161,25 +161,32 @@ export function screenShowsApproval(
 
 // The composer prompt: Claude and Grok draw "❯", Codex "›", Grok inside a box.
 const COMPOSER_RE = /^\s*(?:│\s*)?[❯›]\s/;
+// A numbered menu row ("❯ 1. Alpha", "› 2) Beta") uses the composer's chevron;
+// it is a choice waiting for an answer, not text typed by the user.
+const NUMBERED_OPTION_RE = /^\s*(?:│\s*)?[❯›]\s*\d+[.)]\s/;
 const FRAME_RE = /[─│╭╮╰╯\s]/g;
 
-/** True when the lowest prompt row holds text the user typed. Placeholders
- *  are dim, and the box is drawn with frame characters, so both are skipped. */
-function composerHasDraft(terminal: Terminal): boolean {
+type ComposerState = "draft" | "numbered-choice" | "empty";
+
+/** Classify the lowest prompt row. Placeholders are dim, and the box is drawn
+ * with frame characters, so both are skipped. Numbered options are a hold,
+ * but never user text. */
+function composerState(terminal: Terminal): ComposerState {
   const buffer = terminal.buffer.active;
   for (let y = buffer.length - 1; y >= 0; y -= 1) {
     const line = buffer.getLine(y);
     const text = line?.translateToString(true) ?? "";
     const prompt = text.match(COMPOSER_RE);
     if (!line || !prompt) continue;
+    if (NUMBERED_OPTION_RE.test(text)) return "numbered-choice";
     let typed = "";
     for (let x = prompt[0].length; x < line.length; x += 1) {
       const cell = line.getCell(x);
       if (cell && !cell.isDim()) typed += cell.getChars();
     }
-    return typed.replace(FRAME_RE, "") !== "";
+    return typed.replace(FRAME_RE, "") !== "" ? "draft" : "empty";
   }
-  return false;
+  return "empty";
 }
 
 /** Why a message must not be typed into this pane now, or null. */
@@ -189,7 +196,9 @@ export function paneHold(ptyId: string): string | null {
   if (!pane) return "is not running (exited, or its tab was not opened yet)";
   if (pane.shell) return "runs a shell";
   if (evaluateScreen(screenRows(pane.terminal), pane.agent) === "waiting") return "shows an approval prompt";
-  if (composerHasDraft(pane.terminal)) return "has text the user is typing";
+  const composer = composerState(pane.terminal);
+  if (composer === "numbered-choice") return "shows a numbered choice";
+  if (composer === "draft") return "has text the user is typing";
   return null;
 }
 

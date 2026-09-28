@@ -68,6 +68,14 @@ const GENERIC_RULES: readonly ScreenRule[] = [
 const CLAUDE_RULES: readonly ScreenRule[] = [
   ...GENERIC_RULES,
   {
+    // Claude's project trust check has a plain-text footer and an unnumbered
+    // selection, so detect the dialog before its selected row looks like a draft.
+    id: "claude-trust-confirmation",
+    kind: "prompt",
+    region: "tail",
+    pattern: /Enter\s+to\s+confirm\s*[·•]\s*Esc\s+to\s+cancel/i,
+  },
+  {
     // Scrolling the transcript replays past prompts verbatim. Claude marks
     // that view, so the marker is a reliable "you are reading history".
     id: "transcript-view",
