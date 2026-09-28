@@ -35,7 +35,7 @@ export function isPtyHostRequest(value: unknown): value is PtyHostRequest {
 export function asPaneSize(value: unknown): PaneSize | null {
   const v = value as Partial<PaneSize> | null;
   return typeof v?.cols === "number" && typeof v.rows === "number"
-    ? { cols: v.cols, rows: v.rows }
+    ? (v as PaneSize)
     : null;
 }
 

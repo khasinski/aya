@@ -30,7 +30,8 @@ async function waitFor(predicate, ms = 4000, step = 25) {
   throw new Error(`waitFor timed out after ${ms}ms`);
 }
 
-test("a host that predates the size request reads as an unknown size", async () => {
+/** Ask getSize of a fake host that answers every request with `answer`. */
+async function sizeFromFakeHost(answer) {
   const requests = [];
   const server = net.createServer((socket) => {
     let buf = "";
@@ -41,18 +42,31 @@ test("a host that predates the size request reads as an unknown size", async () 
       for (const line of lines) {
         const { id, type } = JSON.parse(line);
         requests.push(type);
-        socket.write(`${JSON.stringify({ id, ok: false, error: "unknown request" })}\n`);
+        socket.write(`${JSON.stringify({ id, ...answer })}\n`);
       }
     });
   });
   await new Promise((r) => server.listen(PTY_HOST_SOCKET_PATH, r));
   const client = new PtyHostClient(HOST_SCRIPT);
   try {
-    assert.equal(await client.getSize("any"), null);
-    assert.deepEqual(requests, ["size"]);
+    const size = await client.getSize("any");
+    return { size, requests: [...requests] };
   } finally {
     client.restart().catch(() => {});
     await new Promise((r) => server.close(r));
+  }
+}
+
+test("a host that predates the size request reads as an unknown size", async () => {
+  const { size, requests } = await sizeFromFakeHost({ ok: false, error: "unknown request" });
+  assert.equal(size, null);
+  assert.deepEqual(requests, ["size"]);
+});
+
+test("a size answer without numeric cols and rows reads as unknown", async () => {
+  for (const result of ["80x24", { cols: 80 }, { rows: 24 }, { cols: "80", rows: 24 }]) {
+    const { size } = await sizeFromFakeHost({ ok: true, result });
+    assert.equal(size, null, JSON.stringify(result));
   }
 });
 

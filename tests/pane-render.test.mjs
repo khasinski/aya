@@ -4,7 +4,12 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { paneReadText, renderPaneText } from "../dist-electron/pane-render.js";
+import xterm from "@xterm/headless";
+import {
+  PANE_RENDER_SCROLLBACK_LINES,
+  paneReadText,
+  renderPaneText,
+} from "../dist-electron/pane-render.js";
 
 test("colors and cursor moves render to the text they paint", async () => {
   const raw = "\x1b[31mred\x1b[0m plain\r\nline2\x1b[1A\x1b[5Gxx";
@@ -45,6 +50,10 @@ test("wide characters take two cells but read back once", async () => {
   assert.equal(await renderPaneText("日本語 ok\r\n", 20, 5), "日本語 ok");
 });
 
+test("a wide character pushed to the next row leaves no gap", async () => {
+  assert.equal(await renderPaneText("abc日本", 4, 5), "abc日本");
+});
+
 test("a line the terminal wrapped reads back as one line", async () => {
   assert.equal(await renderPaneText("abcdefghijKLM\r\nnext", 10, 5), "abcdefghijKLM\nnext");
 });
@@ -69,12 +78,26 @@ test("trailing blank lines and trailing spaces are trimmed, leading ones kept", 
   assert.equal(await renderPaneText("\r\n  a   \r\n\r\n\r\n", 40, 10), "\n  a");
 });
 
+test("padding a TUI wrote after a line's text is trimmed", async () => {
+  assert.equal(await renderPaneText("a   \r\nb\x1b[20C", 40, 10), "a\nb");
+});
+
+test("a wrapped line whose start scrolled off still reads back", async () => {
+  // At 2 columns (xterm's minimum) the first rows kept are all continuations.
+  const keptRows = PANE_RENDER_SCROLLBACK_LINES + 1;
+  const text = await renderPaneText("x".repeat(keptRows * 4), 2, 1);
+  assert.equal(text.length, keptRows * 2);
+});
+
 test("an empty buffer renders to an empty string", async () => {
   assert.equal(await renderPaneText("", 80, 24), "");
 });
 
-test("a zero size is clamped rather than thrown on", async () => {
-  assert.equal(await renderPaneText("hi", 0, 0), "hi");
+test("each read releases its terminal", async (t) => {
+  // A 1 MB render is not free; left to the GC, 40 reads held 4 MB more heap.
+  const dispose = t.mock.method(xterm.Terminal.prototype, "dispose");
+  await renderPaneText("hi", 80, 24);
+  assert.equal(dispose.mock.callCount(), 1);
 });
 
 test("without a known size the raw buffer is returned unchanged", async () => {
@@ -83,5 +106,6 @@ test("without a known size the raw buffer is returned unchanged", async () => {
 });
 
 test("with a size the buffer is rendered at that size", async () => {
-  assert.equal(await paneReadText("abcdef\x1b[31m!", { cols: 3, rows: 4 }), "abcdef!");
+  const bottomRight = "\x1b[99;99HZ";
+  assert.equal(await paneReadText(bottomRight, { cols: 3, rows: 5 }), "\n\n\n\n  Z");
 });

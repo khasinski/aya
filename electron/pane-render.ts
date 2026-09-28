@@ -6,7 +6,7 @@ import { Terminal } from "@xterm/headless";
 
 // Enough lines to fill PANE_READ_MAX_CHARS even for short lines; the terminal
 // lives only for one read.
-const PANE_RENDER_SCROLLBACK_LINES = 10_000;
+export const PANE_RENDER_SCROLLBACK_LINES = 10_000;
 
 export interface PaneSize {
   cols: number;
@@ -21,8 +21,8 @@ export async function renderPaneText(
   rows: number,
 ): Promise<string> {
   const terminal = new Terminal({
-    cols: Math.max(cols, 1),
-    rows: Math.max(rows, 1),
+    cols,
+    rows,
     scrollback: PANE_RENDER_SCROLLBACK_LINES,
     allowProposedApi: true,
   });
@@ -32,13 +32,14 @@ export async function renderPaneText(
     const lines: string[] = [];
     for (let y = 0; y < buffer.length; y += 1) {
       const line = buffer.getLine(y);
-      // A row the next one continues keeps its trailing spaces: they are text.
-      const continued = buffer.getLine(y + 1)?.isWrapped ?? false;
-      const text = line?.translateToString(!continued) ?? "";
+      const text = line?.translateToString(true) ?? "";
       if (line?.isWrapped && lines.length > 0) lines[lines.length - 1] += text;
       else lines.push(text);
     }
-    return lines.join("\n").trimEnd();
+    return lines
+      .map((line) => line.trimEnd())
+      .join("\n")
+      .trimEnd();
   } finally {
     terminal.dispose();
   }
