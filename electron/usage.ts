@@ -90,6 +90,8 @@ export interface ClaudeUsageSource {
 // Claude Code's config dir when a preset names none (CLAUDE_CONFIG_DIR aside).
 export const CLAUDE_CONFIG_DIRNAME = ".claude";
 export const DEFAULT_CLAUDE_CONFIG_DIR = `~/${CLAUDE_CONFIG_DIRNAME}`;
+// Claude Code's settings file inside a config dir (where the usage hook goes).
+export const CLAUDE_SETTINGS_FILENAME = "settings.json";
 
 export function expandUserPath(value: string): string {
   if (value === "~") return os.homedir();
