@@ -1,7 +1,7 @@
 // Start team (a delivery test to every role), Aya-owned rounds on the team's
 // cadence, and the team pause. Rounds live in Aya, not in one agent session.
 
-import { NO_PANE_HOLD, deliverAndLog, typedTeamMessage, type TeamControlDeps } from "./team-control";
+import { deliverAndLog, roleHold, typedTeamMessage, type TeamControlDeps } from "./team-control";
 import { loadTeam, projectBySlug, teamNames } from "./team-files";
 import { openTeamStore, type TeamStore } from "./team-store";
 import { TEAM_SYSTEM_SENDER } from "./teams";
@@ -51,9 +51,8 @@ export class TeamRunner {
     const { project, store, team } = await this.open(slug, name);
     const notReady: TeamStartResult["held"] = [];
     for (const role of team.roles) {
-      const pane = await store.paneOf(role.id);
-      const reason = pane ? await this.deps.holdReason(pane) : NO_PANE_HOLD;
-      if (reason) notReady.push({ role: role.id, reason });
+      const { hold } = await roleHold(this.deps, store, role.id);
+      if (hold) notReady.push({ role: role.id, reason: hold });
     }
     if (notReady.length) return { started: false, delivered: [], held: notReady };
     await store.setPaused(false);
@@ -75,9 +74,13 @@ export class TeamRunner {
     return this.deliveryTest(project, store, team, roleId);
   }
 
+  private cancel(key: string): void {
+    this.cancels.get(key)?.();
+    this.cancels.delete(key);
+  }
+
   async pause(slug: string, name: string): Promise<void> {
-    this.cancels.get(`${slug}/${name}`)?.();
-    this.cancels.delete(`${slug}/${name}`);
+    this.cancel(`${slug}/${name}`);
     await openTeamStore(this.deps.teamHome, slug, name).setPaused(true);
   }
 
@@ -155,8 +158,7 @@ export class TeamRunner {
 
   private arm(slug: string, name: string, team: TeamDefinition): void {
     const key = `${slug}/${name}`;
-    this.cancels.get(key)?.();
-    this.cancels.delete(key);
+    this.cancel(key);
     if (!team.cadence) return;
     const cadence = team.cadence;
     this.cancels.set(
