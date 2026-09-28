@@ -50,6 +50,8 @@ export interface EnvProbe {
  *  of the strings in its arguments) implausible. */
 const AYA_CHILD_MARKER = " AYA_TERMINAL_ID=";
 const AYA_HOME_MARKER = " AYA_HOME=";
+// The marker followed by its value (up to the next space), for scopeFromEnvDump.
+const AYA_HOME_VALUE_RE = new RegExp(`${AYA_HOME_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^ ]+)`);
 /** Env marker every PTY host carries: the client spawns it with
  *  ELECTRON_RUN_AS_NODE=1. An editor/grep/test-runner that merely mentions the
  *  host script path in its ARGUMENTS does not run as-node. */
@@ -78,7 +80,7 @@ export const PS_ENV_PROBE_MAX_BUFFER_BYTES = 4 * 1024 * 1024;
  *  default ~/.aya. Mirrors electron/paths.ts. Used so a sweep only ever kills
  *  hosts belonging to ITS OWN scope. */
 export function scopeFromEnvDump(commandWithEnv: string, homedir: string): string {
-  const m = commandWithEnv.match(/ AYA_HOME=([^ ]+)/);
+  const m = commandWithEnv.match(AYA_HOME_VALUE_RE);
   if (m) return path.resolve(m[1]);
   if (commandWithEnv.includes(" AYA_DEV=1")) return path.join(homedir, AYA_DEV_HOME_DIRNAME);
   return path.join(homedir, AYA_HOME_DIRNAME);
