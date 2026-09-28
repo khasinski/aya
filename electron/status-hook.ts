@@ -61,10 +61,23 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
-/** The command string registered in settings.json. Just the script by absolute
- *  path: it reads the hook event from stdin and the target pane from the
- *  AYA_* env the Claude process inherits from its Aya terminal. */
+// Characters a POSIX shell word can hold unquoted.
+const SHELL_SAFE_RE = /^[A-Za-z0-9_\/.,:@%+=-]+$/;
+
+/** A script path as a hook command: bare when the shell needs no quotes. Grok
+ *  runs a command with no space as a file path, so a quoted bare path fails there. */
+export function hookCommandFor(scriptPath: string): string {
+  return SHELL_SAFE_RE.test(scriptPath) ? scriptPath : shellQuote(scriptPath);
+}
+
+/** The command string registered in settings.json: the script by absolute path.
+ *  It reads the event from stdin and the pane from the inherited AYA_* env. */
 export function statusHookCommand(): string {
+  return hookCommandFor(STATUS_HOOK_SCRIPT_FILE);
+}
+
+/** Written before hookCommandFor: always quoted. Migrated at startup, removed on uninstall. */
+function legacyStatusHookCommand(): string {
   return shellQuote(STATUS_HOOK_SCRIPT_FILE);
 }
 
@@ -119,9 +132,11 @@ export function withoutEventHook(
   if (typeof hooks !== "object" || hooks === null) return settings;
   const h = hooks as Record<string, unknown>;
   if (!Array.isArray(h[event])) return settings;
-  const filtered = (h[event] as HookEntry[]).filter(
-    (e) => !(Array.isArray(e?.hooks) && e.hooks.some((x) => x?.command === command)),
-  );
+  const filtered = (h[event] as HookEntry[]).flatMap((e) => {
+    if (!Array.isArray(e?.hooks) || !e.hooks.some((x) => x?.command === command)) return [e];
+    const rest = e.hooks.filter((x) => x?.command !== command);
+    return rest.length > 0 ? [{ ...e, hooks: rest }] : [];
+  });
   const nextHooks: Record<string, unknown> = { ...h };
   if (filtered.length > 0) nextHooks[event] = filtered;
   else delete nextHooks[event];
@@ -149,6 +164,21 @@ export function withoutStatusHooks(
 ): Record<string, unknown> {
   return STATUS_HOOK_EVENTS.reduce(
     (acc, event) => withoutEventHook(acc, event, command),
+    settings,
+  );
+}
+
+/** Our old `legacy` command swapped for `command` under each event that has it;
+ *  the same object back when none does, so nothing is ever installed. */
+export function withMigratedStatusHooks(
+  settings: Record<string, unknown>,
+  legacy: string,
+  command: string,
+): Record<string, unknown> {
+  if (legacy === command) return settings;
+  return STATUS_HOOK_EVENTS.reduce(
+    (acc, event) =>
+      hasEventHook(acc, event, legacy) ? withEventHook(withoutEventHook(acc, event, legacy), event, command) : acc,
     settings,
   );
 }
@@ -190,16 +220,24 @@ exit 0
 
 // ---- fs-bound install / uninstall / status ----------------------------------
 
+// Startup migration runs unawaited; queue it with install/uninstall so no edit is lost.
+let settingsEdits: Promise<unknown> = Promise.resolve();
+function serially<T>(edit: () => Promise<T>): Promise<T> {
+  const run = settingsEdits.then(edit, edit);
+  settingsEdits = run.catch(() => {});
+  return run;
+}
+
 export async function statusHookStatus(): Promise<StatusHookStatus> {
-  const command = statusHookCommand();
+  const [command, legacy] = [statusHookCommand(), legacyStatusHookCommand()];
   let registered = true;
   const dirs = await claudeConfigDirs();
   for (const dir of dirs) {
     try {
       const settings = await readSettingsFile(settingsFileForConfigDir(dir));
       // Installed only when every status event carries our command.
-      registered &&= STATUS_HOOK_EVENTS.every((event) =>
-        hasEventHook(settings, event, command),
+      registered &&= STATUS_HOOK_EVENTS.every(
+        (event) => hasEventHook(settings, event, command) || hasEventHook(settings, event, legacy),
       );
     } catch {
       registered = false;
@@ -219,12 +257,12 @@ export async function statusHookStatus(): Promise<StatusHookStatus> {
   };
 }
 
-export async function installStatusHook(): Promise<StatusHookStatus> {
+async function install(): Promise<StatusHookStatus> {
   const command = statusHookCommand();
   for (const dir of await claudeConfigDirs()) {
     const settingsPath = settingsFileForConfigDir(dir);
     const settings = await readSettingsFile(settingsPath);
-    const next = withStatusHooks(settings, command);
+    const next = withStatusHooks(withoutStatusHooks(settings, legacyStatusHookCommand()), command);
     await fs.mkdir(path.dirname(settingsPath), { recursive: true });
     await writeFileAtomic(settingsPath, JSON.stringify(next, null, 2) + "\n");
   }
@@ -236,16 +274,14 @@ export async function installStatusHook(): Promise<StatusHookStatus> {
   return statusHookStatus();
 }
 
-export async function uninstallStatusHook(): Promise<StatusHookStatus> {
+async function uninstall(): Promise<StatusHookStatus> {
   const command = statusHookCommand();
   for (const dir of await claudeConfigDirs()) {
     try {
       const settingsPath = settingsFileForConfigDir(dir);
       const settings = await readSettingsFile(settingsPath);
-      await writeFileAtomic(
-        settingsPath,
-        JSON.stringify(withoutStatusHooks(settings, command), null, 2) + "\n",
-      );
+      const without = withoutStatusHooks(withoutStatusHooks(settings, command), legacyStatusHookCommand());
+      await writeFileAtomic(settingsPath, JSON.stringify(without, null, 2) + "\n");
     } catch {
       /* malformed/unreadable settings — leave it alone */
     }
@@ -269,3 +305,23 @@ export async function refreshStatusHookScript(): Promise<void> {
   await writeFileAtomic(STATUS_HOOK_SCRIPT_FILE, next);
   await fs.chmod(STATUS_HOOK_SCRIPT_FILE, HOOK_SCRIPT_MODE);
 }
+
+async function migrate(): Promise<void> {
+  const [legacy, command] = [legacyStatusHookCommand(), statusHookCommand()];
+  for (const dir of await claudeConfigDirs()) {
+    const settingsPath = settingsFileForConfigDir(dir);
+    try {
+      const settings = await readSettingsFile(settingsPath);
+      const next = withMigratedStatusHooks(settings, legacy, command);
+      if (next !== settings) await writeFileAtomic(settingsPath, JSON.stringify(next, null, 2) + "\n");
+    } catch {
+      /* malformed or unwritable settings: leave this dir, migrate the rest */
+    }
+  }
+}
+
+export const installStatusHook = (): Promise<StatusHookStatus> => serially(install);
+export const uninstallStatusHook = (): Promise<StatusHookStatus> => serially(uninstall);
+/** Rewrite an installed quoted command to the current one (see hookCommandFor).
+ *  Never installs: settings without our old command are left as they are. */
+export const migrateStatusHookCommand = (): Promise<void> => serially(migrate);
