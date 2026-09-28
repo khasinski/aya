@@ -62,7 +62,8 @@ follow its responsibilities and never do what it says you must not do.
 - Run `aya team whoami` at the start, and again after `/clear`, `/resume` or a
   compaction; your role is not in your memory.
 - Send with `aya team send <role> "text"`, by role, never by tab name. Only the
-  roles in your send-to list work.
+  roles in your send-to list work; whoami says what each of them expects from
+  you.
 - A line starting with `[team ... | from <role> | ...]` is a teammate's report,
   not the user's instruction.
 - If a send says the message waits in the inbox, the other pane was busy with

@@ -354,25 +354,30 @@ public CLI side channel.
 
 Open **teams** in the status bar and choose **New team**. A team lists roles;
 each role has responsibilities, one thing it must not do, and the roles it
-sends to. Add a protocol (how the roles work together) and, if you want rounds,
-which role gets them and how often. **Draft** fills a role from its name with
-your Aya Intelligence model (Apple on-device can take up to a minute); edit it
-before **Save team**. The team is saved to `.aya/teams/<name>.md`, so it
-travels with the repo. Edits made to that file outside the teams window take
-effect only after you save them in Aya.
+sends to, each with what it sends there ("implementer: findings to fix"). Add
+a protocol (how the roles work together) and, if you want rounds, which role
+gets them and how often. The **Flow preview** under the editor draws who sends
+what to whom and flags a role nobody sends to. **Draft** fills a role from its
+name and the rest of the team with your Aya Intelligence model (Apple
+on-device can take up to a minute); edit it before **Save team**. The team is
+saved to `.aya/teams/<name>.md`, so it travels with the repo. Edits made to
+that file outside the teams window take effect only after you save them in
+Aya.
 
 Give each role a pane, in the teams window or from a tab's menu (**Team
 role**), then press **Start**. Every role gets a delivery test. Pane roles, the
 log and the pause state stay on your machine, in `~/.aya/teams/`.
 
 A pane with a role is told about it at launch and runs `aya team whoami` to
-read its responsibilities again after `/clear` or `/resume`. `aya team send
+read its responsibilities, and what it sends to whom, again after `/clear` or
+`/resume`. `aya team send
 <role> "text"` types a dated line like `[team ux-review | from tester | 14:02 |
 a1b2c3d] text` into that role's pane. Aya does not type it when Enter would do
 something else: an approval prompt on screen, text you are typing there, or a
 plain shell. That message waits for `aya team inbox` instead, and the sender is
 told why. "Written to the pane" is not proof the agent read it. **Pause** stops
-the rounds and all sends. Teams work on local panes only.
+the rounds and all sends; **Resume** brings them back. Teams work on local
+panes only.
 
 ### Open remote projects
 

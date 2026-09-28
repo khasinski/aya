@@ -16,14 +16,20 @@ A 22-round reviewer/implementer UX session hit:
 ## v1
 
 - **Define team** in the repo, in `.aya/teams/<name>.md`: roles,
-  responsibilities, what each role must not do, who it sends to, a
+  responsibilities, what each role must not do, who it sends to and what
+  it sends there (`Sends to: implementer (findings to fix), tester`), a
   protocol, and a cadence. A per-project screen edits it; outside edits
-  apply only after Save team. It offers a two-role template and drafts a
-  role from its name with any Aya Intelligence provider.
+  apply only after Save team. It offers a two-role template, drafts a role
+  from its name and the rest of the team with any Aya Intelligence
+  provider, and previews the flow from the routes (no model).
+- **Why routes carry a what**: reading the flow back out of prose failed.
+  On Apple's on-device model, five prompt designs over 18 labeled sentences
+  got at most 8 right; "code submitted by the implementer" read as the
+  reviewer sending code. Agents read the same prose, so the route says it.
 - **Assign panes** locally in `~/.aya`: one pane per role, local panes
   only. Closing a pane frees its role; restarting it keeps the role.
-- **Identity**: `aya team whoami` prints the pane's role, send-to list
-  and protocol; every team pane is reminded to run it.
+- **Identity**: `aya team whoami` prints the pane's role, each route with
+  what it carries, and the protocol; every team pane is reminded to run it.
 - **Send by role**: `aya team send <role> "text"` finds the pane by id
   and delivers at once, because the agent CLIs queue input themselves.
   It holds back only when Enter would do something else: an approval
