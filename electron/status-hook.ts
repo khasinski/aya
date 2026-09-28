@@ -28,6 +28,7 @@ import {
   readSettingsFile,
   settingsFileForConfigDir,
 } from "./usage-hook";
+import { shellQuote } from "./pane-command";
 
 // The generated hook script lives in Aya's own dir (always exists), referenced
 // by absolute path from every hook entry.
@@ -54,10 +55,6 @@ export interface StatusHookStatus {
     conflict: boolean;
     configPath: string;
   };
-}
-
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 // Characters a POSIX shell word can hold unquoted.

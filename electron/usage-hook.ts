@@ -22,6 +22,7 @@ import {
   DEFAULT_CLAUDE_CONFIG_DIR,
   expandUserPath,
 } from "./usage";
+import { shellQuote } from "./pane-command";
 
 function hasSettingsOverride(): boolean {
   return !!process.env.AYA_CLAUDE_SETTINGS?.trim();
@@ -49,10 +50,6 @@ export interface UsageHookStatus {
   scriptPath: string;
   /** Where the hook is registered. */
   settingsPath: string;
-}
-
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 function hookCommand(configDir: string): string {

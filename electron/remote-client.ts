@@ -11,6 +11,7 @@ import type {
 } from "./types";
 import { AYA_HOME_DIRNAME, REMOTE_SOCKET_NAME } from "./paths";
 import { REMOTE_PROTOCOL_VERSION, type RemoteMessage } from "./remote-protocol";
+import { shellQuote } from "./pane-command";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 // Cap on the base64 bridge child's stdout - bounds the remote snapshot size.
@@ -84,10 +85,6 @@ setTimeout(() => {
   finish(1);
 }, ${REQUEST_TIMEOUT_MS});
 `.trim();
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
