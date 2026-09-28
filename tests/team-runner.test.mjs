@@ -372,3 +372,20 @@ test("a redelivered line carries no control bytes, header included", async () =>
     t.cleanup();
   }
 });
+
+test("when the pane is held mid-pass, later messages wait even if it frees again: order is kept", async () => {
+  const t = await setup({ cadence: false });
+  try {
+    for (const text of ["first", "second", "third"]) {
+      await t.store.append({ from: "tester", to: "implementer", commit: null, text, delivered: false });
+    }
+    // Free, then held (a prompt after the first), then free again.
+    const states = [null, "shows an approval prompt", null];
+    t.deps.holdReason = async () => (states.length ? states.shift() : null);
+    await t.runner.redeliverWaiting();
+    assert.deepEqual(t.typed.map((w) => w.text.replace(/^.*\] /, "")), ["first"]);
+    assert.deepEqual((await t.store.unread("implementer")).map((m) => m.text), ["second", "third"]);
+  } finally {
+    t.cleanup();
+  }
+});
