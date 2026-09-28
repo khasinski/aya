@@ -9,6 +9,7 @@ import { execSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { makeRepo as makeEmptyRepo } from "./helpers/git.mjs";
 
 const {
   parseWorktrees,
@@ -107,11 +108,7 @@ test("empty input yields no worktrees", () => {
 // --- listWorktrees (integration, real git) -----------------------------------
 
 function makeRepo() {
-  const root = mkdtempSync(join(tmpdir(), "aya-wt-repo-"));
-  execSync("git init -q -b main", { cwd: root });
-  execSync("git config user.email test@aya.invalid", { cwd: root });
-  execSync('git config user.name "Aya Test"', { cwd: root });
-  execSync("git config commit.gpgsign false", { cwd: root });
+  const root = makeEmptyRepo("aya-wt-repo-");
   writeFileSync(join(root, "a.txt"), "hello");
   execSync("git add -A", { cwd: root });
   execSync("git commit -q -m init", { cwd: root });
