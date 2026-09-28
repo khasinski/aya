@@ -35,11 +35,19 @@ export const PROJECTS_STATE_FILE = path.join(AYA_HOME, "projects-state.json");
 export const PROJECTS_ORDER_FILE = path.join(AYA_HOME, "projects-order.json");
 export const OPEN_PROJECTS_FILE = path.join(AYA_HOME, "open-projects.json");
 export const CONTROL_SOCKET_PATH = path.join(AYA_HOME, "aya.sock");
-export const REMOTE_SOCKET_PATH = path.join(AYA_HOME, "aya-remote.sock");
+// Bare name too: the remote bridge script rebuilds the path on the remote host.
+export const REMOTE_SOCKET_NAME = "aya-remote.sock";
+export const REMOTE_SOCKET_PATH = path.join(AYA_HOME, REMOTE_SOCKET_NAME);
 export const PTY_HOST_SOCKET_PATH = path.join(AYA_HOME, "pty-host.sock");
+// Per-harness count of panes that ever called `aya` (#117).
+export const CLI_ADOPTION_FILE = path.join(AYA_HOME, "cli-adoption.json");
+// Main-process diagnostics (GPU-helper deaths, #79).
+export const DIAGNOSTICS_LOG_FILE = path.join(AYA_HOME, "diagnostics.log");
 
 // rw------- (owner-only). Sockets accept unauthenticated local commands /
 // remote bridge traffic, and host-registry records name kill targets - none
 // of it may be readable/writable by other users. One definition for both.
 export const OWNER_ONLY_FILE_MODE = 0o600;
+// rwxr-xr-x: the installed CLI and the generated hook scripts.
+export const EXECUTABLE_FILE_MODE = 0o755;
 export const SOCKET_FILE_PERMISSIONS = OWNER_ONLY_FILE_MODE;

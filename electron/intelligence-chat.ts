@@ -5,6 +5,10 @@ import { spawn } from "node:child_process";
 import type { AyaIntelligenceConfig } from "./types";
 
 export const OLLAMA_BASE_URL = "http://localhost:11434";
+/** Ollama's OpenAI-compatible endpoint (the renderer's default openAiBaseUrl). */
+export const OLLAMA_OPENAI_BASE_URL = `${OLLAMA_BASE_URL}/v1`;
+/** The default ollamaModel and the model the Ollama status recommends. */
+export const RECOMMENDED_OLLAMA_MODEL = "gemma4:e4b";
 
 export type ChatResult = { ok: true; content: string } | { ok: false; error: string };
 
@@ -111,7 +115,6 @@ export async function openAiChat(
   return { ok: true, content };
 }
 
-/** Apple Intelligence through the bundled Swift helper's "chat" request. */
 /** One chat with the HTTP provider a config names: Ollama or OpenAI-compatible. */
 export function providerChat(
   intelligence: AyaIntelligenceConfig,
@@ -129,6 +132,7 @@ export function providerChat(
       );
 }
 
+/** Apple Intelligence through the bundled Swift helper's "chat" request. */
 export function appleChat(helper: string, system: string, user: string, opts: ChatOptions): Promise<ChatResult> {
   return new Promise((resolve) => {
     let stdout = "";

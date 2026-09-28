@@ -72,11 +72,17 @@ import {
   withoutBriefSection,
   teamNote,
 } from "./agent-brief";
-import { paneTeamRole, projectBySlug } from "./team-files";
-import { appleChat, type ChatOptions, type ChatResult, OLLAMA_BASE_URL, providerChat } from "./intelligence-chat";
-import { TeamRunner } from "./team-runner";
-import { assignRole, listTeams, releasePaneEverywhere, saveTeam } from "./team-admin";
-import { draftRole, ROLE_DRAFT_CHAT } from "./team-draft";
+import { paneTeamRole } from "./team-files";
+import {
+  appleChat,
+  type ChatOptions,
+  type ChatResult,
+  OLLAMA_BASE_URL,
+  providerChat,
+  RECOMMENDED_OLLAMA_MODEL,
+} from "./intelligence-chat";
+import type { TeamControlDeps } from "./team-control";
+import { registerTeamIpc } from "./team-ipc";
 import { startRemoteServer } from "./remote-server";
 import {
   createRemoteDirectory,
@@ -96,7 +102,10 @@ import {
 import { getGitHubLink, isGitHubCliAvailable } from "./github";
 import {
   AYA_HOME,
+  CLI_ADOPTION_FILE,
   CONTROL_SOCKET_PATH,
+  DIAGNOSTICS_LOG_FILE,
+  EXECUTABLE_FILE_MODE,
   IS_DEV,
   IS_E2E_HEADLESS,
   IS_E2E_PTY_SHUTDOWN,
@@ -152,12 +161,11 @@ import { readRepoProjectConfig } from "./project-local";
 import { repairProcessPath } from "./shell-path";
 import { PtyHostClient } from "./pty-host-client";
 import { reapStaleHostRecords } from "./pty-host-registry";
-import { COMMAND_PROBE_TIMEOUT_MS } from "./constants";
+import { COMMAND_PROBE_TIMEOUT_MS, HOOK_VIA } from "./constants";
 import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
 import {
   requirePositiveInt,
   requireString,
-  validateTeamDefinition,
   validateSnippetArray,
   validatePresetArray,
   validateProjectCollectionState,
@@ -171,7 +179,9 @@ import { loadWindowState, trackWindowState } from "./window-state";
 import { resolveDropTarget, WindowProjectSlices } from "./window-slices";
 import {
   generateWebPassword,
+  isWildcardHost,
   loadWebConfig,
+  LOOPBACK_HOST,
   normalizeWebPort,
   saveWebConfig,
   webCredentials,
@@ -188,7 +198,6 @@ import type {
   LocalSummaryResult,
   OllamaStatus,
   ProjectCollectionState,
-  ProjectConfig,
   UpdateStatus,
   WebServerStatus,
 } from "./types";
@@ -196,12 +205,10 @@ import type {
 const DEV_SERVER_URL = "http://localhost:5183";
 const WINDOW_TITLE = IS_DEV ? "Aya Dev" : "Aya";
 
-// Filesystem mode for the installed CLI executable (rwxr-xr-x)
-const CLI_EXECUTABLE_MODE = 0o755;
 
 // Per-harness count of panes that ever called `aya` (#117); shown in
 // Settings -> Diagnostics.
-const cliAdoption = createCliAdoptionStore(path.join(AYA_HOME, "cli-adoption.json"));
+const cliAdoption = createCliAdoptionStore(CLI_ADOPTION_FILE);
 // Maximum number of entries returned by path completion
 const MAX_PATH_COMPLETION_ENTRIES = 100;
 // Maximum number of keyboard-navigable projects (Cmd/Ctrl+1..9)
@@ -216,14 +223,29 @@ const COLOR_LIGHT_TEXT = "#f0f6fc";
 const ABOUT_DIALOG_SIZE = 360;
 // About dialog icon dimensions (square, px)
 const ABOUT_ICON_SIZE = 128;
-// How often held team messages are retried; a pane frees up within seconds.
-const TEAM_REDELIVERY_MS = 15_000;
 const LOCAL_SUMMARY_TIMEOUT_MS = 20_000;
 const LOCAL_SUMMARY_MAX_LINES = 30;
 const LOCAL_SUMMARY_MAX_STDOUT_BYTES = 32 * 1024;
-const RECOMMENDED_OLLAMA_MODEL = "gemma4:e4b";
+// Cascade offset for a window opened from another window (File > New Window,
+// tab tear-out), so it doesn't cover its parent exactly.
+const NEW_WINDOW_CASCADE_OFFSET_PX = 28;
+// Tear-out: the cursor lands this far into the new window, on its tab strip.
+const TEAR_OUT_CURSOR_OFFSET_X_PX = 80;
+const TEAR_OUT_CURSOR_OFFSET_Y_PX = 20;
+// Delays after a GPU death at which we ask renderers to heal. The first covers
+// the typical relaunch window; the second is a cheap safety net (the heal is a
+// no-op when the WebGL context is already live again).
+const GPU_HEAL_NUDGE_DELAYS_MS = [1200, 3000];
 
 const ptyHost = new PtyHostClient(path.join(__dirname, "pty-host.js"));
+// One set of team deps for the team runner and the control server's aya team.
+const teamDeps: TeamControlDeps = {
+  teamHome: AYA_HOME,
+  listProjects: () => listProjects(),
+  deliver: (terminalId, text) => deliverTeamMessage((id, data) => ptyHost.write(id, data), terminalId, text),
+  holdReason: (terminalId) => ptyHost.holdReason(terminalId),
+  headCommit,
+};
 const UPDATE_AUTO_CHECK_DELAY_MS = 12_000;
 // Summarizer sampling knobs, shared by BOTH backends (OpenAI-compatible and
 // Ollama) - the two request builders must stay in sync.
@@ -364,11 +386,16 @@ function validateLocalSummaryRequest(value: unknown): LocalSummaryRequest {
   };
 }
 
+/** The bundled Apple Foundation Models helper (no e2e override). */
+function appleHelperPath(): string {
+  return bundledDistElectronHelperPath(__dirname, "aya-local-summary");
+}
+
 async function summarizeWithApple(
   req: LocalSummaryRequest,
 ): Promise<LocalSummaryResult> {
   if (process.platform !== "darwin") return unavailableLocalSummary("unsupported-platform");
-  const helper = bundledDistElectronHelperPath(__dirname, "aya-local-summary");
+  const helper = appleHelperPath();
   try {
     await fs.access(helper, fsConstants.X_OK);
   } catch {
@@ -726,8 +753,8 @@ async function writeCliShim(target: string, script: string): Promise<void> {
   // rename replaces the entry itself instead of writing through a link.
   const tmp = `${target}.aya-${process.pid}.tmp`;
   try {
-    await fs.writeFile(tmp, script, { mode: CLI_EXECUTABLE_MODE });
-    await fs.chmod(tmp, CLI_EXECUTABLE_MODE);
+    await fs.writeFile(tmp, script, { mode: EXECUTABLE_FILE_MODE });
+    await fs.chmod(tmp, EXECUTABLE_FILE_MODE);
     await fs.rename(tmp, target);
   } catch (err) {
     await fs.rm(tmp, { force: true }).catch(() => {});
@@ -1595,7 +1622,7 @@ async function applyWebServerState(): Promise<void> {
 /** Reachable URLs for the settings UI: the pinned address, or every
  *  non-internal IPv4 when listening on all interfaces. */
 function webServerUrls(config: WebConfig): string[] {
-  if (config.host !== "0.0.0.0" && config.host !== "::") {
+  if (!isWildcardHost(config.host)) {
     return [`http://${config.host}:${config.port}`];
   }
   const hosts: string[] = [];
@@ -1604,7 +1631,7 @@ function webServerUrls(config: WebConfig): string[] {
       if (info.family === "IPv4" && !info.internal) hosts.push(info.address);
     }
   }
-  if (hosts.length === 0) hosts.push("127.0.0.1");
+  if (hosts.length === 0) hosts.push(LOOPBACK_HOST);
   return hosts.map((host) => `http://${host}:${config.port}`);
 }
 
@@ -1877,10 +1904,6 @@ interface WindowGeometry {
   isMaximized: boolean;
 }
 
-// Cascade offset for a window opened from another window (File > New Window,
-// tab tear-out), so it doesn't cover its parent exactly.
-const NEW_WINDOW_CASCADE_OFFSET_PX = 28;
-
 /** Open an additional (empty) Aya window, cascaded from the focused one - or,
  *  for a tab tear-out, positioned at the release point so the new window
  *  appears under the cursor like a Chrome tab drag. New windows own no
@@ -1896,7 +1919,7 @@ async function openNewWindow(at?: {
     : { ...(await loadWindowState()), x: undefined, y: undefined };
   const position = at
     ? // Nudge so the cursor lands on the new window's tab strip, not its corner.
-      { x: Math.max(0, at.x - 80), y: Math.max(0, at.y - 20) }
+      { x: Math.max(0, at.x - TEAR_OUT_CURSOR_OFFSET_X_PX), y: Math.max(0, at.y - TEAR_OUT_CURSOR_OFFSET_Y_PX) }
     : anchor
       ? {
           x: anchor.getBounds().x + NEW_WINDOW_CASCADE_OFFSET_PX,
@@ -2194,62 +2217,6 @@ function registerIpc(): void {
   const senderWindow = (
     e: Electron.IpcMainInvokeEvent,
   ): BrowserWindow | null => BrowserWindow.fromWebContents(e.sender);
-  const teamRunner = new TeamRunner({
-    teamHome: AYA_HOME,
-    listProjects: () => listProjects(),
-    deliver: (terminalId, text) => deliverTeamMessage((id, data) => ptyHost.write(id, data), terminalId, text),
-    holdReason: (terminalId) => ptyHost.holdReason(terminalId),
-    headCommit,
-  });
-  // Messages held for a busy or missing pane go out once it is free again.
-  const redelivery = setInterval(
-    () => void teamRunner.redeliverWaiting().catch((err) => console.warn("[aya] held team messages not retried:", err)),
-    TEAM_REDELIVERY_MS,
-  );
-  app.once("before-quit", () => {
-    clearInterval(redelivery);
-    teamRunner.stopAll();
-  });
-  void teamRunner.restore().catch((err) => console.warn("[aya] team rounds not restored:", err));
-  const teamArgs = (slug: unknown, team: unknown, channel: string): [string, string] => [
-    requireString(slug, `${channel}.projectSlug`),
-    requireString(team, `${channel}.team`),
-  ];
-  ipcMain.handle("teams:start", (_e, slug: unknown, team: unknown) =>
-    teamRunner.start(...teamArgs(slug, team, "teams:start")),
-  );
-  ipcMain.handle("teams:pause", (_e, slug: unknown, team: unknown) =>
-    teamRunner.pause(...teamArgs(slug, team, "teams:pause")),
-  );
-  ipcMain.handle("teams:resume", (_e, slug: unknown, team: unknown) =>
-    teamRunner.resume(...teamArgs(slug, team, "teams:resume")),
-  );
-  const teamProject = async (slug: unknown, channel: string): Promise<ProjectConfig> =>
-    projectBySlug(await listProjects(), requireString(slug, `${channel}.projectSlug`));
-  ipcMain.handle("teams:list", async (_e, slug: unknown) =>
-    listTeams(AYA_HOME, await teamProject(slug, "teams:list")),
-  );
-  ipcMain.handle("teams:save", async (_e, slug: unknown, team: unknown, create: unknown) => {
-    const project = await teamProject(slug, "teams:save");
-    const definition = validateTeamDefinition(team);
-    await saveTeam(AYA_HOME, project, definition, { create: create === true });
-    await teamRunner.refresh(project.slug, definition.name);
-  });
-  ipcMain.handle("teams:release-pane", async (_e, slug: unknown, paneId: unknown) =>
-    releasePaneEverywhere(
-      AYA_HOME,
-      await teamProject(slug, "teams:release-pane"),
-      requireString(paneId, "teams:release-pane.paneId"),
-    ),
-  );
-  // Returns why the newly assigned pane was not told its role, or null.
-  ipcMain.handle("teams:assign", async (_e, slug: unknown, team: unknown, role: unknown, paneId: unknown) => {
-    const project = await teamProject(slug, "teams:assign");
-    const [teamName, roleId] = [requireString(team, "teams:assign.team"), requireString(role, "teams:assign.role")];
-    const pane = paneId === null ? null : requireString(paneId, "teams:assign.paneId");
-    await assignRole(AYA_HOME, project, teamName, roleId, pane);
-    return pane ? teamRunner.introduce(project.slug, teamName, roleId) : null;
-  });
   /** A chat with the configured Aya Intelligence; no config means Apple, the default. */
   const intelligenceChat = (config: unknown, opts: ChatOptions) => {
     const intelligence = normalizeAyaIntelligenceConfig(config) ?? normalizeAyaIntelligenceConfig({})!;
@@ -2258,7 +2225,7 @@ function registerIpc(): void {
         intelligence.provider === "apple"
           ? await appleChat(
               // e2e swaps in a stand-in: the real model is slow and not on every Mac.
-              process.env.AYA_E2E_APPLE_HELPER || bundledDistElectronHelperPath(__dirname, "aya-local-summary"),
+              process.env.AYA_E2E_APPLE_HELPER || appleHelperPath(),
               system,
               user,
               opts,
@@ -2268,13 +2235,12 @@ function registerIpc(): void {
       return result.content;
     };
   };
-  ipcMain.handle("teams:draft-role", async (_e, team: unknown, roleId: unknown, config: unknown) =>
-    draftRole(
-      validateTeamDefinition(team, "teams:draft-role"),
-      requireString(roleId, "teams:draft-role.roleId"),
-      intelligenceChat(config, ROLE_DRAFT_CHAT),
-    ),
-  );
+  registerTeamIpc({
+    ipcMain,
+    onBeforeQuit: (teardown) => app.once("before-quit", teardown),
+    team: teamDeps,
+    intelligenceChat,
+  });
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
     const request = validateSpawnRequest(req);
     // A broken presets.json must not stop panes from spawning.
@@ -3106,13 +3072,11 @@ app.whenReady().then(async () => {
     // Returned, not fire-and-forget: the boolean is how pane-send learns the
     // pane was dead, and dropping it made host rejections unhandled.
     writePane: (terminalId, data) => ptyHost.write(terminalId, data),
-    teamHome: AYA_HOME,
-    headCommit,
-    holdReason: (terminalId) => ptyHost.holdReason(terminalId),
+    team: teamDeps,
     onRequest: (request, caller) => {
       // Aya's own automatic-status hooks call `aya status` from inside every
       // Claude/Codex pane; counting them would read as ~100% adoption (#121).
-      if (!caller.terminalId || caller.via === "hook") return;
+      if (!caller.terminalId || caller.via === HOOK_VIA) return;
       void cliAdoption
         .called({
           terminalId: caller.terminalId,
@@ -3283,11 +3247,7 @@ app.on("before-quit", () => {
 // once the replacement GPU process should be up, nudge renderers to re-run
 // their existing WebGL/PTY repair path - belt-and-suspenders over Chromium's
 // own repaint.
-const diagnosticsLog = createPtyLog(path.join(AYA_HOME, "diagnostics.log"));
-// Delays after a GPU death at which we ask renderers to heal. The first covers
-// the typical relaunch window; the second is a cheap safety net (the heal is a
-// no-op when the WebGL context is already live again).
-const GPU_HEAL_NUDGE_DELAYS_MS = [1200, 3000];
+const diagnosticsLog = createPtyLog(DIAGNOSTICS_LOG_FILE);
 // Live heal timers: a burst of deaths must not accumulate them.
 const gpuHealTimers = new Set<NodeJS.Timeout>();
 app.on("child-process-gone", (_event, details) => {

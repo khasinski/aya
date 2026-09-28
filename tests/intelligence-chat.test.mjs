@@ -125,3 +125,11 @@ test("providerChat goes to the provider the config names", async () => {
   const ollama = await providerChat({ ...base, provider: "ollama" }, "s", "u", { ...OPTS, timeoutMs: 2000 });
   assert.notEqual(ollama.ok === false && ollama.error, "missing-api-config");
 });
+
+test("the recommended Ollama model and Ollama's URLs have one electron-side definition", async () => {
+  const m = await import("../dist-electron/intelligence-chat.js");
+  assert.equal(m.RECOMMENDED_OLLAMA_MODEL, "gemma4:e4b");
+  assert.equal(m.OLLAMA_BASE_URL, "http://localhost:11434");
+  assert.equal(m.OLLAMA_OPENAI_BASE_URL, "http://localhost:11434/v1");
+  assert.equal(openAiBaseUrl(m.OLLAMA_BASE_URL), m.OLLAMA_OPENAI_BASE_URL);
+});

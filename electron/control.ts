@@ -16,7 +16,7 @@ import {
   tailForPaneRead,
 } from "./pane-target";
 import { CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
-import { handleTeamRequest } from "./team-control";
+import { handleTeamRequest, type TeamControlDeps } from "./team-control";
 import type { ControlStatusUpdate, ProjectConfig } from "./types";
 
 // Max control-socket message size before rejecting the request (bytes).
@@ -32,6 +32,10 @@ export const CONTROL_LINGER_MS = 2_000;
 /** 150 ms idle gap before pane-send's Enter: in one chunk it reads as a paste and
  *  never submits. Measured: codex-cli 0.153.4 needs 50 ms, Claude Code 120 ms. */
 export const PANE_SEND_SUBMIT_DELAY_MS = 150;
+
+/** Bracketed-paste markers; src/snippet-payload.ts names the same pair. */
+export const PASTE_START = "\x1b[200~";
+export const PASTE_END = "\x1b[201~";
 
 /** Anywhere a status update can be delivered: real BrowserWindows plus the
  *  Aya Web server's virtual sink (which fans out to WebSocket clients). */
@@ -58,12 +62,8 @@ export interface ControlServerOptions {
   openProject: (directory: string) => void;
   /** Every parsed request, with the pane it came from (adoption, #117). */
   onRequest?: (request: ControlRequest, caller: ControlCaller) => void;
-  /** Aya home whose teams/ holds assignments and logs; teams are off without it. */
-  teamHome?: string;
-  /** Why a pane must not be typed into now (approval prompt, draft, shell). */
-  holdReason?: (terminalId: string) => Promise<string | null>;
-  /** The project's current commit, stamped on team messages. */
-  headCommit?: (directory: string) => Promise<string | null>;
+  /** What `aya team` runs on (the same deps as the team runner); teams are off without it. */
+  team?: TeamControlDeps;
   /** Test-only override of the idle reap window. */
   idleTimeoutMs?: number;
 }
@@ -112,12 +112,12 @@ export function deliverTeamMessage(
   terminalId: string,
   text: string,
 ): Promise<void> {
-  return deliverToPane(writePane, terminalId, terminalId, `\x1b[200~${text}\x1b[201~`, true);
+  return deliverToPane(writePane, terminalId, terminalId, `${PASTE_START}${text}${PASTE_END}`, true);
 }
 
 /** Types text into a pane, then Enter when `submit`. Serialized per terminal:
  *  the 150 ms submit gap splits a send into two writes that must not interleave. */
-export function deliverToPane(
+function deliverToPane(
   writePane: NonNullable<ControlServerOptions["writePane"]>,
   terminalId: string,
   name: string,
@@ -196,15 +196,8 @@ async function handleRequest(
     return handlePaneRequest(request, options);
   }
   if (request.type === "team-whoami" || request.type === "team-send" || request.type === "team-inbox") {
-    const { listProjects, writePane, teamHome } = options;
-    if (!listProjects || !writePane || !teamHome) throw new Error("teams are not available");
-    return handleTeamRequest(request, caller.terminalId, {
-      teamHome,
-      listProjects,
-      deliver: (terminalId, text) => deliverTeamMessage(writePane, terminalId, text),
-      headCommit: options.headCommit ?? (async () => null),
-      holdReason: options.holdReason ?? (async () => null),
-    });
+    if (!options.team) throw new Error("teams are not available");
+    return handleTeamRequest(request, caller.terminalId, options.team);
   }
   if (request.type === "focus") {
     focusWindow(win);

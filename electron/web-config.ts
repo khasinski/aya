@@ -18,8 +18,18 @@ export const WEB_CONFIG_FILE = path.join(AYA_HOME, "web.json");
 // Unassigned-ish default; deliberately not 7681 (ttyd) or common dev ports.
 export const DEFAULT_WEB_PORT = 7683;
 export const DEFAULT_WEB_HOST = "0.0.0.0";
+export const LOOPBACK_HOST = "127.0.0.1";
+
+/** True for a listen address that binds every interface (IPv4 or IPv6). */
+export function isWildcardHost(host: string): boolean {
+  return host === "0.0.0.0" || host === "::";
+}
 
 const SCRYPT_KEYLEN = 32;
+// Random bytes in a generated password (~78 bits) and in a password salt.
+export const PASSWORD_BYTES = 10;
+export const SALT_BYTES = 16;
+export const MAX_TCP_PORT = 65535;
 
 export interface WebConfig {
   enabled: boolean;
@@ -45,7 +55,7 @@ export function defaultWebUser(): string {
 
 /** URL-safe, human-typeable secret (~78 bits). */
 export function generateWebPassword(): string {
-  return crypto.randomBytes(10).toString("base64url");
+  return crypto.randomBytes(PASSWORD_BYTES).toString("base64url");
 }
 
 export function hashWebPassword(password: string, saltHex: string): string {
@@ -59,7 +69,7 @@ export function webCredentials(
   password: string,
   generated: boolean,
 ): Pick<WebConfig, "passwordHash" | "passwordSalt" | "generatedPassword"> {
-  const passwordSalt = crypto.randomBytes(16).toString("hex");
+  const passwordSalt = crypto.randomBytes(SALT_BYTES).toString("hex");
   return {
     passwordHash: hashWebPassword(password, passwordSalt),
     passwordSalt,
@@ -92,7 +102,7 @@ export function normalizeWebPort(value: unknown): number {
   return typeof value === "number" &&
     Number.isInteger(value) &&
     value >= 1 &&
-    value <= 65535
+    value <= MAX_TCP_PORT
     ? value
     : DEFAULT_WEB_PORT;
 }

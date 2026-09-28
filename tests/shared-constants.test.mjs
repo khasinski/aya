@@ -56,3 +56,10 @@ test("the control socket reaps idle peers after 30s and lingers 2s", () => {
     "the linger backstop must expire before the idle reaper",
   );
 });
+
+test("cli-adoption.json and diagnostics.log live directly in AYA_HOME", async () => {
+  const { AYA_HOME, CLI_ADOPTION_FILE, DIAGNOSTICS_LOG_FILE } = await import("../dist-electron/paths.js");
+  const { join } = await import("node:path");
+  assert.equal(CLI_ADOPTION_FILE, join(AYA_HOME, "cli-adoption.json"));
+  assert.equal(DIAGNOSTICS_LOG_FILE, join(AYA_HOME, "diagnostics.log"));
+});

@@ -343,3 +343,10 @@ test("latestUsageAccountsFromLines reads id/label from a nested payload.account"
   assert.equal(out[0].id, "team-42");
   assert.equal(out[0].label, "Team");
 });
+
+test("MAX_DATE_MS is the ECMAScript Date range limit", async () => {
+  const { MAX_DATE_MS } = await import("../dist-electron/usage-codex.js");
+  assert.equal(MAX_DATE_MS, 8.64e15);
+  assert.doesNotThrow(() => new Date(MAX_DATE_MS).toISOString());
+  assert.throws(() => new Date(MAX_DATE_MS + 1).toISOString(), RangeError);
+});

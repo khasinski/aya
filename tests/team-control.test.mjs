@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
-const { startControlServerOn } = await import("../dist-electron/control.js");
+const { deliverTeamMessage, startControlServerOn } = await import("../dist-electron/control.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
 const { NO_PANE_HOLD, handleTeamRequest, typedTeamMessage } = await import("../dist-electron/team-control.js");
 
@@ -47,26 +47,32 @@ async function setup({ writePane, assign = true, holdReason } = {}) {
   }
   const writes = [];
   const socket = join(root, "aya.sock");
+  const listProjects = async () => [
+    {
+      slug: "game",
+      name: "game",
+      directory: projectDir,
+      tabs: [
+        { id: "pane-t", presetId: "claude", name: "Tester" },
+        { id: "pane-i", presetId: "claude", name: "Claude Account" },
+        { id: "pane-x", presetId: "claude", name: "Other" },
+      ],
+    },
+  ];
+  const write = writePane ?? (async (id, data) => void writes.push({ id, data }));
   const stop = startControlServerOn(socket, {
     getWindow: () => null,
     openProject: () => {},
-    listProjects: async () => [
-      {
-        slug: "game",
-        name: "game",
-        directory: projectDir,
-        tabs: [
-          { id: "pane-t", presetId: "claude", name: "Tester" },
-          { id: "pane-i", presetId: "claude", name: "Claude Account" },
-          { id: "pane-x", presetId: "claude", name: "Other" },
-        ],
-      },
-    ],
+    listProjects,
     readPane: async () => "",
-    writePane: writePane ?? (async (id, data) => void writes.push({ id, data })),
-    teamHome: ayaHome,
-    headCommit: async () => "a1b2c3d",
-    holdReason: holdReason ?? (async () => null),
+    writePane: write,
+    team: {
+      teamHome: ayaHome,
+      listProjects,
+      deliver: (terminalId, text) => deliverTeamMessage(write, terminalId, text),
+      headCommit: async () => "a1b2c3d",
+      holdReason: holdReason ?? (async () => null),
+    },
   });
   const aya = (pane, ...args) =>
     new Promise((done, fail) => {

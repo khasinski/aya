@@ -87,3 +87,24 @@ test("normalizeWebConfig backfills defaults for optional fields", () => {
   assert.ok(parsed.user.length > 0);
   assert.equal(parsed.generatedPassword, undefined);
 });
+
+test("isWildcardHost: 0.0.0.0 and :: listen everywhere, anything else is pinned", async () => {
+  const { isWildcardHost, LOOPBACK_HOST } = await import("../dist-electron/web-config.js");
+  assert.equal(isWildcardHost("0.0.0.0"), true);
+  assert.equal(isWildcardHost("::"), true);
+  for (const host of ["127.0.0.1", "100.64.0.1", "localhost", "", "::1"]) {
+    assert.equal(isWildcardHost(host), false, host);
+  }
+  assert.equal(LOOPBACK_HOST, "127.0.0.1");
+});
+
+test("secret sizes and the port ceiling are pinned", async () => {
+  const m = await import("../dist-electron/web-config.js");
+  assert.equal(m.PASSWORD_BYTES, 10);
+  assert.equal(m.SALT_BYTES, 16);
+  assert.equal(m.MAX_TCP_PORT, 65535);
+  assert.equal(generateWebPassword().length, Math.ceil((m.PASSWORD_BYTES * 8) / 6));
+  assert.equal(webCredentials("pw", false).passwordSalt.length, m.SALT_BYTES * 2);
+  assert.equal(normalizeWebPort(65535), 65535);
+  assert.equal(normalizeWebPort(65536), DEFAULT_WEB_PORT);
+});

@@ -14,7 +14,7 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
-import { AYA_HOME, USAGE_FILE } from "./paths";
+import { AYA_HOME, EXECUTABLE_FILE_MODE, USAGE_FILE } from "./paths";
 import { listPresets } from "./presets";
 import { expandUserPath } from "./usage";
 
@@ -33,8 +33,6 @@ export const HOOK_SCRIPT_FILE = path.join(AYA_HOME, "aya-usage-hook.sh");
 // throttle window, and bound the network call so a hung endpoint can't stall.
 const HOOK_THROTTLE_SECONDS = 300;
 const HOOK_FETCH_TIMEOUT_SECONDS = 10;
-// Executable mode for the generated fetch script (rwxr-xr-x).
-const HOOK_SCRIPT_MODE = 0o755;
 
 export interface UsageHookStatus {
   installed: boolean;
@@ -242,7 +240,7 @@ export async function installUsageHook(): Promise<UsageHookStatus> {
     await writeFileAtomic(settingsPath, JSON.stringify(next, null, 2) + "\n");
   }
   await writeFileAtomic(HOOK_SCRIPT_FILE, hookScriptSource(USAGE_FILE));
-  await fs.chmod(HOOK_SCRIPT_FILE, HOOK_SCRIPT_MODE);
+  await fs.chmod(HOOK_SCRIPT_FILE, EXECUTABLE_FILE_MODE);
   return usageHookStatus();
 }
 

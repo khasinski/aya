@@ -213,3 +213,9 @@ test("websocket requires a session and speaks the bridge protocol", async () => 
     await cleanup();
   }
 });
+
+test("session tokens are 32 random bytes; hashed assets cache for a year", async () => {
+  const m = await import("../dist-electron/web-server.js");
+  assert.equal(m.SESSION_TOKEN_BYTES, 32);
+  assert.equal(m.IMMUTABLE_MAX_AGE_S, 31_536_000);
+});

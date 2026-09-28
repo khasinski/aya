@@ -23,6 +23,8 @@ export const DEFAULT_CODEX_HOME =
 
 // Bound the per-poll work: only the few most-recent rollouts are read/parsed.
 const MAX_ROLLOUTS_SCANNED = 20;
+// The ECMAScript Date range: past it, toISOString throws RangeError.
+export const MAX_DATE_MS = 8.64e15;
 
 export interface CodexUsageSource {
   id: string;
@@ -38,7 +40,7 @@ function isoFromUnixSeconds(sec: unknown): string | undefined {
   // propagates through the usage:get-codex IPC handler into an uncaught
   // rejection that silently stops the chip from refreshing (#93). An
   // out-of-range value means "no reset time", not a poisoned snapshot.
-  if (Math.abs(ms) > 8.64e15) return undefined;
+  if (Math.abs(ms) > MAX_DATE_MS) return undefined;
   return new Date(ms).toISOString();
 }
 
