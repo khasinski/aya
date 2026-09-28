@@ -1,5 +1,9 @@
 import { test, expect } from "./fixtures";
 import { sidebarRow } from "./helpers/sidebar";
+import { GIT_STATUS_POLL_INTERVAL_MS } from "../src/ui-timing";
+
+/** The cwd poll runs on the git cadence; a few ticks cover a loaded machine. */
+const GIT_TICKS_TIMEOUT_MS = 5 * GIT_STATUS_POLL_INTERVAL_MS;
 
 // The status bar's git surface describes the ACTIVE TERMINAL's checkout. With a
 // tab bound to a git worktree, the project directory's branch and diff are the
@@ -55,9 +59,8 @@ test("status bar follows a `cd` into a worktree", async ({ window, seeded }) => 
   await window.keyboard.insertText(`cd ${seeded.worktreeDir}`);
   await window.keyboard.press("Enter");
 
-  // The cwd poll runs on the git cadence, so allow a couple of ticks.
   await expect(statusbar.locator(".aya-statusbar-item", { hasText: "wt/bar" })).toBeVisible({
-    timeout: 15000,
+    timeout: GIT_TICKS_TIMEOUT_MS,
   });
   await expect(statusbar.locator(".aya-statusbar-worktree")).toContainText("wt-bar");
   await expect(
@@ -68,7 +71,7 @@ test("status bar follows a `cd` into a worktree", async ({ window, seeded }) => 
   await window.keyboard.insertText(`cd ${seeded.projectDir}`);
   await window.keyboard.press("Enter");
   await expect(statusbar.locator(".aya-statusbar-item", { hasText: "feature/foo" })).toBeVisible({
-    timeout: 15000,
+    timeout: GIT_TICKS_TIMEOUT_MS,
   });
 });
 
