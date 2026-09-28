@@ -54,8 +54,17 @@ function clock(iso: string): string {
   return `${String(time.getHours()).padStart(2, "0")}:${String(time.getMinutes()).padStart(2, "0")}`;
 }
 
-/** Why a message to a role with no pane waits in its inbox. */
 export const NO_PANE_HOLD = "no pane assigned";
+
+/** The role's pane and why a message must not be typed into it now, or null. */
+export async function roleHold(
+  deps: Pick<TeamControlDeps, "holdReason">,
+  store: TeamStore,
+  role: string,
+): Promise<{ pane: string | null; hold: string | null }> {
+  const pane = await store.paneOf(role);
+  return { pane, hold: pane ? await deps.holdReason(pane) : NO_PANE_HOLD };
+}
 
 /** Control bytes would submit extra turns without the header; flatten them. */
 function oneLine(text: string): string {
@@ -67,7 +76,6 @@ function teamHeader(team: string, from: string, time: string, commit: string | n
   return `[team ${team} | from ${from} | ${clock(time)}${commit ? ` | ${commit}` : ""}]`;
 }
 
-/** A message as it is typed into the receiver's pane. */
 export function typedTeamMessage(team: string, from: string, time: string, commit: string | null, text: string): string {
   return oneLine(`${teamHeader(team, from, time, commit)} ${text}`);
 }
@@ -81,8 +89,8 @@ export async function deliverAndLog(
   message: { team: string; from: string; to: string; text: string },
 ): Promise<{ entry: TeamMessage; failure: string | null }> {
   const commit = await deps.headCommit(project.directory);
-  const pane = await store.paneOf(message.to);
-  let failure = pane ? await deps.holdReason(pane) : NO_PANE_HOLD;
+  const { pane, hold } = await roleHold(deps, store, message.to);
+  let failure = hold;
   if (pane && !failure) {
     try {
       await deps.deliver(pane, typedTeamMessage(message.team, message.from, new Date().toISOString(), commit, message.text));

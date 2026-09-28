@@ -7,9 +7,9 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { teamProject } from "./helpers/team.mjs";
 
-const { listTeams, saveTeam, assignRole, releasePaneEverywhere } = await import("../dist-electron/team-admin.js");
+const { LOG_TAIL, listTeams, saveTeam, assignRole, releasePaneEverywhere } = await import("../dist-electron/team-admin.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
-const { teamFile, teamsDir } = await import("../dist-electron/team-files.js");
+const { teamFile, teamNames, teamsDir } = await import("../dist-electron/team-files.js");
 
 const TEAM = {
   name: "ux-review",
@@ -92,6 +92,8 @@ test("a team that would not read back the same from its file is refused", async 
     await assert.rejects(saveTeam(t.teamHome, t.project, broken), /tester.*would not read back/);
     const twice = { ...TEAM, roles: [{ ...TEAM.roles[0], mustNot: "a\nMust not: b", responsibilities: "" }, TEAM.roles[1]] };
     await assert.rejects(saveTeam(t.teamHome, t.project, twice), /tester.*would not read back/);
+    const crlf = { ...TEAM, roles: [{ ...TEAM.roles[0], responsibilities: "Plays.\r\nReports." }, TEAM.roles[1]] };
+    await assert.rejects(saveTeam(t.teamHome, t.project, crlf), /tester.*would not read back/);
     const spaced = { ...TEAM, protocol: "  One round every 30 minutes.  " };
     await saveTeam(t.teamHome, t.project, spaced);
     assert.deepEqual((await listTeams(t.teamHome, t.project))[0].definition.protocol, "One round every 30 minutes.");
@@ -136,6 +138,7 @@ test("a repo team never saved in Aya is listed from the file, marked as not yet 
     assert.deepEqual(teams.map((x) => x.name), ["broken", "ux-review"]);
     assert.match(teams[0].error, /Must not|two roles/);
     assert.equal(teams[0].definition, null);
+    assert.equal(teams[0].repoChanged, false);
   } finally {
     t.cleanup();
   }
@@ -241,4 +244,48 @@ test("a project's teams live in .aya/teams, one <name>.md each", () => {
   const project = { slug: "game", name: "game", directory: "/work/game", tabs: [] };
   assert.equal(teamsDir(project), join("/work/game", ".aya", "teams"));
   assert.equal(teamFile(project, "ux-review"), join("/work/game", ".aya", "teams", "ux-review.md"));
+});
+
+test("a held message the receiver has since had shows as delivered; Aya's own never do", async () => {
+  const t = setup();
+  try {
+    await saveTeam(t.teamHome, t.project, TEAM);
+    const store = new TeamStore(teamDir(t.teamHome, "game", "ux-review"));
+    const held = (from, text) => store.append({ from, to: "implementer", commit: null, text, delivered: false, held: "busy" });
+    await held("aya", "round 1");
+    await held("tester", "had");
+    await held("tester", "not yet");
+    await store.markRead("implementer", 2);
+    const [team] = await listTeams(t.teamHome, t.project);
+    assert.deepEqual(team.log.map((m) => [m.text, m.delivered]), [["round 1", false], ["had", true], ["not yet", false]]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("the team comes back with exactly the last LOG_TAIL messages", async () => {
+  const t = setup();
+  try {
+    await saveTeam(t.teamHome, t.project, TEAM);
+    const store = new TeamStore(teamDir(t.teamHome, "game", "ux-review"));
+    for (let i = 1; i <= LOG_TAIL + 1; i++) {
+      await store.append({ from: "tester", to: "implementer", commit: null, text: String(i), delivered: true });
+    }
+    const [team] = await listTeams(t.teamHome, t.project);
+    assert.equal(team.log.length, LOG_TAIL);
+    assert.equal(team.log[0].text, "2");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("only .md files in .aya/teams are teams", async () => {
+  const t = setup();
+  try {
+    await saveTeam(t.teamHome, t.project, TEAM);
+    writeFileSync(join(t.project.directory, ".aya", "teams", "notes.txt"), "not a team");
+    assert.deepEqual(await teamNames(t.project), ["ux-review"]);
+  } finally {
+    t.cleanup();
+  }
 });

@@ -24,6 +24,13 @@ export function openAiBaseUrl(baseUrl: string): string {
   return /\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/v1`;
 }
 
+function messages(system: string, user: string) {
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+}
+
 async function post(
   url: string,
   headers: Record<string, string>,
@@ -63,10 +70,7 @@ export async function ollamaChat(
       model,
       stream: false,
       think: false,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
+      messages: messages(system, user),
       options: { temperature: opts.temperature, num_predict: opts.maxTokens },
     },
     opts.timeoutMs,
@@ -94,10 +98,7 @@ export async function openAiChat(
       temperature: opts.temperature,
       max_tokens: opts.maxTokens,
       think: false,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
+      messages: messages(system, user),
     },
     opts.timeoutMs,
     "api-http",

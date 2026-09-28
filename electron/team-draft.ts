@@ -1,10 +1,8 @@
 // Drafts a team role with Aya Intelligence from its name and the rest of the
-// team. The model returns fields; the code normalizes them, and the user edits
-// before Save team.
+// team; the model returns fields, the code normalizes them.
 
 import type { RoleDraft, SendRoute, TeamDefinition, TeamRole } from "./types";
 
-/** Sends one system + user message and returns the reply text. */
 export type Chat = (system: string, user: string) => Promise<string>;
 
 // A role draft is three short fields; room for them, not for an essay. Apple's
@@ -62,8 +60,10 @@ function modelRoutes(value: unknown): Map<string, string> {
   };
   if (Array.isArray(value)) {
     for (const item of value) {
-      if (item && typeof item === "object") add((item as Record<string, unknown>).to ?? (item as Record<string, unknown>).role, (item as Record<string, unknown>).what);
-      else add(item, "");
+      if (item && typeof item === "object") {
+        const route = item as Record<string, unknown>;
+        add(route.to ?? route.role, route.what);
+      } else add(item, "");
     }
   } else if (value && typeof value === "object") {
     for (const [to, what] of Object.entries(value)) add(to, what);

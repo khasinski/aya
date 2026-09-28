@@ -16,7 +16,6 @@ export function teamFile(project: ProjectConfig, name: string): string {
   return path.join(teamsDir(project), `${name}.md`);
 }
 
-/** The project's team names, sorted; none when the folder is missing. */
 export async function teamNames(project: ProjectConfig): Promise<string[]> {
   try {
     const files = await fs.readdir(teamsDir(project));
@@ -32,7 +31,6 @@ export async function loadTeam(project: ProjectConfig, name: string, store: Team
   return parseTeamFile(name, text);
 }
 
-/** The team and role a pane plays in this project, or null. */
 export async function paneTeamRole(
   teamHome: string,
   project: ProjectConfig,

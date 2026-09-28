@@ -4,19 +4,11 @@
 import { promises as fs } from "node:fs";
 import { writeFileAtomic } from "./atomic-write";
 import { teamFile, teamNames } from "./team-files";
-import { openTeamStore } from "./team-store";
+import { openTeamStore, readText } from "./team-store";
 import { MUST_NOT_FIELD, SECTION_MARKER, SENDS_TO_FIELD, TEAM_SYSTEM_SENDER, parseTeamFile, serializeTeam } from "./teams";
 import type { ProjectConfig, TeamDefinition, TeamSummary } from "./types";
 
 export const LOG_TAIL = 50;
-
-async function readText(file: string): Promise<string | null> {
-  try {
-    return await fs.readFile(file, "utf-8");
-  } catch {
-    return null;
-  }
-}
 
 function repoParsed(name: string, repo: string | null): TeamDefinition | null {
   try {

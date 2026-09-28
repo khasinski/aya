@@ -245,6 +245,7 @@ test("a typed team message is its header and text on one line; a role with no pa
   const at = new Date(2026, 0, 2, 9, 5).toISOString();
   assert.equal(typedTeamMessage("ux-review", "tester", at, "abc1234", "a\nb\x1b c "), "[team ux-review | from tester | 09:05 | abc1234] a b  c");
   assert.equal(typedTeamMessage("ux-review", "aya", at, null, "hi"), "[team ux-review | from aya | 09:05] hi");
+  assert.equal(typedTeamMessage("ux-review", "aya", at, null, "a\x7fb"), "[team ux-review | from aya | 09:05] a b");
   assert.equal(NO_PANE_HOLD, "no pane assigned");
 });
 
@@ -260,5 +261,30 @@ test("a pane with no role, or a role the saved team no longer has, gets the one 
     await assert.rejects(handleTeamRequest({ type: "team-whoami" }, undefined, deps), { message: "run aya team inside an Aya pane" });
   } finally {
     cleanup();
+  }
+});
+
+test("whoami of a role that sends to nobody says so", async () => {
+  const t = await setup();
+  try {
+    await t.store.assign("designer", "pane-x");
+    assert.match((await t.aya("pane-x", "whoami")).stdout, /\nsends to  \(nobody\)\n/);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("inbox shows every waiting message once, then none", async () => {
+  const t = await setup();
+  try {
+    await t.store.releasePane("pane-i");
+    await t.aya("pane-t", "send", "implementer", "first");
+    await t.aya("pane-t", "send", "implementer", "second");
+    await t.store.assign("implementer", "pane-i");
+    const inbox = (await t.aya("pane-i", "inbox")).stdout;
+    assert.match(inbox, /^#1 .*first\n#2 .*second\n$/);
+    assert.equal((await t.aya("pane-i", "inbox")).stdout, "no unread messages\n");
+  } finally {
+    t.cleanup();
   }
 });

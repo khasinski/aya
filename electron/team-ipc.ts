@@ -18,16 +18,13 @@ export interface TeamIpcDeps {
   /** Registers a teardown for app quit (Electron's before-quit). */
   onBeforeQuit: (teardown: () => void) => void;
   team: TeamControlDeps;
-  /** A chat with the configured Aya Intelligence, for teams:draft-role. */
   intelligenceChat: (config: unknown, opts: ChatOptions) => Chat;
 }
 
-/** Registers the teams:* handlers and starts redelivery; returns the runner. */
 export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
   const { ipcMain, team: teamDeps } = deps;
   const { teamHome } = teamDeps;
   const teamRunner = new TeamRunner(teamDeps);
-  // Messages held for a busy or missing pane go out once it is free again.
   const redelivery = setInterval(
     () => void teamRunner.redeliverWaiting().catch((err) => console.warn("[aya] held team messages not retried:", err)),
     TEAM_REDELIVERY_MS,
@@ -37,19 +34,12 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
     teamRunner.stopAll();
   });
   void teamRunner.restore().catch((err) => console.warn("[aya] team rounds not restored:", err));
-  const teamArgs = (slug: unknown, team: unknown, channel: string): [string, string] => [
-    requireString(slug, `${channel}.projectSlug`),
-    requireString(team, `${channel}.team`),
-  ];
-  ipcMain.handle("teams:start", (_e, slug: unknown, team: unknown) =>
-    teamRunner.start(...teamArgs(slug, team, "teams:start")),
-  );
-  ipcMain.handle("teams:pause", (_e, slug: unknown, team: unknown) =>
-    teamRunner.pause(...teamArgs(slug, team, "teams:pause")),
-  );
-  ipcMain.handle("teams:resume", (_e, slug: unknown, team: unknown) =>
-    teamRunner.resume(...teamArgs(slug, team, "teams:resume")),
-  );
+  for (const action of ["start", "pause", "resume"] as const) {
+    const channel = `teams:${action}`;
+    ipcMain.handle(channel, (_e, slug: unknown, team: unknown) =>
+      teamRunner[action](requireString(slug, `${channel}.projectSlug`), requireString(team, `${channel}.team`)),
+    );
+  }
   const teamProject = async (slug: unknown, channel: string): Promise<ProjectConfig> =>
     projectBySlug(await teamDeps.listProjects(), requireString(slug, `${channel}.projectSlug`));
   ipcMain.handle("teams:list", async (_e, slug: unknown) =>

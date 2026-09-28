@@ -163,3 +163,22 @@ test("an agent that has not drawn its composer yet is still starting up; once se
   }
   assert.equal(await hold(["┃  Ask anything"], { agent: "opencode" }), null, "no composer rule for opencode: never 'starting'");
 });
+
+test("every agent with a known composer is starting up until it draws one", async () => {
+  for (const agent of ["claude", "codex", "grok"]) {
+    assert.match(await hold([" loading..."], { agent }), /starting up/, agent);
+  }
+});
+
+test("a composer seen only by the background scan still counts as started", async () => {
+  openVtPane("scan", 80, 24, () => {}, "claude", false);
+  try {
+    writeVtPane("scan", `${RULE}\r\n❯ \r\n${RULE}\r\n`);
+    await new Promise((r) => setTimeout(r, 400));
+    writeVtPane("scan", "\x1b[2J\x1b[H⏺ a long answer that pushed the composer off screen\r\n");
+    await settle();
+    assert.equal(paneHold("scan"), null);
+  } finally {
+    closeVtPane("scan");
+  }
+});

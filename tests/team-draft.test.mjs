@@ -112,3 +112,19 @@ test("the draft waits long enough for Apple's on-device model (13-44 s measured)
 test("a role draft asks for a short, low-temperature answer", () => {
   assert.deepEqual(ROLE_DRAFT_CHAT, { temperature: 0.2, maxTokens: 400, timeoutMs: 90_000 });
 });
+
+test("a field at its cap stays whole; a longer one is cut at a word boundary", () => {
+  const t = team([role("a"), role("b")]);
+  const exact = "no ".repeat(MUST_NOT_MAX / 3 - 1) + "yes";
+  assert.equal(exact.length, MUST_NOT_MAX);
+  assert.equal(parseRoleDraft(JSON.stringify({ mustNot: exact }), t, "a").mustNot, exact);
+  const long = "alpha beta gamma ".repeat(20).trim();
+  const cut = parseRoleDraft(JSON.stringify({ mustNot: long }), t, "a").mustNot;
+  assert.ok(cut.length <= MUST_NOT_MAX);
+  assert.ok(long.startsWith(cut) && long[cut.length] === " ", `cut mid-word: "${cut}"`);
+});
+
+test("a role not yet named in the editor is not one of the others", () => {
+  assert.match(roleDraftPrompt(team([role("a"), role(""), role("b")]), "a"), /other roles in the team: b\./);
+  assert.match(roleDraftPrompt(team([role("a"), role("")]), "a"), /It has no other roles yet\./);
+});
