@@ -1,10 +1,8 @@
 // Drafts a team role with Aya Intelligence from its name and the rest of the
-// team. The model returns fields; the code normalizes them, and the user edits
-// before Save team.
+// team; the model returns fields, the code normalizes them.
 
 import type { RoleDraft, SendRoute, TeamDefinition, TeamRole } from "./types";
 
-/** Sends one system + user message and returns the reply text. */
 export type Chat = (system: string, user: string) => Promise<string>;
 
 // A role draft is three short fields; room for them, not for an essay. Apple's

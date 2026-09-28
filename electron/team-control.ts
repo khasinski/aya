@@ -54,7 +54,6 @@ function clock(iso: string): string {
   return `${String(time.getHours()).padStart(2, "0")}:${String(time.getMinutes()).padStart(2, "0")}`;
 }
 
-/** Why a message to a role with no pane waits in its inbox. */
 export const NO_PANE_HOLD = "no pane assigned";
 
 /** Control bytes would submit extra turns without the header; flatten them. */
@@ -67,7 +66,6 @@ function teamHeader(team: string, from: string, time: string, commit: string | n
   return `[team ${team} | from ${from} | ${clock(time)}${commit ? ` | ${commit}` : ""}]`;
 }
 
-/** A message as it is typed into the receiver's pane. */
 export function typedTeamMessage(team: string, from: string, time: string, commit: string | null, text: string): string {
   return oneLine(`${teamHeader(team, from, time, commit)} ${text}`);
 }

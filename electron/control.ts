@@ -104,9 +104,8 @@ async function handlePaneRequest(
   return { terminalId, projectSlug, name };
 }
 
-/** A team message into an agent's pane: as a bracketed paste, then Enter.
- *  Raw typing let Codex swallow the Enter after 600+ characters (measured);
- *  team messages never go to a shell, which is held, so paste is safe here. */
+/** A team message as a bracketed paste, then Enter: raw typing let Codex swallow
+ *  the Enter after 600+ characters (measured). Shells are held, so paste is safe. */
 export function deliverTeamMessage(
   writePane: NonNullable<ControlServerOptions["writePane"]>,
   terminalId: string,

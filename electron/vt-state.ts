@@ -18,8 +18,7 @@ import type { AgentKind } from "./presets";
 // Only the visible screen matters for "what is on screen right now", and
 // scrollback would grow a buffer per pane in the host process for no gain.
 const VT_SCROLLBACK_LINES = 0;
-// Smallest mirror size. Not the PTY's MIN_PTY_COLS x MIN_PTY_ROWS (4x2): the
-// two differ today and this only names the mirror's own clamp.
+// The mirror's own clamp, not the PTY's MIN_PTY_COLS x MIN_PTY_ROWS (4x2).
 const MIN_MIRROR_SIZE = 1;
 // The screen is scanned at most this often per pane. Writes are applied
 // immediately; only the (comparatively expensive) scan is rate-limited, so a
@@ -177,9 +176,8 @@ type ComposerState = "draft" | "numbered-choice" | "empty" | "absent";
 // Agents whose composer COMPOSER_RE knows; others are never "starting up".
 const COMPOSER_AGENTS: ReadonlySet<AgentKind | undefined> = new Set(["claude", "codex", "grok"]);
 
-/** Classify the lowest prompt row. Placeholders are dim, and the box is drawn
- * with frame characters, so both are skipped. Numbered options are a hold,
- * but never user text. */
+/** Classify the lowest prompt row. Dim placeholders and box frame characters
+ *  are not typed text. */
 function composerState(terminal: Terminal): ComposerState {
   const buffer = terminal.buffer.active;
   for (let y = buffer.length - 1; y >= 0; y -= 1) {

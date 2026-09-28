@@ -19,7 +19,6 @@ export function teamDir(ayaHome: string, project: string, team: string): string 
   return path.join(ayaHome, "teams", project, team);
 }
 
-// A team directory's files, one name per purpose.
 const TEAM_FILES = {
   assignments: "assignments.json",
   state: "state.json",
@@ -154,7 +153,6 @@ export class TeamStore {
   }
 }
 
-/** The store of one team of a project, under ~/.aya/teams. */
 export function openTeamStore(ayaHome: string, project: string, team: string): TeamStore {
   return new TeamStore(teamDir(ayaHome, project, team));
 }

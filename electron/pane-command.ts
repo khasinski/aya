@@ -25,9 +25,8 @@ export function isShellCommand(command: string): boolean {
   return /^(?:\$SHELL|(?:\S*\/)?(?:bash|zsh|sh|fish))(?:\s+-[a-z]+)*\s*$/.test(command.trim());
 }
 
-// Set by a running Claude Code session for its own children. Aya started from
-// such a session must not hand them to its panes: Claude would then save no
-// transcript (nothing for --continue) and each pane would get its token.
+// Set by a running Claude Code session for its children. Passed on to panes,
+// Claude would save no transcript (nothing for --continue) and leak its token.
 const SESSION_MARKERS = new Set([
   "CLAUDECODE",
   "CLAUDE_CODE_CHILD_SESSION",

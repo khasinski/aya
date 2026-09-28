@@ -67,8 +67,8 @@ export class TeamRunner {
     return result;
   }
 
-  /** A pane given a role in a running team learns it now, as Start would have
-   *  told it; returns why it was not typed. Otherwise Start tells it. */
+  /** A pane given a role in an already running team gets the delivery test now;
+   *  returns why it was not typed. */
   async introduce(slug: string, name: string, roleId: string): Promise<string | null> {
     const { project, store, team } = await this.open(slug, name);
     if (!(await store.state()).running) return null;
@@ -111,9 +111,8 @@ export class TeamRunner {
     this.arm(slug, name, team);
   }
 
-  /** Types the messages that waited in an inbox into panes that are free now,
-   *  in order and with their own headers; returns how many. A paused team is
-   *  skipped: it takes no messages, as aya team send refuses them. */
+  /** Types waiting inbox messages into panes that are free now; returns how many.
+   *  A paused team is skipped, as aya team send refuses it. */
   redeliverWaiting(): Promise<number> {
     // A call during a pass shares it: two passes would both read and type one message.
     this.redelivering ??= this.redeliverPass().finally(() => (this.redelivering = null));
