@@ -9,7 +9,7 @@ import type {
   RemoteHostInfo,
   RemoteProjectCreateResult,
 } from "./types";
-import { REMOTE_SOCKET_NAME } from "./paths";
+import { AYA_HOME_DIRNAME, REMOTE_SOCKET_NAME } from "./paths";
 import { REMOTE_PROTOCOL_VERSION, type RemoteMessage } from "./remote-protocol";
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -22,7 +22,7 @@ const net = require("node:net");
 const id = process.argv[1];
 const payload = Buffer.from(process.argv[2], "base64").toString("utf8");
 const socketPath = process.env.AYA_REMOTE_SOCKET ||
-  (process.env.AYA_HOME ? process.env.AYA_HOME + "/${REMOTE_SOCKET_NAME}" : process.env.HOME + "/.aya/${REMOTE_SOCKET_NAME}");
+  (process.env.AYA_HOME ? process.env.AYA_HOME + "/${REMOTE_SOCKET_NAME}" : process.env.HOME + "/${AYA_HOME_DIRNAME}/${REMOTE_SOCKET_NAME}");
 const client = net.createConnection(socketPath);
 let buffer = "";
 let settled = false;
