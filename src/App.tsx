@@ -41,6 +41,7 @@ import { useStable } from "./hooks/useStableIdentity";
 import { sameArrayItems, sameRecordValues } from "./stable-identity";
 import { paletteToChromeVars, paletteToThemeColors } from "./theme-skin";
 import { localSummaryUnavailableMessage } from "./local-summary-errors";
+import { LOCAL_SUMMARY_MAX_LINES } from "./main-mirrors";
 import type { SettingsTab } from "./settings-tabs";
 import {
   useDockBadge,
@@ -172,7 +173,6 @@ const LOCAL_SUMMARY_DEBOUNCE_MS = 10_000;
 const PROJECT_STATE_SAVE_DEBOUNCE_MS = 150;
 const LOCAL_SUMMARY_MIN_UPDATE_MS = 2 * 60 * 1000;
 const LOCAL_SUMMARY_MIN_NEW_LINES = 8;
-const LOCAL_SUMMARY_MAX_LINES = 30;
 // Fewer output lines than this are "not enough output" to summarize.
 const LOCAL_SUMMARY_MIN_LINES = 2;
 // Cleaned output lines shorter than this (prompts, stray glyphs) are dropped.

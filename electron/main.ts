@@ -156,7 +156,11 @@ import {
 } from "./status-hook-codex";
 import { searchHarnessSessions } from "./harness-search";
 import { listMonitoredSessions } from "./session-monitor";
-import { normalizeLocalSummaryError, SUMMARY_TEXT_MAX_CHARS } from "./local-summary-errors";
+import {
+  LOCAL_SUMMARY_MAX_LINES,
+  normalizeLocalSummaryError,
+  SUMMARY_TEXT_MAX_CHARS,
+} from "./local-summary-errors";
 import { readRepoProjectConfig } from "./project-local";
 import { repairProcessPath } from "./shell-path";
 import { PtyHostClient } from "./pty-host-client";
@@ -225,7 +229,6 @@ const ABOUT_DIALOG_SIZE = 360;
 // About dialog icon dimensions (square, px)
 const ABOUT_ICON_SIZE = 128;
 const LOCAL_SUMMARY_TIMEOUT_MS = 20_000;
-const LOCAL_SUMMARY_MAX_LINES = 30;
 const LOCAL_SUMMARY_MAX_STDOUT_BYTES = 32 * 1024;
 // Cascade offset for a window opened from another window (File > New Window,
 // tab tear-out), so it doesn't cover its parent exactly.
