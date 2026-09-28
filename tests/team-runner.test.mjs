@@ -215,3 +215,15 @@ test("a round tick never rejects: a closed project or a failing pane only skips 
     t.cleanup();
   }
 });
+
+test("Aya's messages carry the commit in the header, as the log does", async () => {
+  const t = await setup();
+  try {
+    t.deps.headCommit = async () => "abc1234";
+    await t.runner.start("game", "ux-review");
+    assert.match(t.typed[0].text, /^\[team ux-review \| from aya \| \d\d:\d\d \| abc1234\] Delivery test/);
+    assert.equal((await t.store.log()).at(-1).commit, "abc1234");
+  } finally {
+    t.cleanup();
+  }
+});

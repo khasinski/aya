@@ -8,7 +8,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appleChat, ollamaChat, openAiChat, openAiBaseUrl } from "../dist-electron/intelligence-chat.js";
+import { appleChat, ollamaChat, openAiChat, openAiBaseUrl, providerChat } from "../dist-electron/intelligence-chat.js";
 
 const OPTS = { temperature: 0.2, maxTokens: 50, timeoutMs: 5000 };
 
@@ -116,4 +116,12 @@ test("apple: a helper that never answers is killed at the timeout", async () => 
   } finally {
     h.done();
   }
+});
+
+test("providerChat goes to the provider the config names", async () => {
+  const base = { ollamaModel: "aya-test-no-such-model", openAiBaseUrl: "", openAiApiKey: "", openAiModel: "" };
+  // OpenAI with no base URL is refused before any request; Ollama is asked (and fails or answers).
+  assert.deepEqual(await providerChat({ ...base, provider: "openai" }, "s", "u", OPTS), { ok: false, error: "missing-api-config" });
+  const ollama = await providerChat({ ...base, provider: "ollama" }, "s", "u", { ...OPTS, timeoutMs: 2000 });
+  assert.notEqual(ollama.ok === false && ollama.error, "missing-api-config");
 });

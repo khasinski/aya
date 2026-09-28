@@ -1,15 +1,14 @@
 // Start team (a delivery test to every role), Aya-owned rounds on the team's
 // cadence, and the team pause. Rounds live in Aya, not in one agent session.
 
-import { loadTeam, oneLine, teamHeader, type TeamControlDeps } from "./team-control";
 import { listTeams } from "./team-admin";
+import { deliverAndLog, type TeamControlDeps } from "./team-control";
+import { loadTeam, projectBySlug } from "./team-files";
 import { TeamStore, teamDir } from "./team-store";
 import type { TeamDefinition } from "./teams";
 import type { ProjectConfig, TeamStartResult } from "./types";
 
-export type TeamRunnerDeps = Omit<TeamControlDeps, "headCommit"> & {
-  headCommit?: TeamControlDeps["headCommit"];
-};
+export type TeamRunnerDeps = TeamControlDeps;
 
 /** Runs `fn` every `ms`; returns a cancel. Injected so tests need no clock. */
 export type Schedule = (fn: () => Promise<void>, ms: number) => () => void;
@@ -29,33 +28,14 @@ export class TeamRunner {
   ) {}
 
   private async open(slug: string, name: string) {
-    const project = (await this.deps.listProjects()).find((p) => p.slug === slug);
-    if (!project) throw new Error(`project ${slug} is not open`);
+    const project = projectBySlug(await this.deps.listProjects(), slug);
     const store = new TeamStore(teamDir(this.deps.teamHome, slug, name));
     return { project, store, team: await loadTeam(project, name, store) };
   }
 
-  /** Types a message from Aya unless the pane is held; logs it either way. */
-  private async fromAya(
-    project: ProjectConfig,
-    store: TeamStore,
-    team: TeamDefinition,
-    role: string,
-    text: string,
-  ): Promise<string | null> {
-    const pane = await store.paneOf(role);
-    let held = pane ? await this.deps.holdReason(pane) : "has no pane";
-    const time = new Date().toISOString();
-    if (pane && !held) {
-      try {
-        await this.deps.deliver(pane, `${teamHeader(team.name, "aya", time, null)} ${oneLine(text)}`);
-      } catch (err) {
-        held = err instanceof Error ? err.message : String(err);
-      }
-    }
-    const commit = (await this.deps.headCommit?.(project.directory)) ?? null;
-    await store.append({ from: "aya", to: role, commit, text, delivered: !held });
-    return held;
+  /** A message from Aya; returns why it was not typed, or null. */
+  private async fromAya(project: ProjectConfig, store: TeamStore, team: TeamDefinition, to: string, text: string) {
+    return (await deliverAndLog(this.deps, project, store, { team: team.name, from: "aya", to, text })).failure;
   }
 
   async start(slug: string, name: string): Promise<TeamStartResult> {
@@ -117,7 +97,7 @@ export class TeamRunner {
       this.schedule(async () => {
         try {
           const { project, store, team: current } = await this.open(slug, name);
-          if (await store.paused()) return;
+          if ((await store.state()).paused) return;
           const round = (this.rounds.get(key) ?? 0) + 1;
           const text = `Round ${round}: run your round as the team protocol says.`;
           // A held pane skips the round rather than queueing it: it would be stale.

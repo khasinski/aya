@@ -71,8 +71,8 @@ import {
   withoutBriefSection,
   teamNote,
 } from "./agent-brief";
-import { paneTeamRole } from "./team-control";
-import { appleChat, type ChatOptions, type ChatResult, OLLAMA_BASE_URL, ollamaChat, openAiChat } from "./intelligence-chat";
+import { paneTeamRole, projectBySlug } from "./team-files";
+import { appleChat, type ChatOptions, type ChatResult, OLLAMA_BASE_URL, providerChat } from "./intelligence-chat";
 import { TeamRunner } from "./team-runner";
 import { assignRole, listTeams, releasePaneEverywhere, saveTeam } from "./team-admin";
 import { draftRole, ROLE_DRAFT_CHAT } from "./team-draft";
@@ -492,18 +492,7 @@ async function summarizeLocal(
   if (!intelligence || intelligence.provider === "apple") {
     return summarizeWithApple(req);
   }
-  if (intelligence.provider === "ollama") {
-    const model = intelligence.ollamaModel.trim() || RECOMMENDED_OLLAMA_MODEL;
-    return summaryFromChat(await ollamaChat(model, SUMMARY_SYSTEM, summaryPrompt(req), SUMMARY_CHAT));
-  }
-  return summaryFromChat(
-    await openAiChat(
-      { baseUrl: intelligence.openAiBaseUrl, apiKey: intelligence.openAiApiKey, model: intelligence.openAiModel },
-      SUMMARY_SYSTEM,
-      summaryPrompt(req),
-      SUMMARY_CHAT,
-    ),
-  )
+  return summaryFromChat(await providerChat(intelligence, SUMMARY_SYSTEM, summaryPrompt(req), SUMMARY_CHAT));
 }
 
 async function ollamaStatus(
@@ -2225,12 +2214,8 @@ function registerIpc(): void {
   ipcMain.handle("teams:resume", (_e, slug: unknown, team: unknown) =>
     teamRunner.resume(...teamArgs(slug, team, "teams:resume")),
   );
-  const teamProject = async (slug: unknown, channel: string): Promise<ProjectConfig> => {
-    const wanted = requireString(slug, `${channel}.projectSlug`);
-    const project = (await listProjects()).find((p) => p.slug === wanted);
-    if (!project) throw new Error(`project ${wanted} is not open`);
-    return project;
-  };
+  const teamProject = async (slug: unknown, channel: string): Promise<ProjectConfig> =>
+    projectBySlug(await listProjects(), requireString(slug, `${channel}.projectSlug`));
   ipcMain.handle("teams:list", async (_e, slug: unknown) =>
     listTeams(AYA_HOME, await teamProject(slug, "teams:list")),
   );
@@ -2269,21 +2254,14 @@ function registerIpc(): void {
               user,
               opts,
             )
-          : intelligence.provider === "ollama"
-          ? await ollamaChat(intelligence.ollamaModel, system, user, opts)
-          : await openAiChat(
-              { baseUrl: intelligence.openAiBaseUrl, apiKey: intelligence.openAiApiKey, model: intelligence.openAiModel },
-              system,
-              user,
-              opts,
-            );
+          : await providerChat(intelligence, system, user, opts);
       if (!result.ok) throw new Error(`Aya Intelligence did not answer (${result.error})`);
       return result.content;
     };
   };
   ipcMain.handle("teams:draft-role", async (_e, team: unknown, roleId: unknown, config: unknown) =>
     draftRole(
-      validateTeamDefinition(team),
+      validateTeamDefinition(team, "teams:draft-role"),
       requireString(roleId, "teams:draft-role.roleId"),
       intelligenceChat(config, ROLE_DRAFT_CHAT),
     ),

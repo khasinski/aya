@@ -66,7 +66,7 @@ test.describe("an implementer on an approval prompt", () => {
       const file = join(seeded.projectDir, `team-${pane}.log`);
       return existsSync(file) ? readFileSync(file, "utf8") : "";
     };
-    await expect.poll(() => read("tab-left"), { timeout: 30_000 }).toMatch(/FAIL .*implementer's pane shows an approval prompt/);
+    await expect.poll(() => read("tab-left"), { timeout: 30_000 }).toMatch(/FAIL .*implementer: shows an approval prompt; nothing was typed/);
     expect(read("tab-right")).not.toMatch(/round 5 ready/);
   });
 });
@@ -95,7 +95,7 @@ test.describe("an implementer pane that runs a plain shell", () => {
         return String((err as { stderr?: Buffer }).stderr ?? err);
       }
     };
-    await expect.poll(send, { timeout: 30_000 }).toMatch(/implementer's pane runs a shell/);
+    await expect.poll(send, { timeout: 30_000 }).toMatch(/implementer: runs a shell; nothing was typed/);
     expect(existsSync(join(seeded.projectDir, "should-not-exist"))).toBe(false);
   });
 });

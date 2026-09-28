@@ -1,10 +1,9 @@
 // `aya team whoami|send|inbox`: the caller is known by its pane id, its role
 // by the local assignments, and the team by the definition the user saved.
 
-import { promises as fs } from "node:fs";
-import * as path from "node:path";
-import { parseTeamFile, type TeamDefinition, type TeamRole } from "./teams";
-import { TeamStore, teamDir, type TeamMessage } from "./team-store";
+import { loadTeam, paneTeamRole } from "./team-files";
+import type { TeamDefinition, TeamRole } from "./teams";
+import type { TeamStore, TeamMessage } from "./team-store";
 import type { ProjectConfig } from "./types";
 
 export type TeamRequest =
@@ -29,49 +28,15 @@ interface Membership {
   store: TeamStore;
 }
 
-async function teamNames(directory: string): Promise<string[]> {
-  try {
-    const files = await fs.readdir(path.join(directory, ".aya", "teams"));
-    return files.filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)).sort();
-  } catch {
-    return [];
-  }
-}
-
-/** The team and role a pane plays in this project, or null. */
-export async function paneTeamRole(
-  teamHome: string,
-  project: ProjectConfig,
-  paneId: string,
-): Promise<{ team: string; role: string } | null> {
-  for (const team of await teamNames(project.directory)) {
-    const role = await new TeamStore(teamDir(teamHome, project.slug, team)).roleOf(paneId);
-    if (role) return { team, role };
-  }
-  return null;
-}
-
-/** The saved definition wins: repo edits apply only after Save team. */
-export async function loadTeam(project: ProjectConfig, name: string, store: TeamStore): Promise<TeamDefinition> {
-  const text =
-    (await store.savedDefinition()) ??
-    (await fs.readFile(path.join(project.directory, ".aya", "teams", `${name}.md`), "utf-8"));
-  return parseTeamFile(name, text);
-}
-
 async function membership(callerId: string | undefined, deps: TeamControlDeps): Promise<Membership> {
   if (!callerId) throw new Error("run aya team inside an Aya pane");
   const project = (await deps.listProjects()).find((p) => p.tabs.some((t) => t.id === callerId));
   if (!project) throw new Error("this pane belongs to no open project");
-  for (const name of await teamNames(project.directory)) {
-    const store = new TeamStore(teamDir(deps.teamHome, project.slug, name));
-    const roleId = await store.roleOf(callerId);
-    if (!roleId) continue;
-    const team = await loadTeam(project, name, store);
-    const role = team.roles.find((r) => r.id === roleId);
-    if (role) return { project, team, role, store };
-  }
-  throw new Error("this pane has no team role; assign one from the tab menu");
+  const plays = await paneTeamRole(deps.teamHome, project, callerId);
+  const team = plays && (await loadTeam(project, plays.team, plays.store));
+  const role = team?.roles.find((r) => r.id === plays?.role);
+  if (!plays || !team || !role) throw new Error("this pane has no team role; assign one from the tab menu");
+  return { project, team, role, store: plays.store };
 }
 
 function whoami({ team, role }: Membership): string {
@@ -92,36 +57,46 @@ function clock(iso: string): string {
   return `${String(time.getHours()).padStart(2, "0")}:${String(time.getMinutes()).padStart(2, "0")}`;
 }
 
-/** Marks a message as a peer's dated report, not the user's instruction. */
 /** Control bytes would submit extra turns without the header; flatten them. */
 export function oneLine(text: string): string {
   return text.replace(/[\x00-\x1f\x7f]+/g, " ").trim();
 }
 
+/** Marks a message as a peer's dated report, not the user's instruction. */
 export function teamHeader(team: string, from: string, time: string, commit: string | null): string {
   return `[team ${team} | from ${from} | ${clock(time)}${commit ? ` | ${commit}` : ""}]`;
 }
 
-async function send(m: Membership, to: string, text: string, deps: TeamControlDeps): Promise<string> {
-  if (await m.store.paused()) throw new Error(`team ${m.team.name} is paused; nothing was sent`);
-  if (!m.role.sendsTo.some((r) => r.to === to)) {
-    throw new Error(`${m.role.id} does not send to ${to}; sends to: ${m.role.sendsTo.map((r) => r.to).join(", ") || "nobody"}`);
-  }
-  const commit = await deps.headCommit(m.project.directory);
-  const time = new Date().toISOString();
-  const pane = await m.store.paneOf(to);
-  let failure: string | null = pane ? null : `${to} has no pane`;
-  const held = pane ? await deps.holdReason(pane) : null;
-  if (held) failure = `${to}'s pane ${held}, so nothing was typed`;
-  if (pane && !held) {
+/** Types a message into the receiver's pane unless it is held, and logs it
+ *  either way; `failure` says why it was not typed. */
+export async function deliverAndLog(
+  deps: Pick<TeamControlDeps, "deliver" | "holdReason" | "headCommit">,
+  project: ProjectConfig,
+  store: TeamStore,
+  message: { team: string; from: string; to: string; text: string },
+): Promise<{ entry: TeamMessage; failure: string | null }> {
+  const commit = await deps.headCommit(project.directory);
+  const pane = await store.paneOf(message.to);
+  let failure = pane ? await deps.holdReason(pane) : "no pane assigned";
+  if (pane && !failure) {
+    const header = teamHeader(message.team, message.from, new Date().toISOString(), commit);
     try {
-      await deps.deliver(pane, `${teamHeader(m.team.name, m.role.id, time, commit)} ${oneLine(text)}`);
+      await deps.deliver(pane, `${header} ${oneLine(message.text)}`);
     } catch (err) {
       failure = err instanceof Error ? err.message : String(err);
     }
   }
-  const entry = await m.store.append({ from: m.role.id, to, commit, text, delivered: failure === null });
-  if (failure) throw new Error(`${failure}; message ${entry.id} is kept for aya team inbox`);
+  const entry = await store.append({ from: message.from, to: message.to, commit, text: message.text, delivered: !failure });
+  return { entry, failure };
+}
+
+async function send(m: Membership, to: string, text: string, deps: TeamControlDeps): Promise<string> {
+  if ((await m.store.state()).paused) throw new Error(`team ${m.team.name} is paused; nothing was sent`);
+  if (!m.role.sendsTo.some((r) => r.to === to)) {
+    throw new Error(`${m.role.id} does not send to ${to}; sends to: ${m.role.sendsTo.map((r) => r.to).join(", ") || "nobody"}`);
+  }
+  const { entry, failure } = await deliverAndLog(deps, m.project, m.store, { team: m.team.name, from: m.role.id, to, text });
+  if (failure) throw new Error(`${to}: ${failure}; nothing was typed, message ${entry.id} is kept for aya team inbox`);
   return `written to ${to}'s pane (message ${entry.id}); this does not mean it was read\n`;
 }
 

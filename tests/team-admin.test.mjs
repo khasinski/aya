@@ -106,6 +106,17 @@ test("a team that would not read back the same from its file is refused", async 
   }
 });
 
+test("teams are listed by name, whatever order they were saved in", async () => {
+  const t = setup();
+  try {
+    await saveTeam(t.teamHome, t.project, { ...TEAM, name: "zeta" });
+    await saveTeam(t.teamHome, t.project, { ...TEAM, name: "alpha" });
+    assert.deepEqual((await listTeams(t.teamHome, t.project)).map((x) => x.name), ["alpha", "zeta"]);
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("a repo edit after Save shows as changed; Aya keeps using the saved one", async () => {
   const t = setup();
   try {

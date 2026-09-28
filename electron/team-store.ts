@@ -5,17 +5,17 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
 import { OWNER_ONLY_FILE_MODE } from "./paths";
+import { ID_RE } from "./teams";
 import type { TeamMessage } from "./types";
 
 export type { TeamMessage };
 
-const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const PROJECT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /** Names come over IPC: only a slug may become a path under ~/.aya/teams. */
 export function teamDir(ayaHome: string, project: string, team: string): string {
   if (!PROJECT_RE.test(project) || project.includes("..")) throw new Error(`bad project slug "${project}"`);
-  if (!SLUG_RE.test(team)) throw new Error(`bad team name "${team}"`);
+  if (!ID_RE.test(team)) throw new Error(`bad team name "${team}"`);
   return path.join(ayaHome, "teams", project, team);
 }
 
@@ -43,36 +43,25 @@ export class TeamStore {
     return next;
   }
 
-  private assignments(): Promise<Record<string, string>> {
+  assignments(): Promise<Record<string, string>> {
     return readJson(this.file("assignments.json"), {});
   }
 
   /** One pane per role and one role per pane; taking one gives up the other. */
   assign(role: string, paneId: string): Promise<void> {
-    return this.serial(async () => {
-      const current = await this.assignments();
-      const next = Object.fromEntries(
-        Object.entries(current).filter(([, p]) => p !== paneId),
-      );
-      next[role] = paneId;
-      await writeFileAtomic(this.file("assignments.json"), JSON.stringify(next, null, 2));
-    });
+    return this.reassign(paneId, role);
   }
 
   releasePane(paneId: string): Promise<void> {
+    return this.reassign(paneId);
+  }
+
+  private reassign(paneId: string, role?: string): Promise<void> {
     return this.serial(async () => {
-      const current = await this.assignments();
-      const next = Object.fromEntries(Object.entries(current).filter(([, p]) => p !== paneId));
+      const next = Object.fromEntries(Object.entries(await this.assignments()).filter(([, p]) => p !== paneId));
+      if (role) next[role] = paneId;
       await writeFileAtomic(this.file("assignments.json"), JSON.stringify(next, null, 2));
     });
-  }
-
-  assignmentsSnapshot(): Promise<Record<string, string>> {
-    return this.assignments();
-  }
-
-  log(): Promise<TeamMessage[]> {
-    return this.messages();
   }
 
   async paneOf(role: string): Promise<string | null> {
@@ -93,14 +82,10 @@ export class TeamStore {
     });
   }
 
-  /** Started with Start team and not paused since. */
-  async running(): Promise<boolean> {
+  /** running: started with Start team and not paused since. */
+  async state(): Promise<{ paused: boolean; running: boolean }> {
     const state = await readJson<{ paused?: boolean; started?: boolean }>(this.file("state.json"), {});
-    return state.started === true && state.paused !== true;
-  }
-
-  async paused(): Promise<boolean> {
-    return (await readJson<{ paused?: boolean }>(this.file("state.json"), {})).paused === true;
+    return { paused: state.paused === true, running: state.started === true && state.paused !== true };
   }
 
   /** The definition as the user last saved it; outside edits wait for Save. */
@@ -116,7 +101,7 @@ export class TeamStore {
     }
   }
 
-  private async messages(): Promise<TeamMessage[]> {
+  async log(): Promise<TeamMessage[]> {
     let raw: string;
     try {
       raw = await fs.readFile(this.file("log.jsonl"), "utf-8");
@@ -131,7 +116,7 @@ export class TeamStore {
 
   append(message: Omit<TeamMessage, "id" | "time">): Promise<TeamMessage> {
     return this.serial(async () => {
-      const last = (await this.messages()).at(-1);
+      const last = (await this.log()).at(-1);
       const entry: TeamMessage = { id: (last?.id ?? 0) + 1, time: new Date().toISOString(), ...message };
       await fs.mkdir(this.dir, { recursive: true });
       await fs.appendFile(this.file("log.jsonl"), `${JSON.stringify(entry)}\n`, {
@@ -143,7 +128,7 @@ export class TeamStore {
 
   async unread(role: string): Promise<TeamMessage[]> {
     const read = (await readJson<Record<string, number>>(this.file("read.json"), {}))[role] ?? 0;
-    return (await this.messages()).filter((m) => m.to === role && !m.delivered && m.id > read);
+    return (await this.log()).filter((m) => m.to === role && !m.delivered && m.id > read);
   }
 
   markRead(role: string, id: number): Promise<void> {

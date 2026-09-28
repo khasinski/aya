@@ -2,17 +2,13 @@
 // the snapshot Aya runs on; later repo edits show as changed until saved.
 
 import { promises as fs } from "node:fs";
-import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
+import { teamFile, teamNames } from "./team-files";
 import { TeamStore, teamDir } from "./team-store";
 import { parseTeamFile, serializeTeam } from "./teams";
 import type { ProjectConfig, TeamDefinition, TeamSummary } from "./types";
 
 const LOG_TAIL = 50;
-
-function teamFile(project: ProjectConfig, name: string): string {
-  return path.join(project.directory, ".aya", "teams", `${name}.md`);
-}
 
 async function readText(file: string): Promise<string | null> {
   try {
@@ -31,11 +27,8 @@ function repoParsed(name: string, repo: string | null): TeamDefinition | null {
 }
 
 export async function listTeams(teamHome: string, project: ProjectConfig): Promise<TeamSummary[]> {
-  const files = (await teamNamesOf(project)).map((n) => `${n}.md`);
-  if (files.length === 0) return [];
-  const names = files.filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)).sort();
   return Promise.all(
-    names.map(async (name): Promise<TeamSummary> => {
+    (await teamNames(project)).map(async (name): Promise<TeamSummary> => {
       const store = new TeamStore(teamDir(teamHome, project.slug, name));
       const repo = await readText(teamFile(project, name));
       const saved = await store.savedDefinition();
@@ -52,9 +45,8 @@ export async function listTeams(teamHome: string, project: ProjectConfig): Promi
         error,
         repoChanged: saved !== null && repo !== saved,
         repoDefinition: repoParsed(name, repo),
-        paused: await store.paused(),
-        running: await store.running(),
-        assignments: await store.assignmentsSnapshot(),
+        ...(await store.state()),
+        assignments: await store.assignments(),
         unread: Object.fromEntries(
           await Promise.all(
             (definition?.roles ?? []).map(async (r) => [r.id, (await store.unread(r.id)).length] as const),
@@ -117,24 +109,14 @@ export async function saveTeam(
   await store.saveDefinition(text);
   // A renamed or removed role would keep a pane no role id matches.
   const roles = new Set(team.roles.map((r) => r.id));
-  for (const [role, pane] of Object.entries(await store.assignmentsSnapshot())) {
+  for (const [role, pane] of Object.entries(await store.assignments())) {
     if (!roles.has(role)) await store.releasePane(pane);
-  }
-}
-
-async function teamNamesOf(project: ProjectConfig): Promise<string[]> {
-  try {
-    return (await fs.readdir(path.join(project.directory, ".aya", "teams")))
-      .filter((f) => f.endsWith(".md"))
-      .map((f) => f.slice(0, -3));
-  } catch {
-    return [];
   }
 }
 
 /** A closed tab plays no role anywhere. */
 export async function releasePaneEverywhere(teamHome: string, project: ProjectConfig, paneId: string): Promise<void> {
-  for (const name of await teamNamesOf(project)) {
+  for (const name of await teamNames(project)) {
     await new TeamStore(teamDir(teamHome, project.slug, name)).releasePane(paneId);
   }
 }

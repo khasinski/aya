@@ -229,7 +229,9 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     teamSave: noopAsync,
     teamAssign: noopAsync,
     teamReleasePane: noopAsync,
-    teamDraftRole: noopAsync,
+    teamDraftRole: async () => {
+      throw new Error("Draft needs the app; the emulator has no Aya Intelligence");
+    },
     usageHookStatus: noopAsync,
     installUsageHook: noopAsync,
     uninstallUsageHook: noopAsync,

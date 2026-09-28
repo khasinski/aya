@@ -3,7 +3,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addRole, applyDraft, fromEditor, removeRole, setSend, toEditor, updateRole } from "../dist-test/team-edit.js";
+import { addRole, applyDraft, fromEditor, removeRole, roleId, setSend, toEditor, updateRole } from "../dist-test/team-edit.js";
+import { ID_RE } from "../dist-electron/teams.js";
 
 const TEAM = {
   name: "trio",
@@ -90,4 +91,14 @@ test("a draft lands on its own row even after rows above it were removed", () =>
   const out = fromEditor(t);
   assert.deepEqual(out.roles[1], { id: "tester", sendsTo: [{ to: "implementer", what: "bugs" }], mustNot: "fix bugs", responsibilities: "Tests." });
   assert.equal(out.roles[0].responsibilities, "");
+});
+
+test("whatever is typed as a role name becomes an id the team file accepts, or nothing yet", () => {
+  // The editor (renderer) and the file parser (main) must agree on the rule.
+  const typed = ["Senior UX Game Designer", "  QA!!", "-lead-", "a".repeat(60), "Ünïcode rôle", "x", "---", "", "2nd reviewer"];
+  for (const t of typed) {
+    const id = roleId(t);
+    assert.ok(id === "" || ID_RE.test(id), `${JSON.stringify(t)} -> ${JSON.stringify(id)}`);
+  }
+  assert.equal(roleId("Senior UX Game Designer"), "senior-ux-game-designer");
 });

@@ -134,12 +134,11 @@ test("concurrent appends never share an id", async () => {
 test("a team runs only after Start and until Pause", async () => {
   const store = fresh();
   try {
-    assert.equal(await store.running(), false);
+    assert.equal((await store.state()).running, false);
     await store.setPaused(false);
-    assert.equal(await store.running(), true);
+    assert.equal((await store.state()).running, true);
     await store.setPaused(true);
-    assert.equal(await store.running(), false);
-    assert.equal(await store.paused(), true);
+    assert.deepEqual(await store.state(), { paused: true, running: false });
   } finally {
     done(store);
   }

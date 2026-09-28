@@ -341,33 +341,34 @@ export function validateThemesFile(value: unknown): ThemesFile {
 }
 
 /** Shape only; team rules (must-not, send-to, cadence) are the parser's job. */
-export function validateTeamDefinition(value: unknown): TeamDefinition {
-  const team = requireRecord(value, "teams:save.team");
-  const roles = Array.isArray(team.roles) ? team.roles : fail("teams:save.team.roles", "array");
-  const cadence = team.cadence === null || team.cadence === undefined ? null : requireRecord(team.cadence, "teams:save.team.cadence");
+/** `channel` names the IPC call in errors, e.g. teams:save. */
+export function validateTeamDefinition(value: unknown, channel = "teams:save"): TeamDefinition {
+  const team = requireRecord(value, `${channel}.team`);
+  const roles = Array.isArray(team.roles) ? team.roles : fail(`${channel}.team.roles`, "array");
+  const cadence = team.cadence === null || team.cadence === undefined ? null : requireRecord(team.cadence, `${channel}.team.cadence`);
   return {
-    name: requireString(team.name, "teams:save.team.name"),
+    name: requireString(team.name, `${channel}.team.name`),
     roles: roles.map((raw, i) => {
-      const role = requireRecord(raw, `teams:save.team.roles[${i}]`);
+      const role = requireRecord(raw, `${channel}.team.roles[${i}]`);
       return {
-        id: requireString(role.id, `teams:save.team.roles[${i}].id`),
-        sendsTo: (Array.isArray(role.sendsTo) ? role.sendsTo : fail(`teams:save.team.roles[${i}].sendsTo`, "array")).map(
+        id: requireString(role.id, `${channel}.team.roles[${i}].id`),
+        sendsTo: (Array.isArray(role.sendsTo) ? role.sendsTo : fail(`${channel}.team.roles[${i}].sendsTo`, "array")).map(
           (raw, j) => {
-            const route = requireRecord(raw, `teams:save.team.roles[${i}].sendsTo[${j}]`);
+            const route = requireRecord(raw, `${channel}.team.roles[${i}].sendsTo[${j}]`);
             return {
-              to: requireString(route.to, `teams:save.team.roles[${i}].sendsTo[${j}].to`),
-              what: requireString(route.what, `teams:save.team.roles[${i}].sendsTo[${j}].what`),
+              to: requireString(route.to, `${channel}.team.roles[${i}].sendsTo[${j}].to`),
+              what: requireString(route.what, `${channel}.team.roles[${i}].sendsTo[${j}].what`),
             };
           },
         ),
-        mustNot: requireString(role.mustNot, `teams:save.team.roles[${i}].mustNot`),
-        responsibilities: requireString(role.responsibilities, `teams:save.team.roles[${i}].responsibilities`),
+        mustNot: requireString(role.mustNot, `${channel}.team.roles[${i}].mustNot`),
+        responsibilities: requireString(role.responsibilities, `${channel}.team.roles[${i}].responsibilities`),
       };
     }),
     cadence: cadence && {
-      role: requireString(cadence.role, "teams:save.team.cadence.role"),
-      minutes: typeof cadence.minutes === "number" ? cadence.minutes : fail("teams:save.team.cadence.minutes", "number"),
+      role: requireString(cadence.role, `${channel}.team.cadence.role`),
+      minutes: typeof cadence.minutes === "number" ? cadence.minutes : fail(`${channel}.team.cadence.minutes`, "number"),
     },
-    protocol: requireString(team.protocol, "teams:save.team.protocol"),
+    protocol: requireString(team.protocol, `${channel}.team.protocol`),
   };
 }

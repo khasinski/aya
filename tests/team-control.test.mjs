@@ -151,7 +151,7 @@ test("a role with no pane keeps the message for its inbox", async () => {
     await t.store.releasePane("pane-i");
     const sent = await t.aya("pane-t", "send", "implementer", "please retest");
     assert.notEqual(sent.status, 0);
-    assert.match(sent.stderr, /implementer has no pane.*inbox/);
+    assert.match(sent.stderr, /implementer: no pane assigned; nothing was typed.*inbox/);
     assert.equal(t.writes.length, 0);
     await t.store.assign("implementer", "pane-i");
     const inbox = await t.aya("pane-i", "inbox");
@@ -193,7 +193,7 @@ test("a pane Aya must not type into keeps the message and says why", async () =>
   try {
     const sent = await t.aya("pane-t", "send", "implementer", "round 6");
     assert.notEqual(sent.status, 0);
-    assert.match(sent.stderr, /implementer's pane shows an approval prompt.*inbox/);
+    assert.match(sent.stderr, /implementer: shows an approval prompt; nothing was typed.*inbox/);
     assert.equal(t.writes.length, 0);
     assert.equal((await t.store.unread("implementer")).length, 1);
   } finally {
