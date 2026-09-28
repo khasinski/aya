@@ -41,12 +41,28 @@ A 22-round reviewer/implementer UX session hit:
 - **Log and inbox**: every message is logged in `~/.aya/teams/`, outside
   the repo. Start team sends a delivery test.
 
-## Measured screen detection (Aya's `evaluateScreen`, real CLIs)
+## When Aya does not type a message
 
-| CLI | approval prompt | half-typed text |
-|---|---|---|
-| Claude | waiting | not detected |
-| Codex | waiting | not detected |
-| Grok | not shown (always-approve) | not detected |
+A message waits in the receiver's inbox, and goes out by itself once the
+pane is free (checked every 15 s), when the pane:
 
-Half-typed text needs a new rule.
+- is not running, or its agent has not drawn its composer yet (Claude
+  took about 1 s, Codex 0.5 s, measured);
+- shows an approval prompt, Claude's folder-trust dialog, or a numbered
+  menu;
+- has text the user is typing, or runs a plain shell.
+
+Messages go in as a bracketed paste: Codex took fast raw typing for a
+paste and swallowed the Enter after 600+ characters (measured on 0.158).
+Start checks every pane first and sends nothing while one is not ready.
+
+## Testing teams in Aya Dev
+
+- Aya Dev rebuilds and restarts when `electron/` changes, and a change in
+  a module the pty host runs restarts the panes too. A team working on
+  Aya's own `electron/` restarts itself mid-round; give it another repo,
+  or expect to reassign roles.
+- Aya Dev panes get this branch's `aya` first on PATH, so `aya team` works
+  even when an older Aya.app is installed.
+- Start Aya Dev from a plain terminal if you can; panes drop the markers
+  of a Claude Code session they inherit, but nothing else.
