@@ -13,3 +13,8 @@ export const COMMAND_NOT_FOUND_EXIT_CODE = 127;
  *  harness scans, the Ollama /api/tags reachability probe). Long enough for a
  *  cold disk hit, short enough not to stall spawning noticeably. */
 export const COMMAND_PROBE_TIMEOUT_MS = 2_500;
+
+/** Smallest PTY size Aya spawns or resizes to. The vt mirror floors at the
+ *  same size, or screen rules would read a different screen than the agent draws. */
+export const MIN_PTY_COLS = 4;
+export const MIN_PTY_ROWS = 2;

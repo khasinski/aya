@@ -12,6 +12,7 @@
 // whether or not any window is open, and it costs one extra VT parse per pane.
 
 import { Terminal } from "@xterm/headless";
+import { MIN_PTY_COLS, MIN_PTY_ROWS } from "./constants";
 import { evaluateScreen } from "./agent-screen-rules";
 import type { AgentKind } from "./presets";
 
@@ -51,8 +52,8 @@ export function openVtPane(
 ): void {
   panes.set(ptyId, {
     terminal: new Terminal({
-      cols: Math.max(cols, 1),
-      rows: Math.max(rows, 1),
+      cols: Math.max(cols, MIN_PTY_COLS),
+      rows: Math.max(rows, MIN_PTY_ROWS),
       scrollback: VT_SCROLLBACK_LINES,
       allowProposedApi: true,
     }),
@@ -67,7 +68,7 @@ export function resizeVtPane(ptyId: string, cols: number, rows: number): void {
   const pane = panes.get(ptyId);
   if (!pane) return;
   try {
-    pane.terminal.resize(Math.max(cols, 1), Math.max(rows, 1));
+    pane.terminal.resize(Math.max(cols, MIN_PTY_COLS), Math.max(rows, MIN_PTY_ROWS));
   } catch {
     // A resize can race the pane closing; the next write just lands on the
     // old geometry, which only affects wrapping in the detector's input.

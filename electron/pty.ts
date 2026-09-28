@@ -26,7 +26,12 @@ import {
 } from "./vt-state";
 import type { PaneSize } from "./pane-render";
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
-import { COMMAND_NOT_FOUND_EXIT_CODE, COMMAND_PROBE_TIMEOUT_MS } from "./constants";
+import {
+  COMMAND_NOT_FOUND_EXIT_CODE,
+  COMMAND_PROBE_TIMEOUT_MS,
+  MIN_PTY_COLS,
+  MIN_PTY_ROWS,
+} from "./constants";
 import { userShell } from "./shell";
 import { getProcessCwd } from "./process-cwd";
 import { ptyLog } from "./pty-log";
@@ -36,9 +41,6 @@ import { watchClaudeSession } from "./claude-session";
 
 // Timeout for the shell `command -v` existence check during spawn preflight.
 
-// Minimum PTY dimensions clamped before spawn/resize (node-pty needs >0).
-const MIN_PTY_COLS = 4; // minimum PTY columns
-const MIN_PTY_ROWS = 2; // minimum PTY rows
 // Search-snippet context window around a match (chars).
 const SEARCH_SNIPPET_CONTEXT_BEFORE = 30; // chars before the match
 const SEARCH_SNIPPET_CONTEXT_AFTER = 50; // chars after the match
