@@ -690,3 +690,15 @@ test("control server: stop() removes the socket file so reboot is clean", async 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("deliverTeamMessage types the text as a bracketed paste, then Enter", async () => {
+  const { deliverTeamMessage, PASTE_START, PASTE_END } = await import("../dist-electron/control.js");
+  assert.equal(PASTE_START, "\x1b[200~");
+  assert.equal(PASTE_END, "\x1b[201~");
+  const writes = [];
+  await deliverTeamMessage(async (id, data) => void writes.push([id, data]), "pane-1", "hello");
+  assert.deepEqual(writes, [
+    ["pane-1", "\x1b[200~hello\x1b[201~"],
+    ["pane-1", "\r"],
+  ]);
+});

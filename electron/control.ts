@@ -33,6 +33,10 @@ export const CONTROL_LINGER_MS = 2_000;
  *  never submits. Measured: codex-cli 0.153.4 needs 50 ms, Claude Code 120 ms. */
 export const PANE_SEND_SUBMIT_DELAY_MS = 150;
 
+/** Bracketed-paste markers; src/snippet-payload.ts names the same pair. */
+export const PASTE_START = "\x1b[200~";
+export const PASTE_END = "\x1b[201~";
+
 /** Anywhere a status update can be delivered: real BrowserWindows plus the
  *  Aya Web server's virtual sink (which fans out to WebSocket clients). */
 export interface ControlStatusSink {
@@ -108,12 +112,12 @@ export function deliverTeamMessage(
   terminalId: string,
   text: string,
 ): Promise<void> {
-  return deliverToPane(writePane, terminalId, terminalId, `\x1b[200~${text}\x1b[201~`, true);
+  return deliverToPane(writePane, terminalId, terminalId, `${PASTE_START}${text}${PASTE_END}`, true);
 }
 
 /** Types text into a pane, then Enter when `submit`. Serialized per terminal:
  *  the 150 ms submit gap splits a send into two writes that must not interleave. */
-export function deliverToPane(
+function deliverToPane(
   writePane: NonNullable<ControlServerOptions["writePane"]>,
   terminalId: string,
   name: string,
