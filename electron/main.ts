@@ -209,7 +209,7 @@ import type {
 
 const DEV_SERVER_URL = "http://localhost:5183";
 const RENDERER_DIST_DIR = path.join(__dirname, "..", "dist");
-const RENDERER_INDEX_FILE = "index.html";
+const RENDERER_INDEX_PATH = path.join(RENDERER_DIST_DIR, "index.html");
 const WINDOW_TITLE = IS_DEV ? "Aya Dev" : "Aya";
 
 // Per-harness count of panes that ever called `aya` (#117); shown in
@@ -242,7 +242,8 @@ const TEAR_OUT_CURSOR_OFFSET_Y_PX = 20;
 // (a no-op once the WebGL context is live again).
 const GPU_HEAL_NUDGE_DELAYS_MS = [1200, 3000];
 
-const ptyHost = new PtyHostClient(path.join(__dirname, PTY_HOST_SCRIPT_NAME));
+const PTY_HOST_SCRIPT = path.join(__dirname, PTY_HOST_SCRIPT_NAME);
+const ptyHost = new PtyHostClient(PTY_HOST_SCRIPT);
 // One set of team deps for the team runner and the control server's aya team.
 const teamDeps: TeamControlDeps = {
   teamHome: AYA_HOME,
@@ -2060,7 +2061,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
       isInternalNavigationUrl(url, {
         isDev: IS_DEV,
         devServerUrl: DEV_SERVER_URL,
-        appIndexPath: path.join(RENDERER_DIST_DIR, RENDERER_INDEX_FILE),
+        appIndexPath: RENDERER_INDEX_PATH,
       })
     ) {
       return;
@@ -2147,7 +2148,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     win.loadURL(DEV_SERVER_URL);
     win.webContents.openDevTools({ mode: "detach" });
   } else {
-    win.loadFile(path.join(RENDERER_DIST_DIR, RENDERER_INDEX_FILE));
+    win.loadFile(RENDERER_INDEX_PATH);
   }
 
   return win;
@@ -3022,7 +3023,7 @@ app.whenReady().then(async () => {
   try {
     const summary = reapStaleHostRecords(
       ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION),
-      path.join(__dirname, PTY_HOST_SCRIPT_NAME),
+      PTY_HOST_SCRIPT,
     );
     keptCompatibleHosts = summary.keptCompatible;
     if (summary.reaped.length > 0) {

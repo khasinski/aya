@@ -46,6 +46,10 @@ export function requireStringArray(value: unknown, name: string): string[] {
   return value;
 }
 
+function requireArray(value: unknown, name: string): unknown[] {
+  return Array.isArray(value) ? value : fail(name, "array");
+}
+
 /** IPC payloads for the worktree mutations. Kept strict: these arguments end
  *  up as git argv, and a wrong type here would be a confusing failure deep in
  *  a child process rather than at the boundary. */
@@ -341,7 +345,7 @@ function validateRole(value: unknown, at: string): TeamRole {
   const role = requireRecord(value, at);
   return {
     id: requireString(role.id, `${at}.id`),
-    sendsTo: (Array.isArray(role.sendsTo) ? role.sendsTo : fail(`${at}.sendsTo`, "array")).map((raw, j) => validateRoute(raw, `${at}.sendsTo[${j}]`)),
+    sendsTo: requireArray(role.sendsTo, `${at}.sendsTo`).map((raw, j) => validateRoute(raw, `${at}.sendsTo[${j}]`)),
     mustNot: requireString(role.mustNot, `${at}.mustNot`),
     responsibilities: requireString(role.responsibilities, `${at}.responsibilities`),
   };
@@ -352,7 +356,7 @@ function validateRole(value: unknown, at: string): TeamRole {
 export function validateTeamDefinition(value: unknown, channel = "teams:save"): TeamDefinition {
   const at = `${channel}.team`;
   const team = requireRecord(value, at);
-  const roles = Array.isArray(team.roles) ? team.roles : fail(`${at}.roles`, "array");
+  const roles = requireArray(team.roles, `${at}.roles`);
   const cadence = team.cadence === null || team.cadence === undefined ? null : requireRecord(team.cadence, `${at}.cadence`);
   return {
     name: requireString(team.name, `${at}.name`),
