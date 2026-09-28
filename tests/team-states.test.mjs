@@ -88,7 +88,7 @@ for (const teamState of TEAM_STATES) {
           assert.equal(w.toImplementer().length, 1);
           assert.equal((await w.lastLog()).delivered, true);
         } else {
-          await assert.rejects(send, new RegExp(`implementer: ${reason(paneState).replace(/[()]/g, "\\$&")}; nothing was typed`));
+          await assert.rejects(send, new RegExp(`implementer: ${reason(paneState).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}; nothing was typed`));
           assert.equal(w.toImplementer().length, 0, "never typed into a held pane");
           assert.deepEqual([(await w.lastLog()).delivered, (await w.lastLog()).held], [false, reason(paneState)]);
         }

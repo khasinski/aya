@@ -88,7 +88,7 @@ export async function deliverAndLog(
       await deps.deliver(pane, typedTeamMessage(message.team, message.from, new Date().toISOString(), commit, message.text));
     } catch (err) {
       // The write error is written for the CLI; the team log and window get the gist.
-      console.warn(`[aya] team message to ${message.to} not typed:`, err);
+      console.warn("[aya] team message to %s not typed:", message.to, err);
       failure = "did not take the text (it may have exited)";
     }
   }

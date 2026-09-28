@@ -95,9 +95,11 @@ test("a Must not line typed into Responsibilities is refused, not read back as t
 function appleHelper(name: string, reply: Record<string, unknown>): string {
   const file = join(tmpdir(), `aya-e2e-${name}-${process.pid}`);
   const log = `${file}.request`;
+  // The reply sits in a sidecar file, so the script text is fixed and builds no code from data.
+  writeFileSync(`${file}.json`, JSON.stringify({ log, reply: JSON.stringify(reply) }));
   writeFileSync(
     file,
-    `#!${process.execPath}\nlet s="";process.stdin.on("data",c=>s+=c).on("end",()=>{require("fs").writeFileSync(${JSON.stringify(log)},s);setTimeout(()=>process.stdout.write(${JSON.stringify(JSON.stringify(reply))}),1500);});\n`,
+    `#!${process.execPath}\nconst c=require(__filename+".json");let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{require("fs").writeFileSync(c.log,s);setTimeout(()=>process.stdout.write(c.reply),1500);});\n`,
   );
   chmodSync(file, 0o755);
   return file;
