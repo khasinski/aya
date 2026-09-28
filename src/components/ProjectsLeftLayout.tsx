@@ -19,7 +19,7 @@ import { useDragReorder } from "../hooks/useDragReorder";
 import { GrokUsageChip, UsageChip } from "./UsageChip";
 import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
 import { paneRoles, unreadTotal } from "../team-view";
-import { TeamRoleChip, TeamRoleMenuItems } from "./TeamRole";
+import { TeamRoleChip, TeamRoleMenuItems, TeamUnread } from "./TeamRole";
 
 // Project rail width bounds (px) for the drag-resize handle.
 const RAIL_MIN_WIDTH_PX = 160;
@@ -723,11 +723,7 @@ function ProjectsLeftLayoutImpl({
                           </span>
                         )}
                         {p.name}
-                        {teamUnread > 0 && (
-                          <span className="aya-team-unread" aria-label={`${p.name} team messages waiting`}>
-                            ✉ {teamUnread}
-                          </span>
-                        )}
+                        <TeamUnread count={teamUnread} label={`${p.name} team messages waiting`} />
                       </span>
                     )}
                     <span

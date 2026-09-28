@@ -9,6 +9,8 @@ const NODE_MIN_W = 48;
 const NODE_CHAR_W = 7;
 const NODE_PAD_X = 16;
 
+const edgeKey = (from: string, to: string) => `${from}>${to}`;
+
 function nodeWidth(id: string): number {
   return Math.max(NODE_MIN_W, id.length * NODE_CHAR_W + NODE_PAD_X);
 }
@@ -34,7 +36,7 @@ function segment(a: { x: number; y: number }, b: { x: number; y: number }, twoWa
 
 function FlowGraph({ ids, edges }: { ids: string[]; edges: FlowEdge[] }) {
   const at = flowLayout(ids, WIDTH, HEIGHT);
-  const has = new Set(edges.map((e) => `${e.from}>${e.to}`));
+  const has = new Set(edges.map((e) => edgeKey(e.from, e.to)));
   const label = edges.map((e) => `${e.from} to ${e.to}`).join(", ") || "no routes";
   return (
     <svg className="aya-flow-graph" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label={`Team flow: ${label}`}>
@@ -45,8 +47,8 @@ function FlowGraph({ ids, edges }: { ids: string[]; edges: FlowEdge[] }) {
       </defs>
       {edges.map((e) => (
         <line
-          key={`${e.from}>${e.to}`}
-          {...segment(at[e.from], at[e.to], has.has(`${e.to}>${e.from}`), e.from, e.to)}
+          key={edgeKey(e.from, e.to)}
+          {...segment(at[e.from], at[e.to], has.has(edgeKey(e.to, e.from)), e.from, e.to)}
           className={e.what ? "aya-flow-edge" : "aya-flow-edge aya-flow-edge--unsaid"}
           markerEnd="url(#aya-flow-arrow)"
         />
@@ -77,7 +79,7 @@ export function TeamFlow({ team }: { team: TeamDefinition }) {
       <ul className="aya-flow-routes" aria-label="Flow routes">
         {edges.length === 0 && <li className="aya-teams-muted">No routes: tick Sends to under a role.</li>}
         {edges.map((e) => (
-          <li key={`${e.from}>${e.to}`}>
+          <li key={edgeKey(e.from, e.to)}>
             <strong>{e.from}</strong> → <strong>{e.to}</strong>
             {e.what ? `: ${e.what}` : <span className="aya-teams-muted">: what it sends is not filled in</span>}
           </li>

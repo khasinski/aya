@@ -34,6 +34,15 @@ export function TeamEditor({
   const [drafting, setDrafting] = useState<number | null>(null);
   const save = useAsyncAction();
   const built = fromEditor(team);
+  const draftRole = async (role: EditorRole) => {
+    setDrafting(role.key);
+    try {
+      const draft = await window.aya.teamDraftRole(built, role.id, intelligence);
+      setTeam((t) => applyDraft(t, role.key, draft));
+    } finally {
+      setDrafting(null);
+    }
+  };
 
   return (
     <div className="aya-teams-editor">
@@ -57,15 +66,7 @@ export function TeamEditor({
           team={team}
           setTeam={setTeam}
           drafting={drafting}
-          onDraft={async () => {
-            setDrafting(role.key);
-            try {
-              const draft = await window.aya.teamDraftRole(built, role.id, intelligence);
-              setTeam((t) => applyDraft(t, role.key, draft));
-            } finally {
-              setDrafting(null);
-            }
-          }}
+          onDraft={() => draftRole(role)}
         />
       ))}
       <button className="aya-modal-btn" onClick={() => setTeam(addRole(team))}>

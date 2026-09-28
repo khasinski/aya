@@ -6,8 +6,8 @@ function ipcMessage(err: unknown): string {
   return text.replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
 }
 
-/** Runs one IPC action at a time: busy while it runs, its error (without
- *  Electron's wrapper) after it fails, and its result when it succeeds. */
+/** Runs one IPC action at a time: busy while it runs, its error after it fails,
+ *  its result when it succeeds. */
 export function useAsyncAction() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
