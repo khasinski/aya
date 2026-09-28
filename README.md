@@ -72,6 +72,10 @@ run commands.
 - **Agents drive each other.** `aya pane read "reviewer"` returns another pane's
   output and `aya pane send` types into it, so one agent hands work to another
   and collects the result. Panes are addressed by tab name within a project.
+- **Teams of agents.** A team file in `.aya/teams/` gives panes roles (who
+  they are, what they must not do, who they report to). Agents learn their
+  role with `aya team whoami` and message each other by role, whatever the CLI
+  or model; Aya logs every message and can run the rounds itself.
 - **Apple Intelligence labels.** Aya reads each pane's output through Apple
   Intelligence, or a local Ollama / OpenAI-compatible model, and writes a
   one-line summary under every tab and project. On-device by default.
@@ -312,6 +316,11 @@ aya pane read "reviewer"
 aya pane send "reviewer" "run the tests"
 aya pane send "reviewer" --no-submit "draft for review"
 
+# Work as a team (see "Run a team of agents")
+aya team whoami
+aya team send implementer "Round 5: the alert freezes at zero"
+aya team inbox
+
 # Every command above, as JSON, for an agent to read
 aya capabilities
 ```
@@ -340,6 +349,29 @@ also on every pane's PATH, after any shim you installed.
 
 The companion skill lives in `skills/aya-control/SKILL.md` and uses only this
 public CLI side channel.
+
+### Run a team of agents
+
+Open **teams** in the status bar and choose **New team**. A team lists roles;
+each role has responsibilities, one thing it must not do, and the roles it
+sends to. Add a protocol (how the roles work together) and, if you want rounds,
+which role gets them and how often. **Draft** fills a role from its name with an
+Ollama or OpenAI-compatible model; edit it before **Save team**. The team is
+saved to `.aya/teams/<name>.md`, so it travels with the repo. Edits made to that
+file outside the teams window take effect only after you save them in Aya.
+
+Give each role a pane, in the teams window or from a tab's menu (**Team
+role**), then press **Start**. Every role gets a delivery test. Pane roles, the
+log and the pause state stay on your machine, in `~/.aya/teams/`.
+
+A pane with a role is told about it at launch and runs `aya team whoami` to
+read its responsibilities again after `/clear` or `/resume`. `aya team send
+<role> "text"` types a dated line like `[team ux-review | from tester | 14:02 |
+a1b2c3d] text` into that role's pane. Aya does not type it when Enter would do
+something else: an approval prompt on screen, text you are typing there, or a
+plain shell. That message waits for `aya team inbox` instead, and the sender is
+told why. "Written to the pane" is not proof the agent read it. **Pause** stops
+the rounds and all sends. Teams work on local panes only.
 
 ### Open remote projects
 

@@ -19,7 +19,7 @@ A 22-round reviewer/implementer UX session hit:
   responsibilities, what each role must not do, who it sends to, a
   protocol, and a cadence. A per-project screen edits it; outside edits
   apply only after Save team. It offers a two-role template and drafts a
-  role from its name with Aya Intelligence.
+  role from its name (Ollama or OpenAI-compatible).
 - **Assign panes** locally in `~/.aya`: one pane per role, local panes
   only. Closing a pane frees its role; restarting it keeps the role.
 - **Identity**: `aya team whoami` prints the pane's role, send-to list
