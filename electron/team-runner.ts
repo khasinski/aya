@@ -2,7 +2,7 @@
 // cadence, and the team pause. Rounds live in Aya, not in one agent session.
 
 import { listTeams } from "./team-admin";
-import { deliverAndLog, oneLine, teamHeader, type TeamControlDeps } from "./team-control";
+import { NO_PANE_HOLD, deliverAndLog, typedTeamMessage, type TeamControlDeps } from "./team-control";
 import { loadTeam, projectBySlug, teamNames } from "./team-files";
 import { TeamStore, teamDir } from "./team-store";
 import type { TeamDefinition } from "./teams";
@@ -53,7 +53,7 @@ export class TeamRunner {
     const notReady: TeamStartResult["held"] = [];
     for (const role of team.roles) {
       const pane = await store.paneOf(role.id);
-      const reason = pane ? await this.deps.holdReason(pane) : "no pane assigned";
+      const reason = pane ? await this.deps.holdReason(pane) : NO_PANE_HOLD;
       if (reason) notReady.push({ role: role.id, reason });
     }
     if (notReady.length) return { started: false, delivered: [], held: notReady };
@@ -129,7 +129,7 @@ export class TeamRunner {
             // Each delivery can raise an approval prompt the next would type into.
             if (await this.deps.holdReason(pane)) break;
             try {
-              await this.deps.deliver(pane, oneLine(`${teamHeader(team.name, m.from, m.time, m.commit)} ${m.text}`));
+              await this.deps.deliver(pane, typedTeamMessage(team.name, m.from, m.time, m.commit, m.text));
             } catch {
               break;
             }

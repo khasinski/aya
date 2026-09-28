@@ -57,14 +57,22 @@ function clock(iso: string): string {
   return `${String(time.getHours()).padStart(2, "0")}:${String(time.getMinutes()).padStart(2, "0")}`;
 }
 
+/** Why a message to a role with no pane waits in its inbox. */
+export const NO_PANE_HOLD = "no pane assigned";
+
 /** Control bytes would submit extra turns without the header; flatten them. */
-export function oneLine(text: string): string {
+function oneLine(text: string): string {
   return text.replace(/[\x00-\x1f\x7f]+/g, " ").trim();
 }
 
 /** Marks a message as a peer's dated report, not the user's instruction. */
-export function teamHeader(team: string, from: string, time: string, commit: string | null): string {
+function teamHeader(team: string, from: string, time: string, commit: string | null): string {
   return `[team ${team} | from ${from} | ${clock(time)}${commit ? ` | ${commit}` : ""}]`;
+}
+
+/** A message as it is typed into the receiver's pane. */
+export function typedTeamMessage(team: string, from: string, time: string, commit: string | null, text: string): string {
+  return oneLine(`${teamHeader(team, from, time, commit)} ${text}`);
 }
 
 /** Types a message into the receiver's pane unless it is held, and logs it
@@ -77,11 +85,10 @@ export async function deliverAndLog(
 ): Promise<{ entry: TeamMessage; failure: string | null }> {
   const commit = await deps.headCommit(project.directory);
   const pane = await store.paneOf(message.to);
-  let failure = pane ? await deps.holdReason(pane) : "no pane assigned";
+  let failure = pane ? await deps.holdReason(pane) : NO_PANE_HOLD;
   if (pane && !failure) {
-    const header = teamHeader(message.team, message.from, new Date().toISOString(), commit);
     try {
-      await deps.deliver(pane, oneLine(`${header} ${message.text}`));
+      await deps.deliver(pane, typedTeamMessage(message.team, message.from, new Date().toISOString(), commit, message.text));
     } catch (err) {
       // The write error is written for the CLI; the team log and window get the gist.
       console.warn(`[aya] team message to ${message.to} not typed:`, err);

@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 
 const { startControlServerOn } = await import("../dist-electron/control.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
+const { NO_PANE_HOLD, typedTeamMessage } = await import("../dist-electron/team-control.js");
 
 const cli = resolve("bin/aya");
 const TEAM = `# ux-review
@@ -242,4 +243,11 @@ test("the pasted line carries no control bytes, header included", async () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("a typed team message is its header and text on one line; a role with no pane is held", () => {
+  const at = new Date(2026, 0, 2, 9, 5).toISOString();
+  assert.equal(typedTeamMessage("ux-review", "tester", at, "abc1234", "a\nb\x1b c "), "[team ux-review | from tester | 09:05 | abc1234] a b  c");
+  assert.equal(typedTeamMessage("ux-review", "aya", at, null, "hi"), "[team ux-review | from aya | 09:05] hi");
+  assert.equal(NO_PANE_HOLD, "no pane assigned");
 });
