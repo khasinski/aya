@@ -37,7 +37,6 @@ import { ptyLog } from "./pty-log";
 const IDLE_SHUTDOWN_TIMEOUT_MS = 30_000;
 // Random bytes in a registry record's nonce (hex-encoded, so twice as many chars).
 const HOST_NONCE_BYTES = 8;
-// The host-start log line keeps only this much of the script hash.
 const LOG_HASH_PREFIX_CHARS = 8;
 
 const clients = new Set<net.Socket>();

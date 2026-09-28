@@ -16,7 +16,6 @@ const GIT_COMMAND_TIMEOUT_MS = 1500;
 const GIT_DIFF_TIMEOUT_MS = 3000;
 // Ceiling on git diff output buffered into memory (5MB).
 const GIT_DIFF_MAX_BUFFER_BYTES = 5_000_000;
-// Longest git error message surfaced to a dialog.
 export const GIT_ERROR_MESSAGE_MAX_CHARS = 300;
 
 // Aya only observes repository state. `git status` can otherwise refresh the

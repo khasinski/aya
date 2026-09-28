@@ -48,7 +48,6 @@ export const CONTROL_SOCKET_PATH = path.join(AYA_HOME, "aya.sock");
 export const REMOTE_SOCKET_NAME = "aya-remote.sock";
 export const REMOTE_SOCKET_PATH = path.join(AYA_HOME, REMOTE_SOCKET_NAME);
 export const PTY_HOST_SOCKET_PATH = path.join(AYA_HOME, "pty-host.sock");
-// Per-harness count of panes that ever called `aya` (#117).
 export const CLI_ADOPTION_FILE = path.join(AYA_HOME, "cli-adoption.json");
 // Main-process diagnostics (GPU-helper deaths, #79).
 export const DIAGNOSTICS_LOG_FILE = path.join(AYA_HOME, "diagnostics.log");

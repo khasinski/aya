@@ -108,11 +108,6 @@ function optionalFlag(value: unknown, name: string): boolean | undefined {
   return value;
 }
 
-// A session id is substituted into a spawn command line on restore, so this
-// boundary re-checks its shape rather than trusting the renderer: the same
-// charset the OSC parser enforces (electron/osc-extractor.ts), no shell
-// metacharacters, no whitespace.
-
 function validateWorkingTab(value: unknown, name: string): WorkingTab {
   if (!isRecord(value)) fail(name, "WorkingTab object");
   // cwd (the worktree binding) and sessionId (the agent conversation to
@@ -121,6 +116,7 @@ function validateWorkingTab(value: unknown, name: string): WorkingTab {
   // precise `--resume <id>` to "whatever was latest".
   const cwd = optionalString(value.cwd, `${name}.cwd`);
   const sessionId = optionalString(value.sessionId, `${name}.sessionId`);
+  // Substituted into a spawn command on restore: re-check, don't trust the renderer.
   if (sessionId !== undefined && !SESSION_ID_RE.test(sessionId)) {
     fail(`${name}.sessionId`, "shell-safe session id");
   }

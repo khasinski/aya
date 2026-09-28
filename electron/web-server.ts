@@ -39,7 +39,6 @@ const SESSION_COOKIE = "aya_web_session";
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const LOGIN_BODY_MAX_BYTES = 4096;
 const WS_MAX_PAYLOAD_BYTES = 8 * 1024 * 1024;
-// Random bytes in a session cookie token.
 export const SESSION_TOKEN_BYTES = 32;
 // One year: hashed asset filenames never change content.
 export const IMMUTABLE_MAX_AGE_S = 31_536_000;

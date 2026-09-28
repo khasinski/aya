@@ -50,7 +50,6 @@ export interface EnvProbe {
  *  of the strings in its arguments) implausible. */
 const AYA_CHILD_MARKER = " AYA_TERMINAL_ID=";
 const AYA_HOME_MARKER = " AYA_HOME=";
-// The marker followed by its value (up to the next space), for scopeFromEnvDump.
 const AYA_HOME_VALUE_RE = new RegExp(`${AYA_HOME_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^ ]+)`);
 /** Env marker every PTY host carries: the client spawns it with
  *  ELECTRON_RUN_AS_NODE=1. An editor/grep/test-runner that merely mentions the

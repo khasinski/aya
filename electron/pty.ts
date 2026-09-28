@@ -449,7 +449,6 @@ async function commandExists(binary: string): Promise<boolean> {
   return found;
 }
 
-// The locale a pane gets when the app's environment sets no LANG.
 export const DEFAULT_LANG = "en_US.UTF-8";
 // The spawn log clamps the command: it is unbounded user input, and one line past
 // the log cap would blow straight through it (#89); 4 KB keeps real commands whole.

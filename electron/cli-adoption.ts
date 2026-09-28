@@ -8,7 +8,6 @@ import { TMP_SUFFIX } from "./atomic-write";
 /** Oldest panes are dropped past this, so the file stays small forever. */
 export const CLI_ADOPTION_MAX_PANES = 2000;
 
-/** Quiet time after the last change before the snapshot is written. */
 export const CLI_ADOPTION_SAVE_DEBOUNCE_MS = 2_000;
 
 export interface PaneAdoption {

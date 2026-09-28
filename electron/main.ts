@@ -208,11 +208,9 @@ import type {
 } from "./types";
 
 const DEV_SERVER_URL = "http://localhost:5183";
-// The built renderer (vite output) the packaged app and the web server serve.
 const RENDERER_DIST_DIR = path.join(__dirname, "..", "dist");
 const RENDERER_INDEX_FILE = "index.html";
 const WINDOW_TITLE = IS_DEV ? "Aya Dev" : "Aya";
-
 
 // Per-harness count of panes that ever called `aya` (#117); shown in
 // Settings -> Diagnostics.
@@ -231,7 +229,6 @@ const COLOR_LIGHT_TEXT = "#f0f6fc";
 const ABOUT_DIALOG_SIZE = 360;
 // About dialog icon dimensions (square, px)
 const ABOUT_ICON_SIZE = 128;
-// Stale-host menu dot: 16x16 px at scaleFactor 2 = 8pt logical.
 const STALE_MENU_DOT_PX = 16;
 const STALE_MENU_DOT_SCALE_FACTOR = 2;
 const LOCAL_SUMMARY_TIMEOUT_MS = 20_000;
@@ -239,12 +236,10 @@ const LOCAL_SUMMARY_MAX_STDOUT_BYTES = 32 * 1024;
 // Cascade offset for a window opened from another window (File > New Window,
 // tab tear-out), so it doesn't cover its parent exactly.
 const NEW_WINDOW_CASCADE_OFFSET_PX = 28;
-// Tear-out: the cursor lands this far into the new window, on its tab strip.
 const TEAR_OUT_CURSOR_OFFSET_X_PX = 80;
 const TEAR_OUT_CURSOR_OFFSET_Y_PX = 20;
-// Delays after a GPU death at which we ask renderers to heal. The first covers
-// the typical relaunch window; the second is a cheap safety net (the heal is a
-// no-op when the WebGL context is already live again).
+// Heal nudges after a GPU death: the typical relaunch window, then a safety net
+// (a no-op once the WebGL context is live again).
 const GPU_HEAL_NUDGE_DELAYS_MS = [1200, 3000];
 
 const ptyHost = new PtyHostClient(path.join(__dirname, PTY_HOST_SCRIPT_NAME));
@@ -926,16 +921,14 @@ async function syncCodexBriefs(): Promise<void> {
   await updateBriefRegistry(added, dropped).catch(() => {});
 }
 
-/** The role note for a pane with a team role, else null. */
 async function paneTeamNote(spawn: SpawnRequest): Promise<string | null> {
   const project = (await listProjects()).find((p) => p.slug === spawn.projectSlug);
   const membership = project ? await paneTeamRole(AYA_HOME, project, spawn.ptyId) : null;
   return membership ? teamNote(membership.team, membership.role) : null;
 }
 
-/** Deliver the brief for a fresh (not re-attached) pane whose preset opted
- *  in, and a team pane's role note either way: as an argument, or by making
- *  sure the harness's file carries it. Shared files take no per-pane note. */
+/** The brief (preset opted in) and a team pane's role note, for a fresh pane.
+ *  Shared harness files take the brief only, never a per-pane note. */
 async function withAgentBrief(spawn: SpawnRequest): Promise<SpawnRequest> {
   if (spawn.attachOnly || !spawn.presetId) return spawn;
   const preset = (await listPresets()).find((p) => p.id === spawn.presetId);
