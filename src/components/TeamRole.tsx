@@ -7,11 +7,17 @@ export function TeamRoleChip({ role }: { role: PaneRole }) {
   return (
     <span className="aya-team-chip" title={`${role.role} in team ${role.team}`}>
       {role.role} · {role.team}
-      {role.unread > 0 && (
-        <span className="aya-team-unread" aria-label={`${role.unread} team messages waiting`}>
-          ✉ {role.unread}
-        </span>
-      )}
+      <TeamUnread count={role.unread} label={`${role.unread} team messages waiting`} />
+    </span>
+  );
+}
+
+/** The "✉ 3" badge for team messages waiting; nothing at zero. */
+export function TeamUnread({ count, label }: { count: number; label: string }) {
+  if (count <= 0) return null;
+  return (
+    <span className="aya-team-unread" aria-label={label}>
+      ✉ {count}
     </span>
   );
 }
