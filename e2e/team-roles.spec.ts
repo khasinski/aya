@@ -36,18 +36,18 @@ test.describe("classic layout", () => {
   test("rows show role, team and waiting messages", async ({ window }) => {
     await ready(window);
     const rows = window.locator(".aya-sidebar-row");
-    await expect(rows.filter({ hasText: "shell 1" })).toContainText("tester · ux-review", { timeout: 10_000 });
+    await expect(rows.filter({ hasText: "shell 1" })).toContainText("tester · ux-review");
     await expect(rows.filter({ hasText: "shell 2" }).getByLabel("1 team messages waiting")).toBeVisible();
   });
 
   test("the tab menu moves a role to another pane", async ({ window, seeded }) => {
     await ready(window);
     const row = window.locator('.aya-sidebar-row[data-terminal-name="shell 2"]');
-    await expect(row).toContainText("implementer", { timeout: 10_000 });
+    await expect(row).toContainText("implementer");
     await row.click({ button: "right" });
     await window.locator(".aya-context-menu").getByText("Team role: ux-review › tester").click();
     const file = join(seeded.ayaHome, "teams", "e2e-proj", "ux-review", "assignments.json");
-    await expect.poll(() => JSON.parse(readFileSync(file, "utf8")), { timeout: 10_000 }).toEqual({ tester: "tab-right" });
+    await expect.poll(() => JSON.parse(readFileSync(file, "utf8"))).toEqual({ tester: "tab-right" });
     await expect(row).toContainText("tester · ux-review");
   });
 });
@@ -58,11 +58,11 @@ test.describe("closing a tab", () => {
   test("frees its role", async ({ window, seeded }) => {
     await ready(window);
     const row = window.locator('.aya-sidebar-row[data-terminal-name="shell 2"]');
-    await expect(row).toContainText("implementer", { timeout: 10_000 });
+    await expect(row).toContainText("implementer");
     await row.click({ button: "right" });
     await window.locator(".aya-context-menu").getByText("Close terminal").click();
     const file = join(seeded.ayaHome, "teams", "e2e-proj", "ux-review", "assignments.json");
-    await expect.poll(() => JSON.parse(readFileSync(file, "utf8")), { timeout: 10_000 }).toEqual({ tester: "tab-left" });
+    await expect.poll(() => JSON.parse(readFileSync(file, "utf8"))).toEqual({ tester: "tab-left" });
   });
 });
 
@@ -73,9 +73,7 @@ test.describe("experimental layout", () => {
     await window.evaluate(() => localStorage.setItem("aya:layout-mode", "projects-left"));
     await window.reload();
     await ready(window);
-    await expect(window.locator(".aya-termtab-main").filter({ hasText: "shell 1" })).toContainText("tester · ux-review", {
-      timeout: 10_000,
-    });
+    await expect(window.locator(".aya-termtab-main").filter({ hasText: "shell 1" })).toContainText("tester · ux-review");
     await expect(window.getByLabel("e2e team messages waiting")).toHaveText("✉ 1");
     const tab = window.locator(".aya-termtab-main").filter({ hasText: "shell 1" });
     await tab.click({ button: "right" });
@@ -89,7 +87,7 @@ test.describe("a project that brings a team with no panes", () => {
   test("offers to assign the roles; Open teams shows them", async ({ window }) => {
     await ready(window);
     const prompt = window.getByRole("dialog", { name: "Assign team roles" });
-    await expect(prompt).toContainText("ux-review (tester, implementer)", { timeout: 10_000 });
+    await expect(prompt).toContainText("ux-review (tester, implementer)");
     await prompt.getByRole("button", { name: "Open teams" }).click();
     await expect(window.getByRole("dialog", { name: "Teams" }).getByTestId("team-ux-review")).toBeVisible();
   });

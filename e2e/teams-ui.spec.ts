@@ -52,7 +52,7 @@ test("assign panes, Start sends the delivery test, Pause marks the team, Resume 
   await expect(card.getByRole("button", { name: "Pause", exact: true })).toHaveCount(0);
   await card.getByRole("button", { name: "Start", exact: true }).click();
   await expect.poll(() => log("tab-left"), { timeout: TEAM_DELIVERY_TIMEOUT_MS }).toMatch(/Delivery test/);
-  await expect(card.getByLabel("ux-review messages")).toContainText("aya → implementer", { timeout: 10_000 });
+  await expect(card.getByLabel("ux-review messages")).toContainText("aya → implementer");
   // A pane given a role while the team runs is told its role at once.
   const before = log("tab-right").match(/Delivery test/g)?.length ?? 0;
   await card.getByLabel("Pane for implementer").selectOption({ label: "No pane" });
@@ -71,7 +71,7 @@ test("a repo edit shows as changed and can be adopted", async ({ window, seeded 
   const file = join(seeded.projectDir, ".aya", "teams", "ux-review.md");
   writeFileSync(file, readFileSync(file, "utf8").replace("Must not: edit code", "Must not: touch the database"));
   const card = dialog.getByTestId("team-ux-review");
-  await expect(card.getByText(/repo file changed/)).toBeVisible({ timeout: 10_000 });
+  await expect(card.getByText(/repo file changed/)).toBeVisible();
   await card.getByRole("button", { name: "Use the repo version" }).click();
   await expect(card.getByText("must not touch the database")).toBeVisible();
   await expect(card.getByText(/repo file changed/)).toHaveCount(0);

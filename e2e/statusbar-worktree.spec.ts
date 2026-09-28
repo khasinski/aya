@@ -13,19 +13,15 @@ test("status bar git follows the active terminal's worktree", async ({ window })
   const dirtyBtn = window.locator(".aya-statusbar-button", { hasText: "dirty" });
 
   // shell 1 runs in the project directory: its branch, its 2 dirty files.
-  await expect(statusbar.locator(".aya-statusbar-item", { hasText: "feature/foo" })).toBeVisible({
-    timeout: 10000,
-  });
-  await expect(dirtyBtn).toContainText("2 dirty", { timeout: 10000 });
+  await expect(statusbar.locator(".aya-statusbar-item", { hasText: "feature/foo" })).toBeVisible();
+  await expect(dirtyBtn).toContainText("2 dirty");
   await expect(statusbar.locator(".aya-statusbar-worktree")).toHaveCount(0);
 
   // shell 2 is bound to the worktree -> branch, dirty count and the worktree
   // chip all switch over.
   await sidebarRow(window, "shell 2").click();
-  await expect(statusbar.locator(".aya-statusbar-item", { hasText: "wt/bar" })).toBeVisible({
-    timeout: 10000,
-  });
-  await expect(dirtyBtn).toContainText("1 dirty", { timeout: 10000 });
+  await expect(statusbar.locator(".aya-statusbar-item", { hasText: "wt/bar" })).toBeVisible();
+  await expect(dirtyBtn).toContainText("1 dirty");
   await expect(statusbar.locator(".aya-statusbar-worktree")).toContainText("wt-bar");
 
   // The diff is the worktree's ("twoWT"), not the project directory's ("twoX").
@@ -40,11 +36,9 @@ test("status bar git follows the active terminal's worktree", async ({ window })
   // Back to shell 1: the project directory's state comes back, no stale
   // worktree file list left over in the popover.
   await sidebarRow(window, "shell 1").click();
-  await expect(statusbar.locator(".aya-statusbar-item", { hasText: "feature/foo" })).toBeVisible({
-    timeout: 10000,
-  });
+  await expect(statusbar.locator(".aya-statusbar-item", { hasText: "feature/foo" })).toBeVisible();
   await expect(popover).toHaveCount(0);
-  await expect(dirtyBtn).toContainText("2 dirty", { timeout: 10000 });
+  await expect(dirtyBtn).toContainText("2 dirty");
 });
 
 // The case this was actually built for: nobody bound a tab to anything. You run
@@ -53,9 +47,7 @@ test("status bar git follows the active terminal's worktree", async ({ window })
 // the cwd Aya spawned the terminal with says nothing about where it is now.
 test("status bar follows a `cd` into a worktree", async ({ window, seeded }) => {
   const statusbar = window.locator(".aya-statusbar");
-  await expect(statusbar.locator(".aya-statusbar-item", { hasText: "feature/foo" })).toBeVisible({
-    timeout: 10000,
-  });
+  await expect(statusbar.locator(".aya-statusbar-item", { hasText: "feature/foo" })).toBeVisible();
 
   // shell 1 was spawned in the project directory; move it into the worktree.
   const pane = window.locator(".aya-pane").first();
@@ -70,7 +62,7 @@ test("status bar follows a `cd` into a worktree", async ({ window, seeded }) => 
   await expect(statusbar.locator(".aya-statusbar-worktree")).toContainText("wt-bar");
   await expect(
     window.locator(".aya-statusbar-button", { hasText: "dirty" }),
-  ).toContainText("1 dirty", { timeout: 10000 });
+  ).toContainText("1 dirty");
 
   // And back: the console leaves, the status bar leaves with it.
   await window.keyboard.insertText(`cd ${seeded.projectDir}`);
@@ -86,7 +78,7 @@ test("the checkout picker pins a worktree until you follow the terminal again", 
   const statusbar = window.locator(".aya-statusbar");
   const picker = window.locator('[data-testid="checkout-picker"]');
   // Two worktrees exist, so the branch chip is a picker.
-  await expect(picker).toBeVisible({ timeout: 10000 });
+  await expect(picker).toBeVisible();
   await expect(picker).toContainText("feature/foo");
 
   await picker.click();
@@ -103,10 +95,10 @@ test("the checkout picker pins a worktree until you follow the terminal again", 
   await expect(statusbar.locator(".aya-statusbar-worktree")).toContainText("wt-bar");
   await expect(
     window.locator(".aya-statusbar-button", { hasText: "dirty" }),
-  ).toContainText("1 dirty", { timeout: 10000 });
+  ).toContainText("1 dirty");
 
   // Un-pin: back to what the terminal is in.
   await picker.click();
   await window.locator(".aya-statusbar-popover-action", { hasText: "Follow terminal" }).click();
-  await expect(picker).toContainText("feature/foo", { timeout: 10000 });
+  await expect(picker).toContainText("feature/foo");
 });

@@ -80,7 +80,7 @@ test.describe("real resume behavior", () => {
           } catch {
             return false;
           }
-        }, { timeout: 10_000 })
+        })
         .toBe(true);
     });
   });
@@ -98,7 +98,7 @@ test.describe("real resume behavior", () => {
       // Wait until the spawn actually ran (marker exists), then assert the arg is
       // absent - distinguishes "opted out" from "not spawned yet".
       await expect
-        .poll(() => existsSync(markerPath(seeded.projectDir)), { timeout: 10_000 })
+        .poll(() => existsSync(markerPath(seeded.projectDir)))
         .toBe(true);
       expect(readFileSync(markerPath(seeded.projectDir), "utf8")).not.toContain("--continue");
     });

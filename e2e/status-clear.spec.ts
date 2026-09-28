@@ -41,9 +41,7 @@ async function shellReady(
   await pane.locator(".xterm-screen").click();
   await window.keyboard.insertText(`echo ${marker}`);
   await window.keyboard.press("Enter");
-  await expect(pane.locator(".xterm-rows")).toContainText(marker, {
-    timeout: 10000,
-  });
+  await expect(pane.locator(".xterm-rows")).toContainText(marker);
 }
 
 /** Ordering barrier for control updates: sendControl resolves on the server's

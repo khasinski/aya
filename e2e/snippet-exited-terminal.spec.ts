@@ -75,9 +75,7 @@ test("snippet on a restarted (alive) terminal is not blocked as 'exited'", async
   // suffix, so matching /project\s*[%$#]/ gave a false failure on those machines.
   // The PTY buffers the marker typed below until the fresh shell reads it, and
   // the alive assertion auto-retries, so no prompt-shape match is needed.
-  await expect(window.locator(firstPaneRows)).toContainText(/restarting/i, {
-    timeout: 10000,
-  });
+  await expect(window.locator(firstPaneRows)).toContainText(/restarting/i);
 
   // Prove the terminal is ALIVE after the restart: the fresh shell echoes a
   // typed marker back (a dead PTY would show nothing).
