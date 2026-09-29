@@ -3,6 +3,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  paneOptionLabel,
+  pendingMoves,
+  rolePanesSummary,
   messageDeliveryText,
   paneRoles,
   startSummary,
@@ -71,4 +74,35 @@ test("Start's summary line names what the marked roles mean", () => {
     "Started; the roles marked below did not get the delivery test.",
   );
   assert.equal(startSummary({ started: true, delivered: ["dev"], held: [] }), null);
+});
+
+test("a pane in a role's select names the role it plays, in this team or another", () => {
+  const plays = (team, role) => ({ team, role, unread: 0 });
+  assert.equal(paneOptionLabel("shell 1", undefined, "ux", "tester"), "shell 1");
+  assert.equal(paneOptionLabel("shell 1", plays("ux", "tester"), "ux", "tester"), "shell 1");
+  assert.equal(paneOptionLabel("shell 1", plays("ux", "fixer"), "ux", "tester"), "shell 1 - fixer");
+  assert.equal(paneOptionLabel("shell 1", plays("docs", "writer"), "ux", "tester"), "shell 1 - docs › writer");
+});
+
+test("Apply spells out a move that leaves another role without a pane, unless that role is changed too", () => {
+  const plays = { p1: { team: "ux", role: "tester", unread: 0 }, p2: { team: "docs", role: "writer", unread: 0 } };
+  const name = (id) => ({ p1: "shell 1", p2: "shell 2" })[id];
+  assert.deepEqual(pendingMoves("ux", { fixer: "p1" }, plays, name), ["shell 1 moves from tester to fixer; tester is left without a pane."]);
+  assert.deepEqual(pendingMoves("ux", { fixer: "p1", tester: "new:claude" }, plays, name), []);
+  assert.deepEqual(pendingMoves("ux", { tester: "p1" }, plays, name), []);
+  assert.deepEqual(pendingMoves("ux", { fixer: "p2" }, plays, name), ["shell 2 moves from docs › writer to fixer; docs › writer is left without a pane."]);
+  assert.deepEqual(pendingMoves("ux", { fixer: "new:claude", tester: "" }, plays, name), []);
+});
+
+test("after Apply: each role's pane, who lost one, and Start left to the user", () => {
+  const result = {
+    panes: [
+      { role: "tester", paneId: "p1", name: "Codex - tester", preset: "Codex", notReached: null },
+      { role: "fixer", paneId: "p2", name: "shell 2", preset: null, notReached: "runs a shell" },
+    ],
+    leftWithoutPane: [],
+  };
+  assert.equal(rolePanesSummary(result, false), "tester: new Codex pane, fixer: shell 2. Start the team when you are ready.");
+  assert.equal(rolePanesSummary(result, true), "tester: new Codex pane, fixer: shell 2. The roles marked below were not told their role.");
+  assert.equal(rolePanesSummary({ panes: [result.panes[0]], leftWithoutPane: ["writer"] }, true), "tester: new Codex pane. Left without a pane: writer.");
 });

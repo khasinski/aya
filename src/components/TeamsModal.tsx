@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_CADENCE_MINUTES } from "../team-edit";
-import type { AyaIntelligenceConfig, ProjectConfig, TeamDefinition, TeamSummary } from "../types";
+import { paneRoles } from "../team-view";
+import type { AyaIntelligenceConfig, PresetChoice, ProjectConfig, TeamDefinition, TeamSummary } from "../types";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 import { TeamCard } from "./TeamCard";
 import { TeamEditor } from "./TeamEditor";
@@ -41,6 +42,7 @@ interface Props {
 export function TeamsModal({ project, intelligence, onClose }: Props) {
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [editing, setEditing] = useState<{ team: TeamDefinition; isNew: boolean } | null>(null);
+  const [installed, setInstalled] = useState<PresetChoice[]>([]);
   const list = useAsyncAction();
   const { run } = list;
 
@@ -48,6 +50,13 @@ export function TeamsModal({ project, intelligence, onClose }: Props) {
     const next = await run(() => window.aya.teamList(project.slug));
     if (next) setTeams(next);
   }, [project.slug, run]);
+
+  useEffect(() => {
+    void window.aya
+      .teamPresets()
+      .then((all) => setInstalled(all.filter((p) => p.installed)))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     void reload();
@@ -93,6 +102,8 @@ export function TeamsModal({ project, intelligence, onClose }: Props) {
                 key={team.name}
                 team={team}
                 project={project}
+                installed={installed}
+                plays={paneRoles(teams)}
                 onEdit={(definition) => setEditing({ team: definition, isNew: false })}
                 onChanged={reload}
               />

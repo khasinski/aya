@@ -1,6 +1,6 @@
 // How the tab list and the teams window show teams: roles, unread, log lines.
 
-import type { TeamMessage, TeamStartResult, TeamSummary } from "./types";
+import type { RolePanes, TeamMessage, TeamStartResult, TeamSummary } from "./types";
 
 // The sender electron/team-runner.ts logs Aya's own messages under.
 export const AYA_SENDER = "aya";
@@ -47,4 +47,36 @@ export function messageDeliveryText(m: Pick<TeamMessage, "from" | "delivered" | 
 export function startSummary(result: TeamStartResult): string | null {
   if (!result.started) return "Not started, nothing was sent: fix the roles marked below, then Start again.";
   return result.held.length ? "Started; the roles marked below did not get the delivery test." : null;
+}
+
+/** The select value that stands for a new session of a preset. */
+export const NEW_PANE_PREFIX = "new:";
+
+/** A pane in a role's select: its name, and the role it plays if not this one. */
+export function paneOptionLabel(name: string, plays: PaneRole | undefined, team: string, role: string): string {
+  if (!plays || (plays.team === team && plays.role === role)) return name;
+  return `${name} - ${plays.team === team ? plays.role : `${plays.team} › ${plays.role}`}`;
+}
+
+/** What Apply will move: a pane another role plays leaves that role without one. */
+export function pendingMoves(
+  team: string,
+  changes: Record<string, string>,
+  plays: Record<string, PaneRole>,
+  tabName: (paneId: string) => string,
+): string[] {
+  return Object.entries(changes).flatMap(([role, value]) => {
+    const from = plays[value];
+    if (!from || (from.team === team && (from.role === role || from.role in changes))) return [];
+    const who = from.team === team ? from.role : `${from.team} › ${from.role}`;
+    return [`${tabName(value)} moves from ${who} to ${role}; ${who} is left without a pane.`];
+  });
+}
+
+/** After Apply: which pane each role got, and that Start is the user's. */
+export function rolePanesSummary({ panes, leftWithoutPane }: RolePanes, running: boolean): string {
+  const given = `${panes.map((p) => `${p.role}: ${p.preset ? `new ${p.preset} pane` : p.name}`).join(", ")}.`;
+  const left = leftWithoutPane.length ? ` Left without a pane: ${leftWithoutPane.join(", ")}.` : "";
+  if (!running) return `${given}${left} Start the team when you are ready.`;
+  return `${given}${left}${panes.some((p) => p.notReached) ? " The roles marked below were not told their role." : ""}`;
 }

@@ -2852,6 +2852,17 @@ select.aya-modal-input {
   padding: 4px 6px;
   vertical-align: top;
 }
+.aya-teams-apply {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+.aya-teams-apply .aya-teams-warning {
+  flex-basis: 100%;
+  margin: 0;
+}
 .aya-teams-log {
   border-top: 1px solid var(--border);
   padding-top: 6px;
