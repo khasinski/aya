@@ -1524,7 +1524,11 @@ function dispatchOpenProject(
   dir: string | null,
 ): void {
   if (!win || win.isDestroyed() || !dir) return;
-  win.webContents.send("open-project", dir);
+  const send = () => win.webContents.send("open-project", dir);
+  // A loading page drops what is sent to it. isLoading() can still read true
+  // inside did-finish-load, so the deferred send does not check it again.
+  if (win.webContents.isLoading()) win.webContents.once("did-finish-load", send);
+  else send();
 }
 
 function dispatchShortcut(action: string): void {
@@ -2436,14 +2440,7 @@ function registerIpc(): void {
       if (!win) throw new Error("windows:adopt-project: target window not found");
       if (win.isMinimized()) win.restore();
       win.focus();
-      const targetWin = win;
-      if (targetWin.webContents.isLoading()) {
-        targetWin.webContents.once("did-finish-load", () =>
-          dispatchOpenProject(targetWin, dir),
-        );
-      } else {
-        dispatchOpenProject(targetWin, dir);
-      }
+      dispatchOpenProject(win, dir);
     },
   );
   ipcMain.handle("projects:create", async (_e, name: unknown, dir: unknown) =>
@@ -3136,12 +3133,11 @@ app.whenReady().then(async () => {
         },
       },
     ],
-    openProject: (directory) => {
-      const target = focusedAyaWindow();
-      if (target) {
-        if (target.isMinimized()) target.restore();
-        target.focus();
-      }
+    openProject: async (directory) => {
+      // macOS keeps running with every window closed; the open needs one.
+      const target = focusedAyaWindow() ?? (mainWindow = createWindow(await loadWindowState()));
+      if (target.isMinimized()) target.restore();
+      target.focus();
       dispatchOpenProject(target, directory);
     },
   });
@@ -3226,12 +3222,7 @@ app.whenReady().then(async () => {
 
   // Honor an initial directory argument on first launch — the renderer
   // applies the same switch-or-create logic as for second-instance.
-  const initialDir = findDirInArgv(process.argv);
-  if (initialDir && mainWindow) {
-    mainWindow.webContents.once("did-finish-load", () => {
-      dispatchOpenProject(mainWindow, initialDir);
-    });
-  }
+  dispatchOpenProject(mainWindow, findDirInArgv(process.argv));
 
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
