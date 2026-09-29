@@ -10,7 +10,9 @@ import { leadingEnvAssignments } from "./shell-words";
 
 const execFileAsync = promisify(execFile);
 
-const LIST_TIMEOUT_MS = 5000;
+// Includes the pane shell's own startup (about 3 s for an interactive zsh
+// under load, measured), not just opencode's ~1 s.
+const LIST_TIMEOUT_MS = 10_000;
 export const OPENCODE_LIST_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 const OPENCODE_BINARY = /^opencode(?:\s|$)/;
 const CONTINUE_FLAG = /\s--continue(?=\s|$)/;

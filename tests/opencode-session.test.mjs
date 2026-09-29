@@ -236,5 +236,5 @@ test("output past the named buffer cap is a failed lookup that keeps the command
 test("listOpencodeSessions gives up on a lookup that hangs, so the pane still spawns", async () => {
   const started = Date.now();
   await assert.rejects(listOpencodeSessions(sh("exec sleep 60"), {}));
-  assert.ok(Date.now() - started < 15_000);
+  assert.ok(Date.now() - started < 20_000);
 });
