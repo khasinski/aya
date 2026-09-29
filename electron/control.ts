@@ -74,7 +74,7 @@ export interface ControlServerOptions {
   team?: TeamControlDeps;
   /** Told of a team saved with aya team save, as after the Teams window's Save. */
   teamRunner?: Pick<TeamRunner, "refresh">;
-  /** What aya presets and aya team open run on, as the Teams window's Open panes. */
+  /** What aya presets and aya team open run on, as the Teams window's Apply panes. */
   teamPanes?: TeamPaneDeps;
   /** Test-only override of the idle reap window. */
   idleTimeoutMs?: number;

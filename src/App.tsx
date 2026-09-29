@@ -2172,8 +2172,8 @@ export function App() {
     [activeTabByProject, appendProjectEvent, effectiveCwd],
   );
 
-  // aya team open / the Teams window's Open panes: main picked the ids and
-  // assigns the roles once the project is saved with the new tabs.
+  // aya team open / Apply panes: main picked the ids and assigns the roles
+  // once the project is saved with the new tabs.
   useEffect(
     () =>
       window.aya.onTeamOpenPanes(({ requestId, projectSlug, panes }) => {

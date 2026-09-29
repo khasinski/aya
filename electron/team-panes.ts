@@ -1,7 +1,5 @@
-// `aya presets`, `aya team open` and the Teams window's Apply: one path that
-// checks every role and target first, then gives each role its pane - a new
-// session of a preset, the calling pane, or an existing pane - as the Teams
-// window's assignment does.
+// `aya presets`, `aya team open` and the Teams window's Apply panes: one path
+// that checks every pick first, then gives each role a new session or an open pane.
 
 import { randomUUID } from "node:crypto";
 import type { TeamPanesRequest } from "./control-protocol";

@@ -266,7 +266,7 @@ const teamDeps: TeamControlDeps = {
   headCommit,
 };
 const paneOpens = new RendererRequests();
-// aya team open and the Teams window's Open panes open panes through this.
+// aya team open and the Teams window's Apply panes open panes through this.
 const teamPaneHost: PaneHost = {
   listPresets,
   presetInstalled,
