@@ -2204,7 +2204,19 @@ export function App() {
           setTerminals((prev) => ({ ...prev, ...added }));
           setAllProjects((ps) => ps.map((p) => (p.slug === projectSlug ? updated : p)));
           setProjects((ps) => ps.map((p) => (p.slug === projectSlug ? updated : p)));
-          await window.aya.updateProject(updated);
+          try {
+            await window.aya.updateProject(updated);
+          } catch (err) {
+            // An unsaved tab would stay on screen with a running agent that main never assigns.
+            const kept = { ...terminalsRef.current };
+            for (const id of Object.keys(added)) delete kept[id];
+            terminalsRef.current = kept;
+            setTerminals((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => !(id in added))));
+            setAllProjects((ps) => ps.map((p) => (p.slug === projectSlug ? project : p)));
+            setProjects((ps) => ps.map((p) => (p.slug === projectSlug ? project : p)));
+            for (const id of Object.keys(added)) void window.aya.ptyKill(id);
+            throw err;
+          }
           for (const pane of panes) {
             appendProjectEvent({ projectSlug, terminalId: pane.id, level: "active", title: `${pane.name} started` });
           }

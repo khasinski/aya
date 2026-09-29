@@ -3,6 +3,7 @@ import type { PresetChoice, ProjectConfig, TeamDefinition, TeamSummary } from ".
 import {
   messageDeliveryText,
   NEW_PANE_PREFIX,
+  PANE_PREFIX,
   paneOptionLabel,
   pendingMoves,
   rolePanesSummary,
@@ -46,6 +47,7 @@ export function TeamCard({
     setSummary(startSummary(result));
   };
   // Per role, the pane picked but not applied yet: "" none, a pane id, or NEW_PANE_PREFIX + preset.
+  // Sent as explicit targets, so a pane named like a preset id is still that pane.
   const [picks, setPicks] = useState<Record<string, string>>({});
   const definition = team.definition;
   const current = (role: string) => (project.tabs.some((t) => t.id === team.assignments[role]) ? team.assignments[role] : "");
@@ -58,7 +60,7 @@ export function TeamCard({
         if (!value) await window.aya.teamAssign(project.slug, team.name, role, null);
       }
       const given = Object.entries(changes).flatMap(([role, value]) =>
-        value ? [{ role, target: value.startsWith(NEW_PANE_PREFIX) ? value.slice(NEW_PANE_PREFIX.length) : value }] : [],
+        value ? [{ role, target: value.startsWith(NEW_PANE_PREFIX) ? value : `${PANE_PREFIX}${value}` }] : [],
       );
       return given.length ? window.aya.teamOpenPanes(project.slug, team.name, given) : { panes: [], leftWithoutPane: [] };
     });

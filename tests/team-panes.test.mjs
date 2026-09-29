@@ -17,6 +17,7 @@ const {
   handleTeamPanesRequest,
   presetAgent,
   RendererRequests,
+  PaneOpenTimeout,
   teamPaneDeps,
 } = await import("../dist-electron/team-panes.js");
 const { presetInstalled } = await import("../dist-electron/command-probe.js");
@@ -135,20 +136,20 @@ const USE_CASES = [
   },
   {
     name: "the calling pane takes a role, the rest get new sessions",
-    picks: "reviewer=this implementer=claude tester=codex",
+    picks: "reviewer=this implementer=claude tester=new:codex",
     opens: [["implementer", "claude"], ["tester", "codex"]],
     assigned: { reviewer: "pane-c", implementer: "new-1", tester: "new-2" },
   },
   {
     name: "mixed CLIs",
-    picks: "reviewer=claude implementer=codex tester=grok",
+    picks: "reviewer=claude implementer=new:codex tester=grok",
     opens: [["reviewer", "claude"], ["implementer", "codex"], ["tester", "grok"]],
     assigned: { reviewer: "new-1", implementer: "new-2", tester: "new-3" },
   },
   {
     name: "roles with live panes are left alone; only the missing ones are opened",
     assignments: { reviewer: "pane-c" },
-    picks: "implementer=codex tester=claude",
+    picks: "implementer=new:codex tester=claude",
     opens: [["implementer", "codex"], ["tester", "claude"]],
     assigned: { reviewer: "pane-c", implementer: "new-1", tester: "new-2" },
   },
@@ -212,6 +213,39 @@ const USE_CASES = [
     picks: "tester=pane-x",
     refused: /^pane "Codex" plays writer in team docs; add --replace to move it \(writer is then left without a pane\); nothing/,
   },
+  {
+    name: "refused: a target that is both a preset id and a pane name, with the explicit forms",
+    picks: "tester=codex",
+    refused: /^"codex" is both a preset and a pane name; write new:codex for a new session or pane:codex for the pane; nothing/,
+  },
+  {
+    name: "new: and pane: say which is meant",
+    picks: "tester=new:codex implementer=pane:codex",
+    opens: [["tester", "codex"]],
+    assigned: { tester: "new-1", implementer: "pane-x" },
+  },
+  { name: "refused: new: names no preset", picks: "tester=new:vim", refused: /^no preset "vim"; presets: shell, claude, codex, grok, missing; nothing/ },
+  {
+    name: "refused: pane: names no pane",
+    picks: "tester=pane:claude",
+    refused: /^no pane "claude"; panes: Claude Code, Codex, old tester, worker, worker; nothing/,
+  },
+  {
+    name: "a dead pane another role had can be taken without --replace, and that role is named",
+    assignments: { implementer: "pane-dead" },
+    picks: "tester=pane-dead",
+    opens: [],
+    assigned: { tester: "pane-dead" },
+    left: ["implementer"],
+  },
+  {
+    name: "... also from another team's role",
+    other: { writer: "pane-dead" },
+    picks: "tester=pane-dead",
+    opens: [],
+    assigned: { tester: "pane-dead" },
+    left: ["writer in team docs"],
+  },
   { name: "refused: a preset whose CLI is not installed", picks: "tester=missing", refused: /^preset "missing" \(Missing\) is not installed; nothing/ },
   {
     name: "refused: an unknown role",
@@ -223,7 +257,7 @@ const USE_CASES = [
     picks: "tester=vim",
     refused: /^no preset or pane "vim"; presets: shell, claude, codex, grok, missing; panes: Claude Code, Codex, old tester, worker, worker; nothing/,
   },
-  { name: "refused: a role listed twice", picks: "tester=claude tester=codex", refused: /^role "tester" is listed twice; nothing/ },
+  { name: "refused: a role listed twice", picks: "tester=claude tester=grok", refused: /^role "tester" is listed twice; nothing/ },
   {
     name: "refused: one pane given to two roles",
     picks: "reviewer=this tester=pane-c",
@@ -413,6 +447,66 @@ test("a running team introduces a new pane once it has started, or says why not"
   }
 });
 
+test("a window that saved the tabs but missed its reply: the roles still get them, and a retry opens no second pane", async () => {
+  const t = setup();
+  const open = t.deps.openPanes;
+  t.deps.openPanes = async (slug, panes) => {
+    await open(slug, panes);
+    throw new Error("the Aya window did not open the panes in time");
+  };
+  try {
+    const { panes } = await t.open(picks("reviewer=claude tester=claude"));
+    assert.deepEqual(panes.map((p) => p.paneId), ["new-1", "new-2"]);
+    assert.deepEqual(t.assignments(), { reviewer: "new-1", tester: "new-2" });
+    await assert.rejects(() => t.open(picks("reviewer=claude tester=claude")), /already has a live pane/);
+    assert.equal(t.opened.length, 2, "no second pane");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a window that saves the tabs after the deadline: its late reply still gives the roles their panes", async () => {
+  const t = setup();
+  const open = t.deps.openPanes;
+  let saved;
+  t.deps.openPanes = async (slug, panes) => {
+    const late = new Promise((resolve) => (saved = async () => (await open(slug, panes), resolve())));
+    throw new PaneOpenTimeout(late);
+  };
+  try {
+    await assert.rejects(
+      () => t.open(picks("reviewer=claude tester=claude")),
+      /^Error: the Aya window did not open the panes in time; if it still opens them, their roles follow$/,
+    );
+    assert.deepEqual(t.assignments(), {});
+    await saved();
+    for (let i = 0; i < 50 && !t.assignments().tester; i++) await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(t.assignments(), { reviewer: "new-1", tester: "new-2" });
+    await assert.rejects(() => t.open(picks("reviewer=claude")), /already has a live pane/);
+    assert.equal(t.opened.length, 2, "no second pane");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a window that saved only some tabs before failing: those roles get them, and the error says who did not", async () => {
+  const t = setup();
+  const open = t.deps.openPanes;
+  t.deps.openPanes = async (slug, panes) => {
+    await open(slug, panes.slice(0, 1));
+    throw new Error("the Aya window did not open the panes in time");
+  };
+  try {
+    await assert.rejects(
+      () => t.open(picks("reviewer=claude tester=claude implementer=this")),
+      /^Error: the Aya window did not open the panes in time; reviewer got its new pane \(new-1\), implementer its pane; tester got none$/,
+    );
+    assert.deepEqual(t.assignments(), { reviewer: "new-1", implementer: "pane-c" });
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("a window that fails to open the panes assigns nothing", async () => {
   const t = setup();
   t.deps.openPanes = async () => {
@@ -558,6 +652,15 @@ test("a renderer request settles on its answer, its error, or its deadline", asy
   await ok;
   await assert.rejects(failed, /^Error: no such preset$/);
   await assert.rejects(requests.ask(() => {}, 20), /^Error: the Aya window did not open the panes in time$/);
+  const slow = [];
+  const timeout = await requests.ask((id) => slow.push(id), 20).catch((err) => err);
+  assert.ok(timeout instanceof PaneOpenTimeout);
+  requests.answer(slow[0], null);
+  await timeout.late;
+  const failedLate = [];
+  const lateError = await requests.ask((id) => failedLate.push(id), 20).catch((err) => err);
+  requests.answer(failedLate[0], "cannot save");
+  await assert.rejects(lateError.late, /^Error: cannot save$/);
   const odd = [];
   const oddAnswer = requests.ask((id) => odd.push(id), 1_000);
   requests.answer(odd[0], { not: "a message" });
@@ -566,4 +669,63 @@ test("a renderer request settles on its answer, its error, or its deadline", asy
   const timedOut = requests.ask((id) => late.push(id), 20);
   await assert.rejects(timedOut);
   requests.answer(late[0], null);
+});
+
+test("the Teams window's select values are main's explicit targets", async () => {
+  const view = await import("../dist-test/team-view.js");
+  const { NEW_TARGET, PANE_TARGET } = await import("../dist-electron/team-panes.js");
+  assert.equal(view.NEW_PANE_PREFIX, NEW_TARGET);
+  assert.equal(view.PANE_PREFIX, PANE_TARGET);
+});
+
+const READINESS = {
+  "every role ready": { assignments: { reviewer: "pane-c", implementer: "pane-x", tester: "pane-w1" } },
+  "a role held": { assignments: { reviewer: "pane-c", implementer: "pane-x", tester: "pane-w1" }, holds: (p) => (p === "pane-x" ? "shows an approval prompt" : null) },
+  "a role without a pane": { assignments: { reviewer: "pane-c", tester: "pane-w1" } },
+};
+
+test("aya team start: team state x readiness, through the Teams window's Start", async (s) => {
+  for (const [teamState, state] of Object.entries(TEAM_STATES)) {
+    for (const [readiness, options] of Object.entries(READINESS)) {
+      await s.test(`${teamState}, ${readiness}`, async () => {
+        const t = setup({ state, ...options });
+        const start = () => handleTeamPanesRequest({ type: "team-start", team: "ux-review" }, "pane-c", t.deps);
+        try {
+          if (teamState === "running") {
+            await assert.rejects(start, /^Error: team ux-review is already running; nothing was sent$/);
+            assert.equal(t.typed.length, 0);
+            return;
+          }
+          if (readiness === "every role ready") {
+            assert.equal((await start()).output, "started team ux-review; delivery test written to reviewer, implementer, tester\n");
+            assert.equal(t.typed.length, 3);
+            assert.deepEqual(await t.store.state(), { paused: false, running: true });
+            return;
+          }
+          const why = readiness === "a role held" ? "implementer: shows an approval prompt" : "implementer: no pane assigned";
+          await assert.rejects(start, new RegExp(`^Error: team ux-review was not started, nothing was sent; ${why}$`));
+          assert.equal(t.typed.length, 0);
+          assert.equal((await t.store.state()).running, false);
+        } finally {
+          t.cleanup();
+        }
+      });
+    }
+  }
+});
+
+test("aya team start refuses outside a project and for a team that is not there", async () => {
+  const t = setup();
+  try {
+    await assert.rejects(
+      () => handleTeamPanesRequest({ type: "team-start", team: "ux-review" }, "pane-elsewhere", t.deps),
+      /^Error: run aya team start in an Aya pane, or in the directory of a project open in Aya; nothing was sent$/,
+    );
+    await assert.rejects(
+      () => handleTeamPanesRequest({ type: "team-start", team: "nope" }, "pane-c", t.deps),
+      /^Error: no team "nope" in this project; its teams: ux-review; nothing was sent$/,
+    );
+  } finally {
+    t.cleanup();
+  }
 });

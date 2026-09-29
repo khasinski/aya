@@ -3,7 +3,7 @@
 // pane or an open pane, through the same main-process path. Start stays the user's.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect } from "./fixtures";
 import { envWithoutAya } from "./helpers/env";
@@ -19,6 +19,7 @@ import {
   teamSeed,
 } from "./helpers/team";
 import { firstTerminalShown } from "./helpers/terminal";
+import { TEAMS_REFRESH_MS } from "../src/hooks/useTeams";
 import { AGENT_TEST_TIMEOUT_MS } from "./timeouts";
 
 const TEAM = `# ux-review
@@ -64,6 +65,9 @@ test.describe("one Claude Code pane, where the user asks for a team", () => {
     const file = guide.stdout.split(/^----- .* -----$/m)[1];
     expect(aya(["team", "save", "-"], file).stdout).toMatch(/^saved team ux-fix: 3 roles \(reviewer, fixer, tester\)/);
     expect(aya(["presets"]).stdout).toMatch(/^claude +Claude Code +claude +yes$/m);
+    // The agent proposes the panes now: the window's own assign prompt would compete with it.
+    await window.waitForTimeout(TEAMS_REFRESH_MS + 1_000);
+    await expect(window.getByRole("dialog", { name: "Assign team roles" })).toHaveCount(0);
 
     const opened = aya(["team", "open", "ux-fix", "reviewer=claude", "fixer=claude", "tester=claude"]);
     expect(opened.stderr).toBe("");
@@ -87,10 +91,13 @@ test.describe("one Claude Code pane, where the user asks for a team", () => {
     for (const role of ["reviewer", "fixer", "tester"]) {
       await expect(card.getByLabel(`Pane for ${role}`).locator("option:checked")).toHaveText(`Claude Code - ${role}`);
     }
-    expect(teamState(seeded.ayaHome, "teams/e2e-proj/ux-fix")).toBeNull();
+    expect(teamState(seeded.ayaHome, "teams/e2e-proj/ux-fix")).toEqual({ agentAuthored: true });
     await expect.poll(() => Object.values(ids).every((id) => started(seeded.projectDir, id)), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toBe(true);
 
-    await card.getByRole("button", { name: "Start", exact: true }).click();
+    const start = aya(["team", "start", "ux-fix"]);
+    expect(start.stderr).toBe("");
+    expect(start.stdout).toBe("started team ux-fix; delivery test written to reviewer, fixer, tester\n");
+    await expect(card.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
     const log = teamLog(seeded.projectDir);
     for (const id of Object.values(ids)) {
       await expect.poll(() => log(id), { timeout: TEAM_DELIVERY_TIMEOUT_MS }).toMatch(/Delivery test: run aya team whoami/);
@@ -129,6 +136,27 @@ test.describe("a team saved with no panes", () => {
     await expect(rows.filter({ hasText: "Claude Code - tester" })).toContainText("tester · ux-review");
     await expect(rows.filter({ hasText: "shell 1" })).toContainText("implementer · ux-review");
     expect(teamState(seeded.ayaHome)).toBeNull();
+    const start = aya(["team", "start", "ux-review"]);
+    expect(start.status).toBe(1);
+    expect(start.stderr).toBe("aya: team ux-review was not started, nothing was sent; implementer: runs a shell\n");
+  });
+
+  test("a window that cannot save the project keeps no phantom tab, and nothing is assigned", async ({ window, seeded }) => {
+    test.setTimeout(AGENT_TEST_TIMEOUT_MS);
+    await firstTerminalShown(window);
+    const projects = join(seeded.ayaHome, "projects");
+    chmodSync(projects, 0o555);
+    try {
+      const opened = cli(seeded.ayaHome)(["team", "open", "ux-review", "tester=claude"]);
+      expect(opened.status).toBe(1);
+      expect(opened.stderr).toMatch(/^aya: .*(EACCES|permission denied)/i);
+      await expect(window.locator(".aya-sidebar-row")).toHaveCount(2);
+      await window.waitForTimeout(1_000);
+      await expect(window.locator(".aya-sidebar-row")).toHaveCount(2);
+      expect(existsSync(join(seeded.ayaHome, TEAM_STATE_DIR, "assignments.json"))).toBe(false);
+    } finally {
+      chmodSync(projects, 0o755);
+    }
   });
 
   test("Apply panes in the Teams window: a new session per role from installed presets only", async ({ window, seeded }) => {

@@ -29,7 +29,7 @@ export function unreadTotal(teams: TeamSummary[]): number {
 
 /** Teams whose roles all lack a pane: the project-open prompt offers these. */
 export function unassignedTeams(teams: TeamSummary[]): TeamSummary[] {
-  return teams.filter((t) => t.definition && Object.keys(t.assignments).length === 0);
+  return teams.filter((t) => t.definition && !t.agentAuthored && Object.keys(t.assignments).length === 0);
 }
 
 /** The key a dismissed "assign roles?" prompt is remembered under. */
@@ -49,8 +49,9 @@ export function startSummary(result: TeamStartResult): string | null {
   return result.held.length ? "Started; the roles marked below did not get the delivery test." : null;
 }
 
-/** The select value that stands for a new session of a preset. */
+/** Select values are aya team open targets: a new session of a preset, or a pane. */
 export const NEW_PANE_PREFIX = "new:";
+export const PANE_PREFIX = "pane:";
 
 /** A pane in a role's select: its name, and the role it plays if not this one. */
 export function paneOptionLabel(name: string, plays: PaneRole | undefined, team: string, role: string): string {
