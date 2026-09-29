@@ -5,6 +5,8 @@ set -e
 
 INSTALLED_APP_SOCKET="$HOME/.aya/aya.sock"
 OPEN_SOCKET_WAIT_SECONDS="${AYA_OPEN_WAIT_SECONDS:-15}"
+# Keeps the wait's integer compare far from overflow (under ~3 hours).
+OPEN_SOCKET_WAIT_MAX_DIGITS=4
 
 usage() {
   cat >&2 <<'EOF'
@@ -221,12 +223,14 @@ NODE
 # A named instance (AYA_SOCKET / AYA_HOME) may still be starting; launching the
 # installed app instead would open the project in the wrong Aya.
 wait_for_named_socket() {
-  case "$OPEN_SOCKET_WAIT_SECONDS" in
-    *[!0-9]*)
-      printf "aya: AYA_OPEN_WAIT_SECONDS must be whole seconds, got '%s'\n" "$OPEN_SOCKET_WAIT_SECONDS" >&2
-      exit 1
-      ;;
-  esac
+  if case "$OPEN_SOCKET_WAIT_SECONDS" in
+    *[!0-9]*) true ;;
+    *) [ "${#OPEN_SOCKET_WAIT_SECONDS}" -gt "$OPEN_SOCKET_WAIT_MAX_DIGITS" ] ;;
+  esac; then
+    printf "aya: AYA_OPEN_WAIT_SECONDS must be whole seconds, at most %s digits, got '%s'\n" \
+      "$OPEN_SOCKET_WAIT_MAX_DIGITS" "$OPEN_SOCKET_WAIT_SECONDS" >&2
+    exit 1
+  fi
   waited=0
   while [ ! -S "$1" ]; do
     if [ "$waited" -ge "$OPEN_SOCKET_WAIT_SECONDS" ]; then
