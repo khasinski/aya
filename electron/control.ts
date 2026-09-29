@@ -25,8 +25,8 @@ export const CONTROL_REQUEST_MAX_SIZE_BYTES = 64_000;
  *  is exempt, so this only drops peers that never finish a frame. */
 export const CONTROL_CONNECTION_IDLE_MS = 30_000;
 
-/** How long an open may take to reach a loaded page before the caller hears
- *  ok:false; a new window loads in well under a second. */
+/** How long the caller waits for an open to reach a loaded page; after that it
+ *  hears ok:false, but delivery goes on (dropping a cold-start open is worse). */
 export const OPEN_DELIVERY_TIMEOUT_MS = 15_000;
 
 /** Backstop linger after our FIN, for a peer still writing. */
@@ -167,7 +167,12 @@ async function handleRequest(
         options.openProject(path.resolve(request.path)),
         new Promise((_, reject) => {
           timer = setTimeout(
-            () => reject(new Error(`the open was not delivered within ${limitMs / 1000} s`)),
+            () =>
+              reject(
+                new Error(
+                  `Aya is still loading after ${limitMs / 1000} s; the project will open once it has loaded`,
+                ),
+              ),
             limitMs,
           );
         }),
