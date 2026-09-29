@@ -200,7 +200,7 @@ export function orphanedBriefFiles(recorded: string[], plan: CodexBriefPlan): st
 }
 
 /** What a settings save does to codex AGENTS.md files. A relative home has no
- *  cwd here, so recorded files under it are left alone while its preset opts in. */
+ *  cwd here, so any file under it is left alone while its preset opts in. */
 export function codexBriefSync(
   presets: Array<{ configDir?: string; command: string; agentBrief?: boolean }>,
   recorded: string[],
@@ -219,8 +219,8 @@ export function codexBriefSync(
     const dir = path.dirname(file).split("/");
     return relativeOn.some((tail) => tail.every((seg, i) => dir[dir.length - tail.length + i] === seg));
   };
-  const orphans = orphanedBriefFiles(recorded, plan).filter((f) => !underRelativeOn(f));
-  return { ensure: plan.ensure, remove: [...plan.remove, ...orphans] };
+  const remove = [...plan.remove, ...orphanedBriefFiles(recorded, plan)];
+  return { ensure: plan.ensure, remove: remove.filter((f) => !underRelativeOn(f)) };
 }
 
 /** A relative dir's segments that any cwd keeps: "../h/./x" -> ["h", "x"]. */

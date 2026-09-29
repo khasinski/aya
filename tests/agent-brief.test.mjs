@@ -323,3 +323,14 @@ test("settings sync leaves a relative home's launch-written brief alone while it
     { ensure: ["/Users/dev/.a/AGENTS.md"], remove: [`${envHome}/AGENTS.md`] },
   );
 });
+
+test("settings sync keeps a shared file an absolute preset turned off while a relative one opts in", async () => {
+  const { codexBriefSync } = await import("../dist-electron/agent-brief.js");
+  const file = "/Users/dev/work/.codex/AGENTS.md";
+  const presets = [
+    { configDir: "/Users/dev/work/.codex", command: "codex", agentBrief: false },
+    { configDir: ".codex", command: "codex", agentBrief: true },
+  ];
+  assert.deepEqual(codexBriefSync(presets, [file], "/env/codex-home", expand), { ensure: [], remove: [] });
+  assert.deepEqual(codexBriefSync([presets[0]], [file], "/env/codex-home", expand), { ensure: [], remove: [file] });
+});
