@@ -13,7 +13,7 @@ export type PtyHostRequest =
   // Live cwd of a PTY's child. Added after 0.7.8: a host from an older build
   // answers "unknown request", which the client turns back into null.
   | { id: number; type: "cwd"; ptyId: string }
-  // Live cols x rows, for `aya pane read`'s render. Added after 0.11.0; an
+  // Live cols x rows + alt screen, for `aya pane read`'s render. Added after 0.11.0; an
   // older host answers "unknown request", which the client turns into null.
   | { id: number; type: "size"; ptyId: string }
   | { id: number; type: "version" };
@@ -34,9 +34,10 @@ export function isPtyHostRequest(value: unknown): value is PtyHostRequest {
 
 export function asPaneSize(value: unknown): PaneSize | null {
   const v = value as Partial<PaneSize> | null;
-  return typeof v?.cols === "number" && typeof v.rows === "number"
-    ? (v as PaneSize)
-    : null;
+  if (typeof v?.cols !== "number" || typeof v.rows !== "number") return null;
+  const size: PaneSize = { cols: v.cols, rows: v.rows };
+  if (typeof v.alt === "boolean") size.alt = v.alt;
+  return size;
 }
 
 export function asSearchResult(value: unknown): BufferSearchHit[] {

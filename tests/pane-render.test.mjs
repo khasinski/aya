@@ -29,6 +29,29 @@ test("leaving the alt screen returns the normal buffer again", async () => {
   assert.equal(await renderPaneText(raw, 40, 10), "before\nafter");
 });
 
+// The host's replay buffer is capped: a long-running TUI's alt-screen enter is
+// evicted, so the replay alone would print its frames into the normal buffer.
+const altEnterCutOff =
+  Array.from({ length: 20 }, (_, i) => `log ${i}`).join("\r\n") + "\x1b[1;1Hcurrent";
+
+test("a TUI whose alt-screen enter was cut off still reads as its screen", async () => {
+  assert.equal(
+    await renderPaneText(altEnterCutOff, 40, 5, true),
+    "current\nlog 16\nlog 17\nlog 18\nlog 19",
+  );
+});
+
+test("without the host's word the cut-off TUI reads as a normal buffer", async () => {
+  const lines = (await renderPaneText(altEnterCutOff, 40, 5)).split("\n");
+  assert.equal(lines.length, 20);
+  assert.equal(lines[0], "log 0");
+});
+
+test("an alt screen the replay enters itself is unchanged by the host's word", async () => {
+  const raw = "shell$\r\n\x1b[?1049h\x1b[H\x1b[2Jframe";
+  assert.equal(await renderPaneText(raw, 40, 5, true), "frame");
+});
+
 test("an animation that overwrites itself leaves one frame and the text", async () => {
   const frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
   let raw = "\x1b[?1049h\x1b[H\x1b[2J\x1b[3;1HHello from grok";
@@ -103,6 +126,11 @@ test("each read releases its terminal", async (t) => {
 test("without a known size the raw buffer is returned unchanged", async () => {
   const raw = "\x1b[31mred\x1b[0m";
   assert.equal(await paneReadText(raw, null), raw);
+});
+
+test("the host's alt-screen word reaches the render", async () => {
+  const size = { cols: 40, rows: 5, alt: true };
+  assert.equal((await paneReadText(altEnterCutOff, size)).split("\n").length, 5);
 });
 
 test("with a size the buffer is rendered at that size", async () => {

@@ -121,6 +121,12 @@ function scanPane(ptyId: string): void {
   pane.onChange(waiting);
 }
 
+/** Whether the pane's mirror is on the alt screen; undefined for no mirror. */
+export function vtPaneAltScreen(ptyId: string): boolean | undefined {
+  const pane = panes.get(ptyId);
+  return pane && pane.terminal.buffer.active.type === "alternate";
+}
+
 /** Every rendered screen row, top to bottom, positions preserved. Rules anchor
  *  to regions (the last line, the tail, the whole screen), so blank rows are
  *  kept here and filtered per-region rather than collapsed away up front. */

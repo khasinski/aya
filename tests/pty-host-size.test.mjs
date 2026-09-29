@@ -70,6 +70,32 @@ test("a size answer without numeric cols and rows reads as unknown", async () =>
   }
 });
 
+test("the alt-screen flag passes only as a boolean", async () => {
+  const alt = async (value) =>
+    (await sizeFromFakeHost({ ok: true, result: { cols: 80, rows: 24, alt: value } })).size;
+  assert.deepEqual(await alt(true), { cols: 80, rows: 24, alt: true });
+  assert.deepEqual(await alt(false), { cols: 80, rows: 24, alt: false });
+  assert.deepEqual(await alt("yes"), { cols: 80, rows: 24 });
+});
+
+test("the host reports whether a pane holds the alt screen", async (t) => {
+  const client = new PtyHostClient(HOST_SCRIPT);
+  t.after(async () => {
+    await client.kill("alt-1").catch(() => {});
+    await client.shutdown().catch(() => {});
+  });
+  await client.spawn({
+    ptyId: "alt-1",
+    // One program: the spawn prefixes `exec`, which would end at printf.
+    command: `sh -c "printf '\\033[?1049h'; exec cat"`,
+    cwd: TMP_AYA_HOME,
+    cols: 80,
+    rows: 24,
+  });
+  // A login shell starts first; under a loaded full suite that took over 4 s.
+  assert.equal(await waitFor(async () => (await client.getSize("alt-1"))?.alt, 20_000), true);
+});
+
 test("the host reports a live pane's size, following resizes", async (t) => {
   const client = new PtyHostClient(HOST_SCRIPT);
   t.after(async () => {
@@ -77,9 +103,9 @@ test("the host reports a live pane's size, following resizes", async (t) => {
     await client.shutdown().catch(() => {});
   });
   await client.spawn({ ptyId: "size-1", command: "cat", cwd: TMP_AYA_HOME, cols: 91, rows: 33 });
-  await waitFor(() => client.getSize("size-1"));
-  assert.deepEqual(await client.getSize("size-1"), { cols: 91, rows: 33 });
+  await waitFor(() => client.getSize("size-1"), 20_000);
+  assert.deepEqual(await client.getSize("size-1"), { cols: 91, rows: 33, alt: false });
   await client.resize("size-1", 120, 40);
-  assert.deepEqual(await client.getSize("size-1"), { cols: 120, rows: 40 });
+  assert.deepEqual(await client.getSize("size-1"), { cols: 120, rows: 40, alt: false });
   assert.equal(await client.getSize("no-such-pane"), null);
 });
