@@ -1,5 +1,55 @@
 # Changelog
 
+## v0.12.0 - 2026-09-29
+
+Teams: give panes roles and let Aya carry the messages between them, for any
+agent CLI. Every Claude and OpenCode pane now comes back in its own
+conversation, and `aya open` stops losing opens while Aya starts.
+
+### Features
+
+- **Teams.** Define roles, what each must not do and who it sends what to, in
+  the status bar's **teams** window or as `.aya/teams/<name>.md`. A live flow
+  preview shows who talks to whom, **Draft** fills in a role with Aya
+  Intelligence, and **Start**, **Pause** and **Resume** run the team. Agents use
+  `aya team whoami`, `send` and `inbox`; a message waits while a pane is busy.
+  See `docs/teams.md` (#128).
+- **`aya team new`** gives any agent a guide to write a team from one sentence,
+  and **`aya team save`** checks and saves it like the window's Save (#141).
+- **`aya presets`** and **`aya team open`** give each role a pane: a new
+  session from a preset, the agent's own pane or an open one. **`aya team
+  start`** starts the team. The Teams window gets per-role pane picks and
+  **Apply panes**, and the team log reads as a chat (#142).
+- The repo ships **team1**, the reviewer / implementer / tester team used to
+  review Aya (#143).
+
+### Fixes
+
+- **Each Claude pane comes back in its own conversation** after an update,
+  restart or reboot, instead of all panes opening the latest one (#127).
+- **OpenCode panes resume their own session**, not a sibling worktree's (#138).
+- **`aya open`** with `AYA_SOCKET`/`AYA_HOME` naming another instance never
+  launches the installed app; it waits for that instance, even over a stale
+  socket. An open sent while the window loads is no longer lost, and with every
+  window closed on macOS opens get a new window (#139).
+- **`aya pane read`** returns the pane's text as the screen shows it, not raw
+  terminal bytes (#136).
+- **Restarting a pane while it is still starting** now starts it instead of
+  leaving a blank tab.
+- **Codex** usage and history follow `CODEX_HOME` (#137).
+- **Status hook** runs in Grok panes too, without the "command not found" line
+  (#131).
+- **Remote:** a silent remote Aya and a stuck ssh get separate timeouts and
+  messages (#134).
+- Saving more than 200 snippets is refused instead of silently dropping the
+  rest; Apple summaries can use the full 160 chars (#132). Pane summaries stop
+  at 6 words (#133).
+
+### Internal
+
+- Electron 43.5.0 (security fixes).
+- E2E: no pty host outlives its test run (#135).
+
 ## v0.11.0 - 2026-09-27
 
 Agents inside Aya can now learn the `aya` command on their own, handoffs
