@@ -18,8 +18,16 @@ const everyInterval: Schedule = (fn, ms) => {
 };
 
 /** Who gets the task given with Start: `to`, else the cadence role that leads the
- *  rounds, else the first role. Throws on an unknown `to`, before anything starts. */
+ *  rounds, else the first role. Throws on an unknown `to`, or a team with a role
+ *  named "user", before anything starts. */
 export function taskRecipient(team: TeamDefinition, to?: string): string {
+  // A team saved before "user" was reserved may have a role by that name: its
+  // messages and a task would read alike, so such a team takes no task.
+  if (team.roles.some((r) => r.id === TEAM_USER_SENDER)) {
+    throw new Error(
+      `team ${team.name} has a role named "${TEAM_USER_SENDER}", the sender of a Start task; start it without a task, or rename the role to give one; nothing was started`,
+    );
+  }
   if (to === undefined) return team.cadence?.role ?? team.roles[0].id;
   if (team.roles.some((r) => r.id === to)) return to;
   throw new Error(`team ${team.name} has no role "${to}"; its roles: ${team.roles.map((r) => r.id).join(", ")}; nothing was started`);

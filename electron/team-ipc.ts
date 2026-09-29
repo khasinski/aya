@@ -82,7 +82,7 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
   );
   const panes = teamPaneDeps(teamDeps, deps.paneHost, teamRunner);
   ipcMain.handle("teams:presets", async () => presetChoices(panes));
-  ipcMain.handle("teams:open-panes", async (_e, slug: unknown, team: unknown, picks: unknown) => {
+  ipcMain.handle("teams:open-panes", async (_e, slug: unknown, team: unknown, picks: unknown, release: unknown) => {
     const project = await teamProject(slug, "teams:open-panes");
     const invalid = new Error("Invalid IPC payload for teams:open-panes.panes: expected [{role, target}].");
     if (!Array.isArray(picks)) throw invalid;
@@ -93,8 +93,11 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
         throw invalid;
       }
     });
-    // Each pick is the user's own choice in a row that shows what it replaces or moves.
-    return openTeamPanes(panes, project, requireString(team, "teams:open-panes.team"), valid, { replace: true });
+    if (release !== undefined && !Array.isArray(release)) throw new Error("Invalid IPC payload for teams:open-panes.release: expected [role].");
+    const released = (release ?? []).map((role: unknown, i: number) => requireString(role, `teams:open-panes.release[${i}]`));
+    // Each pick is the user's own choice in a row that shows what it replaces or moves;
+    // "No pane" picks are released only once every other pick passed the check.
+    return openTeamPanes(panes, project, requireString(team, "teams:open-panes.team"), valid, { replace: true, release: released });
   });
   return teamRunner;
 }

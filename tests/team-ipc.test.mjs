@@ -202,6 +202,13 @@ test("teams:open-panes validates its picks and opens through the shared path", a
     // The Teams window's pick is the user's own choice: it may take a pane another role plays.
     const moved = await t.invoke("teams:open-panes", "game", "ux-review", [{ role: "implementer", target: "new-1" }]);
     assert.deepEqual(moved.leftWithoutPane, ["tester"]);
+    // "No pane" rides the same call, so a refused pick releases nothing.
+    await assert.rejects(() => t.invoke("teams:open-panes", "game", "ux-review", [{ role: "qa", target: "shell" }], ["implementer"]), /no role "qa"/);
+    await assert.rejects(() => t.invoke("teams:open-panes", "game", "ux-review", [], "implementer"), /teams:open-panes\.release/);
+    await assert.rejects(() => t.invoke("teams:open-panes", "game", "ux-review", [], [5]), /teams:open-panes\.release\[0\]/);
+    const released = await t.invoke("teams:open-panes", "game", "ux-review", [], ["implementer"]);
+    assert.deepEqual(released, { panes: [], leftWithoutPane: [] });
+    assert.deepEqual((await t.invoke("teams:list", "game"))[0].assignments, {});
     assert.deepEqual(await t.invoke("teams:presets"), [{ id: "shell", name: "Shell", agent: "custom", installed: true }]);
   } finally {
     t.teardowns.forEach((fn) => fn());

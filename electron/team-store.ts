@@ -123,6 +123,13 @@ export class TeamStore {
     return this.updateState((state) => ({ ...state, agentAuthored: true }));
   }
 
+  /** Once a role has a pane or the user saved the team, it is no longer only the
+   *  agent's proposal: a team left with no panes later gets the assign prompt again. */
+  async clearAgentAuthored(): Promise<void> {
+    if (!(await this.agentAuthored())) return;
+    await this.updateState(({ agentAuthored: _, ...rest }) => rest);
+  }
+
   async agentAuthored(): Promise<boolean> {
     return (await this.readState()).agentAuthored === true;
   }

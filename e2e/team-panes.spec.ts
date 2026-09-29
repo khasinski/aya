@@ -18,7 +18,7 @@ import {
   teamLog,
   teamSeed,
 } from "./helpers/team";
-import { firstTerminalShown } from "./helpers/terminal";
+import { firstTerminalShown, waitForShellReady } from "./helpers/terminal";
 import { TEAMS_REFRESH_MS } from "../src/hooks/useTeams";
 import { AGENT_TEST_TIMEOUT_MS } from "./timeouts";
 
@@ -91,7 +91,8 @@ test.describe("one Claude Code pane, where the user asks for a team", () => {
     for (const role of ["reviewer", "fixer", "tester"]) {
       await expect(card.getByLabel(`Pane for ${role}`).locator("option:checked")).toHaveText(`Claude Code - ${role}`);
     }
-    expect(teamState(seeded.ayaHome, "teams/e2e-proj/ux-fix")).toEqual({ agentAuthored: true });
+    // Marked the agent's by aya team save, cleared once a role got a pane.
+    expect(teamState(seeded.ayaHome, "teams/e2e-proj/ux-fix")).toEqual({});
     await expect.poll(() => Object.values(ids).every((id) => started(seeded.projectDir, id)), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toBe(true);
 
     const start = aya(["team", "start", "ux-fix", "make the timer pausable"]);
@@ -205,7 +206,8 @@ test.describe("a running team whose tester has a live pane", () => {
 
   test("needs --replace; then the new session is told its role once it starts, and the old pane keeps running", async ({ window, seeded }) => {
     test.setTimeout(AGENT_TEST_TIMEOUT_MS);
-    await firstTerminalShown(window);
+    // The tester's pane must be running, not just drawn, to count as live.
+    await waitForShellReady(window);
     const aya = cli(seeded.ayaHome);
 
     const refused = aya(["team", "open", "ux-review", "tester=claude"]);

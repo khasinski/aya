@@ -76,8 +76,14 @@ that shows the project (`teams:open-panes`) to add them as tabs named
 `<preset> - <role>`; the window saves the project and answers
 (`teams:panes-opened`, 10 s deadline). A reply that misses the deadline
 still leaves the tabs the window saved: main reloads the project and assigns
-every pane it finds, and says which roles got none. A window that cannot
-save the project removes the tabs again. Then each role is assigned with the
+every pane it finds, and says which roles got none, as it does for a picked
+pane that closed meanwhile. When the window saved none by the deadline,
+nothing is assigned; a late reply gives only its new panes their roles, and
+only if the check still passes and the role still has the pane it had. A
+window that cannot save the project removes the tabs again. Opens of one team
+run one at a time, each checked against what the one before assigned; Apply
+panes sends its "No pane" rows in the same call, released only once every
+pick passed. Then each role is assigned with the
 Teams window's `assignRole`; in a running team a new pane is told its role
 once its agent has drawn its composer (up to 20 s). Start stays the user's:
 `aya team start <team> ["task"] [--to role]` runs the Teams window's Start
@@ -86,10 +92,14 @@ guide has the agent ask whether to start and with what task, and run it only
 on the user's word. A task then goes, after the delivery tests, as a message
 from `user` (reserved like `aya`, and redelivered like a peer's message) to
 `--to`, else the cadence role that leads the rounds, else the first role;
-the output and the Teams window's Start (with its Task field) say who got it. A team saved with `aya team save` from a pane is
+the output and the Teams window's Start (with its Task field) say who got it.
+`user` is reserved when a team is saved, not when a saved one loads: a team
+saved with a `user` role before keeps working, and starts, but takes no task,
+so its log never mixes the role with the user. A team saved with `aya team save` from a pane is
 marked as the agent's, so the window's "Assign team roles?" prompt does not
 compete with the agent's proposal; a team that arrives with a pull still
-gets the prompt.
+gets the prompt. The mark goes once a role gets a pane or the team is saved
+from the window, so a team whose panes all closed later is offered again.
 
 The Teams window runs the same `openTeamPanes`: per role it offers the open
 panes, each labelled with the role it already plays, and `New: <preset>`

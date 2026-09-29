@@ -53,10 +53,18 @@ normalize_path() {
   printf '%s\n' "$1" | sed 's#//*#/#g'
 }
 
+# True when AYA_HOME names a home; the app ignores a blank or whitespace-only one.
+aya_home_set() {
+  case "${AYA_HOME:-}" in
+    *[![:space:]]*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 socket_path() {
   if [ -n "${AYA_SOCKET:-}" ]; then
     normalize_path "$AYA_SOCKET"
-  elif [ -n "${AYA_HOME:-}" ]; then
+  elif aya_home_set; then
     normalize_path "$AYA_HOME/aya.sock"
   else
     normalize_path "$INSTALLED_APP_SOCKET"
@@ -66,25 +74,29 @@ socket_path() {
 remote_socket_path() {
   if [ -n "${AYA_REMOTE_SOCKET:-}" ]; then
     printf '%s\n' "$AYA_REMOTE_SOCKET"
-  elif [ -n "${AYA_HOME:-}" ]; then
+  elif aya_home_set; then
     printf '%s\n' "$AYA_HOME/aya-remote.sock"
   else
     printf '%s\n' "$HOME/.aya/aya-remote.sock"
   fi
 }
 
+# With connect_wait set (whole seconds), a socket that is missing or refuses
+# (a stale file from a crashed Aya) is retried until then instead of failing.
 send_control() {
   socket=$(socket_path)
-  if [ ! -S "$socket" ]; then
+  if [ -z "${connect_wait:-}" ] && [ ! -S "$socket" ]; then
     printf "aya: control socket not found at %s\n" "$socket" >&2
     printf "aya: start Aya first, or use 'aya open <path>' to launch it.\n" >&2
     exit 1
   fi
 
-  node - "$socket" "$@" <<'NODE'
+  AYA_CONNECT_WAIT_SECONDS="${connect_wait:-}" node - "$socket" "$@" <<'NODE'
 const net = require("node:net");
 const socketPath = process.argv[2];
 const kind = process.argv[3];
+const connectWait = process.env.AYA_CONNECT_WAIT_SECONDS || "";
+const CONNECT_RETRY_MS = 200;
 
 function optionalEnv(name) {
   const value = process.env[name];
@@ -174,21 +186,39 @@ const request = {
     via: optionalEnv("AYA_VIA"),
   },
 };
-const client = net.createConnection(socketPath);
+const connectDeadline = Date.now() + Number(connectWait || 0) * 1000;
 let response = "";
 
-client.setEncoding("utf8");
-client.on("connect", () => {
-  client.write(`${JSON.stringify(request)}\n`);
-});
-client.on("data", (chunk) => {
-  response += chunk;
-});
-client.on("error", (err) => {
-  console.error(`aya: ${err.message}`);
-  process.exitCode = 1;
-});
-client.on("end", () => {
+function connect() {
+  const client = net.createConnection(socketPath);
+  let connected = false;
+  client.setEncoding("utf8");
+  client.on("connect", () => {
+    connected = true;
+    client.write(`${JSON.stringify(request)}\n`);
+  });
+  client.on("data", (chunk) => {
+    response += chunk;
+  });
+  client.on("error", (err) => {
+    const notListening = err.code === "ENOENT" || err.code === "ECONNREFUSED";
+    if (connectWait && !connected && notListening) {
+      if (Date.now() < connectDeadline) {
+        setTimeout(connect, CONNECT_RETRY_MS);
+        return;
+      }
+      console.error(`aya: no Aya is listening at ${socketPath} (waited ${connectWait}s)`);
+      console.error("aya: start that instance, or unset AYA_SOCKET and AYA_HOME to use the installed Aya.");
+      process.exitCode = 1;
+      return;
+    }
+    console.error(`aya: ${err.message}`);
+    process.exitCode = 1;
+  });
+  client.on("end", onEnd);
+}
+
+function onEnd() {
   if (!response.trim()) return;
   const parsed = JSON.parse(response);
   if (!parsed.ok) {
@@ -198,7 +228,9 @@ client.on("end", () => {
   }
   // pane read / pane list / capabilities: the payload IS the answer.
   if (typeof parsed.output === "string") process.stdout.write(parsed.output);
-});
+}
+
+connect();
 NODE
 }
 
@@ -254,9 +286,7 @@ client.on("error", (err) => {
 NODE
 }
 
-# A named instance (AYA_SOCKET / AYA_HOME) may still be starting; launching the
-# installed app instead would open the project in the wrong Aya.
-wait_for_named_socket() {
+check_open_wait_seconds() {
   if case "$OPEN_SOCKET_WAIT_SECONDS" in
     *[!0-9]*) true ;;
     *) [ "${#OPEN_SOCKET_WAIT_SECONDS}" -gt "$OPEN_SOCKET_WAIT_MAX_DIGITS" ] ;;
@@ -265,16 +295,6 @@ wait_for_named_socket() {
       "$OPEN_SOCKET_WAIT_MAX_DIGITS" "$OPEN_SOCKET_WAIT_SECONDS" >&2
     exit 1
   fi
-  waited=0
-  while [ ! -S "$1" ]; do
-    if [ "$waited" -ge "$OPEN_SOCKET_WAIT_SECONDS" ]; then
-      printf "aya: no Aya is listening at %s (waited %ss)\n" "$1" "$OPEN_SOCKET_WAIT_SECONDS" >&2
-      printf "aya: start that instance, or unset AYA_SOCKET and AYA_HOME to use the installed Aya.\n" >&2
-      exit 1
-    fi
-    sleep 1
-    waited=$((waited + 1))
-  done
 }
 
 open_project() {
@@ -287,8 +307,14 @@ open_project() {
   fi
 
   socket=$(socket_path)
+  # A named instance (AYA_SOCKET / AYA_HOME) may still be starting, or have left
+  # a stale socket behind; launching the installed app instead would open the
+  # project in the wrong Aya, so keep trying to reach it until the wait ends.
   if [ "$socket" != "$(normalize_path "$INSTALLED_APP_SOCKET")" ]; then
-    wait_for_named_socket "$socket"
+    check_open_wait_seconds
+    connect_wait="$OPEN_SOCKET_WAIT_SECONDS"
+    send_control open "$abs"
+    return
   fi
   if [ -S "$socket" ]; then
     send_control open "$abs"
@@ -448,6 +474,11 @@ case "$command" in
           exit 1
         fi
         if [ "$file" = "-" ]; then
+          # A terminal on stdin would wait for typing no agent sends.
+          if [ -t 0 ]; then
+            printf "aya: team save - reads the team file from stdin; pipe it in or give a file; nothing was saved\n" >&2
+            exit 1
+          fi
           text=$(cat)
         elif [ -f "$file" ]; then
           text=$(cat -- "$file")

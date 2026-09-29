@@ -87,6 +87,7 @@ const BROKEN = [
   ["one role", "# solo\n## Role: a\nMust not: x\n", 'team "solo": a team needs at least 2 roles'],
   ["a bad role id", GOOD.replace("Role: fixer", "Role: Fixer"), 'team "ux-fix": role "Fixer" must be lowercase letters, digits and dashes'],
   ["a role named aya", GOOD.replaceAll("fixer", "aya"), `team "ux-fix": "aya" is reserved for Aya's own messages; name the role something else`],
+  ["a role named user", GOOD.replaceAll("fixer", "user"), `team "ux-fix": "user" is reserved for the user's own messages; name the role something else`],
   ["no must-not", GOOD.replace("Must not: edit code\n", ""), 'team "ux-fix": role "reviewer" needs a "Must not:" line'],
   ["a route to an unknown role", GOOD.replace("Sends to: fixer", "Sends to: tester"), 'team "ux-fix": role "reviewer" sends to unknown role "tester"'],
   ["a route to itself", GOOD.replace("Sends to: fixer", "Sends to: reviewer"), 'team "ux-fix": role "reviewer" sends to itself'],
@@ -340,6 +341,28 @@ test("a team saved from a pane is marked as the agent's, so the window does not 
     const byName = Object.fromEntries((await listTeams(t.teamHome, t.project)).map((team) => [team.name, team]));
     assert.equal(byName["ux-fix"].agentAuthored, true);
     assert.equal(byName.other.agentAuthored, false);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("the agent's mark goes with the first role given a pane, or a save from the window", async () => {
+  const { assignRole, saveTeam } = await import("../dist-electron/team-admin.js");
+  const t = setup();
+  const authored = async (name) => (await listTeams(t.teamHome, t.project)).find((team) => team.name === name).agentAuthored;
+  try {
+    await t.save(GOOD);
+    await t.save(GOOD.replace("# ux-fix", "# other"));
+    assert.equal(await authored("ux-fix"), true);
+    await assignRole(t.teamHome, t.project, "ux-fix", "reviewer", "pane-1");
+    assert.equal(await authored("ux-fix"), false);
+    // Its panes closing later leaves a team the window offers to assign again.
+    assert.equal(await authored("other"), true);
+    await saveTeam(t.teamHome, t.project, parseTeamFile("other", GOOD.replace("# ux-fix", "# other")));
+    assert.equal(await authored("other"), false);
+    // aya team save --replace from a pane marks it again.
+    await t.save(GOOD.replace("# ux-fix", "# other"), { replace: true });
+    assert.equal(await authored("other"), true);
   } finally {
     t.cleanup();
   }

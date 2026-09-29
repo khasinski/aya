@@ -91,8 +91,8 @@ function setup({ saved = true, state = null, assignments = {}, alive = ALIVE, ho
     newPaneId: () => `new-${++next}`,
   };
   const deps = { ...teamPaneDeps(control, host, new TeamRunner(control)), startWaitMs: 1_000 };
-  const open = (picks, { replace = false, callerId = "pane-c", team = "ux-review" } = {}) =>
-    openTeamPanes(deps, project, team, picks, { replace, callerId });
+  const open = (picks, { replace = false, callerId = "pane-c", team = "ux-review", release } = {}) =>
+    openTeamPanes(deps, project, team, picks, { replace, callerId, release });
   return {
     ...t,
     store,
@@ -483,7 +483,7 @@ test("a window that saves the tabs after the deadline: its late reply still give
   try {
     await assert.rejects(
       () => t.open(picks("reviewer=claude tester=claude")),
-      /^Error: the Aya window did not open the panes in time; if it still opens them, their roles follow$/,
+      /^Error: the Aya window did not open the panes in time; nothing was assigned; if it still opens them, the new panes get their roles$/,
     );
     assert.deepEqual(t.assignments(), {});
     await saved();
@@ -491,6 +491,128 @@ test("a window that saves the tabs after the deadline: its late reply still give
     assert.deepEqual(t.assignments(), { reviewer: "new-1", tester: "new-2" });
     await assert.rejects(() => t.open(picks("reviewer=claude")), /already has a live pane/);
     assert.equal(t.opened.length, 2, "no second pane");
+  } finally {
+    t.cleanup();
+  }
+});
+
+/** A window that misses the deadline and saves the tabs when `save()` is called. */
+function lateWindow(t) {
+  const open = t.deps.openPanes;
+  let save;
+  t.deps.openPanes = async (slug, panes) => {
+    const late = new Promise((resolve) => (save = async () => (await open(slug, panes), resolve())));
+    throw new PaneOpenTimeout(late);
+  };
+  return async () => {
+    await save();
+    // The late path runs on its own; let it settle.
+    for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 10));
+  };
+}
+
+test("a late reply gives only the new panes their roles: an open pane picked with them is left as it was", async () => {
+  const t = setup({ assignments: { implementer: "pane-x" } });
+  const save = lateWindow(t);
+  try {
+    await assert.rejects(() => t.open(picks("reviewer=claude tester=pane-x"), { replace: true }), /nothing was assigned/);
+    assert.deepEqual(t.assignments(), { implementer: "pane-x" });
+    await save();
+    assert.deepEqual(t.assignments(), { implementer: "pane-x", reviewer: "new-1" }, "pane-x did not move to tester");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a late reply does not overwrite a role given another pane meanwhile", async (s) => {
+  for (const replace of [false, true]) {
+    await s.test(replace ? "--replace (Apply panes): the other roles still get theirs" : "no --replace: the check now refuses, nothing is assigned", async () => {
+      const t = setup();
+      const save = lateWindow(t);
+      const warn = console.warn;
+      console.warn = () => {};
+      try {
+        await assert.rejects(() => t.open(picks("reviewer=claude tester=claude"), { replace }), /nothing was assigned/);
+        await t.store.assign("reviewer", "pane-x");
+        await save();
+        assert.deepEqual(t.assignments(), replace ? { reviewer: "pane-x", tester: "new-2" } : { reviewer: "pane-x" });
+      } finally {
+        console.warn = warn;
+        t.cleanup();
+      }
+    });
+  }
+});
+
+test("a late reply assigns nothing when the picks no longer pass the check", async () => {
+  const t = setup();
+  const save = lateWindow(t);
+  const warn = console.warn;
+  const warned = [];
+  console.warn = (...args) => void warned.push(args.map(String).join(" "));
+  try {
+    await assert.rejects(() => t.open(picks("reviewer=claude")), /nothing was assigned/);
+    t.deps.presetInstalled = async () => false;
+    await save();
+    assert.deepEqual(t.assignments(), {});
+    assert.match(warned.join("\n"), /not given their roles after a late reply.*preset "claude" \(Claude Code\) is not installed/s);
+  } finally {
+    console.warn = warn;
+    t.cleanup();
+  }
+});
+
+test("a picked pane that closed before it got its role is reported, with no window error", async () => {
+  const t = setup();
+  const list = t.deps.listProjects;
+  // The first read is the check's; pane-x is closed by the next one.
+  let reads = 0;
+  t.deps.listProjects = async () =>
+    (await list()).map((p) => (++reads === 1 ? p : { ...p, tabs: p.tabs.filter((tab) => tab.id !== "pane-x") }));
+  try {
+    await assert.rejects(
+      () => t.open(picks("reviewer=claude tester=pane-x")),
+      /^Error: a picked pane closed before it got its role; reviewer got its new pane \(new-1\); tester got none$/,
+    );
+    assert.deepEqual(t.assignments(), { reviewer: "new-1" });
+    reads = 0;
+    await assert.rejects(() => t.open(picks("tester=pane-x")), /^Error: a picked pane closed before it got its role; tester got none$/);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a released role loses its pane only once every pick passed the check", async () => {
+  const t = setup({ assignments: { reviewer: "pane-c", tester: "pane-x" } });
+  try {
+    await refused(t, "implementer=missing", /preset "missing" \(Missing\) is not installed; nothing was opened$/, { release: ["reviewer"] });
+    await refused(t, "", /^team ux-review has no role "qa"; nothing was opened$/, { release: ["qa"] });
+    await refused(t, "reviewer=claude", /^role "reviewer" is listed twice; nothing was opened$/, { release: ["reviewer"], replace: true });
+    const result = await t.open(picks("implementer=claude"), { release: ["reviewer"] });
+    assert.deepEqual(t.assignments(), { tester: "pane-x", implementer: "new-1" });
+    assert.deepEqual(result.leftWithoutPane, [], "a role the user released is not reported as lost");
+    const only = await t.open([], { release: ["tester"] });
+    assert.deepEqual(only, { panes: [], leftWithoutPane: [] });
+    assert.deepEqual(t.assignments(), { implementer: "new-1" });
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("two opens of one team run in turn: the second is checked against what the first assigned", async () => {
+  const t = setup();
+  const open = t.deps.openPanes;
+  t.deps.openPanes = async (slug, panes) => {
+    await new Promise((r) => setTimeout(r, 20));
+    await open(slug, panes);
+  };
+  try {
+    const [first, second] = await Promise.allSettled([t.open(picks("reviewer=claude")), t.open(picks("reviewer=grok"))]);
+    assert.equal(first.status, "fulfilled");
+    assert.equal(second.status, "rejected");
+    assert.match(second.reason.message, /^role "reviewer" already has a live pane \(new-1\)/);
+    assert.equal(t.opened.length, 1, "one pane opened");
+    assert.deepEqual(t.assignments(), { reviewer: "new-1" });
   } finally {
     t.cleanup();
   }
@@ -676,6 +798,31 @@ test("a renderer request settles on its answer, its error, or its deadline", asy
   const timedOut = requests.ask((id) => late.push(id), 20);
   await assert.rejects(timedOut);
   requests.answer(late[0], null);
+});
+
+test("a window still loading is refused at once, not after the deadline; a missing or closed one too", async () => {
+  const { askWindowToOpenPanes } = await import("../dist-electron/team-panes.js");
+  const requests = new RendererRequests();
+  const sent = [];
+  const win = (loading, destroyed = false) => ({
+    isDestroyed: () => destroyed,
+    webContents: { isLoading: () => loading, send: (channel, request) => void sent.push({ channel, request }) },
+  });
+  const panes = [{ id: "new-1", presetId: "claude", name: "Claude Code - tester" }];
+  const started = Date.now();
+  await assert.rejects(askWindowToOpenPanes(win(true), requests, "game", panes), {
+    message: "the Aya window of project game is still loading; run it again in a moment",
+  });
+  assert.ok(Date.now() - started < 1_000, "no wait for the deadline");
+  await assert.rejects(askWindowToOpenPanes(null, requests, "game", panes), { message: "project game is not open in an Aya window" });
+  await assert.rejects(askWindowToOpenPanes(win(false, true), requests, "game", panes), { message: "project game is not open in an Aya window" });
+  assert.deepEqual(sent, []);
+  const asked = askWindowToOpenPanes(win(false), requests, "game", panes);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].channel, "teams:open-panes");
+  assert.deepEqual({ ...sent[0].request, requestId: "id" }, { requestId: "id", projectSlug: "game", panes });
+  requests.answer(sent[0].request.requestId, null);
+  await asked;
 });
 
 test("the Teams window's select values are main's explicit targets", async () => {

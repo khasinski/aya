@@ -22,6 +22,7 @@ import {
   getBufferedOutput,
   getPtySize,
   getPtyCwd,
+  isPtyStarting,
   killPty,
   shutdownPtyChildren,
   resizePty,
@@ -31,6 +32,7 @@ import {
   type PtyEventSink,
 } from "./pty";
 import { paneHold } from "./vt-state";
+import { HOLD_STARTING } from "./pane-holds";
 import type { PtyEvent } from "./types";
 import { ptyLog } from "./pty-log";
 
@@ -157,7 +159,9 @@ async function handle(request: PtyHostRequest): Promise<unknown> {
     return getPtyCwd(request.ptyId);
   }
   if (request.type === "hold") {
-    return paneHold(request.ptyId);
+    // A pane still in its spawn preflight has no mirror yet; it is starting,
+    // not gone.
+    return isPtyStarting(request.ptyId) ? HOLD_STARTING : paneHold(request.ptyId);
   }
   if (request.type === "version") {
     // pid lets a client correlate the socket-connected host with a registry

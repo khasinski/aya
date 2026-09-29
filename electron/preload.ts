@@ -2,6 +2,7 @@
 // contextBridge. The renderer has no direct Node access.
 
 import { contextBridge, ipcRenderer } from "electron";
+import { createOpenProjectBuffer } from "./open-project-buffer";
 import { installWheelZoom } from "./zoom-preload";
 
 import type {
@@ -14,6 +15,13 @@ import type {
 } from "./types";
 
 installWheelZoom();
+
+// Subscribed at load, not when the renderer asks: an open sent before its
+// effect subscribes waits here instead of being lost.
+const openProjects = createOpenProjectBuffer();
+ipcRenderer.on("open-project", (_e: unknown, directory: string) =>
+  openProjects.push(directory),
+);
 
 const isDev = process.env.AYA_DEV === "1";
 
@@ -83,7 +91,7 @@ const api: AyaApi = {
   teamReleasePane: (projectSlug, paneId) => ipcRenderer.invoke("teams:release-pane", projectSlug, paneId),
   teamDraftRole: (team, roleId, intelligence) => ipcRenderer.invoke("teams:draft-role", team, roleId, intelligence),
   teamPresets: () => ipcRenderer.invoke("teams:presets"),
-  teamOpenPanes: (projectSlug, team, panes) => ipcRenderer.invoke("teams:open-panes", projectSlug, team, panes),
+  teamOpenPanes: (projectSlug, team, panes, release) => ipcRenderer.invoke("teams:open-panes", projectSlug, team, panes, release),
   onTeamOpenPanes: (handler) => {
     const listener = (_e: unknown, request: TeamOpenPanesRequest) => handler(request);
     ipcRenderer.on("teams:open-panes", listener);
@@ -207,11 +215,7 @@ const api: AyaApi = {
     return () => ipcRenderer.removeListener("shortcut", listener);
   },
 
-  onOpenProject: (handler) => {
-    const listener = (_e: unknown, directory: string) => handler(directory);
-    ipcRenderer.on("open-project", listener);
-    return () => ipcRenderer.removeListener("open-project", listener);
-  },
+  onOpenProject: (handler) => openProjects.subscribe(handler),
 
   webStatus: () => ipcRenderer.invoke("web:status"),
   configureWeb: (req) => ipcRenderer.invoke("web:configure", req),

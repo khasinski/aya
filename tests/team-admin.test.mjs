@@ -60,6 +60,28 @@ test("a role named aya is refused on Save and nothing is written", async () => {
   }
 });
 
+test("a role named user is refused on Save, but a team saved with one before still lists", async () => {
+  const t = setup();
+  try {
+    const team = { ...TEAM, roles: [{ ...TEAM.roles[0], id: "user", sendsTo: [] }, { ...TEAM.roles[1], sendsTo: [] }], cadence: null };
+    await assert.rejects(saveTeam(t.teamHome, t.project, team), {
+      message: `team "ux-review": "user" is reserved for the user's own messages; name the role something else`,
+    });
+    assert.deepEqual(await listTeams(t.teamHome, t.project), []);
+    // As an older Aya saved it: both the repo file and the snapshot.
+    const text = "# ux-review\n\n## Role: user\nSends to: implementer\nMust not: edit code\n\n## Role: implementer\nMust not: skip a report\n";
+    mkdirSync(teamsDir(t.project), { recursive: true });
+    writeFileSync(teamFile(t.project, "ux-review"), text);
+    await new TeamStore(teamDir(t.teamHome, "game", "ux-review")).saveDefinition(text);
+    const [listed] = await listTeams(t.teamHome, t.project);
+    assert.equal(listed.error, null);
+    assert.deepEqual(listed.definition.roles.map((r) => r.id), ["user", "implementer"]);
+    assert.deepEqual(listed.repoDefinition.roles.map((r) => r.id), ["user", "implementer"]);
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("a field line inside free text is refused with the exact message, not read back as that field", async () => {
   const t = setup();
   try {

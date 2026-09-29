@@ -86,7 +86,7 @@ import {
 } from "./intelligence-chat";
 import type { TeamControlDeps } from "./team-control";
 import { registerTeamIpc } from "./team-ipc";
-import { newPaneId, RendererRequests, teamPaneDeps, type PaneHost } from "./team-panes";
+import { askWindowToOpenPanes, newPaneId, RendererRequests, teamPaneDeps, type PaneHost } from "./team-panes";
 import { presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
@@ -175,6 +175,7 @@ import {
 import { readRepoProjectConfig } from "./project-local";
 import { repairProcessPath } from "./shell-path";
 import { paneReadText } from "./pane-render";
+import { HOLD_STARTING } from "./pane-holds";
 import { PtyHostClient } from "./pty-host-client";
 import { PTY_HOST_SCRIPT_NAME } from "./pty-host-staleness";
 import { reapStaleHostRecords } from "./pty-host-registry";
@@ -270,13 +271,13 @@ const paneOpens = new RendererRequests();
 const teamPaneHost: PaneHost = {
   listPresets,
   presetInstalled,
-  paneAlive: async (terminalId) => (await ptyHost.getSize(terminalId)) !== null,
+  // A pane still in its spawn preflight has no PTY yet but is live all the same.
+  paneAlive: async (terminalId) =>
+    (await ptyHost.getSize(terminalId)) !== null || (await ptyHost.holdReason(terminalId)) === HOLD_STARTING,
   // The window that shows the project adds the tabs; main picked their ids.
   openPanes: (projectSlug, panes) => {
     const windowId = windowSlices.windowOf(projectSlug);
-    const win = windowId === null ? null : BrowserWindow.fromId(windowId);
-    if (!win || win.isDestroyed()) return Promise.reject(new Error(`project ${projectSlug} is not open in an Aya window`));
-    return paneOpens.ask((requestId) => win.webContents.send("teams:open-panes", { requestId, projectSlug, panes }));
+    return askWindowToOpenPanes(windowId === null ? null : BrowserWindow.fromId(windowId), paneOpens, projectSlug, panes);
   },
   newPaneId,
 };
@@ -2884,6 +2885,22 @@ async function windowForOpen(): Promise<BrowserWindow> {
   return focusedAyaWindow() ?? createWindowOnce();
 }
 
+/** Set once startup has created its own first window. */
+let startupWindowCreated = false;
+
+/** second-instance / open-file: focus the open's window and deliver `dir`.
+ *  Like the control path, a macOS app with every window closed gets a new
+ *  one; before startup made its first window, making one here would make two,
+ *  so those only focus what exists. */
+async function openFromOutside(dir: string | null): Promise<void> {
+  const target = startupWindowCreated ? await windowForOpen() : focusedAyaWindow();
+  if (target) {
+    if (target.isMinimized()) target.restore();
+    target.focus();
+  }
+  await dispatchOpenProject(target, dir);
+}
+
 function eachAyaWindow(fn: (win: BrowserWindow) => void): void {
   for (const win of ayaWindows) {
     if (!win.isDestroyed()) fn(win);
@@ -2925,30 +2942,20 @@ async function releaseWindowSlices(windowId: number): Promise<void> {
 // (the single-instance lock above redirects argv here). Focus the window and
 // forward any directory argument to the renderer.
 app.on("second-instance", (_e, argv, workingDir) => {
-  const target = focusedAyaWindow();
-  if (target) {
-    if (target.isMinimized()) target.restore();
-    target.focus();
-  }
   const dir = findDirInArgv(argv) ?? workingDir ?? null;
-  dispatchOpenProject(target, dir).catch(logOpenFailure(dir));
+  openFromOutside(dir).catch(logOpenFailure(dir));
 });
 
 // macOS sends open-file for `open -a Aya /path` (when invoked without --args).
 app.on("open-file", (event, filePath) => {
   event.preventDefault();
-  const target = focusedAyaWindow();
-  if (target) {
-    if (target.isMinimized()) target.restore();
-    target.focus();
-  }
+  let isDirectory = false;
   try {
-    if (statSync(filePath).isDirectory()) {
-      dispatchOpenProject(target, filePath).catch(logOpenFailure(filePath));
-    }
+    isDirectory = statSync(filePath).isDirectory();
   } catch {
     // ignore
   }
+  openFromOutside(isDirectory ? filePath : null).catch(logOpenFailure(filePath));
 });
 
 app.whenReady().then(async () => {
@@ -3032,6 +3039,7 @@ app.whenReady().then(async () => {
 
   const savedState = await loadWindowState();
   mainWindow = createWindow(savedState);
+  startupWindowCreated = true;
   const teamRunner = registerIpc();
   configureAutoUpdates(mainWindow);
   // Before checking for a NEW update, surface a PREVIOUS one that silently

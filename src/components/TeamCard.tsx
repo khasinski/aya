@@ -65,14 +65,13 @@ export function TeamCard({
   };
   const apply = async () => {
     const applied = changes;
+    // One call: main checks every pick before anything, a "No pane" included, changes.
     const result = await act(async () => {
-      for (const [role, value] of Object.entries(changes)) {
-        if (!value) await window.aya.teamAssign(project.slug, team.name, role, null);
-      }
       const given = Object.entries(changes).flatMap(([role, value]) =>
         value ? [{ role, target: value.startsWith(NEW_PANE_PREFIX) ? value : `${PANE_PREFIX}${value}` }] : [],
       );
-      return given.length ? window.aya.teamOpenPanes(project.slug, team.name, given) : { panes: [], leftWithoutPane: [] };
+      const release = Object.entries(changes).flatMap(([role, value]) => (value ? [] : [role]));
+      return window.aya.teamOpenPanes(project.slug, team.name, given, release);
     });
     if (!result) return;
     // A pick made while this Apply ran is the user's next one: keep it.
@@ -221,7 +220,7 @@ export function TeamCard({
           <span className="aya-teams-muted">A role takes an open pane or a new session of a preset; no pane is closed.</span>
         </div>
       )}
-      {team.log.length > 0 && <TeamChat team={team.name} log={team.log} pane={paneName} />}
+      {team.log.length > 0 && <TeamChat team={team.name} log={team.log} roles={definition?.roles.map((r) => r.id) ?? []} pane={paneName} />}
       {definition && Object.keys(team.assignments).length === 0 && (
         <div className="aya-modal-hint">Give each role a pane, then Start.</div>
       )}

@@ -3,8 +3,19 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import * as net from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -79,7 +90,60 @@ function listen(socket) {
   return new Promise((done) => server.listen(socket, () => done({ server, request })));
 }
 
+/** Leaves a socket file nothing listens on, as a crashed Aya does: a killed
+ *  process never unlinks it. */
+function staleSocket(socket) {
+  spawnSync(process.execPath, [
+    "-e",
+    `require("node:net").createServer().listen(${JSON.stringify(socket)}, () => process.kill(process.pid, "SIGKILL"))`,
+  ]);
+  assert.ok(lstatSync(socket).isSocket(), "no stale socket file was left");
+}
+
 for (const shell of shells) {
+  test(`${shell}: a stale named socket file is retried until the wait ends, launching nothing`, async () => {
+    const box = sandbox("Linux");
+    try {
+      const socket = join(box.root, "dev.sock");
+      staleSocket(socket);
+      const started = Date.now();
+      const { status, stderr } = await runOpen(shell, box.project, {
+        ...box.env,
+        AYA_SOCKET: socket,
+        AYA_OPEN_WAIT_SECONDS: "1",
+      });
+      assert.equal(status, 1);
+      assert.ok(Date.now() - started >= 900, "gave up without waiting");
+      assert.match(stderr, new RegExp(`no Aya is listening at ${socket} \\(waited 1s\\)`));
+      assert.equal(await box.launched(), "");
+    } finally {
+      box.cleanup();
+    }
+  });
+
+  test(`${shell}: a named instance restarting over its stale socket file gets the open request`, async () => {
+    const box = sandbox("Linux");
+    const socket = join(box.root, "dev.sock");
+    let server;
+    try {
+      staleSocket(socket);
+      const run = runOpen(shell, box.project, { ...box.env, AYA_SOCKET: socket });
+      await delay(1500);
+      unlinkSync(socket);
+      const listening = await listen(socket);
+      server = listening.server;
+      const { status, stderr } = await run;
+      assert.equal(status, 0, stderr);
+      const request = await Promise.race([listening.request, delay(2000).then(() => null)]);
+      assert.ok(request, "no request reached the named socket");
+      assert.equal(request.path, realpathSync(box.project));
+      assert.equal(await box.launched(), "");
+    } finally {
+      await new Promise((done) => (server ? server.close(done) : done()));
+      box.cleanup();
+    }
+  });
+
   for (const platform of ["Darwin", "Linux"]) {
     test(`${shell} ${platform}: a missing AYA_SOCKET fails after the wait, launching nothing`, async () => {
       const box = sandbox(platform);
@@ -188,6 +252,7 @@ for (const shell of shells) {
     ["AYA_HOME naming the installed app's home", (home) => ({ AYA_HOME: `${home}/.aya` })],
     ["AYA_HOME with a trailing slash", (home) => ({ AYA_HOME: `${home}/.aya/` })],
     ["AYA_HOME spelled with a literal ~/", () => ({ AYA_HOME: "~/.aya" })],
+    ["a whitespace-only AYA_HOME, which the app ignores", () => ({ AYA_HOME: " \t" })],
   ]) {
     test(`${shell}: ${label} still launches the installed app at once`, async () => {
       const box = sandbox("Linux");

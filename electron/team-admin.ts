@@ -5,7 +5,16 @@ import { promises as fs } from "node:fs";
 import { writeFileAtomic } from "./atomic-write";
 import { teamFile, teamNames } from "./team-files";
 import { openTeamStore, readText } from "./team-store";
-import { MUST_NOT_FIELD, SECTION_MARKER, SENDS_TO_FIELD, TEAM_SYSTEM_SENDER, parseTeamFile, serializeTeam } from "./teams";
+import {
+  MUST_NOT_FIELD,
+  SECTION_MARKER,
+  SENDS_TO_FIELD,
+  TEAM_SYSTEM_SENDER,
+  TeamFileError,
+  parseTeamFile,
+  reservedRoleProblem,
+  serializeTeam,
+} from "./teams";
 import type { ProjectConfig, TeamDefinition, TeamSummary } from "./types";
 
 export const LOG_TAIL = 50;
@@ -75,6 +84,14 @@ async function paneHolds(
 // A line the team file reads as a field or section, where only free text belongs.
 const FIELD_LINE = new RegExp(`^(${SENDS_TO_FIELD}:|${MUST_NOT_FIELD}:|${SECTION_MARKER})`, "m");
 
+/** Loading a saved team allows "user" (reserved later); saving one does not. */
+function refuseReservedRoles(team: TeamDefinition): void {
+  for (const role of team.roles) {
+    const reserved = reservedRoleProblem(role.id);
+    if (reserved) throw new TeamFileError(team.name, reserved);
+  }
+}
+
 function refuseFieldLines(team: TeamDefinition): void {
   for (const role of team.roles) {
     const line = role.responsibilities.match(FIELD_LINE);
@@ -118,6 +135,7 @@ export async function saveTeam(
   team: TeamDefinition,
   { create = false }: { create?: boolean } = {},
 ): Promise<void> {
+  refuseReservedRoles(team);
   refuseFieldLines(team);
   const text = serializeTeam(team);
   refuseLossy(team, text);
@@ -127,6 +145,8 @@ export async function saveTeam(
     await writeFileAtomic(file, text);
     const store = openTeamStore(teamHome, project.slug, team.name);
     await store.saveDefinition(text);
+    // A save is the saver's: aya team save from a pane marks it the agent's again after this.
+    await store.clearAgentAuthored();
     // A renamed or removed role would keep a pane no role id matches.
     const roles = new Set(team.roles.map((r) => r.id));
     for (const [role, pane] of Object.entries(await store.assignments())) {
@@ -135,19 +155,23 @@ export async function saveTeam(
   });
 }
 
+/** Runs each call once every earlier call with its key has settled. */
+export function oneAtATime(): <T>(key: string, work: () => Promise<T>) => Promise<T> {
+  const running = new Map<string, Promise<unknown>>();
+  return async (key, work) => {
+    const mine = (running.get(key) ?? Promise.resolve()).catch(() => {}).then(work);
+    running.set(key, mine);
+    try {
+      return await mine;
+    } finally {
+      if (running.get(key) === mine) running.delete(key);
+    }
+  };
+}
+
 /** Saves of one team file in turn: two creates (aya team save, the Teams window)
  *  would both pass the exists check and the later would overwrite the earlier. */
-const saving = new Map<string, Promise<unknown>>();
-
-async function oneSaveAtATime(file: string, save: () => Promise<void>): Promise<void> {
-  const mine = (saving.get(file) ?? Promise.resolve()).catch(() => {}).then(save);
-  saving.set(file, mine);
-  try {
-    await mine;
-  } finally {
-    if (saving.get(file) === mine) saving.delete(file);
-  }
-}
+const oneSaveAtATime = oneAtATime();
 
 /** A closed tab plays no role anywhere. */
 export async function releasePaneEverywhere(teamHome: string, project: ProjectConfig, paneId: string): Promise<void> {
@@ -174,4 +198,5 @@ export async function assignRole(
   // One role in one team per pane: whoami and the tab chip must agree.
   await releasePaneEverywhere(teamHome, project, paneId);
   await store.assign(role, paneId);
+  await store.clearAgentAuthored();
 }

@@ -74,6 +74,7 @@ export async function ownSessionCommand(
   cwd: string,
   list: (directory: string, assignments: string[]) => Promise<OpencodeSession[]>,
   onLookupError: (err: unknown) => void = () => {},
+  onNoSession: () => void = () => {},
 ): Promise<string> {
   const trimmed = command.trim();
   const { assignments, rest } = leadingEnvAssignments(trimmed);
@@ -90,6 +91,7 @@ export async function ownSessionCommand(
   const own = sessions
     .filter((s) => s.directory === directory)
     .sort((a, b) => b.updated - a.updated)[0];
+  if (!own) onNoSession();
   const resumed = program.replace(CONTINUE_FLAG, own ? ` --session ${own.id}` : "");
   return `${trimmed.slice(0, rest)}${resumed}`;
 }

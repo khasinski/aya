@@ -17,7 +17,7 @@ import { isAgentKind, isPreset } from "./presets";
 import { isStorableSplitTree, MAX_SPLIT_COLS, MAX_SPLIT_ROWS, type SplitNode } from "./split-tree";
 import { SESSION_ID_RE } from "./osc-extractor";
 import { assertSnippetCount, isSnippet, SNIPPET_TEXT_MAX } from "./snippets";
-import { reservedRoleProblem } from "./teams";
+import { RESERVED_ROLE_PROBLEM, TEAM_SYSTEM_SENDER } from "./teams";
 
 /** Persisted schema version for projects-state.json. */
 export const PROJECT_STATE_VERSION = 1;
@@ -341,8 +341,9 @@ function validateRoute(value: unknown, at: string): SendRoute {
 function validateRole(value: unknown, at: string): TeamRole {
   const role = requireRecord(value, at);
   const id = requireString(role.id, `${at}.id`);
-  const reserved = reservedRoleProblem(id);
-  if (reserved) throw new Error(`Invalid IPC payload for ${at}.id: ${reserved}.`);
+  // "user" is refused by saveTeam, not here: drafting a role in a team saved
+  // before it was reserved must still work.
+  if (id === TEAM_SYSTEM_SENDER) throw new Error(`Invalid IPC payload for ${at}.id: ${RESERVED_ROLE_PROBLEM}.`);
   return {
     id,
     sendsTo: requireArray(role.sendsTo, `${at}.sendsTo`).map((raw, j) => validateRoute(raw, `${at}.sendsTo[${j}]`)),
