@@ -551,9 +551,20 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
 
     // Here, not in main: only now is a real spawn certain (attach-only and
     // re-mounts returned above), so the lookup is never paid for nothing.
-    const command = await ownSessionCommand(req.command, cwd, listOpencodeSessions, (err) =>
-      ptyLog.append("opencode-session-lookup-failed", { ptyId: req.ptyId, error: String(err) }),
+    // Through the pane's own shell and env: opencode may only be on the PATH
+    // its startup files build.
+    const command = await ownSessionCommand(
+      req.command,
+      cwd,
+      (dir, lookup) => listOpencodeSessions(shellArgv(lookup, dir), safeEnv(req, cwd)),
+      (err) =>
+        ptyLog.append("opencode-session-lookup-failed", { ptyId: req.ptyId, error: String(err) }),
     );
+    if (pendingKills.delete(req.ptyId)) {
+      // The tab was closed during the awaits above; killPty found no PTY yet.
+      ptyLog.append("spawn-dropped-pending-kill", { ptyId: req.ptyId });
+      return;
+    }
     const argv = shellArgv(command, cwd);
     const file = argv[0];
     const args = argv.slice(1);

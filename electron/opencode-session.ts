@@ -42,24 +42,30 @@ export function parseSessionList(stdout: string): OpencodeSession[] {
   return rows.map(({ id, directory, updated }) => ({ id, directory, updated }));
 }
 
-/** Top-level sessions of the project containing `cwd`, across all its worktrees. */
-export async function listOpencodeSessions(cwd: string): Promise<OpencodeSession[]> {
-  const { stdout } = await execFileAsync("opencode", ["session", "list", "--format", "json"], {
-    cwd,
+/** Runs the lookup as `argv` (the pane's own shell) with `env`. Shell startup
+ *  may print first, so the list is read from the last line opening with `[`. */
+export async function listOpencodeSessions(
+  argv: string[],
+  env: NodeJS.ProcessEnv,
+): Promise<OpencodeSession[]> {
+  const { stdout } = await execFileAsync(argv[0], argv.slice(1), {
+    env,
     timeout: LIST_TIMEOUT_MS,
     maxBuffer: OPENCODE_LIST_MAX_BUFFER_BYTES,
     windowsHide: true,
   });
-  return parseSessionList(stdout);
+  const start = [...stdout.matchAll(/^\[/gm)].at(-1)?.index ?? 0;
+  return parseSessionList(stdout.slice(start));
 }
 
 /** Turns `--continue` into `--session <this directory's newest>`, or drops it
- *  when the directory has none: a fresh session beats another worktree's. */
+ *  when the directory has none: a fresh session beats another worktree's.
+ *  `list` gets the lookup command, carrying the pane command's env assignments. */
 export async function ownSessionCommand(
   command: string,
   cwd: string,
-  list: (cwd: string) => Promise<OpencodeSession[]> = listOpencodeSessions,
-  onLookupError: (err: unknown) => void = (err) => console.warn("[aya] opencode session lookup failed:", err),
+  list: (directory: string, lookup: string) => Promise<OpencodeSession[]>,
+  onLookupError: (err: unknown) => void = () => {},
 ): Promise<string> {
   const trimmed = command.trim();
   const { rest } = leadingEnvAssignments(trimmed);
@@ -68,7 +74,7 @@ export async function ownSessionCommand(
   const directory = await realpath(cwd).catch(() => cwd);
   let sessions: OpencodeSession[];
   try {
-    sessions = await list(directory);
+    sessions = await list(directory, `${trimmed.slice(0, rest)}opencode session list --format json`);
   } catch (err) {
     onLookupError(err);
     return command;
