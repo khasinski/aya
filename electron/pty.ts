@@ -30,6 +30,7 @@ import { getProcessCwd } from "./process-cwd";
 import { ptyLog } from "./pty-log";
 import { pathWithFallbackDir } from "./agent-brief";
 import { bundledAyaCliPath } from "./cli-path";
+import { leadingEnvAssignments } from "./shell-words";
 
 // Timeout for the shell `command -v` existence check during spawn preflight.
 
@@ -285,52 +286,12 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
-function endOfShellToken(s: string, start: number): number {
-  let quote: "'" | '"' | null = null;
-  for (let i = start; i < s.length; i += 1) {
-    const ch = s[i];
-    if (quote) {
-      if (ch === "\\" && quote === '"' && i + 1 < s.length) {
-        i += 1;
-        continue;
-      }
-      if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === "'" || ch === '"') {
-      quote = ch;
-      continue;
-    }
-    if (ch === "\\" && i + 1 < s.length) {
-      i += 1;
-      continue;
-    }
-    if (/\s/.test(ch)) return i;
-  }
-  return s.length;
-}
-
 function commandWithExec(command: string): string {
-  const start = command.search(/\S/);
-  if (start < 0) return "exec";
-  let pos = start;
-  let assignmentEnd = start;
-  let sawAssignment = false;
-
-  while (pos < command.length) {
-    const tokenEnd = endOfShellToken(command, pos);
-    const token = command.slice(pos, tokenEnd);
-    if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) break;
-    sawAssignment = true;
-    assignmentEnd = tokenEnd;
-    pos = tokenEnd;
-    while (pos < command.length && /\s/.test(command[pos])) pos += 1;
-  }
-
-  if (!sawAssignment) return `exec ${command}`;
-  if (pos >= command.length) return command;
-  const executable = command.slice(pos);
-  return `${command.slice(0, assignmentEnd)} exec ${commandForExec(executable)}`;
+  if (!command.trim()) return "exec";
+  const { assignments, end, rest } = leadingEnvAssignments(command);
+  if (!assignments.length) return `exec ${command}`;
+  if (rest >= command.length) return command;
+  return `${command.slice(0, end)} exec ${commandForExec(command.slice(rest))}`;
 }
 
 function commandForExec(command: string): string {
@@ -364,23 +325,12 @@ function expandConfigDir(value: string): string {
 
 export function agentConfigDirsFromCommand(command: string): string[] {
   const dirs: string[] = [];
-  let pos = command.search(/\S/);
-  if (pos < 0) return dirs;
-
-  while (pos < command.length) {
-    const tokenEnd = endOfShellToken(command, pos);
-    const token = command.slice(pos, tokenEnd);
-    const match = token.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-    if (!match) break;
-    const key = match[1];
+  for (const token of leadingEnvAssignments(command).assignments) {
+    const [, key, value] = token.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s) ?? [];
     if (key === "CODEX_HOME" || key === "CLAUDE_CONFIG_DIR") {
-      const dir = expandConfigDir(match[2]);
-      if (dir) dirs.push(dir);
+      dirs.push(expandConfigDir(value));
     }
-    pos = tokenEnd;
-    while (pos < command.length && /\s/.test(command[pos])) pos += 1;
   }
-
   return dirs;
 }
 

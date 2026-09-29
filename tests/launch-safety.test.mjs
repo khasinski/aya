@@ -126,3 +126,14 @@ test("agent config dirs are extracted from leading env assignments", () => {
     [`${os.homedir()}/.claude-secondary`],
   );
 });
+
+test("shellArgv: leading whitespace and an assignment-only command keep their env words", () => {
+  const saved = process.env.SHELL;
+  process.env.SHELL = "/bin/zsh";
+  try {
+    assert.match(shellArgv("  FOO=1 claude", "/tmp").at(-1), /&& {3}FOO=1 exec claude$/);
+    assert.match(shellArgv("FOO=1", "/tmp").at(-1), /&& FOO=1$/);
+  } finally {
+    process.env.SHELL = saved;
+  }
+});
