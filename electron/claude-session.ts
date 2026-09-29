@@ -40,11 +40,13 @@ export async function claudeTranscriptExists(
   cwd: string,
   sessionId: string,
 ): Promise<boolean> {
-  const file = path.join(claudeConfigDir(configDir), "projects", claudeProjectDirName(cwd), `${sessionId}.jsonl`);
-  return fs.access(file).then(
-    () => true,
-    () => false,
-  );
+  // Claude names the folder after its real cwd; Aya may hold a symlinked one.
+  const real = await fs.realpath(cwd).catch(() => cwd);
+  for (const dir of new Set([cwd, real])) {
+    const file = path.join(claudeConfigDir(configDir), "projects", claudeProjectDirName(dir), `${sessionId}.jsonl`);
+    if (await fs.access(file).then(() => true, () => false)) return true;
+  }
+  return false;
 }
 
 /** Reports the conversation a claude process is in on every poll, not only on
