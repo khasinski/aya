@@ -92,6 +92,13 @@ test("a throwing adoption hook never fails the command", async () => {
   assert.equal(JSON.parse(stdout).insideAya, false);
 });
 
+test("capabilities list team new and team save, pointing new at save", () => {
+  const byCommand = Object.fromEntries(AYA_CAPABILITIES.map((c) => [c.command, c]));
+  assert.equal(byCommand["team new"].usage, "aya team new [description]");
+  assert.equal(byCommand["team save"].usage, "aya team save [--replace] file|-");
+  assert.match(byCommand["team new"].summary, /aya team save/);
+});
+
 function helpUsages() {
   const { stderr } = spawnSync(cli, ["help"], { encoding: "utf8" });
   return stderr

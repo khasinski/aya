@@ -84,6 +84,15 @@ function refuseLossy(team: TeamDefinition, text: string): void {
   }
 }
 
+export class TeamExistsError extends Error {
+  constructor(
+    name: string,
+    readonly file: string,
+  ) {
+    super(`team "${name}" already exists; edit it instead`);
+  }
+}
+
 /** `create`: a new team, refused when one with its name already exists. */
 export async function saveTeam(
   teamHome: string,
@@ -95,16 +104,30 @@ export async function saveTeam(
   const text = serializeTeam(team);
   refuseLossy(team, text);
   const file = teamFile(project, team.name);
-  if (create && (await fs.stat(file).then(() => true, () => false))) {
-    throw new Error(`team "${team.name}" already exists; edit it instead`);
-  }
-  await writeFileAtomic(file, text);
-  const store = openTeamStore(teamHome, project.slug, team.name);
-  await store.saveDefinition(text);
-  // A renamed or removed role would keep a pane no role id matches.
-  const roles = new Set(team.roles.map((r) => r.id));
-  for (const [role, pane] of Object.entries(await store.assignments())) {
-    if (!roles.has(role)) await store.releasePane(pane);
+  await oneSaveAtATime(file, async () => {
+    if (create && (await fs.stat(file).then(() => true, () => false))) throw new TeamExistsError(team.name, file);
+    await writeFileAtomic(file, text);
+    const store = openTeamStore(teamHome, project.slug, team.name);
+    await store.saveDefinition(text);
+    // A renamed or removed role would keep a pane no role id matches.
+    const roles = new Set(team.roles.map((r) => r.id));
+    for (const [role, pane] of Object.entries(await store.assignments())) {
+      if (!roles.has(role)) await store.releasePane(pane);
+    }
+  });
+}
+
+/** Saves of one team file in turn: two creates (aya team save, the Teams window)
+ *  would both pass the exists check and the later would overwrite the earlier. */
+const saving = new Map<string, Promise<unknown>>();
+
+async function oneSaveAtATime(file: string, save: () => Promise<void>): Promise<void> {
+  const mine = (saving.get(file) ?? Promise.resolve()).catch(() => {}).then(save);
+  saving.set(file, mine);
+  try {
+    await mine;
+  } finally {
+    if (saving.get(file) === mine) saving.delete(file);
   }
 }
 

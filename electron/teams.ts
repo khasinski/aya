@@ -3,7 +3,9 @@
 
 import type { SendRoute, TeamCadence, TeamDefinition, TeamRole } from "./types";
 
-export const ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+export const ID_MAX_LEN = 40;
+export const ID_RE = new RegExp(`^[a-z0-9][a-z0-9-]{0,${ID_MAX_LEN - 1}}$`);
+export const MIN_TEAM_ROLES = 2;
 /** The sender of Aya's own messages: delivery tests and rounds. */
 export const TEAM_SYSTEM_SENDER = "aya";
 export const RESERVED_ROLE_PROBLEM = `"${TEAM_SYSTEM_SENDER}" is reserved for Aya's own messages; name the role something else`;
@@ -84,7 +86,7 @@ export function parseTeamFile(name: string, text: string): TeamDefinition {
   }
 
   const ids = roles.map((r) => r.id);
-  if (roles.length < 2) throw new TeamFileError(name, "a team needs at least two roles");
+  if (roles.length < MIN_TEAM_ROLES) throw new TeamFileError(name, `a team needs at least ${MIN_TEAM_ROLES} roles`);
   const duplicate = ids.find((id, i) => ids.indexOf(id) !== i);
   if (duplicate) throw new TeamFileError(name, `role "${duplicate}" is defined twice`);
   for (const role of roles) {
@@ -97,6 +99,12 @@ export function parseTeamFile(name: string, text: string): TeamDefinition {
     throw new TeamFileError(name, `cadence names unknown role "${cadence.role}"`);
   }
   return { name, roles, cadence, protocol };
+}
+
+/** The name in the "# <name>" title above the first section, or null. */
+export function teamTitle(text: string): string | null {
+  const head = text.replace(/\r\n/g, "\n").split(SECTION_RE)[0];
+  return head.match(/^#[ \t]+(.+?)[ \t]*$/m)?.[1] ?? null;
 }
 
 export function serializeTeam(team: TeamDefinition): string {

@@ -30,6 +30,8 @@ Usage:
   aya team whoami                    Print this pane's team role and protocol
   aya team send role text            Send a message to the pane playing role
   aya team inbox                     Print messages that could not be typed in
+  aya team new [description]         Print a guide for writing a team file
+  aya team save [--replace] file|-   Check a team file and save it in Aya
   aya capabilities                   Print these commands as JSON, for agents
 EOF
 }
@@ -131,6 +133,12 @@ function requestFromArgs() {
   if (kind === "team-whoami" || kind === "team-inbox") return { type: kind };
   if (kind === "team-send") {
     return { type: "team-send", role: process.argv[4], text: process.argv[5] };
+  }
+  // Unlike whoami/send, these work outside a pane too: the slug or cwd names the project.
+  if (kind === "team-guide" || kind === "team-save") {
+    const scope = { projectSlug: optionalEnv("AYA_PROJECT_SLUG"), cwd: process.cwd() };
+    if (kind === "team-guide") return { type: kind, description: process.argv[4] || undefined, ...scope };
+    return { type: kind, text: process.argv[4], replace: process.argv[5] === "replace", ...scope };
   }
   throw new Error(`unknown command: ${kind}`);
 }
@@ -392,6 +400,40 @@ case "$command" in
     case "$action" in
       whoami) send_control team-whoami ;;
       inbox) send_control team-inbox ;;
+      new) send_control team-guide "$*" ;;
+      save)
+        replace=""
+        file=""
+        for arg do
+          case "$arg" in
+            --replace) replace="replace" ;;
+            *)
+              if [ -n "$file" ]; then
+                usage
+                exit 1
+              fi
+              file="$arg"
+              ;;
+          esac
+        done
+        if [ -z "$file" ]; then
+          usage
+          exit 1
+        fi
+        if [ "$file" = "-" ]; then
+          text=$(cat)
+        elif [ -f "$file" ]; then
+          text=$(cat -- "$file")
+        else
+          printf "aya: no such file: %s\n" "$file" >&2
+          exit 1
+        fi
+        if [ -z "$(printf '%s' "$text" | tr -d '[:space:]')" ]; then
+          printf "aya: %s is empty; nothing was saved\n" "$file" >&2
+          exit 1
+        fi
+        send_control team-save "$text" "$replace"
+        ;;
       send)
         role="${1:-}"
         [ "$#" -eq 0 ] || shift

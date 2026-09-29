@@ -79,7 +79,15 @@ test("the brief points at aya capabilities; the file form is conditional", () =>
   assert.doesNotMatch(briefText(false), /AYA_TERMINAL_ID/);
   // A global file is read outside Aya too.
   assert.match(briefText(true), /^If the AYA_TERMINAL_ID environment variable is set/);
-  assert.ok(briefText(false).split("\n").length <= 5);
+  assert.ok(briefText(false).split("\n").length <= 6);
+});
+
+test("every agent learns from the brief that it can define a team itself", () => {
+  for (const conditional of [false, true]) {
+    const lines = briefText(conditional).split("\n").filter((l) => l.includes("aya team new"));
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /aya team new "<what the team is for>"/);
+  }
 });
 
 const ARG = briefChannel("claude");

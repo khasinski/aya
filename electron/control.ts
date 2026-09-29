@@ -16,7 +16,9 @@ import {
   tailForPaneRead,
 } from "./pane-target";
 import { CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
+import { handleTeamAuthorRequest } from "./team-author";
 import { handleTeamRequest, PaneHeldError, type TeamControlDeps } from "./team-control";
+import type { TeamRunner } from "./team-runner";
 import type { ControlStatusUpdate, ProjectConfig } from "./types";
 
 // Max control-socket message size before rejecting the request (bytes).
@@ -69,6 +71,8 @@ export interface ControlServerOptions {
   onRequest?: (request: ControlRequest, caller: ControlCaller) => void;
   /** What `aya team` runs on (the same deps as the team runner); teams are off without it. */
   team?: TeamControlDeps;
+  /** Told of a team saved with aya team save, as after the Teams window's Save. */
+  teamRunner?: Pick<TeamRunner, "refresh">;
   /** Test-only override of the idle reap window. */
   idleTimeoutMs?: number;
   /** Test-only override of OPEN_DELIVERY_TIMEOUT_MS. */
@@ -235,6 +239,11 @@ async function handleRequest(
   if (request.type === "team-whoami" || request.type === "team-send" || request.type === "team-inbox") {
     if (!options.team) throw new Error("teams are not available");
     return handleTeamRequest(request, caller.terminalId, options.team);
+  }
+  if (request.type === "team-guide" || request.type === "team-save") {
+    const { team, teamRunner } = options;
+    if (!team || !teamRunner) throw new Error("teams are not available");
+    return handleTeamAuthorRequest(request, caller.terminalId, team, (slug, name) => teamRunner.refresh(slug, name));
   }
   if (request.type === "focus") {
     focusWindow(win);
