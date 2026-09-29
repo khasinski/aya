@@ -39,5 +39,33 @@ test("a kill that lands during the opencode lookup stops the spawn", async () =>
   if (started) killPty(ptyId);
   assert.equal(started, 0, "no child may outlive the closed tab");
   assert.doesNotMatch(log, /"ev":"spawn","ptyId":"kill-during-lookup"/);
-  assert.match(log, /"ev":"spawn-dropped-pending-kill","ptyId":"kill-during-lookup"/);
+  assert.match(log, /"ev":"spawn-cancelled","ptyId":"kill-during-lookup"/);
+});
+
+test("a second spawn for the closed tab cannot use up the kill meant for the first", async () => {
+  const sink = { events: [], sendPtyEvent(e) { this.events.push(e); }, isDestroyed: () => false };
+  const ptyId = "kill-then-second-spawn";
+  const req = { ptyId, command: "opencode --continue", cwd, cols: 80, rows: 24 };
+  const first = spawnPty(req, sink);
+  await new Promise((r) => setTimeout(r, 300));
+  killPty(ptyId);
+  await spawnPty(req, sink);
+  await first;
+  const started = activePtyCount();
+  if (started) killPty(ptyId);
+  assert.equal(started, 0, "no child may outlive the closed tab");
+});
+
+test("a spawn call arriving after the cancelled one finished is still dropped", async () => {
+  const sink = { events: [], sendPtyEvent(e) { this.events.push(e); }, isDestroyed: () => false };
+  const ptyId = "kill-then-late-spawn";
+  const req = { ptyId, command: "opencode --continue", cwd, cols: 80, rows: 24 };
+  const first = spawnPty(req, sink);
+  await new Promise((r) => setTimeout(r, 300));
+  killPty(ptyId);
+  await first;
+  await spawnPty(req, sink);
+  const started = activePtyCount();
+  if (started) killPty(ptyId);
+  assert.equal(started, 0, "a late spawn for the closed tab must not start");
 });
