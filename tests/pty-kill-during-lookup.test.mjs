@@ -56,16 +56,29 @@ test("a second spawn for the closed tab cannot use up the kill meant for the fir
   assert.equal(started, 0, "no child may outlive the closed tab");
 });
 
-test("a spawn call arriving after the cancelled one finished is still dropped", async () => {
+test("a tab reopened after its cancelled spawn returned does start (ids are reused)", async () => {
   const sink = { events: [], sendPtyEvent(e) { this.events.push(e); }, isDestroyed: () => false };
-  const ptyId = "kill-then-late-spawn";
-  const req = { ptyId, command: "opencode --continue", cwd, cols: 80, rows: 24 };
-  const first = spawnPty(req, sink);
+  const ptyId = "kill-then-reopen";
+  const first = spawnPty({ ptyId, command: "opencode --continue", cwd, cols: 80, rows: 24 }, sink);
   await new Promise((r) => setTimeout(r, 300));
   killPty(ptyId);
   await first;
-  await spawnPty(req, sink);
-  const started = activePtyCount();
-  if (started) killPty(ptyId);
-  assert.equal(started, 0, "a late spawn for the closed tab must not start");
+  await spawnPty({ ptyId, command: "echo reopened-marker", cwd, cols: 80, rows: 24 }, sink);
+  const output = () => sink.events.filter((e) => e.type === "data").map((e) => e.chunk).join("");
+  const deadline = Date.now() + 10_000;
+  while (!output().includes("reopened-marker") && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  killPty(ptyId);
+  assert.match(output(), /reopened-marker/);
+});
+
+test("a kill with no spawn under way still drops the next spawn of that id", async () => {
+  const sink = { events: [], sendPtyEvent(e) { this.events.push(e); }, isDestroyed: () => false };
+  const ptyId = "kill-before-spawn";
+  killPty(ptyId);
+  await spawnPty({ ptyId, command: "echo never", cwd, cols: 80, rows: 24 }, sink);
+  assert.equal(activePtyCount(), 0);
+  const log = readFileSync(join(process.env.AYA_HOME, "pty-events.log"), "utf8");
+  assert.match(log, /"ev":"spawn-dropped-pending-kill","ptyId":"kill-before-spawn"/);
 });
