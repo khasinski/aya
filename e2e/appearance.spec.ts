@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import { fireShortcut } from "./helpers/shortcut";
+import { MAC_OPTION_KEY_STORAGE_KEY } from "../src/storage-keys";
 
 test("Settings can pin the app appearance or return to system mode", async ({
   window,
@@ -39,7 +40,7 @@ test("Settings can switch the macOS Option key mode", async ({ window, app }) =>
     .filter({ hasText: "All Option = Meta" })
     .click();
   await expect
-    .poll(() => window.evaluate(() => localStorage.getItem("aya:mac-option-key")))
+    .poll(() => window.evaluate((k) => localStorage.getItem(k), MAC_OPTION_KEY_STORAGE_KEY))
     .toBe("option-as-meta");
 
   await settings
@@ -47,7 +48,7 @@ test("Settings can switch the macOS Option key mode", async ({ window, app }) =>
     .filter({ hasText: "Right Option composes" })
     .click();
   await expect
-    .poll(() => window.evaluate(() => localStorage.getItem("aya:mac-option-key")))
+    .poll(() => window.evaluate((k) => localStorage.getItem(k), MAC_OPTION_KEY_STORAGE_KEY))
     .toBe("right-option-compose");
 });
 

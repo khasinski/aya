@@ -1,22 +1,10 @@
-import net from "node:net";
-import { join } from "node:path";
 import { test, expect } from "./fixtures";
+import { sendControl } from "./helpers/control";
 import type { Page } from "@playwright/test";
 
 // AttentionCenter (opened from the StatusBar). Attention items are injected via
 // the control socket (same mechanism as status-clear.spec.ts). Focus/Close are
 // asserted at the real observable (active pane / removed terminal).
-
-function sendControl(ayaHome: string, payload: Record<string, unknown>): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const socket = net.createConnection(join(ayaHome, "aya.sock"));
-    socket.setEncoding("utf8");
-    socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n`));
-    socket.on("data", () => resolve());
-    socket.on("error", reject);
-    socket.on("close", () => resolve());
-  });
-}
 
 const dot = (window: Page, name: string) =>
   window.locator(".aya-sidebar-row", { hasText: name }).locator(".aya-sidebar-statusdot");

@@ -1,13 +1,10 @@
 import { test, expect } from "./fixtures";
+import { visiblePane, visiblePanes } from "./helpers/terminal";
 import { fireShortcut } from "./helpers/shortcut";
-import type { Page } from "@playwright/test";
+import { renameInline } from "./helpers/rename";
 
 // Adversarial probes - they assert the CORRECT expected behaviour in tricky
 // states. A failure here is a hidden-bug candidate, not a test to paper over.
-
-const visiblePanes = (window: Page) => window.locator('[data-testid="terminal-pane"]:visible');
-const visiblePane = (window: Page, name: string) =>
-  window.locator(`[data-testid="terminal-pane"][data-terminal-name="${name}"]:visible`);
 
 // P1 - "Split below" should behave like "Split right": a second cell appears and
 // can be filled. Only "Split right" was exercised.
@@ -33,13 +30,7 @@ test.describe("no split seed", () => {
     // Stable row reference by attribute - filtering by text breaks once the
     // inline editor replaces the name text.
     const row = window.locator('[data-testid="sidebar-terminal"][data-terminal-name="shell 1"]');
-    const input = row.locator(".aya-sidebar-rename");
-    // Robustly open the inline editor (cold-start can swallow the first dblclick).
-    await expect(async () => {
-      await row.locator(".aya-sidebar-name").dblclick();
-      await input.fill("   ", { timeout: 800 });
-      await input.press("Enter", { timeout: 800 });
-    }).toPass({ timeout: 15000 });
+    await renameInline(row.locator(".aya-sidebar-name"), row.locator(".aya-sidebar-rename"), "   ");
     // blank rename must be rejected - the name stays "shell 1"
     await expect(
       window.locator('[data-testid="sidebar-terminal"][data-terminal-name="shell 1"]'),

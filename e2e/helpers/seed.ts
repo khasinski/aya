@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 export interface SeededEnv {
   /** Temp root holding all isolated state for one app launch. */
@@ -56,6 +56,8 @@ export interface SeedOptions {
   pathRepairHarness?: boolean;
   /** HOME = <root>/home, for code that writes under the user's home. */
   fakeHome?: boolean;
+  /** Session ids already saved on the tabs, as a previous run left them. */
+  tabSessionIds?: { left?: string; right?: string };
   /** Stub executables put first on PATH, so harness detection finds them. */
   fakeBins?: string[];
   /** #115's machine: an rvm gemset first on PATH with a working Aya shim, dead
@@ -82,6 +84,9 @@ export interface SeedOptions {
   /** Write the project's `.aya/project.json` with these presets, so the repo
    *  preset-import flow (ProjectPresetImportModal) triggers for the project. */
   repoPresets?: Array<{ id: string; name: string; icon: string; color: string; command: string }>;
+  /** Files to write before launch, relative to the project dir or AYA_HOME. */
+  projectFiles?: Record<string, string>;
+  ayaHomeFiles?: Record<string, string>;
   /** Open a SECOND project ("e2e-proj-2", one tab named "shell 3") so tests can
    *  exercise project switching (e.g. the project-N shortcut). */
   secondProject?: boolean;
@@ -90,6 +95,9 @@ export interface SeedOptions {
    *  (-> stopped/restartable) instead of auto-respawning. Consumed by the
    *  `app` fixture, not by seedEnv. */
   preStartPtyHost?: boolean;
+  /** Write ayaHome/snippets.json with these snippets instead of letting the
+   *  app seed its defaults. */
+  snippetList?: Array<{ id: string; name: string; text: string; autoRun: boolean }>;
 }
 
 function shellQuote(value: string): string {
@@ -128,6 +136,16 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     );
   }
 
+  for (const [base, files] of [
+    [projectDir, opts.projectFiles],
+    [ayaHome, opts.ayaHomeFiles],
+  ] as const) {
+    for (const [rel, text] of Object.entries(files ?? {})) {
+      mkdirSync(dirname(join(base, rel)), { recursive: true });
+      writeFileSync(join(base, rel), text);
+    }
+  }
+
   let worktreeDir: string | undefined;
   if (opts.gitRepo) {
     const git = (...args: string[]) =>
@@ -157,6 +175,9 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     ];
     writeFileSync(join(ayaHome, "presets.json"), JSON.stringify({ presets: presetList }, null, 2));
   }
+  if (opts.snippetList) {
+    writeFileSync(join(ayaHome, "snippets.json"), JSON.stringify({ snippets: opts.snippetList }, null, 2));
+  }
 
   const left = "tab-left";
   const right = "tab-right";
@@ -167,11 +188,17 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
         name: "e2e",
         directory: effectiveProjectDir,
         tabs: [
-          { id: left, presetId: "shell", name: "shell 1" },
+          {
+            id: left,
+            presetId: "shell",
+            name: "shell 1",
+            ...(opts.tabSessionIds?.left ? { sessionId: opts.tabSessionIds.left } : {}),
+          },
           {
             id: right,
             presetId: "shell",
             name: "shell 2",
+            ...(opts.tabSessionIds?.right ? { sessionId: opts.tabSessionIds.right } : {}),
             ...(worktreeDir ? { cwd: worktreeDir } : {}),
           },
         ],

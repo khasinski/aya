@@ -73,7 +73,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   {
     command: "pane read",
     usage: "aya pane read name",
-    summary: "Print another pane's recent output, newest last.",
+    summary: "Print another pane's recent output as plain text, as its screen shows it, newest last.",
     example: 'aya pane read "reviewer"',
     notes: ["There is no 'wait until done': poll, and leave time between reads."],
   },
@@ -86,6 +86,24 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
       "--no-submit types without pressing Enter, for a prompt the user should review first.",
       "Only drive a pane the user asked you to drive.",
     ],
+  },
+  {
+    command: "team whoami",
+    usage: "aya team whoami",
+    summary: "Print this pane's team, role, who it sends to, what it must not do, and the protocol.",
+    notes: ["Run it after a start, /clear or /resume: your role is not in your memory."],
+  },
+  {
+    command: "team send",
+    usage: "aya team send role text",
+    summary: "Send a message to the pane playing role; the recipient sees who sent it, when, at which commit.",
+    example: 'aya team send implementer "Round 5: the alert freezes at zero"',
+    notes: ["Only roles listed in your send-to work.", "Written to the pane does not mean read."],
+  },
+  {
+    command: "team inbox",
+    usage: "aya team inbox",
+    summary: "Print messages for your role that could not be typed into your pane.",
   },
   {
     command: "capabilities",

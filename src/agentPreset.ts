@@ -223,23 +223,16 @@ export function commandWithAutoResume(
   return arg ? `${command} ${arg}` : preset.command;
 }
 
+const BRIEF_HINTS = new Map<Agent, string>([
+  ["claude", "Adds a short note via --append-system-prompt when the pane starts."],
+  ["codex", "Adds a marked section to this account's AGENTS.md (removed when off)."],
+  ["grok", "Adds a short note via --rules when the pane starts."],
+  ["opencode", "Adds a short note to opencode's instructions for Aya panes only (OPENCODE_CONFIG_CONTENT)."],
+  ["antigravity", "Adds one always-on Antigravity rule, shared by all agy presets (deleted when none opts in)."],
+]);
+
 /** Null hides the toggle: the harness has no channel. Mirrors briefChannel in
  *  electron/agent-brief.ts; a test holds them equal. */
 export function agentBriefHint(agent: Agent | undefined): string | null {
-  if (agent === "claude") {
-    return "Adds a short note via --append-system-prompt when the pane starts.";
-  }
-  if (agent === "codex") {
-    return "Adds a marked section to this account's AGENTS.md (removed when off).";
-  }
-  if (agent === "grok") {
-    return "Adds a short note via --rules when the pane starts.";
-  }
-  if (agent === "opencode") {
-    return "Adds a short note to opencode's instructions for Aya panes only (OPENCODE_CONFIG_CONTENT).";
-  }
-  if (agent === "antigravity") {
-    return "Adds one always-on Antigravity rule, shared by all agy presets (deleted when none opts in).";
-  }
-  return null;
+  return (agent ? BRIEF_HINTS.get(agent) : undefined) ?? null;
 }

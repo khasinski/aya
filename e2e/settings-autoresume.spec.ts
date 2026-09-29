@@ -1,20 +1,11 @@
 import { test, expect } from "./fixtures";
-import { fireShortcut } from "./helpers/shortcut";
+import { openPresetsTab } from "./helpers/settings";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ElectronApplication, Page } from "@playwright/test";
 
 // The "Auto-resume restored tabs" preset toggle (Settings > Presets) and the
 // real spawn behavior it controls: a restored agent tab appends the resume arg
 // (--continue / resume --last) only when auto-resume is on.
-
-async function openPresetsTab(window: Page, app: ElectronApplication) {
-  await fireShortcut(app, "open-settings");
-  const settings = window.locator(".aya-modal--settings");
-  await expect(settings).toBeVisible();
-  await settings.getByTestId("settings-tab").filter({ hasText: "Presets" }).click();
-  return settings;
-}
 
 const savedAutoResume = (ayaHome: string, id: string): boolean | "absent" | "no-preset" => {
   try {
@@ -89,7 +80,7 @@ test.describe("real resume behavior", () => {
           } catch {
             return false;
           }
-        }, { timeout: 10_000 })
+        })
         .toBe(true);
     });
   });
@@ -107,7 +98,7 @@ test.describe("real resume behavior", () => {
       // Wait until the spawn actually ran (marker exists), then assert the arg is
       // absent - distinguishes "opted out" from "not spawned yet".
       await expect
-        .poll(() => existsSync(markerPath(seeded.projectDir)), { timeout: 10_000 })
+        .poll(() => existsSync(markerPath(seeded.projectDir)))
         .toBe(true);
       expect(readFileSync(markerPath(seeded.projectDir), "utf8")).not.toContain("--continue");
     });

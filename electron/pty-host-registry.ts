@@ -14,10 +14,11 @@
 // still looks like our host script. All three must hold.
 
 import { execFileSync } from "node:child_process";
-import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { atomicTempPath, TMP_SUFFIX } from "./atomic-write";
 import { AYA_HOME, OWNER_ONLY_FILE_MODE } from "./paths";
+import { UNKNOWN_SCRIPT_HASH } from "./pty-host-staleness";
 
 export interface HostRecord {
   /** Host process pid (also its process-group leader: spawned detached). */
@@ -66,7 +67,7 @@ const recordPath = (dir: string, pid: number): string =>
  *  Best-effort beyond that. */
 export function writeHostRecord(rec: HostRecord, dir: string = HOST_REGISTRY_DIR): void {
   if (!rec.startTime) return;
-  const tmp = `${recordPath(dir, rec.pid)}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`;
+  const tmp = atomicTempPath(recordPath(dir, rec.pid));
   try {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(tmp, JSON.stringify(rec), { mode: OWNER_ONLY_FILE_MODE });
@@ -94,7 +95,7 @@ export function readHostRecords(dir: string = HOST_REGISTRY_DIR): HostRecord[] {
   const out: HostRecord[] = [];
   for (const name of names) {
     const full = path.join(dir, name);
-    if (name.endsWith(".tmp")) {
+    if (name.endsWith(TMP_SUFFIX)) {
       try {
         if (Date.now() - fs.statSync(full).mtimeMs > TMP_SWEEP_AGE_MS) {
           fs.rmSync(full, { force: true });
@@ -194,7 +195,7 @@ export function classifyRecord(
   expected: { version: string; scriptHash: string },
 ): "compatible" | "stale" | "indeterminate" {
   if (rec.version !== expected.version) return "stale";
-  if (rec.scriptHash === "unknown" || expected.scriptHash === "unknown") {
+  if (rec.scriptHash === UNKNOWN_SCRIPT_HASH || expected.scriptHash === UNKNOWN_SCRIPT_HASH) {
     return "indeterminate";
   }
   return rec.scriptHash === expected.scriptHash ? "compatible" : "stale";
@@ -234,7 +235,7 @@ export function collectDescendants(
 // Without TZ pinning a DST transition between record and probe would shift the
 // rendered hour and silently unverify every record (empirically confirmed:
 // the same pid renders 08:52 under TZ=UTC and 10:52 under Europe/Warsaw).
-const PS_ENV = { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" };
+export const PS_ENV = { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" };
 
 /** `ps` fields for one pid. alive:false when ps ran and the pid is gone;
  *  probeFailed:true when ps itself could not run (fork pressure, sandbox) -

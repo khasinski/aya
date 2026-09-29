@@ -17,6 +17,11 @@ import { createRoot } from "react-dom/client";
 import { createEmulatorAya } from "./bridge";
 import { pickScenario } from "./scenarios";
 import type { EmScenario } from "./scenario";
+import {
+  APP_THEME_STORAGE_KEY,
+  LOCAL_SUMMARIES_STORAGE_KEY,
+  LOCAL_SUMMARY_CACHE_STORAGE_KEY,
+} from "../storage-keys";
 
 const container = document.getElementById("root");
 if (!container) throw new Error("#root not found");
@@ -36,7 +41,7 @@ function seedPreferences(scenario: EmScenario, themeOverride: string | null) {
 
   // App chrome appearance. Emulator defaults to dark.
   const theme = themeOverride || scenario.theme || "dark";
-  set("aya:app-theme", theme);
+  set(APP_THEME_STORAGE_KEY, theme);
 
   // Apple Intelligence: pre-seed the local-summary cache from the scenario so
   // tab/project summaries render exactly as if a provider had labelled them.
@@ -58,10 +63,10 @@ function seedPreferences(scenario: EmScenario, themeOverride: string | null) {
     }
   }
   if (hasSummary) {
-    set("aya:local-summaries", "1");
-    set("aya:local-summary-cache", JSON.stringify({ terminal, project }));
+    set(LOCAL_SUMMARIES_STORAGE_KEY, "1");
+    set(LOCAL_SUMMARY_CACHE_STORAGE_KEY, JSON.stringify({ terminal, project }));
   } else {
-    set("aya:local-summaries", "0");
+    set(LOCAL_SUMMARIES_STORAGE_KEY, "0");
   }
 }
 

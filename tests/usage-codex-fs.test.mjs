@@ -49,7 +49,7 @@ const newer = join(sessions, "rollout-new.jsonl");
 const { DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } =
   await import("../dist-electron/usage-codex.js");
 
-// SOURCES mirrors the fallback main.ts inlines; accounts[0] is this test's
+// SOURCES mirrors codexUsageSources([]); accounts[0] is this test's
 // own adapter, standing in for the removed single-snapshot reader.
 const SOURCES = [{ id: "codex", label: "Codex", home: DEFAULT_CODEX_HOME }];
 const codexUsage = async () => {

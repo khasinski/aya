@@ -21,7 +21,8 @@ import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
 // Project tab width bounds (px): tabs shrink to min, then overflow the strip.
 const TAB_MIN_WIDTH_PX = 120;
 const TAB_MAX_WIDTH_PX = 320;
-// Brand accents for the per-agent usage chips.
+// The sessions menu lists at most this many monitored sessions.
+const SESSION_MENU_LIMIT = 8;
 
 interface ProjectAttention {
   count: number;
@@ -427,7 +428,7 @@ function TopBarImpl({
             {showSessions && (
               <div className="aya-session-menu" role="menu">
                 <div className="aya-session-menu-title">Claude/Codex sessions</div>
-                {monitoredSessions.slice(0, 8).map((session) => {
+                {monitoredSessions.slice(0, SESSION_MENU_LIMIT).map((session) => {
                   const project = projects.find((p) => p.slug === session.projectSlug);
                   const source = session.source === "codex" ? "Codex" : "Claude";
                   return (

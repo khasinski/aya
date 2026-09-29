@@ -16,6 +16,7 @@ const GIT_COMMAND_TIMEOUT_MS = 1500;
 const GIT_DIFF_TIMEOUT_MS = 3000;
 // Ceiling on git diff output buffered into memory (5MB).
 const GIT_DIFF_MAX_BUFFER_BYTES = 5_000_000;
+export const GIT_ERROR_MESSAGE_MAX_CHARS = 300;
 
 // Aya only observes repository state. `git status` can otherwise refresh the
 // index as an optimization, which may briefly create .git/index.lock and race
@@ -174,7 +175,7 @@ function gitErrorMessage(err: unknown): string {
   const lines = raw.split("\n").map((line) => line.trim()).filter(Boolean);
   const marked = lines.find((line) => /^(?:fatal|error):/i.test(line));
   const chosen = marked ?? lines[lines.length - 1] ?? raw;
-  return chosen.replace(/^(?:fatal|error):\s*/i, "").slice(0, 300);
+  return chosen.replace(/^(?:fatal|error):\s*/i, "").slice(0, GIT_ERROR_MESSAGE_MAX_CHARS);
 }
 
 /** Create a worktree at `path`. With `branch`, creates that branch (from
@@ -258,6 +259,20 @@ export async function getGitRoot(directory: string): Promise<string | null> {
     );
     const root = stdout.trim();
     return root.length > 0 ? root : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Short hash of HEAD; null outside a repo or before the first commit. */
+export async function headCommit(directory: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["--no-optional-locks", "rev-parse", "--short", "HEAD"],
+      { cwd: directory, ...OPTS },
+    );
+    return stdout.trim() || null;
   } catch {
     return null;
   }

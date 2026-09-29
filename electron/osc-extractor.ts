@@ -118,12 +118,14 @@ export function parseAyaOscStatus(event: AyaOscEvent): AyaOscStatus | null {
 // to characters that cannot change the shape of that command — no quotes,
 // whitespace, or shell metacharacters. Anything else is dropped rather than
 // escaped: a malformed id is worth losing, a command injection is not.
-const SESSION_ID_RE = /^[A-Za-z0-9_.:/-]{1,200}$/;
+export const SESSION_ID_RE = /^[A-Za-z0-9_.:/-]{1,200}$/;
+
+export const isSafeSessionId = (id: string): boolean => SESSION_ID_RE.test(id);
 
 /** Parse an `aya.session` event's id. Returns null for any other key or an id
  *  that isn't shell-safe. */
 export function parseAyaOscSession(event: AyaOscEvent): string | null {
   if (event.key !== "session") return null;
   const id = event.value.trim();
-  return SESSION_ID_RE.test(id) ? id : null;
+  return isSafeSessionId(id) ? id : null;
 }

@@ -1,13 +1,9 @@
 import { test, expect } from "./fixtures";
-import type { Page } from "@playwright/test";
+import { visiblePane, visiblePanes } from "./helpers/terminal";
 
 // Creating and tearing down split panes in the classic layout - the split
 // actions (sidebar context menu) and empty-cell fill. Only the RENDERING of a
 // pre-seeded split was covered before; the actions that build one were not.
-
-const visiblePanes = (window: Page) => window.locator('[data-testid="terminal-pane"]:visible');
-const visiblePane = (window: Page, name: string) =>
-  window.locator(`[data-testid="terminal-pane"][data-terminal-name="${name}"]:visible`);
 
 // Single-view seed: two terminals, only the active one visible, no split yet.
 test.use({ seedOptions: { split: false } });

@@ -1,25 +1,33 @@
 import { spawn } from "node:child_process";
-import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import type { WebContents } from "electron";
 import { PTY_HOST_SOCKET_PATH } from "./paths";
+import type { PaneSize } from "./pane-render";
 import {
+  asPaneSize,
   asSearchResult,
   type PtyHostMessage,
   type PtyHostRequest,
   type PtyHostResponse,
 } from "./pty-host-protocol";
-import type { HostIdentity } from "./pty-host-staleness";
+import {
+  hostBuildHash,
+  RUN_AS_NODE_VALUE,
+  RUN_AS_NODE_VAR,
+  UNKNOWN_SCRIPT_HASH,
+  type HostIdentity,
+} from "./pty-host-staleness";
 import { coalesceAdjacentData } from "./pty-event-coalescer";
 import type { BufferSearchHit } from "./pty";
 import type { PtyEvent, SpawnRequest } from "./types";
 
 // Deadline waiting for the pty host to create its socket (ms).
-const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
+export const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
 // Interval between socket-existence polls while waiting (ms).
 const PTY_HOST_SOCKET_POLL_INTERVAL_MS = 50;
+const DISPOSED_MESSAGE = "PTY host client is disposed";
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -51,6 +59,7 @@ export class PtyHostClient {
   // broadcast to every sink; each renderer's event bus routes by ptyId, so a
   // window that doesn't host the terminal does a single cheap no-op per event.
   private readonly sinks = new Set<PtyEventSink>();
+  private disposed = false;
 
   constructor(private readonly hostScript: string) {}
 
@@ -100,6 +109,12 @@ export class PtyHostClient {
     await this.request({ id: 0, type: "kill", ptyId });
   }
 
+  /** Quit path: every later request rejects instead of starting a host, which
+   *  would have no app to serve and never exit. Requests already sent still land. */
+  dispose(): void {
+    this.disposed = true;
+  }
+
   async shutdown(): Promise<void> {
     await this.request({ id: 0, type: "shutdown" });
     this.socket?.destroy();
@@ -133,14 +148,11 @@ export class PtyHostClient {
    *  the host script this client launches. Compared against the running host's
    *  reported identity to detect a stale host (#28). */
   expectedHostIdentity(appVersion: string): HostIdentity {
-    let scriptHash = "unknown";
+    let scriptHash = UNKNOWN_SCRIPT_HASH;
     try {
-      scriptHash = crypto
-        .createHash("sha256")
-        .update(fs.readFileSync(this.hostScript))
-        .digest("hex");
+      scriptHash = hostBuildHash(path.dirname(this.hostScript), path.basename(this.hostScript));
     } catch {
-      // leave "unknown"; a mismatch on version still flags staleness
+      // leave UNKNOWN_SCRIPT_HASH; a mismatch on version still flags staleness
     }
     return { version: appVersion, scriptHash };
   }
@@ -167,6 +179,27 @@ export class PtyHostClient {
     return typeof result === "string" ? result : "";
   }
 
+  /** Why a message must not be typed into the pane now, or null. A host from
+   *  an older build does not know the request; that also reads as null. */
+  async holdReason(ptyId: string): Promise<string | null> {
+    try {
+      const result = await this.request({ id: 0, type: "hold", ptyId });
+      return typeof result === "string" ? result : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** A live pane's size, or null when the pane is gone or the host predates
+   *  the request (it answers "unknown request"). */
+  async getSize(ptyId: string): Promise<PaneSize | null> {
+    try {
+      return asPaneSize(await this.request({ id: 0, type: "size", ptyId }));
+    } catch {
+      return null;
+    }
+  }
+
   /** Live cwd of a PTY's child, or null when it can't be determined. A host
    *  left over from a build that predates this request answers "unknown
    *  request" — that rejection is a null here, not an error the caller has to
@@ -188,6 +221,7 @@ export class PtyHostClient {
     // as the write so it cannot perturb request ordering.
     finalize?: (request: PtyHostRequest) => PtyHostRequest,
   ): Promise<unknown> {
+    if (this.disposed) throw new Error(DISPOSED_MESSAGE);
     await this.connect();
     const socket = this.socket;
     if (!socket || socket.destroyed) throw new Error("PTY host is not connected");
@@ -220,6 +254,7 @@ export class PtyHostClient {
       this.reusedHost = true;
       return;
     } catch {
+      if (this.disposed) throw new Error(DISPOSED_MESSAGE);
       this.startHost();
       await this.waitForSocket();
       await this.openSocket();
@@ -256,7 +291,7 @@ export class PtyHostClient {
       stdio: "ignore",
       env: {
         ...process.env,
-        ELECTRON_RUN_AS_NODE: "1",
+        [RUN_AS_NODE_VAR]: RUN_AS_NODE_VALUE,
       },
     });
     child.unref();

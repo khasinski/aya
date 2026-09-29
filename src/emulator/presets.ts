@@ -5,6 +5,7 @@
 // shows. `command` is cosmetic here — the emulator never spawns a process.
 
 import type { AgentKind, Preset } from "../types";
+import { PRESET_ID_SHELL } from "../preset-ids";
 
 interface PresetSeed {
   id: string;
@@ -18,7 +19,7 @@ interface PresetSeed {
 // screenshots. Shell first, then the common agents. Add more from
 // electron/harnesses.ts if a scenario needs them.
 const SEEDS: PresetSeed[] = [
-  { id: "shell", name: "Shell", icon: "$", color: "" },
+  { id: PRESET_ID_SHELL, name: "Shell", icon: "$", color: "" },
   { id: "claude", name: "Claude Code", icon: "✻", color: "#d97757", agent: "claude" },
   { id: "codex", name: "Codex", icon: "◆", color: "#10a37f", agent: "codex" },
   { id: "gemini", name: "Gemini", icon: "G", color: "#4285f4" },
@@ -31,6 +32,6 @@ export const EMULATOR_PRESETS: Preset[] = SEEDS.map((s) => ({
   name: s.name,
   icon: s.icon,
   color: s.color,
-  command: s.id === "shell" ? "$SHELL" : s.id,
+  command: s.id === PRESET_ID_SHELL ? "$SHELL" : s.id,
   agent: s.agent,
 }));

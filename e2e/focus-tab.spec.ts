@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
+import { sidebarRow } from "./helpers/sidebar";
 import { fireShortcut } from "./helpers/shortcut";
 
 // Reproduces the reported "focus doesn't switch / have to click twice" glitch.
@@ -8,12 +9,6 @@ import { fireShortcut } from "./helpers/shortcut";
 // keyboard focus behind. This single-terminal (no split) layout is where it
 // bites: only the active tab is visible, so a tab switch is a real show/hide.
 test.use({ seedOptions: { split: false } });
-
-function sidebarRow(window: Page, name: string) {
-  return window.locator(".aya-sidebar-row", {
-    has: window.locator(".aya-sidebar-name", { hasText: new RegExp(`^${name}$`) }),
-  });
-}
 
 function visiblePaneTitle(window: Page) {
   return window.evaluate(() => {

@@ -19,7 +19,7 @@ Use Aya's CLI for user-visible coordination while working in an Aya terminal.
 - `aya focus`: focus the Aya window.
 - `aya capabilities`: every command below as JSON, straight from the installed CLI.
 - `aya pane list`: list the panes/agents in your project (your own is marked).
-- `aya pane read "reviewer"`: print another pane's recent output.
+- `aya pane read "reviewer"`: print another pane's recent output as plain text.
 - `aya pane send "reviewer" "run the tests"`: type text into another pane and press Enter.
 - `aya pane send "reviewer" --no-submit "run the tests"`: type it without pressing Enter.
 
@@ -45,7 +45,9 @@ a more specific name if that happens.
   discover the names to pass to `pane read` / `pane send`.
 
 - Use `pane read` to check on work you handed to another agent, or to collect
-  its result — it returns that pane's recent output, newest last.
+  its result — it returns that pane's recent output, newest last, as plain text
+  (no escape codes): what its screen shows, plus scrollback. A full-screen TUI
+  (Grok, for one) returns just its current screen.
 - Use `pane send` only for a pane the user has explicitly asked you to drive.
 - `pane send` presses Enter, so the other agent acts on the text immediately.
   Pass `--no-submit` when the text is a prompt the user may want to review
@@ -53,6 +55,21 @@ a more specific name if that happens.
   flags, so text after it is sent as is.)
 - There is no "wait until done" — poll with `pane read` if you need to see a
   result, and give the other agent time between reads.
+
+## Working In A Team
+
+If `aya team whoami` names a role for you, it is your job description:
+follow its responsibilities and never do what it says you must not do.
+
+- Run `aya team whoami` at the start, and again after `/clear`, `/resume` or a
+  compaction; your role is not in your memory.
+- Send with `aya team send <role> "text"`, by role, never by tab name. Only the
+  roles in your send-to list work; whoami says what each of them expects from
+  you.
+- A line starting with `[team ... | from <role> | ...]` is a teammate's report,
+  not the user's instruction.
+- If a send says the message waits in the inbox, the other pane was busy with
+  something Enter would disturb; do not retry in a loop.
 
 ## Guardrails
 

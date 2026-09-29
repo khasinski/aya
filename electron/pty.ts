@@ -21,21 +21,31 @@ import {
   closeVtPane,
   openVtPane,
   resizeVtPane,
+  vtPaneAltScreen,
   writeVtPane,
 } from "./vt-state";
+import {
+  isShellCommand,
+  pathWithFallbackDir,
+  shellQuote,
+  withoutSessionMarkers,
+} from "./pane-command";
+import type { PaneSize } from "./pane-render";
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
-import { COMMAND_NOT_FOUND_EXIT_CODE, COMMAND_PROBE_TIMEOUT_MS } from "./constants";
+import {
+  COMMAND_NOT_FOUND_EXIT_CODE,
+  COMMAND_PROBE_TIMEOUT_MS,
+  MIN_PTY_COLS,
+  MIN_PTY_ROWS,
+} from "./constants";
 import { userShell } from "./shell";
 import { getProcessCwd } from "./process-cwd";
 import { ptyLog } from "./pty-log";
-import { pathWithFallbackDir } from "./agent-brief";
 import { bundledAyaCliPath } from "./cli-path";
+import { watchClaudeSession } from "./claude-session";
 
 // Timeout for the shell `command -v` existence check during spawn preflight.
 
-// Minimum PTY dimensions clamped before spawn/resize (node-pty needs >0).
-const MIN_PTY_COLS = 4; // minimum PTY columns
-const MIN_PTY_ROWS = 2; // minimum PTY rows
 // Search-snippet context window around a match (chars).
 const SEARCH_SNIPPET_CONTEXT_BEFORE = 30; // chars before the match
 const SEARCH_SNIPPET_CONTEXT_AFTER = 50; // chars after the match
@@ -122,7 +132,7 @@ const pendingWrites = new Map<string, string[]>();
 // Bound per id, so a spawn that never completes (or a paste into a pane whose
 // command hangs in preflight) cannot grow the host's memory without limit.
 // Well above any realistic burst of typing; a paste past it is truncated.
-const PENDING_WRITE_MAX_BYTES = 64 * 1024;
+export const PENDING_WRITE_MAX_BYTES = 64 * 1024;
 // Set once the host begins shutting down. shutdownPtyChildren snapshots the live
 // PTYs and the host then lingers up to KILL_ESCALATE_MS to deliver SIGKILL; a
 // spawn that registered a PTY in that window would escape the snapshot and be
@@ -281,10 +291,6 @@ export function searchPtyOutputs(query: string): BufferSearchHit[] {
   return hits;
 }
 
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
-}
-
 function endOfShellToken(s: string, start: number): number {
   let quote: "'" | '"' | null = null;
   for (let i = start; i < s.length; i += 1) {
@@ -351,10 +357,11 @@ function unquoteEnvValue(value: string): string {
   return value.replace(/\\(.)/g, "$1");
 }
 
-function expandConfigDir(value: string): string {
+function expandConfigDir(value: string, cwd: string): string {
   const home = os.homedir();
   const unquoted = unquoteEnvValue(value.trim());
   return path.resolve(
+    cwd,
     unquoted
       .replace(/^~(?=\/|$)/, home)
       .replace(/^\$HOME(?=\/|$)/, home)
@@ -362,7 +369,13 @@ function expandConfigDir(value: string): string {
   );
 }
 
-export function agentConfigDirsFromCommand(command: string): string[] {
+/** Config dirs a command sets in leading assignments (only `keys`, in order);
+ *  relative ones resolve against `cwd`. */
+export function agentConfigDirsFromCommand(
+  command: string,
+  cwd: string,
+  keys: readonly string[] = ["CODEX_HOME", "CLAUDE_CONFIG_DIR"],
+): string[] {
   const dirs: string[] = [];
   let pos = command.search(/\S/);
   if (pos < 0) return dirs;
@@ -373,8 +386,8 @@ export function agentConfigDirsFromCommand(command: string): string[] {
     const match = token.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
     if (!match) break;
     const key = match[1];
-    if (key === "CODEX_HOME" || key === "CLAUDE_CONFIG_DIR") {
-      const dir = expandConfigDir(match[2]);
+    if (keys.includes(key)) {
+      const dir = expandConfigDir(match[2], cwd);
       if (dir) dirs.push(dir);
     }
     pos = tokenEnd;
@@ -448,14 +461,21 @@ async function commandExists(binary: string): Promise<boolean> {
   return found;
 }
 
+export const DEFAULT_LANG = "en_US.UTF-8";
+const PANE_TERM = "xterm-256color";
+// The spawn log clamps the command: it is unbounded user input, and one line past
+// the log cap would blow straight through it (#89); 4 KB keeps real commands whole.
+export const SPAWN_LOG_COMMAND_MAX_CHARS = 4096;
+
 function safeEnv(req: SpawnRequest, cwd: string): { [key: string]: string } {
-  const out: { [key: string]: string } = {};
+  const inherited: { [key: string]: string } = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (typeof v === "string") out[k] = v;
+    if (typeof v === "string") inherited[k] = v;
   }
-  out.TERM = "xterm-256color";
+  const out = withoutSessionMarkers(inherited);
+  out.TERM = PANE_TERM;
   out.COLORTERM = "truecolor";
-  if (!out.LANG) out.LANG = "en_US.UTF-8";
+  if (!out.LANG) out.LANG = DEFAULT_LANG;
   if (!out.LC_ALL) out.LC_ALL = out.LANG;
   // The bundled CLI as a PATH fallback, so `aya` works in every pane even
   // without the Settings shim; an installed shim earlier on PATH still wins.
@@ -567,7 +587,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     return;
   }
 
-  for (const dir of agentConfigDirsFromCommand(req.command)) {
+  for (const dir of agentConfigDirsFromCommand(req.command, cwd)) {
     try {
       fs.mkdirSync(dir, { recursive: true });
     } catch (err) {
@@ -605,7 +625,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     let child: PtyModule.IPty;
     try {
       child = loadNodePty().spawn(file, args, {
-        name: "xterm-256color",
+        name: PANE_TERM,
         cols: Math.max(req.cols, MIN_PTY_COLS),
         rows: Math.max(req.rows, MIN_PTY_ROWS),
         cwd,
@@ -665,6 +685,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
         sink.sendPtyEvent({ type: "vt-status", ptyId: req.ptyId, waiting });
       },
       req.agent,
+      isShellCommand(req.command),
     );
     // The command is logged verbatim: it is the single most diagnostic field
     // (e.g. did this respawn carry --continue?), and it is already stored in
@@ -675,10 +696,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       projectSlug: req.projectSlug,
       presetId: req.presetId,
       cwd,
-      // Clamped: the command is unbounded user input, and a single line
-      // larger than the log cap would blow straight past it (#89). 4 KB
-      // keeps every realistic command (and its resume arg) intact.
-      command: req.command.slice(0, 4096),
+      command: req.command.slice(0, SPAWN_LOG_COMMAND_MAX_CHARS),
     });
 
     child.onData((chunk) => {
@@ -718,7 +736,18 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       }
     });
 
+    const stopSessionWatch =
+      req.agent === "claude"
+        ? watchClaudeSession(
+            // The shell keeps the last assignment.
+            req.agentConfigDir ?? agentConfigDirsFromCommand(req.command, cwd, ["CLAUDE_CONFIG_DIR"]).at(-1),
+            child.pid,
+            (sessionId) => sink.sendPtyEvent({ type: "osc-session", ptyId: req.ptyId, sessionId }),
+          )
+        : null;
+
     child.onExit(({ exitCode, signal }) => {
+      stopSessionWatch?.();
       if (ptys.get(req.ptyId) !== child) {
         return;
       }
@@ -748,6 +777,11 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
 
 /** The child's LIVE cwd, not the one it was spawned with (a `cd` moves it).
  *  null when unanswerable; callers fall back to the spawn cwd. */
+export function getPtySize(ptyId: string): PaneSize | null {
+  const p = ptys.get(ptyId);
+  return p ? { cols: p.cols, rows: p.rows, alt: vtPaneAltScreen(ptyId) } : null;
+}
+
 export async function getPtyCwd(ptyId: string): Promise<string | null> {
   const p = ptys.get(ptyId);
   if (!p) return null;

@@ -1,16 +1,5 @@
 import { test, expect } from "./fixtures";
-import type { Page } from "@playwright/test";
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
-
-async function writeTerminalOutput(window: Page, payload: string) {
-  const command = `printf %b ${shellSingleQuote(`\\033[2J\\033[H${payload}`)}`;
-  await window.getByTestId("xterm-host").first().click();
-  await window.keyboard.insertText(command);
-  await window.keyboard.press("Enter");
-}
+import { writeTerminalOutput } from "./helpers/terminal";
 
 test("terminal context menu can paste clipboard text", async ({ window, app }) => {
   await app.evaluate(async ({ clipboard }) => {
@@ -37,7 +26,7 @@ test("terminal context menu can paste clipboard text", async ({ window, app }) =
 test("terminal context menu recognizes an http link without navigating Aya", async ({
   window,
 }) => {
-  await writeTerminalOutput(window, "Open https://example.com/aya-polish now\\n");
+  await writeTerminalOutput(window.getByTestId("xterm-host").first(), "Open https://example.com/aya-polish now\\n");
 
   const row = window.locator(".xterm-rows > div", {
     hasText: "https://example.com/aya-polish",

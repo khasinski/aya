@@ -23,7 +23,9 @@
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
-import { AYA_HOME } from "./paths";
+import { AYA_DEV_HOME_DIRNAME, AYA_DEV_ON, AYA_DEV_VAR, AYA_HOME, AYA_HOME_DIRNAME } from "./paths";
+import { PS_ENV } from "./pty-host-registry";
+import { PTY_HOST_SCRIPT_NAME, RUN_AS_NODE_VALUE, RUN_AS_NODE_VAR } from "./pty-host-staleness";
 
 /** One row of the system process snapshot. */
 export interface ProcRow {
@@ -48,10 +50,13 @@ export interface EnvProbe {
  *  of the strings in its arguments) implausible. */
 const AYA_CHILD_MARKER = " AYA_TERMINAL_ID=";
 const AYA_HOME_MARKER = " AYA_HOME=";
+const AYA_HOME_VALUE_RE = new RegExp(`${AYA_HOME_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^ ]+)`);
 /** Env marker every PTY host carries: the client spawns it with
  *  ELECTRON_RUN_AS_NODE=1. An editor/grep/test-runner that merely mentions the
  *  host script path in its ARGUMENTS does not run as-node. */
-const HOST_ENV_MARKER = " ELECTRON_RUN_AS_NODE=1";
+const HOST_ENV_MARKER = ` ${RUN_AS_NODE_VAR}=${RUN_AS_NODE_VALUE}`;
+/** Env marker of a dev-build process (paths.ts IS_DEV): scope ~/.aya-dev. */
+const DEV_ENV_MARKER = ` ${AYA_DEV_VAR}=${AYA_DEV_ON}`;
 
 /** Does this command line LOOK like a PTY host's argv? The host is spawned as
  *  exactly [execPath, hostScript], so the script path must be the SECOND
@@ -60,7 +65,7 @@ const HOST_ENV_MARKER = " ELECTRON_RUN_AS_NODE=1";
  *  Exec paths containing spaces fail closed (that host just isn't swept). */
 export function isHostArgv(command: string): boolean {
   const m = command.match(/^\S+\s+(\S+)/);
-  return !!m && m[1].endsWith("dist-electron/pty-host.js");
+  return !!m && m[1].endsWith(`dist-electron/${PTY_HOST_SCRIPT_NAME}`);
 }
 // Per-pid env probes fork `ps` each - bound the orphan scan so a pathological
 // process table can't stall startup. Anything past the cap is logged, not
@@ -76,10 +81,10 @@ export const PS_ENV_PROBE_MAX_BUFFER_BYTES = 4 * 1024 * 1024;
  *  default ~/.aya. Mirrors electron/paths.ts. Used so a sweep only ever kills
  *  hosts belonging to ITS OWN scope. */
 export function scopeFromEnvDump(commandWithEnv: string, homedir: string): string {
-  const m = commandWithEnv.match(/ AYA_HOME=([^ ]+)/);
+  const m = commandWithEnv.match(AYA_HOME_VALUE_RE);
   if (m) return path.resolve(m[1]);
-  if (commandWithEnv.includes(" AYA_DEV=1")) return path.join(homedir, ".aya-dev");
-  return path.join(homedir, ".aya");
+  if (commandWithEnv.includes(DEV_ENV_MARKER)) return path.join(homedir, AYA_DEV_HOME_DIRNAME);
+  return path.join(homedir, AYA_HOME_DIRNAME);
 }
 
 /** Parse `ps -Axo uid=,pid=,ppid=,pgid=,command=` output. Malformed lines are
@@ -272,8 +277,6 @@ export function sweepLegacyAyaProcesses(
 }
 
 // --- Impure OS probes (injected in tests) ----------------------------------
-
-const PS_ENV = { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" };
 
 /** Full system snapshot: uid, pid, ppid, pgid, command per process. */
 export function readSnapshot(): ProcRow[] {

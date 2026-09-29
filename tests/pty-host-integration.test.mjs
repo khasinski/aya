@@ -23,34 +23,9 @@ const { PtyHostClient } = await import(
   "../dist-electron/pty-host-client.js"
 );
 
+const { waitFor, fakeWebContents, ptyEventsFor } = await import("./helpers/pty-host.mjs");
+
 const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
-
-/** Wait until predicate() returns truthy or ms elapses. */
-async function waitFor(predicate, ms = 4000, step = 25) {
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
-    const v = predicate();
-    if (v) return v;
-    await new Promise((r) => setTimeout(r, step));
-  }
-  throw new Error(`waitFor timed out after ${ms}ms`);
-}
-
-function fakeWebContents() {
-  const events = [];
-  return {
-    isDestroyed: () => false,
-    send: (channel, payload) => events.push({ channel, payload }),
-    _events: events,
-  };
-}
-
-function ptyEventsFor(wc, ptyId) {
-  return wc._events
-    .filter((e) => e.channel === "pty:event")
-    .map((e) => e.payload)
-    .filter((p) => p.ptyId === ptyId);
-}
 
 test("PtyHostClient: spawn echo then receive data and exit through the event sink", async (t) => {
   const wc = fakeWebContents();
@@ -224,7 +199,7 @@ test("PtyHostClient: shutdown drops the socket file (clean restart possible)", a
 
   // After shutdown the host closes the socket BEFORE exiting; allow a few
   // ticks for filesystem propagation, then assert it's gone.
-  await waitFor(() => !existsSync(socketPath), 2000);
+  await waitFor(() => !existsSync(socketPath));
   assert.equal(existsSync(socketPath), false);
 });
 

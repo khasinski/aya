@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-const { copyFileSync, existsSync, mkdirSync } = require("node:fs");
+const { existsSync, mkdirSync, readFileSync, writeFileSync } = require("node:fs");
 const { dirname, join } = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { renderLocalSummarySource } = require("./local-summary-source.cjs");
 
 if (process.platform !== "darwin") process.exit(0);
 
@@ -51,7 +52,11 @@ const args = [
 const result = spawnSync("clang++", args, { stdio: "inherit" });
 if (result.status !== 0) process.exit(result.status ?? 1);
 
-copyFileSync(summarySourceTemplate, summarySource);
+const { SUMMARY_TEXT_MAX_CHARS } = require(join(outDir, "local-summary-errors.js"));
+writeFileSync(
+  summarySource,
+  renderLocalSummarySource(readFileSync(summarySourceTemplate, "utf8"), SUMMARY_TEXT_MAX_CHARS),
+);
 
 const swiftResult = spawnSync(
   "swiftc",

@@ -22,8 +22,13 @@ export type SplitNode =
       second: SplitNode;
     };
 
-export const MAX_SPLIT_LEAVES = 25;
-export const MAX_SPLIT_DEPTH = 24;
+/** Maximum split-grid dimensions (rows x cols): the clamp in config.ts and the
+ *  IPC validator enforce the same rule. */
+export const MAX_SPLIT_ROWS = 5;
+export const MAX_SPLIT_COLS = 5;
+export const MAX_SPLIT_LEAVES = MAX_SPLIT_ROWS * MAX_SPLIT_COLS;
+// A fully-degenerate tree of MAX_SPLIT_LEAVES leaves is one level per extra leaf.
+export const MAX_SPLIT_DEPTH = MAX_SPLIT_LEAVES - 1;
 
 export function isSplitNode(value: unknown, depth = 0): value is SplitNode {
   if (depth > MAX_SPLIT_DEPTH) return false;

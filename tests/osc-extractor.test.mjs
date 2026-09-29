@@ -10,6 +10,7 @@ import {
   extractAyaOsc,
   parseAyaOscSession,
   parseAyaOscStatus,
+  SESSION_ID_RE,
 } from "../dist-electron/osc-extractor.js";
 
 const AYA_OSC_INTRODUCER = "\x1b]9001;aya.";
@@ -122,6 +123,14 @@ test("parseAyaOscStatus: missing colon or empty text is ignored", () => {
 // A session id is substituted into a spawn command on restore, so the parser
 // is a security boundary, not just a format check: anything that could change
 // the shape of that command line must be rejected outright.
+
+test("SESSION_ID_RE: 1-200 shell-safe characters", () => {
+  assert.equal(SESSION_ID_RE.test("claude-abc_1.2:3/x"), true);
+  assert.equal(SESSION_ID_RE.test("a".repeat(200)), true);
+  assert.equal(SESSION_ID_RE.test("a".repeat(201)), false);
+  assert.equal(SESSION_ID_RE.test(""), false);
+  for (const bad of ["a b", "a'b", 'a"b', "a;b", "a$b", "a`b"]) assert.equal(SESSION_ID_RE.test(bad), false, bad);
+});
 
 test("parseAyaOscSession returns a well-formed id", () => {
   assert.equal(

@@ -1,4 +1,7 @@
 import { agentBriefHint, effectiveAutoResume, inferAgent } from "../agentPreset";
+import { OLLAMA_OPENAI_BASE_URL, RECOMMENDED_OLLAMA_MODEL } from "../ollama-defaults";
+import { PRESET_ID_SHELL } from "../preset-ids";
+import { uuid } from "../uuid";
 import { CLAUDE_BRAND_COLOR, CODEX_BRAND_COLOR } from "../colors";
 import { useEffect, useState, type ReactNode } from "react";
 import {
@@ -26,6 +29,7 @@ import { localSummaryUnavailableMessage } from "../local-summary-errors";
 import type { MacOptionKeyMode } from "../terminal-option-key";
 import type { TerminalSoundCue } from "../terminal-sound-prefs";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
+import { HOOK_THROTTLE_MINUTES } from "../main-mirrors";
 
 const DEFAULT_CLAUDE_CONFIG_DIR = "~/.claude";
 const DEFAULT_CODEX_CONFIG_DIR = "~/.codex";
@@ -84,14 +88,6 @@ interface Props {
    *  button confirms first. */
   onRestartPtyHost: () => Promise<void> | void;
   initialTab?: SettingsTab;
-}
-
-function uuid(): string {
-  // Secure RNG (CodeQL flags Math.random() ids); getRandomValues is available
-  // even on the file:// production page, unlike crypto.randomUUID.
-  const bytes = new Uint8Array(8);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 interface DraftPreset extends Preset {
@@ -339,6 +335,7 @@ export function SettingsModal({
   const [themesDirty, setThemesDirty] = useState(false);
   const [presetsDirty, setPresetsDirty] = useState(false);
   const [snippetsDirty, setSnippetsDirty] = useState(false);
+  const [snippetsSaveError, setSnippetsSaveError] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
@@ -976,7 +973,14 @@ export function SettingsModal({
         await onSave(cleaned);
       }
       if (snippetsDirty) {
-        await onSaveSnippets(collectSnippets());
+        try {
+          await onSaveSnippets(collectSnippets());
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          setSnippetsSaveError(message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ""));
+          setActiveTab("snippets");
+          return;
+        }
       }
       if (themesDirty) {
         await onSaveThemes(themes, activeThemeId);
@@ -1035,7 +1039,7 @@ export function SettingsModal({
               <div className="aya-modal-hint" style={{ lineHeight: 1.6 }}>
                 This writes a small script and a <code>Stop</code> hook into{" "}
                 <code>~/.claude/settings.json</code>. After each Claude Code
-                response (throttled to every 5&nbsp;min) the hook queries
+                response (throttled to every {HOOK_THROTTLE_MINUTES}&nbsp;min) the hook queries
                 Anthropic&apos;s <strong>undocumented</strong> usage endpoint with
                 your own token and saves the result locally for the chip.
                 <br />
@@ -1768,7 +1772,7 @@ export function SettingsModal({
                     Play for these presets
                   </span>
                   {presets
-                    .filter((preset) => preset.id !== "shell")
+                    .filter((preset) => preset.id !== PRESET_ID_SHELL)
                     .map((preset) => (
                       <label className="aya-sound-preset" key={preset.id}>
                         <input
@@ -1905,7 +1909,7 @@ export function SettingsModal({
                           onChange={(e) =>
                             patchAyaIntelligence({ ollamaModel: e.target.value })
                           }
-                          placeholder="gemma4:e4b"
+                          placeholder={RECOMMENDED_OLLAMA_MODEL}
                           spellCheck={false}
                         />
                       </div>
@@ -1953,7 +1957,7 @@ export function SettingsModal({
                           onChange={(e) =>
                             patchAyaIntelligence({ openAiBaseUrl: e.target.value })
                           }
-                          placeholder="http://localhost:11434/v1"
+                          placeholder={OLLAMA_OPENAI_BASE_URL}
                           spellCheck={false}
                         />
                       </div>
@@ -2239,6 +2243,7 @@ export function SettingsModal({
               const row = activePreset;
               const warn = looksNonInteractive(row.command);
               const isAgent = row.agent === "claude" || row.agent === "codex";
+              const briefHint = agentBriefHint(row.agent);
               return (
               <div className="aya-preset-card" key={row.__key}>
                 <div className="aya-preset-section">
@@ -2410,11 +2415,11 @@ export function SettingsModal({
                         }
                       />
                     </label>
-                    {agentBriefHint(row.agent) && (
+                    {briefHint && (
                       <label className="aya-preset-toggle">
                         <span>
                           <strong>Tell the agent about aya</strong>
-                          <small>{agentBriefHint(row.agent)}</small>
+                          <small>{briefHint}</small>
                         </span>
                         <input
                           type="checkbox"
@@ -2558,6 +2563,11 @@ export function SettingsModal({
               Add snippet
             </button>
           </div>
+          {snippetsSaveError && (
+            <div className="aya-settings-errors" data-testid="snippets-save-error">
+              {snippetsSaveError}
+            </div>
+          )}
                 </div>
               </section>
             )}

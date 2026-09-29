@@ -67,3 +67,21 @@ test("listSnippets does NOT overwrite an existing snippets file with defaults", 
     delete process.env.AYA_HOME;
   }
 });
+
+test("saveSnippets refuses more than the cap and leaves the file as it was", async () => {
+  const home = mkdtempSync(join(tmpdir(), "aya-snip-cap-"));
+  process.env.AYA_HOME = home;
+  try {
+    const { saveSnippets, listSnippets, SNIPPETS_MAX } = await import(
+      "../dist-electron/snippets.js"
+    );
+    const make = (n) =>
+      Array.from({ length: n }, (_, i) => ({ id: `s${i}`, name: `s${i}`, text: `echo ${i}`, autoRun: false }));
+    await saveSnippets(make(SNIPPETS_MAX));
+    await assert.rejects(saveSnippets(make(SNIPPETS_MAX + 1)), /Too many snippets/);
+    assert.deepEqual(await listSnippets(), make(SNIPPETS_MAX));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    delete process.env.AYA_HOME;
+  }
+});

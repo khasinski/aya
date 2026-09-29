@@ -9,17 +9,32 @@ import type {
   RemoteHostInfo,
   RemoteProjectCreateResult,
 } from "./types";
-import type { RemoteMessage } from "./remote-protocol";
+import { AYA_HOME_DIRNAME, REMOTE_SOCKET_NAME } from "./paths";
+import { REMOTE_PROTOCOL_VERSION, type RemoteMessage } from "./remote-protocol";
+import { shellQuote } from "./pane-command";
 
-const REQUEST_TIMEOUT_MS = 15_000;
+export interface RemoteTimeouts {
+  bridgeMs: number;
+  sshKillMs: number;
+}
+// The bridge's timer starts only once ssh has connected and node is up, so the kill
+// waits 10s longer; an ssh setup slower than that is reported as ssh, which it is.
+export const REMOTE_TIMEOUTS: RemoteTimeouts = { bridgeMs: 15_000, sshKillMs: 25_000 };
 // Cap on the base64 bridge child's stdout - bounds the remote snapshot size.
 const REMOTE_BRIDGE_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
-const REMOTE_NODE_BRIDGE = `
+// The bridge's grace after client.end() for stdout to flush before it exits.
+const EXIT_FLUSH_DELAY_MS = 250;
+
+function seconds(ms: number): string {
+  return `${ms / 1000}s`;
+}
+
+export const remoteNodeBridge = (timeoutMs: number): string => `
 const net = require("node:net");
 const id = process.argv[1];
 const payload = Buffer.from(process.argv[2], "base64").toString("utf8");
 const socketPath = process.env.AYA_REMOTE_SOCKET ||
-  (process.env.AYA_HOME ? process.env.AYA_HOME + "/aya-remote.sock" : process.env.HOME + "/.aya/aya-remote.sock");
+  (process.env.AYA_HOME ? process.env.AYA_HOME + "/${REMOTE_SOCKET_NAME}" : process.env.HOME + "/${AYA_HOME_DIRNAME}/${REMOTE_SOCKET_NAME}");
 const client = net.createConnection(socketPath);
 let buffer = "";
 let settled = false;
@@ -36,7 +51,7 @@ function finish(code) {
   if (settled) return;
   settled = true;
   client.end();
-  setTimeout(() => process.exit(code), 250);
+  setTimeout(() => process.exit(code), ${EXIT_FLUSH_DELAY_MS});
 }
 client.setEncoding("utf8");
 client.on("data", (chunk) => {
@@ -62,7 +77,7 @@ client.on("data", (chunk) => {
 client.on("error", (err) => {
   write({
     type: "error",
-    protocol: 1,
+    protocol: ${REMOTE_PROTOCOL_VERSION},
     id,
     code: "app_unavailable",
     message: "Aya is not accepting remote connections at " + socketPath,
@@ -73,18 +88,14 @@ client.on("error", (err) => {
 setTimeout(() => {
   write({
     type: "error",
-    protocol: 1,
+    protocol: ${REMOTE_PROTOCOL_VERSION},
     id,
     code: "timeout",
-    message: "Remote Aya timed out.",
+    message: "Remote Aya did not respond within ${seconds(timeoutMs)}.",
   });
   finish(1);
-}, ${REQUEST_TIMEOUT_MS});
+}, ${timeoutMs});
 `.trim();
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -182,6 +193,7 @@ function requirePresets(value: unknown): Preset[] {
 function runRemoteRequest(
   sshTarget: string,
   request: Record<string, unknown>,
+  timeouts: RemoteTimeouts = REMOTE_TIMEOUTS,
 ): Promise<{
   host: RemoteHostInfo;
   presets: Preset[];
@@ -195,7 +207,7 @@ function runRemoteRequest(
     JSON.stringify({ ...request, id }),
     "utf8",
   ).toString("base64");
-  const remoteCommand = `node -e ${shellQuote(REMOTE_NODE_BRIDGE)} ${shellQuote(
+  const remoteCommand = `node -e ${shellQuote(remoteNodeBridge(timeouts.bridgeMs))} ${shellQuote(
     id,
   )} ${shellQuote(payload)}`;
 
@@ -213,7 +225,7 @@ function runRemoteRequest(
       [target, remoteCommand],
       {
         encoding: "utf8",
-        timeout: REQUEST_TIMEOUT_MS,
+        timeout: timeouts.sshKillMs,
         maxBuffer: REMOTE_BRIDGE_MAX_BUFFER_BYTES,
       },
       (err, stdout, stderr) => {
@@ -294,6 +306,12 @@ function runRemoteRequest(
           );
           return;
         }
+        if (err?.killed) {
+          reject(
+            new Error(`ssh ${target} did not finish within ${seconds(timeouts.sshKillMs)}.`),
+          );
+          return;
+        }
         if (err) {
           reject(
             new Error(
@@ -358,7 +376,7 @@ function healthFailureStage(
     return "node";
   }
   if (
-    /not accepting remote connections|Aya is not installed|app_unavailable|aya-remote/i.test(
+    /not accepting remote connections|Aya is not installed|app_unavailable|aya-remote|Remote Aya did not respond/i.test(
       message,
     )
   ) {
@@ -372,6 +390,7 @@ function healthFailureStage(
 
 export async function checkRemoteHealth(
   sshTarget: string,
+  timeouts: RemoteTimeouts = REMOTE_TIMEOUTS,
 ): Promise<RemoteHealthResult> {
   const target = sshTarget.trim();
   const checkedAt = new Date().toISOString();
@@ -386,9 +405,11 @@ export async function checkRemoteHealth(
     };
   }
   try {
-    const { host, presets, recentProjects } = await runRemoteRequest(target, {
-      type: "fs:list",
-    });
+    const { host, presets, recentProjects } = await runRemoteRequest(
+      target,
+      { type: "fs:list" },
+      timeouts,
+    );
     return {
       ok: true,
       sshTarget: target,

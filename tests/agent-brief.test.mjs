@@ -10,10 +10,11 @@ import {
   antigravityBriefFile,
   briefChannel,
   briefText,
+  teamNote,
   codexAgentsFile,
+  codexHomeFor,
   commandWithBriefArg,
   commandWithBriefEnv,
-  pathWithFallbackDir,
   ownedBriefContent,
   planCodexBriefs,
   withBriefSection,
@@ -40,6 +41,7 @@ test("grok: the brief goes in as --rules, one argument", () => {
     "grok --continue --rules 'b'",
   );
   assert.equal(commandWithBriefArg("grok --rules 'mine'", briefChannel("grok"), "b"), null);
+  assert.equal(commandWithBriefArg("grok", briefChannel("grok"), "it's"), "grok --rules 'it'\\''s'");
 });
 
 const ENV = briefChannel("opencode");
@@ -152,7 +154,7 @@ test("agentBrief survives the preset roundtrip; a non-boolean is rejected", () =
   assert.equal(isPreset({ ...base, agentBrief: "yes" }), false);
 });
 
-const expand = (p) => p.replace(/^~/, "/Users/dev");
+const expand = (p) => p.replace(/^(~|\$HOME)(?=\/|$)/, "/Users/dev");
 
 test("codex file: configDir, else inline CODEX_HOME, else the default home", () => {
   assert.equal(
@@ -169,6 +171,50 @@ test("codex file: configDir, else inline CODEX_HOME, else the default home", () 
   );
 });
 
+test("codex home: the stock ~/.codex configDir defers to the command, then CODEX_HOME", () => {
+  const envHome = "/env/codex-home";
+  assert.equal(codexHomeFor({ configDir: "~/.codex", command: "codex" }, envHome, expand), envHome);
+  assert.equal(codexHomeFor({ configDir: "$HOME/.codex", command: "codex" }, envHome, expand), envHome);
+  assert.equal(codexHomeFor({ configDir: "  ", command: "codex" }, envHome, expand), envHome);
+  assert.equal(codexHomeFor({}, envHome, expand), envHome);
+  assert.equal(
+    codexHomeFor({ configDir: "~/.codex", command: 'CODEX_HOME="$HOME/.codex" codex' }, envHome, expand),
+    "/Users/dev/.codex",
+  );
+  assert.equal(
+    codexHomeFor({ configDir: "~/.codex-work", command: 'CODEX_HOME="$HOME/.codex-b" codex' }, envHome, expand),
+    "/Users/dev/.codex-work",
+  );
+  assert.equal(codexHomeFor({ configDir: "~/.codex-work" }, envHome, expand), "/Users/dev/.codex-work");
+  assert.equal(
+    codexAgentsFile({ configDir: "~/.codex", command: "codex" }, envHome, expand),
+    `${envHome}/AGENTS.md`,
+  );
+});
+
+test("codex home: a relative dir resolves against the tab cwd, never Aya's", () => {
+  const envHome = "/env/codex-home";
+  const inline = { command: "CODEX_HOME=.codex codex" };
+  assert.equal(codexHomeFor(inline, envHome, expand, "/project"), "/project/.codex");
+  assert.equal(codexHomeFor(inline, envHome, expand), undefined);
+  assert.equal(codexHomeFor({ configDir: "../h", command: "codex" }, envHome, expand, "/project/a"), "/project/h");
+  assert.equal(codexHomeFor({ configDir: ".codex", command: "codex" }, envHome, expand), undefined);
+  assert.equal(codexHomeFor({ configDir: "/abs/h", command: "codex" }, envHome, expand), "/abs/h");
+  assert.equal(codexHomeFor({ configDir: "~/.codex-w", command: "codex" }, envHome, expand, "/project"), "/Users/dev/.codex-w");
+  assert.equal(codexHomeFor({ configDir: "/Users/dev/.codex", command: "codex" }, envHome, expand), envHome);
+  assert.equal(codexHomeFor({ command: "codex" }, envHome, expand, "/project"), envHome);
+  assert.equal(codexAgentsFile(inline, envHome, expand, "/project"), "/project/.codex/AGENTS.md");
+  assert.equal(codexAgentsFile(inline, envHome, expand), undefined);
+});
+
+test("codex home: a relative .codex is not the stock home even when Aya runs from ~", () => {
+  const expandFromHome = (p) => (/^[~/$]/.test(p) ? expand(p) : `/Users/dev/${p}`);
+  assert.equal(
+    codexHomeFor({ configDir: ".codex", command: "codex" }, "/env/codex-home", expandFromHome, "/project"),
+    "/project/.codex",
+  );
+});
+
 test("a shared codex home keeps the section while any preset opts in", () => {
   assert.deepEqual(
     planCodexBriefs([
@@ -178,14 +224,6 @@ test("a shared codex home keeps the section while any preset opts in", () => {
     ]),
     { ensure: ["/h/a/AGENTS.md"], remove: ["/h/b/AGENTS.md"] },
   );
-});
-
-test("the bundled CLI is appended to PATH, never ahead of an installed shim", () => {
-  assert.equal(pathWithFallbackDir("/a:/b", "/app/bin"), "/a:/b:/app/bin");
-  assert.equal(pathWithFallbackDir("/app/bin:/a", "/app/bin"), "/app/bin:/a");
-  assert.equal(pathWithFallbackDir(undefined, "/app/bin"), "/app/bin");
-  // Empty entries mean the cwd; the user's PATH is kept as it was.
-  assert.equal(pathWithFallbackDir("/a::/b:", "/app/bin"), "/a::/b::/app/bin");
 });
 
 // agy 1.2.11 only loaded config/rules/ files whose frontmatter opens the file.
@@ -246,4 +284,74 @@ test("files Aya wrote to that no codex preset wants any more are orphans", async
     ["/h/gone/AGENTS.md"],
   );
   assert.deepEqual(orphanedBriefFiles([], plan), []);
+});
+
+test("the brief tells every agent how to find its team role", () => {
+  assert.match(briefText(false), /aya team whoami/);
+});
+
+test("a team pane's note names its role and treats peer messages as reports", () => {
+  const note = teamNote("ux-review", "tester");
+  assert.match(note, /^You are the tester in the Aya team ux-review\./);
+  assert.match(note, /aya team whoami/);
+  assert.match(note, /\/clear/);
+  assert.match(note, /\[team[\s\S]*not the user's instructions/);
+});
+
+test("the Settings toggle's hint text per harness", () => {
+  assert.equal(agentBriefHint("claude"), "Adds a short note via --append-system-prompt when the pane starts.");
+  assert.equal(agentBriefHint("codex"), "Adds a marked section to this account's AGENTS.md (removed when off).");
+  assert.equal(agentBriefHint("grok"), "Adds a short note via --rules when the pane starts.");
+  assert.equal(
+    agentBriefHint("opencode"),
+    "Adds a short note to opencode's instructions for Aya panes only (OPENCODE_CONFIG_CONTENT).",
+  );
+  assert.equal(
+    agentBriefHint("antigravity"),
+    "Adds one always-on Antigravity rule, shared by all agy presets (deleted when none opts in).",
+  );
+  assert.equal(agentBriefHint(undefined), null);
+  assert.equal(agentBriefHint("toString"), null);
+});
+
+test("settings sync leaves a relative home's launch-written brief alone while it opts in", async () => {
+  const { codexBriefSync } = await import("../dist-electron/agent-brief.js");
+  const envHome = "/env/codex-home";
+  const recorded = ["/project/.codex/AGENTS.md", "/other/sub/.codex/AGENTS.md", "/h/gone/AGENTS.md"];
+  const rel = (agentBrief) => ({ command: "CODEX_HOME=.codex codex", agentBrief });
+  assert.deepEqual(codexBriefSync([rel(true)], recorded, envHome, expand), {
+    ensure: [],
+    remove: ["/h/gone/AGENTS.md"],
+  });
+  assert.deepEqual(codexBriefSync([rel(false)], recorded, envHome, expand), {
+    ensure: [],
+    remove: [...recorded].sort(),
+  });
+  assert.deepEqual(
+    codexBriefSync([{ configDir: "./sub/.codex", command: "codex", agentBrief: true }], recorded, envHome, expand),
+    { ensure: [], remove: ["/h/gone/AGENTS.md", "/project/.codex/AGENTS.md"] },
+  );
+  assert.deepEqual(
+    codexBriefSync([{ configDir: "../h/gone", command: "codex", agentBrief: true }], recorded, envHome, expand).remove,
+    ["/other/sub/.codex/AGENTS.md", "/project/.codex/AGENTS.md"],
+  );
+  assert.deepEqual(
+    codexBriefSync([{ configDir: ".", command: "codex", agentBrief: true }], recorded, envHome, expand).remove,
+    [],
+  );
+  assert.deepEqual(
+    codexBriefSync([{ configDir: "~/.a", command: "codex", agentBrief: true }, { command: "codex" }], [], envHome, expand),
+    { ensure: ["/Users/dev/.a/AGENTS.md"], remove: [`${envHome}/AGENTS.md`] },
+  );
+});
+
+test("settings sync keeps a shared file an absolute preset turned off while a relative one opts in", async () => {
+  const { codexBriefSync } = await import("../dist-electron/agent-brief.js");
+  const file = "/Users/dev/work/.codex/AGENTS.md";
+  const presets = [
+    { configDir: "/Users/dev/work/.codex", command: "codex", agentBrief: false },
+    { configDir: ".codex", command: "codex", agentBrief: true },
+  ];
+  assert.deepEqual(codexBriefSync(presets, [file], "/env/codex-home", expand), { ensure: [], remove: [] });
+  assert.deepEqual(codexBriefSync([presets[0]], [file], "/env/codex-home", expand), { ensure: [], remove: [file] });
 });

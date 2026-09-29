@@ -12,6 +12,9 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { makeRepo } from "./helpers/git.mjs";
+
+const REPO_PREFIX = "aya-git-";
 
 const {
   parseGitPorcelain,
@@ -19,17 +22,6 @@ const {
   getGitChangedFiles,
   getGitDiff,
 } = await import("../dist-electron/git.js");
-
-function makeRepo() {
-  const root = mkdtempSync(join(tmpdir(), "aya-git-"));
-  // -q silences hint output; -b pins the branch so the tests don't depend on
-  // the host git's init.defaultBranch.
-  execSync("git init -q -b main", { cwd: root });
-  execSync("git config user.email test@aya.invalid", { cwd: root });
-  execSync('git config user.name "Aya Test"', { cwd: root });
-  execSync("git config commit.gpgsign false", { cwd: root });
-  return root;
-}
 
 function commit(root, file, content, message = "init") {
   writeFileSync(join(root, file), content);
@@ -73,7 +65,7 @@ test("parseGitPorcelain ignores blank lines between entries", () => {
 // --- getGitInfo ----------------------------------------------------------------
 
 test("getGitInfo: a clean main-branch repo reports branch=main and dirty=0", async () => {
-  const root = makeRepo();
+  const root = makeRepo(REPO_PREFIX);
   try {
     commit(root, "a.txt", "hi\n");
     const info = await getGitInfo(root);
@@ -85,7 +77,7 @@ test("getGitInfo: a clean main-branch repo reports branch=main and dirty=0", asy
 });
 
 test("getGitInfo: untracked file bumps dirty count", async () => {
-  const root = makeRepo();
+  const root = makeRepo(REPO_PREFIX);
   try {
     commit(root, "a.txt", "hi\n");
     writeFileSync(join(root, "new.txt"), "fresh\n");
@@ -97,7 +89,7 @@ test("getGitInfo: untracked file bumps dirty count", async () => {
 });
 
 test("getGitInfo: a modified tracked file counts as dirty", async () => {
-  const root = makeRepo();
+  const root = makeRepo(REPO_PREFIX);
   try {
     commit(root, "a.txt", "old\n");
     writeFileSync(join(root, "a.txt"), "new\n");
@@ -129,7 +121,7 @@ test("getGitInfo: a missing directory returns nulls without throwing", async () 
 // --- getGitChangedFiles --------------------------------------------------------
 
 test("getGitChangedFiles: clean repo returns []", async () => {
-  const root = makeRepo();
+  const root = makeRepo(REPO_PREFIX);
   try {
     commit(root, "a.txt", "hi\n");
     const files = await getGitChangedFiles(root);
@@ -140,7 +132,7 @@ test("getGitChangedFiles: clean repo returns []", async () => {
 });
 
 test("getGitChangedFiles: surfaces modified + untracked files with porcelain statuses", async () => {
-  const root = makeRepo();
+  const root = makeRepo(REPO_PREFIX);
   try {
     commit(root, "a.txt", "old\n");
     writeFileSync(join(root, "a.txt"), "new\n");
@@ -167,7 +159,7 @@ test("getGitChangedFiles: non-repo returns [] (no throw)", async () => {
 // --- getGitDiff ----------------------------------------------------------------
 
 test("getGitDiff: clean repo returns the empty string", async () => {
-  const root = makeRepo();
+  const root = makeRepo(REPO_PREFIX);
   try {
     commit(root, "a.txt", "hi\n");
     assert.equal(await getGitDiff(root), "");
@@ -177,7 +169,7 @@ test("getGitDiff: clean repo returns the empty string", async () => {
 });
 
 test("getGitDiff: a modified tracked file produces a real diff hunk", async () => {
-  const root = makeRepo();
+  const root = makeRepo(REPO_PREFIX);
   try {
     commit(root, "a.txt", "one\ntwo\n");
     writeFileSync(join(root, "a.txt"), "one\nTWO\n");
@@ -191,7 +183,7 @@ test("getGitDiff: a modified tracked file produces a real diff hunk", async () =
 });
 
 test("getGitDiff: an untracked text file is included as a synthetic new-file diff", async () => {
-  const root = makeRepo();
+  const root = makeRepo(REPO_PREFIX);
   try {
     commit(root, "a.txt", "hi\n");
     writeFileSync(join(root, "new.md"), "line1\nline2\n");
@@ -207,7 +199,7 @@ test("getGitDiff: an untracked text file is included as a synthetic new-file dif
 });
 
 test("getGitDiff: an untracked binary file (NUL bytes) is NOT included", async () => {
-  const root = makeRepo();
+  const root = makeRepo(REPO_PREFIX);
   try {
     commit(root, "a.txt", "hi\n");
     // A NUL byte triggers the "binary" guard in syntheticNewFileDiff().

@@ -9,10 +9,19 @@ export const PER_TEST_TIMEOUT_MS = 45_000;
 /** A single `expect` poll inside a test. */
 export const EXPECT_TIMEOUT_MS = 10_000;
 
-/** Suite ceiling. Local doubles CI's: a loaded laptop is slower, and an overrun
- *  kills tests mid-flight as content failures (5m did, afcb072). PWDEBUG covers
- *  `PWDEBUG=1 playwright test`; `--debug` and UI mode zero the deadline anyway. */
+/** A test that boots the app and waits on a real program in a pane. */
+export const AGENT_TEST_TIMEOUT_MS = 120_000;
+
+/** That program, typically under a login shell, starting in its pane. */
+export const AGENT_START_TIMEOUT_MS = 60_000;
+
+/** Held team messages are retried this often; the value lives in
+ *  electron/team-ipc.ts, and tests/e2e-timeouts-parity.test.mjs pins this copy to it. */
+export const TEAM_REDELIVERY_MS = 15_000;
+
+/** Suite ceiling, local doubles CI's: 10m cut CI at 194 of 204 tests, 5m before it (afcb072).
+ *  An overrun fails tests mid-flight; PWDEBUG, --debug and UI mode run with no deadline. */
 export function globalTimeout(env: NodeJS.ProcessEnv): number | undefined {
   if (env.PWDEBUG) return undefined;
-  return env.CI ? 10 * MINUTE : 20 * MINUTE;
+  return env.CI ? 15 * MINUTE : 30 * MINUTE;
 }

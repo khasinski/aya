@@ -1,16 +1,8 @@
 import { test, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
+import { writeTerminalOutput } from "./helpers/terminal";
 
-function shellSingleQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
-
-async function writeTerminalOutput(window: Page, payload: string) {
-  const command = `printf %b ${shellSingleQuote(`\\033[2J\\033[H${payload}`)}`;
-  await window.locator(".aya-pane:visible .aya-xterm-host").first().click();
-  await window.keyboard.insertText(command);
-  await window.keyboard.press("Enter");
-}
+const visibleHost = (window: Page) => window.locator(".aya-pane:visible .aya-xterm-host").first();
 
 async function renderedRows(window: Page) {
   return window.evaluate(() =>
@@ -48,7 +40,7 @@ test("SGR truecolor, background color, and resets render without bleeding", asyn
   window,
 }) => {
   await writeTerminalOutput(
-    window,
+    visibleHost(window),
     "\\033[38;2;12;34;56mAYA_RGB_FG\\033[48;2;1;2;3mAYA_RGB_BG\\033[0m AYA_PLAIN\\n",
   );
 
@@ -72,7 +64,7 @@ test("OSC title accepts BEL and ST terminators without leaking payload text", as
   window,
 }) => {
   await writeTerminalOutput(
-    window,
+    visibleHost(window),
     "\\033]0;AYA_TITLE_BEL\\007\\033]2;AYA_TITLE_ST\\033\\\\AYA_AFTER_OSC\\n",
   );
 
@@ -88,7 +80,7 @@ test("OSC title accepts BEL and ST terminators without leaking payload text", as
 });
 
 test("alternate screen enter/exit restores the normal screen", async ({ window }) => {
-  await writeTerminalOutput(window, "\\033[?1049hAYA_ALT_SCREEN\\n\\033[?1049lAYA_AFTER_ALT\\n");
+  await writeTerminalOutput(visibleHost(window), "\\033[?1049hAYA_ALT_SCREEN\\n\\033[?1049lAYA_AFTER_ALT\\n");
 
   await expect.poll(() => renderedRows(window)).toContainEqual(
     expect.stringContaining("AYA_AFTER_ALT"),
@@ -102,7 +94,7 @@ test("cursor addressing and erase-in-display handle TUI-style redraws", async ({
   window,
 }) => {
   await writeTerminalOutput(
-    window,
+    visibleHost(window),
     "\\033[2J\\033[HAYA_TOP\\nAYA_OLD_STATUS\\033[2;1H\\033[2KAYA_NEW_STATUS\\n",
   );
 

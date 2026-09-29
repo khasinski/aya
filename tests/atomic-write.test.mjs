@@ -14,7 +14,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { writeFileAtomic } from "../dist-electron/atomic-write.js";
+import { TMP_SUFFIX, atomicTempPath, writeFileAtomic } from "../dist-electron/atomic-write.js";
 import { isEcho } from "../dist-electron/config-echo.js";
 
 // Per-writer payload length (chars) in the concurrent-write race test.
@@ -142,4 +142,13 @@ test("writes an empty string without leaving the file missing", async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("temp files are named <file>.<pid>.<8 hex>.tmp", () => {
+  // The registry sweep and the config watcher rely on this exact shape.
+  assert.equal(TMP_SUFFIX, ".tmp");
+  const target = path.join("/x", "config.json");
+  const re = new RegExp(`^/x/config\\.json\\.${process.pid}\\.[0-9a-f]{8}\\.tmp$`);
+  assert.match(atomicTempPath(target), re);
+  assert.notEqual(atomicTempPath(target), atomicTempPath(target));
 });
