@@ -132,6 +132,17 @@ test("agent config dirs are extracted from leading env assignments", () => {
   );
 });
 
+test("shellArgv: leading whitespace and an assignment-only command keep their env words", () => {
+  const saved = process.env.SHELL;
+  process.env.SHELL = "/bin/zsh";
+  try {
+    assert.match(shellArgv("  FOO=1 claude", "/tmp").at(-1), /&& {3}FOO=1 exec claude$/);
+    assert.match(shellArgv("FOO=1", "/tmp").at(-1), /&& FOO=1$/);
+  } finally {
+    process.env.SHELL = saved;
+  }
+});
+
 test("in Aya Dev an agent pane finds the branch's aya first, even after the shell's rc files", () => {
   const dir = mkdtempSync(join(os.tmpdir(), "aya dev bin-"));
   writeFileSync(join(dir, "aya"), "#!/bin/sh\necho branch-aya\n");

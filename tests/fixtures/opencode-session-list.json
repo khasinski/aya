@@ -1,0 +1,18 @@
+[
+  {
+    "id": "ses_0000000000BBBBBBBBBBBBBBBB",
+    "title": "Session-in-B",
+    "updated": 1790672445497,
+    "created": 1790672445497,
+    "projectId": "0000000000000000000000000000000000000000",
+    "directory": "/work/repo-wt-b"
+  },
+  {
+    "id": "ses_0000000000AAAAAAAAAAAAAAAA",
+    "title": "Session-in-A",
+    "updated": 1790672385497,
+    "created": 1790672385497,
+    "projectId": "0000000000000000000000000000000000000000",
+    "directory": "/work/repo-wt-a"
+  }
+]

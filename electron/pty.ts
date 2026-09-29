@@ -42,6 +42,8 @@ import { userShell } from "./shell";
 import { getProcessCwd } from "./process-cwd";
 import { ptyLog } from "./pty-log";
 import { bundledAyaCliPath } from "./cli-path";
+import { envWithAssignments, leadingEnvAssignments } from "./shell-words";
+import { listOpencodeSessions, ownSessionCommand } from "./opencode-session";
 import { watchClaudeSession, withLiveClaudeResume } from "./claude-session";
 
 // Timeout for the shell `command -v` existence check during spawn preflight.
@@ -110,8 +112,10 @@ export const KILL_ESCALATE_MS = 750;
 // between the `ptys.has` check and registering the PTY. Two concurrent spawns
 // for the same id (e.g. a fast unmount+remount) could both pass that check and
 // both spawn, orphaning the first. We mark an id as spawning across the await
-// so a racing call bails instead of starting a second process.
-const spawning = new Set<string>();
+// so a racing call bails instead of starting a second process. A kill that
+// lands meanwhile cancels THAT spawn: the flag lives on its own entry, so no
+// other spawn call can consume it and no timer can expire it.
+const spawning = new Map<string, { cancelled: boolean }>();
 // Waiters for input parked on an in-flight spawn. Buffering is not delivery: a
 // failed spawn discards the queue, so each waiter gets the real outcome.
 const spawnWaiters = new Map<string, ((delivered: boolean) => void)[]>();
@@ -291,52 +295,12 @@ export function searchPtyOutputs(query: string): BufferSearchHit[] {
   return hits;
 }
 
-function endOfShellToken(s: string, start: number): number {
-  let quote: "'" | '"' | null = null;
-  for (let i = start; i < s.length; i += 1) {
-    const ch = s[i];
-    if (quote) {
-      if (ch === "\\" && quote === '"' && i + 1 < s.length) {
-        i += 1;
-        continue;
-      }
-      if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === "'" || ch === '"') {
-      quote = ch;
-      continue;
-    }
-    if (ch === "\\" && i + 1 < s.length) {
-      i += 1;
-      continue;
-    }
-    if (/\s/.test(ch)) return i;
-  }
-  return s.length;
-}
-
 function commandWithExec(command: string): string {
-  const start = command.search(/\S/);
-  if (start < 0) return "exec";
-  let pos = start;
-  let assignmentEnd = start;
-  let sawAssignment = false;
-
-  while (pos < command.length) {
-    const tokenEnd = endOfShellToken(command, pos);
-    const token = command.slice(pos, tokenEnd);
-    if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) break;
-    sawAssignment = true;
-    assignmentEnd = tokenEnd;
-    pos = tokenEnd;
-    while (pos < command.length && /\s/.test(command[pos])) pos += 1;
-  }
-
-  if (!sawAssignment) return `exec ${command}`;
-  if (pos >= command.length) return command;
-  const executable = command.slice(pos);
-  return `${command.slice(0, assignmentEnd)} exec ${commandForExec(executable)}`;
+  if (!command.trim()) return "exec";
+  const { assignments, end, rest } = leadingEnvAssignments(command);
+  if (!assignments.length) return `exec ${command}`;
+  if (rest >= command.length) return command;
+  return `${command.slice(0, end)} exec ${commandForExec(command.slice(rest))}`;
 }
 
 function commandForExec(command: string): string {
@@ -377,23 +341,12 @@ export function agentConfigDirsFromCommand(
   keys: readonly string[] = ["CODEX_HOME", "CLAUDE_CONFIG_DIR"],
 ): string[] {
   const dirs: string[] = [];
-  let pos = command.search(/\S/);
-  if (pos < 0) return dirs;
-
-  while (pos < command.length) {
-    const tokenEnd = endOfShellToken(command, pos);
-    const token = command.slice(pos, tokenEnd);
-    const match = token.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-    if (!match) break;
-    const key = match[1];
+  for (const token of leadingEnvAssignments(command).assignments) {
+    const [, key = "", value = ""] = token.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s) ?? [];
     if (keys.includes(key)) {
-      const dir = expandConfigDir(match[2], cwd);
-      if (dir) dirs.push(dir);
+      dirs.push(expandConfigDir(value, cwd));
     }
-    pos = tokenEnd;
-    while (pos < command.length && /\s/.test(command[pos])) pos += 1;
   }
-
   return dirs;
 }
 
@@ -606,7 +559,12 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
   // call bails at the guard above. (The bail itself lives before the attachOnly
   // branch; here we only claim the marker, synchronously before the first await
   // so no racing call can interleave before it is set.)
-  spawning.add(req.ptyId);
+  const flight = { cancelled: false };
+  spawning.set(req.ptyId, flight);
+  const cancelled = (): boolean => {
+    if (flight.cancelled) ptyLog.append("spawn-cancelled", { ptyId: req.ptyId });
+    return flight.cancelled;
+  };
   try {
     if (binary && !(await commandExists(binary))) {
       reportSpawnFailure(
@@ -618,6 +576,11 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       return;
     }
 
+    if (cancelled()) return;
+    // Here, not in main: only now is a real spawn certain (attach-only and
+    // re-mounts returned above), so no lookup is paid for nothing. opencode's
+    // goes through the pane's own shell and env: it may only be on the PATH
+    // its startup files build.
     const command =
       req.agent === "claude"
         ? await withLiveClaudeResume(
@@ -625,7 +588,15 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
             req.agentConfigDir ?? agentConfigDirsFromCommand(req.command, cwd, ["CLAUDE_CONFIG_DIR"]).at(-1),
             cwd,
           )
-        : req.command;
+        : await ownSessionCommand(
+            req.command,
+            cwd,
+            (dir, assignments) =>
+              listOpencodeSessions(userShell(), dir, envWithAssignments(safeEnv(req, cwd), assignments)),
+            (err) =>
+              ptyLog.append("opencode-session-lookup-failed", { ptyId: req.ptyId, error: String(err) }),
+          );
+    if (cancelled()) return;
     const argv = shellArgv(command, cwd);
     const file = argv[0];
     const args = argv.slice(1);
@@ -704,7 +675,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       projectSlug: req.projectSlug,
       presetId: req.presetId,
       cwd,
-      command: req.command.slice(0, SPAWN_LOG_COMMAND_MAX_CHARS),
+      command: command.slice(0, SPAWN_LOG_COMMAND_MAX_CHARS),
     });
 
     child.onData((chunk) => {
@@ -899,9 +870,15 @@ export function killPty(ptyId: string): void {
   const p = ptys.get(ptyId);
   ptyLog.append("kill", { ptyId, live: !!p });
   if (!p) {
-    // No PTY for this id yet — either it never existed, or the spawn IPC is
-    // still in flight. Mark it so a late-arriving spawnPty bails out. The
-    // TTL evicts the marker if nothing comes (cleaner than leaking ids).
+    // No PTY for this id yet. A spawn under way is cancelled on its own entry
+    // (no marker: ids are reused, and a reopened tab must start). One whose
+    // IPC has not arrived yet bails on the marker, which a TTL evicts if
+    // nothing comes (cleaner than leaking ids).
+    const flight = spawning.get(ptyId);
+    if (flight) {
+      flight.cancelled = true;
+      return;
+    }
     pendingKills.add(ptyId);
     setTimeout(() => pendingKills.delete(ptyId), PENDING_KILL_TTL_MS);
     return;
