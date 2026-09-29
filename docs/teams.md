@@ -54,6 +54,33 @@ copy Aya runs), so it reaches agents at once. Scope: the calling pane's
 project, else `AYA_PROJECT_SLUG`, else the open project the cwd is in. An
 existing name needs `--replace`, as the window edits rather than creates.
 
+## Give roles panes
+
+A saved team with no panes has nobody to Start. `aya presets` lists the
+presets with the agent each runs and whether its CLI is installed, by the
+same check a pane spawn makes ("command not found"). The guide's last step
+has the agent propose a pane per role and wait for the user's yes, then run
+`aya team open <team> <role>=<target> ...`. A target is `this` (the calling
+pane), a pane id, a preset id (a new session), or a pane name, in that
+order; an ambiguous name is refused with the candidates. Roles not listed
+keep their panes.
+
+Main checks every pick before anything changes: the team is saved in Aya,
+each role exists and is listed once, each preset is installed, no pane goes
+to two roles, and a role with a live pane or a pane that plays another role
+needs `--replace` (the old pane keeps running). On any problem it names them
+all and opens nothing. Main picks the new panes' ids and asks the window
+that shows the project (`teams:open-panes`) to add them as tabs named
+`<preset> - <role>`; the window saves the project and answers
+(`teams:panes-opened`, 10 s deadline). Then each role is assigned with the
+Teams window's `assignRole`; in a running team a new pane is told its role
+once its agent has drawn its composer (up to 20 s). Start stays the user's.
+
+The Teams window runs the same `openTeamPanes`: per role it offers the open
+panes, each labelled with the role it already plays, and `New: <preset>`
+for installed presets. Picks wait for **Apply panes**, which spells out a
+move that leaves another role without a pane.
+
 ## When Aya does not type a message
 
 A message waits in the receiver's inbox, and goes out by itself once the

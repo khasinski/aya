@@ -82,7 +82,15 @@ and fixes the UX"), you write the team file:
 - Save with `aya team save <file>` (or `aya team save -` with the file on
   stdin). A problem is printed and nothing is saved; fix it and save again.
 - If the team already exists, ask the user before `--replace`.
-- Then tell the user to give each role a pane and press Start in Teams.
+- Then give each role a pane. Run `aya presets` (installed CLIs) and
+  `aya pane list` (open panes), and propose one pane per role: a new session
+  of an installed preset, `this` (your own pane), or an open pane by name or
+  id. Several roles may take the same preset; each gets its own new pane.
+- Wait for the user's yes, then run
+  `aya team open <team> <role>=<target> ...`. Never open panes without it.
+  A problem is printed and nothing is opened. A role with a live pane, or a
+  pane that plays another role, needs `--replace`; no pane is ever closed.
+- Do not start the team: the user presses Start in Teams.
 
 ## Guardrails
 
