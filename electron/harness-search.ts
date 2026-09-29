@@ -15,15 +15,16 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { codexHomeFor } from "./agent-brief";
 import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath } from "./usage";
-import { CODEX_DEFAULT_DIR, CODEX_SESSIONS_SUBDIR } from "./usage-codex";
+import { CODEX_SESSIONS_SUBDIR, DEFAULT_CODEX_HOME } from "./usage-codex";
 
 export interface HarnessSearchRequest {
   agent: "claude" | "codex";
   /** The tab's working directory — scopes which sessions are searched. */
   cwd: string;
   /** Preset's config-dir override (may be ~-relative); defaults to the
-   *  agent's standard home (~/.claude / ~/.codex). */
+   *  agent's standard home (~/.claude / CODEX_HOME, else ~/.codex). */
   configDir?: string;
   query: string;
 }
@@ -248,8 +249,8 @@ async function codexSessionFiles(
   cwd: string,
   configDir: string | undefined,
 ): Promise<SessionFile[]> {
-  // Ignores CODEX_HOME, unlike DEFAULT_CODEX_HOME (known bug B8).
-  const home = expandUserPath(configDir?.trim() || CODEX_DEFAULT_DIR);
+  const home = codexHomeFor({ configDir }, DEFAULT_CODEX_HOME, expandUserPath, cwd);
+  if (!home) return [];
   const root = path.join(home, CODEX_SESSIONS_SUBDIR);
   const all: { file: string; mtimeMs: number; size: number }[] = [];
   async function walk(dir: string): Promise<void> {

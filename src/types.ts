@@ -379,6 +379,8 @@ export interface SpawnRequest {
    *  inference — see src/agentPreset.ts). Lets the host pick that agent's
    *  screen-detection rules without duplicating the inference. */
   agent?: AgentKind;
+  /** The preset's config dir, where claude registers its session per pid. */
+  agentConfigDir?: string;
   command: string;
   cwd: string;
   cols: number;

@@ -102,6 +102,8 @@ export interface SpawnRequest {
    *  inference — see src/agentPreset.ts). Lets the host pick that agent's
    *  screen-detection rules without duplicating the inference. */
   agent?: AgentKind;
+  /** The preset's config dir, where claude registers its session per pid. */
+  agentConfigDir?: string;
   // The user-resolved command (e.g. "claude", "$SHELL", "aider --dark"). The
   // renderer picks this from the active preset and the main process embeds it
   // verbatim into `$SHELL -l -c 'cd … && exec <command>'`. NEVER -p / --print.

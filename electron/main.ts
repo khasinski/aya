@@ -59,15 +59,14 @@ import {
   briefChannel,
   briefText,
   codexAgentsFile,
+  codexBriefSync,
   commandWithBriefArg,
   commandWithBriefEnv,
-  planCodexBriefs,
   antigravityBriefFile,
   withOwnedBrief,
   withoutOwnedBrief,
   withBriefSection,
   briefMarkersIntact,
-  orphanedBriefFiles,
   BRIEF_BEGIN,
   withoutBriefSection,
   teamNote,
@@ -134,7 +133,11 @@ import { createWorktree, removeWorktree } from "./git";
 import { listPresets, savePresets } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
 import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath, readClaudeUsageAccounts } from "./usage";
-import { CODEX_DEFAULT_DIR, DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } from "./usage-codex";
+import {
+  DEFAULT_CODEX_HOME,
+  codexUsageSources,
+  readCodexUsageAccountsFromSources,
+} from "./usage-codex";
 import { DEFAULT_GROK_HOME, readGrokUsage } from "./usage-grok";
 import {
   usageHookStatus,
@@ -165,6 +168,7 @@ import {
 } from "./local-summary-errors";
 import { readRepoProjectConfig } from "./project-local";
 import { repairProcessPath } from "./shell-path";
+import { paneReadText } from "./pane-render";
 import { PtyHostClient } from "./pty-host-client";
 import { PTY_HOST_SCRIPT_NAME } from "./pty-host-staleness";
 import { reapStaleHostRecords } from "./pty-host-registry";
@@ -196,6 +200,7 @@ import {
 } from "./web-config";
 import { captureIpcHandlers } from "./web-ipc";
 import { startWebServer, type WebServerHandle } from "./web-server";
+import { parseSummaryResponse, summaryPrompt } from "./summary-prompt";
 import type {
   AyaIntelligenceConfig,
   CliStatus,
@@ -258,9 +263,6 @@ const UPDATE_AUTO_CHECK_DELAY_MS = 12_000;
 // Ollama) - the two request builders must stay in sync.
 const SUMMARY_TEMPERATURE = 0.2;
 const SUMMARY_MAX_TOKENS = 64;
-// Title fallback caps (first-line words / chars) for the local summary.
-const SUMMARY_TITLE_MAX_WORDS = 8;
-const SUMMARY_TITLE_MAX_CHARS = 80;
 // Bound captured `ollama pull` stderr so a chatty child can't balloon memory.
 const OLLAMA_PULL_STDERR_MAX_BYTES = 8192;
 // Max accepted Ollama model-name length (IPC input-validation cap).
@@ -463,50 +465,6 @@ async function summarizeWithApple(
     child.stdin.on("error", () => undefined);
     child.stdin.end(JSON.stringify(req));
   });
-}
-
-function cleanSummary(value: string): string {
-  const oneLine = value
-    .replace(/\s+/g, " ")
-    .replace(/^["'`]+|["'`.]+$/g, "")
-    .trim();
-  const words = oneLine.split(/\s+/).filter(Boolean).slice(0, SUMMARY_TITLE_MAX_WORDS).join(" ");
-  return words.slice(0, SUMMARY_TITLE_MAX_CHARS);
-}
-
-function summaryPrompt(req: LocalSummaryRequest): string {
-  const subject =
-    req.kind === "project" ? "project activity" : "terminal output";
-  return [
-    `Summarize recent ${subject} for a compact app label.`,
-    "Return strict JSON only, with shape:",
-    '{"useful":true,"summary":"2-6 word label"}',
-    "If the output is too noisy, generic, idle, or not meaningful, return:",
-    '{"useful":false,"summary":""}',
-    "Do not invent context. No full sentences. No punctuation. Max 6 words.",
-    "",
-    "Recent output:",
-    req.lines.join("\n"),
-  ].join("\n");
-}
-
-function parseSummaryResponse(content: string): LocalSummaryResult {
-  const trimmed = content.trim();
-  const jsonText =
-    trimmed.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1]?.trim() ?? trimmed;
-  try {
-    const parsed = JSON.parse(jsonText) as Partial<LocalSummaryResult>;
-    const summary =
-      typeof parsed.summary === "string" ? cleanSummary(parsed.summary) : "";
-    return {
-      available: true,
-      useful: parsed.useful === true && summary.length > 0,
-      summary: parsed.useful === true ? summary : "",
-    };
-  } catch {
-    const summary = cleanSummary(trimmed);
-    return { available: true, useful: summary.length > 0, summary };
-  }
 }
 
 const SUMMARY_SYSTEM = "You summarize terminal output for a developer tool. Return JSON only.";
@@ -822,16 +780,6 @@ async function installCli(): Promise<CliStatus> {
   };
 }
 
-/** The codex AGENTS.md each codex preset reads, with its opt-in. */
-async function codexBriefTargets() {
-  return (await listPresets())
-    .filter((preset) => preset.agent === "codex")
-    .map((preset) => ({
-      file: codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath),
-      agentBrief: preset.agentBrief === true,
-    }));
-}
-
 /** Rewrite `file` only when `change` alters it. `null` content = no file.
  *  A symlinked file (e.g. AGENTS.md kept in a dotfiles repo) is edited at its
  *  target, so the link survives (#122 review). */
@@ -905,8 +853,12 @@ async function syncAntigravityBrief(): Promise<void> {
 }
 
 async function syncCodexBriefs(): Promise<void> {
-  const plan = planCodexBriefs(await codexBriefTargets());
-  const orphans = orphanedBriefFiles(await readBriefRegistry(), plan);
+  const plan = codexBriefSync(
+    (await listPresets()).filter((preset) => preset.agent === "codex"),
+    await readBriefRegistry(),
+    DEFAULT_CODEX_HOME,
+    expandUserPath,
+  );
   const brief = briefText(true);
   const added: string[] = [];
   const dropped: string[] = [];
@@ -915,7 +867,7 @@ async function syncCodexBriefs(): Promise<void> {
       .then(() => added.push(file))
       .catch((err) => console.warn(`[aya] could not add the aya brief to ${file}:`, err));
   }
-  for (const file of [...plan.remove, ...orphans]) {
+  for (const file of plan.remove) {
     await rewriteIfChanged(file, withoutBriefSection)
       .then(() => dropped.push(file))
       .catch((err) => console.warn(`[aya] could not remove the aya brief from ${file}:`, err));
@@ -972,7 +924,8 @@ async function withAgentBrief(spawn: SpawnRequest): Promise<SpawnRequest> {
   }
   if (channel.kind === "file") {
     // Re-assert on launch: the user may have edited the file since the save.
-    const file = codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath);
+    const file = codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath, spawn.cwd);
+    if (!file) return spawn;
     await rewriteIfChanged(file, (c) => withBriefSection(c, briefText(true)))
       .then(() => updateBriefRegistry([file], []))
       .catch((err) => console.warn(`[aya] could not add the aya brief to ${file}:`, err));
@@ -2501,24 +2454,7 @@ function registerIpc(): void {
   // Read-only: Codex usage, parsed from its own local rollout logs (Codex
   // writes its rate-limit % there, so no token/endpoint/hook is needed).
   ipcMain.handle("usage:get-codex", async () => {
-    const presets = await listPresets();
-    const codexPresets = presets.filter((p) => p.agent === "codex");
-    return readCodexUsageAccountsFromSources(
-      (codexPresets.length > 0
-        ? codexPresets
-        : [{ id: "codex", name: "Codex", configDir: DEFAULT_CODEX_HOME }]).map(
-        (p) => ({
-          id: p.id,
-          label: p.name,
-          // A preset without configDir ignores CODEX_HOME, unlike
-          // DEFAULT_CODEX_HOME (known bug B8).
-          home:
-            "configDir" in p && typeof p.configDir === "string" && p.configDir
-              ? expandUserPath(p.configDir)
-              : expandUserPath(CODEX_DEFAULT_DIR),
-        }),
-      ),
-    );
+    return readCodexUsageAccountsFromSources(codexUsageSources(await listPresets()));
   });
   // Read-only: 7-day spend and tokens, plus the weekly limit when Grok logged one.
   ipcMain.handle("usage:get-grok", async () => {
@@ -3076,7 +3012,15 @@ app.whenReady().then(async () => {
     // and act through the pty host, so they work regardless of which window
     // (if any) currently owns the target project.
     listProjects: () => listProjects(),
-    readPane: (terminalId) => ptyHost.getBuffer(terminalId),
+    // Rendered here, not in the pty host: up to ~50 ms per 1 MB would stall every
+    // pane's output there.
+    readPane: async (terminalId) => {
+      const [buffer, size] = await Promise.all([
+        ptyHost.getBuffer(terminalId),
+        ptyHost.getSize(terminalId),
+      ]);
+      return paneReadText(buffer, size);
+    },
     // Returned, not fire-and-forget: the boolean is how pane-send learns the
     // pane was dead, and dropping it made host rejections unhandled.
     writePane: (terminalId, data) => ptyHost.write(terminalId, data),
@@ -3240,10 +3184,14 @@ app.on("before-quit", () => {
   }
   for (const timer of gpuHealTimers) clearTimeout(timer);
   gpuHealTimers.clear();
-  if (!IS_E2E_PTY_SHUTDOWN) return;
-  void ptyHost.shutdown().catch(() => {
-    // Test-only cleanup. Normal app runs intentionally keep PTYs alive.
-  });
+  if (IS_E2E_PTY_SHUTDOWN) {
+    void ptyHost.shutdown().catch(() => {
+      // Test-only cleanup. Normal app runs intentionally keep PTYs alive.
+    });
+  }
+  // After the shutdown above is sent: a request from a closing window must not
+  // start a host this quitting app will never connect to.
+  ptyHost.dispose();
 });
 
 // GPU-helper deaths (#79). The OS can quietly kill the GPU process under memory

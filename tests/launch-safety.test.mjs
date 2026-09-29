@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { DEFAULT_PRESETS } from "../dist-electron/presets.js";
 import { agentConfigDirsFromCommand, shellArgv } from "../dist-electron/pty.js";
 import { pathWithFallbackDir, withCliFirst, withoutSessionMarkers } from "../dist-electron/pane-command.js";
+import { inlineCodexHome } from "../dist-electron/agent-brief.js";
 
 const FORBIDDEN = [
   /(?<!\w)-p(?!\w)/,
@@ -122,11 +123,11 @@ test("shellArgv keeps quoted env assignment values intact", () => {
 
 test("agent config dirs are extracted from leading env assignments", () => {
   assert.deepEqual(
-    agentConfigDirsFromCommand('CODEX_HOME="$HOME/.codex3" codex'),
+    agentConfigDirsFromCommand('CODEX_HOME="$HOME/.codex3" codex', "/"),
     [`${os.homedir()}/.codex3`],
   );
   assert.deepEqual(
-    agentConfigDirsFromCommand("CLAUDE_CONFIG_DIR=~/.claude-secondary claude"),
+    agentConfigDirsFromCommand("CLAUDE_CONFIG_DIR=~/.claude-secondary claude", "/"),
     [`${os.homedir()}/.claude-secondary`],
   );
 });
@@ -172,4 +173,40 @@ test("a pane does not inherit the Claude Code session that launched Aya, only th
     CLAUDE_EFFORT: "high",
     CLAUDE_CODE_USE_BEDROCK: "1",
   });
+});
+
+test("agentConfigDirsFromCommand can pick claude's dir alone, in assignment order", () => {
+  assert.deepEqual(
+    agentConfigDirsFromCommand("CODEX_HOME=/tmp/codex CLAUDE_CONFIG_DIR=/tmp/a CLAUDE_CONFIG_DIR=/tmp/b claude", "/", [
+      "CLAUDE_CONFIG_DIR",
+    ]),
+    ["/tmp/a", "/tmp/b"],
+  );
+});
+
+test("both CODEX_HOME parsers agree on leading assignments, differ past them", () => {
+  const home = os.homedir();
+  const cases = [
+    // [command, inlineCodexHome (brief file), agentConfigDirsFromCommand (mkdir)]
+    ['CODEX_HOME="$HOME/.b" codex', "~/.b", [`${home}/.b`]],
+    ['CODEX_HOME="${HOME}/.b" codex', "~/.b", [`${home}/.b`]],
+    ["CODEX_HOME='~/.b' codex", "~/.b", [`${home}/.b`]],
+    ["FOO=1 CODEX_HOME=~/.b codex", "~/.b", [`${home}/.b`]],
+    ["env CODEX_HOME=~/.b codex", "~/.b", []],
+    ["cd /x && CODEX_HOME=~/.b codex", "~/.b", []],
+    ["codex", undefined, []],
+  ];
+  for (const [command, brief, dirs] of cases) {
+    assert.equal(inlineCodexHome(command), brief, command);
+    assert.deepEqual(agentConfigDirsFromCommand(command, "/"), dirs, command);
+  }
+});
+
+test("a relative agent config dir is created under the pane's cwd, not Aya's", () => {
+  assert.deepEqual(agentConfigDirsFromCommand("CODEX_HOME=.codex codex", "/project"), ["/project/.codex"]);
+  assert.deepEqual(
+    agentConfigDirsFromCommand('CLAUDE_CONFIG_DIR="../c" claude', "/project/a"),
+    ["/project/c"],
+  );
+  assert.deepEqual(agentConfigDirsFromCommand("CODEX_HOME=/abs/h codex", "/project"), ["/abs/h"]);
 });

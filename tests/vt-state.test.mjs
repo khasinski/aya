@@ -13,8 +13,10 @@ import {
   resizeVtPane,
   screenShowsApproval,
   screenTail,
+  vtPaneAltScreen,
   writeVtPane,
 } from "../dist-electron/vt-state.js";
+import { MIN_PTY_COLS, MIN_PTY_ROWS } from "../dist-electron/constants.js";
 
 // xterm parses writes asynchronously, so a scan must come after a tick.
 const settle = () => new Promise((r) => setTimeout(r, 20));
@@ -102,18 +104,6 @@ test("screenTail defaults to the last 12 non-empty rows", async () => {
   close();
 });
 
-// The mirror clamps to 1x1, not the PTY's 4x2 minimum; pinned as it is.
-// xterm itself floors cols at 2, so only the row clamp is observable.
-test("the mirror clamps a zero or negative size to one row", () => {
-  openVtPane("p7c", 0, -3, () => {});
-  const { terminal } = __testVtPane("p7c");
-  assert.equal(terminal.rows, 1);
-  resizeVtPane("p7c", 5, 5);
-  resizeVtPane("p7c", -1, 0);
-  assert.equal(terminal.rows, 1);
-  closeVtPane("p7c");
-});
-
 // --- change notification ---------------------------------------------------
 
 test("the change callback fires on BOTH edges, once per transition", async () => {
@@ -170,4 +160,37 @@ test("closeAllVtPanes clears everything (host shutdown)", async () => {
   closeAllVtPanes();
   assert.equal(__testVtPane("p11"), undefined);
   assert.equal(__testVtPane("p12"), undefined);
+});
+
+test("the mirror knows when a pane holds the alt screen", async () => {
+  const close = open("alt");
+  assert.equal(vtPaneAltScreen("alt"), false);
+  writeVtPane("alt", "\x1b[?1049h");
+  await settle();
+  assert.equal(vtPaneAltScreen("alt"), true);
+  writeVtPane("alt", "\x1b[?1049l");
+  await settle();
+  assert.equal(vtPaneAltScreen("alt"), false);
+  close();
+  assert.equal(vtPaneAltScreen("alt"), undefined);
+});
+
+test("the mirror floors its size where the PTY does, so both see one screen", () => {
+  const size = (id) => {
+    const t = __testVtPane(id).terminal;
+    return [t.cols, t.rows];
+  };
+  openVtPane("p13", 2, 1, () => {});
+  assert.deepEqual(size("p13"), [MIN_PTY_COLS, MIN_PTY_ROWS]);
+  resizeVtPane("p13", 40, 10);
+  assert.deepEqual(size("p13"), [40, 10]);
+  resizeVtPane("p13", 3, 1);
+  assert.deepEqual(size("p13"), [MIN_PTY_COLS, MIN_PTY_ROWS]);
+  resizeVtPane("p13", MIN_PTY_COLS + 1, MIN_PTY_ROWS + 1);
+  assert.deepEqual(size("p13"), [MIN_PTY_COLS + 1, MIN_PTY_ROWS + 1]);
+  closeVtPane("p13");
+  openVtPane("p14", 40, 10, () => {});
+  assert.deepEqual(size("p14"), [40, 10]);
+  closeVtPane("p14");
+  assert.deepEqual([MIN_PTY_COLS, MIN_PTY_ROWS], [4, 2]);
 });

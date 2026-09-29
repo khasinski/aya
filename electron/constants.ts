@@ -17,3 +17,8 @@ export const COMMAND_PROBE_TIMEOUT_MS = 2_500;
 /** `caller.via` of an `aya` call made by Aya's own status hooks (AYA_VIA in the
  *  generated scripts); main skips these when counting CLI adoption (#121). */
 export const HOOK_VIA = "hook";
+
+/** Smallest PTY size Aya spawns or resizes to. The vt mirror floors at the
+ *  same size, or screen rules would read a different screen than the agent draws. */
+export const MIN_PTY_COLS = 4;
+export const MIN_PTY_ROWS = 2;

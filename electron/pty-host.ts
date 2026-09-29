@@ -20,6 +20,7 @@ import { createPtyDataCoalescer } from "./pty-event-coalescer";
 import {
   activePtyCount,
   getBufferedOutput,
+  getPtySize,
   getPtyCwd,
   killPty,
   shutdownPtyChildren,
@@ -148,6 +149,9 @@ async function handle(request: PtyHostRequest): Promise<unknown> {
   }
   if (request.type === "buffer") {
     return getBufferedOutput(request.ptyId);
+  }
+  if (request.type === "size") {
+    return getPtySize(request.ptyId);
   }
   if (request.type === "cwd") {
     return getPtyCwd(request.ptyId);

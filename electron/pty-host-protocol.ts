@@ -1,3 +1,4 @@
+import type { PaneSize } from "./pane-render";
 import type { BufferSearchHit } from "./pty";
 import type { PtyEvent, SpawnRequest } from "./types";
 
@@ -14,6 +15,9 @@ export type PtyHostRequest =
   | { id: number; type: "cwd"; ptyId: string }
   // Why a message must not be typed into the pane now (vt-state paneHold).
   | { id: number; type: "hold"; ptyId: string }
+  // Live cols x rows + alt screen, for `aya pane read`'s render. Added after 0.11.0; an
+  // older host answers "unknown request", which the client turns into null.
+  | { id: number; type: "size"; ptyId: string }
   | { id: number; type: "version" };
 
 export type PtyHostResponse =
@@ -28,6 +32,14 @@ export function isPtyHostRequest(value: unknown): value is PtyHostRequest {
   if (!value || typeof value !== "object") return false;
   const r = value as Partial<PtyHostRequest>;
   return typeof r.id === "number" && typeof r.type === "string";
+}
+
+export function asPaneSize(value: unknown): PaneSize | null {
+  const v = value as Partial<PaneSize> | null;
+  if (typeof v?.cols !== "number" || typeof v.rows !== "number") return null;
+  const size: PaneSize = { cols: v.cols, rows: v.rows };
+  if (typeof v.alt === "boolean") size.alt = v.alt;
+  return size;
 }
 
 export function asSearchResult(value: unknown): BufferSearchHit[] {

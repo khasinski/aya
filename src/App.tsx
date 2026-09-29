@@ -2903,8 +2903,8 @@ export function App() {
 
   const onSaveSnippets = useCallback(async (next: Snippet[]) => {
     await window.aya.saveSnippets(next);
-    // Reflect exactly what was persisted (normalized: capped, deduped) rather
-    // than the raw draft, so the in-memory list can't drift from disk.
+    // Reflect exactly what was persisted (deduped, malformed rows dropped)
+    // rather than the raw draft, so the in-memory list can't drift from disk.
     setSnippets(await window.aya.listSnippets());
   }, []);
 

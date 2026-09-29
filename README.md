@@ -70,8 +70,8 @@ run commands.
   waiting state is read off each pane's real screen (a headless VT mirror), not
   a fragile byte-stream heuristic, so it also clears when the agent repaints.
 - **Agents drive each other.** `aya pane read "reviewer"` returns another pane's
-  output and `aya pane send` types into it, so one agent hands work to another
-  and collects the result. Panes are addressed by tab name within a project.
+  output as plain text, as its screen shows it, and `aya pane send` types into
+  it, so one agent hands work to another and collects the result. Panes are addressed by tab name within a project.
 - **Teams of agents.** A team file in `.aya/teams/` gives panes roles (who
   they are, what they must not do, who they report to). Agents learn their
   role with `aya team whoami` and message each other by role, whatever the CLI
@@ -438,6 +438,11 @@ and project JSON files are watched and reloaded while Aya is running.
 
 Set `AYA_HOME=/path/to/dir` to use a separate state directory for screenshots,
 scratch sessions, or isolated testing.
+
+A remote host answers with its installed Aya (`~/.aya/aya-remote.sock`), even
+when an Aya Dev also runs there. To reach the dev build over ssh, set
+`AYA_HOME="$HOME/.aya-dev"` or `AYA_REMOTE_SOCKET` on the host - see
+[docs/remote-sessions.md](docs/remote-sessions.md#which-aya-on-the-host-answers).
 
 ## Architecture
 

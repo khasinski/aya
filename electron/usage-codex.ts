@@ -11,6 +11,7 @@
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { codexHomeFor } from "./agent-brief";
 import type { UsageAccount, UsageData } from "./usage";
 import { expandUserPath, usageAccountFromData } from "./usage";
 
@@ -36,6 +37,19 @@ export interface CodexUsageSource {
   id: string;
   label: string;
   home: string;
+}
+
+/** One usage source per codex preset, else the default home alone. Usage has
+ *  no tab cwd, so a preset with a relative home is skipped rather than guessed. */
+export function codexUsageSources(
+  presets: { id: string; name: string; agent?: string; configDir?: string; command: string }[],
+): CodexUsageSource[] {
+  const codex = presets.filter((p) => p.agent === "codex");
+  if (codex.length === 0) return [{ id: "codex", label: "Codex", home: DEFAULT_CODEX_HOME }];
+  return codex.flatMap((p) => {
+    const home = codexHomeFor(p, DEFAULT_CODEX_HOME, expandUserPath);
+    return home ? [{ id: p.id, label: p.name, home }] : [];
+  });
 }
 
 function isoFromUnixSeconds(sec: unknown): string | undefined {

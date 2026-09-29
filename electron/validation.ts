@@ -16,13 +16,8 @@ import type { ThemeColors } from "./themes";
 import { isAgentKind, isPreset } from "./presets";
 import { isStorableSplitTree, MAX_SPLIT_COLS, MAX_SPLIT_ROWS, type SplitNode } from "./split-tree";
 import { SESSION_ID_RE } from "./osc-extractor";
-import { isSnippet, SNIPPET_TEXT_MAX } from "./snippets";
+import { assertSnippetCount, isSnippet, SNIPPET_TEXT_MAX } from "./snippets";
 import { RESERVED_ROLE_PROBLEM, TEAM_SYSTEM_SENDER } from "./teams";
-
-/** Hard IPC ceiling on the number of snippets accepted in one save. Well above
- *  the 200 persistence cap so normal saves pass; rejects only clearly hostile
- *  payloads before any per-item work happens. */
-const SNIPPETS_IPC_MAX = 1_000;
 
 /** Persisted schema version for projects-state.json. */
 export const PROJECT_STATE_VERSION = 1;
@@ -86,6 +81,9 @@ export function validateSpawnRequest(value: unknown): SpawnRequest {
       ? { presetId: value.presetId as string }
       : {}),
     ...(isAgentKind(value.agent) ? { agent: value.agent } : {}),
+    ...(optionalString(value.agentConfigDir, "pty:spawn.agentConfigDir")
+      ? { agentConfigDir: value.agentConfigDir as string }
+      : {}),
     command: requireString(value.command, "pty:spawn.command"),
     cwd: requireString(value.cwd, "pty:spawn.cwd"),
     cols: requirePositiveInt(value.cols, "pty:spawn.cols"),
@@ -263,9 +261,7 @@ export function validatePresetArray(value: unknown): Preset[] {
 
 export function validateSnippetArray(value: unknown): Snippet[] {
   if (!Array.isArray(value)) fail("snippets:save", "Snippet[]");
-  if (value.length > SNIPPETS_IPC_MAX) {
-    fail("snippets:save", `at most ${SNIPPETS_IPC_MAX} snippets`);
-  }
+  assertSnippetCount(value.length);
   value.forEach((snippet, idx) => {
     if (!isSnippet(snippet)) fail(`snippets:save[${idx}]`, "Snippet");
     if ((snippet as Snippet).text.length > SNIPPET_TEXT_MAX) {

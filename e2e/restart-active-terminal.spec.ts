@@ -5,13 +5,13 @@ import {
   type ElectronApplication,
 } from "@playwright/test";
 import { join } from "node:path";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { seedEnv } from "./helpers/seed";
 import {
   APP_GRACEFUL_CLOSE_TIMEOUT_MS,
   APP_PROCESS_EXIT_TIMEOUT_MS,
   delay,
-  shutdownPtyHost,
+  cleanUpSeeded,
 } from "./fixtures";
 
 // Reproduces: after restart the FIRST terminal is selected, not the one that
@@ -115,8 +115,7 @@ test("the last-active terminal stays active across a restart (#18)", async () =>
     await expect(win.locator(".aya-sidebar-row--active")).toHaveText(/shell 2/);
     await killAndWait(app);
   } finally {
-    await shutdownPtyHost(s.ayaHome);
-    rmSync(s.root, { recursive: true, force: true });
+    await cleanUpSeeded(s);
   }
 });
 
@@ -153,8 +152,7 @@ test("a dangling persisted activeTab falls back to the first terminal", async ()
     ).toBeVisible();
     await killAndWait(app);
   } finally {
-    await shutdownPtyHost(s.ayaHome);
-    rmSync(s.root, { recursive: true, force: true });
+    await cleanUpSeeded(s);
   }
 });
 
@@ -197,7 +195,6 @@ test("the last-active project is restored across a restart (#18)", async () => {
     await expect(win.locator(".aya-sidebar-row--active")).toHaveText(/bravo 1/);
     await killAndWait(app);
   } finally {
-    await shutdownPtyHost(s.ayaHome);
-    rmSync(s.root, { recursive: true, force: true });
+    await cleanUpSeeded(s);
   }
 });

@@ -12,6 +12,7 @@ import {
   validateProjectConfig,
   validateSpawnRequest,
   validateTeamDefinition,
+  validateSnippetArray,
   validateThemesFile,
 } from "../dist-electron/validation.js";
 import { AYA_DARK } from "../dist-electron/themes.js";
@@ -63,6 +64,19 @@ test("validateSpawnRequest passes the attach flags through (regression: they wer
   assert.throws(
     () => validateSpawnRequest({ ...base, attachIfReused: 1 }),
     /pty:spawn\.attachIfReused/,
+  );
+});
+
+test("validateSpawnRequest passes agentConfigDir through, where claude registers its session", () => {
+  const base = { ptyId: "abc", command: "claude", cwd: "/tmp", cols: 80, rows: 24 };
+  assert.equal(
+    validateSpawnRequest({ ...base, agentConfigDir: "~/.claude_chris" }).agentConfigDir,
+    "~/.claude_chris",
+  );
+  assert.equal(validateSpawnRequest(base).agentConfigDir, undefined);
+  assert.throws(
+    () => validateSpawnRequest({ ...base, agentConfigDir: 7 }),
+    /pty:spawn\.agentConfigDir/,
   );
 });
 
@@ -483,4 +497,14 @@ test("validateTeamDefinition refuses a role named aya on both channels, not one 
     });
   }
   assert.equal(validateTeamDefinition({ ...team, roles: [team.roles[0], { ...role, id: "aya-helper" }] }).roles[1].id, "aya-helper");
+});
+
+test("validateSnippetArray takes the stored cap and refuses one more by name", () => {
+  const make = (n) =>
+    Array.from({ length: n }, (_, i) => ({ id: `s${i}`, name: `s${i}`, text: `echo ${i}`, autoRun: false }));
+  assert.equal(validateSnippetArray(make(200)).length, 200);
+  assert.throws(
+    () => validateSnippetArray(make(201)),
+    { message: "Too many snippets: 201. Aya keeps at most 200 - delete some and save again." },
+  );
 });

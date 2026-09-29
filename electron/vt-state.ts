@@ -12,14 +12,13 @@
 // whether or not any window is open, and it costs one extra VT parse per pane.
 
 import { Terminal } from "@xterm/headless";
+import { MIN_PTY_COLS, MIN_PTY_ROWS } from "./constants";
 import { evaluateScreen, TAIL_REGION_LINES } from "./agent-screen-rules";
 import type { AgentKind } from "./presets";
 
 // Only the visible screen matters for "what is on screen right now", and
 // scrollback would grow a buffer per pane in the host process for no gain.
 const VT_SCROLLBACK_LINES = 0;
-// The mirror's own clamp, not the PTY's MIN_PTY_COLS x MIN_PTY_ROWS (4x2).
-const MIN_MIRROR_SIZE = 1;
 // The screen is scanned at most this often per pane. Writes are applied
 // immediately; only the (comparatively expensive) scan is rate-limited, so a
 // firehose of output costs one scan per interval rather than one per chunk.
@@ -54,8 +53,8 @@ export function openVtPane(
 ): void {
   panes.set(ptyId, {
     terminal: new Terminal({
-      cols: Math.max(cols, MIN_MIRROR_SIZE),
-      rows: Math.max(rows, MIN_MIRROR_SIZE),
+      cols: Math.max(cols, MIN_PTY_COLS),
+      rows: Math.max(rows, MIN_PTY_ROWS),
       scrollback: VT_SCROLLBACK_LINES,
       allowProposedApi: true,
     }),
@@ -72,7 +71,7 @@ export function resizeVtPane(ptyId: string, cols: number, rows: number): void {
   const pane = panes.get(ptyId);
   if (!pane) return;
   try {
-    pane.terminal.resize(Math.max(cols, MIN_MIRROR_SIZE), Math.max(rows, MIN_MIRROR_SIZE));
+    pane.terminal.resize(Math.max(cols, MIN_PTY_COLS), Math.max(rows, MIN_PTY_ROWS));
   } catch {
     // A resize can race the pane closing; the next write just lands on the
     // old geometry, which only affects wrapping in the detector's input.
@@ -128,6 +127,12 @@ function scanPane(ptyId: string): void {
   if (waiting === pane.lastWaiting) return;
   pane.lastWaiting = waiting;
   pane.onChange(waiting);
+}
+
+/** Whether the pane's mirror is on the alt screen; undefined for no mirror. */
+export function vtPaneAltScreen(ptyId: string): boolean | undefined {
+  const pane = panes.get(ptyId);
+  return pane && pane.terminal.buffer.active.type === "alternate";
 }
 
 /** Every rendered screen row, top to bottom, positions preserved. Rules anchor
