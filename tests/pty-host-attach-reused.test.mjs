@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { waitFor } from "./helpers/wait-for.mjs";
 
 const TMP_AYA_HOME = mkdtempSync(join(tmpdir(), "aya-attach-reused-"));
 process.env.AYA_HOME = TMP_AYA_HOME;
@@ -24,16 +25,6 @@ const { PtyHostClient, resolveSpawnAttach } = await import(
 );
 
 const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
-
-async function waitFor(predicate, ms = 4000, step = 25) {
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
-    const v = predicate();
-    if (v) return v;
-    await new Promise((r) => setTimeout(r, step));
-  }
-  throw new Error(`waitFor timed out after ${ms}ms`);
-}
 
 function fakeWebContents() {
   const events = [];
