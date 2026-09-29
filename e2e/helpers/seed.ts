@@ -26,6 +26,9 @@ export interface SeededEnv {
 }
 
 export interface SeedOptions {
+  /** The project opens with this one tab (id tab-left) instead of two shells,
+   *  and no split layout. */
+  singleTab?: { presetId: string; name: string };
   /** When false, the project has no split layout, so only the active tab is
    *  visible and switching happens via the sidebar (one terminal at a time).
    *  Defaults to true (1x2 split, both panes visible). */
@@ -112,7 +115,7 @@ function shellQuote(value: string): string {
  *  shell preset (so no PATH harness scan pulls in claude/codex), and an empty
  *  snippet store that the app seeds with its defaults on boot. */
 export function seedEnv(opts: SeedOptions = {}): SeededEnv {
-  const split = opts.split !== false;
+  const split = opts.split !== false && !opts.singleTab;
   const root = mkdtempSync(join(tmpdir(), "aya-e2e-"));
   const ayaHome = join(root, "aya-home");
   const userDataDir = join(root, "electron-data");
@@ -196,14 +199,15 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
             presetId: "shell",
             name: "shell 1",
             ...(opts.tabSessionIds?.left ? { sessionId: opts.tabSessionIds.left } : {}),
+            ...opts.singleTab,
           },
-          {
+          ...(opts.singleTab ? [] : [{
             id: right,
             presetId: "shell",
             name: "shell 2",
             ...(opts.tabSessionIds?.right ? { sessionId: opts.tabSessionIds.right } : {}),
             ...(worktreeDir ? { cwd: worktreeDir } : {}),
-          },
+          }]),
         ],
         ...(split
           ? {
