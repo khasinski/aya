@@ -29,13 +29,21 @@ Usage:
 EOF
 }
 
+# Expands a leading ~/ (a quoted env value keeps it) and collapses repeated slashes.
+normalize_path() {
+  case "$1" in
+    "~/"*) set -- "$HOME/${1#"~/"}" ;;
+  esac
+  printf '%s\n' "$1" | sed 's#//*#/#g'
+}
+
 socket_path() {
   if [ -n "${AYA_SOCKET:-}" ]; then
-    printf '%s\n' "$AYA_SOCKET"
+    normalize_path "$AYA_SOCKET"
   elif [ -n "${AYA_HOME:-}" ]; then
-    printf '%s\n' "$AYA_HOME/aya.sock"
+    normalize_path "$AYA_HOME/aya.sock"
   else
-    printf '%s\n' "$INSTALLED_APP_SOCKET"
+    normalize_path "$INSTALLED_APP_SOCKET"
   fi
 }
 
@@ -213,6 +221,12 @@ NODE
 # A named instance (AYA_SOCKET / AYA_HOME) may still be starting; launching the
 # installed app instead would open the project in the wrong Aya.
 wait_for_named_socket() {
+  case "$OPEN_SOCKET_WAIT_SECONDS" in
+    *[!0-9]*)
+      printf "aya: AYA_OPEN_WAIT_SECONDS must be whole seconds, got '%s'\n" "$OPEN_SOCKET_WAIT_SECONDS" >&2
+      exit 1
+      ;;
+  esac
   waited=0
   while [ ! -S "$1" ]; do
     if [ "$waited" -ge "$OPEN_SOCKET_WAIT_SECONDS" ]; then
@@ -235,7 +249,7 @@ open_project() {
   fi
 
   socket=$(socket_path)
-  if [ "$socket" != "$INSTALLED_APP_SOCKET" ]; then
+  if [ "$socket" != "$(normalize_path "$INSTALLED_APP_SOCKET")" ]; then
     wait_for_named_socket "$socket"
   fi
   if [ -S "$socket" ]; then
