@@ -15,8 +15,8 @@ export interface RemoteTimeouts {
   bridgeMs: number;
   sshKillMs: number;
 }
-// The bridge's timer starts only once ssh has connected and node is up, so the
-// local kill waits longer: it is the backstop for an ssh that never gets there.
+// The bridge's timer starts only once ssh has connected and node is up, so the kill
+// waits 10s longer; an ssh setup slower than that is reported as ssh, which it is.
 export const REMOTE_TIMEOUTS: RemoteTimeouts = { bridgeMs: 15_000, sshKillMs: 25_000 };
 // Cap on the base64 bridge child's stdout - bounds the remote snapshot size.
 const REMOTE_BRIDGE_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
