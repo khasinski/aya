@@ -474,6 +474,11 @@ case "$command" in
           exit 1
         fi
         if [ "$file" = "-" ]; then
+          # A terminal on stdin would wait for typing no agent sends.
+          if [ -t 0 ]; then
+            printf "aya: team save - reads the team file from stdin; pipe it in or give a file; nothing was saved\n" >&2
+            exit 1
+          fi
           text=$(cat)
         elif [ -f "$file" ]; then
           text=$(cat -- "$file")

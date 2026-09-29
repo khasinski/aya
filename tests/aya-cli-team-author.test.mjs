@@ -116,3 +116,43 @@ for (const shell of SHELLS) {
     assert.equal(stderr, `aya: ${reply.error}\n`);
   });
 }
+
+// A pseudo-terminal on the CLI's stdin, as an agent's shell tool may give it;
+// 124 when the CLI still waits after 5 s.
+const WITH_TTY_STDIN = `
+import pty, subprocess, sys
+master, slave = pty.openpty()
+try:
+    sys.exit(subprocess.run(sys.argv[1:], stdin=slave, timeout=5).returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+`;
+const hasPython = await new Promise((done) => {
+  const probe = spawn("python3", ["--version"]);
+  probe.on("error", () => done(false));
+  probe.on("close", (status) => done(status === 0));
+});
+
+test("team save - with a terminal on stdin refuses at once instead of waiting for input", { skip: !hasPython && "no python3" }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-team-author-tty-"));
+  try {
+    const { status, stdout, stderr } = await new Promise((done, fail) => {
+      const child = spawn("python3", ["-c", WITH_TTY_STDIN, "/bin/sh", cli, "team", "save", "-"], {
+        cwd: dir,
+        env: { ...envWithoutAya(), AYA_SOCKET: join(dir, "none.sock") },
+      });
+      let out = "";
+      let err = "";
+      child.stdout.on("data", (c) => (out += c));
+      child.stderr.on("data", (c) => (err += c));
+      child.on("error", fail);
+      child.on("close", (code) => done({ status: code, stdout: out, stderr: err }));
+    });
+    assert.equal(status, 1, "exits at once, not after the 5 s wait (124)");
+    assert.equal(stdout, "");
+    assert.equal(stderr, "aya: team save - reads the team file from stdin; pipe it in or give a file; nothing was saved\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
