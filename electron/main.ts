@@ -86,7 +86,7 @@ import {
 } from "./intelligence-chat";
 import type { TeamControlDeps } from "./team-control";
 import { registerTeamIpc } from "./team-ipc";
-import { newPaneId, RendererRequests, teamPaneDeps, type PaneHost } from "./team-panes";
+import { askWindowToOpenPanes, newPaneId, RendererRequests, teamPaneDeps, type PaneHost } from "./team-panes";
 import { presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
@@ -274,9 +274,7 @@ const teamPaneHost: PaneHost = {
   // The window that shows the project adds the tabs; main picked their ids.
   openPanes: (projectSlug, panes) => {
     const windowId = windowSlices.windowOf(projectSlug);
-    const win = windowId === null ? null : BrowserWindow.fromId(windowId);
-    if (!win || win.isDestroyed()) return Promise.reject(new Error(`project ${projectSlug} is not open in an Aya window`));
-    return paneOpens.ask((requestId) => win.webContents.send("teams:open-panes", { requestId, projectSlug, panes }));
+    return askWindowToOpenPanes(windowId === null ? null : BrowserWindow.fromId(windowId), paneOpens, projectSlug, panes);
   },
   newPaneId,
 };

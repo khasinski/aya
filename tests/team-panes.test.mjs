@@ -800,6 +800,31 @@ test("a renderer request settles on its answer, its error, or its deadline", asy
   requests.answer(late[0], null);
 });
 
+test("a window still loading is refused at once, not after the deadline; a missing or closed one too", async () => {
+  const { askWindowToOpenPanes } = await import("../dist-electron/team-panes.js");
+  const requests = new RendererRequests();
+  const sent = [];
+  const win = (loading, destroyed = false) => ({
+    isDestroyed: () => destroyed,
+    webContents: { isLoading: () => loading, send: (channel, request) => void sent.push({ channel, request }) },
+  });
+  const panes = [{ id: "new-1", presetId: "claude", name: "Claude Code - tester" }];
+  const started = Date.now();
+  await assert.rejects(askWindowToOpenPanes(win(true), requests, "game", panes), {
+    message: "the Aya window of project game is still loading; run it again in a moment",
+  });
+  assert.ok(Date.now() - started < 1_000, "no wait for the deadline");
+  await assert.rejects(askWindowToOpenPanes(null, requests, "game", panes), { message: "project game is not open in an Aya window" });
+  await assert.rejects(askWindowToOpenPanes(win(false, true), requests, "game", panes), { message: "project game is not open in an Aya window" });
+  assert.deepEqual(sent, []);
+  const asked = askWindowToOpenPanes(win(false), requests, "game", panes);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].channel, "teams:open-panes");
+  assert.deepEqual({ ...sent[0].request, requestId: "id" }, { requestId: "id", projectSlug: "game", panes });
+  requests.answer(sent[0].request.requestId, null);
+  await asked;
+});
+
 test("the Teams window's select values are main's explicit targets", async () => {
   const view = await import("../dist-test/team-view.js");
   const { NEW_TARGET, PANE_TARGET } = await import("../dist-electron/team-panes.js");

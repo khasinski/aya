@@ -12,7 +12,7 @@ import type { TeamControlDeps } from "./team-control";
 import { loadTeam, projectBySlug, teamNames } from "./team-files";
 import type { TeamRunner } from "./team-runner";
 import { openTeamStore } from "./team-store";
-import type { NewPane, PanePick, PresetChoice, ProjectConfig, RolePane, RolePanes, TeamStartResult } from "./types";
+import type { NewPane, PanePick, PresetChoice, ProjectConfig, RolePane, RolePanes, TeamOpenPanesRequest, TeamStartResult } from "./types";
 
 /** How long a new pane of a running team may take to start before its role
  *  introduction is given up; an agent CLI starts in seconds. */
@@ -434,4 +434,20 @@ export class RendererRequests {
   answer(requestId: string, error: unknown): void {
     this.pending.get(requestId)?.(typeof error === "string" && error ? error : null);
   }
+}
+
+/** The window side of PaneHost.openPanes; Electron's BrowserWindow in main. */
+export interface PaneWindow {
+  isDestroyed(): boolean;
+  webContents: { isLoading(): boolean; send(channel: string, request: TeamOpenPanesRequest): void };
+}
+
+/** Asks the project's window to add the panes. A window still loading (a reload,
+ *  a start) has no listener yet: refused at once rather than after the deadline. */
+export function askWindowToOpenPanes(win: PaneWindow | null, requests: RendererRequests, projectSlug: string, panes: NewPane[]): Promise<void> {
+  if (!win || win.isDestroyed()) return Promise.reject(new Error(`project ${projectSlug} is not open in an Aya window`));
+  if (win.webContents.isLoading()) {
+    return Promise.reject(new Error(`the Aya window of project ${projectSlug} is still loading; run it again in a moment`));
+  }
+  return requests.ask((requestId) => win.webContents.send("teams:open-panes", { requestId, projectSlug, panes }));
 }
