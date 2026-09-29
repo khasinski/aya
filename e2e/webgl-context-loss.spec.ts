@@ -20,6 +20,8 @@ import { test, expect } from "./fixtures";
 // split is disabled - the reporter's setup).
 test.use({ seedOptions: { split: false } });
 
+const SHOW_ATTEMPTS = 3;
+
 /** State of the terminal's WebGL canvas: "healthy" | "lost" | "none". */
 async function webglState(window: import("@playwright/test").Page): Promise<string> {
   return window.evaluate(() => {
@@ -51,9 +53,18 @@ test("WebGL is dropped while hidden and comes back fresh on visibility - nothing
   await window.emulateMedia({ colorScheme: "dark" }); // match the reporter's setup
   // Before reload(): its context teardown lets V8 collect the pending promise of
   // a main-process evaluate ("Resulting promise was garbage collected" on CI).
-  await app.evaluate(({ BrowserWindow }) => {
-    BrowserWindow.getAllWindows()[0]?.show();
-  });
+  // Since Electron 43.5 the same error also hits this evaluate on its own on
+  // Linux CI; show() is idempotent, so retry just that error.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await app.evaluate(({ BrowserWindow }) => {
+        BrowserWindow.getAllWindows()[0]?.show();
+      });
+      break;
+    } catch (err) {
+      if (attempt >= SHOW_ATTEMPTS || !/garbage collected/.test(String(err))) throw err;
+    }
+  }
   // The app force-disables WebGL under automation (navigator.webdriver); mask
   // it so the REAL user's render path runs. Make visibilityState drivable -
   // the harness gets no native occlusion signals.
