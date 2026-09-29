@@ -102,8 +102,10 @@ export const KILL_ESCALATE_MS = 750;
 // between the `ptys.has` check and registering the PTY. Two concurrent spawns
 // for the same id (e.g. a fast unmount+remount) could both pass that check and
 // both spawn, orphaning the first. We mark an id as spawning across the await
-// so a racing call bails instead of starting a second process.
-const spawning = new Set<string>();
+// so a racing call bails instead of starting a second process. A kill that
+// lands meanwhile cancels THAT spawn: the flag lives on its own entry, so no
+// other spawn call can consume it and no timer can expire it.
+const spawning = new Map<string, { cancelled: boolean }>();
 // Waiters for input parked on an in-flight spawn. Buffering is not delivery: a
 // failed spawn discards the queue, so each waiter gets the real outcome.
 const spawnWaiters = new Map<string, ((delivered: boolean) => void)[]>();
@@ -537,7 +539,12 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
   // call bails at the guard above. (The bail itself lives before the attachOnly
   // branch; here we only claim the marker, synchronously before the first await
   // so no racing call can interleave before it is set.)
-  spawning.add(req.ptyId);
+  const flight = { cancelled: false };
+  spawning.set(req.ptyId, flight);
+  const cancelled = (): boolean => {
+    if (flight.cancelled) ptyLog.append("spawn-cancelled", { ptyId: req.ptyId });
+    return flight.cancelled;
+  };
   try {
     if (binary && !(await commandExists(binary))) {
       reportSpawnFailure(
@@ -553,6 +560,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     // re-mounts returned above), so the lookup is never paid for nothing.
     // Through the pane's own shell and env: opencode may only be on the PATH
     // its startup files build.
+    if (cancelled()) return;
     const command = await ownSessionCommand(
       req.command,
       cwd,
@@ -560,11 +568,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       (err) =>
         ptyLog.append("opencode-session-lookup-failed", { ptyId: req.ptyId, error: String(err) }),
     );
-    if (pendingKills.delete(req.ptyId)) {
-      // The tab was closed during the awaits above; killPty found no PTY yet.
-      ptyLog.append("spawn-dropped-pending-kill", { ptyId: req.ptyId });
-      return;
-    }
+    if (cancelled()) return;
     const argv = shellArgv(command, cwd);
     const file = argv[0];
     const args = argv.slice(1);
@@ -820,9 +824,11 @@ export function killPty(ptyId: string): void {
   const p = ptys.get(ptyId);
   ptyLog.append("kill", { ptyId, live: !!p });
   if (!p) {
-    // No PTY for this id yet — either it never existed, or the spawn IPC is
-    // still in flight. Mark it so a late-arriving spawnPty bails out. The
-    // TTL evicts the marker if nothing comes (cleaner than leaking ids).
+    // No PTY for this id yet. A spawn under way is cancelled on its own entry;
+    // one whose IPC has not arrived yet bails on the marker, which a TTL evicts
+    // if nothing comes (cleaner than leaking ids).
+    const flight = spawning.get(ptyId);
+    if (flight) flight.cancelled = true;
     pendingKills.add(ptyId);
     setTimeout(() => pendingKills.delete(ptyId), PENDING_KILL_TTL_MS);
     return;
