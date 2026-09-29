@@ -57,7 +57,9 @@ const AGENT_SPECS: Record<Exclude<Agent, "custom">, AgentSpec> = {
   // were verified against the installed CLIs: `--continue` takes the latest
   // session, `--session <id>` takes a specific one. Note pi's `--resume` opens
   // an interactive picker — same trap as claude's bare `--resume` — so it is
-  // deliberately not used here.
+  // deliberately not used here. opencode's `--continue` spans every git
+  // worktree of the repo, so main swaps it for this cwd's own session
+  // (electron/opencode-session.ts).
   opencode: {
     binary: /^opencode(?:\s|$)/,
     continueLatest: "--continue",
