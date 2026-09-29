@@ -41,6 +41,8 @@ async function aya(args, { shell = "/bin/sh", reply = { ok: true, output: "from 
       child.stderr.on("data", (c) => (stderr += c));
       child.on("error", fail);
       child.on("close", (status) => done({ status, stdout, stderr }));
+      // The CLI may exit (usage error) before reading stdin; that is not a test failure.
+      child.stdin.on("error", () => {});
       child.stdin.end();
     });
     return { ...result, request, dir };
