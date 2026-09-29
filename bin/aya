@@ -3,6 +3,9 @@
 
 set -e
 
+INSTALLED_APP_SOCKET="$HOME/.aya/aya.sock"
+OPEN_SOCKET_WAIT_SECONDS="${AYA_OPEN_WAIT_SECONDS:-15}"
+
 usage() {
   cat >&2 <<'EOF'
 Usage:
@@ -32,7 +35,7 @@ socket_path() {
   elif [ -n "${AYA_HOME:-}" ]; then
     printf '%s\n' "$AYA_HOME/aya.sock"
   else
-    printf '%s\n' "$HOME/.aya/aya.sock"
+    printf '%s\n' "$INSTALLED_APP_SOCKET"
   fi
 }
 
@@ -207,6 +210,21 @@ client.on("error", (err) => {
 NODE
 }
 
+# A named instance (AYA_SOCKET / AYA_HOME) may still be starting; launching the
+# installed app instead would open the project in the wrong Aya.
+wait_for_named_socket() {
+  waited=0
+  while [ ! -S "$1" ]; do
+    if [ "$waited" -ge "$OPEN_SOCKET_WAIT_SECONDS" ]; then
+      printf "aya: no Aya is listening at %s (waited %ss)\n" "$1" "$OPEN_SOCKET_WAIT_SECONDS" >&2
+      printf "aya: start that instance, or unset AYA_SOCKET and AYA_HOME to use the installed Aya.\n" >&2
+      exit 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
 open_project() {
   target="${1:-.}"
   if [ -d "$target" ]; then
@@ -217,6 +235,9 @@ open_project() {
   fi
 
   socket=$(socket_path)
+  if [ "$socket" != "$INSTALLED_APP_SOCKET" ]; then
+    wait_for_named_socket "$socket"
+  fi
   if [ -S "$socket" ]; then
     send_control open "$abs"
     return
