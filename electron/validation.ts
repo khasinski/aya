@@ -8,6 +8,7 @@ import type {
   WorkingTab,
 } from "./types";
 import type { Preset } from "./presets";
+import { SESSION_ID_RE } from "./osc-extractor";
 import type { Snippet } from "./snippets";
 import type { ThemeColors } from "./themes";
 import { isAgentKind, isPreset } from "./presets";
@@ -114,7 +115,6 @@ function optionalFlag(value: unknown, name: string): boolean | undefined {
 // boundary re-checks its shape rather than trusting the renderer: the same
 // charset the OSC parser enforces (electron/osc-extractor.ts), no shell
 // metacharacters, no whitespace.
-const SESSION_ID_RE = /^[A-Za-z0-9_.:/-]{1,200}$/;
 
 function validateWorkingTab(value: unknown, name: string): WorkingTab {
   if (!isRecord(value)) fail(name, "WorkingTab object");
