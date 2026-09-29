@@ -47,9 +47,12 @@ function sandbox(platform) {
   };
 }
 
+/** Past the default 15 s wait, so a loop that never ends fails the test. */
+const RUN_DEADLINE_MS = 20_000;
+
 function runOpen(shell, project, env) {
   return new Promise((done, fail) => {
-    const child = spawn(shell, [cli, "open", project], { env });
+    const child = spawn(shell, [cli, "open", project], { env, timeout: RUN_DEADLINE_MS });
     let stderr = "";
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk) => (stderr += chunk));
@@ -115,12 +118,36 @@ for (const shell of shells) {
     }
   });
 
-  test(`${shell}: a named socket that appears within the default wait gets the open request`, async () => {
+  for (const wait of ["1.5", "30s", "-1", " 2"]) {
+    test(`${shell}: AYA_OPEN_WAIT_SECONDS=${JSON.stringify(wait)} is refused at once, launching nothing`, async () => {
+      const box = sandbox("Linux");
+      try {
+        const started = Date.now();
+        const { status, stderr } = await runOpen(shell, box.project, {
+          ...box.env,
+          AYA_SOCKET: join(box.root, "dev.sock"),
+          AYA_OPEN_WAIT_SECONDS: wait,
+        });
+        assert.equal(status, 1);
+        assert.ok(Date.now() - started < 900, "waited before refusing");
+        assert.ok(stderr.includes(`AYA_OPEN_WAIT_SECONDS must be whole seconds, got '${wait}'`), stderr);
+        assert.equal(await box.launched(), "");
+      } finally {
+        box.cleanup();
+      }
+    });
+  }
+
+  for (const [label, named] of [
+    ["AYA_SOCKET", (root) => ({ AYA_SOCKET: join(root, "dev", "aya.sock") })],
+    ["AYA_HOME", (root) => ({ AYA_HOME: join(root, "dev") })],
+  ]) test(`${shell}: a named ${label} socket that appears within the default wait gets the open request`, async () => {
     const box = sandbox("Linux");
-    const socket = join(box.root, "dev.sock");
+    mkdirSync(join(box.root, "dev"));
+    const socket = join(box.root, "dev", "aya.sock");
     let server;
     try {
-      const run = runOpen(shell, box.project, { ...box.env, AYA_SOCKET: socket });
+      const run = runOpen(shell, box.project, { ...box.env, ...named(box.root) });
       await delay(2500);
       const listening = await listen(socket);
       server = listening.server;
@@ -138,16 +165,20 @@ for (const shell of shells) {
   });
 
   for (const [label, named] of [
-    ["nothing named", {}],
-    ["AYA_SOCKET naming the installed app's socket", { AYA_SOCKET: ".aya/aya.sock" }],
-    ["AYA_HOME naming the installed app's home", { AYA_HOME: ".aya" }],
+    ["nothing named", () => ({})],
+    ["AYA_SOCKET naming the installed app's socket", (home) => ({ AYA_SOCKET: `${home}/.aya/aya.sock` })],
+    ["AYA_SOCKET spelled with a literal ~/", () => ({ AYA_SOCKET: "~/.aya/aya.sock" })],
+    ["AYA_SOCKET spelled with doubled slashes", (home) => ({ AYA_SOCKET: `${home}//.aya///aya.sock` })],
+    ["AYA_HOME naming the installed app's home", (home) => ({ AYA_HOME: `${home}/.aya` })],
+    ["AYA_HOME with a trailing slash", (home) => ({ AYA_HOME: `${home}/.aya/` })],
+    ["AYA_HOME spelled with a literal ~/", () => ({ AYA_HOME: "~/.aya" })],
   ]) {
-    test(`${shell}: ${label} still launches the installed app`, async () => {
+    test(`${shell}: ${label} still launches the installed app at once`, async () => {
       const box = sandbox("Linux");
       try {
-        const env = { ...box.env };
-        for (const [key, value] of Object.entries(named)) env[key] = join(box.home, value);
-        const { status, stderr } = await runOpen(shell, box.project, env);
+        const started = Date.now();
+        const { status, stderr } = await runOpen(shell, box.project, { ...box.env, ...named(box.home) });
+        assert.ok(Date.now() - started < 900, "waited for the installed app's socket");
         assert.equal(status, 0, stderr);
         assert.match(await box.launched(), /^aya-app \/.*project\n$/);
       } finally {
