@@ -27,7 +27,7 @@ const BRIEF_BODY = [
   "notify the user, and read or type into the other panes of the project.",
   "Run `aya capabilities` for the full command list (JSON) before using it.",
   "In an Aya team, `aya team whoami` tells you your role; run it after /clear or /resume.",
-  'When the user asks for a team of agents, run `aya team new "<what the team is for>"` and follow it.',
+  'Teams: `aya team new "<what for>"` defines one, `aya team open` gives its roles panes, `aya team start <team> "<task>"` starts it; open and start only on the user\'s word.',
 ];
 
 /** Given to a pane with a team role at every start, opted in or not. */
