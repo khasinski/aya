@@ -16,13 +16,13 @@ process.env.CODEX_HOME = codexHome;
 const { searchHarnessSessions } = await import("../dist-electron/harness-search.js");
 const { codexUsageSources } = await import("../dist-electron/usage-codex.js");
 
-function writeSession(home, text) {
+function writeSession(home, text, cwd = "/p") {
   const day = join(home, "sessions", "2026", "07", "01");
   mkdirSync(day, { recursive: true });
   writeFileSync(
     join(day, "rollout-2026-07-01T10-00-00-abc.jsonl"),
     [
-      JSON.stringify({ type: "session_meta", payload: { id: "abc", cwd: "/p" } }),
+      JSON.stringify({ type: "session_meta", payload: { id: "abc", cwd } }),
       JSON.stringify({
         type: "response_item",
         payload: { type: "message", role: "assistant", content: [{ type: "output_text", text }] },
@@ -32,6 +32,9 @@ function writeSession(home, text) {
 }
 
 writeSession(codexHome, "found under codex home");
+const tabCwd = mkdtempSync(join(tmpdir(), "aya-tab-"));
+const ayaCwd = mkdtempSync(join(tmpdir(), "aya-own-cwd-"));
+process.chdir(ayaCwd);
 writeSession(join(fakeHome, ".codex"), "found under stock home");
 
 test("history search without a configDir reads CODEX_HOME", async () => {
@@ -61,5 +64,34 @@ test("usage sources: CODEX_HOME without presets and for a stock preset", () => {
       { id: "a", label: "A", home: codexHome },
       { id: "b", label: "B", home: join(fakeHome, ".codex-b") },
     ],
+  );
+});
+
+test("history search resolves a relative configDir against the tab cwd", async () => {
+  writeSession(join(tabCwd, ".rel"), "relative under tab", tabCwd);
+  writeSession(join(ayaCwd, ".rel"), "relative under aya", tabCwd);
+  const hits = await searchHarnessSessions({
+    agent: "codex",
+    cwd: tabCwd,
+    configDir: ".rel",
+    query: "relative under",
+  });
+  assert.deepEqual(hits.map((h) => h.snippet.includes("under tab")), [true]);
+});
+
+test("usage skips a relative CODEX_HOME: no tab cwd to resolve it against", () => {
+  assert.deepEqual(
+    codexUsageSources([
+      { id: "r", name: "R", agent: "codex", command: "CODEX_HOME=.codex codex" },
+      { id: "a", name: "A", agent: "codex", command: "codex" },
+    ]),
+    [{ id: "a", label: "A", home: codexHome }],
+  );
+});
+
+test("history search with a relative configDir and no tab cwd finds nothing", async () => {
+  assert.deepEqual(
+    await searchHarnessSessions({ agent: "codex", cwd: "", configDir: ".rel", query: "relative under" }),
+    [],
   );
 });

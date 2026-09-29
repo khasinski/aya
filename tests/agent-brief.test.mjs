@@ -191,6 +191,29 @@ test("codex home: the stock ~/.codex configDir defers to the command, then CODEX
   );
 });
 
+test("codex home: a relative dir resolves against the tab cwd, never Aya's", () => {
+  const envHome = "/env/codex-home";
+  const inline = { command: "CODEX_HOME=.codex codex" };
+  assert.equal(codexHomeFor(inline, envHome, expand, "/project"), "/project/.codex");
+  assert.equal(codexHomeFor(inline, envHome, expand), undefined);
+  assert.equal(codexHomeFor({ configDir: "../h", command: "codex" }, envHome, expand, "/project/a"), "/project/h");
+  assert.equal(codexHomeFor({ configDir: ".codex", command: "codex" }, envHome, expand), undefined);
+  assert.equal(codexHomeFor({ configDir: "/abs/h", command: "codex" }, envHome, expand), "/abs/h");
+  assert.equal(codexHomeFor({ configDir: "~/.codex-w", command: "codex" }, envHome, expand, "/project"), "/Users/dev/.codex-w");
+  assert.equal(codexHomeFor({ configDir: "/Users/dev/.codex", command: "codex" }, envHome, expand), envHome);
+  assert.equal(codexHomeFor({ command: "codex" }, envHome, expand, "/project"), envHome);
+  assert.equal(codexAgentsFile(inline, envHome, expand, "/project"), "/project/.codex/AGENTS.md");
+  assert.equal(codexAgentsFile(inline, envHome, expand), undefined);
+});
+
+test("codex home: a relative .codex is not the stock home even when Aya runs from ~", () => {
+  const expandFromHome = (p) => (/^[~/$]/.test(p) ? expand(p) : `/Users/dev/${p}`);
+  assert.equal(
+    codexHomeFor({ configDir: ".codex", command: "codex" }, "/env/codex-home", expandFromHome, "/project"),
+    "/project/.codex",
+  );
+});
+
 test("a shared codex home keeps the section while any preset opts in", () => {
   assert.deepEqual(
     planCodexBriefs([

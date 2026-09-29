@@ -854,10 +854,10 @@ async function installCli(): Promise<CliStatus> {
 async function codexBriefTargets() {
   return (await listPresets())
     .filter((preset) => preset.agent === "codex")
-    .map((preset) => ({
-      file: codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath),
-      agentBrief: preset.agentBrief === true,
-    }));
+    .flatMap((preset) => {
+      const file = codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath);
+      return file ? [{ file, agentBrief: preset.agentBrief === true }] : [];
+    });
 }
 
 /** Rewrite `file` only when `change` alters it. `null` content = no file.
@@ -990,7 +990,8 @@ async function withAgentBrief(spawn: SpawnRequest): Promise<SpawnRequest> {
   }
   if (channel.kind === "file") {
     // Re-assert on launch: the user may have edited the file since the save.
-    const file = codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath);
+    const file = codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath, spawn.cwd);
+    if (!file) return spawn;
     await rewriteIfChanged(file, (c) => withBriefSection(c, briefText(true)))
       .then(() => updateBriefRegistry([file], []))
       .catch((err) => console.warn(`[aya] could not add the aya brief to ${file}:`, err));

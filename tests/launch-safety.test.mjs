@@ -119,18 +119,18 @@ test("shellArgv keeps quoted env assignment values intact", () => {
 
 test("agent config dirs are extracted from leading env assignments", () => {
   assert.deepEqual(
-    agentConfigDirsFromCommand('CODEX_HOME="$HOME/.codex3" codex'),
+    agentConfigDirsFromCommand('CODEX_HOME="$HOME/.codex3" codex', "/"),
     [`${os.homedir()}/.codex3`],
   );
   assert.deepEqual(
-    agentConfigDirsFromCommand("CLAUDE_CONFIG_DIR=~/.claude-secondary claude"),
+    agentConfigDirsFromCommand("CLAUDE_CONFIG_DIR=~/.claude-secondary claude", "/"),
     [`${os.homedir()}/.claude-secondary`],
   );
 });
 
 test("agentConfigDirsFromCommand can pick claude's dir alone, in assignment order", () => {
   assert.deepEqual(
-    agentConfigDirsFromCommand("CODEX_HOME=/tmp/codex CLAUDE_CONFIG_DIR=/tmp/a CLAUDE_CONFIG_DIR=/tmp/b claude", [
+    agentConfigDirsFromCommand("CODEX_HOME=/tmp/codex CLAUDE_CONFIG_DIR=/tmp/a CLAUDE_CONFIG_DIR=/tmp/b claude", "/", [
       "CLAUDE_CONFIG_DIR",
     ]),
     ["/tmp/a", "/tmp/b"],
@@ -151,6 +151,15 @@ test("both CODEX_HOME parsers agree on leading assignments, differ past them", (
   ];
   for (const [command, brief, dirs] of cases) {
     assert.equal(inlineCodexHome(command), brief, command);
-    assert.deepEqual(agentConfigDirsFromCommand(command), dirs, command);
+    assert.deepEqual(agentConfigDirsFromCommand(command, "/"), dirs, command);
   }
+});
+
+test("a relative agent config dir is created under the pane's cwd, not Aya's", () => {
+  assert.deepEqual(agentConfigDirsFromCommand("CODEX_HOME=.codex codex", "/project"), ["/project/.codex"]);
+  assert.deepEqual(
+    agentConfigDirsFromCommand('CLAUDE_CONFIG_DIR="../c" claude', "/project/a"),
+    ["/project/c"],
+  );
+  assert.deepEqual(agentConfigDirsFromCommand("CODEX_HOME=/abs/h codex", "/project"), ["/abs/h"]);
 });

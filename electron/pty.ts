@@ -356,10 +356,11 @@ function unquoteEnvValue(value: string): string {
   return value.replace(/\\(.)/g, "$1");
 }
 
-function expandConfigDir(value: string): string {
+function expandConfigDir(value: string, cwd: string): string {
   const home = os.homedir();
   const unquoted = unquoteEnvValue(value.trim());
   return path.resolve(
+    cwd,
     unquoted
       .replace(/^~(?=\/|$)/, home)
       .replace(/^\$HOME(?=\/|$)/, home)
@@ -367,8 +368,11 @@ function expandConfigDir(value: string): string {
   );
 }
 
+/** Config dirs a command sets in leading assignments (only `keys`, in order);
+ *  relative ones resolve against `cwd`. */
 export function agentConfigDirsFromCommand(
   command: string,
+  cwd: string,
   keys: readonly string[] = ["CODEX_HOME", "CLAUDE_CONFIG_DIR"],
 ): string[] {
   const dirs: string[] = [];
@@ -382,7 +386,7 @@ export function agentConfigDirsFromCommand(
     if (!match) break;
     const key = match[1];
     if (keys.includes(key)) {
-      const dir = expandConfigDir(match[2]);
+      const dir = expandConfigDir(match[2], cwd);
       if (dir) dirs.push(dir);
     }
     pos = tokenEnd;
@@ -575,7 +579,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     return;
   }
 
-  for (const dir of agentConfigDirsFromCommand(req.command)) {
+  for (const dir of agentConfigDirsFromCommand(req.command, cwd)) {
     try {
       fs.mkdirSync(dir, { recursive: true });
     } catch (err) {
@@ -730,7 +734,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       req.agent === "claude"
         ? watchClaudeSession(
             // The shell keeps the last assignment.
-            req.agentConfigDir ?? agentConfigDirsFromCommand(req.command, ["CLAUDE_CONFIG_DIR"]).at(-1),
+            req.agentConfigDir ?? agentConfigDirsFromCommand(req.command, cwd, ["CLAUDE_CONFIG_DIR"]).at(-1),
             child.pid,
             (sessionId) => sink.sendPtyEvent({ type: "osc-session", ptyId: req.ptyId, sessionId }),
           )

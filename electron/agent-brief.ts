@@ -133,28 +133,33 @@ export function inlineCodexHome(command: string): string | undefined {
     .replace(/^\$(?:HOME|\{HOME\})(?=\/|$)/, "~");
 }
 
-/** The home a codex preset runs in: its configDir unless that is the stock
- *  ~/.codex, else a CODEX_HOME inline in its command, else `defaultHome`. */
+const isRelativeDir = (dir: string) => !path.isAbsolute(dir) && !/^(?:~|\$HOME)(?:\/|$)/.test(dir);
+
+/** The home a codex preset runs in: its configDir unless that is the stock ~/.codex,
+ *  else an inline CODEX_HOME, else `defaultHome`; undefined for a relative dir without `cwd`. */
 export function codexHomeFor(
   preset: { configDir?: string; command?: string },
   defaultHome: string,
   expand: (p: string) => string,
-): string {
+  cwd?: string,
+): string | undefined {
   const configDir = preset.configDir?.trim();
-  const dir =
-    configDir && expand(configDir) !== expand("~/.codex")
-      ? configDir
-      : inlineCodexHome(preset.command ?? "");
-  return dir ? expand(dir) : defaultHome;
+  const stock = configDir && !isRelativeDir(configDir) && expand(configDir) === expand("~/.codex");
+  const dir = configDir && !stock ? configDir : inlineCodexHome(preset.command ?? "");
+  if (!dir) return defaultHome;
+  if (!isRelativeDir(dir)) return expand(dir);
+  return cwd ? path.resolve(cwd, dir) : undefined;
 }
 
-/** Which AGENTS.md a codex preset reads. */
+/** Which AGENTS.md a codex preset reads; undefined when its home is unknown. */
 export function codexAgentsFile(
   preset: { configDir?: string; command: string },
   defaultHome: string,
   expand: (p: string) => string,
-): string {
-  return path.join(codexHomeFor(preset, defaultHome, expand), "AGENTS.md");
+  cwd?: string,
+): string | undefined {
+  const home = codexHomeFor(preset, defaultHome, expand, cwd);
+  return home && path.join(home, "AGENTS.md");
 }
 
 export interface CodexBriefPlan {

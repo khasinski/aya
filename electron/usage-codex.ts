@@ -31,17 +31,17 @@ export interface CodexUsageSource {
   home: string;
 }
 
-/** One usage source per codex preset, else the default home alone. */
+/** One usage source per codex preset, else the default home alone. Usage has
+ *  no tab cwd, so a preset with a relative home is skipped rather than guessed. */
 export function codexUsageSources(
   presets: { id: string; name: string; agent?: string; configDir?: string; command: string }[],
 ): CodexUsageSource[] {
   const codex = presets.filter((p) => p.agent === "codex");
   if (codex.length === 0) return [{ id: "codex", label: "Codex", home: DEFAULT_CODEX_HOME }];
-  return codex.map((p) => ({
-    id: p.id,
-    label: p.name,
-    home: codexHomeFor(p, DEFAULT_CODEX_HOME, expandUserPath),
-  }));
+  return codex.flatMap((p) => {
+    const home = codexHomeFor(p, DEFAULT_CODEX_HOME, expandUserPath);
+    return home ? [{ id: p.id, label: p.name, home }] : [];
+  });
 }
 
 function isoFromUnixSeconds(sec: unknown): string | undefined {

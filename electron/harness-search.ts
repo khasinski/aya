@@ -249,7 +249,8 @@ async function codexSessionFiles(
   cwd: string,
   configDir: string | undefined,
 ): Promise<SessionFile[]> {
-  const home = codexHomeFor({ configDir }, DEFAULT_CODEX_HOME, expandUserPath);
+  const home = codexHomeFor({ configDir }, DEFAULT_CODEX_HOME, expandUserPath, cwd);
+  if (!home) return [];
   const root = path.join(home, "sessions");
   const all: { file: string; mtimeMs: number; size: number }[] = [];
   async function walk(dir: string): Promise<void> {
