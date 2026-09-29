@@ -6,8 +6,6 @@ import type { RolePanes, TeamMessage, TeamStartResult, TeamSummary } from "./typ
 export const AYA_SENDER = "aya";
 // The sender of a task given with Start; electron/teams.ts TEAM_USER_SENDER.
 export const USER_SENDER = "user";
-// How many of the latest logged messages a team card shows.
-export const TEAM_LOG_VISIBLE = 8;
 
 export interface PaneRole {
   team: string;
@@ -52,6 +50,22 @@ export function startSummary(result: TeamStartResult): string | null {
   if (!result.held.length) return task ? `Started; task sent to ${task.to}.` : null;
   const given = task ? (task.held ? ` The task for ${task.to} waits in its inbox: ${task.held}.` : ` Task sent to ${task.to}.`) : "";
   return `Started; the roles marked below did not get the delivery test.${given}`;
+}
+
+// The terminal host's hold for a pane with no process (electron/pane-holds.ts).
+export const HOLD_NOT_RUNNING = "is not running (exited, or its tab was not opened yet)";
+
+/** What the role's row says about its pane. */
+export function roleStatus(
+  team: Pick<TeamSummary, "assignments" | "paneHolds">,
+  role: string,
+  tabs: { id: string }[],
+): { text: string; tone: "ok" | "held" | "none" } {
+  const pane = team.assignments[role];
+  if (!pane || !tabs.some((t) => t.id === pane)) return { text: "no pane", tone: "none" };
+  const hold = team.paneHolds[role] ?? null;
+  if (hold === null) return { text: "ready", tone: "ok" };
+  return { text: hold === HOLD_NOT_RUNNING ? "not running" : hold, tone: "held" };
 }
 
 /** Select values are aya team open targets: a new session of a preset, or a pane. */

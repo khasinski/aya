@@ -1,14 +1,14 @@
 import { useState } from "react";
 import type { PresetChoice, ProjectConfig, TeamDefinition, TeamSummary } from "../types";
+import { TeamChat } from "./TeamChat";
 import {
-  messageDeliveryText,
   NEW_PANE_PREFIX,
   PANE_PREFIX,
   paneOptionLabel,
   pendingMoves,
   rolePanesSummary,
+  roleStatus,
   startSummary,
-  TEAM_LOG_VISIBLE,
   type PaneRole,
 } from "../team-view";
 import { ErrorLine, useAsyncAction } from "./use-async-action";
@@ -18,6 +18,7 @@ export function TeamCard({
   team,
   project,
   installed,
+  presetNames,
   plays,
   onEdit,
   onChanged,
@@ -26,6 +27,8 @@ export function TeamCard({
   project: ProjectConfig;
   /** Presets whose CLI is installed: a role can get a new session of one. */
   installed: PresetChoice[];
+  /** Every preset's name by id, to name the pane playing a role. */
+  presetNames: Record<string, string>;
   /** The role each pane of the project plays, in any team. */
   plays: Record<string, PaneRole>;
   onEdit: (definition: TeamDefinition) => void;
@@ -56,6 +59,10 @@ export function TeamCard({
   const changes = Object.fromEntries(Object.entries(picks).filter(([role, value]) => value !== current(role)));
   const tabName = (id: string) => project.tabs.find((t) => t.id === id)?.name ?? id;
   const moves = pendingMoves(team.name, changes, plays, tabName);
+  const paneName = (role: string) => {
+    const tab = project.tabs.find((t) => t.id === team.assignments[role]);
+    return tab ? (presetNames[tab.presetId] ?? tab.name) : null;
+  };
   const apply = async () => {
     const applied = changes;
     const result = await act(async () => {
@@ -144,87 +151,77 @@ export function TeamCard({
         </div>
       )}
       {definition && (
-        <table className="aya-teams-roles">
-          <tbody>
-            {definition.roles.map((role) => (
-              <tr key={role.id}>
-                <td>
-                  <strong>{role.id}</strong>
-                  <div className="aya-teams-muted">must not {role.mustNot}</div>
+        <div className="aya-teams-roles">
+          {definition.roles.map((role) => {
+            const status = roleStatus(team, role.id, project.tabs);
+            return (
+              <div key={role.id} className="aya-teams-role-row">
+                <div>
+                  <div className="aya-teams-role-name">
+                    <strong>{role.id}</strong>
+                    <span className={`aya-teams-status aya-teams-status--${status.tone}`} aria-label={`${role.id} status`}>
+                      {status.text}
+                    </span>
+                  </div>
+                  <div className="aya-teams-mustnot">
+                    <span className="aya-teams-label">Must not</span> {role.mustNot}
+                  </div>
                   {notReached[role.id] && (
                     <div className="aya-teams-role-alert" role="status" aria-label={`${role.id} not reached`}>
                       ⚠ Not reached: {notReached[role.id]}
                     </div>
                   )}
-                </td>
-                <td className="aya-teams-muted">
+                </div>
+                <div className="aya-teams-routes">
                   {role.sendsTo.map((r) => (
                     <div key={r.to}>
-                      → {r.to}
+                      <span className="aya-teams-route-to">→ {r.to}</span>
                       {r.what ? `: ${r.what}` : ""}
                     </div>
                   ))}
-                </td>
-                <td>
-                  <select
-                    aria-label={`Pane for ${role.id}`}
-                    value={picks[role.id] ?? current(role.id)}
-                    disabled={team.unsaved}
-                    onChange={(e) => setPicks((prev) => ({ ...prev, [role.id]: e.target.value }))}
-                  >
-                    <option value="">No pane</option>
-                    {project.tabs.map((tab) => (
-                      <option key={tab.id} value={tab.id}>
-                        {paneOptionLabel(tab.name, plays[tab.id], team.name, role.id)}
-                      </option>
-                    ))}
-                    {installed.length > 0 && (
-                      <optgroup label="New session">
-                        {installed.map((p) => (
-                          <option key={p.id} value={`${NEW_PANE_PREFIX}${p.id}`}>
-                            New: {p.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                  </select>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </div>
+                <select
+                  className="aya-modal-input aya-teams-pane"
+                  aria-label={`Pane for ${role.id}`}
+                  value={picks[role.id] ?? current(role.id)}
+                  disabled={team.unsaved}
+                  onChange={(e) => setPicks((prev) => ({ ...prev, [role.id]: e.target.value }))}
+                >
+                  <option value="">No pane</option>
+                  {project.tabs.map((tab) => (
+                    <option key={tab.id} value={tab.id}>
+                      {paneOptionLabel(tab.name, plays[tab.id], team.name, role.id)}
+                    </option>
+                  ))}
+                  {installed.length > 0 && (
+                    <optgroup label="New session">
+                      {installed.map((p) => (
+                        <option key={p.id} value={`${NEW_PANE_PREFIX}${p.id}`}>
+                          New: {p.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
+            );
+          })}
+        </div>
       )}
-      {definition && !team.unsaved && (
+      {Object.keys(changes).length > 0 && (
         <div className="aya-teams-apply">
           {moves.map((move) => (
             <div key={move} className="aya-teams-warning">
               {move}
             </div>
           ))}
-          <button className="aya-modal-btn" disabled={busy || Object.keys(changes).length === 0} onClick={apply}>
+          <button className="aya-modal-btn aya-modal-btn--primary" disabled={busy} onClick={apply}>
             Apply panes
           </button>
           <span className="aya-teams-muted">A role takes an open pane or a new session of a preset; no pane is closed.</span>
         </div>
       )}
-      {team.log.length > 0 && (
-        <div className="aya-teams-log" aria-label={`${team.name} messages`}>
-          {team.log
-            .slice(-TEAM_LOG_VISIBLE)
-            .reverse()
-            .map((m) => (
-              <div key={m.id} className="aya-teams-log-row">
-                <span className="aya-teams-muted">
-                  {new Date(m.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {m.from} → {m.to}
-                  {m.commit ? ` · ${m.commit}` : ""} ·{" "}
-                  {messageDeliveryText(m)}
-                </span>
-                <span>{m.text}</span>
-              </div>
-            ))}
-          <div className="aya-teams-muted">"written" means it reached the pane, not that it was read.</div>
-        </div>
-      )}
+      {team.log.length > 0 && <TeamChat team={team.name} log={team.log} pane={paneName} />}
       {definition && Object.keys(team.assignments).length === 0 && (
         <div className="aya-modal-hint">Give each role a pane, then Start.</div>
       )}

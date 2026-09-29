@@ -1113,6 +1113,8 @@ export interface TeamSummary {
   /** Saved by an agent from a pane: the agent proposes its panes, no prompt needed. */
   agentAuthored: boolean;
   assignments: Record<string, string>;
+  /** Per role with a pane in the project: why a message would wait now, null when it would not. */
+  paneHolds: Record<string, string | null>;
   /** Messages per role that are waiting in its inbox. */
   unread: Record<string, number>;
   log: TeamMessage[];

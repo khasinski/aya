@@ -116,3 +116,16 @@ test("a team an agent saved from a pane is not offered: the agent proposes its p
   const agents = { ...team("agents", {}, {}), agentAuthored: true };
   assert.deepEqual(unassignedTeams([team("new", {}, {}), agents]).map((t) => t.name), ["new"]);
 });
+
+test("a role's status: no pane, ready, or why its pane would not take a message", async () => {
+  const { roleStatus } = await import("../dist-test/team-view.js");
+  const tabs = [{ id: "p1" }, { id: "p2" }, { id: "p3" }];
+  const team = { assignments: { a: "p1", b: "p2", c: "p3", gone: "p9" }, paneHolds: { a: null, b: "shows an approval prompt", c: "is not running (exited, or its tab was not opened yet)" } };
+  const status = (role) => roleStatus(team, role, tabs);
+  assert.deepEqual(status("a"), { text: "ready", tone: "ok" });
+  assert.deepEqual(status("b"), { text: "shows an approval prompt", tone: "held" });
+  assert.deepEqual(status("c"), { text: "not running", tone: "held" });
+  assert.deepEqual(status("gone"), { text: "no pane", tone: "none" });
+  assert.deepEqual(status("none"), { text: "no pane", tone: "none" });
+  assert.deepEqual(roleStatus({ assignments: { a: "p1" }, paneHolds: {} }, "a", tabs), { text: "ready", tone: "ok" });
+});

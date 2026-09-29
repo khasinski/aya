@@ -342,3 +342,24 @@ test("a save queued behind a refused create still runs", async () => {
     t.cleanup();
   }
 });
+
+test("listTeams reports each assigned pane's hold when asked, and none otherwise", async () => {
+  const { listTeams: list } = await import("../dist-electron/team-admin.js");
+  const { teamProject } = await import("./helpers/team.mjs");
+  const t = teamProject("aya-holds-", { teamFile: "# ux-review\n## Role: a\nMust not: x\n## Role: b\nMust not: y\n", tabs: [{ id: "p1" }, { id: "p2" }] });
+  try {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = join(t.teamHome, "teams", "game", "ux-review");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "assignments.json"), JSON.stringify({ a: "p1", b: "p9" }));
+    const asked = [];
+    const [team] = await list(t.teamHome, t.project, async (pane) => (asked.push(pane), pane === "p1" ? "runs a shell" : null));
+    assert.deepEqual(team.paneHolds, { a: "runs a shell" });
+    assert.deepEqual(asked, ["p1"], "a pane whose tab is gone is not asked");
+    const [plain] = await list(t.teamHome, t.project);
+    assert.deepEqual(plain.paneHolds, {});
+  } finally {
+    t.cleanup();
+  }
+});

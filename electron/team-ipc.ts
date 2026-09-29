@@ -50,7 +50,7 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
   const teamProject = async (slug: unknown, channel: string): Promise<ProjectConfig> =>
     projectBySlug(await teamDeps.listProjects(), requireString(slug, `${channel}.projectSlug`));
   ipcMain.handle("teams:list", async (_e, slug: unknown) =>
-    listTeams(teamHome, await teamProject(slug, "teams:list")),
+    listTeams(teamHome, await teamProject(slug, "teams:list"), teamDeps.holdReason),
   );
   ipcMain.handle("teams:save", async (_e, slug: unknown, team: unknown, create: unknown) => {
     const project = await teamProject(slug, "teams:save");

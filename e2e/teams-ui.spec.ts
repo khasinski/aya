@@ -83,7 +83,7 @@ test("assign panes, Start sends the delivery test, Pause marks the team, Resume 
   await expect(card.getByRole("button", { name: "Pause", exact: true })).toHaveCount(0);
   await card.getByRole("button", { name: "Start", exact: true }).click();
   await expect.poll(() => log("tab-left"), { timeout: TEAM_DELIVERY_TIMEOUT_MS }).toMatch(/Delivery test/);
-  await expect(card.getByLabel("ux-review messages")).toContainText("aya → implementer");
+  await expect(card.getByLabel("ux-review messages")).toContainText("Delivery test: 0/2 answered");
   const before = log("tab-right").match(/Delivery test/g)?.length ?? 0;
   await card.getByLabel("Pane for implementer").selectOption({ label: "No pane" });
   await apply();

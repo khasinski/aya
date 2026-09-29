@@ -180,7 +180,7 @@ test.describe("a team saved with no panes", () => {
     const assigned = readAssignments(seeded.ayaHome);
     expect(assigned.tester).not.toBe(assigned.implementer);
     await expect(tester.locator("option:checked")).toHaveText("Claude Code - tester");
-    await expect(dialog.getByRole("button", { name: "Apply panes" })).toBeDisabled();
+    await expect(dialog.getByRole("button", { name: "Apply panes" })).toHaveCount(0);
     await expect.poll(() => started(seeded.projectDir, assigned.implementer), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toBe(true);
     await expect.poll(() => started(seeded.projectDir, assigned.tester), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toBe(true);
     await expect(window.locator(".aya-sidebar-row")).toHaveCount(4);
