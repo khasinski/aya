@@ -29,11 +29,16 @@ test("a delivery-test exchange collapses to one line with who answered", () => {
   const cases = [
     ["every role answered", [...test3(), m("dev", "ux", "ok"), m("ux", "dev", "ok"), m("qa", "dev", "ok")], ["tests 3/3"]],
     ["one did not", [...test3(), m("dev", "ux", "ok"), m("qa", "dev", "ok")], ["tests 2/3"]],
-    ["a real message ends the exchange", [...test3(), m("dev", "ux", "ok"), m("ux", "dev", "the timer is broken"), m("qa", "dev", "ok")], ["tests 1/3", "peer the timer is broken", "peer ok"]],
+    ["a message in between does not end the exchange; a role that wrote something else is no longer waited for", [...test3(), m("dev", "ux", "ok"), m("ux", "dev", "the timer is broken"), m("qa", "dev", "ok"), m("ux", "dev", "ok")], ["tests 2/3", "peer the timer is broken", "peer ok"]],
+    [
+      "Start with a task: the task is logged before the answers (Aya Dev log ids 7-13)",
+      [m("aya", "developer", "Delivery test: a"), m("aya", "ux-reviewer", "Delivery test: b"), m("aya", "tester", "Delivery test: c"), m("user", "developer", "make it pausable"), m("developer", "ux-reviewer", "ok"), m("ux-reviewer", "developer", "ok"), m("tester", "developer", "ok")],
+      ["tests 3/3", "system make it pausable"],
+    ],
     ["a longer reply is a real message", [...test3(), m("dev", "ux", "ok, starting on it")], ["tests 0/3", "peer ok, starting on it"]],
     ["a role answers once", [...test3(), m("dev", "ux", "ok"), m("dev", "ux", "ok")], ["tests 1/3", "peer ok"]],
     ["a role not tested is not an answer", [m("aya", "dev", "Delivery test: x"), m("ux", "dev", "ok")], ["tests 0/1", "peer ok"]],
-    ["two Starts are two lines", [...test3(), m("dev", "ux", "ok"), m("dev", "ux", "fixed"), ...test3()], ["tests 1/3", "peer fixed", "tests 0/3"]],
+    ["two Starts are two lines, and an answer joins the latest", [...test3(), m("dev", "ux", "ok"), m("dev", "ux", "fixed"), ...test3(), m("ux", "dev", "ok")], ["tests 1/3", "peer fixed", "tests 1/3"]],
   ];
   for (const [name, log, expected] of cases) assert.deepEqual(kinds(teamChat(log)), expected, name);
   const [group] = teamChat([...test3(), m("dev", "ux", "ok")]);

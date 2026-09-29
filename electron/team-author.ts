@@ -17,6 +17,7 @@ import {
   SECTION_MARKER,
   SENDS_TO_FIELD,
   TEAM_SYSTEM_SENDER,
+  TEAM_USER_SENDER,
   parseTeamFile,
   teamTitle,
 } from "./teams";
@@ -72,7 +73,7 @@ The team file
     ${SENDS_TO_FIELD}: <role> (<what>), <role> (<what>)
     ${MUST_NOT_FIELD}: <one line>
     <responsibilities: free text, one or more lines>
-- A role id follows the same rules as the name and is unique in the team. "${TEAM_SYSTEM_SENDER}" is reserved for Aya's own messages.
+- A role id follows the same rules as the name and is unique in the team. "${TEAM_SYSTEM_SENDER}" and "${TEAM_USER_SENDER}" are reserved for Aya's and the user's own messages.
 - "${MUST_NOT_FIELD}:" is required, on one line.
 - "${SENDS_TO_FIELD}:" is one line of roles defined in this file, never the role itself, each once, each with what it gets from this role in parentheses (no parentheses inside). Leave the line out for a role that sends nothing.
 - Every other line of a role is its responsibilities; none may start with "${SENDS_TO_FIELD}:", "${MUST_NOT_FIELD}:" or "${SECTION_MARKER}".

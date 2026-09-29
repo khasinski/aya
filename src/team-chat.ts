@@ -17,27 +17,33 @@ export const abnormal = (m: Pick<TeamMessage, "delivered" | "held">): boolean =>
 
 const isDeliveryTest = (m: TeamMessage) => m.from === AYA_SENDER && m.text.startsWith(DELIVERY_TEST_PREFIX);
 
+/** Answers join the latest Start's line whatever is logged in between (a task
+ *  goes out before them); a role that writes anything else is no longer waited for. */
 export function teamChat(log: TeamMessage[]): ChatEntry[] {
   const chat: ChatEntry[] = [];
+  let group: Extract<ChatEntry, { kind: "delivery-test" }> | null = null;
+  let testing = false;
+  const spoke = new Set<string>();
   for (const message of [...log].sort((a, b) => a.id - b.id)) {
-    const last = chat.at(-1);
-    const group = last?.kind === "delivery-test" ? last : null;
     if (isDeliveryTest(message)) {
-      // Tests follow each other; a reply between them starts no new Start.
-      if (group && group.answered.length === 0) {
-        group.tested.push(message.to);
-        group.messages.push(message);
-      } else {
-        chat.push({ kind: "delivery-test", id: message.id, time: message.time, tested: [message.to], answered: [], messages: [message] });
+      if (!group || !testing) {
+        group = { kind: "delivery-test", id: message.id, time: message.time, tested: [], answered: [], messages: [] };
+        chat.push(group);
+        spoke.clear();
       }
+      group.tested.push(message.to);
+      group.messages.push(message);
+      testing = true;
       continue;
     }
-    const answers = group && group.tested.includes(message.from) && !group.answered.includes(message.from) && ONE_WORD.test(message.text.trim());
-    if (group && answers) {
+    testing = false;
+    const waited = group && group.tested.includes(message.from) && !group.answered.includes(message.from) && !spoke.has(message.from);
+    if (group && waited && ONE_WORD.test(message.text.trim())) {
       group.answered.push(message.from);
       group.messages.push(message);
       continue;
     }
+    spoke.add(message.from);
     const system = message.from === AYA_SENDER || message.from === USER_SENDER;
     chat.push({ kind: system ? "system" : "peer", message, abnormal: abnormal(message) });
   }

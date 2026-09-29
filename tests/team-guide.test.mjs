@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { teamProject } from "./helpers/team.mjs";
 
 const { teamGuide, handleTeamAuthorRequest, GUIDE_EXAMPLE_START, GUIDE_EXAMPLE_END } = await import("../dist-electron/team-author.js");
-const { ID_MAX_LEN, MAX_CADENCE_MINUTES, MIN_TEAM_ROLES, MUST_NOT_FIELD, SENDS_TO_FIELD, TEAM_SYSTEM_SENDER, parseTeamFile } =
+const { ID_MAX_LEN, MAX_CADENCE_MINUTES, MIN_TEAM_ROLES, MUST_NOT_FIELD, SENDS_TO_FIELD, TEAM_SYSTEM_SENDER, TEAM_USER_SENDER, parseTeamFile } =
   await import("../dist-electron/teams.js");
 const { WHAT_WORDS } = await import("../dist-electron/team-draft.js");
 
@@ -25,7 +25,7 @@ test("every rule value is the parser's own", () => {
   for (const expected of [
     `1-${MAX_CADENCE_MINUTES}`,
     `at most ${ID_MAX_LEN} characters`,
-    `"${TEAM_SYSTEM_SENDER}" is reserved`,
+    `"${TEAM_SYSTEM_SENDER}" and "${TEAM_USER_SENDER}" are reserved`,
     `at least ${MIN_TEAM_ROLES} roles`,
     `${SENDS_TO_FIELD}: <role> (<what>), <role> (<what>)`,
     `${MUST_NOT_FIELD}: <one line>`,
@@ -94,4 +94,9 @@ test("the last step proposes a pane per role and opens panes only after the user
   assert.match(guide, /Put first the role that takes the user's request and hands out the work/);
   assert.match(last, /Never open panes without the user's yes/);
   assert.ok(last.indexOf("aya presets") < last.indexOf("aya team open"), "presets are read before any pane opens");
+});
+
+test("the guide names every reserved sender, from the parser's constants", () => {
+  assert.equal(TEAM_USER_SENDER, "user");
+  assert.match(guide, new RegExp(`"${TEAM_SYSTEM_SENDER}" and "${TEAM_USER_SENDER}" are reserved`));
 });
