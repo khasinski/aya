@@ -60,7 +60,18 @@ function Entry({ entry, pane }: { entry: ChatEntry; pane: (role: string) => stri
 }
 
 /** The team log as a chat between the panes; `pane` names the pane playing a role. */
-export function TeamChat({ team, log, pane }: { team: string; log: TeamMessage[]; pane: (role: string) => string | null }) {
+export function TeamChat({
+  team,
+  log,
+  roles,
+  pane,
+}: {
+  team: string;
+  log: TeamMessage[];
+  /** The team's role ids: a legacy role named "user" is a peer, not a task. */
+  roles: string[];
+  pane: (role: string) => string | null;
+}) {
   const [full, setFull] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -87,7 +98,7 @@ export function TeamChat({ team, log, pane }: { team: string; log: TeamMessage[]
           atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_TO_BOTTOM_PX;
         }}
       >
-        {teamChat(log).map((entry) => (
+        {teamChat(log, roles).map((entry) => (
           <Entry key={entry.kind === "delivery-test" ? `t${entry.id}` : entry.message.id} entry={entry} pane={pane} />
         ))}
       </div>

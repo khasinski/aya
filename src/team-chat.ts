@@ -19,7 +19,10 @@ const isDeliveryTest = (m: TeamMessage) => m.from === AYA_SENDER && m.text.start
 
 /** Answers join the latest Start's line whatever is logged in between (a task
  *  goes out before them); a role that writes anything else is no longer waited for. */
-export function teamChat(log: TeamMessage[]): ChatEntry[] {
+/** `roles`: the team's role ids; in a team saved before "user" was reserved,
+ *  a message from "user" is that role's, not a task (such a team takes none). */
+export function teamChat(log: TeamMessage[], roles: string[] = []): ChatEntry[] {
+  const userIsRole = roles.includes(USER_SENDER);
   const chat: ChatEntry[] = [];
   let group: Extract<ChatEntry, { kind: "delivery-test" }> | null = null;
   let testing = false;
@@ -44,7 +47,7 @@ export function teamChat(log: TeamMessage[]): ChatEntry[] {
       continue;
     }
     spoke.add(message.from);
-    const system = message.from === AYA_SENDER || message.from === USER_SENDER;
+    const system = message.from === AYA_SENDER || (message.from === USER_SENDER && !userIsRole);
     chat.push({ kind: system ? "system" : "peer", message, abnormal: abnormal(message) });
   }
   return chat;

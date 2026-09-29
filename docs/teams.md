@@ -86,7 +86,10 @@ guide has the agent ask whether to start and with what task, and run it only
 on the user's word. A task then goes, after the delivery tests, as a message
 from `user` (reserved like `aya`, and redelivered like a peer's message) to
 `--to`, else the cadence role that leads the rounds, else the first role;
-the output and the Teams window's Start (with its Task field) say who got it. A team saved with `aya team save` from a pane is
+the output and the Teams window's Start (with its Task field) say who got it.
+`user` is reserved when a team is saved, not when a saved one loads: a team
+saved with a `user` role before keeps working, and starts, but takes no task,
+so its log never mixes the role with the user. A team saved with `aya team save` from a pane is
 marked as the agent's, so the window's "Assign team roles?" prompt does not
 compete with the agent's proposal; a team that arrives with a pull still
 gets the prompt.

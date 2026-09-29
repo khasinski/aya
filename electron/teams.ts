@@ -9,9 +9,13 @@ export const MIN_TEAM_ROLES = 2;
 /** The sender of Aya's own messages: delivery tests and rounds. */
 export const TEAM_SYSTEM_SENDER = "aya";
 export const RESERVED_ROLE_PROBLEM = `"${TEAM_SYSTEM_SENDER}" is reserved for Aya's own messages; name the role something else`;
-/** The sender of a task the user gives with Start; like "aya", no role may take it. */
+/** The sender of a task the user gives with Start; no new or saved role may take it.
+ *  A team saved before it was reserved still loads and runs: it can start without
+ *  a task, but takes none (TeamRunner.start), so "user" there is only its role. */
 export const TEAM_USER_SENDER = "user";
 
+/** Why a role cannot be saved under this id, or null. Loading an already saved
+ *  team refuses only "aya" (parseTeamFile): "user" became reserved later. */
 export function reservedRoleProblem(id: string): string | null {
   if (id === TEAM_SYSTEM_SENDER) return RESERVED_ROLE_PROBLEM;
   return id === TEAM_USER_SENDER ? `"${TEAM_USER_SENDER}" is reserved for the user's own messages; name the role something else` : null;
@@ -50,8 +54,7 @@ function parseRole(team: string, id: string, body: string): TeamRole {
   if (!ID_RE.test(id)) {
     throw new TeamFileError(team, `role "${id}" must be lowercase letters, digits and dashes`);
   }
-  const reserved = reservedRoleProblem(id);
-  if (reserved) throw new TeamFileError(team, reserved);
+  if (id === TEAM_SYSTEM_SENDER) throw new TeamFileError(team, RESERVED_ROLE_PROBLEM);
   let sendsTo: SendRoute[] = [];
   let mustNot = "";
   const rest: string[] = [];

@@ -90,6 +90,51 @@ test("Start lists every role that is not ready, including one with no pane", asy
   }
 });
 
+test("a team saved with a role named user before it was reserved starts, but takes no task", async () => {
+  const LEGACY = `# ux-review
+
+## Role: user
+Sends to: implementer
+Must not: edit code
+
+## Role: implementer
+Sends to: user
+Must not: skip a report
+
+## Cadence
+user every 30 min
+`;
+  const { teamHome, project, cleanup } = teamProject("aya-runner-legacy-", { teamFile: LEGACY, tabs: [{ id: "pane-u" }, { id: "pane-i" }] });
+  try {
+    const store = new TeamStore(teamDir(teamHome, "game", "ux-review"));
+    await store.assign("user", "pane-u");
+    await store.assign("implementer", "pane-i");
+    const typed = [];
+    const deps = {
+      teamHome,
+      listProjects: async () => [project],
+      deliver: async (pane, text) => void typed.push({ pane, text }),
+      holdReason: async () => null,
+      headCommit: async () => null,
+    };
+    const runner = new TeamRunner(deps, () => () => {});
+    await assert.rejects(runner.start("game", "ux-review", { text: "fix the timer" }), {
+      message: 'team ux-review has a role named "user", the sender of a Start task; start it without a task, or rename the role to give one; nothing was started',
+    });
+    assert.equal(typed.length, 0);
+    assert.equal((await store.state()).running, false);
+    const result = await runner.start("game", "ux-review");
+    assert.deepEqual(result.delivered.sort(), ["implementer", "user"]);
+    assert.match(typed.find((w) => w.pane === "pane-u").text, /aya team send implementer/);
+    // The role still sends by name, as before the upgrade.
+    const sent = await handleTeamRequest({ type: "team-send", role: "implementer", text: "done" }, "pane-u", deps);
+    assert.match(sent.output, /implementer/);
+    assert.match(typed.at(-1).text, /^\[team ux-review \| from user \|/);
+  } finally {
+    cleanup();
+  }
+});
+
 test("rounds go to the cadence role on its interval and are numbered", async () => {
   const t = await setup();
   try {

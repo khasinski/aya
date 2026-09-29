@@ -20,6 +20,12 @@ const m = (from, to, text, extra = {}) => ({
 const test3 = () => [m("aya", "dev", "Delivery test: run aya team whoami."), m("aya", "ux", "Delivery test: run aya team whoami."), m("aya", "qa", "Delivery test: run aya team whoami.")];
 const kinds = (chat) => chat.map((e) => (e.kind === "delivery-test" ? `tests ${e.answered.length}/${e.tested.length}` : `${e.kind} ${e.message.text}`));
 
+test("a message from user is the user's task, unless the team has a role named user (saved before it was reserved)", () => {
+  const log = [m("user", "dev", "make it pausable"), m("dev", "user", "done")];
+  assert.deepEqual(kinds(teamChat(log, ["dev", "qa"])), ["system make it pausable", "peer done"]);
+  assert.deepEqual(kinds(teamChat(log, ["dev", "user"])), ["peer make it pausable", "peer done"]);
+});
+
 test("oldest first, whatever order the log comes in", () => {
   const log = [m("dev", "ux", "one"), m("ux", "dev", "two"), m("dev", "ux", "three")];
   assert.deepEqual(kinds(teamChat([log[2], log[0], log[1]])), ["peer one", "peer two", "peer three"]);

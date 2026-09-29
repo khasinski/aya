@@ -221,7 +221,7 @@ export function TeamCard({
           <span className="aya-teams-muted">A role takes an open pane or a new session of a preset; no pane is closed.</span>
         </div>
       )}
-      {team.log.length > 0 && <TeamChat team={team.name} log={team.log} pane={paneName} />}
+      {team.log.length > 0 && <TeamChat team={team.name} log={team.log} roles={definition?.roles.map((r) => r.id) ?? []} pane={paneName} />}
       {definition && Object.keys(team.assignments).length === 0 && (
         <div className="aya-modal-hint">Give each role a pane, then Start.</div>
       )}

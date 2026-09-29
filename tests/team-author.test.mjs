@@ -87,6 +87,7 @@ const BROKEN = [
   ["one role", "# solo\n## Role: a\nMust not: x\n", 'team "solo": a team needs at least 2 roles'],
   ["a bad role id", GOOD.replace("Role: fixer", "Role: Fixer"), 'team "ux-fix": role "Fixer" must be lowercase letters, digits and dashes'],
   ["a role named aya", GOOD.replaceAll("fixer", "aya"), `team "ux-fix": "aya" is reserved for Aya's own messages; name the role something else`],
+  ["a role named user", GOOD.replaceAll("fixer", "user"), `team "ux-fix": "user" is reserved for the user's own messages; name the role something else`],
   ["no must-not", GOOD.replace("Must not: edit code\n", ""), 'team "ux-fix": role "reviewer" needs a "Must not:" line'],
   ["a route to an unknown role", GOOD.replace("Sends to: fixer", "Sends to: tester"), 'team "ux-fix": role "reviewer" sends to unknown role "tester"'],
   ["a route to itself", GOOD.replace("Sends to: fixer", "Sends to: reviewer"), 'team "ux-fix": role "reviewer" sends to itself'],

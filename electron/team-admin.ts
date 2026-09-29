@@ -5,7 +5,16 @@ import { promises as fs } from "node:fs";
 import { writeFileAtomic } from "./atomic-write";
 import { teamFile, teamNames } from "./team-files";
 import { openTeamStore, readText } from "./team-store";
-import { MUST_NOT_FIELD, SECTION_MARKER, SENDS_TO_FIELD, TEAM_SYSTEM_SENDER, parseTeamFile, serializeTeam } from "./teams";
+import {
+  MUST_NOT_FIELD,
+  SECTION_MARKER,
+  SENDS_TO_FIELD,
+  TEAM_SYSTEM_SENDER,
+  TeamFileError,
+  parseTeamFile,
+  reservedRoleProblem,
+  serializeTeam,
+} from "./teams";
 import type { ProjectConfig, TeamDefinition, TeamSummary } from "./types";
 
 export const LOG_TAIL = 50;
@@ -75,6 +84,14 @@ async function paneHolds(
 // A line the team file reads as a field or section, where only free text belongs.
 const FIELD_LINE = new RegExp(`^(${SENDS_TO_FIELD}:|${MUST_NOT_FIELD}:|${SECTION_MARKER})`, "m");
 
+/** Loading a saved team allows "user" (reserved later); saving one does not. */
+function refuseReservedRoles(team: TeamDefinition): void {
+  for (const role of team.roles) {
+    const reserved = reservedRoleProblem(role.id);
+    if (reserved) throw new TeamFileError(team.name, reserved);
+  }
+}
+
 function refuseFieldLines(team: TeamDefinition): void {
   for (const role of team.roles) {
     const line = role.responsibilities.match(FIELD_LINE);
@@ -118,6 +135,7 @@ export async function saveTeam(
   team: TeamDefinition,
   { create = false }: { create?: boolean } = {},
 ): Promise<void> {
+  refuseReservedRoles(team);
   refuseFieldLines(team);
   const text = serializeTeam(team);
   refuseLossy(team, text);
