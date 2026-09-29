@@ -875,6 +875,8 @@ export interface TeamSummary {
   paused: boolean;
   /** Started with Start team and not paused since. */
   running: boolean;
+  /** Saved by an agent from a pane: the agent proposes its panes, no prompt needed. */
+  agentAuthored: boolean;
   assignments: Record<string, string>;
   /** Messages per role that are waiting in its inbox. */
   unread: Record<string, number>;

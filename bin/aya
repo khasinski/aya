@@ -34,7 +34,9 @@ Usage:
   aya team save [--replace] file|-   Check a team file and save it in Aya
   aya team open [--replace] team role=target...
                                      Give roles a pane: target is a preset
-                                     (new session), this, or a pane name/id
+                                     (new session), this, or a pane name/id;
+                                     new:preset / pane:name when both match
+  aya team start team                Start a team, as the Teams window's Start
   aya presets [--json]               List presets and whether each is installed
   aya capabilities                   Print these commands as JSON, for agents
 EOF
@@ -140,9 +142,10 @@ function requestFromArgs() {
   }
   if (kind === "presets") return { type: kind, json: process.argv[4] === "json" };
   // Unlike whoami/send, these work outside a pane too: the slug or cwd names the project.
-  if (kind === "team-guide" || kind === "team-save" || kind === "team-open") {
+  if (kind === "team-guide" || kind === "team-save" || kind === "team-open" || kind === "team-start") {
     const scope = { projectSlug: optionalEnv("AYA_PROJECT_SLUG"), cwd: process.cwd() };
     if (kind === "team-guide") return { type: kind, description: process.argv[4] || undefined, ...scope };
+    if (kind === "team-start") return { type: kind, team: process.argv[4], ...scope };
     const replace = process.argv[5] === "replace";
     if (kind === "team-save") return { type: kind, text: process.argv[4], replace, ...scope };
     const panes = process.argv.slice(6).map((pair) => {
@@ -452,6 +455,13 @@ case "$command" in
           exit 1
         fi
         send_control team-save "$text" "$replace"
+        ;;
+      start)
+        if [ "$#" -ne 1 ]; then
+          usage
+          exit 1
+        fi
+        send_control team-start "$1"
         ;;
       open)
         replace=""

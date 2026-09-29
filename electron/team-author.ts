@@ -8,6 +8,7 @@ import { TeamExistsError, saveTeam } from "./team-admin";
 import type { TeamControlDeps } from "./team-control";
 import { WHAT_WORDS } from "./team-draft";
 import { teamFile, teamNames } from "./team-files";
+import { openTeamStore } from "./team-store";
 import {
   ID_MAX_LEN,
   MAX_CADENCE_MINUTES,
@@ -61,7 +62,8 @@ Steps
 5. Give each role a pane. Run: aya presets and aya pane list
    aya presets lists this Aya's presets, the agent each runs and whether its CLI is installed; aya pane list lists the panes already open. Propose to the user which pane plays which role, one role per pane. A role can take a new session of an installed preset (several roles may take the same preset: each gets its own pane), this pane you run in, or a pane already open. Different agents for roles that check each other's work can help. Then wait for the user's yes, and with it run:
    aya team open <team> <role>=<target> [<role>=<target> ...]
-   where <target> is a preset id, this, or a pane's name or id. Never open panes without the user's yes. If it prints a problem, nothing was opened: fix what it names and run it again. The user starts the team in the Teams window.
+   where <target> is a preset id, this, or a pane's name or id. If a pane is named like a preset id, it says so: write new:<preset> or pane:<name>. Never open panes without the user's yes. If it prints a problem, nothing was opened: fix what it names and run it again.
+6. Start the team only when the user asks: aya team start <team> (the user can also press Start in the Teams window).
 
 The team file
 - The first line is "# <name>". The name is the team's file name: ${ID_RULE}.
@@ -136,6 +138,7 @@ function savedSummary(team: TeamDefinition, file: string): string {
 async function saveTeamText(
   request: Extract<TeamAuthorRequest, { type: "team-save" }>,
   project: ProjectConfig | null,
+  callerId: string | undefined,
   deps: Pick<TeamControlDeps, "teamHome">,
   refresh: (slug: string, name: string) => Promise<void>,
 ): Promise<string> {
@@ -152,6 +155,8 @@ async function saveTeamText(
     if (!(err instanceof TeamExistsError)) throw err;
     throw new Error(`team "${name}" already exists in ${err.file}; nothing was saved. Run aya team save again with --replace to overwrite it`);
   }
+  // The agent that saved it proposes its panes; the window's assign prompt would compete.
+  if (project.tabs.some((t) => t.id === callerId)) await openTeamStore(deps.teamHome, project.slug, name).markAgentAuthored();
   await refresh(project.slug, name);
   return savedSummary(team, teamFile(project, name));
 }
@@ -164,6 +169,6 @@ export async function handleTeamAuthorRequest(
   refresh: (slug: string, name: string) => Promise<void>,
 ): Promise<{ output: string }> {
   const project = await callerProject(await deps.listProjects(), callerId, request);
-  if (request.type === "team-save") return { output: await saveTeamText(request, project, deps, refresh) };
+  if (request.type === "team-save") return { output: await saveTeamText(request, project, callerId, deps, refresh) };
   return { output: teamGuide(request.description, project ? await teamNames(project) : []) };
 }

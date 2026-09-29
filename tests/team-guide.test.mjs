@@ -87,6 +87,8 @@ test("the last step proposes a pane per role and opens panes only after the user
   assert.match(last, /wait for the user's yes/i);
   assert.match(last, /aya team open <team> <role>=<target>/);
   assert.match(last, /<target> is a preset id, this, or a pane's name or id/);
+  assert.match(last, /new:<preset> or pane:<name>/);
+  assert.match(last, /\n6\. Start the team only when the user asks: aya team start <team>/);
   assert.match(last, /Never open panes without the user's yes/);
   assert.ok(last.indexOf("aya presets") < last.indexOf("aya team open"), "presets are read before any pane opens");
 });

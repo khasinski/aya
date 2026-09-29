@@ -116,6 +116,21 @@ for (const shell of SHELLS) {
     }
   });
 
+  test(`team start sends the team and the caller's project; anything else is refused before the app (${shell})`, async () => {
+    const { status, request, dir } = await aya(["team", "start", "ux-fix"], { shell });
+    assert.equal(status, 0);
+    assert.equal(request.type, "team-start");
+    assert.equal(request.team, "ux-fix");
+    assert.equal(request.projectSlug, "game");
+    assert.ok(request.cwd.endsWith(dir.split("/").pop()), request.cwd);
+    for (const args of [["team", "start"], ["team", "start", "a", "b"]]) {
+      const refused = await aya(args, { shell });
+      assert.equal(refused.status, 1, args.join(" "));
+      assert.match(refused.stderr, /Usage/);
+      assert.equal(refused.request, null);
+    }
+  });
+
   test(`team open prints the app's problem and exits 1 (${shell})`, async () => {
     const reply = { ok: false, error: 'team ux-fix has no role "qa"; nothing was opened' };
     const { status, stdout, stderr } = await aya(["team", "open", "ux-fix", "qa=claude"], { shell, reply });

@@ -331,3 +331,16 @@ test("through the real CLI and control server: saved, summarized, the runner tol
     t.cleanup();
   }
 });
+
+test("a team saved from a pane is marked as the agent's, so the window does not ask to assign it too; one saved outside a pane is not", async () => {
+  const t = setup();
+  try {
+    await t.save(GOOD);
+    await t.run({ type: "team-save", text: GOOD.replace("# ux-fix", "# other"), replace: false, projectSlug: "game" }, null);
+    const byName = Object.fromEntries((await listTeams(t.teamHome, t.project)).map((team) => [team.name, team]));
+    assert.equal(byName["ux-fix"].agentAuthored, true);
+    assert.equal(byName.other.agentAuthored, false);
+  } finally {
+    t.cleanup();
+  }
+});

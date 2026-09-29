@@ -42,6 +42,7 @@ export async function listTeams(teamHome: string, project: ProjectConfig): Promi
         unsaved: saved === null && repo !== null,
         repoDefinition: repoParsed(name, repo),
         ...(await store.state()),
+        agentAuthored: await store.agentAuthored(),
         assignments: await store.assignments(),
         unread: Object.fromEntries(
           await Promise.all(

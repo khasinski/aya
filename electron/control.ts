@@ -248,7 +248,7 @@ async function handleRequest(
     if (!team || !teamRunner) throw new Error("teams are not available");
     return handleTeamAuthorRequest(request, caller.terminalId, team, (slug, name) => teamRunner.refresh(slug, name));
   }
-  if (request.type === "presets" || request.type === "team-open") {
+  if (request.type === "presets" || request.type === "team-open" || request.type === "team-start") {
     if (!options.teamPanes) throw new Error("teams are not available");
     return handleTeamPanesRequest(request, caller.terminalId, options.teamPanes);
   }

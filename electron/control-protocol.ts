@@ -17,7 +17,8 @@ export type TeamAuthorRequest =
 
 export type TeamPanesRequest =
   | { type: "presets"; json: boolean }
-  | ({ type: "team-open"; team: string; panes: PanePick[]; replace: boolean } & TeamAuthorScope);
+  | ({ type: "team-open"; team: string; panes: PanePick[]; replace: boolean } & TeamAuthorScope)
+  | ({ type: "team-start"; team: string } & TeamAuthorScope);
 
 export type ControlRequest =
   | { type: "open"; path: string }
@@ -132,6 +133,11 @@ export function parseControlRequest(value: unknown): ControlRequest {
     const panes = Array.isArray(value.panes) ? value.panes.map(panePick) : [];
     if (!team) throw new Error("team-open needs a team");
     return { type, team, panes, replace: value.replace === true, projectSlug: optionalString(value.projectSlug), cwd: optionalString(value.cwd) };
+  }
+  if (type === "team-start") {
+    const team = optionalString(value.team);
+    if (!team) throw new Error("team-start needs a team");
+    return { type, team, projectSlug: optionalString(value.projectSlug), cwd: optionalString(value.cwd) };
   }
   if (type === "capabilities") return { type };
   if (type === "notify") {

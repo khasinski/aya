@@ -86,11 +86,15 @@ and fixes the UX"), you write the team file:
   `aya pane list` (open panes), and propose one pane per role: a new session
   of an installed preset, `this` (your own pane), or an open pane by name or
   id. Several roles may take the same preset; each gets its own new pane.
+  When a pane is named like a preset id, write `new:<preset>` or
+  `pane:<name-or-id>`.
 - Wait for the user's yes, then run
   `aya team open <team> <role>=<target> ...`. Never open panes without it.
   A problem is printed and nothing is opened. A role with a live pane, or a
   pane that plays another role, needs `--replace`; no pane is ever closed.
-- Do not start the team: the user presses Start in Teams.
+- Start the team only when the user asks: `aya team start <team>` (the same
+  Start as in Teams). If a role's pane is missing or busy, nothing is sent
+  and each such role is named.
 
 ## Guardrails
 

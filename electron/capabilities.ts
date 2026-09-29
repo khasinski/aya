@@ -132,7 +132,17 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
       "Propose the mapping to the user and wait for the user's yes before running it.",
       "Checks every role and target first; on a problem nothing is opened or assigned.",
       "Several roles can take the same preset: each gets its own new pane.",
+      "A name that is both a preset id and a pane name is refused: write new:<preset> or pane:<name-or-id>.",
       "A role with a live pane, or a pane that plays another role, needs --replace; no pane is ever closed.",
+    ],
+  },
+  {
+    command: "team start",
+    usage: "aya team start team",
+    summary: "Start a team as the Teams window's Start does: every role's pane is checked, then gets the delivery test; the team's rounds begin.",
+    notes: [
+      "Start a team only when the user asks for it.",
+      "If a role's pane is missing or busy, nothing is sent and each such role is named.",
     ],
   },
   {

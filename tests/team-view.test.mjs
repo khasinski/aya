@@ -106,3 +106,8 @@ test("after Apply: each role's pane, who lost one, and Start left to the user", 
   assert.equal(rolePanesSummary(result, true), "tester: new Codex pane, fixer: shell 2. The roles marked below were not told their role.");
   assert.equal(rolePanesSummary({ panes: [result.panes[0]], leftWithoutPane: ["writer"] }, true), "tester: new Codex pane. Left without a pane: writer.");
 });
+
+test("a team an agent saved from a pane is not offered: the agent proposes its panes", () => {
+  const agents = { ...team("agents", {}, {}), agentAuthored: true };
+  assert.deepEqual(unassignedTeams([team("new", {}, {}), agents]).map((t) => t.name), ["new"]);
+});

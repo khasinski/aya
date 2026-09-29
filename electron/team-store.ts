@@ -32,7 +32,7 @@ const TEAM_FILES = {
 export const TEAM_LOG_MAX_ENTRIES = 2_000;
 export const TEAM_LOG_KEEP_ENTRIES = 1_000;
 
-type StateFile = { paused?: boolean; started?: boolean; lastRound?: unknown };
+type StateFile = { paused?: boolean; started?: boolean; lastRound?: unknown; agentAuthored?: boolean };
 
 // One write queue per team directory, shared by every store opened on it.
 const queues = new Map<string, Promise<unknown>>();
@@ -116,6 +116,15 @@ export class TeamStore {
   async state(): Promise<{ paused: boolean; running: boolean }> {
     const state = await this.readState();
     return { paused: state.paused === true, running: state.started === true && state.paused !== true };
+  }
+
+  /** Saved by an agent from a pane (aya team save): the agent proposes its panes. */
+  markAgentAuthored(): Promise<void> {
+    return this.updateState((state) => ({ ...state, agentAuthored: true }));
+  }
+
+  async agentAuthored(): Promise<boolean> {
+    return (await this.readState()).agentAuthored === true;
   }
 
   /** The number of the last round Aya typed; 0 before the first. */
