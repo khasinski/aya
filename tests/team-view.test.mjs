@@ -16,6 +16,7 @@ const team = (name, assignments, unread, definition = {}) => ({
   definition,
   error: null,
   repoChanged: false,
+  unsaved: false,
   repoDefinition: null,
   paused: false,
   running: true,

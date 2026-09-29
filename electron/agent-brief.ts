@@ -224,12 +224,25 @@ export function codexBriefSync(
     else if (preset.agentBrief) relativeOn.push(trailingSegments(codexHomeDir(preset, expand) ?? ""));
   }
   const plan = planCodexBriefs(targets);
+  // Only a file a launch wrote (so recorded) can be a relative home's, and an
+  // empty tail ("." or "..") would match every file.
+  const launchWritten = new Set(recorded);
   const underRelativeOn = (file: string) => {
+    if (!launchWritten.has(file)) return false;
     const dir = path.dirname(file).split("/");
-    return relativeOn.some((tail) => tail.every((seg, i) => dir[dir.length - tail.length + i] === seg));
+    return relativeOn.some(
+      (tail) => tail.length > 0 && tail.every((seg, i) => dir[dir.length - tail.length + i] === seg),
+    );
   };
   const remove = [...plan.remove, ...orphanedBriefFiles(recorded, plan)];
   return { ensure: plan.ensure, remove: remove.filter((f) => !underRelativeOn(f)) };
+}
+
+/** A relative home that lands on the pane's cwd or above it would put the
+ *  brief into the project's own AGENTS.md, the one the repo commits. */
+export function codexBriefInProject(file: string, cwd: string): boolean {
+  const rel = path.relative(path.dirname(file), path.resolve(cwd));
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
 /** A relative dir's segments that any cwd keeps: "../h/./x" -> ["h", "x"]. */

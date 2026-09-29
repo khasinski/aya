@@ -59,6 +59,7 @@ import {
   briefChannel,
   briefText,
   codexAgentsFile,
+  codexBriefInProject,
   codexBriefSync,
   commandWithBriefArg,
   commandWithBriefEnv,
@@ -254,7 +255,8 @@ const ptyHost = new PtyHostClient(PTY_HOST_SCRIPT);
 const teamDeps: TeamControlDeps = {
   teamHome: AYA_HOME,
   listProjects: () => listProjects(),
-  deliver: (terminalId, text) => deliverTeamMessage((id, data) => ptyHost.write(id, data), terminalId, text),
+  deliver: (terminalId, text) =>
+    deliverTeamMessage((id, data) => ptyHost.write(id, data), terminalId, text, (id) => ptyHost.holdReason(id)),
   holdReason: (terminalId) => ptyHost.holdReason(terminalId),
   headCommit,
 };
@@ -926,6 +928,10 @@ async function withAgentBrief(spawn: SpawnRequest): Promise<SpawnRequest> {
     // Re-assert on launch: the user may have edited the file since the save.
     const file = codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath, spawn.cwd);
     if (!file) return spawn;
+    if (spawn.cwd && codexBriefInProject(file, spawn.cwd)) {
+      console.warn(`[aya] aya brief skipped for preset ${preset.id}: its CODEX_HOME is the project itself (${file})`);
+      return spawn;
+    }
     await rewriteIfChanged(file, (c) => withBriefSection(c, briefText(true)))
       .then(() => updateBriefRegistry([file], []))
       .catch((err) => console.warn(`[aya] could not add the aya brief to ${file}:`, err));
@@ -2276,6 +2282,7 @@ function registerIpc(): void {
         r.configDir === undefined
           ? undefined
           : requireString(r.configDir, "harness:search.configDir"),
+      command: r.command === undefined ? undefined : requireString(r.command, "harness:search.command"),
       query: requireString(r.query, "harness:search.query"),
     });
   });

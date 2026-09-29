@@ -95,3 +95,15 @@ test("history search with a relative configDir and no tab cwd finds nothing", as
     [],
   );
 });
+
+test("history search follows an inline CODEX_HOME in the preset's command", async () => {
+  const inline = mkdtempSync(join(tmpdir(), "aya-codex-inline-"));
+  writeSession(inline, "inline home transcript");
+  const hits = await searchHarnessSessions({
+    agent: "codex",
+    cwd: "/p",
+    command: `CODEX_HOME=${inline} codex`,
+    query: "inline home",
+  });
+  assert.deepEqual(hits.map((h) => h.snippet.includes("inline home")), [true]);
+});

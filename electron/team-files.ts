@@ -5,7 +5,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { PROJECT_AYA_DIRNAME } from "./paths";
 import { openTeamStore, type TeamStore } from "./team-store";
-import { parseTeamFile } from "./teams";
+import { ID_RE, parseTeamFile } from "./teams";
 import type { ProjectConfig, TeamDefinition } from "./types";
 
 export function teamsDir(project: ProjectConfig): string {
@@ -16,18 +16,26 @@ export function teamFile(project: ProjectConfig, name: string): string {
   return path.join(teamsDir(project), `${name}.md`);
 }
 
+/** Files a team can be named after; anything else there (a README.md, "My
+ *  Team.md") is not a team and must not stop the teams that are. */
 export async function teamNames(project: ProjectConfig): Promise<string[]> {
   try {
     const files = await fs.readdir(teamsDir(project));
-    return files.filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)).sort();
+    return files
+      .filter((f) => f.endsWith(".md"))
+      .map((f) => f.slice(0, -3))
+      .filter((name) => ID_RE.test(name))
+      .sort();
   } catch {
     return [];
   }
 }
 
-/** The saved definition wins: repo edits apply only after Save team. */
-export async function loadTeam(project: ProjectConfig, name: string, store: TeamStore): Promise<TeamDefinition> {
-  const text = (await store.savedDefinition()) ?? (await fs.readFile(teamFile(project, name), "utf-8"));
+/** Only what the user saved in Aya runs: a team file that arrived with a pull
+ *  or a clone is shown in the teams window but reaches no agent until saved. */
+export async function loadTeam(name: string, store: TeamStore): Promise<TeamDefinition> {
+  const text = await store.savedDefinition();
+  if (text === null) throw new Error(`team ${name} is not saved in Aya yet; open Teams and press Save team`);
   return parseTeamFile(name, text);
 }
 

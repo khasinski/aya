@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -58,6 +58,9 @@ export interface SeedOptions {
   fakeHome?: boolean;
   /** Session ids already saved on the tabs, as a previous run left them. */
   tabSessionIds?: { left?: string; right?: string };
+  /** With fakeHome: the claude config dir under HOME that holds a transcript
+   *  for each of `tabSessionIds`, as Claude saves one per conversation. */
+  claudeTranscriptsIn?: string;
   /** Stub executables put first on PATH, so harness detection finds them. */
   fakeBins?: string[];
   /** #115's machine: an rvm gemset first on PATH with a working Aya shim, dead
@@ -340,6 +343,15 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     const home = join(root, "home");
     mkdirSync(home, { recursive: true });
     launchEnv = { ...launchEnv, HOME: home };
+    if (opts.claudeTranscriptsIn) {
+      // Claude names the folder after its real cwd (a symlinked tmpdir resolved).
+      const slug = realpathSync(effectiveProjectDir).replace(/[^a-zA-Z0-9]/g, "-");
+      const dir = join(home, opts.claudeTranscriptsIn, "projects", slug);
+      mkdirSync(dir, { recursive: true });
+      for (const id of Object.values(opts.tabSessionIds ?? {})) {
+        if (id) writeFileSync(join(dir, `${id}.jsonl`), "{}\n");
+      }
+    }
   }
 
   if (opts.cliInstallHarness) {

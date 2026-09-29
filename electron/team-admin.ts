@@ -39,6 +39,7 @@ export async function listTeams(teamHome: string, project: ProjectConfig): Promi
         definition,
         error,
         repoChanged: saved !== null && repo !== saved,
+        unsaved: saved === null && repo !== null,
         repoDefinition: repoParsed(name, repo),
         ...(await store.state()),
         assignments: await store.assignments(),
