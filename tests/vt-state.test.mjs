@@ -94,6 +94,16 @@ test("screenTail is bounded by its line limit", async () => {
   close();
 });
 
+test("screenTail defaults to the last 12 non-empty rows", async () => {
+  const close = open("p7b");
+  writeVtPane("p7b", Array.from({ length: 20 }, (_, i) => `row ${i + 1}`).join("\r\n"));
+  await settle();
+  const rows = screenTail(__testVtPane("p7b").terminal).split("\n");
+  assert.equal(rows.length, 12);
+  assert.equal(rows[0], "row 9");
+  close();
+});
+
 // --- change notification ---------------------------------------------------
 
 test("the change callback fires on BOTH edges, once per transition", async () => {

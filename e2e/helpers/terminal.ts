@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 /** Wait until the visible pane's shell has drawn something - its prompt - and is
  *  therefore reading input.
@@ -25,3 +25,35 @@ export async function waitForShellReady(window: Page) {
     )
     .toBeGreaterThan(0);
 }
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/** Clears the screen of the pane `host` belongs to and prints `payload` (printf %b escapes). */
+export async function writeTerminalOutput(host: Locator, payload: string) {
+  const command = `printf %b ${shellSingleQuote(`\\033[2J\\033[H${payload}`)}`;
+  await host.click();
+  await host.page().keyboard.insertText(command);
+  await host.page().keyboard.press("Enter");
+}
+
+export const visiblePanes = (window: Page) => window.locator('[data-testid="terminal-pane"]:visible');
+
+export const visiblePane = (window: Page, name: string) =>
+  window.locator(`[data-testid="terminal-pane"][data-terminal-name="${name}"]:visible`);
+
+/** The split cell of terminal `name`, if it carries the active-cell marker. */
+export const activeSplitPane = (window: Page, name: string) =>
+  window.locator(`.aya-pane--active-split[data-terminal-name="${name}"]`);
+
+/** The name of the terminal pane holding keyboard focus, or null. */
+export const focusedTerminalName = (window: Page) =>
+  window.evaluate(
+    () =>
+      document.activeElement
+        ?.closest('[data-testid="terminal-pane"]')
+        ?.getAttribute("data-terminal-name") ?? null,
+  );
+
+export const firstTerminalShown = (window: Page) => expect(window.getByTestId("xterm-host").first()).toBeVisible();

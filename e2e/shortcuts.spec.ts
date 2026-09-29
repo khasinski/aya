@@ -1,4 +1,5 @@
 import { test, expect } from "./fixtures";
+import { activeSplitPane, focusedTerminalName, visiblePane } from "./helpers/terminal";
 import { fireShortcut } from "./helpers/shortcut";
 import { enableProjectsLeftLayout } from "./helpers/layout";
 import type { Page } from "@playwright/test";
@@ -6,19 +7,8 @@ import type { Page } from "@playwright/test";
 // Keyboard-shortcut actions (electron/main.ts -> "shortcut" IPC -> useAppShortcuts).
 // fireShortcut sends the IPC the way the menu/accelerator ultimately does.
 
-const visiblePane = (w: Page, name: string) =>
-  w.locator(`[data-testid="terminal-pane"][data-terminal-name="${name}"]:visible`);
 const sidebar = (w: Page, name: string) =>
   w.locator(`[data-testid="sidebar-terminal"][data-terminal-name="${name}"]`);
-const activeSplitPane = (w: Page, name: string) =>
-  w.locator(`.aya-pane--active-split[data-terminal-name="${name}"]`);
-const focusedTerminalName = (w: Page) =>
-  w.evaluate(
-    () =>
-      document.activeElement
-        ?.closest('[data-testid="terminal-pane"]')
-        ?.getAttribute("data-terminal-name") ?? null,
-  );
 
 test.describe("single view (no split)", () => {
   test.use({ seedOptions: { split: false } });

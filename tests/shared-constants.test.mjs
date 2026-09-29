@@ -6,7 +6,14 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SOCKET_FILE_PERMISSIONS, OWNER_ONLY_FILE_MODE } from "../dist-electron/paths.js";
+import { join } from "node:path";
+import {
+  AYA_HOME,
+  CLI_ADOPTION_FILE,
+  DIAGNOSTICS_LOG_FILE,
+  OWNER_ONLY_FILE_MODE,
+  SOCKET_FILE_PERMISSIONS,
+} from "../dist-electron/paths.js";
 import {
   COMMAND_NOT_FOUND_EXIT_CODE,
   COMMAND_PROBE_TIMEOUT_MS,
@@ -55,4 +62,9 @@ test("the control socket reaps idle peers after 30s and lingers 2s", () => {
     CONTROL_LINGER_MS < CONTROL_CONNECTION_IDLE_MS,
     "the linger backstop must expire before the idle reaper",
   );
+});
+
+test("cli-adoption.json and diagnostics.log live directly in AYA_HOME", () => {
+  assert.equal(CLI_ADOPTION_FILE, join(AYA_HOME, "cli-adoption.json"));
+  assert.equal(DIAGNOSTICS_LOG_FILE, join(AYA_HOME, "diagnostics.log"));
 });

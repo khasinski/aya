@@ -18,23 +18,15 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { waitFor } from "./helpers/wait-for.mjs";
 
 const TMP_AYA_HOME = mkdtempSync(join(tmpdir(), "aya-write-order-"));
 process.env.AYA_HOME = TMP_AYA_HOME;
 
 const { PtyHostClient } = await import("../dist-electron/pty-host-client.js");
 
-const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
+const { waitFor, fakeWebContents, ptyEventsFor } = await import("./helpers/pty-host.mjs");
 
-function fakeWebContents() {
-  const events = [];
-  return {
-    isDestroyed: () => false,
-    send: (channel, payload) => events.push({ channel, payload }),
-    _events: events,
-  };
-}
+const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
 
 test("a write queued during the cold-start connect lands AFTER the spawn", async (t) => {
   const wc = fakeWebContents();
@@ -61,17 +53,10 @@ test("a write queued during the cold-start connect lands AFTER the spawn", async
   await Promise.all([spawned, wrote]);
 
   const echoed = await waitFor(() =>
-    ptyEventsFor().some((e) => e.type === "data" && e.chunk.includes("fifo-ping")),
+    ptyEventsFor(wc, "fifo-1").some((e) => e.type === "data" && e.chunk.includes("fifo-ping")),
   ).catch(() => false);
   assert.ok(
     echoed,
     "the early write must reach the PTY - a dropped write means spawn's socket line lost FIFO",
   );
-
-  function ptyEventsFor() {
-    return wc._events
-      .filter((e) => e.channel === "pty:event")
-      .map((e) => e.payload)
-      .filter((p) => p.ptyId === "fifo-1");
-  }
 });

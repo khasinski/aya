@@ -12,6 +12,7 @@ const {
   listRemoteDirectory,
   listRemotePresets,
   recoverExistingRemoteProject,
+  remoteNodeBridge,
   REMOTE_TIMEOUTS,
 } = await import("../dist-electron/remote-client.js");
 
@@ -302,6 +303,15 @@ test("remote client sends mkdir and project:create through the mocked ssh bridge
       ["shell", "claude-yolo"],
     );
   });
+});
+
+// The bridge runs on the remote host as `node -e <script>`; constants embedded
+// into it must come out as the literal values the remote node expects.
+test("the remote node bridge embeds its constants as literals", () => {
+  const BRIDGE = remoteNodeBridge(REMOTE_TIMEOUTS.bridgeMs);
+  assert.match(BRIDGE, /process\.env\.AYA_HOME \+ "\/aya-remote\.sock" : process\.env\.HOME \+ "\/\.aya\/aya-remote\.sock"/);
+  assert.match(BRIDGE, /setTimeout\(\(\) => process\.exit\(code\), 250\);/);
+  assert.equal(BRIDGE.match(/protocol: 1,/g).length, 2);
 });
 
 // --- timeouts ----------------------------------------------------------------

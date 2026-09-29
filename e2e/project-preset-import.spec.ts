@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import { enableProjectsLeftLayout } from "./helpers/layout";
+import { repoConfigIgnoredKey } from "../src/storage-keys";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
@@ -102,7 +103,7 @@ test.describe("dedup filter", () => {
     // Deterministic "the repo-config check ran and decided": when every
     // suggestion is a duplicate, the app auto-marks the project ignored in
     // localStorage. Poll that instead of sleeping, then assert no modal.
-    const ignoredKey = `aya:repo-config-ignored:${seeded.projectDir}`;
+    const ignoredKey = repoConfigIgnoredKey(seeded.projectDir);
     await expect
       .poll(() => window.evaluate((k) => localStorage.getItem(k), ignoredKey))
       .toBe("1");

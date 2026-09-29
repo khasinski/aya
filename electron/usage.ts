@@ -87,6 +87,12 @@ export interface ClaudeUsageSource {
   configDir: string;
 }
 
+// Claude Code's config dir when a preset names none (CLAUDE_CONFIG_DIR aside).
+export const CLAUDE_CONFIG_DIRNAME = ".claude";
+export const DEFAULT_CLAUDE_CONFIG_DIR = `~/${CLAUDE_CONFIG_DIRNAME}`;
+// Claude Code's settings file inside a config dir (where the usage hook goes).
+export const CLAUDE_SETTINGS_FILENAME = "settings.json";
+
 export function expandUserPath(value: string): string {
   if (value === "~") return os.homedir();
   if (value.startsWith("~/")) return path.join(os.homedir(), value.slice(2));
@@ -203,7 +209,7 @@ export async function readClaudeUsageAccounts(
   for (const source of sources) {
     const configDir = expandUserPath(source.configDir);
     const files = [claudeUsageFileForConfigDir(configDir)];
-    if (configDir === path.join(os.homedir(), ".claude")) files.push(USAGE_FILE);
+    if (configDir === path.join(os.homedir(), CLAUDE_CONFIG_DIRNAME)) files.push(USAGE_FILE);
 
     let usage: UsageData | null = null;
     for (const file of files) {

@@ -9,7 +9,14 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createPtyLog, ptyLog, PTY_LOG_MAX_BYTES } from "../dist-electron/pty-log.js";
+import {
+  createPtyLog,
+  ptyLog,
+  PTY_LOG_FILE,
+  PTY_LOG_FILENAME,
+  PTY_LOG_MAX_BYTES,
+} from "../dist-electron/pty-log.js";
+import { AYA_HOME } from "../dist-electron/paths.js";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "aya-pty-log-"));
 
@@ -19,6 +26,11 @@ const readLines = (file) =>
     .split("\n")
     .filter(Boolean)
     .map((l) => JSON.parse(l));
+
+test("the log is AYA_HOME/pty-events.log", () => {
+  assert.equal(PTY_LOG_FILENAME, "pty-events.log");
+  assert.equal(PTY_LOG_FILE, path.join(AYA_HOME, PTY_LOG_FILENAME));
+});
 
 test("append writes one parseable JSON line with ts/pid/ev plus fields", () => {
   const file = path.join(tmp(), "pty-events.log");

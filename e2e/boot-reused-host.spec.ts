@@ -52,7 +52,7 @@ test("boot-restored tabs on a reused host come up stopped, and Shift+Enter resum
   // absence meaningful (a plain "not yet spawned" would also lack the file).
   await expect(
     window.locator('[data-testid="sidebar-terminal"] .aya-sidebar-statusdot--idle').first(),
-  ).toBeVisible({ timeout: 10_000 });
+  ).toBeVisible();
   expect(
     existsSync(markerPath),
     "a boot-restored tab on a reused host must NOT auto-respawn",
@@ -63,6 +63,6 @@ test("boot-restored tabs on a reused host come up stopped, and Shift+Enter resum
   await window.getByTestId("xterm-host").first().click();
   await window.keyboard.press("Shift+Enter");
 
-  await expect.poll(() => existsSync(markerPath), { timeout: 10_000 }).toBe(true);
-  await expect.poll(() => existsSync(continuePath), { timeout: 10_000 }).toBe(true);
+  await expect.poll(() => existsSync(markerPath)).toBe(true);
+  await expect.poll(() => existsSync(continuePath)).toBe(true);
 });

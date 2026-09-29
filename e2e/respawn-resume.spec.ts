@@ -74,9 +74,7 @@ async function openMarkerTabAndFinishFirstRun(window: Page, projectDir: string) 
   // Scoped to the sidebar row - the terminal pane carries the same
   // data-terminal-name, so an unscoped locator trips strict mode.
   const markerRow = window.locator('.aya-sidebar-row[data-terminal-name="Marker"]');
-  await expect(markerRow.locator(".aya-sidebar-statusdot--idle")).toBeVisible({
-    timeout: 10_000,
-  });
+  await expect(markerRow.locator(".aya-sidebar-statusdot--idle")).toBeVisible();
 
   const markerPath = join(projectDir, "respawn-marker.txt");
   const continuePath = join(projectDir, "--continue");
@@ -103,7 +101,7 @@ test("right-click Restart of a launcher-opened agent tab resumes the session", a
   await menu.getByText("Restart terminal").click();
 
   // The respawn must carry the resume arg - the tab already had a session.
-  await expect.poll(() => existsSync(continuePath), { timeout: 10_000 }).toBe(true);
+  await expect.poll(() => existsSync(continuePath)).toBe(true);
 });
 
 test("Shift+Enter restart of an exited launcher-opened agent tab resumes the session", async ({
@@ -117,5 +115,5 @@ test("Shift+Enter restart of an exited launcher-opened agent tab resumes the ses
   await window.getByTestId("xterm-host").first().click();
   await window.keyboard.press("Shift+Enter");
 
-  await expect.poll(() => existsSync(continuePath), { timeout: 10_000 }).toBe(true);
+  await expect.poll(() => existsSync(continuePath)).toBe(true);
 });

@@ -2,10 +2,13 @@ import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   getPreset,
   type Preset,
+  type TeamSummary,
   type TerminalState,
   type Worktree,
 } from "../types";
 import { useDragReorder } from "../hooks/useDragReorder";
+import { paneRoles } from "../team-view";
+import { TeamRoleChip, TeamRoleMenuItems } from "./TeamRole";
 
 // Clamp bounds for drag-resizing the sidebar (px).
 const SIDEBAR_MIN_WIDTH_PX = 180;
@@ -51,7 +54,12 @@ interface Props {
   /** Cross-project attention summary. Kept inside the sidebar so appearing
    *  notifications never reduce the terminal viewport height. */
   statusRail?: ReactNode;
+  /** This project's teams, for role chips and the tab menu's Team role items. */
+  teams?: TeamSummary[];
+  onAssignTeamRole?: (team: string, role: string, paneId: string | null) => void;
 }
+
+const NO_TEAMS: TeamSummary[] = [];
 
 /** "Agent is waiting for input" indicator — small red dot, the same shape
  *  used on project tabs and the dock badge. */
@@ -86,7 +94,10 @@ function SidebarImpl({
   onSplitBelow,
   onRemoveFromSplit,
   statusRail,
+  teams = NO_TEAMS,
+  onAssignTeamRole,
 }: Props) {
+  const roles = paneRoles(teams);
   // Right-click context menu state. Positioned at the cursor; closes on
   // outside click, Esc, or after the user picks an item.
   const [menu, setMenu] = useState<{
@@ -256,6 +267,7 @@ function SidebarImpl({
           {!isRenamingRow && summary && (
             <span className="aya-sidebar-summary">{summary}</span>
           )}
+          {roles[t.id] && <TeamRoleChip role={roles[t.id]} />}
         </span>
         {t.bell && <BellIcon />}
         {splitAssignments[t.id] !== undefined && (
@@ -462,6 +474,15 @@ function SidebarImpl({
             >
               Remove from split
             </button>
+          )}
+          {onAssignTeamRole && (
+            <TeamRoleMenuItems
+              paneId={menu.terminalId}
+              teams={teams}
+              current={roles[menu.terminalId]}
+              onAssign={onAssignTeamRole}
+              onDone={() => setMenu(null)}
+            />
           )}
           <button
             className="aya-context-menu-item aya-context-menu-item--danger"

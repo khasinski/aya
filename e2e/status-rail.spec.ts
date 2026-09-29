@@ -1,21 +1,10 @@
-import net from "node:net";
-import { join } from "node:path";
 import { test, expect } from "./fixtures";
+import { sendControl } from "./helpers/control";
+import { STATUS_RAIL_COLLAPSED_STORAGE_KEY } from "../src/storage-keys";
 import type { Page } from "@playwright/test";
 
 // StatusRail — the sidebar counterpart to the AttentionCenter modal. It must
 // appear below New Terminal without taking height from the terminal viewport.
-
-function sendControl(ayaHome: string, payload: Record<string, unknown>): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const socket = net.createConnection(join(ayaHome, "aya.sock"));
-    socket.setEncoding("utf8");
-    socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n`));
-    socket.on("data", () => resolve());
-    socket.on("error", reject);
-    socket.on("close", () => resolve());
-  });
-}
 
 const rail = (window: Page) => window.locator(".aya-status-rail");
 
@@ -115,6 +104,6 @@ test("the rail collapses to just its counts and the choice persists", async ({
 
   // The preference is stored so a reload doesn't re-expand it in the user's face.
   await expect
-    .poll(() => window.evaluate(() => localStorage.getItem("aya:status-rail-collapsed")))
+    .poll(() => window.evaluate((k) => localStorage.getItem(k), STATUS_RAIL_COLLAPSED_STORAGE_KEY))
     .toBe("1");
 });

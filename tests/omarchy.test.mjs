@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseOmarchyColors } from "../dist-electron/omarchy.js";
+import { OMARCHY_WATCH_DEBOUNCE_MS, parseOmarchyColors } from "../dist-electron/omarchy.js";
 
 const TOKYO_NIGHT = `mode = "dark"
 
@@ -254,4 +254,8 @@ test("an empty top-level value falls through to a palette table", () => {
 
 test("a file with nothing in it is unusable (null)", () => {
   assert.equal(parseOmarchyColors(""), null);
+});
+
+test("theme switches are debounced by 150 ms", () => {
+  assert.equal(OMARCHY_WATCH_DEBOUNCE_MS, 150);
 });

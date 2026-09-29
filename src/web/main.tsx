@@ -19,6 +19,9 @@ import { createRoot } from "react-dom/client";
 import { createWebAya } from "./bridge";
 import { connectWebTransport, webSocketUrl } from "./transport";
 
+// While disconnected, the host is polled this often before reloading.
+const RECONNECT_POLL_MS = 2000;
+
 const container = document.getElementById("root");
 if (!container) throw new Error("#root not found");
 const root = createRoot(container);
@@ -166,7 +169,7 @@ function showDisconnectedOverlay(): void {
     } catch {
       // Host still unreachable — keep polling.
     }
-  }, 2000);
+  }, RECONNECT_POLL_MS);
 }
 
 function WebBoot({ authenticated }: { authenticated: boolean }) {

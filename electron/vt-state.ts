@@ -13,16 +13,12 @@
 
 import { Terminal } from "@xterm/headless";
 import { MIN_PTY_COLS, MIN_PTY_ROWS } from "./constants";
-import { evaluateScreen } from "./agent-screen-rules";
+import { evaluateScreen, TAIL_REGION_LINES } from "./agent-screen-rules";
 import type { AgentKind } from "./presets";
 
 // Only the visible screen matters for "what is on screen right now", and
 // scrollback would grow a buffer per pane in the host process for no gain.
 const VT_SCROLLBACK_LINES = 0;
-// How many non-empty screen lines from the bottom the detector considers.
-// An approval prompt is always near the cursor; scanning the whole screen
-// would match a prompt the agent has already scrolled past within one screen.
-const SCAN_TAIL_LINES = 12;
 // The screen is scanned at most this often per pane. Writes are applied
 // immediately; only the (comparatively expensive) scan is rate-limited, so a
 // firehose of output costs one scan per interval rather than one per chunk.
@@ -34,7 +30,11 @@ export interface VtPane {
    *  a plain shell or an agent we have no rules for — those fall back to the
    *  generic rule set. */
   agent: AgentKind | undefined;
+  /** A plain shell: typed text would run as a command. */
+  shell: boolean;
   lastWaiting: boolean;
+  /** The agent's composer has been on screen once: it has finished starting. */
+  composerSeen: boolean;
   /** Pending trailing scan, so a pane that goes quiet right after painting a
    *  prompt still gets scanned once more. */
   timer: ReturnType<typeof setTimeout> | null;
@@ -49,6 +49,7 @@ export function openVtPane(
   rows: number,
   onChange: (waiting: boolean) => void,
   agent?: AgentKind,
+  shell = false,
 ): void {
   panes.set(ptyId, {
     terminal: new Terminal({
@@ -58,7 +59,9 @@ export function openVtPane(
       allowProposedApi: true,
     }),
     agent,
+    shell,
     lastWaiting: false,
+    composerSeen: false,
     timer: null,
     onChange,
   });
@@ -112,6 +115,10 @@ export function writeVtPane(ptyId: string, chunk: string): void {
 function scanPane(ptyId: string): void {
   const pane = panes.get(ptyId);
   if (!pane) return;
+  // Only until first seen: the search walks the scrollback when none is there.
+  if (!pane.composerSeen && COMPOSER_AGENTS.has(pane.agent) && composerState(pane.terminal) !== "absent") {
+    pane.composerSeen = true;
+  }
   const verdict = evaluateScreen(screenRows(pane.terminal), pane.agent);
   // No opinion: say nothing rather than assert a state change, so a weaker
   // signal (src/bell.ts) keeps whatever it had.
@@ -140,11 +147,11 @@ export function screenRows(terminal: Terminal): string[] {
   return rows;
 }
 
-/** The last `SCAN_TAIL_LINES` non-empty rows as one string. Kept for tests and
+/** The last `TAIL_REGION_LINES` non-empty rows as one string. Kept for tests and
  *  for any future screen-derived signal. */
 export function screenTail(
   terminal: Terminal,
-  maxLines: number = SCAN_TAIL_LINES,
+  maxLines: number = TAIL_REGION_LINES,
 ): string {
   return screenRows(terminal)
     .filter((row) => row.trim())
@@ -160,6 +167,54 @@ export function screenShowsApproval(
   agent?: AgentKind,
 ): boolean {
   return evaluateScreen(screenRows(terminal), agent) === "waiting";
+}
+
+// The composer prompt: Claude and Grok draw "❯", Codex "›", Grok inside a box.
+const COMPOSER_RE = /^\s*(?:│\s*)?[❯›]\s/;
+// A numbered menu row ("❯ 1. Alpha", "› 2) Beta") uses the composer's chevron;
+// it is a choice waiting for an answer, not text typed by the user.
+const NUMBERED_OPTION_RE = /^\s*(?:│\s*)?[❯›]\s*\d+[.)]\s/;
+const FRAME_RE = /[─│╭╮╰╯\s]/g;
+
+type ComposerState = "draft" | "numbered-choice" | "empty" | "absent";
+
+// Agents whose composer COMPOSER_RE knows; others are never "starting up".
+const COMPOSER_AGENTS: ReadonlySet<AgentKind | undefined> = new Set(["claude", "codex", "grok"]);
+
+/** Classify the lowest prompt row. Dim placeholders and box frame characters
+ *  are not typed text. */
+function composerState(terminal: Terminal): ComposerState {
+  const buffer = terminal.buffer.active;
+  for (let y = buffer.length - 1; y >= 0; y -= 1) {
+    const line = buffer.getLine(y);
+    const text = line?.translateToString(true) ?? "";
+    const prompt = text.match(COMPOSER_RE);
+    if (!line || !prompt) continue;
+    if (NUMBERED_OPTION_RE.test(text)) return "numbered-choice";
+    let typed = "";
+    for (let x = prompt[0].length; x < line.length; x += 1) {
+      const cell = line.getCell(x);
+      if (cell && !cell.isDim()) typed += cell.getChars();
+    }
+    return typed.replace(FRAME_RE, "") !== "" ? "draft" : "empty";
+  }
+  return "absent";
+}
+
+/** Why a message must not be typed into this pane now, or null. */
+export function paneHold(ptyId: string): string | null {
+  const pane = panes.get(ptyId);
+  // Every live PTY has a mirror; none means it exited or never started.
+  if (!pane) return "is not running (exited, or its tab was not opened yet)";
+  if (pane.shell) return "runs a shell";
+  if (evaluateScreen(screenRows(pane.terminal), pane.agent) === "waiting") return "shows an approval prompt";
+  const composer = composerState(pane.terminal);
+  if (composer !== "absent") pane.composerSeen = true;
+  // Measured: a message typed before the composer is drawn goes nowhere.
+  if (!pane.composerSeen && COMPOSER_AGENTS.has(pane.agent)) return "is still starting up";
+  if (composer === "numbered-choice") return "shows a numbered choice";
+  if (composer === "draft") return "has text the user is typing";
+  return null;
 }
 
 export function __testVtPane(ptyId: string): VtPane | undefined {

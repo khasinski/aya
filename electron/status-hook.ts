@@ -20,19 +20,19 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
-import { AYA_HOME } from "./paths";
+import { AYA_HOME, EXECUTABLE_FILE_MODE } from "./paths";
 import { bundledAyaCliPath } from "./cli-path";
+import { HOOK_VIA } from "./constants";
 import {
   claudeConfigDirs,
   readSettingsFile,
   settingsFileForConfigDir,
 } from "./usage-hook";
+import { shellQuote } from "./pane-command";
 
 // The generated hook script lives in Aya's own dir (always exists), referenced
 // by absolute path from every hook entry.
 export const STATUS_HOOK_SCRIPT_FILE = path.join(AYA_HOME, "aya-status-hook.sh");
-// Executable mode for the generated script (rwxr-xr-x).
-const HOOK_SCRIPT_MODE = 0o755;
 // The Claude Code hook events we register our command under.
 export const STATUS_HOOK_EVENTS = [
   "Notification",
@@ -55,10 +55,6 @@ export interface StatusHookStatus {
     conflict: boolean;
     configPath: string;
   };
-}
-
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 // Characters a POSIX shell word can hold unquoted.
@@ -207,12 +203,12 @@ EVENT=$(printf '%s' "$INPUT" | jq -r '.hook_event_name // empty')
 case "$EVENT" in
   Notification)
     MSG=$(printf '%s' "$INPUT" | jq -r '.message // "Needs your input"')
-    AYA_VIA=hook "$AYA" status waiting "$MSG" >/dev/null 2>&1 || true ;;
+    AYA_VIA=${HOOK_VIA} "$AYA" status waiting "$MSG" >/dev/null 2>&1 || true ;;
   PostToolUse)
     TOOL=$(printf '%s' "$INPUT" | jq -r '.tool_name // "a tool"')
-    AYA_VIA=hook "$AYA" status active "running $TOOL" >/dev/null 2>&1 || true ;;
+    AYA_VIA=${HOOK_VIA} "$AYA" status active "running $TOOL" >/dev/null 2>&1 || true ;;
   Stop)
-    AYA_VIA=hook "$AYA" status done "Turn finished" >/dev/null 2>&1 || true ;;
+    AYA_VIA=${HOOK_VIA} "$AYA" status done "Turn finished" >/dev/null 2>&1 || true ;;
 esac
 exit 0
 `;
@@ -270,7 +266,7 @@ async function install(): Promise<StatusHookStatus> {
     STATUS_HOOK_SCRIPT_FILE,
     statusHookScriptSource(bundledAyaCliPath(__dirname)),
   );
-  await fs.chmod(STATUS_HOOK_SCRIPT_FILE, HOOK_SCRIPT_MODE);
+  await fs.chmod(STATUS_HOOK_SCRIPT_FILE, EXECUTABLE_FILE_MODE);
   return statusHookStatus();
 }
 
@@ -293,17 +289,21 @@ async function uninstall(): Promise<StatusHookStatus> {
 /** Rewrite an ALREADY-installed hook script whose content is out of date (e.g.
  *  written before hook calls were tagged AYA_VIA=hook, #121). Never installs:
  *  a missing script stays missing. */
-export async function refreshStatusHookScript(): Promise<void> {
+export function refreshStatusHookScript(): Promise<void> {
+  return refreshInstalledScript(STATUS_HOOK_SCRIPT_FILE, statusHookScriptSource(bundledAyaCliPath(__dirname)));
+}
+
+/** Rewrites `file` with `source` (executable) only when it exists and differs. */
+export async function refreshInstalledScript(file: string, source: string): Promise<void> {
   let current: string;
   try {
-    current = await fs.readFile(STATUS_HOOK_SCRIPT_FILE, "utf8");
+    current = await fs.readFile(file, "utf8");
   } catch {
     return;
   }
-  const next = statusHookScriptSource(bundledAyaCliPath(__dirname));
-  if (current === next) return;
-  await writeFileAtomic(STATUS_HOOK_SCRIPT_FILE, next);
-  await fs.chmod(STATUS_HOOK_SCRIPT_FILE, HOOK_SCRIPT_MODE);
+  if (current === source) return;
+  await writeFileAtomic(file, source);
+  await fs.chmod(file, EXECUTABLE_FILE_MODE);
 }
 
 async function migrate(): Promise<void> {

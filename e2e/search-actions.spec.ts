@@ -1,6 +1,6 @@
 import { test, expect } from "./fixtures";
+import { visiblePane } from "./helpers/terminal";
 import { fireShortcut } from "./helpers/shortcut";
-import type { Page } from "@playwright/test";
 
 // SearchModal result kinds beyond buffer-content matching: running a launcher
 // and jumping to a terminal by name. (Only the content-match -> switch flow was
@@ -10,9 +10,6 @@ import type { Page } from "@playwright/test";
 // real visible pane avoids the sidebar-highlight proxy (which can diverge from
 // split-pane focus).
 test.use({ seedOptions: { split: false } });
-
-const visiblePane = (window: Page, name: string) =>
-  window.locator(`[data-testid="terminal-pane"][data-terminal-name="${name}"]:visible`);
 
 test("search can run a launcher preset to spawn a terminal for that preset", async ({
   window,

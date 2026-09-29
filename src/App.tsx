@@ -15,6 +15,8 @@ import {
   mergeProjectsFromDisk,
 } from "./project-reload";
 import { AttentionCenter } from "./components/AttentionCenter";
+import { TeamsModal } from "./components/TeamsModal";
+import { TeamAssignPrompt } from "./components/TeamRole";
 import { StatusRail } from "./components/StatusRail";
 import { EmptyState } from "./components/EmptyState";
 import { MissingDirModal } from "./components/MissingDirModal";
@@ -39,6 +41,7 @@ import { useStable } from "./hooks/useStableIdentity";
 import { sameArrayItems, sameRecordValues } from "./stable-identity";
 import { paletteToChromeVars, paletteToThemeColors } from "./theme-skin";
 import { localSummaryUnavailableMessage } from "./local-summary-errors";
+import { LOCAL_SUMMARY_MAX_LINES, PROJECT_STATE_VERSION } from "./main-mirrors";
 import type { SettingsTab } from "./settings-tabs";
 import {
   useDockBadge,
@@ -46,6 +49,32 @@ import {
   useTerminalNotifications,
 } from "./hooks/useTerminalSignals";
 import { useTerminalSounds } from "./hooks/useTerminalSounds";
+import { useTeams } from "./hooks/useTeams";
+import { OLLAMA_OPENAI_BASE_URL, RECOMMENDED_OLLAMA_MODEL } from "./ollama-defaults";
+import { PRESET_ID_SHELL } from "./preset-ids";
+import {
+  APP_THEME_STORAGE_KEY,
+  AYA_INTELLIGENCE_STORAGE_KEY,
+  CUSTOM_DONE_SOUND_STORAGE_KEY,
+  CUSTOM_WAITING_SOUND_STORAGE_KEY,
+  HARNESS_SEARCH_STORAGE_KEY,
+  LAYOUT_MODE_STORAGE_KEY,
+  LOCAL_SUMMARIES_STORAGE_KEY,
+  LOCAL_SUMMARY_CACHE_STORAGE_KEY,
+  MAC_OPTION_KEY_STORAGE_KEY,
+  NO_HARNESS_HINT_DISMISSED_STORAGE_KEY,
+  SOUND_OVERRIDES_STORAGE_KEY,
+  STATUSBAR_GITHUB_LINK_STORAGE_KEY,
+  STATUS_RAIL_COLLAPSED_STORAGE_KEY,
+  TERMINAL_FONT_FAMILY_STORAGE_KEY,
+  TERMINAL_SOUNDS_STORAGE_KEY,
+  USAGE_HARNESS_NAME_STORAGE_KEY,
+  WORKTREES_STORAGE_KEY,
+  repoConfigIgnoredKey,
+} from "./storage-keys";
+import { GPU_RELAUNCHED_EVENT } from "./window-events";
+import { uuid } from "./uuid";
+import { GIT_STATUS_POLL_INTERVAL_MS } from "./ui-timing";
 import { normalizeSoundOverrides } from "./terminal-sound-prefs";
 import {
   MAX_SPLIT_LEAVES,
@@ -99,8 +128,6 @@ import {
   type WorktreeStatus,
 } from "./types";
 
-// Cadence for polling the active project's git branch/dirty count (no inotify watch).
-const GIT_STATUS_POLL_INTERVAL_MS = 3000;
 // Cadence for re-reading the account-wide usage snapshot a user hook writes.
 const USAGE_POLL_INTERVAL_MS = 30_000;
 // Cap on retained entries in the project event timeline.
@@ -132,28 +159,10 @@ function pollVisible(refresh: () => void, intervalMs: number): () => void {
   };
 }
 const TERMINAL_FONT_SIZE_PX = 13;
-// Persisted schema version for ProjectCollectionState.
-const PROJECT_STATE_VERSION = 1;
-const APP_THEME_STORAGE_KEY = "aya:app-theme";
-const MAC_OPTION_KEY_STORAGE_KEY = "aya:mac-option-key";
-const TERMINAL_FONT_FAMILY_STORAGE_KEY = "aya:terminal-font-family";
-const USAGE_HARNESS_NAME_STORAGE_KEY = "aya:usage-show-harness-name";
-const STATUSBAR_GITHUB_LINK_STORAGE_KEY = "aya:statusbar-github-link";
-const LAYOUT_MODE_STORAGE_KEY = "aya:layout-mode";
-const WORKTREES_STORAGE_KEY = "aya:worktrees";
-const HARNESS_SEARCH_STORAGE_KEY = "aya:harness-search";
-const TERMINAL_SOUNDS_STORAGE_KEY = "aya:terminal-sounds";
-const STATUS_RAIL_COLLAPSED_STORAGE_KEY = "aya:status-rail-collapsed";
 /** Leaf id for the synthetic one-pane tree used when a project has no stored
  *  split (or is showing a single terminal). Constant so React keys and focus
  *  stay stable across renders. */
 const SINGLE_VIEW_LEAF_ID = "single";
-const SOUND_OVERRIDES_STORAGE_KEY = "aya:terminal-sound-overrides";
-const CUSTOM_WAITING_SOUND_STORAGE_KEY = "aya:terminal-sound-waiting";
-const CUSTOM_DONE_SOUND_STORAGE_KEY = "aya:terminal-sound-done";
-const LOCAL_SUMMARIES_STORAGE_KEY = "aya:local-summaries";
-const LOCAL_SUMMARY_CACHE_STORAGE_KEY = "aya:local-summary-cache";
-const AYA_INTELLIGENCE_STORAGE_KEY = "aya:intelligence";
 const WARM_PROJECT_TERMINAL_CACHE_SIZE = 4;
 const LOCAL_SUMMARY_REFRESH_MS = 30 * 60 * 1000;
 const LOCAL_SUMMARY_DEBOUNCE_MS = 10_000;
@@ -161,7 +170,10 @@ const LOCAL_SUMMARY_DEBOUNCE_MS = 10_000;
 const PROJECT_STATE_SAVE_DEBOUNCE_MS = 150;
 const LOCAL_SUMMARY_MIN_UPDATE_MS = 2 * 60 * 1000;
 const LOCAL_SUMMARY_MIN_NEW_LINES = 8;
-const LOCAL_SUMMARY_MAX_LINES = 30;
+// Fewer output lines than this are "not enough output" to summarize.
+const LOCAL_SUMMARY_MIN_LINES = 2;
+// Cleaned output lines shorter than this (prompts, stray glyphs) are dropped.
+const LOCAL_SUMMARY_MIN_LINE_CHARS = 3;
 const LOCAL_SUMMARY_BUFFER_LINES = 80;
 const LOCAL_SUMMARY_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const SESSION_MONITOR_POLL_INTERVAL_MS = 5_000;
@@ -170,10 +182,10 @@ type AppThemePreference = "system" | "light" | "dark" | "omarchy";
 
 const DEFAULT_AYA_INTELLIGENCE: AyaIntelligenceConfig = {
   provider: "apple",
-  ollamaModel: "gemma4:e4b",
-  openAiBaseUrl: "http://localhost:11434/v1",
+  ollamaModel: RECOMMENDED_OLLAMA_MODEL,
+  openAiBaseUrl: OLLAMA_OPENAI_BASE_URL,
   openAiApiKey: "",
-  openAiModel: "gemma4:e4b",
+  openAiModel: RECOMMENDED_OLLAMA_MODEL,
 };
 
 interface AutoSummaryStatus {
@@ -367,7 +379,7 @@ function cleanTerminalOutput(chunk: string): string[] {
         .replace(/\s+/g, " ")
         .trim(),
     )
-    .filter((line) => line.length >= 3);
+    .filter((line) => line.length >= LOCAL_SUMMARY_MIN_LINE_CHARS);
 }
 
 function summaryHash(lines: string[]): string {
@@ -453,15 +465,6 @@ interface PendingRepoImport {
   presets: Preset[];
 }
 
-function uuid(): string {
-  // Cryptographically secure source — CodeQL flags Math.random() ids as
-  // insecure. getRandomValues works in every context (incl. the file://
-  // production page, where crypto.randomUUID is unavailable).
-  const bytes = new Uint8Array(8);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 function findProject(
   projects: ProjectConfig[],
   slug: string,
@@ -507,7 +510,7 @@ function remoteTerminalCommand(project: ProjectConfig, preset: Preset): string {
   if (!project.remote) return preset.command;
   const remoteShell = '"${SHELL:-/bin/sh}"';
   const remoteCommand =
-    preset.id === "shell" || preset.command.trim() === "$SHELL"
+    preset.id === PRESET_ID_SHELL || preset.command.trim() === "$SHELL"
       ? `cd ${shellQuote(project.remote.directory)} && exec ${remoteShell} -l`
       : `cd ${shellQuote(project.remote.directory)} && exec ${remoteShell} -l -i -c ${shellQuote(`exec ${preset.command}`)}`;
   return `ssh -tt ${shellQuote(project.remote.sshTarget)} ${shellQuote(remoteCommand)}`;
@@ -810,6 +813,7 @@ export function App() {
     string | null
   >(null);
   const [showAttentionCenter, setShowAttentionCenter] = useState(false);
+  const [showTeams, setShowTeams] = useState(false);
   const [pendingRepoImport, setPendingRepoImport] =
     useState<PendingRepoImport | null>(null);
   const [findInPaneFor, setFindInPaneFor] = useState<string | null>(null);
@@ -820,7 +824,7 @@ export function App() {
   const [harnessScanDone, setHarnessScanDone] = useState(false);
   const [foundHarnessCount, setFoundHarnessCount] = useState(0);
   const [hideNoHarnessHint, setHideNoHarnessHint] = useState(
-    () => localStorage.getItem("aya:no-harness-hint-dismissed") === "1",
+    () => localStorage.getItem(NO_HARNESS_HINT_DISMISSED_STORAGE_KEY) === "1",
   );
   const fontSize = TERMINAL_FONT_SIZE_PX;
   const openSettings = useCallback((tab: SettingsTab = "general") => {
@@ -1083,7 +1087,7 @@ export function App() {
   // kind of wake/focus events). One subscription for the whole renderer.
   useEffect(() => {
     return window.aya.onGpuRelaunched(() => {
-      window.dispatchEvent(new Event("aya:gpu-relaunched"));
+      window.dispatchEvent(new Event(GPU_RELAUNCHED_EVENT));
     });
   }, []);
 
@@ -1215,7 +1219,7 @@ export function App() {
         return;
       }
       const recent = lines.slice(-LOCAL_SUMMARY_MAX_LINES);
-      if (recent.length < 2) {
+      if (recent.length < LOCAL_SUMMARY_MIN_LINES) {
         setAutoSummaryStatus((prev) => ({
           ...prev,
           lastEvent: `${kind}: not enough output (${recent.length} line${recent.length === 1 ? "" : "s"}).`,
@@ -1763,7 +1767,7 @@ export function App() {
       apply: (summary: string) => void,
     ) => {
       const recent = lines.slice(-LOCAL_SUMMARY_MAX_LINES);
-      if (recent.length < 2) {
+      if (recent.length < LOCAL_SUMMARY_MIN_LINES) {
         setAutoSummaryStatus((prev) => ({
           ...prev,
           lastEvent: `${kind}: not enough output (${recent.length} line${recent.length === 1 ? "" : "s"}).`,
@@ -1835,7 +1839,7 @@ export function App() {
 
     const linesForTerminal = async (terminalId: string): Promise<string[]> => {
       const existing = terminalOutputRef.current[terminalId] ?? [];
-      if (existing.length >= 2) return existing;
+      if (existing.length >= LOCAL_SUMMARY_MIN_LINES) return existing;
       try {
         const buffered = await window.aya.ptyBuffer(terminalId);
         const lines = cleanTerminalOutput(buffered);
@@ -1945,7 +1949,7 @@ export function App() {
     const project = projectsRef.current.find((p) => p.slug === activeProjectId);
     if (!project) return;
     if (project.remote) return;
-    const ignoredKey = `aya:repo-config-ignored:${project.directory}`;
+    const ignoredKey = repoConfigIgnoredKey(project.directory);
     if (localStorage.getItem(ignoredKey) === "1") return;
     let cancelled = false;
     void window.aya.readRepoProjectConfig(project.directory).then((config) => {
@@ -2173,6 +2177,8 @@ export function App() {
     (id: string) => {
       const t = terminalsRef.current[id];
       if (!t) return;
+    // A closed tab plays no team role; a restart keeps it (same tab).
+    void window.aya.teamReleasePane(t.projectSlug, id).catch(() => {});
     // Drop the confirmed-session marker so the id doesn't linger (and can't be
     // mistaken for a re-mount if the id were ever reused).
     forgetSpawn(id);
@@ -3137,7 +3143,7 @@ export function App() {
         ? (remotePresetsByProjectRef.current[slug] ?? presetsRef.current)
         : presetsRef.current;
     const shellPreset =
-      sourcePresets.find((p) => p.id === "shell") ?? sourcePresets[0] ?? BUILTIN_SHELL;
+      sourcePresets.find((p) => p.id === PRESET_ID_SHELL) ?? sourcePresets[0] ?? BUILTIN_SHELL;
     launchTerminal(shellPreset);
   }, [launchTerminal]);
 
@@ -3637,6 +3643,15 @@ export function App() {
 
   const currentMissingDir = missingDirQueue[0] ?? null;
   const chromeBlocked = !!currentMissingDir || !!newProjectModal;
+  const {
+    teamsByProject,
+    activeTeams,
+    teamToPrompt,
+    onAssignTeamRole,
+    dismissTeamPrompt,
+    onTeamsWindowClosed,
+  } = useTeams({ projects, activeProjectId, activeProjectRemote: !!activeProject?.remote });
+
   // Any overlay that should hold focus instead of the terminal. While one is
   // open, no terminal is "active" for focus purposes; closing the last one
   // hands focus back to the active terminal (via TerminalView's isActive effect).
@@ -3645,6 +3660,8 @@ export function App() {
     showSettings ||
     showSearch ||
     showAttentionCenter ||
+    showTeams ||
+    !!teamToPrompt ||
     !!pendingRepoImport;
   const closeFindPane = useCallback(() => setFindInPaneFor(null), []);
   const ignoreSnippetsOpenChange = useCallback(() => undefined, []);
@@ -3764,7 +3781,7 @@ export function App() {
             onOpenProject={showNewProjectModal}
             onOpenSettings={openSettings}
             onDismissNoHarnessHint={() => {
-              localStorage.setItem("aya:no-harness-hint-dismissed", "1");
+              localStorage.setItem(NO_HARNESS_HINT_DISMISSED_STORAGE_KEY, "1");
               setHideNoHarnessHint(true);
             }}
           />
@@ -3943,6 +3960,8 @@ export function App() {
         if (layoutMode === "projects-left") {
           return (
             <ProjectsLeftLayout
+              teamsByProject={teamsByProject}
+              onAssignTeamRole={onAssignTeamRole}
               projects={projects}
               closedProjects={closedProjects}
               activeProjectId={activeProjectId}
@@ -4027,6 +4046,8 @@ export function App() {
                 style={{ gridTemplateColumns: `${sidebarWidth}px 1fr` }}
               >
                 <Sidebar
+                  teams={activeTeams}
+                  onAssignTeamRole={onAssignTeamRole}
                   terminals={projectTerminals}
                   activeId={activeTabId}
                   sidebarWidth={sidebarWidth}
@@ -4087,6 +4108,7 @@ export function App() {
         snippetsDisabled={!activeTerminal}
         onToggleSnippets={toggleSnippetsDrawer}
         onOpenAttentionCenter={openAttentionCenter}
+        onOpenTeams={() => setShowTeams(true)}
         onOpenProjectDirectory={openProjectDirectory}
       />
       {currentMissingDir && (
@@ -4149,6 +4171,27 @@ export function App() {
           onClose={() => setShowSearch(false)}
         />
       )}
+      {showTeams && activeProject && (
+        <TeamsModal
+          project={activeProject}
+          intelligence={ayaIntelligence}
+          onClose={() => {
+            setShowTeams(false);
+            onTeamsWindowClosed(activeProject.slug);
+          }}
+        />
+      )}
+      {!showTeams && teamToPrompt && activeProject && !chromeBlocked && (
+        <TeamAssignPrompt
+          project={activeProject}
+          team={teamToPrompt}
+          onOpenTeams={() => {
+            dismissTeamPrompt(activeProject.slug, teamToPrompt.name);
+            setShowTeams(true);
+          }}
+          onDismiss={() => dismissTeamPrompt(activeProject.slug, teamToPrompt.name)}
+        />
+      )}
       {showAttentionCenter && (
         <AttentionCenter
           projects={projects}
@@ -4165,10 +4208,7 @@ export function App() {
           project={pendingRepoImport.project}
           presets={pendingRepoImport.presets}
           onIgnore={() => {
-            localStorage.setItem(
-              `aya:repo-config-ignored:${pendingRepoImport.project.directory}`,
-              "1",
-            );
+            localStorage.setItem(repoConfigIgnoredKey(pendingRepoImport.project.directory), "1");
             setPendingRepoImport(null);
           }}
           onImport={() => {
@@ -4185,10 +4225,7 @@ export function App() {
             const next = base;
             void window.aya.savePresets(next).then(() => {
               setPresets(next);
-              localStorage.setItem(
-                `aya:repo-config-ignored:${project.directory}`,
-                "1",
-              );
+              localStorage.setItem(repoConfigIgnoredKey(project.directory), "1");
               appendProjectEvent({
                 projectSlug: project.slug,
                 level: "info",

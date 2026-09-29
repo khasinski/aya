@@ -6,11 +6,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, statSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+import { waitFor } from "./helpers/pty-host.mjs";
 import {
   isReapableHost,
   collectDescendants,
@@ -19,6 +18,7 @@ import {
   removeHostRecord,
   reapStaleHostRecords,
   classifyRecord,
+  PS_ENV,
 } from "../dist-electron/pty-host-registry.js";
 
 const SCRIPT = "/Applications/Aya.app/Contents/Resources/app.asar/dist-electron/pty-host.js";
@@ -395,26 +395,29 @@ test("a real spawned host writes its record, and SIGTERM shuts it down cleanly (
     // Wait for the record (written after listen) - proves pid/pgid verification
     // passed and startTime was non-empty on a real process.
     const regDir = join(home, "pty-hosts");
-    const deadline = Date.now() + 5000;
-    let recs = [];
-    while (Date.now() < deadline) {
-      recs = readHostRecords(regDir);
-      if (recs.length > 0) break;
-      await sleep(50);
-    }
+    const recs = await waitFor(() => {
+      const found = readHostRecords(regDir);
+      return found.length > 0 && found;
+    });
     assert.equal(recs.length, 1, "host published its registry record");
     assert.equal(recs[0].pid, host.pid);
     assert.equal(recs[0].pgid, recs[0].pid, "host verified it leads its own group");
     assert.ok(recs[0].startTime.length > 0, "record carries a verifiable start time");
+    assert.match(recs[0].nonce, /^[0-9a-f]{16}$/, "an 8-byte hex nonce");
+    const start = readFileSync(join(home, "pty-events.log"), "utf-8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .find((e) => e.ev === "host-start");
+    assert.equal(start?.scriptHash, recs[0].scriptHash.slice(0, 8), "the log keeps an 8-char hash prefix");
 
     // SIGTERM must now do a REAL graceful shutdown (not leave a socketless
     // zombie): host exits and removes its record (children confirmed dead -
     // there are none here).
     host.kill("SIGTERM");
-    const exitDeadline = Date.now() + 5000;
-    while (Date.now() < exitDeadline && !exited) await sleep(50);
+    await waitFor(() => exited);
     assert.equal(exited, true, "SIGTERM terminates the host (no suppressed-default zombie)");
-    await sleep(100); // let the record removal land
+    await waitFor(() => readHostRecords(regDir).length === 0);
     assert.deepEqual(readHostRecords(regDir), [], "clean shutdown removed the record");
   } finally {
     try {
@@ -424,4 +427,24 @@ test("a real spawned host writes its record, and SIGTERM shuts it down cleanly (
     }
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test("readHostRecords sweeps aged .tmp leftovers and spares young ones", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-reg-tmp-"));
+  try {
+    const aged = join(dir, "4242.json.1.abcdef12.tmp");
+    const young = join(dir, "4243.json.1.abcdef12.tmp");
+    writeFileSync(aged, "{}");
+    writeFileSync(young, "{}");
+    const old = new Date(Date.now() - 120_000);
+    utimesSync(aged, old, old);
+    assert.deepEqual(readHostRecords(dir), []);
+    assert.deepEqual(readdirSync(dir), ["4243.json.1.abcdef12.tmp"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("PS_ENV (shared with the sweep): process env pinned to C locale + UTC", () => {
+  assert.deepEqual(PS_ENV, { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" });
 });

@@ -15,15 +15,23 @@ import { codexHomeFor } from "./agent-brief";
 import type { UsageAccount, UsageData } from "./usage";
 import { expandUserPath, usageAccountFromData } from "./usage";
 
+// Codex's home when neither CODEX_HOME nor a preset names one.
+export const CODEX_DIRNAME = ".codex";
+export const CODEX_DEFAULT_DIR = `~/${CODEX_DIRNAME}`;
+// Rollout JSONL root inside a Codex home (also walked by transcript search).
+export const CODEX_SESSIONS_SUBDIR = "sessions";
+
 /** The default Codex home — the env override, else ~/.codex. Additional homes
  *  (second accounts) are derived from preset commands and passed in explicitly. */
 export const DEFAULT_CODEX_HOME =
   process.env.CODEX_HOME && process.env.CODEX_HOME.trim()
     ? path.resolve(process.env.CODEX_HOME)
-    : path.join(os.homedir(), ".codex");
+    : path.join(os.homedir(), CODEX_DIRNAME);
 
 // Bound the per-poll work: only the few most-recent rollouts are read/parsed.
 const MAX_ROLLOUTS_SCANNED = 20;
+// The ECMAScript Date range: past it, toISOString throws RangeError.
+export const MAX_DATE_MS = 8.64e15;
 
 export interface CodexUsageSource {
   id: string;
@@ -52,7 +60,7 @@ function isoFromUnixSeconds(sec: unknown): string | undefined {
   // propagates through the usage:get-codex IPC handler into an uncaught
   // rejection that silently stops the chip from refreshing (#93). An
   // out-of-range value means "no reset time", not a poisoned snapshot.
-  if (Math.abs(ms) > 8.64e15) return undefined;
+  if (Math.abs(ms) > MAX_DATE_MS) return undefined;
   return new Date(ms).toISOString();
 }
 
@@ -311,7 +319,7 @@ export function resetCodexUsageCaches(): void {
 async function recentRolloutFiles(
   home = DEFAULT_CODEX_HOME,
 ): Promise<{ file: string; mtimeMs: number }[]> {
-  const root = path.join(expandUserPath(home), "sessions");
+  const root = path.join(expandUserPath(home), CODEX_SESSIONS_SUBDIR);
   let cache = walkCaches.get(root);
   if (!cache) {
     cache = {

@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   CLI_ADOPTION_MAX_PANES,
+  CLI_ADOPTION_SAVE_DEBOUNCE_MS,
   createCliAdoptionStore,
   emptyCliAdoption,
   normalizeCliAdoption,
@@ -122,4 +123,8 @@ test("store: a missing file starts empty, and nothing to save writes nothing", a
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("adoption snapshots are saved 2 s after the last change", () => {
+  assert.equal(CLI_ADOPTION_SAVE_DEBOUNCE_MS, 2_000);
 });

@@ -11,9 +11,18 @@
 import * as os from "node:os";
 import * as path from "node:path";
 
-export const IS_DEV = process.env.AYA_DEV === "1";
+// The dev-build switch; the legacy sweep matches the same pair in a process env.
+export const AYA_DEV_VAR = "AYA_DEV";
+export const AYA_DEV_ON = "1";
+export const IS_DEV = process.env[AYA_DEV_VAR] === AYA_DEV_ON;
 export const IS_E2E_HEADLESS = process.env.AYA_E2E_HEADLESS === "1";
 export const IS_E2E_PTY_SHUTDOWN = process.env.AYA_E2E_PTY_SHUTDOWN === "1";
+
+// Home-relative config dirs; the legacy sweep maps a process's env to these too.
+export const AYA_HOME_DIRNAME = ".aya";
+export const AYA_DEV_HOME_DIRNAME = ".aya-dev";
+// A repo's own Aya dir (.aya/project.json, .aya/teams), not the config home.
+export const PROJECT_AYA_DIRNAME = ".aya";
 
 // AYA_HOME env var lets you point a single launch at an arbitrary config
 // directory (e.g. /tmp/aya-demo for screenshots, or a per-task scratch dir).
@@ -21,7 +30,7 @@ export const IS_E2E_PTY_SHUTDOWN = process.env.AYA_E2E_PTY_SHUTDOWN === "1";
 export const AYA_HOME =
   process.env.AYA_HOME && process.env.AYA_HOME.trim()
     ? path.resolve(process.env.AYA_HOME)
-    : path.join(os.homedir(), IS_DEV ? ".aya-dev" : ".aya");
+    : path.join(os.homedir(), IS_DEV ? AYA_DEV_HOME_DIRNAME : AYA_HOME_DIRNAME);
 
 export const PROJECTS_DIR = path.join(AYA_HOME, "projects");
 export const PRESETS_FILE = path.join(AYA_HOME, "presets.json");
@@ -35,11 +44,18 @@ export const PROJECTS_STATE_FILE = path.join(AYA_HOME, "projects-state.json");
 export const PROJECTS_ORDER_FILE = path.join(AYA_HOME, "projects-order.json");
 export const OPEN_PROJECTS_FILE = path.join(AYA_HOME, "open-projects.json");
 export const CONTROL_SOCKET_PATH = path.join(AYA_HOME, "aya.sock");
-export const REMOTE_SOCKET_PATH = path.join(AYA_HOME, "aya-remote.sock");
+// Bare name too: the remote bridge script rebuilds the path on the remote host.
+export const REMOTE_SOCKET_NAME = "aya-remote.sock";
+export const REMOTE_SOCKET_PATH = path.join(AYA_HOME, REMOTE_SOCKET_NAME);
 export const PTY_HOST_SOCKET_PATH = path.join(AYA_HOME, "pty-host.sock");
+export const CLI_ADOPTION_FILE = path.join(AYA_HOME, "cli-adoption.json");
+// Main-process diagnostics (GPU-helper deaths, #79).
+export const DIAGNOSTICS_LOG_FILE = path.join(AYA_HOME, "diagnostics.log");
 
 // rw------- (owner-only). Sockets accept unauthenticated local commands /
 // remote bridge traffic, and host-registry records name kill targets - none
 // of it may be readable/writable by other users. One definition for both.
 export const OWNER_ONLY_FILE_MODE = 0o600;
+// rwxr-xr-x: the installed CLI and the generated hook scripts.
+export const EXECUTABLE_FILE_MODE = 0o755;
 export const SOCKET_FILE_PERMISSIONS = OWNER_ONLY_FILE_MODE;

@@ -4,9 +4,12 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect } from "./fixtures";
+import { AGENT_START_TIMEOUT_MS, AGENT_TEST_TIMEOUT_MS } from "./timeouts";
 import { fireShortcut } from "./helpers/shortcut";
+import { teamSeed } from "./helpers/team";
+import { firstTerminalShown } from "./helpers/terminal";
 
-test.describe.configure({ timeout: 120_000 });
+test.describe.configure({ timeout: AGENT_TEST_TIMEOUT_MS });
 
 const NODE = process.execPath;
 const ARGV_DUMP = join(__dirname, "helpers", "argv-dump.cjs");
@@ -32,7 +35,7 @@ const fakeAgent = (agent: string, agentBrief = true) => ({
 async function paneLaunch(seeded: { projectDir: string; tabIds: { right: string } }) {
   const dump = join(seeded.projectDir, `argv-${seeded.tabIds.right}.json`);
   await expect
-    .poll(() => existsSync(dump), { message: "the pane never started", timeout: 60_000 })
+    .poll(() => existsSync(dump), { message: "the pane never started", timeout: AGENT_START_TIMEOUT_MS })
     .toBe(true);
   return JSON.parse(readFileSync(dump, "utf8"));
 }
@@ -296,4 +299,41 @@ test("a broken presets.json does not stop a pane from spawning", async ({ window
     { cwd: seeded.projectDir, marker },
   );
   await expect.poll(() => existsSync(marker), { timeout: 30_000 }).toBe(true);
+});
+
+const TEAM = `# ux-review
+
+## Role: implementer
+Sends to: tester
+Must not: skip a report
+
+## Role: tester
+Sends to: implementer
+Must not: edit code
+`;
+const teamPane = (agent: string, agentBrief: boolean) =>
+  teamSeed(TEAM, { presetList: fakeAgent(agent, agentBrief).seedOptions.presetList, assignments: { tester: "tab-right" } });
+
+test.describe("a team pane without the brief opt-in", () => {
+  test.use(teamPane("claude", false));
+
+  test("still starts with its role note", async ({ window, seeded }) => {
+    await firstTerminalShown(window);
+    const { args } = await paneLaunch(seeded);
+    const note = args[args.indexOf("--append-system-prompt") + 1];
+    expect(note).toMatch(/tester in the Aya team ux-review/);
+    expect(note).not.toMatch(/aya capabilities/);
+  });
+});
+
+test.describe("a team pane with the brief on", () => {
+  test.use(teamPane("grok", true));
+
+  test("gets the brief and its role note in one flag", async ({ window, seeded }) => {
+    await firstTerminalShown(window);
+    const { args } = await paneLaunch(seeded);
+    const flag = args.indexOf("--rules");
+    expect(args.lastIndexOf("--rules")).toBe(flag);
+    expect(args[flag + 1]).toMatch(/aya capabilities[\s\S]*tester in the Aya team ux-review/);
+  });
 });

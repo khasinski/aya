@@ -15,7 +15,6 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { waitFor } from "./helpers/wait-for.mjs";
 
 const TMP_AYA_HOME = mkdtempSync(join(tmpdir(), "aya-attach-reused-"));
 process.env.AYA_HOME = TMP_AYA_HOME;
@@ -24,23 +23,9 @@ const { PtyHostClient, resolveSpawnAttach } = await import(
   "../dist-electron/pty-host-client.js"
 );
 
+const { waitFor, fakeWebContents, ptyEventsFor } = await import("./helpers/pty-host.mjs");
+
 const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
-
-function fakeWebContents() {
-  const events = [];
-  return {
-    isDestroyed: () => false,
-    send: (channel, payload) => events.push({ channel, payload }),
-    _events: events,
-  };
-}
-
-function ptyEventsFor(wc, ptyId) {
-  return wc._events
-    .filter((e) => e.channel === "pty:event")
-    .map((e) => e.payload)
-    .filter((p) => p.ptyId === ptyId);
-}
 
 const spawnReq = (over) => ({
   ptyId: "id",

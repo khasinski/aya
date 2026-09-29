@@ -21,7 +21,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { AYA_HOME } from "./paths";
 
-export const PTY_LOG_FILE = path.join(AYA_HOME, "pty-events.log");
+export const PTY_LOG_FILENAME = "pty-events.log";
+export const PTY_LOG_FILE = path.join(AYA_HOME, PTY_LOG_FILENAME);
 export const PTY_LOG_MAX_BYTES = 1_000_000;
 
 export interface PtyLogWriter {
@@ -92,7 +93,7 @@ export const ptyLog: PtyLogWriter = {
     if (!lazyLog) {
       const env = process.env.AYA_HOME?.trim();
       lazyLog = createPtyLog(
-        env ? path.join(path.resolve(env), "pty-events.log") : PTY_LOG_FILE,
+        env ? path.join(path.resolve(env), PTY_LOG_FILENAME) : PTY_LOG_FILE,
       );
     }
     lazyLog.append(event, fields);

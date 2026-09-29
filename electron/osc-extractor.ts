@@ -118,7 +118,7 @@ export function parseAyaOscStatus(event: AyaOscEvent): AyaOscStatus | null {
 // to characters that cannot change the shape of that command — no quotes,
 // whitespace, or shell metacharacters. Anything else is dropped rather than
 // escaped: a malformed id is worth losing, a command injection is not.
-const SESSION_ID_RE = /^[A-Za-z0-9_.:/-]{1,200}$/;
+export const SESSION_ID_RE = /^[A-Za-z0-9_.:/-]{1,200}$/;
 
 export const isSafeSessionId = (id: string): boolean => SESSION_ID_RE.test(id);
 

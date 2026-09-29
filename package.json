@@ -120,5 +120,18 @@
     "extraMetadata": {
       "main": "dist-electron/main.js"
     }
+  },
+  "electronmon": {
+    "patterns": [
+      "!playwright-report/**",
+      "!test-results/**",
+      "!tests/**",
+      "!e2e/**",
+      "!dist-test/**",
+      "!docs/**",
+      "!scripts/**",
+      "!.aya/**",
+      "!*.md"
+    ]
   }
 }

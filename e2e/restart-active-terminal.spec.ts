@@ -10,6 +10,7 @@ import { seedEnv } from "./helpers/seed";
 import {
   APP_GRACEFUL_CLOSE_TIMEOUT_MS,
   APP_PROCESS_EXIT_TIMEOUT_MS,
+  delay,
   cleanUpSeeded,
 } from "./fixtures";
 
@@ -19,10 +20,6 @@ import {
 
 const APP_ROOT = join(__dirname, "..");
 const ACTIVE_TAB_PERSISTENCE_TIMEOUT_MS = 5_000;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function projectStatePath(ayaHome: string): string {
   return join(ayaHome, "projects-state.json");

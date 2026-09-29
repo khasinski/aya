@@ -8,7 +8,20 @@ import {
   codexUsageFromRateLimit,
   latestUsageAccountsFromLines,
   latestUsageFromLines,
+  CODEX_DIRNAME,
+  CODEX_DEFAULT_DIR,
+  CODEX_SESSIONS_SUBDIR,
+  MAX_DATE_MS,
 } from "../dist-electron/usage-codex.js";
+
+test("Codex's default home is ~/.codex", () => {
+  assert.equal(CODEX_DIRNAME, ".codex");
+  assert.equal(CODEX_DEFAULT_DIR, "~/.codex");
+});
+
+test("Codex rollouts live under <home>/sessions (usage chip and transcript search)", () => {
+  assert.equal(CODEX_SESSIONS_SUBDIR, "sessions");
+});
 
 // The real shape captured from ~/.codex/sessions/.../rollout-*.jsonl.
 const SAMPLE = {
@@ -342,4 +355,10 @@ test("latestUsageAccountsFromLines reads id/label from a nested payload.account"
   assert.equal(out.length, 1);
   assert.equal(out[0].id, "team-42");
   assert.equal(out[0].label, "Team");
+});
+
+test("MAX_DATE_MS is the ECMAScript Date range limit", () => {
+  assert.equal(MAX_DATE_MS, 8.64e15);
+  assert.doesNotThrow(() => new Date(MAX_DATE_MS).toISOString());
+  assert.throws(() => new Date(MAX_DATE_MS + 1).toISOString(), RangeError);
 });

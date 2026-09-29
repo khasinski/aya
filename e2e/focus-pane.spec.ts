@@ -1,20 +1,10 @@
 import { test, expect } from "./fixtures";
+import { activeSplitPane, focusedTerminalName } from "./helpers/terminal";
 import { fireShortcut } from "./helpers/shortcut";
-import type { Page } from "@playwright/test";
 
 // Directional split-pane focus (focus-pane-left/right/up/down shortcut ->
 // focusSplitPane). Moving must shift BOTH the active-cell marker and real
 // keyboard focus; moving past an edge must be a no-op.
-
-const activeSplitPane = (w: Page, name: string) =>
-  w.locator(`.aya-pane--active-split[data-terminal-name="${name}"]`);
-const focusedTerminalName = (w: Page) =>
-  w.evaluate(
-    () =>
-      document.activeElement
-        ?.closest('[data-testid="terminal-pane"]')
-        ?.getAttribute("data-terminal-name") ?? null,
-  );
 
 test.use({ seedOptions: { split: true } }); // 1x2: shell 1 (cell 0), shell 2 (cell 1)
 

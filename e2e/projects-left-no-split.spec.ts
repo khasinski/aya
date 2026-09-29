@@ -1,4 +1,5 @@
 import { test, expect } from "./fixtures";
+import { visiblePanes } from "./helpers/terminal";
 import { fireShortcut } from "./helpers/shortcut";
 import type { ElectronApplication, Page } from "@playwright/test";
 
@@ -22,8 +23,6 @@ async function enableProjectsLeftLayout(window: Page, app: ElectronApplication) 
   await setLayout(window, app, "Projects on left");
   await expect(window.locator(".aya-topbar--alt")).toBeVisible();
 }
-
-const visiblePanes = (window: Page) => window.locator('[data-testid="terminal-pane"]:visible');
 
 test("only one terminal is visible (no split) in Projects-on-left", async ({ window, app }) => {
   // Hidden terminals stay mounted (display:none) as a persistence pool, so we

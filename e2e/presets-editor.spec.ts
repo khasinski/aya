@@ -1,19 +1,11 @@
 import { test, expect } from "./fixtures";
-import { fireShortcut } from "./helpers/shortcut";
+import { openPresetsTab } from "./helpers/settings";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 
 // Settings > Presets editor: add a custom preset (-> appears as a sidebar
 // launcher + persists), and validation blocks an incomplete preset.
-
-async function openPresetsTab(window: Page, app: import("@playwright/test").ElectronApplication) {
-  await fireShortcut(app, "open-settings");
-  const settings = window.locator(".aya-modal--settings");
-  await expect(settings).toBeVisible();
-  await settings.getByTestId("settings-tab").filter({ hasText: "Presets" }).click();
-  return settings;
-}
 
 // Command input is identified by its placeholder; Name by "Display name".
 const commandInput = (s: Page | ReturnType<Page["locator"]>) =>

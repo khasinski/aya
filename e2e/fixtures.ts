@@ -19,7 +19,7 @@ export const PTY_HOST_EXIT_TIMEOUT_MS = 5_000;
 export const APP_GRACEFUL_CLOSE_TIMEOUT_MS = 1_000;
 export const APP_PROCESS_EXIT_TIMEOUT_MS = 2_000;
 
-function delay(ms: number): Promise<void> {
+export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -93,7 +93,8 @@ export async function reapPtyHosts(ayaHome: string): Promise<void> {
   }
 }
 
-async function shutdownPtyHost(ayaHome: string, pids: number[]): Promise<void> {
+/** Asks the host to shut down; `pids` are then waited for and SIGKILLed if still alive. */
+export async function shutdownPtyHost(ayaHome: string, pids: number[] = []): Promise<void> {
   const socketPath = join(ayaHome, "pty-host.sock");
   await Promise.race([
     new Promise<void>((resolve) => {

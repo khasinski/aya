@@ -2,7 +2,10 @@ import type {
   ProjectCollectionState,
   ProjectConfig,
   SplitLayout,
+  SendRoute,
   SpawnRequest,
+  TeamDefinition,
+  TeamRole,
   Theme,
   ThemesFile,
   WorkingTab,
@@ -11,17 +14,13 @@ import type { Preset } from "./presets";
 import type { Snippet } from "./snippets";
 import type { ThemeColors } from "./themes";
 import { isAgentKind, isPreset } from "./presets";
-import { isStorableSplitTree, type SplitNode } from "./split-tree";
+import { isStorableSplitTree, MAX_SPLIT_COLS, MAX_SPLIT_ROWS, type SplitNode } from "./split-tree";
+import { SESSION_ID_RE } from "./osc-extractor";
 import { assertSnippetCount, isSnippet, SNIPPET_TEXT_MAX } from "./snippets";
+import { RESERVED_ROLE_PROBLEM, TEAM_SYSTEM_SENDER } from "./teams";
 
 /** Persisted schema version for projects-state.json. */
 export const PROJECT_STATE_VERSION = 1;
-
-/** Maximum split-grid dimensions (rows x cols). Single source of truth for the
- *  split-layout limit — imported by config.ts so the clamp and this validator
- *  enforce the same rule. */
-export const MAX_SPLIT_ROWS = 5;
-export const MAX_SPLIT_COLS = 5;
 
 function fail(name: string, expected: string): never {
   throw new Error(`Invalid IPC payload for ${name}: expected ${expected}.`);
@@ -41,6 +40,10 @@ export function requireStringArray(value: unknown, name: string): string[] {
     fail(name, "string[]");
   }
   return value;
+}
+
+function requireArray(value: unknown, name: string): unknown[] {
+  return Array.isArray(value) ? value : fail(name, "array");
 }
 
 /** IPC payloads for the worktree mutations. Kept strict: these arguments end
@@ -108,12 +111,6 @@ function optionalFlag(value: unknown, name: string): boolean | undefined {
   return value;
 }
 
-// A session id is substituted into a spawn command line on restore, so this
-// boundary re-checks its shape rather than trusting the renderer: the same
-// charset the OSC parser enforces (electron/osc-extractor.ts), no shell
-// metacharacters, no whitespace.
-const SESSION_ID_RE = /^[A-Za-z0-9_.:/-]{1,200}$/;
-
 function validateWorkingTab(value: unknown, name: string): WorkingTab {
   if (!isRecord(value)) fail(name, "WorkingTab object");
   // cwd (the worktree binding) and sessionId (the agent conversation to
@@ -122,6 +119,7 @@ function validateWorkingTab(value: unknown, name: string): WorkingTab {
   // precise `--resume <id>` to "whatever was latest".
   const cwd = optionalString(value.cwd, `${name}.cwd`);
   const sessionId = optionalString(value.sessionId, `${name}.sessionId`);
+  // Substituted into a spawn command on restore: re-check, don't trust the renderer.
   if (sessionId !== undefined && !SESSION_ID_RE.test(sessionId)) {
     fail(`${name}.sessionId`, "shell-safe session id");
   }
@@ -332,5 +330,40 @@ export function validateThemesFile(value: unknown): ThemesFile {
       validateTheme(theme, `themes:save.themes[${idx}]`),
     ),
     activeId: requireString(value.activeId, "themes:save.activeId"),
+  };
+}
+
+function validateRoute(value: unknown, at: string): SendRoute {
+  const route = requireRecord(value, at);
+  return { to: requireString(route.to, `${at}.to`), what: requireString(route.what, `${at}.what`) };
+}
+
+function validateRole(value: unknown, at: string): TeamRole {
+  const role = requireRecord(value, at);
+  const id = requireString(role.id, `${at}.id`);
+  if (id === TEAM_SYSTEM_SENDER) throw new Error(`Invalid IPC payload for ${at}.id: ${RESERVED_ROLE_PROBLEM}.`);
+  return {
+    id,
+    sendsTo: requireArray(role.sendsTo, `${at}.sendsTo`).map((raw, j) => validateRoute(raw, `${at}.sendsTo[${j}]`)),
+    mustNot: requireString(role.mustNot, `${at}.mustNot`),
+    responsibilities: requireString(role.responsibilities, `${at}.responsibilities`),
+  };
+}
+
+/** Shape and the reserved role id; other team rules are the parser's job.
+ *  `channel` names the IPC call in errors, e.g. teams:save. */
+export function validateTeamDefinition(value: unknown, channel = "teams:save"): TeamDefinition {
+  const at = `${channel}.team`;
+  const team = requireRecord(value, at);
+  const roles = requireArray(team.roles, `${at}.roles`);
+  const cadence = team.cadence === null || team.cadence === undefined ? null : requireRecord(team.cadence, `${at}.cadence`);
+  return {
+    name: requireString(team.name, `${at}.name`),
+    roles: roles.map((raw, i) => validateRole(raw, `${at}.roles[${i}]`)),
+    cadence: cadence && {
+      role: requireString(cadence.role, `${at}.cadence.role`),
+      minutes: typeof cadence.minutes === "number" ? cadence.minutes : fail(`${at}.cadence.minutes`, "number"),
+    },
+    protocol: requireString(team.protocol, `${at}.protocol`),
   };
 }

@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
@@ -13,13 +12,19 @@ import {
   type PtyHostRequest,
   type PtyHostResponse,
 } from "./pty-host-protocol";
-import type { HostIdentity } from "./pty-host-staleness";
+import {
+  hostBuildHash,
+  RUN_AS_NODE_VALUE,
+  RUN_AS_NODE_VAR,
+  UNKNOWN_SCRIPT_HASH,
+  type HostIdentity,
+} from "./pty-host-staleness";
 import { coalesceAdjacentData } from "./pty-event-coalescer";
 import type { BufferSearchHit } from "./pty";
 import type { PtyEvent, SpawnRequest } from "./types";
 
 // Deadline waiting for the pty host to create its socket (ms).
-const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
+export const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
 // Interval between socket-existence polls while waiting (ms).
 const PTY_HOST_SOCKET_POLL_INTERVAL_MS = 50;
 const DISPOSED_MESSAGE = "PTY host client is disposed";
@@ -143,14 +148,11 @@ export class PtyHostClient {
    *  the host script this client launches. Compared against the running host's
    *  reported identity to detect a stale host (#28). */
   expectedHostIdentity(appVersion: string): HostIdentity {
-    let scriptHash = "unknown";
+    let scriptHash = UNKNOWN_SCRIPT_HASH;
     try {
-      scriptHash = crypto
-        .createHash("sha256")
-        .update(fs.readFileSync(this.hostScript))
-        .digest("hex");
+      scriptHash = hostBuildHash(path.dirname(this.hostScript), path.basename(this.hostScript));
     } catch {
-      // leave "unknown"; a mismatch on version still flags staleness
+      // leave UNKNOWN_SCRIPT_HASH; a mismatch on version still flags staleness
     }
     return { version: appVersion, scriptHash };
   }
@@ -175,6 +177,17 @@ export class PtyHostClient {
   async getBuffer(ptyId: string): Promise<string> {
     const result = await this.request({ id: 0, type: "buffer", ptyId });
     return typeof result === "string" ? result : "";
+  }
+
+  /** Why a message must not be typed into the pane now, or null. A host from
+   *  an older build does not know the request; that also reads as null. */
+  async holdReason(ptyId: string): Promise<string | null> {
+    try {
+      const result = await this.request({ id: 0, type: "hold", ptyId });
+      return typeof result === "string" ? result : null;
+    } catch {
+      return null;
+    }
   }
 
   /** A live pane's size, or null when the pane is gone or the host predates
@@ -278,7 +291,7 @@ export class PtyHostClient {
       stdio: "ignore",
       env: {
         ...process.env,
-        ELECTRON_RUN_AS_NODE: "1",
+        [RUN_AS_NODE_VAR]: RUN_AS_NODE_VALUE,
       },
     });
     child.unref();

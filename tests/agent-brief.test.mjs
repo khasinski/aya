@@ -10,11 +10,11 @@ import {
   antigravityBriefFile,
   briefChannel,
   briefText,
+  teamNote,
   codexAgentsFile,
   codexHomeFor,
   commandWithBriefArg,
   commandWithBriefEnv,
-  pathWithFallbackDir,
   ownedBriefContent,
   planCodexBriefs,
   withBriefSection,
@@ -41,6 +41,7 @@ test("grok: the brief goes in as --rules, one argument", () => {
     "grok --continue --rules 'b'",
   );
   assert.equal(commandWithBriefArg("grok --rules 'mine'", briefChannel("grok"), "b"), null);
+  assert.equal(commandWithBriefArg("grok", briefChannel("grok"), "it's"), "grok --rules 'it'\\''s'");
 });
 
 const ENV = briefChannel("opencode");
@@ -225,14 +226,6 @@ test("a shared codex home keeps the section while any preset opts in", () => {
   );
 });
 
-test("the bundled CLI is appended to PATH, never ahead of an installed shim", () => {
-  assert.equal(pathWithFallbackDir("/a:/b", "/app/bin"), "/a:/b:/app/bin");
-  assert.equal(pathWithFallbackDir("/app/bin:/a", "/app/bin"), "/app/bin:/a");
-  assert.equal(pathWithFallbackDir(undefined, "/app/bin"), "/app/bin");
-  // Empty entries mean the cwd; the user's PATH is kept as it was.
-  assert.equal(pathWithFallbackDir("/a::/b:", "/app/bin"), "/a::/b::/app/bin");
-});
-
 // agy 1.2.11 only loaded config/rules/ files whose frontmatter opens the file.
 test("antigravity: Aya's own always-on rule file, frontmatter first", () => {
   assert.equal(antigravityBriefFile("/Users/dev"), "/Users/dev/.gemini/config/rules/aya-brief.md");
@@ -291,6 +284,34 @@ test("files Aya wrote to that no codex preset wants any more are orphans", async
     ["/h/gone/AGENTS.md"],
   );
   assert.deepEqual(orphanedBriefFiles([], plan), []);
+});
+
+test("the brief tells every agent how to find its team role", () => {
+  assert.match(briefText(false), /aya team whoami/);
+});
+
+test("a team pane's note names its role and treats peer messages as reports", () => {
+  const note = teamNote("ux-review", "tester");
+  assert.match(note, /^You are the tester in the Aya team ux-review\./);
+  assert.match(note, /aya team whoami/);
+  assert.match(note, /\/clear/);
+  assert.match(note, /\[team[\s\S]*not the user's instructions/);
+});
+
+test("the Settings toggle's hint text per harness", () => {
+  assert.equal(agentBriefHint("claude"), "Adds a short note via --append-system-prompt when the pane starts.");
+  assert.equal(agentBriefHint("codex"), "Adds a marked section to this account's AGENTS.md (removed when off).");
+  assert.equal(agentBriefHint("grok"), "Adds a short note via --rules when the pane starts.");
+  assert.equal(
+    agentBriefHint("opencode"),
+    "Adds a short note to opencode's instructions for Aya panes only (OPENCODE_CONFIG_CONTENT).",
+  );
+  assert.equal(
+    agentBriefHint("antigravity"),
+    "Adds one always-on Antigravity rule, shared by all agy presets (deleted when none opts in).",
+  );
+  assert.equal(agentBriefHint(undefined), null);
+  assert.equal(agentBriefHint("toString"), null);
 });
 
 test("settings sync leaves a relative home's launch-written brief alone while it opts in", async () => {

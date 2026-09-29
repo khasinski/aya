@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 export interface SeededEnv {
   /** Temp root holding all isolated state for one app launch. */
@@ -84,6 +84,9 @@ export interface SeedOptions {
   /** Write the project's `.aya/project.json` with these presets, so the repo
    *  preset-import flow (ProjectPresetImportModal) triggers for the project. */
   repoPresets?: Array<{ id: string; name: string; icon: string; color: string; command: string }>;
+  /** Files to write before launch, relative to the project dir or AYA_HOME. */
+  projectFiles?: Record<string, string>;
+  ayaHomeFiles?: Record<string, string>;
   /** Open a SECOND project ("e2e-proj-2", one tab named "shell 3") so tests can
    *  exercise project switching (e.g. the project-N shortcut). */
   secondProject?: boolean;
@@ -131,6 +134,16 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
       join(projectDir, ".aya", "project.json"),
       JSON.stringify({ presets: opts.repoPresets }, null, 2),
     );
+  }
+
+  for (const [base, files] of [
+    [projectDir, opts.projectFiles],
+    [ayaHome, opts.ayaHomeFiles],
+  ] as const) {
+    for (const [rel, text] of Object.entries(files ?? {})) {
+      mkdirSync(dirname(join(base, rel)), { recursive: true });
+      writeFileSync(join(base, rel), text);
+    }
   }
 
   let worktreeDir: string | undefined;
