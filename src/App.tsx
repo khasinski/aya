@@ -2172,6 +2172,51 @@ export function App() {
     [activeTabByProject, appendProjectEvent, effectiveCwd],
   );
 
+  // aya team open / the Teams window's Open panes: main picked the ids and
+  // assigns the roles once the project is saved with the new tabs.
+  useEffect(
+    () =>
+      window.aya.onTeamOpenPanes(({ requestId, projectSlug, panes }) => {
+        const open = async () => {
+          const project = findProject(projectsRef.current, projectSlug);
+          if (!project) throw new Error(`project ${projectSlug} is not open in this window`);
+          const added: Record<string, TerminalState> = {};
+          for (const pane of panes) {
+            if (!presetsRef.current.some((p) => p.id === pane.presetId)) throw new Error(`no preset "${pane.presetId}" in this window`);
+            added[pane.id] = {
+              id: pane.id,
+              projectSlug,
+              presetId: pane.presetId,
+              name: pane.name,
+              cwd: effectiveCwd(project),
+              status: "running",
+              bell: false,
+              exitCode: null,
+            };
+          }
+          // Refs first, as closeTerminal does: a save racing this one must see the new tabs.
+          const next = { ...terminalsRef.current, ...added };
+          terminalsRef.current = next;
+          const tabs = Object.values(next)
+            .filter((t) => t.projectSlug === projectSlug)
+            .map((t) => tabFromTerminal(t, projectBaseCwd(project)));
+          const updated: ProjectConfig = { ...project, tabs };
+          setTerminals((prev) => ({ ...prev, ...added }));
+          setAllProjects((ps) => ps.map((p) => (p.slug === projectSlug ? updated : p)));
+          setProjects((ps) => ps.map((p) => (p.slug === projectSlug ? updated : p)));
+          await window.aya.updateProject(updated);
+          for (const pane of panes) {
+            appendProjectEvent({ projectSlug, terminalId: pane.id, level: "active", title: `${pane.name} started` });
+          }
+        };
+        void open().then(
+          () => window.aya.teamPanesOpened(requestId, null),
+          (err: unknown) => window.aya.teamPanesOpened(requestId, err instanceof Error ? err.message : String(err)),
+        );
+      }),
+    [appendProjectEvent, effectiveCwd],
+  );
+
   const closeTerminal = useCallback(
     (id: string) => {
       const t = terminalsRef.current[id];
