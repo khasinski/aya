@@ -189,11 +189,71 @@ test("outside a pane: the slug, else the project the cwd is in", async () => {
   }
 });
 
+test("the cwd matches through symlinks, at the project root too, and the innermost project wins", async () => {
+  const t = setup();
+  try {
+    const engine = { slug: "engine", name: "engine", directory: join(t.directory, "engine"), tabs: [] };
+    mkdirSync(join(engine.directory, "src"), { recursive: true });
+    const deps = { teamHome: t.teamHome, listProjects: async () => [t.project, engine] };
+    const save = (cwd) => handleTeamAuthorRequest({ type: "team-save", text: GOOD, replace: true, cwd }, null, deps, async () => {});
+    await save(join(engine.directory, "src"));
+    assert.ok(existsSync(t.repoFile("ux-fix", engine.directory)));
+    assert.equal(existsSync(t.repoFile("ux-fix")), false);
+    await save(realpathSync(t.directory));
+    assert.ok(existsSync(t.repoFile("ux-fix")));
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a title with trailing spaces names the team without them", async () => {
+  const t = setup();
+  try {
+    assert.match((await t.save(GOOD.replace("# ux-fix\n", "# ux-fix  \n"))).output, /^saved team ux-fix: /);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a write that fails is reported as itself, not as an existing team", async () => {
+  const t = setup();
+  try {
+    writeFileSync(join(t.directory, ".aya"), "a file where the directory would go");
+    await assert.rejects(t.save(GOOD), (err) => {
+      assert.doesNotMatch(err.message, /already exists/);
+      assert.match(err.message, /ENOTDIR|EEXIST/);
+      return true;
+    });
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a control server without teams says so", async () => {
+  const t = setup();
+  const socket = join(t.root, "aya.sock");
+  const stop = startControlServerOn(socket, { getWindow: () => null, openProject: () => {} });
+  try {
+    const result = await new Promise((done) => {
+      const child = spawn(cli, ["team", "new"], { env: { ...envWithoutAya(), AYA_SOCKET: socket } });
+      let stderr = "";
+      child.stderr.on("data", (x) => (stderr += x));
+      child.on("close", (status) => done({ status, stderr }));
+    });
+    assert.deepEqual(result, { status: 1, stderr: "aya: teams are not available\n" });
+  } finally {
+    stop();
+    t.cleanup();
+  }
+});
+
 test("a pane of no open project, an unknown slug or a cwd outside every project saves nothing", async () => {
   const t = setup();
   try {
     const nowhere = "run aya team save in an Aya pane, or in the directory of a project open in Aya; nothing was saved";
-    for (const scope of [{}, { projectSlug: "nope" }, { cwd: t.root }, { cwd: `${t.directory}-other` }]) {
+    const sibling = `${t.directory}-other`;
+    mkdirSync(sibling);
+    for (const scope of [{}, { projectSlug: "nope" }, { cwd: t.root }, { cwd: sibling }, { cwd: realpathSync(sibling) }]) {
       await assert.rejects(t.run({ type: "team-save", text: GOOD, replace: false, ...scope }, "pane-gone"), { message: nowhere });
     }
     assert.equal(existsSync(join(t.directory, ".aya")), false);
