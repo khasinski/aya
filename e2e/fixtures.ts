@@ -44,7 +44,7 @@ async function removeSeededRoot(root: string): Promise<void> {
 /** Pty hosts running for this AYA_HOME, found by their environment rather than
  *  the registry: a host records itself only once listening, so one still
  *  booting when its app died (seen in e2e) has no record. */
-function hostPidsForHome(ayaHome: string): number[] {
+export function hostPidsForHome(ayaHome: string): number[] {
   const wanted = `AYA_HOME=${ayaHome}`;
   if (process.platform === "linux") {
     return readdirSync("/proc")
@@ -104,7 +104,8 @@ async function shutdownPtyHost(ayaHome: string, pids: number[]): Promise<void> {
   // contention made unrelated specs time out.
   const deadline = Date.now() + PTY_HOST_EXIT_TIMEOUT_MS;
   while (pids.some(isAlive) && Date.now() < deadline) await delay(50);
-  for (const pid of pids.filter(isAlive)) {
+  // Rescanned, not `pids`: one of those may have exited and been reused since.
+  for (const pid of hostPidsForHome(ayaHome)) {
     try {
       process.kill(pid, "SIGKILL");
     } catch {
