@@ -37,7 +37,7 @@ function sandbox(platform) {
     root,
     home,
     project,
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, AYA_SOCKET: "", AYA_HOME: "" },
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, AYA_SOCKET: "", AYA_HOME: "", AYA_OPEN_WAIT_SECONDS: "" },
     /** Linux launches in the background, so give a launch time to land. */
     async launched() {
       for (let waited = 0; waited < LAUNCH_SETTLE_MS && !existsSync(launches); waited += 50) await delay(50);
@@ -90,7 +90,7 @@ for (const shell of shells) {
         });
         assert.notEqual(status, 0);
         assert.ok(Date.now() - started >= 900, "gave up without waiting");
-        assert.match(stderr, new RegExp(`no Aya is listening at ${socket}`));
+        assert.match(stderr, new RegExp(`no Aya is listening at ${socket} \\(waited 1s\\)`));
         assert.equal(await box.launched(), "");
       } finally {
         box.cleanup();
@@ -115,13 +115,13 @@ for (const shell of shells) {
     }
   });
 
-  test(`${shell}: a named socket that appears during the wait gets the open request`, async () => {
+  test(`${shell}: a named socket that appears within the default wait gets the open request`, async () => {
     const box = sandbox("Linux");
     const socket = join(box.root, "dev.sock");
     let server;
     try {
-      const run = runOpen(shell, box.project, { ...box.env, AYA_SOCKET: socket, AYA_OPEN_WAIT_SECONDS: "10" });
-      await delay(1500);
+      const run = runOpen(shell, box.project, { ...box.env, AYA_SOCKET: socket });
+      await delay(2500);
       const listening = await listen(socket);
       server = listening.server;
       const { status, stderr } = await run;
