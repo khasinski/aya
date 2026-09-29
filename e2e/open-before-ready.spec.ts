@@ -34,3 +34,20 @@ test("an open sent as soon as the control socket appears opens the project", asy
   const window = await app.firstWindow();
   await expect(window.locator(".aya-tab-name", { hasText: "open-check" })).toBeVisible();
 });
+
+test("an open with every window closed opens the project in a new window", async ({
+  app,
+  window,
+  seeded,
+}) => {
+  test.skip(process.platform !== "darwin", "only macOS keeps running with no window");
+  const dir = join(seeded.root, "open-check");
+  mkdirSync(dir);
+  await expect(window.locator(".aya-tab-name").first()).toBeVisible();
+  await window.close();
+
+  const opened = app.waitForEvent("window");
+  expect(JSON.parse(await openOverControl(seeded.ayaHome, dir))).toMatchObject({ ok: true });
+
+  await expect((await opened).locator(".aya-tab-name", { hasText: "open-check" })).toBeVisible();
+});
