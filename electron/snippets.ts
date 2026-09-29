@@ -25,8 +25,16 @@ export interface Snippet {
   autoRun: boolean;
 }
 
-/** Defensive cap so a corrupted or hostile file can't grow unbounded. */
+/** The one snippet-count rule: saves above it are refused, reads are capped. */
 export const SNIPPETS_MAX = 200;
+
+export function assertSnippetCount(count: number): void {
+  if (count > SNIPPETS_MAX) {
+    throw new Error(
+      `Too many snippets: ${count}. Aya keeps at most ${SNIPPETS_MAX} - delete some and save again.`,
+    );
+  }
+}
 
 /** Per-snippet text ceiling. A snippet is a command or a prompt, not a file;
  *  20k chars (~4k words) is far above any real use and bounds a corrupted or
@@ -126,6 +134,7 @@ export async function listSnippets(): Promise<Snippet[]> {
 }
 
 export async function saveSnippets(snippets: Snippet[]): Promise<void> {
+  assertSnippetCount(snippets.length);
   const sanitized = normalizeSnippets(snippets);
   await writeFileAtomic(
     SNIPPETS_FILE,

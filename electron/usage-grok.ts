@@ -15,6 +15,10 @@ export const DEFAULT_GROK_HOME =
 /** Rolling window the chip sums over. Grok's paid pool is weekly; 7 days is the
  *  honest local proxy (we don't know the server-side reset boundary). */
 export const GROK_USAGE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+// Grok bills in ticks of 1e-10 USD (GrokUsage.costUsdTicks).
+export const USD_PER_GROK_TICK = 1e-10;
+// Epoch values below this are seconds (1e12 ms is 2001; 1e12 s is year 33658).
+export const SECONDS_EPOCH_CEILING = 1e12;
 
 /** Aggregated Grok usage over the window, account-wide across all sessions. */
 export interface GrokUsage {
@@ -167,7 +171,7 @@ function num(x: unknown): number {
 /** ms-epoch from a value that may be seconds or milliseconds. */
 function toMs(x: unknown): number | null {
   if (typeof x !== "number" || !Number.isFinite(x)) return null;
-  return x < 1e12 ? x * 1000 : x;
+  return x < SECONDS_EPOCH_CEILING ? x * 1000 : x;
 }
 
 /** Pull a usage row from one JSONL line, or null if it carries no turn usage.

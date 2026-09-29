@@ -14,27 +14,35 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
-import { AYA_HOME, USAGE_FILE } from "./paths";
+import { AYA_HOME, EXECUTABLE_FILE_MODE, USAGE_FILE } from "./paths";
 import { listPresets } from "./presets";
-import { expandUserPath } from "./usage";
+import {
+  CLAUDE_CONFIG_DIRNAME,
+  CLAUDE_SETTINGS_FILENAME,
+  DEFAULT_CLAUDE_CONFIG_DIR,
+  expandUserPath,
+} from "./usage";
+import { shellQuote } from "./pane-command";
+
+function hasSettingsOverride(): boolean {
+  return !!process.env.AYA_CLAUDE_SETTINGS?.trim();
+}
 
 // Claude Code's global settings. AYA_CLAUDE_SETTINGS overrides it so tests can
 // run the install/uninstall round-trip against a throwaway file instead of the
 // real ~/.claude/settings.json.
 const CLAUDE_SETTINGS_FILE =
-  process.env.AYA_CLAUDE_SETTINGS && process.env.AYA_CLAUDE_SETTINGS.trim()
-    ? path.resolve(process.env.AYA_CLAUDE_SETTINGS)
-    : path.join(os.homedir(), ".claude", "settings.json");
+  hasSettingsOverride()
+    ? path.resolve(process.env.AYA_CLAUDE_SETTINGS!)
+    : path.join(os.homedir(), CLAUDE_CONFIG_DIRNAME, CLAUDE_SETTINGS_FILENAME);
 // The generated fetch script lives in Aya's own dir (always exists), referenced
 // by absolute path from the hook entry.
 export const HOOK_SCRIPT_FILE = path.join(AYA_HOME, "aya-usage-hook.sh");
 
 // Generated-script tuning: skip a fetch if the file was written within the
 // throttle window, and bound the network call so a hung endpoint can't stall.
-const HOOK_THROTTLE_SECONDS = 300;
+export const HOOK_THROTTLE_SECONDS = 300;
 const HOOK_FETCH_TIMEOUT_SECONDS = 10;
-// Executable mode for the generated fetch script (rwxr-xr-x).
-const HOOK_SCRIPT_MODE = 0o755;
 
 export interface UsageHookStatus {
   installed: boolean;
@@ -44,36 +52,32 @@ export interface UsageHookStatus {
   settingsPath: string;
 }
 
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
-}
-
 function hookCommand(configDir: string): string {
   return `AYA_CLAUDE_CONFIG_DIR=${shellQuote(expandUserPath(configDir))} ${shellQuote(HOOK_SCRIPT_FILE)}`;
 }
 
 export async function claudeConfigDirs(): Promise<string[]> {
-  if (process.env.AYA_CLAUDE_SETTINGS && process.env.AYA_CLAUDE_SETTINGS.trim()) {
+  if (hasSettingsOverride()) {
     return [path.dirname(CLAUDE_SETTINGS_FILE)];
   }
   const dirs = new Set<string>();
   try {
     for (const preset of await listPresets()) {
       if (preset.agent !== "claude") continue;
-      dirs.add(expandUserPath(preset.configDir || "~/.claude"));
+      dirs.add(expandUserPath(preset.configDir || DEFAULT_CLAUDE_CONFIG_DIR));
     }
   } catch {
     // fall through to default
   }
-  if (dirs.size === 0) dirs.add(path.join(os.homedir(), ".claude"));
+  if (dirs.size === 0) dirs.add(path.join(os.homedir(), CLAUDE_CONFIG_DIRNAME));
   return [...dirs];
 }
 
 export function settingsFileForConfigDir(configDir: string): string {
-  if (process.env.AYA_CLAUDE_SETTINGS && process.env.AYA_CLAUDE_SETTINGS.trim()) {
+  if (hasSettingsOverride()) {
     return CLAUDE_SETTINGS_FILE;
   }
-  return path.join(expandUserPath(configDir), "settings.json");
+  return path.join(expandUserPath(configDir), CLAUDE_SETTINGS_FILENAME);
 }
 
 // ---- pure settings.json merge/unmerge (the risky part — unit-tested) --------
@@ -132,6 +136,9 @@ export function withoutStopHook(
 
 // ---- the generated fetch script ---------------------------------------------
 
+// The default Claude dir as the generated shell script spells it.
+const SH_HOME_CLAUDE_DIR = `$HOME/${CLAUDE_CONFIG_DIRNAME}`;
+
 /** The shell script the hook runs. Throttled; reads the token from the OS
  *  credential store; calls the usage endpoint; writes Aya's file shape. Exits
  *  quietly on any missing dependency or failure so it never breaks a session. */
@@ -144,7 +151,7 @@ set -euo pipefail
 OUT=${JSON.stringify(outFile)}
 command -v jq >/dev/null 2>&1 || exit 0
 command -v curl >/dev/null 2>&1 || exit 0
-CONFIG_DIR="\${AYA_CLAUDE_CONFIG_DIR:-\${CLAUDE_CONFIG_DIR:-$HOME/.claude}}"
+CONFIG_DIR="\${AYA_CLAUDE_CONFIG_DIR:-\${CLAUDE_CONFIG_DIR:-${SH_HOME_CLAUDE_DIR}}}"
 mkdir -p "$(dirname "$OUT")"
 if command -v shasum >/dev/null 2>&1; then
   HASH=$(printf '%s' "$CONFIG_DIR" | shasum -a 256 | awk '{print $1}')
@@ -168,10 +175,10 @@ if [ -f "$CONFIG_DIR/.credentials.json" ]; then
   RAW=$(cat "$CONFIG_DIR/.credentials.json")
 elif RAW=$(security find-generic-password -s "Claude Code-credentials-\${HASH:0:8}" -w 2>/dev/null); then
   :
-elif [ "$CONFIG_DIR" = "$HOME/.claude" ] && RAW=$(security find-generic-password -s 'Claude Code-credentials' -w 2>/dev/null); then
+elif [ "$CONFIG_DIR" = "${SH_HOME_CLAUDE_DIR}" ] && RAW=$(security find-generic-password -s 'Claude Code-credentials' -w 2>/dev/null); then
   :
-elif [ -f "$HOME/.claude/.credentials.json" ]; then
-  RAW=$(cat "$HOME/.claude/.credentials.json")
+elif [ -f "${SH_HOME_CLAUDE_DIR}/.credentials.json" ]; then
+  RAW=$(cat "${SH_HOME_CLAUDE_DIR}/.credentials.json")
 else
   exit 0
 fi
@@ -184,7 +191,7 @@ printf '%s' "$RESP" | jq \\
   '{fiveHour:{pct:.five_hour.utilization, resetsAt:.five_hour.resets_at},
     sevenDay:{pct:.seven_day.utilization, resetsAt:.seven_day.resets_at},
     updatedAt:$ts}' > "$ACCOUNT_OUT.tmp" && mv "$ACCOUNT_OUT.tmp" "$ACCOUNT_OUT"
-if [ "$CONFIG_DIR" = "$HOME/.claude" ]; then
+if [ "$CONFIG_DIR" = "${SH_HOME_CLAUDE_DIR}" ]; then
   cp "$ACCOUNT_OUT" "$OUT"
 fi
 `;
@@ -242,7 +249,7 @@ export async function installUsageHook(): Promise<UsageHookStatus> {
     await writeFileAtomic(settingsPath, JSON.stringify(next, null, 2) + "\n");
   }
   await writeFileAtomic(HOOK_SCRIPT_FILE, hookScriptSource(USAGE_FILE));
-  await fs.chmod(HOOK_SCRIPT_FILE, HOOK_SCRIPT_MODE);
+  await fs.chmod(HOOK_SCRIPT_FILE, EXECUTABLE_FILE_MODE);
   return usageHookStatus();
 }
 

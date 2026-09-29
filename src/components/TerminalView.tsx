@@ -38,6 +38,8 @@ import {
   stripScrollbackErase,
 } from "../terminal-rendering";
 import { snippetPtyPayload } from "../snippet-payload";
+import { DEBUG_TERMINAL_INPUT_STORAGE_KEY } from "../storage-keys";
+import { GPU_RELAUNCHED_EVENT } from "../window-events";
 import {
   hadNoSession,
   markMountDecided,
@@ -146,42 +148,39 @@ function toXtermTheme(c: ThemeColors): ITheme {
   return c;
 }
 
+// Last-activity age units; a "month" is 30 days.
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+const MONTH_MS = 30 * DAY_MS;
+
 function formatLastActivity(timestamp: number): string | null {
   const elapsedMs = Math.max(0, Date.now() - timestamp);
-  const minuteMs = 60 * 1000;
-  const hourMs = 60 * minuteMs;
-  const dayMs = 24 * hourMs;
-  const monthMs = 30 * dayMs;
-
-  if (elapsedMs < minuteMs) return null;
-  if (elapsedMs < hourMs) {
-    const minutes = Math.floor(elapsedMs / minuteMs);
+  if (elapsedMs < MINUTE_MS) return null;
+  if (elapsedMs < HOUR_MS) {
+    const minutes = Math.floor(elapsedMs / MINUTE_MS);
     return `${minutes} min ago`;
   }
-  if (elapsedMs < dayMs) {
-    const hours = Math.floor(elapsedMs / hourMs);
+  if (elapsedMs < DAY_MS) {
+    const hours = Math.floor(elapsedMs / HOUR_MS);
     return `${hours} ${hours === 1 ? "hour" : "hours"} ago`;
   }
-  if (elapsedMs < monthMs) {
-    const days = Math.floor(elapsedMs / dayMs);
+  if (elapsedMs < MONTH_MS) {
+    const days = Math.floor(elapsedMs / DAY_MS);
     return `${days} ${days === 1 ? "day" : "days"} ago`;
   }
-  const months = Math.floor(elapsedMs / monthMs);
+  const months = Math.floor(elapsedMs / MONTH_MS);
   return `${months} ${months === 1 ? "month" : "months"} ago`;
 }
 
 function lastActivityRenderBucket(timestamp: number | undefined): string {
   if (!timestamp) return "";
   const elapsedMs = Math.max(0, Date.now() - timestamp);
-  const minuteMs = 60 * 1000;
-  const hourMs = 60 * minuteMs;
-  const dayMs = 24 * hourMs;
-  const monthMs = 30 * dayMs;
-  if (elapsedMs < minuteMs) return "now";
-  if (elapsedMs < hourMs) return `m:${Math.floor(elapsedMs / minuteMs)}`;
-  if (elapsedMs < dayMs) return `h:${Math.floor(elapsedMs / hourMs)}`;
-  if (elapsedMs < monthMs) return `d:${Math.floor(elapsedMs / dayMs)}`;
-  return `mo:${Math.floor(elapsedMs / monthMs)}`;
+  if (elapsedMs < MINUTE_MS) return "now";
+  if (elapsedMs < HOUR_MS) return `m:${Math.floor(elapsedMs / MINUTE_MS)}`;
+  if (elapsedMs < DAY_MS) return `h:${Math.floor(elapsedMs / HOUR_MS)}`;
+  if (elapsedMs < MONTH_MS) return `d:${Math.floor(elapsedMs / DAY_MS)}`;
+  return `mo:${Math.floor(elapsedMs / MONTH_MS)}`;
 }
 
 function recoveryTitle(
@@ -926,7 +925,7 @@ function TerminalViewComponent({
     const onDataDisposable = term.onData((data) => {
       if (replayingOutputRef.current > 0) return;
       if (data.length > 0) setIsScrollbarHidden(true);
-      if (localStorage.getItem("aya:debug-terminal-input") === "1") {
+      if (localStorage.getItem(DEBUG_TERMINAL_INPUT_STORAGE_KEY) === "1") {
         console.debug(
           `[aya terminal input] ${terminal.id} ${preset.id}: ${printableControlData(data)}`,
         );
@@ -971,6 +970,7 @@ function TerminalViewComponent({
         presetId: terminal.presetId,
         // The host uses this to pick the agent's own screen-detection rules.
         agent: presetAgent,
+        agentConfigDir: preset.configDir,
         command,
         cwd,
         cols: Math.max(cols, TERMINAL_FALLBACK_COLS),
@@ -1148,12 +1148,12 @@ function TerminalViewComponent({
     // "focus"/"visibilitychange" beats above may never fire (the window kept
     // focus the whole time), so App relays the main-process signal as this
     // window event and we heal on it too.
-    window.addEventListener("aya:gpu-relaunched", onResumeRender);
+    window.addEventListener(GPU_RELAUNCHED_EVENT, onResumeRender);
     return () => {
       window.removeEventListener("focus", onResumeRender);
       window.removeEventListener("pageshow", onResumeRender);
       document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("aya:gpu-relaunched", onResumeRender);
+      window.removeEventListener(GPU_RELAUNCHED_EVENT, onResumeRender);
     };
   }, [isVisible, healWebgl, repaintTerminal, forcePtyReassert]);
 
@@ -1209,12 +1209,14 @@ function TerminalViewComponent({
       ptyId: terminal.id,
       projectSlug: terminal.projectSlug,
       presetId: terminal.presetId,
+      agent: presetAgent,
+      agentConfigDir: preset.configDir,
       command: commandRef.current,
       cwd: cwdRef.current,
       cols: Math.max(term.cols, TERMINAL_FALLBACK_COLS),
       rows: Math.max(term.rows, TERMINAL_FALLBACK_ROWS),
     });
-  }, [restartTrigger, terminal.id]);
+  }, [restartTrigger, terminal.id, presetAgent, preset.configDir]);
 
   useEffect(() => {
     markRestoring(true);

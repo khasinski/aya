@@ -3,9 +3,12 @@
 
 import { mkdirSync, promises as fs, renameSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
+import { TMP_SUFFIX } from "./atomic-write";
 
 /** Oldest panes are dropped past this, so the file stays small forever. */
 export const CLI_ADOPTION_MAX_PANES = 2000;
+
+export const CLI_ADOPTION_SAVE_DEBOUNCE_MS = 2_000;
 
 export interface PaneAdoption {
   agent?: string;
@@ -137,7 +140,7 @@ export function summarizeCliAdoption(state: CliAdoptionState): HarnessAdoption[]
 }
 
 /** File-backed store: loads once, writes a debounced atomic snapshot. */
-export function createCliAdoptionStore(file: string, debounceMs = 2_000) {
+export function createCliAdoptionStore(file: string, debounceMs = CLI_ADOPTION_SAVE_DEBOUNCE_MS) {
   let state: CliAdoptionState | null = null;
   let loading: Promise<CliAdoptionState> | null = null;
   let timer: NodeJS.Timeout | null = null;
@@ -155,7 +158,7 @@ export function createCliAdoptionStore(file: string, debounceMs = 2_000) {
     if (!timer || !state) return;
     clearTimeout(timer);
     timer = null;
-    const tmp = `${file}.${process.pid}.tmp`;
+    const tmp = `${file}.${process.pid}${TMP_SUFFIX}`;
     mkdirSync(path.dirname(file), { recursive: true });
     writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
     renameSync(tmp, file);

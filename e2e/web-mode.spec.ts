@@ -165,7 +165,8 @@ test("wrong credentials leave the bridge closed and the data off screen", async 
     // The refusal branch: no session, so no bridge, so no bridge-only data.
     // This is the control that keeps the test above honest - if the assertion
     // there passed for some reason OTHER than the bridge, this one would fail.
-    await page.waitForTimeout(2_000);
+    // Boot settled on the login screen: it only leaves that phase on a submit.
+    await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
     await expect(page.locator("body")).not.toContainText(PROJECT_NAME);
   } finally {
     await browser?.close();

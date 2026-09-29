@@ -57,7 +57,6 @@ test("a restored agent terminal respawns with --continue (resumes, not fresh)", 
           return false;
         }
       },
-      { timeout: 10_000 },
     )
     .toBe(true);
 });

@@ -15,14 +15,16 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { expandUserPath } from "./usage";
+import { codexHomeFor } from "./agent-brief";
+import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath } from "./usage";
+import { CODEX_SESSIONS_SUBDIR, DEFAULT_CODEX_HOME } from "./usage-codex";
 
 export interface HarnessSearchRequest {
   agent: "claude" | "codex";
   /** The tab's working directory — scopes which sessions are searched. */
   cwd: string;
   /** Preset's config-dir override (may be ~-relative); defaults to the
-   *  agent's standard home (~/.claude / ~/.codex). */
+   *  agent's standard home (~/.claude / CODEX_HOME, else ~/.codex). */
   configDir?: string;
   query: string;
 }
@@ -183,7 +185,7 @@ async function claudeSessionFiles(
   cwd: string,
   configDir: string | undefined,
 ): Promise<SessionFile[]> {
-  const base = expandUserPath(configDir?.trim() || "~/.claude");
+  const base = expandUserPath(configDir?.trim() || DEFAULT_CLAUDE_CONFIG_DIR);
   const dir = path.join(base, "projects", claudeProjectDirName(cwd));
   let names: string[];
   try {
@@ -247,8 +249,9 @@ async function codexSessionFiles(
   cwd: string,
   configDir: string | undefined,
 ): Promise<SessionFile[]> {
-  const home = expandUserPath(configDir?.trim() || "~/.codex");
-  const root = path.join(home, "sessions");
+  const home = codexHomeFor({ configDir }, DEFAULT_CODEX_HOME, expandUserPath, cwd);
+  if (!home) return [];
+  const root = path.join(home, CODEX_SESSIONS_SUBDIR);
   const all: { file: string; mtimeMs: number; size: number }[] = [];
   async function walk(dir: string): Promise<void> {
     let entries: import("node:fs").Dirent[];

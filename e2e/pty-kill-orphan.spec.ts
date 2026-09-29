@@ -52,7 +52,7 @@ async function reproInLayout(
   await expect(window.locator('[data-testid="terminal-pane"]:visible').first()).toBeVisible();
   // The tab's process is running and appending its heartbeat.
   await expect
-    .poll(() => hbSize(seeded.projectDir, activeTab), { timeout: 10_000 })
+    .poll(() => hbSize(seeded.projectDir, activeTab))
     .toBeGreaterThan(0);
   const beforeClose = hbSize(seeded.projectDir, activeTab);
 

@@ -11,7 +11,18 @@ import {
   parseUsage,
   parseUsageAccounts,
   usageAccountFromData,
+  CLAUDE_CONFIG_DIRNAME,
+  DEFAULT_CLAUDE_CONFIG_DIR,
+  expandUserPath,
 } from "../dist-electron/usage.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+test("Claude's default config dir is ~/.claude", () => {
+  assert.equal(CLAUDE_CONFIG_DIRNAME, ".claude");
+  assert.equal(DEFAULT_CLAUDE_CONFIG_DIR, "~/.claude");
+  assert.equal(expandUserPath(DEFAULT_CLAUDE_CONFIG_DIR), join(homedir(), CLAUDE_CONFIG_DIRNAME));
+});
 
 const valid = {
   fiveHour: { pct: 30, resetsAt: "2026-06-03T17:20:00Z" },

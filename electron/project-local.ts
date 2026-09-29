@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { PROJECT_AYA_DIRNAME } from "./paths";
 import { normalizePreset, type Preset } from "./presets";
 
 export interface RepoProjectConfig {
@@ -9,7 +10,7 @@ export interface RepoProjectConfig {
 export async function readRepoProjectConfig(
   directory: string,
 ): Promise<RepoProjectConfig | null> {
-  const filePath = path.join(directory, ".aya", "project.json");
+  const filePath = path.join(directory, PROJECT_AYA_DIRNAME, "project.json");
   let raw: string;
   try {
     raw = await fs.readFile(filePath, "utf-8");

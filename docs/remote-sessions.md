@@ -203,6 +203,22 @@ machine, then try enabling remote access again.
 When possible, include a copyable command or system setting shortcut, but avoid
 running privileged installation commands automatically.
 
+### Which Aya On The Host Answers
+
+The remote bridge (and `aya remote --stdio`) connects to the first of:
+
+1. `$AYA_REMOTE_SOCKET`
+2. `$AYA_HOME/aya-remote.sock`
+3. `~/.aya/aya-remote.sock` - the installed Aya
+
+It does not follow `AYA_DEV`, on purpose. `AYA_DEV=1` is set only for the
+`npm run dev` process (`scripts/dev-electron.sh`), never in an ssh session, and
+Aya hands its home to child processes through `AYA_HOME` - the same rule `aya`
+uses for its control socket. So a host answers with its installed Aya by
+default. To reach an Aya Dev on the host instead, export
+`AYA_HOME="$HOME/.aya-dev"` (or `AYA_REMOTE_SOCKET`) in the host shell's
+non-interactive environment, e.g. `~/.zshenv`.
+
 ### Saved Machines
 
 Aya should save previously seen remote machines for quick reconnect.

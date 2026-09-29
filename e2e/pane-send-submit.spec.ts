@@ -8,10 +8,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
+import { AGENT_START_TIMEOUT_MS, AGENT_TEST_TIMEOUT_MS } from "./timeouts";
 import type { SeededEnv } from "./helpers/seed";
+import { envWithoutAya } from "./helpers/env";
 
 // App boot plus a login shell starting a program; slower than the 45 s default.
-test.describe.configure({ timeout: 120_000 });
+test.describe.configure({ timeout: AGENT_TEST_TIMEOUT_MS });
 
 const AYA_CLI = join(__dirname, "..", "bin", "aya");
 const RECORDER = join(__dirname, "helpers", "pty-recorder.cjs");
@@ -21,17 +23,16 @@ const NODE = process.execPath;
 const MIN_SUBMIT_GAP_MS = 120;
 /** Past the submit delay, so a regressed always-submit had its chance to fire. */
 const SUBMIT_SETTLE_MS = 600;
+/** One `aya pane send`, and its bytes reaching the pane. */
+const PANE_SEND_TIMEOUT_MS = 15_000;
 
 /** Real CLI against the TEST instance: an inherited AYA_SOCKET would aim it at
  *  the developer's live app, so every AYA_* is dropped. */
 function ayaPaneSend(ayaHome: string, args: string[]): void {
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !key.startsWith("AYA_")),
-  ) as Record<string, string>;
   execFileSync(AYA_CLI, ["pane", "send", ...args], {
-    env: { ...env, AYA_HOME: ayaHome },
+    env: { ...envWithoutAya(), AYA_HOME: ayaHome },
     encoding: "utf8",
-    timeout: 15_000,
+    timeout: PANE_SEND_TIMEOUT_MS,
   });
 }
 
@@ -43,7 +44,7 @@ async function paneShows(window: Page, terminalId: string, needle: string) {
   await expect
     .poll(() => paneBuffer(window, terminalId), {
       message: `pane ${terminalId} never showed ${needle}`,
-      timeout: 60_000,
+      timeout: AGENT_START_TIMEOUT_MS,
     })
     .toContain(needle);
 }
@@ -63,7 +64,7 @@ async function shellExecuting(window: Page, paneIndex: number, terminalId: strin
       },
       {
         message: `the shell in ${terminalId} never executed a command`,
-        timeout: 60_000,
+        timeout: AGENT_START_TIMEOUT_MS,
         intervals: [1_000],
       },
     )
@@ -78,7 +79,7 @@ async function recorderReady(seeded: SeededEnv, terminalId: string) {
   await expect
     .poll(() => existsSync(recorderLog(seeded, terminalId)), {
       message: `the recorder in ${terminalId} never started`,
-      timeout: 60_000,
+      timeout: AGENT_START_TIMEOUT_MS,
     })
     .toBe(true);
 }
@@ -127,7 +128,7 @@ test.describe("pane-send into an agent-shaped program", () => {
     await expect
       .poll(() => bytes(recorded(seeded, seeded.tabIds.right)), {
         message: "the pane never received the full text plus a CR",
-        timeout: 15_000,
+        timeout: PANE_SEND_TIMEOUT_MS,
       })
       .toBe("tekst\r");
 
@@ -151,7 +152,7 @@ test.describe("pane-send into an agent-shaped program", () => {
     await expect
       .poll(() => bytes(recorded(seeded, seeded.tabIds.right)), {
         message: "the pane never received the text",
-        timeout: 15_000,
+        timeout: PANE_SEND_TIMEOUT_MS,
       })
       .toBe("tekst");
 

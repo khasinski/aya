@@ -7,6 +7,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { envWithoutAya } from "./helpers/env.mjs";
 
 const { startControlServerOn } = await import("../dist-electron/control.js");
 const { AYA_CAPABILITIES } = await import("../dist-electron/capabilities.js");
@@ -29,9 +30,7 @@ async function runAgainstServer(args, env, onRequest) {
     const result = await new Promise((done, fail) => {
       const child = spawn(cli, args, {
         env: {
-          ...Object.fromEntries(
-            Object.entries(process.env).filter(([key]) => !key.startsWith("AYA_")),
-          ),
+          ...envWithoutAya(),
           AYA_SOCKET: socket,
           ...env,
         },

@@ -17,8 +17,10 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
-import { AYA_HOME } from "./paths";
+import { AYA_HOME, EXECUTABLE_FILE_MODE } from "./paths";
 import { bundledAyaCliPath } from "./cli-path";
+import { HOOK_VIA } from "./constants";
+import { refreshInstalledScript } from "./status-hook";
 import { DEFAULT_CODEX_HOME } from "./usage-codex";
 
 /** The generated notify program, in Aya's own dir (always exists). */
@@ -26,8 +28,6 @@ export const STATUS_HOOK_CODEX_SCRIPT_FILE = path.join(
   AYA_HOME,
   "aya-status-codex-notify.sh",
 );
-// Executable mode for the generated script (rwxr-xr-x).
-const HOOK_SCRIPT_MODE = 0o755;
 
 /** Codex's config file — the one that carries `notify`. */
 export function codexConfigPath(): string {
@@ -148,7 +148,7 @@ AYA=$(command -v aya 2>/dev/null || true)
 TYPE=$(printf '%s' "$PAYLOAD" | jq -r '.type // empty')
 case "$TYPE" in
   agent-turn-complete)
-    AYA_VIA=hook "$AYA" status done "Turn finished" >/dev/null 2>&1 || true ;;
+    AYA_VIA=${HOOK_VIA} "$AYA" status done "Turn finished" >/dev/null 2>&1 || true ;;
 esac
 exit 0
 `;
@@ -199,7 +199,7 @@ export async function installStatusCodexHook(): Promise<CodexStatusHookStatus> {
       scriptPath,
       codexNotifyScriptSource(bundledAyaCliPath(__dirname)),
     );
-    await fs.chmod(scriptPath, HOOK_SCRIPT_MODE);
+    await fs.chmod(scriptPath, EXECUTABLE_FILE_MODE);
   }
   return statusCodexHookStatus();
 }
@@ -217,15 +217,6 @@ export async function uninstallStatusCodexHook(): Promise<CodexStatusHookStatus>
 
 /** Rewrite an ALREADY-installed Codex notify script whose content is out of
  *  date (see refreshStatusHookScript). Never installs. */
-export async function refreshStatusCodexHookScript(): Promise<void> {
-  let current: string;
-  try {
-    current = await fs.readFile(STATUS_HOOK_CODEX_SCRIPT_FILE, "utf8");
-  } catch {
-    return;
-  }
-  const next = codexNotifyScriptSource(bundledAyaCliPath(__dirname));
-  if (current === next) return;
-  await writeFileAtomic(STATUS_HOOK_CODEX_SCRIPT_FILE, next);
-  await fs.chmod(STATUS_HOOK_CODEX_SCRIPT_FILE, HOOK_SCRIPT_MODE);
+export function refreshStatusCodexHookScript(): Promise<void> {
+  return refreshInstalledScript(STATUS_HOOK_CODEX_SCRIPT_FILE, codexNotifyScriptSource(bundledAyaCliPath(__dirname)));
 }

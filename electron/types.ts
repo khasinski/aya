@@ -102,6 +102,8 @@ export interface SpawnRequest {
    *  inference — see src/agentPreset.ts). Lets the host pick that agent's
    *  screen-detection rules without duplicating the inference. */
   agent?: AgentKind;
+  /** The preset's config dir, where claude registers its session per pid. */
+  agentConfigDir?: string;
   // The user-resolved command (e.g. "claude", "$SHELL", "aider --dark"). The
   // renderer picks this from the active preset and the main process embeds it
   // verbatim into `$SHELL -l -c 'cd … && exec <command>'`. NEVER -p / --print.
@@ -603,6 +605,20 @@ export interface AyaApi {
   /** Read-only Codex usage parsed from its local rollout logs. */
   getCodexUsage(): Promise<UsageAccount[]>;
   getGrokUsage(): Promise<GrokUsage | null>;
+  /** Start a team: unpause, send every role a delivery test, arm its rounds. */
+  teamStart(projectSlug: string, team: string): Promise<TeamStartResult>;
+  teamPause(projectSlug: string, team: string): Promise<void>;
+  teamList(projectSlug: string): Promise<TeamSummary[]>;
+  /** Save team: writes .aya/teams/<name>.md and the snapshot Aya runs on.
+   *  `create`: refuse when a team with this name already exists. */
+  teamSave(projectSlug: string, team: TeamDefinition, create?: boolean): Promise<void>;
+  /** Gives a role a pane (null frees it) and tells the agent; returns why it was not told. */
+  teamAssign(projectSlug: string, team: string, role: string, paneId: string | null): Promise<string | null>;
+  /** A closed tab gives up its roles in every team of the project. */
+  teamReleasePane(projectSlug: string, paneId: string): Promise<void>;
+  /** Drafts a role of the team as the editor holds it, with Aya Intelligence. */
+  teamDraftRole(team: TeamDefinition, roleId: string, intelligence: AyaIntelligenceConfig): Promise<RoleDraft>;
+  teamResume(projectSlug: string, team: string): Promise<void>;
 
   // Optional usage-hook installer (writes ~/.claude/settings.json + a fetch
   // script). The Aya process never reads a token or calls the endpoint.
@@ -743,4 +759,77 @@ declare global {
   interface Window {
     aya: AyaApi;
   }
+}
+
+/** Which roles got Start team's delivery test, and why the others did not. */
+export interface TeamStartResult {
+  /** false: a pane was not ready, so nothing was sent; `held` says which. */
+  started: boolean;
+  delivered: string[];
+  held: { role: string; reason: string }[];
+}
+
+/** A role this one sends to, and what it sends there (may be empty). */
+export interface SendRoute {
+  to: string;
+  what: string;
+}
+
+export interface TeamRole {
+  id: string;
+  sendsTo: SendRoute[];
+  mustNot: string;
+  responsibilities: string;
+}
+
+export interface TeamCadence {
+  role: string;
+  minutes: number;
+}
+
+/** A team from .aya/teams/<name>.md (see electron/teams.ts). */
+export interface TeamDefinition {
+  name: string;
+  roles: TeamRole[];
+  cadence: TeamCadence | null;
+  protocol: string;
+}
+
+export interface TeamMessage {
+  id: number;
+  time: string;
+  from: string;
+  to: string;
+  commit: string | null;
+  text: string;
+  /** Typed into the recipient's pane; the rest wait for its inbox. */
+  delivered: boolean;
+  /** Why it was not typed when sent, e.g. "shows an approval prompt". */
+  held?: string;
+}
+
+/** One team as the teams window shows it. `definition` is what Aya runs on:
+ *  the saved snapshot, else the repo file; null when that does not parse. */
+export interface TeamSummary {
+  name: string;
+  definition: TeamDefinition | null;
+  error: string | null;
+  /** The repo file differs from what the user last saved. */
+  repoChanged: boolean;
+  /** The repo file parsed, to adopt with one Save; null when it does not parse. */
+  repoDefinition: TeamDefinition | null;
+  paused: boolean;
+  /** Started with Start team and not paused since. */
+  running: boolean;
+  assignments: Record<string, string>;
+  /** Messages per role that are waiting in its inbox. */
+  unread: Record<string, number>;
+  log: TeamMessage[];
+}
+
+/** A role drafted by Aya Intelligence from its name, for the user to edit. */
+export interface RoleDraft {
+  responsibilities: string;
+  mustNot: string;
+  sendsTo: SendRoute[];
 }

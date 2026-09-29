@@ -16,15 +16,7 @@ import { killPty, spawnPty } from "../dist-electron/pty.js";
 // the first append), so redirect it before any spawnPty call - otherwise unit
 // runs write into the user's real ~/.aya.
 process.env.AYA_HOME = mkdtempSync(join(tmpdir(), "aya-pty-test-"));
-
-function fakeSink() {
-  const events = [];
-  return {
-    events,
-    sendPtyEvent: (e) => events.push(e),
-    isDestroyed: () => false,
-  };
-}
+const { fakeSink } = await import("./helpers/pty-host.mjs");
 
 const baseReq = (over) => ({
   ptyId: "attach-only-" + Math.random().toString(36).slice(2),

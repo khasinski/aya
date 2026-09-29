@@ -1,4 +1,5 @@
 import { test, expect } from "./fixtures";
+import { renameInline } from "./helpers/rename";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -12,15 +13,7 @@ test("double-clicking a project tab renames it and persists to disk", async ({
   const tab = window.locator(".aya-topbar .aya-tab").first();
   await expect(tab.locator(".aya-tab-name")).toHaveText("e2e");
 
-  // Open the inline editor and rename. The whole gesture is retried because a
-  // cold first render can swallow the double-click or the launch-time focus
-  // grab can blur the editor the instant it opens; retrying makes it reliable.
-  const input = tab.locator(".aya-tab-rename");
-  await expect(async () => {
-    await tab.locator(".aya-tab-name").dblclick();
-    await input.fill("Renamed Project", { timeout: 800 });
-    await input.press("Enter", { timeout: 800 });
-  }).toPass({ timeout: 15000 });
+  await renameInline(tab.locator(".aya-tab-name"), tab.locator(".aya-tab-rename"), "Renamed Project");
 
   await expect(tab.locator(".aya-tab-name")).toHaveText("Renamed Project");
   await expect(window.locator(".aya-tab--active .aya-tab-name")).toHaveText("Renamed Project");

@@ -39,6 +39,9 @@ const SESSION_COOKIE = "aya_web_session";
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const LOGIN_BODY_MAX_BYTES = 4096;
 const WS_MAX_PAYLOAD_BYTES = 8 * 1024 * 1024;
+export const SESSION_TOKEN_BYTES = 32;
+// One year: hashed asset filenames never change content.
+export const IMMUTABLE_MAX_AGE_S = 31_536_000;
 // Failed-login throttle: per client address, sliding window.
 const LOGIN_FAILURE_LIMIT = 10;
 const LOGIN_FAILURE_WINDOW_MS = 15 * 60 * 1000;
@@ -257,7 +260,7 @@ export async function startWebServer(
       return;
     }
     loginFailures.delete(address);
-    const token = crypto.randomBytes(32).toString("hex");
+    const token = crypto.randomBytes(SESSION_TOKEN_BYTES).toString("hex");
     sessions.set(token, { user, expiresAt: Date.now() + SESSION_TTL_MS });
     sendJson(
       res,
@@ -290,7 +293,7 @@ export async function startWebServer(
         "Content-Type": CONTENT_TYPES[ext] ?? "application/octet-stream",
         // Hashed asset filenames may cache forever; entry points must not.
         "Cache-Control": relative.startsWith("assets/")
-          ? "public, max-age=31536000, immutable"
+          ? `public, max-age=${IMMUTABLE_MAX_AGE_S}, immutable`
           : "no-store",
       });
       res.end(data);

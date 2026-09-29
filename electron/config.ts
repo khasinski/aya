@@ -3,7 +3,7 @@
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { isStorableSplitTree, pruneSplitTreeTerminals } from "./split-tree";
+import { isStorableSplitTree, MAX_SPLIT_COLS, MAX_SPLIT_ROWS, pruneSplitTreeTerminals } from "./split-tree";
 import { writeFileAtomic } from "./atomic-write";
 import {
   OPEN_PROJECTS_FILE,
@@ -17,12 +17,7 @@ import type {
   SplitLayout,
   WorkingTab,
 } from "./types";
-import {
-  MAX_SPLIT_COLS,
-  MAX_SPLIT_ROWS,
-  PROJECT_STATE_VERSION,
-  sanitizeStringRecord,
-} from "./validation";
+import { PROJECT_STATE_VERSION, sanitizeStringRecord } from "./validation";
 import { slugifyName } from "./text";
 
 const RESERVED_SLUGS = new Set(["aya-sentinel-new"]);

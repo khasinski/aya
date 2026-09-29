@@ -30,7 +30,7 @@ export const MAX_SPLIT_LEAVES = 25;
 /** Guards the recursive validator and rendering against a pathological tree
  *  (hand-edited config, or a bug). 25 leaves need at most 24 levels in the
  *  fully-degenerate case; this is that bound. */
-export const MAX_SPLIT_DEPTH = 24;
+export const MAX_SPLIT_DEPTH = MAX_SPLIT_LEAVES - 1;
 /** Smallest share a pane may be shrunk to by dragging a divider. */
 export const MIN_SPLIT_PANE_FRACTION = 0.18;
 

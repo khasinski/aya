@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normalizeLocalSummaryError } from "../dist-electron/local-summary-errors.js";
+import { normalizeLocalSummaryError, SUMMARY_TEXT_MAX_CHARS } from "../dist-electron/local-summary-errors.js";
 
 test("Foundation Models assetsUnavailable is mapped to a stable error code", () => {
   assert.equal(
@@ -20,6 +20,6 @@ test("spawn ENOTDIR is mapped to a helper launch error", () => {
 
 test("unknown local summary errors are compacted", () => {
   const normalized = normalizeLocalSummaryError(`x ${"very ".repeat(80)}long`);
-  assert.equal(normalized?.length, 160);
+  assert.equal(normalized?.length, SUMMARY_TEXT_MAX_CHARS);
   assert.ok(normalized?.startsWith("x very very"));
 });

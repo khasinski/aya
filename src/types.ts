@@ -205,6 +205,7 @@ export interface ThemesFile {
 }
 
 import type { SplitNode } from "./split-tree";
+import { PRESET_ID_SHELL } from "./preset-ids";
 
 export interface WorkingTab {
   id: string;
@@ -378,6 +379,8 @@ export interface SpawnRequest {
    *  inference — see src/agentPreset.ts). Lets the host pick that agent's
    *  screen-detection rules without duplicating the inference. */
   agent?: AgentKind;
+  /** The preset's config dir, where claude registers its session per pid. */
+  agentConfigDir?: string;
   command: string;
   cwd: string;
   cols: number;
@@ -753,6 +756,20 @@ export interface AyaApi {
   getCodexUsage(): Promise<UsageAccount[]>;
   /** Grok usage (tokens + cost, last 7 days, account-wide), or null when none. */
   getGrokUsage(): Promise<GrokUsage | null>;
+  /** Start a team: unpause, send every role a delivery test, arm its rounds. */
+  teamStart(projectSlug: string, team: string): Promise<TeamStartResult>;
+  teamPause(projectSlug: string, team: string): Promise<void>;
+  teamList(projectSlug: string): Promise<TeamSummary[]>;
+  /** Save team: writes .aya/teams/<name>.md and the snapshot Aya runs on.
+   *  `create`: refuse when a team with this name already exists. */
+  teamSave(projectSlug: string, team: TeamDefinition, create?: boolean): Promise<void>;
+  /** Gives a role a pane (null frees it) and tells the agent; returns why it was not told. */
+  teamAssign(projectSlug: string, team: string, role: string, paneId: string | null): Promise<string | null>;
+  /** A closed tab gives up its roles in every team of the project. */
+  teamReleasePane(projectSlug: string, paneId: string): Promise<void>;
+  /** Drafts a role of the team as the editor holds it, with Aya Intelligence. */
+  teamDraftRole(team: TeamDefinition, roleId: string, intelligence: AyaIntelligenceConfig): Promise<RoleDraft>;
+  teamResume(projectSlug: string, team: string): Promise<void>;
 
   usageHookStatus(): Promise<UsageHookStatus>;
   installUsageHook(): Promise<UsageHookStatus>;
@@ -935,7 +952,7 @@ export const MISSING_PRESET: Preset = {
 // their own "shell" preset but the Cmd+T shortcut still needs to open a
 // shell terminal. Same shape as the shipped default; not persisted.
 export const BUILTIN_SHELL: Preset = {
-  id: "shell",
+  id: PRESET_ID_SHELL,
   name: "Shell",
   icon: "$",
   color: "",
@@ -947,7 +964,7 @@ export function getPreset(presets: Preset[], id: string): Preset {
   if (found) return found;
   // Special-case "shell" so terminals created via Cmd+T always render with a
   // sensible icon/name even if the user deleted their shell preset.
-  if (id === "shell") return BUILTIN_SHELL;
+  if (id === PRESET_ID_SHELL) return BUILTIN_SHELL;
   return MISSING_PRESET;
 }
 
@@ -973,4 +990,77 @@ export function looksNonInteractive(command: string): boolean {
   return /(?:^|\s)(-p|--print|--headless|--non-interactive|--no-interactive)(?:\s|$|=)/.test(
     command,
   );
+}
+
+/** Which roles got Start team's delivery test, and why the others did not. */
+export interface TeamStartResult {
+  /** false: a pane was not ready, so nothing was sent; `held` says which. */
+  started: boolean;
+  delivered: string[];
+  held: { role: string; reason: string }[];
+}
+
+/** A role this one sends to, and what it sends there (may be empty). */
+export interface SendRoute {
+  to: string;
+  what: string;
+}
+
+export interface TeamRole {
+  id: string;
+  sendsTo: SendRoute[];
+  mustNot: string;
+  responsibilities: string;
+}
+
+export interface TeamCadence {
+  role: string;
+  minutes: number;
+}
+
+/** A team from .aya/teams/<name>.md (see electron/teams.ts). */
+export interface TeamDefinition {
+  name: string;
+  roles: TeamRole[];
+  cadence: TeamCadence | null;
+  protocol: string;
+}
+
+export interface TeamMessage {
+  id: number;
+  time: string;
+  from: string;
+  to: string;
+  commit: string | null;
+  text: string;
+  /** Typed into the recipient's pane; the rest wait for its inbox. */
+  delivered: boolean;
+  /** Why it was not typed when sent, e.g. "shows an approval prompt". */
+  held?: string;
+}
+
+/** One team as the teams window shows it. `definition` is what Aya runs on:
+ *  the saved snapshot, else the repo file; null when that does not parse. */
+export interface TeamSummary {
+  name: string;
+  definition: TeamDefinition | null;
+  error: string | null;
+  /** The repo file differs from what the user last saved. */
+  repoChanged: boolean;
+  /** The repo file parsed, to adopt with one Save; null when it does not parse. */
+  repoDefinition: TeamDefinition | null;
+  paused: boolean;
+  /** Started with Start team and not paused since. */
+  running: boolean;
+  assignments: Record<string, string>;
+  /** Messages per role that are waiting in its inbox. */
+  unread: Record<string, number>;
+  log: TeamMessage[];
+}
+
+/** A role drafted by Aya Intelligence from its name, for the user to edit. */
+export interface RoleDraft {
+  responsibilities: string;
+  mustNot: string;
+  sendsTo: SendRoute[];
 }

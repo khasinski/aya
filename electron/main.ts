@@ -39,6 +39,7 @@ import {
   updateProject,
 } from "./config";
 import { bundledAyaCliPath, bundledDistElectronHelperPath } from "./cli-path";
+import { isShellCommand, withCliFirst } from "./pane-command";
 import { defaultInstallAyaCliPath, renderCliShim } from "./cli-shim";
 import {
   type AyaCopy,
@@ -51,25 +52,37 @@ import {
 } from "./cli-install";
 import { startConfigWatcher } from "./config-watcher";
 import { isHostStale } from "./pty-host-staleness";
-import { startControlServer } from "./control";
+import { deliverTeamMessage, startControlServer } from "./control";
 import { createCliAdoptionStore } from "./cli-adoption";
-import { writeFileAtomic } from "./atomic-write";
+import { TMP_SUFFIX, writeFileAtomic } from "./atomic-write";
 import {
   briefChannel,
   briefText,
   codexAgentsFile,
+  codexBriefSync,
   commandWithBriefArg,
   commandWithBriefEnv,
-  planCodexBriefs,
   antigravityBriefFile,
   withOwnedBrief,
   withoutOwnedBrief,
   withBriefSection,
   briefMarkersIntact,
-  orphanedBriefFiles,
   BRIEF_BEGIN,
   withoutBriefSection,
+  teamNote,
 } from "./agent-brief";
+import { paneTeamRole } from "./team-files";
+import {
+  appleChat,
+  type ChatOptions,
+  type ChatResult,
+  APPLE_HELPER_STDOUT_MAX_BYTES,
+  OLLAMA_BASE_URL,
+  providerChat,
+  RECOMMENDED_OLLAMA_MODEL,
+} from "./intelligence-chat";
+import type { TeamControlDeps } from "./team-control";
+import { registerTeamIpc } from "./team-ipc";
 import { startRemoteServer } from "./remote-server";
 import {
   createRemoteDirectory,
@@ -83,12 +96,16 @@ import {
   getGitDiff,
   getGitInfo,
   getGitRoot,
+  headCommit,
   listWorktreeStatus,
 } from "./git";
 import { getGitHubLink, isGitHubCliAvailable } from "./github";
 import {
   AYA_HOME,
+  CLI_ADOPTION_FILE,
   CONTROL_SOCKET_PATH,
+  DIAGNOSTICS_LOG_FILE,
+  EXECUTABLE_FILE_MODE,
   IS_DEV,
   IS_E2E_HEADLESS,
   IS_E2E_PTY_SHUTDOWN,
@@ -115,8 +132,12 @@ import { isInternalNavigationUrl, parseExternalUrl } from "./navigation";
 import { createWorktree, removeWorktree } from "./git";
 import { listPresets, savePresets } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
-import { expandUserPath, readClaudeUsageAccounts } from "./usage";
-import { DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } from "./usage-codex";
+import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath, readClaudeUsageAccounts } from "./usage";
+import {
+  DEFAULT_CODEX_HOME,
+  codexUsageSources,
+  readCodexUsageAccountsFromSources,
+} from "./usage-codex";
 import { DEFAULT_GROK_HOME, readGrokUsage } from "./usage-grok";
 import {
   usageHookStatus,
@@ -140,12 +161,18 @@ import {
 } from "./status-hook-codex";
 import { searchHarnessSessions } from "./harness-search";
 import { listMonitoredSessions } from "./session-monitor";
-import { normalizeLocalSummaryError, SUMMARY_TEXT_MAX_CHARS } from "./local-summary-errors";
+import {
+  LOCAL_SUMMARY_MAX_LINES,
+  normalizeLocalSummaryError,
+  SUMMARY_TEXT_MAX_CHARS,
+} from "./local-summary-errors";
 import { readRepoProjectConfig } from "./project-local";
 import { repairProcessPath } from "./shell-path";
+import { paneReadText } from "./pane-render";
 import { PtyHostClient } from "./pty-host-client";
+import { PTY_HOST_SCRIPT_NAME } from "./pty-host-staleness";
 import { reapStaleHostRecords } from "./pty-host-registry";
-import { COMMAND_PROBE_TIMEOUT_MS } from "./constants";
+import { COMMAND_PROBE_TIMEOUT_MS, HOOK_VIA } from "./constants";
 import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
 import {
   requirePositiveInt,
@@ -163,7 +190,9 @@ import { loadWindowState, trackWindowState } from "./window-state";
 import { resolveDropTarget, WindowProjectSlices } from "./window-slices";
 import {
   generateWebPassword,
+  isWildcardHost,
   loadWebConfig,
+  LOOPBACK_HOST,
   normalizeWebPort,
   saveWebConfig,
   webCredentials,
@@ -171,6 +200,7 @@ import {
 } from "./web-config";
 import { captureIpcHandlers } from "./web-ipc";
 import { startWebServer, type WebServerHandle } from "./web-server";
+import { parseSummaryResponse, summaryPrompt } from "./summary-prompt";
 import type {
   AyaIntelligenceConfig,
   CliStatus,
@@ -185,14 +215,13 @@ import type {
 } from "./types";
 
 const DEV_SERVER_URL = "http://localhost:5183";
+const RENDERER_DIST_DIR = path.join(__dirname, "..", "dist");
+const RENDERER_INDEX_PATH = path.join(RENDERER_DIST_DIR, "index.html");
 const WINDOW_TITLE = IS_DEV ? "Aya Dev" : "Aya";
-
-// Filesystem mode for the installed CLI executable (rwxr-xr-x)
-const CLI_EXECUTABLE_MODE = 0o755;
 
 // Per-harness count of panes that ever called `aya` (#117); shown in
 // Settings -> Diagnostics.
-const cliAdoption = createCliAdoptionStore(path.join(AYA_HOME, "cli-adoption.json"));
+const cliAdoption = createCliAdoptionStore(CLI_ADOPTION_FILE);
 // Maximum number of entries returned by path completion
 const MAX_PATH_COMPLETION_ENTRIES = 100;
 // Maximum number of keyboard-navigable projects (Cmd/Ctrl+1..9)
@@ -207,22 +236,33 @@ const COLOR_LIGHT_TEXT = "#f0f6fc";
 const ABOUT_DIALOG_SIZE = 360;
 // About dialog icon dimensions (square, px)
 const ABOUT_ICON_SIZE = 128;
+const STALE_MENU_DOT_PX = 16;
+const STALE_MENU_DOT_SCALE_FACTOR = 2;
 const LOCAL_SUMMARY_TIMEOUT_MS = 20_000;
-const LOCAL_SUMMARY_MAX_LINES = 30;
-const LOCAL_SUMMARY_MAX_STDOUT_BYTES = 32 * 1024;
-const RECOMMENDED_OLLAMA_MODEL = "gemma4:e4b";
+// Cascade offset for a window opened from another window (File > New Window,
+// tab tear-out), so it doesn't cover its parent exactly.
+const NEW_WINDOW_CASCADE_OFFSET_PX = 28;
+const TEAR_OUT_CURSOR_OFFSET_X_PX = 80;
+const TEAR_OUT_CURSOR_OFFSET_Y_PX = 20;
+// Heal nudges after a GPU death: the typical relaunch window, then a safety net
+// (a no-op once the WebGL context is live again).
+const GPU_HEAL_NUDGE_DELAYS_MS = [1200, 3000];
 
-const ptyHost = new PtyHostClient(path.join(__dirname, "pty-host.js"));
+const PTY_HOST_SCRIPT = path.join(__dirname, PTY_HOST_SCRIPT_NAME);
+const ptyHost = new PtyHostClient(PTY_HOST_SCRIPT);
+// One set of team deps for the team runner and the control server's aya team.
+const teamDeps: TeamControlDeps = {
+  teamHome: AYA_HOME,
+  listProjects: () => listProjects(),
+  deliver: (terminalId, text) => deliverTeamMessage((id, data) => ptyHost.write(id, data), terminalId, text),
+  holdReason: (terminalId) => ptyHost.holdReason(terminalId),
+  headCommit,
+};
 const UPDATE_AUTO_CHECK_DELAY_MS = 12_000;
-// Local Ollama daemon endpoint (fixed default port) - chat + tags probes.
-const OLLAMA_BASE_URL = "http://localhost:11434";
 // Summarizer sampling knobs, shared by BOTH backends (OpenAI-compatible and
 // Ollama) - the two request builders must stay in sync.
 const SUMMARY_TEMPERATURE = 0.2;
 const SUMMARY_MAX_TOKENS = 64;
-// Title fallback caps (first-line words / chars) for the local summary.
-const SUMMARY_TITLE_MAX_WORDS = 8;
-const SUMMARY_TITLE_MAX_CHARS = 80;
 // Bound captured `ollama pull` stderr so a chatty child can't balloon memory.
 const OLLAMA_PULL_STDERR_MAX_BYTES = 8192;
 // Max accepted Ollama model-name length (IPC input-validation cap).
@@ -355,11 +395,16 @@ function validateLocalSummaryRequest(value: unknown): LocalSummaryRequest {
   };
 }
 
+/** The bundled Apple Foundation Models helper (no e2e override). */
+function appleHelperPath(): string {
+  return bundledDistElectronHelperPath(__dirname, "aya-local-summary");
+}
+
 async function summarizeWithApple(
   req: LocalSummaryRequest,
 ): Promise<LocalSummaryResult> {
   if (process.platform !== "darwin") return unavailableLocalSummary("unsupported-platform");
-  const helper = bundledDistElectronHelperPath(__dirname, "aya-local-summary");
+  const helper = appleHelperPath();
   try {
     await fs.access(helper, fsConstants.X_OK);
   } catch {
@@ -387,11 +432,11 @@ async function summarizeWithApple(
 
     child.stdout.setEncoding("utf-8");
     child.stdout.on("data", (chunk: string) => {
-      if (stdout.length < LOCAL_SUMMARY_MAX_STDOUT_BYTES) stdout += chunk;
+      if (stdout.length < APPLE_HELPER_STDOUT_MAX_BYTES) stdout += chunk;
     });
     child.stderr.setEncoding("utf-8");
     child.stderr.on("data", (chunk: string) => {
-      if (stderr.length < LOCAL_SUMMARY_MAX_STDOUT_BYTES) stderr += chunk;
+      if (stderr.length < APPLE_HELPER_STDOUT_MAX_BYTES) stderr += chunk;
     });
     child.on("error", (error) => finish(unavailableLocalSummary(error.message)));
     child.on("close", (code) => {
@@ -422,162 +467,17 @@ async function summarizeWithApple(
   });
 }
 
-function cleanSummary(value: string): string {
-  const oneLine = value
-    .replace(/\s+/g, " ")
-    .replace(/^["'`]+|["'`.]+$/g, "")
-    .trim();
-  const words = oneLine.split(/\s+/).filter(Boolean).slice(0, SUMMARY_TITLE_MAX_WORDS).join(" ");
-  return words.slice(0, SUMMARY_TITLE_MAX_CHARS);
-}
+const SUMMARY_SYSTEM = "You summarize terminal output for a developer tool. Return JSON only.";
+const SUMMARY_CHAT = {
+  temperature: SUMMARY_TEMPERATURE,
+  maxTokens: SUMMARY_MAX_TOKENS,
+  timeoutMs: LOCAL_SUMMARY_TIMEOUT_MS,
+};
 
-function summaryPrompt(req: LocalSummaryRequest): string {
-  const subject =
-    req.kind === "project" ? "project activity" : "terminal output";
-  return [
-    `Summarize recent ${subject} for a compact app label.`,
-    "Return strict JSON only, with shape:",
-    '{"useful":true,"summary":"2-6 word label"}',
-    "If the output is too noisy, generic, idle, or not meaningful, return:",
-    '{"useful":false,"summary":""}',
-    "Do not invent context. No full sentences. No punctuation. Max 6 words.",
-    "",
-    "Recent output:",
-    req.lines.join("\n"),
-  ].join("\n");
-}
-
-function openAiBaseUrl(baseUrl: string): string {
-  const trimmed = baseUrl.trim().replace(/\/+$/, "");
-  if (!trimmed) return "";
-  return /\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/v1`;
-}
-
-function parseSummaryResponse(content: string): LocalSummaryResult {
-  const trimmed = content.trim();
-  const jsonText =
-    trimmed.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1]?.trim() ?? trimmed;
-  try {
-    const parsed = JSON.parse(jsonText) as Partial<LocalSummaryResult>;
-    const summary =
-      typeof parsed.summary === "string" ? cleanSummary(parsed.summary) : "";
-    return {
-      available: true,
-      useful: parsed.useful === true && summary.length > 0,
-      summary: parsed.useful === true ? summary : "",
-    };
-  } catch {
-    const summary = cleanSummary(trimmed);
-    return { available: true, useful: summary.length > 0, summary };
-  }
-}
-
-async function summarizeWithOpenAiCompatible(args: {
-  req: LocalSummaryRequest;
-  baseUrl: string;
-  apiKey?: string;
-  model: string;
-}): Promise<LocalSummaryResult> {
-  const baseUrl = openAiBaseUrl(args.baseUrl);
-  const model = args.model.trim();
-  if (!baseUrl || !model) return unavailableLocalSummary("missing-api-config");
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), LOCAL_SUMMARY_TIMEOUT_MS);
-  try {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        ...(args.apiKey ? { Authorization: `Bearer ${args.apiKey}` } : {}),
-      },
-      body: JSON.stringify({
-        model,
-        temperature: SUMMARY_TEMPERATURE,
-        max_tokens: SUMMARY_MAX_TOKENS,
-        think: false,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You summarize terminal output for a developer tool. Return JSON only.",
-          },
-          { role: "user", content: summaryPrompt(args.req) },
-        ],
-      }),
-    });
-    if (!response.ok) {
-      return unavailableLocalSummary(`api-http-${response.status}`);
-    }
-    const json = (await response.json()) as {
-      choices?: Array<{
-        message?: { content?: unknown; reasoning?: unknown };
-        text?: unknown;
-      }>;
-    };
-    const content =
-      typeof json.choices?.[0]?.message?.content === "string"
-        ? json.choices[0].message.content ||
-          (typeof json.choices[0].message.reasoning === "string"
-            ? json.choices[0].message.reasoning
-            : "")
-        : typeof json.choices?.[0]?.text === "string"
-          ? json.choices[0].text
-          : "";
-    if (!content) return { available: true, useful: false, summary: "" };
-    return parseSummaryResponse(content);
-  } catch (err) {
-    return unavailableLocalSummary(err instanceof Error ? err.message : String(err));
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function summarizeWithOllama(
-  req: LocalSummaryRequest,
-  model: string,
-): Promise<LocalSummaryResult> {
-  const selectedModel = model.trim() || RECOMMENDED_OLLAMA_MODEL;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), LOCAL_SUMMARY_TIMEOUT_MS);
-  try {
-    const response = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
-      method: "POST",
-      signal: controller.signal,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: selectedModel,
-        stream: false,
-        think: false,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You summarize terminal output for a developer tool. Return JSON only.",
-          },
-          { role: "user", content: summaryPrompt(req) },
-        ],
-        options: {
-          temperature: SUMMARY_TEMPERATURE,
-          num_predict: SUMMARY_MAX_TOKENS,
-        },
-      }),
-    });
-    if (!response.ok) {
-      return unavailableLocalSummary(`ollama-http-${response.status}`);
-    }
-    const json = (await response.json()) as {
-      message?: { content?: unknown };
-    };
-    const content =
-      typeof json.message?.content === "string" ? json.message.content : "";
-    if (!content) return { available: true, useful: false, summary: "" };
-    return parseSummaryResponse(content);
-  } catch (err) {
-    return unavailableLocalSummary(err instanceof Error ? err.message : String(err));
-  } finally {
-    clearTimeout(timeout);
-  }
+function summaryFromChat(result: ChatResult): LocalSummaryResult {
+  if (!result.ok) return unavailableLocalSummary(result.error);
+  if (!result.content) return { available: true, useful: false, summary: "" };
+  return parseSummaryResponse(result.content);
 }
 
 async function summarizeLocal(
@@ -587,18 +487,7 @@ async function summarizeLocal(
   if (!intelligence || intelligence.provider === "apple") {
     return summarizeWithApple(req);
   }
-  if (intelligence.provider === "ollama") {
-    return summarizeWithOllama(
-      req,
-      intelligence.ollamaModel || RECOMMENDED_OLLAMA_MODEL,
-    );
-  }
-  return summarizeWithOpenAiCompatible({
-    req,
-    baseUrl: intelligence.openAiBaseUrl,
-    apiKey: intelligence.openAiApiKey,
-    model: intelligence.openAiModel,
-  });
+  return summaryFromChat(await providerChat(intelligence, SUMMARY_SYSTEM, summaryPrompt(req), SUMMARY_CHAT));
 }
 
 async function ollamaStatus(
@@ -827,10 +716,10 @@ function freshCliShim(): string {
 async function writeCliShim(target: string, script: string): Promise<void> {
   // Temp file + rename: a failed write can't leave a truncated, dead shim, and
   // rename replaces the entry itself instead of writing through a link.
-  const tmp = `${target}.aya-${process.pid}.tmp`;
+  const tmp = `${target}.aya-${process.pid}${TMP_SUFFIX}`;
   try {
-    await fs.writeFile(tmp, script, { mode: CLI_EXECUTABLE_MODE });
-    await fs.chmod(tmp, CLI_EXECUTABLE_MODE);
+    await fs.writeFile(tmp, script, { mode: EXECUTABLE_FILE_MODE });
+    await fs.chmod(tmp, EXECUTABLE_FILE_MODE);
     await fs.rename(tmp, target);
   } catch (err) {
     await fs.rm(tmp, { force: true }).catch(() => {});
@@ -889,16 +778,6 @@ async function installCli(): Promise<CliStatus> {
         ? (status.message ?? installedMessage)
         : installedMessage,
   };
-}
-
-/** The codex AGENTS.md each codex preset reads, with its opt-in. */
-async function codexBriefTargets() {
-  return (await listPresets())
-    .filter((preset) => preset.agent === "codex")
-    .map((preset) => ({
-      file: codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath),
-      agentBrief: preset.agentBrief === true,
-    }));
 }
 
 /** Rewrite `file` only when `change` alters it. `null` content = no file.
@@ -974,8 +853,12 @@ async function syncAntigravityBrief(): Promise<void> {
 }
 
 async function syncCodexBriefs(): Promise<void> {
-  const plan = planCodexBriefs(await codexBriefTargets());
-  const orphans = orphanedBriefFiles(await readBriefRegistry(), plan);
+  const plan = codexBriefSync(
+    (await listPresets()).filter((preset) => preset.agent === "codex"),
+    await readBriefRegistry(),
+    DEFAULT_CODEX_HOME,
+    expandUserPath,
+  );
   const brief = briefText(true);
   const added: string[] = [];
   const dropped: string[] = [];
@@ -984,7 +867,7 @@ async function syncCodexBriefs(): Promise<void> {
       .then(() => added.push(file))
       .catch((err) => console.warn(`[aya] could not add the aya brief to ${file}:`, err));
   }
-  for (const file of [...plan.remove, ...orphans]) {
+  for (const file of plan.remove) {
     await rewriteIfChanged(file, withoutBriefSection)
       .then(() => dropped.push(file))
       .catch((err) => console.warn(`[aya] could not remove the aya brief from ${file}:`, err));
@@ -992,21 +875,31 @@ async function syncCodexBriefs(): Promise<void> {
   await updateBriefRegistry(added, dropped).catch(() => {});
 }
 
-/** Deliver the brief for a fresh (not re-attached) pane whose preset opted
- *  in: as an argument, or by making sure the harness's file carries it. */
+async function paneTeamNote(spawn: SpawnRequest): Promise<string | null> {
+  const project = (await listProjects()).find((p) => p.slug === spawn.projectSlug);
+  const membership = project ? await paneTeamRole(AYA_HOME, project, spawn.ptyId) : null;
+  return membership ? teamNote(membership.team, membership.role) : null;
+}
+
+/** The brief (preset opted in) and a team pane's role note, for a fresh pane.
+ *  Shared harness files take the brief only, never a per-pane note. */
 async function withAgentBrief(spawn: SpawnRequest): Promise<SpawnRequest> {
   if (spawn.attachOnly || !spawn.presetId) return spawn;
   const preset = (await listPresets()).find((p) => p.id === spawn.presetId);
-  if (!preset?.agentBrief) return spawn;
+  if (!preset) return spawn;
+  const note = await paneTeamNote(spawn);
+  if (!preset.agentBrief && !note) return spawn;
   const channel = briefChannel(spawn.agent ?? preset.agent);
   if (channel.kind === "arg") {
-    const command = commandWithBriefArg(spawn.command, channel, briefText(false));
+    const text = [preset.agentBrief ? briefText(false) : null, note].filter(Boolean).join("\n\n");
+    const command = commandWithBriefArg(spawn.command, channel, text);
     if (!command) {
       console.warn(`[aya] aya brief skipped for preset ${preset.id}: its command is not a single simple command, or already sets ${channel.flag}`);
       return spawn;
     }
     return { ...spawn, command };
   }
+  if (!preset.agentBrief) return spawn;
   if (channel.kind === "env") {
     // A file Aya owns, so nothing of the user's is touched; only Aya panes
     // get the variable, so the text needs no "if inside Aya".
@@ -1031,7 +924,8 @@ async function withAgentBrief(spawn: SpawnRequest): Promise<SpawnRequest> {
   }
   if (channel.kind === "file") {
     // Re-assert on launch: the user may have edited the file since the save.
-    const file = codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath);
+    const file = codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath, spawn.cwd);
+    if (!file) return spawn;
     await rewriteIfChanged(file, (c) => withBriefSection(c, briefText(true)))
       .then(() => updateBriefRegistry([file], []))
       .catch((err) => console.warn(`[aya] could not add the aya brief to ${file}:`, err));
@@ -1674,7 +1568,7 @@ async function applyWebServerState(): Promise<void> {
     webServer = await startWebServer({
       appVersion: app.getVersion(),
       isDev: IS_DEV,
-      distDir: path.join(__dirname, "..", "dist"),
+      distDir: RENDERER_DIST_DIR,
       getConfig: () => webConfig ?? config,
     });
     ptyHost.attachWebContents(webPtySink);
@@ -1686,7 +1580,7 @@ async function applyWebServerState(): Promise<void> {
 /** Reachable URLs for the settings UI: the pinned address, or every
  *  non-internal IPv4 when listening on all interfaces. */
 function webServerUrls(config: WebConfig): string[] {
-  if (config.host !== "0.0.0.0" && config.host !== "::") {
+  if (!isWildcardHost(config.host)) {
     return [`http://${config.host}:${config.port}`];
   }
   const hosts: string[] = [];
@@ -1695,7 +1589,7 @@ function webServerUrls(config: WebConfig): string[] {
       if (info.family === "IPv4" && !info.internal) hosts.push(info.address);
     }
   }
-  if (hosts.length === 0) hosts.push("127.0.0.1");
+  if (hosts.length === 0) hosts.push(LOOPBACK_HOST);
   return hosts.map((host) => `http://${host}:${config.port}`);
 }
 
@@ -1968,10 +1862,6 @@ interface WindowGeometry {
   isMaximized: boolean;
 }
 
-// Cascade offset for a window opened from another window (File > New Window,
-// tab tear-out), so it doesn't cover its parent exactly.
-const NEW_WINDOW_CASCADE_OFFSET_PX = 28;
-
 /** Open an additional (empty) Aya window, cascaded from the focused one - or,
  *  for a tab tear-out, positioned at the release point so the new window
  *  appears under the cursor like a Chrome tab drag. New windows own no
@@ -1987,7 +1877,7 @@ async function openNewWindow(at?: {
     : { ...(await loadWindowState()), x: undefined, y: undefined };
   const position = at
     ? // Nudge so the cursor lands on the new window's tab strip, not its corner.
-      { x: Math.max(0, at.x - 80), y: Math.max(0, at.y - 20) }
+      { x: Math.max(0, at.x - TEAR_OUT_CURSOR_OFFSET_X_PX), y: Math.max(0, at.y - TEAR_OUT_CURSOR_OFFSET_Y_PX) }
     : anchor
       ? {
           x: anchor.getBounds().x + NEW_WINDOW_CASCADE_OFFSET_PX,
@@ -2125,7 +2015,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
       isInternalNavigationUrl(url, {
         isDev: IS_DEV,
         devServerUrl: DEV_SERVER_URL,
-        appIndexPath: path.join(__dirname, "..", "dist", "index.html"),
+        appIndexPath: RENDERER_INDEX_PATH,
       })
     ) {
       return;
@@ -2208,11 +2098,11 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     if (!win.isDestroyed()) win.webContents.send("shortcut", action);
   });
 
-  if (process.env.AYA_DEV === "1") {
+  if (IS_DEV) {
     win.loadURL(DEV_SERVER_URL);
     win.webContents.openDevTools({ mode: "detach" });
   } else {
-    win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+    win.loadFile(RENDERER_INDEX_PATH);
   }
 
   return win;
@@ -2269,8 +2159,8 @@ function setStaleMenuIcon(): void {
     // 16x16 px red dot at scaleFactor 2 = 8pt logical - renders as a
     // small colored circle to the left of the label (standard macOS pattern).
     item.icon = nativeImage.createFromBuffer(
-      makeCirclePng(16, 255, 59, 48), // red (macOS systemRed #ff3b30)
-      { scaleFactor: 2 },
+      makeCirclePng(STALE_MENU_DOT_PX, 255, 59, 48), // red (macOS systemRed #ff3b30)
+      { scaleFactor: STALE_MENU_DOT_SCALE_FACTOR },
     );
   }
 }
@@ -2285,13 +2175,43 @@ function registerIpc(): void {
   const senderWindow = (
     e: Electron.IpcMainInvokeEvent,
   ): BrowserWindow | null => BrowserWindow.fromWebContents(e.sender);
+  /** A chat with the configured Aya Intelligence; no config means Apple, the default. */
+  const intelligenceChat = (config: unknown, opts: ChatOptions) => {
+    const intelligence = normalizeAyaIntelligenceConfig(config) ?? normalizeAyaIntelligenceConfig({})!;
+    return async (system: string, user: string) => {
+      const result =
+        intelligence.provider === "apple"
+          ? await appleChat(
+              // e2e swaps in a stand-in: the real model is slow and not on every Mac.
+              process.env.AYA_E2E_APPLE_HELPER || appleHelperPath(),
+              system,
+              user,
+              opts,
+            )
+          : await providerChat(intelligence, system, user, opts);
+      if (!result.ok) throw new Error(`Aya Intelligence did not answer (${result.error})`);
+      return result.content;
+    };
+  };
+  registerTeamIpc({
+    ipcMain,
+    onBeforeQuit: (teardown) => app.once("before-quit", teardown),
+    team: teamDeps,
+    intelligenceChat,
+  });
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
     const request = validateSpawnRequest(req);
     // A broken presets.json must not stop panes from spawning.
-    const spawn = await withAgentBrief(request).catch((err) => {
+    const briefed = await withAgentBrief(request).catch((err) => {
       console.warn("[aya] aya brief skipped:", err);
       return request;
     });
+    // Aya Dev: agents get this branch's aya, not an older installed one that
+    // the shell's rc files put first. Shell panes stay plain shells.
+    const spawn =
+      IS_DEV && !isShellCommand(briefed.command)
+        ? { ...briefed, command: withCliFirst(briefed.command, path.dirname(bundledAyaCliPath(__dirname))) }
+        : briefed;
     await ptyHost.spawn(spawn);
     void cliAdoption
       .launched({
@@ -2527,29 +2447,14 @@ function registerIpc(): void {
         .map((p) => ({
           id: p.id,
           label: p.name,
-          configDir: p.configDir || "~/.claude",
+          configDir: p.configDir || DEFAULT_CLAUDE_CONFIG_DIR,
         })),
     );
   });
   // Read-only: Codex usage, parsed from its own local rollout logs (Codex
   // writes its rate-limit % there, so no token/endpoint/hook is needed).
   ipcMain.handle("usage:get-codex", async () => {
-    const presets = await listPresets();
-    const codexPresets = presets.filter((p) => p.agent === "codex");
-    return readCodexUsageAccountsFromSources(
-      (codexPresets.length > 0
-        ? codexPresets
-        : [{ id: "codex", name: "Codex", configDir: DEFAULT_CODEX_HOME }]).map(
-        (p) => ({
-          id: p.id,
-          label: p.name,
-          home:
-            "configDir" in p && typeof p.configDir === "string" && p.configDir
-              ? expandUserPath(p.configDir)
-              : expandUserPath("~/.codex"),
-        }),
-      ),
-    );
+    return readCodexUsageAccountsFromSources(codexUsageSources(await listPresets()));
   });
   // Read-only: 7-day spend and tokens, plus the weekly limit when Grok logged one.
   ipcMain.handle("usage:get-grok", async () => {
@@ -3056,7 +2961,7 @@ app.whenReady().then(async () => {
   try {
     const summary = reapStaleHostRecords(
       ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION),
-      path.join(__dirname, "pty-host.js"),
+      PTY_HOST_SCRIPT,
     );
     keptCompatibleHosts = summary.keptCompatible;
     if (summary.reaped.length > 0) {
@@ -3107,14 +3012,23 @@ app.whenReady().then(async () => {
     // and act through the pty host, so they work regardless of which window
     // (if any) currently owns the target project.
     listProjects: () => listProjects(),
-    readPane: (terminalId) => ptyHost.getBuffer(terminalId),
+    // Rendered here, not in the pty host: up to ~50 ms per 1 MB would stall every
+    // pane's output there.
+    readPane: async (terminalId) => {
+      const [buffer, size] = await Promise.all([
+        ptyHost.getBuffer(terminalId),
+        ptyHost.getSize(terminalId),
+      ]);
+      return paneReadText(buffer, size);
+    },
     // Returned, not fire-and-forget: the boolean is how pane-send learns the
     // pane was dead, and dropping it made host rejections unhandled.
     writePane: (terminalId, data) => ptyHost.write(terminalId, data),
+    team: teamDeps,
     onRequest: (request, caller) => {
       // Aya's own automatic-status hooks call `aya status` from inside every
       // Claude/Codex pane; counting them would read as ~100% adoption (#121).
-      if (!caller.terminalId || caller.via === "hook") return;
+      if (!caller.terminalId || caller.via === HOOK_VIA) return;
       void cliAdoption
         .called({
           terminalId: caller.terminalId,
@@ -3270,10 +3184,14 @@ app.on("before-quit", () => {
   }
   for (const timer of gpuHealTimers) clearTimeout(timer);
   gpuHealTimers.clear();
-  if (!IS_E2E_PTY_SHUTDOWN) return;
-  void ptyHost.shutdown().catch(() => {
-    // Test-only cleanup. Normal app runs intentionally keep PTYs alive.
-  });
+  if (IS_E2E_PTY_SHUTDOWN) {
+    void ptyHost.shutdown().catch(() => {
+      // Test-only cleanup. Normal app runs intentionally keep PTYs alive.
+    });
+  }
+  // After the shutdown above is sent: a request from a closing window must not
+  // start a host this quitting app will never connect to.
+  ptyHost.dispose();
 });
 
 // GPU-helper deaths (#79). The OS can quietly kill the GPU process under memory
@@ -3285,11 +3203,7 @@ app.on("before-quit", () => {
 // once the replacement GPU process should be up, nudge renderers to re-run
 // their existing WebGL/PTY repair path - belt-and-suspenders over Chromium's
 // own repaint.
-const diagnosticsLog = createPtyLog(path.join(AYA_HOME, "diagnostics.log"));
-// Delays after a GPU death at which we ask renderers to heal. The first covers
-// the typical relaunch window; the second is a cheap safety net (the heal is a
-// no-op when the WebGL context is already live again).
-const GPU_HEAL_NUDGE_DELAYS_MS = [1200, 3000];
+const diagnosticsLog = createPtyLog(DIAGNOSTICS_LOG_FILE);
 // Live heal timers: a burst of deaths must not accumulate them.
 const gpuHealTimers = new Set<NodeJS.Timeout>();
 app.on("child-process-gone", (_event, details) => {
