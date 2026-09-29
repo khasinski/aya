@@ -126,3 +126,12 @@ test("agent config dirs are extracted from leading env assignments", () => {
     [`${os.homedir()}/.claude-secondary`],
   );
 });
+
+test("agentConfigDirsFromCommand can pick claude's dir alone, in assignment order", () => {
+  assert.deepEqual(
+    agentConfigDirsFromCommand("CODEX_HOME=/tmp/codex CLAUDE_CONFIG_DIR=/tmp/a CLAUDE_CONFIG_DIR=/tmp/b claude", [
+      "CLAUDE_CONFIG_DIR",
+    ]),
+    ["/tmp/a", "/tmp/b"],
+  );
+});

@@ -971,6 +971,7 @@ function TerminalViewComponent({
         presetId: terminal.presetId,
         // The host uses this to pick the agent's own screen-detection rules.
         agent: presetAgent,
+        agentConfigDir: preset.configDir,
         command,
         cwd,
         cols: Math.max(cols, TERMINAL_FALLBACK_COLS),
@@ -1209,12 +1210,14 @@ function TerminalViewComponent({
       ptyId: terminal.id,
       projectSlug: terminal.projectSlug,
       presetId: terminal.presetId,
+      agent: presetAgent,
+      agentConfigDir: preset.configDir,
       command: commandRef.current,
       cwd: cwdRef.current,
       cols: Math.max(term.cols, TERMINAL_FALLBACK_COLS),
       rows: Math.max(term.rows, TERMINAL_FALLBACK_ROWS),
     });
-  }, [restartTrigger, terminal.id]);
+  }, [restartTrigger, terminal.id, presetAgent, preset.configDir]);
 
   useEffect(() => {
     markRestoring(true);
