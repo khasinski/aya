@@ -91,7 +91,8 @@ test.describe("one Claude Code pane, where the user asks for a team", () => {
     for (const role of ["reviewer", "fixer", "tester"]) {
       await expect(card.getByLabel(`Pane for ${role}`).locator("option:checked")).toHaveText(`Claude Code - ${role}`);
     }
-    expect(teamState(seeded.ayaHome, "teams/e2e-proj/ux-fix")).toEqual({ agentAuthored: true });
+    // Marked the agent's by aya team save, cleared once a role got a pane.
+    expect(teamState(seeded.ayaHome, "teams/e2e-proj/ux-fix")).toEqual({});
     await expect.poll(() => Object.values(ids).every((id) => started(seeded.projectDir, id)), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toBe(true);
 
     const start = aya(["team", "start", "ux-fix", "make the timer pausable"]);

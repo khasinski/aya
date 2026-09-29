@@ -345,3 +345,25 @@ test("a team saved from a pane is marked as the agent's, so the window does not 
     t.cleanup();
   }
 });
+
+test("the agent's mark goes with the first role given a pane, or a save from the window", async () => {
+  const { assignRole, saveTeam } = await import("../dist-electron/team-admin.js");
+  const t = setup();
+  const authored = async (name) => (await listTeams(t.teamHome, t.project)).find((team) => team.name === name).agentAuthored;
+  try {
+    await t.save(GOOD);
+    await t.save(GOOD.replace("# ux-fix", "# other"));
+    assert.equal(await authored("ux-fix"), true);
+    await assignRole(t.teamHome, t.project, "ux-fix", "reviewer", "pane-1");
+    assert.equal(await authored("ux-fix"), false);
+    // Its panes closing later leaves a team the window offers to assign again.
+    assert.equal(await authored("other"), true);
+    await saveTeam(t.teamHome, t.project, parseTeamFile("other", GOOD.replace("# ux-fix", "# other")));
+    assert.equal(await authored("other"), false);
+    // aya team save --replace from a pane marks it again.
+    await t.save(GOOD.replace("# ux-fix", "# other"), { replace: true });
+    assert.equal(await authored("other"), true);
+  } finally {
+    t.cleanup();
+  }
+});

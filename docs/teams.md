@@ -98,7 +98,8 @@ saved with a `user` role before keeps working, and starts, but takes no task,
 so its log never mixes the role with the user. A team saved with `aya team save` from a pane is
 marked as the agent's, so the window's "Assign team roles?" prompt does not
 compete with the agent's proposal; a team that arrives with a pull still
-gets the prompt.
+gets the prompt. The mark goes once a role gets a pane or the team is saved
+from the window, so a team whose panes all closed later is offered again.
 
 The Teams window runs the same `openTeamPanes`: per role it offers the open
 panes, each labelled with the role it already plays, and `New: <preset>`

@@ -145,6 +145,8 @@ export async function saveTeam(
     await writeFileAtomic(file, text);
     const store = openTeamStore(teamHome, project.slug, team.name);
     await store.saveDefinition(text);
+    // A save is the saver's: aya team save from a pane marks it the agent's again after this.
+    await store.clearAgentAuthored();
     // A renamed or removed role would keep a pane no role id matches.
     const roles = new Set(team.roles.map((r) => r.id));
     for (const [role, pane] of Object.entries(await store.assignments())) {
@@ -196,4 +198,5 @@ export async function assignRole(
   // One role in one team per pane: whoami and the tab chip must agree.
   await releasePaneEverywhere(teamHome, project, paneId);
   await store.assign(role, paneId);
+  await store.clearAgentAuthored();
 }
