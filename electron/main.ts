@@ -70,7 +70,6 @@ import {
   BRIEF_BEGIN,
   withoutBriefSection,
 } from "./agent-brief";
-import { withOwnOpencodeSession } from "./opencode-session";
 import { startRemoteServer } from "./remote-server";
 import {
   createRemoteDirectory,
@@ -2287,7 +2286,7 @@ function registerIpc(): void {
     e: Electron.IpcMainInvokeEvent,
   ): BrowserWindow | null => BrowserWindow.fromWebContents(e.sender);
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
-    const request = await withOwnOpencodeSession(validateSpawnRequest(req));
+    const request = validateSpawnRequest(req);
     // A broken presets.json must not stop panes from spawning.
     const spawn = await withAgentBrief(request).catch((err) => {
       console.warn("[aya] aya brief skipped:", err);

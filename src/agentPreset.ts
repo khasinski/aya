@@ -58,7 +58,7 @@ const AGENT_SPECS: Record<Exclude<Agent, "custom">, AgentSpec> = {
   // session, `--session <id>` takes a specific one. Note pi's `--resume` opens
   // an interactive picker — same trap as claude's bare `--resume` — so it is
   // deliberately not used here. opencode's `--continue` spans every git
-  // worktree of the repo, so main swaps it for this cwd's own session
+  // worktree of the repo, so the pty host swaps it for this cwd's own session
   // (electron/opencode-session.ts).
   opencode: {
     binary: /^opencode(?:\s|$)/,

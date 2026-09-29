@@ -31,6 +31,7 @@ import { ptyLog } from "./pty-log";
 import { pathWithFallbackDir } from "./agent-brief";
 import { bundledAyaCliPath } from "./cli-path";
 import { leadingEnvAssignments } from "./shell-words";
+import { listOpencodeSessions, ownSessionCommand } from "./opencode-session";
 
 // Timeout for the shell `command -v` existence check during spawn preflight.
 
@@ -548,7 +549,12 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       return;
     }
 
-    const argv = shellArgv(req.command, cwd);
+    // Here, not in main: only now is a real spawn certain (attach-only and
+    // re-mounts returned above), so the lookup is never paid for nothing.
+    const command = await ownSessionCommand(req.command, cwd, listOpencodeSessions, (err) =>
+      ptyLog.append("opencode-session-lookup-failed", { ptyId: req.ptyId, error: String(err) }),
+    );
+    const argv = shellArgv(command, cwd);
     const file = argv[0];
     const args = argv.slice(1);
 
@@ -628,7 +634,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       // Clamped: the command is unbounded user input, and a single line
       // larger than the log cap would blow straight past it (#89). 4 KB
       // keeps every realistic command (and its resume arg) intact.
-      command: req.command.slice(0, 4096),
+      command: command.slice(0, 4096),
     });
 
     child.onData((chunk) => {
