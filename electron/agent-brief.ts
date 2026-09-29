@@ -122,26 +122,53 @@ export function withoutBriefSection(content: string): string {
   return rest.trim() ? rest : "";
 }
 
-/** A leading `CODEX_HOME=...` assignment in a preset command, unquoted, with
- *  $HOME turned into ~ for the caller's expander. */
+/** A `CODEX_HOME=...` assignment anywhere in a preset command, unquoted, with
+ *  $HOME / ${HOME} turned into ~ for the caller's expander. */
 export function inlineCodexHome(command: string): string | undefined {
   const value = command.match(/(?:^|\s)CODEX_HOME=("[^"]*"|'[^']*'|\S+)/)?.[1];
   if (!value) return undefined;
   return value
     .replace(/^"|"$/g, "")
     .replace(/^'|'$/g, "")
-    .replace(/^\$HOME(?=\/|$)/, "~");
+    .replace(/^\$(?:HOME|\{HOME\})(?=\/|$)/, "~");
 }
 
-/** Which AGENTS.md a codex preset reads: its configDir, else a CODEX_HOME set
- *  inline in its command, else the default home. */
+const isRelativeDir = (dir: string) => !path.isAbsolute(dir) && !/^(?:~|\$HOME)(?:\/|$)/.test(dir);
+
+/** The dir a codex preset names for its home, as written: its configDir unless
+ *  that is the stock ~/.codex, else an inline CODEX_HOME. */
+function codexHomeDir(
+  preset: { configDir?: string; command?: string },
+  expand: (p: string) => string,
+): string | undefined {
+  const configDir = preset.configDir?.trim();
+  const stock = configDir && !isRelativeDir(configDir) && expand(configDir) === expand("~/.codex");
+  return configDir && !stock ? configDir : inlineCodexHome(preset.command ?? "");
+}
+
+/** The home a codex preset runs in, else `defaultHome`; undefined for a
+ *  relative dir without `cwd`. */
+export function codexHomeFor(
+  preset: { configDir?: string; command?: string },
+  defaultHome: string,
+  expand: (p: string) => string,
+  cwd?: string,
+): string | undefined {
+  const dir = codexHomeDir(preset, expand);
+  if (!dir) return defaultHome;
+  if (!isRelativeDir(dir)) return expand(dir);
+  return cwd ? path.resolve(cwd, dir) : undefined;
+}
+
+/** Which AGENTS.md a codex preset reads; undefined when its home is unknown. */
 export function codexAgentsFile(
   preset: { configDir?: string; command: string },
   defaultHome: string,
   expand: (p: string) => string,
-): string {
-  const dir = preset.configDir?.trim() || inlineCodexHome(preset.command);
-  return path.join(dir ? expand(dir) : defaultHome, "AGENTS.md");
+  cwd?: string,
+): string | undefined {
+  const home = codexHomeFor(preset, defaultHome, expand, cwd);
+  return home && path.join(home, "AGENTS.md");
 }
 
 export interface CodexBriefPlan {
@@ -170,6 +197,36 @@ export function orphanedBriefFiles(recorded: string[], plan: CodexBriefPlan): st
   const wanted = new Set(plan.ensure);
   const planned = new Set(plan.remove);
   return [...new Set(recorded)].filter((f) => !wanted.has(f) && !planned.has(f)).sort();
+}
+
+/** What a settings save does to codex AGENTS.md files. A relative home has no
+ *  cwd here, so any file under it is left alone while its preset opts in. */
+export function codexBriefSync(
+  presets: Array<{ configDir?: string; command: string; agentBrief?: boolean }>,
+  recorded: string[],
+  defaultHome: string,
+  expand: (p: string) => string,
+): CodexBriefPlan {
+  const targets: Array<{ file: string; agentBrief: boolean }> = [];
+  const relativeOn: string[][] = [];
+  for (const preset of presets) {
+    const file = codexAgentsFile(preset, defaultHome, expand);
+    if (file) targets.push({ file, agentBrief: preset.agentBrief === true });
+    else if (preset.agentBrief) relativeOn.push(trailingSegments(codexHomeDir(preset, expand) ?? ""));
+  }
+  const plan = planCodexBriefs(targets);
+  const underRelativeOn = (file: string) => {
+    const dir = path.dirname(file).split("/");
+    return relativeOn.some((tail) => tail.every((seg, i) => dir[dir.length - tail.length + i] === seg));
+  };
+  const remove = [...plan.remove, ...orphanedBriefFiles(recorded, plan)];
+  return { ensure: plan.ensure, remove: remove.filter((f) => !underRelativeOn(f)) };
+}
+
+/** A relative dir's segments that any cwd keeps: "../h/./x" -> ["h", "x"]. */
+function trailingSegments(dir: string): string[] {
+  const segs = path.normalize(dir).split("/").filter((s) => s && s !== ".");
+  return segs.slice(segs.lastIndexOf("..") + 1);
 }
 
 /** Measured on agy 1.2.11: only config/rules/ with always_on frontmatter

@@ -58,15 +58,14 @@ import {
   briefChannel,
   briefText,
   codexAgentsFile,
+  codexBriefSync,
   commandWithBriefArg,
   commandWithBriefEnv,
-  planCodexBriefs,
   antigravityBriefFile,
   withOwnedBrief,
   withoutOwnedBrief,
   withBriefSection,
   briefMarkersIntact,
-  orphanedBriefFiles,
   BRIEF_BEGIN,
   withoutBriefSection,
 } from "./agent-brief";
@@ -116,7 +115,11 @@ import { createWorktree, removeWorktree } from "./git";
 import { listPresets, savePresets } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
 import { expandUserPath, readClaudeUsageAccounts } from "./usage";
-import { DEFAULT_CODEX_HOME, readCodexUsageAccountsFromSources } from "./usage-codex";
+import {
+  DEFAULT_CODEX_HOME,
+  codexUsageSources,
+  readCodexUsageAccountsFromSources,
+} from "./usage-codex";
 import { DEFAULT_GROK_HOME, readGrokUsage } from "./usage-grok";
 import {
   usageHookStatus,
@@ -846,16 +849,6 @@ async function installCli(): Promise<CliStatus> {
   };
 }
 
-/** The codex AGENTS.md each codex preset reads, with its opt-in. */
-async function codexBriefTargets() {
-  return (await listPresets())
-    .filter((preset) => preset.agent === "codex")
-    .map((preset) => ({
-      file: codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath),
-      agentBrief: preset.agentBrief === true,
-    }));
-}
-
 /** Rewrite `file` only when `change` alters it. `null` content = no file.
  *  A symlinked file (e.g. AGENTS.md kept in a dotfiles repo) is edited at its
  *  target, so the link survives (#122 review). */
@@ -929,8 +922,12 @@ async function syncAntigravityBrief(): Promise<void> {
 }
 
 async function syncCodexBriefs(): Promise<void> {
-  const plan = planCodexBriefs(await codexBriefTargets());
-  const orphans = orphanedBriefFiles(await readBriefRegistry(), plan);
+  const plan = codexBriefSync(
+    (await listPresets()).filter((preset) => preset.agent === "codex"),
+    await readBriefRegistry(),
+    DEFAULT_CODEX_HOME,
+    expandUserPath,
+  );
   const brief = briefText(true);
   const added: string[] = [];
   const dropped: string[] = [];
@@ -939,7 +936,7 @@ async function syncCodexBriefs(): Promise<void> {
       .then(() => added.push(file))
       .catch((err) => console.warn(`[aya] could not add the aya brief to ${file}:`, err));
   }
-  for (const file of [...plan.remove, ...orphans]) {
+  for (const file of plan.remove) {
     await rewriteIfChanged(file, withoutBriefSection)
       .then(() => dropped.push(file))
       .catch((err) => console.warn(`[aya] could not remove the aya brief from ${file}:`, err));
@@ -986,7 +983,8 @@ async function withAgentBrief(spawn: SpawnRequest): Promise<SpawnRequest> {
   }
   if (channel.kind === "file") {
     // Re-assert on launch: the user may have edited the file since the save.
-    const file = codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath);
+    const file = codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath, spawn.cwd);
+    if (!file) return spawn;
     await rewriteIfChanged(file, (c) => withBriefSection(c, briefText(true)))
       .then(() => updateBriefRegistry([file], []))
       .catch((err) => console.warn(`[aya] could not add the aya brief to ${file}:`, err));
@@ -2489,22 +2487,7 @@ function registerIpc(): void {
   // Read-only: Codex usage, parsed from its own local rollout logs (Codex
   // writes its rate-limit % there, so no token/endpoint/hook is needed).
   ipcMain.handle("usage:get-codex", async () => {
-    const presets = await listPresets();
-    const codexPresets = presets.filter((p) => p.agent === "codex");
-    return readCodexUsageAccountsFromSources(
-      (codexPresets.length > 0
-        ? codexPresets
-        : [{ id: "codex", name: "Codex", configDir: DEFAULT_CODEX_HOME }]).map(
-        (p) => ({
-          id: p.id,
-          label: p.name,
-          home:
-            "configDir" in p && typeof p.configDir === "string" && p.configDir
-              ? expandUserPath(p.configDir)
-              : expandUserPath("~/.codex"),
-        }),
-      ),
-    );
+    return readCodexUsageAccountsFromSources(codexUsageSources(await listPresets()));
   });
   // Read-only: 7-day spend and tokens, plus the weekly limit when Grok logged one.
   ipcMain.handle("usage:get-grok", async () => {

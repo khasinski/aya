@@ -15,14 +15,16 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { codexHomeFor } from "./agent-brief";
 import { expandUserPath } from "./usage";
+import { DEFAULT_CODEX_HOME } from "./usage-codex";
 
 export interface HarnessSearchRequest {
   agent: "claude" | "codex";
   /** The tab's working directory — scopes which sessions are searched. */
   cwd: string;
   /** Preset's config-dir override (may be ~-relative); defaults to the
-   *  agent's standard home (~/.claude / ~/.codex). */
+   *  agent's standard home (~/.claude / CODEX_HOME, else ~/.codex). */
   configDir?: string;
   query: string;
 }
@@ -247,7 +249,8 @@ async function codexSessionFiles(
   cwd: string,
   configDir: string | undefined,
 ): Promise<SessionFile[]> {
-  const home = expandUserPath(configDir?.trim() || "~/.codex");
+  const home = codexHomeFor({ configDir }, DEFAULT_CODEX_HOME, expandUserPath, cwd);
+  if (!home) return [];
   const root = path.join(home, "sessions");
   const all: { file: string; mtimeMs: number; size: number }[] = [];
   async function walk(dir: string): Promise<void> {
