@@ -19,6 +19,7 @@
     "src/colors.ts",
     "src/control-status-target.ts",
     "src/team-edit.ts",
+    "src/team-chat.ts",
     "src/team-flow.ts",
     "src/team-view.ts",
     "src/diff-navigation.ts",
