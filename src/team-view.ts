@@ -55,7 +55,8 @@ export const NEW_PANE_PREFIX = "new:";
 /** A pane in a role's select: its name, and the role it plays if not this one. */
 export function paneOptionLabel(name: string, plays: PaneRole | undefined, team: string, role: string): string {
   if (!plays || (plays.team === team && plays.role === role)) return name;
-  return `${name} - ${plays.team === team ? plays.role : `${plays.team} › ${plays.role}`}`;
+  // Not "name - role": new team panes are named "<preset> - <role>" and keep that name.
+  return `${name} (plays ${plays.team === team ? plays.role : `${plays.team} › ${plays.role}`})`;
 }
 
 /** What Apply will move: a pane another role plays leaves that role without one. */

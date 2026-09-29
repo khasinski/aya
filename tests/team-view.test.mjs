@@ -80,8 +80,8 @@ test("a pane in a role's select names the role it plays, in this team or another
   const plays = (team, role) => ({ team, role, unread: 0 });
   assert.equal(paneOptionLabel("shell 1", undefined, "ux", "tester"), "shell 1");
   assert.equal(paneOptionLabel("shell 1", plays("ux", "tester"), "ux", "tester"), "shell 1");
-  assert.equal(paneOptionLabel("shell 1", plays("ux", "fixer"), "ux", "tester"), "shell 1 - fixer");
-  assert.equal(paneOptionLabel("shell 1", plays("docs", "writer"), "ux", "tester"), "shell 1 - docs › writer");
+  assert.equal(paneOptionLabel("shell 1", plays("ux", "fixer"), "ux", "tester"), "shell 1 (plays fixer)");
+  assert.equal(paneOptionLabel("shell 1", plays("docs", "writer"), "ux", "tester"), "shell 1 (plays docs › writer)");
 });
 
 test("Apply spells out a move that leaves another role without a pane, unless that role is changed too", () => {

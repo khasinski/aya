@@ -411,7 +411,7 @@ session of a preset (several roles can share one preset, each in its own
 pane), the agent's own pane (`this`), or an open pane by name. Aya checks
 every pick first and opens nothing on a problem. You press **Start**. In the
 teams window, each role's pane list offers the same: open panes, labelled
-with the role they already play, and `New: <preset>`; **Apply panes** applies
+with the role they already play ("shell 1 (plays tester)"), and `New: <preset>`; **Apply panes** applies
 the picks.
 
 ### Open remote projects

@@ -194,10 +194,10 @@ test.describe("one pane and two roles", () => {
     test.setTimeout(AGENT_TEST_TIMEOUT_MS);
     const dialog = await openTeams(window);
     const implementer = dialog.getByLabel("Pane for implementer");
-    await expect(implementer.locator("option")).toHaveText(["No pane", "shell 1 - tester", "shell 2", "New: Shell", "New: Claude Code"]);
+    await expect(implementer.locator("option")).toHaveText(["No pane", "shell 1 (plays tester)", "shell 2", "New: Shell", "New: Claude Code"]);
     await expect(dialog.getByLabel("Pane for tester").locator("option")).toHaveText(["No pane", "shell 1", "shell 2", "New: Shell", "New: Claude Code"]);
 
-    await implementer.selectOption({ label: "shell 1 - tester" });
+    await implementer.selectOption({ label: "shell 1 (plays tester)" });
     await expect(dialog.getByText("shell 1 moves from tester to implementer; tester is left without a pane.")).toBeVisible();
     expect(readAssignments(seeded.ayaHome)).toEqual({ tester: "tab-left" });
     await window.screenshot({ path: test.info().outputPath("pane-move-pending.png") });
