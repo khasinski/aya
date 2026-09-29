@@ -166,6 +166,7 @@ for (const shell of shells) {
 
   for (const [label, named] of [
     ["nothing named", () => ({})],
+    ["nothing named, HOME with a trailing slash", (home) => ({ HOME: `${home}/` })],
     ["AYA_SOCKET naming the installed app's socket", (home) => ({ AYA_SOCKET: `${home}/.aya/aya.sock` })],
     ["AYA_SOCKET spelled with a literal ~/", () => ({ AYA_SOCKET: "~/.aya/aya.sock" })],
     ["AYA_SOCKET spelled with doubled slashes", (home) => ({ AYA_SOCKET: `${home}//.aya///aya.sock` })],
