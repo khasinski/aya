@@ -73,7 +73,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   {
     command: "pane read",
     usage: "aya pane read name",
-    summary: "Print another pane's recent output, newest last.",
+    summary: "Print another pane's recent output as plain text, as its screen shows it, newest last.",
     example: 'aya pane read "reviewer"',
     notes: ["There is no 'wait until done': poll, and leave time between reads."],
   },

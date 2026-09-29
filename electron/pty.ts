@@ -21,8 +21,10 @@ import {
   closeVtPane,
   openVtPane,
   resizeVtPane,
+  vtPaneAltScreen,
   writeVtPane,
 } from "./vt-state";
+import type { PaneSize } from "./pane-render";
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 import { COMMAND_NOT_FOUND_EXIT_CODE, COMMAND_PROBE_TIMEOUT_MS } from "./constants";
 import { userShell } from "./shell";
@@ -748,6 +750,11 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
 
 /** The child's LIVE cwd, not the one it was spawned with (a `cd` moves it).
  *  null when unanswerable; callers fall back to the spawn cwd. */
+export function getPtySize(ptyId: string): PaneSize | null {
+  const p = ptys.get(ptyId);
+  return p ? { cols: p.cols, rows: p.rows, alt: vtPaneAltScreen(ptyId) } : null;
+}
+
 export async function getPtyCwd(ptyId: string): Promise<string | null> {
   const p = ptys.get(ptyId);
   if (!p) return null;

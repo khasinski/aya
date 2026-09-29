@@ -13,6 +13,7 @@ import {
   resizeVtPane,
   screenShowsApproval,
   screenTail,
+  vtPaneAltScreen,
   writeVtPane,
 } from "../dist-electron/vt-state.js";
 
@@ -148,4 +149,17 @@ test("closeAllVtPanes clears everything (host shutdown)", async () => {
   closeAllVtPanes();
   assert.equal(__testVtPane("p11"), undefined);
   assert.equal(__testVtPane("p12"), undefined);
+});
+
+test("the mirror knows when a pane holds the alt screen", async () => {
+  const close = open("alt");
+  assert.equal(vtPaneAltScreen("alt"), false);
+  writeVtPane("alt", "\x1b[?1049h");
+  await settle();
+  assert.equal(vtPaneAltScreen("alt"), true);
+  writeVtPane("alt", "\x1b[?1049l");
+  await settle();
+  assert.equal(vtPaneAltScreen("alt"), false);
+  close();
+  assert.equal(vtPaneAltScreen("alt"), undefined);
 });
