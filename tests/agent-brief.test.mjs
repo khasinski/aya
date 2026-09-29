@@ -82,11 +82,10 @@ test("the brief points at aya capabilities; the file form is conditional", () =>
   assert.ok(briefText(false).split("\n").length <= 6);
 });
 
-test("every agent learns from the brief that it can define a team itself", () => {
+test("every agent learns from one brief line how to define, give panes to and start a team", () => {
   for (const conditional of [false, true]) {
-    const lines = briefText(conditional).split("\n").filter((l) => l.includes("aya team new"));
-    assert.equal(lines.length, 1);
-    assert.match(lines[0], /aya team new "<what the team is for>"/);
+    const lines = briefText(conditional).split("\n").filter((l) => /aya team (new|open|start)/.test(l));
+    assert.deepEqual(lines, ['Teams: `aya team new "<what for>"` defines one, `aya team open` gives its roles panes, `aya team start <team> "<task>"` starts it; open and start only on the user\'s word.'], `conditional ${conditional}`);
   }
 });
 

@@ -66,7 +66,9 @@ test("round minutes out of range are flagged before Save, which stays off until 
 test("assign panes, Start sends the delivery test, Pause marks the team, Resume clears it", async ({ window, seeded }) => {
   const dialog = await defineFromTemplate(window, "ux-review");
   const card = dialog.getByTestId("team-ux-review");
+  const apply = () => card.getByRole("button", { name: "Apply panes" }).click();
   await card.getByLabel("Pane for reviewer").selectOption({ label: "shell 1" });
+  await apply();
   const file = (pane: string) => teamLogFile(seeded.projectDir, pane);
   const log = teamLog(seeded.projectDir);
   // Each agent creates its log on start; Start before that finds it still starting.
@@ -77,13 +79,16 @@ test("assign panes, Start sends the delivery test, Pause marks the team, Resume 
   await expect(card.getByRole("status", { name: "reviewer not reached" })).toHaveCount(0);
   await expect(card.getByLabel("ux-review messages")).toHaveCount(0);
   await card.getByLabel("Pane for implementer").selectOption({ label: "shell 2" });
+  await apply();
   await expect(card.getByRole("button", { name: "Pause", exact: true })).toHaveCount(0);
   await card.getByRole("button", { name: "Start", exact: true }).click();
   await expect.poll(() => log("tab-left"), { timeout: TEAM_DELIVERY_TIMEOUT_MS }).toMatch(/Delivery test/);
-  await expect(card.getByLabel("ux-review messages")).toContainText("aya → implementer");
+  await expect(card.getByLabel("ux-review messages")).toContainText("Delivery test: 0/2 answered");
   const before = log("tab-right").match(/Delivery test/g)?.length ?? 0;
   await card.getByLabel("Pane for implementer").selectOption({ label: "No pane" });
+  await apply();
   await card.getByLabel("Pane for implementer").selectOption({ label: "shell 2" });
+  await apply();
   await expect.poll(() => log("tab-right").match(/Delivery test/g)?.length ?? 0, { timeout: TEAM_DELIVERY_TIMEOUT_MS }).toBe(before + 1);
   await card.getByRole("button", { name: "Pause", exact: true }).click();
   await expect(card.getByText("paused", { exact: true })).toBeVisible();

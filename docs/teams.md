@@ -54,6 +54,48 @@ copy Aya runs), so it reaches agents at once. Scope: the calling pane's
 project, else `AYA_PROJECT_SLUG`, else the open project the cwd is in. An
 existing name needs `--replace`, as the window edits rather than creates.
 
+## Give roles panes
+
+A saved team with no panes has nobody to Start. `aya presets` lists the
+presets with the agent each runs and whether its CLI is installed, by the
+same check a pane spawn makes ("command not found"). The guide's last step
+has the agent propose a pane per role and wait for the user's yes, then run
+`aya team open <team> <role>=<target> ...`. A target is `this` (the calling
+pane), `new:<preset>` (a new session), `pane:<name-or-id>`, or the bare
+preset id, pane id or pane name when only one of them matches; a name that
+is both a preset id and a pane name, or two panes' name, is refused with the
+explicit forms or the candidate ids. Roles not listed keep their panes.
+
+Main checks every pick before anything changes: the team is saved in Aya,
+each role exists and is listed once, each preset is installed, no pane goes
+to two roles, and a role with a live pane or a pane that plays another role
+needs `--replace` (the old pane keeps running); a dead pane of another role
+does not, and the output names the role that lost it. On any problem it
+names them all and opens nothing. Main picks the new panes' ids and asks the window
+that shows the project (`teams:open-panes`) to add them as tabs named
+`<preset> - <role>`; the window saves the project and answers
+(`teams:panes-opened`, 10 s deadline). A reply that misses the deadline
+still leaves the tabs the window saved: main reloads the project and assigns
+every pane it finds, and says which roles got none. A window that cannot
+save the project removes the tabs again. Then each role is assigned with the
+Teams window's `assignRole`; in a running team a new pane is told its role
+once its agent has drawn its composer (up to 20 s). Start stays the user's:
+`aya team start <team> ["task"] [--to role]` runs the Teams window's Start
+(the same pane check, nothing sent while a role is missing or busy); the
+guide has the agent ask whether to start and with what task, and run it only
+on the user's word. A task then goes, after the delivery tests, as a message
+from `user` (reserved like `aya`, and redelivered like a peer's message) to
+`--to`, else the cadence role that leads the rounds, else the first role;
+the output and the Teams window's Start (with its Task field) say who got it. A team saved with `aya team save` from a pane is
+marked as the agent's, so the window's "Assign team roles?" prompt does not
+compete with the agent's proposal; a team that arrives with a pull still
+gets the prompt.
+
+The Teams window runs the same `openTeamPanes`: per role it offers the open
+panes, each labelled with the role it already plays, and `New: <preset>`
+for installed presets. Picks wait for **Apply panes**, which spells out a
+move that leaves another role without a pane.
+
 ## When Aya does not type a message
 
 A message waits in the receiver's inbox, and goes out by itself once the

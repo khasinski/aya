@@ -123,6 +123,38 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     ],
   },
   {
+    command: "team open",
+    usage: "aya team open [--replace] team role=target...",
+    summary:
+      "Give roles of a saved team a pane in this project: target is a preset id (a new session of it), this (the pane you run in), or an existing pane's name or id. Roles not listed keep theirs; the team is not started.",
+    example: "aya team open ux-fix reviewer=claude fixer=codex tester=this",
+    notes: [
+      "Propose the mapping to the user and wait for the user's yes before running it.",
+      "Checks every role and target first; on a problem nothing is opened or assigned.",
+      "Several roles can take the same preset: each gets its own new pane.",
+      "A name that is both a preset id and a pane name is refused: write new:<preset> or pane:<name-or-id>.",
+      "A role with a live pane, or a pane that plays another role, needs --replace; no pane is ever closed.",
+    ],
+  },
+  {
+    command: "team start",
+    usage: 'aya team start team ["task"] [--to role]',
+    summary:
+      "Start a team as the Teams window's Start does: every role's pane is checked, then gets the delivery test; the team's rounds begin. A task then goes to --to, else the cadence role, else the first role, as a message from the user.",
+    example: 'aya team start ux-fix "make the timer pausable"',
+    notes: [
+      "Start a team only when the user asks for it; ask the user for the task first.",
+      "It prints who got the task.",
+      "If a role's pane is missing or busy, nothing is sent and each such role is named.",
+    ],
+  },
+  {
+    command: "presets",
+    usage: "aya presets [--json]",
+    summary: "List this Aya's presets: id, name, the agent it runs, and whether its CLI is installed.",
+    notes: ["Run it before aya team open, to propose installed presets for the roles."],
+  },
+  {
     command: "capabilities",
     usage: "aya capabilities",
     summary: "Print this list as JSON.",

@@ -222,7 +222,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     getUsage: async () => (scenario.usage ?? []) as never,
     getCodexUsage: async () => (scenario.codexUsage ?? []) as never,
     getGrokUsage: async () => (scenario.grokUsage ?? null) as never,
-    teamStart: async () => ({ started: true, delivered: [], held: [] }),
+    teamStart: async () => ({ started: true, delivered: [], held: [], task: null }),
     teamPause: noopAsync,
     teamResume: noopAsync,
     teamList: async () => [],
@@ -232,6 +232,10 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     teamDraftRole: async () => {
       throw new Error("Draft needs the app; the emulator has no Aya Intelligence");
     },
+    teamPresets: async () => [],
+    teamOpenPanes: async () => ({ panes: [], leftWithoutPane: [] }),
+    onTeamOpenPanes: noopSubscription,
+    teamPanesOpened: noopAsync,
     usageHookStatus: noopAsync,
     installUsageHook: noopAsync,
     uninstallUsageHook: noopAsync,

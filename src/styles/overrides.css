@@ -2797,9 +2797,17 @@ select.aya-modal-input {
 
 /* Teams window */
 .aya-teams-modal {
-  width: min(760px, 92vw);
-  max-height: 86vh;
+  width: min(860px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+}
+.aya-teams-body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  margin: 0 -4px;
+  padding: 0 4px;
 }
 .aya-teams-card {
   border: 1px solid var(--border);
@@ -2844,24 +2852,170 @@ select.aya-modal-input {
   color: var(--danger, #c0392b);
 }
 .aya-teams-roles {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 8px 0;
+  display: grid;
+  gap: 10px;
+  margin: 10px 0;
 }
-.aya-teams-roles td {
-  padding: 4px 6px;
-  vertical-align: top;
+.aya-teams-role-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
 }
-.aya-teams-log {
+.aya-teams-role-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+@media (max-width: 720px) {
+  .aya-teams-role-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+}
+.aya-teams-role-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.aya-teams-status {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--fg-tertiary);
+}
+.aya-teams-status::before {
+  content: "●";
+  margin-right: 4px;
+}
+.aya-teams-status--ok::before {
+  color: var(--success, #2e9e5b);
+}
+.aya-teams-status--held::before {
+  color: var(--warning, #d19a1f);
+}
+.aya-teams-mustnot {
+  font-size: 12px;
+  color: var(--fg-secondary);
+  margin-top: 4px;
+}
+.aya-teams-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-tertiary);
+  margin-right: 4px;
+}
+.aya-teams-routes {
+  font-size: 12px;
+  color: var(--fg-secondary);
+  display: grid;
+  gap: 2px;
+}
+.aya-teams-route-to {
+  white-space: nowrap;
+  color: var(--fg-primary);
+}
+.aya-teams-pane {
+  font-family: var(--font-sans);
+  padding: 5px 8px;
+}
+.aya-teams-task {
+  width: 14rem;
+  font-family: var(--font-sans);
+  padding: 5px 8px;
+}
+.aya-teams-apply {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+.aya-teams-apply .aya-teams-warning {
+  flex-basis: 100%;
+  margin: 0;
+}
+.aya-chat-wrap {
   border-top: 1px solid var(--border);
   padding-top: 6px;
-  display: grid;
-  gap: 4px;
+  margin-top: 6px;
 }
-.aya-teams-log-row {
-  display: grid;
-  gap: 1px;
+.aya-chat-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.aya-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.aya-chat--full {
+  max-height: none;
+}
+.aya-chat-bubble {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.aya-chat-bubble--alert {
+  border-color: var(--danger, #c0392b);
+}
+.aya-chat-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 2px;
+}
+.aya-chat-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+.aya-chat-foot {
+  font-size: 11px;
+  color: var(--fg-tertiary);
+  margin-top: 2px;
+}
+.aya-chat-alert {
   font-size: 12px;
+  color: var(--danger, #c0392b);
+  margin-top: 2px;
+}
+.aya-chat-system {
+  font-size: 12px;
+  color: var(--fg-tertiary);
+  padding: 0 4px;
+}
+.aya-chat-system-text {
+  color: var(--fg-secondary);
+}
+.aya-chat-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg-tertiary);
+  cursor: pointer;
+}
+.aya-chat-toggle:hover {
+  color: var(--fg-primary);
+}
+.aya-chat-sub {
+  padding-left: 14px;
+  overflow-wrap: anywhere;
 }
 .aya-teams-editor textarea.aya-modal-input {
   min-height: 56px;

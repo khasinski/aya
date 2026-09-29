@@ -3,7 +3,7 @@
 // are resolved only when the team is built for Save or the preview.
 
 import { MAX_CADENCE_MINUTES } from "./main-mirrors";
-import { AYA_SENDER } from "./team-view";
+import { AYA_SENDER, USER_SENDER } from "./team-view";
 import type { RoleDraft, TeamDefinition } from "./types";
 
 export interface EditorRole {
@@ -39,7 +39,8 @@ export function roleId(typed: string): string {
 
 /** Why main would refuse the role id, or null; a test holds the words equal. */
 export function roleIdProblem(id: string): string | null {
-  return id === AYA_SENDER ? `"${AYA_SENDER}" is reserved for Aya's own messages; name the role something else` : null;
+  if (id === AYA_SENDER) return `"${AYA_SENDER}" is reserved for Aya's own messages; name the role something else`;
+  return id === USER_SENDER ? `"${USER_SENDER}" is reserved for the user's own messages; name the role something else` : null;
 }
 
 export function toEditor(team: TeamDefinition): EditorTeam {

@@ -1,4 +1,4 @@
-import type { ControlStatusUpdate } from "./types";
+import type { ControlStatusUpdate, PanePick } from "./types";
 
 export type TeamRequest =
   | { type: "team-whoami" }
@@ -14,6 +14,11 @@ interface TeamAuthorScope {
 export type TeamAuthorRequest =
   | ({ type: "team-guide"; description?: string } & TeamAuthorScope)
   | ({ type: "team-save"; text: string; replace: boolean } & TeamAuthorScope);
+
+export type TeamPanesRequest =
+  | { type: "presets"; json: boolean }
+  | ({ type: "team-open"; team: string; panes: PanePick[]; replace: boolean } & TeamAuthorScope)
+  | ({ type: "team-start"; team: string; task?: string; to?: string } & TeamAuthorScope);
 
 export type ControlRequest =
   | { type: "open"; path: string }
@@ -60,7 +65,8 @@ export type ControlRequest =
     }
   | { type: "capabilities" }
   | TeamRequest
-  | TeamAuthorRequest;
+  | TeamAuthorRequest
+  | TeamPanesRequest;
 
 /** The calling pane (AYA_TERMINAL_ID / AYA_PRESET_ID), sent with every request
  *  to measure adoption per harness (#117); absent outside Aya. */
@@ -91,6 +97,13 @@ export function parseControlCaller(value: unknown): ControlCaller {
   };
 }
 
+export function panePick(value: unknown): PanePick {
+  const role = isRecord(value) ? optionalString(value.role) : undefined;
+  const target = isRecord(value) ? optionalString(value.target) : undefined;
+  if (!role || !target) throw new Error("each pane needs a role and a target");
+  return { role, target };
+}
+
 export function parseControlRequest(value: unknown): ControlRequest {
   if (!isRecord(value)) throw new Error("request must be an object");
   const type = optionalString(value.type);
@@ -113,6 +126,20 @@ export function parseControlRequest(value: unknown): ControlRequest {
     const text = optionalString(value.text);
     if (!text) throw new Error("team-save needs the team file's text");
     return { type, text, replace: value.replace === true, ...scope };
+  }
+  if (type === "presets") return { type, json: value.json === true };
+  if (type === "team-open") {
+    const team = optionalString(value.team);
+    const panes = Array.isArray(value.panes) ? value.panes.map(panePick) : [];
+    if (!team) throw new Error("team-open needs a team");
+    return { type, team, panes, replace: value.replace === true, projectSlug: optionalString(value.projectSlug), cwd: optionalString(value.cwd) };
+  }
+  if (type === "team-start") {
+    const team = optionalString(value.team);
+    if (!team) throw new Error("team-start needs a team");
+    const task = optionalString(value.task);
+    const to = optionalString(value.to);
+    return { type, team, ...(task ? { task } : {}), ...(to ? { to } : {}), projectSlug: optionalString(value.projectSlug), cwd: optionalString(value.cwd) };
   }
   if (type === "capabilities") return { type };
   if (type === "notify") {

@@ -9,6 +9,7 @@ import type {
   ConfigChange,
   ControlStatusUpdate,
   PtyEvent,
+  TeamOpenPanesRequest,
   UpdateStatus,
 } from "./types";
 
@@ -72,7 +73,7 @@ const api: AyaApi = {
   getUsage: () => ipcRenderer.invoke("usage:get"),
   getCodexUsage: () => ipcRenderer.invoke("usage:get-codex"),
   getGrokUsage: () => ipcRenderer.invoke("usage:get-grok"),
-  teamStart: (projectSlug, team) => ipcRenderer.invoke("teams:start", projectSlug, team),
+  teamStart: (projectSlug, team, task) => ipcRenderer.invoke("teams:start", projectSlug, team, task),
   teamPause: (projectSlug, team) => ipcRenderer.invoke("teams:pause", projectSlug, team),
   teamResume: (projectSlug, team) => ipcRenderer.invoke("teams:resume", projectSlug, team),
   teamList: (projectSlug) => ipcRenderer.invoke("teams:list", projectSlug),
@@ -81,6 +82,14 @@ const api: AyaApi = {
     ipcRenderer.invoke("teams:assign", projectSlug, team, role, paneId),
   teamReleasePane: (projectSlug, paneId) => ipcRenderer.invoke("teams:release-pane", projectSlug, paneId),
   teamDraftRole: (team, roleId, intelligence) => ipcRenderer.invoke("teams:draft-role", team, roleId, intelligence),
+  teamPresets: () => ipcRenderer.invoke("teams:presets"),
+  teamOpenPanes: (projectSlug, team, panes) => ipcRenderer.invoke("teams:open-panes", projectSlug, team, panes),
+  onTeamOpenPanes: (handler) => {
+    const listener = (_e: unknown, request: TeamOpenPanesRequest) => handler(request);
+    ipcRenderer.on("teams:open-panes", listener);
+    return () => ipcRenderer.removeListener("teams:open-panes", listener);
+  },
+  teamPanesOpened: (requestId, error) => ipcRenderer.invoke("teams:panes-opened", requestId, error),
   usageHookStatus: () => ipcRenderer.invoke("usage-hook:status"),
   installUsageHook: () => ipcRenderer.invoke("usage-hook:install"),
   uninstallUsageHook: () => ipcRenderer.invoke("usage-hook:uninstall"),

@@ -9,6 +9,13 @@ export const MIN_TEAM_ROLES = 2;
 /** The sender of Aya's own messages: delivery tests and rounds. */
 export const TEAM_SYSTEM_SENDER = "aya";
 export const RESERVED_ROLE_PROBLEM = `"${TEAM_SYSTEM_SENDER}" is reserved for Aya's own messages; name the role something else`;
+/** The sender of a task the user gives with Start; like "aya", no role may take it. */
+export const TEAM_USER_SENDER = "user";
+
+export function reservedRoleProblem(id: string): string | null {
+  if (id === TEAM_SYSTEM_SENDER) return RESERVED_ROLE_PROBLEM;
+  return id === TEAM_USER_SENDER ? `"${TEAM_USER_SENDER}" is reserved for the user's own messages; name the role something else` : null;
+}
 export const SENDS_TO_FIELD = "Sends to";
 export const MUST_NOT_FIELD = "Must not";
 export const SECTION_MARKER = "## ";
@@ -43,7 +50,8 @@ function parseRole(team: string, id: string, body: string): TeamRole {
   if (!ID_RE.test(id)) {
     throw new TeamFileError(team, `role "${id}" must be lowercase letters, digits and dashes`);
   }
-  if (id === TEAM_SYSTEM_SENDER) throw new TeamFileError(team, RESERVED_ROLE_PROBLEM);
+  const reserved = reservedRoleProblem(id);
+  if (reserved) throw new TeamFileError(team, reserved);
   let sendsTo: SendRoute[] = [];
   let mustNot = "";
   const rest: string[] = [];

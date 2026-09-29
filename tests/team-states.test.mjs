@@ -136,7 +136,7 @@ for (const teamState of TEAM_STATES) {
           assert.deepEqual(await w.store.state(), { paused: false, running: true });
           assert.equal(w.scheduled.length, 1, "rounds armed");
         } else {
-          assert.deepEqual(result, { started: false, delivered: [], held: [{ role: "implementer", reason: reason(paneState) }] });
+          assert.deepEqual(result, { started: false, delivered: [], held: [{ role: "implementer", reason: reason(paneState) }], task: null });
           assert.equal(w.typed.length, 0, "one pane not ready: nothing is sent to anyone");
           assert.equal((await w.store.log()).length, 0);
           assert.deepEqual(await w.store.state(), before, "the team state does not change");

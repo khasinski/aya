@@ -99,6 +99,14 @@ test("capabilities list team new and team save, pointing new at save", () => {
   assert.match(byCommand["team new"].summary, /aya team save/);
 });
 
+test("capabilities list presets and team open, which waits for the user's yes", () => {
+  const byCommand = Object.fromEntries(AYA_CAPABILITIES.map((c) => [c.command, c]));
+  assert.equal(byCommand.presets.usage, "aya presets [--json]");
+  assert.equal(byCommand["team open"].usage, "aya team open [--replace] team role=target...");
+  assert.match(byCommand["team open"].notes.join(" "), /user's yes/);
+  assert.match(byCommand["team new"].summary, /aya team save/);
+});
+
 function helpUsages() {
   const { stderr } = spawnSync(cli, ["help"], { encoding: "utf8" });
   return stderr

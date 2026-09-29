@@ -18,10 +18,16 @@ function repoParsed(name: string, repo: string | null): TeamDefinition | null {
   }
 }
 
-export async function listTeams(teamHome: string, project: ProjectConfig): Promise<TeamSummary[]> {
+/** `holdReason`, when given, reports each assigned pane's hold for the role's status. */
+export async function listTeams(
+  teamHome: string,
+  project: ProjectConfig,
+  holdReason?: (paneId: string) => Promise<string | null>,
+): Promise<TeamSummary[]> {
   return Promise.all(
     (await teamNames(project)).map(async (name): Promise<TeamSummary> => {
       const store = openTeamStore(teamHome, project.slug, name);
+      const assignments = await store.assignments();
       const repo = await readText(teamFile(project, name));
       const saved = await store.savedDefinition();
       let definition: TeamDefinition | null = null;
@@ -42,7 +48,9 @@ export async function listTeams(teamHome: string, project: ProjectConfig): Promi
         unsaved: saved === null && repo !== null,
         repoDefinition: repoParsed(name, repo),
         ...(await store.state()),
-        assignments: await store.assignments(),
+        agentAuthored: await store.agentAuthored(),
+        assignments,
+        paneHolds: await paneHolds(assignments, project, holdReason),
         unread: Object.fromEntries(
           await Promise.all(
             (definition?.roles ?? []).map(async (r) => [r.id, (await store.unread(r.id)).length] as const),
@@ -52,6 +60,16 @@ export async function listTeams(teamHome: string, project: ProjectConfig): Promi
       };
     }),
   );
+}
+
+async function paneHolds(
+  assignments: Record<string, string>,
+  project: ProjectConfig,
+  holdReason?: (paneId: string) => Promise<string | null>,
+): Promise<Record<string, string | null>> {
+  if (!holdReason) return {};
+  const live = Object.entries(assignments).filter(([, pane]) => project.tabs.some((t) => t.id === pane));
+  return Object.fromEntries(await Promise.all(live.map(async ([role, pane]) => [role, await holdReason(pane)] as const)));
 }
 
 // A line the team file reads as a field or section, where only free text belongs.

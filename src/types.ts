@@ -759,7 +759,7 @@ export interface AyaApi {
   /** Grok usage (tokens + cost, last 7 days, account-wide), or null when none. */
   getGrokUsage(): Promise<GrokUsage | null>;
   /** Start a team: unpause, send every role a delivery test, arm its rounds. */
-  teamStart(projectSlug: string, team: string): Promise<TeamStartResult>;
+  teamStart(projectSlug: string, team: string, task?: string): Promise<TeamStartResult>;
   teamPause(projectSlug: string, team: string): Promise<void>;
   teamList(projectSlug: string): Promise<TeamSummary[]>;
   /** Save team: writes .aya/teams/<name>.md and the snapshot Aya runs on.
@@ -772,6 +772,13 @@ export interface AyaApi {
   /** Drafts a role of the team as the editor holds it, with Aya Intelligence. */
   teamDraftRole(team: TeamDefinition, roleId: string, intelligence: AyaIntelligenceConfig): Promise<RoleDraft>;
   teamResume(projectSlug: string, team: string): Promise<void>;
+  /** The presets, each with whether its CLI is installed (aya presets). */
+  teamPresets(): Promise<PresetChoice[]>;
+  /** Gives each role a new session or an existing pane (aya team open --replace). */
+  teamOpenPanes(projectSlug: string, team: string, panes: PanePick[]): Promise<RolePanes>;
+  /** Main asks this window to add panes as tabs; answer with teamPanesOpened. */
+  onTeamOpenPanes(handler: (request: TeamOpenPanesRequest) => void): () => void;
+  teamPanesOpened(requestId: string, error: string | null): Promise<void>;
 
   usageHookStatus(): Promise<UsageHookStatus>;
   installUsageHook(): Promise<UsageHookStatus>;
@@ -994,12 +1001,58 @@ export function looksNonInteractive(command: string): boolean {
   );
 }
 
+/** One `role=target` of aya team open / the Teams window's Apply: a preset id
+ *  (a new session), "this" (the calling pane), or a pane id or name. */
+export interface PanePick {
+  role: string;
+  target: string;
+}
+
+/** A preset as aya presets lists it: installed as the pane spawn checks it. */
+export interface PresetChoice {
+  id: string;
+  name: string;
+  agent: AgentKind;
+  installed: boolean;
+}
+
+/** A pane main asks the window to open, with the id main picked. */
+export interface NewPane {
+  id: string;
+  presetId: string;
+  name: string;
+}
+
+export interface TeamOpenPanesRequest {
+  requestId: string;
+  projectSlug: string;
+  panes: NewPane[];
+}
+
+/** The pane a role got: `preset` names a new session's preset, null an existing
+ *  pane; `notReached` says why a running team could not introduce it. */
+export interface RolePane {
+  role: string;
+  paneId: string;
+  name: string;
+  preset: string | null;
+  notReached: string | null;
+}
+
+/** Roles given a pane, and roles whose pane moved to another role. */
+export interface RolePanes {
+  panes: RolePane[];
+  leftWithoutPane: string[];
+}
+
 /** Which roles got Start team's delivery test, and why the others did not. */
 export interface TeamStartResult {
   /** false: a pane was not ready, so nothing was sent; `held` says which. */
   started: boolean;
   delivered: string[];
   held: { role: string; reason: string }[];
+  /** The task given with Start: who got it, and why it waits in the inbox, if it does. */
+  task: { to: string; held: string | null } | null;
 }
 
 /** A role this one sends to, and what it sends there (may be empty). */
@@ -1057,7 +1110,11 @@ export interface TeamSummary {
   paused: boolean;
   /** Started with Start team and not paused since. */
   running: boolean;
+  /** Saved by an agent from a pane: the agent proposes its panes, no prompt needed. */
+  agentAuthored: boolean;
   assignments: Record<string, string>;
+  /** Per role with a pane in the project: why a message would wait now, null when it would not. */
+  paneHolds: Record<string, string | null>;
   /** Messages per role that are waiting in its inbox. */
   unread: Record<string, number>;
   log: TeamMessage[];

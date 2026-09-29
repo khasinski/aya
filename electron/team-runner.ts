@@ -4,7 +4,7 @@
 import { deliverAndLog, roleHold, typedTeamMessage, type TeamControlDeps } from "./team-control";
 import { loadTeam, projectBySlug, teamNames } from "./team-files";
 import { openTeamStore, type TeamStore } from "./team-store";
-import { TEAM_SYSTEM_SENDER } from "./teams";
+import { TEAM_SYSTEM_SENDER, TEAM_USER_SENDER } from "./teams";
 import type { ProjectConfig, TeamDefinition, TeamStartResult } from "./types";
 
 const MS_PER_MINUTE = 60 * 1000;
@@ -16,6 +16,14 @@ const everyInterval: Schedule = (fn, ms) => {
   const timer = setInterval(() => void fn(), ms);
   return () => clearInterval(timer);
 };
+
+/** Who gets the task given with Start: `to`, else the cadence role that leads the
+ *  rounds, else the first role. Throws on an unknown `to`, before anything starts. */
+export function taskRecipient(team: TeamDefinition, to?: string): string {
+  if (to === undefined) return team.cadence?.role ?? team.roles[0].id;
+  if (team.roles.some((r) => r.id === to)) return to;
+  throw new Error(`team ${team.name} has no role "${to}"; its roles: ${team.roles.map((r) => r.id).join(", ")}; nothing was started`);
+}
 
 export class TeamRunner {
   private cancels = new Map<string, () => void>();
@@ -46,20 +54,26 @@ export class TeamRunner {
 
   /** Checks every pane first: with one missing, not running or held, nothing
    *  is sent and no rounds run, so one broken pane cannot waste the rest. */
-  async start(slug: string, name: string): Promise<TeamStartResult> {
+  /** `task` goes to its role as a message from the user, after the delivery tests. */
+  async start(slug: string, name: string, task?: { text: string; to?: string }): Promise<TeamStartResult> {
     const { project, store, team } = await this.open(slug, name);
+    const recipient = task ? taskRecipient(team, task.to) : null;
     const notReady: TeamStartResult["held"] = [];
     for (const role of team.roles) {
       const { hold } = await roleHold(this.deps, store, role.id);
       if (hold) notReady.push({ role: role.id, reason: hold });
     }
-    if (notReady.length) return { started: false, delivered: [], held: notReady };
+    if (notReady.length) return { started: false, delivered: [], held: notReady, task: null };
     await store.setPaused(false);
-    const result: TeamStartResult = { started: true, delivered: [], held: [] };
+    const result: TeamStartResult = { started: true, delivered: [], held: [], task: null };
     for (const role of team.roles) {
       const held = await this.deliveryTest(project, store, team, role.id);
       if (held) result.held.push({ role: role.id, reason: held });
       else result.delivered.push(role.id);
+    }
+    if (task && recipient) {
+      const { failure } = await deliverAndLog(this.deps, project, store, { team: team.name, from: TEAM_USER_SENDER, to: recipient, text: task.text });
+      result.task = { to: recipient, held: failure };
     }
     this.arm(slug, name, team);
     return result;

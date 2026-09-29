@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_CADENCE_MINUTES } from "../team-edit";
-import type { AyaIntelligenceConfig, ProjectConfig, TeamDefinition, TeamSummary } from "../types";
+import { paneRoles } from "../team-view";
+import type { AyaIntelligenceConfig, PresetChoice, ProjectConfig, TeamDefinition, TeamSummary } from "../types";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 import { TeamCard } from "./TeamCard";
 import { TeamEditor } from "./TeamEditor";
@@ -41,6 +42,7 @@ interface Props {
 export function TeamsModal({ project, intelligence, onClose }: Props) {
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [editing, setEditing] = useState<{ team: TeamDefinition; isNew: boolean } | null>(null);
+  const [presets, setPresets] = useState<PresetChoice[]>([]);
   const list = useAsyncAction();
   const { run } = list;
 
@@ -48,6 +50,13 @@ export function TeamsModal({ project, intelligence, onClose }: Props) {
     const next = await run(() => window.aya.teamList(project.slug));
     if (next) setTeams(next);
   }, [project.slug, run]);
+
+  useEffect(() => {
+    void window.aya
+      .teamPresets()
+      .then(setPresets)
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     void reload();
@@ -69,6 +78,7 @@ export function TeamsModal({ project, intelligence, onClose }: Props) {
         onClick={(e) => e.stopPropagation()}
       >
         {editing ? (
+          <div className="aya-teams-body">
           <TeamEditor
             initial={editing.team}
             isNew={editing.isNew}
@@ -80,6 +90,7 @@ export function TeamsModal({ project, intelligence, onClose }: Props) {
               await reload();
             }}
           />
+          </div>
         ) : (
           <>
             <div className="aya-modal-title">Teams · {project.name}</div>
@@ -87,16 +98,22 @@ export function TeamsModal({ project, intelligence, onClose }: Props) {
               Defined in .aya/teams/ in the repo. Which pane plays which role stays on this machine.
             </div>
             <ErrorLine error={list.error} />
+            {/* Only the cards scroll: the title and the buttons stay on screen. */}
+            <div className="aya-teams-body">
             {teams.length === 0 && <div className="aya-modal-hint">No team yet.</div>}
             {teams.map((team) => (
               <TeamCard
                 key={team.name}
                 team={team}
                 project={project}
+                installed={presets.filter((p) => p.installed)}
+                presetNames={Object.fromEntries(presets.map((p) => [p.id, p.name]))}
+                plays={paneRoles(teams)}
                 onEdit={(definition) => setEditing({ team: definition, isNew: false })}
                 onChanged={reload}
               />
             ))}
+            </div>
             <div className="aya-modal-actions">
               <button
                 className="aya-modal-btn"

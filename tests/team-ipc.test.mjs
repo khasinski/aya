@@ -10,7 +10,12 @@ import { tmpdir } from "node:os";
 const { registerTeamIpc, TEAM_REDELIVERY_MS } = await import("../dist-electron/team-ipc.js");
 const { ROLE_DRAFT_CHAT } = await import("../dist-electron/team-draft.js");
 
-function register({ listProjects = async () => [], teamHome = "/nonexistent-aya-home", holdReason = async () => null } = {}) {
+function register({
+  listProjects = async () => [],
+  teamHome = "/nonexistent-aya-home",
+  holdReason = async () => null,
+  openPanes = async () => {},
+} = {}) {
   const handlers = new Map();
   const teardowns = [];
   const chats = [];
@@ -23,6 +28,13 @@ function register({ listProjects = async () => [], teamHome = "/nonexistent-aya-
       deliver: async () => {},
       headCommit: async () => null,
       holdReason,
+    },
+    paneHost: {
+      listPresets: async () => [{ id: "shell", name: "Shell", icon: "$", color: "", command: "$SHELL" }],
+      presetInstalled: async () => true,
+      paneAlive: async () => true,
+      openPanes,
+      newPaneId: () => "new-1",
     },
     intelligenceChat: (config, opts) => {
       chats.push({ config, opts });
@@ -51,6 +63,8 @@ test("registers the teams:* channels in order and one quit teardown", () => {
         "teams:release-pane",
         "teams:assign",
         "teams:draft-role",
+        "teams:presets",
+        "teams:open-panes",
       ],
     );
     assert.equal(t.teardowns.length, 1);
@@ -149,6 +163,46 @@ test("teams:save hands the saved team to the runner, so running rounds follow it
       protocol: "",
     });
     assert.deepEqual(refreshed, [["game", "ux-review"]]);
+  } finally {
+    t.teardowns.forEach((fn) => fn());
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("teams:open-panes validates its picks and opens through the shared path", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aya-team-ipc-"));
+  const directory = join(root, "game");
+  mkdirSync(directory);
+  let project = { slug: "game", name: "game", directory, tabs: [] };
+  const t = register({
+    listProjects: async () => [project],
+    teamHome: join(root, "aya"),
+    openPanes: async (_slug, panes) => void (project = { ...project, tabs: panes.map((p) => ({ id: p.id, presetId: p.presetId, name: p.name })) }),
+  });
+  const team = {
+    name: "ux-review",
+    roles: [
+      { id: "tester", sendsTo: [], mustNot: "edit code", responsibilities: "" },
+      { id: "implementer", sendsTo: [], mustNot: "skip a report", responsibilities: "" },
+    ],
+    cadence: null,
+    protocol: "",
+  };
+  try {
+    await t.invoke("teams:save", "game", team, true);
+    await assert.rejects(() => t.invoke("teams:open-panes", "game", "ux-review", "tester=shell"), {
+      message: "Invalid IPC payload for teams:open-panes.panes: expected [{role, target}].",
+    });
+    await assert.rejects(() => t.invoke("teams:open-panes", "game", "ux-review", [{ role: "tester" }]), /teams:open-panes\.panes/);
+    const opened = await t.invoke("teams:open-panes", "game", "ux-review", [{ role: "tester", target: "shell" }]);
+    assert.deepEqual(opened, {
+      panes: [{ role: "tester", paneId: "new-1", name: "Shell - tester", preset: "Shell", notReached: null }],
+      leftWithoutPane: [],
+    });
+    // The Teams window's pick is the user's own choice: it may take a pane another role plays.
+    const moved = await t.invoke("teams:open-panes", "game", "ux-review", [{ role: "implementer", target: "new-1" }]);
+    assert.deepEqual(moved.leftWithoutPane, ["tester"]);
+    assert.deepEqual(await t.invoke("teams:presets"), [{ id: "shell", name: "Shell", agent: "custom", installed: true }]);
   } finally {
     t.teardowns.forEach((fn) => fn());
     rmSync(root, { recursive: true, force: true });
