@@ -118,7 +118,7 @@ for (const shell of shells) {
     }
   });
 
-  for (const wait of ["1.5", "30s", "-1", " 2", "10000", "999999999999999999999999999999999999"]) {
+  for (const wait of ["1.5", "30s", "-1", " 2", "+", "length", "10000", "999999999999999999999999999999999999"]) {
     test(`${shell}: AYA_OPEN_WAIT_SECONDS=${JSON.stringify(wait)} is refused at once, launching nothing`, async () => {
       const box = sandbox("Linux");
       try {
@@ -130,7 +130,7 @@ for (const shell of shells) {
         });
         assert.equal(status, 1);
         assert.ok(Date.now() - started < 900, "waited before refusing");
-        assert.ok(stderr.includes(`AYA_OPEN_WAIT_SECONDS must be whole seconds, at most 9999, got '${wait}'`), stderr);
+        assert.ok(stderr.includes(`AYA_OPEN_WAIT_SECONDS must be whole seconds, at most 4 digits, got '${wait}'`), stderr);
         assert.equal(await box.launched(), "");
       } finally {
         box.cleanup();
