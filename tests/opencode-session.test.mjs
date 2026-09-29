@@ -19,11 +19,13 @@ const FIXTURE = readFileSync(new URL("./fixtures/opencode-session-list.json", im
 
 const lister = (sessions) => {
   const calls = [];
-  const list = async (cwd) => {
+  const lookups = [];
+  const list = async (cwd, lookup) => {
     calls.push(cwd);
+    lookups.push(lookup);
     return sessions;
   };
-  return { list, calls };
+  return { list, calls, lookups };
 };
 
 function withFakeOpencode(script) {
@@ -31,16 +33,6 @@ function withFakeOpencode(script) {
   writeFileSync(path.join(bin, "opencode"), `#!/bin/sh\n${script}\n`);
   chmodSync(path.join(bin, "opencode"), 0o755);
   return bin;
-}
-
-async function onPath(bin, fn) {
-  const saved = process.env.PATH;
-  process.env.PATH = `${bin}:${saved}`;
-  try {
-    return await fn();
-  } finally {
-    process.env.PATH = saved;
-  }
 }
 
 test("a worktree pane resumes its own session, not the newer one of a sibling worktree", async () => {
@@ -134,11 +126,19 @@ test("left untouched, without asking opencode: no --continue, another agent, loo
   }
 });
 
-test("a failed lookup keeps the command as it was", async () => {
-  const out = await ownSessionCommand("opencode --continue", A, async () => {
-    throw new Error("opencode not found");
-  });
+test("a failed lookup keeps the command as it was, and is reported", async () => {
+  const reported = [];
+  const failure = new Error("opencode not found");
+  const out = await ownSessionCommand(
+    "opencode --continue",
+    A,
+    async () => {
+      throw failure;
+    },
+    (err) => reported.push(err),
+  );
   assert.equal(out, "opencode --continue");
+  assert.deepEqual(reported, [failure]);
 });
 
 test("an unrecognised list shape is a failed lookup, not 'no session here'", async () => {
@@ -182,15 +182,35 @@ test("session ids follow the same shell-safe rule as the rest of Aya's session i
   }
 });
 
-test("listOpencodeSessions asks the opencode on PATH, from the pane's directory", async () => {
-  const log = path.join(mkdtempSync(path.join(tmpdir(), "oc-log-")), "log");
-  const bin = withFakeOpencode(
-    `echo "$PWD|$*" > '${log}'\necho '[{"id":"ses_A","directory":"${A}","updated":9}]'`,
-  );
-  assert.deepEqual(await onPath(bin, () => listOpencodeSessions(A)), [
+test("the lookup runs the command's own env assignments, from the pane's directory", async () => {
+  const { list, calls, lookups } = lister([{ id: "ses_A", directory: A, updated: 1 }]);
+  await ownSessionCommand(`PATH="/x:$PATH" OPENCODE_CONFIG_CONTENT='{}' opencode -m m --continue`, A, list);
+  assert.deepEqual(calls, [A]);
+  assert.deepEqual(lookups, [
+    `PATH="/x:$PATH" OPENCODE_CONFIG_CONTENT='{}' opencode session list --format json`,
+  ]);
+});
+
+const sh = (script) => ["/bin/sh", "-c", script];
+
+test("listOpencodeSessions runs the given argv with the given env", async () => {
+  const bin = withFakeOpencode(`echo '[{"id":"ses_A","directory":"${A}","updated":9}]'`);
+  const env = { PATH: `${bin}:/usr/bin:/bin` };
+  assert.deepEqual(await listOpencodeSessions(sh("opencode session list --format json"), env), [
     { id: "ses_A", directory: A, updated: 9 },
   ]);
-  assert.equal(readFileSync(log, "utf8").trim(), `${A}|session list --format json`);
+});
+
+test("shell startup noise before the list is skipped; noise alone or after it is a failed lookup", async () => {
+  const list = JSON.stringify([{ id: "ses_A", title: "[WIP] a\n[b]", directory: A, updated: 9 }], null, 2);
+  const file = path.join(mkdtempSync(path.join(tmpdir(), "oc-noise-")), "list.json");
+  writeFileSync(file, list);
+  assert.deepEqual(await listOpencodeSessions(sh(`echo 'Agent pid 42'; echo '[x]'; cat '${file}'`), {}), [
+    { id: "ses_A", directory: A, updated: 9 },
+  ]);
+  assert.deepEqual(await listOpencodeSessions(sh("true"), {}), []);
+  await assert.rejects(listOpencodeSessions(sh("echo 'Agent pid 42'"), {}));
+  await assert.rejects(listOpencodeSessions(sh(`cat '${file}'; echo bye`), {}));
 });
 
 test("a long session list, past execFile's default 1 MB, is still read", async () => {
@@ -198,23 +218,23 @@ test("a long session list, past execFile's default 1 MB, is still read", async (
   const rows = Array.from({ length: 3000 }, (_, i) => ({ id: `ses_${i}`, title, updated: i, directory: B }));
   rows.push({ id: "ses_A", title, updated: 1, directory: A });
   const file = path.join(mkdtempSync(path.join(tmpdir(), "oc-big-")), "list.json");
-  writeFileSync(file, JSON.stringify(rows));
+  writeFileSync(file, JSON.stringify(rows, null, 2));
   assert.ok(readFileSync(file).length > 2_000_000);
-  const bin = withFakeOpencode(`cat '${file}'`);
-  const out = await onPath(bin, () => ownSessionCommand("opencode --continue", A));
+  const out = await ownSessionCommand("opencode --continue", A, () =>
+    listOpencodeSessions(sh(`cat '${file}'`), {}),
+  );
   assert.equal(out, "opencode --session ses_A");
 });
 
 test("output past the named buffer cap is a failed lookup that keeps the command", async () => {
-  const bin = withFakeOpencode(`head -c ${OPENCODE_LIST_MAX_BUFFER_BYTES + 1} /dev/zero`);
-  await onPath(bin, () => assert.rejects(listOpencodeSessions(A), /maxBuffer/));
-  const out = await onPath(bin, () => ownSessionCommand("opencode --continue", A));
+  const argv = sh(`head -c ${OPENCODE_LIST_MAX_BUFFER_BYTES + 1} /dev/zero`);
+  await assert.rejects(listOpencodeSessions(argv, {}), /maxBuffer/);
+  const out = await ownSessionCommand("opencode --continue", A, () => listOpencodeSessions(argv, {}));
   assert.equal(out, "opencode --continue");
 });
 
-test("listOpencodeSessions gives up on an opencode that hangs, so the pane still spawns", async () => {
-  const bin = withFakeOpencode("exec sleep 60");
+test("listOpencodeSessions gives up on a lookup that hangs, so the pane still spawns", async () => {
   const started = Date.now();
-  await onPath(bin, () => assert.rejects(listOpencodeSessions(A)));
+  await assert.rejects(listOpencodeSessions(sh("exec sleep 60"), {}));
   assert.ok(Date.now() - started < 15_000);
 });
