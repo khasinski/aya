@@ -51,3 +51,25 @@ test("an open with every window closed opens the project in a new window", async
 
   await expect((await opened).locator(".aya-tab-name", { hasText: "open-check" })).toBeVisible();
 });
+
+test("two opens with every window closed share one new window", async ({
+  app,
+  window,
+  seeded,
+}) => {
+  test.skip(process.platform !== "darwin", "only macOS keeps running with no window");
+  const dirs = ["open-one", "open-two"].map((name) => join(seeded.root, name));
+  for (const dir of dirs) mkdirSync(dir);
+  await expect(window.locator(".aya-tab-name").first()).toBeVisible();
+  await window.close();
+
+  const opened = app.waitForEvent("window");
+  const replies = await Promise.all(dirs.map((dir) => openOverControl(seeded.ayaHome, dir)));
+  for (const reply of replies) expect(JSON.parse(reply)).toMatchObject({ ok: true });
+
+  const win = await opened;
+  for (const name of ["open-one", "open-two"]) {
+    await expect(win.locator(".aya-tab-name", { hasText: name })).toBeVisible();
+  }
+  expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
+});
