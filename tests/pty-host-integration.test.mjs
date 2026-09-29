@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { waitFor } from "./helpers/wait-for.mjs";
 
 const TMP_AYA_HOME = mkdtempSync(join(tmpdir(), "aya-ptyhost-"));
 process.env.AYA_HOME = TMP_AYA_HOME;
@@ -24,17 +25,6 @@ const { PtyHostClient } = await import(
 );
 
 const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
-
-/** Wait until predicate() returns truthy or ms elapses. */
-async function waitFor(predicate, ms = 4000, step = 25) {
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
-    const v = predicate();
-    if (v) return v;
-    await new Promise((r) => setTimeout(r, step));
-  }
-  throw new Error(`waitFor timed out after ${ms}ms`);
-}
 
 function fakeWebContents() {
   const events = [];
@@ -224,7 +214,7 @@ test("PtyHostClient: shutdown drops the socket file (clean restart possible)", a
 
   // After shutdown the host closes the socket BEFORE exiting; allow a few
   // ticks for filesystem propagation, then assert it's gone.
-  await waitFor(() => !existsSync(socketPath), 2000);
+  await waitFor(() => !existsSync(socketPath));
   assert.equal(existsSync(socketPath), false);
 });
 

@@ -22,6 +22,7 @@ import type { PtyEvent, SpawnRequest } from "./types";
 const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
 // Interval between socket-existence polls while waiting (ms).
 const PTY_HOST_SOCKET_POLL_INTERVAL_MS = 50;
+const DISPOSED_MESSAGE = "PTY host client is disposed";
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -53,6 +54,7 @@ export class PtyHostClient {
   // broadcast to every sink; each renderer's event bus routes by ptyId, so a
   // window that doesn't host the terminal does a single cheap no-op per event.
   private readonly sinks = new Set<PtyEventSink>();
+  private disposed = false;
 
   constructor(private readonly hostScript: string) {}
 
@@ -100,6 +102,12 @@ export class PtyHostClient {
 
   async kill(ptyId: string): Promise<void> {
     await this.request({ id: 0, type: "kill", ptyId });
+  }
+
+  /** Quit path: every later request rejects instead of starting a host, which
+   *  would have no app to serve and never exit. Requests already sent still land. */
+  dispose(): void {
+    this.disposed = true;
   }
 
   async shutdown(): Promise<void> {
@@ -200,6 +208,7 @@ export class PtyHostClient {
     // as the write so it cannot perturb request ordering.
     finalize?: (request: PtyHostRequest) => PtyHostRequest,
   ): Promise<unknown> {
+    if (this.disposed) throw new Error(DISPOSED_MESSAGE);
     await this.connect();
     const socket = this.socket;
     if (!socket || socket.destroyed) throw new Error("PTY host is not connected");
@@ -232,6 +241,7 @@ export class PtyHostClient {
       this.reusedHost = true;
       return;
     } catch {
+      if (this.disposed) throw new Error(DISPOSED_MESSAGE);
       this.startHost();
       await this.waitForSocket();
       await this.openSocket();

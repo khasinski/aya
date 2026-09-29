@@ -3233,10 +3233,14 @@ app.on("before-quit", () => {
   }
   for (const timer of gpuHealTimers) clearTimeout(timer);
   gpuHealTimers.clear();
-  if (!IS_E2E_PTY_SHUTDOWN) return;
-  void ptyHost.shutdown().catch(() => {
-    // Test-only cleanup. Normal app runs intentionally keep PTYs alive.
-  });
+  if (IS_E2E_PTY_SHUTDOWN) {
+    void ptyHost.shutdown().catch(() => {
+      // Test-only cleanup. Normal app runs intentionally keep PTYs alive.
+    });
+  }
+  // After the shutdown above is sent: a request from a closing window must not
+  // start a host this quitting app will never connect to.
+  ptyHost.dispose();
 });
 
 // GPU-helper deaths (#79). The OS can quietly kill the GPU process under memory

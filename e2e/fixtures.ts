@@ -4,8 +4,8 @@ import {
   type ElectronApplication,
   type Page,
 } from "@playwright/test";
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import * as net from "node:net";
 import { join } from "node:path";
 import { seedEnv, type SeededEnv, type SeedOptions } from "./helpers/seed";
@@ -41,15 +41,55 @@ async function removeSeededRoot(root: string): Promise<void> {
   }
 }
 
-/** Pids of the hosts registered under this AYA_HOME - the registry names each
- *  record file after its pid. */
-function registeredHostPids(ayaHome: string): number[] {
+/** Pty hosts running for this AYA_HOME, found by their environment rather than
+ *  the registry: a host records itself only once listening, so one still
+ *  booting when its app died (seen in e2e) has no record. */
+export function hostPidsForHome(ayaHome: string): number[] {
+  const wanted = `AYA_HOME=${ayaHome}`;
+  if (process.platform === "linux") {
+    return readdirSync("/proc")
+      .filter((d) => /^\d+$/.test(d))
+      .filter((d) => {
+        try {
+          return (
+            readFileSync(`/proc/${d}/cmdline`, "utf8").includes("pty-host.js") &&
+            readFileSync(`/proc/${d}/environ`, "utf8").split("\0").includes(wanted)
+          );
+        } catch {
+          return false;
+        }
+      })
+      .map(Number);
+  }
+  const out = spawnSync("ps", ["eww", "-A", "-o", "pid=,command="], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  }).stdout;
+  return (out ?? "")
+    .split("\n")
+    .filter((line) => line.includes("pty-host.js") && line.split(/\s+/).includes(wanted))
+    .map((line) => Number.parseInt(line.trim(), 10))
+    .filter((pid) => Number.isInteger(pid) && pid > 0);
+}
+
+/** Reap the seeded home's pty hosts, then delete its root even if that throws. */
+export async function cleanUpSeeded(s: SeededEnv): Promise<void> {
   try {
-    return readdirSync(join(ayaHome, "pty-hosts"))
-      .map((name) => Number.parseInt(name, 10))
-      .filter((pid) => Number.isInteger(pid) && pid > 0);
-  } catch {
-    return [];
+    await reapPtyHosts(s.ayaHome);
+  } finally {
+    await removeSeededRoot(s.root);
+  }
+}
+
+/** Leave no pty host of this AYA_HOME running, and throw if one survives: a
+ *  leaked host keeps its children and loads every later test. */
+export async function reapPtyHosts(ayaHome: string): Promise<void> {
+  const pids = hostPidsForHome(ayaHome);
+  if (pids.length === 0) return;
+  await shutdownPtyHost(ayaHome, pids);
+  const leaked = hostPidsForHome(ayaHome);
+  if (leaked.length > 0) {
+    throw new Error(`pty host(s) ${leaked.join(", ")} of ${ayaHome} outlived the test`);
   }
 }
 
@@ -73,7 +113,8 @@ async function shutdownPtyHost(ayaHome: string, pids: number[]): Promise<void> {
   // contention made unrelated specs time out.
   const deadline = Date.now() + PTY_HOST_EXIT_TIMEOUT_MS;
   while (pids.some(isAlive) && Date.now() < deadline) await delay(50);
-  for (const pid of pids.filter(isAlive)) {
+  // Rescanned, not `pids`: one of those may have exited and been reused since.
+  for (const pid of hostPidsForHome(ayaHome)) {
     try {
       process.kill(pid, "SIGKILL");
     } catch {
@@ -140,15 +181,15 @@ export const test = base.extend<{
         }
       }
     }
-    await removeSeededRoot(s.root);
+    // Here, not in `app`: this teardown also runs when launching the app failed.
+    await cleanUpSeeded(s);
   },
 
   app: async ({ seeded, seedOptions }, use) => {
     // A host started FIRST makes the app treat it as REUSED, so boot-restored
     // tabs must attach-only instead of respawning.
-    let preStartedHost: ChildProcess | null = null;
     if (seedOptions.preStartPtyHost) {
-      preStartedHost = spawn(
+      spawn(
         process.execPath,
         [join(APP_ROOT, "dist-electron", "pty-host.js")],
         {
@@ -199,20 +240,7 @@ export const test = base.extend<{
 
     const app = await electron.launch({ args: launchArgs, cwd: APP_ROOT, env });
     await use(app);
-    // Snapshot the host pids BEFORE closing: a graceful close already tells the
-    // host to go (AYA_E2E_PTY_SHUTDOWN), and it drops its registry record on the
-    // way out - so afterwards a host still draining children is unfindable.
-    const hostPids = registeredHostPids(seeded.ayaHome);
     await closeAndWait(app);
-    await shutdownPtyHost(seeded.ayaHome, hostPids);
-    // Belt for a hung host. Liveness, not `.killed` - see closeAndWait.
-    if (preStartedHost?.pid !== undefined && isAlive(preStartedHost.pid)) {
-      try {
-        preStartedHost.kill("SIGKILL");
-      } catch {
-        // already gone
-      }
-    }
   },
 
   window: async ({ app }, use) => {
