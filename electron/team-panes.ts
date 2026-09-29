@@ -131,7 +131,6 @@ async function check(
   if (picks.length === 0) return refused("name at least one role=target");
   const presets = await deps.listPresets();
   const playing = await rolesByPane(deps.teamHome, project);
-  const listed = new Set(picks.map((p) => p.role));
   const problems: string[] = [];
   const targets: Target[] = [];
   const seenRoles = new Set<string>();
@@ -161,7 +160,7 @@ async function check(
     if (other) problems.push(`pane "${resolved.name}" is given to both ${other} and ${role}`);
     givenTo.set(resolved.paneId, role);
     const plays = playing.get(resolved.paneId);
-    const elsewhere = plays && !(plays.team === teamName && (plays.role === role || listed.has(plays.role)));
+    const elsewhere = plays && !(plays.team === teamName && plays.role === role);
     if (elsewhere && !replace) {
       const where = plays.team === teamName ? plays.role : `${plays.role} in team ${plays.team}`;
       problems.push(`pane "${resolved.name}" plays ${where}; add --replace to move it (${plays.role} is then left without a pane)`);

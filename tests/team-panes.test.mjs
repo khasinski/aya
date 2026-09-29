@@ -183,6 +183,35 @@ const USE_CASES = [
     assigned: { tester: "pane-x" },
     left: ["implementer"],
   },
+  {
+    name: "a role given the live pane it already has is not a replace",
+    assignments: { tester: "pane-x" },
+    picks: "tester=pane-x",
+    opens: [],
+    assigned: { tester: "pane-x" },
+  },
+  {
+    name: "... or by its name",
+    assignments: { tester: "pane-x" },
+    picks: "tester=codex-pane-by-name",
+    rename: { "codex-pane-by-name": "Codex" },
+    opens: [],
+    assigned: { tester: "pane-x" },
+  },
+  {
+    name: "a pane still running after its tab closed does not hold the role",
+    assignments: { tester: "pane-orphan" },
+    alive: [...ALIVE, "pane-orphan"],
+    picks: "tester=claude",
+    opens: [["tester", "claude"]],
+    assigned: { tester: "new-1" },
+  },
+  {
+    name: "refused: a pane that plays a role in another team, without --replace",
+    other: { writer: "pane-x" },
+    picks: "tester=pane-x",
+    refused: /^pane "Codex" plays writer in team docs; add --replace to move it \(writer is then left without a pane\); nothing/,
+  },
   { name: "refused: a preset whose CLI is not installed", picks: "tester=missing", refused: /^preset "missing" \(Missing\) is not installed; nothing/ },
   {
     name: "refused: an unknown role",
@@ -241,7 +270,14 @@ const USE_CASES = [
 test("use cases: new sessions, this, existing panes, mixes, refusals", async (s) => {
   for (const row of USE_CASES) {
     await s.test(row.name, async () => {
-      const t = setup({ assignments: row.assignments ?? {}, state: row.state ?? null });
+      const t = setup({ assignments: row.assignments ?? {}, state: row.state ?? null, ...(row.alive ? { alive: row.alive } : {}) });
+      if (row.other) {
+        mkdirSync(join(t.directory, ".aya", "teams"), { recursive: true });
+        writeFileSync(join(t.directory, ".aya", "teams", "docs.md"), "# docs\n");
+        const docs = new TeamStore(teamDir(t.teamHome, "game", "docs"));
+        mkdirSync(docs.dir, { recursive: true });
+        writeFileSync(join(docs.dir, "assignments.json"), JSON.stringify(row.other));
+      }
       const line = Object.entries(row.rename ?? {}).reduce((l, [from, to]) => l.replace(from, to), row.picks);
       const options = { replace: row.replace ?? false, ...("callerId" in row ? { callerId: row.callerId } : {}) };
       try {
@@ -354,11 +390,13 @@ test("a running team introduces a new pane once it has started, or says why not"
   } finally {
     starting.cleanup();
   }
-  const never = setup({ state: RUNNING, holds: () => HOLD_NOT_RUNNING });
+  let asked = 0;
+  const never = setup({ state: RUNNING, holds: () => (asked++, HOLD_NOT_RUNNING) });
   try {
     const started = Date.now();
     const { panes } = await never.open(picks("tester=claude"));
     assert.ok(Date.now() - started >= never.deps.startWaitMs, "waits the whole start window");
+    assert.ok(asked <= never.deps.startWaitMs / 250 + 2, `polls every 250 ms, not in a busy loop (${asked} checks)`);
     assert.equal(panes[0].notReached, HOLD_NOT_RUNNING);
     assert.equal(never.typed.length, 0);
   } finally {
@@ -430,6 +468,7 @@ test("installed is what the spawn check would say: a missing binary is not, $SHE
   const preset = (command) => ({ id: "x", name: "x", icon: "", color: "", command });
   assert.equal(await presetInstalled(preset("aya-no-such-binary-4c1f")), false);
   assert.equal(await presetInstalled(preset("sh -c true")), true);
+  assert.equal(await presetInstalled(preset("sh -c false")), true, "a found binary stays found (cached)");
   assert.equal(await presetInstalled(preset("$SHELL")), true);
   assert.equal(await presetInstalled(preset("FOO=1 aya-no-such-binary-4c1f")), true);
 });
@@ -518,7 +557,11 @@ test("a renderer request settles on its answer, its error, or its deadline", asy
   requests.answer(sent[0], null);
   await ok;
   await assert.rejects(failed, /^Error: no such preset$/);
-  await assert.rejects(requests.ask(() => {}, 20), /the Aya window did not open the panes/);
+  await assert.rejects(requests.ask(() => {}, 20), /^Error: the Aya window did not open the panes in time$/);
+  const odd = [];
+  const oddAnswer = requests.ask((id) => odd.push(id), 1_000);
+  requests.answer(odd[0], { not: "a message" });
+  await oddAnswer;
   const late = [];
   const timedOut = requests.ask((id) => late.push(id), 20);
   await assert.rejects(timedOut);

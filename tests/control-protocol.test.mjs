@@ -218,3 +218,22 @@ test("team-save needs text; replace is only ever a literal true", () => {
     assert.throws(() => parseControlRequest({ type: "team-save", text }), /team-save needs the team file's text/);
   }
 });
+
+test("presets and team-open parse: json and replace only when true, every pick a role and a target", () => {
+  assert.deepEqual(parseControlRequest({ type: "presets", json: true }), { type: "presets", json: true });
+  assert.deepEqual(parseControlRequest({ type: "presets", json: "yes" }), { type: "presets", json: false });
+  const open = (extra) => parseControlRequest({ type: "team-open", team: "ux", panes: [{ role: "a", target: "this" }], ...extra });
+  assert.deepEqual(open({ replace: true, projectSlug: "game", cwd: "/p" }), {
+    type: "team-open",
+    team: "ux",
+    panes: [{ role: "a", target: "this" }],
+    replace: true,
+    projectSlug: "game",
+    cwd: "/p",
+  });
+  assert.equal(open({}).replace, false);
+  assert.equal(open({ replace: "true" }).replace, false);
+  assert.deepEqual(open({ panes: "a=this" }).panes, []);
+  assert.throws(() => open({ team: " " }), { message: "team-open needs a team" });
+  assert.throws(() => open({ panes: [{ role: "a" }] }), { message: "each pane needs a role and a target" });
+});
