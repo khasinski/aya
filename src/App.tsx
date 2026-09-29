@@ -1012,17 +1012,13 @@ export function App() {
   // useEffect has populated projects state. If we processed it then, the
   // "find by directory" check sees an empty list and falls through to
   // auto-create — producing a duplicate next to whatever bootstrap loads.
-  // So we buffer requests until bootstrap signals ready, then drain.
-  const openProjectRef = useRef<(dir: string) => void>(() => {});
-  const bootReadyRef = useRef(false);
-  const pendingOpenRef = useRef<string[]>([]);
+  // So requests queue until bootstrap signals ready, then run one at a time.
+  const openProjectRef = useRef<(dir: string) => Promise<void>>(async () => {});
+  const [openQueue, setOpenQueue] = useState<string[]>([]);
+  const openRunningRef = useRef(false);
   useEffect(() => {
     return window.aya.onOpenProject((dir) => {
-      if (!bootReadyRef.current) {
-        pendingOpenRef.current.push(dir);
-        return;
-      }
-      openProjectRef.current(dir);
+      setOpenQueue((queue) => [...queue, dir]);
     });
   }, []);
 
@@ -1043,13 +1039,16 @@ export function App() {
   // setProjects → projectsRef.current before the handler tries to match by
   // directory. Without this gate the drain raced the commit and "aya <known
   // project path>" auto-created a duplicate, hitting the slug-collision error.
+  // One open per commit for the same reason: two concurrent opens each built on
+  // the same stale project list, and the second dropped the first.
   useEffect(() => {
-    if (!didBootstrap) return;
-    bootReadyRef.current = true;
-    const queued = pendingOpenRef.current;
-    pendingOpenRef.current = [];
-    for (const dir of queued) openProjectRef.current(dir);
-  }, [didBootstrap]);
+    if (!didBootstrap || openRunningRef.current || openQueue.length === 0) return;
+    openRunningRef.current = true;
+    void openProjectRef.current(openQueue[0]).finally(() => {
+      openRunningRef.current = false;
+      setOpenQueue((queue) => queue.slice(1));
+    });
+  }, [didBootstrap, openQueue]);
 
   // Track fullscreen state so platform chrome can change without hiding
   // Aya's normal project tabs and controls.

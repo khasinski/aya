@@ -13,6 +13,7 @@ const {
   startControlServerOn,
   CONTROL_REQUEST_MAX_SIZE_BYTES,
   PANE_SEND_SUBMIT_DELAY_MS,
+  OPEN_DELIVERY_TIMEOUT_MS,
   PASTE_END,
   PASTE_START,
   deliverTeamMessage,
@@ -101,6 +102,64 @@ test("control server: open dispatches the resolved path and acknowledges", async
     assert.deepEqual(res, { ok: true });
     assert.deepEqual(calls.openProject, [join(process.cwd(), "sub/dir")]);
   });
+});
+
+test("control server: open answers only once the open was delivered", async () => {
+  let deliver;
+  const delivered = new Promise((resolve) => (deliver = resolve));
+  let replied = false;
+  await withServer({ getWindow: () => null, openProject: () => delivered }, async (socket) => {
+    const reply = rpc(socket, `${JSON.stringify({ type: "open", path: "/x" })}\n`).then((res) => {
+      replied = true;
+      return res;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(replied, false, "acked before the open was delivered");
+    deliver();
+    assert.deepEqual(await reply, { ok: true });
+  });
+});
+
+test("control server: an open that fails answers ok:false with the reason", async () => {
+  const options = {
+    getWindow: () => null,
+    openProject: async () => {
+      throw new Error("the window closed before it loaded");
+    },
+  };
+  await withServer(options, async (socket) => {
+    const res = await rpc(socket, `${JSON.stringify({ type: "open", path: "/x" })}\n`);
+    assert.deepEqual(res, { ok: false, error: "the window closed before it loaded" });
+  });
+});
+
+test("control server: a slow open answers after the bound that it will still open, and still does", async () => {
+  let delivered = false;
+  const options = {
+    getWindow: () => null,
+    openProject: () =>
+      new Promise((resolve) =>
+        setTimeout(() => {
+          delivered = true;
+          resolve();
+        }, 150),
+      ),
+    openTimeoutMs: 50,
+  };
+  await withServer(options, async (socket) => {
+    const res = await rpc(socket, `${JSON.stringify({ type: "open", path: "/x" })}\n`);
+    assert.deepEqual(res, {
+      ok: false,
+      error: "Aya is still loading after 0.05 s; the project will open once it has loaded",
+    });
+    assert.equal(delivered, false);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(delivered, true);
+  });
+});
+
+test("control server: the default open bound is between 5 and 60 seconds", () => {
+  assert.ok(OPEN_DELIVERY_TIMEOUT_MS >= 5_000 && OPEN_DELIVERY_TIMEOUT_MS <= 60_000);
 });
 
 test("control server: malformed JSON returns ok:false with the parser error", async () => {
