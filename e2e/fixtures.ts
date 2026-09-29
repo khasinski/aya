@@ -72,6 +72,15 @@ export function hostPidsForHome(ayaHome: string): number[] {
     .filter((pid) => Number.isInteger(pid) && pid > 0);
 }
 
+/** Reap the seeded home's pty hosts, then delete its root even if that throws. */
+export async function cleanUpSeeded(s: SeededEnv): Promise<void> {
+  try {
+    await reapPtyHosts(s.ayaHome);
+  } finally {
+    await removeSeededRoot(s.root);
+  }
+}
+
 /** Leave no pty host of this AYA_HOME running, and throw if one survives: a
  *  leaked host keeps its children and loads every later test. */
 export async function reapPtyHosts(ayaHome: string): Promise<void> {
@@ -173,11 +182,7 @@ export const test = base.extend<{
       }
     }
     // Here, not in `app`: this teardown also runs when launching the app failed.
-    try {
-      await reapPtyHosts(s.ayaHome);
-    } finally {
-      await removeSeededRoot(s.root);
-    }
+    await cleanUpSeeded(s);
   },
 
   app: async ({ seeded, seedOptions }, use) => {
