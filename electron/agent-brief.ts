@@ -135,17 +135,26 @@ export function inlineCodexHome(command: string): string | undefined {
 
 const isRelativeDir = (dir: string) => !path.isAbsolute(dir) && !/^(?:~|\$HOME)(?:\/|$)/.test(dir);
 
-/** The home a codex preset runs in: its configDir unless that is the stock ~/.codex,
- *  else an inline CODEX_HOME, else `defaultHome`; undefined for a relative dir without `cwd`. */
+/** The dir a codex preset names for its home, as written: its configDir unless
+ *  that is the stock ~/.codex, else an inline CODEX_HOME. */
+function codexHomeDir(
+  preset: { configDir?: string; command?: string },
+  expand: (p: string) => string,
+): string | undefined {
+  const configDir = preset.configDir?.trim();
+  const stock = configDir && !isRelativeDir(configDir) && expand(configDir) === expand("~/.codex");
+  return configDir && !stock ? configDir : inlineCodexHome(preset.command ?? "");
+}
+
+/** The home a codex preset runs in, else `defaultHome`; undefined for a
+ *  relative dir without `cwd`. */
 export function codexHomeFor(
   preset: { configDir?: string; command?: string },
   defaultHome: string,
   expand: (p: string) => string,
   cwd?: string,
 ): string | undefined {
-  const configDir = preset.configDir?.trim();
-  const stock = configDir && !isRelativeDir(configDir) && expand(configDir) === expand("~/.codex");
-  const dir = configDir && !stock ? configDir : inlineCodexHome(preset.command ?? "");
+  const dir = codexHomeDir(preset, expand);
   if (!dir) return defaultHome;
   if (!isRelativeDir(dir)) return expand(dir);
   return cwd ? path.resolve(cwd, dir) : undefined;
@@ -188,6 +197,36 @@ export function orphanedBriefFiles(recorded: string[], plan: CodexBriefPlan): st
   const wanted = new Set(plan.ensure);
   const planned = new Set(plan.remove);
   return [...new Set(recorded)].filter((f) => !wanted.has(f) && !planned.has(f)).sort();
+}
+
+/** What a settings save does to codex AGENTS.md files. A relative home has no
+ *  cwd here, so recorded files under it are left alone while its preset opts in. */
+export function codexBriefSync(
+  presets: Array<{ configDir?: string; command: string; agentBrief?: boolean }>,
+  recorded: string[],
+  defaultHome: string,
+  expand: (p: string) => string,
+): CodexBriefPlan {
+  const targets: Array<{ file: string; agentBrief: boolean }> = [];
+  const relativeOn: string[][] = [];
+  for (const preset of presets) {
+    const file = codexAgentsFile(preset, defaultHome, expand);
+    if (file) targets.push({ file, agentBrief: preset.agentBrief === true });
+    else if (preset.agentBrief) relativeOn.push(trailingSegments(codexHomeDir(preset, expand) ?? ""));
+  }
+  const plan = planCodexBriefs(targets);
+  const underRelativeOn = (file: string) => {
+    const dir = path.dirname(file).split("/");
+    return relativeOn.some((tail) => tail.every((seg, i) => dir[dir.length - tail.length + i] === seg));
+  };
+  const orphans = orphanedBriefFiles(recorded, plan).filter((f) => !underRelativeOn(f));
+  return { ensure: plan.ensure, remove: [...plan.remove, ...orphans] };
+}
+
+/** A relative dir's segments that any cwd keeps: "../h/./x" -> ["h", "x"]. */
+function trailingSegments(dir: string): string[] {
+  const segs = path.normalize(dir).split("/").filter((s) => s && s !== ".");
+  return segs.slice(segs.lastIndexOf("..") + 1);
 }
 
 /** Measured on agy 1.2.11: only config/rules/ with always_on frontmatter

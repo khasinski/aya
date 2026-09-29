@@ -292,3 +292,34 @@ test("files Aya wrote to that no codex preset wants any more are orphans", async
   );
   assert.deepEqual(orphanedBriefFiles([], plan), []);
 });
+
+test("settings sync leaves a relative home's launch-written brief alone while it opts in", async () => {
+  const { codexBriefSync } = await import("../dist-electron/agent-brief.js");
+  const envHome = "/env/codex-home";
+  const recorded = ["/project/.codex/AGENTS.md", "/other/sub/.codex/AGENTS.md", "/h/gone/AGENTS.md"];
+  const rel = (agentBrief) => ({ command: "CODEX_HOME=.codex codex", agentBrief });
+  assert.deepEqual(codexBriefSync([rel(true)], recorded, envHome, expand), {
+    ensure: [],
+    remove: ["/h/gone/AGENTS.md"],
+  });
+  assert.deepEqual(codexBriefSync([rel(false)], recorded, envHome, expand), {
+    ensure: [],
+    remove: [...recorded].sort(),
+  });
+  assert.deepEqual(
+    codexBriefSync([{ configDir: "./sub/.codex", command: "codex", agentBrief: true }], recorded, envHome, expand),
+    { ensure: [], remove: ["/h/gone/AGENTS.md", "/project/.codex/AGENTS.md"] },
+  );
+  assert.deepEqual(
+    codexBriefSync([{ configDir: "../h/gone", command: "codex", agentBrief: true }], recorded, envHome, expand).remove,
+    ["/other/sub/.codex/AGENTS.md", "/project/.codex/AGENTS.md"],
+  );
+  assert.deepEqual(
+    codexBriefSync([{ configDir: ".", command: "codex", agentBrief: true }], recorded, envHome, expand).remove,
+    [],
+  );
+  assert.deepEqual(
+    codexBriefSync([{ configDir: "~/.a", command: "codex", agentBrief: true }, { command: "codex" }], [], envHome, expand),
+    { ensure: ["/Users/dev/.a/AGENTS.md"], remove: [`${envHome}/AGENTS.md`] },
+  );
+});

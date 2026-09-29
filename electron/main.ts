@@ -58,15 +58,14 @@ import {
   briefChannel,
   briefText,
   codexAgentsFile,
+  codexBriefSync,
   commandWithBriefArg,
   commandWithBriefEnv,
-  planCodexBriefs,
   antigravityBriefFile,
   withOwnedBrief,
   withoutOwnedBrief,
   withBriefSection,
   briefMarkersIntact,
-  orphanedBriefFiles,
   BRIEF_BEGIN,
   withoutBriefSection,
 } from "./agent-brief";
@@ -850,16 +849,6 @@ async function installCli(): Promise<CliStatus> {
   };
 }
 
-/** The codex AGENTS.md each codex preset reads, with its opt-in. */
-async function codexBriefTargets() {
-  return (await listPresets())
-    .filter((preset) => preset.agent === "codex")
-    .flatMap((preset) => {
-      const file = codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath);
-      return file ? [{ file, agentBrief: preset.agentBrief === true }] : [];
-    });
-}
-
 /** Rewrite `file` only when `change` alters it. `null` content = no file.
  *  A symlinked file (e.g. AGENTS.md kept in a dotfiles repo) is edited at its
  *  target, so the link survives (#122 review). */
@@ -933,8 +922,12 @@ async function syncAntigravityBrief(): Promise<void> {
 }
 
 async function syncCodexBriefs(): Promise<void> {
-  const plan = planCodexBriefs(await codexBriefTargets());
-  const orphans = orphanedBriefFiles(await readBriefRegistry(), plan);
+  const plan = codexBriefSync(
+    (await listPresets()).filter((preset) => preset.agent === "codex"),
+    await readBriefRegistry(),
+    DEFAULT_CODEX_HOME,
+    expandUserPath,
+  );
   const brief = briefText(true);
   const added: string[] = [];
   const dropped: string[] = [];
@@ -943,7 +936,7 @@ async function syncCodexBriefs(): Promise<void> {
       .then(() => added.push(file))
       .catch((err) => console.warn(`[aya] could not add the aya brief to ${file}:`, err));
   }
-  for (const file of [...plan.remove, ...orphans]) {
+  for (const file of plan.remove) {
     await rewriteIfChanged(file, withoutBriefSection)
       .then(() => dropped.push(file))
       .catch((err) => console.warn(`[aya] could not remove the aya brief from ${file}:`, err));
