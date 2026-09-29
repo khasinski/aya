@@ -30,7 +30,7 @@ import { getProcessCwd } from "./process-cwd";
 import { ptyLog } from "./pty-log";
 import { pathWithFallbackDir } from "./agent-brief";
 import { bundledAyaCliPath } from "./cli-path";
-import { leadingEnvAssignments } from "./shell-words";
+import { envWithAssignments, leadingEnvAssignments } from "./shell-words";
 import { listOpencodeSessions, ownSessionCommand } from "./opencode-session";
 
 // Timeout for the shell `command -v` existence check during spawn preflight.
@@ -564,7 +564,8 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     const command = await ownSessionCommand(
       req.command,
       cwd,
-      (dir, lookup) => listOpencodeSessions(shellArgv(lookup, dir), safeEnv(req, cwd)),
+      (dir, assignments) =>
+        listOpencodeSessions(userShell(), dir, envWithAssignments(safeEnv(req, cwd), assignments)),
       (err) =>
         ptyLog.append("opencode-session-lookup-failed", { ptyId: req.ptyId, error: String(err) }),
     );

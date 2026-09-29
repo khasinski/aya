@@ -44,13 +44,19 @@ export function parseSessionList(stdout: string): OpencodeSession[] {
   return rows.map(({ id, directory, updated }) => ({ id, directory, updated }));
 }
 
-/** Runs the lookup as `argv` (the pane's own shell) with `env`. Shell startup
- *  may print first, so the list is read from the last line opening with `[`. */
+/** Shell arguments of the lookup: fixed, so no preset text is ever on its
+ *  command line; the preset's env words travel in the child's env. */
+export const OPENCODE_LIST_ARGV = ["-l", "-i", "-c", "exec opencode session list --format json"];
+
+/** Runs the lookup through `shell` as a login shell, like the pane. Shell
+ *  startup may print first, so the list is read from the last line opening with `[`. */
 export async function listOpencodeSessions(
-  argv: string[],
+  shell: string,
+  cwd: string,
   env: NodeJS.ProcessEnv,
 ): Promise<OpencodeSession[]> {
-  const { stdout } = await execFileAsync(argv[0], argv.slice(1), {
+  const { stdout } = await execFileAsync(shell, OPENCODE_LIST_ARGV, {
+    cwd,
     env,
     timeout: LIST_TIMEOUT_MS,
     maxBuffer: OPENCODE_LIST_MAX_BUFFER_BYTES,
@@ -62,21 +68,21 @@ export async function listOpencodeSessions(
 
 /** Turns `--continue` into `--session <this directory's newest>`, or drops it
  *  when the directory has none: a fresh session beats another worktree's.
- *  `list` gets the lookup command, carrying the pane command's env assignments. */
+ *  `list` also gets the command's leading env assignments, unexpanded. */
 export async function ownSessionCommand(
   command: string,
   cwd: string,
-  list: (directory: string, lookup: string) => Promise<OpencodeSession[]>,
+  list: (directory: string, assignments: string[]) => Promise<OpencodeSession[]>,
   onLookupError: (err: unknown) => void = () => {},
 ): Promise<string> {
   const trimmed = command.trim();
-  const { rest } = leadingEnvAssignments(trimmed);
+  const { assignments, rest } = leadingEnvAssignments(trimmed);
   const program = trimmed.slice(rest);
   if (!OPENCODE_BINARY.test(program) || !CONTINUE_FLAG.test(program)) return command;
   const directory = await realpath(cwd).catch(() => cwd);
   let sessions: OpencodeSession[];
   try {
-    sessions = await list(directory, `${trimmed.slice(0, rest)}opencode session list --format json`);
+    sessions = await list(directory, assignments);
   } catch (err) {
     onLookupError(err);
     return command;
