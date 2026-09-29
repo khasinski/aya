@@ -8,7 +8,6 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { execFile } from "node:child_process";
 import type * as PtyModule from "node-pty";
 import type { PtyEvent, SpawnFailureReason, SpawnRequest } from "./types";
 import {
@@ -34,10 +33,10 @@ import type { PaneSize } from "./pane-render";
 import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 import {
   COMMAND_NOT_FOUND_EXIT_CODE,
-  COMMAND_PROBE_TIMEOUT_MS,
   MIN_PTY_COLS,
   MIN_PTY_ROWS,
 } from "./constants";
+import { commandExists, preflightBinary } from "./command-probe";
 import { userShell } from "./shell";
 import { getProcessCwd } from "./process-cwd";
 import { ptyLog } from "./pty-log";
@@ -378,40 +377,6 @@ function reportSpawnFailure(
   sink.sendPtyEvent({ type: "spawn-failed", ptyId, reason, detail: message });
   sink.sendPtyEvent({ type: "data", ptyId, chunk: banner });
   sink.sendPtyEvent({ type: "exit", ptyId, exitCode: COMMAND_NOT_FOUND_EXIT_CODE });
-}
-
-function preflightBinary(command: string): string | null {
-  const trimmed = command.trim();
-  if (!trimmed) return null;
-  if (
-    /(^|\s)[A-Za-z_][A-Za-z0-9_]*=/.test(trimmed) ||
-    /[|&;<>(){}[\]*?~$`"'\\]/.test(trimmed)
-  ) {
-    return null;
-  }
-  const [binary] = trimmed.split(/\s+/);
-  return /^[a-zA-Z0-9_.-]+$/.test(binary) ? binary : null;
-}
-
-// The probe spawns a full login+interactive shell (oh-my-zsh startup can be
-// hundreds of ms), and it runs before EVERY non-shell spawn for the same few
-// binaries. A found binary effectively never disappears mid-session, so cache
-// positives for the process lifetime; misses stay uncached so installing a
-// tool mid-session is picked up by the next spawn.
-const commandExistsCache = new Set<string>();
-
-async function commandExists(binary: string): Promise<boolean> {
-  if (commandExistsCache.has(binary)) return true;
-  const found = await new Promise<boolean>((resolve) => {
-    execFile(
-      userShell(),
-      ["-l", "-i", "-c", `command -v -- ${binary} >/dev/null 2>&1`],
-      { timeout: COMMAND_PROBE_TIMEOUT_MS, windowsHide: true },
-      (err) => resolve(err === null),
-    );
-  });
-  if (found) commandExistsCache.add(binary);
-  return found;
 }
 
 export const DEFAULT_LANG = "en_US.UTF-8";

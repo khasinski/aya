@@ -14,6 +14,7 @@
 import { Terminal } from "@xterm/headless";
 import { MIN_PTY_COLS, MIN_PTY_ROWS } from "./constants";
 import { evaluateScreen, TAIL_REGION_LINES } from "./agent-screen-rules";
+import { HOLD_NOT_RUNNING, HOLD_STARTING } from "./pane-holds";
 import type { AgentKind } from "./presets";
 
 // Only the visible screen matters for "what is on screen right now", and
@@ -205,13 +206,13 @@ function composerState(terminal: Terminal): ComposerState {
 export function paneHold(ptyId: string): string | null {
   const pane = panes.get(ptyId);
   // Every live PTY has a mirror; none means it exited or never started.
-  if (!pane) return "is not running (exited, or its tab was not opened yet)";
+  if (!pane) return HOLD_NOT_RUNNING;
   if (pane.shell) return "runs a shell";
   if (evaluateScreen(screenRows(pane.terminal), pane.agent) === "waiting") return "shows an approval prompt";
   const composer = composerState(pane.terminal);
   if (composer !== "absent") pane.composerSeen = true;
   // Measured: a message typed before the composer is drawn goes nowhere.
-  if (!pane.composerSeen && COMPOSER_AGENTS.has(pane.agent)) return "is still starting up";
+  if (!pane.composerSeen && COMPOSER_AGENTS.has(pane.agent)) return HOLD_STARTING;
   if (composer === "numbered-choice") return "shows a numbered choice";
   if (composer === "draft") return "has text the user is typing";
   return null;
