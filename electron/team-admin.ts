@@ -153,19 +153,23 @@ export async function saveTeam(
   });
 }
 
+/** Runs each call once every earlier call with its key has settled. */
+export function oneAtATime(): <T>(key: string, work: () => Promise<T>) => Promise<T> {
+  const running = new Map<string, Promise<unknown>>();
+  return async (key, work) => {
+    const mine = (running.get(key) ?? Promise.resolve()).catch(() => {}).then(work);
+    running.set(key, mine);
+    try {
+      return await mine;
+    } finally {
+      if (running.get(key) === mine) running.delete(key);
+    }
+  };
+}
+
 /** Saves of one team file in turn: two creates (aya team save, the Teams window)
  *  would both pass the exists check and the later would overwrite the earlier. */
-const saving = new Map<string, Promise<unknown>>();
-
-async function oneSaveAtATime(file: string, save: () => Promise<void>): Promise<void> {
-  const mine = (saving.get(file) ?? Promise.resolve()).catch(() => {}).then(save);
-  saving.set(file, mine);
-  try {
-    await mine;
-  } finally {
-    if (saving.get(file) === mine) saving.delete(file);
-  }
-}
+const oneSaveAtATime = oneAtATime();
 
 /** A closed tab plays no role anywhere. */
 export async function releasePaneEverywhere(teamHome: string, project: ProjectConfig, paneId: string): Promise<void> {

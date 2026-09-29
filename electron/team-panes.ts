@@ -6,7 +6,7 @@ import type { TeamPanesRequest } from "./control-protocol";
 import { preflightBinary } from "./command-probe";
 import { HOLD_NOT_RUNNING, HOLD_STARTING } from "./pane-holds";
 import { AGENT_KINDS, type AgentKind, type Preset } from "./presets";
-import { assignRole } from "./team-admin";
+import { assignRole, oneAtATime } from "./team-admin";
 import { callerProject } from "./team-author";
 import type { TeamControlDeps } from "./team-control";
 import { loadTeam, projectBySlug, teamNames } from "./team-files";
@@ -149,7 +149,7 @@ async function check(
   project: ProjectConfig,
   teamName: string,
   picks: PanePick[],
-  { replace, callerId }: { replace: boolean; callerId?: string },
+  { replace, callerId, release = [] }: OpenPanesOptions,
 ): Promise<Checked> {
   const refused = (problem: string): Checked => ({ problems: [problem], targets: [] });
   if (project.remote) return refused("teams work only on local projects");
@@ -157,7 +157,7 @@ async function check(
   if (!names.includes(teamName)) return refused(`no team "${teamName}" in this project; its teams: ${names.join(", ") || "none"}`);
   const team = await loadTeam(teamName, openTeamStore(deps.teamHome, project.slug, teamName)).catch((err: Error) => err);
   if (team instanceof Error) return refused(team.message);
-  if (picks.length === 0) return refused("name at least one role=target");
+  if (picks.length === 0 && release.length === 0) return refused("name at least one role=target");
   const presets = await deps.listPresets();
   const playing = await rolesByPane(deps.teamHome, project);
   const problems: string[] = [];
@@ -165,6 +165,11 @@ async function check(
   const seenRoles = new Set<string>();
   const givenTo = new Map<string, string>();
   const live = async (pane: string) => project.tabs.some((t) => t.id === pane) && (await deps.paneAlive(pane));
+  for (const role of release) {
+    if (seenRoles.has(role)) problems.push(`role "${role}" is listed twice`);
+    seenRoles.add(role);
+    if (!team.roles.some((r) => r.id === role)) problems.push(`team ${teamName} has no role "${role}"`);
+  }
   for (const { role, target } of picks) {
     if (seenRoles.has(role)) problems.push(`role "${role}" is listed twice`);
     seenRoles.add(role);
@@ -209,6 +214,32 @@ async function startedHold(deps: TeamPaneDeps, paneId: string): Promise<string |
   }
 }
 
+/** A pick with the pane it gets: a new session's main-picked id, or an open pane. */
+interface Planned {
+  role: string;
+  target: Target;
+  pane: NewPane;
+}
+
+/** What the locked part of openTeamPanes did; introductions run after the lock. */
+interface Assigned {
+  given: Planned[];
+  missed: string[];
+  failure: Error | null;
+  leftWithoutPane: string[];
+}
+
+export interface OpenPanesOptions {
+  replace: boolean;
+  callerId?: string;
+  /** Roles to leave without a pane ("No pane" in Apply panes), once every pick passed. */
+  release?: string[];
+}
+
+/** One open of a team's panes at a time: two would both pass the check on the
+ *  same assignments and the later would undo what the check allowed the earlier. */
+const oneOpenAtATime = oneAtATime();
+
 /** Refuses with every problem and changes nothing, else opens the new
  *  sessions and gives every listed role its pane; unlisted roles keep theirs. */
 export async function openTeamPanes(
@@ -216,68 +247,104 @@ export async function openTeamPanes(
   project: ProjectConfig,
   teamName: string,
   picks: PanePick[],
-  options: { replace: boolean; callerId?: string },
+  options: OpenPanesOptions,
 ): Promise<RolePanes> {
+  // Checked against the project as it is once the open before this one is done.
+  const { given, missed, failure, leftWithoutPane } = await oneOpenAtATime(`${project.slug}/${teamName}`, async () =>
+    openAndAssign(deps, projectBySlug(await deps.listProjects(), project.slug), teamName, picks, options),
+  );
+  const panes = await introduce(deps, project.slug, teamName, given);
+  if (missed.length) {
+    const which = panes.map((p, j) => `${p.role} ${j ? "" : "got "}${p.preset ? `its new pane (${p.paneId})` : "its pane"}`);
+    const why = failure?.message ?? "a picked pane closed before it got its role";
+    throw new Error([why, which.join(", "), `${missed.join(", ")} got none`].filter(Boolean).join("; "));
+  }
+  return { panes, leftWithoutPane };
+}
+
+async function openAndAssign(
+  deps: TeamPaneDeps,
+  project: ProjectConfig,
+  teamName: string,
+  picks: PanePick[],
+  options: OpenPanesOptions,
+): Promise<Assigned> {
   const { problems, targets } = await check(deps, project, teamName, picks, options);
   if (problems.length) throw new Error(`${problems.join("; ")}; nothing was opened`);
-  const store = openTeamStore(deps.teamHome, project.slug, teamName);
   const before = await rolesByPane(deps.teamHome, project);
-  const panes = targets.map((t, i) =>
-    t.kind === "new"
-      ? { id: deps.newPaneId(), presetId: t.preset.id, name: `${t.preset.name} - ${picks[i].role}` }
-      : { id: t.paneId, presetId: "", name: t.name },
-  );
-  const fresh = panes.filter((_, i) => targets[i].kind === "new");
+  const planned: Planned[] = picks.map(({ role }, i) => {
+    const target = targets[i];
+    const pane =
+      target.kind === "new"
+        ? { id: deps.newPaneId(), presetId: target.preset.id, name: `${target.preset.name} - ${role}` }
+        : { id: target.paneId, presetId: "", name: target.name };
+    return { role, target, pane };
+  });
+  const fresh = planned.filter((p) => p.target.kind === "new");
   // A reply can miss its deadline around the window's save: main picked the ids,
-  // so the project says which panes exist, and those get their roles, now or on the late reply.
+  // so the project says which panes exist, and those get their roles.
   const failure = fresh.length
-    ? await deps.openPanes(project.slug, fresh).then(
+    ? await deps.openPanes(project.slug, fresh.map((p) => p.pane)).then(
         () => null,
         (err: Error) => err,
       )
     : null;
-  const assign = async () => {
-    const current = projectBySlug(await deps.listProjects(), project.slug);
-    const got = panes.map((pane) => current.tabs.some((t) => t.id === pane.id));
-    if (failure && !fresh.some((p) => current.tabs.some((t) => t.id === p.id))) return null;
-    for (const [i, pick] of picks.entries()) if (got[i]) await assignRole(deps.teamHome, current, teamName, pick.role, panes[i].id);
-    const after = await rolesByPane(deps.teamHome, current);
-    const { running } = await store.state();
-    const given = await Promise.all(
-      picks.flatMap((pick, i): Promise<RolePane>[] => {
-        if (!got[i]) return [];
-        const target = targets[i];
-        return [
-          (async () => {
-            const hold = running ? await startedHold(deps, panes[i].id) : null;
-            const notReached = running ? (hold ?? (await deps.introduce(project.slug, teamName, pick.role))) : null;
-            return {
-              role: pick.role,
-              paneId: panes[i].id,
-              name: panes[i].name,
-              preset: target.kind === "new" ? target.preset.name : null,
-              notReached,
-            };
-          })(),
-        ];
-      }),
-    );
-    const missed = picks.filter((_, i) => !got[i]).map((p) => p.role);
-    if (failure && missed.length) {
-      const which = given.map((p, j) => `${p.role} ${j ? "" : "got "}${p.preset ? `its new pane (${p.paneId})` : "its pane"}`);
-      throw new Error(`${failure.message}; ${which.join(", ")}; ${missed.join(", ")} got none`);
-    }
-    const stillPlays = new Set([...after.values()].map((p) => `${p.team}/${p.role}`));
-    const leftWithoutPane = [...before.values()]
-      .filter((p) => !stillPlays.has(`${p.team}/${p.role}`))
-      .map((p) => (p.team === teamName ? p.role : `${p.role} in team ${p.team}`));
-    return { panes: given, leftWithoutPane };
-  };
-  const result = await assign();
-  if (result) return result;
-  if (!(failure instanceof PaneOpenTimeout)) throw failure;
-  void failure.late.then(assign).catch((err) => console.warn("[aya] team panes not given their roles after a late reply:", err));
-  throw new Error(`${failure.message}; if it still opens them, their roles follow`);
+  const current = projectBySlug(await deps.listProjects(), project.slug);
+  const exists = (p: Planned) => current.tabs.some((t) => t.id === p.pane.id);
+  if (failure && !fresh.some(exists)) {
+    if (!(failure instanceof PaneOpenTimeout)) throw failure;
+    void failure.late
+      .then(() => oneOpenAtATime(`${project.slug}/${teamName}`, () => assignLate(deps, project.slug, teamName, fresh, before, options)))
+      .then((late) => introduce(deps, project.slug, teamName, late))
+      .catch((err) => console.warn("[aya] team panes not given their roles after a late reply:", err));
+    throw new Error(`${failure.message}; nothing was assigned; if it still opens them, the new panes get their roles`);
+  }
+  const given = planned.filter(exists);
+  for (const p of given) await assignRole(deps.teamHome, current, teamName, p.role, p.pane.id);
+  const release = options.release ?? [];
+  for (const role of release) await assignRole(deps.teamHome, current, teamName, role, null);
+  const after = await rolesByPane(deps.teamHome, current);
+  const stillPlays = new Set([...after.values()].map((p) => `${p.team}/${p.role}`));
+  const leftWithoutPane = [...before.values()]
+    .filter((p) => !stillPlays.has(`${p.team}/${p.role}`) && !(p.team === teamName && release.includes(p.role)))
+    .map((p) => (p.team === teamName ? p.role : `${p.role} in team ${p.team}`));
+  return { given, missed: planned.filter((p) => !exists(p)).map((p) => p.role), failure, leftWithoutPane };
+}
+
+/** After a late reply: only the new panes the window added get their roles, and
+ *  only if the picks still pass the check and each role still has the pane it had
+ *  when they were checked. Open panes picked with them are left as they are. */
+async function assignLate(
+  deps: TeamPaneDeps,
+  slug: string,
+  teamName: string,
+  fresh: Planned[],
+  before: Map<string, { team: string; role: string }>,
+  options: OpenPanesOptions,
+): Promise<Planned[]> {
+  const current = projectBySlug(await deps.listProjects(), slug);
+  const arrived = fresh.filter((p) => current.tabs.some((t) => t.id === p.pane.id));
+  if (!arrived.length) return [];
+  const recheck = arrived.map((p) => ({ role: p.role, target: `${NEW_TARGET}${p.pane.presetId}` }));
+  const { problems } = await check(deps, current, teamName, recheck, { ...options, release: [] });
+  if (problems.length) throw new Error(problems.join("; "));
+  const now = await openTeamStore(deps.teamHome, slug, teamName).assignments();
+  const had = (role: string) => [...before].find(([, p]) => p.team === teamName && p.role === role)?.[0];
+  const given = arrived.filter((p) => now[p.role] === had(p.role));
+  for (const p of given) await assignRole(deps.teamHome, current, teamName, p.role, p.pane.id);
+  return given;
+}
+
+/** In a running team, each pane is told its role once its agent has started. */
+async function introduce(deps: TeamPaneDeps, slug: string, teamName: string, given: Planned[]): Promise<RolePane[]> {
+  const { running } = await openTeamStore(deps.teamHome, slug, teamName).state();
+  return Promise.all(
+    given.map(async ({ role, target, pane }) => {
+      const hold = running ? await startedHold(deps, pane.id) : null;
+      const notReached = running ? (hold ?? (await deps.introduce(slug, teamName, role))) : null;
+      return { role, paneId: pane.id, name: pane.name, preset: target.kind === "new" ? target.preset.name : null, notReached };
+    }),
+  );
 }
 
 export function formatOpened(team: string, result: RolePanes, state: { running: boolean; paused: boolean }): string {

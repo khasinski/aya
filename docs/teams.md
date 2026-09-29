@@ -76,8 +76,14 @@ that shows the project (`teams:open-panes`) to add them as tabs named
 `<preset> - <role>`; the window saves the project and answers
 (`teams:panes-opened`, 10 s deadline). A reply that misses the deadline
 still leaves the tabs the window saved: main reloads the project and assigns
-every pane it finds, and says which roles got none. A window that cannot
-save the project removes the tabs again. Then each role is assigned with the
+every pane it finds, and says which roles got none, as it does for a picked
+pane that closed meanwhile. When the window saved none by the deadline,
+nothing is assigned; a late reply gives only its new panes their roles, and
+only if the check still passes and the role still has the pane it had. A
+window that cannot save the project removes the tabs again. Opens of one team
+run one at a time, each checked against what the one before assigned; Apply
+panes sends its "No pane" rows in the same call, released only once every
+pick passed. Then each role is assigned with the
 Teams window's `assignRole`; in a running team a new pane is told its role
 once its agent has drawn its composer (up to 20 s). Start stays the user's:
 `aya team start <team> ["task"] [--to role]` runs the Teams window's Start

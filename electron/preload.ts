@@ -91,7 +91,7 @@ const api: AyaApi = {
   teamReleasePane: (projectSlug, paneId) => ipcRenderer.invoke("teams:release-pane", projectSlug, paneId),
   teamDraftRole: (team, roleId, intelligence) => ipcRenderer.invoke("teams:draft-role", team, roleId, intelligence),
   teamPresets: () => ipcRenderer.invoke("teams:presets"),
-  teamOpenPanes: (projectSlug, team, panes) => ipcRenderer.invoke("teams:open-panes", projectSlug, team, panes),
+  teamOpenPanes: (projectSlug, team, panes, release) => ipcRenderer.invoke("teams:open-panes", projectSlug, team, panes, release),
   onTeamOpenPanes: (handler) => {
     const listener = (_e: unknown, request: TeamOpenPanesRequest) => handler(request);
     ipcRenderer.on("teams:open-panes", listener);

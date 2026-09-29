@@ -622,7 +622,8 @@ export interface AyaApi {
   /** The presets, each with whether its CLI is installed (aya presets). */
   teamPresets(): Promise<PresetChoice[]>;
   /** Gives each role a new session or an existing pane (aya team open --replace). */
-  teamOpenPanes(projectSlug: string, team: string, panes: PanePick[]): Promise<RolePanes>;
+  /** `release`: roles left without a pane, applied with the picks after they pass the check. */
+  teamOpenPanes(projectSlug: string, team: string, panes: PanePick[], release?: string[]): Promise<RolePanes>;
   /** Main asks this window to add panes as tabs; answer with teamPanesOpened. */
   onTeamOpenPanes(handler: (request: TeamOpenPanesRequest) => void): () => void;
   teamPanesOpened(requestId: string, error: string | null): Promise<void>;
