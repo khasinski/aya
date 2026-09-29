@@ -113,8 +113,20 @@ export const KILL_ESCALATE_MS = 750;
 // both spawn, orphaning the first. We mark an id as spawning across the await
 // so a racing call bails instead of starting a second process. A kill that
 // lands meanwhile cancels THAT spawn: the flag lives on its own entry, so no
-// other spawn call can consume it and no timer can expire it.
-const spawning = new Map<string, { cancelled: boolean }>();
+// other spawn call can consume it and no timer can expire it. `done` settles
+// when the spawn does, so a restart that meets a cancelled flight can wait it
+// out instead of being dropped (see spawnPty).
+interface SpawnFlight {
+  cancelled: boolean;
+  done: Promise<void>;
+}
+const spawning = new Map<string, SpawnFlight>();
+
+function newFlight(): [SpawnFlight, () => void] {
+  let settle!: () => void;
+  const done = new Promise<void>((resolve) => (settle = resolve));
+  return [{ cancelled: false, done }, settle];
+}
 // Waiters for input parked on an in-flight spawn. Buffering is not delivery: a
 // failed spawn discards the queue, so each waiter gets the real outcome.
 const spawnWaiters = new Map<string, ((delivered: boolean) => void)[]>();
@@ -442,7 +454,8 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     }
     return;
   }
-  if (spawning.has(req.ptyId)) {
+  const inFlight = spawning.get(req.ptyId);
+  if (inFlight && !inFlight.cancelled) {
     // A spawn for this id is already in flight (a concurrent re-mount got here
     // first, before it could register its PTY). Bail BEFORE the attachOnly
     // branch: the in-flight spawn owns the session and will stream to the
@@ -450,6 +463,15 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     // stopped. (Checked before attachOnly so the host is robust regardless of
     // the renderer's confirmed-output gating.)
     ptyLog.append("spawn-dropped-in-flight", { ptyId: req.ptyId });
+    return;
+  }
+  if (inFlight) {
+    // The flight was killed (a restart: kill, then spawn the same id) but is
+    // still in its preflight. Dropping this spawn would leave the tab with no
+    // process and no event. Take the id over now, so a later kill cancels THIS
+    // spawn and a re-mount meanwhile is dropped, wait for the old flight to
+    // return, then start over from the top.
+    await takeOverCancelledFlight(req, sink, inFlight);
     return;
   }
   if (req.attachOnly) {
@@ -524,7 +546,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
   // call bails at the guard above. (The bail itself lives before the attachOnly
   // branch; here we only claim the marker, synchronously before the first await
   // so no racing call can interleave before it is set.)
-  const flight = { cancelled: false };
+  const [flight, settleFlight] = newFlight();
   spawning.set(req.ptyId, flight);
   const cancelled = (): boolean => {
     if (flight.cancelled) ptyLog.append("spawn-cancelled", { ptyId: req.ptyId });
@@ -560,6 +582,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
               listOpencodeSessions(userShell(), dir, envWithAssignments(safeEnv(req, cwd), assignments)),
             (err) =>
               ptyLog.append("opencode-session-lookup-failed", { ptyId: req.ptyId, error: String(err) }),
+            () => ptyLog.append("opencode-session-none", { ptyId: req.ptyId }),
           );
     if (cancelled()) return;
     const argv = shellArgv(command, cwd);
@@ -711,14 +734,53 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       sink.sendPtyEvent({ type: "exit", ptyId: req.ptyId, exitCode });
     });
   } finally {
-    spawning.delete(req.ptyId);
-    // Covers every early return above (preflight failure, spawn error,
-    // shutdown): the spawn window is over, so nothing may keep holding input
-    // for it. On the success path the flush already emptied this.
-    pendingWrites.delete(req.ptyId);
-    // A live PTY means the flush ran; anything else discarded the queue.
-    settleSpawnWaiters(req.ptyId, ptys.has(req.ptyId));
+    // A restart may have taken the id over while this (cancelled) spawn was in
+    // preflight: the entry and any input queued since belong to it then.
+    if (spawning.get(req.ptyId) === flight) {
+      spawning.delete(req.ptyId);
+      // Covers every early return above (preflight failure, spawn error,
+      // shutdown): the spawn window is over, so nothing may keep holding input
+      // for it. On the success path the flush already emptied this.
+      endSpawnWindow(req.ptyId);
+    }
+    settleFlight();
   }
+}
+
+/** Drop input held for a spawn window that is over; a live PTY means the flush
+ *  ran, anything else discarded the queue. */
+function endSpawnWindow(ptyId: string): void {
+  pendingWrites.delete(ptyId);
+  settleSpawnWaiters(ptyId, ptys.has(ptyId));
+}
+
+async function takeOverCancelledFlight(
+  req: SpawnRequest,
+  sink: PtyEventSink,
+  prior: SpawnFlight,
+): Promise<void> {
+  const [flight, settleFlight] = newFlight();
+  spawning.set(req.ptyId, flight);
+  ptyLog.append("spawn-waits-cancelled", { ptyId: req.ptyId });
+  try {
+    await prior.done;
+  } finally {
+    if (spawning.get(req.ptyId) === flight) spawning.delete(req.ptyId);
+    settleFlight();
+  }
+  if (flight.cancelled) {
+    // Killed again while waiting (the tab closed after all): start nothing.
+    ptyLog.append("spawn-cancelled", { ptyId: req.ptyId });
+    if (!spawning.has(req.ptyId)) endSpawnWindow(req.ptyId);
+    return;
+  }
+  // Synchronous up to its first await, so nothing interleaves between the
+  // delete above and it claiming the id again; input typed while this waited
+  // stays queued for it.
+  await spawnPty(req, sink);
+  // An early return before its claim (attach-only, bad cwd) leaves no window
+  // to flush the queue; unless a newer spawn owns the id by now, end it here.
+  if (!spawning.has(req.ptyId)) endSpawnWindow(req.ptyId);
 }
 
 /** The PTY's current size and whether its screen is the alternate one; null
@@ -842,6 +904,9 @@ export function killPty(ptyId: string): void {
     const flight = spawning.get(ptyId);
     if (flight) {
       flight.cancelled = true;
+      // What was typed into the killed spawn goes nowhere, even if a restart
+      // takes the id over before this spawn returns.
+      endSpawnWindow(ptyId);
       return;
     }
     pendingKills.add(ptyId);
