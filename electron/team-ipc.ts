@@ -37,7 +37,11 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
     teamRunner.stopAll();
   });
   void teamRunner.restore().catch((err) => console.warn("[aya] team rounds not restored:", err));
-  for (const action of ["start", "pause", "resume"] as const) {
+  ipcMain.handle("teams:start", (_e, slug: unknown, team: unknown, task: unknown) => {
+    const text = task === undefined || task === null || task === "" ? undefined : requireString(task, "teams:start.task");
+    return teamRunner.start(requireString(slug, "teams:start.projectSlug"), requireString(team, "teams:start.team"), text ? { text } : undefined);
+  });
+  for (const action of ["pause", "resume"] as const) {
     const channel = `teams:${action}`;
     ipcMain.handle(channel, (_e, slug: unknown, team: unknown) =>
       teamRunner[action](requireString(slug, `${channel}.projectSlug`), requireString(team, `${channel}.team`)),

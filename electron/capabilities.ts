@@ -138,10 +138,13 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   },
   {
     command: "team start",
-    usage: "aya team start team",
-    summary: "Start a team as the Teams window's Start does: every role's pane is checked, then gets the delivery test; the team's rounds begin.",
+    usage: 'aya team start team ["task"] [--to role]',
+    summary:
+      "Start a team as the Teams window's Start does: every role's pane is checked, then gets the delivery test; the team's rounds begin. A task then goes to --to, else the cadence role, else the first role, as a message from the user.",
+    example: 'aya team start ux-fix "make the timer pausable"',
     notes: [
-      "Start a team only when the user asks for it.",
+      "Start a team only when the user asks for it; ask the user for the task first.",
+      "It prints who got the task.",
       "If a role's pane is missing or busy, nothing is sent and each such role is named.",
     ],
   },

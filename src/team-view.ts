@@ -4,6 +4,8 @@ import type { RolePanes, TeamMessage, TeamStartResult, TeamSummary } from "./typ
 
 // The sender electron/team-runner.ts logs Aya's own messages under.
 export const AYA_SENDER = "aya";
+// The sender of a task given with Start; electron/teams.ts TEAM_USER_SENDER.
+export const USER_SENDER = "user";
 // How many of the latest logged messages a team card shows.
 export const TEAM_LOG_VISIBLE = 8;
 
@@ -46,7 +48,10 @@ export function messageDeliveryText(m: Pick<TeamMessage, "from" | "delivered" | 
 /** The line under a team after Start; null when every role got the test. */
 export function startSummary(result: TeamStartResult): string | null {
   if (!result.started) return "Not started, nothing was sent: fix the roles marked below, then Start again.";
-  return result.held.length ? "Started; the roles marked below did not get the delivery test." : null;
+  const task = result.task;
+  if (!result.held.length) return task ? `Started; task sent to ${task.to}.` : null;
+  const given = task ? (task.held ? ` The task for ${task.to} waits in its inbox: ${task.held}.` : ` Task sent to ${task.to}.`) : "";
+  return `Started; the roles marked below did not get the delivery test.${given}`;
 }
 
 /** Select values are aya team open targets: a new session of a preset, or a pane. */

@@ -36,7 +36,10 @@ Usage:
                                      Give roles a pane: target is a preset
                                      (new session), this, or a pane name/id;
                                      new:preset / pane:name when both match
-  aya team start team                Start a team, as the Teams window's Start
+  aya team start team ["task"] [--to role]
+                                     Start a team as the Teams window's Start;
+                                     a task goes to --to, the cadence role
+                                     or the first role
   aya presets [--json]               List presets and whether each is installed
   aya capabilities                   Print these commands as JSON, for agents
 EOF
@@ -145,7 +148,9 @@ function requestFromArgs() {
   if (kind === "team-guide" || kind === "team-save" || kind === "team-open" || kind === "team-start") {
     const scope = { projectSlug: optionalEnv("AYA_PROJECT_SLUG"), cwd: process.cwd() };
     if (kind === "team-guide") return { type: kind, description: process.argv[4] || undefined, ...scope };
-    if (kind === "team-start") return { type: kind, team: process.argv[4], ...scope };
+    if (kind === "team-start") {
+      return { type: kind, team: process.argv[4], task: process.argv[5] || undefined, to: process.argv[6] || undefined, ...scope };
+    }
     const replace = process.argv[5] === "replace";
     if (kind === "team-save") return { type: kind, text: process.argv[4], replace, ...scope };
     const panes = process.argv.slice(6).map((pair) => {
@@ -457,11 +462,37 @@ case "$command" in
         send_control team-save "$text" "$replace"
         ;;
       start)
-        if [ "$#" -ne 1 ]; then
+        team=""
+        task=""
+        to=""
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --to)
+              if [ "$#" -lt 2 ]; then
+                usage
+                exit 1
+              fi
+              to="$2"
+              shift 2
+              ;;
+            *)
+              if [ -z "$team" ]; then
+                team="$1"
+              elif [ -z "$task" ]; then
+                task="$1"
+              else
+                usage
+                exit 1
+              fi
+              shift
+              ;;
+          esac
+        done
+        if [ -z "$team" ] || { [ -n "$to" ] && [ -z "$task" ]; }; then
           usage
           exit 1
         fi
-        send_control team-start "$1"
+        send_control team-start "$team" "$task" "$to"
         ;;
       open)
         replace=""

@@ -92,9 +92,11 @@ and fixes the UX"), you write the team file:
   `aya team open <team> <role>=<target> ...`. Never open panes without it.
   A problem is printed and nothing is opened. A role with a live pane, or a
   pane that plays another role, needs `--replace`; no pane is ever closed.
-- Start the team only when the user asks: `aya team start <team>` (the same
-  Start as in Teams). If a role's pane is missing or busy, nothing is sent
-  and each such role is named.
+- Then ask the user whether to start the team now, and with what task. Only
+  on the user's word run `aya team start <team> "<task>"` (the same Start as
+  in Teams). The task goes to the cadence role, else the first role
+  (`--to <role>` picks another); it prints who got it. If a role's pane is
+  missing or busy, nothing is sent and each such role is named.
 
 ## Guardrails
 

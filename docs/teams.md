@@ -80,9 +80,13 @@ every pane it finds, and says which roles got none. A window that cannot
 save the project removes the tabs again. Then each role is assigned with the
 Teams window's `assignRole`; in a running team a new pane is told its role
 once its agent has drawn its composer (up to 20 s). Start stays the user's:
-`aya team start <team>` runs the Teams window's Start (the same pane check,
-nothing sent while a role is missing or busy), and the guide says to run it
-only when the user asks. A team saved with `aya team save` from a pane is
+`aya team start <team> ["task"] [--to role]` runs the Teams window's Start
+(the same pane check, nothing sent while a role is missing or busy); the
+guide has the agent ask whether to start and with what task, and run it only
+on the user's word. A task then goes, after the delivery tests, as a message
+from `user` (reserved like `aya`, and redelivered like a peer's message) to
+`--to`, else the cadence role that leads the rounds, else the first role;
+the output and the Teams window's Start (with its Task field) say who got it. A team saved with `aya team save` from a pane is
 marked as the agent's, so the window's "Assign team roles?" prompt does not
 compete with the agent's proposal; a team that arrives with a pull still
 gets the prompt.

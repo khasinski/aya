@@ -330,7 +330,7 @@ aya team new "a team that reviews and fixes the UX"   # guide for an agent
 aya team save ux-fix.md                                # check and save it
 aya presets                                            # presets, installed or not
 aya team open ux-fix reviewer=claude fixer=codex tester=this  # give roles panes
-aya team start ux-fix                                  # as the Teams window's Start
+aya team start ux-fix "make the timer pausable"        # Start, with a task
 
 # Every command above, as JSON, for an agent to read
 aya capabilities
@@ -411,8 +411,11 @@ open ux-fix reviewer=claude fixer=claude tester=this`. Each role gets a new
 session of a preset (several roles can share one preset, each in its own
 pane), the agent's own pane (`this`), or an open pane by name. If a pane is
 named like a preset id, Aya asks for `new:<preset>` or `pane:<name>`. Aya checks
-every pick first and opens nothing on a problem. You press **Start**, or ask
-the agent to run `aya team start ux-fix`. In the
+every pick first and opens nothing on a problem. Then the agent asks whether
+to start and with what task; on your word it runs `aya team start ux-fix
+"make the timer pausable"` (or you press **Start**, with an optional task).
+The task goes to the cadence role, else the first role, and Aya says who
+got it. In the
 teams window, each role's pane list offers the same: open panes, labelled
 with the role they already play ("shell 1 (plays tester)"), and `New: <preset>`; **Apply panes** applies
 the picks.

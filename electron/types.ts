@@ -606,7 +606,7 @@ export interface AyaApi {
   getCodexUsage(): Promise<UsageAccount[]>;
   getGrokUsage(): Promise<GrokUsage | null>;
   /** Start a team: unpause, send every role a delivery test, arm its rounds. */
-  teamStart(projectSlug: string, team: string): Promise<TeamStartResult>;
+  teamStart(projectSlug: string, team: string, task?: string): Promise<TeamStartResult>;
   teamPause(projectSlug: string, team: string): Promise<void>;
   teamList(projectSlug: string): Promise<TeamSummary[]>;
   /** Save team: writes .aya/teams/<name>.md and the snapshot Aya runs on.
@@ -818,6 +818,8 @@ export interface TeamStartResult {
   started: boolean;
   delivered: string[];
   held: { role: string; reason: string }[];
+  /** The task given with Start: who got it, and why it waits in the inbox, if it does. */
+  task: { to: string; held: string | null } | null;
 }
 
 /** A role this one sends to, and what it sends there (may be empty). */

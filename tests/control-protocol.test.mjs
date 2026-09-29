@@ -237,3 +237,16 @@ test("presets and team-open parse: json and replace only when true, every pick a
   assert.throws(() => open({ team: " " }), { message: "team-open needs a team" });
   assert.throws(() => open({ panes: [{ role: "a" }] }), { message: "each pane needs a role and a target" });
 });
+
+test("team-start parses its team, and a task and --to only when given", () => {
+  assert.deepEqual(parseControlRequest({ type: "team-start", team: "ux", projectSlug: "game" }), { type: "team-start", team: "ux", projectSlug: "game", cwd: undefined });
+  assert.deepEqual(parseControlRequest({ type: "team-start", team: "ux", task: "fix it", to: "tester" }), {
+    type: "team-start",
+    team: "ux",
+    task: "fix it",
+    to: "tester",
+    projectSlug: undefined,
+    cwd: undefined,
+  });
+  assert.throws(() => parseControlRequest({ type: "team-start" }), { message: "team-start needs a team" });
+});

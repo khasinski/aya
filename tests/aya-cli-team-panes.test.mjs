@@ -123,7 +123,13 @@ for (const shell of SHELLS) {
     assert.equal(request.team, "ux-fix");
     assert.equal(request.projectSlug, "game");
     assert.ok(request.cwd.endsWith(dir.split("/").pop()), request.cwd);
-    for (const args of [["team", "start"], ["team", "start", "a", "b"]]) {
+    const withTask = await aya(["team", "start", "--to", "tester", "ux-fix", "fix the login"], { shell });
+    assert.equal(withTask.status, 0);
+    assert.deepEqual([withTask.request.team, withTask.request.task, withTask.request.to], ["ux-fix", "fix the login", "tester"]);
+    const taskFirst = await aya(["team", "start", "ux-fix", "fix it", "--to", "tester"], { shell });
+    assert.deepEqual([taskFirst.request.task, taskFirst.request.to], ["fix it", "tester"]);
+    assert.equal(request.task, undefined);
+    for (const args of [["team", "start"], ["team", "start", "a", "b", "c"], ["team", "start", "a", "--to"], ["team", "start", "--to", "x"]]) {
       const refused = await aya(args, { shell });
       assert.equal(refused.status, 1, args.join(" "));
       assert.match(refused.stderr, /Usage/);

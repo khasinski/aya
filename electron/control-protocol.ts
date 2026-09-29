@@ -18,7 +18,7 @@ export type TeamAuthorRequest =
 export type TeamPanesRequest =
   | { type: "presets"; json: boolean }
   | ({ type: "team-open"; team: string; panes: PanePick[]; replace: boolean } & TeamAuthorScope)
-  | ({ type: "team-start"; team: string } & TeamAuthorScope);
+  | ({ type: "team-start"; team: string; task?: string; to?: string } & TeamAuthorScope);
 
 export type ControlRequest =
   | { type: "open"; path: string }
@@ -137,7 +137,9 @@ export function parseControlRequest(value: unknown): ControlRequest {
   if (type === "team-start") {
     const team = optionalString(value.team);
     if (!team) throw new Error("team-start needs a team");
-    return { type, team, projectSlug: optionalString(value.projectSlug), cwd: optionalString(value.cwd) };
+    const task = optionalString(value.task);
+    const to = optionalString(value.to);
+    return { type, team, ...(task ? { task } : {}), ...(to ? { to } : {}), projectSlug: optionalString(value.projectSlug), cwd: optionalString(value.cwd) };
   }
   if (type === "capabilities") return { type };
   if (type === "notify") {

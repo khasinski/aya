@@ -37,7 +37,7 @@ export interface TeamPaneDeps extends PaneHost, Pick<TeamControlDeps, "teamHome"
   /** The Teams window's own introduction of an assigned role (TeamRunner). */
   introduce: (projectSlug: string, team: string, role: string) => Promise<string | null>;
   /** The Teams window's Start (TeamRunner). */
-  start: (projectSlug: string, team: string) => Promise<TeamStartResult>;
+  start: (projectSlug: string, team: string, task?: { text: string; to?: string }) => Promise<TeamStartResult>;
   /** Test-only override of PANE_START_WAIT_MS. */
   startWaitMs?: number;
 }
@@ -49,7 +49,7 @@ export function teamPaneDeps(team: TeamControlDeps, host: PaneHost, runner: Pick
     listProjects: team.listProjects,
     holdReason: team.holdReason,
     introduce: (slug, name, role) => runner.introduce(slug, name, role),
-    start: (slug, name) => runner.start(slug, name),
+    start: (slug, name, task) => runner.start(slug, name, task),
   };
 }
 
@@ -303,7 +303,10 @@ export async function handleTeamPanesRequest(
     return { output: request.json ? `${JSON.stringify(choices, null, 2)}\n` : formatPresets(choices) };
   }
   const project = await callerProject(await deps.listProjects(), callerId, request);
-  if (request.type === "team-start") return { output: await startTeam(deps, project, request.team) };
+  if (request.type === "team-start") {
+    const task = request.task ? { text: request.task, to: request.to } : undefined;
+    return { output: await startTeam(deps, project, request.team, task) };
+  }
   if (!project) throw new Error("run aya team open in an Aya pane, or in the directory of a project open in Aya; nothing was opened");
   const result = await openTeamPanes(deps, project, request.team, request.panes, { replace: request.replace, callerId });
   const state = await openTeamStore(deps.teamHome, project.slug, request.team).state();
@@ -311,15 +314,16 @@ export async function handleTeamPanesRequest(
 }
 
 /** `aya team start`: the Teams window's Start, refused for a team already running. */
-async function startTeam(deps: TeamPaneDeps, project: ProjectConfig | null, name: string): Promise<string> {
+async function startTeam(deps: TeamPaneDeps, project: ProjectConfig | null, name: string, task?: { text: string; to?: string }): Promise<string> {
   if (!project) throw new Error("run aya team start in an Aya pane, or in the directory of a project open in Aya; nothing was sent");
   const names = await teamNames(project);
   if (!names.includes(name)) throw new Error(`no team "${name}" in this project; its teams: ${names.join(", ") || "none"}; nothing was sent`);
   if ((await openTeamStore(deps.teamHome, project.slug, name).state()).running) throw new Error(`team ${name} is already running; nothing was sent`);
-  const result = await deps.start(project.slug, name);
+  const result = await deps.start(project.slug, name, task);
   const held = result.held.map((h) => `${h.role}: ${h.reason}`).join("; ");
   if (!result.started) throw new Error(`team ${name} was not started, nothing was sent; ${held}`);
-  return `started team ${name}; delivery test written to ${result.delivered.join(", ") || "no role"}${held ? `; not written to ${held}` : ""}\n`;
+  const given = result.task ? (result.task.held ? `; task for ${result.task.to} waits in its inbox: ${result.task.held}` : `; task sent to ${result.task.to}`) : "";
+  return `started team ${name}; delivery test written to ${result.delivered.join(", ") || "no role"}${held ? `; not written to ${held}` : ""}${given}\n`;
 }
 
 /** How long a window's reply is still acted on after its deadline. */

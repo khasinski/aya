@@ -73,7 +73,12 @@ test("Start's summary line names what the marked roles mean", () => {
     startSummary({ started: true, delivered: [], held }),
     "Started; the roles marked below did not get the delivery test.",
   );
-  assert.equal(startSummary({ started: true, delivered: ["dev"], held: [] }), null);
+  assert.equal(startSummary({ started: true, delivered: ["dev"], held: [], task: null }), null);
+  assert.equal(startSummary({ started: true, delivered: ["dev"], held: [], task: { to: "dev", held: null } }), "Started; task sent to dev.");
+  assert.equal(
+    startSummary({ started: true, delivered: [], held, task: { to: "dev", held: "busy" } }),
+    "Started; the roles marked below did not get the delivery test. The task for dev waits in its inbox: busy.",
+  );
 });
 
 test("a pane in a role's select names the role it plays, in this team or another", () => {

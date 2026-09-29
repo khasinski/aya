@@ -192,6 +192,13 @@ const USE_CASES = [
     assigned: { tester: "pane-x" },
   },
   {
+    name: "... or as this",
+    assignments: { reviewer: "pane-c" },
+    picks: "reviewer=this",
+    opens: [],
+    assigned: { reviewer: "pane-c" },
+  },
+  {
     name: "... or by its name",
     assignments: { tester: "pane-x" },
     picks: "tester=codex-pane-by-name",
@@ -725,6 +732,74 @@ test("aya team start refuses outside a project and for a team that is not there"
       () => handleTeamPanesRequest({ type: "team-start", team: "nope" }, "pane-c", t.deps),
       /^Error: no team "nope" in this project; its teams: ux-review; nothing was sent$/,
     );
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("who gets the task: --to, else the cadence role, else the first role; an unknown --to starts nothing", async (s) => {
+  const { taskRecipient } = await import("../dist-electron/team-runner.js");
+  const { parseTeamFile } = await import("../dist-electron/teams.js");
+  const plain = parseTeamFile("ux-review", TEAM);
+  const paced = parseTeamFile("ux-review", `${TEAM}\n## Cadence\ntester every 30 min\n`);
+  const rows = [
+    ["no cadence, no --to", plain, undefined, "reviewer"],
+    ["cadence, no --to", paced, undefined, "tester"],
+    ["no cadence, --to", plain, "implementer", "implementer"],
+    ["cadence, --to", paced, "implementer", "implementer"],
+    ["no cadence, unknown --to", plain, "qa", /^team ux-review has no role "qa"; its roles: reviewer, implementer, tester; nothing was started$/],
+    ["cadence, unknown --to", paced, "qa", /^team ux-review has no role "qa"/],
+  ];
+  for (const [name, team, to, expected] of rows) {
+    await s.test(name, () => {
+      if (expected instanceof RegExp) assert.throws(() => taskRecipient(team, to), { message: expected });
+      else assert.equal(taskRecipient(team, to), expected);
+    });
+  }
+});
+
+test("aya team start with a task: team state x task x a role held; the task goes only to a started team", async (s) => {
+  const readiness = { "every role ready": READINESS["every role ready"], "a role held": READINESS["a role held"] };
+  for (const [teamState, state] of Object.entries(TEAM_STATES)) {
+    for (const task of [undefined, "fix the login"]) {
+      for (const [ready, options] of Object.entries(readiness)) {
+        await s.test(`${teamState}, ${task ? "a task" : "no task"}, ${ready}`, async () => {
+          const t = setup({ state, ...options });
+          const start = () => handleTeamPanesRequest({ type: "team-start", team: "ux-review", ...(task ? { task } : {}) }, "pane-c", t.deps);
+          const taskMessages = () => t.typed.filter((m) => m.text.includes("fix the login"));
+          try {
+            if (teamState === "running" || ready === "a role held") {
+              await assert.rejects(start);
+              assert.deepEqual(taskMessages(), [], "no task without a start");
+              return;
+            }
+            const { output } = await start();
+            assert.equal(output.endsWith(task ? "; task sent to reviewer\n" : "tester\n"), true, output);
+            if (!task) return assert.deepEqual(taskMessages(), []);
+            assert.equal(taskMessages().length, 1);
+            assert.equal(taskMessages()[0].pane, "pane-c");
+            assert.match(taskMessages()[0].text, /^\[team ux-review \| from user \| \d\d:\d\d\] fix the login$/);
+            const log = await t.store.log();
+            assert.equal(log.at(-1).from, "user");
+            assert.equal(log.at(-1).to, "reviewer");
+          } finally {
+            t.cleanup();
+          }
+        });
+      }
+    }
+  }
+});
+
+test("aya team start --to an unknown role starts nothing", async () => {
+  const t = setup({ ...READINESS["every role ready"] });
+  try {
+    await assert.rejects(
+      () => handleTeamPanesRequest({ type: "team-start", team: "ux-review", task: "x", to: "qa" }, "pane-c", t.deps),
+      /^Error: team ux-review has no role "qa"; its roles: reviewer, implementer, tester; nothing was started$/,
+    );
+    assert.equal(t.typed.length, 0);
+    assert.equal((await t.store.state()).running, false);
   } finally {
     t.cleanup();
   }

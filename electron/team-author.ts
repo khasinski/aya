@@ -53,7 +53,7 @@ const ID_RULE = `lowercase letters a-z, digits and dashes, starting with a lette
 const GUIDE = `Define an Aya team for this project. A team is a few roles; each role is an agent in its own Aya pane, and the roles message each other with: aya team send <role> "text". You write the team file; Aya checks it and saves it.
 
 Steps
-1. Look at the project before choosing roles: its README, how it is built, run and tested, and the code the request is about. Choose roles from what this project needs and what the user asked for. Two or three roles are usually enough; add one only for work no other role covers.
+1. Look at the project before choosing roles: its README, how it is built, run and tested, and the code the request is about. Choose roles from what this project needs and what the user asked for. Two or three roles are usually enough; add one only for work no other role covers. Put first the role that takes the user's request and hands out the work.
 2. Write the team file in the format below. Do not write .aya/teams/<name>.md yourself: the save writes it.
 3. Save it: aya team save <draft-file>
    Or give it on stdin: aya team save -  (a quoted heredoc, <<'EOF', keeps $ and backticks as written).
@@ -63,7 +63,7 @@ Steps
    aya presets lists this Aya's presets, the agent each runs and whether its CLI is installed; aya pane list lists the panes already open. Propose to the user which pane plays which role, one role per pane. A role can take a new session of an installed preset (several roles may take the same preset: each gets its own pane), this pane you run in, or a pane already open. Different agents for roles that check each other's work can help. Then wait for the user's yes, and with it run:
    aya team open <team> <role>=<target> [<role>=<target> ...]
    where <target> is a preset id, this, or a pane's name or id. If a pane is named like a preset id, it says so: write new:<preset> or pane:<name>. Never open panes without the user's yes. If it prints a problem, nothing was opened: fix what it names and run it again.
-6. Start the team only when the user asks: aya team start <team> (the user can also press Start in the Teams window).
+6. Ask the user whether to start the team now, and with what task. Run it only on the user's word: aya team start <team> "<task>". The task goes to the cadence role, else the first role (--to <role> picks another), and it prints who got the task. The user can also press Start in the Teams window.
 
 The team file
 - The first line is "# <name>". The name is the team's file name: ${ID_RULE}.

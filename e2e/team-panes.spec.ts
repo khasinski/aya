@@ -94,14 +94,17 @@ test.describe("one Claude Code pane, where the user asks for a team", () => {
     expect(teamState(seeded.ayaHome, "teams/e2e-proj/ux-fix")).toEqual({ agentAuthored: true });
     await expect.poll(() => Object.values(ids).every((id) => started(seeded.projectDir, id)), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toBe(true);
 
-    const start = aya(["team", "start", "ux-fix"]);
+    const start = aya(["team", "start", "ux-fix", "make the timer pausable"]);
     expect(start.stderr).toBe("");
-    expect(start.stdout).toBe("started team ux-fix; delivery test written to reviewer, fixer, tester\n");
+    // The example team's cadence role leads the rounds, so it takes the task.
+    expect(start.stdout).toBe("started team ux-fix; delivery test written to reviewer, fixer, tester; task sent to reviewer\n");
     await expect(card.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
     const log = teamLog(seeded.projectDir);
     for (const id of Object.values(ids)) {
       await expect.poll(() => log(id), { timeout: TEAM_DELIVERY_TIMEOUT_MS }).toMatch(/Delivery test: run aya team whoami/);
     }
+    await expect.poll(() => log(ids.reviewer)).toMatch(/Delivery test[\s\S]*\[team ux-fix \| from user \| \d\d:\d\d\] make the timer pausable/);
+    expect(log(ids.fixer)).not.toMatch(/make the timer pausable/);
     expect(log("tab-left")).not.toMatch(/Delivery test/);
     await expect(rows).toHaveCount(4);
   });
@@ -179,8 +182,15 @@ test.describe("a team saved with no panes", () => {
     await expect(tester.locator("option:checked")).toHaveText("Claude Code - tester");
     await expect(dialog.getByRole("button", { name: "Apply panes" })).toBeDisabled();
     await expect.poll(() => started(seeded.projectDir, assigned.implementer), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toBe(true);
+    await expect.poll(() => started(seeded.projectDir, assigned.tester), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toBe(true);
     await expect(window.locator(".aya-sidebar-row")).toHaveCount(4);
     expect(teamState(seeded.ayaHome)).toBeNull();
+
+    // Start with a task: the team has no cadence, so its first role takes it.
+    await dialog.getByLabel("Task for ux-review").fill("retest the login");
+    await dialog.getByRole("button", { name: "Start", exact: true }).click();
+    await expect(dialog.getByText("Started; task sent to tester.")).toBeVisible();
+    await expect.poll(() => teamLog(seeded.projectDir)(assigned.tester), { timeout: TEAM_DELIVERY_TIMEOUT_MS }).toMatch(/from user \| \d\d:\d\d\] retest the login/);
   });
 });
 
