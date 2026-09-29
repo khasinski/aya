@@ -302,3 +302,43 @@ test("only .md files in .aya/teams are teams", async () => {
     t.cleanup();
   }
 });
+
+test("two concurrent creates of one new team: exactly one wins, the other is told it exists", async () => {
+  const { TeamExistsError } = await import("../dist-electron/team-admin.js");
+  const t = setup();
+  try {
+    const other = { ...TEAM, roles: [{ ...TEAM.roles[0], mustNot: "touch the build" }, TEAM.roles[1]] };
+    const results = await Promise.allSettled([
+      saveTeam(t.teamHome, t.project, TEAM, { create: true }),
+      saveTeam(t.teamHome, t.project, other, { create: true }),
+    ]);
+    const won = results.filter((r) => r.status === "fulfilled");
+    const lost = results.filter((r) => r.status === "rejected");
+    assert.equal(won.length, 1);
+    assert.equal(lost.length, 1);
+    assert.ok(lost[0].reason instanceof TeamExistsError);
+    const winner = results[0].status === "fulfilled" ? TEAM : other;
+    const [team] = await listTeams(t.teamHome, t.project);
+    assert.deepEqual(team.definition, winner);
+    assert.equal(team.repoChanged, false);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a save queued behind a refused create still runs", async () => {
+  const t = setup();
+  try {
+    const edit = { ...TEAM, roles: [{ ...TEAM.roles[0], mustNot: "edit the tests" }, TEAM.roles[1]] };
+    const results = await Promise.allSettled([
+      saveTeam(t.teamHome, t.project, TEAM, { create: true }),
+      saveTeam(t.teamHome, t.project, TEAM, { create: true }),
+      saveTeam(t.teamHome, t.project, edit),
+    ]);
+    assert.deepEqual(results.map((r) => r.status), ["fulfilled", "rejected", "fulfilled"]);
+    const [team] = await listTeams(t.teamHome, t.project);
+    assert.deepEqual(team.definition, edit);
+  } finally {
+    t.cleanup();
+  }
+});
