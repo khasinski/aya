@@ -41,6 +41,19 @@ A 22-round reviewer/implementer UX session hit:
 - **Log and inbox**: every message is logged in `~/.aya/teams/`, outside
   the repo. Start team sends a delivery test.
 
+## Define a team from an agent
+
+`aya team new [description]` prints a guide for any agent CLI: where the
+file goes, the format with a complete example, every rule the parser
+enforces, and the two mistakes seen in drafted roles (a must-not that
+forbids the role's own work, a long what). The rule values are printed from
+the parser's constants, and a test saves the guide's example. The agent
+writes the file and runs `aya team save <file|->`: main parses it, then
+saves it through the same `saveTeam` as **Save team** (repo file and the
+copy Aya runs), so it reaches agents at once. Scope: the calling pane's
+project, else `AYA_PROJECT_SLUG`, else the open project the cwd is in. An
+existing name needs `--replace`, as the window edits rather than creates.
+
 ## When Aya does not type a message
 
 A message waits in the receiver's inbox, and goes out by itself once the

@@ -71,6 +71,19 @@ follow its responsibilities and never do what it says you must not do.
 - If a send says the message waits in the inbox, the other pane was busy with
   something Enter would disturb; do not retry in a loop.
 
+## Define A Team From An Agent
+
+When the user asks for a team of agents ("aya team new - a team that reviews
+and fixes the UX"), you write the team file:
+
+- Run `aya team new "<what the team is for>"` and follow the guide it prints:
+  the format, every rule Aya checks, and an example.
+- Look at the project before choosing roles.
+- Save with `aya team save <file>` (or `aya team save -` with the file on
+  stdin). A problem is printed and nothing is saved; fix it and save again.
+- If the team already exists, ask the user before `--replace`.
+- Then tell the user to give each role a pane and press Start in Teams.
+
 ## Guardrails
 
 - Only use the public `aya` CLI. Do not inspect Claude, Codex, or provider auth files, quota files, hidden logs, or internal process state.

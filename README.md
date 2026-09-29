@@ -320,6 +320,8 @@ aya pane send "reviewer" --no-submit "draft for review"
 aya team whoami
 aya team send implementer "Round 5: the alert freezes at zero"
 aya team inbox
+aya team new "a team that reviews and fixes the UX"   # guide for an agent
+aya team save ux-fix.md                                # check and save it
 
 # Every command above, as JSON, for an agent to read
 aya capabilities
@@ -337,7 +339,7 @@ Aya also counts, per harness, how many panes ever called `aya` at all; the
 numbers are under `cliAdoption` in Settings -> Diagnostics.
 
 To tell an agent the CLI exists, turn on "Tell the agent about aya" on its
-preset (Settings -> Presets; off by default). It adds a five-line note that
+preset (Settings -> Presets; off by default). It adds a six-line note that
 points at `aya capabilities`, through whatever channel the harness has:
 Claude gets it via `--append-system-prompt` and Grok via `--rules` at launch,
 opencode via `OPENCODE_CONFIG_CONTENT` (added to your own instructions, in Aya
@@ -378,6 +380,21 @@ plain shell. That message waits for `aya team inbox` instead, and the sender is
 told why. "Written to the pane" is not proof the agent read it. **Pause** stops
 the rounds and all sends; **Resume** brings them back. Teams work on local
 panes only.
+
+#### Define a team from an agent
+
+Ask the agent in any pane, whatever its CLI, for the team you want: "aya team
+new - a team for this project that reviews and fixes the UX of the game". The
+agent runs `aya team new "<what the team is for>"`, which prints a guide: the
+team file format with a complete example, every rule Aya checks, and what
+makes a role work (a must-not never forbids the role's own work, a route says
+in a few words what it carries). The agent looks at the project, writes the
+file and runs `aya team save <file>` (or `aya team save -` with the file on
+stdin). Aya checks it the way **Save team** does: on a problem it prints it,
+saves nothing and exits 1; otherwise it writes `.aya/teams/<name>.md`, saves
+the team in Aya, and prints each role and who it sends to. The teams window
+shows it within seconds, ready for panes and **Start**. An existing team is
+overwritten only with `--replace`.
 
 ### Open remote projects
 

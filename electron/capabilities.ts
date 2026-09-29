@@ -106,6 +106,23 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     summary: "Print messages for your role that could not be typed into your pane.",
   },
   {
+    command: "team new",
+    usage: "aya team new [description]",
+    summary: "Print a guide for writing a team file for this project: the format, its rules and an example; save the file with aya team save.",
+    example: 'aya team new "a team that reviews and fixes the UX"',
+    notes: ["Run it when the user asks for a team; look at the project before choosing roles."],
+  },
+  {
+    command: "team save",
+    usage: "aya team save [--replace] file|-",
+    summary: "Check a team file and save it in Aya, as the Teams window's Save team does; - reads it from stdin.",
+    example: "aya team save /tmp/ux-fix.md",
+    notes: [
+      "Prints each role and who it sends to, or the problem; a refused file saves nothing.",
+      "An existing team needs --replace; ask the user first.",
+    ],
+  },
+  {
     command: "capabilities",
     usage: "aya capabilities",
     summary: "Print this list as JSON.",
