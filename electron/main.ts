@@ -175,6 +175,7 @@ import {
 import { readRepoProjectConfig } from "./project-local";
 import { repairProcessPath } from "./shell-path";
 import { paneReadText } from "./pane-render";
+import { HOLD_STARTING } from "./pane-holds";
 import { PtyHostClient } from "./pty-host-client";
 import { PTY_HOST_SCRIPT_NAME } from "./pty-host-staleness";
 import { reapStaleHostRecords } from "./pty-host-registry";
@@ -270,7 +271,9 @@ const paneOpens = new RendererRequests();
 const teamPaneHost: PaneHost = {
   listPresets,
   presetInstalled,
-  paneAlive: async (terminalId) => (await ptyHost.getSize(terminalId)) !== null,
+  // A pane still in its spawn preflight has no PTY yet but is live all the same.
+  paneAlive: async (terminalId) =>
+    (await ptyHost.getSize(terminalId)) !== null || (await ptyHost.holdReason(terminalId)) === HOLD_STARTING,
   // The window that shows the project adds the tabs; main picked their ids.
   openPanes: (projectSlug, panes) => {
     const windowId = windowSlices.windowOf(projectSlug);

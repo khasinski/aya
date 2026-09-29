@@ -25,7 +25,7 @@ process.env.XDG_DATA_HOME = join(root, "xdg-data");
 process.env.SHELL = "/bin/sh";
 process.env.PATH = `${bin}:/usr/bin:/bin`;
 
-const { activePtyCount, killPty, spawnPty } = await import("../dist-electron/pty.js");
+const { activePtyCount, isPtyStarting, killPty, spawnPty } = await import("../dist-electron/pty.js");
 
 test("a kill that lands during the opencode lookup stops the spawn", async () => {
   const sink = { events: [], sendPtyEvent(e) { this.events.push(e); }, isDestroyed: () => false };
@@ -125,4 +125,15 @@ test("a kill with no spawn under way still drops the next spawn of that id", asy
   assert.equal(activePtyCount(), 0);
   const log = readFileSync(join(process.env.AYA_HOME, "pty-events.log"), "utf8");
   assert.match(log, /"ev":"spawn-dropped-pending-kill","ptyId":"kill-before-spawn"/);
+});
+
+test("a pane in its lookup is starting, and stops being so once killed", async () => {
+  const sink = { events: [], sendPtyEvent(e) { this.events.push(e); }, isDestroyed: () => false };
+  const ptyId = "starting-during-lookup";
+  const spawning = spawnPty({ ptyId, command: "opencode --continue", cwd, cols: 80, rows: 24 }, sink);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(isPtyStarting(ptyId), true, "a team must not treat a starting pane as gone");
+  killPty(ptyId);
+  assert.equal(isPtyStarting(ptyId), false);
+  await spawning;
 });

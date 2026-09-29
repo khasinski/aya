@@ -18,7 +18,7 @@ import {
   teamLog,
   teamSeed,
 } from "./helpers/team";
-import { firstTerminalShown } from "./helpers/terminal";
+import { firstTerminalShown, waitForShellReady } from "./helpers/terminal";
 import { TEAMS_REFRESH_MS } from "../src/hooks/useTeams";
 import { AGENT_TEST_TIMEOUT_MS } from "./timeouts";
 
@@ -206,7 +206,8 @@ test.describe("a running team whose tester has a live pane", () => {
 
   test("needs --replace; then the new session is told its role once it starts, and the old pane keeps running", async ({ window, seeded }) => {
     test.setTimeout(AGENT_TEST_TIMEOUT_MS);
-    await firstTerminalShown(window);
+    // The tester's pane must be running, not just drawn, to count as live.
+    await waitForShellReady(window);
     const aya = cli(seeded.ayaHome);
 
     const refused = aya(["team", "open", "ux-review", "tester=claude"]);

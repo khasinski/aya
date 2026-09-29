@@ -785,6 +785,13 @@ async function takeOverCancelledFlight(
 
 /** The PTY's current size and whether its screen is the alternate one; null
  *  once the pane is gone. */
+/** True while a spawn for this id is in its preflight and not cancelled: the
+ *  pane has no PTY yet, but it is coming. */
+export function isPtyStarting(ptyId: string): boolean {
+  const flight = spawning.get(ptyId);
+  return flight !== undefined && !flight.cancelled;
+}
+
 export function getPtySize(ptyId: string): PaneSize | null {
   const p = ptys.get(ptyId);
   return p ? { cols: p.cols, rows: p.rows, alt: vtPaneAltScreen(ptyId) } : null;
