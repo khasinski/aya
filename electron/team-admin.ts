@@ -84,6 +84,15 @@ function refuseLossy(team: TeamDefinition, text: string): void {
   }
 }
 
+export class TeamExistsError extends Error {
+  constructor(
+    name: string,
+    readonly file: string,
+  ) {
+    super(`team "${name}" already exists; edit it instead`);
+  }
+}
+
 /** `create`: a new team, refused when one with its name already exists. */
 export async function saveTeam(
   teamHome: string,
@@ -95,9 +104,7 @@ export async function saveTeam(
   const text = serializeTeam(team);
   refuseLossy(team, text);
   const file = teamFile(project, team.name);
-  if (create && (await fs.stat(file).then(() => true, () => false))) {
-    throw new Error(`team "${team.name}" already exists; edit it instead`);
-  }
+  if (create && (await fs.stat(file).then(() => true, () => false))) throw new TeamExistsError(team.name, file);
   await writeFileAtomic(file, text);
   const store = openTeamStore(teamHome, project.slug, team.name);
   await store.saveDefinition(text);

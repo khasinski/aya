@@ -12,6 +12,8 @@ export const ROLE_DRAFT_CHAT = { temperature: 0.2, maxTokens: 400, timeoutMs: 90
 export const RESPONSIBILITIES_MAX = 400;
 export const MUST_NOT_MAX = 120;
 export const WHAT_MAX = 60;
+/** How long a route's what should be, for the model and the team guide alike. */
+export const WHAT_WORDS = "2 to 6 words";
 const SYSTEM = "You define roles for a team of coding agents working in terminal panes. Return JSON only.";
 
 function clip(text: string, max: number): string {
@@ -47,8 +49,8 @@ export function roleDraftPrompt(team: TeamDefinition, roleId: string): string {
     "responsibilities: two or three plain sentences on what this role does each round.",
     `mustNot: one mistake a ${name} is tempted to make, as a short phrase. Never forbid the work its name says it does.`,
     sends.length
-      ? `sendsTo: exactly these roles: ${sends.join(", ")}, each with what it sends them in 2 to 6 words.`
-      : "sendsTo: the roles it sends to, choose only from the other roles, each with what it sends them in 2 to 6 words.",
+      ? `sendsTo: exactly these roles: ${sends.join(", ")}, each with what it sends them in ${WHAT_WORDS}.`
+      : `sendsTo: the roles it sends to, choose only from the other roles, each with what it sends them in ${WHAT_WORDS}.`,
   ].join("\n");
 }
 
