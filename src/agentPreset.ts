@@ -45,7 +45,7 @@ const AGENT_SPECS: Record<Exclude<Agent, "custom">, AgentSpec> = {
     binary: /^claude(?:\s|$)/,
     continueLatest: "--continue",
     sessionResume: (id) => `--resume ${id}`,
-    resumeFlag: /(?:^|\s)(?:-c|--continue|-r|--resume)(?:\s|$)/,
+    resumeFlag: /(?:^|\s)(?:-c|--continue|-r|--resume|--session-id)(?:[=\s]|$)/,
   },
   codex: {
     binary: /^codex(?:\s|$)/,

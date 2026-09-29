@@ -3,7 +3,7 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { writeFileAtomic } from "./atomic-write";
+import { atomicTempPath, writeFileAtomic } from "./atomic-write";
 import { OWNER_ONLY_FILE_MODE } from "./paths";
 import { ID_RE } from "./teams";
 import type { TeamMessage } from "./types";
@@ -26,6 +26,11 @@ const TEAM_FILES = {
   log: "log.jsonl",
   read: "read.json",
 } as const;
+
+// The log keeps its newest messages only; ids go on counting, so read marks and
+// unread messages (always among the newest) are unaffected.
+export const TEAM_LOG_MAX_ENTRIES = 2_000;
+export const TEAM_LOG_KEEP_ENTRIES = 1_000;
 
 type StateFile = { paused?: boolean; started?: boolean; lastRound?: unknown };
 
@@ -132,23 +137,44 @@ export class TeamStore {
     return readText(this.file(TEAM_FILES.saved));
   }
 
+  /** A torn or hand-edited line is skipped, not fatal to the whole team. */
   async log(): Promise<TeamMessage[]> {
-    return ((await readText(this.file(TEAM_FILES.log))) ?? "")
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as TeamMessage);
+    const entries: TeamMessage[] = [];
+    for (const line of ((await readText(this.file(TEAM_FILES.log))) ?? "").split("\n")) {
+      if (!line) continue;
+      try {
+        const entry = JSON.parse(line) as TeamMessage;
+        if (entry && Number.isSafeInteger(entry.id)) entries.push(entry);
+      } catch {
+        // skipped
+      }
+    }
+    return entries;
   }
 
   append(message: Omit<TeamMessage, "id" | "time">): Promise<TeamMessage> {
     return this.serial(async () => {
-      const last = (await this.log()).at(-1);
-      const entry: TeamMessage = { id: (last?.id ?? 0) + 1, time: new Date().toISOString(), ...message };
+      const log = await this.log();
+      const entry: TeamMessage = { id: (log.at(-1)?.id ?? 0) + 1, time: new Date().toISOString(), ...message };
       await fs.mkdir(this.dir, { recursive: true });
-      await fs.appendFile(this.file(TEAM_FILES.log), `${JSON.stringify(entry)}\n`, {
-        mode: OWNER_ONLY_FILE_MODE,
-      });
+      if (log.length >= TEAM_LOG_MAX_ENTRIES) {
+        const kept = [...log.slice(-(TEAM_LOG_KEEP_ENTRIES - 1)), entry];
+        // Owner-only from the first byte: messages may hold secrets.
+        const tmp = atomicTempPath(this.file(TEAM_FILES.log));
+        await fs.writeFile(tmp, kept.map((m) => `${JSON.stringify(m)}\n`).join(""), { mode: OWNER_ONLY_FILE_MODE });
+        await fs.rename(tmp, this.file(TEAM_FILES.log));
+      } else {
+        await fs.appendFile(this.file(TEAM_FILES.log), `${JSON.stringify(entry)}\n`, {
+          mode: OWNER_ONLY_FILE_MODE,
+        });
+      }
       return entry;
     });
+  }
+
+  /** How many messages `from` sent since `sinceMs` (epoch ms). */
+  async sentSince(from: string, sinceMs: number): Promise<number> {
+    return (await this.log()).filter((m) => m.from === from && Date.parse(m.time) >= sinceMs).length;
   }
 
   async unread(role: string): Promise<TeamMessage[]> {

@@ -16,6 +16,8 @@ const REMOVE_RETRY_DELAY_MS = 100;
 export const PTY_HOST_SHUTDOWN_TIMEOUT_MS = 1_000;
 /** How long to wait for a host to actually exit before killing it. */
 export const PTY_HOST_EXIT_TIMEOUT_MS = 5_000;
+/** How long a SIGKILLed host may still show up in the process table. */
+const PTY_HOST_REAP_TIMEOUT_MS = 2_000;
 export const APP_GRACEFUL_CLOSE_TIMEOUT_MS = 1_000;
 export const APP_PROCESS_EXIT_TIMEOUT_MS = 2_000;
 
@@ -65,9 +67,14 @@ export function hostPidsForHome(ayaHome: string): number[] {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   }).stdout;
+  // Matched as whole " KEY=value" words, so a home with a space in it still
+  // matches, and a longer home that starts with this one does not.
   return (out ?? "")
     .split("\n")
-    .filter((line) => line.includes("pty-host.js") && line.split(/\s+/).includes(wanted))
+    .filter(
+      (line) =>
+        /\/pty-host\.js(\s|$)/.test(line) && (line.includes(` ${wanted} `) || line.endsWith(` ${wanted}`)),
+    )
     .map((line) => Number.parseInt(line.trim(), 10))
     .filter((pid) => Number.isInteger(pid) && pid > 0);
 }
@@ -87,7 +94,13 @@ export async function reapPtyHosts(ayaHome: string): Promise<void> {
   const pids = hostPidsForHome(ayaHome);
   if (pids.length === 0) return;
   await shutdownPtyHost(ayaHome, pids);
-  const leaked = hostPidsForHome(ayaHome);
+  // A SIGKILLed process lingers in the table until the kernel reaps it.
+  const deadline = Date.now() + PTY_HOST_REAP_TIMEOUT_MS;
+  let leaked = hostPidsForHome(ayaHome);
+  while (leaked.length > 0 && Date.now() < deadline) {
+    await delay(50);
+    leaked = hostPidsForHome(ayaHome);
+  }
   if (leaked.length > 0) {
     throw new Error(`pty host(s) ${leaked.join(", ")} of ${ayaHome} outlived the test`);
   }

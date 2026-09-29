@@ -215,3 +215,38 @@ test("openTeamStore opens the store in the team's directory, refusing a bad name
   assert.equal(openTeamStore("/home/aya", "game", "ux-review").dir, teamDir("/home/aya", "game", "ux-review"));
   assert.throws(() => openTeamStore("/home/aya", "game", "../x"), /bad team name "\.\.\/x"/);
 });
+
+test("a torn or hand-edited log line is skipped, not fatal", async () => {
+  const store = fresh();
+  try {
+    await store.append({ from: "tester", to: "implementer", commit: null, text: "one", delivered: false });
+    const { appendFileSync } = await import("node:fs");
+    appendFileSync(join(store.dir, "log.jsonl"), '{"id": 2, "from": "tes\nnot json\n');
+    const next = await store.append({ from: "tester", to: "implementer", commit: null, text: "two", delivered: false });
+    assert.equal(next.id, 2);
+    assert.deepEqual((await store.unread("implementer")).map((m) => m.text), ["one", "two"]);
+  } finally {
+    done(store);
+  }
+});
+
+test("the log keeps its newest messages once it grows past the cap; ids go on", async () => {
+  const { TEAM_LOG_MAX_ENTRIES, TEAM_LOG_KEEP_ENTRIES } = await import("../dist-electron/team-store.js");
+  const store = fresh();
+  try {
+    const line = (id) => JSON.stringify({ id, time: new Date(0).toISOString(), from: "a", to: "b", commit: null, text: "x", delivered: true });
+    writeFileSync(
+      join(store.dir, "log.jsonl"),
+      Array.from({ length: TEAM_LOG_MAX_ENTRIES }, (_, i) => `${line(i + 1)}\n`).join(""),
+    );
+    const entry = await store.append({ from: "a", to: "b", commit: null, text: "new", delivered: false });
+    assert.equal(entry.id, TEAM_LOG_MAX_ENTRIES + 1);
+    const log = await store.log();
+    assert.equal(log.length, TEAM_LOG_KEEP_ENTRIES);
+    assert.equal(log.at(-1).id, entry.id);
+    assert.equal(statSync(join(store.dir, "log.jsonl")).mode & 0o777, 0o600);
+    assert.deepEqual((await store.unread("b")).map((m) => m.text), ["new"]);
+  } finally {
+    done(store);
+  }
+});

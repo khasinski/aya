@@ -1504,6 +1504,7 @@ function TerminalViewComponent({
           historyAgent={findHistoryAgent}
           cwd={cwd}
           configDir={preset.configDir}
+          command={preset.command}
           onClearTerminalMatches={() => {
             try {
               searchRef.current?.clearDecorations();
@@ -1550,6 +1551,8 @@ interface FindBarProps {
   historyAgent: "claude" | "codex" | null;
   cwd: string;
   configDir?: string;
+  /** The preset's command: an inline CODEX_HOME there moves the history too. */
+  command?: string;
   /** Clears xterm search highlights when the bar switches to History mode. */
   onClearTerminalMatches: () => void;
 }
@@ -1575,6 +1578,7 @@ function FindBar({
   historyAgent,
   cwd,
   configDir,
+  command,
   onClearTerminalMatches,
 }: FindBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1605,7 +1609,7 @@ function FindBar({
     const seq = ++historySeqRef.current;
     const timer = window.setTimeout(() => {
       window.aya
-        .harnessSearch({ agent: historyAgent, cwd, configDir, query })
+        .harnessSearch({ agent: historyAgent, cwd, configDir, command, query })
         .then((results) => {
           if (historySeqRef.current !== seq) return; // stale response
           setHits(results);
@@ -1619,7 +1623,7 @@ function FindBar({
         });
     }, HISTORY_SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [historyActive, historyAgent, cwd, configDir, query]);
+  }, [historyActive, historyAgent, cwd, configDir, command, query]);
 
   const switchMode = (toHistory: boolean) => {
     if (toHistory === historyMode) return;

@@ -26,9 +26,10 @@ test("holdReason is null when the host holds nothing or answers something else",
   assert.equal(await clientAnswering(() => 5).client.holdReason("p"), null);
 });
 
-test("holdReason is null when an older host rejects the request", async () => {
+test("holdReason holds the message when the host cannot answer (fails closed)", async () => {
+  const { PANE_HOLD_UNKNOWN } = await import("../dist-electron/pty-host-client.js");
   const { client } = clientAnswering(() => {
     throw new Error("unknown request");
   });
-  assert.equal(await client.holdReason("p"), null);
+  assert.equal(await client.holdReason("p"), PANE_HOLD_UNKNOWN);
 });

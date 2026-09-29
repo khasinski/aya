@@ -80,3 +80,39 @@ test("watchClaudeSession stays quiet once stopped", async () => {
   rmSync(dir, { recursive: true, force: true });
   assert.equal(seen.length, 0);
 });
+
+test("watchClaudeSession with a cwd reports only a conversation Claude saved a transcript for", async () => {
+  const id = "8c57e24a-75d4-41b9-85e7-6465b1cae474";
+  const dir = configDir({ 7: JSON.stringify({ pid: 7, sessionId: id }) });
+  const cwd = "/Users/dev/my proj";
+  const seen = [];
+  const stop = watchClaudeSession(dir, 7, (s) => seen.push(s), 10, cwd);
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(seen.length, 0, "no transcript yet: resuming it would exit at once");
+    mkdirSync(join(dir, "projects", "-Users-dev-my-proj"), { recursive: true });
+    writeFileSync(join(dir, "projects", "-Users-dev-my-proj", `${id}.jsonl`), "{}\n");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  } finally {
+    stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
+  assert.ok(seen.length >= 1 && seen.every((s) => s === id));
+});
+
+test("a restore resuming a conversation Claude no longer has continues the latest instead", async () => {
+  const { withLiveClaudeResume } = await import("../dist-electron/claude-session.js");
+  const id = "8c57e24a-75d4-41b9-85e7-6465b1cae474";
+  const dir = configDir({});
+  try {
+    assert.equal(await withLiveClaudeResume(`claude --resume ${id}`, dir, "/p"), "claude --continue");
+    assert.equal(await withLiveClaudeResume(`claude --model opus --resume=${id}`, dir, "/p"), "claude --model opus --continue");
+    mkdirSync(join(dir, "projects", "-p"), { recursive: true });
+    writeFileSync(join(dir, "projects", "-p", `${id}.jsonl`), "{}\n");
+    assert.equal(await withLiveClaudeResume(`claude --resume ${id}`, dir, "/p"), `claude --resume ${id}`);
+    assert.equal(await withLiveClaudeResume("claude --continue", dir, "/p"), "claude --continue");
+    assert.equal(await withLiveClaudeResume("claude", dir, "/p"), "claude");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

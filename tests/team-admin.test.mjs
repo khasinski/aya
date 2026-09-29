@@ -150,6 +150,8 @@ test("a repo team never saved in Aya is listed from the file, marked as not yet 
     assert.match(teams[0].error, /Must not|two roles/);
     assert.equal(teams[0].definition, null);
     assert.equal(teams[0].repoChanged, false);
+    assert.equal(teams[0].unsaved, true, "only the repo has it");
+    assert.equal(teams[1].unsaved, false);
   } finally {
     t.cleanup();
   }

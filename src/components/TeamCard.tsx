@@ -70,6 +70,19 @@ export function TeamCard({
       </div>
       <ErrorLine error={error ?? team.error} />
       {summary && <div className="aya-teams-warning">{summary}</div>}
+      {team.unsaved && (
+        <div className="aya-teams-warning">
+          This team file is not saved in Aya yet, so no agent sees it and it cannot start. Read it, then save it to run it.
+          {team.repoDefinition && (
+            <button
+              className="aya-modal-btn"
+              onClick={() => act(() => window.aya.teamSave(project.slug, team.repoDefinition as TeamDefinition))}
+            >
+              Save this team
+            </button>
+          )}
+        </div>
+      )}
       {team.repoChanged && (
         <div className="aya-teams-warning">
           The repo file changed since this team was saved. Aya keeps running the saved version.

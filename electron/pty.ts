@@ -44,7 +44,7 @@ import { ptyLog } from "./pty-log";
 import { bundledAyaCliPath } from "./cli-path";
 import { envWithAssignments, leadingEnvAssignments } from "./shell-words";
 import { listOpencodeSessions, ownSessionCommand } from "./opencode-session";
-import { watchClaudeSession } from "./claude-session";
+import { watchClaudeSession, withLiveClaudeResume } from "./claude-session";
 
 // Timeout for the shell `command -v` existence check during spawn preflight.
 
@@ -578,17 +578,24 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
 
     if (cancelled()) return;
     // Here, not in main: only now is a real spawn certain (attach-only and
-    // re-mounts returned above), so the lookup is never paid for nothing.
-    // Through the pane's own shell and env: opencode may only be on the PATH
+    // re-mounts returned above), so no lookup is paid for nothing. opencode's
+    // goes through the pane's own shell and env: it may only be on the PATH
     // its startup files build.
-    const command = await ownSessionCommand(
-      req.command,
-      cwd,
-      (dir, assignments) =>
-        listOpencodeSessions(userShell(), dir, envWithAssignments(safeEnv(req, cwd), assignments)),
-      (err) =>
-        ptyLog.append("opencode-session-lookup-failed", { ptyId: req.ptyId, error: String(err) }),
-    );
+    const command =
+      req.agent === "claude"
+        ? await withLiveClaudeResume(
+            req.command,
+            req.agentConfigDir ?? agentConfigDirsFromCommand(req.command, cwd, ["CLAUDE_CONFIG_DIR"]).at(-1),
+            cwd,
+          )
+        : await ownSessionCommand(
+            req.command,
+            cwd,
+            (dir, assignments) =>
+              listOpencodeSessions(userShell(), dir, envWithAssignments(safeEnv(req, cwd), assignments)),
+            (err) =>
+              ptyLog.append("opencode-session-lookup-failed", { ptyId: req.ptyId, error: String(err) }),
+          );
     if (cancelled()) return;
     const argv = shellArgv(command, cwd);
     const file = argv[0];
@@ -715,6 +722,8 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
             req.agentConfigDir ?? agentConfigDirsFromCommand(req.command, cwd, ["CLAUDE_CONFIG_DIR"]).at(-1),
             child.pid,
             (sessionId) => sink.sendPtyEvent({ type: "osc-session", ptyId: req.ptyId, sessionId }),
+            undefined,
+            cwd,
           )
         : null;
 
@@ -747,13 +756,15 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
   }
 }
 
-/** The child's LIVE cwd, not the one it was spawned with (a `cd` moves it).
- *  null when unanswerable; callers fall back to the spawn cwd. */
+/** The PTY's current size and whether its screen is the alternate one; null
+ *  once the pane is gone. */
 export function getPtySize(ptyId: string): PaneSize | null {
   const p = ptys.get(ptyId);
   return p ? { cols: p.cols, rows: p.rows, alt: vtPaneAltScreen(ptyId) } : null;
 }
 
+/** The child's LIVE cwd, not the one it was spawned with (a `cd` moves it).
+ *  null when unanswerable; callers fall back to the spawn cwd. */
 export async function getPtyCwd(ptyId: string): Promise<string | null> {
   const p = ptys.get(ptyId);
   if (!p) return null;

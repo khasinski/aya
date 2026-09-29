@@ -2,7 +2,7 @@
 // conversation. Aya never learned a session id, so a restart gave every pane
 // `--continue` and they all opened the same, latest conversation.
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect } from "./fixtures";
 
@@ -26,6 +26,15 @@ test.use({
     ],
   },
 });
+
+/** The transcript Claude saves with a conversation's first message; Aya only
+ *  keeps an id it can resume. */
+function saveTranscript(root: string, projectDir: string, sessionId: string): void {
+  const slug = realpathSync(projectDir).replace(/[^a-zA-Z0-9]/g, "-");
+  const dir = join(root, "home", "claude-config", "projects", slug);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${sessionId}.jsonl`), "{}\n");
+}
 
 type Launch = { args: string[]; sessionId: string; pid: number };
 
@@ -60,6 +69,7 @@ test("each claude pane keeps its own session id and resumes it", async ({ window
   // /clear starts a new conversation and claude rewrites the file with it.
   const cleared = "0b2f3c4d-1111-4222-8333-944455556666";
   const leftPid = launches(projectDir, tabIds.left)[0].pid;
+  saveTranscript(seeded.root, projectDir, cleared);
   writeFileSync(
     join(seeded.root, "home", "claude-config", "sessions", `${leftPid}.json`),
     JSON.stringify({ pid: leftPid, sessionId: cleared }),
@@ -75,6 +85,7 @@ test("each claude pane keeps its own session id and resumes it", async ({ window
 
   // The restarted process is watched too: its next /clear still reaches Aya.
   const afterRestart = "7c8d9e0f-2222-4333-8444-a55566667777";
+  saveTranscript(seeded.root, projectDir, afterRestart);
   writeFileSync(
     join(seeded.root, "home", "claude-config", "sessions", `${restarted.pid}.json`),
     JSON.stringify({ pid: restarted.pid, sessionId: afterRestart }),
@@ -121,6 +132,7 @@ test.describe("after an update or reboot", () => {
     seedOptions: {
       fakeHome: true,
       tabSessionIds: { left, right },
+      claudeTranscriptsIn: "claude-config",
       presetList: [
         {
           id: "shell",
