@@ -127,3 +127,34 @@ test("removing a snippet (native confirm) drops it from disk", async ({
     })
     .toBe(false);
 });
+
+test.describe("at the snippet cap", () => {
+  const full = Array.from({ length: 200 }, (_, i) => ({
+    id: `s${i}`,
+    name: `s${i}`,
+    text: `echo ${i}`,
+    autoRun: false,
+  }));
+  test.use({ seedOptions: { snippetList: full } });
+
+  test("saving one more is refused with the limit shown, and nothing on disk changes", async ({
+    window,
+    app,
+    seeded,
+  }) => {
+    const settings = await openSnippets(app, window);
+    const rows = settings.locator(".aya-settings-snippet-row");
+    await expect(rows).toHaveCount(200);
+
+    await settings.locator(".aya-settings-add").click();
+    await rows.last().locator(".aya-settings-snippet-name").fill("one too many");
+    await rows.last().locator(".aya-settings-snippet-text").fill("echo 201");
+    await settings.locator(".aya-modal-btn--primary", { hasText: "Save" }).click();
+
+    await expect(settings.getByTestId("snippets-save-error")).toHaveText(
+      "Too many snippets: 201. Aya keeps at most 200 - delete some and save again.",
+    );
+    await expect(settings).toBeVisible();
+    expect(diskSnippets(seeded.ayaHome)).toEqual(full);
+  });
+});

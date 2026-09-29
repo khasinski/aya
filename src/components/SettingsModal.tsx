@@ -339,6 +339,7 @@ export function SettingsModal({
   const [themesDirty, setThemesDirty] = useState(false);
   const [presetsDirty, setPresetsDirty] = useState(false);
   const [snippetsDirty, setSnippetsDirty] = useState(false);
+  const [snippetsSaveError, setSnippetsSaveError] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
@@ -976,7 +977,14 @@ export function SettingsModal({
         await onSave(cleaned);
       }
       if (snippetsDirty) {
-        await onSaveSnippets(collectSnippets());
+        try {
+          await onSaveSnippets(collectSnippets());
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          setSnippetsSaveError(message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ""));
+          setActiveTab("snippets");
+          return;
+        }
       }
       if (themesDirty) {
         await onSaveThemes(themes, activeThemeId);
@@ -2558,6 +2566,11 @@ export function SettingsModal({
               Add snippet
             </button>
           </div>
+          {snippetsSaveError && (
+            <div className="aya-settings-errors" data-testid="snippets-save-error">
+              {snippetsSaveError}
+            </div>
+          )}
                 </div>
               </section>
             )}

@@ -90,6 +90,9 @@ export interface SeedOptions {
    *  (-> stopped/restartable) instead of auto-respawning. Consumed by the
    *  `app` fixture, not by seedEnv. */
   preStartPtyHost?: boolean;
+  /** Write ayaHome/snippets.json with these snippets instead of letting the
+   *  app seed its defaults. */
+  snippetList?: Array<{ id: string; name: string; text: string; autoRun: boolean }>;
 }
 
 function shellQuote(value: string): string {
@@ -156,6 +159,9 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
       { id: "shell", name: "Shell", icon: "$", color: "", command: "$SHELL" },
     ];
     writeFileSync(join(ayaHome, "presets.json"), JSON.stringify({ presets: presetList }, null, 2));
+  }
+  if (opts.snippetList) {
+    writeFileSync(join(ayaHome, "snippets.json"), JSON.stringify({ snippets: opts.snippetList }, null, 2));
   }
 
   const left = "tab-left";
