@@ -152,7 +152,7 @@ export const test = base.extend<{
         process.execPath,
         [join(APP_ROOT, "dist-electron", "pty-host.js")],
         {
-          env: { ...process.env, AYA_HOME: seeded.ayaHome },
+          env: { ...process.env, ...seeded.launchEnv, AYA_HOME: seeded.ayaHome },
           stdio: "ignore",
         },
       );

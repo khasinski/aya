@@ -74,3 +74,21 @@ test("attachOnly returns before command/cwd validation (no spawn-failed)", async
   assert.equal(sink.events.length, 1);
   assert.equal(sink.events[0].type, "no-session");
 });
+
+test("attachOnly never asks opencode for its sessions: the command is thrown away", async () => {
+  const { chmodSync, existsSync, writeFileSync } = await import("node:fs");
+  const bin = mkdtempSync(join(tmpdir(), "aya-fake-opencode-"));
+  const log = join(bin, "called");
+  writeFileSync(join(bin, "opencode"), `#!/bin/sh\ntouch '${log}'\necho '[]'\n`);
+  chmodSync(join(bin, "opencode"), 0o755);
+  const saved = process.env.PATH;
+  process.env.PATH = `${bin}:${saved}`;
+  try {
+    const sink = fakeSink();
+    await spawnPty(baseReq({ attachOnly: true, command: "opencode --continue" }), sink);
+    assert.equal(sink.events[0].type, "no-session");
+  } finally {
+    process.env.PATH = saved;
+  }
+  assert.equal(existsSync(log), false);
+});
