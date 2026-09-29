@@ -133,10 +133,10 @@ export function providerChat(
       );
 }
 
-/** Apple Intelligence through the bundled Swift helper's "chat" request. */
 /** How much of the Apple helper's stdout is read; a chat or summary reply is a few KB. */
 export const APPLE_HELPER_STDOUT_MAX_BYTES = 32 * 1024;
 
+/** Apple Intelligence through the bundled Swift helper's "chat" request. */
 export function appleChat(helper: string, system: string, user: string, opts: ChatOptions): Promise<ChatResult> {
   return new Promise((resolve) => {
     let stdout = "";

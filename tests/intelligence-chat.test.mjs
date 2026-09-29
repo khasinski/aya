@@ -69,6 +69,18 @@ test("openai without a base URL or model is a config error, not a request", asyn
 
 // Apple Intelligence runs through the bundled Swift helper; a script stands in.
 // `stdout` is what it prints; null means it never answers.
+// SIGKILL is sent before appleChat resolves; the exit itself can land a moment later.
+async function helperGone(file) {
+  for (const deadline = Date.now() + 3000; Date.now() < deadline; await new Promise((r) => setTimeout(r, 50))) {
+    try {
+      execFileSync("pgrep", ["-f", file]);
+    } catch {
+      return;
+    }
+  }
+  assert.fail("the helper still runs");
+}
+
 function fakeHelper(stdout, code = null) {
   const dir = mkdtempSync(join(tmpdir(), "aya-apple-"));
   const file = join(dir, "helper");
@@ -122,7 +134,7 @@ test("apple: a helper that never answers is killed at the timeout", async () => 
     const started = Date.now();
     assert.deepEqual(await appleChat(h.file, "s", "u", { ...OPTS, timeoutMs: 300 }), { ok: false, error: "timeout" });
     assert.ok(Date.now() - started < 3000);
-    assert.throws(() => execFileSync("pgrep", ["-f", h.file]), "the helper still runs");
+    await helperGone(h.file);
   } finally {
     h.done();
   }
@@ -132,7 +144,7 @@ test("apple: a helper that floods stdout is stopped at the cap, not read to the 
   const h = fakeHelper(null, `const b="x".repeat(${APPLE_HELPER_STDOUT_MAX_BYTES});const w=()=>process.stdout.write(b,w);w();`);
   try {
     assert.deepEqual(await appleChat(h.file, "s", "u", OPTS), { ok: false, error: "helper-output-too-large" });
-    assert.throws(() => execFileSync("pgrep", ["-f", h.file]), "the helper still runs");
+    await helperGone(h.file);
   } finally {
     h.done();
   }
