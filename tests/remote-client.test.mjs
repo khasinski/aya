@@ -1,16 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as net from "node:net";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const {
+  checkRemoteHealth,
   createRemoteDirectory,
   createRemoteProjectOnHost,
   listRemoteDirectory,
   listRemotePresets,
   recoverExistingRemoteProject,
+  REMOTE_TIMEOUTS,
 } = await import("../dist-electron/remote-client.js");
 
 // --- recoverExistingRemoteProject --------------------------------------------
@@ -85,14 +87,16 @@ exec sh -c "$1"
   };
 }
 
-function startRemoteSocket(handler) {
+function startRemoteSocket(handler, subdir = "") {
   const dir = mkdtempSync(join(tmpdir(), "aya-remote-client-"));
-  const socket = join(dir, "aya-remote.sock");
+  mkdirSync(join(dir, subdir), { recursive: true });
+  const socket = join(dir, subdir, "aya-remote.sock");
   const server = net.createServer(handler);
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(socket, () => {
       resolve({
+        dir,
         socket,
         cleanup: async () => {
           await new Promise((closeResolve) => server.close(closeResolve));
@@ -168,11 +172,11 @@ function remoteSnapshot() {
   };
 }
 
-async function withMockRemote(testFn) {
+async function withMockRemote(
+  testFn,
+  { subdir = "", envFor = (remote) => ({ AYA_REMOTE_SOCKET: remote.socket }) } = {},
+) {
   const fake = mkFakeSsh();
-  const previousPath = process.env.PATH;
-  const previousSocket = process.env.AYA_REMOTE_SOCKET;
-  process.env.PATH = fake.env.PATH;
   let requestBeforeSnapshot = false;
   let snapshotSent = false;
   const remote = await startRemoteSocket((socket) => {
@@ -228,19 +232,16 @@ async function withMockRemote(testFn) {
         }
       }
     });
-  });
-  process.env.AYA_REMOTE_SOCKET = remote.socket;
+  }, subdir);
   try {
-    await testFn({
-      get requestBeforeSnapshot() {
-        return requestBeforeSnapshot;
-      },
-    });
+    await withEnv({ PATH: fake.env.PATH, ...envFor(remote) }, () =>
+      testFn({
+        get requestBeforeSnapshot() {
+          return requestBeforeSnapshot;
+        },
+      }),
+    );
   } finally {
-    if (previousPath === undefined) delete process.env.PATH;
-    else process.env.PATH = previousPath;
-    if (previousSocket === undefined) delete process.env.AYA_REMOTE_SOCKET;
-    else process.env.AYA_REMOTE_SOCKET = previousSocket;
     fake.cleanup();
     await remote.cleanup();
   }
@@ -301,4 +302,115 @@ test("remote client sends mkdir and project:create through the mocked ssh bridge
       ["shell", "claude-yolo"],
     );
   });
+});
+
+// --- timeouts ----------------------------------------------------------------
+// The remote bridge gives up first and says the remote Aya is silent; the local
+// ssh kill is only a backstop for an ssh that never gets the bridge running.
+
+const SILENT_AYA = { bridgeMs: 300, sshKillMs: 60_000 };
+const HUNG_SSH = { bridgeMs: 60_000, sshKillMs: 1_000 };
+
+function mkHungSsh() {
+  const dir = mkdtempSync(join(tmpdir(), "aya-hung-ssh-"));
+  writeFileSync(join(dir, "ssh"), "#!/bin/sh\nexec sleep 30\n");
+  chmodSync(join(dir, "ssh"), 0o755);
+  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+async function withEnv(vars, fn) {
+  const previous = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+  for (const [k, v] of Object.entries(vars)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  try {
+    return await fn();
+  } finally {
+    for (const [k, v] of Object.entries(previous)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+function failedCheck(result) {
+  assert.equal(result.ok, false);
+  const failed = result.checks.filter((check) => !check.ok);
+  assert.equal(failed.length, 1);
+  return failed[0];
+}
+
+test("a silent remote Aya fails at the bridge timeout, before the ssh kill", async () => {
+  const fake = mkFakeSsh();
+  const remote = await startRemoteSocket((socket) => send(socket, remoteHello()));
+  try {
+    const started = Date.now();
+    const result = await withEnv(
+      { PATH: fake.env.PATH, AYA_REMOTE_SOCKET: remote.socket },
+      () => checkRemoteHealth("hostname", SILENT_AYA),
+    );
+    const elapsed = Date.now() - started;
+    const failed = failedCheck(result);
+    assert.equal(failed.stage, "aya-remote");
+    assert.equal(failed.message, "Remote Aya did not respond within 0.3s.");
+    assert.ok(elapsed >= SILENT_AYA.bridgeMs && elapsed < REMOTE_TIMEOUTS.bridgeMs, `took ${elapsed}ms`);
+    assert.deepEqual(
+      result.checks.map((check) => `${check.stage}:${check.ok}`),
+      ["ssh:true", "node:true", "aya-remote:false"],
+    );
+  } finally {
+    fake.cleanup();
+    await remote.cleanup();
+  }
+});
+
+test("an ssh that never starts the bridge is killed at the backstop and blamed on ssh", async () => {
+  const hung = mkHungSsh();
+  try {
+    const started = Date.now();
+    const result = await withEnv({ PATH: `${hung.dir}:${process.env.PATH}` }, () =>
+      checkRemoteHealth("hostname", HUNG_SSH),
+    );
+    const elapsed = Date.now() - started;
+    const failed = failedCheck(result);
+    assert.equal(failed.stage, "ssh");
+    assert.equal(failed.message, "ssh hostname did not finish within 1s.");
+    assert.ok(elapsed >= HUNG_SSH.sshKillMs, `took ${elapsed}ms`);
+  } finally {
+    hung.cleanup();
+  }
+});
+
+test("the ssh kill backstop leaves the bridge timeout room to report first", () => {
+  assert.ok(REMOTE_TIMEOUTS.sshKillMs - REMOTE_TIMEOUTS.bridgeMs >= 5_000);
+});
+
+// --- socket fallback ---------------------------------------------------------
+// Without AYA_REMOTE_SOCKET the bridge uses $AYA_HOME, else the installed Aya's
+// ~/.aya - AYA_DEV never reaches an ssh session (docs/remote-sessions.md).
+
+async function presetsViaFallback(subdir, envFor) {
+  let ids = [];
+  await withMockRemote(
+    async () => {
+      ids = (await listRemotePresets("hostname")).map((preset) => preset.id);
+    },
+    { subdir, envFor: (remote) => ({ AYA_REMOTE_SOCKET: undefined, ...envFor(remote.dir) }) },
+  );
+  return ids;
+}
+
+test("the bridge falls back to $AYA_HOME/aya-remote.sock", async () => {
+  const ids = await presetsViaFallback("", (dir) => ({ AYA_HOME: dir, HOME: "/nonexistent" }));
+  assert.deepEqual(ids, ["shell", "claude-yolo"]);
+});
+
+test("without AYA_HOME the bridge reaches ~/.aya even when AYA_DEV=1", async () => {
+  const ids = await presetsViaFallback(".aya", (dir) => ({
+    AYA_HOME: undefined,
+    AYA_DEV: "1",
+    HOME: dir,
+  }));
+  assert.deepEqual(ids, ["shell", "claude-yolo"]);
 });
