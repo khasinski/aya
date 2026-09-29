@@ -130,12 +130,28 @@ test("control server: an open that fails answers ok:false with the reason", asyn
   });
 });
 
-test("control server: an open that never settles answers ok:false after the bound", async () => {
-  const options = { getWindow: () => null, openProject: () => new Promise(() => {}), openTimeoutMs: 50 };
+test("control server: a slow open answers after the bound that it will still open, and still does", async () => {
+  let delivered = false;
+  const options = {
+    getWindow: () => null,
+    openProject: () =>
+      new Promise((resolve) =>
+        setTimeout(() => {
+          delivered = true;
+          resolve();
+        }, 150),
+      ),
+    openTimeoutMs: 50,
+  };
   await withServer(options, async (socket) => {
     const res = await rpc(socket, `${JSON.stringify({ type: "open", path: "/x" })}\n`);
-    assert.equal(res.ok, false);
-    assert.match(res.error, /not delivered within 0\.05 s/);
+    assert.deepEqual(res, {
+      ok: false,
+      error: "Aya is still loading after 0.05 s; the project will open once it has loaded",
+    });
+    assert.equal(delivered, false);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(delivered, true);
   });
 });
 
