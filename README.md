@@ -262,6 +262,12 @@ binary at `/opt/Aya/aya`, so add one if you want that cold-start workflow:
 sudo ln -s /opt/Aya/aya /usr/local/bin/aya-app
 ```
 
+When `AYA_SOCKET` or `AYA_HOME` names an instance other than the installed
+app's `~/.aya` (for example Aya Dev's `~/.aya-dev`, which panes inherit),
+`aya open` never launches the installed app: it waits up to 15 seconds for
+that instance's socket (`AYA_OPEN_WAIT_SECONDS` changes this), then fails
+with the socket path.
+
 ### Start terminals
 
 Each project gets launcher buttons for configured presets. First launch seeds
