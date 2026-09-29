@@ -42,7 +42,7 @@ import { userShell } from "./shell";
 import { getProcessCwd } from "./process-cwd";
 import { ptyLog } from "./pty-log";
 import { bundledAyaCliPath } from "./cli-path";
-import { watchClaudeSession } from "./claude-session";
+import { watchClaudeSession, withLiveClaudeResume } from "./claude-session";
 
 // Timeout for the shell `command -v` existence check during spawn preflight.
 
@@ -618,7 +618,15 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       return;
     }
 
-    const argv = shellArgv(req.command, cwd);
+    const command =
+      req.agent === "claude"
+        ? await withLiveClaudeResume(
+            req.command,
+            req.agentConfigDir ?? agentConfigDirsFromCommand(req.command, cwd, ["CLAUDE_CONFIG_DIR"]).at(-1),
+            cwd,
+          )
+        : req.command;
+    const argv = shellArgv(command, cwd);
     const file = argv[0];
     const args = argv.slice(1);
 
@@ -743,6 +751,8 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
             req.agentConfigDir ?? agentConfigDirsFromCommand(req.command, cwd, ["CLAUDE_CONFIG_DIR"]).at(-1),
             child.pid,
             (sessionId) => sink.sendPtyEvent({ type: "osc-session", ptyId: req.ptyId, sessionId }),
+            undefined,
+            cwd,
           )
         : null;
 
@@ -775,13 +785,15 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
   }
 }
 
-/** The child's LIVE cwd, not the one it was spawned with (a `cd` moves it).
- *  null when unanswerable; callers fall back to the spawn cwd. */
+/** The PTY's current size and whether its screen is the alternate one; null
+ *  once the pane is gone. */
 export function getPtySize(ptyId: string): PaneSize | null {
   const p = ptys.get(ptyId);
   return p ? { cols: p.cols, rows: p.rows, alt: vtPaneAltScreen(ptyId) } : null;
 }
 
+/** The child's LIVE cwd, not the one it was spawned with (a `cd` moves it).
+ *  null when unanswerable; callers fall back to the spawn cwd. */
 export async function getPtyCwd(ptyId: string): Promise<string | null> {
   const p = ptys.get(ptyId);
   if (!p) return null;

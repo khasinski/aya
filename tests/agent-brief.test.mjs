@@ -335,9 +335,10 @@ test("settings sync leaves a relative home's launch-written brief alone while it
     codexBriefSync([{ configDir: "../h/gone", command: "codex", agentBrief: true }], recorded, envHome, expand).remove,
     ["/other/sub/.codex/AGENTS.md", "/project/.codex/AGENTS.md"],
   );
+  // "." has no tail to tell its files by; a launch never writes there (codexBriefInProject).
   assert.deepEqual(
     codexBriefSync([{ configDir: ".", command: "codex", agentBrief: true }], recorded, envHome, expand).remove,
-    [],
+    [...recorded].sort(),
   );
   assert.deepEqual(
     codexBriefSync([{ configDir: "~/.a", command: "codex", agentBrief: true }, { command: "codex" }], [], envHome, expand),
@@ -354,4 +355,22 @@ test("settings sync keeps a shared file an absolute preset turned off while a re
   ];
   assert.deepEqual(codexBriefSync(presets, [file], "/env/codex-home", expand), { ensure: [], remove: [] });
   assert.deepEqual(codexBriefSync([presets[0]], [file], "/env/codex-home", expand), { ensure: [], remove: [file] });
+});
+
+test("an opted-out home's brief is removed even while a relative .codex preset opts in", async () => {
+  const { codexBriefSync } = await import("../dist-electron/agent-brief.js");
+  const presets = [
+    { command: "codex", agentBrief: false },
+    { configDir: ".codex", command: "codex", agentBrief: true },
+  ];
+  // ~/.codex/AGENTS.md ends in .codex too, but no launch of the relative preset wrote it.
+  assert.deepEqual(codexBriefSync(presets, [], "/Users/dev/.codex", expand).remove, ["/Users/dev/.codex/AGENTS.md"]);
+});
+
+test("a relative CODEX_HOME that is the project itself gets no brief written into it", async () => {
+  const { codexBriefInProject } = await import("../dist-electron/agent-brief.js");
+  assert.equal(codexBriefInProject("/p/repo/AGENTS.md", "/p/repo"), true);
+  assert.equal(codexBriefInProject("/p/AGENTS.md", "/p/repo/sub"), true);
+  assert.equal(codexBriefInProject("/p/repo/.codex/AGENTS.md", "/p/repo"), false);
+  assert.equal(codexBriefInProject("/Users/dev/.codex/AGENTS.md", "/p/repo"), false);
 });

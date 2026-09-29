@@ -16,6 +16,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { codexHomeFor } from "./agent-brief";
+import { claudeProjectDirName } from "./claude-session";
 import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath } from "./usage";
 import { CODEX_SESSIONS_SUBDIR, DEFAULT_CODEX_HOME } from "./usage-codex";
 
@@ -26,6 +27,8 @@ export interface HarnessSearchRequest {
   /** Preset's config-dir override (may be ~-relative); defaults to the
    *  agent's standard home (~/.claude / CODEX_HOME, else ~/.codex). */
   configDir?: string;
+  /** The preset's command; a leading CODEX_HOME=... there is codex's home. */
+  command?: string;
   query: string;
 }
 
@@ -76,11 +79,7 @@ interface SessionFile {
   size: number;
 }
 
-/** Claude Code's project-directory name for a cwd: every non-alphanumeric
- *  character becomes "-" (e.g. /Users/x/proj → -Users-x-proj). */
-export function claudeProjectDirName(cwd: string): string {
-  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
-}
+export { claudeProjectDirName };
 
 /** Injected wrappers, command echoes, and context blobs recorded as "user"
  *  messages that no human typed — not worth surfacing as history hits. */
@@ -248,8 +247,9 @@ async function codexSessionCwd(file: string): Promise<string | null> {
 async function codexSessionFiles(
   cwd: string,
   configDir: string | undefined,
+  command: string | undefined,
 ): Promise<SessionFile[]> {
-  const home = codexHomeFor({ configDir }, DEFAULT_CODEX_HOME, expandUserPath, cwd);
+  const home = codexHomeFor({ configDir, command }, DEFAULT_CODEX_HOME, expandUserPath, cwd);
   if (!home) return [];
   const root = path.join(home, CODEX_SESSIONS_SUBDIR);
   const all: { file: string; mtimeMs: number; size: number }[] = [];
@@ -397,7 +397,7 @@ export async function searchHarnessSessions(
   const sessions =
     req.agent === "claude"
       ? await claudeSessionFiles(req.cwd, req.configDir)
-      : await codexSessionFiles(req.cwd, req.configDir);
+      : await codexSessionFiles(req.cwd, req.configDir, req.command);
   const hits: HarnessSearchHit[] = [];
   for (const session of sessions) {
     if (session.size > MAX_TRANSCRIPT_BYTES) continue;

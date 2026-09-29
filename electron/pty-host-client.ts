@@ -28,6 +28,10 @@ export const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
 // Interval between socket-existence polls while waiting (ms).
 const PTY_HOST_SOCKET_POLL_INTERVAL_MS = 50;
 const DISPOSED_MESSAGE = "PTY host client is disposed";
+// holdReason when the terminal host cannot say; the message waits in the inbox.
+// A host kept from before an update does not know the request: say the fix.
+export const PANE_HOLD_UNKNOWN =
+  "cannot be checked: the terminal host did not answer (after an update, use Settings > Diagnostics > PTY host > Restart)";
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -179,14 +183,15 @@ export class PtyHostClient {
     return typeof result === "string" ? result : "";
   }
 
-  /** Why a message must not be typed into the pane now, or null. A host from
-   *  an older build does not know the request; that also reads as null. */
+  /** Why a message must not be typed into the pane now, or null. Fails closed:
+   *  a host that does not answer (or predates the request) cannot vouch that
+   *  Enter will not answer an approval prompt. */
   async holdReason(ptyId: string): Promise<string | null> {
     try {
       const result = await this.request({ id: 0, type: "hold", ptyId });
       return typeof result === "string" ? result : null;
     } catch {
-      return null;
+      return PANE_HOLD_UNKNOWN;
     }
   }
 

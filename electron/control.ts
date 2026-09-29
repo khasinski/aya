@@ -16,7 +16,7 @@ import {
   tailForPaneRead,
 } from "./pane-target";
 import { CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
-import { handleTeamRequest, type TeamControlDeps } from "./team-control";
+import { handleTeamRequest, PaneHeldError, type TeamControlDeps } from "./team-control";
 import type { ControlStatusUpdate, ProjectConfig } from "./types";
 
 // Max control-socket message size before rejecting the request (bytes).
@@ -105,13 +105,23 @@ async function handlePaneRequest(
 }
 
 /** A team message as a bracketed paste, then Enter: raw typing let Codex swallow
- *  the Enter after 600+ characters (measured). Shells are held, so paste is safe. */
+ *  the Enter after 600+ characters (measured). Shells are held, so paste is safe.
+ *  `holdReason` is asked again once the pane lock is held: a send queued behind
+ *  another can find the approval prompt that one raised. (Not again before
+ *  Enter: the pasted text itself reads as a draft there.) */
 export function deliverTeamMessage(
   writePane: NonNullable<ControlServerOptions["writePane"]>,
   terminalId: string,
   text: string,
+  holdReason?: (terminalId: string) => Promise<string | null>,
 ): Promise<void> {
-  return deliverToPane(writePane, terminalId, terminalId, `${PASTE_START}${text}${PASTE_END}`, true);
+  const guard = holdReason
+    ? async () => {
+        const hold = await holdReason(terminalId);
+        if (hold) throw new PaneHeldError(hold);
+      }
+    : undefined;
+  return deliverToPane(writePane, terminalId, terminalId, `${PASTE_START}${text}${PASTE_END}`, true, guard);
 }
 
 /** Types text into a pane, then Enter when `submit`. Serialized per terminal:
@@ -122,8 +132,10 @@ function deliverToPane(
   name: string,
   text: string,
   submit: boolean,
+  guard?: () => Promise<void>,
 ): Promise<void> {
   return withPaneLock(terminalId, async () => {
+    await guard?.();
     // Raw bytes, unlike the snippet drawer's bracketed paste: macOS bash 3.2 has
     // none and would take the markers as command text. "\r" is Enter, not "\n".
     if ((await writePane(terminalId, text)) === false) {

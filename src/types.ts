@@ -622,6 +622,8 @@ export interface HarnessSearchRequest {
   cwd: string;
   /** Preset's config-dir override (may be ~-relative). */
   configDir?: string;
+  /** Preset's command, for an inline CODEX_HOME=... there. */
+  command?: string;
   query: string;
 }
 
@@ -1047,6 +1049,9 @@ export interface TeamSummary {
   error: string | null;
   /** The repo file differs from what the user last saved. */
   repoChanged: boolean;
+  /** Only the repo file exists (a pull or a clone brought it): nothing of it
+   *  runs until the user saves it in Aya. */
+  unsaved: boolean;
   /** The repo file parsed, to adopt with one Save; null when it does not parse. */
   repoDefinition: TeamDefinition | null;
   paused: boolean;

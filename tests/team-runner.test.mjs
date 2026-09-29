@@ -40,7 +40,7 @@ async function setup({ cadence = true, held = {} } = {}) {
     scheduled.push(job);
     return () => (job.cancelled = true);
   });
-  return { runner, typed, scheduled, store, deps, cleanup };
+  return { runner, typed, scheduled, store, deps, project, cleanup };
 }
 
 test("start sends every role a delivery test that names its peer", async () => {
@@ -350,6 +350,8 @@ test("overlapping redelivery passes type each held message once", async () => {
       t.typed.push({ pane, text });
     };
     await Promise.all([t.runner.redeliverWaiting(), t.runner.redeliverWaiting()]);
+    assert.deepEqual(t.typed.map((w) => w.text.split("] ")[1]), ["first"]);
+    await t.runner.redeliverWaiting();
     assert.deepEqual(t.typed.map((w) => w.text.split("] ")[1]), ["first", "second"]);
     assert.equal((await t.store.unread("implementer")).length, 0);
   } finally {
@@ -437,5 +439,62 @@ test("a pane that refuses the first waiting message gets none of the later ones"
     assert.deepEqual((await t.store.unread("implementer")).map((m) => m.text), ["first", "second", "third"]);
   } finally {
     t.cleanup();
+  }
+});
+
+test("redelivery types one message per pane per pass, so a prompt it raises can show first", async () => {
+  const t = await setup({ cadence: false });
+  try {
+    for (const text of ["first", "second", "third"]) {
+      await t.store.append({ from: "tester", to: "implementer", commit: null, text, delivered: false });
+    }
+    await t.store.append({ from: "implementer", to: "tester", commit: null, text: "back", delivered: false });
+    assert.equal(await t.runner.redeliverWaiting(), 2);
+    assert.deepEqual(t.typed.map((w) => [w.pane, w.text.split("] ")[1]]), [["pane-t", "back"], ["pane-i", "first"]]);
+    assert.deepEqual((await t.store.unread("implementer")).map((m) => m.text), ["second", "third"]);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a stray file or a broken team in .aya/teams does not stop the other teams", async () => {
+  const t = await setup({ cadence: false });
+  try {
+    const dir = join(t.project.directory, ".aya", "teams");
+    writeFileSync(join(dir, "README.md"), "# Our teams\n");
+    writeFileSync(join(dir, "My Team.md"), "# My Team\n");
+    writeFileSync(join(dir, "aaa-broken.md"), "not a team\n");
+    const broken = new TeamStore(teamDir(t.deps.teamHome, "game", "aaa-broken"));
+    await broken.saveDefinition("not a team\n");
+    await broken.append({ from: "tester", to: "implementer", commit: null, text: "x", delivered: false });
+    await t.store.append({ from: "tester", to: "implementer", commit: null, text: "through", delivered: false });
+    assert.equal(await t.runner.redeliverWaiting(), 1);
+    assert.equal(t.typed[0].text.split("] ")[1], "through");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a team file nobody saved in Aya reaches no agent", async () => {
+  const { teamHome, project, cleanup } = teamProject("aya-runner-", { teamFile: TEAM(true), saved: false });
+  try {
+    const store = new TeamStore(teamDir(teamHome, "game", "ux-review"));
+    await store.assign("tester", "pane-t");
+    const typed = [];
+    const runner = new TeamRunner({
+      teamHome,
+      listProjects: async () => [project],
+      deliver: async (pane, text) => void typed.push({ pane, text }),
+      holdReason: async () => null,
+      headCommit: async () => null,
+    }, () => () => {});
+    await assert.rejects(runner.start("game", "ux-review"), /not saved in Aya yet/);
+    await assert.rejects(
+      handleTeamRequest({ type: "team-whoami" }, "pane-t", { teamHome, listProjects: async () => [project] }),
+      /not saved in Aya yet/,
+    );
+    assert.equal(typed.length, 0);
+  } finally {
+    cleanup();
   }
 });

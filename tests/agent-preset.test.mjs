@@ -69,6 +69,10 @@ test("commandHasResumeFlag detects an existing resume/continue flag", () => {
   assert.equal(commandHasResumeFlag(preset({ command: "claude -c" }), "claude -c"), true);
   assert.equal(commandHasResumeFlag(preset({ command: "claude --continue" }), "claude --continue"), true);
   assert.equal(commandHasResumeFlag(preset({ command: "claude --resume" }), "claude --resume"), true);
+  // A pinned conversation in the preset itself must not get a second one appended.
+  assert.equal(commandHasResumeFlag(preset({ command: "claude" }), "claude --resume=abc"), true);
+  assert.equal(commandHasResumeFlag(preset({ command: "claude" }), "claude --session-id abc"), true);
+  assert.equal(commandHasResumeFlag(preset({ command: "claude" }), "claude --session-id=abc"), true);
   assert.equal(commandHasResumeFlag(preset({ command: "claude" }), "claude"), false);
   assert.equal(commandHasResumeFlag(preset({ command: "codex resume" }), "codex resume"), true);
   assert.equal(commandHasResumeFlag(preset({ command: "codex" }), "codex"), false);

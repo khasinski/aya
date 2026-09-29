@@ -9,7 +9,8 @@ import type { ProjectConfig, TeamDefinition, TeamRole } from "./types";
 export interface TeamControlDeps {
   teamHome: string;
   listProjects: () => Promise<ProjectConfig[]>;
-  /** Types text into a pane and presses Enter; throws when the pane refuses. */
+  /** Types text into a pane and presses Enter; throws when the pane refuses,
+   *  PaneHeldError when it is held by the time the text would go in. */
   deliver: (terminalId: string, text: string) => Promise<void>;
   headCommit: (directory: string) => Promise<string | null>;
   /** Set when Enter would do something else there; the message then waits. */
@@ -30,7 +31,7 @@ async function membership(callerId: string | undefined, deps: TeamControlDeps): 
   const noRole = "this pane has no team role; assign one from the tab menu";
   const plays = await paneTeamRole(deps.teamHome, project, callerId);
   if (!plays) throw new Error(noRole);
-  const team = await loadTeam(project, plays.team, plays.store);
+  const team = await loadTeam(plays.team, plays.store);
   const role = team.roles.find((r) => r.id === plays.role);
   if (!role) throw new Error(noRole);
   return { project, team, role, store: plays.store };
@@ -55,6 +56,13 @@ function clock(iso: string): string {
 }
 
 export const NO_PANE_HOLD = "no pane assigned";
+
+/** `deliver` found the pane held once it had the pane to itself. */
+export class PaneHeldError extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+  }
+}
 
 /** The role's pane and why a message must not be typed into it now, or null. */
 export async function roleHold(
@@ -95,9 +103,13 @@ export async function deliverAndLog(
     try {
       await deps.deliver(pane, typedTeamMessage(message.team, message.from, new Date().toISOString(), commit, message.text));
     } catch (err) {
-      // The write error is written for the CLI; the team log and window get the gist.
-      console.warn("[aya] team message to %s not typed:", message.to, err);
-      failure = "did not take the text (it may have exited)";
+      if (err instanceof PaneHeldError) {
+        failure = err.reason;
+      } else {
+        // The write error is written for the CLI; the team log and window get the gist.
+        console.warn("[aya] team message to %s not typed:", message.to, err);
+        failure = "did not take the text (it may have exited)";
+      }
     }
   }
   const entry = await store.append({
@@ -111,8 +123,18 @@ export async function deliverAndLog(
   return { entry, failure };
 }
 
+// Two agents answering each other can loop forever; a role that sends this many
+// in a minute is refused until the minute passes, and the user sees why.
+export const TEAM_SENDS_PER_MINUTE = 10;
+const MINUTE_MS = 60_000;
+
 async function send(m: Membership, to: string, text: string, deps: TeamControlDeps): Promise<string> {
   if ((await m.store.state()).paused) throw new Error(`team ${m.team.name} is paused; nothing was sent`);
+  if ((await m.store.sentSince(m.role.id, Date.now() - MINUTE_MS)) >= TEAM_SENDS_PER_MINUTE) {
+    throw new Error(
+      `${m.role.id} sent ${TEAM_SENDS_PER_MINUTE} messages in the last minute; nothing was sent. If two roles keep answering each other, stop and report to the user`,
+    );
+  }
   if (!m.role.sendsTo.some((r) => r.to === to)) {
     throw new Error(`${m.role.id} does not send to ${to}; sends to: ${m.role.sendsTo.map((r) => r.to).join(", ") || "nobody"}`);
   }

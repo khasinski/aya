@@ -29,7 +29,7 @@ export class TeamRunner {
   private async open(slug: string, name: string) {
     const project = projectBySlug(await this.deps.listProjects(), slug);
     const store = openTeamStore(this.deps.teamHome, slug, name);
-    return { project, store, team: await loadTeam(project, name, store) };
+    return { project, store, team: await loadTeam(name, store) };
   }
 
   /** A message from Aya; returns why it was not typed, or null. */
@@ -97,7 +97,7 @@ export class TeamRunner {
         if (!(await store.state()).running) continue;
         let team: TeamDefinition;
         try {
-          team = await loadTeam(project, name, store);
+          team = await loadTeam(name, store);
         } catch {
           continue; // The teams window shows why it does not parse; the other teams still run.
         }
@@ -125,27 +125,36 @@ export class TeamRunner {
     let typed = 0;
     for (const project of await this.deps.listProjects()) {
       for (const name of await teamNames(project)) {
-        const store = openTeamStore(this.deps.teamHome, project.slug, name);
-        if ((await store.state()).paused) continue;
-        const team = await loadTeam(project, name, store);
-        for (const role of team.roles) {
-          const waiting = await store.unread(role.id);
-          const pane = waiting.length ? await store.paneOf(role.id) : null;
-          if (!pane) continue;
-          // Aya's own rounds and delivery tests go stale; a later one replaces them.
-          for (const m of waiting.filter((w) => w.from !== TEAM_SYSTEM_SENDER)) {
-            // Each delivery can raise an approval prompt the next would type into.
-            if (await this.deps.holdReason(pane)) break;
-            try {
-              await this.deps.deliver(pane, typedTeamMessage(team.name, m.from, m.time, m.commit, m.text));
-            } catch {
-              break;
-            }
-            await store.markRead(role.id, m.id);
-            typed++;
-          }
+        try {
+          typed += await this.redeliverTeam(project, name);
+        } catch (err) {
+          // One team that does not parse or read must not stall the others.
+          console.warn(`[aya] team ${project.slug}/${name} held messages not retried:`, err);
         }
       }
+    }
+    return typed;
+  }
+
+  /** At most one message per pane per pass: a delivery can raise an approval
+   *  prompt only after the agent has read it, so the next one waits a pass. */
+  private async redeliverTeam(project: ProjectConfig, name: string): Promise<number> {
+    const store = openTeamStore(this.deps.teamHome, project.slug, name);
+    if ((await store.state()).paused) return 0;
+    const team = await loadTeam(name, store);
+    let typed = 0;
+    for (const role of team.roles) {
+      // Aya's own rounds and delivery tests go stale; a later one replaces them.
+      const next = (await store.unread(role.id)).find((w) => w.from !== TEAM_SYSTEM_SENDER);
+      const pane = next ? await store.paneOf(role.id) : null;
+      if (!next || !pane || (await this.deps.holdReason(pane))) continue;
+      try {
+        await this.deps.deliver(pane, typedTeamMessage(team.name, next.from, next.time, next.commit, next.text));
+      } catch {
+        continue;
+      }
+      await store.markRead(role.id, next.id);
+      typed++;
     }
     return typed;
   }

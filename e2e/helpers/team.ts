@@ -44,6 +44,8 @@ export function teamSeed(
       ...(presetList ? { presetList } : {}),
       projectFiles: { ".aya/teams/ux-review.md": team },
       ayaHomeFiles: {
+        // Saved in Aya, as a team made in the Teams window is: a bare repo file does not run.
+        [`${TEAM_STATE_DIR}/saved.md`]: team,
         ...(assignments ? { [`${TEAM_STATE_DIR}/assignments.json`]: JSON.stringify(assignments) } : {}),
         ...ayaHomeFiles,
       },

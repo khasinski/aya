@@ -288,3 +288,70 @@ test("inbox shows every waiting message once, then none", async () => {
     t.cleanup();
   }
 });
+
+test("the hold is asked again once the pane lock is held, before anything is typed", async () => {
+  const { PaneHeldError } = await import("../dist-electron/team-control.js");
+  const writes = [];
+  const write = async (id, data) => void writes.push(data);
+  // Held from the start: nothing is written.
+  await assert.rejects(
+    deliverTeamMessage(write, "pane-a", "hi", async () => "shows an approval prompt"),
+    (err) => err instanceof PaneHeldError && err.reason === "shows an approval prompt",
+  );
+  assert.equal(writes.length, 0);
+  // A send queued behind another sees the prompt that one raised with its Enter.
+  let prompt = null;
+  const typed = [];
+  const raising = async (id, data) => {
+    typed.push(data);
+    if (data === "\r") prompt = "shows an approval prompt";
+  };
+  const first = deliverTeamMessage(raising, "pane-b", "one", async () => prompt);
+  const second = deliverTeamMessage(raising, "pane-b", "two", async () => prompt);
+  await first;
+  await assert.rejects(second, (err) => err instanceof PaneHeldError);
+  assert.equal(typed.length, 2, "the second message typed nothing");
+});
+
+test("a pane held by the time deliver runs logs the message as held, not failed", async () => {
+  const { PaneHeldError } = await import("../dist-electron/team-control.js");
+  const root = mkdtempSync(join(tmpdir(), "aya-team-ctl-"));
+  try {
+    const store = new TeamStore(join(root, "team"));
+    await store.assign("implementer", "pane-i");
+    const deps = {
+      deliver: async () => {
+        throw new PaneHeldError("shows an approval prompt");
+      },
+      holdReason: async () => null,
+      headCommit: async () => null,
+    };
+    const { failure, entry } = await deliverAndLog(deps, { directory: root }, store, {
+      team: "ux-review",
+      from: "tester",
+      to: "implementer",
+      text: "hi",
+    });
+    assert.equal(failure, "shows an approval prompt");
+    assert.equal(entry.held, "shows an approval prompt");
+    assert.equal((await store.unread("implementer")).length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a role that floods its peers is refused for the rest of the minute", async () => {
+  const { TEAM_SENDS_PER_MINUTE } = await import("../dist-electron/team-control.js");
+  const t = await setup();
+  try {
+    for (let i = 0; i < TEAM_SENDS_PER_MINUTE; i++) {
+      await t.store.append({ from: "tester", to: "implementer", commit: null, text: `m${i}`, delivered: true });
+    }
+    const sent = await t.aya("pane-t", "send", "implementer", "one more");
+    assert.notEqual(sent.status, 0);
+    assert.match(sent.stderr, /sent 10 messages in the last minute; nothing was sent/);
+    assert.equal(t.writes.length, 0);
+  } finally {
+    t.cleanup();
+  }
+});
