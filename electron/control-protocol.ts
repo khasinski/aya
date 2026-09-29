@@ -5,6 +5,16 @@ export type TeamRequest =
   | { type: "team-inbox" }
   | { type: "team-send"; role: string; text: string };
 
+/** Where `aya team new|save` was run, when it is not a pane: AYA_PROJECT_SLUG, cwd. */
+interface TeamAuthorScope {
+  projectSlug?: string;
+  cwd?: string;
+}
+
+export type TeamAuthorRequest =
+  | ({ type: "team-guide"; description?: string } & TeamAuthorScope)
+  | ({ type: "team-save"; text: string; replace: boolean } & TeamAuthorScope);
+
 export type ControlRequest =
   | { type: "open"; path: string }
   | { type: "focus" }
@@ -49,7 +59,8 @@ export type ControlRequest =
       selfTerminalId?: string;
     }
   | { type: "capabilities" }
-  | TeamRequest;
+  | TeamRequest
+  | TeamAuthorRequest;
 
 /** The calling pane (AYA_TERMINAL_ID / AYA_PRESET_ID), sent with every request
  *  to measure adoption per harness (#117); absent outside Aya. */
@@ -95,6 +106,13 @@ export function parseControlRequest(value: unknown): ControlRequest {
     const text = typeof value.text === "string" ? value.text : "";
     if (!role || !text) throw new Error("team-send needs a role and text");
     return { type, role, text };
+  }
+  if (type === "team-guide" || type === "team-save") {
+    const scope = { projectSlug: optionalString(value.projectSlug), cwd: optionalString(value.cwd) };
+    if (type === "team-guide") return { type, description: optionalString(value.description), ...scope };
+    const text = optionalString(value.text);
+    if (!text) throw new Error("team-save needs the team file's text");
+    return { type, text, replace: value.replace === true, ...scope };
   }
   if (type === "capabilities") return { type };
   if (type === "notify") {

@@ -189,3 +189,32 @@ test("team-send needs a role and non-empty text", () => {
   assert.throws(() => parseControlRequest({ type: "team-send", role: "tester", text: "" }), /role and text/);
   assert.throws(() => parseControlRequest({ type: "team-send", role: " ", text: "hi" }), /role and text/);
 });
+
+test("team-guide carries an optional description and the caller's scope", () => {
+  assert.deepEqual(parseControlRequest({ type: "team-guide", description: "fix UX", projectSlug: "game", cwd: "/w" }), {
+    type: "team-guide",
+    description: "fix UX",
+    projectSlug: "game",
+    cwd: "/w",
+  });
+  assert.deepEqual(parseControlRequest({ type: "team-guide", description: " " }), {
+    type: "team-guide",
+    description: undefined,
+    projectSlug: undefined,
+    cwd: undefined,
+  });
+});
+
+test("team-save needs text; replace is only ever a literal true", () => {
+  assert.deepEqual(parseControlRequest({ type: "team-save", text: "# t", replace: true, projectSlug: "game", cwd: "/w" }), {
+    type: "team-save",
+    text: "# t",
+    replace: true,
+    projectSlug: "game",
+    cwd: "/w",
+  });
+  assert.equal(parseControlRequest({ type: "team-save", text: "# t", replace: "yes" }).replace, false);
+  for (const text of ["", "  \n", undefined, 5]) {
+    assert.throws(() => parseControlRequest({ type: "team-save", text }), /team-save needs the team file's text/);
+  }
+});

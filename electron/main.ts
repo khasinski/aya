@@ -84,6 +84,7 @@ import {
 } from "./intelligence-chat";
 import type { TeamControlDeps } from "./team-control";
 import { registerTeamIpc } from "./team-ipc";
+import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
 import {
   createRemoteDirectory,
@@ -2171,7 +2172,7 @@ function setStaleMenuIcon(): void {
   }
 }
 
-function registerIpc(): void {
+function registerIpc(): TeamRunner {
   // Aya Web reuses these handlers over WebSocket — record every registration
   // (must run before the first ipcMain.handle below).
   captureIpcHandlers(ipcMain);
@@ -2199,7 +2200,7 @@ function registerIpc(): void {
       return result.content;
     };
   };
-  registerTeamIpc({
+  const teamRunner = registerTeamIpc({
     ipcMain,
     onBeforeQuit: (teardown) => app.once("before-quit", teardown),
     team: teamDeps,
@@ -2834,6 +2835,7 @@ function registerIpc(): void {
     // Existing sessions stay valid; new logins need the new password.
     return webStatus();
   });
+  return teamRunner;
 }
 
 // Multi-window: every live Aya window, in creation order. `mainWindow` tracks
@@ -2998,7 +3000,7 @@ app.whenReady().then(async () => {
 
   const savedState = await loadWindowState();
   mainWindow = createWindow(savedState);
-  registerIpc();
+  const teamRunner = registerIpc();
   configureAutoUpdates(mainWindow);
   // Before checking for a NEW update, surface a PREVIOUS one that silently
   // failed to install and rolled back (#78).
@@ -3032,6 +3034,7 @@ app.whenReady().then(async () => {
     // pane was dead, and dropping it made host rejections unhandled.
     writePane: (terminalId, data) => ptyHost.write(terminalId, data),
     team: teamDeps,
+    teamRunner,
     onRequest: (request, caller) => {
       // Aya's own automatic-status hooks call `aya status` from inside every
       // Claude/Codex pane; counting them would read as ~100% adoption (#121).
