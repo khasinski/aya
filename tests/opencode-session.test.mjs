@@ -30,8 +30,23 @@ test("a worktree pane resumes its own session, not the newer one of a sibling wo
     { id: "ses_B", directory: B, updated: 300 },
     { id: "ses_A", directory: A, updated: 100 },
   ]);
-  const out = await withOwnOpencodeSession(spawn("opencode --continue"), list);
+  const req = spawn("opencode --continue", { presetId: "oc", agent: "opencode" });
+  const out = await withOwnOpencodeSession(req, list);
+  assert.deepEqual(out, { ...req, command: "opencode --session ses_A" });
+});
+
+test("a preset command with stray whitespace is still recognised", async () => {
+  const { list } = lister([{ id: "ses_A", directory: A, updated: 1 }]);
+  const out = await withOwnOpencodeSession(spawn("  opencode --continue  "), list);
   assert.equal(out.command, "opencode --session ses_A");
+});
+
+test("a cwd that no longer exists is matched as given", async () => {
+  const gone = path.join(A, "deleted-worktree");
+  const { list, calls } = lister([{ id: "ses_G", directory: gone, updated: 1 }]);
+  const out = await withOwnOpencodeSession(spawn("opencode --continue", { cwd: gone }), list);
+  assert.equal(out.command, "opencode --session ses_G");
+  assert.deepEqual(calls, [gone]);
 });
 
 test("the newest of the directory's own sessions wins, whatever the list order", async () => {
@@ -77,6 +92,8 @@ test("left untouched, without asking opencode: no --continue, another agent, att
     spawn("opencode --continued"),
     spawn("claude --continue"),
     spawn("ssh -tt host 'opencode --continue'"),
+    spawn("ssh -tt host opencode --continue"),
+    spawn("opencode-dev --continue"),
     spawn("opencode --continue", { attachOnly: true }),
   ];
   for (const req of cases) {
@@ -101,6 +118,7 @@ test("parseSessionList: empty output is no sessions; malformed or shell-unsafe e
     { id: "ses_ok", title: "t", updated: 5, created: 1, projectId: "p", directory: A },
     { id: "ses_x; rm -rf ~", updated: 6, directory: A },
     { id: 7, updated: 6, directory: A },
+    null,
     { id: "ses_nodir", updated: 6 },
     { id: "ses_notime", directory: A },
   ]);
@@ -125,4 +143,19 @@ test("listOpencodeSessions asks the opencode on PATH, from the pane's directory"
     process.env.PATH = saved;
   }
   assert.equal(readFileSync(log, "utf8").trim(), `${A}|session list --format json`);
+});
+
+test("listOpencodeSessions gives up on an opencode that hangs, so the pane still spawns", async () => {
+  const bin = mkdtempSync(path.join(tmpdir(), "oc-hang-"));
+  writeFileSync(path.join(bin, "opencode"), "#!/bin/sh\nexec sleep 60\n");
+  chmodSync(path.join(bin, "opencode"), 0o755);
+  const saved = process.env.PATH;
+  process.env.PATH = `${bin}:${saved}`;
+  const started = Date.now();
+  try {
+    await assert.rejects(listOpencodeSessions(A));
+  } finally {
+    process.env.PATH = saved;
+  }
+  assert.ok(Date.now() - started < 15_000);
 });

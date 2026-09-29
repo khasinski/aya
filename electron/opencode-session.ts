@@ -23,8 +23,7 @@ export interface OpencodeSession {
 /** `opencode session list --format json`; it prints nothing when there are no sessions. */
 export function parseSessionList(stdout: string): OpencodeSession[] {
   if (!stdout.trim()) return [];
-  const rows: unknown = JSON.parse(stdout);
-  if (!Array.isArray(rows)) throw new Error("opencode session list: expected a JSON array");
+  const rows: Array<Record<string, unknown> | null> = JSON.parse(stdout);
   return rows.flatMap((row) => {
     const { id, directory, updated } = row ?? {};
     return typeof id === "string" &&
