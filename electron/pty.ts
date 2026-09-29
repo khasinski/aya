@@ -824,11 +824,15 @@ export function killPty(ptyId: string): void {
   const p = ptys.get(ptyId);
   ptyLog.append("kill", { ptyId, live: !!p });
   if (!p) {
-    // No PTY for this id yet. A spawn under way is cancelled on its own entry;
-    // one whose IPC has not arrived yet bails on the marker, which a TTL evicts
-    // if nothing comes (cleaner than leaking ids).
+    // No PTY for this id yet. A spawn under way is cancelled on its own entry
+    // (no marker: ids are reused, and a reopened tab must start). One whose
+    // IPC has not arrived yet bails on the marker, which a TTL evicts if
+    // nothing comes (cleaner than leaking ids).
     const flight = spawning.get(ptyId);
-    if (flight) flight.cancelled = true;
+    if (flight) {
+      flight.cancelled = true;
+      return;
+    }
     pendingKills.add(ptyId);
     setTimeout(() => pendingKills.delete(ptyId), PENDING_KILL_TTL_MS);
     return;
