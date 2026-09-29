@@ -33,7 +33,8 @@ function listenerTotal(win) {
   return (
     win.listenerCount("closed") +
     win.webContents.listenerCount("did-finish-load") +
-    win.webContents.listenerCount("did-fail-load")
+    win.webContents.listenerCount("did-fail-load") +
+    win.webContents.listenerCount("render-process-gone")
   );
 }
 
@@ -88,6 +89,28 @@ test("a subframe load failure is ignored", async () => {
   w.finishLoad();
   await delivery;
   assert.deepEqual(w.sent, [["open-project", "/p"]]);
+});
+
+test("an aborted main-frame load keeps waiting for the load that replaced it", async () => {
+  const w = fakeWindow({ loading: true });
+  let settled = false;
+  const delivery = deliverOpenProject(w.win, "/p").then(() => (settled = true));
+  w.win.webContents.emit("did-fail-load", {}, -3, "ERR_ABORTED", "http://localhost:5173/", true);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(settled, false);
+  w.finishLoad();
+  await delivery;
+  assert.deepEqual(w.sent, [["open-project", "/p"]]);
+  assert.equal(listenerTotal(w.win), 0);
+});
+
+test("a renderer gone before the load rejects, sending nothing", async () => {
+  const w = fakeWindow({ loading: true });
+  const delivery = deliverOpenProject(w.win, "/p");
+  w.win.webContents.emit("render-process-gone", {}, { reason: "crashed", exitCode: 1 });
+  await assert.rejects(delivery, /renderer is gone: crashed/);
+  assert.deepEqual(w.sent, []);
+  assert.equal(listenerTotal(w.win), 0);
 });
 
 test("a destroyed window rejects at once", async () => {

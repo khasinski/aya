@@ -2884,6 +2884,22 @@ async function windowForOpen(): Promise<BrowserWindow> {
   return focusedAyaWindow() ?? createWindowOnce();
 }
 
+/** Set once startup has created its own first window. */
+let startupWindowCreated = false;
+
+/** second-instance / open-file: focus the open's window and deliver `dir`.
+ *  Like the control path, a macOS app with every window closed gets a new
+ *  one; before startup made its first window, making one here would make two,
+ *  so those only focus what exists. */
+async function openFromOutside(dir: string | null): Promise<void> {
+  const target = startupWindowCreated ? await windowForOpen() : focusedAyaWindow();
+  if (target) {
+    if (target.isMinimized()) target.restore();
+    target.focus();
+  }
+  await dispatchOpenProject(target, dir);
+}
+
 function eachAyaWindow(fn: (win: BrowserWindow) => void): void {
   for (const win of ayaWindows) {
     if (!win.isDestroyed()) fn(win);
@@ -2925,30 +2941,20 @@ async function releaseWindowSlices(windowId: number): Promise<void> {
 // (the single-instance lock above redirects argv here). Focus the window and
 // forward any directory argument to the renderer.
 app.on("second-instance", (_e, argv, workingDir) => {
-  const target = focusedAyaWindow();
-  if (target) {
-    if (target.isMinimized()) target.restore();
-    target.focus();
-  }
   const dir = findDirInArgv(argv) ?? workingDir ?? null;
-  dispatchOpenProject(target, dir).catch(logOpenFailure(dir));
+  openFromOutside(dir).catch(logOpenFailure(dir));
 });
 
 // macOS sends open-file for `open -a Aya /path` (when invoked without --args).
 app.on("open-file", (event, filePath) => {
   event.preventDefault();
-  const target = focusedAyaWindow();
-  if (target) {
-    if (target.isMinimized()) target.restore();
-    target.focus();
-  }
+  let isDirectory = false;
   try {
-    if (statSync(filePath).isDirectory()) {
-      dispatchOpenProject(target, filePath).catch(logOpenFailure(filePath));
-    }
+    isDirectory = statSync(filePath).isDirectory();
   } catch {
     // ignore
   }
+  openFromOutside(isDirectory ? filePath : null).catch(logOpenFailure(filePath));
 });
 
 app.whenReady().then(async () => {
@@ -3032,6 +3038,7 @@ app.whenReady().then(async () => {
 
   const savedState = await loadWindowState();
   mainWindow = createWindow(savedState);
+  startupWindowCreated = true;
   const teamRunner = registerIpc();
   configureAutoUpdates(mainWindow);
   // Before checking for a NEW update, surface a PREVIOUS one that silently

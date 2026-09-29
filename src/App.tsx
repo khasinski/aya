@@ -1006,7 +1006,8 @@ export function App() {
 
   // Handle "open this directory" requests from main — fired by `aya <dir>`
   // CLI invocations and the initial argv. Subscribed once; uses a ref to
-  // always see the latest projects + handlers without resubscribing.
+  // always see the latest projects + handlers without resubscribing. The
+  // preload holds opens sent before this subscribes and hands them over here.
   //
   // The IPC can arrive on `did-finish-load`, which is BEFORE the bootstrap
   // useEffect has populated projects state. If we processed it then, the
@@ -1044,7 +1045,10 @@ export function App() {
   useEffect(() => {
     if (!didBootstrap || openRunningRef.current || openQueue.length === 0) return;
     openRunningRef.current = true;
-    void openProjectRef.current(openQueue[0]).finally(() => {
+    const dir = openQueue[0];
+    void openProjectRef.current(dir).catch((err) => {
+      console.warn(`[aya] could not open ${dir}:`, err);
+    }).finally(() => {
       openRunningRef.current = false;
       setOpenQueue((queue) => queue.slice(1));
     });
