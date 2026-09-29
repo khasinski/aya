@@ -110,6 +110,11 @@ export function createWebAya(transport: WebTransport): AyaApi {
     teamAssign: inv("teams:assign"),
     teamReleasePane: inv("teams:release-pane"),
     teamDraftRole: inv("teams:draft-role"),
+    teamPresets: inv("teams:presets"),
+    teamOpenPanes: inv("teams:open-panes"),
+    // Main asks the desktop window that shows the project to add the tabs.
+    onTeamOpenPanes: noopSubscription,
+    teamPanesOpened: noopAsync,
     usageHookStatus: inv("usage-hook:status"),
     installUsageHook: inv("usage-hook:install"),
     uninstallUsageHook: inv("usage-hook:uninstall"),

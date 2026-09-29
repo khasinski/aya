@@ -123,6 +123,25 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     ],
   },
   {
+    command: "team open",
+    usage: "aya team open [--replace] team role=target...",
+    summary:
+      "Give roles of a saved team a pane in this project: target is a preset id (a new session of it), this (the pane you run in), or an existing pane's name or id. Roles not listed keep theirs; the team is not started.",
+    example: "aya team open ux-fix reviewer=claude fixer=codex tester=this",
+    notes: [
+      "Propose the mapping to the user and wait for the user's yes before running it.",
+      "Checks every role and target first; on a problem nothing is opened or assigned.",
+      "Several roles can take the same preset: each gets its own new pane.",
+      "A role with a live pane, or a pane that plays another role, needs --replace; no pane is ever closed.",
+    ],
+  },
+  {
+    command: "presets",
+    usage: "aya presets [--json]",
+    summary: "List this Aya's presets: id, name, the agent it runs, and whether its CLI is installed.",
+    notes: ["Run it before aya team open, to propose installed presets for the roles."],
+  },
+  {
     command: "capabilities",
     usage: "aya capabilities",
     summary: "Print this list as JSON.",

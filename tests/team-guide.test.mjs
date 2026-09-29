@@ -74,3 +74,19 @@ test("existing teams are named, with what reusing a name takes", () => {
   const listed = teamGuide(undefined, ["review", "ux-fix"]);
   assert.match(listed, /Teams this project already has: review, ux-fix\. Saving under one of these names needs --replace; ask the user first\./);
 });
+
+test("the last step proposes a pane per role and opens panes only after the user says yes", () => {
+  const steps = guide.slice(guide.indexOf("Steps\n"), guide.indexOf("\nThe team file\n"));
+  const last = steps.slice(steps.lastIndexOf("\n5. "));
+  assert.match(last, /aya presets/);
+  assert.match(last, /aya pane list/);
+  assert.match(last, /installed/);
+  assert.match(last, /one role per pane/);
+  assert.match(last, /several roles may take the same preset: each gets its own pane/);
+  assert.match(last, /this pane you run in/);
+  assert.match(last, /wait for the user's yes/i);
+  assert.match(last, /aya team open <team> <role>=<target>/);
+  assert.match(last, /<target> is a preset id, this, or a pane's name or id/);
+  assert.match(last, /Never open panes without the user's yes/);
+  assert.ok(last.indexOf("aya presets") < last.indexOf("aya team open"), "presets are read before any pane opens");
+});

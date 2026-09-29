@@ -6,6 +6,8 @@ import { assignRole, listTeams, releasePaneEverywhere, saveTeam } from "./team-a
 import type { TeamControlDeps } from "./team-control";
 import { draftRole, ROLE_DRAFT_CHAT, type Chat } from "./team-draft";
 import { projectBySlug } from "./team-files";
+import { openTeamPanes, presetChoices, teamPaneDeps, type PaneHost } from "./team-panes";
+import { panePick } from "./control-protocol";
 import { TeamRunner } from "./team-runner";
 import type { ProjectConfig } from "./types";
 import { requireString, validateTeamDefinition } from "./validation";
@@ -18,6 +20,7 @@ export interface TeamIpcDeps {
   /** Registers a teardown for app quit (Electron's before-quit). */
   onBeforeQuit: (teardown: () => void) => void;
   team: TeamControlDeps;
+  paneHost: PaneHost;
   intelligenceChat: (config: unknown, opts: ChatOptions) => Chat;
 }
 
@@ -73,5 +76,21 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
       deps.intelligenceChat(config, ROLE_DRAFT_CHAT),
     ),
   );
+  const panes = teamPaneDeps(teamDeps, deps.paneHost, teamRunner);
+  ipcMain.handle("teams:presets", async () => presetChoices(panes));
+  ipcMain.handle("teams:open-panes", async (_e, slug: unknown, team: unknown, picks: unknown) => {
+    const project = await teamProject(slug, "teams:open-panes");
+    const invalid = new Error("Invalid IPC payload for teams:open-panes.panes: expected [{role, target}].");
+    if (!Array.isArray(picks)) throw invalid;
+    const valid = picks.map((pick) => {
+      try {
+        return panePick(pick);
+      } catch {
+        throw invalid;
+      }
+    });
+    // Each pick is the user's own choice in a row that shows what it replaces or moves.
+    return openTeamPanes(panes, project, requireString(team, "teams:open-panes.team"), valid, { replace: true });
+  });
   return teamRunner;
 }

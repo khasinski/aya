@@ -18,6 +18,7 @@ import {
 import { CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
 import { handleTeamAuthorRequest } from "./team-author";
 import { handleTeamRequest, PaneHeldError, type TeamControlDeps } from "./team-control";
+import { handleTeamPanesRequest, type TeamPaneDeps } from "./team-panes";
 import type { TeamRunner } from "./team-runner";
 import type { ControlStatusUpdate, ProjectConfig } from "./types";
 
@@ -73,6 +74,8 @@ export interface ControlServerOptions {
   team?: TeamControlDeps;
   /** Told of a team saved with aya team save, as after the Teams window's Save. */
   teamRunner?: Pick<TeamRunner, "refresh">;
+  /** What aya presets and aya team open run on, as the Teams window's Open panes. */
+  teamPanes?: TeamPaneDeps;
   /** Test-only override of the idle reap window. */
   idleTimeoutMs?: number;
   /** Test-only override of OPEN_DELIVERY_TIMEOUT_MS. */
@@ -244,6 +247,10 @@ async function handleRequest(
     const { team, teamRunner } = options;
     if (!team || !teamRunner) throw new Error("teams are not available");
     return handleTeamAuthorRequest(request, caller.terminalId, team, (slug, name) => teamRunner.refresh(slug, name));
+  }
+  if (request.type === "presets" || request.type === "team-open") {
+    if (!options.teamPanes) throw new Error("teams are not available");
+    return handleTeamPanesRequest(request, caller.terminalId, options.teamPanes);
   }
   if (request.type === "focus") {
     focusWindow(win);

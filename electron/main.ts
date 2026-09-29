@@ -86,6 +86,8 @@ import {
 } from "./intelligence-chat";
 import type { TeamControlDeps } from "./team-control";
 import { registerTeamIpc } from "./team-ipc";
+import { newPaneId, RendererRequests, teamPaneDeps, type PaneHost } from "./team-panes";
+import { presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
 import {
@@ -262,6 +264,21 @@ const teamDeps: TeamControlDeps = {
     deliverTeamMessage((id, data) => ptyHost.write(id, data), terminalId, text, (id) => ptyHost.holdReason(id)),
   holdReason: (terminalId) => ptyHost.holdReason(terminalId),
   headCommit,
+};
+const paneOpens = new RendererRequests();
+// aya team open and the Teams window's Open panes open panes through this.
+const teamPaneHost: PaneHost = {
+  listPresets,
+  presetInstalled,
+  paneAlive: async (terminalId) => (await ptyHost.getSize(terminalId)) !== null,
+  // The window that shows the project adds the tabs; main picked their ids.
+  openPanes: (projectSlug, panes) => {
+    const windowId = windowSlices.windowOf(projectSlug);
+    const win = windowId === null ? null : BrowserWindow.fromId(windowId);
+    if (!win || win.isDestroyed()) return Promise.reject(new Error(`project ${projectSlug} is not open in an Aya window`));
+    return paneOpens.ask((requestId) => win.webContents.send("teams:open-panes", { requestId, projectSlug, panes }));
+  },
+  newPaneId,
 };
 const UPDATE_AUTO_CHECK_DELAY_MS = 12_000;
 // Summarizer sampling knobs, shared by BOTH backends (OpenAI-compatible and
@@ -2210,8 +2227,12 @@ function registerIpc(): TeamRunner {
     ipcMain,
     onBeforeQuit: (teardown) => app.once("before-quit", teardown),
     team: teamDeps,
+    paneHost: teamPaneHost,
     intelligenceChat,
   });
+  ipcMain.handle("teams:panes-opened", (_e, requestId: unknown, error: unknown) =>
+    paneOpens.answer(requireString(requestId, "teams:panes-opened.requestId"), error),
+  );
   ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
     const request = validateSpawnRequest(req);
     // A broken presets.json must not stop panes from spawning.
@@ -3046,6 +3067,7 @@ app.whenReady().then(async () => {
     writePane: (terminalId, data) => ptyHost.write(terminalId, data),
     team: teamDeps,
     teamRunner,
+    teamPanes: teamPaneDeps(teamDeps, teamPaneHost, teamRunner),
     onRequest: (request, caller) => {
       // Aya's own automatic-status hooks call `aya status` from inside every
       // Claude/Codex pane; counting them would read as ~100% adoption (#121).

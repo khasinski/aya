@@ -57,7 +57,11 @@ Steps
 3. Save it: aya team save <draft-file>
    Or give it on stdin: aya team save -  (a quoted heredoc, <<'EOF', keeps $ and backticks as written).
    If it prints a problem, nothing was saved: fix what it names and save again. If the team already exists, ask the user before saving again with --replace.
-4. Tell the user the team is saved and what each role does. In Aya's Teams window they give each role a pane and press Start.
+4. Tell the user the team is saved and what each role does.
+5. Give each role a pane. Run: aya presets and aya pane list
+   aya presets lists this Aya's presets, the agent each runs and whether its CLI is installed; aya pane list lists the panes already open. Propose to the user which pane plays which role, one role per pane. A role can take a new session of an installed preset (several roles may take the same preset: each gets its own pane), this pane you run in, or a pane already open. Different agents for roles that check each other's work can help. Then wait for the user's yes, and with it run:
+   aya team open <team> <role>=<target> [<role>=<target> ...]
+   where <target> is a preset id, this, or a pane's name or id. Never open panes without the user's yes. If it prints a problem, nothing was opened: fix what it names and run it again. The user starts the team in the Teams window.
 
 The team file
 - The first line is "# <name>". The name is the team's file name: ${ID_RULE}.
@@ -100,7 +104,7 @@ async function real(p: string): Promise<string> {
 }
 
 /** The calling pane's project, else the slug's, else the one the cwd is in. */
-async function callerProject(
+export async function callerProject(
   projects: ProjectConfig[],
   callerId: string | undefined,
   { projectSlug, cwd }: { projectSlug?: string; cwd?: string },

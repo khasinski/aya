@@ -619,6 +619,13 @@ export interface AyaApi {
   /** Drafts a role of the team as the editor holds it, with Aya Intelligence. */
   teamDraftRole(team: TeamDefinition, roleId: string, intelligence: AyaIntelligenceConfig): Promise<RoleDraft>;
   teamResume(projectSlug: string, team: string): Promise<void>;
+  /** The presets, each with whether its CLI is installed (aya presets). */
+  teamPresets(): Promise<PresetChoice[]>;
+  /** Gives each role a new session or an existing pane (aya team open --replace). */
+  teamOpenPanes(projectSlug: string, team: string, panes: PanePick[]): Promise<RolePanes>;
+  /** Main asks this window to add panes as tabs; answer with teamPanesOpened. */
+  onTeamOpenPanes(handler: (request: TeamOpenPanesRequest) => void): () => void;
+  teamPanesOpened(requestId: string, error: string | null): Promise<void>;
 
   // Optional usage-hook installer (writes ~/.claude/settings.json + a fetch
   // script). The Aya process never reads a token or calls the endpoint.
@@ -759,6 +766,50 @@ declare global {
   interface Window {
     aya: AyaApi;
   }
+}
+
+/** One `role=target` of aya team open / the Teams window's Apply: a preset id
+ *  (a new session), "this" (the calling pane), or a pane id or name. */
+export interface PanePick {
+  role: string;
+  target: string;
+}
+
+/** A preset as aya presets lists it: installed as the pane spawn checks it. */
+export interface PresetChoice {
+  id: string;
+  name: string;
+  agent: AgentKind;
+  installed: boolean;
+}
+
+/** A pane main asks the window to open, with the id main picked. */
+export interface NewPane {
+  id: string;
+  presetId: string;
+  name: string;
+}
+
+export interface TeamOpenPanesRequest {
+  requestId: string;
+  projectSlug: string;
+  panes: NewPane[];
+}
+
+/** The pane a role got: `preset` names a new session's preset, null an existing
+ *  pane; `notReached` says why a running team could not introduce it. */
+export interface RolePane {
+  role: string;
+  paneId: string;
+  name: string;
+  preset: string | null;
+  notReached: string | null;
+}
+
+/** Roles given a pane, and roles whose pane moved to another role. */
+export interface RolePanes {
+  panes: RolePane[];
+  leftWithoutPane: string[];
 }
 
 /** Which roles got Start team's delivery test, and why the others did not. */
