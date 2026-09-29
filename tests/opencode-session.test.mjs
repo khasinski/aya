@@ -86,6 +86,16 @@ test("no session of its own: the pane starts fresh instead of borrowing another 
   assert.equal(await ownSessionCommand("FOO=1 opencode --continue", A, list), "FOO=1 opencode");
 });
 
+test("dropping --continue for want of a session is reported; resuming one is not", async () => {
+  let none = 0;
+  const onNone = () => (none += 1);
+  const { list } = lister([{ id: "ses_B", directory: B, updated: 300 }]);
+  await ownSessionCommand("opencode --continue", A, list, undefined, onNone);
+  assert.equal(none, 1);
+  await ownSessionCommand("opencode --continue", B, list, undefined, onNone);
+  assert.equal(none, 1);
+});
+
 test("the preset's other arguments survive the rewrite", async () => {
   const { list } = lister([{ id: "ses_A", directory: A, updated: 1 }]);
   assert.equal(
