@@ -40,11 +40,13 @@ export function TeamCard({
     await onChanged();
     return result;
   };
+  const [task, setTask] = useState("");
   const start = async () => {
-    const result = await act(() => window.aya.teamStart(project.slug, team.name));
+    const result = await act(() => window.aya.teamStart(project.slug, team.name, task.trim() || undefined));
     if (!result) return;
     setNotReached(Object.fromEntries(result.held.map((h) => [h.role, h.reason])));
     setSummary(startSummary(result));
+    if (result.started) setTask("");
   };
   // Per role, the pane picked but not applied yet: "" none, a pane id, or NEW_PANE_PREFIX + preset.
   // Sent as explicit targets, so a pane named like a preset id is still that pane.
@@ -55,6 +57,7 @@ export function TeamCard({
   const tabName = (id: string) => project.tabs.find((t) => t.id === id)?.name ?? id;
   const moves = pendingMoves(team.name, changes, plays, tabName);
   const apply = async () => {
+    const applied = changes;
     const result = await act(async () => {
       for (const [role, value] of Object.entries(changes)) {
         if (!value) await window.aya.teamAssign(project.slug, team.name, role, null);
@@ -65,7 +68,8 @@ export function TeamCard({
       return given.length ? window.aya.teamOpenPanes(project.slug, team.name, given) : { panes: [], leftWithoutPane: [] };
     });
     if (!result) return;
-    setPicks({});
+    // A pick made while this Apply ran is the user's next one: keep it.
+    setPicks((prev) => Object.fromEntries(Object.entries(prev).filter(([role, value]) => applied[role] !== value)));
     setNotReached((prev) => ({ ...prev, ...Object.fromEntries(result.panes.flatMap((p) => (p.notReached ? [[p.role, p.notReached]] : []))) }));
     if (result.panes.length) setSummary(rolePanesSummary(result, team.running));
   };
@@ -95,9 +99,18 @@ export function TeamCard({
               </button>
             )}
             {!team.running && (
-              <button className="aya-modal-btn aya-modal-btn--primary" disabled={busy} onClick={start}>
-                Start
-              </button>
+              <>
+                <input
+                  className="aya-modal-input aya-teams-task"
+                  aria-label={`Task for ${team.name}`}
+                  placeholder="Task (optional)"
+                  value={task}
+                  onChange={(e) => setTask(e.target.value)}
+                />
+                <button className="aya-modal-btn aya-modal-btn--primary" disabled={busy} onClick={start}>
+                  Start
+                </button>
+              </>
             )}
           </>
         )}
