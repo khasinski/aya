@@ -53,6 +53,7 @@ import { startConfigWatcher } from "./config-watcher";
 import { isHostStale } from "./pty-host-staleness";
 import { startControlServer } from "./control";
 import { deliverOpenProject } from "./open-delivery";
+import { singleFlight } from "./single-flight";
 import { createCliAdoptionStore } from "./cli-adoption";
 import { writeFileAtomic } from "./atomic-write";
 import {
@@ -2936,19 +2937,16 @@ function focusedAyaWindow(): BrowserWindow | null {
   return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
 }
 
-let windowBeingCreated: Promise<BrowserWindow> | null = null;
+/** macOS keeps running with every window closed; outside opens and `activate`
+ *  share this, so however they interleave only one window is created. */
+const createWindowOnce = singleFlight(async () => {
+  mainWindow = createWindow(await loadWindowState());
+  return mainWindow;
+});
 
-/** The window an outside open lands in. macOS keeps running with every window
- *  closed, so one is created - once, however many opens arrive meanwhile. */
-function windowForOpen(): Promise<BrowserWindow> {
-  const existing = focusedAyaWindow();
-  if (existing) return Promise.resolve(existing);
-  windowBeingCreated ??= loadWindowState()
-    .then((state) => (mainWindow = createWindow(state)))
-    .finally(() => {
-      windowBeingCreated = null;
-    });
-  return windowBeingCreated;
+/** The window an outside open lands in. */
+async function windowForOpen(): Promise<BrowserWindow> {
+  return focusedAyaWindow() ?? createWindowOnce();
 }
 
 function eachAyaWindow(fn: (win: BrowserWindow) => void): void {
@@ -3240,11 +3238,9 @@ app.whenReady().then(async () => {
   const initialDir = findDirInArgv(process.argv);
   dispatchOpenProject(mainWindow, initialDir).catch(logOpenFailure(initialDir));
 
-  app.on("activate", async () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      const state = await loadWindowState();
-      mainWindow = createWindow(state);
-    }
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length > 0) return;
+    createWindowOnce().catch((err) => console.warn("[aya] could not create a window:", err));
   });
 });
 
