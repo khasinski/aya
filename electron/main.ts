@@ -52,6 +52,7 @@ import {
 import { startConfigWatcher } from "./config-watcher";
 import { isHostStale } from "./pty-host-staleness";
 import { startControlServer } from "./control";
+import { deliverOpenProject } from "./open-delivery";
 import { createCliAdoptionStore } from "./cli-adoption";
 import { writeFileAtomic } from "./atomic-write";
 import {
@@ -1522,13 +1523,13 @@ async function completeDirectoryPath(rawPrefix: string): Promise<string[]> {
 function dispatchOpenProject(
   win: BrowserWindow | null,
   dir: string | null,
-): void {
-  if (!win || win.isDestroyed() || !dir) return;
-  const send = () => win.webContents.send("open-project", dir);
-  // A loading page drops what is sent to it. isLoading() can still read true
-  // inside did-finish-load, so the deferred send does not check it again.
-  if (win.webContents.isLoading()) win.webContents.once("did-finish-load", send);
-  else send();
+): Promise<void> {
+  if (!win || !dir) return Promise.resolve();
+  return deliverOpenProject(win, dir);
+}
+
+function logOpenFailure(dir: string | null): (err: unknown) => void {
+  return (err) => console.warn(`[aya] could not open ${dir}:`, err);
 }
 
 function dispatchShortcut(action: string): void {
@@ -2440,7 +2441,7 @@ function registerIpc(): void {
       if (!win) throw new Error("windows:adopt-project: target window not found");
       if (win.isMinimized()) win.restore();
       win.focus();
-      dispatchOpenProject(win, dir);
+      dispatchOpenProject(win, dir).catch(logOpenFailure(dir));
     },
   );
   ipcMain.handle("projects:create", async (_e, name: unknown, dir: unknown) =>
@@ -2935,6 +2936,21 @@ function focusedAyaWindow(): BrowserWindow | null {
   return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
 }
 
+let windowBeingCreated: Promise<BrowserWindow> | null = null;
+
+/** The window an outside open lands in. macOS keeps running with every window
+ *  closed, so one is created - once, however many opens arrive meanwhile. */
+function windowForOpen(): Promise<BrowserWindow> {
+  const existing = focusedAyaWindow();
+  if (existing) return Promise.resolve(existing);
+  windowBeingCreated ??= loadWindowState()
+    .then((state) => (mainWindow = createWindow(state)))
+    .finally(() => {
+      windowBeingCreated = null;
+    });
+  return windowBeingCreated;
+}
+
 function eachAyaWindow(fn: (win: BrowserWindow) => void): void {
   for (const win of ayaWindows) {
     if (!win.isDestroyed()) fn(win);
@@ -2982,7 +2998,7 @@ app.on("second-instance", (_e, argv, workingDir) => {
     target.focus();
   }
   const dir = findDirInArgv(argv) ?? workingDir ?? null;
-  dispatchOpenProject(target, dir);
+  dispatchOpenProject(target, dir).catch(logOpenFailure(dir));
 });
 
 // macOS sends open-file for `open -a Aya /path` (when invoked without --args).
@@ -2995,7 +3011,7 @@ app.on("open-file", (event, filePath) => {
   }
   try {
     if (statSync(filePath).isDirectory()) {
-      dispatchOpenProject(target, filePath);
+      dispatchOpenProject(target, filePath).catch(logOpenFailure(filePath));
     }
   } catch {
     // ignore
@@ -3134,11 +3150,10 @@ app.whenReady().then(async () => {
       },
     ],
     openProject: async (directory) => {
-      // macOS keeps running with every window closed; the open needs one.
-      const target = focusedAyaWindow() ?? (mainWindow = createWindow(await loadWindowState()));
+      const target = await windowForOpen();
       if (target.isMinimized()) target.restore();
       target.focus();
-      dispatchOpenProject(target, directory);
+      await dispatchOpenProject(target, directory);
     },
   });
   startRemoteServer({
@@ -3222,7 +3237,8 @@ app.whenReady().then(async () => {
 
   // Honor an initial directory argument on first launch — the renderer
   // applies the same switch-or-create logic as for second-instance.
-  dispatchOpenProject(mainWindow, findDirInArgv(process.argv));
+  const initialDir = findDirInArgv(process.argv);
+  dispatchOpenProject(mainWindow, initialDir).catch(logOpenFailure(initialDir));
 
   app.on("activate", async () => {
     if (BrowserWindow.getAllWindows().length === 0) {

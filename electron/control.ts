@@ -25,6 +25,10 @@ export const CONTROL_REQUEST_MAX_SIZE_BYTES = 64_000;
  *  is exempt, so this only drops peers that never finish a frame. */
 export const CONTROL_CONNECTION_IDLE_MS = 30_000;
 
+/** How long an open may take to reach a loaded page before the caller hears
+ *  ok:false; a new window loads in well under a second. */
+export const OPEN_DELIVERY_TIMEOUT_MS = 15_000;
+
 /** Backstop linger after our FIN, for a peer still writing. */
 export const CONTROL_LINGER_MS = 2_000;
 
@@ -54,11 +58,14 @@ export interface ControlServerOptions {
   /** All live windows (and window-like sinks); status updates are broadcast
    *  because the terminal they describe may be in an unfocused window. */
   getWindows?: () => ControlStatusSink[];
-  openProject: (directory: string) => void;
+  /** Settles once the open reached a loaded page; rejects with the reason. */
+  openProject: (directory: string) => Promise<void> | void;
   /** Every parsed request, with the pane it came from (adoption, #117). */
   onRequest?: (request: ControlRequest, caller: ControlCaller) => void;
   /** Test-only override of the idle reap window. */
   idleTimeoutMs?: number;
+  /** Test-only override of OPEN_DELIVERY_TIMEOUT_MS. */
+  openTimeoutMs?: number;
 }
 
 function focusWindow(win: BrowserWindow | null): void {
@@ -153,7 +160,21 @@ async function handleRequest(
     };
   }
   if (request.type === "open") {
-    options.openProject(path.resolve(request.path));
+    const limitMs = options.openTimeoutMs ?? OPEN_DELIVERY_TIMEOUT_MS;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        options.openProject(path.resolve(request.path)),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`the open was not delivered within ${limitMs / 1000} s`)),
+            limitMs,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
     return;
   }
   if (request.type === "pane-list") {
