@@ -26,7 +26,10 @@ function tuiCodex(command: string): { binary: string; withFlag: string } | null 
   const binary = CODEX_BINARY.exec(program)?.[0];
   if (!binary) return null;
   const args = program.slice(binary.length);
-  if (args.split(/\s+/).some((w) => w === NO_DAEMON || NON_TUI.has(w))) return null;
+  // A quoted word is the prompt; the subcommand, if any, comes before it.
+  const words = args.split(/\s+/);
+  const prompt = words.findIndex((w) => /^["']/.test(w));
+  if ((prompt < 0 ? words : words.slice(0, prompt)).some((w) => w === NO_DAEMON || NON_TUI.has(w))) return null;
   return { binary, withFlag: `${trimmed.slice(0, rest)}${binary} ${NO_DAEMON}${args}` };
 }
 
