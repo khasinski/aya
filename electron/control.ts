@@ -204,7 +204,7 @@ async function handleRequest(
   } catch {
     // measurement must never fail a command
   }
-  if (options.listProjects && !IDENTITY_FREE.has(request.type)) {
+  if (caller.terminalId && caller.cwd && options.listProjects && !IDENTITY_FREE.has(request.type)) {
     const refusal = await foreignIdentity(await options.listProjects(), caller, options.worktrees ?? (async () => []));
     if (refusal) throw new Error(refusal);
   }

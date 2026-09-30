@@ -4,6 +4,8 @@
 // codex-cli 0.158.0). `--no-daemon` keeps the commands in the pane's own process.
 
 import { execFile } from "node:child_process";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { COMMAND_PROBE_TIMEOUT_MS } from "./constants";
 import { leadingEnvAssignments } from "./shell-words";
 
@@ -67,9 +69,26 @@ export async function noDaemonCommand(
   }
 }
 
-// Keyed by PATH and binary, since each PATH may find another install. A yes
-// holds for the process lifetime; a no is asked again, so an upgrade is picked up.
-const supportsCache = new Set<string>();
+// Keyed by the installed file and its mtime and size, so each install has its
+// own answer and a reinstall or upgrade is asked again.
+const supportsCache = new Map<string, boolean>();
+
+/** The file `binary` runs from `PATH`, as a cache key; null when only the login shell finds it. */
+async function installedKey(binary: string, pathVar: string | undefined, cwd: string): Promise<string | null> {
+  const candidates = binary.includes("/")
+    ? [path.resolve(cwd, binary)]
+    : (pathVar ?? "").split(path.delimiter).filter(Boolean).map((dir) => path.join(dir, binary));
+  for (const candidate of candidates) {
+    try {
+      const file = await fs.realpath(candidate);
+      const stat = await fs.stat(file);
+      if (stat.isFile() && stat.mode & 0o111) return `${file}\0${stat.mtimeMs}\0${stat.size}`;
+    } catch {
+      // not on this PATH entry
+    }
+  }
+  return null;
+}
 
 /** Whether `binary --help` lists --no-daemon, run through the pane's login shell. */
 export async function codexSupportsNoDaemon(
@@ -78,8 +97,9 @@ export async function codexSupportsNoDaemon(
   env: NodeJS.ProcessEnv,
   binary: string,
 ): Promise<boolean> {
-  const key = `${env.PATH ?? ""}\0${binary}`;
-  if (supportsCache.has(key)) return true;
+  const key = await installedKey(binary, env.PATH, cwd);
+  const known = key === null ? undefined : supportsCache.get(key);
+  if (known !== undefined) return known;
   const help = await new Promise<string>((resolve) => {
     execFile(
       shell,
@@ -89,6 +109,6 @@ export async function codexSupportsNoDaemon(
     );
   });
   const supported = help.includes(NO_DAEMON);
-  if (supported) supportsCache.add(key);
+  if (key !== null) supportsCache.set(key, supported);
   return supported;
 }

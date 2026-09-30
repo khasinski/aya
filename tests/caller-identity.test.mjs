@@ -156,3 +156,17 @@ test("the control server refuses a borrowed identity before the command acts, fo
     assert.equal(capabilities.ok, true);
   });
 });
+
+test("a request without a pane id or cwd does not read the projects for the check", async () => {
+  let reads = 0;
+  const options = { listProjects: async () => (reads++, PROJECTS), getWindows: () => [] };
+  await withServer(options, async (socket) => {
+    for (const caller of [{}, { cwd: B }, { terminalId: "pane-a" }]) {
+      const reply = await rpc(socket, { type: "status", level: "active", text: "x", terminalId: "pane-a", caller });
+      assert.equal(reply.ok, true);
+    }
+    assert.equal(reads, 0);
+    await rpc(socket, { type: "status", level: "active", text: "x", terminalId: "pane-a", caller: { terminalId: "pane-a", cwd: A } });
+    assert.equal(reads, 1);
+  });
+});

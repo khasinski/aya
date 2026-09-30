@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { codexSupportsNoDaemon, noDaemonCommand, withNoDaemon } from "../dist-electron/codex-daemon.js";
@@ -31,6 +31,10 @@ const SPAWN_TABLE = [
   ["codex --profile=review", "codex --no-daemon --profile=review"],
   ["codex -p work review", "codex -p work review"],
   ["codex --search exec", "codex --search exec"],
+  ["codex fix the login bug", "codex --no-daemon fix the login bug"],
+  ["codex write a review", "codex --no-daemon write a review"],
+  ["codex act as a reviewer", "codex --no-daemon act as a reviewer"],
+  ["codex -m o3 explain e and exec", "codex --no-daemon -m o3 explain e and exec"],
   ["codex -c model=o3 exec 'x'", "codex -c model=o3 exec 'x'"],
   ["codex -s read-only exec", "codex -s read-only exec"],
   ["codex -a never exec", "codex -a never exec"],
@@ -85,33 +89,56 @@ test("noDaemonCommand keeps the command when the probe fails or throws before it
   assert.equal(early, "X=$(date) codex");
 });
 
-function fakeCodex(help) {
-  const bin = mkdtempSync(path.join(tmpdir(), "codex-bin-"));
+function fakeCodex(help, bin = mkdtempSync(path.join(tmpdir(), "codex-bin-"))) {
   const log = path.join(bin, "calls.log");
   writeFileSync(path.join(bin, "codex"), `#!/bin/sh\necho "$*" >> '${log}'\ncat <<'EOF'\n${help}\nEOF\n`);
   chmodSync(path.join(bin, "codex"), 0o755);
   return { bin, log, env: { PATH: `${bin}:/usr/bin:/bin`, HOME: bin } };
 }
 
-test("codexSupportsNoDaemon reads codex --help through the shell, caching only a yes", async () => {
+const calls = (fake) => readFileSync(fake.log, "utf8").split("\n").filter(Boolean).length;
+
+test("codexSupportsNoDaemon reads codex --help through the shell once per installed file", async () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "codex-cwd-"));
   const neu = fakeCodex("Options:\n      --no-daemon\n          Run without the shared background server");
   const old = fakeCodex("Options:\n  -m, --model <MODEL>");
-  assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, old.env, path.join(old.bin, "codex")), false);
-  assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, old.env, path.join(old.bin, "codex")), false);
-  assert.equal((await import("node:fs")).readFileSync(old.log, "utf8"), "--help\n--help\n");
+  const oldFile = path.join(old.bin, "codex");
+  const SAME_MTIME = 1_000_000_000;
+  utimesSync(oldFile, SAME_MTIME, SAME_MTIME);
+  assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, old.env, oldFile), false);
+  assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, old.env, oldFile), false);
+  assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, old.env, "codex"), false);
+  assert.equal(calls(old), 1);
   assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, neu.env, "codex"), true);
   assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, neu.env, "codex"), true);
-  assert.equal((await import("node:fs")).readFileSync(neu.log, "utf8"), "--help\n");
+  assert.equal(calls(neu), 1);
+  fakeCodex("Options:\n      --no-daemon   (upgraded)", old.bin);
+  utimesSync(oldFile, SAME_MTIME, SAME_MTIME);
+  assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, old.env, "codex"), true, "same mtime, new size");
+  assert.equal(calls(old), 2);
 });
 
 test("two installs named codex on different PATHs each get their own answer", async () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "codex-cwd-"));
   const neu = fakeCodex("      --no-daemon");
   const old = fakeCodex("  -m, --model <MODEL>");
-  assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, neu.env, "codex"), true);
-  assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, old.env, "codex"), false);
-  assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, neu.env, "codex"), true);
+  const notRunnable = mkdtempSync(path.join(tmpdir(), "codex-noexec-"));
+  writeFileSync(path.join(notRunnable, "codex"), "not a program");
+  const behind = (fake) => ({ ...fake.env, PATH: `${notRunnable}:${fake.env.PATH}` });
+  assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, behind(neu), "codex"), true);
+  assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, behind(old), "codex"), false);
+  assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, behind(neu), "codex"), true);
+});
+
+test("a codex only the login shell finds is asked every time", async () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "codex-cwd-"));
+  const hidden = fakeCodex("  -m, --model <MODEL>");
+  const home = mkdtempSync(path.join(tmpdir(), "codex-home-"));
+  writeFileSync(path.join(home, ".profile"), `PATH='${hidden.bin}':$PATH\nexport PATH\n`);
+  const env = { PATH: "/usr/bin:/bin", HOME: home };
+  assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, env, "codex"), false);
+  assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, env, "codex"), false);
+  assert.equal(calls(hidden), 2);
 });
 
 test("codexSupportsNoDaemon: a missing codex is a no, not a throw", async () => {
