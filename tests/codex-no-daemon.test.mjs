@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { codexSupportsNoDaemon, noDaemonCommand, withNoDaemon } from "../dist-electron/codex-daemon.js";
+import { CODEX_HELP_ARGV, codexSupportsNoDaemon, noDaemonCommand, withNoDaemon } from "../dist-electron/codex-daemon.js";
 
 const SPAWN_TABLE = [
   ["codex", "codex --no-daemon"],
@@ -116,6 +116,10 @@ test("codexSupportsNoDaemon reads codex --help through the shell once per instal
   utimesSync(oldFile, SAME_MTIME, SAME_MTIME);
   assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, old.env, "codex"), true, "same mtime, new size");
   assert.equal(calls(old), 2);
+});
+
+test("the probe's command line is fixed: the binary reaches the shell only as env", () => {
+  assert.deepEqual(CODEX_HELP_ARGV, ["-l", "-i", "-c", 'exec "$AYA_CODEX_BINARY" --help']);
 });
 
 test("two installs named codex on different PATHs each get their own answer", async () => {

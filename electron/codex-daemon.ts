@@ -69,6 +69,10 @@ export async function noDaemonCommand(
   }
 }
 
+const CODEX_BINARY_ENV = "AYA_CODEX_BINARY";
+/** Fixed, so no preset text is on the probe's command line; the binary travels in the env. */
+export const CODEX_HELP_ARGV = ["-l", "-i", "-c", `exec "$${CODEX_BINARY_ENV}" --help`];
+
 // Keyed by the installed file and its mtime and size, so each install has its
 // own answer and a reinstall or upgrade is asked again.
 const supportsCache = new Map<string, boolean>();
@@ -103,8 +107,8 @@ export async function codexSupportsNoDaemon(
   const help = await new Promise<string>((resolve) => {
     execFile(
       shell,
-      ["-l", "-i", "-c", 'exec "$0" --help', binary],
-      { cwd, env, timeout: COMMAND_PROBE_TIMEOUT_MS, windowsHide: true },
+      CODEX_HELP_ARGV,
+      { cwd, env: { ...env, [CODEX_BINARY_ENV]: binary }, timeout: COMMAND_PROBE_TIMEOUT_MS, windowsHide: true },
       (_err, stdout) => resolve(String(stdout)),
     );
   });
