@@ -17,38 +17,58 @@ const NON_TUI = new Set([
   "migrate-rollouts", "unarchive", "cloud", "exec-server", "features", "help", "agents",
 ]);
 
-/** The codex binary and the command split around it, or null when the flag
- *  does not belong: another program, a non-TUI subcommand, already present. */
-function tuiCodex(command: string): { binary: string; withFlag: string } | null {
+// From `codex --help` on 0.158.0: the options whose next word is their value.
+const VALUE_OPTIONS = new Set([
+  "-c", "--config", "--enable", "--disable", "--remote", "--remote-auth-token-env", "-i", "--image",
+  "-m", "--model", "--local-provider", "-p", "--profile", "-s", "--sandbox", "-C", "--cd", "--add-dir",
+  "-a", "--ask-for-approval",
+]);
+
+/** The first word that is neither an option nor an option's value. */
+function firstPositional(words: string[]): string | undefined {
+  for (let i = 0; i < words.length; i += 1) {
+    if (!words[i].startsWith("-")) return words[i];
+    if (VALUE_OPTIONS.has(words[i])) i += 1;
+  }
+  return undefined;
+}
+
+/** The codex binary, its env assignments and the command with the flag, or
+ *  null when the flag does not belong: another program, a non-TUI subcommand, already present. */
+function tuiCodex(command: string): { binary: string; assignments: string[]; withFlag: string } | null {
   const trimmed = command.trim();
-  const { rest } = leadingEnvAssignments(trimmed);
+  const { assignments, rest } = leadingEnvAssignments(trimmed);
   const program = trimmed.slice(rest);
   const binary = CODEX_BINARY.exec(program)?.[0];
   if (!binary) return null;
   const args = program.slice(binary.length);
   // A quoted word is the prompt; the subcommand, if any, comes before it.
-  const words = args.split(/\s+/);
+  const words = args.split(/\s+/).filter(Boolean);
   const prompt = words.findIndex((w) => /^["']/.test(w));
-  if ((prompt < 0 ? words : words.slice(0, prompt)).some((w) => w === NO_DAEMON || NON_TUI.has(w))) return null;
-  return { binary, withFlag: `${trimmed.slice(0, rest)}${binary} ${NO_DAEMON}${args}` };
+  if ((prompt < 0 ? words : words.slice(0, prompt)).includes(NO_DAEMON) || NON_TUI.has(firstPositional(words) ?? "")) return null;
+  return { binary, assignments, withFlag: `${trimmed.slice(0, rest)}${binary} ${NO_DAEMON}${args}` };
 }
 
 export function withNoDaemon(command: string): string {
   return tuiCodex(command)?.withFlag ?? command;
 }
 
-/** withNoDaemon, when `supports` says the installed codex has the flag. */
+/** withNoDaemon, when `supports` says the codex this command runs has the flag. */
 export async function noDaemonCommand(
   command: string,
-  supports: (binary: string) => Promise<boolean>,
+  supports: (binary: string, assignments: string[]) => Promise<boolean>,
 ): Promise<string> {
   const codex = tuiCodex(command);
   if (!codex) return command;
-  return (await supports(codex.binary).catch(() => false)) ? codex.withFlag : command;
+  try {
+    return (await supports(codex.binary, codex.assignments)) ? codex.withFlag : command;
+  } catch {
+    return command;
+  }
 }
 
-// A yes holds for the process lifetime; a no is asked again, so an upgrade
-// mid-session is picked up by the next pane.
+// Keyed by PATH and binary, since each PATH may find another install. A yes
+// holds for the process lifetime; a no is asked again, so an upgrade is picked up.
 const supportsCache = new Set<string>();
 
 /** Whether `binary --help` lists --no-daemon, run through the pane's login shell. */
@@ -58,7 +78,8 @@ export async function codexSupportsNoDaemon(
   env: NodeJS.ProcessEnv,
   binary: string,
 ): Promise<boolean> {
-  if (supportsCache.has(binary)) return true;
+  const key = `${env.PATH ?? ""}\0${binary}`;
+  if (supportsCache.has(key)) return true;
   const help = await new Promise<string>((resolve) => {
     execFile(
       shell,
@@ -68,6 +89,6 @@ export async function codexSupportsNoDaemon(
     );
   });
   const supported = help.includes(NO_DAEMON);
-  if (supported) supportsCache.add(binary);
+  if (supported) supportsCache.add(key);
   return supported;
 }

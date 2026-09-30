@@ -17,7 +17,12 @@ function fakeCodex(dir, helpOption) {
   const file = join(dir, "codex");
   writeFileSync(
     file,
-    ["#!/bin/sh", `if [ "$1" = --help ]; then echo '      ${helpOption}'; exit 0; fi`, 'echo "CODEX-ARGS:$*"', ""].join("\n"),
+    [
+      "#!/bin/sh",
+      `if [ "$1" = --help ]; then [ -n "$CODEX_FAKE_OLD" ] || echo '      ${helpOption}'; exit 0; fi`,
+      'echo "CODEX-ARGS:$*"',
+      "",
+    ].join("\n"),
   );
   chmodSync(file, 0o755);
   return file;
@@ -58,5 +63,10 @@ test("a codex resume pane is launched with --no-daemon after the binary", async 
 
 test("a codex without --no-daemon in its help is launched as the preset says", async (t) => {
   const output = await spawnOutput(t, "cx-2", `${oldCodex} resume --last`);
+  assert.match(output, /CODEX-ARGS:resume --last\s/);
+});
+
+test("the probe runs with the preset's env words, as the pane's codex does", async (t) => {
+  const output = await spawnOutput(t, "cx-3", "CODEX_FAKE_OLD=1 codex resume --last");
   assert.match(output, /CODEX-ARGS:resume --last\s/);
 });

@@ -585,8 +585,8 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
               ptyLog.append("opencode-session-lookup-failed", { ptyId: req.ptyId, error: String(err) }),
             () => ptyLog.append("opencode-session-none", { ptyId: req.ptyId }),
           );
-    const command = await noDaemonCommand(resumed, (codex) =>
-      codexSupportsNoDaemon(userShell(), cwd, safeEnv(req, cwd), codex),
+    const command = await noDaemonCommand(resumed, (codex, assignments) =>
+      codexSupportsNoDaemon(userShell(), cwd, envWithAssignments(safeEnv(req, cwd), assignments), codex),
     );
     if (cancelled()) return;
     const argv = shellArgv(command, cwd);
