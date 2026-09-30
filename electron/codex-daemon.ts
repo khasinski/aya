@@ -61,10 +61,10 @@ export async function codexSupportsNoDaemon(
       shell,
       ["-l", "-i", "-c", 'exec "$0" --help', binary],
       { cwd, env, timeout: COMMAND_PROBE_TIMEOUT_MS, windowsHide: true },
-      (err, stdout) => resolve(err ? "" : String(stdout)),
+      (_err, stdout) => resolve(String(stdout)),
     );
   });
-  const supported = new RegExp(`(^|\\s)${NO_DAEMON}(\\s|$)`, "m").test(help);
+  const supported = help.includes(NO_DAEMON);
   if (supported) supportsCache.add(binary);
   return supported;
 }

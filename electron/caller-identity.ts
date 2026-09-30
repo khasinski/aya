@@ -13,7 +13,7 @@ export async function foreignIdentity(
   { terminalId, cwd }: ControlCaller,
   worktrees: (directory: string) => Promise<string[]>,
 ): Promise<string | null> {
-  if (!terminalId || !cwd) return null;
+  if (!cwd) return null;
   const own = projects.find((p) => p.tabs.some((t) => t.id === terminalId));
   if (!own || own.remote) return null;
   const here = await real(cwd);
@@ -21,7 +21,7 @@ export async function foreignIdentity(
   const bound = own.tabs.flatMap((t) => (t.cwd ? [t.cwd] : []));
   if (await inside([own.directory, ...bound])) return null;
   const other = await callerProject(projects, undefined, { cwd: here });
-  if (!other || other === own || (await inside(await worktrees(own.directory)))) return null;
+  if (!other || (await inside(await worktrees(own.directory)))) return null;
   return (
     `this command runs with another pane's identity (AYA_TERMINAL_ID=${terminalId}, a pane of project "${own.name}") in ${here}, project "${other.name}"; ` +
     "a CLI that runs commands in a shared background process - such as Codex's app-server daemon - loses the pane's identity. " +

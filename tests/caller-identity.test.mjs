@@ -146,6 +146,8 @@ test("the control server refuses a borrowed identity before the command acts, fo
     assert.deepEqual(written, []);
     const own = await rpc(socket, { type: "pane-send", target: "pane-b", text: "hi", caller: { terminalId: "pane-a", cwd: A } });
     assert.equal(own.ok, true);
+    const worktree = await rpc(socket, { type: "pane-send", target: "pane-b", text: "hi", caller: { terminalId: "pane-a", cwd: WT } });
+    assert.equal(worktree.ok, true, worktree.error);
     const outside = await rpc(socket, { type: "pane-send", target: "pane-b", text: "hi", caller: { cwd: B } });
     assert.equal(outside.ok, true);
     const unknown = await rpc(socket, { type: "team-whoami", caller: { terminalId: "gone-1234", cwd: B } });
