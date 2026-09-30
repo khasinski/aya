@@ -30,6 +30,12 @@ A 22-round reviewer/implementer UX session hit:
   only. Closing a pane frees its role; restarting it keeps the role.
 - **Identity**: `aya team whoami` prints the pane's role, each route with
   what it carries, and the protocol; every team pane is reminded to run it.
+- **A borrowed id**: interactive Codex ran every pane's shell commands in
+  one shared `codex app-server daemon`, with the env of the pane that
+  started it, so `aya team whoami` in a later pane answered for that pane,
+  or failed once it had closed (codex-cli 0.158.0, measured). Aya starts
+  Codex with `--no-daemon`, and refuses a command whose pane id belongs to
+  another open project than the directory it runs in.
 - **Send by role**: `aya team send <role> "text"` finds the pane by id
   and delivers at once, because the agent CLIs queue input themselves.
   It holds back only when Enter would do something else: an approval
