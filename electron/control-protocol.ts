@@ -75,6 +75,8 @@ export interface ControlCaller {
   presetId?: string;
   /** "hook" when the call comes from Aya's automatic-status hook, not the agent. */
   via?: string;
+  /** The directory the command runs in, to tell a borrowed pane id (caller-identity.ts). */
+  cwd?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -90,10 +92,12 @@ export function parseControlCaller(value: unknown): ControlCaller {
   const terminalId = optionalString(value.caller.terminalId);
   const presetId = optionalString(value.caller.presetId);
   const via = optionalString(value.caller.via);
+  const cwd = optionalString(value.caller.cwd);
   return {
     ...(terminalId ? { terminalId } : {}),
     ...(presetId ? { presetId } : {}),
     ...(via ? { via } : {}),
+    ...(cwd ? { cwd } : {}),
   };
 }
 

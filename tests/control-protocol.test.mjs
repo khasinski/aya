@@ -182,6 +182,8 @@ test("the caller's via tag survives parsing, so hook traffic can be told apart",
     { terminalId: "t1", presetId: "claude", via: "hook" },
   );
   assert.deepEqual(parseControlCaller({ caller: { terminalId: "t1" } }), { terminalId: "t1" });
+  assert.deepEqual(parseControlCaller({ caller: { terminalId: "t1", cwd: "/w" } }), { terminalId: "t1", cwd: "/w" });
+  assert.deepEqual(parseControlCaller({ caller: { terminalId: "t1", cwd: " " } }), { terminalId: "t1" });
 });
 
 test("team-send needs a role and non-empty text", () => {

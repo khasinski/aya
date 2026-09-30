@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import * as net from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -48,7 +48,7 @@ async function aya(args, { shell = "/bin/sh", reply = { ok: true, output: "from 
       child.stdin.on("error", () => {});
       child.stdin.end(stdin);
     });
-    return { ...result, request, dir };
+    return { ...result, request, dir: realpathSync(dir) };
   } finally {
     await new Promise((done) => server.close(done));
     rmSync(dir, { recursive: true, force: true });
@@ -65,6 +65,12 @@ for (const shell of SHELLS) {
     assert.equal(request.projectSlug, "game");
     assert.equal(request.caller.terminalId, "pane-1");
     assert.ok(request.cwd.endsWith(dir.split("/").pop()), request.cwd);
+  });
+
+  test(`team whoami tells the app where the command runs, to catch a borrowed pane id (${shell})`, async () => {
+    const { status, request, dir } = await aya(["whoami"], { shell });
+    assert.equal(status, 0);
+    assert.deepEqual(request, { type: "team-whoami", caller: { terminalId: "pane-1", cwd: dir } });
   });
 
   test(`team new without a description asks for the guide alone (${shell})`, async () => {

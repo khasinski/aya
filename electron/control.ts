@@ -2,6 +2,7 @@ import type { BrowserWindow } from "electron";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
+import { foreignIdentity } from "./caller-identity";
 import { capabilitiesDocument } from "./capabilities";
 import {
   parseControlCaller,
@@ -76,6 +77,8 @@ export interface ControlServerOptions {
   teamRunner?: Pick<TeamRunner, "refresh">;
   /** What aya presets and aya team open run on, as the Teams window's Apply panes. */
   teamPanes?: TeamPaneDeps;
+  /** Git worktrees of a project directory: a pane working in one is still its project's. */
+  worktrees?: (directory: string) => Promise<string[]>;
   /** Test-only override of the idle reap window. */
   idleTimeoutMs?: number;
   /** Test-only override of OPEN_DELIVERY_TIMEOUT_MS. */
@@ -188,6 +191,9 @@ async function withPaneLock<T>(
   }
 }
 
+/** Requests that act the same whichever pane sends them. */
+const IDENTITY_FREE = new Set<ControlRequest["type"]>(["open", "focus", "capabilities", "presets"]);
+
 async function handleRequest(
   request: ControlRequest,
   caller: ControlCaller,
@@ -197,6 +203,10 @@ async function handleRequest(
     options.onRequest?.(request, caller);
   } catch {
     // measurement must never fail a command
+  }
+  if (options.listProjects && !IDENTITY_FREE.has(request.type)) {
+    const refusal = await foreignIdentity(await options.listProjects(), caller, options.worktrees ?? (async () => []));
+    if (refusal) throw new Error(refusal);
   }
   const win = options.getWindow();
   if (request.type === "capabilities") {
