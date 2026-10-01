@@ -51,7 +51,9 @@ export interface SeedOptions {
     icon: string;
     color: string;
     command: string;
+    agent?: string;
     autoResume?: boolean;
+    configDir?: string;
   }>;
   /** Extra environment variables for the Electron process. */
   launchEnv?: Record<string, string>;
@@ -64,6 +66,11 @@ export interface SeedOptions {
   /** With fakeHome: the claude config dir under HOME that holds a transcript
    *  for each of `tabSessionIds`, as Claude saves one per conversation. */
   claudeTranscriptsIn?: string;
+  /** Resolve the temp root's symlinks (macOS tmpdir is /var -> /private/var), so
+   *  the project dir is the path git reports. The status bar follows the active
+   *  pane's live checkout, and the first read of it would otherwise swap the
+   *  git directory once, closing whatever status-bar popover a test has open. */
+  realPaths?: boolean;
   /** Stub executables put first on PATH, so harness detection finds them. */
   fakeBins?: string[];
   /** #115's machine: an rvm gemset first on PATH with a working Aya shim, dead
@@ -116,7 +123,7 @@ function shellQuote(value: string): string {
  *  snippet store that the app seeds with its defaults on boot. */
 export function seedEnv(opts: SeedOptions = {}): SeededEnv {
   const split = opts.split !== false && !opts.singleTab;
-  const root = mkdtempSync(join(tmpdir(), "aya-e2e-"));
+  const root = opts.realPaths ? realpathSync(mkdtempSync(join(tmpdir(), "aya-e2e-"))) : mkdtempSync(join(tmpdir(), "aya-e2e-"));
   const ayaHome = join(root, "aya-home");
   const userDataDir = join(root, "electron-data");
   const projectDir = join(root, "project");
