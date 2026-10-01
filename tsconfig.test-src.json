@@ -23,6 +23,7 @@
     "src/team-flow.ts",
     "src/team-view.ts",
     "src/diff-navigation.ts",
+    "src/diff-review.ts",
     "src/double-shift.ts",
     "src/focus-reporting.ts",
     "src/hooks/usePersistentPreference.ts",

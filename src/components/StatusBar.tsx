@@ -8,6 +8,13 @@ import type {
   WorktreeStatus,
 } from "../types";
 import { diffFileLineIndex } from "../diff-navigation";
+import {
+  commentRowIndex,
+  locateDiffLine,
+  reviewPrompt,
+  type DiffComment,
+  type ReviewTarget,
+} from "../diff-review";
 
 // Material Symbols small icon size (px) used for status-bar glyphs
 const ICON_SIZE_SM_PX = 13;
@@ -37,6 +44,10 @@ interface Props {
   attentionCount: number;
   snippetsOpen: boolean;
   snippetsDisabled: boolean;
+  /** Agent panes of the active project a diff review can go to, the default
+   *  first. Empty: comments can be written, not sent. */
+  reviewTargets: ReviewTarget[];
+  onSendReview: (target: ReviewTarget, prompt: string) => void;
   onOpenProjectDirectory: (directory: string) => void;
   onToggleSnippets: () => void;
   onOpenAttentionCenter: () => void;
@@ -62,6 +73,8 @@ function StatusBarImpl({
   attentionCount,
   snippetsOpen,
   snippetsDisabled,
+  reviewTargets,
+  onSendReview,
   onOpenProjectDirectory,
   onToggleSnippets,
   onOpenAttentionCenter,
@@ -97,6 +110,10 @@ function StatusBarImpl({
   const [diffQuery, setDiffQuery] = useState("");
   // When set, the diff view scrolls to this file's section once it renders.
   const [scrollToPath, setScrollToPath] = useState<string | null>(null);
+  // Review comments on the diff, kept while the popover is closed and reopened
+  // (a reload of the diff finds their rows again by content).
+  const [comments, setComments] = useState<DiffComment[]>([]);
+  const [reviewTargetId, setReviewTargetId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!showDirtyFiles) return;
@@ -136,7 +153,14 @@ function StatusBarImpl({
     setDiffText("");
     setDiffQuery("");
     setScrollToPath(null);
+    setComments([]);
   }, [gitDirectory]);
+
+  const sendReview = (target: ReviewTarget) => {
+    onSendReview(target, reviewPrompt(comments, gitDirectory));
+    setComments([]);
+    setShowDirtyFiles(false);
+  };
 
   const toggleDirtyFiles = () => {
     if (!gitDirectory) return;
@@ -411,6 +435,12 @@ function StatusBarImpl({
                   onQueryChange={setDiffQuery}
                   scrollToPath={scrollToPath}
                   onScrolled={() => setScrollToPath(null)}
+                  comments={comments}
+                  onCommentsChange={setComments}
+                  targets={reviewTargets}
+                  targetId={reviewTargetId}
+                  onTargetChange={setReviewTargetId}
+                  onSend={sendReview}
                 />
               ) : dirtyFilesLoading ? (
                 <div className="aya-statusbar-popover-empty">Loading...</div>
@@ -652,6 +682,12 @@ function DiffPanel({
   onQueryChange,
   scrollToPath,
   onScrolled,
+  comments,
+  onCommentsChange,
+  targets,
+  targetId,
+  onTargetChange,
+  onSend,
 }: {
   diff: string;
   loading: boolean;
@@ -659,8 +695,39 @@ function DiffPanel({
   onQueryChange: (query: string) => void;
   scrollToPath: string | null;
   onScrolled: () => void;
+  comments: DiffComment[];
+  onCommentsChange: (comments: DiffComment[]) => void;
+  targets: ReviewTarget[];
+  targetId: string | null;
+  onTargetChange: (id: string) => void;
+  onSend: (target: ReviewTarget) => void;
 }) {
   const lines = useMemo(() => annotateDiff(diff), [diff]);
+  const rawLines = useMemo(() => diff.split("\n"), [diff]);
+  // Which row is being commented on, and the draft note.
+  const [editing, setEditing] = useState<number | null>(null);
+  const [draft, setDraft] = useState("");
+  // Row -> the comments under it, found again by content after a reload.
+  const commentsByRow = useMemo(() => {
+    const byRow = new Map<number, DiffComment[]>();
+    for (const comment of comments) {
+      const row = commentRowIndex(rawLines, comment);
+      if (row >= 0) byRow.set(row, [...(byRow.get(row) ?? []), comment]);
+    }
+    return byRow;
+  }, [comments, rawLines]);
+  const orphaned = comments.length - [...commentsByRow.values()].reduce((n, list) => n + list.length, 0);
+  const target = targets.find((t) => t.id === targetId) ?? targets[0] ?? null;
+  const saveDraft = () => {
+    const note = draft.trim();
+    const place = editing === null ? null : locateDiffLine(rawLines, editing);
+    if (note && place) onCommentsChange([...comments, { ...place, note }]);
+    setEditing(null);
+    setDraft("");
+  };
+  const removeComment = (comment: DiffComment) => {
+    onCommentsChange(comments.filter((c) => c !== comment));
+  };
   const matchCount = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return 0;
@@ -705,20 +772,129 @@ function DiffPanel({
               highlightCodeHtml(code, line.language),
               query,
             );
+            const commentable = prefix !== "";
+            const under = commentsByRow.get(index) ?? [];
             return (
-              <div
-                className={`aya-diff-view-line aya-diff-view-line--${line.kind}`}
-                key={index}
-                ref={index === targetIndex ? targetRef : undefined}
-              >
-                <span className="aya-diff-view-gutter">{index + 1}</span>
-                <span className="aya-diff-view-code">
-                  {prefix ? <span className="aya-diff-prefix">{prefix}</span> : null}
-                  <span dangerouslySetInnerHTML={{ __html: highlighted }} />
-                </span>
+              <div key={index}>
+                <div
+                  className={`aya-diff-view-line aya-diff-view-line--${line.kind} ${
+                    under.length || editing === index ? "aya-diff-view-line--commented" : ""
+                  }`}
+                  ref={index === targetIndex ? targetRef : undefined}
+                >
+                  <span className="aya-diff-view-gutter">
+                    {commentable && (
+                      <button
+                        className="aya-diff-comment-btn"
+                        type="button"
+                        title="Comment on this line"
+                        aria-label={`Comment on line ${index + 1}`}
+                        onClick={() => {
+                          setEditing(index);
+                          setDraft("");
+                        }}
+                      >
+                        +
+                      </button>
+                    )}
+                    {index + 1}
+                  </span>
+                  <span className="aya-diff-view-code">
+                    {prefix ? <span className="aya-diff-prefix">{prefix}</span> : null}
+                    <span dangerouslySetInnerHTML={{ __html: highlighted }} />
+                  </span>
+                </div>
+                {under.map((comment, i) => (
+                  <div className="aya-diff-comment" key={i}>
+                    <span className="aya-diff-comment-note">{comment.note}</span>
+                    <button
+                      className="aya-diff-comment-remove"
+                      type="button"
+                      title="Remove comment"
+                      onClick={() => removeComment(comment)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+                {editing === index && (
+                  <div className="aya-diff-comment aya-diff-comment--editor">
+                    <textarea
+                      autoFocus
+                      rows={2}
+                      value={draft}
+                      placeholder="What should the agent change here? Enter sends, Shift+Enter adds a line, Esc cancels."
+                      onChange={(event) => setDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          setEditing(null);
+                          setDraft("");
+                        } else if (event.key === "Enter" && !event.shiftKey) {
+                          event.preventDefault();
+                          saveDraft();
+                        }
+                      }}
+                    />
+                    <div className="aya-diff-comment-actions">
+                      <button className="aya-modal-btn aya-modal-btn--primary" type="button" onClick={saveDraft}>
+                        Add
+                      </button>
+                      <button
+                        className="aya-modal-btn"
+                        type="button"
+                        onClick={() => {
+                          setEditing(null);
+                          setDraft("");
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
+        </div>
+      )}
+      {comments.length > 0 && (
+        <div className="aya-diff-review-bar" data-testid="diff-review-bar">
+          <span className="aya-diff-review-count">
+            {comments.length} {comments.length === 1 ? "comment" : "comments"}
+            {orphaned > 0 ? ` (${orphaned} no longer in the diff)` : ""}
+          </span>
+          <button className="aya-statusbar-popover-action" type="button" onClick={() => onCommentsChange([])}>
+            Clear
+          </button>
+          <span className="aya-diff-review-spacer" />
+          {targets.length === 0 ? (
+            <span className="aya-diff-review-hint">No agent pane in this project to send to.</span>
+          ) : (
+            <>
+              <label className="aya-diff-review-target">
+                Send to
+                <select value={target?.id ?? ""} onChange={(event) => onTargetChange(event.target.value)}>
+                  {targets.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                      {t.hold ? ` (${t.hold})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="aya-modal-btn aya-modal-btn--primary"
+                type="button"
+                data-testid="diff-review-send"
+                disabled={!target || target.hold !== null}
+                title={target?.hold ? `${target.name} ${target.hold}` : "Paste the comments into the pane and press Enter"}
+                onClick={() => target && onSend(target)}
+              >
+                Send
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>

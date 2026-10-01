@@ -1148,6 +1148,119 @@ body {
 }
 .aya-diff-view-line--add .aya-diff-prefix { color: var(--aya-diff-add-fg); }
 .aya-diff-view-line--del .aya-diff-prefix { color: var(--aya-diff-del-fg); }
+/* Review comments: a "+" in the gutter on hover, a note block under the row,
+   and the send bar at the bottom of the panel. */
+.aya-diff-view-gutter {
+  position: relative;
+}
+.aya-diff-comment-btn {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: var(--accent);
+  color: var(--bg);
+  font: 700 11px/14px var(--font-mono);
+  cursor: pointer;
+  opacity: 0;
+}
+.aya-diff-view-line:hover .aya-diff-comment-btn,
+.aya-diff-comment-btn:focus-visible {
+  opacity: 1;
+}
+.aya-diff-view-line--commented {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.aya-diff-comment {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 2px 12px 4px 48px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in oklab, var(--accent) 40%, var(--border));
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--accent) 8%, var(--bg-secondary));
+  color: var(--fg-primary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 16px;
+}
+.aya-diff-comment--editor {
+  flex-direction: column;
+  align-items: stretch;
+}
+.aya-diff-comment-note {
+  flex: 1;
+  white-space: pre-wrap;
+}
+.aya-diff-comment-remove {
+  border: 0;
+  background: none;
+  color: var(--fg-tertiary);
+  font: inherit;
+  cursor: pointer;
+}
+.aya-diff-comment-remove:hover {
+  color: var(--fg-primary);
+}
+.aya-diff-comment textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg-primary);
+  font: inherit;
+  padding: 4px 6px;
+}
+.aya-diff-comment textarea:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.aya-diff-comment-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.aya-diff-review-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--fg-secondary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
+.aya-diff-review-spacer {
+  flex: 1;
+}
+.aya-diff-review-count {
+  color: var(--fg-primary);
+  font-weight: 600;
+}
+.aya-diff-review-hint {
+  color: var(--fg-tertiary);
+}
+.aya-diff-review-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.aya-diff-review-target select {
+  max-width: 220px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg-primary);
+  font: inherit;
+}
 .aya-diff-view .hljs-keyword,
 .aya-diff-view .hljs-selector-tag,
 .aya-diff-view .hljs-built_in,

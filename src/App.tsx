@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { detectApproval } from "./bell";
-import { commandWithAutoResume } from "./agentPreset";
+import { commandWithAutoResume, isAgentPreset } from "./agentPreset";
+import { REVIEW_SUBMIT_DELAY_MS, reviewPtyPayload, type ReviewTarget } from "./diff-review";
 import { gitContextCwd, projectBaseCwd, tabFromTerminal } from "./worktree";
 import { findStatusTarget } from "./control-status-target";
 import {
@@ -3352,6 +3353,38 @@ export function App() {
   const activeGithubLink = activeGitDirectory
     ? (githubLinks[activeGitDirectory] ?? null)
     : null;
+  // Agent panes a diff review can be sent to: the active one first, then the
+  // project's tab order. Local projects only, like the diff itself.
+  const reviewTargets = useMemo<ReviewTarget[]>(() => {
+    if (!activeProject || activeProject.remote) return [];
+    const order = activeProject.tabs.map((tab) => tab.id);
+    const ids = activeTerminal
+      ? [activeTerminal.id, ...order.filter((id) => id !== activeTerminal.id)]
+      : order;
+    return ids.flatMap((id) => {
+      const t = terminals[id];
+      const preset = t && activePresets.find((p) => p.id === t.presetId);
+      if (!t || !preset || !isAgentPreset(preset)) return [];
+      const hold =
+        t.exitCode !== null || t.stopped
+          ? "has exited"
+          : t.status === "waiting"
+            ? "is waiting for your approval"
+            : null;
+      return [{ id, projectSlug: t.projectSlug, name: t.name, hold }];
+    });
+  }, [activeProject, activeTerminal, terminals, activePresets]);
+  const sendDiffReview = useCallback(
+    (target: ReviewTarget, prompt: string) => {
+      void (async () => {
+        await window.aya.ptyWrite(target.id, reviewPtyPayload(prompt));
+        await new Promise((resolve) => setTimeout(resolve, REVIEW_SUBMIT_DELAY_MS));
+        await window.aya.ptyWrite(target.id, "\r");
+      })();
+      focusTerminalFromNotification(target.projectSlug, target.id);
+    },
+    [focusTerminalFromNotification],
+  );
   // Resolve the PR/branch link only when the active checkout or its branch
   // changes — `gh pr view` hits the GitHub API, so we deliberately keep it off
   // the 3s git poll. Local repos only; remote projects have no working tree.
@@ -4166,6 +4199,8 @@ export function App() {
         attentionCount={attentionCount}
         snippetsOpen={snippetsOpenForActiveTerminal}
         snippetsDisabled={!activeTerminal}
+        reviewTargets={reviewTargets}
+        onSendReview={sendDiffReview}
         onToggleSnippets={toggleSnippetsDrawer}
         onOpenAttentionCenter={openAttentionCenter}
         onOpenTeams={() => setShowTeams(true)}
