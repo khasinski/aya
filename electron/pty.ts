@@ -36,6 +36,7 @@ import {
   MIN_PTY_COLS,
   MIN_PTY_ROWS,
 } from "./constants";
+import { codexSupportsNoDaemon, noDaemonCommand } from "./codex-daemon";
 import { commandExists, preflightBinary } from "./command-probe";
 import { userShell } from "./shell";
 import { getProcessCwd } from "./process-cwd";
@@ -568,7 +569,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     // re-mounts returned above), so no lookup is paid for nothing. opencode's
     // goes through the pane's own shell and env: it may only be on the PATH
     // its startup files build.
-    const command =
+    const resumed =
       req.agent === "claude"
         ? await withLiveClaudeResume(
             req.command,
@@ -584,6 +585,9 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
               ptyLog.append("opencode-session-lookup-failed", { ptyId: req.ptyId, error: String(err) }),
             () => ptyLog.append("opencode-session-none", { ptyId: req.ptyId }),
           );
+    const command = await noDaemonCommand(resumed, (codex, assignments) =>
+      codexSupportsNoDaemon(userShell(), cwd, envWithAssignments(safeEnv(req, cwd), assignments), codex),
+    );
     if (cancelled()) return;
     const argv = shellArgv(command, cwd);
     const file = argv[0];

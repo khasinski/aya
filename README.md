@@ -342,6 +342,15 @@ and `pane send` presses Enter after the text unless you pass `--no-submit`
 (type only, for a prompt a human should review first). `--submit` is still
 accepted, in any position, and changes nothing.
 
+Every command knows its pane by `AYA_TERMINAL_ID`, so a CLI that runs the
+agent's commands in a shared background process hands them the env of
+whichever pane started that process. Interactive Codex does this with its
+app-server daemon (measured on codex-cli 0.158.0), so Aya starts Codex panes
+with `--no-daemon` when the installed codex has it (not `codex exec` and other
+non-interactive subcommands). A command whose pane id belongs to one open
+project while it runs in another is refused, naming this cause; restart that
+pane. A pane's git worktrees and a directory outside every project are fine.
+
 `aya capabilities` is the machine-readable form of this list, so an agent can
 learn the commands from the CLI itself instead of from a copied skill file.
 Aya also counts, per harness, how many panes ever called `aya` at all; the

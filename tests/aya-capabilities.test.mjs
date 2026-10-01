@@ -64,15 +64,15 @@ test("aya capabilities prints the command list as JSON, marked inside Aya", asyn
   );
   assert.ok(doc.commands.find((c) => c.command === "pane send").notes.join(" ").includes("--no-submit"));
   assert.deepEqual(seen, [
-    { request: { type: "capabilities" }, caller: { terminalId: "term-1", presetId: "claude" } },
+    { request: { type: "capabilities" }, caller: { terminalId: "term-1", presetId: "claude", cwd: process.cwd() } },
   ]);
 });
 
-test("outside an Aya pane: still answers, insideAya false, no caller", async () => {
+test("outside an Aya pane: still answers, insideAya false, no pane in the caller", async () => {
   const { status, stdout, seen } = await runAgainstServer(["capabilities"], {});
   assert.equal(status, 0);
   assert.equal(JSON.parse(stdout).insideAya, false);
-  assert.deepEqual(seen[0].caller, {});
+  assert.deepEqual(seen[0].caller, { cwd: process.cwd() });
 });
 
 test("every command carries its pane, not just capabilities", async () => {
@@ -81,7 +81,7 @@ test("every command carries its pane, not just capabilities", async () => {
     AYA_PRESET_ID: "codex",
   });
   assert.equal(seen[0].request.type, "status");
-  assert.deepEqual(seen[0].caller, { terminalId: "term-2", presetId: "codex" });
+  assert.deepEqual(seen[0].caller, { terminalId: "term-2", presetId: "codex", cwd: process.cwd() });
 });
 
 test("a throwing adoption hook never fails the command", async () => {

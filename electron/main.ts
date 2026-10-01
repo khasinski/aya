@@ -104,6 +104,7 @@ import {
   getGitRoot,
   headCommit,
   listWorktreeStatus,
+  listWorktrees,
 } from "./git";
 import { getGitHubLink, isGitHubCliAvailable } from "./github";
 import {
@@ -3061,6 +3062,7 @@ app.whenReady().then(async () => {
     // and act through the pty host, so they work regardless of which window
     // (if any) currently owns the target project.
     listProjects: () => listProjects(),
+    worktrees: async (directory) => (await listWorktrees(directory)).map((w) => w.path),
     // Rendered here, not in the pty host: up to ~50 ms per 1 MB would stall every
     // pane's output there.
     readPane: async (terminalId) => {

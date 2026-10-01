@@ -184,6 +184,9 @@ const request = {
     // Set by Aya's own automatic-status hooks, so their calls don't read as
     // the agent adopting the CLI.
     via: optionalEnv("AYA_VIA"),
+    // Where the command runs: a CLI that runs commands in a shared background
+    // process (Codex's app-server daemon) hands them another pane's id.
+    cwd: process.cwd(),
   },
 };
 const connectDeadline = Date.now() + Number(connectWait || 0) * 1000;

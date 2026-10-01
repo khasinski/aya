@@ -102,8 +102,13 @@ export function teamGuide(description: string | undefined, existing: string[]): 
   return [...parts, GUIDE].join("\n\n");
 }
 
-async function real(p: string): Promise<string> {
+export async function real(p: string): Promise<string> {
   return fs.realpath(p).catch(() => path.resolve(p));
+}
+
+/** `here` is `dir` or below it; both already real paths. */
+export function within(here: string, dir: string): boolean {
+  return here === dir || here.startsWith(dir + path.sep);
 }
 
 /** The calling pane's project, else the slug's, else the one the cwd is in. */
@@ -119,8 +124,7 @@ export async function callerProject(
   let best: { project: ProjectConfig; depth: number } | null = null;
   for (const project of projects) {
     const dir = await real(project.directory);
-    const inside = here === dir || here.startsWith(dir + path.sep);
-    if (inside && dir.length > (best?.depth ?? -1)) best = { project, depth: dir.length };
+    if (within(here, dir) && dir.length > (best?.depth ?? -1)) best = { project, depth: dir.length };
   }
   return best?.project ?? null;
 }
