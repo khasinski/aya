@@ -24,7 +24,7 @@ outside the project:
 | OpenCode | plan agent | the socket yes; the work no: edits denied, it would not write a file | refuses a preset with `--agent plan` |
 | Claude Code | no sandbox (default); `--dangerously-skip-permissions` | yes | nothing to add |
 | Claude Code | `sandbox.enabled`, with or without `--dangerously-skip-permissions` | no: EPERM | adds `--settings` that puts the socket's real path in `sandbox.network.allowUnixSockets` |
-| Claude Code | `sandbox.enabled` with `allowUnixSockets` naming the socket's directory (or an ancestor), or `allowAllUnixSockets` | yes (2.1.285, scripted tool call); an exact entry spelled through a symlink (`/tmp/...` for `/private/tmp/...`) does not match, the real path does | nothing to add |
+| Claude Code | `sandbox.enabled` with `allowUnixSockets` naming the socket's directory (or an ancestor other than `/`), or `allowAllUnixSockets` | yes (2.1.285, scripted tool call); an exact entry spelled through a symlink (`/tmp/...` for `/private/tmp/...`) does not match, the real path does; `/` was not measured | nothing to add; for `/`, adds the socket as above, which is harmless if `/` already covers it |
 | Claude Code | `permissions.defaultMode` `plan` in the settings, without `--permission-mode` | no: plan mode does not act on the role's work | refuses a new pane; an open pane is held |
 | Claude Code | `--permission-mode plan` | unknown: refused to run the command in 1 of 2 runs | not held; noted: restart it without the flag |
 | Grok | default, `--sandbox workspace`, `strict`, `read-only`, `devbox`; `--permission-mode plan` | yes (`read-only` did not stop a file write either) | nothing to add |
