@@ -1,7 +1,7 @@
 // A team, as defined in the repo at .aya/teams/<name>.md. Plain markdown
 // sections instead of YAML, so people and agents can read and edit it.
 
-import type { SendRoute, TeamCadence, TeamDefinition, TeamRole } from "./types";
+import type { SendRoute, TeamDefinition, TeamRole } from "./types";
 
 export const ID_MAX_LEN = 40;
 export const ID_RE = new RegExp(`^[a-z0-9][a-z0-9-]{0,${ID_MAX_LEN - 1}}$`);
@@ -9,9 +9,8 @@ export const MIN_TEAM_ROLES = 2;
 /** The sender of Aya's own messages: delivery tests and rounds. */
 export const TEAM_SYSTEM_SENDER = "aya";
 export const RESERVED_ROLE_PROBLEM = `"${TEAM_SYSTEM_SENDER}" is reserved for Aya's own messages; name the role something else`;
-/** The sender of a task the user gives with Start; no new or saved role may take it.
- *  A team saved before it was reserved still loads and runs: it can start without
- *  a task, but takes none (TeamRunner.start), so "user" there is only its role. */
+/** The sender of a task the user gives with Start; no new or saved role may take it. A team saved before it was
+ *  reserved still runs, but takes no task (TeamRunner.start), so "user" there is only its role. */
 export const TEAM_USER_SENDER = "user";
 
 /** Why a role cannot be saved under this id, or null. Loading an already saved
@@ -68,7 +67,13 @@ function parseRole(team: string, id: string, body: string): TeamRole {
   return { id, sendsTo, mustNot, responsibilities: rest.join("\n").trim() };
 }
 
-function parseCadence(team: string, body: string): TeamCadence {
+/** A file's "## Cadence": the role it names and the minutes. */
+interface FileCadence {
+  role: string;
+  minutes: number;
+}
+
+function parseCadence(team: string, body: string): FileCadence {
   const match = body.trim().match(/^([a-z0-9-]+) every (\d+) min$/);
   const minutes = match ? Number(match[2]) : 0;
   if (!match || minutes < 1 || minutes > MAX_CADENCE_MINUTES) {
@@ -77,12 +82,19 @@ function parseCadence(team: string, body: string): TeamCadence {
   return { role: match[1], minutes };
 }
 
+function parseLead(team: string, body: string): string {
+  const lead = body.trim();
+  if (!ID_RE.test(lead)) throw new TeamFileError(team, 'lead must read "<role>", one role id');
+  return lead;
+}
+
 export function parseTeamFile(name: string, text: string): TeamDefinition {
   if (!ID_RE.test(name)) {
     throw new TeamFileError(name, "the file name must be lowercase letters, digits and dashes");
   }
   const roles: TeamRole[] = [];
-  let cadence: TeamCadence | null = null;
+  let cadence: FileCadence | null = null;
+  let lead: string | null = null;
   let protocol = "";
   // The first chunk is the title and anything before the first section.
   for (const section of text.replace(/\r\n/g, "\n").split(SECTION_RE).slice(1)) {
@@ -91,6 +103,7 @@ export function parseTeamFile(name: string, text: string): TeamDefinition {
     const body = newline < 0 ? "" : section.slice(newline + 1);
     const role = heading.match(/^Role:\s*(.+)$/);
     if (role) roles.push(parseRole(name, role[1].trim(), body));
+    else if (heading === "Lead") lead = parseLead(name, body);
     else if (heading === "Cadence") cadence = parseCadence(name, body);
     else if (heading === "Protocol") protocol = body.trim();
     else throw new TeamFileError(name, `unknown section "## ${heading}"`);
@@ -109,7 +122,22 @@ export function parseTeamFile(name: string, text: string): TeamDefinition {
   if (cadence && !ids.includes(cadence.role)) {
     throw new TeamFileError(name, `cadence names unknown role "${cadence.role}"`);
   }
-  return { name, roles, cadence, protocol };
+  if (lead && !ids.includes(lead)) throw new TeamFileError(name, `lead names unknown role "${lead}"`);
+  return { name, roles, ...leadAndRhythm(lead, cadence), protocol };
+}
+
+/** The one rule for the lead and the rhythm: the role "## Cadence" names is the lead. A "## Lead" naming another goes to
+ *  `leadConflict`, so an old file still loads (the card warns) and a save refuses it. */
+function leadAndRhythm(lead: string | null, cadence: FileCadence | null): Pick<TeamDefinition, "lead" | "cadenceMinutes" | "leadConflict"> {
+  const conflict = lead !== null && cadence !== null && lead !== cadence.role;
+  return { lead: cadence?.role ?? lead, cadenceMinutes: cadence?.minutes ?? null, ...(conflict ? { leadConflict: lead } : {}) };
+}
+
+/** Why a team cannot be saved for its lead, or null. That the lead is one of its roles and the minutes are in
+ *  range is the parser's to say, when the saved text is read back. */
+export function leadProblemOf(team: Pick<TeamDefinition, "lead" | "leadConflict">): string | null {
+  if (team.leadConflict) return "cadence and lead name different roles; make them the same";
+  return team.lead ? null : 'no role leads it; add "## Lead" with the role that starts the work and checks nobody waits too long';
 }
 
 /** The name in the "# <name>" title above the first section, or null. */
@@ -129,7 +157,8 @@ export function serializeTeam(team: TeamDefinition): string {
     if (role.responsibilities) lines.push(role.responsibilities);
     parts.push(lines.join("\n"));
   }
-  if (team.cadence) parts.push(`## Cadence\n${team.cadence.role} every ${team.cadence.minutes} min`);
+  if (team.lead) parts.push(`## Lead\n${team.lead}`);
+  if (team.lead && team.cadenceMinutes !== null) parts.push(`## Cadence\n${team.lead} every ${team.cadenceMinutes} min`);
   if (team.protocol) parts.push(`## Protocol\n${team.protocol}`);
   return `${parts.join("\n\n")}\n`;
 }

@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MUST_NOT_FIELD, SECTION_MARKER, SENDS_TO_FIELD, TEAM_SYSTEM_SENDER, parseTeamFile, serializeTeam } from "../dist-electron/teams.js";
+import { MUST_NOT_FIELD, SECTION_MARKER, SENDS_TO_FIELD, TEAM_SYSTEM_SENDER, parseTeamFile, serializeTeam } from "../dist-electron/team-definition.js";
 
 const UX_REVIEW = `# ux-review
 
@@ -17,6 +17,9 @@ Reports findings as hypotheses with a measurement request.
 Sends to: tester
 Must not: skip a report
 Fixes findings and names the commit to test.
+
+## Lead
+tester
 
 ## Cadence
 tester every 30 min
@@ -44,9 +47,15 @@ test("parses roles, send-to, must-not, cadence and protocol", () => {
         responsibilities: "Fixes findings and names the commit to test.",
       },
     ],
-    cadence: { role: "tester", minutes: 30 },
+    lead: "tester",
+    cadenceMinutes: 30,
     protocol: "One round every 30 minutes. Reports are one-way.",
   });
+});
+
+test("a team with no lead is saved with no Cadence: minutes alone name no role", () => {
+  const team = { ...parseTeamFile("ux-review", UX_REVIEW), lead: null, cadenceMinutes: 30 };
+  assert.doesNotMatch(serializeTeam(team), /## (Cadence|Lead)/);
 });
 
 test("serialize then parse gives the same team", () => {
@@ -57,7 +66,7 @@ test("serialize then parse gives the same team", () => {
 test("cadence and protocol are optional", () => {
   const text = UX_REVIEW.replace(/## Cadence[\s\S]*$/, "");
   const team = parseTeamFile("ux-review", text);
-  assert.equal(team.cadence, null);
+  assert.equal(team.cadenceMinutes, null);
   assert.equal(team.protocol, "");
 });
 
@@ -126,9 +135,9 @@ test("a role named aya is refused, since its messages would read as Aya's own", 
 });
 
 test("cadence runs from 1 min up to a day, both ends included", () => {
-  const every = (n) => parseTeamFile("ux-review", UX_REVIEW.replace("every 30 min", `every ${n} min`)).cadence;
-  assert.deepEqual(every(1), { role: "tester", minutes: 1 });
-  assert.deepEqual(every(24 * 60), { role: "tester", minutes: 24 * 60 });
+  const every = (n) => parseTeamFile("ux-review", UX_REVIEW.replace("every 30 min", `every ${n} min`)).cadenceMinutes;
+  assert.equal(every(1), 1);
+  assert.equal(every(24 * 60), 24 * 60);
   assert.throws(() => every(24 * 60 + 1), /cadence/);
 });
 
