@@ -15,7 +15,8 @@ import { teamProject } from "./helpers/team.mjs";
 const { TeamRunner } = await import("../dist-electron/team-runner.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
 const { teamLiveness, observe, parseProgress } = await import("../dist-electron/team-progress.js");
-const { STALL_AFTER_MS, SILENCE_FIRST_MS } = await import("../dist-electron/team-times.js");
+const { STALL_AFTER_MS, SILENCE_FIRST_MS, BLOCKED_AFTER_MS } = await import("../dist-electron/team-times.js");
+const { HOLD_APPROVAL } = await import("../dist-electron/pane-holds.js");
 const { recordAgentStatus } = await import("../dist-electron/agent-status.js");
 const git = await import("../dist-electron/git.js");
 const { livenessLine } = await import("../dist-test/team-view.js");
@@ -47,12 +48,12 @@ async function world(opts = {}) {
   const store = new TeamStore(teamDir(teamHome, "game", "ux-review"));
   await store.assign("tester", "pane-t");
   await store.assign("implementer", "pane-i");
-  const w = { commit: "c0", tree: "t0", busy: new Set(), typed: [], jobs: [], now: Date.parse("2026-10-01T20:52:14Z"), edits: 0, commits: 0 };
+  const w = { commit: "c0", tree: "t0", busy: new Set(), typed: [], jobs: [], now: Date.parse("2026-10-01T20:52:14Z"), edits: 0, commits: 0, holds: {} };
   w.deps = {
     teamHome,
     listProjects: async () => [project],
     deliver: async (pane, text) => void w.typed.push({ pane, text, at: w.now }),
-    holdReason: async () => null,
+    holdReason: async (pane) => w.holds[pane] ?? null,
     headCommit: async () => w.commit,
     treeState: async () => w.tree,
     busy: async (pane) => w.busy.has(pane),
@@ -84,6 +85,8 @@ async function world(opts = {}) {
     "lead busy": () => void w.busy.add("pane-t"),
     "lead free": () => void w.busy.delete("pane-t"),
     "lead waits for user": () => recordAgentStatus("pane-t", "waiting", w.now),
+    "tester approval": () => void (w.holds["pane-t"] = HOLD_APPROVAL),
+    "screen answered": () => void delete w.holds["pane-t"],
   };
   const run = async (...steps) => {
     for (const step of steps) {
@@ -142,6 +145,35 @@ for (const [name, steps, status, on] of CASES) {
     assert.equal(live.stalledSince !== null, on === "repo", "stalled on the repo");
   });
 }
+
+// The count is of talk since the window's "since": every event that restarts the stall clock restarts it too.
+const B = Math.ceil(BLOCKED_AFTER_MS / S);
+const CLOCK_EVENTS = [
+  ["a commit", ["commit", "check"]],
+  ["an edit", ["edit", "check"]],
+  ["Start after a pause", ["pause", "start", "check"]],
+  ["Resume", ["pause", "resume", "check"]],
+  ["an answered screen (a wake)", ["tester approval", "check", B, "check", "screen answered", "check", "check"]],
+  ["a relaunch", ["restart", "check"]],
+];
+
+for (const [event, steps] of CLOCK_EVENTS) {
+  progressTest(`repo progress | ${event} restarts the stall clock and the messages counted since it`, async (t) => {
+    await t.run("start", "check", ...talkChecked(30), 5);
+    assert.equal((await t.live()).repo.messages, 3, "talk before the event is counted");
+    const at = t.w.now;
+    await t.run(...steps);
+    const live = await t.live();
+    assert.ok(Date.parse(live.repo.since) >= at, `the clock restarted at the ${event}`);
+    assert.deepEqual([live.status, live.repo.messages], ["progressing", 0], "no talk since the clock restarted");
+  });
+}
+
+progressTest("repo progress | a relaunch of a team stalled at the last look keeps its stall and its messages", async (t) => {
+  await t.run("start", "check", ...talkChecked(30), T, "check", "restart", "check");
+  const live = await t.live();
+  assert.deepEqual([live.status, live.repo.messages], ["stalled", 3]);
+});
 
 progressTest("the stall round: one, to the lead, naming the last change to the repo and the messages since", async (t) => {
   await t.run("start", "check", ...talkChecked(T - 10), 11, "check");

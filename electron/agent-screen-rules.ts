@@ -210,8 +210,8 @@ function regionText(rows: readonly string[], region: ScreenRegion): string {
   return nonEmpty.slice(-TAIL_REGION_LINES).join("\n");
 }
 
-// The `aya` subcommands (bin/aya); not preceded by a path or word, so "cd ~/aya" is not one.
-const AYA_COMMAND = /(?:^|[^\w./-])aya\s+(?:open|project|focus|notify|remote|status|pane|team|presets|capabilities)\b/;
+// The `aya` subcommands (bin/aya, held equal by a test); not preceded by a path or word, so "cd ~/aya" is not one.
+const AYA_COMMAND = /(?:^|[^\w./-])aya\s+(?:open|project|focus|debug|notify|remote|status|pane|team|presets|capabilities)\b/;
 
 export function asksToRunAya(rows: readonly string[]): boolean {
   return AYA_COMMAND.test(regionText(rows, "tail"));

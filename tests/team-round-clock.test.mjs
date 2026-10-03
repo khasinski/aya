@@ -65,7 +65,8 @@ async function world(opts = {}) {
   };
   const toLead = () => w.typed.filter((t) => t.pane === "pane-t" && /\| from aya \|/.test(t.text) && !/Delivery test/.test(t.text));
   const skips = async () => (await store.log()).filter((m) => m.from === "aya" && /^round \d+ skipped: /.test(m.text)).map((m) => m.text);
-  const talk = () => store.append({ from: "implementer", to: "tester", commit: null, text: "report: still measuring the solver", delivered: true, time: new Date(w.now).toISOString() });
+  const talk = (from = "implementer") =>
+    store.append({ from, to: from === "tester" ? "implementer" : "tester", commit: null, text: "report: still measuring the solver", delivered: true, time: new Date(w.now).toISOString() });
   return { w, store, check, toLead, skips, talk, cleanup: () => (w.runner.stopAll(), cleanup()) };
 }
 
@@ -125,27 +126,35 @@ clockTest("a due round is logged as skipped when the team is paused while it is 
   assert.deepEqual(await t.skips(), ["round 1 skipped: the team is paused"]);
 });
 
-clockTest("a stalled team: the round due at the stall says so, the rounds after it are skipped and logged once", async (t) => {
-  await t.w.runner.start("game", "ux-review");
-  // The implementer talks every beat (not the lead, so its rounds go unanswered) and the repo never changes.
-  for (let s = 0; s <= T; s += BEAT) {
-    t.w.now += BEAT * S;
-    await t.talk();
-    await t.check();
-  }
-  const stalledRounds = t.toLead().filter((r) => /stalled: no change to the repo/.test(r.text));
-  assert.equal(stalledRounds.length, 1, "the lead is told once");
-  const typed = t.toLead().length;
-  for (let i = 0; i < 5; i++) {
-    t.w.now += BEAT * S;
-    await t.talk();
-    await t.check();
-  }
-  assert.equal(t.toLead().length, typed, "no round while stalled");
-  const skipped = await t.skips();
-  assert.equal(skipped.length, 1, skipped.join("\n"));
-  assert.match(skipped[0], new RegExp(`^round ${typed + 1} skipped: stalled: no change to the repo since \\d\\d:\\d\\d`));
-});
+// [who talks every beat, whether its talk answers the lead's rounds] The repo never changes either way.
+const STALLS = [
+  ["the lead answers every round", "tester", false],
+  ["only the implementer talks, so the rounds are held before the stall", "implementer", true],
+];
+for (const [label, talker, braked] of STALLS) {
+  clockTest(`a stalled team: the round due at the stall says so, the rounds after it are skipped and logged once | ${label}`, async (t) => {
+    await t.w.runner.start("game", "ux-review");
+    for (let s = 0; s <= T; s += BEAT) {
+      t.w.now += BEAT * S;
+      await t.talk(talker);
+      await t.check();
+    }
+    const held = (await t.store.log()).filter((m) => m.from === "aya" && /^rounds held: /.test(m.text));
+    assert.equal(held.length > 0, braked, `the brake is ${braked ? "on" : "off"} before the stall`);
+    const stalledRounds = t.toLead().filter((r) => /stalled: no change to the repo/.test(r.text));
+    assert.equal(stalledRounds.length, 1, "the lead is told once");
+    const typed = t.toLead().length;
+    for (let i = 0; i < 5; i++) {
+      t.w.now += BEAT * S;
+      await t.talk(talker);
+      await t.check();
+    }
+    assert.equal(t.toLead().length, typed, "no round while stalled");
+    const skipped = await t.skips();
+    assert.equal(skipped.length, 1, skipped.join("\n"));
+    assert.match(skipped[0], new RegExp(`^round ${typed + 1} skipped: stalled: no change to the repo since \\d\\d:\\d\\d`));
+  });
+}
 
 test("a round whose Enter did not go through is logged as left in the composer and keeps its number", async () => {
   const { TextPastedError } = await import("../dist-electron/team-control.js");

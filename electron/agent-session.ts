@@ -164,6 +164,8 @@ export const launchesAgentDirectly = (command: string) => agentProgram(command) 
 
 const CONTINUE_FLAGS = ["-c", "--continue"];
 const RESUMING_FLAGS = [...CONTINUE_FLAGS, "-r", "--resume", "--session-id", "--fork-session"];
+// The pane's agent kind can disagree with the binary (an explicit preset field, CLAUDE_CONFIG_DIR inference).
+const TAKES_SESSION_ID = new Set(["claude", "grok"]);
 
 /** A fresh claude or grok launch gets a session id of its own at the end, so the pane never depends on the CLI's
  *  "latest"; a command that already resumes, names a session or chains commands is left alone. */
@@ -171,7 +173,8 @@ export function withOwnSessionId(command: string): { command: string; sessionId:
   const trimmed = command.trim();
   const words = simpleShellWords(trimmed);
   const resuming = words?.some((w) => RESUMING_FLAGS.some((f) => w.text === f || w.text.startsWith(`${f}=`)));
-  if (!words?.length || resuming || !launchesAgentDirectly(trimmed)) return { command, sessionId: null };
+  const program = agentProgram(trimmed);
+  if (!words?.length || resuming || !program || !TAKES_SESSION_ID.has(program)) return { command, sessionId: null };
   const sessionId = randomUUID();
   return { command: `${trimmed} --session-id ${sessionId}`, sessionId };
 }

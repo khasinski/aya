@@ -408,6 +408,7 @@ interface ClaudeSandbox {
 function holdsSocket(entry: unknown, socket: string): boolean {
   if (typeof entry !== "string") return false;
   const dir = entry.replace(/\/+$/, "");
+  // "/" (empty once trimmed) was never measured: counting it as not allowed only adds Aya's own entry, which is harmless.
   return dir !== "" && (dir === socket || socket.startsWith(`${dir}/`));
 }
 

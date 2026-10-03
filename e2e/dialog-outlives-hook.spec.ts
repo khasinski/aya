@@ -1,5 +1,5 @@
-// Claude's Notification hook sends `aya status waiting` (via hook) while its permission dialog is still up:
-// the screen owns dialogs, so the pane stays waiting and no "finished" row is written.
+// Claude's Notification hook (`aya status waiting`) and Stop hook (`aya status done`) both arrive while its permission
+// dialog is still up: the screen owns dialogs, so the pane stays waiting and no "finished" row is written.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -28,10 +28,12 @@ test("a hook's finished turn while a permission dialog is on screen leaves the p
     return existsSync(file) ? readFileSync(file, "utf8") : "";
   };
   await expect.poll(log, { timeout: SLOW_EXPECT_TIMEOUT_MS }).toMatch(/HOOK-SENT\n/);
-  // The window applies control statuses in arrival order: once one sent after the hook's shows, the hook's has landed.
+  // The window applies control statuses in arrival order: once one sent after the hooks' shows, theirs have landed.
   await sendControl(seeded.ayaHome, { type: "status", level: "error", text: "barrier", terminalId: seeded.tabIds.right });
   await expect(window.locator('.aya-sidebar-row[data-terminal-id="tab-right"] .aya-sidebar-statusdot')).toHaveClass(/aya-sidebar-statusdot--error/);
   await expect(dot).toHaveClass(/aya-sidebar-statusdot--waiting/);
+  // The finished turn did arrive: it is the pane's reported status, only the dialog outranks it.
+  await expect(window.locator('[data-testid="terminal-pane"][data-terminal-id="tab-left"] .aya-pane-header-activity--done')).toHaveText("Turn finished");
 
   await window.getByTitle("Open attention center").click();
   const timeline = window.locator(".aya-attention-modal .aya-timeline-row");
