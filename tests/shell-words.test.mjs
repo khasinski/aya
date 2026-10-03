@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { envWithAssignments } from "../dist-electron/shell-words.js";
+import { cdLead, envWithAssignments, simpleShellWords } from "../dist-electron/shell-words.js";
 
 const base = { HOME: "/h", PATH: "/usr/bin", KEEP: "k" };
 
@@ -67,4 +67,20 @@ test("anything that would need the shell to run code is refused", () => {
   for (const [token, message] of refused) {
     assert.throws(() => envWithAssignments(base, [token]), message, token);
   }
+});
+
+test("inside double quotes a backslash escapes only $ ` \" \\, as in the shell", () => {
+  const text = (command) => simpleShellWords(command)?.map((w) => w.text);
+  assert.deepEqual(text('echo "a\\nb"'), ["echo", "a\\nb"]);
+  assert.deepEqual(text('echo "a\\\\b \\"q\\" \\$x"'), ["echo", 'a\\b "q" $x']);
+});
+
+test("a quote left open is no simple command", () => {
+  assert.equal(simpleShellWords('claude "open'), null);
+  assert.equal(simpleShellWords("claude 'open"), null);
+});
+
+test("cd ~user is no literal directory: Aya does not resolve another user's home", () => {
+  assert.equal(cdLead("cd ~bob && claude"), null);
+  assert.deepEqual(cdLead("cd ~/x && claude"), { dir: "~/x", at: 10 });
 });
