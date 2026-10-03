@@ -42,6 +42,8 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    env:
+      SYSTEM_DEPS_CACHE: ${{ runner.temp }}/e2e-system-deps
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -98,22 +100,27 @@ jobs:
           printf 'electron' > node_modules/electron/path.txt
           node -e "const fs=require('fs'); const e=require('electron'); if (typeof e!=='string' || !fs.existsSync(e)) throw new Error('electron binary missing after extraction: '+e); console.log('electron ->', e)"
 
-      # Electron on Linux CI needs the Chromium system libraries plus a virtual
-      # X server. install-deps pulls the shared libs; xvfb-run provides the display.
+      # Installed packages are safe to restore only onto the same runner image
+      # and base dpkg manifest. Each shard has its own entry so a cold run warms
+      # every shard, even when GitHub queues some jobs behind the others.
+      - name: Prepare Electron system dependency cache
+        id: system-deps-key
+        run: bash .github/e2e-system-deps.sh prepare
+
+      - name: Cache Electron system dependencies
+        id: system-deps-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.SYSTEM_DEPS_CACHE }}
+          key: e2e-system-deps-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.system-deps-key.outputs.image }}-${{ steps.system-deps-key.outputs.packages }}-${{ hashFiles('package-lock.json', '.github/e2e-system-deps.sh') }}-${{ matrix.shard }}
+
       - name: Install Electron system dependencies
+        env:
+          SYSTEM_DEPS_CACHE_HIT: ${{ steps.system-deps-cache.outputs.cache-hit }}
+        run: bash .github/e2e-system-deps.sh install
+
+      - name: Ensure Playwright Chromium
         run: |
-          # Runner-added third-party apt sources (Google Chrome, Microsoft, VSCode)
-          # intermittently fail `apt-get update` mid mirror-sync ("File has
-          # unexpected size ... Mirror sync in progress?"), reddening the E2E job.
-          # None are needed for Electron's Chromium libs or xvfb, so drop them
-          # first. Globs cover both .list and deb822 .sources naming; rm -f is a
-          # no-op if a given runner image doesn't have them.
-          sudo rm -f /etc/apt/sources.list.d/*google* \
-            /etc/apt/sources.list.d/*chrome* \
-            /etc/apt/sources.list.d/*microsoft* \
-            /etc/apt/sources.list.d/*vscode*
-          npx playwright install-deps
-          sudo apt-get install -y xvfb
           # Every other spec drives Electron, which carries its own Chromium, so
           # the runner never needed a standalone browser. e2e/web-mode.spec.ts is
           # the first that does - it drives a real browser against the web server
