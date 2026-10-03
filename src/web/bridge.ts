@@ -1,4 +1,4 @@
-// Aya Web (experimental) — window.aya implemented over the WebSocket bridge.
+// Aya Web (experimental) - window.aya implemented over the WebSocket bridge.
 //
 // Mirrors electron/preload.ts: every invoke-style method forwards
 // (channel, args) to the server, which dispatches to the same ipcMain
@@ -14,7 +14,7 @@ import type { WebTransport } from "./transport";
 async function readClipboardWeb(): Promise<string> {
   // navigator.clipboard needs a secure context; plain-HTTP Aya Web over the
   // LAN doesn't have one. Keyboard paste still works (xterm handles the
-  // browser's native paste event) — only menu-driven paste degrades.
+  // browser's native paste event) - only menu-driven paste degrades.
   try {
     return await navigator.clipboard.readText();
   } catch {
@@ -27,7 +27,7 @@ async function writeClipboardWeb(text: string): Promise<void> {
     await navigator.clipboard.writeText(text);
     return;
   } catch {
-    // Insecure context / permission denied — legacy fallback below.
+    // Insecure context / permission denied - legacy fallback below.
   }
   const textarea = document.createElement("textarea");
   textarea.value = text;
@@ -93,6 +93,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
     readRepoProjectConfig: inv("projects:read-repo-config"),
 
     listPresets: inv("presets:list"),
+    agentWaiting: inv("agent:waiting"),
     savePresets: inv("presets:save"),
     scanHarnesses: inv("presets:scan-harnesses"),
 
@@ -104,6 +105,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
     getGrokUsage: inv("usage:get-grok"),
     teamStart: inv("teams:start"),
     teamPause: inv("teams:pause"),
+    teamRemove: inv("teams:remove"),
     teamResume: inv("teams:resume"),
     teamList: inv("teams:list"),
     teamSave: inv("teams:save"),
@@ -128,7 +130,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
 
     listThemes: inv("themes:list"),
     saveThemes: inv("themes:save"),
-    // Native file picker — not available in the browser.
+    // Native file picker - not available in the browser.
     importTheme: async () => null as never,
 
     getCwd: inv("env:cwd"),
@@ -146,7 +148,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
     // result and the confirmation prompt.
     createWorktree: async () => ({ ok: false, error: "Not available in Aya Web" }),
     removeWorktree: async () => ({ ok: false, error: "Not available in Aya Web" }),
-    // Native pickers — a browser session can't drive the host's file dialogs.
+    // Native pickers - a browser session can't drive the host's file dialogs.
     pickDirectory: async () => null,
     pickSoundFile: async () => null,
     dirExists: inv("env:dir-exists"),
@@ -160,7 +162,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
     writeClipboard: (text: string) =>
       writeClipboardWeb(text) as Promise<never>,
 
-    // Window chrome — no window to manage in a browser tab.
+    // Window chrome - no window to manage in a browser tab.
     isFullScreen: async () => false as never,
     isMaximized: async () => false as never,
     setDockBadge: noopAsync,
@@ -204,6 +206,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
     },
 
     onOpenProject: on("open-project"),
+    openProjectDone: () => {},
 
     webStatus: inv("web:status"),
     configureWeb: inv("web:configure"),

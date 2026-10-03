@@ -88,7 +88,7 @@ export function TeamFlow({ team }: { team: TeamDefinition }) {
       {gaps.unreached.map((id) => (
         <div key={`to-${id}`} className="aya-teams-warning">
           Nobody sends to {id}
-          {team.cadence?.role === id ? "; it only gets Aya's rounds" : "; it will never hear from the team"}.
+          {team.cadenceMinutes !== null && team.lead === id ? "; it only gets Aya's rounds" : "; it will never hear from the team"}.
         </div>
       ))}
       {gaps.silent.map((id) => (

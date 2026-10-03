@@ -6,12 +6,11 @@
 // (unknown ptyId, exited terminal, equal status/bell after recompute), it
 // returns the same map reference so React's shallow check can skip a re-render.
 
-import { detectApproval, looksBusy } from "./bell";
 import { PRESET_ID_SHELL } from "./preset-ids";
 import type { ControlStatusLevel, PtyEvent, TerminalState, TerminalStatus } from "./types";
 
-/** Map an agent-reported status level — from the control socket or an inline
- *  OSC 9001 `aya.status` sequence (integrations.md) — to the terminal's
+/** Map an agent-reported status level - from the control socket or an inline
+ *  OSC 9001 `aya.status` sequence (integrations.md) - to the terminal's
  *  status field. Shared so both transports drive identical UI. */
 export function controlLevelToTerminalStatus(
   level: ControlStatusLevel,
@@ -35,7 +34,7 @@ export function controlStatusEventTitle(
   return `${terminalName} updated status`;
 }
 
-/** True once a terminal has finished a real task and gone idle — either
+/** True once a terminal has finished a real task and gone idle - either
  *  explicitly reported ("done") or inferred from a clean exit on the PTY
  *  lifecycle. Excludes plain shells, which sit idle at rest and would
  *  otherwise read as "done" after every command. Shared by the project-badge
@@ -45,7 +44,7 @@ export function isTerminalDone(
   t: Pick<TerminalState, "externalStatus" | "status" | "exitCode" | "presetId">,
 ): boolean {
   return (
-    t.externalStatus?.level === "done" ||
+    (t.externalStatus?.level === "done" && t.status !== "waiting") ||
     (t.status === "idle" && t.exitCode === 0 && t.presetId !== PRESET_ID_SHELL)
   );
 }
@@ -75,6 +74,21 @@ export function clearedTerminalStatus(terminal: TerminalState): TerminalState {
     ...rest,
     status: deriveLifecycleStatus(rest),
     bell: externalStatus?.level === "waiting" ? false : terminal.bell,
+  };
+}
+
+/** A status the agent or its hook reported. A CLI dialog on the screen outlives every report but the agent's own
+ *  question: Claude's Notification hook arrives as "done" while its permission dialog is up, and only the screen ends it. */
+export function applyReportedStatus(
+  terminal: TerminalState,
+  { level, text, updatedAt, restart }: NonNullable<TerminalState["externalStatus"]>,
+): TerminalState {
+  const dialog = terminal.status === "waiting" && terminal.externalStatus?.level !== "waiting" && level !== "waiting";
+  return {
+    ...terminal,
+    status: dialog ? "waiting" : controlLevelToTerminalStatus(level),
+    bell: dialog ? terminal.bell : level === "waiting",
+    externalStatus: { level, text, updatedAt, ...(restart ? { restart } : {}) },
   };
 }
 
@@ -122,16 +136,17 @@ export function applyPtyEvent(
   if (event.type === "vt-status") {
     const t = prev[event.ptyId];
     if (!t || t.exitCode !== null) return prev;
-    // An agent that reported its own status outranks anything inferred — but
-    // only in the CLEARING direction. A blocked agent the user never notices
-    // is the expensive failure, so inference may still raise the bell; it just
-    // may not silence or downgrade what the agent said about itself.
-    if (t.externalStatus && !event.waiting) return prev;
-    const status = event.waiting ? "waiting" : "running";
+    // The screen is the one source of a CLI dialog: it raises the bell over any reported status, and ends
+    // the dialog's waiting, back to what was reported. Only the agent's own question outlives the screen.
+    if (!event.waiting && (t.status !== "waiting" || t.externalStatus?.level === "waiting")) return prev;
+    // A dialog opening proves a turn runs: a done reported before it is the previous turn's (the hook has no turn start).
+    const { externalStatus, ...rest } = t;
+    const reported = event.waiting && t.status !== "waiting" && externalStatus?.level === "done" ? undefined : externalStatus;
+    const status = event.waiting ? "waiting" : reported ? controlLevelToTerminalStatus(reported.level) : "running";
     if (t.status === status && t.bell === event.waiting) return prev;
     return {
       ...prev,
-      [event.ptyId]: { ...t, status, bell: event.waiting },
+      [event.ptyId]: { ...rest, ...(reported ? { externalStatus: reported } : {}), status, bell: event.waiting },
     };
   }
 
@@ -149,15 +164,7 @@ export function applyPtyEvent(
     if (!t) return prev;
     const text = event.text.trim();
     if (!text) return prev;
-    return {
-      ...prev,
-      [event.ptyId]: {
-        ...t,
-        status: controlLevelToTerminalStatus(event.level),
-        bell: event.level === "waiting",
-        externalStatus: { level: event.level, text, updatedAt: event.updatedAt },
-      },
-    };
+    return { ...prev, [event.ptyId]: applyReportedStatus(t, { level: event.level, text, updatedAt: event.updatedAt }) };
   }
 
   // event.type === "data"
@@ -167,28 +174,11 @@ export function applyPtyEvent(
   // (e.g. final newline after exit).
   if (t.exitCode !== null) return prev;
 
-  const isApproval = detectApproval(event.chunk);
-  // Same precedence rule as vt-status: this is the weakest signal, so it may
-  // raise the bell but must never overwrite an agent's own report.
-  if (t.externalStatus && !isApproval) return prev;
-  const busy = looksBusy(event.chunk);
-  let status = t.status;
-  let bell = t.bell;
-  if (isApproval) {
-    status = "waiting";
-    bell = true;
-  } else if (busy && t.status === "waiting") {
-    // The agent resumed work after the user approved: clear the bell.
-    status = "running";
-    bell = false;
-  } else if (t.status !== "waiting") {
-    // Any other output while not waiting means the terminal is running.
-    status = "running";
-  }
-  if (status === t.status && bell === t.bell) return prev;
+  // Output says the terminal runs; it never says what the agent reported or what the screen shows (vt-status).
+  if (t.externalStatus || t.status === "waiting" || t.status === "running") return prev;
   return {
     ...prev,
-    [event.ptyId]: { ...t, status, bell },
+    [event.ptyId]: { ...t, status: "running" },
   };
 }
 

@@ -1,4 +1,4 @@
-// Aya Emulator — window.aya implemented entirely from a static scenario.
+// Aya Emulator - window.aya implemented entirely from a static scenario.
 //
 // Mirrors the AyaApi surface of electron/preload.ts and src/web/bridge.ts, but
 // instead of forwarding to a host it serves emulated in-memory state. The
@@ -211,6 +211,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
 
     // presets
     listPresets: async () => EMULATOR_PRESETS as never,
+    agentWaiting: async () => ({}),
     savePresets: noopAsync,
     scanHarnesses: async () => [] as never,
 
@@ -224,6 +225,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     getGrokUsage: async () => (scenario.grokUsage ?? null) as never,
     teamStart: async () => ({ started: true, delivered: [], held: [], task: null }),
     teamPause: noopAsync,
+    teamRemove: noopAsync,
     teamResume: noopAsync,
     teamList: async () => [],
     teamSave: noopAsync,
@@ -335,6 +337,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     onConfigChange: noopSubscription,
     onShortcut: noopSubscription,
     onOpenProject: noopSubscription,
+    openProjectDone: () => {},
 
     // web sharing (Settings-only)
     webStatus: noopAsync,

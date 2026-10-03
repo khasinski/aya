@@ -1,16 +1,16 @@
 // The team log as the Teams window's chat: oldest first, each Start's
 // delivery-test exchange on one line, Aya's and the user's messages as system lines.
 
+import { DELIVERY_TEST_ANSWER, DELIVERY_TEST_PREFIX } from "./main-mirrors";
 import { AYA_SENDER, USER_SENDER } from "./team-view";
 import type { TeamMessage } from "./types";
 
-const DELIVERY_TEST_PREFIX = "Delivery test:";
-// The one word a role sends back to a delivery test; anything longer is a real message.
-const ONE_WORD = /^\S+$/;
+// Anything but the asked-for word is a real message.
+const TEST_ANSWER = new RegExp(`^${DELIVERY_TEST_ANSWER}[.!]?$`, "i");
 
 export type ChatEntry =
   | { kind: "peer" | "system"; message: TeamMessage; abnormal: boolean }
-  | { kind: "delivery-test"; id: number; time: string; tested: string[]; answered: string[]; messages: TeamMessage[] };
+  | { kind: "delivery-test"; id: number; time: string; tested: string[]; answered: string[]; messages: TeamMessage[]; abnormalIds: number[] };
 
 /** Worth the user's eye: still held, or typed only after a hold. */
 export const abnormal = (m: Pick<TeamMessage, "delivered" | "held">): boolean => !m.delivered || Boolean(m.held);
@@ -30,20 +30,22 @@ export function teamChat(log: TeamMessage[], roles: string[] = []): ChatEntry[] 
   for (const message of [...log].sort((a, b) => a.id - b.id)) {
     if (isDeliveryTest(message)) {
       if (!group || !testing) {
-        group = { kind: "delivery-test", id: message.id, time: message.time, tested: [], answered: [], messages: [] };
+        group = { kind: "delivery-test", id: message.id, time: message.time, tested: [], answered: [], messages: [], abnormalIds: [] };
         chat.push(group);
         spoke.clear();
       }
       group.tested.push(message.to);
       group.messages.push(message);
+      if (abnormal(message)) group.abnormalIds.push(message.id);
       testing = true;
       continue;
     }
     testing = false;
     const waited = group && group.tested.includes(message.from) && !group.answered.includes(message.from) && !spoke.has(message.from);
-    if (group && waited && ONE_WORD.test(message.text.trim())) {
+    if (group && waited && TEST_ANSWER.test(message.text.trim())) {
       group.answered.push(message.from);
       group.messages.push(message);
+      if (abnormal(message)) group.abnormalIds.push(message.id);
       continue;
     }
     spoke.add(message.from);
