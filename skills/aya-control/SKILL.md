@@ -82,10 +82,12 @@ and fixes the UX"), you write the team file:
 - Save with `aya team save <file>` (or `aya team save -` with the file on
   stdin). A problem is printed and nothing is saved; fix it and save again.
 - If the team already exists, ask the user before `--replace`.
-- Then give each role a pane. Run `aya presets` (installed CLIs) and
-  `aya pane list` (open panes), and propose one pane per role: a new session
-  of an installed preset, `this` (your own pane), or an open pane by name or
-  id. Several roles may take the same preset; each gets its own new pane.
+- Then give each role a pane. Run `aya presets` (installed CLIs, and whether
+  a role's pane of each reaches Aya) and `aya pane list` (open panes), and
+  propose one pane per role: a new session of an installed preset whose
+  "reaches aya" is not "no", `this` (your own pane), or an open pane by name
+  or id. A sandbox or a plan agent can keep a pane's `aya` calls from ever
+  reaching Aya; `aya team open` says so for an open pane, and why. Several roles may take the same preset; each gets its own new pane.
   When a pane is named like a preset id, write `new:<preset>` or
   `pane:<name-or-id>`.
 - Wait for the user's yes, then run
@@ -94,9 +96,13 @@ and fixes the UX"), you write the team file:
   pane that plays another role, needs `--replace`; no pane is ever closed.
 - Then ask the user whether to start the team now, and with what task. Only
   on the user's word run `aya team start <team> "<task>"` (the same Start as
-  in Teams). The task goes to the cadence role, else the first role
+  in Teams). The task goes to the lead
   (`--to <role>` picks another); it prints who got it. If a role's pane is
   missing or busy, nothing is sent and each such role is named.
+- In a team's pane, never run `aya team start` to give a role work: that is
+  `aya team send`. From a role's pane it is refused while the team runs and on
+  a pause the user made (only the user resumes that); the lead may resume only
+  its own `aya team pause`.
 
 ## Guardrails
 

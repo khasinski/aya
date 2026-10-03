@@ -5,16 +5,30 @@ import {
   globalTimeout,
 } from "./e2e/timeouts";
 
+// These specs touch the OS clipboard or temporarily rebuild the shared PTY
+// host script. They run one at a time after every isolated app has closed.
+const sharedResources = /(?:^|[/\\])(?:diagnostics|terminal-polish|team-relaunch-stale-host)\.spec\.ts$/;
+
 // Electron end-to-end tests. Each test launches the built app (dist-electron +
 // dist) through Playwright's Electron driver against an isolated, seeded
 // AYA_HOME and a throwaway Electron user-data-dir, so runs are deterministic
 // and never touch the real ~/.aya or collide with a running Aya instance.
 export default defineConfig({
   testDir: "./e2e",
-  // App launches are heavy and share node_modules/electron + the window server;
-  // run serially for stability.
+  // Each case has its own seeded HOME, AYA_HOME and user data. The isolated
+  // project can split large files across workers; explicit serial groups keep
+  // their order, and the shared-resource project keeps file-level scheduling.
   fullyParallel: false,
-  workers: 1,
+  workers: process.env.CI ? 2 : 8,
+  projects: [
+    { name: "isolated", testIgnore: sharedResources, fullyParallel: true },
+    {
+      name: "shared-resources",
+      testMatch: sharedResources,
+      workers: 1,
+      dependencies: ["isolated"],
+    },
+  ],
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   globalTimeout: globalTimeout(process.env),

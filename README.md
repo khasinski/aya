@@ -276,6 +276,8 @@ that instance's socket, then fails with the socket path.
 
 Each project gets launcher buttons for configured presets. First launch seeds
 presets from agent CLIs found on your login-shell PATH, plus a shell fallback.
+A login shell that does not answer within 2.5 s is not read as "not installed":
+that launch shows what it found but saves nothing, and the next launch scans again.
 Settings can add suggested harnesses, edit commands, set agent metadata, and
 label unsafe-mode presets.
 
@@ -326,11 +328,14 @@ aya pane send "reviewer" --no-submit "draft for review"
 aya team whoami
 aya team send implementer "Round 5: the alert freezes at zero"
 aya team inbox
+aya team pause "no lower complexity is possible"      # the lead ends the work
 aya team new "a team that reviews and fixes the UX"   # guide for an agent
 aya team save ux-fix.md                                # check and save it
 aya presets                                            # presets, installed or not
 aya team open ux-fix reviewer=claude fixer=codex tester=this  # give roles panes
 aya team start ux-fix "make the timer pausable"        # Start, with a task
+aya debug on                                           # log every team decision
+aya team debug ux-fix -f                               # read and follow that log
 
 # Every command above, as JSON, for an agent to read
 aya capabilities
@@ -347,9 +352,11 @@ agent's commands in a shared background process hands them the env of
 whichever pane started that process. Interactive Codex does this with its
 app-server daemon (measured on codex-cli 0.158.0), so Aya starts Codex panes
 with `--no-daemon` when the installed codex has it (not `codex exec` and other
-non-interactive subcommands). A command whose pane id belongs to one open
-project while it runs in another is refused, naming this cause; restart that
-pane. A pane's git worktrees and a directory outside every project are fine.
+non-interactive subcommands). `aya` also sends its own pid, and the team
+commands that speak as the pane (`aya team whoami|send|inbox|pause`) are
+refused when that pid does not run under the pane's process or runs through a
+`codex app-server`, naming this cause; restart that pane. The directory a
+command runs in is not checked (see docs/teams.md, "A borrowed id").
 
 `aya capabilities` is the machine-readable form of this list, so an agent can
 learn the commands from the CLI itself instead of from a copied skill file.
@@ -360,10 +367,11 @@ To tell an agent the CLI exists, turn on "Tell the agent about aya" on its
 preset (Settings -> Presets; off by default). It adds a six-line note that
 points at `aya capabilities`, through whatever channel the harness has:
 Claude gets it via `--append-system-prompt` and Grok via `--rules` at launch,
-opencode via `OPENCODE_CONFIG_CONTENT` (added to your own instructions, in Aya
-panes only), Antigravity via its own always-on rule in `~/.gemini/config/rules/`
-(deleted when you turn it off), and Codex via a marked section in that account's `AGENTS.md`,
-removed again when you turn it off.
+opencode via `OPENCODE_CONFIG`, or `OPENCODE_CONFIG_CONTENT` when you set your own
+`OPENCODE_CONFIG` (added to your own instructions, in Aya panes only), Antigravity via its own always-on rule in `~/.gemini/config/rules/`
+(deleted when you turn it off), and Codex via `-c developer_instructions` at launch (a user's own
+`developer_instructions` is never replaced; the pane then goes without). Earlier versions put
+Codex's note into a marked section of `AGENTS.md`; Aya removes the sections it recorded once, at startup.
 Harnesses without a channel do not show the toggle. The bundled `aya` is
 also on every pane's PATH, after any shim you installed.
 
@@ -375,8 +383,8 @@ public CLI side channel.
 Open **teams** in the status bar and choose **New team**. A team lists roles;
 each role has responsibilities, one thing it must not do, and the roles it
 sends to, each with what it sends there ("implementer: findings to fix"). Add
-a protocol (how the roles work together) and, if you want rounds, which role
-gets them and how often. The **Flow preview** under the editor draws who sends
+a protocol (how the roles work together), the lead, and, if you want rounds on a
+timer, how often the lead gets them (the rhythm belongs to the lead). The **Flow preview** under the editor draws who sends
 what to whom and flags a role nobody sends to. **Draft** fills a role from its
 name and the rest of the team with your Aya Intelligence model (Apple
 on-device can take up to a minute); edit it before **Save team**. The team is
@@ -388,7 +396,8 @@ Give each role a pane, in the teams window or from a tab's menu (**Team
 role**), then press **Start**. Every role gets a delivery test. Pane roles, the
 log and the pause state stay on your machine, in `~/.aya/teams/`.
 
-A pane with a role is told about it at launch and runs `aya team whoami` to
+A pane with a role is told about it at launch (only Claude, Grok, Codex and
+OpenCode get a note; other CLIs say they cannot) and runs `aya team whoami` to
 read its responsibilities, and what it sends to whom, again after `/clear` or
 `/resume`. `aya team send
 <role> "text"` types a dated line like `[team ux-review | from tester | 14:02 |
@@ -396,8 +405,26 @@ a1b2c3d] text` into that role's pane. Aya does not type it when Enter would do
 something else: an approval prompt on screen, text you are typing there, or a
 plain shell. That message waits for `aya team inbox` instead, and the sender is
 told why. "Written to the pane" is not proof the agent read it. **Pause** stops
-the rounds and all sends; **Resume** brings them back. Teams work on local
+the rounds and all sends; **Resume** brings them back. The team's lead can pause
+it too, with `aya team pause "why"`, when the work is done. A team you paused is
+resumed only by you: `aya team start` from a role's own pane is refused (roles
+give each other work with `aya team send`). The Teams window counts a change to
+the repo (a commit or an edit) as progress; roles that only message each other
+are "talking", and stalled after 60 min with no change. Teams work on local
 panes only.
+
+To see why a team does what it does (a held message, a skipped round, the
+brake), run `aya debug on` and read `aya team debug <team>`; it is off by
+default and costs nothing then. See [docs/teams.md](docs/teams.md#debug-on).
+
+How a CLI is launched decides whether its `aya` calls reach Aya at all:
+Codex's default sandbox blocks the socket, and OpenCode's plan agent never
+edits. A pane Aya opens for a role gets a mode that reaches Aya (for Codex,
+`-c sandbox_workspace_write.network_access=true`, never full access); a preset
+that would need more is refused with the reason. An open pane that cannot
+reach Aya still takes the role, but its status says why and **Start** leaves
+nothing in it. `aya presets` shows which presets reach Aya. The measurements
+are in [docs/teams.md](docs/teams.md#states-a-team-depends-on).
 
 #### Define a team from an agent
 
@@ -423,8 +450,13 @@ named like a preset id, Aya asks for `new:<preset>` or `pane:<name>`. Aya checks
 every pick first and opens nothing on a problem. Then the agent asks whether
 to start and with what task; on your word it runs `aya team start ux-fix
 "make the timer pausable"` (or you press **Start**, with an optional task).
-The task goes to the cadence role, else the first role, and Aya says who
-got it. In the
+The task goes to the team's lead (`## Lead` in the team file; the role with the
+optional `## Cadence` is the lead), and Aya says who got it (the Task field names
+the recipient, and a select picks another role). When nothing moves for 30 minutes
+Aya asks the lead for a round that says who waits on whom (then every 10 minutes),
+also in a team with no cadence; after 60 minutes without a change to the repo
+(a commit or an edit; messages alone do not count) the team shows as stalled and the
+lead is told so once. In the
 teams window, each role's pane list offers the same: open panes, labelled
 with the role they already play ("shell 1 (plays tester)"), and `New: <preset>`; **Apply panes** applies
 the picks.
