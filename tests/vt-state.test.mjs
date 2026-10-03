@@ -1,6 +1,6 @@
 // Server-side screen mirror. The whole point of this module is that it knows
 // what a pane SHOWS, not merely what bytes went past — so the tests that
-// matter are the ones a raw-byte regex (src/bell.ts) would get wrong.
+// matter are the ones a raw-byte regex would get wrong.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -12,7 +12,6 @@ import {
   openVtPane,
   resizeVtPane,
   screenShowsApproval,
-  screenTail,
   vtPaneAltScreen,
   writeVtPane,
 } from "../dist-electron/vt-state.js";
@@ -71,36 +70,6 @@ test("a bare [y/n] at the end of a line counts as a prompt", async () => {
   writeVtPane("p5", "Overwrite existing file? [y/n]");
   await settle();
   assert.equal(screenShowsApproval(__testVtPane("p5").terminal), true);
-  close();
-});
-
-// --- screenTail ------------------------------------------------------------
-
-test("screenTail returns rendered lines oldest-first, blank rows skipped", async () => {
-  const close = open("p6");
-  writeVtPane("p6", "one\r\n\r\ntwo\r\nthree\r\n");
-  await settle();
-  const tail = screenTail(__testVtPane("p6").terminal);
-  assert.equal(tail, "one\ntwo\nthree");
-  close();
-});
-
-test("screenTail is bounded by its line limit", async () => {
-  const close = open("p7");
-  writeVtPane("p7", "line\r\n".repeat(20));
-  await settle();
-  const tail = screenTail(__testVtPane("p7").terminal, 3);
-  assert.equal(tail.split("\n").length, 3);
-  close();
-});
-
-test("screenTail defaults to the last 12 non-empty rows", async () => {
-  const close = open("p7b");
-  writeVtPane("p7b", Array.from({ length: 20 }, (_, i) => `row ${i + 1}`).join("\r\n"));
-  await settle();
-  const rows = screenTail(__testVtPane("p7b").terminal).split("\n");
-  assert.equal(rows.length, 12);
-  assert.equal(rows[0], "row 9");
   close();
 });
 

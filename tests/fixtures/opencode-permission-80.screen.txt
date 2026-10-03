@@ -1,0 +1,23 @@
+  ┃  aya                                                                        
+  ┃                                                                             
+  ┃  ===BIN===                                                                  
+  ┃  -rwxr-xr-x@ 1 alice  staff  326 Sep 26 11:58 /Users/alice/.rvm/gems/       
+  ┃  ruby-3.4.4/bin/aya                                                         
+  ┃  zsh:1: no matches found: /Users/alice/.rvm/gems/ruby-3.4.4/gems/aya*       
+  ┃                                                                             
+                                                                                
+     ⠋ Read ~/.rvm/gems/ruby-3.4.4/bin/aya                                      
+                                                                                
+     ▣  Build · Big Pickle                                                   ▄  
+                                                                                
+  ┃                                                                             
+  ┃  △ Permission required                                                      
+  ┃    ← Access external directory ~/.rvm/gems/ruby-3.4.4/bin                   
+  ┃                                                                             
+  ┃  Patterns                                                                   
+  ┃                                                                             
+  ┃  - /Users/alice/.rvm/gems/ruby-3.4.4/bin/*                                  
+  ┃                                                                             
+  ┃                                                                             
+  ┃   Allow once   Allow always   Reject  ctrl+f fullscreen  ⇆ select  enter con
+  ┃                                                                             

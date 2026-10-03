@@ -5,10 +5,11 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   evaluateScreen,
-  hasAgentRules,
   rulesForAgent,
+  TAIL_REGION_LINES,
 } from "../dist-electron/agent-screen-rules.js";
 
 const rows = (...lines) => lines;
@@ -30,8 +31,8 @@ test("ordinary output reads as clear", () => {
 });
 
 test("an empty screen has no opinion", () => {
-  // Saying "clear" here would let the screen watcher silence a bell before the
-  // pane has rendered anything at all.
+  // Saying "clear" here would make the screen watcher report the pane no longer waiting
+  // before it has rendered anything at all (vt-state scanPane skips a null verdict).
   assert.equal(evaluateScreen([], "claude"), null);
 });
 
@@ -42,6 +43,14 @@ test("a [y/n] suffix counts only on the final line", () => {
     evaluateScreen(rows("Overwrite file? [y/n]", "y", "done", "next task"), undefined),
     "clear",
   );
+});
+
+test("the tail region is the last TAIL_REGION_LINES non-empty rows: a prompt at its top row counts, one above does not", () => {
+  const filler = (n) => Array.from({ length: n }, (_, i) => `line ${i}`);
+  assert.equal(TAIL_REGION_LINES, 12);
+  assert.equal(evaluateScreen(["Do you want to proceed?", ...filler(TAIL_REGION_LINES - 1)], undefined), "waiting");
+  assert.equal(evaluateScreen(["Do you want to proceed?", "", ...filler(TAIL_REGION_LINES - 1)], undefined), "waiting", "blank rows do not count");
+  assert.equal(evaluateScreen(["Do you want to proceed?", ...filler(TAIL_REGION_LINES)], undefined), "clear");
 });
 
 test("a prompt far above the cursor falls outside the tail region", () => {
@@ -96,17 +105,13 @@ test("a suppressor outranks a prompt no matter the order on screen", () => {
 // --- rule sets -------------------------------------------------------------
 
 test("agents without their own rules fall back to the generic set", () => {
-  assert.equal(hasAgentRules("claude"), true);
-  assert.equal(hasAgentRules("codex"), true);
-  assert.equal(hasAgentRules("grok"), false);
-  assert.equal(hasAgentRules(undefined), false);
   // Falling back must still detect the common prompts, so an unknown CLI is
   // no worse off than before per-agent rules existed.
-  assert.equal(evaluateScreen(rows("Do you want to proceed?"), "grok"), "waiting");
+  assert.equal(evaluateScreen(rows("Do you want to proceed?"), "kilo"), "waiting");
 });
 
 test("every agent rule set carries at least the generic prompts", () => {
-  for (const agent of ["claude", "codex", undefined]) {
+  for (const agent of ["claude", "codex", "opencode", "grok", undefined]) {
     const prompts = rulesForAgent(agent).filter((r) => r.kind === "prompt");
     assert.ok(prompts.length >= 11, `${agent ?? "generic"} lost prompt rules`);
   }
@@ -119,4 +124,25 @@ test("only agents with real knowledge define suppressors", () => {
     false,
     "a generic suppressor would silence agents we know nothing about",
   );
+});
+
+// --- OpenCode's plan agent ------------------------------------------------
+
+// A real capture (opencode 1.18.30, plan agent, xterm 110x40): the plan agent asks its
+// approval question with OpenCode's own question dialog and waits.
+const OPENCODE_QUESTION = readFileSync(new URL("./fixtures/opencode-plan-question.screen.txt", import.meta.url), "utf8").split("\n");
+
+test("OpenCode's question dialog (the real capture) reads as waiting", () => {
+  assert.equal(evaluateScreen(OPENCODE_QUESTION, "opencode"), "waiting");
+});
+
+test("the same dialog scrolled far above the cursor, or the plan agent's idle screen, is not waiting", () => {
+  const scrolledAway = [...OPENCODE_QUESTION.filter((r) => r.trim()), ...Array.from({ length: 30 }, (_, i) => `line ${i}`)];
+  assert.equal(evaluateScreen(scrolledAway, "opencode"), "clear");
+  assert.equal(evaluateScreen(rows("  Plan - DeepSeek V4 Pro", "  ctrl+p commands"), "opencode"), "clear");
+});
+
+test("only OpenCode's own footer decides, not the model's wording", () => {
+  assert.equal(evaluateScreen(rows("Want me to proceed (requires exiting plan mode)?"), "opencode"), "clear");
+  assert.equal(evaluateScreen(rows("  1. Approve", "  2. Reject", "  ↑↓ select  enter submit  esc dismiss"), "opencode"), "waiting");
 });

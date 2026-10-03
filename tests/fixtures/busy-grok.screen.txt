@@ -1,0 +1,9 @@
+  e2e/local-global-timeout ~/Projects/aya                                                    2.0K / 256K │ [Dashboard]
+     ❯ Do not use any tools or run any commands. Write the numbers from 1 to 60, one per line, then the      4:13 PM
+       word done.
+     1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19                                                         4:13 PM
+   ⠸ Responding… 0.1s                                                                               2.6s ⇣1.98k [stop]
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                                                                │
+  ╰───────────────────────────────────────────────────────────────────────────── Grok 4.7 (medium) · always-approve ─╯
+  Shift+Tab:mode  │  Ctrl+c:cancel  │  Ctrl+x:shortcuts

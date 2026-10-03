@@ -1,0 +1,8 @@
+  ┃  [team team1 | from aya | 15:09 | c4b996a] Delivery test: run aya team whoami, then
+  ┃  send one word to reviewer with: aya team send reviewer "ok".
+  ┃
+     ▣  Build · DeepSeek V4 Flash
+  ┃
+  ┃  Build · DeepSeek V4 Flash OpenCode Zen · high
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   ⬝⬝⬝⬝■■■■  esc interrupt                              41.1K (4%) · $0.04  ctrl+p commands    • OpenCode 1.18.30

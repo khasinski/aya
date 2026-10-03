@@ -1,0 +1,9 @@
+❯ [team team1 | from aya | 15:15 | 0aa04db] Delivery test: run aya team whoami,
+  then send one word to tester with: aya team send tester "ok".
+✽ Generating…
+                                                            ◐ medium · /effort
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · r…
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #128 · esc to interrupt
