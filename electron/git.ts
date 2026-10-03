@@ -2,7 +2,8 @@
 // already require a working POSIX env (claude / codex need it too). If git
 // isn't installed or the dir isn't a repo, return nulls.
 
-import { exec, execFile } from "node:child_process";
+import { exec, execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { ProjectGitInfo, Worktree, WorktreeStatus } from "./types";
@@ -22,7 +23,8 @@ export const GIT_ERROR_MESSAGE_MAX_CHARS = 300;
 // index as an optimization, which may briefly create .git/index.lock and race
 // with user-initiated git commands.
 const GIT_ENV = { ...process.env, GIT_OPTIONAL_LOCKS: "0" } as const;
-const READ_ONLY_GIT = "git --no-optional-locks";
+const NO_LOCKS = "--no-optional-locks";
+const READ_ONLY_GIT = `git ${NO_LOCKS}`;
 
 const OPTS = {
   timeout: GIT_COMMAND_TIMEOUT_MS,
@@ -64,7 +66,7 @@ export async function getGitInfo(directory: string): Promise<ProjectGitInfo> {
     // and execFile skips the /bin/sh wrapper exec() would fork.
     const { stdout } = await execFileAsync(
       "git",
-      ["--no-optional-locks", "status", "--porcelain", "--branch"],
+      [NO_LOCKS, "status", "--porcelain", "--branch"],
       { cwd: directory, ...OPTS },
     );
     return parseStatusWithBranch(stdout);
@@ -120,30 +122,26 @@ export function parseWorktrees(porcelain: string): Worktree[] {
 /** List the git worktrees for the repo containing `directory`. Returns [] for a
  *  non-repo dir or if git is missing (read-only; safe to poll). */
 export async function listWorktrees(directory: string): Promise<Worktree[]> {
-  try {
-    const { stdout } = await execAsync(
-      `${READ_ONLY_GIT} worktree list --porcelain`,
-      { cwd: directory, ...OPTS },
-    );
-    // `git worktree list` prints each path as it was recorded, which can differ
-    // from the symlink-resolved root `git rev-parse --show-toplevel` (i.e.
-    // getGitRoot) returns — macOS /tmp -> /private/tmp, or a symlinked projects
-    // dir. The status bar matches a worktree against the live checkout root, so
-    // canonicalize to the same shape here or the --current highlight and the
-    // pin tracking silently never match. A prunable/removed checkout can't be
-    // resolved; keep its recorded path.
-    return await Promise.all(
-      parseWorktrees(stdout).map(async (w) => {
-        try {
-          return { ...w, path: await realpath(w.path) };
-        } catch {
-          return w;
-        }
-      }),
-    );
-  } catch {
-    return [];
-  }
+  return listWorktreesOrThrow(directory).catch(() => []);
+}
+
+/** `listWorktrees` for a caller that must tell "git failed" from "no worktrees". */
+export async function listWorktreesOrThrow(directory: string): Promise<Worktree[]> {
+  const { stdout } = await execAsync(
+    `${READ_ONLY_GIT} worktree list --porcelain`,
+    { cwd: directory, ...OPTS },
+  );
+  // Paths come as recorded, not symlink-resolved like getGitRoot (macOS /tmp -> /private/tmp), and the status bar
+  // matches against that root. A prunable/removed checkout cannot be resolved; it keeps its recorded path.
+  return await Promise.all(
+    parseWorktrees(stdout).map(async (w) => {
+      try {
+        return { ...w, path: await realpath(w.path) };
+      } catch {
+        return w;
+      }
+    }),
+  );
 }
 
 /** Outcome of a git command that CHANGES the repository. Unlike every read
@@ -254,7 +252,7 @@ export async function getGitRoot(directory: string): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync(
       "git",
-      ["--no-optional-locks", "rev-parse", "--show-toplevel"],
+      [NO_LOCKS, "rev-parse", "--show-toplevel"],
       { cwd: directory, ...OPTS },
     );
     const root = stdout.trim();
@@ -269,10 +267,33 @@ export async function headCommit(directory: string): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync(
       "git",
-      ["--no-optional-locks", "rev-parse", "--short", "HEAD"],
+      [NO_LOCKS, "rev-parse", "--short", "HEAD"],
       { cwd: directory, ...OPTS },
     );
     return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** A fingerprint of the working tree: `git status --porcelain` (untracked files too) and the diff of tracked
+ *  files against HEAD, hashed as it streams. null when either cannot be read (outside a repo, no commit yet). */
+export async function workingTreeState(directory: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("git", [NO_LOCKS, "status", "--porcelain=v1", "-z"], { cwd: directory, ...DIFF_OPTS });
+    const hash = createHash("sha1").update(stdout).update("\0");
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn("git", [NO_LOCKS, "diff", "HEAD", "--no-ext-diff", "--no-color", "--binary"], { cwd: directory, env: GIT_ENV, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+      const timer = setTimeout(() => child.kill(), GIT_DIFF_TIMEOUT_MS);
+      child.stdout.on("data", (chunk: Buffer) => hash.update(chunk));
+      child.on("error", reject);
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        if (code === 0) resolve();
+        else reject(new Error(`git diff exited ${code}`));
+      });
+    });
+    return hash.digest("hex");
   } catch {
     return null;
   }

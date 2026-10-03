@@ -17,7 +17,7 @@ import { isAgentKind, isPreset } from "./presets";
 import { isStorableSplitTree, MAX_SPLIT_COLS, MAX_SPLIT_ROWS, type SplitNode } from "./split-tree";
 import { SESSION_ID_RE } from "./osc-extractor";
 import { assertSnippetCount, isSnippet, SNIPPET_TEXT_MAX } from "./snippets";
-import { RESERVED_ROLE_PROBLEM, TEAM_SYSTEM_SENDER } from "./teams";
+import { RESERVED_ROLE_PROBLEM, TEAM_SYSTEM_SENDER } from "./team-definition";
 
 /** Persisted schema version for projects-state.json. */
 export const PROJECT_STATE_VERSION = 1;
@@ -85,6 +85,12 @@ export function validateSpawnRequest(value: unknown): SpawnRequest {
       ? { agentConfigDir: value.agentConfigDir as string }
       : {}),
     command: requireString(value.command, "pty:spawn.command"),
+    ...(optionalString(value.sharedDirCommand, "pty:spawn.sharedDirCommand")
+      ? { sharedDirCommand: value.sharedDirCommand as string }
+      : {}),
+    ...(Array.isArray(value.peerCwds)
+      ? { peerCwds: value.peerCwds.map((cwd) => requireString(cwd, "pty:spawn.peerCwds")) }
+      : {}),
     cwd: requireString(value.cwd, "pty:spawn.cwd"),
     cols: requirePositiveInt(value.cols, "pty:spawn.cols"),
     rows: requirePositiveInt(value.rows, "pty:spawn.rows"),
@@ -100,6 +106,7 @@ export function validateSpawnRequest(value: unknown): SpawnRequest {
     ...(optionalFlag(value.attachIfReused, "pty:spawn.attachIfReused")
       ? { attachIfReused: true }
       : {}),
+    ...(optionalFlag(value.teamLaunch, "pty:spawn.teamLaunch") ? { teamLaunch: true } : {}),
   };
 }
 
@@ -129,6 +136,8 @@ function validateWorkingTab(value: unknown, name: string): WorkingTab {
     name: requireString(value.name, `${name}.name`),
     ...(cwd ? { cwd } : {}),
     ...(sessionId ? { sessionId } : {}),
+    ...(value.sharedDir === true ? { sharedDir: true as const } : {}),
+    ...(optionalFlag(value.teamLaunch, `${name}.teamLaunch`) ? { teamLaunch: true } : {}),
   };
 }
 
@@ -358,14 +367,13 @@ export function validateTeamDefinition(value: unknown, channel = "teams:save"): 
   const at = `${channel}.team`;
   const team = requireRecord(value, at);
   const roles = requireArray(team.roles, `${at}.roles`);
-  const cadence = team.cadence === null || team.cadence === undefined ? null : requireRecord(team.cadence, `${at}.cadence`);
+  const minutes = team.cadenceMinutes;
   return {
     name: requireString(team.name, `${at}.name`),
     roles: roles.map((raw, i) => validateRole(raw, `${at}.roles[${i}]`)),
-    cadence: cadence && {
-      role: requireString(cadence.role, `${at}.cadence.role`),
-      minutes: typeof cadence.minutes === "number" ? cadence.minutes : fail(`${at}.cadence.minutes`, "number"),
-    },
+    lead: team.lead === null || team.lead === undefined ? null : requireString(team.lead, `${at}.lead`),
+    cadenceMinutes: minutes === null || minutes === undefined ? null : typeof minutes === "number" ? minutes : fail(`${at}.cadenceMinutes`, "number"),
+    ...(team.leadConflict === null || team.leadConflict === undefined ? {} : { leadConflict: requireString(team.leadConflict, `${at}.leadConflict`) }),
     protocol: requireString(team.protocol, `${at}.protocol`),
   };
 }

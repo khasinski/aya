@@ -10,6 +10,9 @@
 
 import * as os from "node:os";
 import * as path from "node:path";
+import { CONTROL_SOCKET_NAME, PTY_HOST_SOCKET_NAME, REMOTE_SOCKET_NAME } from "./constants";
+
+export { CONTROL_SOCKET_NAME, PTY_HOST_SOCKET_NAME, REMOTE_SOCKET_NAME };
 
 // The dev-build switch; the legacy sweep matches the same pair in a process env.
 export const AYA_DEV_VAR = "AYA_DEV";
@@ -17,6 +20,12 @@ export const AYA_DEV_ON = "1";
 export const IS_DEV = process.env[AYA_DEV_VAR] === AYA_DEV_ON;
 export const IS_E2E_HEADLESS = process.env.AYA_E2E_HEADLESS === "1";
 export const IS_E2E_PTY_SHUTDOWN = process.env.AYA_E2E_PTY_SHUTDOWN === "1";
+/** E2E only: how long the boot window waits for its project list, to hold the gap where the socket is up and no project is restored. */
+export const PROJECTS_STATE_DELAY_MS = Number(process.env.AYA_E2E_PROJECTS_STATE_DELAY_MS) || 0;
+/** E2E only: how long main prepares every pane spawn (brief, lookups) before the host hears of it. */
+export const SPAWN_PREP_DELAY_MS = Number(process.env.AYA_E2E_SPAWN_PREP_DELAY_MS) || 0;
+/** E2E only: how long a team cadence "minute" lasts, so a round test need not wait a real one. */
+export const TEAM_MINUTE_MS = Number(process.env.AYA_E2E_TEAM_MINUTE_MS) || 60_000;
 
 // Home-relative config dirs; the legacy sweep maps a process's env to these too.
 export const AYA_HOME_DIRNAME = ".aya";
@@ -43,12 +52,13 @@ export const WINDOW_STATE_FILE = path.join(AYA_HOME, "window-state.json");
 export const PROJECTS_STATE_FILE = path.join(AYA_HOME, "projects-state.json");
 export const PROJECTS_ORDER_FILE = path.join(AYA_HOME, "projects-order.json");
 export const OPEN_PROJECTS_FILE = path.join(AYA_HOME, "open-projects.json");
-export const CONTROL_SOCKET_PATH = path.join(AYA_HOME, "aya.sock");
-// Bare name too: the remote bridge script rebuilds the path on the remote host.
-export const REMOTE_SOCKET_NAME = "aya-remote.sock";
+export const CONTROL_SOCKET_PATH = path.join(AYA_HOME, CONTROL_SOCKET_NAME);
 export const REMOTE_SOCKET_PATH = path.join(AYA_HOME, REMOTE_SOCKET_NAME);
-export const PTY_HOST_SOCKET_PATH = path.join(AYA_HOME, "pty-host.sock");
+export const PTY_HOST_SOCKET_PATH = path.join(AYA_HOME, PTY_HOST_SOCKET_NAME);
 export const CLI_ADOPTION_FILE = path.join(AYA_HOME, "cli-adoption.json");
+export const REACHED_AYA_FILE = path.join(AYA_HOME, "reached-aya.json");
+export const PANE_LAUNCH_ROLES_FILE = path.join(AYA_HOME, "pane-launch-roles.json");
+export const AGENT_BRIEF_FILES_FILE = path.join(AYA_HOME, "agent-brief-files.json");
 // Main-process diagnostics (GPU-helper deaths, #79).
 export const DIAGNOSTICS_LOG_FILE = path.join(AYA_HOME, "diagnostics.log");
 

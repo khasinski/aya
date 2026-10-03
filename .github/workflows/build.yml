@@ -36,8 +36,12 @@ jobs:
         run: npm run build
 
   e2e:
-    name: E2E (Electron)
+    name: E2E (Electron) ${{ matrix.shard }}/12
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -51,12 +55,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Cache Electron archive and Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/ms-playwright
+          key: e2e-binaries-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+
       # Ensure node_modules/electron/path.txt exists (Playwright's
       # electron.launch reads it to find the binary). electron is recorded with
       # hasInstallScript:false in the lockfile, so `npm ci` never downloads its
       # binary. @electron/get downloads the zip fine on this runner, but
-      # electron's own extraction leaves dist/ without the binary - so we force
-      # the download, extract the cached zip ourselves (Linux x64 job), point
+      # electron's own extraction leaves dist/ without the binary - so we use
+      # the version-matched cached zip (download it on a miss), extract it
+      # ourselves (Linux x64 job), point
       # path.txt at it, and validate require('electron') resolves to a real
       # file. install.js failing is TOLERATED (its extraction is the broken
       # part) but surfaced as a warning annotation instead of being swallowed;
@@ -64,10 +77,14 @@ jobs:
       - name: Ensure Electron binary
         run: |
           rm -rf node_modules/electron/dist node_modules/electron/path.txt
-          if ! force_no_cache=true node node_modules/electron/install.js; then
-            echo "::warning title=electron install.js failed::continuing with manual extraction of the downloaded zip (its extraction step is known-broken on this runner)"
+          electron_version="$(node -p "require('./node_modules/electron/package.json').version")"
+          zip="$(find "$HOME/.cache/electron" -name "electron-v${electron_version}-linux-x64.zip" -print -quit 2>/dev/null || true)"
+          if [ ! -f "$zip" ]; then
+            if ! node node_modules/electron/install.js; then
+              echo "::warning title=electron install.js failed::continuing with manual extraction of the downloaded zip (its extraction step is known-broken on this runner)"
+            fi
+            zip="$(find "$HOME/.cache/electron" -name "electron-v${electron_version}-linux-x64.zip" -print -quit)"
           fi
-          zip="$(find "$HOME/.cache/electron" -name 'electron-v*-linux-x64.zip' | head -1)"
           if [ ! -f "$zip" ]; then
             echo "::error title=electron download missing::no electron-v*-linux-x64.zip under ~/.cache/electron - install.js failed before downloading"
             exit 1
@@ -105,14 +122,35 @@ jobs:
           # system libs came from install-deps above.
           npx playwright install chromium
 
+      - name: Build app
+        run: npm run build
+
       - name: Run Playwright E2E
-        run: xvfb-run -a npm run test:e2e
+        # Project dependencies pull the whole isolated suite into every shard
+        # containing shared tests. Select each project with --no-deps instead,
+        # and preserve the dependency's ordering with two sequential stages.
+        run: |
+          export PLAYWRIGHT_BROWSERS_PATH="$HOME/.cache/ms-playwright"
+          run_e2e() {
+            local test_home result=0
+            test_home="$(mktemp -d /tmp/aya-e2e.XXXX)"
+            env -u AYA_SOCKET -u AYA_TERMINAL_ID -u AYA_PROJECT_SLUG \
+              -u AYA_PRESET_ID -u AYA_DEV HOME="$test_home" AYA_HOME="$test_home/aya" \
+              xvfb-run -a npx playwright test --no-deps --project="$1" \
+                --shard=${{ matrix.shard }}/12 --workers="$2" || result=$?
+            rm -rf "$test_home"
+            return "$result"
+          }
+          # Two Electron workers fit the runner's 4 vCPUs. Clipboard and
+          # rebuilt-host cases stay serial, after this shard's isolated apps.
+          run_e2e isolated 2
+          run_e2e shared-resources 1
 
       - name: Upload report on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: playwright-report/
           retention-days: 7
 

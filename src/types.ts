@@ -2,7 +2,7 @@
 // places (here and electron/types.ts) so the two TS projects stay independent.
 
 /** Agent CLIs Aya knows how to classify and resume. "custom" is anything
- *  else — a plain shell, a script, an agent we have no resume story for. */
+ *  else - a plain shell, a script, an agent we have no resume story for. */
 export type AgentKind =
   | "claude"
   | "codex"
@@ -48,7 +48,7 @@ export interface HarnessDef {
 }
 
 /** A reusable text snippet the user injects into the active terminal (à la
- *  iTerm2 Snippets). Lives in Aya (editor side), not in an agent's prompt — so
+ *  iTerm2 Snippets). Lives in Aya (editor side), not in an agent's prompt - so
  *  it doesn't sit in the agent's context until actually sent. `autoRun`
  *  appends Enter to execute. */
 export interface Snippet {
@@ -59,7 +59,7 @@ export interface Snippet {
 }
 
 /** Account-wide Claude/Codex usage snapshot (mirrors electron/usage.ts).
- *  Written by a user hook, read-only in Aya. Numbers are account-global —
+ *  Written by a user hook, read-only in Aya. Numbers are account-global -
  *  all sessions share the 5h + weekly limits, never per-project. */
 export interface UsageWindow {
   pct: number;
@@ -218,6 +218,11 @@ export interface WorkingTab {
    *  Lets a restore resume that exact conversation instead of whatever the
    *  CLI considers "latest". Absent for agents that never report one. */
   sessionId?: string;
+  /** A same-agent pane has shared this folder once, kept: with no session id
+   *  the pane starts fresh, not on the folder's "latest". */
+  sharedDir?: true;
+  /** Opened for a team role: every launch gets a mode that reaches Aya. */
+  teamLaunch?: boolean;
 }
 
 export interface SplitLayout {
@@ -371,17 +376,24 @@ export type SpawnFailureReason =
   | "command-not-found"
   | "node-pty-spawn-error";
 
+/** What a pane spawns: `command`, and `sharedDirCommand` when a peer in `peerCwds` is in the same folder. */
+export type SpawnCommand = Pick<SpawnRequest, "command" | "sharedDirCommand" | "peerCwds">;
+
 export interface SpawnRequest {
   ptyId: string;
   projectSlug?: string;
   presetId?: string;
   /** Which agent CLI this pane runs, resolved by the renderer (it owns the
-   *  inference — see src/agentPreset.ts). Lets the host pick that agent's
+   *  inference - see src/agentPreset.ts). Lets the host pick that agent's
    *  screen-detection rules without duplicating the inference. */
   agent?: AgentKind;
   /** The preset's config dir, where claude registers its session per pid. */
   agentConfigDir?: string;
   command: string;
+  /** Run instead of `command` when a pane in `peerCwds` is in the same
+   *  folder; the host compares real paths. */
+  sharedDirCommand?: string;
+  peerCwds?: string[];
   cwd: string;
   cols: number;
   rows: number;
@@ -398,6 +410,9 @@ export interface SpawnRequest {
    *  stopped/restartable instead of silently auto-respawning. On a fresh
    *  host this is a no-op and boot auto-start is unchanged. */
   attachIfReused?: boolean;
+  /** A pane Aya opened for a team role: launched in a mode that reaches Aya
+   *  (electron/launch-mode.ts teamLaunch). */
+  teamLaunch?: boolean;
 }
 
 export type PtyEvent =
@@ -413,7 +428,7 @@ export type PtyEvent =
   // the host stayed up. The tab becomes stopped/restartable, not respawned.
   | { type: "no-session"; ptyId: string }
   // Explicit status parsed from an OSC 9001 `aya.status` sequence the TUI (or
-  // a wrapper script) emitted inline in its own output — see integrations.md.
+  // a wrapper script) emitted inline in its own output - see integrations.md.
   // Same vocabulary as ControlStatusUpdate's "status" request, delivered
   // in-band through the PTY stream instead of the control socket.
   | {
@@ -585,6 +600,14 @@ export type MicPermissionStatus =
 
 export type ControlStatusLevel = "active" | "waiting" | "done" | "error";
 
+/** A question the agent asked before Aya was closed: read back ("restored"), or no longer confirmed by the pane's
+ *  session ("unconfirmed": shown to the user, holds no round). */
+export type QuestionRestart = "restored" | "unconfirmed";
+
+/** Panes whose agent ran `aya status waiting`, by pane id: its text, when (epoch ms), and whether it was asked
+ *  before Aya was closed (electron/agent-status.ts: "unconfirmed" holds no round). */
+export type WaitingPanes = Record<string, { text: string; since: number; restart?: QuestionRestart }>;
+
 export interface ControlStatusUpdate {
   terminalId?: string;
   projectSlug?: string;
@@ -592,6 +615,7 @@ export interface ControlStatusUpdate {
   level: ControlStatusLevel | "clear";
   text?: string;
   updatedAt: number;
+  restart?: QuestionRestart;
 }
 
 export type MonitoredSessionLevel = ControlStatusLevel;
@@ -632,7 +656,7 @@ export interface HarnessSearchHit {
   role: "user" | "assistant";
   /** ISO timestamp of the matched message, when the transcript carried one. */
   timestamp?: string;
-  /** Full message text (capped) — shown when the user expands the hit. */
+  /** Full message text (capped) - shown when the user expands the hit. */
   text: string;
   snippet: string;
   /** Offset/length of the first matched token WITHIN the snippet. */
@@ -746,6 +770,8 @@ export interface AyaApi {
   readRepoProjectConfig(directory: string): Promise<RepoProjectConfig | null>;
 
   listPresets(): Promise<Preset[]>;
+  /** The questions agents asked the user (`aya status waiting`) that nobody has answered, by pane, kept across restarts. */
+  agentWaiting(): Promise<WaitingPanes>;
   savePresets(presets: Preset[]): Promise<void>;
   scanHarnesses(): Promise<HarnessDef[]>;
 
@@ -759,8 +785,9 @@ export interface AyaApi {
   /** Grok usage (tokens + cost, last 7 days, account-wide), or null when none. */
   getGrokUsage(): Promise<GrokUsage | null>;
   /** Start a team: unpause, send every role a delivery test, arm its rounds. */
-  teamStart(projectSlug: string, team: string, task?: string): Promise<TeamStartResult>;
+  teamStart(projectSlug: string, team: string, task?: string, to?: string): Promise<TeamStartResult>;
   teamPause(projectSlug: string, team: string): Promise<void>;
+  teamRemove(projectSlug: string, team: string): Promise<void>;
   teamList(projectSlug: string): Promise<TeamSummary[]>;
   /** Save team: writes .aya/teams/<name>.md and the snapshot Aya runs on.
    *  `create`: refuse when a team with this name already exists. */
@@ -881,13 +908,14 @@ export interface AyaApi {
    *  "open-settings", "prev-tab", "next-tab", and "project-1".."project-9". */
   onShortcut(handler: (action: string) => void): () => void;
   onOpenProject(handler: (directory: string) => void): () => void;
+  openProjectDone(directory: string): void;
 
   /** Fired when something outside the app edits one of the watched config files
    *  under ~/.aya/, so the renderer can reload that slice instead of
    *  overwriting the edit on the next save in the app. */
   onConfigChange(handler: (change: ConfigChange) => void): () => void;
 
-  // Aya Web (experimental) — browser access to Aya
+  // Aya Web (experimental) - browser access to Aya
   webStatus(): Promise<WebServerStatus>;
   configureWeb(req: WebConfigureRequest): Promise<WebServerStatus>;
   regenerateWebPassword(): Promise<WebServerStatus>;
@@ -918,6 +946,7 @@ export interface TerminalState {
     level: ControlStatusLevel;
     text: string;
     updatedAt: number;
+    restart?: QuestionRestart;
   };
   /** Tab added by an external config edit (#4): kept out of the hidden
    *  TerminalView pool so no PTY spawns until the terminal first becomes
@@ -930,10 +959,14 @@ export interface TerminalState {
   /** Restored from a persisted project tab, not newly created by the user.
    *  Agent presets may append --resume only in this case. */
   restored?: boolean;
+  /** Opened for a team role (WorkingTab.teamLaunch). */
+  teamLaunch?: boolean;
   /** Last session id the agent reported over OSC 9001, mirrored from (and
    *  persisted back to) the project's WorkingTab so a restore can resume this
    *  exact conversation. */
   sessionId?: string;
+  /** Mirrors WorkingTab.sharedDir. */
+  sharedDir?: true;
 }
 
 export type ProjectEventLevel = "info" | "active" | "waiting" | "done" | "error";
@@ -950,7 +983,7 @@ export interface ProjectEvent {
 
 // Fallback used in the sidebar/pane header when a tab references a preset
 // that no longer exists (e.g. the user deleted it).
-export const MISSING_PRESET: Preset = {
+const MISSING_PRESET: Preset = {
   id: "__missing__",
   name: "missing preset",
   icon: "?",
@@ -1015,13 +1048,21 @@ export interface PresetChoice {
   name: string;
   agent: AgentKind;
   installed: boolean;
+  /** Whether a pane Aya opens for a role from this preset reaches Aya. */
+  reach: LaunchReach;
+  /** Why Aya refuses to open one, when it does. */
+  cantReach: string | null;
 }
+
+export type LaunchReach = "reaches" | "blocked" | "unknown";
 
 /** A pane main asks the window to open, with the id main picked. */
 export interface NewPane {
   id: string;
   presetId: string;
   name: string;
+  /** Opened for a team role: launched in a mode that reaches Aya. */
+  teamLaunch: boolean;
 }
 
 export interface TeamOpenPanesRequest {
@@ -1038,6 +1079,12 @@ export interface RolePane {
   name: string;
   preset: string | null;
   notReached: string | null;
+  /** Why the pane's launch mode cannot reach Aya, null when it can or Aya cannot tell. */
+  cantReach: string | null;
+  /** What Aya widened to make it reach Aya, and "may not reach Aya" for an unknown verdict; null when nothing. */
+  note: string | null;
+  /** Aya cannot tell whether the pane reaches it: no verdict yet, or an unknown one its process has not settled. */
+  unsure: boolean;
 }
 
 /** Roles given a pane, and roles whose pane moved to another role. */
@@ -1050,10 +1097,14 @@ export interface RolePanes {
 export interface TeamStartResult {
   /** false: a pane was not ready, so nothing was sent; `held` says which. */
   started: boolean;
+  /** The team was already running (or another Start is in flight): nothing was sent. */
+  alreadyRunning?: boolean;
+  /** A role's pane may not resume this pause (team-runner.ts resumeRefusal): nothing was sent. */
+  refused?: string;
   delivered: string[];
   held: { role: string; reason: string }[];
-  /** The task given with Start: who got it, and why it waits in the inbox, if it does. */
-  task: { to: string; held: string | null } | null;
+  /** The task given with Start: who got it, and why it waits in the inbox, if it does. `messageId`: its log entry. */
+  task: { to: string; held: string | null; typedOnly?: boolean; afterEnter?: boolean; messageId?: number } | null;
 }
 
 /** A role this one sends to, and what it sends there (may be empty). */
@@ -1069,16 +1120,16 @@ export interface TeamRole {
   responsibilities: string;
 }
 
-export interface TeamCadence {
-  role: string;
-  minutes: number;
-}
-
-/** A team from .aya/teams/<name>.md (see electron/teams.ts). */
+/** A team from .aya/teams/<name>.md (see electron/team-definition.ts). */
 export interface TeamDefinition {
   name: string;
   roles: TeamRole[];
-  cadence: TeamCadence | null;
+  /** The role that gets the task and the rounds and checks nobody waits too long; null in a team saved before leads. */
+  lead: string | null;
+  /** The lead gets a round every this many minutes; null: no periodic rounds. The rhythm has no role of its own. */
+  cadenceMinutes: number | null;
+  /** An old file named another role under "## Lead" than its "## Cadence": that role (the cadence's leads). */
+  leadConflict?: string | null;
   protocol: string;
 }
 
@@ -1093,6 +1144,12 @@ export interface TeamMessage {
   delivered: boolean;
   /** Why it was not typed when sent, e.g. "shows an approval prompt". */
   held?: string;
+  /** Typed into the composer with its Enter withheld: a draft until a human submits it. */
+  typedOnly?: boolean;
+  /** Typed only, and `held` says what came of the Enter Aya sent (it failed, no turn, a dialog), not why it was withheld. */
+  afterEnter?: boolean;
+  /** Held, then read by the receiver with `aya team inbox` (set by the window's listing, not stored). */
+  viaInbox?: boolean;
 }
 
 /** One team as the teams window shows it. `definition` is what Aya runs on:
@@ -1103,6 +1160,8 @@ export interface TeamSummary {
   error: string | null;
   /** The repo file differs from what the user last saved. */
   repoChanged: boolean;
+  /** The repo file is gone; Aya runs the saved copy until the user removes the team. */
+  repoGone: boolean;
   /** Only the repo file exists (a pull or a clone brought it): nothing of it
    *  runs until the user saves it in Aya. */
   unsaved: boolean;
@@ -1116,9 +1175,33 @@ export interface TeamSummary {
   assignments: Record<string, string>;
   /** Per role with a pane in the project: why a message would wait now, null when it would not. */
   paneHolds: Record<string, string | null>;
+  /** Per role with a pane: why its CLI holds no note for this role, null when it does. */
+  roleNotes: Record<string, string | null>;
+  /** Panes that started with a role note of this team that they no longer play. */
+  staleNotes: string[];
+  /** Per role with a pane in the project: what Aya widened so the pane reaches it, null when nothing. */
+  paneNotes: Record<string, string | null>;
   /** Messages per role that are waiting in its inbox. */
   unread: Record<string, number>;
+  liveness: TeamLiveness;
   log: TeamMessage[];
+}
+
+/** Whether the team's rounds get any answer; mirrors electron/types.ts. */
+export interface TeamLiveness {
+  status: "never started" | "paused" | "progressing" | "talking" | "stalled" | "blocked" | "unreachable";
+  /** Set while rounds are skipped: since the last sign of life (ISO). */
+  stalledSince: string | null;
+  blocked: { role: string; reason: string; since: string }[];
+  /** The role rounds go to, while its pane has taken none for several rounds (not running, a draft, a shell). */
+  unreached: { role: string; reason: string; since: string } | null;
+  /** What watches a team: the lead gets a round every `everyMin` (null: no cadence) and is asked for one after
+   *  `askAfterMin` of quiet (null: the team has no lead); the team is stalled after `stalledAfterMin`. */
+  silence: { askAfterMin: number | null; everyMin?: number | null; stalledAfterMin: number };
+  /** While running: the last change to the repo (ISO) and the peer messages since it. */
+  repo?: { since: string; messages: number } | null;
+  /** The lead did not answer its last `rounds` rounds: the next ones wait for its answer. */
+  roundsHeld?: { role: string; rounds: number } | null;
 }
 
 /** A role drafted by Aya Intelligence from its name, for the user to edit. */
