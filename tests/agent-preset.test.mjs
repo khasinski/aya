@@ -14,7 +14,11 @@ import {
   sessionResumeArg,
   commandHasResumeFlag,
   commandWithAutoResume,
+  resumeSpawn,
+  sharingPaneIds,
+  launchesAgentDirectly,
 } from "../dist-test/agentPreset.js";
+import { launchesAgentDirectly as hostLaunchesAgentDirectly } from "../dist-electron/agent-session.js";
 
 const preset = (over) => ({
   id: "p",
@@ -304,4 +308,132 @@ test("antigravity continues the latest conversation on restore, once", () => {
     commandWithAutoResume(preset({ command: "agy" }), true, "c-42"),
     "agy --conversation c-42",
   );
+});
+
+test("commandWithAutoResume: a codex pane that shares its cwd resumes its own id or starts fresh", () => {
+  const codex = preset({ agent: "codex", command: "codex" });
+  assert.equal(commandWithAutoResume(codex, true, undefined, false), "codex resume --last");
+  assert.equal(commandWithAutoResume(codex, true, undefined, true), "codex");
+  assert.equal(commandWithAutoResume(codex, true, "abc", true), "codex resume abc");
+  assert.equal(commandWithAutoResume(codex, false, undefined, true), "codex");
+});
+
+test("commandWithAutoResume: sharing a cwd makes claude and opencode start fresh; antigravity keeps its per-directory continue", () => {
+  for (const agent of ["claude", "opencode"]) {
+    const p = preset({ agent, command: agent });
+    assert.equal(commandWithAutoResume(p, true, undefined, true), agent, agent);
+  }
+  assert.equal(commandWithAutoResume(preset({ agent: "antigravity", command: "agy" }), true, undefined, true), "agy --continue");
+});
+
+
+test("resumeSpawn: latest-continue agents get a second command for when a peer shares the folder", () => {
+  const self = { id: "a", cwd: "/w", restored: true };
+  const peers = (agent) => [
+    { id: "a", preset: preset({ agent, command: agent }), cwd: "/w" },
+    { id: "b", preset: preset({ agent, command: agent }), cwd: "/other" },
+  ];
+  const spawn = (agent, extra = {}) =>
+    resumeSpawn(preset({ agent, command: agent }), { ...self, ...extra }, peers(agent));
+  assert.deepEqual(spawn("codex"), { command: "codex resume --last", sharedDirCommand: "codex", peerCwds: ["/other"] });
+  assert.deepEqual(spawn("claude"), { command: "claude --continue", sharedDirCommand: "claude", peerCwds: ["/other"] });
+  assert.deepEqual(spawn("opencode"), { command: "opencode --continue", sharedDirCommand: "opencode", peerCwds: ["/other"] });
+  assert.deepEqual(spawn("codex", { sessionId: "abc" }), { command: "codex resume abc" });
+  assert.deepEqual(spawn("grok"), { command: "grok" });
+  assert.deepEqual(spawn("codex", { restored: false }), { command: "codex" });
+});
+
+test("resumeSpawn: only peers of the same agent count, and a pane alone has none", () => {
+  const codex = preset({ agent: "codex", command: "codex" });
+  const claude = preset({ agent: "claude", command: "claude" });
+  const self = { id: "a", cwd: "/w", restored: true };
+  const alone = resumeSpawn(codex, self, [{ id: "a", preset: codex, cwd: "/w" }]);
+  assert.deepEqual(alone, { command: "codex resume --last" });
+  const mixed = resumeSpawn(codex, self, [
+    { id: "a", preset: codex, cwd: "/w" },
+    { id: "b", preset: claude, cwd: "/w" },
+    { id: "c", preset: preset({ command: "$SHELL" }), cwd: "/w" },
+  ]);
+  assert.deepEqual(mixed, { command: "codex resume --last" });
+});
+
+// agent x (id known, shared the folder once, peer now) for a restored pane: what it launches with.
+test("resumeSpawn: a pane that ever shared its folder never falls back to the folder's latest", () => {
+  const latest = { codex: "codex resume --last", claude: "claude --continue", opencode: "opencode --continue" };
+  const self = (extra) => ({ id: "a", cwd: "/w", restored: true, ...extra });
+  const none = (agent) => [{ id: "a", preset: preset({ agent, command: agent }), cwd: "/w" }];
+  for (const agent of Object.keys(latest)) {
+    const p = preset({ agent, command: agent });
+    const cell = (extra) => resumeSpawn(p, self(extra), none(agent));
+    assert.deepEqual(cell({}), { command: latest[agent] }, `${agent}: alone, never shared`);
+    assert.deepEqual(cell({ sharedDir: true }), { command: agent }, `${agent}: alone, shared once`);
+    assert.deepEqual(cell({ sharedDir: true, sessionId: "abc" }).command.includes("abc"), true, `${agent}: id wins`);
+    assert.deepEqual(cell({ sharedDir: false }), { command: latest[agent] }, `${agent}: flag off`);
+  }
+  assert.deepEqual(resumeSpawn(preset({ agent: "grok", command: "grok" }), self({ sharedDir: true }), []), { command: "grok" });
+});
+
+test("sharingPaneIds: same agent in the same folder, however the slash is written", () => {
+  const codex = preset({ agent: "codex", command: "codex" });
+  const claude = preset({ agent: "claude", command: "claude" });
+  const grok = preset({ agent: "grok", command: "grok" });
+  const panes = [
+    { id: "a", preset: codex, cwd: "/w" },
+    { id: "b", preset: codex, cwd: "/w/" },
+    { id: "c", preset: claude, cwd: "/w" },
+    { id: "d", preset: codex, cwd: "/other" },
+    { id: "e", preset: grok, cwd: "/g" },
+    { id: "f", preset: grok, cwd: "/g" },
+    { id: "g", preset: preset({ command: "$SHELL" }), cwd: "/w" },
+    { id: "h", preset: preset({ command: "$SHELL" }), cwd: "/w" },
+  ];
+  assert.deepEqual([...sharingPaneIds(panes)].sort(), ["a", "b"]);
+  const three = ["x", "y", "z"].map((id) => ({ id, preset: codex, cwd: "/t" }));
+  assert.deepEqual([...sharingPaneIds(three)].sort(), ["x", "y", "z"]);
+  const root = [{ id: "r", preset: codex, cwd: "/" }, { id: "s", preset: codex, cwd: "" }];
+  assert.deepEqual([...sharingPaneIds(root)], [], "the root folder keeps its slash");
+});
+
+// --- a saved id is only appended to a command that starts the agent itself ---
+
+const WRAPPED = [
+  "bash -lc 'exec AGENT'", "sh -c 'AGENT'", "env FOO=1 AGENT", "nohup AGENT", "sudo -u bob AGENT",
+  "docker exec -it c AGENT", "mosh h -- AGENT", "tsh ssh h AGENT", "command ssh h AGENT",
+  "/usr/bin/ssh h AGENT", "X=1 ssh h AGENT", "ssh h AGENT",
+];
+const STARTED = ["AGENT", "X=1 AGENT", "X='a b' Y=2 AGENT", "exec AGENT", "X=1 exec AGENT", "/opt/bin/AGENT"];
+const SAVED = "11111111-1111-4111-8111-111111111111";
+
+test("a saved id is appended to a command that starts the agent, never to a wrapper of it", () => {
+  for (const agent of ["claude", "grok", "codex", "opencode"]) {
+    for (const template of WRAPPED) {
+      const p = preset({ agent, command: template.replace("AGENT", agent) });
+      assert.equal(commandWithAutoResume(p, true, SAVED), commandWithAutoResume(p, true), p.command);
+      assert.ok(!commandWithAutoResume(p, true, SAVED).includes(SAVED), p.command);
+    }
+  }
+  for (const agent of ["claude", "grok", "codex"]) {
+    for (const template of STARTED) {
+      const p = preset({ agent, command: template.replace("AGENT", agent) });
+      assert.ok(commandWithAutoResume(p, true, SAVED).endsWith(SAVED), p.command);
+    }
+  }
+});
+
+test("the renderer and the host agree on which commands start the agent themselves", () => {
+  for (const agent of ["claude", "grok", "codex", "opencode"]) {
+    for (const template of [...WRAPPED, ...STARTED, "claude 'a' && echo b", ""]) {
+      const command = template.replace("AGENT", agent);
+      assert.equal(launchesAgentDirectly(command), hostLaunchesAgentDirectly(command), command);
+    }
+  }
+  assert.equal(launchesAgentDirectly("claude"), true);
+  assert.equal(launchesAgentDirectly("bash -lc claude"), false);
+});
+
+test("a grok preset that already names its session with --session-id gets no --resume", () => {
+  for (const command of ["grok --session-id 11111111-1111-4111-8111-111111111111", "grok --session-id=11111111-1111-4111-8111-111111111111 --x"]) {
+    assert.equal(commandWithAutoResume(preset({ command, agent: "grok" }), true, "22222222-2222-4222-8222-222222222222"), command, command);
+    assert.equal(commandHasResumeFlag(preset({ command, agent: "grok" }), command), true, command);
+  }
 });

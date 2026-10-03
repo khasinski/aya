@@ -9,6 +9,7 @@ import {
   latestUsageAccountsFromLines,
   latestUsageFromLines,
   CODEX_DIRNAME,
+  CODEX_CONFIG_FILENAME,
   CODEX_DEFAULT_DIR,
   CODEX_SESSIONS_SUBDIR,
   MAX_DATE_MS,
@@ -17,6 +18,10 @@ import {
 test("Codex's default home is ~/.codex", () => {
   assert.equal(CODEX_DIRNAME, ".codex");
   assert.equal(CODEX_DEFAULT_DIR, "~/.codex");
+});
+
+test("Codex reads its settings from config.toml", () => {
+  assert.equal(CODEX_CONFIG_FILENAME, "config.toml");
 });
 
 test("Codex rollouts live under <home>/sessions (usage chip and transcript search)", () => {

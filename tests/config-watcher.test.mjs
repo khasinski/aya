@@ -10,13 +10,13 @@
 // redirect it. `node --test` runs each test file in its own process, so this
 // redirect can't leak into the other test files.
 //
-// These run against a throwaway AYA_HOME using the real fs.watch, so they use
-// real timers and wait out the 200ms WATCH_DEBOUNCE_MS (see waitForDebounce)
-// before checking results; there's no fake-timer setup in this repo.
+// These use real fs.watch and file I/O in a throwaway AYA_HOME. Only the
+// debounce/poll clock is virtual: advance the same five debounce windows,
+// draining actual filesystem work between ticks instead of sleeping.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, promises as fs, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -26,7 +26,7 @@ import { join } from "node:path";
 const SNIPPETS_A = '{"snippets":[{"id":"a","name":"a","text":"echo a"}]}';
 const SNIPPETS_B = '{"snippets":[{"id":"b","name":"b","text":"echo b"}]}';
 
-test("config watcher emits external edits, skips echoes, catches reverts, and stops cleanly", async () => {
+test("config watcher emits external edits, skips echoes, catches reverts, and stops cleanly", async (t) => {
   const home = mkdtempSync(join(tmpdir(), "aya-config-watcher-"));
   process.env.AYA_HOME = home;
 
@@ -43,14 +43,37 @@ test("config watcher emits external edits, skips echoes, catches reverts, and st
     const { startConfigWatcher, WATCH_DEBOUNCE_MS } = await import(
       "../dist-electron/config-watcher.js"
     );
-    // Five debounce windows before reading `received`: under the full suite macOS
-    // fs.watch can deliver the event noticeably later than when this file runs alone.
-    const waitForDebounce = () => new Promise((r) => setTimeout(r, 5 * WATCH_DEBOUNCE_MS));
+    // Track real async filesystem work so each clock tick observes the write
+    // before the next one. Native watcher events still run on the real loop;
+    // the polling fallback also gets both of its 500 ms looks in this window.
+    const pending = new Set();
+    for (const name of ["readFile", "readdir"]) {
+      const original = fs[name];
+      t.mock.method(fs, name, (...args) => {
+        const work = original(...args);
+        pending.add(work);
+        work.then(() => pending.delete(work), () => pending.delete(work));
+        return work;
+      });
+    }
+    const drainIO = async () => {
+      await new Promise((r) => setImmediate(r));
+      while (pending.size) await Promise.allSettled([...pending]);
+      await new Promise((r) => setImmediate(r));
+    };
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const waitForDebounce = async () => {
+      for (let i = 0; i < 5; i++) {
+        await drainIO();
+        t.mock.timers.tick(WATCH_DEBOUNCE_MS);
+      }
+      await drainIO();
+    };
     const { writeFileAtomic } = await import("../dist-electron/atomic-write.js");
 
     const file = join(home, "snippets.json");
     stop = startConfigWatcher(win);
-    await new Promise((r) => setTimeout(r, 50));
+    await drainIO();
 
     // (a) An outside write of new content -> exactly one reload of that slice.
     writeFileSync(file, SNIPPETS_A);

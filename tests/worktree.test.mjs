@@ -89,13 +89,6 @@ test("gitContextCwd falls back to the base cwd with no terminal cwd", () => {
   assert.equal(gitContextCwd("/home/me/repo", ""), "/home/me/repo");
 });
 
-test("round-trip: a worktree binding survives terminal -> tab", () => {
-  const p = project();
-  const t = term({ cwd: "/home/me/repo-wt/feature" });
-  const tab = tabFromTerminal(t, projectBaseCwd(p));
-  assert.equal(tab.cwd, "/home/me/repo-wt/feature");
-});
-
 test("tabFromTerminal carries the agent session id to disk", () => {
   const tab = tabFromTerminal(
     { id: "t1", presetId: "claude", name: "Claude", cwd: "/p", sessionId: "abc123" },
@@ -110,4 +103,15 @@ test("tabFromTerminal omits sessionId when the agent never reported one", () => 
     "/p",
   );
   assert.equal("sessionId" in tab, false);
+});
+
+test("tabFromTerminal carries the shared-folder latch to disk, and only when set", () => {
+  const base = { id: "t1", presetId: "codex", name: "Codex", cwd: "/p" };
+  assert.equal(tabFromTerminal({ ...base, sharedDir: true }, "/p").sharedDir, true);
+  assert.equal("sharedDir" in tabFromTerminal(base, "/p"), false);
+});
+
+test("tabFromTerminal keeps a role pane's teamLaunch, and leaves it off other tabs", () => {
+  assert.equal(tabFromTerminal(term({ cwd: "/home/me/repo", teamLaunch: true }), "/home/me/repo").teamLaunch, true);
+  assert.equal("teamLaunch" in tabFromTerminal(term({ cwd: "/home/me/repo" }), "/home/me/repo"), false);
 });

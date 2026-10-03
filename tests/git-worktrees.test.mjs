@@ -5,8 +5,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, execSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { makeRepo as makeEmptyRepo } from "./helpers/git.mjs";
@@ -142,7 +142,7 @@ test("listWorktrees reports a linked branch worktree, main flagged once", async 
   const root = makeRepo();
   const feature = tmpWorktreePath("feature");
   try {
-    execSync(`git worktree add "${feature}" -b feature`, { cwd: root });
+    execFileSync("git", ["worktree", "add", feature, "-b", "feature"], { cwd: root });
     const wts = await listWorktrees(root);
     assert.equal(wts.length, 2);
     assert.equal(wts.filter((w) => w.isMain).length, 1);
@@ -159,7 +159,7 @@ test("a detached worktree reports branch=null, detached=true", async () => {
   const root = makeRepo();
   const detached = tmpWorktreePath("detached");
   try {
-    execSync(`git worktree add --detach "${detached}" HEAD`, { cwd: root });
+    execFileSync("git", ["worktree", "add", "--detach", detached, "HEAD"], { cwd: root });
     const wts = await listWorktrees(root);
     const d = wts.find((w) => !w.isMain);
     assert.ok(d, "linked worktree present");
@@ -174,7 +174,7 @@ test("listWorktrees works from a LINKED worktree too (git sees all)", async () =
   const root = makeRepo();
   const feature = tmpWorktreePath("feature");
   try {
-    execSync(`git worktree add "${feature}" -b feature`, { cwd: root });
+    execFileSync("git", ["worktree", "add", feature, "-b", "feature"], { cwd: root });
     // Query from the linked worktree, not the main checkout.
     const wts = await listWorktrees(feature);
     assert.equal(wts.length, 2);
@@ -294,7 +294,7 @@ test("listWorktreeStatus reports each worktree's own branch and dirty count", as
   const root = makeRepo();
   const feature = tmpWorktreePath("feature");
   try {
-    execSync(`git worktree add "${feature}" -b feature`, { cwd: root });
+    execFileSync("git", ["worktree", "add", feature, "-b", "feature"], { cwd: root });
     // Distinct states: main dirty by two files, the worktree by one.
     writeFileSync(join(root, "a.txt"), "changed");
     writeFileSync(join(root, "new.txt"), "untracked");
@@ -320,7 +320,7 @@ test("listWorktreeStatus keeps a detached worktree's branch null, not 'HEAD'", a
   const root = makeRepo();
   const detached = tmpWorktreePath("detached");
   try {
-    execSync(`git worktree add --detach "${detached}" HEAD`, { cwd: root });
+    execFileSync("git", ["worktree", "add", "--detach", detached, "HEAD"], { cwd: root });
     const list = await listWorktreeStatus(root);
     const wt = list.find((w) => !w.isMain);
     assert.ok(wt, "linked worktree present");
@@ -358,7 +358,7 @@ test("getGitRoot resolves a subdirectory to its OWN checkout root", async () => 
   const root = makeRepo();
   const feature = tmpWorktreePath("feature");
   try {
-    execSync(`git worktree add "${feature}" -b feature`, { cwd: root });
+    execFileSync("git", ["worktree", "add", feature, "-b", "feature"], { cwd: root });
     mkdirSync(join(feature, "deep", "nested"), { recursive: true });
     // A live terminal cwd can sit anywhere under the checkout; the git surface
     // needs the worktree's root, not the main repo's.
@@ -377,4 +377,21 @@ test("getGitRoot returns null outside a repo and for a missing dir", async () =>
     rmSync(dir, { recursive: true, force: true });
   }
   assert.equal(await getGitRoot("/no/such/dir/aya-xyz-123"), null);
+});
+
+test("listWorktrees: a worktree whose recorded path now runs through a symlink is listed by its real path", async () => {
+  const repo = makeEmptyRepo("aya-wt-link-");
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "aya-wt-base-")));
+  try {
+    execSync("git commit -q --allow-empty -m init", { cwd: repo });
+    mkdirSync(join(base, "a"));
+    execFileSync("git", ["worktree", "add", "-q", join(base, "a", "wt")], { cwd: repo });
+    renameSync(join(base, "a"), join(base, "b"));
+    symlinkSync(join(base, "b"), join(base, "a"));
+    const paths = (await listWorktrees(repo)).map((w) => w.path);
+    assert.ok(paths.includes(join(base, "b", "wt")), paths.join(", "));
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(base, { recursive: true, force: true });
+  }
 });
