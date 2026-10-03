@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_CADENCE_MINUTES } from "../team-edit";
 import { paneRoles } from "../team-view";
-import type { AyaIntelligenceConfig, PresetChoice, ProjectConfig, TeamDefinition, TeamSummary } from "../types";
+import type { AyaIntelligenceConfig, PresetChoice, ProjectConfig, TeamDefinition, TeamSummary, WaitingPanes } from "../types";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 import { TeamCard } from "./TeamCard";
 import { TeamEditor } from "./TeamEditor";
@@ -28,7 +28,8 @@ const TWO_ROLE_TEMPLATE: TeamDefinition = {
       responsibilities: "Fixes findings, answers every report, and names the commit to check.",
     },
   ],
-  cadence: { role: "reviewer", minutes: DEFAULT_CADENCE_MINUTES },
+  lead: "reviewer",
+  cadenceMinutes: DEFAULT_CADENCE_MINUTES,
   protocol:
     "Findings are hypotheses with a measurement request, not facts. Number rounds and mark items [reported -> confirmed]. Reports are one-way unless a question is asked.",
 };
@@ -36,10 +37,11 @@ const TWO_ROLE_TEMPLATE: TeamDefinition = {
 interface Props {
   project: ProjectConfig;
   intelligence: AyaIntelligenceConfig;
+  waiting: WaitingPanes;
   onClose: () => void;
 }
 
-export function TeamsModal({ project, intelligence, onClose }: Props) {
+export function TeamsModal({ project, intelligence, waiting, onClose }: Props) {
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [editing, setEditing] = useState<{ team: TeamDefinition; isNew: boolean } | null>(null);
   const [presets, setPresets] = useState<PresetChoice[]>([]);
@@ -109,6 +111,7 @@ export function TeamsModal({ project, intelligence, onClose }: Props) {
                 installed={presets.filter((p) => p.installed)}
                 presetNames={Object.fromEntries(presets.map((p) => [p.id, p.name]))}
                 plays={paneRoles(teams)}
+                waiting={waiting}
                 onEdit={(definition) => setEditing({ team: definition, isNew: false })}
                 onChanged={reload}
               />

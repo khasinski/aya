@@ -12,6 +12,7 @@ import type {
 import { AYA_HOME_DIRNAME, REMOTE_SOCKET_NAME } from "./paths";
 import { REMOTE_PROTOCOL_VERSION, type RemoteMessage } from "./remote-protocol";
 import { shellQuote } from "./pane-command";
+import { socketPathLimit } from "./socket-path";
 
 export interface RemoteTimeouts {
   bridgeMs: number;
@@ -35,6 +36,8 @@ const id = process.argv[1];
 const payload = Buffer.from(process.argv[2], "base64").toString("utf8");
 const socketPath = process.env.AYA_REMOTE_SOCKET ||
   (process.env.AYA_HOME ? process.env.AYA_HOME + "/${REMOTE_SOCKET_NAME}" : process.env.HOME + "/${AYA_HOME_DIRNAME}/${REMOTE_SOCKET_NAME}");
+const limit = process.platform === "darwin" ? ${socketPathLimit("darwin")} : ${socketPathLimit("linux")};
+const pathBytes = Buffer.byteLength(socketPath);
 const client = net.createConnection(socketPath);
 let buffer = "";
 let settled = false;
@@ -80,7 +83,9 @@ client.on("error", (err) => {
     protocol: ${REMOTE_PROTOCOL_VERSION},
     id,
     code: "app_unavailable",
-    message: "Aya is not accepting remote connections at " + socketPath,
+    message: pathBytes > limit
+      ? "Aya's remote socket path is " + pathBytes + " bytes, the limit is " + limit + ": set a shorter AYA_HOME on the remote host (" + socketPath + ")"
+      : "Aya is not accepting remote connections at " + socketPath,
     detail: err.code || err.message,
   });
   finish(1);

@@ -19,9 +19,8 @@ export const RUN_AS_NODE_VALUE = "1";
 // A scriptHash that could not be read. The reaper never kills on it.
 export const UNKNOWN_SCRIPT_HASH = "unknown";
 
-/** Identity a host reports about the build it was launched from. Reported via
- *  the `version` handshake; an old host that predates the handshake returns an
- *  error, which the client maps to `null` (treated as stale below). */
+/** The build a host was launched from, from the `version` handshake; a host predating it errors, which the
+ *  client maps to null (stale). */
 export interface HostIdentity {
   /** App version from the host build's package.json. */
   version: string;
@@ -31,19 +30,26 @@ export interface HostIdentity {
   scriptHash: string;
 }
 
-/** True when the running host does not match what the current app would spawn.
- *  `actual === null` means the handshake failed (old host / no version
- *  support) - itself the strongest "stale" signal. Otherwise a difference in
- *  either the version or the script hash means a different build. */
+/** A different version is "stale"; hashes compare only when both are known, else "indeterminate"
+ *  (the "unknown" sentinel would trust a foreign build or condemn a healthy one). */
+export function classifyIdentity(
+  expected: { version: string; scriptHash: string },
+  actual: { version: string; scriptHash: string },
+): "compatible" | "stale" | "indeterminate" {
+  if (actual.version !== expected.version) return "stale";
+  if (actual.scriptHash === UNKNOWN_SCRIPT_HASH || expected.scriptHash === UNKNOWN_SCRIPT_HASH) {
+    return "indeterminate";
+  }
+  return actual.scriptHash === expected.scriptHash ? "compatible" : "stale";
+}
+
+/** True when the running host is stale; `actual === null` (failed handshake) is the strongest signal.
+ *  An indeterminate identity is not stale: restarting the host kills every agent in it. */
 export function isHostStale(
   expected: HostIdentity,
   actual: HostIdentity | null,
 ): boolean {
-  if (actual === null) return true;
-  return (
-    actual.version !== expected.version ||
-    actual.scriptHash !== expected.scriptHash
-  );
+  return actual === null || classifyIdentity(expected, actual) === "stale";
 }
 
 /** Every file the host runs from `dir`: its entry and the relative modules it

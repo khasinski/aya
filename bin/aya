@@ -1,5 +1,5 @@
 #!/bin/sh
-# aya — open projects and control the running Aya.app
+# aya - open projects and control the running Aya.app
 
 set -e
 
@@ -7,6 +7,14 @@ INSTALLED_APP_SOCKET="$HOME/.aya/aya.sock"
 OPEN_SOCKET_WAIT_SECONDS="${AYA_OPEN_WAIT_SECONDS:-15}"
 # Keeps the wait's integer compare far from overflow (under ~3 hours).
 OPEN_SOCKET_WAIT_MAX_DIGITS=4
+# send_control's exit status for a socket file nothing listens on.
+NOT_LISTENING_EXIT=75
+# Longest socket path that binds (measured), as electron/socket-path.ts has it.
+DARWIN_SOCKET_PATH_MAX_BYTES=104
+LINUX_SOCKET_PATH_MAX_BYTES=107
+# "debug on": the switch in the config home and each team's log, as electron/team-debug.ts names them.
+DEBUG_SWITCH_FILE=debug.json
+DEBUG_LOG_FILE=debug.jsonl
 
 usage() {
   cat >&2 <<'EOF'
@@ -30,6 +38,7 @@ Usage:
   aya team whoami                    Print this pane's team role and protocol
   aya team send role text            Send a message to the pane playing role
   aya team inbox                     Print messages that could not be typed in
+  aya team pause ["why"]             The lead ends the team's work: pauses it, as the Pause button does
   aya team new [description]         Print a guide for writing a team file
   aya team save [--replace] file|-   Check a team file and save it in Aya
   aya team open [--replace] team role=target...
@@ -38,11 +47,23 @@ Usage:
                                      new:preset / pane:name when both match
   aya team start team ["task"] [--to role]
                                      Start a team as the Teams window's Start;
-                                     a task goes to --to, the cadence role
-                                     or the first role
-  aya presets [--json]               List presets and whether each is installed
+                                     a task goes to --to, else the
+                                     lead (the role with the
+                                     cadence is the lead), else
+                                     the first role
+  aya team debug team [-f]          Print the team's last debug entries
+                                     (-f: and follow them)
+  aya debug on|off|status            Turn on/off writing every team decision
+                                     to the team's debug log
+  aya presets [--json]               List presets, whether each is installed and
+                                     whether a role's pane of it reaches Aya
   aya capabilities                   Print these commands as JSON, for agents
 EOF
+}
+
+usage_fail() {
+  usage
+  exit 1
 }
 
 # Expands a leading ~/ (a quoted env value keeps it) and collapses repeated slashes.
@@ -81,17 +102,44 @@ remote_socket_path() {
   fi
 }
 
+socket_path_limit() {
+  case "$(uname -s)" in
+    Darwin) echo "$DARWIN_SOCKET_PATH_MAX_BYTES" ;;
+    *) echo "$LINUX_SOCKET_PATH_MAX_BYTES" ;;
+  esac
+}
+
+# Sets path_length and path_limit; succeeds when the path is over the limit.
+socket_path_too_long() {
+  path_length=$(printf '%s' "$1" | wc -c | tr -d ' ')
+  path_limit=$(socket_path_limit)
+  [ "$path_length" -gt "$path_limit" ]
+}
+
+fail_if_socket_path_too_long() {
+  if socket_path_too_long "$1"; then
+    printf "aya: control socket path is too long (%s bytes, the limit is %s): %s\n" "$path_length" "$path_limit" "$1" >&2
+    if [ -n "${AYA_SOCKET:-}" ]; then
+      printf "aya: set AYA_SOCKET to a shorter path.\n" >&2
+    else
+      printf "aya: set AYA_HOME to a shorter directory.\n" >&2
+    fi
+    exit 1
+  fi
+}
+
 # With connect_wait set (whole seconds), a socket that is missing or refuses
 # (a stale file from a crashed Aya) is retried until then instead of failing.
 send_control() {
   socket=$(socket_path)
+  fail_if_socket_path_too_long "$socket"
   if [ -z "${connect_wait:-}" ] && [ ! -S "$socket" ]; then
     printf "aya: control socket not found at %s\n" "$socket" >&2
     printf "aya: start Aya first, or use 'aya open <path>' to launch it.\n" >&2
     exit 1
   fi
 
-  AYA_CONNECT_WAIT_SECONDS="${connect_wait:-}" node - "$socket" "$@" <<'NODE'
+  AYA_CONNECT_WAIT_SECONDS="${connect_wait:-}" AYA_NOT_LISTENING_EXIT="${exit_if_not_listening:+$NOT_LISTENING_EXIT}" node - "$socket" "$@" <<'NODE'
 const net = require("node:net");
 const socketPath = process.argv[2];
 const kind = process.argv[3];
@@ -134,7 +182,7 @@ function requestFromArgs() {
     };
   }
   // pane read/send target ANOTHER terminal, so the caller's own project scopes
-  // the name lookup — "reviewer" means the one in this project.
+  // the name lookup - "reviewer" means the one in this project.
   if (kind === "pane-read") {
     return {
       type: "pane-read",
@@ -155,6 +203,7 @@ function requestFromArgs() {
   if (kind === "team-send") {
     return { type: "team-send", role: process.argv[4], text: process.argv[5] };
   }
+  if (kind === "team-pause") return { type: kind, text: process.argv[4] || undefined };
   if (kind === "presets") return { type: kind, json: process.argv[4] === "json" };
   // Unlike whoami/send, these work outside a pane too: the slug or cwd names the project.
   if (kind === "team-guide" || kind === "team-save" || kind === "team-open" || kind === "team-start") {
@@ -184,9 +233,8 @@ const request = {
     // Set by Aya's own automatic-status hooks, so their calls don't read as
     // the agent adopting the CLI.
     via: optionalEnv("AYA_VIA"),
-    // Where the command runs: a CLI that runs commands in a shared background
-    // process (Codex's app-server daemon) hands them another pane's id.
-    cwd: process.cwd(),
+    // Aya checks this process runs under the pane it names: a borrowed id does not.
+    pid: process.pid,
   },
 };
 const connectDeadline = Date.now() + Number(connectWait || 0) * 1000;
@@ -205,6 +253,11 @@ function connect() {
   });
   client.on("error", (err) => {
     const notListening = err.code === "ENOENT" || err.code === "ECONNREFUSED";
+    // The caller launches the app instead.
+    if (process.env.AYA_NOT_LISTENING_EXIT && !connected && notListening) {
+      process.exitCode = Number(process.env.AYA_NOT_LISTENING_EXIT);
+      return;
+    }
     if (connectWait && !connected && notListening) {
       if (Date.now() < connectDeadline) {
         setTimeout(connect, CONNECT_RETRY_MS);
@@ -222,8 +275,18 @@ function connect() {
 }
 
 function onEnd() {
-  if (!response.trim()) return;
+  if (!response.trim()) {
+    console.error("aya: Aya closed the connection before answering; the message may or may not have been typed.");
+    process.exitCode = 1;
+    return;
+  }
   const parsed = JSON.parse(response);
+  // Refused before anything happened (Aya is still starting): from a pane, ask again.
+  if (!parsed.ok && parsed.retry && connectWait && Date.now() < connectDeadline) {
+    response = "";
+    setTimeout(connect, CONNECT_RETRY_MS);
+    return;
+  }
   if (!parsed.ok) {
     console.error(`aya: ${parsed.error || "command failed"}`);
     process.exitCode = 1;
@@ -237,8 +300,124 @@ connect();
 NODE
 }
 
+aya_home() {
+  if aya_home_set; then
+    normalize_path "$AYA_HOME"
+  else
+    normalize_path "$HOME/.aya"
+  fi
+}
+
+# Written whole, then renamed: a running Aya reads it on its change and never sees half a file.
+debug_switch() {
+  home=$(aya_home)
+  case "$1" in
+    on|off)
+      mkdir -p "$home"
+      [ "$1" = on ] && value=true || value=false
+      printf '{"on":%s}\n' "$value" > "$home/$DEBUG_SWITCH_FILE.tmp"
+      mv -f "$home/$DEBUG_SWITCH_FILE.tmp" "$home/$DEBUG_SWITCH_FILE"
+      ;;
+    status) ;;
+    *) usage_fail ;;
+  esac
+  if grep -q '"on":true' "$home/$DEBUG_SWITCH_FILE" 2>/dev/null; then
+    printf "debug is on: every team decision goes to the team's %s; read it with aya team debug <team>\n" "$DEBUG_LOG_FILE"
+  else
+    printf "debug is off\n"
+  fi
+}
+
+# The team's debug log: in AYA_PROJECT_SLUG's project, else in the one project that has the team.
+team_debug() {
+  team="${1:-}"
+  case "$team" in
+    ""|.*|*/*) usage_fail ;;
+  esac
+  teams="$(aya_home)/teams"
+  if [ -n "${AYA_PROJECT_SLUG:-}" ]; then
+    file="$teams/$AYA_PROJECT_SLUG/$team/$DEBUG_LOG_FILE"
+  else
+    file=""
+    found=""
+    for candidate in "$teams"/*/"$team"/"$DEBUG_LOG_FILE"; do
+      [ -f "$candidate" ] || continue
+      project=$(basename "$(dirname "$(dirname "$candidate")")")
+      found="${found:+$found, }$project"
+      file="$candidate"
+    done
+    case "$found" in
+      *,*)
+        printf "aya: team %s is in more than one project (%s); set AYA_PROJECT_SLUG to one of them\n" "$team" "$found" >&2
+        exit 1
+        ;;
+    esac
+  fi
+  if [ -z "$file" ] || { [ ! -f "$file" ] && [ "${2:-}" != follow ]; }; then
+    printf "aya: no debug log for team %s yet; turn it on with aya debug on, and it fills as the team runs\n" "$team" >&2
+    exit 1
+  fi
+  # exec: a stopped -f stops the reader too.
+  exec node - "$file" "${2:-}" <<'NODE'
+const fs = require("node:fs");
+const [file, mode] = process.argv.slice(2);
+const LAST = 50;
+const POLL_MS = 300;
+// The longest event name the runner logs, "round-check": the fields line up after it.
+const EVENT_WIDTH = 11;
+
+function show(line) {
+  let e;
+  try {
+    e = JSON.parse(line);
+  } catch {
+    return;
+  }
+  const { time, event, ...fields } = e;
+  const at = new Date(time);
+  const clock = Number.isNaN(at.getTime()) ? "--:--:--" : at.toTimeString().slice(0, 8);
+  const shown = Object.entries(fields).map(([k, v]) => `${k}=${typeof v === "string" && !/[\s"=]/.test(v) && v ? v : JSON.stringify(v)}`);
+  process.stdout.write(`${clock} ${String(event).padEnd(EVENT_WIDTH)} ${shown.join(" ")}`.trimEnd() + "\n");
+}
+
+// From `from` to the end, or from the start when the file is shorter now (rotated).
+function read(from) {
+  try {
+    const fd = fs.openSync(file, "r");
+    try {
+      const size = fs.fstatSync(fd).size;
+      const start = size < from ? 0 : from;
+      const buffer = Buffer.alloc(size - start);
+      fs.readSync(fd, buffer, 0, buffer.length, start);
+      const text = buffer.toString("utf8");
+      const complete = text.slice(0, text.lastIndexOf("\n") + 1);
+      return { lines: complete.split("\n").filter(Boolean), next: start + Buffer.byteLength(complete) };
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return { lines: [], next: from };
+  }
+}
+
+let { lines, next } = read(0);
+lines.slice(-LAST).forEach(show);
+if (mode === "follow") {
+  setInterval(() => {
+    ({ lines, next } = read(next));
+    lines.forEach(show);
+  }, POLL_MS);
+}
+NODE
+}
+
 remote_stdio() {
   socket=$(remote_socket_path)
+  if socket_path_too_long "$socket"; then
+    printf '{"type":"error","code":"app_unavailable","message":"the remote socket path is too long (%s bytes, the limit is %s); set %s to a shorter path"}\n' \
+      "$path_length" "$path_limit" "$([ -n "${AYA_REMOTE_SOCKET:-}" ] && echo AYA_REMOTE_SOCKET || echo AYA_HOME)"
+    exit 1
+  fi
   node - "$socket" <<'NODE'
 const net = require("node:net");
 const socketPath = process.argv[2];
@@ -300,6 +479,12 @@ check_open_wait_seconds() {
   fi
 }
 
+# send_control then retries a missing or refusing socket for AYA_OPEN_WAIT_SECONDS.
+wait_for_socket() {
+  check_open_wait_seconds
+  connect_wait="$OPEN_SOCKET_WAIT_SECONDS"
+}
+
 open_project() {
   target="${1:-.}"
   if [ -d "$target" ]; then
@@ -314,14 +499,16 @@ open_project() {
   # a stale socket behind; launching the installed app instead would open the
   # project in the wrong Aya, so keep trying to reach it until the wait ends.
   if [ "$socket" != "$(normalize_path "$INSTALLED_APP_SOCKET")" ]; then
-    check_open_wait_seconds
-    connect_wait="$OPEN_SOCKET_WAIT_SECONDS"
+    wait_for_socket
     send_control open "$abs"
     return
   fi
+  # A crashed Aya leaves its socket file behind; that is "not running", not an error.
   if [ -S "$socket" ]; then
-    send_control open "$abs"
-    return
+    exit_if_not_listening=1
+    status=0
+    send_control open "$abs" || status=$?
+    [ "$status" -eq "$NOT_LISTENING_EXIT" ] || exit "$status"
   fi
 
   case "$(uname -s)" in
@@ -359,15 +546,16 @@ case "$command" in
     ;;
   project)
     [ "$#" -eq 0 ] || shift
-    if [ "${1:-}" != "open" ]; then
-      usage
-      exit 1
-    fi
+    if [ "${1:-}" != "open" ]; then usage_fail; fi
     [ "$#" -eq 0 ] || shift
     open_project "${1:-.}"
     ;;
   focus)
     send_control focus
+    ;;
+  debug)
+    [ "$#" -eq 2 ] || usage_fail
+    debug_switch "$2"
     ;;
   capabilities)
     send_control capabilities
@@ -376,8 +564,8 @@ case "$command" in
     [ "$#" -eq 0 ] || shift
     case "${1:-}" in
       "") send_control presets "" ;;
-      --json) [ "$#" -eq 1 ] || { usage; exit 1; }; send_control presets json ;;
-      *) usage; exit 1 ;;
+      --json) [ "$#" -eq 1 ] || usage_fail; send_control presets json ;;
+      *) usage_fail ;;
     esac
     ;;
   notify)
@@ -389,18 +577,12 @@ case "$command" in
       [ "$#" -eq 0 ] || shift
     fi
     body="$*"
-    if [ -z "$body" ]; then
-      usage
-      exit 1
-    fi
+    if [ -z "$body" ]; then usage_fail; fi
     send_control notify "$title" "$body"
     ;;
   remote)
     [ "$#" -eq 0 ] || shift
-    if [ "${1:-}" != "--stdio" ]; then
-      usage
-      exit 1
-    fi
+    if [ "${1:-}" != "--stdio" ]; then usage_fail; fi
     remote_stdio
     ;;
   pane)
@@ -413,10 +595,7 @@ case "$command" in
         ;;
       read)
         target="${1:-}"
-        if [ -z "$target" ]; then
-          usage
-          exit 1
-        fi
+        if [ -z "$target" ]; then usage_fail; fi
         send_control pane-read "$target"
         ;;
       send)
@@ -437,26 +616,39 @@ case "$command" in
           fi
           text="${text:+$text }$arg"
         done
-        if [ -z "$target" ] || [ -z "$text" ]; then
-          usage
-          exit 1
-        fi
+        if [ -z "$target" ] || [ -z "$text" ]; then usage_fail; fi
         send_control pane-send "$target" "$text" "$submit"
         ;;
       *)
-        usage
-        exit 1
+        usage_fail
         ;;
     esac
     ;;
   team)
+    # A pane that outlived the app calls while Aya restarts: wait for its socket, do not give up.
+    if [ -n "${AYA_TERMINAL_ID:-}" ]; then
+      wait_for_socket
+    fi
     [ "$#" -eq 0 ] || shift
     action="${1:-}"
     [ "$#" -eq 0 ] || shift
     case "$action" in
       whoami) send_control team-whoami ;;
       inbox) send_control team-inbox ;;
+      pause) send_control team-pause "$*" ;;
       new) send_control team-guide "$*" ;;
+      debug)
+        team="${1:-}"
+        follow=""
+        [ "$#" -eq 0 ] || shift
+        for arg do
+          case "$arg" in
+            -f|--follow) follow=follow ;;
+            *) usage_fail ;;
+          esac
+        done
+        team_debug "$team" "$follow"
+        ;;
       save)
         replace=""
         file=""
@@ -464,18 +656,12 @@ case "$command" in
           case "$arg" in
             --replace) replace="replace" ;;
             *)
-              if [ -n "$file" ]; then
-                usage
-                exit 1
-              fi
+              if [ -n "$file" ]; then usage_fail; fi
               file="$arg"
               ;;
           esac
         done
-        if [ -z "$file" ]; then
-          usage
-          exit 1
-        fi
+        if [ -z "$file" ]; then usage_fail; fi
         if [ "$file" = "-" ]; then
           # A terminal on stdin would wait for typing no agent sends.
           if [ -t 0 ]; then
@@ -489,10 +675,14 @@ case "$command" in
           printf "aya: no such file: %s\n" "$file" >&2
           exit 1
         fi
-        if [ -z "$(printf '%s' "$text" | tr -d '[:space:]')" ]; then
-          printf "aya: %s is empty; nothing was saved\n" "$file" >&2
-          exit 1
-        fi
+        # A case pattern, not tr: BSD tr (macOS) rejects bytes invalid in a UTF-8 locale.
+        case "$text" in
+          *[![:space:]]*) ;;
+          *)
+            printf "aya: %s is empty; nothing was saved\n" "$file" >&2
+            exit 1
+            ;;
+        esac
         send_control team-save "$text" "$replace"
         ;;
       start)
@@ -502,10 +692,7 @@ case "$command" in
         while [ "$#" -gt 0 ]; do
           case "$1" in
             --to)
-              if [ "$#" -lt 2 ]; then
-                usage
-                exit 1
-              fi
+              if [ "$#" -lt 2 ]; then usage_fail; fi
               to="$2"
               shift 2
               ;;
@@ -515,17 +702,13 @@ case "$command" in
               elif [ -z "$task" ]; then
                 task="$1"
               else
-                usage
-                exit 1
+                usage_fail
               fi
               shift
               ;;
           esac
         done
-        if [ -z "$team" ] || { [ -n "$to" ] && [ -z "$task" ]; }; then
-          usage
-          exit 1
-        fi
+        if [ -z "$team" ] || { [ -n "$to" ] && [ -z "$task" ]; }; then usage_fail; fi
         send_control team-start "$team" "$task" "$to"
         ;;
       open)
@@ -550,25 +733,18 @@ case "$command" in
               ;;
           esac
         done
-        if [ -z "$team" ] || [ "$#" -eq 0 ]; then
-          usage
-          exit 1
-        fi
+        if [ -z "$team" ] || [ "$#" -eq 0 ]; then usage_fail; fi
         send_control team-open "$team" "$replace" "$@"
         ;;
       send)
         role="${1:-}"
         [ "$#" -eq 0 ] || shift
         text="$*"
-        if [ -z "$role" ] || [ -z "$text" ]; then
-          usage
-          exit 1
-        fi
+        if [ -z "$role" ] || [ -z "$text" ]; then usage_fail; fi
         send_control team-send "$role" "$text"
         ;;
       *)
-        usage
-        exit 1
+        usage_fail
         ;;
     esac
     ;;
@@ -580,15 +756,11 @@ case "$command" in
       set|active) level="active" ;;
       waiting|done|error|clear) ;;
       *)
-        usage
-        exit 1
+        usage_fail
         ;;
     esac
     text="$*"
-    if [ "$level" != "clear" ] && [ -z "$text" ]; then
-      usage
-      exit 1
-    fi
+    if [ "$level" != "clear" ] && [ -z "$text" ]; then usage_fail; fi
     send_control status "$level" "$text"
     ;;
   *)

@@ -1,0 +1,38 @@
+
+  main /p/t/c/-/2/s/s/sudoku/proj-sudoku                                                                    1.4K / 256K │ [Dashboard]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ❯ aya team new - a team called sudoku-crew with three roles: a leader who coordinates the rounds and decides when to stop and   │
+  │   gets a round every 3 minutes, an implementer, and a benchmarker. Goal: write a sudoku solver in src/sudoku.js, then keep      │
+  │   lowering its complexity round after round, measured as search nodes on tests/puzzles.json, until the benchmarker shows that   │
+  │   no lower complexity is possible. Just define and save it; do not open panes or start it.                                      │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────── Grok 4.7 (medium) · always-approve ─╯
+
+  Enter:send  │  Opt+Enter:newline  │  Shift+Tab:mode  │  Ctrl+x:shortcuts

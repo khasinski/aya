@@ -49,6 +49,8 @@ export function terminalsForNewTabs(
       exitCode: null,
       spawnDeferred: true,
       ...(tab.sessionId ? { sessionId: tab.sessionId } : {}),
+      ...(tab.sharedDir ? { sharedDir: true as const } : {}),
+      ...(tab.teamLaunch ? { teamLaunch: true } : {}),
     }));
 }
 

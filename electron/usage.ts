@@ -12,6 +12,7 @@ import * as fs from "node:fs/promises";
 import * as crypto from "node:crypto";
 import * as os from "node:os";
 import * as path from "node:path";
+import { CLAUDE_CONFIG_DIRNAME, CLAUDE_SETTINGS_FILENAME } from "./constants";
 import { USAGE_FILE } from "./paths";
 
 export interface UsageWindow {
@@ -87,11 +88,8 @@ export interface ClaudeUsageSource {
   configDir: string;
 }
 
-// Claude Code's config dir when a preset names none (CLAUDE_CONFIG_DIR aside).
-export const CLAUDE_CONFIG_DIRNAME = ".claude";
+export { CLAUDE_CONFIG_DIRNAME, CLAUDE_SETTINGS_FILENAME };
 export const DEFAULT_CLAUDE_CONFIG_DIR = `~/${CLAUDE_CONFIG_DIRNAME}`;
-// Claude Code's settings file inside a config dir (where the usage hook goes).
-export const CLAUDE_SETTINGS_FILENAME = "settings.json";
 
 export function expandUserPath(value: string): string {
   if (value === "~") return os.homedir();

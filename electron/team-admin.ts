@@ -3,19 +3,23 @@
 
 import { promises as fs } from "node:fs";
 import { writeFileAtomic } from "./atomic-write";
-import { teamFile, teamNames } from "./team-files";
-import { openTeamStore, readText } from "./team-store";
+import { oneAtATime } from "./keyed-queue";
+import { runnableTeamNames, teamFile } from "./team-files";
+import { teamLiveness } from "./team-progress";
+import { STALL_AFTER_MIN } from "./team-times";
+import { openTeamStore, readText, type TeamStore } from "./team-store";
 import {
   MUST_NOT_FIELD,
   SECTION_MARKER,
   SENDS_TO_FIELD,
-  TEAM_SYSTEM_SENDER,
   TeamFileError,
+  leadProblemOf,
   parseTeamFile,
   reservedRoleProblem,
   serializeTeam,
-} from "./teams";
-import type { ProjectConfig, TeamDefinition, TeamSummary } from "./types";
+} from "./team-definition";
+import type { TeamControlDeps } from "./team-control";
+import type { ProjectConfig, TeamDefinition, TeamLiveness, TeamMessage, TeamSummary } from "./types";
 
 export const LOG_TAIL = 50;
 
@@ -27,14 +31,16 @@ function repoParsed(name: string, repo: string | null): TeamDefinition | null {
   }
 }
 
-/** `holdReason`, when given, reports each assigned pane's hold for the role's status. */
+/** `holdReason` and `launchNote`, when given, report each assigned pane's hold and its launch note. */
 export async function listTeams(
   teamHome: string,
   project: ProjectConfig,
   holdReason?: (paneId: string) => Promise<string | null>,
+  roleNoteReport?: TeamControlDeps["roleNoteReport"],
+  launchNote?: (paneId: string) => Promise<string | null>,
 ): Promise<TeamSummary[]> {
   return Promise.all(
-    (await teamNames(project)).map(async (name): Promise<TeamSummary> => {
+    (await runnableTeamNames(teamHome, project)).map(async (name): Promise<TeamSummary> => {
       const store = openTeamStore(teamHome, project.slug, name);
       const assignments = await store.assignments();
       const repo = await readText(teamFile(project, name));
@@ -46,39 +52,53 @@ export async function listTeams(
       } catch (err) {
         error = err instanceof Error ? err.message : String(err);
       }
-      // A held message the receiver has since had (inbox or typed later) reached it.
-      const read = await store.readMarks();
-      const log = (await store.log()).slice(-LOG_TAIL).map((m) => ({ ...m, delivered: m.delivered || (m.from !== TEAM_SYSTEM_SENDER && m.id <= (read[m.to] ?? 0)) }));
+      const roleIds = definition && new Set(definition.roles.map((r) => r.id));
+      const log = (await store.annotatedLog()).slice(-LOG_TAIL).map((m): TeamMessage => {
+        // A role renamed or removed by a Save takes its inbox with it: say so instead of waiting for ever.
+        const gone = !m.delivered && roleIds && !roleIds.has(m.to);
+        return gone ? { ...m, held: `${m.to} is no longer a role of this team; this will not be delivered` } : m;
+      });
       return {
         name,
         definition,
         error,
-        repoChanged: saved !== null && repo !== saved,
+        repoChanged: saved !== null && repo !== null && repo !== saved,
+        repoGone: saved !== null && repo === null,
         unsaved: saved === null && repo !== null,
         repoDefinition: repoParsed(name, repo),
         ...(await store.state()),
         agentAuthored: await store.agentAuthored(),
         assignments,
-        paneHolds: await paneHolds(assignments, project, holdReason),
-        unread: Object.fromEntries(
-          await Promise.all(
-            (definition?.roles ?? []).map(async (r) => [r.id, (await store.unread(r.id)).length] as const),
-          ),
-        ),
+        paneHolds: await perLivePane(assignments, project, holdReason),
+        paneNotes: await perLivePane(assignments, project, launchNote),
+        ...(roleNoteReport ? await roleNoteReport(project, name, assignments) : { roleNotes: {}, staleNotes: [] }),
+        unread: Object.fromEntries(await Promise.all((definition?.roles ?? []).map(async (r) => [r.id, (await store.owed(r.id)).length] as const))),
+        liveness: await livenessOf(store, definition, holdReason),
         log,
       };
     }),
   );
 }
 
-async function paneHolds(
+/** A team whose progress cannot be read still lists; the others are not affected. */
+async function livenessOf(store: TeamStore, definition: TeamDefinition | null, holdReason?: (paneId: string) => Promise<string | null>): Promise<TeamLiveness> {
+  try {
+    const watch = { cadence: definition?.cadenceMinutes ?? null, lead: !!definition?.lead };
+    return await teamLiveness(store, (definition?.roles ?? []).map((r) => r.id), holdReason ?? (async () => null), watch);
+  } catch (err) {
+    console.warn("[aya] team liveness not read:", err);
+    return { status: "never started", stalledSince: null, blocked: [], unreached: null, silence: { askAfterMin: null, stalledAfterMin: STALL_AFTER_MIN } };
+  }
+}
+
+async function perLivePane(
   assignments: Record<string, string>,
   project: ProjectConfig,
-  holdReason?: (paneId: string) => Promise<string | null>,
+  ask?: (paneId: string) => Promise<string | null>,
 ): Promise<Record<string, string | null>> {
-  if (!holdReason) return {};
+  if (!ask) return {};
   const live = Object.entries(assignments).filter(([, pane]) => project.tabs.some((t) => t.id === pane));
-  return Object.fromEntries(await Promise.all(live.map(async ([role, pane]) => [role, await holdReason(pane)] as const)));
+  return Object.fromEntries(await Promise.all(live.map(async ([role, pane]) => [role, await ask(pane).catch(() => null)] as const)));
 }
 
 // A line the team file reads as a field or section, where only free text belongs.
@@ -90,6 +110,14 @@ function refuseReservedRoles(team: TeamDefinition): void {
     const reserved = reservedRoleProblem(role.id);
     if (reserved) throw new TeamFileError(team.name, reserved);
   }
+}
+
+/** A new or edited team needs a lead (an old file without one still loads); leadProblemOf holds the rule. */
+function withLead(given: TeamDefinition): TeamDefinition {
+  const problem = leadProblemOf(given);
+  if (problem) throw new TeamFileError(given.name, problem);
+  const { leadConflict: _, ...team } = given;
+  return team;
 }
 
 function refuseFieldLines(team: TeamDefinition): void {
@@ -128,15 +156,17 @@ export class TeamExistsError extends Error {
   }
 }
 
-/** `create`: a new team, refused when one with its name already exists. */
+/** `create`: a new team, refused when one with its name already exists.
+ *  `byAgent`: saved from a pane; the mark lands before the saved copy, so the window never lists the team without it. */
 export async function saveTeam(
   teamHome: string,
   project: ProjectConfig,
-  team: TeamDefinition,
-  { create = false }: { create?: boolean } = {},
+  given: TeamDefinition,
+  { create = false, byAgent = false }: { create?: boolean; byAgent?: boolean } = {},
 ): Promise<void> {
-  refuseReservedRoles(team);
-  refuseFieldLines(team);
+  refuseReservedRoles(given);
+  refuseFieldLines(given);
+  const team = withLead(given);
   const text = serializeTeam(team);
   refuseLossy(team, text);
   const file = teamFile(project, team.name);
@@ -144,9 +174,10 @@ export async function saveTeam(
     if (create && (await fs.stat(file).then(() => true, () => false))) throw new TeamExistsError(team.name, file);
     await writeFileAtomic(file, text);
     const store = openTeamStore(teamHome, project.slug, team.name);
+    if (byAgent) await store.markAgentAuthored();
     await store.saveDefinition(text);
-    // A save is the saver's: aya team save from a pane marks it the agent's again after this.
-    await store.clearAgentAuthored();
+    // A save in the window is the user's: it ends an earlier agent mark.
+    if (!byAgent) await store.clearAgentAuthored();
     // A renamed or removed role would keep a pane no role id matches.
     const roles = new Set(team.roles.map((r) => r.id));
     for (const [role, pane] of Object.entries(await store.assignments())) {
@@ -155,27 +186,15 @@ export async function saveTeam(
   });
 }
 
-/** Runs each call once every earlier call with its key has settled. */
-export function oneAtATime(): <T>(key: string, work: () => Promise<T>) => Promise<T> {
-  const running = new Map<string, Promise<unknown>>();
-  return async (key, work) => {
-    const mine = (running.get(key) ?? Promise.resolve()).catch(() => {}).then(work);
-    running.set(key, mine);
-    try {
-      return await mine;
-    } finally {
-      if (running.get(key) === mine) running.delete(key);
-    }
-  };
-}
-
 /** Saves of one team file in turn: two creates (aya team save, the Teams window)
  *  would both pass the exists check and the later would overwrite the earlier. */
 const oneSaveAtATime = oneAtATime();
 
+export const whileTeamNotSaved = (file: string, work: () => Promise<void>): Promise<void> => oneSaveAtATime(file, work);
+
 /** A closed tab plays no role anywhere. */
 export async function releasePaneEverywhere(teamHome: string, project: ProjectConfig, paneId: string): Promise<void> {
-  for (const name of await teamNames(project)) {
+  for (const name of await runnableTeamNames(teamHome, project)) {
     await openTeamStore(teamHome, project.slug, name).releasePane(paneId);
   }
 }

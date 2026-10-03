@@ -191,36 +191,38 @@ state on disk. The `aya` CLI is the glue that makes both feel uniform.
    natively.
 6. ✅ **Adopt the OSC channel in the existing bell detection path**: an
    `aya.status` event sets `externalStatus`/`bell` exactly like the
-   control-socket path, which already wins over the regex heuristic in the
-   project-badge computation. The regex (`src/bell.ts`) is untouched and
-   stays the universal fallback for TUIs that emit neither.
+   control-socket path. A TUI that emits neither is read from its rendered
+   screen (below); the byte-stream regex that used to back it up is gone.
 
 ## Detection precedence
 
-Three signals can mark a terminal as waiting. They are layered so the most
-trustworthy one wins:
+Two signals mark a terminal as waiting for the user, one per kind of wait:
 
-1. **What the agent says about itself** — `aya status` over the control socket,
-   or `aya.status` over OSC 9001. Sets `externalStatus`; nothing overrules it.
-2. **What the pane actually shows** — `electron/vt-state.ts` feeds the byte
+1. **The agent asks the user** — `aya status waiting` run by the agent over the
+   control socket, or `aya.status` over OSC 9001. Sets `externalStatus`. Aya's
+   own status hooks (`AYA_VIA=hook`) are not the agent asking. They report
+   PostToolUse (active; not a subagent's tool call), Stop (done) and
+   StopFailure (error: the turn ended on an API error, with no Stop). They
+   report no Notification: Claude sends one for a dialog 6 s old, an idle
+   composer 60 s after Stop and ten other things, and the screen owns
+   dialogs; startup removes the Notification entry an older Aya installed.
+   No hook call ends a question the agent asked, and a reported status never
+   ends a dialog the screen shows. The user's Enter answers the question, unless the screen
+   shows a CLI dialog at that moment: that Enter answers the dialog.
+2. **A CLI dialog on screen** — `electron/vt-state.ts` feeds the byte
    stream through a real VT parser (`@xterm/headless`) in the pty host and
    matches per-agent rules (`electron/agent-screen-rules.ts`) against the
    *rendered screen*. Emitted as the `vt-status` PtyEvent on both edges, so it
-   can also clear a stale waiting state — something the byte heuristic
-   structurally cannot do, since it only ever sees a prompt appear, never
-   disappear. Rules include *suppressors*: screens that contain prompt-like
+   can also clear a stale waiting state. Rules include *suppressors*: screens that contain prompt-like
    text but are not a prompt (Claude's scrolled-back transcript, an idle
    composer hint). An agent with no rules of its own falls back to the generic
    set, so an unknown CLI is never worse off.
-3. **What the bytes contained** — `src/bell.ts`'s regex over raw chunks. Kept
-   as the universal fallback; it is the one that misfires when a TUI repaints
-   over a prompt it printed earlier.
 
-The ordering is asymmetric on purpose. A weaker signal may **raise** the bell
-even when a stronger one is present — a blocked agent nobody notices is the
-expensive failure — but it may never clear or downgrade a state the agent
-reported for itself. Only `aya status clear` (or the user dismissing it) does
-that.
+The screen may **raise** the bell over any reported status (a blocked agent
+nobody notices is the expensive failure) and ends the dialog's waiting, back
+to the reported status. It never ends the agent's own question: only the
+agent (`aya status clear`, `done`, ...), the user's answer or the user
+dismissing the status does that.
 
 ## Trade-offs to remember
 

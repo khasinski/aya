@@ -1,0 +1,37 @@
+✻ Crunched for 15s · done 7:38 PM
+
+❯ [team slug-crew | from reviewer | 19:38 | 47521de] APPROVED: slugify (7/7 tests pass, tests/slugify.test.js). You may start
+  truncate.
+
+  Listed 1 directory
+
+⏺ Write(src/truncate.js)
+  ⎿  Wrote 12 lines to src/truncate.js
+       1 'use strict';
+       2
+       3 const ELLIPSIS = '...';
+       4
+       5 function truncate(text, n) {
+       6   const str = String(text);
+       7   if (str.length <= n) return str;
+       8   if (n <= ELLIPSIS.length) return ELLIPSIS.slice(0, Math.max(n, 0));
+       9   return str.slice(0, n - ELLIPSIS.length) + ELLIPSIS;
+      10 }
+     … +2 lines
+
+  Ran 1 shell command
+
+⏺ truncate is written in src/truncate.js and sent to the reviewer. A quick check gave hello... for ('hello world', 8), hi for ('hi',
+  8), and .. for ('hello', 2).
+
+  There was no truncate test or spec to go by. I chose that the result is at most n characters, and longer text is cut and ends with
+  .... I included that rule in the message to the reviewer.
+
+  I'm waiting for approval before starting titleCase.
+
+✻ Cogitated for 9s · done 7:38 PM
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

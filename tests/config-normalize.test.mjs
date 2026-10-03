@@ -364,3 +364,14 @@ test("a tree beyond the pane cap is not storable", () => {
   }
   assert.equal(isStorableSplitTree(tree), false);
 });
+
+test("normalizeTab keeps the shared-folder latch only when it is exactly true", () => {
+  const tab = (sharedDir) => normalizeTab({ id: "a", presetId: "codex", name: "x", sharedDir });
+  assert.equal(tab(true).sharedDir, true);
+  for (const bad of [false, "true", 1, undefined]) assert.equal("sharedDir" in tab(bad), false);
+});
+
+test("normalizeTab keeps teamLaunch true, drops anything else", () => {
+  assert.equal(normalizeTab({ id: "a", presetId: "codex", name: "x", teamLaunch: true }).teamLaunch, true);
+  assert.equal("teamLaunch" in normalizeTab({ id: "b", presetId: "codex", name: "x", teamLaunch: "yes" }), false);
+});

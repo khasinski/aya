@@ -49,7 +49,6 @@ test("default shell preset stays user-facing simple", () => {
   const p = DEFAULT_PRESETS.find((x) => x.id === "shell");
   assert.ok(p, "default shell preset missing");
   assert.equal(p.command, "$SHELL");
-  assert.doesNotMatch(p.command, /env|EDITOR|VISUAL|exec/);
 });
 
 test("shellArgv wraps the user command in $SHELL -l -i -c + cd + exec", () => {
@@ -85,17 +84,6 @@ test("shellArgv shell-quotes the cwd so spaces and quotes don't break", () => {
   assert.match(argv[4], /cd '\/tmp\/with '\\''tricky'\\'' name'/);
 });
 
-test("shellArgv passes the command verbatim so $VARS expand", () => {
-  // The shell preset uses literal $SHELL; we count on the wrapping shell's
-  // -l -c to expand it. Therefore the command must NOT be single-quoted by
-  // shellArgv.
-  const argv = shellArgv("$SHELL", "/tmp");
-  assert.ok(
-    argv[4].endsWith("exec env -u EDITOR -u VISUAL $SHELL"),
-    `expected unquoted $SHELL in argv: ${argv[4]}`,
-  );
-});
-
 test("shellArgv unsets editor vars only for the nested shell launcher", () => {
   const shell = shellArgv("$SHELL", "/tmp");
   assert.match(shell[4], /exec env -u EDITOR -u VISUAL \$SHELL$/);
@@ -103,14 +91,6 @@ test("shellArgv unsets editor vars only for the nested shell launcher", () => {
   const agent = shellArgv("claude", "/tmp");
   assert.match(agent[4], /exec claude$/);
   assert.doesNotMatch(agent[4], /EDITOR|VISUAL/);
-});
-
-test("shellArgv puts exec after leading env assignments", () => {
-  const argv = shellArgv("CLAUDE_CONFIG_DIR=/tmp/claude-secondary claude", "/tmp");
-  assert.ok(
-    argv[4].endsWith("CLAUDE_CONFIG_DIR=/tmp/claude-secondary exec claude"),
-    `expected exec after env assignment: ${argv[4]}`,
-  );
 });
 
 test("shellArgv keeps quoted env assignment values intact", () => {
@@ -181,9 +161,10 @@ test("a pane does not inherit the Claude Code session that launched Aya, only th
   assert.deepEqual(withoutSessionMarkers(parent), {
     PATH: "/usr/bin",
     CLAUDE_CONFIG_DIR: "/Users/me/.claude-work",
-    CLAUDE_EFFORT: "high",
     CLAUDE_CODE_USE_BEDROCK: "1",
   });
+  // The effort is the session's while a session launched Aya, the user's otherwise.
+  assert.deepEqual(withoutSessionMarkers({ CLAUDE_EFFORT: "high" }), { CLAUDE_EFFORT: "high" });
 });
 
 test("agentConfigDirsFromCommand can pick claude's dir alone, in assignment order", () => {

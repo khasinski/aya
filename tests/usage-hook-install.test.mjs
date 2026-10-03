@@ -19,14 +19,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isolateHome } from "./helpers/isolate-home.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "aya-hook-test-"));
 const settingsPath = join(root, "settings.json");
-process.env.AYA_HOME = join(root, "aya"); // script + usage.json land here
+isolateHome(root);
 process.env.AYA_CLAUDE_SETTINGS = settingsPath;
-// A broken override must still land in the temp dir, never in the real ~/.claude.
-process.env.HOME = join(root, "home");
-delete process.env.CLAUDE_CONFIG_DIR;
 
 // Seed an existing settings file with unrelated config + a pre-existing Stop
 // hook that MUST survive both install and uninstall.

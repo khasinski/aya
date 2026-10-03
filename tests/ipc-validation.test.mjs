@@ -40,6 +40,16 @@ test("validateSpawnRequest accepts the pty spawn shape", () => {
   );
 });
 
+test("validateSpawnRequest keeps the shared-folder command and the peers' folders, and rejects a non-string peer", () => {
+  const base = { ptyId: "abc", command: "codex resume --last", cwd: "/tmp", cols: 80, rows: 24 };
+  const out = validateSpawnRequest({ ...base, sharedDirCommand: "codex", peerCwds: ["/a", "host:/b"] });
+  assert.equal(out.sharedDirCommand, "codex");
+  assert.deepEqual(out.peerCwds, ["/a", "host:/b"]);
+  assert.equal(validateSpawnRequest(base).sharedDirCommand, undefined);
+  assert.equal(validateSpawnRequest(base).peerCwds, undefined);
+  assert.throws(() => validateSpawnRequest({ ...base, peerCwds: [1] }));
+});
+
 test("validateSpawnRequest passes the attach flags through (regression: they were silently dropped)", () => {
   // The validator REBUILDS the request object, so a field it does not copy
   // dies at the IPC boundary. attachOnly shipped after the validator and was
@@ -65,6 +75,13 @@ test("validateSpawnRequest passes the attach flags through (regression: they wer
     () => validateSpawnRequest({ ...base, attachIfReused: 1 }),
     /pty:spawn\.attachIfReused/,
   );
+});
+
+test("validateSpawnRequest passes teamLaunch through: a role's pane would otherwise launch blocked", () => {
+  const base = { ptyId: "abc", command: "codex", cwd: "/tmp", cols: 80, rows: 24 };
+  assert.equal(validateSpawnRequest({ ...base, teamLaunch: true }).teamLaunch, true);
+  assert.equal(validateSpawnRequest({ ...base, teamLaunch: false }).teamLaunch, undefined);
+  assert.throws(() => validateSpawnRequest({ ...base, teamLaunch: "yes" }), /pty:spawn\.teamLaunch/);
 });
 
 test("validateSpawnRequest passes agentConfigDir through, where claude registers its session", () => {
@@ -416,6 +433,18 @@ test("validateProjectConfig preserves a tab's agent session id", () => {
   assert.equal(project.tabs[0].sessionId, "sess-abc.123");
 });
 
+test("validateProjectConfig preserves a tab's shared-folder latch, and only a true one", () => {
+  const tab = (sharedDir) =>
+    validateProjectConfig({
+      slug: "aya",
+      name: "Aya",
+      directory: "/tmp/aya",
+      tabs: [{ id: "t1", presetId: "codex", name: "Codex", sharedDir }],
+    }).tabs[0];
+  assert.equal(tab(true).sharedDir, true);
+  for (const off of [false, undefined, "true"]) assert.equal("sharedDir" in tab(off), false);
+});
+
 test("a tab without cwd/sessionId keeps them absent, not undefined-valued", () => {
   const project = validateProjectConfig({
     slug: "aya",
@@ -447,12 +476,12 @@ test("a session id that could alter a command line is rejected at the boundary",
 
 test("validateTeamDefinition error texts name the exact path, first problem first", () => {
   const role = { id: "tester", sendsTo: [{ to: "implementer", what: "" }], mustNot: "edit code", responsibilities: "" };
-  const team = { name: "ux-review", roles: [role, role], cadence: { role: "tester", minutes: 30 }, protocol: "" };
+  const team = { name: "ux-review", roles: [role, role], lead: "tester", cadenceMinutes: 30, protocol: "" };
   const refuses = (value, text, channel) =>
     assert.throws(() => validateTeamDefinition(value, channel), { message: `Invalid IPC payload for ${text}.` });
   refuses("x", "teams:save.team: expected object");
-  refuses({ ...team, roles: "x", cadence: "y" }, "teams:save.team.roles: expected array");
-  refuses({ ...team, name: 5, cadence: "y" }, "teams:save.team.cadence: expected object");
+  refuses({ ...team, roles: "x", cadenceMinutes: "y" }, "teams:save.team.roles: expected array");
+  refuses({ ...team, name: 5, cadenceMinutes: "y" }, "teams:save.team.name: expected string");
   refuses({ ...team, name: 5, roles: [5] }, "teams:save.team.name: expected string");
   refuses({ ...team, roles: [role, 5] }, "teams:save.team.roles[1]: expected object");
   refuses({ ...team, roles: [role, { ...role, id: 5, sendsTo: 5 }] }, "teams:save.team.roles[1].id: expected string");
@@ -461,9 +490,9 @@ test("validateTeamDefinition error texts name the exact path, first problem firs
   refuses({ ...team, roles: [role, { ...role, sendsTo: [{ to: 5, what: 5 }] }] }, "teams:save.team.roles[1].sendsTo[0].to: expected string");
   refuses({ ...team, roles: [role, { ...role, sendsTo: [{ to: "a", what: 5 }] }] }, "teams:draft-role.team.roles[1].sendsTo[0].what: expected string", "teams:draft-role");
   refuses({ ...team, roles: [role, { ...role, mustNot: 5, responsibilities: 5 }] }, "teams:save.team.roles[1].mustNot: expected string");
-  refuses({ ...team, roles: [role, { ...role, responsibilities: 5 }], cadence: { role: 5 } }, "teams:save.team.roles[1].responsibilities: expected string");
-  refuses({ ...team, cadence: { role: 5, minutes: "30" }, protocol: 5 }, "teams:save.team.cadence.role: expected string");
-  refuses({ ...team, cadence: { role: "tester", minutes: "30" }, protocol: 5 }, "teams:save.team.cadence.minutes: expected number");
+  refuses({ ...team, roles: [role, { ...role, responsibilities: 5 }], cadenceMinutes: "y" }, "teams:save.team.roles[1].responsibilities: expected string");
+  refuses({ ...team, lead: 5, cadenceMinutes: "30", protocol: 5 }, "teams:save.team.lead: expected string");
+  refuses({ ...team, cadenceMinutes: "30", protocol: 5 }, "teams:save.team.cadenceMinutes: expected number");
   refuses({ ...team, protocol: 5 }, "teams:save.team.protocol: expected string");
 });
 
@@ -471,26 +500,27 @@ test("validateTeamDefinition keeps a well-formed team and refuses wrong shapes",
   const team = {
     name: "ux-review",
     roles: [{ id: "tester", sendsTo: [{ to: "implementer", what: "" }], mustNot: "edit code", responsibilities: "" }],
-    cadence: { role: "tester", minutes: 30 },
+    lead: "tester",
+    cadenceMinutes: 30,
     protocol: "",
     extra: "dropped",
   };
   const { extra, ...clean } = team;
   assert.deepEqual(validateTeamDefinition(team), clean);
-  assert.equal(validateTeamDefinition({ ...team, cadence: null }).cadence, null);
-  const { cadence, ...noCadence } = team;
-  assert.equal(validateTeamDefinition(noCadence).cadence, null, "a team without cadence has none");
+  assert.equal(validateTeamDefinition({ ...team, cadenceMinutes: null }).cadenceMinutes, null);
+  const { cadenceMinutes, ...noCadence } = team;
+  assert.equal(validateTeamDefinition(noCadence).cadenceMinutes, null, "a team without cadence has none");
   assert.throws(() => validateTeamDefinition({ ...team, roles: "x" }), /teams:save\.team\.roles/);
   assert.throws(() => validateTeamDefinition({ ...team, roles: "x" }, "teams:draft-role"), /teams:draft-role\.team\.roles/);
   assert.throws(() => validateTeamDefinition({ ...team, roles: [{ ...team.roles[0], sendsTo: "implementer" }] }), /sendsTo/);
   assert.throws(() => validateTeamDefinition({ ...team, roles: [{ ...team.roles[0], sendsTo: ["implementer"] }] }), /sendsTo\[0\]/);
   assert.throws(() => validateTeamDefinition({ ...team, roles: [{ ...team.roles[0], sendsTo: [{ to: "implementer", what: 5 }] }] }), /sendsTo\[0\]\.what/);
-  assert.throws(() => validateTeamDefinition({ ...team, cadence: { role: "tester", minutes: "30" } }), /minutes/);
+  assert.throws(() => validateTeamDefinition({ ...team, cadenceMinutes: "30" }), /cadenceMinutes/);
 });
 
 test("validateTeamDefinition refuses a role named aya on both channels, not one that only starts with it", () => {
   const role = { id: "aya", sendsTo: [], mustNot: "edit code", responsibilities: "" };
-  const team = { name: "ux-review", roles: [{ ...role, id: "tester" }, role], cadence: null, protocol: "" };
+  const team = { name: "ux-review", roles: [{ ...role, id: "tester" }, role], cadenceMinutes: null, protocol: "" };
   for (const channel of ["teams:save", "teams:draft-role"]) {
     assert.throws(() => validateTeamDefinition(team, channel), {
       message: `Invalid IPC payload for ${channel}.team.roles[1].id: "aya" is reserved for Aya's own messages; name the role something else.`,
@@ -507,4 +537,12 @@ test("validateSnippetArray takes the stored cap and refuses one more by name", (
     () => validateSnippetArray(make(201)),
     { message: "Too many snippets: 201. Aya keeps at most 200 - delete some and save again." },
   );
+});
+
+test("validateProjectConfig keeps a role's pane opened by team open as such: a restart keeps its launch mode", () => {
+  const tab = (extra) => validateProjectConfig({ slug: "aya", name: "Aya", directory: "/tmp/aya", tabs: [{ id: "t1", presetId: "codex", name: "Codex - tester", ...extra }] }).tabs[0];
+  assert.equal(tab({ teamLaunch: true }).teamLaunch, true);
+  assert.equal("teamLaunch" in tab({}), false);
+  assert.equal("teamLaunch" in tab({ teamLaunch: false }), false);
+  assert.throws(() => tab({ teamLaunch: "yes" }), /teamLaunch/);
 });

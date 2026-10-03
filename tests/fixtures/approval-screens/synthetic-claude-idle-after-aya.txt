@@ -1,0 +1,9 @@
+● Bash(aya team send reviewer "Round 1 done")
+  ⎿  delivered to reviewer
+
+● Sent. Waiting for the reviewer.
+
+────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────
+  ? for shortcuts

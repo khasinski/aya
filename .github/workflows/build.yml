@@ -36,8 +36,12 @@ jobs:
         run: npm run build
 
   e2e:
-    name: E2E (Electron)
+    name: E2E (Electron) ${{ matrix.shard }}/12
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -51,12 +55,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Cache Electron archive and Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/ms-playwright
+          key: e2e-binaries-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+
       # Ensure node_modules/electron/path.txt exists (Playwright's
       # electron.launch reads it to find the binary). electron is recorded with
       # hasInstallScript:false in the lockfile, so `npm ci` never downloads its
       # binary. @electron/get downloads the zip fine on this runner, but
-      # electron's own extraction leaves dist/ without the binary - so we force
-      # the download, extract the cached zip ourselves (Linux x64 job), point
+      # electron's own extraction leaves dist/ without the binary - so we use
+      # the version-matched cached zip (download it on a miss), extract it
+      # ourselves (Linux x64 job), point
       # path.txt at it, and validate require('electron') resolves to a real
       # file. install.js failing is TOLERATED (its extraction is the broken
       # part) but surfaced as a warning annotation instead of being swallowed;
@@ -64,10 +77,14 @@ jobs:
       - name: Ensure Electron binary
         run: |
           rm -rf node_modules/electron/dist node_modules/electron/path.txt
-          if ! force_no_cache=true node node_modules/electron/install.js; then
-            echo "::warning title=electron install.js failed::continuing with manual extraction of the downloaded zip (its extraction step is known-broken on this runner)"
+          electron_version="$(node -p "require('./node_modules/electron/package.json').version")"
+          zip="$(find "$HOME/.cache/electron" -name "electron-v${electron_version}-linux-x64.zip" -print -quit 2>/dev/null || true)"
+          if [ ! -f "$zip" ]; then
+            if ! node node_modules/electron/install.js; then
+              echo "::warning title=electron install.js failed::continuing with manual extraction of the downloaded zip (its extraction step is known-broken on this runner)"
+            fi
+            zip="$(find "$HOME/.cache/electron" -name "electron-v${electron_version}-linux-x64.zip" -print -quit)"
           fi
-          zip="$(find "$HOME/.cache/electron" -name 'electron-v*-linux-x64.zip' | head -1)"
           if [ ! -f "$zip" ]; then
             echo "::error title=electron download missing::no electron-v*-linux-x64.zip under ~/.cache/electron - install.js failed before downloading"
             exit 1
@@ -81,22 +98,27 @@ jobs:
           printf 'electron' > node_modules/electron/path.txt
           node -e "const fs=require('fs'); const e=require('electron'); if (typeof e!=='string' || !fs.existsSync(e)) throw new Error('electron binary missing after extraction: '+e); console.log('electron ->', e)"
 
-      # Electron on Linux CI needs the Chromium system libraries plus a virtual
-      # X server. install-deps pulls the shared libs; xvfb-run provides the display.
+      # Installed packages are safe to restore only onto the same runner image
+      # and base dpkg manifest. Each shard has its own entry so a cold run warms
+      # every shard, even when GitHub queues some jobs behind the others.
+      - name: Prepare Electron system dependency cache
+        id: system-deps-key
+        run: bash .github/e2e-system-deps.sh prepare
+
+      - name: Cache Electron system dependencies
+        id: system-deps-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/e2e-system-deps
+          key: e2e-system-deps-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.system-deps-key.outputs.image }}-${{ steps.system-deps-key.outputs.packages }}-${{ hashFiles('package-lock.json', '.github/e2e-system-deps.sh') }}-${{ matrix.shard }}
+
       - name: Install Electron system dependencies
+        env:
+          SYSTEM_DEPS_CACHE_HIT: ${{ steps.system-deps-cache.outputs.cache-hit }}
+        run: bash .github/e2e-system-deps.sh install
+
+      - name: Ensure Playwright Chromium
         run: |
-          # Runner-added third-party apt sources (Google Chrome, Microsoft, VSCode)
-          # intermittently fail `apt-get update` mid mirror-sync ("File has
-          # unexpected size ... Mirror sync in progress?"), reddening the E2E job.
-          # None are needed for Electron's Chromium libs or xvfb, so drop them
-          # first. Globs cover both .list and deb822 .sources naming; rm -f is a
-          # no-op if a given runner image doesn't have them.
-          sudo rm -f /etc/apt/sources.list.d/*google* \
-            /etc/apt/sources.list.d/*chrome* \
-            /etc/apt/sources.list.d/*microsoft* \
-            /etc/apt/sources.list.d/*vscode*
-          npx playwright install-deps
-          sudo apt-get install -y xvfb
           # Every other spec drives Electron, which carries its own Chromium, so
           # the runner never needed a standalone browser. e2e/web-mode.spec.ts is
           # the first that does - it drives a real browser against the web server
@@ -105,14 +127,52 @@ jobs:
           # system libs came from install-deps above.
           npx playwright install chromium
 
+      - name: Build app
+        run: npm run build
+
       - name: Run Playwright E2E
-        run: xvfb-run -a npm run test:e2e
+        # Project dependencies pull the whole isolated suite into every shard
+        # containing shared tests. Select each project with --no-deps instead,
+        # and preserve the dependency's ordering with two sequential stages.
+        run: |
+          export PLAYWRIGHT_BROWSERS_PATH="$HOME/.cache/ms-playwright"
+          mkdir -p playwright-timings
+          npx playwright test --list --no-deps --reporter=json > playwright-timings/inventory.json
+          node .github/e2e-shards.cjs playwright-timings/inventory.json \
+            ${{ matrix.shard }}/12 "$RUNNER_TEMP/e2e-shard"
+          cp "$RUNNER_TEMP/e2e-shard/plan.json" playwright-timings/plan.json
+          run_e2e() {
+            local test_home result=0
+            test_home="$(mktemp -d /tmp/aya-e2e.XXXX)"
+            PLAYWRIGHT_JSON_OUTPUT_FILE="$GITHUB_WORKSPACE/playwright-timings/$1.json" \
+              env -u AYA_SOCKET -u AYA_TERMINAL_ID -u AYA_PROJECT_SLUG \
+              -u AYA_PRESET_ID -u AYA_DEV HOME="$test_home" AYA_HOME="$test_home/aya" \
+              xvfb-run -a npx playwright test --no-deps --project="$1" \
+                --test-list="$RUNNER_TEMP/e2e-shard/$1.list" --workers="$2" \
+                --reporter=github,html,json || result=$?
+            rm -rf "$test_home"
+            return "$result"
+          }
+          # Two Electron workers fit the runner's 4 vCPUs. Clipboard and
+          # rebuilt-host cases stay serial, after this shard's isolated apps.
+          run_e2e isolated 2
+          if [ -s "$RUNNER_TEMP/e2e-shard/shared-resources.list" ]; then
+            run_e2e shared-resources 1
+          fi
+
+      - name: Upload Playwright timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-timings-${{ matrix.shard }}
+          path: playwright-timings/*.json
+          retention-days: 7
 
       - name: Upload report on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: playwright-report/
           retention-days: 7
 

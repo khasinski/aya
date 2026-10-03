@@ -27,24 +27,24 @@ test("a null identity (handshake failed / old host) is stale", () => {
   assert.equal(isHostStale(FRESH, null), true);
 });
 
-test("a matching identity is not stale", () => {
-  assert.equal(isHostStale(FRESH, { version: "0.4.0", scriptHash: "abc123" }), false);
-  // Guard against "always return false": one-character hash change must be stale.
-  assert.equal(isHostStale(FRESH, { version: "0.4.0", scriptHash: "abc124" }), true);
-});
-
-test("a different version is stale", () => {
-  assert.equal(
-    isHostStale(FRESH, { version: "0.3.0", scriptHash: "abc123" }),
-    true,
-  );
-});
-
-test("same version but different script hash is stale (dev rebuild case)", () => {
-  // The exact scenario a version-only check misses: 0.4.0 -> 0.4.0 with a
-  // changed bundle. The hash catches it.
-  assert.equal(
-    isHostStale(FRESH, { version: "0.4.0", scriptHash: "DIFFERENT" }),
-    true,
-  );
-});
+// The "unknown" hash never decides a kill: a stale verdict restarts the host and every agent in it.
+const UNKNOWN = UNKNOWN_SCRIPT_HASH;
+const SENTINEL_TABLE = [
+  // [name, expected, actual, stale]
+  ["both hashes known and equal", "abc123", "abc123", false],
+  ["both hashes known and different", "abc123", "abc124", true],
+  ["the host's hash is unknown", "abc123", UNKNOWN, false],
+  ["this app's hash is unknown", UNKNOWN, "abc123", false],
+  ["both unknown", UNKNOWN, UNKNOWN, false],
+];
+for (const [name, expectedHash, actualHash, stale] of SENTINEL_TABLE) {
+  for (const sameVersion of [true, false]) {
+    // A different version is stale whatever the hashes say.
+    const want = sameVersion ? stale : true;
+    test(`${name}, ${sameVersion ? "same" : "different"} version: ${want ? "stale" : "kept"}`, () => {
+      const expected = { version: "0.4.0", scriptHash: expectedHash };
+      const actual = { version: sameVersion ? "0.4.0" : "0.3.0", scriptHash: actualHash };
+      assert.equal(isHostStale(expected, actual), want);
+    });
+  }
+}

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { detectApproval } from "./bell";
-import { commandWithAutoResume } from "./agentPreset";
+import { resumeSpawn, sharingPaneIds } from "./agentPreset";
 import { gitContextCwd, projectBaseCwd, tabFromTerminal } from "./worktree";
 import { findStatusTarget } from "./control-status-target";
 import {
+  applyReportedStatus,
   clearedTerminalStatus,
   controlLevelToTerminalStatus,
   controlStatusEventTitle,
@@ -118,7 +118,9 @@ import {
   type ProjectConfig,
   type ProjectGitInfo,
   type RemoteProjectCreateResult,
+  type SpawnCommand,
   type TerminalState,
+  type WaitingPanes,
   type Theme,
   type ThemeColors,
   type UsageAccount,
@@ -516,16 +518,37 @@ function remoteTerminalCommand(project: ProjectConfig, preset: Preset): string {
   return `ssh -tt ${shellQuote(project.remote.sshTarget)} ${shellQuote(remoteCommand)}`;
 }
 
-function terminalCommand(
+/** Where a terminal's agent keeps its sessions: its cwd, or the remote directory. */
+function sessionDir(project: ProjectConfig | null, terminal: TerminalState): string {
+  return project?.remote
+    ? `${project.remote.sshTarget}:${project.remote.directory}`
+    : terminal.cwd;
+}
+
+function terminalSpawn(
   project: ProjectConfig | null,
   preset: Preset,
   terminal: TerminalState,
-): string {
-  const commandPreset = {
-    ...preset,
-    command: commandWithAutoResume(preset, terminal.restored, terminal.sessionId),
+  panes: Array<{ id: string; preset: Preset; cwd: string }>,
+  homeDir: string,
+): SpawnCommand {
+  const key = sessionDir(project, terminal);
+  const spawn = resumeSpawn(
+    preset,
+    { id: terminal.id, cwd: key, restored: terminal.restored, sessionId: terminal.sessionId, sharedDir: terminal.sharedDir },
+    panes,
+  );
+  const wrap = (command: string) => (project ? remoteTerminalCommand(project, { ...preset, command }) : command);
+  // A remote pane runs in the home dir here; its peers share the folder when their key is the same.
+  const peerCwds = project?.remote
+    ? spawn.peerCwds?.includes(key) ? [homeDir] : undefined
+    : spawn.peerCwds;
+  return {
+    command: wrap(spawn.command),
+    ...(spawn.sharedDirCommand && peerCwds
+      ? { sharedDirCommand: wrap(spawn.sharedDirCommand), peerCwds }
+      : {}),
   };
-  return project ? remoteTerminalCommand(project, commandPreset) : commandPreset.command;
 }
 
 function uniqueProjectName(projects: ProjectConfig[], directory: string): string {
@@ -838,6 +861,18 @@ export function App() {
     ? (activeTabByProject[activeProjectId] ?? null)
     : null;
   const activeTerminal = activeTabId ? (terminals[activeTabId] ?? null) : null;
+  // Panes whose agent ran `aya status waiting`: the Teams window shows a waiting lead.
+  const waitingPanes = useMemo<WaitingPanes>(
+    () =>
+      Object.fromEntries(
+        Object.entries(terminals).flatMap(([id, t]) =>
+          t.externalStatus?.level === "waiting"
+            ? [[id, { text: t.externalStatus.text, since: t.externalStatus.updatedAt, restart: t.externalStatus.restart }]]
+            : [],
+        ),
+      ),
+    [terminals],
+  );
 
   // The active project's own checkout — where a terminal with no worktree
   // binding runs. null for remote projects (no local working tree).
@@ -1017,6 +1052,10 @@ export function App() {
   const openProjectRef = useRef<(dir: string) => Promise<void>>(async () => {});
   const [openQueue, setOpenQueue] = useState<string[]>([]);
   const openRunningRef = useRef(false);
+  // Opens the page finished but whose project state the writer below has not saved:
+  // main sends them again after a reload until this page says they are on disk.
+  const unsavedOpensRef = useRef<string[]>([]);
+  const [unsavedOpensTick, setUnsavedOpensTick] = useState(0);
   useEffect(() => {
     return window.aya.onOpenProject((dir) => {
       setOpenQueue((queue) => [...queue, dir]);
@@ -1049,6 +1088,8 @@ export function App() {
     void openProjectRef.current(dir).catch((err) => {
       console.warn(`[aya] could not open ${dir}:`, err);
     }).finally(() => {
+      unsavedOpensRef.current.push(dir);
+      setUnsavedOpensTick((tick) => tick + 1);
       openRunningRef.current = false;
       setOpenQueue((queue) => queue.slice(1));
     });
@@ -1406,7 +1447,7 @@ export function App() {
         });
         return;
       }
-      if (event.type === "data" && detectApproval(event.chunk)) {
+      if (event.type === "vt-status" && event.waiting) {
         appendProjectEvent({
           projectSlug: terminal.projectSlug,
           terminalId: terminal.id,
@@ -1476,16 +1517,26 @@ export function App() {
   // a pure function of state and removes the race by construction.
   useEffect(() => {
     if (!didBootstrap) return;
+    const savedWithThisState = [...unsavedOpensRef.current];
     const handle = window.setTimeout(() => {
-      void window.aya.saveProjectState({
-        version: PROJECT_STATE_VERSION,
-        order: projectState.order,
-        open: projectState.open,
-        recent: projectState.recent,
-        activeProject: activeProjectId,
-        activeTab: compactRecord(activeTabByProject),
-        singleView: compactRecord(singleViewByProject),
-      });
+      void window.aya
+        .saveProjectState({
+          version: PROJECT_STATE_VERSION,
+          order: projectState.order,
+          open: projectState.open,
+          recent: projectState.recent,
+          activeProject: activeProjectId,
+          activeTab: compactRecord(activeTabByProject),
+          singleView: compactRecord(singleViewByProject),
+        })
+        .then(() => {
+          for (const dir of savedWithThisState) {
+            const at = unsavedOpensRef.current.indexOf(dir);
+            if (at === -1) continue;
+            unsavedOpensRef.current.splice(at, 1);
+            window.aya.openProjectDone(dir);
+          }
+        });
     }, PROJECT_STATE_SAVE_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
   }, [
@@ -1494,6 +1545,7 @@ export function App() {
     activeProjectId,
     activeTabByProject,
     singleViewByProject,
+    unsavedOpensTick,
   ]);
 
   // Hydration helper — instantiates TerminalStates for a project's saved tabs.
@@ -1516,6 +1568,8 @@ export function App() {
             exitCode: null,
             restored: true,
             ...(tab.sessionId ? { sessionId: tab.sessionId } : {}),
+            ...(tab.sharedDir ? { sharedDir: true as const } : {}),
+            ...(tab.teamLaunch ? { teamLaunch: true } : {}),
           };
         }
         return next;
@@ -1908,6 +1962,22 @@ export function App() {
     };
   }, [ayaIntelligence, localSummariesEnabled, summaryNudge]);
 
+  // Questions an agent asked before Aya was last closed are still questions: put them back on their panes.
+  useEffect(() => {
+    if (!didBootstrap) return;
+    void window.aya.agentWaiting().then((asked) => {
+      setTerminals((prev) => {
+        const entries = Object.entries(asked).filter(([id]) => prev[id] && !prev[id].externalStatus);
+        if (entries.length === 0) return prev;
+        const next = { ...prev };
+        for (const [id, { text, since, restart }] of entries) {
+          next[id] = applyReportedStatus(prev[id], { level: "waiting", text, updatedAt: since, restart });
+        }
+        return next;
+      });
+    }).catch(() => {});
+  }, [didBootstrap]);
+
   useEffect(() => {
     return window.aya.onControlStatus((update) => {
       setTerminals((prev) => {
@@ -1922,27 +1992,19 @@ export function App() {
         }
         const text = update.text?.trim();
         if (!text) return prev;
-        appendProjectEvent({
-          projectSlug: terminal.projectSlug,
-          terminalId: terminal.id,
-          level: update.level === "active" ? "active" : update.level,
-          title: controlStatusEventTitle(terminal.name, update.level),
-          detail: text,
-          createdAt: update.updatedAt,
-        });
-        return {
-          ...prev,
-          [id]: {
-            ...terminal,
-            status: controlLevelToTerminalStatus(update.level),
-            bell: update.level === "waiting",
-            externalStatus: {
-              level: update.level,
-              text,
-              updatedAt: update.updatedAt,
-            },
-          },
-        };
+        const next = applyReportedStatus(terminal, { level: update.level, text, updatedAt: update.updatedAt, restart: update.restart });
+        // A dialog still on screen: the pane did not finish, so no "finished" row either.
+        if (next.status === controlLevelToTerminalStatus(update.level)) {
+          appendProjectEvent({
+            projectSlug: terminal.projectSlug,
+            terminalId: terminal.id,
+            level: update.level === "active" ? "active" : update.level,
+            title: controlStatusEventTitle(terminal.name, update.level),
+            detail: text,
+            createdAt: update.updatedAt,
+          });
+        }
+        return { ...prev, [id]: next };
       });
     });
   }, [appendProjectEvent]);
@@ -2011,20 +2073,20 @@ export function App() {
     [],
   );
 
-  // A session id arrives asynchronously (OSC 9001) while a terminal is already
-  // running, so it needs its own persist trigger — the others (launch, rename,
-  // close) may never fire again before the app quits, and an unsaved id means
-  // the next restore silently falls back to "latest session".
+  // A session id or sharedDir mark arrives while a terminal is already running,
+  // so it needs its own persist trigger - the others (launch, rename, close) may
+  // never fire again before the app quits, and an unsaved one means the next
+  // restore may fall back to "latest session".
   const sessionIdSignature = Object.values(terminals)
-    .filter((t) => t.sessionId)
-    .map((t) => `${t.id}:${t.sessionId}`)
+    .filter((t) => t.sessionId || t.sharedDir)
+    .map((t) => `${t.id}:${t.sessionId}:${t.sharedDir}`)
     .sort()
     .join("\n");
   useEffect(() => {
     if (!didBootstrap || !sessionIdSignature) return;
     const slugs = new Set(
       Object.values(terminalsRef.current)
-        .filter((t) => t.sessionId)
+        .filter((t) => t.sessionId || t.sharedDir)
         .map((t) => t.projectSlug),
     );
     for (const slug of slugs) persistProject(slug, terminalsRef.current);
@@ -2196,6 +2258,7 @@ export function App() {
               status: "running",
               bell: false,
               exitCode: null,
+              ...(pane.teamLaunch ? { teamLaunch: true } : {}),
             };
           }
           // Refs first, as closeTerminal does: a save racing this one must see the new tabs.
@@ -3300,6 +3363,27 @@ export function App() {
     activeProject?.remote && activeProjectId
       ? (remotePresetsByProject[activeProjectId] ?? presets)
       : presets;
+  const resumePanes = useMemo(
+    () =>
+      Object.values(terminals).map((t) => {
+        const project = findProject(projects, t.projectSlug);
+        const list = project?.remote ? (remotePresetsByProject[t.projectSlug] ?? presets) : presets;
+        return { id: t.id, preset: getPreset(list, t.presetId), cwd: sessionDir(project, t) };
+      }),
+    [terminals, projects, presets, remotePresetsByProject],
+  );
+  // Once two panes of an agent have shared a folder, neither may ever "continue
+  // the latest" there again, even after the other is closed.
+  useEffect(() => {
+    const sharing = sharingPaneIds(resumePanes);
+    setTerminals((prev) => {
+      const marked = Object.values(prev).filter((t) => sharing.has(t.id) && !t.sharedDir);
+      if (marked.length === 0) return prev;
+      const next = { ...prev };
+      for (const t of marked) next[t.id] = { ...t, sharedDir: true as const };
+      return next;
+    });
+  }, [resumePanes]);
   // The derived collections below are memoized: App re-renders on every poll
   // tick and PTY status flip, and rebuilding these arrays/Sets/records each time
   // both wastes O(terminals) work several times over AND hands children fresh
@@ -3925,7 +4009,7 @@ export function App() {
                   paneStyle={paneStyle}
                   terminal={terminal}
                   preset={preset}
-                  command={terminalCommand(activeProject, preset, terminal)}
+                  {...terminalSpawn(activeProject, preset, terminal, resumePanes, homeDir)}
                   snippets={snippets}
                   snippetsOpen={snippetDrawerTerminalId === terminal.id}
                   onSnippetsOpenChange={(open) =>
@@ -3973,7 +4057,7 @@ export function App() {
                   key={t.id}
                   terminal={t}
                   preset={preset}
-                  command={terminalCommand(project, preset, t)}
+                  {...terminalSpawn(project, preset, t, resumePanes, homeDir)}
                   snippets={snippets}
                   snippetsOpen={false}
                   onSnippetsOpenChange={ignoreSnippetsOpenChange}
@@ -4234,6 +4318,7 @@ export function App() {
       {showTeams && activeProject && (
         <TeamsModal
           project={activeProject}
+          waiting={waitingPanes}
           intelligence={ayaIntelligence}
           onClose={() => {
             setShowTeams(false);

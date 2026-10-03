@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -14,9 +14,16 @@ const cwd = join(root, "wt");
 mkdirSync(bin);
 mkdirSync(cwd);
 mkdirSync(join(root, "home"));
+const lookupStarted = join(root, "lookup-started");
+const lookupRelease = join(root, "lookup-release");
 writeFileSync(
   join(bin, "opencode"),
-  '#!/bin/sh\nif [ "$1" = session ]; then sleep 1; echo "[]"; exit 0; fi\nexec sleep 30\n',
+  `#!/bin/sh\nif [ "$1" = session ]; then
+    touch '${lookupStarted}'
+    while [ ! -f '${lookupRelease}' ]; do sleep 0.01; done
+    echo "[]"; exit 0
+  fi
+  exec sleep 30\n`,
 );
 chmodSync(join(bin, "opencode"), 0o755);
 process.env.AYA_HOME = join(root, "aya-home");
@@ -27,12 +34,27 @@ process.env.PATH = `${bin}:/usr/bin:/bin`;
 
 const { activePtyCount, isPtyStarting, killPty, spawnPty } = await import("../dist-electron/pty.js");
 
+// Keep the lookup suspended until the test has killed/restarted the pane.
+// A marker proves the lookup is underway; it answers only once released.
+test.beforeEach(() => {
+  rmSync(lookupStarted, { force: true });
+  rmSync(lookupRelease, { force: true });
+});
+test.afterEach(() => releaseLookup());
+const releaseLookup = () => writeFileSync(lookupRelease, "");
+async function duringLookup() {
+  const deadline = Date.now() + 10_000;
+  while (!existsSync(lookupStarted) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
+  assert.equal(existsSync(lookupStarted), true, "the session lookup has started");
+}
+
 test("a kill that lands during the opencode lookup stops the spawn", async () => {
   const sink = { events: [], sendPtyEvent(e) { this.events.push(e); }, isDestroyed: () => false };
   const ptyId = "kill-during-lookup";
   const spawning = spawnPty({ ptyId, command: "opencode --continue", cwd, cols: 80, rows: 24 }, sink);
-  await new Promise((r) => setTimeout(r, 300));
+  await duringLookup();
   killPty(ptyId);
+  releaseLookup();
   await spawning;
   const log = readFileSync(join(process.env.AYA_HOME, "pty-events.log"), "utf8");
   const started = activePtyCount();
@@ -55,9 +77,10 @@ test("a restart during the lookup starts the new spawn, never the killed one", a
   const sink = { events: [], sendPtyEvent(e) { this.events.push(e); }, isDestroyed: () => false };
   const ptyId = "kill-then-restart";
   const first = spawnPty({ ptyId, command: "opencode --continue", cwd, cols: 80, rows: 24 }, sink);
-  await new Promise((r) => setTimeout(r, 300));
+  await duringLookup();
   killPty(ptyId);
   const second = spawnPty({ ptyId, command: "echo restarted-marker", cwd, cols: 80, rows: 24 }, sink);
+  releaseLookup();
   await first;
   await second;
   await waitForOutput(sink, "restarted-marker");
@@ -75,9 +98,11 @@ test("a restart of an opencode pane during its lookup resumes (every agent resta
   const ptyId = "kill-then-restart-same";
   const req = { ptyId, command: "opencode --continue", cwd, cols: 80, rows: 24 };
   const first = spawnPty(req, sink);
-  await new Promise((r) => setTimeout(r, 300));
+  await duringLookup();
   killPty(ptyId);
-  await Promise.all([first, spawnPty(req, sink)]);
+  const second = spawnPty(req, sink);
+  releaseLookup();
+  await Promise.all([first, second]);
   const started = activePtyCount();
   killPty(ptyId);
   assert.equal(started, 1, "the restart must leave exactly one live child");
@@ -90,12 +115,13 @@ test("a tab closed again while its restart waits starts nothing", async () => {
   const ptyId = "kill-restart-kill";
   const req = { ptyId, command: "opencode --continue", cwd, cols: 80, rows: 24 };
   const first = spawnPty(req, sink);
-  await new Promise((r) => setTimeout(r, 300));
+  await duringLookup();
   killPty(ptyId);
   const second = spawnPty(req, sink);
   // A re-mount while the restart waits is a double mount of the restart.
   const third = spawnPty(req, sink);
   killPty(ptyId);
+  releaseLookup();
   await Promise.all([first, second, third]);
   const started = activePtyCount();
   if (started) killPty(ptyId);
@@ -108,8 +134,9 @@ test("a tab reopened after its cancelled spawn returned does start (ids are reus
   const sink = { events: [], sendPtyEvent(e) { this.events.push(e); }, isDestroyed: () => false };
   const ptyId = "kill-then-reopen";
   const first = spawnPty({ ptyId, command: "opencode --continue", cwd, cols: 80, rows: 24 }, sink);
-  await new Promise((r) => setTimeout(r, 300));
+  await duringLookup();
   killPty(ptyId);
+  releaseLookup();
   await first;
   await spawnPty({ ptyId, command: "echo reopened-marker", cwd, cols: 80, rows: 24 }, sink);
   await waitForOutput(sink, "reopened-marker");
@@ -131,9 +158,10 @@ test("a pane in its lookup is starting, and stops being so once killed", async (
   const sink = { events: [], sendPtyEvent(e) { this.events.push(e); }, isDestroyed: () => false };
   const ptyId = "starting-during-lookup";
   const spawning = spawnPty({ ptyId, command: "opencode --continue", cwd, cols: 80, rows: 24 }, sink);
-  await new Promise((r) => setTimeout(r, 300));
+  await duringLookup();
   assert.equal(isPtyStarting(ptyId), true, "a team must not treat a starting pane as gone");
   killPty(ptyId);
   assert.equal(isPtyStarting(ptyId), false);
+  releaseLookup();
   await spawning;
 });

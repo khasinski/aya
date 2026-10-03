@@ -72,6 +72,7 @@ const api: AyaApi = {
     ipcRenderer.invoke("projects:read-repo-config", directory),
 
   listPresets: () => ipcRenderer.invoke("presets:list"),
+  agentWaiting: () => ipcRenderer.invoke("agent:waiting"),
   savePresets: (presets) => ipcRenderer.invoke("presets:save", presets),
   scanHarnesses: () => ipcRenderer.invoke("presets:scan-harnesses"),
 
@@ -81,8 +82,9 @@ const api: AyaApi = {
   getUsage: () => ipcRenderer.invoke("usage:get"),
   getCodexUsage: () => ipcRenderer.invoke("usage:get-codex"),
   getGrokUsage: () => ipcRenderer.invoke("usage:get-grok"),
-  teamStart: (projectSlug, team, task) => ipcRenderer.invoke("teams:start", projectSlug, team, task),
+  teamStart: (projectSlug, team, task, to) => ipcRenderer.invoke("teams:start", projectSlug, team, task, to),
   teamPause: (projectSlug, team) => ipcRenderer.invoke("teams:pause", projectSlug, team),
+  teamRemove: (projectSlug, team) => ipcRenderer.invoke("teams:remove", projectSlug, team),
   teamResume: (projectSlug, team) => ipcRenderer.invoke("teams:resume", projectSlug, team),
   teamList: (projectSlug) => ipcRenderer.invoke("teams:list", projectSlug),
   teamSave: (projectSlug, team, create) => ipcRenderer.invoke("teams:save", projectSlug, team, create),
@@ -216,6 +218,7 @@ const api: AyaApi = {
   },
 
   onOpenProject: (handler) => openProjects.subscribe(handler),
+  openProjectDone: (directory) => ipcRenderer.send("open-project:done", directory),
 
   webStatus: () => ipcRenderer.invoke("web:status"),
   configureWeb: (req) => ipcRenderer.invoke("web:configure", req),

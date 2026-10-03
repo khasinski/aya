@@ -35,6 +35,15 @@ function termState(id, slug, overrides = {}) {
   };
 }
 
+test("terminalsForNewTabs carries the saved session id and shared-folder latch", () => {
+  const tab = { id: "t", presetId: "codex", name: "t", sessionId: "s1", sharedDir: true };
+  const [term] = terminalsForNewTabs(project("a", { tabs: [tab] }), {});
+  assert.equal(term.sessionId, "s1");
+  assert.equal(term.sharedDir, true);
+  const [plain] = terminalsForNewTabs(project("a"), {});
+  assert.equal("sharedDir" in plain, false);
+});
+
 // --- mergeProjectsFromDisk ---------------------------------------------------
 
 test("disk wins for projects it contains (name/directory/tabs replaced)", () => {
@@ -97,6 +106,11 @@ test("an externally-added worktree tab keeps its cwd (not the project dir)", () 
   const created = terminalsForNewTabs(p, {});
   assert.equal(created.length, 1);
   assert.equal(created[0].cwd, "/tmp/a-worktrees/feature");
+});
+
+test("an externally-added role pane keeps teamLaunch, so it launches in a mode that reaches Aya", () => {
+  const p = project("a", { tabs: [{ id: "a-role", presetId: "codex", name: "Codex - tester", teamLaunch: true }] });
+  assert.equal(terminalsForNewTabs(p, {})[0].teamLaunch, true);
 });
 
 test("existing terminals are never recreated (no respawn, decision 1)", () => {

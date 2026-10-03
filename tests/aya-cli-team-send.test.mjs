@@ -4,14 +4,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import * as net from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { CLI_SHELLS, shellOptions } from "./helpers/cli-shells.mjs";
 
 const cli = resolve("bin/aya");
-// Linux runs /bin/sh as dash, where a failed shift ends the script.
-const SHELLS = ["/bin/sh", "/bin/dash"].filter(existsSync);
 
 async function teamSend(args, shell = "/bin/sh") {
   const dir = mkdtempSync(join(tmpdir(), "aya-team-send-"));
@@ -53,8 +52,8 @@ test("unquoted words after the role are one message", async () => {
   assert.equal(request.text, "round 5 ready");
 });
 
-for (const shell of SHELLS) {
-  test(`a send without text is refused before anything reaches the app (${shell})`, async () => {
+for (const shell of CLI_SHELLS) {
+  test(`a send without text is refused before anything reaches the app (${shell})`, shellOptions(shell), async () => {
     for (const args of [["implementer"], ["implementer", ""], []]) {
       const { status, request } = await teamSend(args, shell);
       assert.equal(status, 1, JSON.stringify(args));

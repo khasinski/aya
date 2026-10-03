@@ -1,13 +1,10 @@
 // A team message goes from one real pane to another through the real app:
 // role lookup, the pane id from the local assignments, the dated header.
 
-import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import type { Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
 import {
   ASK_BRIEFLY_MS,
-  AYA,
   TEAM_AGENT_READY_TIMEOUT_MS,
   TEAM_DELIVERY_TIMEOUT_MS,
   agentPreset,
@@ -15,25 +12,14 @@ import {
   TEAM_STATE_DIR,
   teamLog,
   teamSeed,
+  TWO_ROLE_TEAM,
+  START_REPLY_TIMEOUT_MS,
+  DELIVERY_SLACK_MS,
 } from "./helpers/team";
 import { firstTerminalShown } from "./helpers/terminal";
-import { envWithoutAya } from "./helpers/env";
 import { TEAM_REDELIVERY_MS } from "./timeouts";
 
-const TEAM = `# ux-review
-
-## Role: tester
-Sends to: implementer
-Must not: edit code
-Plays the build each round.
-
-## Role: implementer
-Sends to: tester
-Must not: skip a report
-Fixes findings.
-`;
-
-test.use(teamSeed(TEAM, { presetList: [agentPreset()] }));
+test.use(teamSeed(TWO_ROLE_TEAM, { presetList: [agentPreset()] }));
 
 test("tester's aya team send reaches the implementer's pane with the team header", async ({ window, seeded }) => {
   await firstTerminalShown(window);
@@ -45,7 +31,7 @@ test("tester's aya team send reaches the implementer's pane with the team header
 });
 
 test.describe("an implementer on an approval prompt", () => {
-  test.use(teamSeed(TEAM, { presetList: [agentPreset("ask", "claude")] }));
+  test.use(teamSeed(TWO_ROLE_TEAM, { presetList: [agentPreset("ask", "claude")] }));
 
   test("is not typed into: Enter would answer the prompt", async ({ window, seeded }) => {
     await firstTerminalShown(window);
@@ -56,7 +42,7 @@ test.describe("an implementer on an approval prompt", () => {
 });
 
 test.describe("an implementer that answers its prompt later", () => {
-  test.use(teamSeed(TEAM, { presetList: [agentPreset(`ask-briefly ${ASK_BRIEFLY_MS}`, "claude")] }));
+  test.use(teamSeed(TWO_ROLE_TEAM, { presetList: [agentPreset(`ask-briefly ${ASK_BRIEFLY_MS}`, "claude")] }));
 
   test("gets the held message once the prompt is gone, and the window says it was held", async ({ window, seeded }) => {
     await firstTerminalShown(window);
@@ -64,7 +50,7 @@ test.describe("an implementer that answers its prompt later", () => {
     await expect.poll(() => read("tab-left"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/FAIL .*implementer: shows an approval prompt/);
     // Retried every redelivery period once the prompt clears; a retry may land just before it does.
     await expect
-      .poll(() => read("tab-right"), { timeout: ASK_BRIEFLY_MS + 2 * TEAM_REDELIVERY_MS + 5_000 })
+      .poll(() => read("tab-right"), { timeout: ASK_BRIEFLY_MS + 2 * TEAM_REDELIVERY_MS + DELIVERY_SLACK_MS })
       .toMatch(/\[team ux-review \| from tester \| \d\d:\d\d\] round 5 ready/);
     const dialog = await openTeams(window);
     await expect(dialog.getByLabel("ux-review messages")).toContainText(
@@ -74,28 +60,20 @@ test.describe("an implementer that answers its prompt later", () => {
 });
 
 test.describe("an implementer pane that runs a plain shell", () => {
-  test.use(teamSeed(TEAM, { presetList: [{ id: "shell", name: "Shell", icon: "$", color: "", command: "$SHELL" }] }));
+  // The tester's own pane sends: an id forged from outside its process tree is refused (caller-proof.ts).
+  const plain = { id: "plain", name: "Shell", icon: "$", color: "", command: "$SHELL" };
+  const seed = teamSeed(TWO_ROLE_TEAM, { presetList: [agentPreset(), plain] });
+  test.use({ seedOptions: { ...seed.seedOptions, rightTab: { presetId: "plain", name: "Shell" } } });
 
   test("is not typed into: Enter would run the text as a command", async ({ window, seeded }) => {
     await firstTerminalShown(window);
-    const send = () => {
-      try {
-        execFileSync(AYA, ["team", "send", "implementer", "touch should-not-exist"], {
-          env: { ...envWithoutAya(), AYA_SOCKET: join(seeded.ayaHome, "aya.sock"), AYA_TERMINAL_ID: "tab-left" },
-          stdio: "pipe",
-        });
-        return "sent";
-      } catch (err) {
-        return String((err as { stderr?: Buffer }).stderr ?? err);
-      }
-    };
-    await expect.poll(send, { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/implementer: runs a shell; nothing was typed/);
-    expect(existsSync(join(seeded.projectDir, "should-not-exist"))).toBe(false);
+    const read = teamLog(seeded.projectDir);
+    await expect.poll(() => read("tab-left"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/FAIL .*implementer: runs a shell; nothing was typed/);
   });
 });
 
 test.describe("Start team", () => {
-  test.use(teamSeed(TEAM, { presetList: [agentPreset("quiet", "claude")] }));
+  test.use(teamSeed(TWO_ROLE_TEAM, { presetList: [agentPreset("quiet", "claude")] }));
 
   test("sends every role a delivery test naming its peer", async ({ window, seeded }) => {
     await firstTerminalShown(window);
@@ -115,7 +93,7 @@ test.describe("Start team", () => {
 
 test.describe("a running team restored after a restart", () => {
   test.use(
-    teamSeed(TEAM, {
+    teamSeed(TWO_ROLE_TEAM, {
       presetList: [agentPreset("quiet", "claude")],
       ayaHomeFiles: {
         [`${TEAM_STATE_DIR}/state.json`]: JSON.stringify({ paused: false, started: true }),
@@ -136,7 +114,59 @@ test.describe("a running team restored after a restart", () => {
     await firstTerminalShown(window);
     const read = teamLog(seeded.projectDir);
     // Redelivery runs every period once the pane is up.
-    await expect.poll(() => read("tab-right"), { timeout: 3 * TEAM_REDELIVERY_MS + 5_000 }).toMatch(/peer report from before/);
+    await expect.poll(() => read("tab-right"), { timeout: 3 * TEAM_REDELIVERY_MS + DELIVERY_SLACK_MS }).toMatch(/peer report from before/);
     expect(read("tab-right")).not.toMatch(/old round|old test/);
+  });
+});
+
+// Start's task from the Teams window, to the tester (the first role).
+async function startWithTask(window: Page, task: string) {
+  const dialog = await openTeams(window);
+  await dialog.getByLabel("Task for ux-review").fill(task);
+  const start = dialog.getByRole("button", { name: "Start", exact: true });
+  // Start refuses until every agent has drawn its composer: press it again until it took.
+  await expect(async () => {
+    if (await start.isVisible()) await start.click();
+    await expect(dialog.getByText(/^Started;/)).toBeVisible({ timeout: START_REPLY_TIMEOUT_MS });
+  }).toPass({ timeout: TEAM_AGENT_READY_TIMEOUT_MS });
+  return dialog;
+}
+
+test.describe("Start with a task on a focused Claude composer", () => {
+  test.use(teamSeed(TWO_ROLE_TEAM, { presetList: [agentPreset("focused-cursor", "claude")] }));
+
+  test("the placeholder under the cursor is not a draft: the task is typed, not parked in the inbox", async ({ window, seeded }) => {
+    await firstTerminalShown(window);
+    const dialog = await startWithTask(window, "retest the login");
+    await expect(dialog.getByText("Started; task sent to tester.")).toBeVisible();
+    await expect(dialog.getByText("has text the user is typing")).toHaveCount(0);
+    await expect.poll(() => teamLog(seeded.projectDir)("tab-left"), { timeout: TEAM_DELIVERY_TIMEOUT_MS }).toMatch(/from user \| \d\d:\d\d\] retest the login/);
+  });
+});
+
+test.describe("Start with a task that waits for a draft to clear", () => {
+  const DRAFT_MS = 4_000;
+  test.use(teamSeed(TWO_ROLE_TEAM, { presetList: [agentPreset(`draft-briefly ${DRAFT_MS}`, "claude")] }));
+
+  test("the Started line about the inbox goes once the task is written", async ({ window, seeded }) => {
+    await firstTerminalShown(window);
+    const dialog = await startWithTask(window, "retest the login");
+    await expect(dialog.getByText("Started; task for tester waits in its inbox: has text the user is typing.")).toBeVisible();
+    await expect.poll(() => teamLog(seeded.projectDir)("tab-left"), { timeout: DRAFT_MS + 3 * TEAM_REDELIVERY_MS + DELIVERY_SLACK_MS }).toMatch(/retest the login/);
+    await expect(dialog.getByLabel("ux-review messages")).toContainText("written later (was held: has text the user is typing)");
+    await expect(dialog.getByText(/waits in its inbox/)).toHaveCount(0);
+  });
+});
+
+test.describe("Start with a task right behind the delivery test, on a composer that redraws late", () => {
+  const REDRAW_MS = 1_000;
+  test.use(teamSeed(TWO_ROLE_TEAM, { presetList: [agentPreset(`slow-echo ${REDRAW_MS}`, "claude")] }));
+
+  test("Aya's own delivery test still in the composer is not the user's draft: the task is typed at once", async ({ window, seeded }) => {
+    await firstTerminalShown(window);
+    const dialog = await startWithTask(window, "retest the login");
+    await expect(dialog.getByText("Started; task sent to tester.")).toBeVisible();
+    await expect(dialog.getByText("has text the user is typing")).toHaveCount(0);
+    await expect.poll(() => teamLog(seeded.projectDir)("tab-left"), { timeout: TEAM_DELIVERY_TIMEOUT_MS }).toMatch(/from user \| \d\d:\d\d\] retest the login/);
   });
 });

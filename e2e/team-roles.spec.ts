@@ -4,23 +4,13 @@
 import { test, expect } from "./fixtures";
 import { TEAMS_REFRESH_MS } from "../src/hooks/useTeams";
 import { reloadInProjectsLeftLayout } from "./helpers/layout";
-import { TEAM_STATE_DIR, readAssignments, teamSeed } from "./helpers/team";
+import { TEAM_STATE_DIR, readAssignments, teamSeed, BARE_TEAM } from "./helpers/team";
 import { firstTerminalShown } from "./helpers/terminal";
 
-const TEAM = `# ux-review
-
-## Role: tester
-Sends to: implementer
-Must not: edit code
-
-## Role: implementer
-Sends to: tester
-Must not: skip a report
-`;
 const WAITING = `${JSON.stringify({ id: 1, time: new Date().toISOString(), from: "tester", to: "implementer", commit: null, text: "retest", delivered: false })}\n`;
 
 test.describe("classic layout", () => {
-  test.use(teamSeed(TEAM, { ayaHomeFiles: { [`${TEAM_STATE_DIR}/log.jsonl`]: WAITING } }));
+  test.use(teamSeed(BARE_TEAM, { ayaHomeFiles: { [`${TEAM_STATE_DIR}/log.jsonl`]: WAITING } }));
 
   test("rows show role, team and waiting messages", async ({ window }) => {
     await firstTerminalShown(window);
@@ -41,7 +31,7 @@ test.describe("classic layout", () => {
 });
 
 test.describe("closing a tab", () => {
-  test.use(teamSeed(TEAM));
+  test.use(teamSeed(BARE_TEAM));
 
   test("frees its role", async ({ window, seeded }) => {
     await firstTerminalShown(window);
@@ -54,7 +44,7 @@ test.describe("closing a tab", () => {
 });
 
 test.describe("experimental layout", () => {
-  test.use(teamSeed(TEAM, { ayaHomeFiles: { [`${TEAM_STATE_DIR}/log.jsonl`]: WAITING } }));
+  test.use(teamSeed(BARE_TEAM, { ayaHomeFiles: { [`${TEAM_STATE_DIR}/log.jsonl`]: WAITING } }));
 
   test("tabs show the role and the project rail sums waiting messages", async ({ window }) => {
     await reloadInProjectsLeftLayout(window);
@@ -68,7 +58,7 @@ test.describe("experimental layout", () => {
 });
 
 test.describe("a project that brings a team with no panes", () => {
-  test.use(teamSeed(TEAM, { assignments: null }));
+  test.use(teamSeed(BARE_TEAM, { assignments: null }));
 
   test("offers to assign the roles; Open teams shows them", async ({ window }) => {
     await firstTerminalShown(window);

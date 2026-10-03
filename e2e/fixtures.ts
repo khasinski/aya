@@ -8,9 +8,10 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import * as net from "node:net";
 import { join } from "node:path";
-import { seedEnv, type SeededEnv, type SeedOptions } from "./helpers/seed";
+import { appEnv, seedEnv, type SeededEnv, type SeedOptions } from "./helpers/seed";
 
 const APP_ROOT = join(__dirname, "..");
+export const PTY_HOST_SCRIPT = join(APP_ROOT, "dist-electron", "pty-host.js");
 const REMOVE_RETRY_COUNT = 5;
 const REMOVE_RETRY_DELAY_MS = 100;
 export const PTY_HOST_SHUTDOWN_TIMEOUT_MS = 1_000;
@@ -20,6 +21,12 @@ export const PTY_HOST_EXIT_TIMEOUT_MS = 5_000;
 const PTY_HOST_REAP_TIMEOUT_MS = 2_000;
 export const APP_GRACEFUL_CLOSE_TIMEOUT_MS = 1_000;
 export const APP_PROCESS_EXIT_TIMEOUT_MS = 2_000;
+
+/** CI-only: no SUID sandbox there, and the GPU process under xvfb keeps
+ *  app.close() from ever resolving. Playwright's launch adds --no-sandbox itself; a raw spawn does not. */
+export function ciElectronFlags(): string[] {
+  return process.env.CI ? ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] : [];
+}
 
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -147,7 +154,22 @@ function isAlive(pid: number): boolean {
   }
 }
 
-async function closeAndWait(app: ElectronApplication): Promise<void> {
+export function launchApp(seeded: SeededEnv): Promise<ElectronApplication> {
+  // No AYA_DEV: load the built dist/index.html; no ELECTRON_RUN_AS_NODE, or
+  // Electron starts as plain Node with no `app`. Both are dropped by appEnv.
+  const env = appEnv(seeded);
+
+  // The built main entry, not the app root: a bare directory arg reads as
+  // "open this project". main.ts skips argv entries ending in "main.js".
+  const launchArgs = [
+    join(APP_ROOT, "dist-electron", "main.js"),
+    `--user-data-dir=${seeded.userDataDir}`,
+  ];
+  launchArgs.push(...ciElectronFlags());
+  return electron.launch({ args: launchArgs, cwd: APP_ROOT, env });
+}
+
+export async function closeAndWait(app: ElectronApplication): Promise<void> {
   const proc = app.process();
   const pid = proc.pid;
   const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
@@ -205,9 +227,9 @@ export const test = base.extend<{
     if (seedOptions.preStartPtyHost) {
       spawn(
         process.execPath,
-        [join(APP_ROOT, "dist-electron", "pty-host.js")],
+        [PTY_HOST_SCRIPT],
         {
-          env: { ...process.env, ...seeded.launchEnv, AYA_HOME: seeded.ayaHome },
+          env: appEnv(seeded, process.env, false),
           stdio: "ignore",
         },
       );
@@ -220,39 +242,7 @@ export const test = base.extend<{
         await delay(50);
       }
     }
-    // No AYA_DEV: load the built dist/index.html. ELECTRON_RUN_AS_NODE must go
-    // or Electron starts as plain Node with no `app`.
-    const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) {
-      if (typeof v === "string" && k !== "ELECTRON_RUN_AS_NODE" && k !== "AYA_DEV") {
-        env[k] = v;
-      }
-    }
-    env.AYA_HOME = seeded.ayaHome;
-    env.AYA_E2E_PTY_SHUTDOWN = "1";
-    if (!process.env.CI) {
-      env.AYA_E2E_HEADLESS = "1";
-    }
-    // Empty CODEX_HOME: never read the real machine's rollout logs.
-    env.CODEX_HOME = join(seeded.root, "codex-home");
-    // Same isolation for Grok: its usage chip reads ~/.grok/sessions, and a dev
-    // machine with real Grok usage would add a chip the specs do not expect.
-    env.GROK_HOME = join(seeded.root, "grok-home");
-    Object.assign(env, seeded.launchEnv);
-
-    // The built main entry, not the app root: a bare directory arg reads as
-    // "open this project". main.ts skips argv entries ending in "main.js".
-    const launchArgs = [
-      join(APP_ROOT, "dist-electron", "main.js"),
-      `--user-data-dir=${seeded.userDataDir}`,
-    ];
-    // CI-only: no SUID sandbox there, and the GPU process under xvfb keeps
-    // app.close() from ever resolving.
-    if (process.env.CI) {
-      launchArgs.push("--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage");
-    }
-
-    const app = await electron.launch({ args: launchArgs, cwd: APP_ROOT, env });
+    const app = await launchApp(seeded);
     await use(app);
     await closeAndWait(app);
   },

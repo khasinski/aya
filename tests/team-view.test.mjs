@@ -2,6 +2,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as view from "../dist-test/team-view.js";
 import {
   paneOptionLabel,
   pendingMoves,
@@ -57,6 +58,7 @@ test("a logged message says how far it got, in the teams window's words", () => 
   const m = (over) => ({ from: "dev", delivered: false, ...over });
   assert.equal(messageDeliveryText(m({ delivered: true })), "written");
   assert.equal(messageDeliveryText(m({ delivered: true, held: "busy" })), "written later (was held: busy)");
+  assert.equal(messageDeliveryText(m({ delivered: true, typedOnly: true, held: "shows an approval prompt" })), "typed, Enter withheld: shows an approval prompt");
   assert.equal(messageDeliveryText(m({ from: "aya" })), "not typed: held");
   assert.equal(messageDeliveryText(m({ from: "aya", held: "busy" })), "not typed: busy");
   assert.equal(messageDeliveryText(m({})), "waiting in inbox: held");
@@ -79,6 +81,36 @@ test("Start's summary line names what the marked roles mean", () => {
     startSummary({ started: true, delivered: [], held, task: { to: "dev", held: "busy" } }),
     "Started; the roles marked below did not get the delivery test. The task for dev waits in its inbox: busy.",
   );
+  assert.equal(
+    startSummary({ started: true, delivered: [], held, task: { to: "dev", held: "busy", typedOnly: true } }),
+    "Started; the roles marked below did not get the delivery test. The task for dev is typed in its composer, Enter withheld: busy.",
+  );
+  assert.equal(
+    startSummary({ started: true, delivered: ["dev"], held: [], task: { to: "dev", held: "busy", typedOnly: true } }),
+    "Started; task for dev is typed in its composer, Enter withheld: busy.",
+  );
+});
+
+// The task line is true only while the task waits: once the log says it was written, it goes.
+test("Start's task line goes once the task was written; a typed-only one stays", () => {
+  const entry = (patch) => [{ id: 7, time: "", from: "user", to: "dev", commit: null, text: "t", delivered: false, held: "busy", ...patch }];
+  const roleHeld = [{ role: "ops", reason: "busy" }];
+  const ROLES = "the roles marked below did not get the delivery test.";
+  const rows = [
+    // [name, task, log, held roles, expected]
+    ["waiting in the inbox: shown", { to: "dev", held: "busy", messageId: 7 }, entry({}), [], "Started; task for dev waits in its inbox: busy."],
+    ["written later: gone", { to: "dev", held: "busy", messageId: 7 }, entry({ delivered: true }), [], null],
+    ["typed, Enter withheld: stays", { to: "dev", held: "busy", typedOnly: true, messageId: 7 }, entry({ delivered: true, typedOnly: true }), [], "Started; task for dev is typed in its composer, Enter withheld: busy."],
+    ["rolled out of the log: gone", { to: "dev", held: "busy", messageId: 7 }, [], [], null],
+    ["that id is not in the log: gone", { to: "dev", held: "busy", messageId: 7 }, entry({ id: 8 }), [], null],
+    ["written later, a role missed the test: only the roles", { to: "dev", held: "busy", messageId: 7 }, entry({ delivered: true }), roleHeld, `Started; ${ROLES}`],
+    ["waiting, a role missed the test: both", { to: "dev", held: "busy", messageId: 7 }, entry({}), roleHeld, `Started; ${ROLES} The task for dev waits in its inbox: busy.`],
+    ["sent at once: unchanged by the log", { to: "dev", held: null, messageId: 7 }, [], [], "Started; task sent to dev."],
+    ["no message id (older result): shown", { to: "dev", held: "busy" }, [], [], "Started; task for dev waits in its inbox: busy."],
+  ];
+  for (const [name, task, log, held, expected] of rows) {
+    assert.equal(startSummary({ started: true, delivered: ["dev"], held, task }, log), expected, name);
+  }
 });
 
 test("a pane in a role's select names the role it plays, in this team or another", () => {
@@ -110,6 +142,24 @@ test("after Apply: each role's pane, who lost one, and Start left to the user", 
   assert.equal(rolePanesSummary(result, false), "tester: new Codex pane, fixer: shell 2. Start the team when you are ready.");
   assert.equal(rolePanesSummary(result, true), "tester: new Codex pane, fixer: shell 2. The roles marked below were not told their role.");
   assert.equal(rolePanesSummary({ panes: [result.panes[0]], leftWithoutPane: ["writer"] }, true), "tester: new Codex pane. Left without a pane: writer.");
+  const blocked = { role: "reviewer", paneId: "p3", name: "Codex", preset: null, notReached: null, cantReach: "can't reach Aya: Codex sandbox workspace-write blocks the socket" };
+  assert.equal(
+    rolePanesSummary({ panes: [result.panes[0], blocked], leftWithoutPane: [] }, false),
+    "tester: new Codex pane, reviewer: Codex. Can't reach Aya: reviewer; its status below says why. Start the team when you are ready.",
+  );
+});
+
+test("after Apply: a pane main marks unsure is May not reach, whatever its texts say", () => {
+  // main decides it; the window reads no wording of main's texts.
+  const pane = (role, cantReach, unsure) => ({ role, paneId: role, name: role, preset: null, notReached: null, cantReach, note: null, unsure });
+  assert.equal(
+    rolePanesSummary({ panes: [pane("tester", null, true)], leftWithoutPane: [] }, false),
+    "tester: tester. May not reach Aya: tester; its status below says why. Start the team when you are ready.",
+  );
+  assert.equal(
+    rolePanesSummary({ panes: [pane("tester", "Aya does not know yet how this pane was launched", true), pane("fixer", "can't reach Aya: read-only", false)], leftWithoutPane: [] }, false),
+    "tester: tester, fixer: fixer. Can't reach Aya: fixer; its status below says why. May not reach Aya: tester; its status below says why. Start the team when you are ready.",
+  );
 });
 
 test("a team an agent saved from a pane is not offered: the agent proposes its panes", () => {
@@ -128,4 +178,82 @@ test("a role's status: no pane, ready, or why its pane would not take a message"
   assert.deepEqual(status("gone"), { text: "no pane", tone: "none" });
   assert.deepEqual(status("none"), { text: "no pane", tone: "none" });
   assert.deepEqual(roleStatus({ assignments: { a: "p1" }, paneHolds: {} }, "a", tabs), { text: "ready", tone: "ok" });
+  const why = "can't reach Aya: OpenCode's plan agent is read-only (edits denied), so the role never does its work; open a new pane for it, or restart this one with --agent build";
+  assert.deepEqual(roleStatus({ assignments: { a: "p1" }, paneHolds: { a: why } }, "a", tabs), { text: why, tone: "held" });
+});
+
+test("a role's note: what Aya widened for its pane, only while it has one", async () => {
+  const { roleNote } = await import("../dist-test/team-view.js");
+  const tabs = [{ id: "p1" }, { id: "p2" }];
+  const note = "Aya opened it with -c sandbox_workspace_write.network_access=true so it reaches Aya";
+  const team = { assignments: { a: "p1", b: "p2", gone: "p9" }, paneNotes: { a: note, b: null, gone: note } };
+  assert.equal(roleNote(team, "a", tabs), note);
+  assert.equal(roleNote(team, "b", tabs), null);
+  assert.equal(roleNote(team, "gone", tabs), null);
+  assert.equal(roleNote(team, "none", tabs), null);
+  assert.equal(roleNote({ assignments: { a: "p1" }, paneNotes: {} }, "a", tabs), null);
+});
+
+test("liveness lines: nothing for a team not running, a stall and a blocked role spelled out", async () => {
+  const { livenessLine, roleStatus } = await import("../dist-test/team-view.js");
+  const live = (status, extra = {}) => ({ status, stalledSince: null, blocked: [], ...extra });
+  assert.equal(livenessLine(live("never started")), null);
+  assert.equal(livenessLine(live("paused")), null);
+  assert.equal(livenessLine(live("progressing")).text, "progressing");
+  assert.equal(livenessLine(live("progressing", { roundsHeld: { role: "tester", rounds: 2 } })).text, "progressing - rounds wait for tester to answer (2 unanswered)");
+  const silence = { askAfterMin: 30, stalledAfterMin: 60 };
+  assert.equal(
+    livenessLine(live("progressing", { silence })).text,
+    "progressing - the lead is asked for a round after 30 min without a message or a change to the repo; flagged after 60 min without a change to the repo",
+    "a team with no cadence says what watches it, not 'no rounds to watch'",
+  );
+  assert.equal(livenessLine(live("progressing", { silence: { askAfterMin: null, stalledAfterMin: 60 } })).text, "progressing - no lead to ask; flagged after 60 min without a change to the repo");
+  assert.equal(livenessLine(live("progressing", { silence })).tone, "ok");
+  assert.equal(livenessLine(live("progressing", { silence: { ...silence, everyMin: 3 } })).text, "progressing - the lead gets a round every 3 min; flagged after 60 min without a change to the repo");
+  const since = "2026-09-30T18:34:00.000Z";
+  // Rounds nobody answers are no stall, so there is no "idle" or "no reply" line.
+  assert.match(livenessLine(live("stalled", { stalledSince: since })).text, /^stalled: no change to the repo since \d\d:\d\d - rounds are paused until the repo changes$/);
+  const repo = { since, messages: 1 };
+  assert.match(livenessLine(live("stalled", { stalledSince: since, repo, silence })).text, /^stalled: no change to the repo since \d\d:\d\d \(1 message\) - rounds are paused until the repo changes$/);
+  const clock = (iso) => new Date(iso).toTimeString().slice(0, 5);
+  const earlier = "2026-09-30T15:07:00.000Z";
+  assert.equal(livenessLine(live("stalled", { stalledSince: since, repo: { since: earlier, messages: 1 } })).text.split(" since ")[1].slice(0, 5), clock(earlier), "the repo's last change, not the stall's start");
+  assert.match(livenessLine(live("talking", { repo: { since, messages: 4 }, silence })).text, /^talking - no change to the repo since \d\d:\d\d \(4 messages\); flagged after 60 min without one$/);
+  assert.equal(livenessLine(live("talking", { repo, silence })).tone, "ok");
+  const blocked = [{ role: "tester", reason: "shows an approval prompt", since }];
+  assert.match(livenessLine(live("blocked", { blocked })).text, /^tester is waiting for you in its CLI$/);
+  assert.match(livenessLine(live("blocked", { blocked, stalledSince: since })).text, /^stalled since \d\d:\d\d - tester is waiting for you in its CLI$/);
+  const unreached = { role: "implementer", reason: "is not running (exited, or its tab was not opened yet)", since };
+  const line = livenessLine(live("unreachable", { unreached }));
+  assert.equal(line.tone, "held");
+  assert.match(line.text, /^no round typed to implementer since \d\d:\d\d: its pane is not running/);
+  const team = { assignments: { tester: "p1" }, paneHolds: { tester: "shows an approval prompt" }, liveness: live("blocked", { blocked }) };
+  assert.match(roleStatus(team, "tester", [{ id: "p1" }]).text, /^waiting for you since \d\d:\d\d$/);
+});
+
+// "Not reached" is the reason Apply or Start last gave; it goes when the pane stops being held.
+const NR_ROWS = [
+  // [label, stored reason, assigned pane in tabs, current hold, shown]
+  ["held then, held now: still shown", "shows an approval prompt", true, "shows an approval prompt", "shows an approval prompt"],
+  ["held then, another hold now: still shown", "shows an approval prompt", true, "runs a shell", "shows an approval prompt"],
+  ["held then, answered since: gone", "shows an approval prompt", true, null, null],
+  ["a replacement pane that is free: gone", "shows an approval prompt", true, null, null],
+  ["no pane then and none now: shown", "no pane assigned", false, null, "no pane assigned"],
+  ["nothing stored: nothing shown", undefined, true, "shows an approval prompt", null],
+  ["nothing stored, no pane: nothing shown", undefined, false, null, null],
+];
+for (const [label, stored, hasPane, hold, shown] of NR_ROWS) {
+  test(`notReachedLine | ${label}`, () => {
+    const team = { assignments: hasPane ? { fixer: "p1" } : {}, paneHolds: hasPane ? { fixer: hold } : {} };
+    assert.equal(view.notReachedLine(team, "fixer", [{ id: "p1" }], stored), shown);
+  });
+}
+
+test("notReachedLine | a pane that left the project counts as no pane", () => {
+  assert.equal(view.notReachedLine({ assignments: { fixer: "gone" }, paneHolds: {} }, "fixer", [{ id: "p1" }], "no pane assigned"), "no pane assigned");
+});
+
+test("startSummary: a team already running says nothing was sent; taskPlaceholder: no roles, no recipient", () => {
+  assert.equal(startSummary({ started: false, alreadyRunning: true, delivered: [], held: [], task: null }), "Already running, nothing was sent.");
+  assert.equal(view.taskPlaceholder({ roles: [], lead: null }), "Task (optional)");
 });

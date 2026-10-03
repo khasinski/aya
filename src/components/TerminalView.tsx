@@ -56,7 +56,7 @@ const DEFAULT_TERMINAL_FONT_FAMILY =
   '"JetBrains Mono", "SF Mono", Menlo, Consolas, monospace';
 // Lines of scrollback xterm keeps in memory per terminal.
 const SCROLLBACK_LINES = 10_000;
-// Wheel-scroll easing: ~8 frames at 60Hz — smooth without feeling sluggish.
+// Wheel-scroll easing: ~8 frames at 60Hz - smooth without feeling sluggish.
 const SMOOTH_SCROLL_DURATION_MS = 125;
 // Delay before re-fitting/repainting a freshly-shown terminal, giving xterm a
 // beat to finish measuring after a visibility/layout change.
@@ -100,6 +100,9 @@ interface Props {
   terminal: TerminalState;
   preset: Preset;
   command: string;
+  /** What to spawn instead when a peer pane runs in the same folder. */
+  sharedDirCommand?: string;
+  peerCwds?: string[];
   /** Saved snippets the user can inject into this terminal via the drawer. */
   snippets: Snippet[];
   snippetsOpen: boolean;
@@ -143,7 +146,7 @@ interface Props {
 }
 
 /** Our internal ThemeColors shape is a superset of xterm.js's ITheme. This
- *  just hands it through — separate function so the call site stays clean. */
+ *  just hands it through - separate function so the call site stays clean. */
 function toXtermTheme(c: ThemeColors): ITheme {
   return c;
 }
@@ -227,6 +230,8 @@ function terminalViewPropsEqual(a: Props, b: Props): boolean {
     terminalRenderStateEqual(a.terminal, b.terminal) &&
     presetRenderStateEqual(a.preset, b.preset) &&
     a.command === b.command &&
+    a.sharedDirCommand === b.sharedDirCommand &&
+    (a.peerCwds ?? []).join("\0") === (b.peerCwds ?? []).join("\0") &&
     a.snippets === b.snippets &&
     a.snippetsOpen === b.snippetsOpen &&
     a.isVisible === b.isVisible &&
@@ -284,6 +289,8 @@ function TerminalViewComponent({
   terminal,
   preset,
   command,
+  sharedDirCommand,
+  peerCwds,
   snippets,
   snippetsOpen,
   onSnippetsOpenChange,
@@ -384,20 +391,20 @@ function TerminalViewComponent({
             "\r\n\x1b[2maya: terminal has exited — press Shift+Enter to restart, then send the snippet again\x1b[0m\r\n",
           );
         } catch {
-          /* ignore — terminal may be mid-dispose */
+          /* ignore - terminal may be mid-dispose */
         }
         onSnippetsOpenChange(false);
         return;
       }
       void window.aya.ptyWrite(terminal.id, snippetPtyPayload(snippet));
-      // Collapse the drawer so the result (and the typed text) is visible —
-      // an open drawer covers the bottom of the terminal — and return focus
+      // Collapse the drawer so the result (and the typed text) is visible -
+      // an open drawer covers the bottom of the terminal - and return focus
       // so the user can keep typing / press Enter on a held snippet.
       onSnippetsOpenChange(false);
       try {
         xtermRef.current?.focus();
       } catch {
-        /* ignore — terminal may be mid-dispose */
+        /* ignore - terminal may be mid-dispose */
       }
     },
     [terminal.id, terminal.exitCode, terminal.stopped, onSnippetsOpenChange],
@@ -415,6 +422,8 @@ function TerminalViewComponent({
   canRestartRef.current = terminal.exitCode === 0 || !!terminal.stopped;
   const commandRef = useRef(command);
   commandRef.current = command;
+  const sharedRef = useRef({ sharedDirCommand, peerCwds });
+  sharedRef.current = { sharedDirCommand, peerCwds };
   const cwdRef = useRef(cwd);
   cwdRef.current = cwd;
 
@@ -445,7 +454,7 @@ function TerminalViewComponent({
         term.refresh(0, Math.max(term.rows - 1, 0));
         if (shouldFocus) term.focus();
       } catch {
-        /* ignore — xterm may be mid-dispose or still measuring fonts */
+        /* ignore - xterm may be mid-dispose or still measuring fonts */
       }
     });
   }, []);
@@ -481,7 +490,7 @@ function TerminalViewComponent({
   }, [terminal.id]);
 
   // RECOVER: the expensive path. clearTextureAtlas() throws away the whole
-  // glyph cache and forces every visible cell to re-rasterize — that full
+  // glyph cache and forces every visible cell to re-rasterize - that full
   // re-raster is the visible "flash". Reserve it for the moments the atlas is
   // genuinely suspect (a lost/rebuilt GL context), NOT ordinary focus/resize.
   const recoverTerminalRender = useCallback(
@@ -493,7 +502,7 @@ function TerminalViewComponent({
           webglRef.current?.clearTextureAtlas();
           term.refresh(0, Math.max(term.rows - 1, 0));
         } catch {
-          /* ignore — renderer may be recreating after sleep/wake */
+          /* ignore - renderer may be recreating after sleep/wake */
         }
       };
       refresh();
@@ -528,7 +537,7 @@ function TerminalViewComponent({
         try {
           term.refresh(0, Math.max(term.rows - 1, 0));
         } catch {
-          /* ignore — xterm may be mid-dispose or still measuring */
+          /* ignore - xterm may be mid-dispose or still measuring */
         }
       };
       refresh();
@@ -605,7 +614,7 @@ function TerminalViewComponent({
             try {
               t.refresh(0, Math.max(t.rows - 1, 0));
             } catch {
-              /* ignore — terminal may be mid-dispose */
+              /* ignore - terminal may be mid-dispose */
             }
           });
         });
@@ -742,7 +751,7 @@ function TerminalViewComponent({
     };
     containerRef.current.addEventListener("click", onTerminalLinkClick, true);
 
-    // GPU-accelerated renderer — eliminates the column-drift you get with
+    // GPU-accelerated renderer - eliminates the column-drift you get with
     // the default DOM renderer when fonts (especially JetBrains Mono with
     // ligatures, or unicode box-drawing chars that fall back to a non-
     // monospace family) don't render at exact integer cell widths. WebGL
@@ -816,7 +825,7 @@ function TerminalViewComponent({
       }
       if (ev.type !== "keydown") return true;
 
-      // Enter handling (restart / soft newline / submit) — see enterKeyAction.
+      // Enter handling (restart / soft newline / submit) - see enterKeyAction.
       // Returning false stops xterm from also forwarding its default CR.
       if (ev.key === "Enter") {
         const action = enterKeyAction({
@@ -840,7 +849,7 @@ function TerminalViewComponent({
         }
         if (action === "soft-newline" || action === "submit") {
           // Shift/Option+Enter: a newline inside a running rich TUI (focus-
-          // reporting on), a plain submit at the shell — xterm's default is
+          // reporting on), a plain submit at the shell - xterm's default is
           // wrong for both (it submits Shift+Enter; macOptionIsMeta turns
           // Option+Enter into a zsh multiline edit).
           ev.preventDefault();
@@ -871,7 +880,7 @@ function TerminalViewComponent({
       // which is NOT bound in vanilla zsh and which some shell configs
       // misinterpret as a delete command (user-visible symptom: text
       // disappears instead of cursor moving). Send the iTerm2-style
-      // ESC-prefixed sequences instead — those are what readline, zsh's
+      // ESC-prefixed sequences instead - those are what readline, zsh's
       // default zle, claude, and codex all expect for word ops on macOS.
       if (
         ev.altKey &&
@@ -896,7 +905,7 @@ function TerminalViewComponent({
 
       // Bare control + letter combos (no Cmd/Shift/Alt) are shell-level
       // control characters. Chromium intercepts several of them at the
-      // WebContents level — Ctrl+R as page-reload is the headline one,
+      // WebContents level - Ctrl+R as page-reload is the headline one,
       // and that's what stops reverse-i-search from working in shells
       // running inside aya. Forward the control byte to the PTY ourselves
       // and preventDefault so Chromium's reload doesn't fire. Limited to
@@ -972,11 +981,13 @@ function TerminalViewComponent({
         agent: presetAgent,
         agentConfigDir: preset.configDir,
         command,
+        ...sharedRef.current,
         cwd,
         cols: Math.max(cols, TERMINAL_FALLBACK_COLS),
         rows: Math.max(rows, TERMINAL_FALLBACK_ROWS),
         attachOnly,
         attachIfReused,
+        ...(terminal.teamLaunch ? { teamLaunch: true } : {}),
       });
     }
 
@@ -1036,7 +1047,7 @@ function TerminalViewComponent({
   // FONT-LOAD FIX: the WebGL atlas rasterizes each glyph with whatever font is
   // actually resolved at draw time. "JetBrains Mono" is a web font, so if the
   // atlas warms up before it finishes loading, the initial glyph cache is built
-  // from a fallback (SF Mono / Menlo) with wrong shapes and metrics — and those
+  // from a fallback (SF Mono / Menlo) with wrong shapes and metrics - and those
   // stay cached (keyed by codepoint+colors, not by font) until something clears
   // them. Once the real font is ready, throw the atlas away once so glyphs
   // re-rasterize correctly. Skipped entirely when the primary family is already
@@ -1048,9 +1059,9 @@ function TerminalViewComponent({
     if (!primary) return;
     const probe = `${fontSize}px ${primary}`;
     try {
-      if (document.fonts.check(probe)) return; // already loaded — atlas is fine
+      if (document.fonts.check(probe)) return; // already loaded - atlas is fine
     } catch {
-      /* font shorthand rejected (unusual) — fall through and wait on ready */
+      /* font shorthand rejected (unusual) - fall through and wait on ready */
     }
     let cancelled = false;
     document.fonts.ready
@@ -1062,7 +1073,7 @@ function TerminalViewComponent({
           webglRef.current?.clearTextureAtlas();
           term.refresh(0, Math.max(term.rows - 1, 0));
         } catch {
-          /* ignore — terminal may be mid-dispose */
+          /* ignore - terminal may be mid-dispose */
         }
       })
       .catch(() => {});
@@ -1074,7 +1085,7 @@ function TerminalViewComponent({
   useEffect(() => {
     if (!isVisible) return;
     // Repaint the freshly-shown terminal (webgl atlas, scrollback). Focus is
-    // NOT done here — it's owned by the isActive effect below, so a concurrent
+    // NOT done here - it's owned by the isActive effect below, so a concurrent
     // fit can't swallow it. Also re-assert size to the PTY (with nudge for
     // rich TUIs) so harnesses re-render their static layout when the terminal
     // view is brought back (tab switch, split activation, etc.).
@@ -1112,7 +1123,7 @@ function TerminalViewComponent({
           forcePtyReassert();
         }
       } catch {
-        /* ignore — xterm may be mid-dispose */
+        /* ignore - xterm may be mid-dispose */
       }
     };
     // Focus now, and retry across a couple of frames because xterm may still be
@@ -1212,11 +1223,13 @@ function TerminalViewComponent({
       agent: presetAgent,
       agentConfigDir: preset.configDir,
       command: commandRef.current,
+      ...sharedRef.current,
       cwd: cwdRef.current,
       cols: Math.max(term.cols, TERMINAL_FALLBACK_COLS),
       rows: Math.max(term.rows, TERMINAL_FALLBACK_ROWS),
+      ...(terminal.teamLaunch ? { teamLaunch: true } : {}),
     });
-  }, [restartTrigger, terminal.id, presetAgent, preset.configDir]);
+  }, [restartTrigger, terminal.id, presetAgent, preset.configDir, terminal.teamLaunch]);
 
   useEffect(() => {
     markRestoring(true);
@@ -1226,7 +1239,7 @@ function TerminalViewComponent({
 
   // Hot-swap theme when the active selection changes. xterm.js stashes the
   // new palette into `options.theme` but does NOT repaint the visible grid by
-  // itself — already-rendered cells keep the old colors. We force a refresh
+  // itself - already-rendered cells keep the old colors. We force a refresh
   // of every visible row to make the change take effect immediately.
   useEffect(() => {
     const term = xtermRef.current;
@@ -1235,7 +1248,7 @@ function TerminalViewComponent({
     try {
       term.refresh(0, Math.max(term.rows - 1, 0));
     } catch {
-      /* ignore — refresh may throw if the terminal is being disposed */
+      /* ignore - refresh may throw if the terminal is being disposed */
     }
   }, [themeColors]);
 

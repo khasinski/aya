@@ -106,6 +106,16 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     summary: "Print messages for your role that could not be typed into your pane.",
   },
   {
+    command: "team pause",
+    usage: 'aya team pause ["why"]',
+    summary: "The lead ends the team's work: pauses it as the Pause button does, and the Teams window shows why; the user resumes it.",
+    example: 'aya team pause "no lower complexity is possible"',
+    notes: [
+      "Only the lead (your whoami says so). Run it when the work is done or cannot go on, not to wait for the user: that is aya status waiting.",
+      "A pause the user made is not the lead's to end, and a lead's pause the user Resumes or Pauses again becomes the user's.",
+    ],
+  },
+  {
     command: "team new",
     usage: "aya team new [description]",
     summary: "Print a guide for writing a team file for this project: the format, its rules and an example; save the file with aya team save.",
@@ -140,13 +150,26 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     command: "team start",
     usage: 'aya team start team ["task"] [--to role]',
     summary:
-      "Start a team as the Teams window's Start does: every role's pane is checked, then gets the delivery test; the team's rounds begin. A task then goes to --to, else the cadence role, else the first role, as a message from the user.",
+      "Start a team as the Teams window's Start does: every role's pane is checked, then gets the delivery test; the team's rounds begin. A task then goes to --to, else the lead (the role with the cadence is the lead), else the first role, as a message from the user (from a role's pane: from that role).",
     example: 'aya team start ux-fix "make the timer pausable"',
     notes: [
       "Start a team only when the user asks for it; ask the user for the task first.",
+      "Never run it to give a teammate work: that is aya team send. From a pane of one of the team's roles it is refused while the team runs, and on a pause the user made; the lead may resume only its own aya team pause.",
       "It prints who got the task.",
       "If a role's pane is missing or busy, nothing is sent and each such role is named.",
     ],
+  },
+  {
+    command: "team debug",
+    usage: "aya team debug team [-f]",
+    summary: "Print the team's last 50 debug entries (every hold, round and its reason, queue, reservation, pause, liveness), -f to follow them; written only while aya debug is on.",
+    notes: ["For the user debugging a team; set AYA_PROJECT_SLUG when the team's name is in two projects."],
+  },
+  {
+    command: "debug",
+    usage: "aya debug on|off|status",
+    summary: "Turn writing every team decision to the team's debug log on or off, with no restart; off by default.",
+    notes: ["The user's switch: do not turn it on or off unless the user asks."],
   },
   {
     command: "presets",
