@@ -4,14 +4,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import * as net from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { envWithoutAya } from "./helpers/env.mjs";
+import { CLI_SHELLS, shellOptions } from "./helpers/cli-shells.mjs";
 
 const cli = resolve("bin/aya");
-const SHELLS = ["/bin/sh", "/bin/dash"].filter(existsSync);
 
 async function aya(args, { shell = "/bin/sh", reply = { ok: true, output: "from the app\n" } } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "aya-team-panes-"));
@@ -52,8 +52,8 @@ async function aya(args, { shell = "/bin/sh", reply = { ok: true, output: "from 
   }
 }
 
-for (const shell of SHELLS) {
-  test(`presets asks the app and prints its answer, --json asks for JSON (${shell})`, async () => {
+for (const shell of CLI_SHELLS) {
+  test(`presets asks the app and prints its answer, --json asks for JSON (${shell})`, shellOptions(shell), async () => {
     const plain = await aya(["presets"], { shell });
     assert.equal(plain.status, 0);
     assert.equal(plain.stdout, "from the app\n");
@@ -64,14 +64,14 @@ for (const shell of SHELLS) {
     assert.equal(json.request.json, true);
   });
 
-  test(`presets refuses anything but --json before reaching the app (${shell})`, async () => {
+  test(`presets refuses anything but --json before reaching the app (${shell})`, shellOptions(shell), async () => {
     const { status, stderr, request } = await aya(["presets", "--all"], { shell });
     assert.equal(status, 1);
     assert.match(stderr, /Usage/);
     assert.equal(request, null);
   });
 
-  test(`team open sends the team, each role=target in order, and --replace anywhere (${shell})`, async () => {
+  test(`team open sends the team, each role=target in order, and --replace anywhere (${shell})`, shellOptions(shell), async () => {
     for (const args of [
       ["team", "open", "ux-fix", "reviewer=claude", "tester=this", "fixer=shell 2"],
       ["team", "open", "--replace", "ux-fix", "reviewer=claude", "tester=this", "fixer=shell 2"],
@@ -94,7 +94,7 @@ for (const shell of SHELLS) {
     }
   });
 
-  test(`team open keeps a repeated role for the app to refuse, and splits at the first = (${shell})`, async () => {
+  test(`team open keeps a repeated role for the app to refuse, and splits at the first = (${shell})`, shellOptions(shell), async () => {
     const { request } = await aya(["team", "open", "t", "a=x", "a=my=pane"], { shell });
     assert.deepEqual(request.panes, [
       { role: "a", target: "x" },
@@ -102,7 +102,7 @@ for (const shell of SHELLS) {
     ]);
   });
 
-  test(`team open refuses a missing team or a malformed pair before reaching the app (${shell})`, async () => {
+  test(`team open refuses a missing team or a malformed pair before reaching the app (${shell})`, shellOptions(shell), async () => {
     for (const [args, message] of [
       [["team", "open"], /Usage/],
       [["team", "open", "--replace"], /Usage/],
@@ -118,7 +118,7 @@ for (const shell of SHELLS) {
     }
   });
 
-  test(`team start sends the team and the caller's project; anything else is refused before the app (${shell})`, async () => {
+  test(`team start sends the team and the caller's project; anything else is refused before the app (${shell})`, shellOptions(shell), async () => {
     const { status, request, dir } = await aya(["team", "start", "ux-fix"], { shell });
     assert.equal(status, 0);
     assert.equal(request.type, "team-start");
@@ -139,7 +139,7 @@ for (const shell of SHELLS) {
     }
   });
 
-  test(`team open prints the app's problem and exits 1 (${shell})`, async () => {
+  test(`team open prints the app's problem and exits 1 (${shell})`, shellOptions(shell), async () => {
     const reply = { ok: false, error: 'team ux-fix has no role "qa"; nothing was opened' };
     const { status, stdout, stderr } = await aya(["team", "open", "ux-fix", "qa=claude"], { shell, reply });
     assert.equal(status, 1);

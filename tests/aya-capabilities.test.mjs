@@ -49,6 +49,12 @@ async function runAgainstServer(args, env, onRequest) {
   }
 }
 
+/** The caller minus its pid, which is the CLI's own and changes every run (caller-proof.ts). */
+function withoutPid({ pid, ...caller }) {
+  assert.ok(Number.isInteger(pid) && pid > 0, "the CLI sends its own pid");
+  return caller;
+}
+
 test("aya capabilities prints the command list as JSON, marked inside Aya", async () => {
   const { status, stdout, seen } = await runAgainstServer(["capabilities"], {
     AYA_TERMINAL_ID: "term-1",
@@ -63,8 +69,8 @@ test("aya capabilities prints the command list as JSON, marked inside Aya", asyn
     AYA_CAPABILITIES.map((c) => c.usage),
   );
   assert.ok(doc.commands.find((c) => c.command === "pane send").notes.join(" ").includes("--no-submit"));
-  assert.deepEqual(seen, [
-    { request: { type: "capabilities" }, caller: { terminalId: "term-1", presetId: "claude", cwd: process.cwd() } },
+  assert.deepEqual(seen.map(({ request, caller }) => ({ request, caller: withoutPid(caller) })), [
+    { request: { type: "capabilities" }, caller: { terminalId: "term-1", presetId: "claude" } },
   ]);
 });
 
@@ -72,7 +78,7 @@ test("outside an Aya pane: still answers, insideAya false, no pane in the caller
   const { status, stdout, seen } = await runAgainstServer(["capabilities"], {});
   assert.equal(status, 0);
   assert.equal(JSON.parse(stdout).insideAya, false);
-  assert.deepEqual(seen[0].caller, { cwd: process.cwd() });
+  assert.deepEqual(withoutPid(seen[0].caller), {});
 });
 
 test("every command carries its pane, not just capabilities", async () => {
@@ -81,7 +87,7 @@ test("every command carries its pane, not just capabilities", async () => {
     AYA_PRESET_ID: "codex",
   });
   assert.equal(seen[0].request.type, "status");
-  assert.deepEqual(seen[0].caller, { terminalId: "term-2", presetId: "codex", cwd: process.cwd() });
+  assert.deepEqual(withoutPid(seen[0].caller), { terminalId: "term-2", presetId: "codex" });
 });
 
 test("a throwing adoption hook never fails the command", async () => {

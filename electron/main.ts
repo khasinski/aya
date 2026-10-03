@@ -52,29 +52,32 @@ import {
 } from "./cli-install";
 import { startConfigWatcher } from "./config-watcher";
 import { isHostStale } from "./pty-host-staleness";
-import { deliverTeamMessage, startControlServer } from "./control";
-import { deliverOpenProject } from "./open-delivery";
-import { singleFlight } from "./single-flight";
+import { noteUserAnswer, onQuestionUnconfirmed, outstandingWaiting } from "./agent-status";
+import { deliverTeamMessage, paneOutputMarks, settledAfterSubmit, startControlServer, type ControlStatusSink, type TurnProbe } from "./control";
+import { confirmOpen, deliverOpenProject, replayOpensOnLoad } from "./open-delivery";
+import { createWindowSource } from "./window-for-open";
 import { createCliAdoptionStore } from "./cli-adoption";
-import { TMP_SUFFIX, writeFileAtomic } from "./atomic-write";
+import { TMP_SUFFIX } from "./atomic-write";
+import { dropCodexBriefSections, rewriteIfChanged } from "./codex-brief";
 import {
-  briefChannel,
   briefText,
-  codexAgentsFile,
-  codexBriefInProject,
-  codexBriefSync,
-  commandWithBriefArg,
-  commandWithBriefEnv,
   antigravityBriefFile,
   withOwnedBrief,
   withoutOwnedBrief,
-  withBriefSection,
-  briefMarkersIntact,
-  BRIEF_BEGIN,
-  withoutBriefSection,
-  teamNote,
 } from "./agent-brief";
 import { paneTeamRole } from "./team-files";
+import { pathExists } from "./path-exists";
+import {
+  fileLaunchRecords,
+  loginShellEnv,
+  removePaneBrief,
+  roleNoteReport,
+  sweepPaneBriefs,
+  withAgentBrief,
+  type PaneBriefDeps,
+  type RoleRef,
+} from "./pane-brief";
+import { closePane, createSpawnGate } from "./spawn-gate";
 import {
   appleChat,
   type ChatOptions,
@@ -84,10 +87,15 @@ import {
   providerChat,
   RECOMMENDED_OLLAMA_MODEL,
 } from "./intelligence-chat";
-import type { TeamControlDeps } from "./team-control";
+import { withLaunchHolds, withSpawnHolds, type TeamControlDeps } from "./team-control";
+import { roleLaunchCheck } from "./launch-config";
+import { launchBlockOf, launchHoldOf, launchNoteOf } from "./launch-mode";
+import { reachedAyaPanes } from "./reached-aya";
+import { debugPane, watchDebugSwitch } from "./team-debug";
+import { userShell } from "./shell";
 import { registerTeamIpc } from "./team-ipc";
-import { askWindowToOpenPanes, newPaneId, RendererRequests, teamPaneDeps, type PaneHost } from "./team-panes";
-import { presetInstalled } from "./command-probe";
+import { askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, teamPaneDeps, type PaneHost } from "./team-panes";
+import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
 import {
@@ -104,7 +112,7 @@ import {
   getGitRoot,
   headCommit,
   listWorktreeStatus,
-  listWorktrees,
+  workingTreeState,
 } from "./git";
 import { getGitHubLink, isGitHubCliAvailable } from "./github";
 import {
@@ -116,8 +124,13 @@ import {
   IS_DEV,
   IS_E2E_HEADLESS,
   IS_E2E_PTY_SHUTDOWN,
+  PROJECTS_STATE_DELAY_MS,
+  SPAWN_PREP_DELAY_MS,
   PTY_HOST_SOCKET_PATH,
   REMOTE_SOCKET_PATH,
+  REACHED_AYA_FILE,
+  PANE_LAUNCH_ROLES_FILE,
+  AGENT_BRIEF_FILES_FILE,
 } from "./paths";
 import { createPtyLog } from "./pty-log";
 import {
@@ -174,13 +187,13 @@ import {
   SUMMARY_TEXT_MAX_CHARS,
 } from "./local-summary-errors";
 import { readRepoProjectConfig } from "./project-local";
-import { repairProcessPath } from "./shell-path";
+import { repairProcessPath, resolveLoginShellPath } from "./shell-path";
 import { paneReadText } from "./pane-render";
-import { HOLD_STARTING } from "./pane-holds";
 import { PtyHostClient } from "./pty-host-client";
+import { homeSocketProblems } from "./socket-path";
 import { PTY_HOST_SCRIPT_NAME } from "./pty-host-staleness";
 import { reapStaleHostRecords } from "./pty-host-registry";
-import { COMMAND_PROBE_TIMEOUT_MS, HOOK_VIA } from "./constants";
+import { COMMAND_PROBE_TIMEOUT_MS, HOOK_VIA, PTY_HOST_NOT_CONNECTED, PTY_HOST_UNKNOWN_REQUEST } from "./constants";
 import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
 import {
   requirePositiveInt,
@@ -194,6 +207,7 @@ import {
   validateSpawnRequest,
   validateThemesFile,
 } from "./validation";
+import { withSharedDirCommand } from "./agent-session";
 import { loadWindowState, trackWindowState } from "./window-state";
 import { resolveDropTarget, WindowProjectSlices } from "./window-slices";
 import {
@@ -212,9 +226,10 @@ import { parseSummaryResponse, summaryPrompt } from "./summary-prompt";
 import type {
   AyaIntelligenceConfig,
   CliStatus,
+  ControlStatusUpdate,
   DiagnosticsReport,
-  SpawnRequest,
   LocalSummaryRequest,
+  SpawnRequest,
   LocalSummaryResult,
   OllamaStatus,
   ProjectCollectionState,
@@ -258,29 +273,62 @@ const GPU_HEAL_NUDGE_DELAYS_MS = [1200, 3000];
 
 const PTY_HOST_SCRIPT = path.join(__dirname, PTY_HOST_SCRIPT_NAME);
 const ptyHost = new PtyHostClient(PTY_HOST_SCRIPT);
+const spawnGate = createSpawnGate();
+const paneRunning = async (ptyId: string) => (await ptyHost.getSize(ptyId)) !== null;
+const teamHold = settledAfterSubmit((terminalId, pasted) => ptyHost.holdReason(terminalId, pasted));
+const outputMarks = paneOutputMarks();
+ptyHost.attachWebContents(outputMarks.sink);
+const turnProbe: TurnProbe = {
+  hold: (terminalId, pasted) => ptyHost.holdReason(terminalId, pasted),
+  outputMark: outputMarks.mark,
+  outputPaused: outputMarks.outputPaused,
+};
+/** The host's hold, except that a pane still being prepared here is starting, not gone. */
+const startingHold = withSpawnHolds((terminalId) => teamHold(terminalId), (terminalId) => spawnGate.spawning(terminalId));
+/** Panes whose process called aya (not through a hook): proof that settles an unknown verdict. */
+const reachedAya = reachedAyaPanes({
+  panePid: (terminalId) => ptyHost.getPid(terminalId),
+  file: REACHED_AYA_FILE,
+  onReached: (terminalId) => void debugPane(teamDeps, terminalId, "launch", { verdict: "reached" }),
+});
+async function launchNote(terminalId: string): Promise<string | null> {
+  return launchNoteOf(await ptyHost.launch(terminalId), await reachedAya.has(terminalId));
+}
 // One set of team deps for the team runner and the control server's aya team.
 const teamDeps: TeamControlDeps = {
   teamHome: AYA_HOME,
   listProjects: () => listProjects(),
-  deliver: (terminalId, text) =>
-    deliverTeamMessage((id, data) => ptyHost.write(id, data), terminalId, text, (id) => ptyHost.holdReason(id)),
-  holdReason: (terminalId) => ptyHost.holdReason(terminalId),
+  deliver: (terminalId, text, cancelled, entered, pasting) =>
+    deliverTeamMessage((id, data) => ptyHost.write(id, data), terminalId, text, teamHold, cancelled, turnProbe, entered, pasting),
+  holdReason: withLaunchHolds(startingHold, async (terminalId) => launchHoldOf(await ptyHost.launch(terminalId))),
+  busy: (terminalId) => ptyHost.paneBusy(terminalId),
+  roleNoteReport: (project, team, assignments) => roleNoteReport(project, team, assignments, paneBriefDeps),
+  launchNote,
   headCommit,
+  treeState: workingTreeState,
+  starting: () => !bootProjectsLoaded,
 };
 const paneOpens = new RendererRequests();
 // aya team open and the Teams window's Apply panes open panes through this.
 const teamPaneHost: PaneHost = {
   listPresets,
   presetInstalled,
+  roleLaunch: (preset, project) =>
+    roleLaunchCheck(preset.command, project?.directory ?? os.homedir(), process.env, CONTROL_SOCKET_PATH, userShell()),
+  launchBlock: async (terminalId) => launchBlockOf(await ptyHost.launch(terminalId)),
+  launchNote,
   // A pane still in its spawn preflight has no PTY yet but is live all the same.
-  paneAlive: async (terminalId) =>
-    (await ptyHost.getSize(terminalId)) !== null || (await ptyHost.holdReason(terminalId)) === HOLD_STARTING,
+  paneAlive: paneAliveOf((terminalId) => ptyHost.getSize(terminalId), startingHold),
   // The window that shows the project adds the tabs; main picked their ids.
   openPanes: (projectSlug, panes) => {
     const windowId = windowSlices.windowOf(projectSlug);
-    return askWindowToOpenPanes(windowId === null ? null : BrowserWindow.fromId(windowId), paneOpens, projectSlug, panes);
+    return askWindowToOpenPanes(windowId === null ? null : BrowserWindow.fromId(windowId), paneOpens, projectSlug, panes, !bootProjectsLoaded);
   },
   newPaneId,
+  expectRoles: (roles) => {
+    for (const { ptyId, team, role } of roles) pendingPaneRoles.set(ptyId, { team, role });
+    return () => roles.forEach(({ ptyId }) => pendingPaneRoles.delete(ptyId));
+  },
 };
 const UPDATE_AUTO_CHECK_DELAY_MS = 12_000;
 // Summarizer sampling knobs, shared by BOTH backends (OpenAI-compatible and
@@ -804,67 +852,6 @@ async function installCli(): Promise<CliStatus> {
   };
 }
 
-/** Rewrite `file` only when `change` alters it. `null` content = no file.
- *  A symlinked file (e.g. AGENTS.md kept in a dotfiles repo) is edited at its
- *  target, so the link survives (#122 review). */
-async function rewriteIfChanged(
-  file: string,
-  change: (content: string) => string,
-): Promise<void> {
-  let linked = false;
-  try {
-    linked = (await fs.lstat(file)).isSymbolicLink();
-  } catch {
-    // no file yet
-  }
-  const real = linked ? await fs.realpath(file).catch(() => file) : file;
-  let content: string | null = null;
-  try {
-    content = await fs.readFile(real, "utf-8");
-  } catch {
-    // no file yet
-  }
-  if (content !== null && content.includes(BRIEF_BEGIN) && !briefMarkersIntact(content)) {
-    console.warn(
-      `[aya] left ${file} untouched: its aya brief markers are damaged; delete the aya:brief lines to reset`,
-    );
-    return;
-  }
-  const next = change(content ?? "");
-  if (next === (content ?? "")) return;
-  if (!next && content !== null) {
-    // The file held nothing but our section: we created it, so it goes -
-    // unless it is a link's target, which the user owns; empty it instead.
-    if (linked) await fs.writeFile(real, "");
-    else await fs.rm(file, { force: true });
-    return;
-  }
-  if (linked) await fs.writeFile(real, next);
-  else await writeFileAtomic(file, next);
-}
-
-/** Every AGENTS.md Aya has put a codex brief into, so a deleted or re-homed
- *  codex preset still gets its section removed (#122 review). */
-const CODEX_BRIEF_REGISTRY = path.join(AYA_HOME, "agent-brief-files.json");
-
-async function readBriefRegistry(): Promise<string[]> {
-  try {
-    const parsed = JSON.parse(await fs.readFile(CODEX_BRIEF_REGISTRY, "utf-8")) as unknown;
-    return Array.isArray(parsed) ? parsed.filter((f): f is string => typeof f === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-async function updateBriefRegistry(add: string[], drop: string[]): Promise<void> {
-  const current = new Set(await readBriefRegistry());
-  for (const f of add) current.add(f);
-  for (const f of drop) current.delete(f);
-  await writeFileAtomic(CODEX_BRIEF_REGISTRY, `${JSON.stringify([...current].sort(), null, 2)}\n`);
-}
-
-/** Only files a codex preset points at are touched, and only the brief section
- *  in them. */
 /** One Aya-owned rules file for every antigravity preset: present while any
  *  of them opts in, deleted once none does (or none is left). */
 async function syncAntigravityBrief(): Promise<void> {
@@ -876,90 +863,24 @@ async function syncAntigravityBrief(): Promise<void> {
   ).catch((err) => console.warn(`[aya] could not sync the aya brief at ${file}:`, err));
 }
 
-async function syncCodexBriefs(): Promise<void> {
-  const plan = codexBriefSync(
-    (await listPresets()).filter((preset) => preset.agent === "codex"),
-    await readBriefRegistry(),
-    DEFAULT_CODEX_HOME,
-    expandUserPath,
-  );
-  const brief = briefText(true);
-  const added: string[] = [];
-  const dropped: string[] = [];
-  for (const file of plan.ensure) {
-    await rewriteIfChanged(file, (c) => withBriefSection(c, brief))
-      .then(() => added.push(file))
-      .catch((err) => console.warn(`[aya] could not add the aya brief to ${file}:`, err));
-  }
-  for (const file of plan.remove) {
-    await rewriteIfChanged(file, withoutBriefSection)
-      .then(() => dropped.push(file))
-      .catch((err) => console.warn(`[aya] could not remove the aya brief from ${file}:`, err));
-  }
-  await updateBriefRegistry(added, dropped).catch(() => {});
-}
-
-async function paneTeamNote(spawn: SpawnRequest): Promise<string | null> {
-  const project = (await listProjects()).find((p) => p.slug === spawn.projectSlug);
-  const membership = project ? await paneTeamRole(AYA_HOME, project, spawn.ptyId) : null;
-  return membership ? teamNote(membership.team, membership.role) : null;
-}
-
-/** The brief (preset opted in) and a team pane's role note, for a fresh pane.
- *  Shared harness files take the brief only, never a per-pane note. */
-async function withAgentBrief(spawn: SpawnRequest): Promise<SpawnRequest> {
-  if (spawn.attachOnly || !spawn.presetId) return spawn;
-  const preset = (await listPresets()).find((p) => p.id === spawn.presetId);
-  if (!preset) return spawn;
-  const note = await paneTeamNote(spawn);
-  if (!preset.agentBrief && !note) return spawn;
-  const channel = briefChannel(spawn.agent ?? preset.agent);
-  if (channel.kind === "arg") {
-    const text = [preset.agentBrief ? briefText(false) : null, note].filter(Boolean).join("\n\n");
-    const command = commandWithBriefArg(spawn.command, channel, text);
-    if (!command) {
-      console.warn(`[aya] aya brief skipped for preset ${preset.id}: its command is not a single simple command, or already sets ${channel.flag}`);
-      return spawn;
-    }
-    return { ...spawn, command };
-  }
-  if (!preset.agentBrief) return spawn;
-  if (channel.kind === "env") {
-    // A file Aya owns, so nothing of the user's is touched; only Aya panes
-    // get the variable, so the text needs no "if inside Aya".
-    const briefFile = path.join(AYA_HOME, "agent-brief.md");
-    const command = commandWithBriefEnv(
-      spawn.command,
-      channel,
-      briefFile,
-      process.env[channel.name],
-    );
-    if (!command) {
-      console.warn(`[aya] aya brief skipped for preset ${preset.id}: its command is not a single simple command, or ${channel.name} is already set`);
-      return spawn;
-    }
-    try {
-      await rewriteIfChanged(briefFile, () => `${briefText(false)}\n`);
-    } catch (err) {
-      console.warn(`[aya] could not write ${briefFile}:`, err);
-      return spawn;
-    }
-    return { ...spawn, command };
-  }
-  if (channel.kind === "file") {
-    // Re-assert on launch: the user may have edited the file since the save.
-    const file = codexAgentsFile(preset, DEFAULT_CODEX_HOME, expandUserPath, spawn.cwd);
-    if (!file) return spawn;
-    if (spawn.cwd && codexBriefInProject(file, spawn.cwd)) {
-      console.warn(`[aya] aya brief skipped for preset ${preset.id}: its CODEX_HOME is the project itself (${file})`);
-      return spawn;
-    }
-    await rewriteIfChanged(file, (c) => withBriefSection(c, briefText(true)))
-      .then(() => updateBriefRegistry([file], []))
-      .catch((err) => console.warn(`[aya] could not add the aya brief to ${file}:`, err));
-  }
-  return spawn;
-}
+/** Roles of panes that `team open` is about to open: they spawn before the role is saved. */
+const pendingPaneRoles = new Map<string, RoleRef>();
+const paneBriefDeps: PaneBriefDeps = {
+  ayaHome: AYA_HOME,
+  defaultCodexHome: DEFAULT_CODEX_HOME,
+  expand: expandUserPath,
+  shellEnv: loginShellEnv,
+  listPresets: () => listPresets(),
+  paneRole: async (spawn) => {
+    const pending = pendingPaneRoles.get(spawn.ptyId);
+    if (pending) return pending;
+    const project = (await listProjects()).find((p) => p.slug === spawn.projectSlug);
+    return project ? paneTeamRole(AYA_HOME, project, spawn.ptyId) : null;
+  },
+  records: fileLaunchRecords(PANE_LAUNCH_ROLES_FILE),
+  starts: (spawn) => ptyHost.willStart(spawn),
+  running: paneRunning,
+};
 
 /** Rewrites dead shims at startup for users who never reopen Settings (#115).
  *  Packaged only: in dev the fresh shim would aim at this checkout. */
@@ -985,25 +906,8 @@ async function healDeadCliShims(): Promise<void> {
   }
 }
 
-async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Version of the build whose host the client WOULD spawn - read from the
- *  package.json next to dist-electron, exactly how the host computes its own
- *  identity (pty-host.ts computeHostIdentity). app.getVersion() is WRONG for
- *  this in any non-packaged launch (dev, e2e): there it reports Electron's
- *  own version, so the staleness probe compared e.g. "42.5.2" against the
- *  host's honest "0.7.8" and KILLED a perfectly current host on every boot -
- *  murdering all live consoles in dev, and in e2e racing the first spawns
- *  (tabs that landed on the first host died mid-test: a long-standing flake
- *  source). Snapshotted once - the build cannot change under a running app
- *  in a way this comparison should follow. */
+/** The version of the host the client WOULD spawn, from package.json as the host reads it: app.getVersion()
+ *  is Electron's own outside a packaged app, and that mismatch killed a current host on every dev/e2e boot. */
 const EXPECTED_HOST_VERSION: string = (() => {
   try {
     const pkg = JSON.parse(
@@ -1149,11 +1053,8 @@ function updateVersion(info: unknown): string | undefined {
     : undefined;
 }
 
-/** On launch, reconcile a previously-requested update against the version we
- *  actually came back as (#78). A silent ShipIt rollback is otherwise
- *  indistinguishable from success - the user reinstalls the same update for
- *  days. When we detect it, we clean ShipIt's poisoned state, mark the update
- *  status as errored, and point the user at the releases page. */
+/** A requested update against the version we came back as (#78): a silent ShipIt rollback looks like success,
+ *  so its state is cleaned, the update marked errored, and the user pointed at the releases page. */
 async function reconcilePendingUpdate(win: BrowserWindow | null): Promise<void> {
   const pending = await readPendingUpdate();
   const diagnosis = diagnoseRelaunch(pending, app.getVersion());
@@ -1312,6 +1213,16 @@ function configureAppIdentity(): void {
 
 configureAppIdentity();
 
+// Before the single-instance lock: a home whose sockets cannot bind would
+// otherwise run on as an app nothing can reach.
+const socketProblems = homeSocketProblems(AYA_HOME);
+if (socketProblems.fatal) {
+  console.error(`Aya: ${socketProblems.fatal}`);
+  if (!IS_E2E_HEADLESS) dialog.showErrorBox("Aya cannot start", socketProblems.fatal);
+  app.exit(1);
+}
+if (socketProblems.remote) console.error(`Aya: ${socketProblems.remote}`);
+
 // Only one Aya instance per config dir. A second launch (e.g. `open -a Aya
 // /path/to/project` or the `aya` CLI shim) sends its argv to the first
 // instance via the `second-instance` event, which the renderer turns into
@@ -1357,9 +1268,7 @@ if (IS_DEV) {
   }) as NodeJS.WriteStream["write"];
 }
 
-/** Resolve the bundled icon. In dev we load straight from the repo's
- *  build/ folder; in production electron-builder embeds it in the .app and
- *  this code path is unused (the dock icon comes from the bundle). */
+/** The repo's build/ icon, for dev; a packaged app's dock icon comes from the bundle. */
 function devIconPath(): string {
   return path.join(__dirname, "..", "build", "icon.png");
 }
@@ -1379,9 +1288,8 @@ async function openExternalUrl(raw: string): Promise<void> {
   await shell.openExternal(parsed.toString());
 }
 
-/** Walk argv (which includes electron's own args in dev) and return the
- *  first positional value that resolves to an existing directory. Used to
- *  honor `aya /path/to/project` invocations. */
+/** The first positional argv value that is an existing directory (`aya /path/to/project`); in dev argv
+ *  includes Electron's own args. */
 function findDirInArgv(argv: readonly string[]): string | null {
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
@@ -1402,7 +1310,7 @@ function findDirInArgv(argv: readonly string[]): string | null {
       const resolved = path.resolve(a);
       if (statSync(resolved).isDirectory()) return resolved;
     } catch {
-      // Not a real directory — keep searching.
+      // Not a real directory - keep searching.
       continue;
     }
   }
@@ -1438,9 +1346,8 @@ async function completeDirectoryPath(rawPrefix: string): Promise<string[]> {
     .map((entry) => `${rawDirPrefix}${entry.name}/`);
 }
 
-/** Forward an "open this project" request from another process (or our own
- *  initial argv) to the renderer. The renderer figures out whether to switch
- *  to an existing project, create a new one, or no-op. */
+/** An "open this project" request (another process, or our own argv) for the renderer, which switches to,
+ *  creates, or ignores the project. */
 function dispatchOpenProject(
   win: BrowserWindow | null,
   dir: string | null,
@@ -1573,7 +1480,7 @@ let appQuitting = false;
 // --- Aya Web (experimental): browser access over HTTP + WebSocket ---
 let webConfig: WebConfig | null = null;
 let webServer: WebServerHandle | null = null;
-// Last start failure (e.g. port already in use) — surfaced in Settings.
+// Last start failure (e.g. port already in use) - surfaced in Settings.
 let webServerError: string | null = null;
 // Virtual PTY-event sink: fans "pty:event" out to the web clients exactly
 // like a window's webContents. Registered while the server runs.
@@ -1894,11 +1801,8 @@ interface WindowGeometry {
   isMaximized: boolean;
 }
 
-/** Open an additional (empty) Aya window, cascaded from the focused one - or,
- *  for a tab tear-out, positioned at the release point so the new window
- *  appears under the cursor like a Chrome tab drag. New windows own no
- *  projects until the user opens/moves one into them (their projects:state
- *  slice starts empty - see projectStateForWindow). */
+/** An extra, empty window cascaded from the focused one, or under the cursor for a tab tear-out; it owns no
+ *  projects until one is opened or moved into it (see projectStateForWindow). */
 async function openNewWindow(at?: {
   x: number;
   y: number;
@@ -1949,7 +1853,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
       nodeIntegration: false,
       sandbox: false, // node-pty needs the preload to have node access
       // In headless e2e the window is never shown, so Chromium would throttle
-      // requestAnimationFrame and xterm's render loop would never paint — the
+      // requestAnimationFrame and xterm's render loop would never paint - the
       // tests that read rendered rows then time out. Keep the hidden test
       // window fully active. Production keeps the default (throttle when
       // backgrounded to save power).
@@ -2008,7 +1912,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   });
 
   // Notify the renderer when fullscreen state changes so the topbar can drop
-  // its left padding (which is there to clear the traffic-light buttons —
+  // its left padding (which is there to clear the traffic-light buttons -
   // those buttons hide in fullscreen).
   const sendFullScreen = (isFs: boolean) => {
     if (!win.isDestroyed()) win.webContents.send("app:fullscreen", isFs);
@@ -2029,6 +1933,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   win.on("unmaximize", () => sendMaximized(false));
   // Initial broadcast once the renderer is ready (also useful if a future
   // restart preserves fullscreen state).
+  replayOpensOnLoad(win);
   win.webContents.once("did-finish-load", () => {
     sendFullScreen(isAyaFullScreen(win));
     sendMaximized(win.isMaximized());
@@ -2106,7 +2011,7 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
       if (!win.isDestroyed()) win.webContents.send("shortcut", action);
       return;
     }
-    // Don't trigger our shortcuts if extra modifiers we don't bind are held —
+    // Don't trigger our shortcuts if extra modifiers we don't bind are held -
     // e.g. Cmd+Shift+T should NOT fire our Cmd+T action.
     if (input.shift || input.alt) return;
     const key = input.key.toLowerCase();
@@ -2140,18 +2045,8 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   return win;
 }
 
-/** On launch, auto-reap a stale PTY host (#28), even with live terminals: an
- *  update ships new binaries, so the old host's terminals must restart anyway
- *  (Shift+Enter), and leaving it alive is exactly what accumulated orphaned
- *  hosts + processes. Best-effort: never blocks or crashes startup.
- *
- *  Honest limits: restart() only ASKS the socket-connected host to shut down -
- *  the old host runs ITS OWN shutdown code. Hosts from builds before the #73
- *  escalation SIGHUP their children and exit immediately, so a signal-ignoring
- *  child (claude --chrome) can still be orphaned once, at this first-update
- *  boundary; such hosts also predate the registry, so the by-pid reap can't
- *  cover them either. Cleaning those already-orphaned trees is the Phase-2
- *  sweep's job. Hosts from this build onward are covered on both paths. */
+/** On launch, reap a stale PTY host (#28) even with live terminals: an update's terminals restart anyway. Best-effort;
+ *  a pre-#73 host runs its own shutdown and may orphan a signal-ignoring child once (the sweep's job). */
 async function handleStaleHost(): Promise<void> {
   try {
     const expected = ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION);
@@ -2198,7 +2093,7 @@ function setStaleMenuIcon(): void {
 }
 
 function registerIpc(): TeamRunner {
-  // Aya Web reuses these handlers over WebSocket — record every registration
+  // Aya Web reuses these handlers over WebSocket - record every registration
   // (must run before the first ipcMain.handle below).
   captureIpcHandlers(ipcMain);
   // Multi-window: registered once for the whole app, so handlers that act on
@@ -2235,19 +2130,21 @@ function registerIpc(): TeamRunner {
   ipcMain.handle("teams:panes-opened", (_e, requestId: unknown, error: unknown) =>
     paneOpens.answer(requireString(requestId, "teams:panes-opened.requestId"), error),
   );
-  ipcMain.handle("pty:spawn", async (_e, req: unknown) => {
-    const request = validateSpawnRequest(req);
+  const prepareSpawn = async (validated: SpawnRequest): Promise<SpawnRequest> => {
+    if (SPAWN_PREP_DELAY_MS) await new Promise((done) => setTimeout(done, SPAWN_PREP_DELAY_MS));
+    const request = await withSharedDirCommand(validated);
     // A broken presets.json must not stop panes from spawning.
-    const briefed = await withAgentBrief(request).catch((err) => {
+    const briefed = await withAgentBrief(request, paneBriefDeps).catch((err) => {
       console.warn("[aya] aya brief skipped:", err);
       return request;
     });
     // Aya Dev: agents get this branch's aya, not an older installed one that
     // the shell's rc files put first. Shell panes stay plain shells.
-    const spawn =
-      IS_DEV && !isShellCommand(briefed.command)
-        ? { ...briefed, command: withCliFirst(briefed.command, path.dirname(bundledAyaCliPath(__dirname))) }
-        : briefed;
+    return IS_DEV && !isShellCommand(briefed.command)
+      ? { ...briefed, command: withCliFirst(briefed.command, path.dirname(bundledAyaCliPath(__dirname))) }
+      : briefed;
+  };
+  const sendSpawn = async (spawn: SpawnRequest) => {
     await ptyHost.spawn(spawn);
     void cliAdoption
       .launched({
@@ -2256,13 +2153,24 @@ function registerIpc(): TeamRunner {
         presetId: spawn.presetId,
       })
       .catch(() => {});
+    return true;
+  };
+  ipcMain.handle("pty:spawn", (_e, req: unknown) => {
+    const validated = validateSpawnRequest(req);
+    return spawnGate.spawn(validated.ptyId, () => prepareSpawn(validated), sendSpawn).then(async (sent) => {
+      // Closed while preparing: the brief files it wrote after the close are no one's.
+      if (sent === undefined && !spawnGate.spawning(validated.ptyId)) await removePaneBrief(AYA_HOME, validated.ptyId).catch(() => {});
+    });
   });
-  ipcMain.handle("pty:write", async (_e, ptyId: unknown, data: unknown) =>
-    ptyHost.write(
-      requireString(ptyId, "pty:write.ptyId"),
-      requireString(data, "pty:write.data"),
-    ),
-  );
+  ipcMain.handle("pty:write", async (_e, ptyId: unknown, data: unknown) => {
+    const id = requireString(ptyId, "pty:write.ptyId");
+    const text = requireString(data, "pty:write.data");
+    await spawnGate.afterSpawn(id);
+    // The user's Enter answers a pane that asked for them (aya status waiting): the windows drop the status.
+    const answered = await noteUserAnswer(id, text, () => ptyHost.holdReason(id));
+    if (answered) broadcastStatus(answered);
+    return ptyHost.write(id, text);
+  });
   ipcMain.handle(
     "pty:resize",
     async (_e, ptyId: unknown, cols: unknown, rows: unknown) =>
@@ -2272,16 +2180,18 @@ function registerIpc(): TeamRunner {
         requirePositiveInt(rows, "pty:resize.rows"),
       ),
   );
-  ipcMain.handle("pty:kill", async (_e, ptyId: unknown) =>
-    ptyHost.kill(requireString(ptyId, "pty:kill.ptyId")),
-  );
+  ipcMain.handle("pty:kill", async (_e, ptyId: unknown) => {
+    const id = requireString(ptyId, "pty:kill.ptyId");
+    await removePaneBrief(AYA_HOME, id).catch(() => {});
+    return closePane(spawnGate, id, { hasPane: paneRunning, kill: (ptyId) => ptyHost.kill(ptyId) });
+  });
   ipcMain.handle("pty:buffer", async (_e, ptyId: unknown) => {
     try {
       return await ptyHost.getBuffer(requireString(ptyId, "pty:buffer.ptyId"));
     } catch (err) {
       if (
         err instanceof Error &&
-        /unknown request|PTY host is not connected/i.test(err.message)
+        [PTY_HOST_UNKNOWN_REQUEST, PTY_HOST_NOT_CONNECTED].some((m) => err.message.includes(m))
       ) {
         return "";
       }
@@ -2327,6 +2237,7 @@ function registerIpc(): TeamRunner {
 
   ipcMain.handle("projects:list", async () => listProjects());
   ipcMain.handle("projects:state", async (e) => {
+    if (PROJECTS_STATE_DELAY_MS) await new Promise((resolve) => setTimeout(resolve, PROJECTS_STATE_DELAY_MS));
     const state = await listProjectState();
     const win = senderWindow(e);
     // Each window sees only its own open-project slice (multi-window). No
@@ -2396,6 +2307,9 @@ function registerIpc(): TeamRunner {
       dispatchOpenProject(win, dir).catch(logOpenFailure(dir));
     },
   );
+  ipcMain.on("open-project:done", (event, dir: unknown) => {
+    if (typeof dir === "string") confirmOpen(event.sender, dir);
+  });
   ipcMain.handle("projects:create", async (_e, name: unknown, dir: unknown) =>
     createProject(
       requireString(name, "projects:create.name"),
@@ -2454,9 +2368,11 @@ function registerIpc(): TeamRunner {
   );
 
   ipcMain.handle("presets:list", async () => listPresets());
+  ipcMain.handle("agent:waiting", () => outstandingWaiting());
+  // A question from before the restart that the pane's session no longer confirms: the windows mark it.
+  onQuestionUnconfirmed(broadcastStatus);
   ipcMain.handle("presets:save", async (_e, presets: unknown) => {
     await savePresets(validatePresetArray(presets));
-    await syncCodexBriefs();
     await syncAntigravityBrief();
   });
   ipcMain.handle("presets:scan-harnesses", async () => scanHarnesses());
@@ -2496,7 +2412,7 @@ function registerIpc(): TeamRunner {
   });
   // Optional, user-enabled usage hook installer (writes ~/.claude/settings.json
   // + a fetch script). The Aya process never reads a token or calls the
-  // endpoint — that happens later in the script, run by Claude Code.
+  // endpoint - that happens later in the script, run by Claude Code.
   ipcMain.handle("usage-hook:status", async () => usageHookStatus());
   ipcMain.handle("usage-hook:install", async () => installUsageHook());
   ipcMain.handle("usage-hook:uninstall", async () => uninstallUsageHook());
@@ -2876,23 +2792,16 @@ function focusedAyaWindow(): BrowserWindow | null {
 
 /** macOS keeps running with every window closed; outside opens and `activate`
  *  share this, so however they interleave only one window is created. */
-const createWindowOnce = singleFlight(async () => {
+const { createOnce: createWindowOnce, forOpen: windowForOpen } = createWindowSource(focusedAyaWindow, async () => {
   mainWindow = createWindow(await loadWindowState());
   return mainWindow;
-});
-
-/** The window an outside open lands in. */
-async function windowForOpen(): Promise<BrowserWindow> {
-  return focusedAyaWindow() ?? createWindowOnce();
-}
+}, () => appQuitting);
 
 /** Set once startup has created its own first window. */
 let startupWindowCreated = false;
 
-/** second-instance / open-file: focus the open's window and deliver `dir`.
- *  Like the control path, a macOS app with every window closed gets a new
- *  one; before startup made its first window, making one here would make two,
- *  so those only focus what exists. */
+/** second-instance / open-file: focus the open's window and deliver `dir`; with every window closed a new one is
+ *  made, except before startup made its first (that would make two). */
 async function openFromOutside(dir: string | null): Promise<void> {
   const target = startupWindowCreated ? await windowForOpen() : focusedAyaWindow();
   if (target) {
@@ -2900,6 +2809,16 @@ async function openFromOutside(dir: string | null): Promise<void> {
     target.focus();
   }
   await dispatchOpenProject(target, dir);
+}
+
+/** Every window, and Aya Web's clients through a window-like sink (harness status dots must work in the browser too). */
+function statusSinks(): ControlStatusSink[] {
+  const web = { isDestroyed: () => false, webContents: { send: (channel: "control:status", update: unknown) => void webServer?.broadcast(channel, update) } };
+  return [...[...ayaWindows].filter((w) => !w.isDestroyed()), web];
+}
+
+function broadcastStatus(update: ControlStatusUpdate): void {
+  for (const sink of statusSinks()) sink.webContents.send("control:status", update);
 }
 
 function eachAyaWindow(fn: (win: BrowserWindow) => void): void {
@@ -2912,17 +2831,19 @@ function eachAyaWindow(fn: (win: BrowserWindow) => void): void {
 // window-slices.ts; main only wires window ids and the disk write.
 const windowSlices = new WindowProjectSlices();
 let bootWindowId: number | null = null;
+/** The boot window has been handed the project list: from here a missing project is really not open. */
+let bootProjectsLoaded = false;
 
 function projectStateForWindow(
   state: ProjectCollectionState,
   windowId: number,
 ): ProjectCollectionState {
-  return windowSlices.stateForWindow(state, windowId, windowId === bootWindowId);
+  const slice = windowSlices.stateForWindow(state, windowId, windowId === bootWindowId);
+  if (windowId === bootWindowId) bootProjectsLoaded = true;
+  return slice;
 }
 
-/** A window died: drop its slice and persist the shrunken union so its
- *  projects fall out of `open` (they land back in recent; their PTYs keep
- *  running in the detached host, same as an app restart). */
+/** A window died: its projects fall out of `open` into recent; their PTYs keep running in the detached host. */
 async function releaseWindowSlices(windowId: number): Promise<void> {
   const released = windowSlices.release(windowId);
   if (released.length === 0 || appQuitting) return;
@@ -2960,24 +2881,28 @@ app.on("open-file", (event, filePath) => {
 });
 
 app.whenReady().then(async () => {
+  app.once("before-quit", watchDebugSwitch(AYA_HOME));
   configureAppIdentity();
 
-  // Repair PATH before anything that resolves a binary. A GUI-launched app
-  // only inherits launchd's minimal PATH, so the user's CLIs (claude, codex,
-  // …) installed under ~/.local/bin / mise / asdf are invisible until we pull
-  // the real PATH from a login shell. Must run before createWindow (the
-  // renderer's first preset:list triggers a harness scan) and before the PTY
-  // host spawns (it inherits this process's env), so we await it here. The
-  // probe self-bounds (SIGKILL + guard timer), so a slow rc delays first paint
-  // by at most the probe timeout; a failed probe is a no-op.
-  await repairProcessPath();
-  // Presets can change on disk without a save through Settings; a file-only
-  // pass that writes nothing unless a codex preset's opt-in disagrees with it.
-  void syncCodexBriefs();
+  // A GUI-launched app inherits launchd's minimal PATH: take the login shell's before the first harness scan and the
+  // PTY host's spawn (it inherits this env). Bounded by the probe timeout; only a repaired PATH makes a miss "not installed".
+  await repairProcessPath(async () => {
+    const resolved = await resolveLoginShellPath();
+    notePathRepaired(resolved !== null);
+    return resolved;
+  });
+  // Codex gets the brief at launch now; AGENTS.md files earlier versions wrote lose it once.
+  void dropCodexBriefSections(AGENT_BRIEF_FILES_FILE);
+  // Presets can change on disk without a save through Settings.
   void syncAntigravityBrief();
   // Needs the repaired PATH to see the user's shims; not awaited - it only
   // touches files and nothing below depends on it.
   void healDeadCliShims();
+  void listProjects().then((projects) => sweepPaneBriefs(paneBriefDeps, projects)).catch(() => {});
+  // Asked ahead of the first opencode pane, which waits for the answer.
+  void listPresets()
+    .then((presets) => void (presets.some((p) => p.agent === "opencode") && loginShellEnv()))
+    .catch(() => {});
   // Installed status-hook scripts from older builds lack the AYA_VIA=hook tag
   // and would count as agent adoption; refresh them in place (never install).
   void refreshStatusHookScript().catch(() => {});
@@ -2992,7 +2917,7 @@ app.whenReady().then(async () => {
       const icon = nativeImage.createFromPath(devIconPath());
       if (!icon.isEmpty()) app.dock.setIcon(icon);
     } catch {
-      // Non-fatal — just means we keep Electron's default dock icon.
+      // Non-fatal - just means we keep Electron's default dock icon.
     }
   }
 
@@ -3025,14 +2950,14 @@ app.whenReady().then(async () => {
       );
     }
   } catch {
-    // best effort — never block startup on reconciliation
+    // best effort - never block startup on reconciliation
   }
 
   // Reconcile the SOCKET-connected host too, still before the window exists:
   // once the renderer loads it immediately spawns terminals, and a spawn that
   // raced this check could land on the stale host and be killed by the reap
   // (losing the user's first terminal). Fast path: no socket file, no host to
-  // reconcile — don't pay a probe (which would spawn a host early) on a cold
+  // reconcile - don't pay a probe (which would spawn a host early) on a cold
   // start. The red fallback icon is applied after installApplicationMenu.
   if (await pathExists(PTY_HOST_SOCKET_PATH)) {
     await handleStaleHost();
@@ -3062,7 +2987,7 @@ app.whenReady().then(async () => {
     // and act through the pty host, so they work regardless of which window
     // (if any) currently owns the target project.
     listProjects: () => listProjects(),
-    worktrees: async (directory) => (await listWorktrees(directory)).map((w) => w.path),
+    panePid: (terminalId) => ptyHost.getPid(terminalId),
     // Rendered here, not in the pty host: up to ~50 ms per 1 MB would stall every
     // pane's output there.
     readPane: async (terminalId) => {
@@ -3089,20 +3014,10 @@ app.whenReady().then(async () => {
           command: request.type,
         })
         .catch(() => {});
+      // Awaited by the server: a quick command's process may be gone once it has its answer.
+      return reachedAya.called(caller);
     },
-    // Status updates also reach Aya Web clients via a virtual window-like
-    // sink (harness status dots must work in the browser too).
-    getWindows: () => [
-      ...[...ayaWindows].filter((w) => !w.isDestroyed()),
-      {
-        isDestroyed: () => false,
-        webContents: {
-          send: (channel: "control:status", update: unknown) => {
-            webServer?.broadcast(channel, update);
-          },
-        },
-      },
-    ],
+    getWindows: statusSinks,
     openProject: async (directory) => {
       const target = await windowForOpen();
       if (target.isMinimized()) target.restore();
@@ -3110,7 +3025,7 @@ app.whenReady().then(async () => {
       await dispatchOpenProject(target, directory);
     },
   });
-  startRemoteServer({
+  if (!socketProblems.remote) startRemoteServer({
     appVersion: app.getVersion(),
     getSnapshot: async () => ({
       projects: await listProjects(),
@@ -3123,7 +3038,7 @@ app.whenReady().then(async () => {
     createProject: (name, directory) => getOrCreateProject(name, directory),
   });
   // Aya Web (experimental): start the browser-access server when enabled.
-  // Off the critical path — a bad config or busy port must not block boot;
+  // Off the critical path - a bad config or busy port must not block boot;
   // the failure lands in webServerError and shows up in Settings.
   void loadWebConfig()
     .then(async (config) => {
@@ -3189,7 +3104,7 @@ app.whenReady().then(async () => {
     })();
   }, LEGACY_SWEEP_DELAY_MS);
 
-  // Honor an initial directory argument on first launch — the renderer
+  // Honor an initial directory argument on first launch - the renderer
   // applies the same switch-or-create logic as for second-instance.
   const initialDir = findDirInArgv(process.argv);
   dispatchOpenProject(mainWindow, initialDir).catch(logOpenFailure(initialDir));
