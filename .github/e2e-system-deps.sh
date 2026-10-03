@@ -2,7 +2,7 @@
 set -euo pipefail
 export LC_ALL=C
 
-cache_dir="${SYSTEM_DEPS_CACHE:?}"
+cache_dir="${RUNNER_TEMP:?}/e2e-system-deps"
 package_manifest() {
   dpkg-query -W -f='${db:Status-Abbrev}\t${binary:Package}\t${Version}\n' |
     awk -F '\t' '$1 == "ii " { print $2 "\t" $3 }' | sort

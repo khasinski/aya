@@ -42,8 +42,6 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-    env:
-      SYSTEM_DEPS_CACHE: ${{ runner.temp }}/e2e-system-deps
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -111,7 +109,7 @@ jobs:
         id: system-deps-cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          path: ${{ env.SYSTEM_DEPS_CACHE }}
+          path: ${{ runner.temp }}/e2e-system-deps
           key: e2e-system-deps-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.system-deps-key.outputs.image }}-${{ steps.system-deps-key.outputs.packages }}-${{ hashFiles('package-lock.json', '.github/e2e-system-deps.sh') }}-${{ matrix.shard }}
 
       - name: Install Electron system dependencies
