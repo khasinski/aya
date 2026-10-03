@@ -165,7 +165,8 @@ const MODES = [
   ],
   ["claude", { claude: [JSON.stringify({ sandbox: { enabled: true, network: { allowAllUnixSockets: true } } })] }, "sandbox on, Aya's socket allowed", "reaches"],
   // Claude Code 2.1.285, measured with a scripted tool call: a directory that holds the socket is allowed
-  // as well (its parent, a grandparent, a trailing slash), a sibling or a name prefix is not.
+  // as well (its parent, a grandparent, a trailing slash), a sibling or a name prefix is not. "/" was not measured, so
+  // Aya adds its own entry for it rather than bet the pane on it.
   ...[
     ["/Users/me/.aya", "reaches"],
     ["/Users/me", "reaches"],
