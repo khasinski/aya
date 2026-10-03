@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import { envWithoutAya } from "./helpers/env.mjs";
@@ -15,7 +15,7 @@ const { handleTeamAuthorRequest } = await import("../dist-electron/team-author.j
 const { startControlServerOn } = await import("../dist-electron/control.js");
 const { listTeams } = await import("../dist-electron/team-admin.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
-const { serializeTeam, parseTeamFile } = await import("../dist-electron/teams.js");
+const { serializeTeam, parseTeamFile } = await import("../dist-electron/team-definition.js");
 
 const GOOD = `# ux-fix
 
@@ -28,6 +28,9 @@ Plays the game and reports what confuses a player.
 Sends to: reviewer (the commit to check)
 Must not: leave a finding unanswered
 Fixes findings.
+
+## Lead
+reviewer
 
 ## Cadence
 reviewer every 30 min
@@ -50,35 +53,37 @@ function setup({ remote = false } = {}) {
   return { ...t, other, refreshed, run, save, repoFile };
 }
 
-test("a valid file is written, saved in Aya, and the running team refreshed", async () => {
-  const t = setup();
-  try {
-    const { output } = await t.save(GOOD);
-    const file = t.repoFile("ux-fix");
-    assert.equal(readFileSync(file, "utf8"), serializeTeam(parseTeamFile("ux-fix", GOOD)));
-    assert.equal(await new TeamStore(teamDir(t.teamHome, "game", "ux-fix")).savedDefinition(), readFileSync(file, "utf8"));
-    const [team] = await listTeams(t.teamHome, t.project);
-    assert.equal(team.unsaved, false);
-    assert.equal(team.error, null);
-    assert.deepEqual(t.refreshed, ["game/ux-fix"]);
-    assert.equal(
-      output,
-      `saved team ux-fix: 2 roles (reviewer, fixer); reviewer -> fixer (findings with proof), fixer -> reviewer (the commit to check)\n` +
-        `written to ${file}; saved in Aya, so its roles can be given panes and started from the Teams window\n`,
-    );
-  } finally {
-    t.cleanup();
-  }
+const authorTest = (name, ...args) => {
+  const fn = args.pop();
+  test(name, async () => {
+    const t = await setup(...args);
+    try {
+      await fn(t);
+    } finally {
+      t.cleanup();
+    }
+  });
+};
+
+authorTest("a valid file is written, saved in Aya, and the running team refreshed", async (t) => {
+  const { output } = await t.save(GOOD);
+  const file = t.repoFile("ux-fix");
+  assert.equal(readFileSync(file, "utf8"), serializeTeam(parseTeamFile("ux-fix", GOOD)));
+  assert.equal(await new TeamStore(teamDir(t.teamHome, "game", "ux-fix")).savedDefinition(), readFileSync(file, "utf8"));
+  const [team] = await listTeams(t.teamHome, t.project);
+  assert.equal(team.unsaved, false);
+  assert.equal(team.error, null);
+  assert.deepEqual(t.refreshed, ["game/ux-fix"]);
+  assert.equal(
+    output,
+    `saved team ux-fix: 2 roles (reviewer, fixer); reviewer -> fixer (findings with proof), fixer -> reviewer (the commit to check)\n` +
+      `written to ${file}; saved in Aya, so its roles can be given panes and started from the Teams window\n`,
+  );
 });
 
-test("a role that sends nothing shows as sending to nobody", async () => {
-  const t = setup();
-  try {
-    const { output } = await t.save("# pair\n## Role: a\nSends to: b\nMust not: x\n## Role: b\nMust not: y\n");
-    assert.match(output, /^saved team pair: 2 roles \(a, b\); a -> b, b -> nobody\n/);
-  } finally {
-    t.cleanup();
-  }
+authorTest("a role that sends nothing shows as sending to nobody", async (t) => {
+  const { output } = await t.save("# pair\n## Role: a\nSends to: b\nMust not: x\n## Role: b\nMust not: y\n## Lead\na\n");
+  assert.match(output, /^saved team pair: 2 roles \(a, b\); a -> b, b -> nobody\n/);
 });
 
 const BROKEN = [
@@ -101,133 +106,88 @@ const BROKEN = [
 ];
 
 for (const [what, text, problem] of BROKEN) {
-  test(`${what}: refused with the exact problem, nothing saved`, async () => {
-    const t = setup();
-    try {
-      await assert.rejects(t.save(text), (err) => {
-        assert.equal(err.message, problem);
-        return true;
-      });
-      assert.equal(existsSync(join(t.directory, ".aya")), false);
-      assert.equal(existsSync(join(t.teamHome, "teams")), false);
-      assert.deepEqual(t.refreshed, []);
-    } finally {
-      t.cleanup();
-    }
+  authorTest(`${what}: refused with the exact problem, nothing saved`, async (t) => {
+    await assert.rejects(t.save(text), (err) => {
+      assert.equal(err.message, problem);
+      return true;
+    });
+    assert.equal(existsSync(join(t.directory, ".aya")), false);
+    assert.equal(existsSync(join(t.teamHome, "teams")), false);
+    assert.deepEqual(t.refreshed, []);
   });
 }
 
-test("an existing team is refused without --replace and left as it was", async () => {
-  const t = setup();
-  try {
-    await t.save(GOOD);
-    const before = readFileSync(t.repoFile("ux-fix"), "utf8");
-    const changed = GOOD.replace("Must not: edit code", "Must not: touch the save files");
-    await assert.rejects(t.save(changed), {
-      message: `team "ux-fix" already exists in ${t.repoFile("ux-fix")}; nothing was saved. Run aya team save again with --replace to overwrite it`,
-    });
-    assert.equal(readFileSync(t.repoFile("ux-fix"), "utf8"), before);
-    assert.equal(await new TeamStore(teamDir(t.teamHome, "game", "ux-fix")).savedDefinition(), before);
-    await t.save(changed, { replace: true });
-    const [team] = await listTeams(t.teamHome, t.project);
-    assert.equal(team.definition.roles[0].mustNot, "touch the save files");
-    assert.equal(team.repoChanged, false);
-  } finally {
-    t.cleanup();
-  }
+authorTest("an existing team is refused without --replace and left as it was", async (t) => {
+  await t.save(GOOD);
+  const before = readFileSync(t.repoFile("ux-fix"), "utf8");
+  const changed = GOOD.replace("Must not: edit code", "Must not: touch the save files");
+  await assert.rejects(t.save(changed), {
+    message: `team "ux-fix" already exists in ${t.repoFile("ux-fix")}; nothing was saved. Run aya team save again with --replace to overwrite it`,
+  });
+  assert.equal(readFileSync(t.repoFile("ux-fix"), "utf8"), before);
+  assert.equal(await new TeamStore(teamDir(t.teamHome, "game", "ux-fix")).savedDefinition(), before);
+  await t.save(changed, { replace: true });
+  const [team] = await listTeams(t.teamHome, t.project);
+  assert.equal(team.definition.roles[0].mustNot, "touch the save files");
+  assert.equal(team.repoChanged, false);
 });
 
-test("an unsaved repo file of the same name also needs --replace", async () => {
-  const t = setup();
-  try {
-    mkdirSync(join(t.directory, ".aya", "teams"), { recursive: true });
-    writeFileSync(t.repoFile("ux-fix"), GOOD);
-    await assert.rejects(t.save(GOOD), /already exists/);
-    await t.save(GOOD, { replace: true });
-    const [team] = await listTeams(t.teamHome, t.project);
-    assert.equal(team.unsaved, false);
-  } finally {
-    t.cleanup();
-  }
+authorTest("an unsaved repo file of the same name also needs --replace", async (t) => {
+  mkdirSync(join(t.directory, ".aya", "teams"), { recursive: true });
+  writeFileSync(t.repoFile("ux-fix"), GOOD);
+  await assert.rejects(t.save(GOOD), /already exists/);
+  await t.save(GOOD, { replace: true });
+  const [team] = await listTeams(t.teamHome, t.project);
+  assert.equal(team.unsaved, false);
 });
 
-test("--replace drops a removed role's pane, as Save team does", async () => {
-  const t = setup();
-  try {
-    await t.save(GOOD);
-    const store = new TeamStore(teamDir(t.teamHome, "game", "ux-fix"));
-    await store.assign("fixer", "pane-1");
-    await t.save(GOOD.replaceAll("fixer", "builder"), { replace: true });
-    assert.deepEqual(await store.assignments(), {});
-  } finally {
-    t.cleanup();
-  }
+authorTest("--replace drops a removed role's pane, as Save team does", async (t) => {
+  await t.save(GOOD);
+  const store = new TeamStore(teamDir(t.teamHome, "game", "ux-fix"));
+  await store.assign("fixer", "pane-1");
+  await t.save(GOOD.replaceAll("fixer", "builder"), { replace: true });
+  assert.deepEqual(await store.assignments(), {});
 });
 
-test("the calling pane's project wins over the slug and the cwd", async () => {
-  const t = setup();
-  try {
-    await t.save(GOOD, { projectSlug: "site", cwd: t.other.directory });
-    assert.ok(existsSync(t.repoFile("ux-fix")));
-    assert.equal(existsSync(t.repoFile("ux-fix", t.other.directory)), false);
-  } finally {
-    t.cleanup();
-  }
+authorTest("the calling pane's project wins over the slug and the cwd", async (t) => {
+  await t.save(GOOD, { projectSlug: "site", cwd: t.other.directory });
+  assert.ok(existsSync(t.repoFile("ux-fix")));
+  assert.equal(existsSync(t.repoFile("ux-fix", t.other.directory)), false);
 });
 
-test("outside a pane: the slug, else the project the cwd is in", async () => {
-  const t = setup();
-  try {
-    await t.run({ type: "team-save", text: GOOD, replace: false, projectSlug: "site" }, null);
-    assert.ok(existsSync(t.repoFile("ux-fix", t.other.directory)));
-    const sub = join(t.directory, "src", "ui");
-    mkdirSync(sub, { recursive: true });
-    await t.run({ type: "team-save", text: GOOD, replace: false, cwd: realpathSync(sub) }, null);
-    assert.ok(existsSync(t.repoFile("ux-fix")));
-    assert.deepEqual(t.refreshed, ["site/ux-fix", "game/ux-fix"]);
-  } finally {
-    t.cleanup();
-  }
+authorTest("outside a pane: the slug, else the project the cwd is in", async (t) => {
+  await t.run({ type: "team-save", text: GOOD, replace: false, projectSlug: "site" }, null);
+  assert.ok(existsSync(t.repoFile("ux-fix", t.other.directory)));
+  const sub = join(t.directory, "src", "ui");
+  mkdirSync(sub, { recursive: true });
+  await t.run({ type: "team-save", text: GOOD, replace: false, cwd: realpathSync(sub) }, null);
+  assert.ok(existsSync(t.repoFile("ux-fix")));
+  assert.deepEqual(t.refreshed, ["site/ux-fix", "game/ux-fix"]);
 });
 
-test("the cwd matches through symlinks, at the project root too, and the innermost project wins", async () => {
-  const t = setup();
-  try {
-    const engine = { slug: "engine", name: "engine", directory: join(t.directory, "engine"), tabs: [] };
-    mkdirSync(join(engine.directory, "src"), { recursive: true });
-    const deps = { teamHome: t.teamHome, listProjects: async () => [t.project, engine] };
-    const save = (cwd) => handleTeamAuthorRequest({ type: "team-save", text: GOOD, replace: true, cwd }, null, deps, async () => {});
-    await save(join(engine.directory, "src"));
-    assert.ok(existsSync(t.repoFile("ux-fix", engine.directory)));
-    assert.equal(existsSync(t.repoFile("ux-fix")), false);
-    await save(realpathSync(t.directory));
-    assert.ok(existsSync(t.repoFile("ux-fix")));
-  } finally {
-    t.cleanup();
-  }
+authorTest("the cwd matches through symlinks, at the project root too, and the innermost project wins", async (t) => {
+  const engine = { slug: "engine", name: "engine", directory: join(t.directory, "engine"), tabs: [] };
+  mkdirSync(join(engine.directory, "src"), { recursive: true });
+  const deps = { teamHome: t.teamHome, listProjects: async () => [t.project, engine] };
+  const save = (cwd) => handleTeamAuthorRequest({ type: "team-save", text: GOOD, replace: true, cwd }, null, deps, async () => {});
+  await save(join(engine.directory, "src"));
+  assert.ok(existsSync(t.repoFile("ux-fix", engine.directory)));
+  assert.equal(existsSync(t.repoFile("ux-fix")), false);
+  await save(realpathSync(t.directory));
+  assert.ok(existsSync(t.repoFile("ux-fix")));
 });
 
-test("a title with trailing spaces names the team without them", async () => {
-  const t = setup();
-  try {
-    assert.match((await t.save(GOOD.replace("# ux-fix\n", "# ux-fix  \n"))).output, /^saved team ux-fix: /);
-  } finally {
-    t.cleanup();
-  }
+authorTest("a title with trailing spaces names the team without them", async (t) => {
+  assert.match((await t.save(GOOD.replace("# ux-fix\n", "# ux-fix  \n"))).output, /^saved team ux-fix: /);
 });
 
-test("a write that fails is reported as itself, not as an existing team", async () => {
-  const t = setup();
-  try {
-    writeFileSync(join(t.directory, ".aya"), "a file where the directory would go");
-    await assert.rejects(t.save(GOOD), (err) => {
-      assert.doesNotMatch(err.message, /already exists/);
-      assert.match(err.message, /ENOTDIR|EEXIST/);
-      return true;
-    });
-  } finally {
-    t.cleanup();
-  }
+authorTest("a write that fails is reported as itself, not as an existing team", async (t) => {
+  writeFileSync(join(t.directory, ".aya"), "a file where the directory would go");
+  await assert.rejects(t.save(GOOD), (err) => {
+    assert.doesNotMatch(err.message, /already exists/);
+    assert.match(err.message, /ENOTDIR|EEXIST/);
+    return true;
+  });
 });
 
 test("a control server without teams says so", async () => {
@@ -248,44 +208,36 @@ test("a control server without teams says so", async () => {
   }
 });
 
-test("a pane of no open project, an unknown slug or a cwd outside every project saves nothing", async () => {
-  const t = setup();
-  try {
-    const nowhere = "run aya team save in an Aya pane, or in the directory of a project open in Aya; nothing was saved";
-    const sibling = `${t.directory}-other`;
-    mkdirSync(sibling);
-    for (const scope of [{}, { projectSlug: "nope" }, { cwd: t.root }, { cwd: sibling }, { cwd: realpathSync(sibling) }]) {
-      await assert.rejects(t.run({ type: "team-save", text: GOOD, replace: false, ...scope }, "pane-gone"), { message: nowhere });
-    }
-    assert.equal(existsSync(join(t.directory, ".aya")), false);
-  } finally {
-    t.cleanup();
+authorTest("a pane of no open project, an unknown slug or a cwd outside every project saves nothing", async (t) => {
+  const nowhere = "run aya team save in an Aya pane, or in the directory of a project open in Aya; nothing was saved";
+  const sibling = `${t.directory}-other`;
+  mkdirSync(sibling);
+  for (const scope of [{}, { projectSlug: "nope" }, { cwd: t.root }, { cwd: sibling }, { cwd: realpathSync(sibling) }]) {
+    await assert.rejects(t.run({ type: "team-save", text: GOOD, replace: false, ...scope }, "pane-gone"), { message: nowhere });
   }
+  assert.equal(existsSync(join(t.directory, ".aya")), false);
 });
 
-test("a remote project is refused: its files are on another machine", async () => {
-  const t = setup({ remote: true });
-  try {
-    await assert.rejects(t.save(GOOD), { message: "teams work only on local projects; nothing was saved" });
-    assert.equal(existsSync(join(t.directory, ".aya")), false);
-  } finally {
-    t.cleanup();
-  }
+authorTest("a remote project is refused: its files are on another machine", { remote: true }, async (t) => {
+  await assert.rejects(t.save(GOOD), { message: "teams work only on local projects; nothing was saved" });
+  assert.equal(existsSync(join(t.directory, ".aya")), false);
 });
 
-test("the guide echoes the request and names the project's teams", async () => {
-  const t = setup();
-  try {
-    await t.save(GOOD);
-    const { output } = await t.run({ type: "team-guide", description: "a team that fixes UX" });
-    assert.match(output, /^The user asked for: a team that fixes UX\n/);
-    assert.match(output, /Teams this project already has: ux-fix\./);
-    const bare = (await t.run({ type: "team-guide" }, "pane-gone")).output;
-    assert.doesNotMatch(bare, /The user asked for/);
-    assert.doesNotMatch(bare, /already has/);
-  } finally {
-    t.cleanup();
-  }
+authorTest("the guide echoes the request and names the project's teams", async (t) => {
+  await t.save(GOOD);
+  const { output } = await t.run({ type: "team-guide", description: "a team that fixes UX" });
+  assert.match(output, /^The user asked for: a team that fixes UX\n/);
+  assert.match(output, /Teams this project already has: ux-fix\./);
+  const bare = (await t.run({ type: "team-guide" }, "pane-gone")).output;
+  assert.doesNotMatch(bare, /The user asked for/);
+  assert.doesNotMatch(bare, /already has/);
+});
+
+authorTest("the guide names a team that lives only in Aya, its repo file gone", async (t) => {
+  await t.save(GOOD);
+  rmSync(t.repoFile("ux-fix"));
+  const { output } = await t.run({ type: "team-guide" });
+  assert.match(output, /Teams this project already has: ux-fix\./);
 });
 
 test("through the real CLI and control server: saved, summarized, the runner told", async () => {
@@ -333,17 +285,12 @@ test("through the real CLI and control server: saved, summarized, the runner tol
   }
 });
 
-test("a team saved from a pane is marked as the agent's, so the window does not ask to assign it too; one saved outside a pane is not", async () => {
-  const t = setup();
-  try {
-    await t.save(GOOD);
-    await t.run({ type: "team-save", text: GOOD.replace("# ux-fix", "# other"), replace: false, projectSlug: "game" }, null);
-    const byName = Object.fromEntries((await listTeams(t.teamHome, t.project)).map((team) => [team.name, team]));
-    assert.equal(byName["ux-fix"].agentAuthored, true);
-    assert.equal(byName.other.agentAuthored, false);
-  } finally {
-    t.cleanup();
-  }
+authorTest("a team saved from a pane is marked as the agent's, so the window does not ask to assign it too; one saved outside a pane is not", async (t) => {
+  await t.save(GOOD);
+  await t.run({ type: "team-save", text: GOOD.replace("# ux-fix", "# other"), replace: false, projectSlug: "game" }, null);
+  const byName = Object.fromEntries((await listTeams(t.teamHome, t.project)).map((team) => [team.name, team]));
+  assert.equal(byName["ux-fix"].agentAuthored, true);
+  assert.equal(byName.other.agentAuthored, false);
 });
 
 test("the agent's mark goes with the first role given a pane, or a save from the window", async () => {
@@ -367,3 +314,32 @@ test("the agent's mark goes with the first role given a pane, or a save from the
     t.cleanup();
   }
 });
+
+// The window lists a team once Aya holds its saved copy; from then on a team with no pane and no
+// agent mark gets the "assign roles?" prompt that the agent's own proposal of panes would compete with.
+for (const [from, callerId] of [["a pane", "pane-1"], ["outside a pane", null]]) {
+  authorTest(`a new team saved ${from} is never visible in the window without its authorship, however the polls fall`, async (t) => {
+    let seenUnmarked = 0;
+    let seenMarked = 0;
+    for (let i = 0; i < 25; i++) {
+      const name = `t${i}`;
+      const store = new TeamStore(teamDir(t.teamHome, "game", name));
+      let done = false;
+      const saving = t
+        .run({ type: "team-save", text: GOOD.replace("# ux-fix", `# ${name}`), replace: false, projectSlug: "game" }, callerId)
+        .finally(() => (done = true));
+      // Saved copy first, then the mark: a team seen with the copy must already carry it.
+      while (!done) {
+        if ((await store.savedDefinition()) === null) continue;
+        if (await store.agentAuthored()) seenMarked++;
+        else seenUnmarked++;
+      }
+      await saving;
+    }
+    if (callerId === null) assert.equal(seenMarked, 0, "a save outside a pane is never the agent's");
+    else {
+      assert.equal(seenUnmarked, 0, `${seenUnmarked} polls saw a saved team not yet marked as the agent's`);
+      assert.ok(seenMarked > 0, "the polls did see the saved team");
+    }
+  });
+}

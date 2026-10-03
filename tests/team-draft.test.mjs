@@ -19,7 +19,7 @@ const role = (id, sends = [], responsibilities = "", mustNot = "") => ({
   responsibilities,
   mustNot,
 });
-const team = (roles, protocol = "") => ({ name: "t", roles, cadence: null, protocol });
+const team = (roles, protocol = "") => ({ name: "t", roles, cadenceMinutes: null, protocol });
 
 const TRIO = team(
   [

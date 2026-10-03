@@ -17,7 +17,7 @@ import {
   toEditor,
   updateRole,
 } from "../dist-test/team-edit.js";
-import { ID_RE, parseTeamFile, serializeTeam } from "../dist-electron/teams.js";
+import { ID_RE, parseTeamFile, serializeTeam } from "../dist-electron/team-definition.js";
 
 const TEAM = {
   name: "trio",
@@ -26,7 +26,8 @@ const TEAM = {
     { id: "implementer", sendsTo: [{ to: "reviewer", what: "commits" }], mustNot: "skip", responsibilities: "" },
     { id: "tester", sendsTo: [], mustNot: "fix", responsibilities: "" },
   ],
-  cadence: { role: "tester", minutes: 30 },
+  lead: "tester",
+  cadenceMinutes: 30,
   protocol: "P",
 };
 const keyOf = (t, id) => t.roles.find((r) => r.id === id).key;
@@ -35,12 +36,12 @@ test("a team goes into the editor and comes back unchanged", () => {
   assert.deepEqual(fromEditor(toEditor(TEAM)), TEAM);
 });
 
-test("renaming a role keeps every link and the cadence pointing at it", () => {
+test("renaming a role keeps every link and the lead (and its rounds) pointing at it", () => {
   let t = toEditor(TEAM);
   t = updateRole(t, keyOf(t, "tester"), { id: "qa" });
   const out = fromEditor(t);
   assert.deepEqual(out.roles[0].sendsTo[1], { to: "qa", what: "requests" });
-  assert.deepEqual(out.cadence, { role: "qa", minutes: 30 });
+  assert.deepEqual([out.lead, out.cadenceMinutes], ["qa", 30]);
 });
 
 test("clearing a name and typing it again keeps the links", () => {
@@ -51,23 +52,23 @@ test("clearing a name and typing it again keeps the links", () => {
   assert.deepEqual(fromEditor(t), TEAM);
 });
 
-test("a cadence on a row whose name was cleared is left out until it has a name", () => {
+test("a lead on a row whose name was cleared is left out until it has a name", () => {
   let t = toEditor(TEAM);
   const k = keyOf(t, "tester");
   t = updateRole(t, k, { id: "" });
-  assert.equal(fromEditor(t).cadence, null);
+  assert.equal(fromEditor(t).lead, null);
   t = updateRole(t, k, { id: "qa" });
-  assert.deepEqual(fromEditor(t).cadence, { role: "qa", minutes: 30 });
+  assert.equal(fromEditor(t).lead, "qa");
 });
 
-test("removing a role drops every link to it and a cadence on it", () => {
+test("removing a role drops every link to it, and the lead when it led", () => {
   let t = toEditor(TEAM);
   t = removeRole(t, keyOf(t, "tester"));
-  assert.equal(t.cadence, null);
+  assert.equal(t.lead, null);
   const out = fromEditor(t);
   assert.deepEqual(out.roles.map((r) => r.id), ["reviewer", "implementer"]);
   assert.deepEqual(out.roles[0].sendsTo, [{ to: "implementer", what: "findings" }]);
-  assert.equal(out.cadence, null);
+  assert.equal(out.lead, null);
 });
 
 test("an unnamed row stays for the user to fill, but nothing links to it yet", () => {
@@ -125,14 +126,14 @@ test("a new cadence runs every 30 minutes until changed", () => {
   assert.equal(DEFAULT_CADENCE_MINUTES, 30);
 });
 
-test("a hand-written link or cadence to a role the file lacks never enters the editor", () => {
+test("a hand-written link or lead to a role the file lacks never enters the editor", () => {
   const t = toEditor({
     ...TEAM,
     roles: [{ ...TEAM.roles[0], sendsTo: [{ to: "ghost", what: "x" }, ...TEAM.roles[0].sendsTo] }, ...TEAM.roles.slice(1)],
-    cadence: { role: "ghost", minutes: 30 },
+    lead: "ghost",
   });
   assert.deepEqual(t.roles[0].sendsTo.map((s) => s.key), [keyOf(t, "implementer"), keyOf(t, "tester")]);
-  assert.equal(t.cadence, null);
+  assert.equal(t.lead, null);
 });
 
 test("rows added one after another each get their own key", () => {
@@ -163,7 +164,7 @@ test("the editor flags only the role id aya, before Save", () => {
 test("the editor flags a cadence exactly when the saved file would refuse it", () => {
   const saves = (minutes) => {
     try {
-      parseTeamFile("trio", serializeTeam({ ...TEAM, cadence: { role: "tester", minutes } }));
+      parseTeamFile("trio", serializeTeam({ ...TEAM, cadenceMinutes: minutes }));
       return true;
     } catch {
       return false;
