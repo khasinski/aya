@@ -652,6 +652,15 @@ Not covered: a socket refusal before the caller's team is known (an unproven pan
 nothing, on and off without a restart, rotation), `tests/aya-cli-debug.test.mjs` (CLI under sh and dash),
 `e2e/team-debug.spec.ts`.
 
+`aya team stats <team>` (`--json` for the same as JSON) counts what Aya did for the team, from its files only,
+so it works with Aya closed: run time (`log.jsonl`), messages per sender and receiver and per role, the last round
+(`state.json`), held messages by their note (`delivery-notes.json`), messages still in an inbox and each role's read
+mark (`read.json`), who waits on whom, and HEADs seen (`progress.json`). Rounds typed and skipped and why, hold
+decisions by reason, redelivery tries and pauses come from `debug.jsonl` (and `debug.1.jsonl`): without debug on,
+those rows say they need it rather than count zero. Hold reasons are grouped by kind (`#N` for message ids). It
+reads `electron/team-stats.ts` compiled beside the CLI (in the app, `app.asar.unpacked`).
+Tests: `tests/team-stats.test.mjs`.
+
 ## Testing teams in Aya Dev
 
 - Aya Dev rebuilds and restarts when `electron/` changes, and a change in

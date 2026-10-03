@@ -94,6 +94,13 @@
     ],
     "asarUnpack": [
       "bin/**",
+      "dist-electron/team-stats.js",
+      "dist-electron/team-records.js",
+      "dist-electron/team-definition.js",
+      "dist-electron/team-supervision.js",
+      "dist-electron/team-times.js",
+      "dist-electron/paths.js",
+      "dist-electron/constants.js",
       "dist-electron/*.node",
       "dist-electron/aya-local-summary"
     ],

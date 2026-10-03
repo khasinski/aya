@@ -166,6 +166,13 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     notes: ["For the user debugging a team; set AYA_PROJECT_SLUG when the team's name is in two projects."],
   },
   {
+    command: "team stats",
+    usage: "aya team stats team [--json]",
+    summary:
+      "Print what Aya did for a team, read from its files with Aya open or closed: run time, messages per sender and receiver, rounds typed and skipped and why, holds by reason, redeliveries, messages still in an inbox, read marks, commits seen.",
+    notes: ["Read-only. Rounds skipped, hold decisions, redeliveries and pauses come from the debug log: without aya debug on those rows say so instead of counting zero. Set AYA_PROJECT_SLUG when the team's name is in two projects."],
+  },
+  {
     command: "debug",
     usage: "aya debug on|off|status",
     summary: "Turn writing every team decision to the team's debug log on or off, with no restart; off by default.",

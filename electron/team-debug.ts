@@ -8,11 +8,11 @@ import { OWNER_ONLY_FILE_MODE } from "./paths";
 import { callerProject } from "./team-author";
 import { paneTeamRole } from "./team-files";
 import { openTeamStore } from "./team-store";
+import { DEBUG_LOG_FILE, DEBUG_LOG_OLD_FILE } from "./team-records";
 import type { ProjectConfig } from "./types";
 
 export const DEBUG_SWITCH_FILE = "debug.json";
-export const DEBUG_LOG_FILE = "debug.jsonl";
-export const DEBUG_LOG_OLD_FILE = "debug.1.jsonl";
+export { DEBUG_LOG_FILE, DEBUG_LOG_OLD_FILE };
 export const DEBUG_LOG_MAX_BYTES = 5 * 1024 * 1024;
 // What agents or the user wrote is kept to its start; other strings (hold reasons) are Aya's own and kept longer.
 export const MESSAGE_CHARS = 80;
