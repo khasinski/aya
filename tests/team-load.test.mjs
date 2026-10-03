@@ -22,6 +22,10 @@ const TABLE = [
     assert.match(t, /tester got 1 sent 0/);
   }],
   ["lists who waits on whom, in minutes", [msg(1, "tester", "implementer")], [{ waiter: "tester", on: "implementer", since: "2026-10-03T10:02:00.000Z" }], (t) => assert.match(t, /Waiting: tester on implementer 8 min\./)],
+  ["waits under five minutes are left out", [msg(1, "tester", "implementer")], [{ waiter: "tester", on: "implementer", since: "2026-10-03T10:07:00.000Z" }], (t) => assert.doesNotMatch(t, /Waiting/)],
+  ["only the three longest waits (waits come oldest first)", [msg(1, "tester", "implementer")], ["a", "b", "c", "d"].map((x, i) => ({ waiter: "tester", on: x, since: `2026-10-03T10:0${i}:00.000Z` })), (t) => {
+    assert.match(t, /Waiting: tester on a 10 min; tester on b 9 min; tester on c 8 min\.$/);
+  }],
   ["plain ASCII, one line", [msg(1, "lead", "tester")], [], (t) => assert.match(t, /^[\x20-\x7e]*$/)],
 ];
 
