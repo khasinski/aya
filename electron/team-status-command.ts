@@ -5,6 +5,8 @@ import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { withoutSessionMarkers } from "./pane-command";
+import { PANE_ENV_VARS } from "./pane-env";
+import { statusCommandOf } from "./team-definition";
 import type { TeamDefinition } from "./types";
 
 export const STATUS_COMMAND_TIMEOUT_MS = 20_000;
@@ -14,7 +16,7 @@ export const STATUS_SECTION_TITLE = "Status (from the team's command)";
 /** What statusSection needs of a team: TeamRunner's `open` gives exactly these. */
 export interface StatusTeam {
   project: { directory: string; remote?: unknown };
-  store: { dir: string; state(): Promise<{ paused: boolean; running: boolean }> };
+  store: { dir: string; state(): Promise<TeamState> };
   team: Pick<TeamDefinition, "statusCommand">;
 }
 
@@ -24,13 +26,30 @@ export interface StatusRun {
   failure: string | null;
 }
 
+/** What `aya team stats` shows: the run, or why it did not run. */
+export interface StatsStatus extends StatusRun {
+  command: string;
+  notRun: string | null;
+}
+
+type TeamState = { paused: boolean; running: boolean };
+
+const failed = (reason: string) => `status command failed: ${reason}`;
+
+/** Why the command does not run for this team, or null. A remote project's directory is on another machine; a paused
+ *  or unstarted team gets no rounds to carry it. */
+async function whyNotRun(project: { remote?: unknown }, readState: () => Promise<TeamState>): Promise<string | null> {
+  if (project.remote) return "a remote project: the command would run on this machine, not in its directory";
+  const { paused, running } = await readState();
+  return running ? null : `the team is ${paused ? "paused" : "not started"}; it runs only for a running team`;
+}
+
 // A pane's identity in the command's env would let its `aya` calls act as that pane (a nested Aya Dev inherits one).
-const PANE_VARS = ["AYA_TERMINAL_ID", "AYA_PRESET_ID", "AYA_PROJECT_SLUG", "AYA_PROJECT_DIR"];
 
 export function statusCommandEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const plain = Object.fromEntries(Object.entries(env).filter((e): e is [string, string] => typeof e[1] === "string"));
   const out = withoutSessionMarkers(plain);
-  for (const key of PANE_VARS) delete out[key];
+  for (const key of PANE_ENV_VARS) delete out[key];
   return out;
 }
 
@@ -73,7 +92,7 @@ export function runStatusCommand(command: string, cwd: string, timeoutMs = STATU
       // detached: its own process group, so a timeout kills what the shell started too, not the shell alone.
       child = spawn(command, { cwd, env, shell: true, detached: true, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     } catch (e) {
-      resolve({ output: "", failure: `status command failed: ${(e as Error).message}` });
+      resolve({ output: "", failure: failed((e as Error).message) });
       return;
     }
     // Reading past the cap only drains the pipe: a chatty command must not block on a full one.
@@ -92,26 +111,24 @@ export function runStatusCommand(command: string, cwd: string, timeoutMs = STATU
       }
       finish(`status command timed out after ${Math.round(timeoutMs / 1000)} s`);
     }, timeoutMs);
-    child.on("error", (e) => finish(`status command failed: ${e.message}`));
-    child.on("close", (code, signal) => finish(code === 0 ? null : `status command failed: ${signal ? `killed by ${signal}` : `exit ${code}`}`));
+    child.on("error", (e) => finish(failed(e.message)));
+    child.on("close", (code, signal) => finish(code === 0 ? null : failed(signal ? `killed by ${signal}` : `exit ${code}`)));
   });
 }
 
-// One run per team directory: a round and a stats call made while it runs share it.
 const inFlight = new Map<string, Promise<StatusRun | null>>();
 
 /** The command's run for a running local team, else null; calls made while one runs share it. */
 export function statusRun({ project, store, team }: StatusTeam, timeoutMs = STATUS_COMMAND_TIMEOUT_MS): Promise<StatusRun | null> {
-  const command = team.statusCommand?.trim();
+  const command = statusCommandOf(team.statusCommand);
   if (!command) return Promise.resolve(null);
   const running = inFlight.get(store.dir);
   if (running) return running;
   const run = (async () => {
-    // A remote project's directory is on another machine; a paused or unstarted team gets no rounds to carry it.
-    if (project.remote || !(await store.state()).running) return null;
+    if (await whyNotRun(project, () => store.state())) return null;
     return runStatusCommand(command, project.directory, timeoutMs);
   })()
-    .catch((e: Error) => ({ output: "", failure: `status command failed: ${e.message}` }))
+    .catch((e: Error) => ({ output: "", failure: failed(e.message) }))
     .finally(() => inFlight.delete(store.dir));
   inFlight.set(store.dir, run);
   return run;
@@ -127,8 +144,9 @@ export async function statusSection(team: StatusTeam): Promise<string | null> {
 
 /** `aya team stats`: the block it prints, from the team directory `dir` (<home>/teams/<slug>/<team>), its saved
  *  definition and state.json; null for a team with no status command. */
-export async function statusForStats(dir: string, statusCommand: string | undefined, state: { paused: boolean; running: boolean }): Promise<{ command: string; output: string; failure: string | null; notRun: string | null } | null> {
-  if (!statusCommand) return null;
+export async function statusForStats(dir: string, statusCommand: string | undefined, state: TeamState): Promise<StatsStatus | null> {
+  const command = statusCommandOf(statusCommand);
+  if (!command) return null;
   const slug = path.basename(path.dirname(dir));
   const projectFile = path.join(dir, "..", "..", "..", "projects", `${slug}.json`);
   let project: { directory?: unknown; remote?: unknown } = {};
@@ -137,15 +155,15 @@ export async function statusForStats(dir: string, statusCommand: string | undefi
   } catch {
     // No project file: said below.
   }
-  const base = { command: statusCommand, output: "", failure: null };
+  const base = { command, output: "", failure: null };
   if (typeof project.directory !== "string") return { ...base, notRun: `project ${slug} is not in Aya's projects` };
-  if (project.remote) return { ...base, notRun: "a remote project: the command would run on this machine, not in its directory" };
-  if (!state.running) return { ...base, notRun: `the team is ${state.paused ? "paused" : "not started"}; it runs only for a running team` };
-  const run = await statusRun({ project: { directory: project.directory }, store: { dir, state: async () => state }, team: { statusCommand } });
+  const notRun = await whyNotRun(project, async () => state);
+  if (notRun) return { ...base, notRun };
+  const run = await statusRun({ project: { directory: project.directory }, store: { dir, state: async () => state }, team: { statusCommand: command } });
   return run ? { ...base, ...run, notRun: null } : { ...base, notRun: "the team is not running" };
 }
 
-export function formatStatusForStats(s: NonNullable<Awaited<ReturnType<typeof statusForStats>>>): string {
+export function formatStatusForStats(s: StatsStatus): string {
   const lines = ["", STATUS_SECTION_TITLE, `  command: ${s.command}`];
   if (s.notRun) lines.push(`  not run: ${s.notRun}`);
   else lines.push(...(s.output ? s.output.split("\n") : ["no output"]).map((l) => `  ${l}`), ...(s.failure ? [`  ${s.failure}`] : []));

@@ -18,6 +18,8 @@ const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
 const { handleTeamRequest } = await import("../dist-electron/team-control.js");
 const { teamLiveness } = await import("../dist-electron/team-progress.js");
 const times = await import("../dist-electron/team-times.js");
+const { WALL_MINUTE_MS } = times;
+const { DIGEST_IDLE_MIN } = await import("../dist-electron/team-digest.js");
 const { recordAgentStatus } = await import("../dist-electron/agent-status.js");
 const { HOLD_DRAFT, HOLD_NOT_RUNNING } = await import("../dist-electron/pane-holds.js");
 
@@ -46,6 +48,7 @@ test("the defaults live in one place: 30 min first, 10 min after, stalled at 60,
 });
 
 let nextWorld = 0;
+const IMPLEMENTER_PANE = (t) => t.w.paneIds.lead.replace(/-t$/, "-i");
 
 async function world(opts = {}) {
   const number = ++nextWorld;
@@ -236,7 +239,33 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
 
   silenceTest("a rhythm round ends with the team's status command output", { cadence: true, status: "echo athena: gemma-best; echo laptop: nothing loaded" }, async (t) => {
     await t.run("start", 10, "lead reports", 80, "tick");
-    assert.match(t.toLead().at(-1).text, /Round 1: run your round as the team protocol says\..*Status \(from the team's command\): athena: gemma-best \| laptop: nothing loaded/);
+    const text = t.toLead().at(-1).text;
+    assert.match(text, /Round 1: run your round as the team protocol says\..*Status \(from the team's command\): athena: gemma-best \| laptop: nothing loaded/);
+    assert.equal(text.split("Status (from the team's command)").length, 2, "the section's title once");
+  });
+
+  silenceTest("a rhythm round's digest reads the store: refusals, held messages, the round before", { cadence: true }, async (t) => {
+    await t.run("start", 10, "lead reports", 80, "tick");
+    await t.store.recordRefusal({ from: "implementer", to: "author", reason: "no such role", text: "a finding" });
+    t.w.holds[IMPLEMENTER_PANE(t)] = HOLD_DRAFT;
+    await t.send(t.w.paneIds.lead, "implementer", "decision: ship it");
+    await t.run("commit", 90, "tick");
+    const text = t.toLead().at(-1).text;
+    assert.match(text, /Round 2: run your round as the team protocol says\. Since \d\d:\d\d: \+1 message, \+1 commit \([^)]*\), 1 held\..*Refused sends: implementer -> "author" \(no such role\): "a finding"\.$/);
+  });
+
+  silenceTest("a rhythm round names idle roles from the panes' busy state", { cadence: true }, async (t) => {
+    await t.run("start", 10, "lead reports", 80, "tick");
+    // The log is stamped with the wall clock and the digest counts wall-clock minutes: the fake clock jumps past them.
+    t.w.now = Date.now() + (DIGEST_IDLE_MIN + 5) * WALL_MINUTE_MS;
+    await t.run("commit", "tick");
+    assert.match(t.toLead().at(-1).text, new RegExp(`Idle over ${DIGEST_IDLE_MIN} min: implementer\\.`));
+    t.w.busy.add(IMPLEMENTER_PANE(t));
+    await t.run("commit", 90, "tick");
+    assert.doesNotMatch(t.toLead().at(-1).text, /Idle over/);
+    delete t.w.deps.busy;
+    await t.run("commit", 90, "tick");
+    assert.match(t.toLead().at(-1).text, new RegExp(`Idle over ${DIGEST_IDLE_MIN} min \\(not known whether busy now\\): implementer\\.`));
   });
 
   silenceTest("a failing status command is one line in the round, and the round still goes out", { cadence: true, status: "exit 3" }, async (t) => {

@@ -730,16 +730,15 @@ case "$command" in
         ;;
       stats)
         team="${1:-}"
-        json=""
+        flag=""
         [ "$#" -eq 0 ] || shift
         for arg do
           case "$arg" in
-            --json) json="--json" ;;
-            --now) json="--now" ;;
+            --json|--now) flag="$arg" ;;
             *) usage_fail ;;
           esac
         done
-        team_stats "$team" "$json"
+        team_stats "$team" "$flag"
         ;;
       save)
         replace=""

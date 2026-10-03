@@ -90,6 +90,21 @@ export function statusCommandProblem(command: string): string | null {
   return text.includes("\n") ? "the status command must be one line; put a longer one in a script and name the script" : null;
 }
 
+/** The command a team runs: trimmed, and undefined when blank, as the team file keeps it. */
+export function statusCommandOf(command: string | undefined): string | undefined {
+  return command?.trim() || undefined;
+}
+
+/** The status command of a saved team file; undefined when it has none or no longer parses. */
+export function savedStatusCommand(name: string, text: string | null): string | undefined {
+  if (text === null) return undefined;
+  try {
+    return parseTeamFile(name, text).statusCommand;
+  } catch {
+    return undefined;
+  }
+}
+
 function parseStatusCommand(team: string, body: string): string {
   const problem = statusCommandProblem(body);
   if (problem) throw new TeamFileError(team, problem);
@@ -175,7 +190,8 @@ export function serializeTeam(team: TeamDefinition): string {
   }
   if (team.lead) parts.push(`## Lead\n${team.lead}`);
   if (team.lead && team.cadenceMinutes !== null) parts.push(`## Cadence\n${team.lead} every ${team.cadenceMinutes} min`);
-  if (team.statusCommand?.trim()) parts.push(`${SECTION_MARKER}${STATUS_COMMAND_SECTION}\n${team.statusCommand.trim()}`);
+  const statusCommand = statusCommandOf(team.statusCommand);
+  if (statusCommand) parts.push(`${SECTION_MARKER}${STATUS_COMMAND_SECTION}\n${statusCommand}`);
   if (team.protocol) parts.push(`## Protocol\n${team.protocol}`);
   return `${parts.join("\n\n")}\n`;
 }

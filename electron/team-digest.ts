@@ -5,10 +5,9 @@
 import { HOLD_APPROVAL, HOLD_APPROVE_AYA, HOLD_CHOICE, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, HOLD_USAGE_LIMIT, NO_PANE_HOLD } from "./pane-holds";
 import { TEAM_SYSTEM_SENDER } from "./team-definition";
 import { pendingWaits } from "./team-supervision";
-import { clock } from "./team-times";
+import { clock, WALL_MINUTE_MS } from "./team-times";
 import type { TeamMessage } from "./types";
 
-const MINUTE_MS = 60_000;
 // Wall-clock minutes, not cadence ones: they measure people and agents, and the CLI must give the round's answer.
 /** A screen or held message younger than this is a prompt being answered, not a block. */
 export const DIGEST_BLOCKED_MIN = 5;
@@ -19,8 +18,8 @@ export const DIGEST_IDLE_MIN = 20;
 /** Enough of a refused text to tell which message it was; the round is no place for the whole of it. */
 export const REFUSED_TEXT_CHARS = 40;
 /** Lines per section: a long list in a round is a page the lead skims past. */
-const SECTION_ITEMS_SHOWN = 8;
-const COMMITS_SHOWN = 5;
+export const SECTION_ITEMS_SHOWN = 8;
+export const COMMITS_SHOWN = 5;
 
 /** A send `aya team send` refused, as refused.jsonl keeps it (team-store.ts recordRefusal). */
 export interface RefusedSend {
@@ -35,9 +34,10 @@ export interface RefusedSend {
 export function parseRefused(text: string | null): RefusedSend[] {
   const out: RefusedSend[] = [];
   for (const line of (text ?? "").split("\n")) {
+    if (!line) continue;
     try {
-      const r = line ? (JSON.parse(line) as RefusedSend) : null;
-      if (r && [r.time, r.from, r.to, r.reason, r.text].every((v) => typeof v === "string")) out.push(r);
+      const r = JSON.parse(line) as RefusedSend;
+      if ([r.time, r.from, r.to, r.reason, r.text].every((v) => typeof v === "string")) out.push(r);
     } catch {
       // skipped
     }
@@ -96,11 +96,15 @@ export function holdLabel(reason: string): { label: string; onlyUser: boolean } 
   return known ? { label: known[1], onlyUser: true } : { label: reason.replace(/; .*$/, ""), onlyUser: false };
 }
 
-const minutes = (sinceMs: number, nowMs: number) => Math.max(0, Math.floor((nowMs - sinceMs) / MINUTE_MS));
+const minutes = (sinceMs: number, nowMs: number) => Math.max(0, Math.floor((nowMs - sinceMs) / WALL_MINUTE_MS));
 export const duration = (min: number) => (min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`);
 const who = (onlyUser: boolean) => (onlyUser ? "only the user" : "the team");
 const isRound = (m: TeamMessage, lead: string | null) => m.from === TEAM_SYSTEM_SENDER && m.to === lead && /^Round \d+:/.test(m.text);
 const QUEUED = /^earlier message #\d+ for it is still waiting/;
+/** Still held for its receiver; Aya's own held rounds go stale, so they are no block. */
+const heldForRole = (m: TeamMessage) => !m.delivered && !!m.held && m.from !== TEAM_SYSTEM_SENDER;
+const counted = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+const cut = (text: string) => (text.length > REFUSED_TEXT_CHARS ? `${text.slice(0, REFUSED_TEXT_CHARS).trimEnd()} ...` : text);
 
 function capped(items: string[]): string[] {
   return items.length > SECTION_ITEMS_SHOWN ? [...items.slice(0, SECTION_ITEMS_SHOWN), `and ${items.length - SECTION_ITEMS_SHOWN} more`] : items;
@@ -119,19 +123,22 @@ function blockedRows(input: DigestInput): { roles: Set<string>; rows: [string, s
   const blocked = new Set<string>();
   for (const role of roles) {
     const screen = progress?.blocked?.[role];
+    const stuck = screen ? minutes(Date.parse(screen.since), nowMs) : 0;
     // A screen read free since is being answered.
-    if (screen && !screen.freeReads && minutes(Date.parse(screen.since), nowMs) >= DIGEST_BLOCKED_MIN) {
+    if (screen && !screen.freeReads && stuck >= DIGEST_BLOCKED_MIN) {
       const { label, onlyUser } = holdLabel(screen.goneSince ? HOLD_NOT_RUNNING : screen.reason);
-      rows.push([role, `stuck ${duration(minutes(Date.parse(screen.since), nowMs))}: ${label} (${who(onlyUser)})`]);
+      rows.push([role, `stuck ${duration(stuck)}: ${label} (${who(onlyUser)})`]);
       blocked.add(role);
       continue;
     }
-    // Aya's own rounds go stale while held; a message queued behind another names the first one's reason instead.
-    const held = log.filter((m) => m.to === role && !m.delivered && m.held && m.from !== TEAM_SYSTEM_SENDER);
+    // A message queued behind another names the first one's reason instead.
+    const held = log.filter((m) => m.to === role && heldForRole(m));
     const first = held.find((m) => !QUEUED.test(m.held!)) ?? held[0];
-    if (!first || minutes(Date.parse(first.time), nowMs) < DIGEST_BLOCKED_MIN) continue;
+    if (!first) continue;
+    const heldMin = minutes(Date.parse(first.time), nowMs);
+    if (heldMin < DIGEST_BLOCKED_MIN) continue;
     const { label, onlyUser } = QUEUED.test(first.held!) ? { label: "queued behind an earlier message", onlyUser: false } : holdLabel(first.held!);
-    rows.push([role, `message #${first.id} held ${duration(minutes(Date.parse(first.time), nowMs))}: ${label} (${who(onlyUser)})`]);
+    rows.push([role, `message #${first.id} held ${duration(heldMin)}: ${label} (${who(onlyUser)})`]);
     blocked.add(role);
   }
   return { roles: blocked, rows };
@@ -158,14 +165,14 @@ export function roundDigest(input: DigestInput): Digest {
 
   const messages = recent.filter((m) => m.from !== TEAM_SYSTEM_SENDER).length;
   const commits = commitsSince(log, prevIndex, progress?.commit);
-  const held = recent.filter((m) => !m.delivered && m.held && m.from !== TEAM_SYSTEM_SENDER).length;
+  const held = recent.filter(heldForRole).length;
   const skipped = recent.filter((m) => m.from === TEAM_SYSTEM_SENDER && m.to === lead && /^round \d+ skipped/.test(m.text)).length;
   const shown = commits.slice(-COMMITS_SHOWN).join(", ");
   const parts = [
-    messages ? `+${messages} message${messages === 1 ? "" : "s"}` : "no messages",
-    commits.length ? `+${commits.length} commit${commits.length === 1 ? "" : "s"} (${commits.length > COMMITS_SHOWN ? "..., " : ""}${shown})` : "no commits",
+    messages ? `+${counted(messages, "message")}` : "no messages",
+    commits.length ? `+${counted(commits.length, "commit")} (${commits.length > COMMITS_SHOWN ? "..., " : ""}${shown})` : "no commits",
     ...(held ? [`${held} held`] : []),
-    ...(skipped ? [`${skipped} round${skipped === 1 ? "" : "s"} skipped`] : []),
+    ...(skipped ? [`${counted(skipped, "round")} skipped`] : []),
   ];
   const header = sinceIso === null ? "No messages yet" : `Since ${clock(sinceIso)}${prev ? "" : " (no round before)"}: ${parts.join(", ")}`;
 
@@ -184,7 +191,7 @@ export function roundDigest(input: DigestInput): Digest {
 
   add(
     "Refused sends",
-    refused.filter((r) => Date.parse(r.time) > sinceMs).map((r) => `${r.from} -> "${r.to}" (${r.reason}): "${r.text.length > REFUSED_TEXT_CHARS ? `${r.text.slice(0, REFUSED_TEXT_CHARS).trimEnd()} ...` : r.text}"`),
+    refused.filter((r) => Date.parse(r.time) > sinceMs).map((r) => `${r.from} -> "${r.to}" (${r.reason}): "${cut(r.text)}"`),
   );
 
   // Not idle: the lead (it reads this), a blocked role, one waiting on a reply, and one working now.

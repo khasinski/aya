@@ -21,7 +21,7 @@ type Shape = keyof typeof SHAPES;
 const carriesAppended = (shape: Shape) => shape !== "compound";
 
 // One cell per branch of withRoleNote/brief (agent-brief.ts, pane-brief.ts): each channel once with the brief on;
-// the brief off, the assignment prefix and a compound command (refused before the channel) once each.
+// the brief off (a claude team pane takes it anyway), the assignment prefix and a compound command (refused before the channel) once each.
 const CELLS: [agent: string, optedIn: boolean, shape: Shape][] = [
   ["claude", true, "simple"],
   ["grok", true, "simple"],

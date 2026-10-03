@@ -17,7 +17,9 @@ import {
   leadProblemOf,
   parseTeamFile,
   reservedRoleProblem,
+  savedStatusCommand,
   serializeTeam,
+  statusCommandOf,
 } from "./team-definition";
 import type { TeamControlDeps } from "./team-control";
 import type { ProjectConfig, TeamDefinition, TeamLiveness, TeamMessage, TeamSummary } from "./types";
@@ -145,25 +147,19 @@ function refuseLossy(team: TeamDefinition, text: string): void {
       read.responsibilities === flat(role.responsibilities) &&
       JSON.stringify(read.sendsTo) === JSON.stringify(role.sendsTo.map((s) => ({ to: s.to, what: flat(s.what) })));
     if (!same) throw new Error(`role "${role.id}" would not read back the same from the team file; check for line breaks or parentheses`);
-  }  if ((back.statusCommand ?? "") !== (team.statusCommand?.trim() ?? "")) throw new Error("the status command would not read back the same from the team file");
+  }
+  if (back.statusCommand !== statusCommandOf(team.statusCommand)) throw new Error("the status command would not read back the same from the team file");
 }
 
 /** An agent's save keeps the status command the user saved: the command runs with the user's rights outside any
  *  pane's sandbox, so only the Teams window sets or changes it. */
 async function withSavedStatusCommand(teamHome: string, project: ProjectConfig, team: TeamDefinition): Promise<TeamDefinition> {
-  const savedText = await openTeamStore(teamHome, project.slug, team.name).savedDefinition();
-  let saved: string | undefined;
-  try {
-    saved = savedText === null ? undefined : parseTeamFile(team.name, savedText).statusCommand;
-  } catch {
-    saved = undefined;
-  }
-  const given = team.statusCommand?.trim() || undefined;
+  const saved = savedStatusCommand(team.name, await openTeamStore(teamHome, project.slug, team.name).savedDefinition());
+  const given = statusCommandOf(team.statusCommand);
   if (given !== undefined && given !== saved) {
     throw new TeamFileError(team.name, `"${SECTION_MARKER}${STATUS_COMMAND_SECTION}" runs with the user's rights, so only the user sets it, in the Teams window; leave the section out`);
   }
-  const { statusCommand: _, ...rest } = team;
-  return saved === undefined ? rest : { ...rest, statusCommand: saved };
+  return saved === undefined ? team : { ...team, statusCommand: saved };
 }
 
 export class TeamExistsError extends Error {

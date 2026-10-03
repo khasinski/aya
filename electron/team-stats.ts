@@ -3,11 +3,12 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { parseTeamFile } from "./team-definition";
+import { parseTeamFile, savedStatusCommand } from "./team-definition";
 import { DEBUG_LOG_FILE, DEBUG_LOG_OLD_FILE, deliveryState, goesStale, TEAM_FILES, unreadIn, type DeliveryNote } from "./team-records";
 import { betweenRoles, pendingWaits, roleLoad, type RoleWait } from "./team-supervision";
-import { digestLines, parseRefused, roundDigest, type Digest } from "./team-digest";
+import { digestLines, duration, parseRefused, roundDigest, type Digest } from "./team-digest";
 import { formatStatusForStats, statusForStats } from "./team-status-command";
+import { clock, WALL_MINUTE_MS } from "./team-times";
 import type { TeamMessage } from "./types";
 
 /** The team's files as text, null when absent. `debug` is debug.1.jsonl then debug.jsonl. */
@@ -52,6 +53,7 @@ export interface TeamStats {
 }
 
 const DEBUG_ROWS = ["rounds typed and skipped", "hold decisions", "redeliveries", "pauses"];
+const minutesBetween = (fromMs: number, toMs: number) => Math.round((toMs - fromMs) / WALL_MINUTE_MS);
 
 function json<T>(text: string | null, fallback: T): T {
   if (text === null) return fallback;
@@ -129,10 +131,12 @@ function teamRoles(team: string, files: TeamFiles, read: Record<string, number>)
   return { roles: [...new Set([...Object.keys(read), ...Object.keys(json<Record<string, unknown>>(files.assignments, {}))])], lead: null };
 }
 
+type Notes = Record<string, Record<string, DeliveryNote>>;
+
+const parseLog = (files: TeamFiles) => lines<TeamMessage>(files.log, (m) => Number.isSafeInteger(m.id) && typeof m.from === "string" && typeof m.to === "string");
+
 /** The log with each message's delivery state, as the team store reads it. */
-function annotatedLog(files: TeamFiles, read: Record<string, number>): TeamMessage[] {
-  const notes = json<Record<string, Record<string, DeliveryNote>>>(files.notes, {});
-  const log = lines<TeamMessage>(files.log, (m) => Number.isSafeInteger(m.id) && typeof m.from === "string" && typeof m.to === "string");
+function annotatedLog(log: TeamMessage[], notes: Notes, read: Record<string, number>): TeamMessage[] {
   return log.map((m) => deliveryState(m, isRecord(notes[m.to]) ? notes[m.to][m.id] : undefined, read[m.to] ?? 0));
 }
 
@@ -148,7 +152,7 @@ export function digestFromFiles(team: string, files: TeamFiles, nowMs: number): 
   return roundDigest({
     roles,
     lead,
-    log: annotatedLog(files, read),
+    log: annotatedLog(parseLog(files), json<Notes>(files.notes, {}), read),
     progress: isRecord(progress) ? { commit: typeof progress.commit === "string" ? progress.commit : null, ...(isRecord(progress.blocked) ? { blocked: progress.blocked as never } : {}) } : null,
     refused: parseRefused(files.refused ?? null),
     turns,
@@ -162,12 +166,11 @@ export function teamStats(team: string, files: TeamFiles, nowMs: number): TeamSt
   const state = json<Record<string, unknown>>(files.state, {});
   const read = numbers(json(files.read, {}));
   const typing = json<Record<string, unknown>>(files.typing, {});
-  const notes = json<Record<string, Record<string, DeliveryNote>>>(files.notes, {});
+  const notes = json<Notes>(files.notes, {});
   const progress = json<Record<string, unknown>>(files.progress, {});
   const { roles } = teamRoles(team, files, read);
 
-  const log = lines<TeamMessage>(files.log, (m) => Number.isSafeInteger(m.id) && typeof m.from === "string" && typeof m.to === "string");
-  const annotated = annotatedLog(files, read);
+  const log = parseLog(files);
   const debug = files.debug === null ? null : lines<DebugEvent>(files.debug, (e) => typeof e.event === "string");
   const events = debug ?? [];
   const times = (xs: { time?: unknown }[]) => xs.map((x) => String(x.time)).filter((t) => !Number.isNaN(Date.parse(t)));
@@ -181,7 +184,7 @@ export function teamStats(team: string, files: TeamFiles, nowMs: number): TeamSt
   });
   const between = betweenRoles(log, roles);
   const { load, top } = roleLoad(between, roles);
-  const owed = log.filter((m) => unreadIn(read)(m) && !goesStale(m));
+  const owed = log.filter(unreadIn(read)).filter((m) => !goesStale(m));
   const holds = events.filter((e) => e.event === "hold");
   const redeliveries = events.filter((e) => e.event === "redelivery");
   const lastRound = Number.isSafeInteger(state.lastRound) ? (state.lastRound as number) : 0;
@@ -195,7 +198,7 @@ export function teamStats(team: string, files: TeamFiles, nowMs: number): TeamSt
       pausedBy: paused ? (typeof state.pausedBy === "string" && state.pausedBy ? state.pausedBy : "user") : null,
     },
     runTime: logTimes.length
-      ? { from: logTimes[0], to: logTimes.at(-1)!, minutes: Math.round((Date.parse(logTimes.at(-1)!) - Date.parse(logTimes[0])) / 60_000), firstId: log[0].id, lastId: log.at(-1)!.id }
+      ? { from: logTimes[0], to: logTimes.at(-1)!, minutes: minutesBetween(Date.parse(logTimes[0]), Date.parse(logTimes.at(-1)!)), firstId: log[0].id, lastId: log.at(-1)!.id }
       : null,
     debugTime: debugTimes.length ? { from: debugTimes[0], to: debugTimes.at(-1)! } : null,
     messages: { pairs, total: log.length },
@@ -214,7 +217,7 @@ export function teamStats(team: string, files: TeamFiles, nowMs: number): TeamSt
       const reserved = typeof mark === "number" ? mark : isRecord(mark) && Number.isSafeInteger(mark.queued) ? (mark.queued as number) : null;
       return { role, mark: read[role] ?? 0, lastTo: log.filter((m) => m.to === role).at(-1)?.id ?? null, typing: reserved };
     }),
-    waits: pendingWaits(annotated, roles).map((w) => ({ ...w, minutes: Math.max(0, Math.round((nowMs - Date.parse(w.since)) / 60_000)) })),
+    waits: pendingWaits(annotatedLog(log, notes, read), roles).map((w) => ({ ...w, minutes: Math.max(0, minutesBetween(Date.parse(w.since), nowMs)) })),
     commits: {
       head: typeof progress.commit === "string" ? progress.commit : null,
       knownHeads: known,
@@ -229,9 +232,8 @@ const pad2 = (n: number) => String(n).padStart(2, "0");
 /** Local "YYYY-MM-DD HH:MM": a run often spans midnight. */
 function stamp(iso: string): string {
   const t = new Date(iso);
-  return `${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())} ${pad2(t.getHours())}:${pad2(t.getMinutes())}`;
+  return `${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())} ${clock(iso)}`;
 }
-const duration = (minutes: number) => (minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes} min`);
 const LABEL_WIDTH = 36;
 const COUNT_WIDTH = 6;
 const row = (label: string, value: string | number) => `  ${label.padEnd(LABEL_WIDTH)} ${value}`.trimEnd();
@@ -305,13 +307,6 @@ export function formatStats(s: TeamStats): string {
   return `${out.join("\n")}\n`;
 }
 
-function savedStatusCommand(team: string, saved: string | null): string | undefined {
-  try {
-    return saved === null ? undefined : parseTeamFile(team, saved).statusCommand;
-  } catch {
-    return undefined;
-  }
-}
 
 function readOrNull(file: string): string | null {
   try {

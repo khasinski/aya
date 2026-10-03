@@ -62,6 +62,7 @@ import { codexHomeFor } from "./agent-brief";
 import { DEFAULT_CODEX_HOME } from "./usage-codex";
 import { DEFAULT_GROK_HOME } from "./usage-grok";
 import { expandUserPath } from "./usage";
+import { PANE_ENV_VARS } from "./pane-env";
 
 // Search-snippet context window around a match (chars).
 const SEARCH_SNIPPET_CONTEXT_BEFORE = 30; // chars before the match
@@ -511,11 +512,10 @@ export function safeEnv(req: SpawnRequest, cwd: string): { [key: string]: string
   out.PATH = pathWithFallbackDir(out.PATH, path.dirname(bundledAyaCliPath(__dirname)));
   out.AYA_HOME = AYA_HOME;
   out.AYA_SOCKET = CONTROL_SOCKET_PATH;
+  // Never the outer Aya pane's (a nested Aya): aya team save would fall back to its project.
+  for (const key of PANE_ENV_VARS) delete out[key];
   out.AYA_TERMINAL_ID = req.ptyId;
   out.AYA_PROJECT_DIR = cwd;
-  // Never the outer Aya pane's (a nested Aya): aya team save would fall back to its project.
-  delete out.AYA_PROJECT_SLUG;
-  delete out.AYA_PRESET_ID;
   if (req.projectSlug) out.AYA_PROJECT_SLUG = req.projectSlug;
   if (req.presetId) out.AYA_PRESET_ID = req.presetId;
   return out;

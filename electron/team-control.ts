@@ -9,7 +9,7 @@ import { noteTyped } from "./team-progress";
 import { goesStale, type TeamStore, type TeamMessage } from "./team-store";
 import { TEAM_SYSTEM_SENDER } from "./team-definition";
 import type { ProjectConfig, TeamDefinition, TeamRole } from "./types";
-import { clock } from "./team-times";
+import { clock, WALL_MINUTE_MS } from "./team-times";
 
 export interface TeamControlDeps {
   teamHome: string;
@@ -310,7 +310,6 @@ export function logTyped(
 // Two agents answering each other can loop forever; a role that sends this many
 // in a minute is refused until the minute passes, and the user sees why.
 export const TEAM_SENDS_PER_MINUTE = 10;
-const MINUTE_MS = 60_000;
 
 /** A line from Aya in the team log, addressed to `to` and never typed. */
 export const systemLine = (store: TeamStore, to: string, text: string) => store.append({ from: TEAM_SYSTEM_SENDER, to, commit: null, text, delivered: true });
@@ -318,7 +317,7 @@ export const systemLine = (store: TeamStore, to: string, text: string) => store.
 /** One line in the team log per minute of refusals, so the window shows what the tool output alone said. */
 async function logRefusedSend({ role, store }: Membership, to: string): Promise<void> {
   const text = `${role.id}'s message to ${to} was refused: ${TEAM_SENDS_PER_MINUTE} messages in the last minute`;
-  const since = Date.now() - MINUTE_MS;
+  const since = Date.now() - WALL_MINUTE_MS;
   const told = (await store.log()).some((l) => l.from === TEAM_SYSTEM_SENDER && l.text === text && Date.parse(l.time) >= since);
   if (!told) await systemLine(store, role.id, text);
 }
@@ -333,7 +332,7 @@ async function refused(m: Membership, to: string, text: string, reason: string, 
 async function send(m: Membership, to: string, text: string, deps: TeamControlDeps): Promise<string> {
   const paused = m.store.pausedSince();
   if ((await m.store.state()).paused) throw await refused(m, to, text, "team paused", `team ${m.team.name} is paused; nothing was sent`);
-  if ((await m.store.sentSince(m.role.id, Date.now() - MINUTE_MS)) >= TEAM_SENDS_PER_MINUTE) {
+  if ((await m.store.sentSince(m.role.id, Date.now() - WALL_MINUTE_MS)) >= TEAM_SENDS_PER_MINUTE) {
     await logRefusedSend(m, to);
     throw await refused(
       m,
@@ -352,9 +351,12 @@ async function send(m: Membership, to: string, text: string, deps: TeamControlDe
   // Its Enter went: the sender must not send it again, only learn that nothing showed it was taken.
   if (unseen) return `written to ${to}'s pane (message ${entry.id}), but ${unseen.replace(/^typed, /, "")}; it is not resent\n`;
   if (failure && typed) throw new Error(`${to}: ${failure}; message ${entry.id} is not resent`);
-  // Kept for the inbox, but a role without a pane may never read it: the lead hears of it with the refusals.
-  if (failure === NO_PANE_HOLD) throw await refused(m, to, text, `no pane, kept as #${entry.id}`, `${to}: ${failure}; nothing was typed, message ${entry.id} is kept for aya team inbox`);
-  if (failure) throw new Error(`${to}: ${failure}; nothing was typed, message ${entry.id} is kept for aya team inbox`);
+  if (failure) {
+    const kept = `${to}: ${failure}; nothing was typed, message ${entry.id} is kept for aya team inbox`;
+    // Kept for the inbox, but a role without a pane may never read it: the lead hears of it with the refusals.
+    if (failure === NO_PANE_HOLD) throw await refused(m, to, text, `no pane, kept as #${entry.id}`, kept);
+    throw new Error(kept);
+  }
   return `written to ${to}'s pane (message ${entry.id}); this does not mean it was read\n`;
 }
 

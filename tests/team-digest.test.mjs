@@ -12,13 +12,14 @@ const root = mkdtempSync(join(tmpdir(), "aya-team-digest-"));
 isolateHome(root);
 process.on("exit", () => rmSync(root, { recursive: true, force: true }));
 
-const { roundDigest, digestLines, digestOneLine, DIGEST_BLOCKED_MIN, DIGEST_IDLE_MIN, DIGEST_WAIT_MIN } = await import("../dist-electron/team-digest.js");
-const { clock } = await import("../dist-electron/team-times.js");
+const { roundDigest, digestLines, digestOneLine, DIGEST_BLOCKED_MIN, DIGEST_IDLE_MIN, DIGEST_WAIT_MIN, REFUSED_TEXT_CHARS, SECTION_ITEMS_SHOWN, COMMITS_SHOWN } = await import("../dist-electron/team-digest.js");
+const { clock, WALL_MINUTE_MS } = await import("../dist-electron/team-times.js");
 const H = await import("../dist-electron/pane-holds.js");
+const { betweenRoles } = await import("../dist-electron/team-supervision.js");
 
 const ROLES = ["lead", "tester", "implementer", "reviewer"];
 const NOW = Date.parse("2026-10-03T12:00:00.000Z");
-const ago = (min) => new Date(NOW - min * 60_000).toISOString();
+const ago = (min) => new Date(NOW - min * WALL_MINUTE_MS).toISOString();
 let next = 1;
 const msg = (from, to, min, extra = {}) => ({ id: next++, time: ago(min), from, to, commit: "c0", text: "x", delivered: true, ...extra });
 const round = (min, n = 1) => msg("aya", "lead", min, { text: `Round ${n}: run your round as the team protocol says.` });
@@ -75,6 +76,14 @@ const TABLE = [
     `a screen just under ${DIGEST_BLOCKED_MIN} min is no block yet; at ${DIGEST_BLOCKED_MIN} it is`,
     () => input({ log: [...busyTeam(), round(1)], progress: { blocked: { tester: { reason: H.HOLD_CHOICE, since: ago(DIGEST_BLOCKED_MIN - 0.1) }, reviewer: { reason: H.HOLD_CHOICE, since: ago(DIGEST_BLOCKED_MIN) } } } }),
     (d) => assert.deepEqual(section(d, "Needs action").items, [`reviewer  stuck ${DIGEST_BLOCKED_MIN} min: numbered choice (only the user)`]),
+  ],
+  [
+    `a message held just under ${DIGEST_BLOCKED_MIN} min is no block yet; at ${DIGEST_BLOCKED_MIN} it is`,
+    () => {
+      const log = [...busyTeam(), round(20), msg("lead", "tester", DIGEST_BLOCKED_MIN - 0.1, { delivered: false, held: H.HOLD_APPROVAL }), msg("lead", "reviewer", DIGEST_BLOCKED_MIN, { delivered: false, held: H.HOLD_APPROVAL })];
+      return input({ log, busy: ["tester", "reviewer"] });
+    },
+    (d) => assert.deepEqual(section(d, "Needs action").items, [`reviewer  message #${next - 1} held ${DIGEST_BLOCKED_MIN} min: approval prompt (only the user)`]),
   ],
   [
     "a screen read free since (freeReads) is being answered: not shown",
@@ -146,6 +155,14 @@ const TABLE = [
     },
   ],
   [
+    `a refused text of ${REFUSED_TEXT_CHARS} chars is shown whole; one more char and it is cut`,
+    () => {
+      const refusal = (to, text) => ({ time: ago(5), from: "lead", to, reason: "no such role", text });
+      return input({ log: [...busyTeam(), round(10)], refused: [refusal("a", "x".repeat(REFUSED_TEXT_CHARS)), refusal("b", "y".repeat(REFUSED_TEXT_CHARS + 1))] });
+    },
+    (d) => assert.deepEqual(section(d, "Refused sends").items, [`lead -> "a" (no such role): "${"x".repeat(REFUSED_TEXT_CHARS)}"`, `lead -> "b" (no such role): "${"y".repeat(REFUSED_TEXT_CHARS)} ..."`]),
+  ],
+  [
     "a refused send since the last round, its text cut; one from before the round is not repeated",
     () =>
       input({
@@ -197,11 +214,54 @@ const TABLE = [
     (d) => assert.deepEqual(section(d, "Idle over").items, ["implementer"]),
   ],
   [
+    `past ${COMMITS_SHOWN} new commits the header shows the newest ${COMMITS_SHOWN} after "..."`,
+    () => {
+      const log = [...busyTeam(), round(30), ...Array.from({ length: COMMITS_SHOWN + 1 }, (_, i) => msg("tester", "lead", 20 - i, { commit: `k${i}` }))];
+      return input({ log, busy: ["tester"] });
+    },
+    (d) => {
+      const newest = Array.from({ length: COMMITS_SHOWN }, (_, i) => `k${i + 1}`).join(", ");
+      assert.match(d.header, new RegExp(`\\+${COMMITS_SHOWN + 1} commits \\(\\.\\.\\., ${newest}\\)$`));
+    },
+  ],
+  [
+    `exactly ${COMMITS_SHOWN} new commits are all shown, without "..."`,
+    () => {
+      const log = [...busyTeam(), round(30), ...Array.from({ length: COMMITS_SHOWN }, (_, i) => msg("tester", "lead", 20 - i, { commit: `k${i}` }))];
+      return input({ log, busy: ["tester"] });
+    },
+    (d) => assert.match(d.header, new RegExp(`\\+${COMMITS_SHOWN} commits \\(k0, `)),
+  ],
+  [
+    `a section lists ${SECTION_ITEMS_SHOWN} items, then how many more`,
+    () => {
+      const refused = Array.from({ length: SECTION_ITEMS_SHOWN + 2 }, (_, i) => ({ time: ago(5), from: "lead", to: `r${i}`, reason: "no such role", text: "x" }));
+      return input({ log: [...busyTeam(), round(10)], refused });
+    },
+    (d) => {
+      const items = section(d, "Refused sends").items;
+      assert.equal(items.length, SECTION_ITEMS_SHOWN + 1);
+      assert.equal(items.at(-1), "and 2 more");
+    },
+  ],
+  [
+    `a section of exactly ${SECTION_ITEMS_SHOWN} items is not cut`,
+    () => {
+      const refused = Array.from({ length: SECTION_ITEMS_SHOWN }, (_, i) => ({ time: ago(5), from: "lead", to: `r${i}`, reason: "no such role", text: "x" }));
+      return input({ log: [...busyTeam(), round(10)], refused });
+    },
+    (d) => assert.equal(section(d, "Refused sends").items.length, SECTION_ITEMS_SHOWN),
+  ],
+  [
     "empty sections are omitted, the rest keep their order; the status command's section goes last",
     () => input({ log: [...busyTeam(), round(30), msg("tester", "lead", 10)], busy: ["tester"], statusCommandSection: { title: "Status", items: ["ok"] } }),
     (d) => assert.deepEqual(titles(d), ["Waiting on you", "Status"]),
   ],
 ];
+
+test("the digest's numbers are the product's: wall-clock minutes, 5 min blocked, 30 min wait, 20 min idle, 40 chars, 8 items, 5 commits", () => {
+  assert.deepEqual([WALL_MINUTE_MS, DIGEST_BLOCKED_MIN, DIGEST_WAIT_MIN, DIGEST_IDLE_MIN, REFUSED_TEXT_CHARS, SECTION_ITEMS_SHOWN, COMMITS_SHOWN], [60_000, 5, 30, 20, 40, 8, 5]);
+});
 
 for (const [label, make, check] of TABLE) {
   test(`roundDigest | ${label}`, () => {
@@ -209,6 +269,11 @@ for (const [label, make, check] of TABLE) {
     check(roundDigest(make()));
   });
 }
+
+test("betweenRoles: talk between the team's roles only, never a role's note to itself", () => {
+  const log = [msg("tester", "lead", 3), msg("tester", "tester", 2), msg("aya", "lead", 1), msg("tester", "qa", 1)];
+  assert.deepEqual(betweenRoles(log, ROLES), [log[0]]);
+});
 
 test("digestLines: one item stays on its title's line, more go below it; digestOneLine is one ASCII line", () => {
   const d = { header: "Since 10:00: +1 message, no commits", sections: [{ title: "Waiting on you", items: ["tester #3 for 5 min"] }, { title: "Needs action", items: ["a   stuck 6 min: x (only the user)", "bb  stuck 7 min: y (the team)"] }] };

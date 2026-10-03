@@ -39,6 +39,13 @@ export const REFUSED_KEEP_ENTRIES = 100;
 
 const CRASHED_MID_TYPING: DeliveryNote = { kind: "withheld", reason: "Aya went down while typing it; it may be in the composer without its Enter, or not there at all - check the pane" };
 
+/** Rewrites a JSONL file with `lines` through a temp file, owner-only from the first byte: messages may hold secrets. */
+async function replaceJsonl(file: string, lines: string[]): Promise<void> {
+  const tmp = atomicTempPath(file);
+  await fs.writeFile(tmp, lines.map((l) => `${l}\n`).join(""), { mode: OWNER_ONLY_FILE_MODE });
+  await fs.rename(tmp, file);
+}
+
 /** What a trim keeps within TEAM_LOG_TRIM_BYTES: messages still owed to their role first (a quiet role's must not be
  *  cut by the others' talk), then the newest TEAM_LOG_KEEP_ENTRIES of the rest; in log order. */
 function keptByTrim(log: TeamMessage[], owed: (m: TeamMessage) => boolean): TeamMessage[] {
@@ -352,10 +359,7 @@ export class TeamStore {
       if (log.length >= TEAM_LOG_MAX_ENTRIES || size + JSON.stringify(entry).length + 1 > TEAM_LOG_READ_BYTES) {
         const unread = unreadIn(await this.readMarks());
         const kept = keptByTrim([...log, entry], (m) => unread(m) && !goesStale(m));
-        // Owner-only from the first byte: messages may hold secrets.
-        const tmp = atomicTempPath(this.file(TEAM_FILES.log));
-        await fs.writeFile(tmp, kept.map((m) => `${JSON.stringify(m)}\n`).join(""), { mode: OWNER_ONLY_FILE_MODE });
-        await fs.rename(tmp, this.file(TEAM_FILES.log));
+        await replaceJsonl(this.file(TEAM_FILES.log), kept.map((m) => JSON.stringify(m)));
       } else {
         await fs.appendFile(this.file(TEAM_FILES.log), `${JSON.stringify(entry)}\n`, {
           mode: OWNER_ONLY_FILE_MODE,
@@ -372,11 +376,8 @@ export class TeamStore {
       const file = this.file(TEAM_FILES.refused);
       const kept = ((await readText(file)) ?? "").split("\n").filter(Boolean);
       await fs.mkdir(this.dir, { recursive: true });
-      if (kept.length >= REFUSED_MAX_ENTRIES) {
-        const tmp = atomicTempPath(file);
-        await fs.writeFile(tmp, [...kept.slice(-REFUSED_KEEP_ENTRIES + 1), JSON.stringify(entry)].map((l) => `${l}\n`).join(""), { mode: OWNER_ONLY_FILE_MODE });
-        await fs.rename(tmp, file);
-      } else await fs.appendFile(file, `${JSON.stringify(entry)}\n`, { mode: OWNER_ONLY_FILE_MODE });
+      if (kept.length >= REFUSED_MAX_ENTRIES) await replaceJsonl(file, [...kept.slice(-REFUSED_KEEP_ENTRIES + 1), JSON.stringify(entry)]);
+      else await fs.appendFile(file, `${JSON.stringify(entry)}\n`, { mode: OWNER_ONLY_FILE_MODE });
     });
   }
 

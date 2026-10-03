@@ -101,6 +101,7 @@
       "dist-electron/team-digest.js",
       "dist-electron/pane-holds.js",
       "dist-electron/team-status-command.js",
+      "dist-electron/pane-env.js",
       "dist-electron/pane-command.js",
       "dist-electron/shell-words.js",
       "dist-electron/team-times.js",

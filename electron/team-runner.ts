@@ -13,7 +13,7 @@ import { oneAtATime } from "./keyed-queue";
 import { noteRound, observe, quietTooLong, repoSince, resetProgress, roundsHeld, stalledWhenLastLooked, teamLiveness, type TeamProgress } from "./team-progress";
 import { pendingWaits, stalledText, supervisionText } from "./team-supervision";
 import { digestOneLine, roundDigest } from "./team-digest";
-import { statusSection, STATUS_SECTION_TITLE } from "./team-status-command";
+import { statusSection, STATUS_SECTION_TITLE, type StatusTeam } from "./team-status-command";
 import { openTeamStore, readText, type PendingTask, type TeamStore } from "./team-store";
 import { clock, ROUND_CHECK_MS, SILENCE_FIRST_MS, SILENCE_REPEAT_MS } from "./team-times";
 import { TEAM_SYSTEM_SENDER, TEAM_USER_SENDER } from "./team-definition";
@@ -357,18 +357,22 @@ export class TeamRunner {
     this.cancels.set(key, this.schedule(tick, ROUND_CHECK_MS));
   }
 
-  /** The rhythm round's digest, from the store and whether each role's agent is mid-turn now. */
-  private async digest(project: Parameters<typeof statusSection>[0]["project"], store: TeamStore, team: TeamDefinition, progress: TeamProgress, nowMs: number) {
-    const roles = team.roles.map((r) => r.id);
+  /** Roles whose agent is mid-turn now; null when Aya cannot tell. */
+  private async busyRoles(store: TeamStore, roles: string[]): Promise<string[] | null> {
     const isBusy = this.deps.busy;
-    const busy = isBusy
-      ? (await Promise.all(roles.map(async (r) => {
-          const pane = await store.paneOf(r);
-          return pane && (await isBusy(pane).catch(() => false)) ? r : null;
-        }))).filter((r): r is string => r !== null)
-      : null;
+    if (!isBusy) return null;
+    const busy = await Promise.all(roles.map(async (r) => {
+      const pane = await store.paneOf(r);
+      return !!pane && (await isBusy(pane).catch(() => false));
+    }));
+    return roles.filter((_, i) => busy[i]);
+  }
+
+  private async digest(project: StatusTeam["project"], store: TeamStore, team: TeamDefinition, progress: TeamProgress, nowMs: number) {
+    const roles = team.roles.map((r) => r.id);
+    const busy = await this.busyRoles(store, roles);
     const status = await statusSection({ project, store, team });
-    const statusCommandSection = status ? { title: STATUS_SECTION_TITLE, items: [status.slice(STATUS_SECTION_TITLE.length + 2)] } : null;
+    const statusCommandSection = status ? { title: STATUS_SECTION_TITLE, items: [status.slice(`${STATUS_SECTION_TITLE}: `.length)] } : null;
     return roundDigest({ roles, lead: team.lead, log: await store.annotatedLog(), progress, refused: await store.refusals(), turns: null, busy, nowMs, statusCommandSection });
   }
 

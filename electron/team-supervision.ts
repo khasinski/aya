@@ -13,10 +13,14 @@ export interface RoleWait {
   id: number;
 }
 
+/** The messages between the team's roles: Aya's, the user's, other roles' and a role's to itself are not load. */
+export const betweenRoles = (log: readonly TeamMessage[], roles: readonly string[]): TeamMessage[] =>
+  log.filter((m) => roles.includes(m.from) && roles.includes(m.to) && m.from !== m.to);
+
 /** Pairs where nothing `on` sent since `waiter` wrote to it reached `waiter`, directly or round a ring; a message to a
  *  third role, a held one or one typed without its Enter (annotatedLog) is no answer. Aya's and the user's do not count. */
 export function pendingWaits(log: readonly TeamMessage[], roles: readonly string[]): RoleWait[] {
-  const own = log.filter((m) => roles.includes(m.from) && roles.includes(m.to) && m.from !== m.to);
+  const own = betweenRoles(log, roles);
   // heard[x][y]: the id of y's latest message that has reached x by then (a vector clock over the log).
   const heard = new Map(roles.map((r) => [r, new Map<string, number>()]));
   for (const m of own) {
@@ -60,10 +64,6 @@ export function stalledText({ round, since, messages, waits, nowMs }: { round: n
     ASK_USER
   );
 }
-
-/** The messages between the team's roles: Aya's, the user's, other roles' and a role's to itself are not load. */
-export const betweenRoles = (log: readonly TeamMessage[], roles: readonly string[]): TeamMessage[] =>
-  log.filter((m) => roles.includes(m.from) && roles.includes(m.to) && m.from !== m.to);
 
 /** Per role that got or sent any of `messages`, both counts, and the role most of them went to (the first role on a tie). */
 export function roleLoad(messages: readonly TeamMessage[], roles: readonly string[]): { load: { role: string; got: number; sent: number }[]; top: { role: string; got: number } } {

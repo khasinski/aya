@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isolateHome } from "./helpers/isolate-home.mjs";
 import { teamProject } from "./helpers/team.mjs";
@@ -13,7 +13,7 @@ isolateHome(home.root);
 process.on("exit", () => home.cleanup());
 
 const { TeamStore, teamDir, REFUSED_MAX_ENTRIES, REFUSED_KEEP_ENTRIES } = await import("../dist-electron/team-store.js");
-const { handleTeamRequest, TEAM_SENDS_PER_MINUTE } = await import("../dist-electron/team-control.js");
+const { handleTeamRequest, oneLine, TEAM_SENDS_PER_MINUTE } = await import("../dist-electron/team-control.js");
 const { digestFromFiles, readTeamFiles } = await import("../dist-electron/team-stats.js");
 const { MESSAGE_CHARS } = await import("../dist-electron/team-debug.js");
 
@@ -52,6 +52,7 @@ const LONG = "8651809: Found a bug in the parser that loses errors on an empty l
 const TABLE = [
   ["an allowed send records nothing", async () => {}, "pane-l", "worker", "go", null, /^written to worker's pane/, 1],
   ["no such role", async () => {}, "pane-l", "author", LONG, "no such role", /does not send to author/, 0],
+  ["a text of several lines is recorded as one line", async () => {}, "pane-l", "author", "first\n\nsecond", "no such role", /does not send to author/, 0],
   ["a role it does not send to", async () => {}, "pane-w", "tester", "numbers?", "not in its sends-to", /worker does not send to tester/, 0],
   ["the team is paused", (t) => t.store.setPaused(true), "pane-l", "worker", "go", "team paused", /is paused; nothing was sent/, 0],
   ["a receiver without a pane: kept for its inbox, and recorded", async () => {}, "pane-l", "tester", "measure", /^no pane, kept as #\d+$/, /no pane assigned; nothing was typed, message \d+ is kept/, 1],
@@ -64,7 +65,7 @@ const TABLE = [
     "worker",
     "one more",
     `${TEAM_SENDS_PER_MINUTE} sends in a minute`,
-    /sent 10 messages in the last minute/,
+    new RegExp(`sent ${TEAM_SENDS_PER_MINUTE} messages in the last minute`),
     TEAM_SENDS_PER_MINUTE,
   ],
 ];
@@ -81,7 +82,8 @@ for (const [label, prepare, pane, to, text, reason, answer, logged] of TABLE) {
       else {
         assert.equal(recorded.length, 1);
         const [r] = recorded;
-        assert.deepEqual([r.from, r.to, r.text], [from, to, text.slice(0, MESSAGE_CHARS)]);
+        assert.deepEqual([r.from, r.to, r.text], [from, to, oneLine(text).slice(0, MESSAGE_CHARS)]);
+        assert.doesNotMatch(r.text, /\n/);
         if (reason instanceof RegExp) assert.match(r.reason, reason);
         else assert.equal(r.reason, reason);
       }
@@ -92,16 +94,28 @@ for (const [label, prepare, pane, to, text, reason, answer, logged] of TABLE) {
   });
 }
 
+test("a refusal that cannot be recorded still refuses with the same answer", async () => {
+  const t = await setup();
+  try {
+    mkdirSync(join(t.store.dir, "refused.jsonl"), { recursive: true });
+    assert.match(await t.send("pane-l", "author", "hi"), /^refused: lead does not send to author/);
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("refused.jsonl is bounded: past the max the newest are kept, oldest first", async () => {
+  assert.deepEqual([REFUSED_MAX_ENTRIES, REFUSED_KEEP_ENTRIES], [200, 100]);
   const t = await setup();
   try {
     for (let i = 0; i < REFUSED_MAX_ENTRIES + 3; i++) await t.store.recordRefusal({ from: "lead", to: "author", reason: "no such role", text: `n${i}` });
     const lines = readFileSync(join(t.store.dir, "refused.jsonl"), "utf8").trim().split("\n");
-    assert.ok(lines.length <= REFUSED_MAX_ENTRIES, `${lines.length} lines`);
+    // The write past the max leaves the newest REFUSED_KEEP_ENTRIES; the two after it are appended.
+    assert.equal(lines.length, REFUSED_KEEP_ENTRIES + 2);
     const texts = (await t.store.refusals()).map((r) => r.text);
     assert.equal(texts.at(-1), `n${REFUSED_MAX_ENTRIES + 2}`);
     assert.equal(texts[0], `n${REFUSED_MAX_ENTRIES + 3 - texts.length}`);
-    assert.ok(texts.length >= REFUSED_KEEP_ENTRIES, `${texts.length} kept`);
+    assert.deepEqual(readdirSync(t.store.dir).filter((f) => f.endsWith(".tmp")), [], "the trim's temp file is renamed over the file");
   } finally {
     t.cleanup();
   }

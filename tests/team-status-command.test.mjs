@@ -14,8 +14,15 @@ const root = mkdtempSync(join(tmpdir(), "aya-status-cmd-"));
 isolateHome(root);
 process.on("exit", () => rmSync(root, { recursive: true, force: true }));
 
-const { runStatusCommand, statusRun, statusSection, statusCommandEnv, capOutput, STATUS_OUTPUT_MAX_BYTES } = await import("../dist-electron/team-status-command.js");
+const { runStatusCommand, statusRun, statusSection, statusCommandEnv, capOutput, STATUS_OUTPUT_MAX_BYTES, STATUS_COMMAND_TIMEOUT_MS } = await import("../dist-electron/team-status-command.js");
 const { TEAM_FILES } = await import("../dist-electron/team-records.js");
+
+// The timeout case: a 1 s limit on a 30 s sleep must return well before the sleep ends.
+const SHORT_TIMEOUT_MS = 1_000;
+const RETURNED_WITHIN_MS = 5_000;
+const KILL_SETTLE_MS = 200;
+const UTF8_MAX_CHAR_BYTES = 4;
+const CLI_TIMEOUT_MS = 30_000;
 
 let n = 0;
 const projectDir = () => {
@@ -35,7 +42,7 @@ const CASES = [
   { name: "exit 0, no output", command: "true", output: "", failure: null, section: "Status (from the team's command): no output" },
   { name: "non-zero exit keeps stdout and stderr", command: "echo out; echo err >&2; exit 2", output: "out\nstderr:\nerr", failure: "status command failed: exit 2", section: "Status (from the team's command): out | stderr: | err | status command failed: exit 2" },
   { name: "stderr on success is kept", command: "echo warn >&2", output: "stderr:\nwarn", failure: null, section: "Status (from the team's command): stderr: | warn" },
-  { name: "ESC sequences and CR do not reach the composer", command: "printf '\\033[31mred\\033[0m\\r\\nok\\007\\n'", output: "red\nok", failure: null, section: "Status (from the team's command): red | ok" },
+  { name: "ESC sequences, CR and Ctrl-U do not reach the composer", command: "printf '\\033[31mred\\033[0m\\r\\nok\\007\\025 a\\rb\\n'", output: "red\nok ab", failure: null, section: "Status (from the team's command): red | ok ab" },
   { name: "no stdin: a reader gets EOF at once", command: "cat; echo done", output: "done", failure: null, section: "Status (from the team's command): done" },
   { name: "a command that is not there", command: "aya-no-such-command-xyz", output: /stderr:\n.*not found/, failure: "status command failed: exit 127", section: /status command failed: exit 127$/ },
 ];
@@ -56,25 +63,39 @@ for (const c of CASES) {
 test("timeout: reported as one line, and what the shell started is killed with it", async () => {
   const dir = projectDir();
   const started = Date.now();
-  const run = await runStatusCommand("sleep 30 & echo $! > child.pid; echo partial; wait", dir, 1000);
-  assert.ok(Date.now() - started < 5000, "returned at the timeout, not when sleep ended");
+  const run = await runStatusCommand("sleep 30 & echo $! > child.pid; echo partial; wait", dir, SHORT_TIMEOUT_MS);
+  assert.ok(Date.now() - started < RETURNED_WITHIN_MS, "returned at the timeout, not when sleep ended");
   assert.equal(run.failure, "status command timed out after 1 s");
   assert.equal(run.output, "partial");
   const pid = Number(readFileSync(join(dir, "child.pid"), "utf8"));
-  await new Promise((r) => setTimeout(r, 200));
+  await new Promise((r) => setTimeout(r, KILL_SETTLE_MS));
   assert.throws(() => process.kill(pid, 0), "the background sleep was killed with its group");
 });
 
 test("huge output is cut at the cap, on a character boundary, and says so", async () => {
-  const run = await runStatusCommand("yes ąą | head -c 200000", projectDir());
+  const run = await runStatusCommand(`yes ąą | head -c ${STATUS_OUTPUT_MAX_BYTES * 100}`, projectDir());
   assert.equal(run.failure, null);
   const note = `\n(cut at ${STATUS_OUTPUT_MAX_BYTES} bytes)`;
   assert.ok(run.output.endsWith(note), run.output.slice(-40));
   const body = run.output.slice(0, -note.length);
   assert.ok(Buffer.byteLength(body) <= STATUS_OUTPUT_MAX_BYTES);
-  assert.ok(Buffer.byteLength(body) > STATUS_OUTPUT_MAX_BYTES - 4, "cut at the cap, not well before it");
+  assert.ok(Buffer.byteLength(body) > STATUS_OUTPUT_MAX_BYTES - UTF8_MAX_CHAR_BYTES, "cut at the cap, not well before it");
   assert.doesNotMatch(body, /�/);
   assert.equal(capOutput("short"), "short");
+  const atCap = "a".repeat(STATUS_OUTPUT_MAX_BYTES);
+  assert.equal(capOutput(atCap), atCap, "exactly the cap is not cut");
+  assert.equal(capOutput(`${atCap}b`), `${atCap}\n(cut at ${STATUS_OUTPUT_MAX_BYTES} bytes)`);
+});
+
+test("output in many small writes is kept up to the cap, not only the first writes", async () => {
+  const writes = 30;
+  const each = Math.ceil((STATUS_OUTPUT_MAX_BYTES * 1.5) / writes);
+  const run = await runStatusCommand(`i=0; while [ $i -lt ${writes} ]; do head -c ${each} /dev/zero | tr '\\0' a; sleep 0.01; i=$((i+1)); done`, projectDir());
+  assert.equal(run.output, `${"a".repeat(STATUS_OUTPUT_MAX_BYTES)}\n(cut at ${STATUS_OUTPUT_MAX_BYTES} bytes)`);
+});
+
+test("the default limit is 20 s: long enough for a GPU or model-server query, short enough for a round", () => {
+  assert.equal(STATUS_COMMAND_TIMEOUT_MS, 20_000);
 });
 
 test("cwd is the project directory", async () => {
@@ -152,7 +173,7 @@ Must not: skip a round
 lead
 ${command ? `\n## Status command\n${command}\n` : ""}`;
 
-function statsHome({ command, state, project = true }) {
+function statsHome({ command, state, project = true, remote }) {
   const h = mkdtempSync(join(root, "cli-"));
   const dir = join(h, "aya", "teams", "game", "crew");
   mkdirSync(dir, { recursive: true });
@@ -162,7 +183,7 @@ function statsHome({ command, state, project = true }) {
   mkdirSync(directory);
   if (project) {
     mkdirSync(join(h, "aya", "projects"), { recursive: true });
-    writeFileSync(join(h, "aya", "projects", "game.json"), JSON.stringify({ name: "game", directory, tabs: [] }));
+    writeFileSync(join(h, "aya", "projects", "game.json"), JSON.stringify({ name: "game", directory, tabs: [], ...(remote ? { remote } : {}) }));
   }
   return { h, directory };
 }
@@ -170,13 +191,14 @@ const stats = (h, json) =>
   spawnSync("/bin/sh", [resolve("bin/aya"), "team", "stats", "crew", ...(json ? ["--json"] : [])], {
     env: { ...envWithoutAya(), HOME: h, AYA_HOME: join(h, "aya") },
     encoding: "utf8",
-    timeout: 30000,
+    timeout: CLI_TIMEOUT_MS,
   });
 
 const STATS_CASES = [
   { name: "running: the output, run in the project", command: "pwd -P; exit 3", state: { started: true }, out: (d) => `\nStatus (from the team's command)\n  command: pwd -P; exit 3\n  ${d}\n  status command failed: exit 3\n` },
   { name: "paused: not run", command: "touch ran", state: { started: true, paused: true }, out: () => "\nStatus (from the team's command)\n  command: touch ran\n  not run: the team is paused; it runs only for a running team\n" },
   { name: "not started: not run", command: "touch ran", state: {}, out: () => "\nStatus (from the team's command)\n  command: touch ran\n  not run: the team is not started; it runs only for a running team\n" },
+  { name: "remote project: not run", command: "touch ran", state: { started: true }, remote: { hostId: "h" }, out: () => "\nStatus (from the team's command)\n  command: touch ran\n  not run: a remote project: the command would run on this machine, not in its directory\n" },
   { name: "no project file: not run", command: "touch ran", state: { started: true }, project: false, out: () => "\nStatus (from the team's command)\n  command: touch ran\n  not run: project game is not in Aya's projects\n" },
   { name: "no status command: no block", command: null, state: { started: true }, out: null },
 ];
