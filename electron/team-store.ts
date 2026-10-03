@@ -9,7 +9,7 @@ import { debugLog, MESSAGE_CHARS } from "./team-debug";
 import { OWNER_ONLY_FILE_MODE } from "./paths";
 import { ID_RE, TEAM_SYSTEM_SENDER, TEAM_USER_SENDER } from "./team-definition";
 import { FRESH_PROGRESS, parseProgress, type TeamProgress } from "./team-progress";
-import { deliveryState, goesStale, TEAM_FILES, unreadIn, type DeliveryNote } from "./team-records";
+import { DEBUG_LOG_FILE, DEBUG_LOG_OLD_FILE, debugTurns, deliveryState, goesStale, TEAM_FILES, unreadIn, type DeliveryNote } from "./team-records";
 import type { TeamMessage } from "./types";
 import { parseRefused, type RefusedSend } from "./team-digest";
 
@@ -382,6 +382,12 @@ export class TeamStore {
   }
 
   /** The refused sends refused.jsonl keeps, oldest first; a torn line is skipped. */
+  /** Turns typed messages started, from the debug log; null when there is none (debug off). */
+  async turns(): Promise<{ role: string; time: string }[] | null> {
+    const parts = (await Promise.all([DEBUG_LOG_OLD_FILE, DEBUG_LOG_FILE].map((f) => readText(this.file(f))))).filter((t): t is string => t !== null);
+    return debugTurns(parts.length ? parts.join("\n") : null);
+  }
+
   async refusals(): Promise<RefusedSend[]> {
     return parseRefused(await readText(this.file(TEAM_FILES.refused)));
   }

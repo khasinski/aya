@@ -58,6 +58,10 @@ async function closeThenPick(window: Page, app: ElectronApplication, pick: () =>
   // The user picks the pane; typing from then on is theirs to send there.
   await pick();
   await expect(visiblePane(window, "shell 2")).toBeVisible();
+  // Focus lands asynchronously after the pick (TerminalView retries it); keys typed before it would go nowhere.
+  await expect
+    .poll(() => window.evaluate(() => !!document.activeElement?.closest('[data-terminal-name="shell 2"]')))
+    .toBe(true);
   await window.keyboard.type("zqpickedmark");
   await expect.poll(() => bufferOf(window, ids["shell 2"])).toContain("zqpickedmark");
   expect(await bufferOf(window, ids["shell 2"])).not.toContain("zqtailmark");

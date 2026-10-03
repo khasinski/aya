@@ -63,12 +63,12 @@ export function resolvePaneTarget(
   if (!typed) return { ok: false, error: "pane name or id is required" };
   const wanted = typed.toLowerCase();
 
+  // `aya pane list` prints ids and the CLI has one target slot: an id there names its pane, before a name
+  // that only matches it case-insensitively (tab "T4" against id "t4").
+  const byId = all.find((c) => c.terminalId === typed);
+  if (byId) return { ok: true, match: byId };
   const matches = all.filter((c) => c.name.trim().toLowerCase() === wanted);
-  if (matches.length === 0) {
-    // `aya pane list` prints ids and the CLI has one target slot: an id there names its pane.
-    const byId = all.find((c) => c.terminalId === typed);
-    return byId ? { ok: true, match: byId } : { ok: false, error: `no pane named "${query.name}"` };
-  }
+  if (matches.length === 0) return { ok: false, error: `no pane named "${query.name}"` };
   if (matches.length > 1) {
     const where = matches.map((m) => `${m.projectSlug}/${m.name} ${m.terminalId}`).join(", ");
     // --project cannot split two panes of one project; only an id can.

@@ -141,6 +141,11 @@ export function leadWarning(definition: Pick<TeamDefinition, "lead" | "leadConfl
   return definition.lead === null ? "no lead role: set one" : null;
 }
 
+/** The card's status note for a team: an unsaved team's definition is the repo parse, not a saved command. */
+export function cardStatusNote(team: Pick<TeamSummary, "definition" | "repoDefinition" | "unsaved" | "repoChanged">): ReturnType<typeof statusCommandNote> {
+  return statusCommandNote(team.unsaved ? null : team.definition, team.unsaved || team.repoChanged ? team.repoDefinition : null);
+}
+
 /** The card's word on the status command: the one saved, and a new one that "Save this team" or "Use the repo
  *  version" would start running, named before the click since it runs with the user's rights. */
 export function statusCommandNote(

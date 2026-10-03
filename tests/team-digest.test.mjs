@@ -67,6 +67,20 @@ const TABLE = [
     },
     (d) => assert.match(d.header, /: \+1 message, no commits, 1 held, 1 round skipped$/),
   ],
+  ...[
+    ["typed only, its Enter withheld", { typedOnly: true, held: "Enter withheld: a draft" }],
+    ["held, never typed", { delivered: false, held: H.HOLD_APPROVAL }],
+  ].map(([how, extra]) => [
+    `a round the lead never got (${how}) is no baseline: the sends refused before it stay news`,
+    () => {
+      const refused = [{ time: ago(20), from: "tester", to: "qa", reason: "no such role", text: "a finding" }];
+      return input({ log: [...busyTeam(), round(30, 1), msg("tester", "lead", 25), msg("aya", "lead", 10, { text: "Round 2: run your round as the team protocol says.", ...extra })], refused });
+    },
+    (d) => {
+      assert.equal(d.header, `Since ${clock(ago(30))}: +1 message, no commits`);
+      assert.deepEqual(section(d, "Refused sends").items, ['tester -> "qa" (no such role): "a finding"']);
+    },
+  ]),
   [
     "a screen the clock saw for 12 min, a dialog: only the user",
     () => input({ log: [...busyTeam(), round(1)], progress: { blocked: { tester: { reason: H.HOLD_APPROVAL, since: ago(12) } } } }),
@@ -253,9 +267,9 @@ const TABLE = [
     (d) => assert.equal(section(d, "Refused sends").items.length, SECTION_ITEMS_SHOWN),
   ],
   [
-    "empty sections are omitted, the rest keep their order; the status command's section goes last",
-    () => input({ log: [...busyTeam(), round(30), msg("tester", "lead", 10)], busy: ["tester"], statusCommandSection: { title: "Status", items: ["ok"] } }),
-    (d) => assert.deepEqual(titles(d), ["Waiting on you", "Status"]),
+    "empty sections are omitted, the rest keep their order",
+    () => input({ log: [...busyTeam(), round(30), msg("tester", "lead", 10)], busy: ["tester"] }),
+    (d) => assert.deepEqual(titles(d), ["Waiting on you"]),
   ],
 ];
 

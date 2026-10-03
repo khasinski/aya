@@ -14,6 +14,7 @@ export const TEAM_FILES = {
   progress: "progress.json",
   deliveryNotes: "delivery-notes.json",
   refused: "refused.jsonl",
+  status: "status.json",
 } as const;
 
 export const DEBUG_LOG_FILE = "debug.jsonl";
@@ -38,4 +39,20 @@ export function deliveryState(m: TeamMessage, note: DeliveryNote | undefined, re
   // Taken for typing or typed later (the read mark passed it): it reached the pane.
   if (!m.delivered && !goesStale(m) && m.id <= readMark) return { ...m, delivered: true, ...(note?.kind === "held" ? { held: note.reason } : {}) };
   return note?.kind === "held" ? { ...m, held: note.reason } : m;
+}
+
+/** Turns typed messages started per receiver, from the debug log's text (debug.1.jsonl then debug.jsonl); null without
+ *  one. The round and `aya team stats --now` both read activity this way, so their idle roles agree. */
+export function debugTurns(debug: string | null): { role: string; time: string }[] | null {
+  if (debug === null) return null;
+  const turns: { role: string; time: string }[] = [];
+  for (const line of debug.split("\n")) {
+    try {
+      const e = JSON.parse(line) as Record<string, unknown> | null;
+      if (e?.event === "turn" && typeof e.to === "string" && typeof e.time === "string") turns.push({ role: e.to, time: e.time });
+    } catch {
+      // A torn line is skipped, as everywhere else.
+    }
+  }
+  return turns;
 }

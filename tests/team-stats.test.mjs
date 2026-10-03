@@ -16,6 +16,8 @@ process.on("exit", () => rmSync(root, { recursive: true, force: true }));
 
 const { teamStats, formatStats, holdKind, readTeamFiles } = await import("../dist-electron/team-stats.js");
 const { TEAM_FILES, DEBUG_LOG_FILE, DEBUG_LOG_OLD_FILE, deliveryState } = await import("../dist-electron/team-records.js");
+const { duration } = await import("../dist-electron/team-digest.js");
+const { clock, WALL_MINUTE_MS } = await import("../dist-electron/team-times.js");
 
 // Stats count wall-clock minutes (MINUTE_MS): the literal pins it, and the runs below span minutes of it.
 const MINUTE_MS = 60_000;
@@ -343,9 +345,14 @@ test("aya team stats <team> [--json]: the real CLI on a temp AYA_HOME, read-only
   assert.deepEqual(json.inbox.map((i) => [i.role, i.count]), [["lead", 1]]);
   assert.deepEqual(json.needsDebug, []);
   // --now: the lead's round digest from the same files; message #2 waits on the lead.
+  const ranFrom = Date.now();
   r = runCli(h, ["team", "stats", "crew", "--now"]);
+  const ranTo = Date.now();
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /^Since \d\d:\d\d \(no round before\): \+2 messages, no commits\nWaiting on you: tester #2 for \d+ (h \d+ )?min\n/);
+  // The CLI reads the wall clock: the wait is #2's age at some instant of the run, in whole minutes.
+  const waited = new Set([ranFrom, ranTo].map((t) => duration(Math.floor((t - Date.parse(at(2))) / WALL_MINUTE_MS))));
+  const head = `Since ${clock(at(1))} (no round before): +2 messages, no commits\n`;
+  assert.ok([...waited].some((w) => r.stdout.startsWith(`${head}Waiting on you: tester #2 for ${w}\n`)), r.stdout);
   assert.equal(readFileSync(logFile, "utf8"), before, "nothing written");
 });
 

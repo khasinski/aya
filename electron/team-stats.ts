@@ -4,7 +4,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseTeamFile, savedStatusCommand } from "./team-definition";
-import { DEBUG_LOG_FILE, DEBUG_LOG_OLD_FILE, deliveryState, goesStale, TEAM_FILES, unreadIn, type DeliveryNote } from "./team-records";
+import { DEBUG_LOG_FILE, DEBUG_LOG_OLD_FILE, debugTurns, deliveryState, goesStale, TEAM_FILES, unreadIn, type DeliveryNote } from "./team-records";
 import { betweenRoles, pendingWaits, roleLoad, type RoleWait } from "./team-supervision";
 import { digestLines, duration, parseRefused, roundDigest, type Digest } from "./team-digest";
 import { formatStatusForStats, statusForStats } from "./team-status-command";
@@ -24,6 +24,8 @@ export interface TeamFiles {
   debug: string | null;
   /** refused.jsonl; absent from older callers. */
   refused?: string | null;
+  /** status.json, the status command's last run a round recorded. */
+  status?: string | null;
 }
 
 export type Count = { key: string; count: number };
@@ -145,17 +147,13 @@ export function digestFromFiles(team: string, files: TeamFiles, nowMs: number): 
   const read = numbers(json(files.read, {}));
   const { roles, lead } = teamRoles(team, files, read);
   const progress = json<Record<string, unknown> | null>(files.progress, null);
-  const turns =
-    files.debug === null
-      ? null
-      : lines<DebugEvent>(files.debug, (e) => e.event === "turn" && typeof e.to === "string" && typeof e.time === "string").map((e) => ({ role: String(e.to), time: String(e.time) }));
   return roundDigest({
     roles,
     lead,
     log: annotatedLog(parseLog(files), json<Notes>(files.notes, {}), read),
     progress: isRecord(progress) ? { commit: typeof progress.commit === "string" ? progress.commit : null, ...(isRecord(progress.blocked) ? { blocked: progress.blocked as never } : {}) } : null,
     refused: parseRefused(files.refused ?? null),
-    turns,
+    turns: debugTurns(files.debug),
     busy: null,
     nowMs,
   });
@@ -331,6 +329,7 @@ export function readTeamFiles(dir: string): TeamFiles {
     assignments: at(TEAM_FILES.assignments),
     debug: debugParts.length ? debugParts.map((t) => (t.endsWith("\n") ? t : `${t}\n`)).join("") : null,
     refused: at(TEAM_FILES.refused),
+    status: at(TEAM_FILES.status),
   };
 }
 
@@ -338,11 +337,12 @@ export function readTeamFiles(dir: string): TeamFiles {
 if (require.main === module) {
   const [dir, team, flag] = process.argv.slice(2);
   const files = readTeamFiles(dir);
-  if (flag === "--now") process.stdout.write(digestLines(digestFromFiles(team, files, Date.now())));
+  const status = statusForStats(savedStatusCommand(team, files.saved), files.status ?? null);
+  const statusBlock = status ? formatStatusForStats(status) : "";
+  // --now is the lead's round, and the round ends with the status command's output.
+  if (flag === "--now") process.stdout.write(digestLines(digestFromFiles(team, files, Date.now())) + statusBlock);
   else {
     const stats = teamStats(team, files, Date.now());
-    void statusForStats(dir, savedStatusCommand(team, files.saved), { paused: stats.status.state === "paused", running: stats.status.state === "running" }).then((status) => {
-      process.stdout.write(flag === "--json" ? `${JSON.stringify({ ...stats, statusCommand: status }, null, 2)}\n` : formatStats(stats) + (status ? formatStatusForStats(status) : ""));
-    });
+    process.stdout.write(flag === "--json" ? `${JSON.stringify({ ...stats, statusCommand: status }, null, 2)}\n` : formatStats(stats) + statusBlock);
   }
 }

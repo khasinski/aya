@@ -158,7 +158,7 @@ test("never throws into the runner: a state read that fails becomes a failure li
   assert.equal(await statusSection(t), "Status (from the team's command): status command failed: state.json torn");
 });
 
-// The real CLI: aya team stats prints the block from the saved definition, on a temp AYA_HOME.
+// The round records each run in the team's status.json; aya team stats only reads that, never runs the command.
 const SAVED = (command) => `# crew
 
 ## Role: lead
@@ -173,7 +173,7 @@ Must not: skip a round
 lead
 ${command ? `\n## Status command\n${command}\n` : ""}`;
 
-function statsHome({ command, state, project = true, remote }) {
+function statsHome({ command, state = { started: true } }) {
   const h = mkdtempSync(join(root, "cli-"));
   const dir = join(h, "aya", "teams", "game", "crew");
   mkdirSync(dir, { recursive: true });
@@ -181,11 +181,9 @@ function statsHome({ command, state, project = true, remote }) {
   writeFileSync(join(dir, TEAM_FILES.state), JSON.stringify(state));
   const directory = join(h, "game");
   mkdirSync(directory);
-  if (project) {
-    mkdirSync(join(h, "aya", "projects"), { recursive: true });
-    writeFileSync(join(h, "aya", "projects", "game.json"), JSON.stringify({ name: "game", directory, tabs: [], ...(remote ? { remote } : {}) }));
-  }
-  return { h, directory };
+  mkdirSync(join(h, "aya", "projects"), { recursive: true });
+  writeFileSync(join(h, "aya", "projects", "game.json"), JSON.stringify({ name: "game", directory, tabs: [] }));
+  return { h, dir, directory };
 }
 const stats = (h, json) =>
   spawnSync("/bin/sh", [resolve("bin/aya"), "team", "stats", "crew", ...(json ? ["--json"] : [])], {
@@ -193,24 +191,70 @@ const stats = (h, json) =>
     encoding: "utf8",
     timeout: CLI_TIMEOUT_MS,
   });
+const hhmm = (iso) => {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
+const NOT_RUN_YET = "  not run yet: it runs with the lead's rounds of a running local team\n";
 
+test("a round's run is recorded in status.json: the command, its output, failure and time", async () => {
+  const directory = projectDir();
+  const dir = join(root, "team-recorded");
+  const before = Date.now();
+  const run = await statusRun(team("echo athena; exit 3", { directory, dir }));
+  const recorded = JSON.parse(readFileSync(join(dir, TEAM_FILES.status), "utf8"));
+  assert.deepEqual({ ...recorded, ranAt: undefined }, { command: "echo athena; exit 3", output: "athena", failure: "status command failed: exit 3", ranAt: undefined });
+  assert.deepEqual([recorded.output, recorded.failure], [run.output, run.failure]);
+  assert.ok(Date.parse(recorded.ranAt) >= before && Date.parse(recorded.ranAt) <= Date.now());
+});
+
+test("a run that is not made records nothing", async () => {
+  const dir = join(root, "team-not-recorded");
+  assert.equal(await statusRun(team("echo x", { dir, state: { paused: true, running: false } })), null);
+  assert.equal(existsSync(join(dir, TEAM_FILES.status)), false);
+});
+
+// [name, saved command, recorded run (null: none), what the block ends with]
 const STATS_CASES = [
-  { name: "running: the output, run in the project", command: "pwd -P; exit 3", state: { started: true }, out: (d) => `\nStatus (from the team's command)\n  command: pwd -P; exit 3\n  ${d}\n  status command failed: exit 3\n` },
-  { name: "paused: not run", command: "touch ran", state: { started: true, paused: true }, out: () => "\nStatus (from the team's command)\n  command: touch ran\n  not run: the team is paused; it runs only for a running team\n" },
-  { name: "not started: not run", command: "touch ran", state: {}, out: () => "\nStatus (from the team's command)\n  command: touch ran\n  not run: the team is not started; it runs only for a running team\n" },
-  { name: "remote project: not run", command: "touch ran", state: { started: true }, remote: { hostId: "h" }, out: () => "\nStatus (from the team's command)\n  command: touch ran\n  not run: a remote project: the command would run on this machine, not in its directory\n" },
-  { name: "no project file: not run", command: "touch ran", state: { started: true }, project: false, out: () => "\nStatus (from the team's command)\n  command: touch ran\n  not run: project game is not in Aya's projects\n" },
-  { name: "no status command: no block", command: null, state: { started: true }, out: null },
+  ["running, never run: not run yet", "touch ran", null, () => NOT_RUN_YET],
+  ["the last recorded run, with its time", "touch ran", { output: "athena: gemma\nlaptop: idle", failure: "status command failed: exit 3" }, (at) => `  last run ${hhmm(at)}\n  athena: gemma\n  laptop: idle\n  status command failed: exit 3\n`],
+  ["a run with no output says so", "touch ran", { output: "", failure: null }, (at) => `  last run ${hhmm(at)}\n  no output\n`],
+  ["a run of an older command is not this one's", "touch ran", { command: "echo old", output: "old", failure: null }, () => NOT_RUN_YET],
+  ["a torn status.json: not run yet", "touch ran", "torn", () => NOT_RUN_YET],
 ];
-for (const c of STATS_CASES) {
-  test(`aya team stats: ${c.name}`, () => {
-    const { h, directory } = statsHome(c);
+for (const [name, command, recorded, tail] of STATS_CASES) {
+  test(`aya team stats: ${name}; it never runs the command`, () => {
+    const { h, dir, directory } = statsHome({ command });
+    const ranAt = new Date(Date.now() - 5 * 60_000).toISOString();
+    if (recorded === "torn") writeFileSync(join(dir, TEAM_FILES.status), "{\"command\":");
+    else if (recorded) writeFileSync(join(dir, TEAM_FILES.status), JSON.stringify({ command, ranAt, ...recorded }));
     const r = stats(h);
     assert.equal(r.status, 0, r.stderr);
-    if (c.out === null) assert.doesNotMatch(r.stdout, /Status \(from/);
-    else assert.ok(r.stdout.endsWith(c.out(realpathSync(directory))), r.stdout.slice(-300));
-    assert.equal(existsSync(join(directory, "ran")), false);
-    const json = JSON.parse(stats(h, true).stdout);
-    assert.equal(json.statusCommand?.command ?? null, c.command);
+    const block = `\nStatus (from the team's command)\n  command: ${command}\n${tail(ranAt)}`;
+    assert.ok(r.stdout.endsWith(block), r.stdout.slice(-300));
+    const json = JSON.parse(stats(h, true).stdout).statusCommand;
+    const shown = recorded && recorded !== "torn" && !recorded.command;
+    assert.deepEqual(json, { command, ranAt: shown ? ranAt : null, output: shown ? recorded.output : "", failure: shown ? recorded.failure : null });
+    assert.equal(existsSync(join(directory, "ran")), false, "stats did not run the command");
   });
 }
+
+test("aya team stats: no status command, no block", () => {
+  const { h } = statsHome({ command: null });
+  const r = stats(h);
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /Status \(from/);
+  assert.equal(JSON.parse(stats(h, true).stdout).statusCommand, null);
+});
+
+test("aya team stats --now: the round's digest ends with the last recorded run too, never a new one", () => {
+  const command = "touch ran";
+  const { h, dir, directory } = statsHome({ command });
+  const ranAt = new Date(Date.now() - 5 * 60_000).toISOString();
+  writeFileSync(join(dir, TEAM_FILES.status), JSON.stringify({ command, ranAt, output: "athena: gemma", failure: null }));
+  const r = spawnSync("/bin/sh", [resolve("bin/aya"), "team", "stats", "crew", "--now"], { env: { ...envWithoutAya(), HOME: h, AYA_HOME: join(h, "aya") }, encoding: "utf8", timeout: CLI_TIMEOUT_MS });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.stdout.endsWith(`\nStatus (from the team's command)\n  command: touch ran\n  last run ${hhmm(ranAt)}\n  athena: gemma\n`), r.stdout);
+  assert.equal(r.stdout.split("Status (from the team's command)").length, 2, "the block once");
+  assert.equal(existsSync(join(directory, "ran")), false);
+});

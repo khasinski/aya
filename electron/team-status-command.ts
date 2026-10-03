@@ -1,12 +1,15 @@
 // A team's "## Status command": project state Aya cannot know (which models a server has loaded, who shares the GPU),
-// run in the project directory and handed to the lead with its round. The CLI's team stats loads this with plain node.
+// run in the project directory and handed to the lead with its round. The CLI's team stats loads this with plain node
+// and only reads the last run the round recorded (status.json): stats must not run the user's command beside a round.
 
 import { spawn } from "node:child_process";
-import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { writeFileAtomic } from "./atomic-write";
 import { withoutSessionMarkers } from "./pane-command";
 import { PANE_ENV_VARS } from "./pane-env";
 import { statusCommandOf } from "./team-definition";
+import { TEAM_FILES } from "./team-records";
+import { clock } from "./team-times";
 import type { TeamDefinition } from "./types";
 
 export const STATUS_COMMAND_TIMEOUT_MS = 20_000;
@@ -26,10 +29,10 @@ export interface StatusRun {
   failure: string | null;
 }
 
-/** What `aya team stats` shows: the run, or why it did not run. */
+/** What `aya team stats` shows: the last run a round recorded; `ranAt` null when this command has not run yet. */
 export interface StatsStatus extends StatusRun {
   command: string;
-  notRun: string | null;
+  ranAt: string | null;
 }
 
 type TeamState = { paused: boolean; running: boolean };
@@ -126,7 +129,10 @@ export function statusRun({ project, store, team }: StatusTeam, timeoutMs = STAT
   if (running) return running;
   const run = (async () => {
     if (await whyNotRun(project, () => store.state())) return null;
-    return runStatusCommand(command, project.directory, timeoutMs);
+    const result = await runStatusCommand(command, project.directory, timeoutMs);
+    // A record that fails to write must not cost the round its status.
+    await writeFileAtomic(path.join(store.dir, TEAM_FILES.status), JSON.stringify({ command, ranAt: new Date().toISOString(), ...result })).catch(() => {});
+    return result;
   })()
     .catch((e: Error) => ({ output: "", failure: failed(e.message) }))
     .finally(() => inFlight.delete(store.dir));
@@ -142,30 +148,24 @@ export async function statusSection(team: StatusTeam): Promise<string | null> {
   return `${STATUS_SECTION_TITLE}: ${lines.length ? lines.join(" | ") : "no output"}`;
 }
 
-/** `aya team stats`: the block it prints, from the team directory `dir` (<home>/teams/<slug>/<team>), its saved
- *  definition and state.json; null for a team with no status command. */
-export async function statusForStats(dir: string, statusCommand: string | undefined, state: TeamState): Promise<StatsStatus | null> {
+/** `aya team stats`: the saved command and the last run of it the round recorded (status.json's text), never a run
+ *  of its own; null for a team with no status command. */
+export function statusForStats(statusCommand: string | undefined, recorded: string | null): StatsStatus | null {
   const command = statusCommandOf(statusCommand);
   if (!command) return null;
-  const slug = path.basename(path.dirname(dir));
-  const projectFile = path.join(dir, "..", "..", "..", "projects", `${slug}.json`);
-  let project: { directory?: unknown; remote?: unknown } = {};
+  let last: Partial<Record<keyof StatsStatus, unknown>> = {};
   try {
-    project = JSON.parse(await fs.readFile(projectFile, "utf8")) as typeof project;
+    last = JSON.parse(recorded ?? "{}") as typeof last;
   } catch {
-    // No project file: said below.
+    // A torn record: not run yet.
   }
-  const base = { command, output: "", failure: null };
-  if (typeof project.directory !== "string") return { ...base, notRun: `project ${slug} is not in Aya's projects` };
-  const notRun = await whyNotRun(project, async () => state);
-  if (notRun) return { ...base, notRun };
-  const run = await statusRun({ project: { directory: project.directory }, store: { dir, state: async () => state }, team: { statusCommand: command } });
-  return run ? { ...base, ...run, notRun: null } : { ...base, notRun: "the team is not running" };
+  if (last.command !== command || typeof last.ranAt !== "string" || typeof last.output !== "string") return { command, ranAt: null, output: "", failure: null };
+  return { command, ranAt: last.ranAt, output: last.output, failure: typeof last.failure === "string" ? last.failure : null };
 }
 
 export function formatStatusForStats(s: StatsStatus): string {
   const lines = ["", STATUS_SECTION_TITLE, `  command: ${s.command}`];
-  if (s.notRun) lines.push(`  not run: ${s.notRun}`);
-  else lines.push(...(s.output ? s.output.split("\n") : ["no output"]).map((l) => `  ${l}`), ...(s.failure ? [`  ${s.failure}`] : []));
+  if (s.ranAt === null) lines.push("  not run yet: it runs with the lead's rounds of a running local team");
+  else lines.push(`  last run ${clock(s.ranAt)}`, ...(s.output ? s.output.split("\n") : ["no output"]).map((l) => `  ${l}`), ...(s.failure ? [`  ${s.failure}`] : []));
   return `${lines.join("\n")}\n`;
 }

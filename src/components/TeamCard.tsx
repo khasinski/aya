@@ -11,7 +11,7 @@ import {
   rolePanesSummary,
   livenessLine,
   leadWarning,
-  statusCommandNote,
+  cardStatusNote,
   leadWaitingLine,
   livePane,
   roleStatus,
@@ -73,7 +73,7 @@ export function TeamCard({
   const [picks, setPicks] = useState<Record<string, string>>({});
   const definition = team.definition;
   const leadWarned = leadWarning(definition);
-  const statusNote = statusCommandNote(definition, team.unsaved || team.repoChanged ? team.repoDefinition : null);
+  const statusNote = cardStatusNote(team);
   const startNote = note && ("start" in note ? startSummary(note.start, team.log) : note.apply);
   const liveness = livenessLine(team.liveness);
   const leadWaiting = leadWaitingLine(team, waiting);

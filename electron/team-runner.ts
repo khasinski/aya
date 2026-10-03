@@ -13,7 +13,7 @@ import { oneAtATime } from "./keyed-queue";
 import { noteRound, observe, quietTooLong, repoSince, resetProgress, roundsHeld, stalledWhenLastLooked, teamLiveness, type TeamProgress } from "./team-progress";
 import { pendingWaits, stalledText, supervisionText } from "./team-supervision";
 import { digestOneLine, roundDigest } from "./team-digest";
-import { statusSection, STATUS_SECTION_TITLE, type StatusTeam } from "./team-status-command";
+import { statusSection } from "./team-status-command";
 import { openTeamStore, readText, type PendingTask, type TeamStore } from "./team-store";
 import { clock, ROUND_CHECK_MS, SILENCE_FIRST_MS, SILENCE_REPEAT_MS } from "./team-times";
 import { TEAM_SYSTEM_SENDER, TEAM_USER_SENDER } from "./team-definition";
@@ -54,6 +54,9 @@ export function resumeRefusal(pausedBy: string | null, by: string): string | nul
   if (pausedBy === TEAM_USER_SENDER) return "the user paused this team; only the user can resume it; nothing was sent";
   return `the lead (${pausedBy}) paused this team; only ${pausedBy} or the user can resume it; nothing was sent`;
 }
+
+/** Every lead round ends with the status command's output, whatever made it due: a lead-only team gets no rhythm round. */
+const withStatus = (text: string, status: string | null): string => (status ? `${text} ${status}` : text);
 
 export class TeamRunner {
   private cancels = new Map<string, () => void>();
@@ -368,12 +371,10 @@ export class TeamRunner {
     return roles.filter((_, i) => busy[i]);
   }
 
-  private async digest(project: StatusTeam["project"], store: TeamStore, team: TeamDefinition, progress: TeamProgress, nowMs: number) {
+  private async digest(store: TeamStore, team: TeamDefinition, progress: TeamProgress, nowMs: number) {
     const roles = team.roles.map((r) => r.id);
     const busy = await this.busyRoles(store, roles);
-    const status = await statusSection({ project, store, team });
-    const statusCommandSection = status ? { title: STATUS_SECTION_TITLE, items: [status.slice(`${STATUS_SECTION_TITLE}: `.length)] } : null;
-    return roundDigest({ roles, lead: team.lead, log: await store.annotatedLog(), progress, refused: await store.refusals(), turns: null, busy, nowMs, statusCommandSection });
+    return roundDigest({ roles, lead: team.lead, log: await store.annotatedLog(), progress, refused: await store.refusals(), turns: await store.turns(), busy, nowMs });
   }
 
   /** A look of the team's clock: records the repo, talk and screens. A round due on the rhythm, the silence or a stall
@@ -415,12 +416,6 @@ export class TeamRunner {
     const question = await this.askedTheUser(store, lead, Date.parse(progress.changedAt), project);
     if (question !== null) return skip(`${lead} asked the user${question ? `: ${oneLine(question)}` : ""}`);
     const waits = () => store.annotatedLog().then((log) => pendingWaits(log, team.roles.map((r) => r.id)));
-    const text = onRepo
-      ? stalledText({ round, since: repoSince(progress), messages: progress.messages ?? 0, waits: await waits(), nowMs })
-      : quiet
-        ? supervisionText({ round, quietSince: progress.changedAt, waits: await waits(), nowMs })
-        : `Round ${round}: run your round as the team protocol says. ${digestOneLine(await this.digest(project, store, team, progress, nowMs))}`;
-    const message = { team: team.name, from: TEAM_SYSTEM_SENDER, to: lead, text };
     // A silence round was decided before the wait for the lead's pane: talk that went in meanwhile ends the silence.
     // Read once, as the lock is taken, before the paste (the second read, before the Enter, is the Pause's only).
     const talkedBefore = store.talkedSince();
@@ -440,6 +435,17 @@ export class TeamRunner {
         return this.deps.deliver(pane, line, () => stale() || talkedSince(), entered, pasting);
       },
     };
+    const body = onRepo
+      ? stalledText({ round, since: repoSince(progress), messages: progress.messages ?? 0, waits: await waits(), nowMs })
+      : quiet
+        ? supervisionText({ round, quietSince: progress.changedAt, waits: await waits(), nowMs })
+        : `Round ${round}: run your round as the team protocol says. ${digestOneLine(await this.digest(store, team, progress, nowMs))}`;
+    // A round the lead's pane cannot take now stays due and is looked at again each minute: the user's command runs
+    // only for a round that goes now, not on every look while it waits.
+    const leadPane = await store.paneOf(lead);
+    const goesNow = leadPane !== null && (await deps.holdReason(leadPane)) === null;
+    const text = withStatus(body, goesNow ? await statusSection({ project, store, team }) : null);
+    const message = { team: team.name, from: TEAM_SYSTEM_SENDER, to: lead, text };
     // The number is used up at the Enter, whatever the turn shows after: a relaunch in between types the next one.
     const typed = await typeFromAya(deps, project, store, message, async () => {
       await store.recordRound(round, { ...(periodic ? { roundClockAt: nowMs } : {}), ...(quiet ? { silenceRoundAt: nowMs } : {}) });

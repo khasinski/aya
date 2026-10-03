@@ -61,6 +61,16 @@ test("an unknown id is an error, not a fallback to name matching", () => {
   assert.match(r.error, /no pane with id nope/);
 });
 
+// The CLI's one target slot takes a name or an id: an id is unique, a name match on another pane must not win.
+const CLASH = [project("alpha", [["t4", "deploy"], ["t9", "T4"]])];
+for (const [typed, id] of [["t4", "t4"], [" t4 ", "t4"], ["T4", "t9"], ["deploy", "t4"]]) {
+  test(`a typed target ${JSON.stringify(typed)} -> ${id}: an exact pane id wins over a name that matches it case-insensitively`, () => {
+    const r = resolvePaneTarget(CLASH, { name: typed });
+    assert.equal(r.ok, true);
+    assert.equal(r.match.terminalId, id);
+  });
+}
+
 // --- by name ---------------------------------------------------------------
 
 test("a unique name resolves", () => {

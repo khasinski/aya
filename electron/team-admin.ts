@@ -182,11 +182,12 @@ export async function saveTeam(
   refuseReservedRoles(given);
   refuseFieldLines(given);
   const led = withLead(given);
-  const team = byAgent ? await withSavedStatusCommand(teamHome, project, led) : led;
-  const text = serializeTeam(team);
-  refuseLossy(team, text);
-  const file = teamFile(project, team.name);
+  refuseLossy(led, serializeTeam(led));
+  const file = teamFile(project, led.name);
   await oneSaveAtATime(file, async () => {
+    // Read in the queue: a save queued ahead (the user clearing it) may change the command this one keeps.
+    const team = byAgent ? await withSavedStatusCommand(teamHome, project, led) : led;
+    const text = serializeTeam(team);
     if (create && (await fs.stat(file).then(() => true, () => false))) throw new TeamExistsError(team.name, file);
     await writeFileAtomic(file, text);
     const store = openTeamStore(teamHome, project.slug, team.name);

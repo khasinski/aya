@@ -178,7 +178,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     summary:
       "Print what Aya did for a team, read from its files with Aya open or closed: run time, messages per sender and receiver, rounds typed and skipped and why, holds by reason, redeliveries, messages still in an inbox, read marks, commits seen.",
     notes: [
-      "Read-only. Rounds skipped, hold decisions, redeliveries and pauses come from the debug log: without aya debug on those rows say so instead of counting zero. Set AYA_PROJECT_SLUG when the team's name is in two projects.",
+      "Read-only: it never runs the team's status command, it prints the last run a round recorded, with its time. Rounds skipped, hold decisions, redeliveries and pauses come from the debug log: without aya debug on those rows say so instead of counting zero. Set AYA_PROJECT_SLUG when the team's name is in two projects.",
       "--now prints the lead's round digest instead: blocked roles and who can unblock them, who waits on the lead, refused sends, what changed since the last round, idle roles.",
     ],
   },

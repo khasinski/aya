@@ -7,7 +7,7 @@ process.env.AYA_HOME = mkdtempSync(join(tmpdir(), "aya-silence-home-"));
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { teamProject } from "./helpers/team.mjs";
@@ -19,7 +19,8 @@ const { handleTeamRequest } = await import("../dist-electron/team-control.js");
 const { teamLiveness } = await import("../dist-electron/team-progress.js");
 const times = await import("../dist-electron/team-times.js");
 const { WALL_MINUTE_MS } = times;
-const { DIGEST_IDLE_MIN } = await import("../dist-electron/team-digest.js");
+const { DIGEST_IDLE_MIN, digestOneLine } = await import("../dist-electron/team-digest.js");
+const { digestFromFiles, readTeamFiles } = await import("../dist-electron/team-stats.js");
 const { recordAgentStatus } = await import("../dist-electron/agent-status.js");
 const { HOLD_DRAFT, HOLD_NOT_RUNNING } = await import("../dist-electron/pane-holds.js");
 
@@ -244,6 +245,47 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
     assert.equal(text.split("Status (from the team's command)").length, 2, "the section's title once");
   });
 
+  // A team with a lead and no cadence gets only these rounds: each carries the status too, once.
+  const STATUS = "echo athena: gemma-best";
+  const STATUS_LINE = /Status \(from the team's command\): athena: gemma-best/;
+  silenceTest("a silence round ends with the team's status command output", { status: STATUS }, async (t) => {
+    await t.run("start", 91, "check");
+    const text = t.toLead().at(-1).text;
+    assert.match(text, /Round 1: no progress since /);
+    assert.match(text, STATUS_LINE);
+    assert.equal(text.split("Status (from the team's command)").length, 2, "the section's title once");
+  });
+
+  silenceTest("a stall round ends with the team's status command output", { status: STATUS }, async (t) => {
+    await t.run("start", 91, "check", 30, "check", 30, "check", 30, "check");
+    const text = t.toLead().at(-1).text;
+    assert.match(text, /Round 4: stalled: /);
+    assert.match(text, STATUS_LINE);
+    assert.equal(text.split("Status (from the team's command)").length, 2, "the section's title once");
+  });
+
+  silenceTest("a cadence round due with the quiet clock carries the status too", { cadence: true, status: STATUS }, async (t) => {
+    await t.run("implementer waits on tester", "start", 90, "tick");
+    const text = t.toLead().at(-1).text;
+    assert.match(text, /Round 1: no progress since /);
+    assert.match(text, STATUS_LINE);
+  });
+
+  // A round the lead's pane does not take stays due and is looked at again each minute: the command runs once it goes.
+  for (const [how, block, unblock] of [["busy", "lead busy", "lead free"], ["a draft", "lead draft", "lead free"]]) {
+    const marker = join(mkdtempSync(join(tmpdir(), "aya-status-runs-")), "runs");
+    silenceTest(`a lead ${how}: the status command does not run while the round waits, then runs once with it`, { status: `echo run >> ${marker}; echo athena: gemma-best` }, async (t) => {
+      const runs = () => (existsSync(marker) ? readFileSync(marker, "utf8").split("\n").filter(Boolean).length : 0);
+      await t.run("start", block, 91, "check", 30, "check", 30, "check");
+      assert.deepEqual(t.rounds(), []);
+      assert.equal(runs(), 0, "no run for a round not typed");
+      await t.run(unblock, "check");
+      assert.equal(t.rounds().length, 1);
+      assert.match(t.toLead().at(-1).text, STATUS_LINE);
+      assert.equal(runs(), 1);
+    });
+  }
+
   silenceTest("a rhythm round's digest reads the store: refusals, held messages, the round before", { cadence: true }, async (t) => {
     await t.run("start", 10, "lead reports", 80, "tick");
     await t.store.recordRefusal({ from: "implementer", to: "author", reason: "no such role", text: "a finding" });
@@ -266,6 +308,18 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
     delete t.w.deps.busy;
     await t.run("commit", 90, "tick");
     assert.match(t.toLead().at(-1).text, new RegExp(`Idle over ${DIGEST_IDLE_MIN} min \\(not known whether busy now\\): implementer\\.`));
+  });
+
+  silenceTest("a rhythm round counts a turn in the debug log as activity, as aya team stats --now does", { cadence: true }, async (t) => {
+    await t.run("start", 10, "lead reports", 80, "tick");
+    t.w.now = Date.now() + (DIGEST_IDLE_MIN + 5) * WALL_MINUTE_MS;
+    // A message typed to the implementer a minute ago started its turn; the log has the message's earlier send time.
+    appendFileSync(join(t.store.dir, "debug.jsonl"), `${JSON.stringify({ time: new Date(t.w.now - WALL_MINUTE_MS).toISOString(), event: "turn", to: "implementer", from: "tester", id: 1 })}\n`);
+    await t.run("commit", "tick");
+    const live = t.toLead().at(-1).text;
+    assert.doesNotMatch(live, /Idle over/);
+    const now = digestOneLine(digestFromFiles("ux-review", readTeamFiles(t.store.dir), t.w.now));
+    assert.doesNotMatch(now, /Idle over/, "--now agrees");
   });
 
   silenceTest("a failing status command is one line in the round, and the round still goes out", { cadence: true, status: "exit 3" }, async (t) => {

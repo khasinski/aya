@@ -107,6 +107,8 @@
       "dist-electron/team-times.js",
       "dist-electron/paths.js",
       "dist-electron/constants.js",
+      "dist-electron/atomic-write.js",
+      "dist-electron/config-echo.js",
       "dist-electron/*.node",
       "dist-electron/aya-local-summary"
     ],

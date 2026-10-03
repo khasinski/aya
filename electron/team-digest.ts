@@ -73,8 +73,6 @@ export interface DigestInput {
   /** Roles whose agent is mid-turn now; null when not known (Aya closed, the CLI reading files). */
   busy: readonly string[] | null;
   nowMs: number;
-  /** The one place an extra section is appended, last: the output of the team's status command, once there is one. */
-  statusCommandSection?: DigestSection | null;
 }
 
 // Each hold Aya names, said short. All of them wait for the user: a dialog, a draft, a pane to open, restart or wait for.
@@ -99,7 +97,8 @@ export function holdLabel(reason: string): { label: string; onlyUser: boolean } 
 const minutes = (sinceMs: number, nowMs: number) => Math.max(0, Math.floor((nowMs - sinceMs) / WALL_MINUTE_MS));
 export const duration = (min: number) => (min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`);
 const who = (onlyUser: boolean) => (onlyUser ? "only the user" : "the team");
-const isRound = (m: TeamMessage, lead: string | null) => m.from === TEAM_SYSTEM_SENDER && m.to === lead && /^Round \d+:/.test(m.text);
+/** A round the lead got: one typed with its Enter withheld, or held, is no baseline, or what it would show is lost. */
+const isRound = (m: TeamMessage, lead: string | null) => m.from === TEAM_SYSTEM_SENDER && m.to === lead && m.delivered && !m.typedOnly && /^Round \d+:/.test(m.text);
 const QUEUED = /^earlier message #\d+ for it is still waiting/;
 /** Still held for its receiver; Aya's own held rounds go stale, so they are no block. */
 const heldForRole = (m: TeamMessage) => !m.delivered && !!m.held && m.from !== TEAM_SYSTEM_SENDER;
@@ -205,7 +204,6 @@ export function roundDigest(input: DigestInput): Digest {
   const idle = roles.filter((r) => r !== lead && !blocked.roles.has(r) && !waiting.has(r) && !busy?.includes(r) && minutes(lastActive(r), nowMs) >= DIGEST_IDLE_MIN);
   add(`Idle over ${DIGEST_IDLE_MIN} min${busy === null ? " (not known whether busy now)" : ""}`, idle.length ? [idle.join(", ")] : []);
 
-  if (input.statusCommandSection?.items.length) sections.push(input.statusCommandSection);
   return { header, sections };
 }
 
