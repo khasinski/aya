@@ -263,7 +263,7 @@ never kills or blocks anything.
 | Client disconnects | n/a | upstream aborted, lease `client-gone` |
 | Machines host crashes | connection refused right away (no hang) | restarted on next need; leases with a dead proxy pid dropped from the file |
 | Aya not running | proxy keeps serving while the machines host lives; `aya machines` says start Aya | the pid sweep still runs in the machines host |
-| Aya Dev and Aya.app both running | separate homes, separate pools and ports | documented; see Open questions |
+| Aya Dev and Aya.app both running | separate homes, separate pools and ports | accepted: Aya Dev is temporary, for testing unmerged PRs |
 
 ## Security
 
@@ -327,7 +327,7 @@ server serving `/api/ps`, `/api/tags` and streaming `/api/chat`) and a fake
 ## Open questions
 
 1. **Does the base path survive in Ollama clients?** Path tokens (`/t/<token>`) work for OpenAI SDKs. It is not verified whether the Go `ollama` CLI (`OLLAMA_HOST`) and `ollama-python` keep a base path. If they drop it, peer-pid attribution becomes the main path for those clients and has to be measured on macOS and Linux.
-2. **One pool or two for Aya Dev and Aya.app?** Today they would have separate pools with conflicting proxy ports and reservations that cannot see each other. Should `machines*.json` always live in `~/.aya`, outside the dev/prod split?
+- Resolved: one pool per Aya config home, like every other Aya setting. Aya Dev only runs while a PR is unmerged, so a pool shared with Aya.app is not worth the complexity.
 3. **Where should the proxy run in step 3?** The design puts it in a separate machines host. Shipping step 3 inside main first would be smaller, but every Aya Dev rebuild would cut in-flight streams. Is that acceptable as an interim step?
 4. **Apple Silicon GPU load.** Can `ioreg` "Device Utilization %" be read without sudo on current macOS, or does local GPU stay `n/a`?
 5. **A cap on in-flight requests per machine without a reservation?** Claude Science has a per-host concurrency limit. The design leaves unreserved traffic to Ollama's own queue, which is the queue that froze agent turns for 70 minutes. Should a per-machine `maxInFlight` refuse past the limit?
