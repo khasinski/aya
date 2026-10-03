@@ -15,8 +15,10 @@ import { tmpdir } from "node:os";
 const TMP_AYA_HOME = mkdtempSync(join(tmpdir(), "aya-size-"));
 process.env.AYA_HOME = TMP_AYA_HOME;
 
+const { PTY_HOST_UNKNOWN_REQUEST } = await import("../dist-electron/constants.js");
 const { PtyHostClient } = await import("../dist-electron/pty-host-client.js");
 const { PTY_HOST_SOCKET_PATH } = await import("../dist-electron/paths.js");
+assert.ok(PTY_HOST_SOCKET_PATH.startsWith(TMP_AYA_HOME + "/"), `pty host socket outside the test's home: ${PTY_HOST_SOCKET_PATH}`);
 
 const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
 
@@ -58,7 +60,7 @@ async function sizeFromFakeHost(answer) {
 }
 
 test("a host that predates the size request reads as an unknown size", async () => {
-  const { size, requests } = await sizeFromFakeHost({ ok: false, error: "unknown request" });
+  const { size, requests } = await sizeFromFakeHost({ ok: false, error: PTY_HOST_UNKNOWN_REQUEST });
   assert.equal(size, null);
   assert.deepEqual(requests, ["size"]);
 });

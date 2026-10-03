@@ -2,7 +2,7 @@
 //
 // We accept a literal `command` string from the renderer and wrap it in
 // `$SHELL -l -i -c 'cd CWD && exec COMMAND'`. Using the user's login +
-// interactive shell — not a hard-coded bash — lets PATH, functions, aliases,
+// interactive shell - not a hard-coded bash - lets PATH, functions, aliases,
 // and env from their normal terminal startup files flow through.
 
 import * as fs from "node:fs";
@@ -21,12 +21,14 @@ import {
   openVtPane,
   resizeVtPane,
   vtPaneAltScreen,
+  vtPaneWaiting,
   writeVtPane,
 } from "./vt-state";
 import {
   isShellCommand,
   pathWithFallbackDir,
   shellQuote,
+  simpleCommand,
   withoutSessionMarkers,
 } from "./pane-command";
 import type { PaneSize } from "./pane-render";
@@ -37,16 +39,29 @@ import {
   MIN_PTY_ROWS,
 } from "./constants";
 import { codexSupportsNoDaemon, noDaemonCommand } from "./codex-daemon";
+import { paneLaunchRecord, readLaunchConfig } from "./launch-config";
+import { teamLaunch, withLaunchArgs, type PaneLaunch } from "./launch-mode";
 import { commandExists, preflightBinary } from "./command-probe";
 import { userShell } from "./shell";
 import { getProcessCwd } from "./process-cwd";
 import { ptyLog } from "./pty-log";
 import { bundledAyaCliPath } from "./cli-path";
-import { envWithAssignments, leadingEnvAssignments } from "./shell-words";
+import { envWithAssignments, leadingEnvAssignments, startsWithExec } from "./shell-words";
 import { listOpencodeSessions, ownSessionCommand } from "./opencode-session";
-import { watchClaudeSession, withLiveClaudeResume } from "./claude-session";
-
-// Timeout for the shell `command -v` existence check during spawn preflight.
+import { shellClaudeConfigDir, watchClaudeSession, withLiveClaudeResume } from "./claude-session";
+import {
+  pollSession,
+  processFamily,
+  readCodexSessionId,
+  readGrokSessionId,
+  withLiveCodexResume,
+  withLiveGrokResume,
+  withOwnSessionId,
+} from "./agent-session";
+import { codexHomeFor } from "./agent-brief";
+import { DEFAULT_CODEX_HOME } from "./usage-codex";
+import { DEFAULT_GROK_HOME } from "./usage-grok";
+import { expandUserPath } from "./usage";
 
 // Search-snippet context window around a match (chars).
 const SEARCH_SNIPPET_CONTEXT_BEFORE = 30; // chars before the match
@@ -64,11 +79,12 @@ function loadNodePty(): typeof PtyModule {
 }
 
 const ptys = new Map<string, PtyModule.IPty>();
+const launches = new Map<string, PaneLaunch>();
 
 // Per-PTY rolling buffer of recent output, used to repaint xterm.js when the
 // renderer remounts (Vite HMR, React strict-mode double-mount, etc.). The PTY
 // keeps running across these events but the new xterm.js instance has no
-// scrollback — we replay the buffered bytes so the user sees the existing
+// scrollback - we replay the buffered bytes so the user sees the existing
 // terminal state instead of an empty pane.
 export const OUTPUT_BUFFER_MAX = 1_000_000; // ~1MB of recent bytes per terminal
 // `total` is the summed length of `chunks`, kept incrementally so the 1MB cap
@@ -100,7 +116,7 @@ const oscCarryBuffers = new Map<string, string>();
 // and bail out of subsequent spawn for them.
 const pendingKills = new Set<string>();
 // Auto-evict pending-kill markers so stale ids don't linger forever (defense
-// in depth — usually the spawn either runs within milliseconds or never).
+// in depth - usually the spawn either runs within milliseconds or never).
 const PENDING_KILL_TTL_MS = 5_000;
 // Grace period before escalating a kill to SIGKILL. node-pty's default kill
 // sends SIGHUP, which a stuck agent (e.g. `claude --chrome`) can trap and
@@ -185,9 +201,8 @@ export function __testClearOutputBuffers(): void {
   outputBuffers.clear();
 }
 
-/** Input currently held for an in-flight spawn: [chunks, bytes]. The queue is
- *  private and empty by the time any spawn settles, so a test observing it has
- *  to look while the spawn is still in flight. */
+/** Input held for an in-flight spawn: [chunks, bytes]. Empty once any spawn settles, so a test looks while
+ *  the spawn is still in flight. */
 export function __testPendingWrites(ptyId: string): [number, number] {
   const queued = pendingWrites.get(ptyId) ?? [];
   return [queued.length, queued.reduce((n, s) => n + Buffer.byteLength(s), 0)];
@@ -199,13 +214,7 @@ export function getBufferedOutput(ptyId: string): string {
 }
 
 /** Strip ANSI escape sequences and control chars so search snippets are
- *  readable. Keeps newlines so line context survives. Exported for unit tests.
- *
- *  DUPLICATE: a near-identical copy lives in src/bell.ts (renderer process,
- *  which can't import this main-process module). Keep the escape-sequence rules
- *  in sync — the only intended difference is the trailing control-char strip,
- *  which bell.ts omits. (The ST-OSC leak this fixes had to be patched in both;
- *  one was nearly missed.) */
+ *  readable. Keeps newlines so line context survives. Exported for unit tests. */
 export function stripAnsi(s: string): string {
   return s
     .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
@@ -229,11 +238,8 @@ export interface BufferSearchHit {
   more: number;
 }
 
-/** Case-insensitive AND-search across all live PTY buffers. The query is
- *  split into whitespace-delimited tokens; every token must appear in the
- *  buffer for that buffer to count as a hit. Snippet is built around the
- *  first-occurring token (so user sees relevant context for whichever
- *  word matched earliest). */
+/** Case-insensitive AND-search over every live PTY buffer: each whitespace token must appear; the snippet
+ *  surrounds the earliest-occurring token. */
 export function searchPtyOutputs(query: string): BufferSearchHit[] {
   const tokens = query
     .toLowerCase()
@@ -307,12 +313,19 @@ export function searchPtyOutputs(query: string): BufferSearchHit[] {
   return hits;
 }
 
+// exec would replace the shell with the program, or with `cd`'s /usr/bin twin.
+const NOT_EXECABLE = /^(?:[({]|(?:cd|export|source|\.|alias|eval|set|unset|umask|ulimit|pushd|popd|builtin)(?:\s|$)|command(?:\s+-|\s*$))/;
+
 function commandWithExec(command: string): string {
   if (!command.trim()) return "exec";
   const { assignments, end, rest } = leadingEnvAssignments(command);
-  if (!assignments.length) return `exec ${command}`;
+  const program = command.slice(rest).trim();
+  if (!simpleCommand(command) || NOT_EXECABLE.test(program) || startsWithExec(program)) return command;
+  // `exec command x` needs a /usr/bin/command (not on Linux); `command` only skips functions and aliases.
+  const target = program.replace(/^command\s+/, "");
+  if (!assignments.length) return `exec ${target}`;
   if (rest >= command.length) return command;
-  return `${command.slice(0, end)} exec ${commandForExec(command.slice(rest))}`;
+  return `${command.slice(0, end)} exec ${commandForExec(target)}`;
 }
 
 function commandForExec(command: string): string {
@@ -362,10 +375,8 @@ export function agentConfigDirsFromCommand(
   return dirs;
 }
 
-/** Build the shell argv for a given command + cwd. Uses the user's login +
- *  interactive shell so PATH/env/functions from their rc files (zsh, fish,
- *  bash, etc.) flow through. Many user launchers are shell functions or PATH
- *  edits in .zshrc/.bashrc, which login-only non-interactive shells skip. */
+/** The user's login + interactive shell, so launchers defined as rc-file functions or PATH edits (which a
+ *  non-interactive shell skips) still run. */
 export function shellArgv(command: string, cwd: string): string[] {
   const cwdQuoted = shellQuote(cwd);
   // The user's command is embedded verbatim so $VARS / quoting / pipes work.
@@ -374,7 +385,83 @@ export function shellArgv(command: string, cwd: string): string[] {
   return [userShell(), "-l", "-i", "-c", `cd ${cwdQuoted} && ${commandWithExec(commandForExec(command))}`];
 }
 
-/** Friendly error reporter — writes a red banner into the terminal and emits
+const codexHomeOf = (req: SpawnRequest, cwd: string) =>
+  codexHomeFor({ configDir: req.agentConfigDir, command: req.command }, DEFAULT_CODEX_HOME, expandUserPath, cwd);
+
+/** The dir the command itself sets for claude; a preset's configDir is only a label, the pane's env decides. */
+function claudeDirInCommand(req: SpawnRequest, cwd: string): string | undefined {
+  return agentConfigDirsFromCommand(req.command, cwd, ["CLAUDE_CONFIG_DIR"]).at(-1);
+}
+
+// The shell keeps the last assignment in a command.
+function grokHomeOf(req: SpawnRequest, cwd: string): string {
+  const dir = req.agentConfigDir ?? agentConfigDirsFromCommand(req.command, cwd, ["GROK_HOME"]).at(-1);
+  return dir ? expandUserPath(dir) : DEFAULT_GROK_HOME;
+}
+
+const ownSession = (command: string) => {
+  const own = withOwnSessionId(command);
+  return { command: own.command, ownSessionId: own.sessionId };
+};
+
+/** The command to run: each agent's check that its session to resume still exists, or the pane's own session id for
+ *  a fresh claude or grok; opencode's goes through the pane's shell, whose startup files may build its PATH. */
+async function resolveSpawnCommand(
+  req: SpawnRequest,
+  cwd: string,
+): Promise<{ command: string; ownSessionId: string | null }> {
+  if (req.agent === "claude") {
+    return ownSession(await withLiveClaudeResume(
+      req.command,
+      claudeDirInCommand(req, cwd),
+      cwd,
+      () => shellClaudeConfigDir(userShell(), cwd, safeEnv(req, cwd)),
+      (err) => ptyLog.append("claude-config-dir-probe-failed", { ptyId: req.ptyId, error: err.message }),
+    ));
+  }
+  if (req.agent === "codex") {
+    const home = codexHomeOf(req, cwd);
+    const onError = (err: Error) =>
+      ptyLog.append("codex-resume-check-failed", { ptyId: req.ptyId, error: err.message });
+    return { command: home ? await withLiveCodexResume(req.command, home, onError) : req.command, ownSessionId: null };
+  }
+  if (req.agent === "grok") return ownSession(await withLiveGrokResume(req.command, grokHomeOf(req, cwd), cwd));
+  const command = await ownSessionCommand(
+    req.command,
+    cwd,
+    (dir, assignments) => listOpencodeSessions(userShell(), dir, envWithAssignments(safeEnv(req, cwd), assignments)),
+    (err) => ptyLog.append("opencode-session-lookup-failed", { ptyId: req.ptyId, error: String(err) }),
+    () => ptyLog.append("opencode-session-none", { ptyId: req.ptyId }),
+  );
+  return { command, ownSessionId: null };
+}
+
+/** Reports the conversation a pane's agent is in, as the status hook would. */
+function watchAgentSession(
+  req: SpawnRequest,
+  cwd: string,
+  pid: number,
+  spawnedAt: number,
+  report: (sessionId: string) => void,
+): () => void {
+  const onError = (err: Error) =>
+    ptyLog.append("agent-session-read-failed", { ptyId: req.ptyId, agent: req.agent, error: err.message });
+  if (req.agent === "claude") {
+    return watchClaudeSession(claudeDirInCommand(req, cwd), pid, report, undefined, cwd, spawnedAt);
+  }
+  if (req.agent === "codex") {
+    const home = codexHomeOf(req, cwd);
+    if (!home) return () => {};
+    return pollSession(async () => readCodexSessionId(home, cwd, await processFamily(pid), spawnedAt), report, undefined, onError);
+  }
+  if (req.agent === "grok") {
+    const home = grokHomeOf(req, cwd);
+    return pollSession(async () => readGrokSessionId(home, await processFamily(pid), spawnedAt), report, undefined, onError);
+  }
+  return () => {};
+}
+
+/** Friendly error reporter - writes a red banner into the terminal and emits
  *  a synthetic exit so the host knows the spawn never happened. */
 function reportSpawnFailure(
   sink: PtyEventSink,
@@ -392,18 +479,29 @@ function reportSpawnFailure(
   sink.sendPtyEvent({ type: "exit", ptyId, exitCode: COMMAND_NOT_FOUND_EXIT_CODE });
 }
 
-export const DEFAULT_LANG = "en_US.UTF-8";
+const DEFAULT_LANG = "en_US.UTF-8";
 const PANE_TERM = "xterm-256color";
+// Aya's own switches for the process that runs it: passed on, a nested Aya or
+// Electron tool started from a pane would change mode. AYA_REMOTE_SOCKET stays, `aya` reads it.
+const PANE_UNSHARED_VARS = [
+  "ELECTRON_RUN_AS_NODE",
+  "AYA_DEV",
+  "AYA_E2E_HEADLESS",
+  "AYA_E2E_PTY_SHUTDOWN",
+  "AYA_E2E_APPLE_HELPER",
+  "AYA_CLAUDE_SETTINGS",
+];
 // The spawn log clamps the command: it is unbounded user input, and one line past
 // the log cap would blow straight through it (#89); 4 KB keeps real commands whole.
 export const SPAWN_LOG_COMMAND_MAX_CHARS = 4096;
 
-function safeEnv(req: SpawnRequest, cwd: string): { [key: string]: string } {
+export function safeEnv(req: SpawnRequest, cwd: string): { [key: string]: string } {
   const inherited: { [key: string]: string } = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (typeof v === "string") inherited[k] = v;
   }
   const out = withoutSessionMarkers(inherited);
+  for (const key of PANE_UNSHARED_VARS) delete out[key];
   out.TERM = PANE_TERM;
   out.COLORTERM = "truecolor";
   if (!out.LANG) out.LANG = DEFAULT_LANG;
@@ -415,6 +513,9 @@ function safeEnv(req: SpawnRequest, cwd: string): { [key: string]: string } {
   out.AYA_SOCKET = CONTROL_SOCKET_PATH;
   out.AYA_TERMINAL_ID = req.ptyId;
   out.AYA_PROJECT_DIR = cwd;
+  // Never the outer Aya pane's (a nested Aya): aya team save would fall back to its project.
+  delete out.AYA_PROJECT_SLUG;
+  delete out.AYA_PRESET_ID;
   if (req.projectSlug) out.AYA_PROJECT_SLUG = req.projectSlug;
   if (req.presetId) out.AYA_PRESET_ID = req.presetId;
   return out;
@@ -436,7 +537,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     return;
   }
   if (ptys.has(req.ptyId)) {
-    // Already running — this is a re-mount (Vite HMR or a React double-mount).
+    // Already running - this is a re-mount (Vite HMR or a React double-mount).
     // Don't spawn again; replay the buffered output so the freshly-created
     // xterm.js can repaint the existing scrollback. The PTY's own onData
     // continues to deliver new bytes to the renderer.
@@ -453,6 +554,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
         replay: true,
       });
     }
+    if (vtPaneWaiting(req.ptyId) && !sink.isDestroyed()) sink.sendPtyEvent({ type: "vt-status", ptyId: req.ptyId, waiting: true });
     return;
   }
   const inFlight = spawning.get(req.ptyId);
@@ -554,7 +656,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     return flight.cancelled;
   };
   try {
-    if (binary && !(await commandExists(binary))) {
+    if (binary && !(await commandExists(binary, cwd))) {
       reportSpawnFailure(
         sink,
         req.ptyId,
@@ -569,25 +671,14 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     // re-mounts returned above), so no lookup is paid for nothing. opencode's
     // goes through the pane's own shell and env: it may only be on the PATH
     // its startup files build.
-    const resumed =
-      req.agent === "claude"
-        ? await withLiveClaudeResume(
-            req.command,
-            req.agentConfigDir ?? agentConfigDirsFromCommand(req.command, cwd, ["CLAUDE_CONFIG_DIR"]).at(-1),
-            cwd,
-          )
-        : await ownSessionCommand(
-            req.command,
-            cwd,
-            (dir, assignments) =>
-              listOpencodeSessions(userShell(), dir, envWithAssignments(safeEnv(req, cwd), assignments)),
-            (err) =>
-              ptyLog.append("opencode-session-lookup-failed", { ptyId: req.ptyId, error: String(err) }),
-            () => ptyLog.append("opencode-session-none", { ptyId: req.ptyId }),
-          );
-    const command = await noDaemonCommand(resumed, (codex, assignments) =>
-      codexSupportsNoDaemon(userShell(), cwd, envWithAssignments(safeEnv(req, cwd), assignments), codex),
+    const spawnedAt = Date.now();
+    const { command: resumed, ownSessionId } = await resolveSpawnCommand(req, cwd);
+    const env = safeEnv(req, cwd);
+    const plain = await noDaemonCommand(resumed, (codex, assignments) =>
+      codexSupportsNoDaemon(userShell(), cwd, envWithAssignments(env, assignments), codex),
     );
+    const { command, added } = req.teamLaunch ? await roleLaunch(req.ptyId, plain, cwd, env) : { command: plain, added: [] };
+    const launch = await paneLaunchRecord(command, cwd, added, env, CONTROL_SOCKET_PATH);
     if (cancelled()) return;
     const argv = shellArgv(command, cwd);
     const file = argv[0];
@@ -600,7 +691,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
         cols: Math.max(req.cols, MIN_PTY_COLS),
         rows: Math.max(req.rows, MIN_PTY_ROWS),
         cwd,
-        env: safeEnv(req, cwd),
+        env,
       });
     } catch (err) {
       reportSpawnFailure(
@@ -631,6 +722,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
     }
 
     ptys.set(req.ptyId, child);
+    launches.set(req.ptyId, launch);
     // Replay anything typed during the spawn window, in order, before the pane
     // takes live input. Writes arriving after this point find the PTY through
     // `ptys` on the normal path, so there is no gap between flush and cleanup.
@@ -707,24 +799,23 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       }
     });
 
-    const stopSessionWatch =
-      req.agent === "claude"
-        ? watchClaudeSession(
-            // The shell keeps the last assignment.
-            req.agentConfigDir ?? agentConfigDirsFromCommand(req.command, cwd, ["CLAUDE_CONFIG_DIR"]).at(-1),
-            child.pid,
-            (sessionId) => sink.sendPtyEvent({ type: "osc-session", ptyId: req.ptyId, sessionId }),
-            undefined,
-            cwd,
-          )
-        : null;
+    // Known before the CLI writes anything, so a restart before its first message resumes it.
+    if (ownSessionId) sink.sendPtyEvent({ type: "osc-session", ptyId: req.ptyId, sessionId: ownSessionId });
+    const stopSessionWatch = watchAgentSession(
+      req,
+      cwd,
+      child.pid,
+      spawnedAt,
+      (sessionId) => sink.sendPtyEvent({ type: "osc-session", ptyId: req.ptyId, sessionId }),
+    );
 
     child.onExit(({ exitCode, signal }) => {
-      stopSessionWatch?.();
+      stopSessionWatch();
       if (ptys.get(req.ptyId) !== child) {
         return;
       }
       ptys.delete(req.ptyId);
+      launches.delete(req.ptyId);
       outputBuffers.delete(req.ptyId);
       oscCarryBuffers.delete(req.ptyId);
       closeVtPane(req.ptyId);
@@ -796,6 +887,18 @@ export function isPtyStarting(ptyId: string): boolean {
   return flight !== undefined && !flight.cancelled;
 }
 
+export function getPtyLaunch(ptyId: string): PaneLaunch | null {
+  return launches.get(ptyId) ?? null;
+}
+
+/** A role's pane gets what makes it reach Aya; one Aya would have to escalate launches as its preset says. */
+async function roleLaunch(ptyId: string, command: string, cwd: string, env: Record<string, string>): Promise<{ command: string; added: string[] }> {
+  const launch = teamLaunch(command, await readLaunchConfig(command, cwd, env, CONTROL_SOCKET_PATH));
+  if ("args" in launch) return { command: withLaunchArgs(command, launch.args), added: launch.args };
+  ptyLog.append("team-launch-refused", { ptyId, reason: launch.refused });
+  return { command, added: [] };
+}
+
 export function getPtySize(ptyId: string): PaneSize | null {
   const p = ptys.get(ptyId);
   return p ? { cols: p.cols, rows: p.rows, alt: vtPaneAltScreen(ptyId) } : null;
@@ -807,6 +910,10 @@ export async function getPtyCwd(ptyId: string): Promise<string | null> {
   const p = ptys.get(ptyId);
   if (!p) return null;
   return getProcessCwd(p.pid);
+}
+
+export function getPtyPid(ptyId: string): number | null {
+  return ptys.get(ptyId)?.pid ?? null;
 }
 
 /** Write to a PTY; false means it went NOWHERE (dead id, queue at cap, failed
@@ -834,40 +941,19 @@ export async function writePty(ptyId: string, data: string): Promise<boolean> {
   return true;
 }
 
-/** Queue input for an in-flight spawn, capped at PENDING_WRITE_MAX_BYTES;
- *  truncation keeps the head. False when the chunk was not queued WHOLE. */
+/** Queue input for an in-flight spawn, capped at PENDING_WRITE_MAX_BYTES. False when the chunk
+ *  was not queued WHOLE: a cut paste would leave the pane mid-paste. */
 function bufferPendingWrite(ptyId: string, data: string): boolean {
   const queued = pendingWrites.get(ptyId) ?? [];
   const used = queued.reduce((n, s) => n + Buffer.byteLength(s), 0);
-  const room = PENDING_WRITE_MAX_BYTES - used;
-  if (room <= 0) {
-    ptyLog.append("pending-write-dropped", {
-      ptyId,
-      bytes: Buffer.byteLength(data),
-    });
+  const bytes = Buffer.byteLength(data);
+  if (bytes > PENDING_WRITE_MAX_BYTES - used) {
+    ptyLog.append("pending-write-dropped", { ptyId, bytes });
     return false;
   }
-  let chunk = data;
-  let whole = true;
-  if (Buffer.byteLength(chunk) > room) {
-    // Back off the cut to a character boundary. Slicing mid-character and
-    // decoding would hand the shell a U+FFFD it never typed, so walk back over
-    // any UTF-8 continuation bytes (0b10xxxxxx) first.
-    const buf = Buffer.from(chunk);
-    let end = room;
-    while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
-    chunk = buf.subarray(0, end).toString("utf8");
-    ptyLog.append("pending-write-truncated", { ptyId, keptBytes: end });
-    // Keep the head but report the loss: with --submit, acking a truncated
-    // write presses Enter on a half-typed command.
-    whole = false;
-    // The remaining room was smaller than the first character, so nothing of
-    // this chunk survives - queue no empty entry for the flush to write.
-    if (!chunk) return false;
-  }
-  queued.push(chunk);
+  queued.push(data);
   pendingWrites.set(ptyId, queued);
-  return whole;
+  return true;
 }
 
 export function resizePty(ptyId: string, cols: number, rows: number): void {
@@ -877,7 +963,7 @@ export function resizePty(ptyId: string, cols: number, rows: number): void {
   try {
     p.resize(Math.max(cols, MIN_PTY_COLS), Math.max(rows, MIN_PTY_ROWS));
   } catch {
-    // ignore — pty may have just exited
+    // ignore - pty may have just exited
   }
 }
 
@@ -896,7 +982,7 @@ export function terminatePtyChild(
     try {
       p.kill("SIGKILL");
     } catch {
-      // already exited — nothing to force-kill
+      // already exited - nothing to force-kill
     }
   }, KILL_ESCALATE_MS);
 }
@@ -928,6 +1014,7 @@ export function killPty(ptyId: string): void {
   // PTY), then terminate with SIGKILL escalation so a signal-ignoring child
   // can't survive and get orphaned.
   ptys.delete(ptyId);
+  launches.delete(ptyId);
   // The spawn-time onExit skips its "exit" append once the map entry is gone
   // (its identity guard exists so a respawn under the same id is not wrongly
   // torn down) - so log the killed child's actual exit here, or the forensic
@@ -938,14 +1025,8 @@ export function killPty(ptyId: string): void {
   terminatePtyChild(p);
 }
 
-/** Graceful shutdown of a set of PTY children, event-driven with a hard deadline
- *  (the graceful->timeout->SIGKILL ladder of systemd/k8s/docker, but resolving
- *  as soon as the children are actually dead so a clean quit isn't delayed by a
- *  fixed timer). Sends the graceful signal to each, calls `onDone` once the last
- *  child exits, and at the KILL_ESCALATE_MS deadline force-kills any survivor
- *  (the SIGKILL syscall dooms it regardless of whether this host outlives it)
- *  before resolving. Split from `shutdownPtyChildren` so the loop is unit-testable
- *  with fake children; `schedule` is injectable. `onDone` fires exactly once. */
+/** Graceful signal to each child, `onDone` exactly once when the last exits, SIGKILL for survivors at the
+ *  KILL_ESCALATE_MS deadline. Split out (injectable `schedule`) so the ladder is testable with fake children. */
 export function shutdownChildren(
   children: Array<Pick<PtyModule.IPty, "kill" | "onExit">>,
   onDone: () => void,
@@ -974,12 +1055,12 @@ export function shutdownChildren(
     try {
       p.onExit(() => settleOne());
     } catch {
-      // Can't observe this child's exit — let the deadline cover it.
+      // Can't observe this child's exit - let the deadline cover it.
     }
     try {
       p.kill(); // graceful first; a well-behaved child exits and triggers onExit
     } catch {
-      settleOne(); // already gone — counts as settled
+      settleOne(); // already gone - counts as settled
     }
   }
 
@@ -988,7 +1069,7 @@ export function shutdownChildren(
       try {
         p.kill("SIGKILL");
       } catch {
-        // already exited — nothing to force-kill
+        // already exited - nothing to force-kill
       }
     }
     finish();

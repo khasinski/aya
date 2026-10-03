@@ -102,20 +102,19 @@ test("exit for an unknown ptyId is a no-op", () => {
   assert.equal(next, prev);
 });
 
-// --- data: approval detection -------------------------------------------
+// --- data: no approval detection (the screen is the source, vt-status) ----
 
-test("approval-prompt chunk transitions running -> waiting and rings the bell", () => {
+test("approval wording in the bytes leaves a running terminal alone", () => {
   const prev = { t1: termState("t1", { status: "running", bell: false }) };
   const next = applyPtyEvent(prev, {
     type: "data",
     ptyId: "t1",
     chunk: "Do you want me to apply this edit?",
   });
-  assert.equal(next.t1.status, "waiting");
-  assert.equal(next.t1.bell, true);
+  assert.equal(next, prev);
 });
 
-test("approval-prompt while already waiting is idempotent (same map reference)", () => {
+test("approval wording while already waiting is idempotent (same map reference)", () => {
   const prev = { t1: termState("t1", { status: "waiting", bell: true }) };
   const next = applyPtyEvent(prev, {
     type: "data",
@@ -125,17 +124,16 @@ test("approval-prompt while already waiting is idempotent (same map reference)",
   assert.equal(next, prev);
 });
 
-// --- data: busy resumes from waiting ------------------------------------
+// --- data while waiting: only the screen ends a dialog's waiting ----------
 
-test("substantial output after a waiting prompt clears the bell and returns to running", () => {
+test("substantial output while a dialog waits leaves it to the screen", () => {
   const prev = { t1: termState("t1", { status: "waiting", bell: true }) };
   const next = applyPtyEvent(prev, {
     type: "data",
     ptyId: "t1",
     chunk: "Compiling... ".repeat(20),
   });
-  assert.equal(next.t1.status, "running");
-  assert.equal(next.t1.bell, false);
+  assert.equal(next, prev);
 });
 
 test("short output while waiting does NOT clear the bell (just a cursor repaint)", () => {
@@ -334,8 +332,9 @@ test("osc-status: waiting sets status + rings the bell + records externalStatus"
   });
 });
 
-test("osc-status: done maps to idle and clears the bell", () => {
-  const prev = { t1: termState("t1", { status: "waiting", bell: true }) };
+// A waiting with no report of its own is a dialog on the screen, which a report does not end (dialog-outlives-report).
+test("osc-status: done after the agent's own question maps to idle and clears the bell", () => {
+  const prev = { t1: termState("t1", { status: "waiting", bell: true, externalStatus: { level: "waiting", text: "q", updatedAt: 1 } }) };
   const next = applyPtyEvent(prev, {
     type: "osc-status",
     ptyId: "t1",
@@ -574,7 +573,7 @@ test("vt-status clears a waiting state once the prompt leaves the screen", () =>
   assert.equal(next.t1.bell, false);
 });
 
-test("vt-status never overrules an agent's own reported status", () => {
+test("vt-status never ends an agent's own question", () => {
   const prev = {
     t1: termState("t1", {
       status: "waiting",
@@ -620,14 +619,11 @@ test("vt-status for an unknown ptyId is a no-op", () => {
   assert.equal(next, prev);
 });
 
-// --- precedence between the three waiting signals ---------------------------
-// integrations.md documents the chain: an agent's own report > the rendered
-// screen > a regex over raw bytes. The rule is asymmetric on purpose — a
-// blocked agent nobody notices is the expensive failure, so a weaker signal
-// may still RAISE the bell; it just may never silence or downgrade what the
-// agent said about itself.
+// --- precedence between the two waiting signals ----------------------------
+// The screen may still RAISE the bell over a reported status (a blocked agent nobody notices is the expensive
+// failure); it never ends the agent's own question.
 
-test("inferred signals may still raise the bell over a stale agent status", () => {
+test("the screen may still raise the bell over a stale agent status", () => {
   // An agent that announced "active" once and then hit an approval prompt it
   // did not report must still ring, or the user waits forever.
   const prev = {
@@ -641,8 +637,7 @@ test("inferred signals may still raise the bell over a stale agent status", () =
     ptyId: "t1",
     chunk: "Do you want me to apply this edit?",
   });
-  assert.equal(fromBytes.t1.bell, true);
-  assert.equal(fromBytes.t1.status, "waiting");
+  assert.equal(fromBytes, prev, "the bytes are no source");
 
   const fromScreen = applyPtyEvent(prev, { type: "vt-status", ptyId: "t1", waiting: true });
   assert.equal(fromScreen.t1.bell, true);

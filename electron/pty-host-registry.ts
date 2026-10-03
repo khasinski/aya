@@ -18,7 +18,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { atomicTempPath, TMP_SUFFIX } from "./atomic-write";
 import { AYA_HOME, OWNER_ONLY_FILE_MODE } from "./paths";
-import { UNKNOWN_SCRIPT_HASH } from "./pty-host-staleness";
+import { classifyIdentity } from "./pty-host-staleness";
 
 export interface HostRecord {
   /** Host process pid (also its process-group leader: spawned detached). */
@@ -48,7 +48,7 @@ export interface ProcInfo {
   command: string | null;
 }
 
-export const HOST_REGISTRY_DIR = path.join(AYA_HOME, "pty-hosts");
+const HOST_REGISTRY_DIR = path.join(AYA_HOME, "pty-hosts");
 
 // Fixed width of the `ps -o lstart=` ctime field (C locale + UTC pinned in
 // PS_ENV below): "Wed Jul  2 10:00:00 2026" = 24 chars. The two slices in
@@ -62,9 +62,8 @@ const TMP_SWEEP_AGE_MS = 60_000;
 const recordPath = (dir: string, pid: number): string =>
   path.join(dir, `${pid}.json`);
 
-/** Atomically write a host's record (tmp + rename). Refuses a record without a
- *  start time - it could never be verified, so it would only ever be GC'd.
- *  Best-effort beyond that. */
+/** Atomic (tmp + rename), best-effort. A record without a start time is refused: it could never be
+ *  verified, only GC'd. */
 export function writeHostRecord(rec: HostRecord, dir: string = HOST_REGISTRY_DIR): void {
   if (!rec.startTime) return;
   const tmp = atomicTempPath(recordPath(dir, rec.pid));
@@ -82,9 +81,8 @@ export function writeHostRecord(rec: HostRecord, dir: string = HOST_REGISTRY_DIR
   }
 }
 
-/** Read all valid host records in the registry. Self-healing: unlinks files
- *  that fail parse/shape validation (writes are atomic, so a bad .json is a
- *  crash artifact, never a mid-write) and sweeps aged .tmp leftovers. */
+/** Valid records only: an unparsable .json is a crash artifact (writes are atomic) and is unlinked, as are
+ *  aged .tmp leftovers. */
 export function readHostRecords(dir: string = HOST_REGISTRY_DIR): HostRecord[] {
   let names: string[];
   try {
@@ -146,12 +144,9 @@ function isHostRecord(v: unknown): v is HostRecord {
   );
 }
 
-/** Is the live pid the EXACT process we recorded? Alive, start time matches
- *  exactly (PID-reuse defense), and the command still runs a pty-host script.
- *  The start-time equality is the real authenticator; the command basename check
- *  (not full path - a stale host lives in an older/different bundle) only rejects
- *  a reused pid now running something unrelated. */
-export function isSameRecordedProcess(
+/** The live pid is the EXACT recorded process: equal start time is the authenticator (PID reuse); the
+ *  script basename check (an old bundle path differs) only rejects a reused pid running something else. */
+function isSameRecordedProcess(
   rec: HostRecord,
   info: ProcInfo,
   hostScript: string,
@@ -164,11 +159,8 @@ export function isSameRecordedProcess(
   return true;
 }
 
-/** FAIL-CLOSED gate: may we SIGKILL (by process group) the host `rec` describes?
- *  Adds the kill-only guards on top of the identity check: never our own pid,
- *  never init/invalid, and the record MUST be a detached group leader (pgid ==
- *  pid) so kill(-pgid) targets exactly that host's own group and not some other
- *  group a corrupted/foreign record might name. */
+/** FAIL-CLOSED gate for kill(-pgid): never our pid or init, and only a detached group leader (pgid ==
+ *  pid), so a corrupted record cannot name another group. */
 export function isReapableHost(
   rec: HostRecord,
   info: ProcInfo,
@@ -181,29 +173,8 @@ export function isReapableHost(
   return isSameRecordedProcess(rec, info, hostScript);
 }
 
-/** How a record compares to the identity THIS app would spawn.
- *  - "compatible": same version AND same known scriptHash -> keep (#28).
- *  - "stale": different version, or same version with two KNOWN, different
- *    hashes (a rebuild) -> reap.
- *  - "indeterminate": same version but either hash is the "unknown" sentinel
- *    (a failed read at record or launch time). Comparing sentinels would be
- *    catastrophic in both directions - "unknown"==="unknown" would trust a
- *    foreign build, and real-vs-"unknown" would SIGKILL a healthy same-build
- *    host - so we do NOTHING with such records this launch. */
-export function classifyRecord(
-  rec: Pick<HostRecord, "version" | "scriptHash">,
-  expected: { version: string; scriptHash: string },
-): "compatible" | "stale" | "indeterminate" {
-  if (rec.version !== expected.version) return "stale";
-  if (rec.scriptHash === UNKNOWN_SCRIPT_HASH || expected.scriptHash === UNKNOWN_SCRIPT_HASH) {
-    return "indeterminate";
-  }
-  return rec.scriptHash === expected.scriptHash ? "compatible" : "stale";
-}
-
-/** All descendant pids of `rootPid`, recursively, from a (pid,ppid) list.
- *  Cycle-safe. Excludes the root itself. Used only to LOG what a group kill
- *  covered - never as a kill target (a snapshotted pid could be reused). */
+/** Every descendant pid of `rootPid` (cycle-safe, root excluded). Only for LOGGING what a group kill
+ *  covered: a snapshotted pid could be reused, so never a kill target. */
 export function collectDescendants(
   rootPid: number,
   procs: Array<{ pid: number; ppid: number }>,
@@ -237,9 +208,8 @@ export function collectDescendants(
 // the same pid renders 08:52 under TZ=UTC and 10:52 under Europe/Warsaw).
 export const PS_ENV = { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" };
 
-/** `ps` fields for one pid. alive:false when ps ran and the pid is gone;
- *  probeFailed:true when ps itself could not run (fork pressure, sandbox) -
- *  callers must treat that as UNKNOWN, not as dead. */
+/** `ps` fields for one pid: alive:false when ps ran and the pid is gone; probeFailed:true when ps could not
+ *  run (fork pressure, sandbox), which callers treat as UNKNOWN, not dead. */
 export function readProcInfo(pid: number): ProcInfo {
   try {
     const out = execFileSync("ps", ["-p", String(pid), "-o", "lstart=,command="], {
@@ -287,9 +257,8 @@ export function ownStartTime(): string {
   return readProcInfo(process.pid).startTime ?? "";
 }
 
-/** Own process-group id via the OS, or null when unreadable. The host records
- *  itself only when it truly is a group leader (pgid === pid) - the property
- *  the reaper's kill(-pgid) depends on - rather than assuming detached spawn. */
+/** Own process-group id from the OS, null when unreadable: the host records itself only as a real group
+ *  leader, which the reaper's kill(-pgid) depends on. */
 export function ownPgid(): number | null {
   try {
     const out = execFileSync("ps", ["-p", String(process.pid), "-o", "pgid="], {
@@ -325,24 +294,8 @@ const defaultDeps = (): ReapDeps => ({
   selfPid: process.pid,
 });
 
-/** Reconcile the registry on launch: KEEP a recorded host whose identity matches
- *  what we would spawn (#28 - survive same-version restart); force-kill the whole
- *  process GROUP of any STALE (version/scriptHash-mismatched) host we can verify
- *  by pid (fail-closed via isReapableHost); GC records whose process is verifiably
- *  gone or reused (removed WITHOUT signaling - never a blind kill); SKIP records
- *  we cannot judge this launch (failed probe, "unknown" hash sentinel) so a live
- *  host never loses its record to a transient failure.
- *
- *  The kill targets the whole process GROUP (kill(-pgid)) of a just-verified,
- *  still-alive detached leader - atomic, and free of the enumerate-then-kill
- *  reuse race (a snapshotted child pid could be reused before we signal it).
- *  POSIX delivers a group signal to every member INCLUDING the leader, so there
- *  is deliberately no follow-up kill(pid) - that would be the one unverified
- *  signal in the file and would reopen the reuse window the group kill closes.
- *  Known limits (accepted for now): a descendant that called setsid() escapes the
- *  group, and a leader that dies in the microseconds before the kill could let
- *  its pgid be reused. Deps are injectable so the decision + signalling are
- *  unit-testable without real processes. */
+/** On launch: KEEP a matching host, kill the GROUP of a verified stale one (kill(-pgid) reaches the leader
+ *  too, so no unverified kill(pid)), GC gone or reused pids unsignalled, SKIP what cannot be judged this launch. */
 export function reapStaleHostRecords(
   expected: { version: string; scriptHash: string },
   hostScript: string,
@@ -372,7 +325,7 @@ export function reapStaleHostRecords(
       summary.skipped.push(rec.pid);
       continue;
     }
-    const kind = classifyRecord(rec, expected);
+    const kind = classifyIdentity(expected, rec);
     if (kind === "indeterminate") {
       // Identity can't be compared ("unknown" hash) so NEVER kill - but GC is
       // still safe when a successful probe shows the pid conclusively gone or

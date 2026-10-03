@@ -72,6 +72,7 @@ test("a client that SPAWNED the host plain-spawns despite attachIfReused (cold b
     !events.some((e) => e.type === "no-session"),
     "a fresh host must not report no-session for a boot tab",
   );
+  assert.equal(await client.willStart(spawnReq({ ptyId: "new-1", attachIfReused: true })), true, "a fresh host starts a boot tab");
 });
 
 test("a client that FOUND the host running gets no-session for a dead id (no silent respawn)", async () => {
@@ -125,5 +126,11 @@ test("attachIfReused still attaches to a LIVE session on a reused host", async (
     !ptyEventsFor(wcB, "live-1").some((e) => e.type === "no-session"),
     "a live session must attach, not stop",
   );
+  const starts = (over) => client.willStart(spawnReq({ ptyId: "never-run", ...over }));
+  assert.equal(await client.willStart(spawnReq({ ptyId: "live-1" })), false, "a live id is only replayed");
+  assert.equal(await client.willStart(spawnReq({ ptyId: "live-1", attachIfReused: true })), false);
+  assert.equal(await starts({ attachOnly: true }), false);
+  assert.equal(await starts({ attachIfReused: true }), false, "a reused host does not start a boot tab");
+  assert.equal(await starts({}), true, "a plain spawn of a new id starts");
   await client.kill("live-1");
 });

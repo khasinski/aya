@@ -1,8 +1,8 @@
 // Parses Aya's OSC 9001 signal vocabulary (see integrations.md) out of raw PTY
 // output. A cooperating TUI (or a wrapper script) can emit
-// `ESC ]9001;aya.<key>=<value> BEL` to hand Aya a structured signal — the
-// "explicit status" channel that supersedes the regex-based bell heuristic
-// (src/bell.ts) once it can identify a live one.
+// `ESC ]9001;aya.<key>=<value> BEL` to hand Aya a structured signal - the
+// "explicit status" channel, the agent's own word next to what its screen shows
+// (electron/vt-state.ts).
 //
 // Sequences are always stripped from the byte stream before it reaches
 // xterm.js: whether or not Aya recognizes/consumes a given key, an agent's

@@ -17,9 +17,9 @@ import {
   readHostRecords,
   removeHostRecord,
   reapStaleHostRecords,
-  classifyRecord,
   PS_ENV,
 } from "../dist-electron/pty-host-registry.js";
+import { classifyIdentity } from "../dist-electron/pty-host-staleness.js";
 
 const SCRIPT = "/Applications/Aya.app/Contents/Resources/app.asar/dist-electron/pty-host.js";
 const REC = {
@@ -250,19 +250,19 @@ test("reap: empty registry is a no-op", () => {
 
 // --- the "unknown" identity sentinel must never decide a kill or a keep ---
 
-test("classifyRecord: version mismatch is stale regardless of hashes", () => {
-  assert.equal(classifyRecord({ version: "0.7.0", scriptHash: "unknown" }, EXPECTED), "stale");
-  assert.equal(classifyRecord({ version: "0.7.0", scriptHash: "new" }, EXPECTED), "stale");
+test("classifyIdentity: version mismatch is stale regardless of hashes", () => {
+  assert.equal(classifyIdentity(EXPECTED, { version: "0.7.0", scriptHash: "unknown" }), "stale");
+  assert.equal(classifyIdentity(EXPECTED, { version: "0.7.0", scriptHash: "new" }), "stale");
 });
 
-test("classifyRecord: same version needs BOTH hashes known to decide", () => {
-  assert.equal(classifyRecord({ version: "0.8.0", scriptHash: "new" }, EXPECTED), "compatible");
-  assert.equal(classifyRecord({ version: "0.8.0", scriptHash: "other" }, EXPECTED), "stale");
+test("classifyIdentity: same version needs BOTH hashes known to decide", () => {
+  assert.equal(classifyIdentity(EXPECTED, { version: "0.8.0", scriptHash: "new" }), "compatible");
+  assert.equal(classifyIdentity(EXPECTED, { version: "0.8.0", scriptHash: "other" }), "stale");
   // 'unknown' on either side -> indeterminate: 'unknown'==='unknown' must not
   // trust a foreign build, and real-vs-'unknown' must not SIGKILL a healthy one.
-  assert.equal(classifyRecord({ version: "0.8.0", scriptHash: "unknown" }, EXPECTED), "indeterminate");
+  assert.equal(classifyIdentity(EXPECTED, { version: "0.8.0", scriptHash: "unknown" }), "indeterminate");
   assert.equal(
-    classifyRecord({ version: "0.8.0", scriptHash: "real" }, { version: "0.8.0", scriptHash: "unknown" }),
+    classifyIdentity({ version: "0.8.0", scriptHash: "unknown" }, { version: "0.8.0", scriptHash: "real" }),
     "indeterminate",
   );
 });
