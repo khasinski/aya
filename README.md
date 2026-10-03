@@ -319,8 +319,10 @@ aya status done "Build passed"
 aya status error "Tests failed"
 aya status clear
 
-# Read or drive another pane (resolved by tab name within your project)
+# Read or drive another pane (resolved by tab name within your project;
+# a name in two projects needs --project <slug> or the id from aya pane list)
 aya pane read "reviewer"
+aya pane read "reviewer" --project libeval
 aya pane send "reviewer" "run the tests"
 aya pane send "reviewer" --no-submit "draft for review"
 

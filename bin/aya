@@ -32,9 +32,12 @@ Usage:
   aya status done text               Mark this terminal as done
   aya status error text              Mark this terminal as errored
   aya status clear                   Clear agent status
-  aya pane list                      List the panes/agents in this project
-  aya pane read name                 Print another pane's recent output
-  aya pane send name [--no-submit] text
+  aya pane list [--project slug]     List the panes/agents in this project
+  aya pane read target [--project slug]
+                                     Print another pane's recent output;
+                                     target is a pane name or an id from
+                                     aya pane list
+  aya pane send target [--no-submit] [--project slug] text
                                      Type text into another pane and press
                                      Enter (--no-submit: type only)
   aya team whoami                    Print this pane's team role and protocol
@@ -179,10 +182,11 @@ function requestFromArgs() {
       cwd: optionalEnv("AYA_PROJECT_DIR") || process.cwd(),
     };
   }
+  // --project beats the pane's own project, which otherwise scopes every lookup.
   if (kind === "pane-list") {
     return {
       type: "pane-list",
-      projectSlug: optionalEnv("AYA_PROJECT_SLUG"),
+      projectSlug: process.argv[4] || optionalEnv("AYA_PROJECT_SLUG"),
       selfTerminalId: optionalEnv("AYA_TERMINAL_ID"),
     };
   }
@@ -192,7 +196,7 @@ function requestFromArgs() {
     return {
       type: "pane-read",
       target: process.argv[4],
-      projectSlug: optionalEnv("AYA_PROJECT_SLUG"),
+      projectSlug: process.argv[5] || optionalEnv("AYA_PROJECT_SLUG"),
     };
   }
   if (kind === "pane-send") {
@@ -201,7 +205,7 @@ function requestFromArgs() {
       target: process.argv[4],
       text: process.argv[5],
       submit: process.argv[6] === "submit",
-      projectSlug: optionalEnv("AYA_PROJECT_SLUG"),
+      projectSlug: process.argv[7] || optionalEnv("AYA_PROJECT_SLUG"),
     };
   }
   if (kind === "team-whoami" || kind === "team-inbox") return { type: kind };
@@ -632,16 +636,44 @@ case "$command" in
     ;;
   pane)
     [ "$#" -eq 0 ] || shift
+    # --project <slug> counts anywhere before `--`: it scopes the target, so it is never
+    # part of a pane name or of the text sent. The rest is rotated back into "$@".
+    project=""
+    left=$#
+    literal=""
+    while [ "$left" -gt 0 ]; do
+      arg=$1
+      shift
+      left=$((left - 1))
+      if [ -z "$literal" ]; then
+        case "$arg" in
+          --) literal=1 ;;
+          --project)
+            if [ "$left" -eq 0 ] || [ -z "$1" ]; then usage_fail; fi
+            project=$1
+            shift
+            left=$((left - 1))
+            continue
+            ;;
+          --project=*)
+            project=${arg#--project=}
+            if [ -z "$project" ]; then usage_fail; fi
+            continue
+            ;;
+        esac
+      fi
+      set -- "$@" "$arg"
+    done
     action="${1:-}"
     [ "$#" -eq 0 ] || shift
     case "$action" in
       list|ls)
-        send_control pane-list
+        send_control pane-list "$project"
         ;;
       read)
         target="${1:-}"
-        if [ -z "$target" ]; then usage_fail; fi
-        send_control pane-read "$target"
+        if [ -z "$target" ] || [ "$#" -gt 1 ]; then usage_fail; fi
+        send_control pane-read "$target" "$project"
         ;;
       send)
         target="${1:-}"
@@ -662,7 +694,7 @@ case "$command" in
           text="${text:+$text }$arg"
         done
         if [ -z "$target" ] || [ -z "$text" ]; then usage_fail; fi
-        send_control pane-send "$target" "$text" "$submit"
+        send_control pane-send "$target" "$text" "$submit" "$project"
         ;;
       *)
         usage_fail

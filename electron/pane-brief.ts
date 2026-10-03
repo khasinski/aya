@@ -189,8 +189,14 @@ async function rolePlan(agent: string | undefined, command: string, text: string
   });
 }
 
-function carriedText(agentBrief: boolean | undefined, role: RoleRef | null): string {
-  return [agentBrief ? briefText(false) : null, role ? teamNote(role.team, role.role) : null].filter(Boolean).join("\n\n");
+/** A team pane on the main CLIs always takes the brief, whatever its preset says (user decision 2026-10-03);
+ *  the other CLIs follow the preset, so nothing changes for them. */
+const TEAM_BRIEF_AGENTS: ReadonlySet<string> = new Set(["claude", "codex"]);
+const briefOn = (preset: Preset, agent: string | undefined, role: RoleRef | null) =>
+  !!preset.agentBrief || (!!role && TEAM_BRIEF_AGENTS.has(agent ?? ""));
+
+function carriedText(withBrief: boolean, role: RoleRef | null): string {
+  return [withBrief ? briefText(false) : null, role ? teamNote(role.team, role.role) : null].filter(Boolean).join("\n\n");
 }
 /** Hex chars of a `told` digest; records on disk carry it, so another length flags every pane as told an older brief. */
 export const TOLD_DIGEST_HEX_CHARS = 12;
@@ -218,7 +224,7 @@ export async function roleNoteGap(tab: WorkingTab, current: RoleRef, deps: PaneB
   if (!launch) return (await capabilityGap(tab, preset, deps)) ?? ((await deps.running(tab.id)) ? unknown : null);
   if (launch.unknown) return (await capabilityGap(tab, preset, deps)) ?? unknown;
   if (launch.carried && sameRole(launch.role, current)) {
-    const now = digest(carriedText(preset.agentBrief, current));
+    const now = digest(carriedText(briefOn(preset, presetAgent(preset), current), current));
     return launch.told && launch.told !== now ? `started with an older brief: ${restart} to give it the current one` : null;
   }
   if (launch.carried && launch.role) {
@@ -258,7 +264,7 @@ export async function roleNoteReport(
   return { roleNotes, staleNotes };
 }
 
-/** The brief (preset opted in) and a team pane's role note, for a fresh pane.
+/** The brief (preset opted in, or a claude/codex team pane) and a team pane's role note, for a fresh pane.
  *  Shared harness files take the brief only, never a per-pane note. */
 export async function withAgentBrief(spawn: SpawnRequest, deps: PaneBriefDeps): Promise<SpawnRequest> {
   if (!spawn.presetId || !(await deps.starts(spawn))) return spawn;
@@ -267,7 +273,7 @@ export async function withAgentBrief(spawn: SpawnRequest, deps: PaneBriefDeps): 
   const role = await deps.paneRole(spawn);
   const agent = spawn.agent ?? preset.agent;
   const { spawn: out, carried } = await brief(spawn, preset, agent, role, deps);
-  const told = carried ? digest(carriedText(preset.agentBrief, role)) : undefined;
+  const told = carried ? digest(carriedText(briefOn(preset, agent, role), role)) : undefined;
   await recordLaunch(spawn, agent, { role, carried, ...(told && { told }) }, deps).catch((err) =>
     console.warn("[aya] could not record what the pane was told:", err),
   );
@@ -294,9 +300,10 @@ async function brief(
 ): Promise<{ spawn: SpawnRequest; carried: boolean }> {
   const plain = { spawn, carried: false };
   const channel = roleChannel(agent);
-  if ((!preset.agentBrief && !role) || channel.kind === "none") return plain;
+  const withBrief = briefOn(preset, agent, role);
+  if ((!withBrief && !role) || channel.kind === "none") return plain;
   const skipped = (why: string) => (console.warn(`[aya] aya brief skipped for preset ${preset.id}: ${why}`), plain);
-  const text = carriedText(preset.agentBrief, role);
+  const text = carriedText(withBrief, role);
   const base = role ? paneBriefBase(deps.ayaHome, spawn.ptyId) : path.join(deps.ayaHome, "agent-brief");
   const plan = await rolePlan(agent, spawn.command, text, `${base}.json`, preset, spawn.cwd, deps);
   if ("problem" in plan) return skipped(plan.problem);

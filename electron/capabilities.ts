@@ -66,23 +66,30 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   },
   {
     command: "pane list",
-    usage: "aya pane list",
-    summary: "List the panes in this project by tab name; yours is marked (this pane).",
-    notes: ["Run it first to learn the names pane read / pane send take."],
+    usage: "aya pane list [--project slug]",
+    summary: "List the panes in this project by tab name and id; yours is marked (this pane).",
+    notes: [
+      "Run it first to learn the names and ids pane read / pane send take.",
+      "Outside a pane it lists every project; --project lists one.",
+    ],
   },
   {
     command: "pane read",
-    usage: "aya pane read name",
+    usage: "aya pane read target [--project slug]",
     summary: "Print another pane's recent output as plain text, as its screen shows it, newest last.",
     example: 'aya pane read "reviewer"',
-    notes: ["There is no 'wait until done': poll, and leave time between reads."],
+    notes: [
+      "target is a pane name or an id from aya pane list; --project picks the project a name is looked up in.",
+      "There is no 'wait until done': poll, and leave time between reads.",
+    ],
   },
   {
     command: "pane send",
-    usage: "aya pane send name [--no-submit] text",
+    usage: "aya pane send target [--no-submit] [--project slug] text",
     summary: "Type text into another pane and press Enter.",
     example: 'aya pane send "reviewer" "run the tests"',
     notes: [
+      "target and --project work as in pane read.",
       "--no-submit types without pressing Enter, for a prompt the user should review first.",
       "Only drive a pane the user asked you to drive.",
     ],

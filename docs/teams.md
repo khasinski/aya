@@ -108,7 +108,7 @@ dimension has been run end to end against every real CLI.
 Cells that produced bugs (must be tested together): launch mode x aya action (21, 18); daemon x first pane's lifecycle x project (20); launcher env x resume x restart (7); host reap x resume x worktrees (9, 10); inbox origin x restart (5); round counter x restart x pause/resume (6); socket readiness x instance env (11, 12).
 
 
-Every CLI with a launch channel gets the brief and its role note together at launch (Codex in `developer_instructions`), so one digest of that text tells the Teams window when a pane started with an older brief or note; no brief is written into a file another CLI reads.
+Every CLI with a launch channel gets the brief and its role note together at launch (Codex in `developer_instructions`), so one digest of that text tells the Teams window when a pane started with an older brief or note; no brief is written into a file another CLI reads. A Claude or Codex pane with a team role always gets the brief, whatever its preset says (the preset is not changed); the other CLIs follow the preset.
 
 ## Why
 

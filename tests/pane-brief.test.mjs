@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const { teamNote } = await import("../dist-electron/agent-brief.js");
+const { teamNote, briefText } = await import("../dist-electron/agent-brief.js");
 const { withAgentBrief, roleNoteGap, roleNoteReport, removePaneBrief, sweepPaneBriefs, fileLaunchRecords, loginShellEnv, forgetLoginShellEnv, LOGIN_ENV_TIMEOUT, TOLD_DIGEST_HEX_CHARS } = await import("../dist-electron/pane-brief.js");
 
 const ROLE = { team: "ux-review", role: "tester" };
@@ -78,6 +78,7 @@ function told(spawn, deps) {
   return [spawn.command, ...files].join("\n");
 }
 
+const TEAM_BRIEF = { claude: true, codex: true, grok: false, opencode: false };
 const CHANNEL_TAKES_NOTE = { claude: true, grok: true, opencode: true, codex: true, cursor: false };
 const printedCodexArg = (command) => spawnSync("/bin/sh", ["-c", command.replace(/^codex/, "printf '%s\\n'")], { encoding: "utf8" }).stdout.split("\n")[1].replace(/^developer_instructions=/, "");
 
@@ -111,7 +112,7 @@ for (const agent of AGENTS) {
 
 test("codex: the role note is a -c developer_instructions TOML string, and the user's own is not replaced", () =>
   withRig(presetOf("codex"), ROLE, async ({ deps, start, gap }) => {
-    assert.match((await start()).command, /^codex -c 'developer_instructions="You are the tester/);
+    assert.match((await start()).command, /^codex -c 'developer_instructions="You are running inside Aya[\s\S]*You are the tester/);
     mkdirSync(deps.defaultCodexHome, { recursive: true });
     writeFileSync(join(deps.defaultCodexHome, "config.toml"), 'developer_instructions = "mine"\n');
     assert.equal((await start()).command, "codex");
@@ -189,10 +190,10 @@ test("pane-briefs: private files, one per full id, removed with the pane and swe
     assert.deepEqual([...deps.records.all.keys()], ["keep"]);
   }));
 
-test("the codex note is exactly the TOML basic string of the note", async () => {
+test("the codex brief and note are exactly the TOML basic string of the text", async () => {
   const role = { team: 'ux "review"', role: "t\\ster\nüñ" };
   await withRig(presetOf("codex"), role, async ({ start }) => {
-    assert.equal(JSON.parse(printedCodexArg((await start()).command)), teamNote(role.team, role.role));
+    assert.equal(JSON.parse(printedCodexArg((await start()).command)), `${briefText(false)}\n\n${teamNote(role.team, role.role)}`);
   });
 });
 
@@ -494,13 +495,14 @@ test("opencode: an inline OPENCODE_CONFIG_CONTENT in the command is the user's o
   }));
 
 // A pane keeps what it was told at its start, so the window must say when the brief or the note Aya would
-// give it now is not what it carries.
+// give it now is not what it carries. A claude or codex role pane always takes the brief, so a preset toggle
+// changes nothing it would be told now.
 for (const agent of ["claude", "grok", "opencode", "codex"]) {
   const restart = agent === "codex" ? "start a new session" : "restart it";
   for (const [change, mutate, flagged] of [
     ["nothing changed", () => {}, false],
-    ["brief turned on after the start", (p) => void (p.agentBrief = true), true],
-    ["brief turned off after the start", (p) => void delete p.agentBrief, true],
+    ["brief turned on after the start", (p) => void (p.agentBrief = true), !TEAM_BRIEF[agent]],
+    ["brief turned off after the start", (p) => void delete p.agentBrief, !TEAM_BRIEF[agent]],
   ]) {
     for (const startedOn of [true, false]) {
       if (change === "brief turned on after the start" && startedOn) continue;
@@ -550,14 +552,15 @@ for (const [agent, received] of Object.entries(RECEIVED)) {
 }
 
 test("restart: the digest of what a pane was told survives in the records file, so a changed brief is flagged after Aya restarts", async () => {
-  const preset = presetOf("claude");
-  await withRig(preset, ROLE, async ({ deps, start, gap }) => {
+  await withRig(presetOf("claude"), ROLE, async ({ deps, start, gap }) => {
     const file = join(deps.ayaHome, "records.json");
     deps.records = fileLaunchRecords(file);
     await start();
     deps.records = fileLaunchRecords(file);
     assert.equal(await gap(), null);
-    preset.agentBrief = true;
+    const launch = await deps.records.get("t1");
+    await deps.records.set("t1", { ...launch, told: "0".repeat(TOLD_DIGEST_HEX_CHARS) });
+    deps.records = fileLaunchRecords(file);
     assert.match((await gap()) ?? "", /^started with an older brief:/);
   });
 });
@@ -608,3 +611,44 @@ test("a CLI with no channel is not told the brief, and that is not reported as a
     cleanup();
   }
 });
+
+// User decision 2026-10-03: the brief stays opt-in for ordinary panes, but a claude or codex pane playing a team
+// role always gets it, whatever the preset says and without changing the preset. The other CLIs keep their
+// behaviour: one row each (Antigravity has no per-pane channel, so neither brief nor note, and its gap says so).
+const BRIEF = /aya capabilities/;
+/** The text a CLI was handed: opencode's instructions file, else the command line itself. */
+function handed(out) {
+  const config = out.command.match(/OPENCODE_CONFIG='([^']*)'/)?.[1];
+  if (!config) return out.command;
+  return readFileSync(JSON.parse(readFileSync(config, "utf8")).instructions[0], "utf8");
+}
+const BIN = { claude: "claude", codex: "codex", grok: "grok", opencode: "opencode", antigravity: "agy" };
+const PANES = ["plain pane", "team role pane", "role pane after restart"];
+const TEAM_BRIEF_CELLS = [
+  ...["claude", "codex"].flatMap((agent) =>
+    ["unset", "true"].flatMap((presetBrief) =>
+      PANES.map((pane) => ({ agent, presetBrief, pane, brief: presetBrief === "true" || pane !== "plain pane", note: pane !== "plain pane" })),
+    ),
+  ),
+  { agent: "grok", presetBrief: "unset", pane: "team role pane", brief: false, note: true },
+  { agent: "opencode", presetBrief: "unset", pane: "team role pane", brief: false, note: true },
+  { agent: "antigravity", presetBrief: "unset", pane: "team role pane", brief: false, note: false },
+];
+for (const { agent, presetBrief, pane, brief, note } of TEAM_BRIEF_CELLS) {
+  test(`team brief: ${agent}, preset brief ${presetBrief}, ${pane}`, async () => {
+    const preset = presetOf(agent, BIN[agent], presetBrief === "true" ? { agentBrief: true } : {});
+    const saved = structuredClone(preset);
+    const role = pane === "plain pane" ? null : ROLE;
+    await withRig(preset, role, async ({ start, gap }) => {
+      let out = await start();
+      if (pane === "role pane after restart") out = await start();
+      const text = handed(out);
+      assert.equal(BRIEF.test(text), brief, `brief ${brief ? "missing" : "unexpected"} in: ${text}`);
+      assert.equal(NOTE.test(text), note);
+      assert.deepEqual(preset, saved, "the preset itself is never changed");
+      if (!role) return;
+      if (note) assert.equal(await gap(), null, "what the pane got is what Aya would give it now");
+      else assert.match((await gap()) ?? "", /^cannot tell this CLI its role: \S/);
+    });
+  });
+}
