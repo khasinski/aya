@@ -102,8 +102,7 @@ Science's Remote compute, it describes the machine and is not re-checked.
 
 ## Data model and where state lives
 
-Everything is under the Aya config home (`AYA_HOME`, `~/.aya`;
-`~/.aya-dev` for Aya Dev). Writes go through `atomic-write.ts` with mode
+Everything is under the Aya config home (`AYA_HOME`, by default `~/.aya`). Writes go through `atomic-write.ts` with mode
 0600.
 
 - `machines.json` is the registry, written only by add, remove and note
@@ -177,8 +176,8 @@ pid does not count. A dead holder releases its reservation and writes
 
 - The proxy runs in its own detached process, the machines host, built
   like the pty host: its own unix socket, a registry record and a staleness
-  hash. It does not run in main, because main restarts on every Aya Dev
-  rebuild and would cut a stream in the middle of a run. It does not run in
+  hash. It does not run in main, because main restarts with every Aya
+  restart or update and would cut a stream in the middle of a run. It does not run in
   the pty host, because a proxy bug there would kill every pane. It exits
   when there are no panes, leases or reservations, the same idle rule as
   the pty host.
@@ -326,7 +325,7 @@ server serving `/api/ps`, `/api/tags` and streaming `/api/chat`) and a fake
 ## Open questions
 
 1. **Does the base path survive in Ollama clients?** Path tokens (`/t/<token>`) work for OpenAI SDKs. It is not verified whether the Go `ollama` CLI (`OLLAMA_HOST`) and `ollama-python` keep a base path. If they drop it, peer-pid attribution becomes the main path for those clients and has to be measured on macOS and Linux.
-3. **Where should the proxy run in step 3?** The design puts it in a separate machines host. Shipping step 3 inside main first would be smaller, but every Aya Dev rebuild would cut in-flight streams. Is that acceptable as an interim step?
+3. **Where should the proxy run in step 3?** The design puts it in a separate machines host. Shipping step 3 inside main first would be smaller, but every Aya restart or update would cut in-flight streams. Is that acceptable as an interim step?
 4. **Apple Silicon GPU load.** Can `ioreg` "Device Utilization %" be read without sudo on current macOS, or does local GPU stay `n/a`?
 5. **A cap on in-flight requests per machine without a reservation?** Claude Science has a per-host concurrency limit. The design leaves unreserved traffic to Ollama's own queue, which is the queue that froze agent turns for 70 minutes. Should a per-machine `maxInFlight` refuse past the limit?
 6. **Should refusals suggest an alternative?** The example points to "laptop has the model hot", but the laptop was the about 6x slower fallback. Should the suggestion be limited to machines whose probe note puts them in the same speed class, or should the refusal only state the facts?
