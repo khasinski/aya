@@ -28,8 +28,6 @@ import { firstTerminalShown, waitForShellReady } from "./helpers/terminal";
 import { TEAMS_REFRESH_MS } from "../src/hooks/useTeams";
 import { AGENT_TEST_TIMEOUT_MS } from "./timeouts";
 
-// Stands in for Claude Code: draws its composer, so Aya holds it only while it starts. Aya reads it as
-// `node`, an unknown launch: its role line may carry a "may not reach Aya" note until it calls aya.
 const MISSING = { id: "missing", name: "Missing CLI", icon: "m", color: "", command: "aya-no-such-cli-e2e" };
 const PRESETS = [SHELL_PRESET, CLAUDE_PRESET, MISSING];
 
@@ -218,7 +216,7 @@ test.describe("a team saved with no panes", () => {
     expect(existsSync(join(seeded.ayaHome, TEAM_STATE_DIR, "assignments.json"))).toBe(false);
     await dialog.getByRole("button", { name: "Apply panes" }).click();
 
-    // The stand-in Claude is `node agent.cjs`, an unknown launch: once recorded, the banner may name it.
+    // The stand-in Claude runs as a program named claude, so it gets Claude's own launch verdict.
     await expect(dialog.getByText(/^tester: new Claude Code pane, implementer: new Claude Code pane\.( May not reach Aya: [^;]+; [^.]+\.)? Start the team when you are ready\.$/)).toBeVisible();
     await expect.poll(() => Object.keys(readAssignments(seeded.ayaHome)).sort()).toEqual(["implementer", "tester"]);
     const assigned = readAssignments(seeded.ayaHome);

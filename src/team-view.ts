@@ -51,7 +51,7 @@ function taskHeld(task: { to: string; held: string | null; typedOnly?: boolean; 
   return task.typedOnly ? `task for ${task.to} is typed in its composer, Enter withheld: ${task.held}` : `task for ${task.to} waits in its inbox: ${task.held}`;
 }
 
-/** The line under a team after Start; null when every role got the test. A held task is
+/** The line under a team after Start; null when every role got the test and no task is named. A held task is
  *  named only while `log` still has it waiting or typed: once written, the line is stale. */
 export function startSummary(result: TeamStartResult, log?: TeamMessage[]): string | null {
   if (result.alreadyRunning) return "Already running, nothing was sent.";
@@ -72,7 +72,7 @@ function taskStillHeld(task: NonNullable<TeamStartResult["task"]>, log: TeamMess
 export const HOLD_NOT_RUNNING = "is not running (exited, or its tab was not opened yet)";
 // electron/pane-holds.ts HOLD_USAGE_LIMIT: a blocked role whose CLI ran out says so, not "waiting for you".
 export const HOLD_USAGE_LIMIT = "is out of credits or at its usage limit";
-// electron/pane-holds.ts NO_PANE_HOLD: a role whose pane was closed.
+// electron/pane-holds.ts NO_PANE_HOLD: a role whose pane was closed or never given.
 export const NO_PANE_HOLD = "no pane assigned";
 
 /** Local HH:MM of an ISO time: every team time in the window (electron/team-times.ts clock in main). */

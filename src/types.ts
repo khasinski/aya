@@ -221,7 +221,7 @@ export interface WorkingTab {
   /** A same-agent pane has shared this folder once, kept: with no session id
    *  the pane starts fresh, not on the folder's "latest". */
   sharedDir?: true;
-  /** Opened for a team role: every launch gets a mode that reaches Aya. */
+  /** Opened for a team role: every launch is widened to reach Aya, unless Aya may not lift the block. */
   teamLaunch?: boolean;
 }
 
@@ -410,8 +410,8 @@ export interface SpawnRequest {
    *  stopped/restartable instead of silently auto-respawning. On a fresh
    *  host this is a no-op and boot auto-start is unchanged. */
   attachIfReused?: boolean;
-  /** A pane Aya opened for a team role: launched in a mode that reaches Aya
-   *  (electron/launch-mode.ts teamLaunch). */
+  /** A pane Aya opened for a team role: launched widened to reach Aya, or as is when
+   *  electron/launch-mode.ts teamLaunch refuses. */
   teamLaunch?: boolean;
 }
 
@@ -1061,7 +1061,7 @@ export interface NewPane {
   id: string;
   presetId: string;
   name: string;
-  /** Opened for a team role: launched in a mode that reaches Aya. */
+  /** Opened for a team role: launched widened to reach Aya where Aya may (SpawnRequest.teamLaunch). */
   teamLaunch: boolean;
 }
 
@@ -1079,7 +1079,7 @@ export interface RolePane {
   name: string;
   preset: string | null;
   notReached: string | null;
-  /** Why the pane's launch mode cannot reach Aya, null when it can or Aya cannot tell. */
+  /** Why the pane's launch mode cannot reach Aya, or why Aya cannot tell (then `unsure`); null when it reaches Aya. */
   cantReach: string | null;
   /** What Aya widened to make it reach Aya, and "may not reach Aya" for an unknown verdict; null when nothing. */
   note: string | null;
@@ -1148,7 +1148,7 @@ export interface TeamMessage {
   typedOnly?: boolean;
   /** Typed only, and `held` says what came of the Enter Aya sent (it failed, no turn, a dialog), not why it was withheld. */
   afterEnter?: boolean;
-  /** Held, then read by the receiver with `aya team inbox` (set by the window's listing, not stored). */
+  /** Held, then read by the receiver with `aya team inbox` (set when the log is read with its delivery notes, not stored). */
   viaInbox?: boolean;
 }
 
@@ -1190,7 +1190,7 @@ export interface TeamSummary {
 /** Whether the team's rounds get any answer; mirrors electron/types.ts. */
 export interface TeamLiveness {
   status: "never started" | "paused" | "progressing" | "talking" | "stalled" | "blocked" | "unreachable";
-  /** Set while rounds are skipped: since the last sign of life (ISO). */
+  /** Set while stalled: the last change to the repo (ISO). */
   stalledSince: string | null;
   blocked: { role: string; reason: string; since: string }[];
   /** The role rounds go to, while its pane has taken none for several rounds (not running, a draft, a shell). */

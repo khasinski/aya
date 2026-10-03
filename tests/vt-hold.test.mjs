@@ -1,5 +1,5 @@
 // A team message must not be typed where Enter would do something else. The screens
-// mirror what real Claude, Codex and Grok drew.
+// mirror what real Claude, Codex, Grok and OpenCode drew.
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";

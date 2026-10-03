@@ -1,5 +1,5 @@
-// The real `aya` CLI against the real process table: a command under the pane's process is accepted, one whose parent
-// chain left the pane (a daemon's command) is refused, whatever AYA_TERMINAL_ID says.
+// The real `aya` CLI against the real process table: a command under the pane's process is accepted, one outside it or
+// under a Codex app-server (the shared daemon) is refused, whatever AYA_TERMINAL_ID says.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

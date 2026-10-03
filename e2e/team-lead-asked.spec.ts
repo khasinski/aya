@@ -1,4 +1,5 @@
-// Grok's hook reports its idle composer as "waiting" (AYA_VIA=hook): only a question the lead asked holds rounds.
+// A "waiting" from Aya's status hook (AYA_VIA=hook, an idle composer) is a finished turn: only a question the lead
+// asked holds rounds.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

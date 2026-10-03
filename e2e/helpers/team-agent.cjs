@@ -1,4 +1,4 @@
-// A stand-in agent for team e2e: tab-left sends one team message; every pane
+// A stand-in agent for team e2e: in the default modes tab-left sends one team message; every pane
 // records what reaches its input in team-<pane>.log in the project dir.
 const { execFile, execFileSync } = require("node:child_process");
 const fs = require("node:fs");
@@ -6,8 +6,8 @@ const path = require("node:path");
 
 // The branch's own CLI: an older installed `aya` may come first on PATH.
 const aya = process.argv[2];
-// Modes (argv[3]) shape tab-right (implementer) or tab-left (lead); argv[4] is a delay in ms. "transcript-*" draw an
-// idle composer under a last answer; "lead-*" answer Aya's round; "deaf"/"busy" use raw input (a real CLI does not echo).
+// Modes (argv[3]) shape tab-right (implementer) or tab-left (tester or lead); argv[4] is a delay in ms. "transcript-*" draw an
+// idle composer under a last answer; "lead-*" (but lead-restarts) answer Aya's no-progress round; "deaf"/"busy" use raw input (a real CLI does not echo).
 const mode = process.argv[3] ?? "";
 const me = process.env.AYA_TERMINAL_ID;
 const log = path.join(process.env.AYA_PROJECT_DIR, `team-${me}.log`);
@@ -157,7 +157,7 @@ if ((mode.startsWith("ask") || (mode === "relaunch" && !relaunched)) && me === "
   }[mode.slice("transcript-waiting-".length)];
   process.stdout.write(idle.join("\r\n") + "\r\n");
 } else if (mode === "transcript-question" && me === "tab-left") {
-  // Answers a moment after it is up: output before the window attaches is only replayed.
+  // Asks its question 2 s after start: output before the window attaches is only replayed.
   process.stdin.setRawMode(true);
   composer();
   setTimeout(() => {

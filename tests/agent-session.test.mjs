@@ -1,4 +1,5 @@
-// Which conversation a codex or grok pane is in, read from the CLI's own store.
+// Which conversation a codex or grok pane is in (read from the CLI's own store), and how launch
+// commands get their own session id or have a stale resume rewritten.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -55,7 +56,7 @@ function writeCodex(home, { version = 5, threads = [], logs = [] }) {
 
 const A = scratch();
 const B = scratch();
-// Both CLIs take only a UUID as --session-id; anything else after --resume is a title.
+// claude and grok take only a UUID as --session-id; anything else after --resume is a title.
 const uid = (n) => `${String(n).repeat(8)}-${String(n).repeat(4)}-4${String(n).repeat(3)}-8${String(n).repeat(3)}-${String(n).repeat(12)}`;
 const GONE = uid(1);
 const HERE = uid(2);

@@ -1,5 +1,5 @@
-// A leader whose agent has ended gets no round, so nothing goes silent: after 3 rounds (every ROUND_MS)
-// that could not be typed the window names the leader.
+// The rhythm's role (implementer) runs an agent that exits: after UNREACHED_ROUNDS (3) rounds, one every
+// ROUND_MS, that could not be typed, the window names it as unreached.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

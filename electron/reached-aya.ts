@@ -12,7 +12,7 @@ export interface ReachDeps {
   processTable?: (pid: number) => Promise<ProcessTable | null>;
   /** Where the proofs outlive a quit of Aya: the pty host, and so the pane's process, does. */
   file?: string;
-  /** Told once a pane's unknown verdict is settled: its process called aya. */
+  /** Told the first time a pane's process is proven to have called aya. */
   onReached?: (terminalId: string) => void;
 }
 

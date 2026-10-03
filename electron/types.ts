@@ -839,7 +839,7 @@ export interface RolePane {
   name: string;
   preset: string | null;
   notReached: string | null;
-  /** Why the pane's launch mode cannot reach Aya, null when it can or Aya cannot tell. */
+  /** Why the pane's launch mode cannot reach Aya, or why Aya cannot tell (then `unsure`); null when it reaches Aya. */
   cantReach: string | null;
   /** What Aya widened to make it reach Aya, null when nothing. */
   note: string | null;
@@ -855,7 +855,7 @@ export interface RolePanes {
 
 /** Which roles got Start team's delivery test, and why the others did not. */
 export interface TeamStartResult {
-  /** false: a pane was not ready, so nothing was sent; `held` says which. */
+  /** false: nothing was sent; `held` names the panes not ready, else `alreadyRunning` or `refused` says why. */
   started: boolean;
   /** The team was already running (or another Start is in flight): nothing was sent. */
   alreadyRunning?: boolean;
@@ -909,7 +909,7 @@ export interface TeamMessage {
   typedOnly?: boolean;
   /** Typed only, and `held` says what came of the Enter Aya sent (it failed, no turn, a dialog), not why it was withheld. */
   afterEnter?: boolean;
-  /** Held, then read by the receiver with `aya team inbox` (set by the window's listing, not stored). */
+  /** Held, then read by the receiver with `aya team inbox` (set when the log is read with its delivery notes, not stored). */
   viaInbox?: boolean;
 }
 

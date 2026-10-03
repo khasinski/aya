@@ -167,7 +167,7 @@ const FRAME_RE = /[─│╭╮╰╯\s]/g;
 
 type ComposerState = "draft" | "numbered-choice" | "empty" | "absent";
 
-// Agents whose composer we can tell is drawn; others are never "starting up".
+// Agents whose composer we can tell is drawn; others count as started once their screen settles.
 const COMPOSER_AGENTS: ReadonlySet<AgentKind | undefined> = new Set(["claude", "codex", "grok", "opencode", "antigravity"]);
 
 // OpenCode draws its composer (and every message and dialog after it) as a bar of ┃ or ╹ rows, not a

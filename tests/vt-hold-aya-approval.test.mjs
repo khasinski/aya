@@ -40,7 +40,7 @@ for (const [agent, name, expected] of TABLE) {
 }
 
 // Byte streams a real Claude Code 2.1.285 and Codex 0.159.2 wrote into a 30-row pty
-// (fake model API, tool call `aya team send ...`, --permission-mode default / -a on-request).
+// (fake model API, a tool call running `aya team send ...` or `aya status`, --permission-mode default / -a on-request).
 const recorded = (name) => readFileSync(join(process.cwd(), "tests", "fixtures", "approval-screens", name), "utf8");
 const RECORDED = [["claude", 40], ["claude", 60], ["claude", 100], ["codex", 40], ["codex", 50], ["codex", 100]];
 

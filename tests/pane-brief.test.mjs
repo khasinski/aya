@@ -22,7 +22,7 @@ const SHAPES = {
   "path to binary": (bin) => `/opt/bin/${bin}`,
 };
 
-/** The digest of what was told is checked by its own tests; the shape tests ignore it. */
+/** The digest of what was told has its own tests; the record checks ignore it. */
 const noTold = ({ told, ...rest }) => rest;
 
 const memoryRecords = () => {
@@ -85,7 +85,7 @@ for (const agent of AGENTS) {
   for (const optedIn of [true, false]) {
     for (const [shape, make] of Object.entries(SHAPES)) {
       for (const hasRole of [true, false]) {
-        // With no role the note comes from carriedText alone, whatever the command's shape: one shape stands for all.
+        // With no role there is no role note to carry, whatever the command's shape: one shape stands for all.
         if (!hasRole && shape !== "simple") continue;
         test(`${agent}, brief ${optedIn ? "on" : "off"}, ${shape}, ${hasRole ? "role" : "no role"}`, () =>
           withRig(presetOf(agent, make(agent), optedIn ? { agentBrief: true } : {}), hasRole ? ROLE : null, async ({ deps, start, gap: gapOf }) => {

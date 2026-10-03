@@ -83,7 +83,7 @@ test("saving: by an agent or from the window, for every kind of file", async (s)
         try {
           const text = withSections(...sections);
           const parsed = parseTeamFile("duo", text);
-          // The renderer's model has no role for the rhythm.
+          // The renderer's model drops leadConflict (the Lead the cadence overrides).
           const plain = { ...parsed, leadConflict: undefined };
           const save =
             how === "agent"

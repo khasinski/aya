@@ -435,7 +435,7 @@ async function assignWhileDefined(
 }
 
 /** A new pane's host records how it was launched only after its spawn preflight (shell startup files run there):
- *  wait a window for the pane to reach the host, then up to three while the host reports it starting. */
+ *  wait one window for the pane to reach the host, SPAWN_WAIT_WINDOWS in all once the host reports it starting. */
 async function launchBlockOnceRecorded(deps: TeamPaneDeps, paneId: string, isNew: boolean): Promise<string | null> {
   const window = deps.startWaitMs ?? PANE_START_WAIT_MS;
   const begun = Date.now();

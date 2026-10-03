@@ -285,7 +285,7 @@ worldTest("a state.json from before round numbers were kept starts at Round 1", 
 });
 
 // After a quit the pty host survives, so a pane reattaches as it was (a prompt or a draft is still there);
-// after a host reap every agent respawns and is starting.
+// after a host reap every agent respawns, so a pane is still starting or has drawn its composer.
 const INBOX = {
   empty: async () => {},
   "Aya-only stale": async (w) => {

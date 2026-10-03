@@ -1,4 +1,5 @@
-// Limits: covers in-process fs writes only; a child process's writes show only in the exit-time mtime check of isolate-home.mjs.
+// Limits: guards fs writes and socket connects in this process and node children (guardChildren); other children's
+// writes show only in the exit-time mtime check of isolate-home.mjs.
 import fs from "node:fs";
 import net from "node:net";
 import { syncBuiltinESMExports } from "node:module";

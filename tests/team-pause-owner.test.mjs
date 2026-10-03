@@ -96,7 +96,7 @@ async function world(pausedBy) {
     teamRunner: runner,
     teamPanes: teamPaneDeps(control, host, runner),
   });
-  // As bin/aya sends it: the cwd in the request (it names the project outside a pane) and in the caller.
+  // As bin/aya sends it, team-start carries the cwd: it names the project outside a pane.
   const call = (caller, frame) => rpc(socket, { ...frame, ...(frame.type === "team-start" ? { cwd: t.directory } : {}), caller: { ...caller, cwd: t.directory } });
   if (pausedBy !== "never") await runner.start("game", "ux-review");
   if (pausedBy === "user") await runner.pause("game", "ux-review");

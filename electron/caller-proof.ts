@@ -82,7 +82,7 @@ const LIVE_SOURCE: TableSource = { readTable: readProcessTable, readPpid: readPa
 
 let recent: { at: number; read: Promise<ProcessTable | null> } | null = null;
 
-/** The table with `pid` in it: a read that finished within TABLE_SHARE_MS is shared by a burst of
+/** The table with `pid` in it: a read in flight or finished within TABLE_SHARE_MS is shared by a burst of
  *  requests while `pid` still has the parent that read shows, else the table is read again. */
 export async function processTable(pid: number, source: TableSource = LIVE_SOURCE): Promise<ProcessTable | null> {
   if (recent && source.now() - recent.at < TABLE_SHARE_MS) {

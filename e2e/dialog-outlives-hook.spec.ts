@@ -1,5 +1,5 @@
-// Claude's Notification hook fires (done) while its permission dialog is still up: only the screen ends
-// a dialog, so the pane stays waiting and no "finished" row is written.
+// Claude's Notification hook sends `aya status waiting` (via hook) while its permission dialog is still up:
+// the screen owns dialogs, so the pane stays waiting and no "finished" row is written.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

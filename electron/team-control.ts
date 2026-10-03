@@ -1,4 +1,4 @@
-// `aya team whoami|send|inbox`: the caller is known by its pane id, its role
+// `aya team whoami|send|inbox|pause`: the caller is known by its pane id, its role
 // by the local assignments, and the team by the definition the user saved.
 
 import type { TeamRequest } from "./control-protocol";

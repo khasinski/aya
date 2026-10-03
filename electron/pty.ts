@@ -163,7 +163,7 @@ function settleSpawnWaiters(ptyId: string, delivered: boolean): void {
 const pendingWrites = new Map<string, string[]>();
 // Bound per id, so a spawn that never completes (or a paste into a pane whose
 // command hangs in preflight) cannot grow the host's memory without limit.
-// Well above any realistic burst of typing; a paste past it is truncated.
+// Well above any realistic burst of typing; a chunk past it is refused whole.
 export const PENDING_WRITE_MAX_BYTES = 64 * 1024;
 // Set once the host begins shutting down. shutdownPtyChildren snapshots the live
 // PTYs and the host then lingers up to KILL_ESCALATE_MS to deliver SIGKILL; a
@@ -878,8 +878,6 @@ async function takeOverCancelledFlight(
   if (!spawning.has(req.ptyId)) endSpawnWindow(req.ptyId);
 }
 
-/** The PTY's current size and whether its screen is the alternate one; null
- *  once the pane is gone. */
 /** True while a spawn for this id is in its preflight and not cancelled: the
  *  pane has no PTY yet, but it is coming. */
 export function isPtyStarting(ptyId: string): boolean {
@@ -899,6 +897,8 @@ async function roleLaunch(ptyId: string, command: string, cwd: string, env: Reco
   return { command, added: [] };
 }
 
+/** The PTY's current size and whether its screen is the alternate one; null
+ *  once the pane is gone. */
 export function getPtySize(ptyId: string): PaneSize | null {
   const p = ptys.get(ptyId);
   return p ? { cols: p.cols, rows: p.rows, alt: vtPaneAltScreen(ptyId) } : null;

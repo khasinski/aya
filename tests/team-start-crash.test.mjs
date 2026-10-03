@@ -60,7 +60,7 @@ const crashTest = (name, ...args) => {
 
 const tasks = (typed) => typed.filter((m) => m.text.includes("write the solver"));
 
-// Calls to headCommit in Start: 1 freshProgress, 2-3 the delivery tests, 4 the task, 5 after the task.
+// Calls to headCommit in Start: 1 freshProgress, 2-3 the delivery tests, 4 the task.
 const CRASH_AT = [
   ["before the first delivery test", 2],
   ["between the delivery tests and the task", 4],

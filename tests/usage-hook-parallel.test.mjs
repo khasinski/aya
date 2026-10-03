@@ -1,4 +1,4 @@
-// Panes ending a turn at once both pass the hook's throttle and race on the same scratch file: the real
+// Panes ending a turn at once both pass the hook's throttle, each with its own scratch file: the real
 // generated script runs N times in parallel in a fake HOME with a stub curl.
 
 import { test } from "node:test";

@@ -1,5 +1,6 @@
 // Per-agent screen rules. SUPPRESSORS are screens showing an approval-looking string while nothing is asked (a
-// scrolled-back transcript); one that matches wins outright, and regions keep a prompt near the cursor.
+// scrolled-back transcript); one that matches wins over any prompt (dialogs are read first), and regions keep a
+// prompt near the cursor.
 
 import type { AgentKind } from "./presets";
 

@@ -357,7 +357,7 @@ test("resumeSpawn: only peers of the same agent count, and a pane alone has none
   assert.deepEqual(mixed, { command: "codex resume --last" });
 });
 
-// agent x (id known, shared the folder once, peer now) for a restored pane: what it launches with.
+// agent x (id known, shared the folder once) for a restored pane with no peer now: what it launches with.
 test("resumeSpawn: a pane that ever shared its folder never falls back to the folder's latest", () => {
   const latest = { codex: "codex resume --last", claude: "claude --continue", opencode: "opencode --continue" };
   const self = (extra) => ({ id: "a", cwd: "/w", restored: true, ...extra });

@@ -30,7 +30,7 @@ const exited = (child, ms) =>
     });
   });
 
-// Every case starts its own host or CLI against its own temporary socket.
+// Every case starts its own host under its own temporary AYA_HOME (and socket).
 describe("idle startup with isolated hosts", { concurrency: 4 }, () => {
   test("a host that never gets a client exits after its idle timeout", async () => {
     const home = mkdtempSync(join(tmpdir(), "aya-idle-start-"));

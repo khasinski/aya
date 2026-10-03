@@ -63,7 +63,7 @@ for (const agent of AGENTS) {
 
 const LOGIN_SHELL = existsSync("/bin/zsh") ? "/bin/zsh" : "/bin/bash";
 
-// The rc file takes longer than a status poll waits (5 s), not longer than a spawn does.
+// The rc file takes over 5 s, still under the 20 s a spawn waits for the login shell's env (LOGIN_ENV_TIMEOUT).
 const RC_SECONDS = 6;
 test.describe(`opencode with a login shell that takes ${RC_SECONDS} s to start`, () => {
   test.use(

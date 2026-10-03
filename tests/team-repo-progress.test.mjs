@@ -217,7 +217,7 @@ progressTest("migration: a progress.json from older code is read, and no false s
   assert.equal((await t.live()).status, "progressing");
 });
 
-// A live log: HEAD stayed 1b27df1 from #168 (20:52:14Z) to the Pause. Replayed with its own times.
+// A live log: HEAD stayed 1b27df1 from #168 (20:52:14Z) to the Pause. Replayed with its times scaled to the 2 s minute.
 const SUDOKU = [
   [168, "20:52:14", "implementer", "benchmarker", "Committed 1b27df1 naked pairs; please measure"],
   [180, "20:53:02", "benchmarker", "leader", "1b27df1: easy 51, medium 45, hard 393, total 489"],

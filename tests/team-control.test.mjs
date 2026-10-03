@@ -368,7 +368,7 @@ test("a role that floods its peers is refused for the rest of the minute", async
 });
 
 const HOSTILE = `hi \x1b[31m RED \x1b]0;title\x07 ‮evil​‍‍\u{E0041} ok`;
-// Anything a terminal or a reader could act on or not see; the emoji ZWJ is not in the payload.
+// Anything a terminal or a reader could act on or not see, the payload's zero-width joiners included.
 const HIDDEN_OR_CONTROL = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u;
 
 controlTest("a held message reaches the receiver's pane through the inbox without control or hidden characters", { holdReason: async (pane) => (pane === "pane-t" ? "busy" : null) }, async (t) => {

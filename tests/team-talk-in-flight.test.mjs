@@ -1,4 +1,4 @@
-// The clock looks every few seconds; a team message's Enter is checked for a turn for up to 6 s after its paste.
+// The round clock looks every ROUND_CHECK_MS; a team message's Enter is checked for a turn for up to 6 s after its paste.
 // A look in between must not decide whether that message was talk: only how its Enter went does.
 
 import { test } from "node:test";

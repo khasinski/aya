@@ -33,8 +33,7 @@ const TEAM_FILES = {
   deliveryNotes: "delivery-notes.json",
 } as const;
 
-// The log keeps its newest messages only; ids go on counting, so read marks and
-// unread messages (always among the newest) are unaffected.
+// A trim keeps messages still owed plus the newest; ids go on counting, so read marks are unaffected.
 export const TEAM_LOG_MAX_ENTRIES = 2_000;
 export const TEAM_LOG_KEEP_ENTRIES = 1_000;
 // Every log operation reads this much of the end and no more: messages are capped, but 2,000 of them still add up.

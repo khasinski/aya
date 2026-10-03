@@ -46,7 +46,7 @@ const CLIS = {
   grok: {
     idle: draw(GROK_IDLE),
     draft: (text) => draw(replaceRow(GROK_IDLE, /│ ❯/, `  │ ❯ ${text}`)),
-    // Grok has no busy rule of ours: its composer emptied by the submit is the sign.
+    // No Grok busy rule matches this screen: its composer emptied by the submit is the sign.
     started: draw(["  ⏺ on it", ...GROK_IDLE]),
     dialog: draw(ASK),
   },

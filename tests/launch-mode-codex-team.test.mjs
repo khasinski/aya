@@ -1,5 +1,5 @@
-// A Codex role pane runs with -s danger-full-access -a never: measured 2026-10-03 (codex-cli 0.160), the default sandbox
-// failed `git commit` on .git/index.lock and held `aya team send` for an approval. A preset's own sandbox/approval stays.
+// A Codex role pane runs with -s danger-full-access -a never: measured 2026-10-03 (codex-cli 0.160), workspace-write
+// even with network access failed `git commit` on .git/index.lock and held `aya team send` for an approval. A preset's own sandbox/approval stays.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

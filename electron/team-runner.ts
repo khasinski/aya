@@ -78,7 +78,7 @@ export class TeamRunner {
   }
 
   /** The delivery test: the role reads itself back and pings its first peer. Logged at its Enter or once held; returns
-   *  why it was not typed, or null. Aya's own are never owed, so they take no reservation. */
+   *  why it was held or its Enter started no turn, or null. Aya's own are never owed, so they take no reservation. */
   private async deliveryTest(project: ProjectConfig, store: TeamStore, team: TeamDefinition, roleId: string, paused: () => boolean) {
     const peer = team.roles.find((r) => r.id === roleId)?.sendsTo[0]?.to;
     const reply = peer ? `, then send one word to ${peer} with: aya team send ${peer} "ok"` : "";
@@ -172,7 +172,7 @@ export class TeamRunner {
   }
 
   /** A pane given a role in an already running team gets the delivery test now;
-   *  returns why it was not typed. */
+   *  returns why it was held or its Enter started no turn, else null. */
   async introduce(slug: string, name: string, roleId: string): Promise<string | null> {
     const { project, store, team } = await this.open(slug, name);
     const paused = store.pausedSince();
@@ -263,8 +263,8 @@ export class TeamRunner {
     } catch {
       return; // The teams window shows why it does not parse; the other teams still run.
     }
-    // The silence and stall clocks start at the launch unless the lead asked the user since (the rounds stay held on
-    // it); a team stalled at the last look before Aya closed stays stalled.
+    // The stall clock starts at the launch, the silence clock too unless the lead asked the user since (the rounds stay
+    // held on it); a team stalled at the last look before Aya closed stays stalled.
     const progress = await store.progress();
     const launch = new Date(this.now()).toISOString();
     if (progress?.changedAt && !stalledWhenLastLooked(progress)) {

@@ -1,5 +1,5 @@
-// A running team across a real quit and relaunch of the same AYA_HOME: the
-// second app life reads what the first left on disk, and its panes start over.
+// A running team across a relaunch whose pty host script was rebuilt: boot reaps
+// the stale host, the agents respawn under their roles, the held report is typed once.
 
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

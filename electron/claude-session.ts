@@ -98,7 +98,7 @@ export async function shellClaudeConfigDir(
   return line.slice(CONFIG_DIR_MARK.length);
 }
 
-/** Drops a resume of a conversation Claude no longer has (it would start a new one under that id). `configDir` set by
+/** `--resume <id>` of a conversation Claude no longer has becomes `--session-id <id>`. `configDir` set by
  *  the command is the only dir; else the env's or the pane shell's. A shell that cannot answer keeps the resume. */
 export function withLiveClaudeResume(
   command: string,

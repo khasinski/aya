@@ -20,8 +20,8 @@ export interface TeamProgress {
   changedAt: string;
   /** The lead was told of this stall (by the round due at it). */
   stalledLogged: boolean;
-  /** Per role seen on its own CLI's approval screen, and since when (ISO). `goneSince`: its
-   *  pane has been closed since then; `freeReads`: consecutive reads of a free screen. */
+  /** Per role seen on its own CLI's dialog (pane-holds isDialogHold), and since when (ISO). `goneSince`: its
+   *  pane has not been running since then; `freeReads`: consecutive reads of a free screen. */
   blocked: Record<string, { reason: string; since: string; goneSince?: string; freeReads?: number }>;
   /** The lead's pane could not take a due round (not running, a draft, a shell):
    *  `rounds` of them in a row since `since`. A busy pane is not this: its agent is working. */
@@ -31,7 +31,7 @@ export interface TeamProgress {
   /** Last change to the repo, or the Start, Resume, launch or answered screen that restarted the stall
    *  clock; ISO. Absent in a progress.json from older code: changedAt (never earlier) stands for it. */
   repoChangedAt?: string;
-  /** Peer messages of more than one word since repoChangedAt. */
+  /** Peer messages of more than one word since the last change to the repo, Start or Resume. */
   messages?: number;
   /** The clock's last look (ISO): a relaunch tells a stall from before it apart from the time Aya was closed. */
   lookedAt?: string;
@@ -132,7 +132,7 @@ function peerMessages(log: TeamMessage[]): TeamMessage[] {
 }
 
 /** The screens now: a role on one screen keeps its first-seen time; a confirmed block ends (and wakes a stall) after
- *  FREE_READS_TO_WAKE free reads in a row; a pane closed longer than a block takes to count is gone, not waiting. */
+ *  FREE_READS_TO_WAKE free reads in a row; a pane not running longer than a block takes to count is gone, not waiting. */
 function withScreens(base: TeamProgress, holds: Record<string, string | null>, now: string): TeamProgress {
   const blocked: TeamProgress["blocked"] = {};
   let woken = false;
@@ -207,8 +207,8 @@ export async function observe(
 /** The lead's rounds wait for its answer: it did not answer the last UNANSWERED_ROUNDS. */
 export const roundsHeld = (progress: TeamProgress): boolean => (progress.unanswered?.rounds ?? 0) >= UNANSWERED_ROUNDS;
 
-/** A peer message that was held and is typed now: talk, as it would have been had it gone in at once.
- *  A draft left in the composer is not typed and does not call this. */
+/** A held peer message that reaches its role now (typed late, or read from the inbox): talk, as it would
+ *  have been had it gone in at once. A draft left in the composer does not call this. */
 export async function noteTyped(store: TeamStore, message: Pick<TeamMessage, "text">, now: string): Promise<void> {
   if (isAck(message.text)) return;
   await store.updateProgress((p) => ({ ...p, changedAt: now, messages: (p.messages ?? 0) + 1 }));
@@ -258,7 +258,7 @@ function stillBlocked(b: TeamProgress["blocked"][string], hold: string | null, n
   return hold === HOLD_STARTING || isDialogHold(hold);
 }
 
-/** The team's liveness for the teams window, from what the clock recorded and the panes' holds now. Writes nothing. */
+/** The team's liveness for the teams window, from what the clock recorded and the panes' holds now. Writes no progress. */
 export async function teamLiveness(
   store: TeamStore,
   roles: readonly string[],

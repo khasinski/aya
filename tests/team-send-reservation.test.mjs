@@ -1,5 +1,5 @@
-// Every typing path takes the same reservation: the message is in the log before its paste, and a paste Aya went
-// down in the middle of is counted as typed (never typed twice) and shown as maybe sitting in the composer.
+// Every path typing a logged message (not Aya's own) takes the same reservation: the message is in the log before its
+// paste, and a paste Aya went down in the middle of is counted as typed (never typed twice), maybe sitting in the composer.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

@@ -13,7 +13,7 @@ export function sendControl(ayaHome: string, payload: Record<string, unknown>): 
   });
 }
 
-/** A request to the control socket as pane `terminalId` would send it; resolves with the parsed reply. */
+/** A request to the control socket naming pane `terminalId` as caller, with no pid (as an older CLI sends it); resolves with the parsed reply. */
 export function askControl<T = { ok: boolean; error?: string }>(ayaHome: string, request: Record<string, unknown>, terminalId = "tab-left"): Promise<T> {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection(join(ayaHome, "aya.sock"));

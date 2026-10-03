@@ -9,7 +9,7 @@ const { openVtPane, closeVtPane, writeVtPane, paneHold, SCREEN_SETTLE_MS, SCREEN
 const { HOLD_STARTING, HOLD_CHOICE } = await import("../dist-electron/pane-holds.js");
 
 const SPLASH = /[⠀-⣿]{8,}/;
-// The dialog arrives at 622 ms.
+// The update dialog arrives at 668 ms.
 const { meta, reads } = ownScreen("codex-idle");
 const PREFIX = reads.filter(([t]) => t < 600);
 const LAST = PREFIX.at(-1)[0];

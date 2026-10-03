@@ -127,7 +127,7 @@ describe("Codex daemon policy with isolated installs", { concurrency: 2 }, () =>
     const bin = path.join(mkdtempSync(path.join(tmpdir(), "codex odd-")), "x;touch semi;$(touch subst)");
     mkdirSync(bin);
     const fake = fakeCodex("      --no-daemon", bin);
-    // Not on PATH: macOS path_helper evals PATH in /etc/profile, which would run it before the probe does.
+    // Kept off PATH, so only the path the preset names can reach it.
     const env = { ...fake.env, PATH: "/usr/bin:/bin" };
     assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, env, path.join(bin, "codex")), true);
     assert.equal(calls(fake), 1);
@@ -212,8 +212,8 @@ describe("Codex daemon policy with isolated installs", { concurrency: 2 }, () =>
     assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, fake.env, "codex"), true);
   });
 
-  // A login shell's rc can block: SIGTERM to the shell does not end `sleep`, and an rc that
-  // reads stdin never ends. The probe must return on its own timer and leave nothing behind.
+  // A login shell's rc can block: SIGTERM to the shell does not end `sleep`; a stdin read ends only
+  // because the probe closes stdin. The probe must return on its own timer and leave nothing behind.
   const RC_CASES = [
     ["sleep", (pids) => `echo $$ > '${pids}'\nsleep 7 &\necho $! >> '${pids}'\nwait\n`, "timeout"],
     ["stdin read", (pids) => `echo $$ > '${pids}'\nread x\n`, "eof"],

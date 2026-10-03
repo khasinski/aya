@@ -99,7 +99,7 @@ export async function debugPane(deps: DebugDeps, paneId: string, event: string, 
   }
 }
 
-/** The socket's answer to an aya team command, in the caller's team's debug log (its pane's, else the team it names). */
+/** The socket's answer to an aya team command, in a team's debug log (the team it names, else its pane's team). */
 export async function debugAnswer<T>(
   deps: DebugDeps | undefined,
   request: ControlRequest,

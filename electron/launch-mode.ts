@@ -545,7 +545,7 @@ function programWords(command: string): string[] {
 
 export function teamLaunch(command: string, config: LaunchConfig): { args: string[] } | { refused: string } {
   const first = launchMode(command, config);
-  // A read-only config.toml is a choice Aya never lifts, so it stays refused.
+  // A block Aya may not lift itself (no autoFix, e.g. a read-only sandbox) stays refused.
   const kept = first.reach === "blocked" && !first.autoFix;
   const args = first.cli === "codex" && first.reach !== "unknown" && !kept && !codexPresetDecides(programWords(command)) ? [...CODEX_TEAM_ARGS] : [];
   const tried = new Set<string>();

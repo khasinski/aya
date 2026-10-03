@@ -55,7 +55,7 @@ for (const [label, entries, moved] of ROWS) {
         if (how === "the clock's look") await observe(t.store, null, {}, now);
         else await teamLiveness(t.store, ["lead", "worker"], async () => null, { cadence: null, lead: true }, NOW);
         const after = (await t.store.progress()).changedAt;
-        // The log's own entry time is "now" on this machine; progress moves the clock to it (or leaves it at the Start).
+        // Entries carry this machine's real time, capped at `now`: progress moves changedAt to NOW (or leaves it at the Start).
         assert.equal(after !== before, moved && how === "the clock's look", `changedAt ${before} -> ${after}`);
       } finally {
         t.cleanup();

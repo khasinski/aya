@@ -1,5 +1,5 @@
-// Every row is a measurement (docs/teams.md, "States a team depends on"): codex-cli 0.158.0 TUI,
-// opencode 1.18.30, Claude Code 2.1.284, grok 1.0.44.
+// Rows follow the measurements in docs/teams.md ("States a team depends on"): codex-cli 0.158.0 TUI,
+// opencode 1.18.30, Claude Code 2.1.284, grok 1.0.44; later versions are named where used.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

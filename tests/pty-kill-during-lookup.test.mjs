@@ -35,7 +35,7 @@ process.env.PATH = `${bin}:/usr/bin:/bin`;
 const { activePtyCount, isPtyStarting, killPty, spawnPty } = await import("../dist-electron/pty.js");
 
 // Keep the lookup suspended until the test has killed/restarted the pane.
-// A marker proves the lookup is underway; release replaces its fixed 1 s sleep.
+// A marker proves the lookup is underway; it answers only once released.
 test.beforeEach(() => {
   rmSync(lookupStarted, { force: true });
   rmSync(lookupRelease, { force: true });

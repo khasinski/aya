@@ -355,7 +355,7 @@ describe("stores in independent directories", { concurrency: 16 }, () => {
     };
     const TRIMS = {
       "the entry cap": { count: TEAM_LOG_MAX_ENTRIES - 1, text: "x" },
-      // just under the read window before the append, past it after
+      // just under the read window before the two appends, past it after both
       "the byte window": { count: Math.floor(TEAM_LOG_READ_BYTES / 8150), text: "y".repeat(8000) },
     };
     for (const [trim, { count, text }] of Object.entries(TRIMS)) {

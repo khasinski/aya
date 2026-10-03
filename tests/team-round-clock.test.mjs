@@ -127,7 +127,7 @@ clockTest("a due round is logged as skipped when the team is paused while it is 
 
 clockTest("a stalled team: the round due at the stall says so, the rounds after it are skipped and logged once", async (t) => {
   await t.w.runner.start("game", "ux-review");
-  // The roles talk every beat (the rounds are answered) and the repo never changes.
+  // The implementer talks every beat (not the lead, so its rounds go unanswered) and the repo never changes.
   for (let s = 0; s <= T; s += BEAT) {
     t.w.now += BEAT * S;
     await t.talk();

@@ -1,5 +1,5 @@
-// A running team across a real quit and relaunch of the same AYA_HOME: the
-// second app life reads what the first left on disk, and its panes start over.
+// A running team across a real quit and relaunch of the same AYA_HOME: the second app
+// life reads what the first left on disk; its agents start over, or survive with the pty host.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -87,7 +87,7 @@ test.describe("the pty host outliving the app", () => {
     const first = await launch(env);
     await expect.poll(() => read("tab-left"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/FAIL .*implementer: shows an approval prompt/);
     await expect.poll(() => roundsIn(read("tab-left")).length, { timeout: ROUND_WAIT_MS }).toBeGreaterThan(0);
-    // Quit before the first redelivery pass; the prompt clears while no app is running.
+    // Quit while the approval prompt is still up (ASK_BRIEFLY_MS); it clears while no app is running.
     await quit(first.app);
     const before = read("tab-left");
     const lastRound = Math.max(...roundsIn(before));

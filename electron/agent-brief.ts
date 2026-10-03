@@ -1,5 +1,5 @@
 // A few lines pointing at `aya capabilities`, not the skill, so the context cost
-// is flat and cannot go stale (#117). Pure; main.ts does the IO.
+// is flat and cannot go stale (#117). Pure; pane-brief.ts and main.ts do the IO.
 
 import * as path from "node:path";
 import { shellQuote, simpleCommand } from "./pane-command";
@@ -12,7 +12,7 @@ export type RoleChannel =
   | { kind: "none"; reason: string };
 
 /** Measured on the real CLIs 2026-09-26 (grok --rules, codex -c developer_instructions 0.158.0, opencode 1.18.30):
- *  OPENCODE_CONFIG_CONTENT is its own config layer, so it carries the brief beside a user's OPENCODE_CONFIG file. */
+ *  the brief goes in OPENCODE_CONFIG, or in OPENCODE_CONFIG_CONTENT (its own layer) when the user already set OPENCODE_CONFIG. */
 export function roleChannel(agent: string | undefined): RoleChannel {
   if (agent === "claude") return { kind: "arg", flag: "--append-system-prompt" };
   if (agent === "grok") return { kind: "arg", flag: "--rules" };

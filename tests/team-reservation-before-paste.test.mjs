@@ -40,7 +40,7 @@ async function quitThenRelaunch(quit) {
   const stuck = {
     teamHome: t.teamHome,
     listProjects: async () => [t.project],
-    // The pane lock is never granted (another paste hangs there); "pasted" got it and began its paste.
+    // The pane lock is never granted (another paste hangs there); "after the paste began" got it and began its paste.
     deliver: async (_pane, _text, _cancelled, _entered, pasting) => {
       if (quit === "after the paste began") await pasting?.();
       began = true;

@@ -2073,10 +2073,10 @@ export function App() {
     [],
   );
 
-  // A session id arrives asynchronously (OSC 9001) while a terminal is already
-  // running, so it needs its own persist trigger — the others (launch, rename,
-  // close) may never fire again before the app quits, and an unsaved id means
-  // the next restore silently falls back to "latest session".
+  // A session id or sharedDir mark arrives while a terminal is already running,
+  // so it needs its own persist trigger - the others (launch, rename, close) may
+  // never fire again before the app quits, and an unsaved one means the next
+  // restore may fall back to "latest session".
   const sessionIdSignature = Object.values(terminals)
     .filter((t) => t.sessionId || t.sharedDir)
     .map((t) => `${t.id}:${t.sessionId}:${t.sharedDir}`)

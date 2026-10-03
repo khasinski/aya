@@ -35,7 +35,7 @@ export function controlStatusEventTitle(
 }
 
 /** True once a terminal has finished a real task and gone idle - either
- *  explicitly reported ("done") or inferred from a clean exit on the PTY
+ *  explicitly reported ("done", with no dialog on screen) or inferred from a clean exit on the PTY
  *  lifecycle. Excludes plain shells, which sit idle at rest and would
  *  otherwise read as "done" after every command. Shared by the project-badge
  *  computation (App.tsx) and the completion sound so both agree on what

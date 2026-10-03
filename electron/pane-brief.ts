@@ -108,8 +108,8 @@ export function loginShellEnv(): Promise<Record<string, string> | null> {
 /** For tests: the next call asks the shell again. */
 export const forgetLoginShellEnv = () => void (loginEnv = null);
 
-/** Records in one JSON file; writes go one after another. A file that cannot be
- *  read is set aside on the next write, and never pruned. */
+/** Records in one JSON file; writes go one after another. A file that does not
+ *  parse to an object is set aside on the next write, and never pruned. */
 export function fileLaunchRecords(file: string): LaunchRecords {
   const inTurn = oneAtATime();
   const read = async (): Promise<Record<string, Launch> | null> => {

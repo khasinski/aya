@@ -1,4 +1,4 @@
-// A role's pane command composed as pty.ts does (brief -> resume -> --no-daemon -> role launch), run against
+// A role's pane command composed as pane-brief.ts and pty.ts do (brief -> resume -> --no-daemon -> role launch), run against
 // stub binaries that print their argv and env.
 
 import { test } from "node:test";

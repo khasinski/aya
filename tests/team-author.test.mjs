@@ -328,7 +328,7 @@ for (const [from, callerId] of [["a pane", "pane-1"], ["outside a pane", null]])
       const saving = t
         .run({ type: "team-save", text: GOOD.replace("# ux-fix", `# ${name}`), replace: false, projectSlug: "game" }, callerId)
         .finally(() => (done = true));
-      // Saved copy first, then the mark: a team seen with the copy must already carry it.
+      // The mark lands before the saved copy: a team seen with the copy must already carry it.
       while (!done) {
         if ((await store.savedDefinition()) === null) continue;
         if (await store.agentAuthored()) seenMarked++;

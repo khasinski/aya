@@ -349,7 +349,7 @@ describe("liveness with independent teams", { concurrency: 16 }, () => {
 
   liveTest("a holdReason that throws, or a progress file that cannot be read, still lists the team", async (t) => {
     await t.run("start");
-    // The window asks a pane's hold only for a confirmed block.
+    // The window asks a pane's hold only for a role with a recorded block (or an unreached lead).
     await seedBlocked(t, oldBlock());
     const boom = async () => {
       throw new Error("pty host gone");
