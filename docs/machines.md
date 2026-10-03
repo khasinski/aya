@@ -154,23 +154,25 @@ pid does not count. A dead holder releases its reservation and writes
 
 ## Getting the URL into a pane (step 3)
 
-- Each machine gets one proxy port, bound to `127.0.0.1:<proxyPort>`.
+Aya decides how its panes reach a model: it sets the URL itself, so no
+client has to cooperate.
+
+- Each pane gets its own proxy port per machine, bound to
+  `127.0.0.1:<port>` and allocated when the pane first needs it. A plain
+  `host:port` is kept by every client (Ollama CLI, ollama-python, OpenAI
+  SDKs), so the port alone tells the proxy which pane is asking. No path
+  token and no peer-pid lookup.
 - `safeEnv` in `electron/pty.ts` adds `AYA_OLLAMA_<ID>_URL` for every
-  registered machine (id upper-cased, `-` becomes `_`). The value is
-  `http://127.0.0.1:<port>/t/<token>`, where the token is
-  HMAC(secret, terminalId) and the secret lives in `machines-secret`
-  (0600). An OpenAI-compatible client adds `/v1` to that base.
-- A new preset field, `ollamaMachine: "athena"`, also sets
-  `AYA_OLLAMA_URL` and `OLLAMA_HOST` for that pane. It never sets
-  `OPENAI_BASE_URL`, because that would redirect Codex and similar agents.
-- Panes that started before a machine was added: `aya machines url athena`
-  prints the URL for the calling pane.
-- Who is asking: the token in the path names the pane. A request without a
-  token (an OLLAMA_HOST client that drops the path) is matched by its peer
-  pid: look up the TCP source port (`lsof` or `/proc/net/tcp`), then walk
-  parent pids up to a pane shell the pty host knows. If both fail, the
-  request is `unknown`, is still served, and is logged. The token is for
-  attribution, not security: every pane runs as the same user.
+  registered machine (id upper-cased, `-` becomes `_`), e.g.
+  `http://127.0.0.1:11531`. An OpenAI-compatible client adds `/v1`.
+- A preset field, `ollamaMachine: "athena"`, also sets `AYA_OLLAMA_URL` and
+  `OLLAMA_HOST` for that pane. It never sets `OPENAI_BASE_URL`, because that
+  would redirect Codex and similar agents.
+- A pane started before a machine was added: `aya machines url athena`
+  prints its URL.
+- A process outside Aya's panes that still uses a proxy port is served and
+  logged as `unknown`. The port is for attribution, not security: every
+  pane runs as the same user.
 
 ## Proxy and leases (step 3)
 
@@ -324,7 +326,6 @@ server serving `/api/ps`, `/api/tags` and streaming `/api/chat`) and a fake
 
 ## Open questions
 
-1. **Does the base path survive in Ollama clients?** Path tokens (`/t/<token>`) work for OpenAI SDKs. It is not verified whether the Go `ollama` CLI (`OLLAMA_HOST`) and `ollama-python` keep a base path. If they drop it, peer-pid attribution becomes the main path for those clients and has to be measured on macOS and Linux.
 3. **Where should the proxy run in step 3?** The design puts it in a separate machines host. Shipping step 3 inside main first would be smaller, but every Aya restart or update would cut in-flight streams. Is that acceptable as an interim step?
 4. **Apple Silicon GPU load.** Can `ioreg` "Device Utilization %" be read without sudo on current macOS, or does local GPU stay `n/a`?
 5. **A cap on in-flight requests per machine without a reservation?** Claude Science has a per-host concurrency limit. The design leaves unreserved traffic to Ollama's own queue, which is the queue that froze agent turns for 70 minutes. Should a per-machine `maxInFlight` refuse past the limit?
@@ -337,9 +338,9 @@ server serving `/api/ps`, `/api/tags` and streaming `/api/chat`) and a fake
 |---|---|---|---|
 | 1. `aya machines` + add/remove + probe | high | medium | parsing `nvidia-smi`, `/proc`, `vm_stat` on Linux and macOS |
 | 2. Machines view | high | small-medium | none: same status function as the CLI |
-| 3. Proxy + per-request leases | medium | large | a new detached process; streaming; whether the Go `ollama` CLI keeps a base path (open question 1) |
+| 3. Proxy + per-request leases | medium | large | a new detached process; streaming; a port per pane and machine |
 | 4. Run reservations | medium-high after 3 | medium | enforced only for clients that go through the proxy |
 | 5. Detection of direct clients | medium-low reliability | small | a heuristic over `/api/ps`; a warning, never a gate |
 | 6. A line for a team's round | high | small | none |
 
-Steps 1, 2 and 6 show today's blind spots (which model is hot, until when, GPU load) at low risk. Step 3 needs one measurement first: does each Ollama client keep a path in its base URL.
+Steps 1, 2 and 6 show today's blind spots (which model is hot, until when, GPU load) at low risk. Step 3 is the largest: a new background process and streaming.
