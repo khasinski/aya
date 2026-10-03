@@ -44,7 +44,6 @@ export function agentPreset(args = "", agent?: string): Preset {
   return { id: "shell", name: "Agent", icon: "a", color: "", ...(agent ? { agent } : {}), command };
 }
 
-/** A plain shell preset, and a quiet claude-named agent: the panes most team specs offer. */
 export const SHELL_PRESET: Preset = { id: "shell", name: "Shell", icon: "$", color: "", command: "$SHELL" };
 export const CLAUDE_PRESET: Preset = { ...agentPreset("quiet", "claude"), id: "claude", name: "Claude Code" };
 
@@ -125,7 +124,6 @@ Must not: skip a report
 tester
 `;
 
-/** TWO_ROLE_TEAM with the tester's rhythm at one cadence minute. */
 export const RELAUNCH_TEAM = `${TWO_ROLE_TEAM}\n## Cadence\ntester every 1 min\n`;
 
 /** A team-log line for a message that was never typed, held as an approval prompt holds it. */
@@ -153,13 +151,11 @@ export const QUIET_NO_ROUND_MS = 18 * QUIET_MINUTE_MS;
 /** A rhythm spec's cadence "minute": an every-1-min rhythm beats each second, the 60 min stall comes after the test. */
 export const RHYTHM_MINUTE_MS = 1_000;
 
-/** The round numbers Aya typed, in the order the pane received them. */
 export const roundsIn = (log: string) => [...log.matchAll(/Round (\d+): run your round/g)].map((m) => Number(m[1]));
 
 /** Where the seeded ux-review team keeps its local state, relative to AYA_HOME. */
 export const TEAM_STATE_DIR = "teams/e2e-proj/ux-review";
 
-/** `seed` with one cadence "minute" lasting `minuteMs` (AYA_E2E_TEAM_MINUTE_MS), and any `extraEnv` besides. */
 export const teamMinute = (seed: ReturnType<typeof teamSeed>, minuteMs: number, extraEnv: Record<string, string> = {}) => ({
   seedOptions: { ...seed.seedOptions, launchEnv: { ...seed.seedOptions.launchEnv, AYA_E2E_TEAM_MINUTE_MS: String(minuteMs), ...extraEnv } },
 });
@@ -221,7 +217,7 @@ export function teamLog(projectDir: string) {
   };
 }
 
-/** How many times `re` (global) matches in a pane's team log. */
+/** `re` must be global. */
 export const countMatches = (text: string, re: RegExp) => (text.match(re) ?? []).length;
 
 export async function openTeams(window: Page) {

@@ -62,7 +62,6 @@ test("a team paused in one app life stays quiet in the next, and Resume goes on 
   const read = teamLog(seeded.projectDir);
   const logFile = join(seeded.ayaHome, TEAM_STATE_DIR, "log.jsonl");
 
-  // Life 1: running; a round is typed, then the user pauses.
   const first = await launch(env);
   await expect
     .poll(() => roundsIn(read("tab-left")).length, {
@@ -81,7 +80,6 @@ test("a team paused in one app life stays quiet in the next, and Resume goes on 
   await quit(first.app);
   appendFileSync(logFile, LEFT_HELD);
 
-  // Life 2: paused. Nothing is typed to either pane for several rounds' worth of time.
   const second = await launch(env);
   await expect(second.card).toContainText("paused");
   // The agent is up: its own send is refused because the team is paused.
@@ -119,8 +117,7 @@ test("a team paused in one app life stays quiet in the next, and Resume goes on 
   const resumedTo = stateOf(seeded.ayaHome).lastRound;
   await quit(second.app);
 
-  // Life 3: running again; the rounds go on past the ones just typed. The pane log still holds life 2's
-  // until the new agent truncates it, so wait for a round beyond them.
+  // The pane log still holds life 2's rounds until the new agent truncates it, so wait for a round beyond them.
   await launch(env);
   await expect
     .poll(

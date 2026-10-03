@@ -29,7 +29,6 @@ export function confirmOpen(webContents: object, dir: string): void {
   if (at !== -1) list.splice(at, 1);
 }
 
-/** Sends a window's unconfirmed opens again after each of its page loads. */
 export function replayOpensOnLoad(win: Pick<BrowserWindow, "webContents">): void {
   win.webContents.on("did-finish-load", () => {
     for (const dir of unconfirmed.get(win.webContents) ?? []) win.webContents.send("open-project", dir);

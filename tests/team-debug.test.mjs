@@ -91,7 +91,6 @@ async function world(opts = {}) {
   return { t, w, store, look, start, live, events, cleanup: () => (w.runner.stopAll(), t.cleanup()) };
 }
 
-/** A team world with debug switched on first. */
 const debugWorld = async (...args) => (await setDebug(true), world(...args));
 const inWorld = (make) => (name, ...args) => {
   const fn = args.pop();

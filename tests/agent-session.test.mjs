@@ -218,8 +218,6 @@ test("processFamily lists the pid and its descendants, and the pid alone when ps
   }
 });
 
-// --- a pid reused by a new pane must not inherit a dead process's thread ---
-
 test("codex: a thread logged by an earlier process with the same pid is not this pane's", async () => {
   const home = codexHome({ threads: [["sibling", A, 500]], logs: [["sibling", 4242, 100]] });
   const spawnedAt = 200 * 1000;
@@ -252,8 +250,6 @@ test("grok: of several rows for one pid the newest wins, so a stale row cannot s
   assert.equal(await readGrokSessionId(home, [555], 60_000), "s-new");
   assert.equal(await readGrokSessionId(home, [555], 0), "s-new");
 });
-
-// --- handles and failures ---
 
 const openHandles = (file) => {
   try {
@@ -305,8 +301,6 @@ test("pollSession reports a failing read once per distinct error, and keeps poll
   assert.ok(seen.includes("ok"));
 });
 
-// --- a saved id whose session is gone must not leave the pane dead ---
-
 test("codex: resume of a thread that no longer exists, or is archived, starts fresh", async () => {
   const home = codexHome({ threads: [["alive", A, 1]] });
   assert.equal(await withLiveCodexResume("codex resume alive", home), "codex resume alive");
@@ -347,8 +341,6 @@ test("claude: a conversation with no transcript restarts under the same id, neve
   assert.equal(await withLiveClaudeResume(`claude --resume ${HERE}`, config, A), `claude --resume ${HERE}`);
   assert.equal(await withLiveClaudeResume(`claude --resume ${GONE}`, config, A), `claude --session-id ${GONE}`);
 });
-
-// --- a pane gets its own id at birth ---
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
 
@@ -392,8 +384,6 @@ test("a launch that already resumes, names its session, or chains commands is le
   }
   assert.deepEqual(withOwnSessionId("grok --resume x"), { command: "grok --resume x", sessionId: null });
 });
-
-// --- one folder, however it is spelled ---
 
 test("sharesFolder: symlinks, trailing slashes and dot segments are one folder; other folders are not", async () => {
   const link = linkTo(A);
@@ -464,8 +454,6 @@ test("withSharedDirCommand: a peer in the same folder swaps the command; the ext
   assert.deepEqual(await withSharedDirCommand(req({ sharedDirCommand: "codex" })), req({}));
   assert.deepEqual(await withSharedDirCommand(req({})), req({}));
 });
-
-// --- the brief and a team note are on the command the launch steps see ---
 
 // What a real note looks like: an apostrophe (shellQuote writes it as '\'') and backticks.
 const NOTE = "You are the tester in the user's team; run `aya team send` && report | done > now $(x)";
@@ -608,8 +596,6 @@ test("direct commands: assignments, a plain exec and a path to the binary still 
   }
 });
 
-// --- only a UUID is a session id: `--resume <word>` is a title or a search term ---
-
 test("a --resume value that is not a UUID is a title: no rewrite, for claude and grok", async () => {
   const home = scratch();
   const config = scratch();
@@ -631,8 +617,6 @@ test("a UUID --resume is rewritten in either spelling, upper case included", asy
   assert.equal(await restartGoneResume(`grok --resume=${GONE} --x`, dead), `grok --session-id ${GONE} --x`);
 });
 
-// --- flags are words of the command, not text that looks like one ---
-
 test("a flag value that looks like --resume=<uuid> is a value: never rewritten, never dropped", async () => {
   for (const command of [
     `claude --append-system-prompt '--resume=${GONE}' --model m`,
@@ -652,8 +636,6 @@ test("a quoted --continue is still a continue flag: a stale --resume beside it i
   }
   assert.equal(withOwnSessionId("claude '--continue'").sessionId, null);
 });
-
-// --- a path to the binary is the binary, for the per-pane opencode session too ---
 
 test("ownSessionCommand: every spelling of the opencode program gets the pane's own session", async () => {
   const list = async () => [{ id: "ses_A", directory: A, updated: 1 }];

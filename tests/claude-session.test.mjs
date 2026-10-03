@@ -233,10 +233,8 @@ describe("Claude config probes with independent shells", { concurrency: 3 }, () 
     const shell = join(dir, "hangsh");
     writeFileSync(shell, "#!/bin/sh\nexec sleep 40\n");
     chmodSync(shell, 0o755);
-    // Keep the real hung child and kill signal. Verify the app's default at the
-    // execFile boundary, then scale only Node's timer and advance elapsed time
-    // by that requested duration. The separate 200 ms override case above
-    // exercises the actual timeout without the scaled clock.
+    // Keep the real hung child; check the default at the execFile boundary, then scale only Node's timer.
+    // The 200 ms override case above exercises the real timeout without the scaled clock.
     const realNow = Date.now;
     let clockOffset = 0;
     t.mock.method(Date, "now", () => realNow() + clockOffset);
@@ -264,9 +262,8 @@ describe("Claude config probes with independent shells", { concurrency: 3 }, () 
         clockOffset += duration - (realNow() - nativeStarted);
       }
     };
-    // The module captures promisify(execFile) at load. Reload just this pure
-    // module synchronously, restore both caches/exports before any await, and
-    // leave the other cases' already-imported probe instances alone.
+    // The module captures promisify(execFile) at load: reload only it, synchronously, and restore the caches
+    // before any await so the other cases keep their already-imported probe instances.
     let shellClaudeConfigDir;
     childProcess.execFile = scaledExecFile;
     delete require.cache[moduleId];

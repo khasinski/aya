@@ -140,7 +140,7 @@ export function vtPaneAltScreen(ptyId: string): boolean | undefined {
   return pane && pane.terminal.buffer.active.type === "alternate";
 }
 
-/** Every rendered screen row, top to bottom; blank rows are kept, each rule region filters them. */
+/** Blank rows are kept: each rule region filters them. */
 export function screenRows(terminal: Terminal): string[] {
   const buffer = terminal.buffer.active;
   const rows: string[] = [];

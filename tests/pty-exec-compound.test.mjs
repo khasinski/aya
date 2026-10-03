@@ -44,7 +44,6 @@ for (const [command, starts, argvPattern] of CASES) {
     const run = launched(command);
     assert.equal(run !== null, starts);
     assert.match(shellArgv(command, "/x")[4], argvPattern);
-    // A compound command runs in the directory it cd'd to.
     if (run && /\bcd sub\b/.test(command)) assert.match(readOut(run.dir), /sub$/);
   });
 }

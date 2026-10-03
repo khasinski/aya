@@ -11,7 +11,6 @@ import { paneLaunchMode, readLaunchConfig, roleLaunchCheck } from "../dist-elect
 
 const RO = 'sandbox_mode = "read-only"';
 
-/** A home and a repo under a temp root, removed after test `t`. */
 function world(t) {
   const root = mkdtempSync(join(tmpdir(), "aya-launch-"));
   const home = join(root, "home");
@@ -23,7 +22,6 @@ function world(t) {
   return { root, home, repo, env: { HOME: home }, socket: join(root, "aya.sock") };
 }
 
-/** A git repo at <root>/main with a worktree at <root>/tree. */
 function worktree(w) {
   const main = join(w.root, "main");
   const tree = join(w.root, "tree");

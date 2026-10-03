@@ -24,7 +24,6 @@ test.describe("a lead that runs aya team start on its own team", () => {
       await expect.poll(lead).toMatch(new RegExp(`START-FAIL \\(${tag}\\) .*team ux-review: the user paused this team; only the user can resume it`));
     }
     await expect.poll(() => countMatches(lead(), /START-FAIL .*the user paused this team/g)).toBeGreaterThanOrEqual(before + 4);
-    // Still paused after all those tries: the card, its Resume button, and no task in the implementer's pane.
     await expect(card.getByText("paused", { exact: true })).toBeVisible();
     await expect(card.getByRole("button", { name: "Resume" })).toBeVisible();
     expect(lead()).not.toContain("START-OK");

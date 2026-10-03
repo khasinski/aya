@@ -10,10 +10,8 @@ import path from "node:path";
 import { waitFor } from "./helpers/wait-for.mjs";
 import { NON_TUI, codexSupportsNoDaemon, noDaemonCommand, withNoDaemon } from "../dist-electron/codex-daemon.js";
 
-// Cache, quoting and binary-selection cases need the shell protocol, not a
-// machine's /etc/profile. This stand-in checks the exact login-shell argv and
-// executes its command with the given env. The rc and login-PATH cases below
-// keep the real shells, where startup files are the behavior under test.
+// Cache, quoting and binary-selection cases need the shell protocol, not the machine's /etc/profile;
+// the rc and login-PATH cases keep the real shells, whose startup files are under test.
 const probeDir = mkdtempSync(path.join(tmpdir(), "codex-probe-sh-"));
 const PROBE_SHELL = path.join(probeDir, "sh");
 writeFileSync(PROBE_SHELL, '#!/bin/sh\n[ "$#" -eq 4 ] && [ "$1" = "-l" ] && [ "$2" = "-i" ] && [ "$3" = "-c" ] || exit 2\neval "$4"\n', { mode: 0o755 });

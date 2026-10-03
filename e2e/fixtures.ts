@@ -154,7 +154,6 @@ function isAlive(pid: number): boolean {
   }
 }
 
-/** Launches the built app against a seeded home; a test that quits and relaunches calls it again. */
 export function launchApp(seeded: SeededEnv): Promise<ElectronApplication> {
   // No AYA_DEV: load the built dist/index.html; no ELECTRON_RUN_AS_NODE, or
   // Electron starts as plain Node with no `app`. Both are dropped by appEnv.

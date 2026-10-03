@@ -619,9 +619,8 @@ test("vt-status for an unknown ptyId is a no-op", () => {
   assert.equal(next, prev);
 });
 
-// --- precedence between the two waiting signals ----------------------------
-// The screen may still RAISE the bell over a reported status (a blocked agent nobody notices is the expensive
-// failure); it never ends the agent's own question.
+// Precedence of the two waiting signals: the screen may still RAISE the bell over a reported status (a blocked
+// agent nobody notices is the expensive failure); it never ends the agent's own question.
 
 test("the screen may still raise the bell over a stale agent status", () => {
   // An agent that announced "active" once and then hit an approval prompt it

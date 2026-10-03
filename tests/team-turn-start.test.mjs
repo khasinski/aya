@@ -126,7 +126,6 @@ async function withTeam(run) {
   }
 }
 
-/** One report through `pane` in a fresh team, handed to `check`; the pane is closed after. */
 async function reportThrough(pane, check) {
   try {
     await withTeam(async (store, root) => check(await report(pane, store, root), store, root));
@@ -135,7 +134,6 @@ async function reportThrough(pane, check) {
   }
 }
 
-/** The tester's report typed to the implementer's pane, logged; then one look of the team's clock. */
 async function report(pane, store, root, text = "round 5 ready") {
   await store.assign("implementer", pane.id);
   const deps = {

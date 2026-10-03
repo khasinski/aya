@@ -135,8 +135,6 @@ const silenceTest = (name, ...args) => {
 
 // [name, options, steps (numbers are seconds), rounds the lead got, status at the end]
 // A message is talk, not progress: only a change to the repo restarts the stall clock (T, 180 s here).
-// Stores, fake clocks, holds and process-wide status ids belong to one world.
-// Keep each case's steps serial while independent worlds run together.
 describe("silence with independent teams", { concurrency: 16 }, () => {
   const CASES = [
     ["R6.1 quiet for just under the limit: nothing", {}, ["start", 89, "check"], [], "progressing"],

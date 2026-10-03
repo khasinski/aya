@@ -490,9 +490,8 @@ test("a new pane is asked how it was launched only once the host has recorded it
   });
 });
 
-// The window's banner after Apply says "May not reach Aya" for a pane Aya has no verdict for or whose verdict is
-// unknown; main decides that and hands it over as `unsure`, so the window reads no wording of main's texts.
-// [launch answer, unsure]
+// "May not reach Aya" shows for a pane with no or an unknown verdict; main hands that over as `unsure`,
+// so the window reads none of main's wording. [launch answer, unsure]
 const UNSURE = [
   ["no record", () => null, true],
   ["the host did not answer", () => LAUNCH_UNREACHABLE, true],

@@ -61,9 +61,8 @@ const RUN_DEADLINE_MS = 20_000;
 
 function runOpen(shell, project, env) {
   return new Promise((done, fail) => {
-    // Source the actual CLI with the same $0/argv in its shell, then reap its
-    // stub launcher. Linux backgrounds aya-app; waiting for that owned child
-    // proves its launch log is complete, including when there was no launch.
+    // Reap the stub launcher too: Linux backgrounds aya-app, and waiting for that owned child proves
+    // its launch log is complete, including when there was no launch.
     const child = spawn(shell, ["-c", '. "$0"; status=$?; wait; exit "$status"', cli, "open", project], { env, timeout: RUN_DEADLINE_MS });
     let stderr = "";
     child.stderr.setEncoding("utf8");

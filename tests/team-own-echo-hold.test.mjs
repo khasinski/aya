@@ -51,8 +51,7 @@ const TABLE = [
   ["Aya's line in flight and the user appends to it: a draft at once", 80, " and more", DRAFT],
 ];
 
-// Each case owns its pane and store. Redraws and assertions are unchanged;
-// independent panes can wait for redraws together with the explicit FAST grace.
+// Each case owns its pane and store, so independent panes can wait for redraws together under FAST's grace.
 describe("submit echoes on independent panes", { concurrency: 8 }, () => {
   for (const [name, clearMs, userAdds, expected] of TABLE) {
     test(name, async () => {

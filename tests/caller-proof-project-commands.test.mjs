@@ -11,9 +11,8 @@ import { tmpdir } from "node:os";
 const { startControlServerOn } = await import("../dist-electron/control.js");
 const { agentWaitingSince, __resetAgentStatusForTests } = await import("../dist-electron/agent-status.js");
 
-// pane-a (project A): 100 > 150 > 160 (aya). Its Codex TUI 300 forks the daemon 320, whose commands sit under it:
-// 330 > 340 (aya). pane-b (project B): 200 > 250 > 260. A daemon detached from its pane: 900 (parent 1) > 910.
-// 170: aya run by pane-a's shell, whose own argv (the team file's text) mentions `codex app-server`.
+// pane-a (A): 100 > 150 > 160; its Codex TUI 300 forks daemon 320, whose commands sit under it: 330 > 340. pane-b (B):
+// 200 > 250 > 260. Detached daemon: 900 (parent 1) > 910. 170: pane-a's aya whose argv mentions `codex app-server`.
 const COMMANDS = { 170: "node /x/bin/aya team save codex app-server notes", 300: "node /usr/local/bin/codex", 320: "/opt/codex/bin/codex app-server --listen unix://", 900: "codex app-server" };
 const PARENTS = new Map(
   [[1, 0], [100, 1], [150, 100], [160, 150], [170, 150], [200, 1], [250, 200], [260, 250], [300, 100], [320, 300], [330, 320], [340, 330], [900, 1], [910, 900]].map(

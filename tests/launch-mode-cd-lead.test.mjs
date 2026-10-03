@@ -111,9 +111,8 @@ test("on disk: cd ~/x reads the folder under the pane's HOME; the codex project 
   }
 });
 
-// Codex's approval policy: `untrusted` asks before every command it runs that is not on its own
-// read-only list, so each aya call waits for the user (docs/teams.md "When Aya does not type a message").
-// A sandbox or approval policy the preset picks is its own; only full access with -a never cannot stop.
+// `untrusted` asks before every command not on Codex's read-only list, so each aya call waits for the user;
+// a sandbox or approval policy the preset picks is its own: only full access with -a never cannot stop.
 const UNTRUSTED = /approval policy untrusted.*each aya call .*waits for you to approve it/;
 const PRESET = /as the preset sets them.*may stop for approvals on git and aya/;
 const APPROVAL = [

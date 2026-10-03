@@ -6,10 +6,8 @@ const path = require("node:path");
 
 // The branch's own CLI: an older installed `aya` may come first on PATH.
 const aya = process.argv[2];
-// Modes (argv[3]) shape tab-right (the implementer) or tab-left (the lead); argv[4] is a delay in ms.
-// "transcript-*" draw a last answer above an idle composer: nothing is asked, so a message must be typed.
-// "lead-*" answer the quiet-team round Aya types; "lead-idle-hook" reports idle as Grok's hook does.
-// "deaf" and "busy" use raw input: a real CLI does not echo typed text over its screen.
+// Modes (argv[3]) shape tab-right (implementer) or tab-left (lead); argv[4] is a delay in ms. "transcript-*" draw an
+// idle composer under a last answer; "lead-*" answer Aya's round; "deaf"/"busy" use raw input (a real CLI does not echo).
 const mode = process.argv[3] ?? "";
 const me = process.env.AYA_TERMINAL_ID;
 const log = path.join(process.env.AYA_PROJECT_DIR, `team-${me}.log`);

@@ -1,7 +1,5 @@
-// A Codex pane Aya opens for a role runs with -s danger-full-access -a never, so git and aya never wait for a human:
-// measured 2026-10-03 (codex-cli 0.160), the default sandbox failed `git commit` on .git/index.lock and held
-// `aya team send` for an approval while Aya recorded verdict=reached. A preset that picks its own sandbox or
-// approval policy is left as it is, and its row says it may stop for approvals.
+// A Codex role pane runs with -s danger-full-access -a never: measured 2026-10-03 (codex-cli 0.160), the default sandbox
+// failed `git commit` on .git/index.lock and held `aya team send` for an approval. A preset's own sandbox/approval stays.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

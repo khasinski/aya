@@ -96,10 +96,8 @@ function underGuard(dirName, write, { env = {}, preload = PRELOAD_AT_FAKE_HOME, 
   return { out: r.stdout.trim(), stderr: r.stderr, fake };
 }
 
-/** One preloaded child per home: every blocked operation runs under the same
- * guard. It cannot change the fixture, so subsequent operations still see the
- * same protected (or not-yet-existing) directory. Keep a result per operation.
- */
+/** One preloaded child per home runs every blocked operation under the same guard; it cannot change the
+ *  fixture, so later operations still see the same protected (or not-yet-existing) directory. */
 function underGuardWrites(dir, entries, options) {
   const attempts = entries.map(([name, write]) => `{
     try { ${write}; console.log(JSON.stringify([${JSON.stringify(name)}, "WROTE"])); }

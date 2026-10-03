@@ -190,7 +190,6 @@ export async function saveTeam(
  *  would both pass the exists check and the later would overwrite the earlier. */
 const oneSaveAtATime = oneAtATime();
 
-/** Runs `work` while no save of this team file is running or can start. */
 export const whileTeamNotSaved = (file: string, work: () => Promise<void>): Promise<void> => oneSaveAtATime(file, work);
 
 /** A closed tab plays no role anywhere. */

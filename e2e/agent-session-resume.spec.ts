@@ -108,7 +108,6 @@ test.describe("codex panes that share a folder", () => {
       .poll(() => savedSessions(ayaHome), LONG)
       .toMatchObject({ [tabIds.left]: first[tabIds.left].session, [tabIds.right]: first[tabIds.right].session });
 
-    // The right pane restarts first, the left one only once it is back.
     await restartAndWait(window, projectDir, RIGHT, tabIds.right, 2);
     await restartAndWait(window, projectDir, LEFT, tabIds.left, 2);
     for (const tab of tabs) {

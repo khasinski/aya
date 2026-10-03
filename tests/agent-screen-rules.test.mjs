@@ -126,8 +126,6 @@ test("only agents with real knowledge define suppressors", () => {
   );
 });
 
-// --- OpenCode's plan agent ------------------------------------------------
-
 // A real capture (opencode 1.18.30, plan agent, xterm 110x40): the plan agent asks its
 // approval question with OpenCode's own question dialog and waits.
 const OPENCODE_QUESTION = readFileSync(new URL("./fixtures/opencode-plan-question.screen.txt", import.meta.url), "utf8").split("\n");

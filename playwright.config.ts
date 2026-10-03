@@ -15,9 +15,8 @@ const sharedResources = /(?:^|[/\\])(?:diagnostics|terminal-polish|team-relaunch
 // and never touch the real ~/.aya or collide with a running Aya instance.
 export default defineConfig({
   testDir: "./e2e",
-  // Each case has its own seeded HOME, AYA_HOME and user data. The isolated
-  // project can split large files across workers; explicit serial groups keep
-  // their order, and the shared-resource project keeps file-level scheduling.
+  // The isolated project can split large files across workers (each case has its own HOME);
+  // explicit serial groups keep their order, the shared-resource project keeps file-level scheduling.
   fullyParallel: false,
   workers: process.env.CI ? 2 : 8,
   projects: [

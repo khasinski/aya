@@ -86,7 +86,6 @@ interface RoleNoteContext {
   userConfig?: string | null;
   /** The same for the channel's inline variable, read along with userConfig. */
   userConfigContent?: string;
-  /** The codex home's config.toml, when it could be read. */
   codexConfig?: string;
 }
 

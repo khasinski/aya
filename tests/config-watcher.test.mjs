@@ -10,9 +10,8 @@
 // redirect it. `node --test` runs each test file in its own process, so this
 // redirect can't leak into the other test files.
 //
-// These use real fs.watch and file I/O in a throwaway AYA_HOME. Only the
-// debounce/poll clock is virtual: advance the same five debounce windows,
-// draining actual filesystem work between ticks instead of sleeping.
+// Real fs.watch and file I/O in a throwaway AYA_HOME; only the debounce/poll clock is virtual,
+// draining real filesystem work between ticks instead of sleeping.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -43,9 +42,8 @@ test("config watcher emits external edits, skips echoes, catches reverts, and st
     const { startConfigWatcher, WATCH_DEBOUNCE_MS } = await import(
       "../dist-electron/config-watcher.js"
     );
-    // Track real async filesystem work so each clock tick observes the write
-    // before the next one. Native watcher events still run on the real loop;
-    // the polling fallback also gets both of its 500 ms looks in this window.
+    // Track real async fs work so each tick sees the write before the next one; native watcher events
+    // still run on the real loop, and the polling fallback gets both its 500 ms looks in this window.
     const pending = new Set();
     for (const name of ["readFile", "readdir"]) {
       const original = fs[name];

@@ -16,9 +16,8 @@ const { parseControlCaller } = await import("../dist-electron/control-protocol.j
 
 // pane-a: 100 > 150 > 160 (aya). pane-b: 200 > 250 > 260. The daemon a started: 900 (parent 1) > 910.
 const table = (parents, commands = {}) => new Map([...parents].map(([pid, ppid]) => [pid, { ppid, command: commands[pid] ?? "sh" }]));
-// A TUI `codex` typed in pane-a (300) forks the shared daemon as its CHILD (320, measured
-// on 0.159.2), so what the daemon runs for any pane sits under pane-a: 330 > 340 (aya).
-// A hand-started `codex app-server &` in pane-a's shell (350) does the same (360 > 370).
+// A TUI `codex` in pane-a (300) forks the shared daemon as its CHILD (320, measured on 0.159.2), so the daemon's
+// commands for any pane sit under pane-a: 330 > 340 (aya). A hand-started `codex app-server &` (350) too: 360 > 370.
 const PARENTS = table(
   [[100, 1], [150, 100], [160, 150], [200, 1], [250, 200], [260, 250], [900, 1], [910, 900], [1, 0],
     [300, 100], [310, 300], [320, 310], [330, 320], [340, 330], [350, 100], [360, 350], [370, 360],

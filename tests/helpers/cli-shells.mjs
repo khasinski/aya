@@ -24,7 +24,6 @@ export function programOf(shell) {
   return programs.get(shell);
 }
 
-/** The shell listed before `shell` in `shells` that is the same program, or null. */
 export function sameProgramBefore(shell, shells = CLI_SHELLS) {
   const program = programOf(shell);
   return shells.slice(0, shells.indexOf(shell)).find((s) => existsSync(s) && programOf(s) === program) ?? null;
@@ -38,7 +37,6 @@ export function shellOptions(shell, shells = CLI_SHELLS) {
   return same ? { skip: `${shell} is the same program as ${same} (${programOf(shell)}), exercised there` } : {};
 }
 
-/** The installed shells of `shells`, each program once. */
 export const distinctShells = (shells) => shells.filter((s) => existsSync(s) && !sameProgramBefore(s, shells));
 
 /** A control socket that records each request and acks it after `delayMs`. */
