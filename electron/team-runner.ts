@@ -269,7 +269,7 @@ export class TeamRunner {
     const launch = new Date(this.now()).toISOString();
     if (progress?.changedAt && !stalledWhenLastLooked(progress)) {
       const quiet = !team.lead || (await this.askedTheUser(store, team.lead, Date.parse(progress.changedAt), project)) === null;
-      await store.updateProgress((p) => ({ ...p, ...(quiet ? { changedAt: launch } : {}), repoChangedAt: launch }));
+      await store.updateProgress((p) => ({ ...p, ...(quiet ? { changedAt: launch } : {}), repoChangedAt: launch, messages: 0 }));
     }
     await this.typeOwedTask(project, store, team).catch((err) => this.warn("[aya] team %s/%s task not typed:", project.slug, name, err));
     await this.arm(project.slug, name, team, store, "kept", armedBefore);

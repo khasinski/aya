@@ -31,7 +31,7 @@ export interface TeamProgress {
   /** Last change to the repo, or the Start, Resume, launch or answered screen that restarted the stall
    *  clock; ISO. Absent in a progress.json from older code: changedAt (never earlier) stands for it. */
   repoChangedAt?: string;
-  /** Peer messages of more than one word since the last change to the repo, Start or Resume. */
+  /** Peer messages of more than one word since repoChangedAt: whatever restarts that clock zeroes this. */
   messages?: number;
   /** The clock's last look (ISO): a relaunch tells a stall from before it apart from the time Aya was closed. */
   lookedAt?: string;
@@ -151,8 +151,8 @@ function withScreens(base: TeamProgress, holds: Record<string, string | null>, n
       else blocked[role] = { ...prev, freeReads };
     }
   }
-  // Answering the screen is the user's move: both clocks start over.
-  return { ...base, blocked, changedAt: base.changedAt || now, ...(woken ? { stalledLogged: false, changedAt: now, repoChangedAt: now } : {}) };
+  // Answering the screen is the user's move: both clocks start over, and the talk counted against the old one goes.
+  return { ...base, blocked, changedAt: base.changedAt || now, ...(woken ? { stalledLogged: false, changedAt: now, repoChangedAt: now, messages: 0 } : {}) };
 }
 
 function remember(known: readonly string[], head: string | null): string[] {
