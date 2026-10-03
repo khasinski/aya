@@ -5,6 +5,8 @@
 import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import { promisify } from "node:util";
+import { agentProgram } from "./agent-session";
+import { listWorktreesOrThrow } from "./git";
 import { SESSION_ID_RE } from "./osc-extractor";
 import { leadingEnvAssignments } from "./shell-words";
 
@@ -14,7 +16,6 @@ const execFileAsync = promisify(execFile);
 // under load, measured), not just opencode's ~1 s.
 const LIST_TIMEOUT_MS = 10_000;
 export const OPENCODE_LIST_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
-const OPENCODE_BINARY = /^opencode(?:\s|$)/;
 const CONTINUE_FLAG = /\s--continue(?=\s|$)/;
 
 export interface OpencodeSession {
@@ -66,32 +67,43 @@ export async function listOpencodeSessions(
   return parseSessionList(stdout.slice(start));
 }
 
-/** Turns `--continue` into `--session <this directory's newest>`, or drops it
- *  when the directory has none: a fresh session beats another worktree's.
- *  `list` also gets the command's leading env assignments, unexpanded. */
+/** `--continue` becomes `--session <this directory's newest>`, or goes when there is none; a failed lookup keeps it only
+ *  where no sibling worktree's session can be taken (one checkout, or git says no repository). */
 export async function ownSessionCommand(
   command: string,
   cwd: string,
   list: (directory: string, assignments: string[]) => Promise<OpencodeSession[]>,
   onLookupError: (err: unknown) => void = () => {},
   onNoSession: () => void = () => {},
+  worktrees: (directory: string) => Promise<readonly unknown[]> = listWorktreesOrThrow,
 ): Promise<string> {
   const trimmed = command.trim();
   const { assignments, rest } = leadingEnvAssignments(trimmed);
   const program = trimmed.slice(rest);
-  if (!OPENCODE_BINARY.test(program) || !CONTINUE_FLAG.test(program)) return command;
+  if (agentProgram(trimmed) !== "opencode" || !CONTINUE_FLAG.test(program)) return command;
   const directory = await realpath(cwd).catch(() => cwd);
+  const resume = (flag: string) => `${trimmed.slice(0, rest)}${program.replace(CONTINUE_FLAG, flag)}`;
   let sessions: OpencodeSession[];
   try {
     sessions = await list(directory, assignments);
   } catch (err) {
     onLookupError(err);
-    return command;
+    return (await alone(worktrees, directory)) ? command : resume("");
   }
   const own = sessions
     .filter((s) => s.directory === directory)
     .sort((a, b) => b.updated - a.updated)[0];
   if (!own) onNoSession();
-  const resumed = program.replace(CONTINUE_FLAG, own ? ` --session ${own.id}` : "");
-  return `${trimmed.slice(0, rest)}${resumed}`;
+  return resume(own ? ` --session ${own.id}` : "");
+}
+
+const NOT_A_REPO_RE = /not a git repository/i;
+
+/** Whether no other worktree can hold a session of this repo; a git that failed for any other reason says nothing. */
+async function alone(worktrees: (directory: string) => Promise<readonly unknown[]>, directory: string): Promise<boolean> {
+  try {
+    return (await worktrees(directory)).length < 2;
+  } catch (err) {
+    return NOT_A_REPO_RE.test(`${(err as { stderr?: unknown }).stderr ?? ""} ${(err as Error)?.message ?? ""}`);
+  }
 }

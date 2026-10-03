@@ -17,11 +17,12 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
+import { pathExists } from "./path-exists";
 import { AYA_HOME, EXECUTABLE_FILE_MODE } from "./paths";
 import { bundledAyaCliPath } from "./cli-path";
 import { HOOK_VIA } from "./constants";
 import { refreshInstalledScript } from "./status-hook";
-import { DEFAULT_CODEX_HOME } from "./usage-codex";
+import { CODEX_CONFIG_FILENAME, DEFAULT_CODEX_HOME } from "./usage-codex";
 
 /** The generated notify program, in Aya's own dir (always exists). */
 export const STATUS_HOOK_CODEX_SCRIPT_FILE = path.join(
@@ -29,9 +30,9 @@ export const STATUS_HOOK_CODEX_SCRIPT_FILE = path.join(
   "aya-status-codex-notify.sh",
 );
 
-/** Codex's config file — the one that carries `notify`. */
+/** Codex's config file - the one that carries `notify`. */
 export function codexConfigPath(): string {
-  return path.join(DEFAULT_CODEX_HOME, "config.toml");
+  return path.join(DEFAULT_CODEX_HOME, CODEX_CONFIG_FILENAME);
 }
 
 export interface CodexStatusHookStatus {
@@ -43,7 +44,7 @@ export interface CodexStatusHookStatus {
   configPath: string;
 }
 
-// ---- pure config.toml notify merge/unmerge (the risky part — unit-tested) ---
+// ---- pure config.toml notify merge/unmerge (the risky part - unit-tested) ---
 //
 // We deliberately do NOT parse/re-serialize the whole TOML (that would lose the
 // user's comments and formatting). We only ever add a single top-level line or
@@ -62,7 +63,7 @@ export function codexNotifyLine(scriptPath: string): string {
 }
 
 /** The first TOP-LEVEL `notify = ...` line, or null. "Top-level" means before
- *  the first `[table]` / `[[array]]` header — a `notify` under a table is that
+ *  the first `[table]` / `[[array]]` header - a `notify` under a table is that
  *  table's key, not Codex's global notify program. Returns the raw line so the
  *  caller can decide whether it is ours. */
 export function findTopLevelNotify(toml: string): string | null {
@@ -170,13 +171,7 @@ export async function statusCodexHookStatus(): Promise<CodexStatusHookStatus> {
   const toml = await readConfigToml();
   const topNotify = findTopLevelNotify(toml);
   const ours = topNotify !== null && topNotify.includes(scriptPath);
-  let scriptExists = false;
-  try {
-    await fs.access(scriptPath);
-    scriptExists = true;
-  } catch {
-    scriptExists = false;
-  }
+  const scriptExists = await pathExists(scriptPath);
   return {
     configured: ours && scriptExists,
     conflict: topNotify !== null && !ours,

@@ -1,12 +1,14 @@
 // Claude writes <configDir>/sessions/<pid>.json for each running CLI, with the
 // conversation that process is in. Aya reads it so a restart resumes that one.
 
+import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { promisify } from "node:util";
+import { AGENT_SESSION_POLL_MS, asError, LOG_CLOCK_SLACK_MS, pollSession, restartGoneResume } from "./agent-session";
 import { isSafeSessionId } from "./osc-extractor";
+import { pathExists } from "./path-exists";
 import { expandUserPath } from "./usage";
-
-export const CLAUDE_SESSION_POLL_MS = 5_000;
 
 /** Claude Code's project-directory name for a cwd: every non-alphanumeric
  *  character becomes "-" (e.g. /Users/x/proj → -Users-x-proj). */
@@ -14,82 +16,105 @@ export function claudeProjectDirName(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, "-");
 }
 
+const execFileAsync = promisify(execFile);
+
 export function claudeConfigDir(configDir: string | undefined): string {
   return expandUserPath(configDir || process.env.CLAUDE_CONFIG_DIR || "~/.claude");
 }
 
-/** Null until Claude has registered the pid, or for an id unsafe on a command line. */
-export async function readClaudeSessionId(
-  configDir: string | undefined,
-  pid: number,
-): Promise<string | null> {
+/** Null until Claude has registered the pid (it writes the file late), for an id unsafe on a command line, and with
+ *  `sinceMs` for a process started before then: a dead claude's file outlives it, and its pid is reused. */
+export async function readClaudeSessionId(configDir: string | undefined, pid: number, sinceMs?: number): Promise<string | null> {
   const file = path.join(claudeConfigDir(configDir), "sessions", `${pid}.json`);
   try {
-    const { sessionId } = JSON.parse(await fs.readFile(file, "utf-8")) as { sessionId?: unknown };
+    const { sessionId, startedAt } = JSON.parse(await fs.readFile(file, "utf-8")) as { sessionId?: unknown; startedAt?: unknown };
+    if (sinceMs !== undefined && typeof startedAt === "number" && startedAt < sinceMs - LOG_CLOCK_SLACK_MS) return null;
     return typeof sessionId === "string" && isSafeSessionId(sessionId) ? sessionId : null;
   } catch {
     return null;
   }
 }
 
-/** Whether Claude saved a transcript for `sessionId` under `cwd`. Claude writes
- *  it with the first message; until then `claude --resume <id>` exits with
- *  "No conversation found" and a restored pane would come back dead. */
+/** Whether Claude saved a transcript for `sessionId`: it writes one with the
+ *  first message, and `--resume` of an unsaved id exits at once. */
 export async function claudeTranscriptExists(
   configDir: string | undefined,
   cwd: string,
   sessionId: string,
 ): Promise<boolean> {
-  // Claude names the folder after its real cwd; Aya may hold a symlinked one.
-  const real = await fs.realpath(cwd).catch(() => cwd);
-  for (const dir of new Set([cwd, real])) {
-    const file = path.join(claudeConfigDir(configDir), "projects", claudeProjectDirName(dir), `${sessionId}.jsonl`);
-    if (await fs.access(file).then(() => true, () => false)) return true;
-  }
-  return false;
+  const projects = path.join(claudeConfigDir(configDir), "projects");
+  if (await pathExists(path.join(projects, claudeProjectDirName(cwd), `${sessionId}.jsonl`))) return true;
+  // A folder Aya cannot name (symlinked cwd; a long one is cut at 200 characters
+  // plus a hash) must not read as "gone": --session-id of an existing id is fatal.
+  const others = await fs.readdir(projects).catch(() => [] as string[]);
+  const found = await Promise.all(others.map((name) => pathExists(path.join(projects, name, `${sessionId}.jsonl`))));
+  return found.includes(true);
 }
 
-/** Reports the conversation a claude process is in on every poll, not only on
- *  change: an event sent while no Aya window is connected is lost. With `cwd`,
- *  only a conversation that has a transcript to resume is reported. */
+/** Reports a claude process's conversation on every poll (an event sent while no window is connected is lost); with
+ *  `cwd` only one with a transcript to resume, with `sinceMs` only a process started since. */
 export function watchClaudeSession(
   configDir: string | undefined,
   pid: number,
   report: (sessionId: string) => void,
-  intervalMs: number = CLAUDE_SESSION_POLL_MS,
+  intervalMs: number = AGENT_SESSION_POLL_MS,
   cwd?: string,
+  sinceMs?: number,
 ): () => void {
-  let stopped = false;
   let resumable: string | null = null;
-  const timer = setInterval(async () => {
-    let sessionId = await readClaudeSessionId(configDir, pid);
-    if (sessionId && cwd && sessionId !== resumable) {
-      if (await claudeTranscriptExists(configDir, cwd, sessionId)) resumable = sessionId;
-      else sessionId = null;
-    }
-    // A restart reuses the pty id: a read still in flight must not report
-    // the old process's session over the new one's.
-    if (!stopped && sessionId) report(sessionId);
-  }, intervalMs);
-  timer.unref();
-  return () => {
-    stopped = true;
-    clearInterval(timer);
-  };
+  return pollSession(
+    async () => {
+      const sessionId = await readClaudeSessionId(configDir, pid, sinceMs);
+      if (!sessionId || !cwd || sessionId === resumable) return sessionId;
+      if (!(await claudeTranscriptExists(configDir, cwd, sessionId))) return null;
+      resumable = sessionId;
+      return sessionId;
+    },
+    report,
+    intervalMs,
+  );
 }
 
-// A trailing `--resume <id>`: what a restore appends for a known conversation.
-const TRAILING_RESUME_RE = /(\s)--resume[=\s]+([A-Za-z0-9-]+)\s*$/;
+const CONFIG_DIR_MARK = "aya-claude-config-dir:";
+const CONFIG_DIR_TIMEOUT_MS = 10_000;
 
-/** A restore that would resume a conversation Claude no longer has (purged
- *  after cleanupPeriodDays, or never saved) continues the latest one instead:
- *  `claude --resume <gone>` exits at once and the pane would come back dead. */
-export async function withLiveClaudeResume(
+/** CLAUDE_CONFIG_DIR as the pane's own login shell exports it, "" when unset;
+ *  throws when the shell does not answer. Rc files run after Aya's env is built. */
+export async function shellClaudeConfigDir(
+  shell: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  timeoutMs = CONFIG_DIR_TIMEOUT_MS,
+): Promise<string> {
+  const script = `printf '\\n${CONFIG_DIR_MARK}%s\\n' "$CLAUDE_CONFIG_DIR"`;
+  const { stdout } = await execFileAsync(shell, ["-l", "-i", "-c", script], {
+    cwd,
+    env,
+    timeout: timeoutMs,
+    windowsHide: true,
+  });
+  const line = stdout.split("\n").reverse().find((l) => l.startsWith(CONFIG_DIR_MARK));
+  if (line === undefined) throw new Error("the shell did not report CLAUDE_CONFIG_DIR");
+  return line.slice(CONFIG_DIR_MARK.length);
+}
+
+/** Drops a resume of a conversation Claude no longer has (it would start a new one under that id). `configDir` set by
+ *  the command is the only dir; else the env's or the pane shell's. A shell that cannot answer keeps the resume. */
+export function withLiveClaudeResume(
   command: string,
   configDir: string | undefined,
   cwd: string,
+  paneConfigDir: () => Promise<string> = async () => "",
+  onProbeError: (err: Error) => void = () => {},
 ): Promise<string> {
-  const match = TRAILING_RESUME_RE.exec(command);
-  if (!match || (await claudeTranscriptExists(configDir, cwd, match[2]))) return command;
-  return `${command.slice(0, match.index)}${match[1]}--continue`;
+  return restartGoneResume(command, async (id) => {
+    if (configDir !== undefined) return claudeTranscriptExists(configDir, cwd, id);
+    if (await claudeTranscriptExists(undefined, cwd, id)) return true;
+    try {
+      return await claudeTranscriptExists(await paneConfigDir() || undefined, cwd, id);
+    } catch (err) {
+      onProbeError(asError(err));
+      return true;
+    }
+  });
 }

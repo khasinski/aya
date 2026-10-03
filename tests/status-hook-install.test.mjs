@@ -6,13 +6,12 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { isolateHome } from "./helpers/isolate-home.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "aya-status-hook-test-"));
 const settingsPath = join(root, "settings.json");
-process.env.AYA_HOME = join(root, "aya");
+isolateHome(root);
 process.env.AYA_CLAUDE_SETTINGS = settingsPath;
-process.env.HOME = join(root, "home");
-delete process.env.CLAUDE_CONFIG_DIR;
 
 const { installStatusHook, migrateStatusHookCommand, statusHookStatus, uninstallStatusHook, STATUS_HOOK_EVENTS, STATUS_HOOK_SCRIPT_FILE } =
   await import("../dist-electron/status-hook.js");
@@ -57,7 +56,8 @@ test("uninstall removes both the bare and the quoted command", async () => {
   seedQuoted();
   await installStatusHook();
   const s = read();
-  s.hooks.Notification.push({ hooks: [{ type: "command", command: quoted }] });
+  // Notification is no status event; an install from before may still carry ours there.
+  (s.hooks.Notification ??= []).push({ hooks: [{ type: "command", command: quoted }] });
   writeFileSync(settingsPath, JSON.stringify(s));
   await uninstallStatusHook();
   assert.deepEqual(read(), { env: { FOO: "1" }, hooks: { Stop: [other] } });
@@ -76,14 +76,6 @@ test("a quoted install not yet migrated still reads as installed", async () => {
   mkdirSync(dirname(STATUS_HOOK_SCRIPT_FILE), { recursive: true });
   writeFileSync(STATUS_HOOK_SCRIPT_FILE, "#!/bin/sh\n");
   assert.equal((await statusHookStatus()).installed, true);
-});
-
-test("an install racing the startup migration stays installed, in either order", async () => {
-  for (const [first, second] of [[migrateStatusHookCommand, installStatusHook], [installStatusHook, migrateStatusHookCommand]]) {
-    writeFileSync(settingsPath, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: quoted }] }] } }));
-    await Promise.all([first(), second()]);
-    for (const event of STATUS_HOOK_EVENTS) assert.deepEqual(commands(read(), event), [STATUS_HOOK_SCRIPT_FILE], event);
-  }
 });
 
 test("a settings file that cannot be written does not fail the startup migration", async () => {

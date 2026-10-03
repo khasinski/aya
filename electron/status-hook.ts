@@ -4,9 +4,11 @@
 // plus a VT screen mirror. This installer wires Claude Code's own lifecycle
 // hooks straight into `aya status`, so a pane reliably reports what the agent
 // is doing:
-//   Notification -> waiting   (needs approval / your input)
-//   PostToolUse  -> active    (running a tool)
+//   PostToolUse  -> active    (running a tool; not a subagent's)
 //   Stop         -> done      (turn finished)
+//   StopFailure  -> error     (the turn ended on an API error, with no Stop)
+// No Notification: Claude sends one for 12 kinds of thing, a dialog 6 s old and
+// an idle composer 60 s after Stop among them; the screen owns dialogs (vt-state).
 //
 // IMPORTANT trust boundary: the hooks live in ~/.claude/settings.json and fire
 // in EVERY Claude Code session, not only inside Aya. The generated script
@@ -20,12 +22,14 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
+import { pathExists } from "./path-exists";
 import { AYA_HOME, EXECUTABLE_FILE_MODE } from "./paths";
 import { bundledAyaCliPath } from "./cli-path";
 import { HOOK_VIA } from "./constants";
 import {
   claudeConfigDirs,
   readSettingsFile,
+  serially,
   settingsFileForConfigDir,
 } from "./usage-hook";
 import { shellQuote } from "./pane-command";
@@ -34,11 +38,10 @@ import { shellQuote } from "./pane-command";
 // by absolute path from every hook entry.
 export const STATUS_HOOK_SCRIPT_FILE = path.join(AYA_HOME, "aya-status-hook.sh");
 // The Claude Code hook events we register our command under.
-export const STATUS_HOOK_EVENTS = [
-  "Notification",
-  "PostToolUse",
-  "Stop",
-] as const;
+export const STATUS_HOOK_EVENTS = ["PostToolUse", "Stop", "StopFailure"] as const;
+/** Registered by earlier versions: our command is removed from them at startup and on uninstall. */
+const RETIRED_STATUS_HOOK_EVENTS = ["Notification"] as const;
+const EVERY_STATUS_HOOK_EVENT = [...STATUS_HOOK_EVENTS, ...RETIRED_STATUS_HOOK_EVENTS];
 
 export interface StatusHookStatus {
   installed: boolean;
@@ -68,7 +71,7 @@ export function hookCommandFor(scriptPath: string): string {
 
 /** The command string registered in settings.json: the script by absolute path.
  *  It reads the event from stdin and the pane from the inherited AYA_* env. */
-export function statusHookCommand(): string {
+function statusHookCommand(): string {
   return hookCommandFor(STATUS_HOOK_SCRIPT_FILE);
 }
 
@@ -77,7 +80,7 @@ function legacyStatusHookCommand(): string {
   return shellQuote(STATUS_HOOK_SCRIPT_FILE);
 }
 
-// ---- pure settings.json merge/unmerge (the risky part — unit-tested) --------
+// ---- pure settings.json merge/unmerge (the risky part - unit-tested) --------
 
 type HookEntry = { hooks?: Array<{ type?: string; command?: string }> };
 
@@ -103,7 +106,7 @@ export function hasEventHook(
 }
 
 /** A NEW settings object with `command` added under `event` (idempotent),
- *  leaving every other key — and any other hooks — untouched. */
+ *  leaving every other key - and any other hooks - untouched. */
 export function withEventHook(
   settings: Record<string, unknown>,
   event: string,
@@ -116,9 +119,8 @@ export function withEventHook(
   return { ...settings, hooks: { ...hooks, [event]: arr } };
 }
 
-/** A NEW settings object with our `command` removed from `event`, leaving
- *  everything else intact. Drops now-empty containers so we leave no litter,
- *  but never touches other people's hooks. */
+/** A NEW settings object without our `command` under `event`; emptied containers go, other people's hooks
+ *  stay. */
 export function withoutEventHook(
   settings: Record<string, unknown>,
   event: string,
@@ -153,15 +155,23 @@ export function withStatusHooks(
   );
 }
 
-/** Remove our command from every status event. */
+/** Remove our command from every status event, retired ones included. */
 export function withoutStatusHooks(
   settings: Record<string, unknown>,
   command: string,
 ): Record<string, unknown> {
-  return STATUS_HOOK_EVENTS.reduce(
+  return EVERY_STATUS_HOOK_EVENT.reduce(
     (acc, event) => withoutEventHook(acc, event, command),
     settings,
   );
+}
+
+/** An install of `command` brought to the current events: off the retired ones, on every current one. Settings
+ *  without our command under any event come back as they are, so nothing is ever installed. */
+function withCurrentStatusEvents(settings: Record<string, unknown>, command: string): Record<string, unknown> {
+  if (!EVERY_STATUS_HOOK_EVENT.some((event) => hasEventHook(settings, event, command))) return settings;
+  const current = withStatusHooks(RETIRED_STATUS_HOOK_EVENTS.reduce((acc, event) => withoutEventHook(acc, event, command), settings), command);
+  return JSON.stringify(current) === JSON.stringify(settings) ? settings : current;
 }
 
 /** Our old `legacy` command swapped for `command` under each event that has it;
@@ -172,7 +182,7 @@ export function withMigratedStatusHooks(
   command: string,
 ): Record<string, unknown> {
   if (legacy === command) return settings;
-  return STATUS_HOOK_EVENTS.reduce(
+  return EVERY_STATUS_HOOK_EVENT.reduce(
     (acc, event) =>
       hasEventHook(acc, event, legacy) ? withEventHook(withoutEventHook(acc, event, legacy), event, command) : acc,
     settings,
@@ -181,9 +191,8 @@ export function withMigratedStatusHooks(
 
 // ---- the generated hook script ----------------------------------------------
 
-/** The shell script every hook runs. Reads the Claude hook JSON on stdin, maps
- *  the event to `aya status`, and no-ops outside an Aya terminal. `ayaCli` is
- *  the fallback path to the bundled CLI when `aya` is not on PATH. */
+/** Maps the Claude hook JSON on stdin to `aya status`, a no-op outside Aya; `ayaCli` is the bundled CLI for
+ *  when `aya` is not on PATH. */
 export function statusHookScriptSource(ayaCli: string): string {
   return `#!/usr/bin/env bash
 # Auto-generated by Aya (Settings -> automatic status). Reports Claude Code's
@@ -200,29 +209,26 @@ AYA=$(command -v aya 2>/dev/null || true)
 [ -x "$AYA" ] || exit 0
 INPUT=$(cat)
 EVENT=$(printf '%s' "$INPUT" | jq -r '.hook_event_name // empty')
+# Notification (an install from before still sends it) reports nothing: the screen owns dialogs.
 case "$EVENT" in
-  Notification)
-    MSG=$(printf '%s' "$INPUT" | jq -r '.message // "Needs your input"')
-    AYA_VIA=${HOOK_VIA} "$AYA" status waiting "$MSG" >/dev/null 2>&1 || true ;;
   PostToolUse)
+    # A subagent's tool call may come after the lead's Stop.
+    [ -z "$(printf '%s' "$INPUT" | jq -r '.agent_id // empty')" ] || exit 0
     TOOL=$(printf '%s' "$INPUT" | jq -r '.tool_name // "a tool"')
     AYA_VIA=${HOOK_VIA} "$AYA" status active "running $TOOL" >/dev/null 2>&1 || true ;;
   Stop)
     AYA_VIA=${HOOK_VIA} "$AYA" status done "Turn finished" >/dev/null 2>&1 || true ;;
+  StopFailure)
+    WHY=$(printf '%s' "$INPUT" | jq -r '.error_type // .error // .reason // empty')
+    MSG="Turn ended with an API error"
+    [ -z "$WHY" ] || MSG="Turn ended: $WHY"
+    AYA_VIA=${HOOK_VIA} "$AYA" status error "$MSG" >/dev/null 2>&1 || true ;;
 esac
 exit 0
 `;
 }
 
 // ---- fs-bound install / uninstall / status ----------------------------------
-
-// Startup migration runs unawaited; queue it with install/uninstall so no edit is lost.
-let settingsEdits: Promise<unknown> = Promise.resolve();
-function serially<T>(edit: () => Promise<T>): Promise<T> {
-  const run = settingsEdits.then(edit, edit);
-  settingsEdits = run.catch(() => {});
-  return run;
-}
 
 export async function statusHookStatus(): Promise<StatusHookStatus> {
   const [command, legacy] = [statusHookCommand(), legacyStatusHookCommand()];
@@ -239,13 +245,7 @@ export async function statusHookStatus(): Promise<StatusHookStatus> {
       registered = false;
     }
   }
-  let scriptExists = false;
-  try {
-    await fs.access(STATUS_HOOK_SCRIPT_FILE);
-    scriptExists = true;
-  } catch {
-    scriptExists = false;
-  }
+  const scriptExists = await pathExists(STATUS_HOOK_SCRIPT_FILE);
   return {
     installed: registered && scriptExists,
     scriptPath: STATUS_HOOK_SCRIPT_FILE,
@@ -279,16 +279,14 @@ async function uninstall(): Promise<StatusHookStatus> {
       const without = withoutStatusHooks(withoutStatusHooks(settings, command), legacyStatusHookCommand());
       await writeFileAtomic(settingsPath, JSON.stringify(without, null, 2) + "\n");
     } catch {
-      /* malformed/unreadable settings — leave it alone */
+      /* malformed/unreadable settings - leave it alone */
     }
   }
   await fs.rm(STATUS_HOOK_SCRIPT_FILE, { force: true });
   return statusHookStatus();
 }
 
-/** Rewrite an ALREADY-installed hook script whose content is out of date (e.g.
- *  written before hook calls were tagged AYA_VIA=hook, #121). Never installs:
- *  a missing script stays missing. */
+/** Rewrites an ALREADY-installed, out-of-date script; never installs one. */
 export function refreshStatusHookScript(): Promise<void> {
   return refreshInstalledScript(STATUS_HOOK_SCRIPT_FILE, statusHookScriptSource(bundledAyaCliPath(__dirname)));
 }
@@ -312,7 +310,7 @@ async function migrate(): Promise<void> {
     const settingsPath = settingsFileForConfigDir(dir);
     try {
       const settings = await readSettingsFile(settingsPath);
-      const next = withMigratedStatusHooks(settings, legacy, command);
+      const next = withCurrentStatusEvents(withMigratedStatusHooks(settings, legacy, command), command);
       if (next !== settings) await writeFileAtomic(settingsPath, JSON.stringify(next, null, 2) + "\n");
     } catch {
       /* malformed or unwritable settings: leave this dir, migrate the rest */
