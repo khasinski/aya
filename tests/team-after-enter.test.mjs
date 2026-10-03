@@ -49,7 +49,7 @@ for (const [label, fields, line] of LINES) {
   test(`typed without a turn | the window's line follows afterEnter | ${label}`, () => {
     assert.equal(messageDeliveryText({ from: "tester", delivered: true, typedOnly: true, ...fields }), line);
     const task = { to: "implementer", held: fields.held, typedOnly: true, afterEnter: fields.afterEnter, messageId: 1 };
-    const said = startSummary({ started: true, delivered: ["implementer"], held: [], task });
+    const said = startSummary({ started: true, delivered: ["implementer"], held: [], task })?.text;
     assert.equal(said, fields.afterEnter ? `Started; task for implementer was ${fields.held}.` : `Started; task for implementer is typed in its composer, Enter withheld: ${fields.held}.`);
   });
 }

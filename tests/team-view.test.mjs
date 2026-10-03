@@ -6,14 +6,17 @@ import * as view from "../dist-test/team-view.js";
 import {
   paneOptionLabel,
   pendingMoves,
-  rolePanesSummary,
+  rolePanesSummary as panesNote,
   messageDeliveryText,
   paneRoles,
-  startSummary,
+  startSummary as startNote,
   teamPromptKey,
   unassignedTeams,
   unreadTotal,
 } from "../dist-test/team-view.js";
+
+const startSummary = (...args) => startNote(...args)?.text ?? null;
+const rolePanesSummary = (...args) => panesNote(...args).text;
 
 const team = (name, assignments, unread, definition = {}) => ({
   name,
@@ -257,3 +260,57 @@ test("startSummary: a team already running says nothing was sent; taskPlaceholde
   assert.equal(startSummary({ started: false, alreadyRunning: true, delivered: [], held: [], task: null }), "Already running, nothing was sent.");
   assert.equal(view.taskPlaceholder({ roles: [], lead: null }), "Task (optional)");
 });
+
+// Before Start the card already says what rhythm Start begins, in the words the running line uses.
+const CADENCE_ROWS = [
+  // [label, status, silence, expected line]
+  ["a cadence, not started: the rhythm, neutral", "never started", { askAfterMin: 30, everyMin: 10, stalledAfterMin: 60 }, { text: "not started - the lead gets a round every 10 min", tone: "idle" }],
+  ["a lead, no cadence, not started: nothing", "never started", { askAfterMin: 30, everyMin: null, stalledAfterMin: 60 }, null],
+  ["no lead, no cadence, not started: nothing", "never started", { askAfterMin: null, stalledAfterMin: 60 }, null],
+  ["no silence read, not started: nothing", "never started", undefined, null],
+  ["a cadence, paused: the paused badge says it", "paused", { askAfterMin: 30, everyMin: 10, stalledAfterMin: 60 }, null],
+];
+for (const [label, status, silence, expected] of CADENCE_ROWS) {
+  test(`livenessLine before Start | ${label}`, () => {
+    assert.deepEqual(view.livenessLine({ status, stalledSince: null, blocked: [], unreached: null, ...(silence ? { silence } : {}) }), expected);
+  });
+}
+
+test("livenessLine before Start | the rhythm reads as it does once the team runs", () => {
+  const silence = { askAfterMin: 30, everyMin: 10, stalledAfterMin: 60 };
+  const running = view.livenessLine({ status: "progressing", stalledSince: null, blocked: [], unreached: null, silence }).text;
+  const before = view.livenessLine({ status: "never started", stalledSince: null, blocked: [], unreached: null, silence }).text;
+  const rhythm = "the lead gets a round every 10 min";
+  assert.ok(running.includes(rhythm) && before.includes(rhythm), `${running} | ${before}`);
+});
+
+// The card styles a note by the kind main's result gives it, never by its words: info is neutral, a problem red.
+const held = [{ role: "dev", reason: "busy" }];
+const START_KINDS = [
+  // [label, Start result, kind]
+  ["already running", { started: false, alreadyRunning: true, delivered: [], held: [], task: null }, "info"],
+  ["not started: roles to fix", { started: false, delivered: [], held }, "error"],
+  ["started, task sent", { started: true, delivered: ["dev"], held: [], task: { to: "dev", held: null } }, "info"],
+  ["started, task waits in the inbox", { started: true, delivered: ["dev"], held: [], task: { to: "dev", held: "busy" } }, "error"],
+  ["started, task typed with Enter withheld", { started: true, delivered: ["dev"], held: [], task: { to: "dev", held: "busy", typedOnly: true } }, "error"],
+  ["started, a role missed the delivery test", { started: true, delivered: [], held }, "error"],
+  ["started, a role missed the test, task sent", { started: true, delivered: [], held, task: { to: "dev", held: null } }, "error"],
+];
+for (const [label, result, kind] of START_KINDS) {
+  test(`startSummary kind | ${label}: ${kind}`, () => assert.equal(startNote(result).kind, kind));
+}
+
+const reached = { role: "reviewer", paneId: "p1", name: "Claude Code", preset: "Claude Code", notReached: null };
+const PANES_KINDS = [
+  // [label, Apply result, running, kind]
+  ["new pane, team not running: Start when ready", { panes: [reached], leftWithoutPane: [] }, false, "info"],
+  ["new pane, team running, told its role", { panes: [reached], leftWithoutPane: [] }, true, "info"],
+  ["a role left without a pane", { panes: [reached], leftWithoutPane: ["writer"] }, false, "error"],
+  ["a pane that can't reach Aya", { panes: [{ ...reached, cantReach: "can't reach Aya: read-only" }], leftWithoutPane: [] }, false, "error"],
+  ["a pane that may not reach Aya", { panes: [{ ...reached, unsure: true }], leftWithoutPane: [] }, false, "error"],
+  ["running, a role not told its role", { panes: [{ ...reached, notReached: "runs a shell" }], leftWithoutPane: [] }, true, "error"],
+  ["not running, not reached yet: Start tells it", { panes: [{ ...reached, notReached: "runs a shell" }], leftWithoutPane: [] }, false, "info"],
+];
+for (const [label, result, running, kind] of PANES_KINDS) {
+  test(`rolePanesSummary kind | ${label}: ${kind}`, () => assert.equal(panesNote(result, running).kind, kind));
+}
