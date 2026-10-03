@@ -332,6 +332,28 @@ server serving `/api/ps`, `/api/tags` and streaming `/api/chat`) and a fake
 6. **Should refusals suggest an alternative?** The example points to "laptop has the model hot", but the laptop was the about 6x slower fallback. Should the suggestion be limited to machines whose probe note puts them in the same speed class, or should the refusal only state the facts?
 7. **`--confirm` for agents.** Is a draft id plus `aya machines add --confirm <id>` acceptable under "no flags"? The alternative is that only the UI saves, and the CLI prints the draft and a pointer to the view.
 
+## Everything over ssh
+
+Aya reaches every machine over ssh and never needs Ollama exposed on the
+network. ssh is required anyway for GPU/CPU/memory, the alias and key already
+exist, and nothing changes on the host. Exposing Ollama directly
+(`OLLAMA_HOST=0.0.0.0`) would open it to the whole network with no password,
+and anyone could load or delete models.
+
+| Task | Over ssh | Ollama exposed directly | Easier |
+|---|---|---|---|
+| 1. GPU, CPU, memory | `nvidia-smi`, `/proc` | not possible, Ollama does not report it | ssh, the only way |
+| 1. Hot models and until when | `ssh <alias> curl -s localhost:<port>/api/ps`, one command, no tunnel | `/api/ps` over the network, after opening the port | ssh |
+| 2. Machines view | same data as 1 | same as 1 | ssh |
+| 3. Per-request leases | `ssh -L` forward + Aya's proxy | Aya's proxy in front of an open port | ssh: one forward, the port stays closed |
+| 4. Reservations and refusals | as 3 | as 3, but anyone can bypass the proxy through the open port | ssh |
+| 5. Detecting direct clients | `/api/ps` over ssh | same over the network | about the same |
+| 6. A line for a team's round | from 1 | from 1 | about the same |
+
+Steps 1, 2 and 6 need only read-only commands over `ssh <alias>`: no forward
+and no change on the host. The forward to Ollama appears only with the proxy
+(step 3), also over ssh.
+
 ## Feasibility (estimates, not measured)
 
 | Step | Feasibility | Size | Main risk |
