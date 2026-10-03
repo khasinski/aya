@@ -136,6 +136,11 @@ jobs:
         # and preserve the dependency's ordering with two sequential stages.
         run: |
           export PLAYWRIGHT_BROWSERS_PATH="$HOME/.cache/ms-playwright"
+          mkdir -p playwright-timings
+          npx playwright test --list --no-deps --reporter=json > playwright-timings/inventory.json
+          node .github/e2e-shards.cjs playwright-timings/inventory.json \
+            ${{ matrix.shard }}/12 "$RUNNER_TEMP/e2e-shard"
+          cp "$RUNNER_TEMP/e2e-shard/plan.json" playwright-timings/plan.json
           run_e2e() {
             local test_home result=0
             test_home="$(mktemp -d /tmp/aya-e2e.XXXX)"
@@ -143,7 +148,7 @@ jobs:
               env -u AYA_SOCKET -u AYA_TERMINAL_ID -u AYA_PROJECT_SLUG \
               -u AYA_PRESET_ID -u AYA_DEV HOME="$test_home" AYA_HOME="$test_home/aya" \
               xvfb-run -a npx playwright test --no-deps --project="$1" \
-                --shard=${{ matrix.shard }}/12 --workers="$2" \
+                --test-list="$RUNNER_TEMP/e2e-shard/$1.list" --workers="$2" \
                 --reporter=github,html,json || result=$?
             rm -rf "$test_home"
             return "$result"
@@ -151,7 +156,9 @@ jobs:
           # Two Electron workers fit the runner's 4 vCPUs. Clipboard and
           # rebuilt-host cases stay serial, after this shard's isolated apps.
           run_e2e isolated 2
-          run_e2e shared-resources 1
+          if [ -s "$RUNNER_TEMP/e2e-shard/shared-resources.list" ]; then
+            run_e2e shared-resources 1
+          fi
 
       - name: Upload Playwright timings
         if: always()
