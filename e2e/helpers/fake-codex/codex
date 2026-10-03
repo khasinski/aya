@@ -1,0 +1,4 @@
+#!/bin/sh
+# A Codex stand-in named codex, so Aya reads its launch mode as Codex's.
+if [ "$1" = --help ]; then echo "      --no-daemon"; exit 0; fi
+exec "$AYA_E2E_NODE" "$(dirname "$0")/../fake-codex-sandbox.cjs" "$@"

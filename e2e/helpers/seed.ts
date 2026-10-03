@@ -2,6 +2,10 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { COMMAND_PROBE_TIMEOUT_MS } from "../../dist-electron/constants.js";
+
+/** A slowLoginShell delay past the command probe's limit, as a heavy rc file under load is. */
+export const PAST_PROBE_MS = COMMAND_PROBE_TIMEOUT_MS + 1_000;
 
 export interface SeededEnv {
   /** Temp root holding all isolated state for one app launch. */
@@ -29,6 +33,8 @@ export interface SeedOptions {
   /** The project opens with this one tab (id tab-left) instead of two shells,
    *  and no split layout. */
   singleTab?: { presetId: string; name: string };
+  /** The second tab (id tab-right) runs this preset instead of a shell. */
+  rightTab?: { presetId: string; name: string };
   /** When false, the project has no split layout, so only the active tab is
    *  visible and switching happens via the sidebar (one terminal at a time).
    *  Defaults to true (1x2 split, both panes visible). */
@@ -57,11 +63,21 @@ export interface SeedOptions {
   launchEnv?: Record<string, string>;
   /** Create a fake shell/bin setup where interactive shell PATH reveals claude. */
   pathRepairHarness?: boolean;
-  /** HOME = <root>/home, for code that writes under the user's home. */
-  fakeHome?: boolean;
+  /** $SHELL waits this long before it runs anything (a heavy rc file under load), and `cli`
+   *  is a stub on PATH that prints "<cli> started" and stays up. */
+  slowLoginShell?: { delayMs: number; cli: string };
+  /** The right tab runs in a symlink to the project dir: one folder, spelled twice. */
+  rightTabViaSymlink?: boolean;
   /** Session ids already saved on the tabs, as a previous run left them. */
   tabSessionIds?: { left?: string; right?: string };
-  /** With fakeHome: the claude config dir under HOME that holds a transcript
+  /** The left tab shared its folder with another pane once, as a previous run recorded. */
+  leftSharedDir?: boolean;
+  /** The project lives on a host reached by ssh. `ssh`, `claude` and `grok` on PATH stand in
+   *  for it: the "remote" agents keep their sessions under <root>/remote-home, out of Aya's sight. */
+  remoteProject?: boolean;
+  /** Files written under HOME (shell rc files, say). */
+  homeFiles?: Record<string, string>;
+  /** The claude config dir under HOME that holds a transcript
    *  for each of `tabSessionIds`, as Claude saves one per conversation. */
   claudeTranscriptsIn?: string;
   /** Stub executables put first on PATH, so harness detection finds them. */
@@ -116,7 +132,9 @@ function shellQuote(value: string): string {
  *  snippet store that the app seeds with its defaults on boot. */
 export function seedEnv(opts: SeedOptions = {}): SeededEnv {
   const split = opts.split !== false && !opts.singleTab;
-  const root = mkdtempSync(join(tmpdir(), "aya-e2e-"));
+  // Keep sockets short and use the shell's canonical cwd spelling from boot.
+  // Otherwise /tmp -> /private/tmp looks like a checkout change to the UI.
+  const root = realpathSync(mkdtempSync(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "aya-e2e-")));
   const ayaHome = join(root, "aya-home");
   const userDataDir = join(root, "electron-data");
   const projectDir = join(root, "project");
@@ -175,6 +193,12 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     throw new Error("seed: gitWorktree requires gitRepo");
   }
 
+  let symlinkDir: string | undefined;
+  if (opts.rightTabViaSymlink) {
+    symlinkDir = join(root, "project-link");
+    symlinkSync(effectiveProjectDir, symlinkDir);
+  }
+
   if (opts.presets !== false) {
     const presetList = opts.presetList ?? [
       { id: "shell", name: "Shell", icon: "$", color: "", command: "$SHELL" },
@@ -193,12 +217,14 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
       {
         name: "e2e",
         directory: effectiveProjectDir,
+        ...(opts.remoteProject ? { remote: { hostId: "fakehost", label: "fakehost", sshTarget: "me@fakehost", directory: effectiveProjectDir } } : {}),
         tabs: [
           {
             id: left,
             presetId: "shell",
             name: "shell 1",
             ...(opts.tabSessionIds?.left ? { sessionId: opts.tabSessionIds.left } : {}),
+            ...(opts.leftSharedDir ? { sharedDir: true } : {}),
             ...opts.singleTab,
           },
           ...(opts.singleTab ? [] : [{
@@ -206,7 +232,8 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
             presetId: "shell",
             name: "shell 2",
             ...(opts.tabSessionIds?.right ? { sessionId: opts.tabSessionIds.right } : {}),
-            ...(worktreeDir ? { cwd: worktreeDir } : {}),
+            ...(worktreeDir ?? symlinkDir ? { cwd: worktreeDir ?? symlinkDir } : {}),
+            ...opts.rightTab,
           }]),
         ],
         ...(split
@@ -295,7 +322,17 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     );
   }
 
-  let launchEnv = opts.launchEnv;
+  // Startup syncs the antigravity rule and CLI shims under os.homedir(): never the account's.
+  const home = join(root, "home");
+  mkdirSync(home, { recursive: true });
+  if (opts.launchEnv?.HOME && !insideRoot(opts.launchEnv.HOME, root)) {
+    throw new Error(`seed: launchEnv HOME ${opts.launchEnv.HOME} is outside the seeded root`);
+  }
+  let launchEnv: Record<string, string> = { HOME: home, ...opts.launchEnv };
+  const prependPath = (bin: string) => (launchEnv = { ...launchEnv, PATH: `${bin}:${launchEnv.PATH ?? process.env.PATH}` });
+  const homeFiles = { ...opts.homeFiles };
+  // A login shell stand-in: runs the -c script, ignores -l and -i.
+  const RUN_C = 'while [ "$#" -gt 0 ]; do\n  case "$1" in -c) shift; exec /bin/sh -c "$1" ;; *) shift ;; esac\ndone\n';
   if (opts.pathRepairHarness) {
     const fakeBin = join(root, "interactive-bin");
     const fakeShell = join(root, "fake-login-shell");
@@ -334,27 +371,60 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     };
   }
 
+  if (opts.slowLoginShell) {
+    const { delayMs, cli } = opts.slowLoginShell;
+    const bin = join(root, "slow-shell-bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, cli), `#!/bin/sh\necho "${cli} started"\nexec sleep 600\n`, { mode: 0o755 });
+    const slowShell = join(root, "slow-login-shell");
+    writeFileSync(slowShell, `#!/bin/sh\nsleep ${delayMs / 1000}\n${RUN_C}`, { mode: 0o755 });
+    prependPath(bin);
+    launchEnv.SHELL = slowShell;
+  }
+
+  if (opts.remoteProject) {
+    const bin = join(root, "remote-bin");
+    mkdirSync(bin, { recursive: true });
+    const remoteShell = join(bin, "remote-shell");
+    writeFileSync(remoteShell, `#!/bin/sh\n${RUN_C}`, { mode: 0o755 });
+    // Only the pane's `ssh -tt <target> <script>`; Aya's other ssh calls (preset listing) fail fast.
+    writeFileSync(join(bin, "ssh"), `#!/bin/sh\n[ "$1" = "-tt" ] || exit 255\nSHELL=${shellQuote(remoteShell)} exec /bin/sh -c "$3"\n`, { mode: 0o755 });
+    const remoteHome = join(root, "remote-home");
+    for (const [name, env, fake] of [
+      ["claude", `CLAUDE_CONFIG_DIR=${shellQuote(join(remoteHome, ".claude"))}`, "fake-claude.cjs"],
+      ["grok", `GROK_HOME=${shellQuote(join(remoteHome, ".grok"))}`, "fake-grok.cjs"],
+    ]) {
+      writeFileSync(
+        join(bin, name),
+        `#!/bin/sh\nexport ${env}\nexec ${shellQuote(process.execPath)} ${shellQuote(join(__dirname, fake))} ${shellQuote(effectiveProjectDir)}/agent-"$AYA_TERMINAL_ID".jsonl "$@"\n`,
+        { mode: 0o755 },
+      );
+    }
+    prependPath(bin);
+    // A login shell puts /usr/bin (the real ssh) back in front of PATH.
+    homeFiles[".zprofile"] = homeFiles[".bash_profile"] = `export PATH=${shellQuote(bin)}:"$PATH"\n`;
+  }
+
   if (opts.fakeBins?.length) {
     const bin = join(root, "fake-bin");
     mkdirSync(bin, { recursive: true });
     for (const name of opts.fakeBins) {
       writeFileSync(join(bin, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
     }
-    launchEnv = { ...launchEnv, PATH: `${bin}:${launchEnv?.PATH ?? process.env.PATH}` };
+    prependPath(bin);
   }
 
-  if (opts.fakeHome) {
-    const home = join(root, "home");
-    mkdirSync(home, { recursive: true });
-    launchEnv = { ...launchEnv, HOME: home };
-    if (opts.claudeTranscriptsIn) {
-      // Claude names the folder after its real cwd (a symlinked tmpdir resolved).
-      const slug = realpathSync(effectiveProjectDir).replace(/[^a-zA-Z0-9]/g, "-");
-      const dir = join(home, opts.claudeTranscriptsIn, "projects", slug);
-      mkdirSync(dir, { recursive: true });
-      for (const id of Object.values(opts.tabSessionIds ?? {})) {
-        if (id) writeFileSync(join(dir, `${id}.jsonl`), "{}\n");
-      }
+  for (const [rel, text] of Object.entries(homeFiles)) {
+    mkdirSync(dirname(join(home, rel)), { recursive: true });
+    writeFileSync(join(home, rel), text);
+  }
+  if (opts.claudeTranscriptsIn) {
+    // Claude names the folder after its real cwd (a symlinked tmpdir resolved).
+    const slug = realpathSync(effectiveProjectDir).replace(/[^a-zA-Z0-9]/g, "-");
+    const dir = join(home, opts.claudeTranscriptsIn, "projects", slug);
+    mkdirSync(dir, { recursive: true });
+    for (const id of Object.values(opts.tabSessionIds ?? {})) {
+      if (id) writeFileSync(join(dir, `${id}.jsonl`), "{}\n");
     }
   }
 
@@ -445,4 +515,34 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     missingDirPath,
     worktreeDir,
   };
+}
+
+export const insideRoot = (path: string, root: string): boolean => path.startsWith(`${root}/`);
+
+const DROPPED_FROM_APP_ENV = ["ELECTRON_RUN_AS_NODE", "AYA_DEV", "AYA_SOCKET", "AYA_TERMINAL_ID", "AYA_PROJECT_SLUG", "AYA_PRESET_ID"];
+
+/** The env for the app (or its pty host): the runner's env with every config dir
+ *  pointing into the seeded root, so no launch reads or writes the account's. */
+export function appEnv(
+  seeded: Pick<SeededEnv, "root" | "ayaHome" | "launchEnv">,
+  base: NodeJS.ProcessEnv = process.env,
+  e2eFlags = true,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(base)) {
+    if (typeof v === "string" && !DROPPED_FROM_APP_ENV.includes(k)) env[k] = v;
+  }
+  const home = join(seeded.root, "home");
+  env.AYA_HOME = seeded.ayaHome;
+  env.CODEX_HOME = join(seeded.root, "codex-home");
+  env.GROK_HOME = join(seeded.root, "grok-home");
+  // Only if the runner set them: an unset one already falls back under HOME.
+  if (env.CLAUDE_CONFIG_DIR) env.CLAUDE_CONFIG_DIR = join(home, ".claude");
+  if (env.XDG_CONFIG_HOME) env.XDG_CONFIG_HOME = join(home, ".config");
+  if (env.OPENCODE_CONFIG_DIR) env.OPENCODE_CONFIG_DIR = join(home, ".config", "opencode");
+  if (e2eFlags) {
+    env.AYA_E2E_PTY_SHUTDOWN = "1";
+    if (!base.CI) env.AYA_E2E_HEADLESS = "1";
+  }
+  return Object.assign(env, seeded.launchEnv);
 }

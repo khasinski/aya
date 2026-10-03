@@ -23,7 +23,8 @@ import { join } from "node:path";
 
 test.use({
   seedOptions: {
-    split: false,
+    // One pane: with two agent panes in a folder a restore starts fresh instead.
+    singleTab: { presetId: "shell", name: "Shell" },
     preStartPtyHost: true,
     presetList: [
       {

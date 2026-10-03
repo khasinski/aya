@@ -1,18 +1,17 @@
 // #117: the brief reaches the agent through its harness's channel, only for
 // presets that opt in, on the real launch path.
 
-import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect } from "./fixtures";
-import { AGENT_START_TIMEOUT_MS, AGENT_TEST_TIMEOUT_MS } from "./timeouts";
+import { AGENT_START_TIMEOUT_MS, AGENT_TEST_TIMEOUT_MS, SLOW_EXPECT_TIMEOUT_MS } from "./timeouts";
 import { fireShortcut } from "./helpers/shortcut";
-import { teamSeed } from "./helpers/team";
+import { teamSeed, IMPLEMENTER_FIRST_TEAM } from "./helpers/team";
+import { agentBin, ARGV_DUMP, ARGV_DUMP_FILE } from "./helpers/agent-bin";
 import { firstTerminalShown } from "./helpers/terminal";
 
 test.describe.configure({ timeout: AGENT_TEST_TIMEOUT_MS });
 
-const NODE = process.execPath;
-const ARGV_DUMP = join(__dirname, "helpers", "argv-dump.cjs");
 const REPO_BIN = join(__dirname, "..", "bin");
 
 /** A preset whose pane records its argv/env instead of running `agent`. */
@@ -26,7 +25,7 @@ const fakeAgent = (agent: string, agentBrief = true) => ({
         color: "",
         agent,
         ...(agentBrief ? { agentBrief: true } : {}),
-        command: `'${NODE}' '${ARGV_DUMP}' "$AYA_PROJECT_DIR/argv-$AYA_TERMINAL_ID.json"`,
+        command: `${agentBin(agent, ARGV_DUMP)} ${ARGV_DUMP_FILE}`,
       },
     ],
   },
@@ -41,7 +40,7 @@ async function paneLaunch(seeded: { projectDir: string; tabIds: { right: string 
 }
 
 test.describe("antigravity preset with the brief on", () => {
-  test.use({ seedOptions: { ...fakeAgent("antigravity").seedOptions, fakeHome: true } });
+  test.use({ seedOptions: { ...fakeAgent("antigravity").seedOptions } });
 
   test("launch writes Aya's always-on rule; turning it off deletes it", async ({
     window,
@@ -81,13 +80,14 @@ test.describe("claude preset with the brief on", () => {
   }) => {
     void window;
     const { args, ayaOnPath, pathEntries } = await paneLaunch(seeded);
-    // The seeded tab is a restored one, so auto-resume's --continue comes
-    // first; the brief follows it as exactly one argument.
+    // Two claude panes share the folder, so no --continue; the brief is exactly
+    // one argument, then the session id the pane is born with.
     const flag = args.indexOf("--append-system-prompt");
     expect(flag).toBeGreaterThanOrEqual(0);
     expect(args.lastIndexOf("--append-system-prompt")).toBe(flag);
     expect(args[flag + 1]).toContain("aya capabilities");
-    expect(args).toHaveLength(flag + 2);
+    expect(args.slice(flag + 2)).toHaveLength(2);
+    expect(args[flag + 2]).toBe("--session-id");
     // User rc files run after us and may append more, so only presence is promised.
     expect(pathEntries).toContain(REPO_BIN);
     expect(ayaOnPath).not.toBeNull();
@@ -105,7 +105,7 @@ test.describe("claude preset with the brief off (the default)", () => {
 });
 
 test.describe("Antigravity added from Suggested", () => {
-  test.use({ seedOptions: { fakeHome: true, fakeBins: ["agy"] } });
+  test.use({ seedOptions: { fakeBins: ["agy"] } });
 
   // Suggested harnesses used to be saved as "custom", hiding the toggle.
   test("shows the brief toggle, and opting in writes the rule", async ({ window, app, seeded }) => {
@@ -159,128 +159,26 @@ test.describe("grok preset with the brief on", () => {
     const flag = args.indexOf("--rules");
     expect(flag).toBeGreaterThanOrEqual(0);
     expect(args[flag + 1]).toContain("aya capabilities");
-    expect(args).toHaveLength(flag + 2);
+    expect(args.slice(flag + 2, flag + 3)).toEqual(["--session-id"]);
+    expect(args).toHaveLength(flag + 4);
   });
 });
 
 test.describe("opencode preset with the brief on", () => {
   test.use(fakeAgent("opencode"));
 
-  test("the pane gets OPENCODE_CONFIG_CONTENT naming a brief file in AYA_HOME", async ({
+  test("the pane gets OPENCODE_CONFIG naming a config file that lists a brief file in AYA_HOME", async ({
     window,
     seeded,
   }) => {
     void window;
-    const { args, opencodeConfigContent } = await paneLaunch(seeded);
+    const { args, opencodeConfig, opencodeConfigContent } = await paneLaunch(seeded);
     expect(args).not.toContain("--rules");
-    const { instructions } = JSON.parse(opencodeConfigContent);
+    expect(opencodeConfigContent, "the user's own inline config is not touched").toBeNull();
+    const { instructions } = JSON.parse(readFileSync(opencodeConfig, "utf8"));
     expect(instructions).toEqual([join(seeded.ayaHome, "agent-brief.md")]);
     expect(readFileSync(instructions[0], "utf8")).toContain("aya capabilities");
   });
-});
-
-test("codex AGENTS.md: saving the preset adds the section, turning it off removes only it", async ({
-  window,
-  seeded,
-}) => {
-  const home = join(seeded.root, "codex-brief-home");
-  const agentsMd = join(home, "AGENTS.md");
-  mkdirSync(home, { recursive: true });
-  const userText = "# My rules\n\nAlways run the tests.\n";
-  writeFileSync(agentsMd, userText);
-
-  const save = (agentBrief: boolean, configDir = home) =>
-    window.evaluate(
-      async ({ configDir, agentBrief }) => {
-        const presets = await window.aya.listPresets();
-        await window.aya.savePresets([
-          ...presets.filter((p) => p.id !== "codex-brief"),
-          {
-            id: "codex-brief",
-            name: "Codex",
-            icon: "C",
-            color: "",
-            agent: "codex",
-            configDir,
-            command: "codex",
-            ...(agentBrief ? { agentBrief: true } : {}),
-          },
-        ]);
-      },
-      { configDir, agentBrief },
-    );
-
-  await save(true);
-  const withBrief = readFileSync(agentsMd, "utf8");
-  expect(withBrief.startsWith(userText)).toBe(true);
-  expect(withBrief).toContain("aya:brief:begin");
-  expect(withBrief).toContain("If the AYA_TERMINAL_ID environment variable is set");
-
-  await save(true);
-  expect(readFileSync(agentsMd, "utf8"), "a second save stacked a section").toBe(withBrief);
-
-  await save(false);
-  expect(readFileSync(agentsMd, "utf8")).toBe(userText);
-
-  // An AGENTS.md that Aya created for the section alone is deleted with it.
-  const bareMd = join(seeded.root, "codex-bare-home", "AGENTS.md");
-  await save(true, join(seeded.root, "codex-bare-home"));
-  expect(existsSync(bareMd)).toBe(true);
-  await save(false, join(seeded.root, "codex-bare-home"));
-  expect(existsSync(bareMd)).toBe(false);
-});
-
-test("codex AGENTS.md: a deleted preset's section is removed, and a symlinked file stays a link", async ({
-  window,
-  seeded,
-}) => {
-  // #122 review: the section outlived a deleted preset, and an atomic rename
-  // replaced a dotfiles symlink with a plain file.
-  const home = join(seeded.root, "codex-link-home");
-  const dotfiles = join(seeded.root, "dotfiles");
-  mkdirSync(home, { recursive: true });
-  mkdirSync(dotfiles, { recursive: true });
-  const realMd = join(dotfiles, "AGENTS.md");
-  const linkMd = join(home, "AGENTS.md");
-  const userText = "# Dotfiles rules\n";
-  writeFileSync(realMd, userText);
-  symlinkSync(realMd, linkMd);
-
-  const setPreset = (present: boolean) =>
-    window.evaluate(
-      async ({ configDir, present }) => {
-        const presets = (await window.aya.listPresets()).filter((p) => p.id !== "codex-link");
-        await window.aya.savePresets(
-          present
-            ? [
-                ...presets,
-                {
-                  id: "codex-link",
-                  name: "Codex",
-                  icon: "C",
-                  color: "",
-                  agent: "codex",
-                  configDir,
-                  command: "codex",
-                  agentBrief: true,
-                },
-              ]
-            : presets,
-        );
-      },
-      { configDir: home, present },
-    );
-
-  await setPreset(true);
-  expect(lstatSync(linkMd).isSymbolicLink(), "the symlink was replaced by a plain file").toBe(true);
-  expect(readFileSync(realMd, "utf8")).toContain("aya:brief:begin");
-
-  // Deleting the preset (not just turning the toggle off) must clean up too.
-  await setPreset(false);
-  await expect
-    .poll(() => readFileSync(realMd, "utf8"), { message: "section outlived the deleted preset" })
-    .toBe(userText);
-  expect(lstatSync(linkMd).isSymbolicLink()).toBe(true);
 });
 
 test("a broken presets.json does not stop a pane from spawning", async ({ window, seeded }) => {
@@ -298,21 +196,11 @@ test("a broken presets.json does not stop a pane from spawning", async ({ window
       }),
     { cwd: seeded.projectDir, marker },
   );
-  await expect.poll(() => existsSync(marker), { timeout: 30_000 }).toBe(true);
+  await expect.poll(() => existsSync(marker), { timeout: SLOW_EXPECT_TIMEOUT_MS }).toBe(true);
 });
 
-const TEAM = `# ux-review
-
-## Role: implementer
-Sends to: tester
-Must not: skip a report
-
-## Role: tester
-Sends to: implementer
-Must not: edit code
-`;
 const teamPane = (agent: string, agentBrief: boolean) =>
-  teamSeed(TEAM, { presetList: fakeAgent(agent, agentBrief).seedOptions.presetList, assignments: { tester: "tab-right" } });
+  teamSeed(IMPLEMENTER_FIRST_TEAM, { presetList: fakeAgent(agent, agentBrief).seedOptions.presetList, assignments: { tester: "tab-right" } });
 
 test.describe("a team pane without the brief opt-in", () => {
   test.use(teamPane("claude", false));

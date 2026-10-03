@@ -17,7 +17,8 @@ test("terminal context menu can paste clipboard text", async ({ window, app }) =
       window.evaluate(() =>
         Array.from(document.querySelectorAll(".xterm-rows > div"))
           .map((row) => row.textContent ?? "")
-          .join("\n"),
+          // "": a long CI prompt wraps the pasted line mid-word at the pane width.
+          .join(""),
       ),
     )
     .toContain("AYA_CONTEXT_PASTE");

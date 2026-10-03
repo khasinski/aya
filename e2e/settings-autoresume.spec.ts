@@ -62,10 +62,11 @@ test.describe("real resume behavior", () => {
   // sandbox does not exec PTYs, so run them only in CI where node-pty works.
   test.skip(!process.env.CI, "needs real PTY execution (unavailable in local sandbox)");
 
+  // One pane: two of the same agent in one folder would not continue "the latest", a sibling's session.
   test.describe("auto-resume ON", () => {
     test.use({
       seedOptions: {
-        split: false,
+        singleTab: { presetId: "shell", name: "Claude" },
         presetList: [{ id: "shell", name: "Claude", icon: "✻", color: "", command: markerCmd, autoResume: true }],
       },
     });
@@ -88,7 +89,7 @@ test.describe("real resume behavior", () => {
   test.describe("auto-resume OFF", () => {
     test.use({
       seedOptions: {
-        split: false,
+        singleTab: { presetId: "shell", name: "Claude" },
         presetList: [{ id: "shell", name: "Claude", icon: "✻", color: "", command: markerCmd, autoResume: false }],
       },
     });
