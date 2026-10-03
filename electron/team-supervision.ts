@@ -59,3 +59,16 @@ export function stalledText({ round, since, messages, waits, nowMs }: { round: n
     ASK_USER
   );
 }
+
+/** The load since the last round, appended to the rhythm round: messages each role got and sent between roles,
+ *  the role most messages went to, and who waits on whom. Aya counts; what to change is the lead's call. */
+export function loadText({ log, roles, sinceMs, waits, nowMs }: { log: readonly TeamMessage[]; roles: readonly string[]; sinceMs: number; waits: readonly RoleWait[]; nowMs: number }): string {
+  const recent = log.filter((m) => roles.includes(m.from) && roles.includes(m.to) && m.from !== m.to && Date.parse(m.time) >= sinceMs);
+  if (!recent.length) return "";
+  const got = (r: string) => recent.filter((m) => m.to === r).length;
+  const sent = (r: string) => recent.filter((m) => m.from === r).length;
+  const rows = roles.filter((r) => got(r) || sent(r)).map((r) => `${r} got ${got(r)} sent ${sent(r)}`);
+  const top = [...roles].sort((a, b) => got(b) - got(a))[0];
+  const waiting = waits.length ? ` Waiting: ${waits.map((w) => `${w.waiter} on ${w.on} ${minutesSince(w.since, nowMs)} min`).join("; ")}.` : "";
+  return ` Load since ${clock(new Date(sinceMs).toISOString())}: ${rows.join("; ")}. Most messages went to ${top} (${got(top)}).${waiting}`;
+}

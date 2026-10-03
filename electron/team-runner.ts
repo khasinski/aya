@@ -11,7 +11,7 @@ import { HOLD_BUSY, NO_PANE_HOLD } from "./pane-holds";
 import { debugLog, debugOn } from "./team-debug";
 import { oneAtATime } from "./keyed-queue";
 import { noteRound, observe, quietTooLong, repoSince, resetProgress, roundsHeld, stalledWhenLastLooked, teamLiveness, type TeamProgress } from "./team-progress";
-import { pendingWaits, stalledText, supervisionText } from "./team-supervision";
+import { pendingWaits, stalledText, supervisionText, loadText } from "./team-supervision";
 import { openTeamStore, readText, type PendingTask, type TeamStore } from "./team-store";
 import { clock, ROUND_CHECK_MS, SILENCE_FIRST_MS, SILENCE_REPEAT_MS } from "./team-times";
 import { TEAM_SYSTEM_SENDER, TEAM_USER_SENDER } from "./team-definition";
@@ -398,7 +398,8 @@ export class TeamRunner {
       ? stalledText({ round, since: repoSince(progress), messages: progress.messages ?? 0, waits: await waits(), nowMs })
       : quiet
         ? supervisionText({ round, quietSince: progress.changedAt, waits: await waits(), nowMs })
-        : `Round ${round}: run your round as the team protocol says.`;
+        : `Round ${round}: run your round as the team protocol says.` +
+          loadText({ log: await store.annotatedLog(), roles: team.roles.map((r) => r.id), sinceMs: (await store.roundClockAt()) ?? nowMs - cadenceMs, waits: await waits(), nowMs });
     const message = { team: team.name, from: TEAM_SYSTEM_SENDER, to: lead, text };
     // A silence round was decided before the wait for the lead's pane: talk that went in meanwhile ends the silence.
     // Read once, as the lock is taken, before the paste (the second read, before the Enter, is the Pause's only).

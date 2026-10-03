@@ -229,6 +229,13 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
     }
   });
 
+  silenceTest("a rhythm round carries the load since the last round: messages per role and who got most", { cadence: true }, async (t) => {
+    await t.run("start", 10, "lead reports", 80, "tick");
+    const text = t.toLead().at(-1).text;
+    assert.match(text, /Round 1: run your round as the team protocol says\. Load since \d\d:\d\d: tester got 0 sent 1; implementer got 1 sent 0\./);
+    assert.match(text, /Most messages went to implementer \(1\)\. Waiting: tester on implementer \d+ min\.$/);
+  });
+
   silenceTest("the round with nobody waiting says so", async (t) => {
     await t.run("start", 91, "check");
     assert.match(t.toLead().at(-1).text, /Round 1: .*No role has an unanswered message/);
