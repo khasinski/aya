@@ -141,6 +141,15 @@ if ((mode.startsWith("ask") || (mode === "relaunch" && !relaunched)) && me === "
     const askMs = Number(process.argv[4]);
     if (!Number.isFinite(askMs)) throw new Error("ask-briefly needs its delay in ms");
     setTimeout(redraw, askMs);
+  } else if (mode === "ask-until-released") {
+    // The test, not a clock, decides when the prompt clears: prompt-release-<pane> in, prompt-cleared-<pane> out.
+    const dir = process.env.AYA_PROJECT_DIR;
+    const release = setInterval(() => {
+      if (!fs.existsSync(path.join(dir, `prompt-release-${me}`))) return;
+      clearInterval(release);
+      redraw();
+      fs.writeFileSync(path.join(dir, `prompt-cleared-${me}`), "");
+    }, 100);
   }
 } else if (mode === "transcript-waiting" && me === "tab-right") {
   process.stdin.setRawMode(true);
