@@ -15,6 +15,7 @@ import {
   MUST_NOT_FIELD,
   SECTION_MARKER,
   SENDS_TO_FIELD,
+  STATUS_COMMAND_SECTION,
   TEAM_SYSTEM_SENDER,
   TEAM_USER_SENDER,
   parseTeamFile,
@@ -82,6 +83,7 @@ The team file
 - Required "${SECTION_MARKER}Lead": one line, the id of the role that leads the team; name it yourself. The lead gets the task, and checks that nobody waits too long on someone else and that work is going on at all: when the team has made no progress for a while, Aya asks the lead for a round that says who waits on whom. Pick the role that takes the request and hands out the work, and give the reason in one sentence in the protocol. The save refuses a team without it.
 - Optional "${SECTION_MARKER}Cadence": one line "<role> every <N> min", N from 1-${MAX_CADENCE_MINUTES}, with the lead's role: the rhythm belongs to the lead. The save refuses a Cadence and a Lead that name different roles (cadence and lead name different roles; make them the same). While the team runs, Aya prompts the lead to start a new round every N minutes. A team with no Cadence still has its lead; it just gets no rounds on a timer.
 - Optional "${SECTION_MARKER}Protocol": rules every role follows, free text; no line may start with "${SECTION_MARKER}".
+- Leave out "${SECTION_MARKER}${STATUS_COMMAND_SECTION}": the user sets it in the Teams window, and the save refuses one from an agent.
 - No other "${SECTION_MARKER}" sections. Text between the title and the first section is dropped.
 
 Write it well

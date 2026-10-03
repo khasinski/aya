@@ -296,6 +296,10 @@ test("aya team stats <team> [--json]: the real CLI on a temp AYA_HOME, read-only
   assert.equal(json.messages.total, 2);
   assert.deepEqual(json.inbox.map((i) => [i.role, i.count]), [["lead", 1]]);
   assert.deepEqual(json.needsDebug, []);
+  // --now: the lead's round digest from the same files; message #2 waits on the lead.
+  r = runCli(h, ["team", "stats", "crew", "--now"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^Since \d\d:\d\d \(no round before\): \+2 messages, no commits\nWaiting on you: tester #2 for \d+ (h \d+ )?min\n/);
   assert.equal(readFileSync(join(h, "aya", "teams", "game", "crew", TEAM_FILES.log), "utf8"), before, "nothing written");
 });
 

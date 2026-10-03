@@ -13,6 +13,7 @@ export const TEAM_FILES = {
   typing: "typing.json",
   progress: "progress.json",
   deliveryNotes: "delivery-notes.json",
+  refused: "refused.jsonl",
 } as const;
 
 export const DEBUG_LOG_FILE = "debug.jsonl";

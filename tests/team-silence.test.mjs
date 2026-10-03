@@ -28,7 +28,7 @@ const M = 10 * MIN;
 const T = 60 * MIN;
 const ROLES = ["tester", "implementer"];
 
-const TEAM = ({ lead = true, cadence = false } = {}) => `# ux-review
+const TEAM = ({ lead = true, cadence = false, status = null } = {}) => `# ux-review
 
 ## Role: tester
 Sends to: implementer (findings)
@@ -37,7 +37,7 @@ Must not: edit code
 ## Role: implementer
 Sends to: tester (a change to check)
 Must not: skip a report
-${lead ? "\n## Lead\ntester\n" : ""}${cadence ? "\n## Cadence\ntester every 30 min\n" : ""}`;
+${lead ? "\n## Lead\ntester\n" : ""}${cadence ? "\n## Cadence\ntester every 30 min\n" : ""}${status ? `\n## Status command\n${status}\n` : ""}`;
 
 test("the defaults live in one place: 30 min first, 10 min after, stalled at 60, all under 3 minutes here", () => {
   assert.deepEqual([times.SILENCE_FIRST_MIN, times.SILENCE_REPEAT_MIN, times.STALL_AFTER_MIN], [30, 10, 60]);
@@ -227,11 +227,21 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
     }
   });
 
-  silenceTest("a rhythm round carries the load since the last round: messages per role and who got most", { cadence: true }, async (t) => {
+  silenceTest("a rhythm round carries the digest: what changed since, then only the sections with news", { cadence: true }, async (t) => {
     await t.run("start", 10, "lead reports", 80, "tick");
     const text = t.toLead().at(-1).text;
-    assert.match(text, /Round 1: run your round as the team protocol says\. Load since \d\d:\d\d: tester got 0 sent 1; implementer got 1 sent 0\./);
-    assert.match(text, /Most messages went to implementer \(1\)\. Waiting: tester on implementer \d+ min\.$/);
+    assert.match(text, /Round 1: run your round as the team protocol says\. Since \d\d:\d\d \(no round before\): \+1 message, no commits\./);
+    assert.doesNotMatch(text, /Load since|Needs action|Waiting on you|Refused sends/);
+  });
+
+  silenceTest("a rhythm round ends with the team's status command output", { cadence: true, status: "echo athena: gemma-best; echo laptop: nothing loaded" }, async (t) => {
+    await t.run("start", 10, "lead reports", 80, "tick");
+    assert.match(t.toLead().at(-1).text, /Round 1: run your round as the team protocol says\..*Status \(from the team's command\): athena: gemma-best \| laptop: nothing loaded/);
+  });
+
+  silenceTest("a failing status command is one line in the round, and the round still goes out", { cadence: true, status: "exit 3" }, async (t) => {
+    await t.run("start", 10, "lead reports", 80, "tick");
+    assert.match(t.toLead().at(-1).text, /Round 1: run your round as the team protocol says\..*Status \(from the team's command\): status command failed: exit 3/);
   });
 
   silenceTest("the round with nobody waiting says so", async (t) => {

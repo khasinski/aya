@@ -11,7 +11,9 @@ import { HOLD_BUSY, NO_PANE_HOLD } from "./pane-holds";
 import { debugLog, debugOn } from "./team-debug";
 import { oneAtATime } from "./keyed-queue";
 import { noteRound, observe, quietTooLong, repoSince, resetProgress, roundsHeld, stalledWhenLastLooked, teamLiveness, type TeamProgress } from "./team-progress";
-import { pendingWaits, stalledText, supervisionText, loadText } from "./team-supervision";
+import { pendingWaits, stalledText, supervisionText } from "./team-supervision";
+import { digestOneLine, roundDigest } from "./team-digest";
+import { statusSection, STATUS_SECTION_TITLE } from "./team-status-command";
 import { openTeamStore, readText, type PendingTask, type TeamStore } from "./team-store";
 import { clock, ROUND_CHECK_MS, SILENCE_FIRST_MS, SILENCE_REPEAT_MS } from "./team-times";
 import { TEAM_SYSTEM_SENDER, TEAM_USER_SENDER } from "./team-definition";
@@ -355,6 +357,21 @@ export class TeamRunner {
     this.cancels.set(key, this.schedule(tick, ROUND_CHECK_MS));
   }
 
+  /** The rhythm round's digest, from the store and whether each role's agent is mid-turn now. */
+  private async digest(project: Parameters<typeof statusSection>[0]["project"], store: TeamStore, team: TeamDefinition, progress: TeamProgress, nowMs: number) {
+    const roles = team.roles.map((r) => r.id);
+    const isBusy = this.deps.busy;
+    const busy = isBusy
+      ? (await Promise.all(roles.map(async (r) => {
+          const pane = await store.paneOf(r);
+          return pane && (await isBusy(pane).catch(() => false)) ? r : null;
+        }))).filter((r): r is string => r !== null)
+      : null;
+    const status = await statusSection({ project, store, team });
+    const statusCommandSection = status ? { title: STATUS_SECTION_TITLE, items: [status.slice(STATUS_SECTION_TITLE.length + 2)] } : null;
+    return roundDigest({ roles, lead: team.lead, log: await store.annotatedLog(), progress, refused: await store.refusals(), turns: null, busy, nowMs, statusCommandSection });
+  }
+
   /** A look of the team's clock: records the repo, talk and screens. A round due on the rhythm, the silence or a stall
    *  goes to the lead, logged at its Enter; one not typed is logged as skipped and stays due. */
   private async roundTick(slug: string, name: string, stale: () => boolean): Promise<void> {
@@ -398,8 +415,7 @@ export class TeamRunner {
       ? stalledText({ round, since: repoSince(progress), messages: progress.messages ?? 0, waits: await waits(), nowMs })
       : quiet
         ? supervisionText({ round, quietSince: progress.changedAt, waits: await waits(), nowMs })
-        : `Round ${round}: run your round as the team protocol says.` +
-          loadText({ log: await store.annotatedLog(), roles: team.roles.map((r) => r.id), sinceMs: (await store.roundClockAt()) ?? nowMs - cadenceMs, waits: await waits(), nowMs });
+        : `Round ${round}: run your round as the team protocol says. ${digestOneLine(await this.digest(project, store, team, progress, nowMs))}`;
     const message = { team: team.name, from: TEAM_SYSTEM_SENDER, to: lead, text };
     // A silence round was decided before the wait for the lead's pane: talk that went in meanwhile ends the silence.
     // Read once, as the lock is taken, before the paste (the second read, before the Enter, is the Pause's only).

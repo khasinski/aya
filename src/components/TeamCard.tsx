@@ -11,6 +11,7 @@ import {
   rolePanesSummary,
   livenessLine,
   leadWarning,
+  statusCommandNote,
   leadWaitingLine,
   livePane,
   roleStatus,
@@ -72,6 +73,7 @@ export function TeamCard({
   const [picks, setPicks] = useState<Record<string, string>>({});
   const definition = team.definition;
   const leadWarned = leadWarning(definition);
+  const statusNote = statusCommandNote(definition, team.unsaved || team.repoChanged ? team.repoDefinition : null);
   const startNote = note && ("start" in note ? startSummary(note.start, team.log) : note.apply);
   const liveness = livenessLine(team.liveness);
   const leadWaiting = leadWaitingLine(team, waiting);
@@ -174,6 +176,11 @@ export function TeamCard({
       {startNote && (
         <div className={startNote.kind === "error" ? "aya-teams-warning" : "aya-teams-note"} aria-label={`${team.name} note`}>
           {startNote.text}
+        </div>
+      )}
+      {statusNote && (
+        <div className={`aya-teams-${statusNote.tone}`} aria-label={`${team.name} status command`}>
+          {statusNote.text}
         </div>
       )}
       {team.unsaved && (

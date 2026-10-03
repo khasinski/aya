@@ -323,23 +323,37 @@ async function logRefusedSend({ role, store }: Membership, to: string): Promise<
   if (!told) await systemLine(store, role.id, text);
 }
 
+/** Records a refused send for the lead's round (refused.jsonl) and returns the error to throw; a failed record must
+ *  not change what the sender is told. */
+async function refused(m: Membership, to: string, text: string, reason: string, error: string): Promise<Error> {
+  await m.store.recordRefusal({ from: m.role.id, to, reason, text: oneLine(text) }).catch((err: unknown) => console.warn("[aya] refused send not recorded:", err));
+  return new Error(error);
+}
+
 async function send(m: Membership, to: string, text: string, deps: TeamControlDeps): Promise<string> {
   const paused = m.store.pausedSince();
-  if ((await m.store.state()).paused) throw new Error(`team ${m.team.name} is paused; nothing was sent`);
+  if ((await m.store.state()).paused) throw await refused(m, to, text, "team paused", `team ${m.team.name} is paused; nothing was sent`);
   if ((await m.store.sentSince(m.role.id, Date.now() - MINUTE_MS)) >= TEAM_SENDS_PER_MINUTE) {
     await logRefusedSend(m, to);
-    throw new Error(
+    throw await refused(
+      m,
+      to,
+      text,
+      `${TEAM_SENDS_PER_MINUTE} sends in a minute`,
       `${m.role.id} sent ${TEAM_SENDS_PER_MINUTE} messages in the last minute; nothing was sent. If two roles keep answering each other, stop and report to the user`,
     );
   }
   if (!m.role.sendsTo.some((r) => r.to === to)) {
-    throw new Error(`${m.role.id} does not send to ${to}; sends to: ${m.role.sendsTo.map((r) => r.to).join(", ") || "nobody"}`);
+    const reason = m.team.roles.some((r) => r.id === to) ? "not in its sends-to" : "no such role";
+    throw await refused(m, to, text, reason, `${m.role.id} does not send to ${to}; sends to: ${m.role.sendsTo.map((r) => r.to).join(", ") || "nobody"}`);
   }
   // A Pause while this waits for the receiver's pane (another message is being typed there) stops it there too.
   const { entry, failure, typed, unseen } = await deliverAndLog(deps, m.project, m.store, { team: m.team.name, from: m.role.id, to, text }, undefined, paused);
   // Its Enter went: the sender must not send it again, only learn that nothing showed it was taken.
   if (unseen) return `written to ${to}'s pane (message ${entry.id}), but ${unseen.replace(/^typed, /, "")}; it is not resent\n`;
   if (failure && typed) throw new Error(`${to}: ${failure}; message ${entry.id} is not resent`);
+  // Kept for the inbox, but a role without a pane may never read it: the lead hears of it with the refusals.
+  if (failure === NO_PANE_HOLD) throw await refused(m, to, text, `no pane, kept as #${entry.id}`, `${to}: ${failure}; nothing was typed, message ${entry.id} is kept for aya team inbox`);
   if (failure) throw new Error(`${to}: ${failure}; nothing was typed, message ${entry.id} is kept for aya team inbox`);
   return `written to ${to}'s pane (message ${entry.id}); this does not mean it was read\n`;
 }

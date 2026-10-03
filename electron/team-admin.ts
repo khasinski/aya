@@ -12,6 +12,7 @@ import {
   MUST_NOT_FIELD,
   SECTION_MARKER,
   SENDS_TO_FIELD,
+  STATUS_COMMAND_SECTION,
   TeamFileError,
   leadProblemOf,
   parseTeamFile,
@@ -144,7 +145,25 @@ function refuseLossy(team: TeamDefinition, text: string): void {
       read.responsibilities === flat(role.responsibilities) &&
       JSON.stringify(read.sendsTo) === JSON.stringify(role.sendsTo.map((s) => ({ to: s.to, what: flat(s.what) })));
     if (!same) throw new Error(`role "${role.id}" would not read back the same from the team file; check for line breaks or parentheses`);
+  }  if ((back.statusCommand ?? "") !== (team.statusCommand?.trim() ?? "")) throw new Error("the status command would not read back the same from the team file");
+}
+
+/** An agent's save keeps the status command the user saved: the command runs with the user's rights outside any
+ *  pane's sandbox, so only the Teams window sets or changes it. */
+async function withSavedStatusCommand(teamHome: string, project: ProjectConfig, team: TeamDefinition): Promise<TeamDefinition> {
+  const savedText = await openTeamStore(teamHome, project.slug, team.name).savedDefinition();
+  let saved: string | undefined;
+  try {
+    saved = savedText === null ? undefined : parseTeamFile(team.name, savedText).statusCommand;
+  } catch {
+    saved = undefined;
   }
+  const given = team.statusCommand?.trim() || undefined;
+  if (given !== undefined && given !== saved) {
+    throw new TeamFileError(team.name, `"${SECTION_MARKER}${STATUS_COMMAND_SECTION}" runs with the user's rights, so only the user sets it, in the Teams window; leave the section out`);
+  }
+  const { statusCommand: _, ...rest } = team;
+  return saved === undefined ? rest : { ...rest, statusCommand: saved };
 }
 
 export class TeamExistsError extends Error {
@@ -166,7 +185,8 @@ export async function saveTeam(
 ): Promise<void> {
   refuseReservedRoles(given);
   refuseFieldLines(given);
-  const team = withLead(given);
+  const led = withLead(given);
+  const team = byAgent ? await withSavedStatusCommand(teamHome, project, led) : led;
   const text = serializeTeam(team);
   refuseLossy(team, text);
   const file = teamFile(project, team.name);

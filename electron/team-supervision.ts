@@ -8,8 +8,9 @@ import { clock } from "./team-times";
 export interface RoleWait {
   waiter: string;
   on: string;
-  /** The first message of the waiter's that the other role has not answered yet (ISO). */
+  /** The first message of the waiter's that the other role has not answered yet (ISO), and its id. */
   since: string;
+  id: number;
 }
 
 /** Pairs where nothing `on` sent since `waiter` wrote to it reached `waiter`, directly or round a ring; a message to a
@@ -30,7 +31,7 @@ export function pendingWaits(log: readonly TeamMessage[], roles: readonly string
     for (const on of roles) {
       const answered = heard.get(waiter)!.get(on) ?? 0;
       const first = own.find((m) => m.from === waiter && m.to === on && m.id > answered);
-      if (first) waits.push({ waiter, on, since: first.time });
+      if (first) waits.push({ waiter, on, since: first.time, id: first.id });
     }
   }
   return waits.sort((a, b) => Date.parse(a.since) - Date.parse(b.since));
@@ -60,9 +61,6 @@ export function stalledText({ round, since, messages, waits, nowMs }: { round: n
   );
 }
 
-const LOAD_WAIT_MIN = 5;
-const LOAD_WAITS_SHOWN = 3;
-
 /** The messages between the team's roles: Aya's, the user's, other roles' and a role's to itself are not load. */
 export const betweenRoles = (log: readonly TeamMessage[], roles: readonly string[]): TeamMessage[] =>
   log.filter((m) => roles.includes(m.from) && roles.includes(m.to) && m.from !== m.to);
@@ -74,17 +72,4 @@ export function roleLoad(messages: readonly TeamMessage[], roles: readonly strin
   const load = roles.filter((r) => got(r) || sent(r)).map((role) => ({ role, got: got(role), sent: sent(role) }));
   const top = [...roles].sort((a, b) => got(b) - got(a))[0] ?? "";
   return { load, top: { role: top, got: got(top) } };
-}
-
-/** The load since the last round, appended to the rhythm round: messages each role got and sent between roles,
- *  the role most messages went to, and who waits on whom. Aya counts; what to change is the lead's call. */
-export function loadText({ log, roles, sinceMs, waits, nowMs }: { log: readonly TeamMessage[]; roles: readonly string[]; sinceMs: number; waits: readonly RoleWait[]; nowMs: number }): string {
-  const recent = betweenRoles(log, roles).filter((m) => Date.parse(m.time) >= sinceMs);
-  if (!recent.length) return "";
-  const { load, top } = roleLoad(recent, roles);
-  const rows = load.map(({ role, got, sent }) => `${role} got ${got} sent ${sent}`);
-  // Short waits are a reply on its way: only the three longest of five minutes or more.
-  const long = waits.filter((w) => minutesSince(w.since, nowMs) >= LOAD_WAIT_MIN).slice(0, LOAD_WAITS_SHOWN);
-  const waiting = long.length ? ` Waiting: ${long.map((w) => `${w.waiter} on ${w.on} ${minutesSince(w.since, nowMs)} min`).join("; ")}.` : "";
-  return ` Load since ${clock(new Date(sinceMs).toISOString())}: ${rows.join("; ")}. Most messages went to ${top.role} (${top.got}).${waiting}`;
 }

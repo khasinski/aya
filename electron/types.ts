@@ -892,6 +892,8 @@ export interface TeamDefinition {
   /** An old file named another role under "## Lead" than its "## Cadence": that role (the cadence's leads). */
   leadConflict?: string | null;
   protocol: string;
+  /** "## Status command": one shell line whose output Aya appends to the lead's round; absent when the team has none. */
+  statusCommand?: string;
 }
 
 export interface TeamMessage {
