@@ -27,10 +27,10 @@ export function addDialogText(ask: AddAsk): { message: string; detail: string } 
   };
 }
 
-export async function confirmAddInAya(ask: AddAsk, win: BrowserWindow | null): Promise<boolean> {
+export async function confirmAddInAya(ask: AddAsk, win: BrowserWindow | null, signal?: AbortSignal): Promise<boolean> {
   // Lazy: plain Node tests load control.ts and must not load Electron.
   const { dialog } = require("electron") as typeof import("electron");
-  const options = { type: "question" as const, buttons: ["Add", "Cancel"], defaultId: CANCEL_BUTTON, cancelId: CANCEL_BUTTON, noLink: true, ...addDialogText(ask) };
+  const options = { type: "question" as const, buttons: ["Add", "Cancel"], defaultId: CANCEL_BUTTON, cancelId: CANCEL_BUTTON, noLink: true, signal, ...addDialogText(ask) };
   const { response } = win && !win.isDestroyed() ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
   return response === ADD_BUTTON;
 }

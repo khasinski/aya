@@ -40,8 +40,9 @@ await new Promise((r) => ollama.listen(0, "127.0.0.1", r));
 const ollamaPort = ollama.address().port;
 
 const socket = join(root, "aya.sock");
-// Stands in for Aya's Add / Cancel dialog: records what the user was shown and answers `dialog.answer`.
-const dialog = { answer: true, asked: [] };
+// Stands in for Aya's Add / Cancel dialog: records what the user was shown and answers `dialog.answer`,
+// after `dialog.holdMs` or once Aya closes it (`dialog.closed`), as the user clicking late would.
+const dialog = { answer: true, asked: [], holdMs: 0, closed: null, answered: null };
 const stop = startControlServerOn(socket, {
   getWindow: () => null,
   openProject: () => {},
@@ -49,9 +50,18 @@ const stop = startControlServerOn(socket, {
   machines: {
     ayaHome,
     userHome: home,
-    confirmAdd: async (ask) => {
+    confirmAdd: async (ask, signal) => {
       dialog.asked.push(ask);
-      return dialog.answer;
+      if (dialog.holdMs) {
+        await new Promise((r) => {
+          const timer = setTimeout(r, dialog.holdMs);
+          signal?.addEventListener("abort", () => (clearTimeout(timer), r()));
+        });
+      }
+      dialog.closed = signal?.aborted ?? false;
+      const answer = dialog.answer;
+      dialog.answered?.();
+      return answer;
     },
   },
 });
@@ -62,8 +72,12 @@ test.after(() => {
 });
 
 function aya(...args) {
+  return ayaWith({}, ...args);
+}
+
+function ayaWith(env, ...args) {
   return new Promise((done, fail) => {
-    const child = spawn(cli, ["machines", ...args], { env: { ...envWithoutAya(), AYA_SOCKET: socket, USER: "justi" } });
+    const child = spawn(cli, ["machines", ...args], { env: { ...envWithoutAya(), AYA_SOCKET: socket, USER: "justi", ...env } });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (c) => (stdout += c));
@@ -77,6 +91,9 @@ const registry = () => JSON.parse(readFileSync(registryFile, "utf8"));
 const reset = () => {
   dialog.answer = true;
   dialog.asked = [];
+  dialog.holdMs = 0;
+  dialog.closed = null;
+  dialog.answered = null;
   rmSync(registryFile, { force: true });
   rmSync(join(root, "ssh", "calls"), { force: true });
   clearMachineStatusCache();
@@ -109,6 +126,20 @@ for (const c of sentenceAnswers) {
     else assert.throws(() => statSync(registryFile), /ENOENT/);
   });
 }
+
+test("the CLI gives up before the user clicks Add: Aya closes the dialog, nothing is added, the CLI says so", async () => {
+  reset();
+  fake.setMode("athena", "down");
+  dialog.holdMs = 5000;
+  const answered = new Promise((r) => (dialog.answered = r));
+  const r = await ayaWith({ AYA_REPLY_TIMEOUT_MS: "1000" }, "add", "--ssh", "athena");
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /no answer from Aya after 1 s; nothing was added, Aya closed its dialog/);
+  await answered;
+  assert.equal(dialog.closed, true, "Aya closed the dialog when the caller left");
+  await new Promise((r) => setTimeout(r, 200));
+  assert.throws(() => statSync(registryFile), /ENOENT/, "a late Add registers nothing");
+});
 
 test("add: only an ambiguous word drafts nothing, and an unknown host is named", async () => {
   reset();

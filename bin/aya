@@ -275,7 +275,13 @@ function connect() {
     connected = true;
     client.write(`${JSON.stringify(request)}\n`);
     const deadline = setTimeout(() => {
-      console.error(`aya: no answer from Aya after ${REPLY_TIMEOUT_MS / 1000} s; the command may still be in progress (a team message shows in aya team inbox once typed).`);
+      // Aya stops waiting on its Add dialog once this connection closes, so a late click adds nothing.
+      const addingMachine = request.type === "machines" && request.argv[0] === "add";
+      console.error(
+        addingMachine
+          ? `aya: no answer from Aya after ${REPLY_TIMEOUT_MS / 1000} s; nothing was added, Aya closed its dialog. Run the add again when you can answer it.`
+          : `aya: no answer from Aya after ${REPLY_TIMEOUT_MS / 1000} s; the command may still be in progress (a team message shows in aya team inbox once typed).`,
+      );
       process.exitCode = 1;
       client.destroy();
     }, REPLY_TIMEOUT_MS);

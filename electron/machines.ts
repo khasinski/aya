@@ -51,8 +51,8 @@ export interface MachinesDeps {
   userHome: string;
   probe?: typeof probeMachine;
   now?: () => Date;
-  /** Aya's own Add / Cancel dialog with the probe results; without it nothing can be added. */
-  confirmAdd?: (ask: AddAsk) => Promise<boolean>;
+  /** Aya's own Add / Cancel dialog with the probe results; without it nothing can be added. It closes on `signal`. */
+  confirmAdd?: (ask: AddAsk, signal?: AbortSignal) => Promise<boolean>;
 }
 
 /** What the user is asked to add, with what a read-only probe found on each machine. */
@@ -422,11 +422,16 @@ function parseManualAdd(argv: string[], registry: Registry, aliases: string[]): 
 const sameReach = (a: Reach, b: Reach) => (a === "local" ? b === "local" : b !== "local" && a.ssh === b.ssh);
 
 /** Probes the draft read-only, asks the user in Aya, and saves only on the dialog's Add; the caller is never asked. */
-async function addMachines(drafted: DraftMachine[], deps: MachinesDeps, pane: string | undefined, before: string): Promise<MachinesAnswer> {
+async function addMachines(drafted: DraftMachine[], deps: MachinesDeps, pane: string | undefined, before: string, callerGone?: AbortSignal): Promise<MachinesAnswer> {
   if (!deps.confirmAdd) throw new Error("adding a machine needs the user's yes in Aya, and Aya's dialog is not available here; nothing was saved");
   const probe = deps.probe ?? probeMachine;
   const machines = await Promise.all(drafted.map(async (m) => ({ ...m, status: await probe(m.reach, m.port, { now: deps.now }) })));
-  if (!(await deps.confirmAdd({ machines, ...(pane ? { pane } : {}) }))) return { output: `${before}Not added: cancelled in Aya.\n` };
+  const gone = new Error("the command stopped waiting for the user's answer; nothing was added");
+  if (callerGone?.aborted) throw gone;
+  const yes = await deps.confirmAdd({ machines, ...(pane ? { pane } : {}) }, callerGone);
+  // A dialog that cannot be closed (no parent window on macOS) still answers; that answer comes too late.
+  if (callerGone?.aborted) throw gone;
+  if (!yes) return { output: `${before}Not added: cancelled in Aya.\n` };
   await mutateRegistry(deps, (registry) => {
     for (const m of drafted) {
       if (registry.machines.some((x) => x.id === m.id || sameReach(x.reach, m.reach))) throw new Error(`${m.id} was already added meanwhile; nothing was saved`);
@@ -442,7 +447,7 @@ function findMachine(registry: Registry, id: string | undefined): Machine {
   return machine;
 }
 
-export async function handleMachinesRequest(request: MachinesRequest, deps: MachinesDeps, pane?: string): Promise<MachinesAnswer> {
+export async function handleMachinesRequest(request: MachinesRequest, deps: MachinesDeps, pane?: string, callerGone?: AbortSignal): Promise<MachinesAnswer> {
   const [sub, ...rest] = request.argv;
   const now = () => deps.now?.() ?? new Date();
   if (sub === undefined || sub === "--json") {
@@ -458,13 +463,13 @@ export async function handleMachinesRequest(request: MachinesRequest, deps: Mach
   }
   if (sub === "add") {
     const [aliases, registry] = await Promise.all([sshHostAliases(deps.userHome), loadRegistry(deps)]);
-    if (rest[0]?.startsWith("--")) return addMachines(parseManualAdd(rest, registry, aliases), deps, pane, "");
+    if (rest[0]?.startsWith("--")) return addMachines(parseManualAdd(rest, registry, aliases), deps, pane, "", callerGone);
     const sentence = rest.join(" ").trim();
     if (!sentence) throw new Error(USAGE);
     const draft = draftFromSentence(sentence, aliases, registry);
     const output = formatDraft(draft);
     if (draft.machines.length === 0) return { output };
-    return addMachines(draft.machines, deps, pane, output);
+    return addMachines(draft.machines, deps, pane, output, callerGone);
   }
   if (sub === "remove") {
     if (rest.length !== 1) throw new Error(USAGE);
