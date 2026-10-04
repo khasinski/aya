@@ -154,8 +154,27 @@ written with `atomic-write.ts`, mode 0600.
 Each step ships only after the one before it is used and the open question
 it depends on is answered.
 
-2. **Machines view.** A top-bar chip and a panel over the same status
-   function, plus Settings -> Machines for the sentence and Remove.
+2. **Machines view with suggestions.** A top-bar chip and a panel over the
+   same status function, plus Settings -> Machines:
+   - **Suggested machines.** Aya lists every Host alias in `~/.ssh/config`
+     (with `Include`) that is not added yet, and `local`. Listing reads only
+     the config file; it connects to nothing. A "Check" per host, or "Check
+     all" on the user's click, runs the step 1 read-only probe with
+     `BatchMode=yes` and a short timeout, and shows: reachable or why not,
+     GPU, memory, Ollama and its models. Hosts with Ollama and a GPU come
+     first, unreachable ones last. "Add" saves a suggestion after the user
+     sees what it found; nothing is added on its own. Aya never probes
+     hosts the user did not ask it to check, because a config can name
+     servers the user does not want touched.
+   - **A host that is not in the config yet.** "Set up ssh" asks for the
+     address and user, checks for a key and offers to create one, opens a
+     shell pane with `ssh-copy-id` where the user types the password (Aya
+     never sees or stores it), then shows the `Host` block for
+     `~/.ssh/config` and writes it only on the user's yes, after a backup.
+     The new host then appears among the suggestions.
+   - The added list with state, occupancy ("who and why") and Remove.
+   Only added machines show in the top-bar chip, its panel and
+   `aya machines`; suggestions live in Settings until the user adds them.
 3. **Routing test (cheap, before any proxy).** With the user's approval
    and during a window they pick, put a throwaway forwarding shim (a small
    Node script on `127.0.0.1`, no Aya changes) in front of one machine's
