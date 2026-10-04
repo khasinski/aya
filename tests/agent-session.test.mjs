@@ -386,6 +386,22 @@ test("a launch that already resumes, names its session, or chains commands is le
   assert.deepEqual(withOwnSessionId("grok --resume x"), { command: "grok --resume x", sessionId: null });
 });
 
+test("codex and opencode, which take no --session-id, are never given one", () => {
+  const commands = [
+    "codex",
+    "codex --model m",
+    "opencode",
+    "exec opencode --model m",
+    "CODEX_HOME=/x codex",
+    // inferAgent calls a preset with CLAUDE_CONFIG_DIR claude whatever binary runs.
+    "CLAUDE_CONFIG_DIR=/x codex",
+    "CLAUDE_CONFIG_DIR=/x /usr/local/bin/opencode",
+  ];
+  for (const command of commands) {
+    assert.deepEqual(withOwnSessionId(command), { command, sessionId: null }, command);
+  }
+});
+
 test("sharesFolder: symlinks, trailing slashes and dot segments are one folder; other folders are not", async () => {
   const link = linkTo(A);
   assert.equal(await sharesFolder(A, [A]), true);

@@ -54,8 +54,35 @@ test("an agent without screen rules of its own gets the same wording", async () 
   assert.equal(await hold(recorded("recorded-claude-100.txt"), "opencode"), AYA);
 });
 
+// The git-status approvals with the command swapped, so `aya debug on` is drawn where a recorded command sits.
+const AYA_DEBUG = [
+  ["claude", "synthetic-claude-git-status.txt", "cd /Users/dev/aya && git status", "aya debug on                   "],
+  ["codex", "synthetic-codex-git-status.txt", "git status --short", "aya debug on"],
+];
+
+for (const [agent, name, from, to] of AYA_DEBUG) {
+  test(`${agent}: approval of \`aya debug on\` -> aya wording`, async () => {
+    const screen = fixture(name).map((row) => row.replace(from, to));
+    assert.ok(screen.some((row) => row.includes("aya debug on")));
+    assert.equal(await hold(screen, agent), AYA);
+  });
+}
+
+// The top-level `case` arms of bin/aya's dispatch, so a new subcommand cannot be missed here.
+function ayaSubcommands() {
+  const script = readFileSync(join(process.cwd(), "bin", "aya"), "utf8");
+  const dispatch = script.slice(script.indexOf('\ncase "$command" in'));
+  const arms = [...dispatch.matchAll(/^  ([a-z|-]+)\)/gm)].flatMap((m) => m[1].split("|"));
+  return arms.filter((arm) => !arm.startsWith("-") && arm !== "help");
+}
+
+test("bin/aya's subcommands are found (the dispatch parse still works)", () => {
+  const subs = ayaSubcommands();
+  for (const sub of ["open", "team", "status", "debug"]) assert.ok(subs.includes(sub), sub);
+});
+
 test("every aya subcommand in an approval prompt is an aya command", () => {
-  for (const sub of ["open", "project", "focus", "notify", "remote", "status", "pane", "team", "presets", "capabilities"]) {
+  for (const sub of ayaSubcommands()) {
     assert.equal(asksToRunAya([`  $ aya ${sub} x`]), true, sub);
     assert.equal(asksToRunAya([`  $ FOO=1 aya  ${sub}`]), true, `${sub} after an assignment`);
   }

@@ -7,7 +7,6 @@ import { test, expect } from "./fixtures";
 import type { SeededEnv } from "./helpers/seed";
 import {
   agentPreset,
-  ASK_BRIEFLY_MS,
   RELAUNCH_MINUTE_MS,
   RELAUNCH_REDELIVERY_MS as E2E_REDELIVERY_MS,
   readAssignments,
@@ -76,7 +75,7 @@ test("a relaunch that restarts the agents keeps the panes, counts on from the la
 });
 
 test.describe("the pty host outliving the app", () => {
-  test.use(runningTeam(RELAUNCH_TEAM, agentPreset(`ask-briefly ${ASK_BRIEFLY_MS}`, "claude"), { [`${TEAM_STATE_DIR}/log.jsonl`]: OLD_ROUND_LOG }));
+  test.use(runningTeam(RELAUNCH_TEAM, agentPreset("ask-until-released", "claude"), { [`${TEAM_STATE_DIR}/log.jsonl`]: OLD_ROUND_LOG }));
 
   test("keeps the agents running, and the held report is typed once the reused pane is free", async ({ seeded }) => {
     test.setTimeout(TEAM_RELAUNCH_TEST_TIMEOUT_MS);
@@ -87,15 +86,18 @@ test.describe("the pty host outliving the app", () => {
     const first = await launch(env);
     await expect.poll(() => read("tab-left"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/FAIL .*implementer: shows an approval prompt/);
     await expect.poll(() => roundsIn(read("tab-left")).length, { timeout: ROUND_WAIT_MS }).toBeGreaterThan(0);
-    // Quit while the approval prompt is still up (ASK_BRIEFLY_MS); it clears while no app is running.
+    // The approval prompt is still up at quit, however late the round came; it clears while no app is running.
+    expect(read("tab-right")).not.toMatch(/round 5 ready/);
     await quit(first.app);
     const before = read("tab-left");
     const lastRound = Math.max(...roundsIn(before));
+    writeFileSync(join(seeded.projectDir, "prompt-release-tab-right"), "");
+    await expect.poll(() => existsSync(join(seeded.projectDir, "prompt-cleared-tab-right"))).toBe(true);
 
     // The surviving agent asks who it is while no Aya is listening: it waits for the relaunch.
     writeFileSync(join(seeded.projectDir, "whoami-request-tab-left"), "");
     await launch(env);
-    await expect.poll(() => read("tab-right"), { timeout: ASK_BRIEFLY_MS + 2 * TEAM_REDELIVERY_MS }).toMatch(/round 5 ready/);
+    await expect.poll(() => read("tab-right"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS + 2 * TEAM_REDELIVERY_MS }).toMatch(/round 5 ready/);
     // The same agent process: a restarted one would have truncated its log.
     expect(read("tab-left").startsWith(before)).toBe(true);
     const whoamiOut = join(seeded.projectDir, "whoami-out-tab-left");

@@ -25,7 +25,7 @@ const OPENCODE = [
   ["the closing edge alone is enough too", [["  ╹▀▀▀▀▀▀"]], null],
   ["a crash report before any UI is not a composer", [["error: something went wrong", "please file a GitHub issue"]], /starting up/],
   ["logo, then composer", [LOGO_ONLY, IDLE], null],
-  ["composer, then back to a blank redraw of a resumed session before its footer", [BLANK, IDLE], null],
+  ["composer, then back to a blank redraw of a resumed session before its footer", [IDLE, BLANK, ["the resumed session's last answer"]], null],
 ];
 for (const [name, screens, want] of OPENCODE) {
   test(`opencode: ${name}`, async () => {
