@@ -79,6 +79,9 @@ function taskStillHeld(task: NonNullable<TeamStartResult["task"]>, log: TeamMess
 export const HOLD_NOT_RUNNING = "is not running (exited, or its tab was not opened yet)";
 // electron/pane-holds.ts HOLD_USAGE_LIMIT: a blocked role whose CLI ran out says so, not "waiting for you".
 export const HOLD_USAGE_LIMIT = "is out of credits or at its usage limit";
+// electron/pane-holds.ts HOLD_ACCOUNT_SETTING: the offer is named, so no one answers it as a routine approval.
+export const HOLD_ACCOUNT_SETTING =
+  "Claude Code offers an account-wide setting: block reads outside the working directories; your choice applies to every session on this account";
 // electron/pane-holds.ts NO_PANE_HOLD: a role whose pane was closed or never given.
 export const NO_PANE_HOLD = "no pane assigned";
 
@@ -86,6 +89,12 @@ export const NO_PANE_HOLD = "no pane assigned";
 export function clock(iso: string): string {
   const time = new Date(iso);
   return `${String(time.getHours()).padStart(2, "0")}:${String(time.getMinutes()).padStart(2, "0")}`;
+}
+
+/** A blocked role as the team line says it: the holds that name themselves, else a dialog for the user. */
+function blockedWords(reason: string): string {
+  if (reason === HOLD_USAGE_LIMIT) return reason;
+  return reason === HOLD_ACCOUNT_SETTING ? `is waiting for you: ${reason}` : "is waiting for you in its CLI";
 }
 
 const everyRound = (min: number) => `the lead gets a round every ${min} min`;
@@ -122,7 +131,7 @@ export function livenessLine({ status, stalledSince, blocked, unreached, silence
     return { text: `stalled: no change to the repo since ${clock(repo?.since ?? stalledSince ?? "")}${what} - rounds are paused until the repo changes`, tone: "held" };
   }
   const since = stalledSince ? `stalled since ${clock(stalledSince)}` : "";
-  const who = blocked.map((b) => `${b.role} ${b.reason === HOLD_USAGE_LIMIT ? b.reason : "is waiting for you in its CLI"}`).join("; ");
+  const who = blocked.map((b) => `${b.role} ${blockedWords(b.reason)}`).join("; ");
   return { text: since ? `${since} - ${who}` : who, tone: "held" };
 }
 
@@ -201,7 +210,11 @@ export function roleStatus(
   const pane = livePane(team, role, tabs);
   if (!pane) return { text: "no pane", tone: "none" };
   const blocked = team.liveness?.blocked.find((b) => b.role === role);
-  if (blocked) return { text: `${blocked.reason === HOLD_USAGE_LIMIT ? blocked.reason : "waiting for you"} since ${clock(blocked.since)}`, tone: "held" };
+  if (blocked) {
+    const since = clock(blocked.since);
+    if (blocked.reason === HOLD_USAGE_LIMIT) return { text: `${blocked.reason} since ${since}`, tone: "held" };
+    return { text: `waiting for you since ${since}${blocked.reason === HOLD_ACCOUNT_SETTING ? `: ${blocked.reason}` : ""}`, tone: "held" };
+  }
   const asked = waiting[pane];
   if (asked && !asked.on) return { text: asked.restart === "unconfirmed" ? `asked before the restart (${askedAt(asked)}), not confirmed` : `waiting for you since ${askedAt(asked)}`, tone: "held" };
   const hold = team.paneHolds[role] ?? null;

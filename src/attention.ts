@@ -39,6 +39,14 @@ const LEVEL_RANK: Record<AttentionLevel, number> = {
   idle: 1,
 };
 
+export const SCREEN_WAITING_DETAIL = "Approval or input needed";
+
+/** A dialog Aya names on screen (an account-wide offer) says what it is, over any reported text. */
+export function waitingDetail(terminal: Pick<TerminalState, "screenDialog" | "externalStatus" | "status">): string {
+  if (terminal.status === "waiting" && terminal.screenDialog) return terminal.screenDialog;
+  return terminal.externalStatus?.text ?? SCREEN_WAITING_DETAIL;
+}
+
 export function attentionFor(
   project: ProjectConfig,
   terminal: TerminalState,
@@ -71,7 +79,7 @@ export function attentionFor(
       terminal,
       level: "waiting",
       title: `${terminal.name} is waiting`,
-      detail: terminal.externalStatus?.text ?? "Approval or input needed",
+      detail: waitingDetail(terminal),
     };
   }
   // A team role waiting on a teammate asks nothing of the user: listed with the idle ones, never counted.

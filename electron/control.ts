@@ -20,7 +20,7 @@ import {
 } from "./pane-target";
 import { CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
 import { handleTeamAuthorRequest } from "./team-author";
-import { HOLD_BUSY, HOLD_DRAFT, isDialogHold } from "./pane-holds";
+import { HOLD_BUSY, HOLD_DRAFT, isDialogHold, isUserOnlyHold } from "./pane-holds";
 import { debugAnswer } from "./team-debug";
 import { handleTeamRequest, oneLine, PaneHeldError, TEAMS_UNAVAILABLE, teammateToWaitOn, TextPastedError, TryAgainError, type TeamControlDeps } from "./team-control";
 import { handleTeamPanesRequest, THIS_PANE, type TeamPaneDeps } from "./team-panes";
@@ -92,6 +92,8 @@ export interface ControlServerOptions {
   /** Write bytes to one pane's PTY. Only `false` means not delivered; anything
    *  else - including `undefined` - counts as delivered. */
   writePane?: (terminalId: string, data: string) => Promise<boolean | void>;
+  /** Why the pane must not be typed into now (vt-state paneHold); pane-send refuses only a dialog for the user alone. */
+  paneHold?: (terminalId: string) => Promise<string | null>;
   /** All live windows (and window-like sinks); status updates are broadcast
    *  because the terminal they describe may be in an unfocused window. */
   getWindows?: () => ControlStatusSink[];
@@ -151,6 +153,9 @@ async function handlePaneRequest(
     const output = await options.readPane(terminalId);
     return { terminalId, projectSlug, name, output: tailForPaneRead(output) };
   }
+  // Any key, Enter or not, answers a select dialog; an unreadable screen is no reason to refuse.
+  const hold = await options.paneHold?.(terminalId).catch(() => null);
+  if (isUserOnlyHold(hold)) throw new Error(`pane "${name}": ${hold}. Only the user answers it, in that pane; nothing was typed`);
   await deliverToPane(options.writePane, terminalId, name, request.text, request.submit === true);
   return { terminalId, projectSlug, name };
 }

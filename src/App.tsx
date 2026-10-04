@@ -75,6 +75,7 @@ import { GPU_RELAUNCHED_EVENT } from "./window-events";
 import { uuid } from "./uuid";
 import { GIT_STATUS_POLL_INTERVAL_MS } from "./ui-timing";
 import { normalizeSoundOverrides } from "./terminal-sound-prefs";
+import { SCREEN_WAITING_DETAIL } from "./attention";
 import {
   MAX_SPLIT_LEAVES,
   assignTerminal,
@@ -1450,7 +1451,7 @@ export function App() {
           terminalId: terminal.id,
           level: "waiting",
           title: `${terminal.name} is waiting`,
-          detail: "Approval or input needed",
+          detail: event.dialog ?? SCREEN_WAITING_DETAIL,
         });
         return;
       }

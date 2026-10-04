@@ -2,7 +2,7 @@
 // since the last round and idle roles. Pure: the round (team-runner.ts) and `aya team stats --now` (team-stats.ts)
 // read the team's records their own way and both call roundDigest. Totals stay in `aya team stats`.
 
-import { HOLD_APPROVAL, HOLD_APPROVE_AYA, HOLD_CHOICE, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, HOLD_USAGE_LIMIT, NO_PANE_HOLD } from "./pane-holds";
+import { HOLD_ACCOUNT_SETTING, HOLD_APPROVAL, HOLD_APPROVE_AYA, HOLD_CHOICE, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, HOLD_USAGE_LIMIT, NO_PANE_HOLD } from "./pane-holds";
 import { TEAM_SYSTEM_SENDER } from "./team-definition";
 import { pendingWaits, type StatusWait } from "./team-supervision";
 import { clock, WALL_MINUTE_MS } from "./team-times";
@@ -83,6 +83,7 @@ const HOLD_LABELS: [string, string][] = [
   [HOLD_CHOICE, "numbered choice"],
   [HOLD_APPROVE_AYA, "aya command approval"],
   [HOLD_USAGE_LIMIT, "out of credits or at its usage limit"],
+  [HOLD_ACCOUNT_SETTING, HOLD_ACCOUNT_SETTING],
   [HOLD_DRAFT, "user typing"],
   [HOLD_NOT_RUNNING, "pane not running"],
   [NO_PANE_HOLD, "no pane"],

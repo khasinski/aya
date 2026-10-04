@@ -309,8 +309,8 @@ export type PtyEvent =
   // Derived from the pane's real rendered screen (electron/vt-state.ts):
   // whether an approval prompt is on screen RIGHT NOW. Unlike the raw-byte
   // heuristic it also reports when the prompt goes away, so it is emitted on
-  // both edges.
-  | { type: "vt-status"; ptyId: string; waiting: boolean };
+  // both edges. `dialog` names a dialog Aya tells apart (an account-wide offer).
+  | { type: "vt-status"; ptyId: string; waiting: boolean; dialog?: string };
 
 export interface WaitingNotificationRequest {
   projectSlug: string;

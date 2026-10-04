@@ -142,15 +142,19 @@ export function applyPtyEvent(
     if (!t || t.exitCode !== null) return prev;
     // The screen is the one source of a CLI dialog: it raises the bell over any reported status, and ends
     // the dialog's waiting, back to what was reported. Only the agent's own question outlives the screen.
-    if (!event.waiting && (t.status !== "waiting" || t.externalStatus?.level === "waiting")) return prev;
+    const screenDialog = event.waiting ? event.dialog : undefined;
+    const { screenDialog: shown, ...unnamed } = t;
+    if (!event.waiting && (t.status !== "waiting" || t.externalStatus?.level === "waiting")) {
+      return shown === undefined ? prev : { ...prev, [event.ptyId]: unnamed };
+    }
     // A dialog opening proves a turn runs: a done reported before it is the previous turn's (the hook has no turn start).
-    const { externalStatus, ...rest } = t;
+    const { externalStatus, ...rest } = unnamed;
     const reported = event.waiting && t.status !== "waiting" && externalStatus?.level === "done" ? undefined : externalStatus;
     const status = event.waiting ? "waiting" : reported ? controlLevelToTerminalStatus(reported.level) : "running";
-    if (t.status === status && t.bell === event.waiting) return prev;
+    if (t.status === status && t.bell === event.waiting && shown === screenDialog) return prev;
     return {
       ...prev,
-      [event.ptyId]: { ...rest, ...(reported ? { externalStatus: reported } : {}), status, bell: event.waiting },
+      [event.ptyId]: { ...rest, ...(reported ? { externalStatus: reported } : {}), ...(screenDialog ? { screenDialog } : {}), status, bell: event.waiting },
     };
   }
 
