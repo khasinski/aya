@@ -97,7 +97,7 @@ import { userShell } from "./shell";
 import { registerTeamIpc } from "./team-ipc";
 import { askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, presetAgent, teamPaneDeps, type PaneHost } from "./team-panes";
 import { confirmRestart, type RelaunchDeps } from "./relaunch-notes";
-import { ordinaryQuitInstalls, restartStaleHost } from "./update-quit";
+import { restartStaleHost, updateInstaller } from "./update-quit";
 import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
@@ -397,7 +397,7 @@ let updateCheckInFlight: Promise<UpdateStatus> | null = null;
 // True from the moment we hand off to ShipIt until we quit (#78). A second
 // install click must not spawn a second ShipIt - overlapping install requests
 // are a suspected cause of the silent-rollback failure.
-let updateInstalling = false;
+const updateLatch = { installing: false };
 // Sticky #78 warning: the phase it used to live in is replaced by the startup
 // auto-check 12 s later, so it is merged in separately and cleared on apply.
 let rollbackNotice: string | null = null;
@@ -1095,7 +1095,7 @@ async function reconcilePendingUpdate(win: BrowserWindow | null): Promise<void> 
   const diagnosis = diagnoseRelaunch(pending, app.getVersion());
   if (diagnosis === "none") return;
   await clearPendingUpdate();
-  updateInstalling = false;
+  updateLatch.installing = false;
   if (diagnosis === "applied") {
     rollbackNotice = null; // an install landed; retire any earlier warning
     return; // it worked; stay quiet
@@ -1204,7 +1204,7 @@ function configureAutoUpdates(win: BrowserWindow): void {
     // is the only place an async install failure can release the latch. The
     // marker is deliberately kept: `error` also fires for unrelated checks, and
     // deleting it there would cost the whole #78 detector.
-    updateInstalling = false;
+    updateLatch.installing = false;
     setUpdateStatus({
       phase: "error",
       message: error instanceof Error ? error.message : String(error),
@@ -1516,8 +1516,6 @@ let appQuitting = false;
 const TEAM_QUIT_SETTLE_MS = 2_000;
 let teamsAtQuit: TeamRunner | null = null;
 let teamsStopped = false;
-// An ordinary quit with a downloaded update decides once whether it installs (update-quit.ts).
-let quitUpdateDecided = false;
 // The install an ordinary quit started holds the quit this long at most before it quits without it.
 const QUIT_INSTALL_SETTLE_MS = 15_000;
 
@@ -2129,24 +2127,21 @@ async function handleStaleHost(): Promise<void> {
   }
 }
 
-/** An ordinary quit with a downloaded update: installs it (no relaunch) only when no pane shows background work, else
- *  quits and leaves it for Restart to update, which asks. The marker is written for diagnoseRelaunch (#78). */
-async function installOnOrdinaryQuit(): Promise<void> {
-  const status = getUpdateStatus();
-  if (!(await ordinaryQuitInstalls(relaunchDeps, status.phase === "downloaded"))) return app.quit();
-  updateInstalling = true;
-  try {
-    if (status.downloadedVersion) markPendingUpdateSync(status.downloadedVersion);
-    autoUpdater.autoRunAppAfterInstall = false;
-    autoUpdater.quitAndInstall(false, false);
-  } catch {
-    updateInstalling = false;
-    await clearPendingUpdate();
-    return app.quit();
-  }
-  // The updater quits once the installer has it; a handoff that fails asynchronously must not keep Aya open.
-  setTimeout(() => app.quit(), QUIT_INSTALL_SETTLE_MS).unref();
-}
+/** Restart to update (asks before stopping background work) and an ordinary quit's update (installs only past no
+ *  background work, else leaves it for Restart to update). Markers are written for diagnoseRelaunch (#78). */
+const updates = updateInstaller({
+  status: getUpdateStatus,
+  relaunch: relaunchDeps,
+  ask: (text) => askRestart("Restart to update", text),
+  latch: updateLatch,
+  mark: markPendingUpdate,
+  markSync: markPendingUpdateSync,
+  clearMark: clearPendingUpdate,
+  updater: autoUpdater,
+  quit: () => app.quit(),
+  failed: (message) => setUpdateStatus({ phase: "error", message }),
+  settleMs: QUIT_INSTALL_SETTLE_MS,
+});
 
 /** Red dot on the "Restart Aya" menu item - the manual reap affordance (#52).
  *  No-op until the application menu is installed. */
@@ -2744,41 +2739,7 @@ function registerIpc(): TeamRunner {
   ipcMain.handle("app:diagnostics", async () => diagnosticsReport());
   ipcMain.handle("updates:status", async () => getUpdateStatus());
   ipcMain.handle("updates:check", async () => checkForUpdates());
-  ipcMain.handle("updates:install", async () => {
-    const status = getUpdateStatus();
-    if (status.phase !== "downloaded") {
-      throw new Error("No downloaded update is ready to install.");
-    }
-    // One ShipIt at a time (#78): a double-click used to be able to fire two
-    // quitAndInstall handoffs, and overlapping installs are a suspected cause
-    // of the silent rollback.
-    if (updateInstalling) return;
-    // An update replaces the PTY host, so every pane restarts.
-    if (!(await confirmLosingWork("Restarting to update", "Restart to update"))) return;
-    if (updateInstalling) return;
-    updateInstalling = true;
-    try {
-      // Written before the handoff, since quitAndInstall quits. Inside the try:
-      // a failed marker write must not strand the latch with no updater error.
-      if (status.downloadedVersion) {
-        await markPendingUpdate(status.downloadedVersion);
-      }
-      autoUpdater.quitAndInstall(false, true);
-    } catch (err) {
-      // A synchronous handoff failure IS observable - surface it instead of
-      // leaving the button dead. (The dangerous case is the async ShipIt
-      // failure, which this can't see; that one is caught on next launch, and
-      // the updater's own `error` event releases the latch meanwhile.)
-      updateInstalling = false;
-      await clearPendingUpdate();
-      setUpdateStatus({
-        phase: "error",
-        message: `Couldn't start the update: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      });
-    }
-  });
+  ipcMain.handle("updates:install", () => updates.install());
   ipcMain.handle("app:open-notification-settings", async () => {
     if (process.platform === "darwin") {
       await shell.openExternal(
@@ -3222,12 +3183,7 @@ app.on("before-quit", (event) => {
       return;
     }
   }
-  if (!quitUpdateDecided && !updateInstalling && getUpdateStatus().phase === "downloaded") {
-    quitUpdateDecided = true;
-    event.preventDefault();
-    void installOnOrdinaryQuit().catch(() => app.quit());
-    return;
-  }
+  if (updates.beforeQuit(event)) return;
   appQuitting = true;
   try {
     cliAdoption.flush();
