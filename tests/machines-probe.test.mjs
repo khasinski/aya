@@ -152,3 +152,54 @@ test("probeRemote refuses an alias that could be an ssh option or shell text, be
 test("the whole probe deadline is 10 s", () => {
   assert.equal(PROBE_DEADLINE_MS, 10_000);
 });
+
+const { localMemory, probeLocal } = await import("../dist-electron/machines-probe.js");
+const meminfo = linux.slice(linux.indexOf("@@meminfo\n") + 10, linux.indexOf("@@vmstat"));
+const vmStat = macos.slice(macos.indexOf("@@vmstat\n") + 9, macos.indexOf("@@memsize"));
+const fakeOs = { totalmem: () => 1000, freemem: () => 100 };
+const localMemoryCases = [
+  // Linux: MemAvailable, as the remote path; free memory would count the page cache as used.
+  { platform: "linux", sources: { meminfo }, expect: { used: (31481720 - 20098224) * 1024, total: 31481720 * 1024 } },
+  { platform: "darwin", sources: { vmStat }, total: 68719476736, expect: { used: (1791108 + 431989 + 93508) * 16384, total: 68719476736 } },
+  { platform: "linux", sources: {}, expect: { used: 900, total: 1000 } },
+  { platform: "darwin", sources: { vmStat: "garbage" }, expect: { used: 900, total: 1000 } },
+];
+for (const c of localMemoryCases) {
+  test(`local memory on ${c.platform} from ${Object.keys(c.sources).join(",") || "os only"}`, () => {
+    const o = c.total ? { ...fakeOs, totalmem: () => c.total } : fakeOs;
+    assert.deepEqual(localMemory(c.platform, c.sources, o), c.expect);
+  });
+}
+
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test("a hung local nvidia-smi is killed with its children at the deadline, before the probe answers", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-smi-"));
+  const { writeFileSync, chmodSync, mkdirSync } = await import("node:fs");
+  mkdirSync(join(dir, "bin"));
+  writeFileSync(join(dir, "bin", "nvidia-smi"), `#!/bin/sh\necho $$ > "${dir}/pid"\nsleep 30 &\necho $! > "${dir}/child"\nwait\n`);
+  chmodSync(join(dir, "bin", "nvidia-smi"), 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = `${join(dir, "bin")}:${path}`;
+  t.after(() => {
+    process.env.PATH = path;
+    rmSync(dir, { recursive: true, force: true });
+  });
+  // Long enough for a loaded machine to start the fake and write its pids.
+  const status = await probeLocal(1, { deadlineMs: 3000 });
+  assert.equal(status.reachable, false);
+  assert.equal(status.error, "timed out after 3 s");
+  const pid = Number(readFileSync(join(dir, "pid"), "utf8"));
+  const child = Number(readFileSync(join(dir, "child"), "utf8"));
+  assert.equal(alive(pid), false, "nvidia-smi was reaped before the probe answered");
+  const until = Date.now() + 2000;
+  while (alive(child) && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+  assert.equal(alive(child), false, "its child died with the group");
+});

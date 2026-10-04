@@ -1,6 +1,7 @@
 // Read-only probes of a machine for `aya machines` (docs/machines.md, step 1).
 
-import { execFile, spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { promises as fs } from "node:fs";
 import * as os from "node:os";
 
 export const SSH_ALIAS_PATTERN = /^[A-Za-z0-9._-]+$/;
@@ -20,7 +21,6 @@ export const SSH_OPTIONS = [
   "RequestTTY=no",
 ];
 const OLLAMA_HTTP_TIMEOUT_MS = 3_000;
-const LOCAL_TOOL_TIMEOUT_MS = 5_000;
 const MAX_PROBE_OUTPUT_BYTES = 1_000_000;
 // Ollama's keep_alive -1 shows an expiry this far out; anything later reads as pinned.
 const PINNED_AFTER_YEAR = 2100;
@@ -272,32 +272,83 @@ export async function probeRemote(alias: string, port: number, options: ProbeOpt
   return parseRemoteProbe(r.stdout, checkedAt, probeMs);
 }
 
-function execText(cmd: string, args: string[]): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: LOCAL_TOOL_TIMEOUT_MS, encoding: "utf8" }, (err, stdout) => resolve(err ? null : stdout));
-  });
+/** Local tools in their own process groups, so a hung one and its children can be killed together and awaited. */
+class LocalTools {
+  private readonly running = new Set<ChildProcess>();
+
+  run(cmd: string, args: string[]): Promise<string | null> {
+    return new Promise((resolve) => {
+      let out = "";
+      let child: ChildProcess;
+      try {
+        child = spawn(cmd, args, { stdio: ["ignore", "pipe", "ignore"], detached: true });
+      } catch {
+        resolve(null);
+        return;
+      }
+      this.running.add(child);
+      child.stdout?.on("data", (chunk: Buffer) => {
+        if (out.length < MAX_PROBE_OUTPUT_BYTES) out += chunk.toString("utf8");
+      });
+      child.on("error", () => {
+        this.running.delete(child);
+        resolve(null);
+      });
+      child.on("exit", (code) => {
+        this.running.delete(child);
+        resolve(code === 0 ? out : null);
+      });
+    });
+  }
+
+  /** SIGKILL to every group still running, resolved once each direct child has exited. */
+  async killAll(): Promise<void> {
+    await Promise.all(
+      [...this.running].map(
+        (child) =>
+          new Promise<void>((resolve) => {
+            if (child.exitCode !== null || child.signalCode !== null) return resolve();
+            child.once("exit", () => resolve());
+            try {
+              if (child.pid) process.kill(-child.pid, "SIGKILL");
+            } catch {
+              child.kill("SIGKILL");
+            }
+          }),
+      ),
+    );
+  }
 }
 
-async function getText(url: string): Promise<string | undefined> {
+async function getText(url: string, signal: AbortSignal): Promise<string | undefined> {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(OLLAMA_HTTP_TIMEOUT_MS) });
+    const res = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(OLLAMA_HTTP_TIMEOUT_MS)]) });
     return res.ok ? await res.text() : undefined;
   } catch {
     return undefined;
   }
 }
 
-async function probeLocalOnce(port: number, checkedAt: string, started: number): Promise<MachineStatus> {
+type OsMemory = Pick<typeof os, "totalmem" | "freemem">;
+
+/** /proc/meminfo on Linux and vm_stat on macOS, parsed as the remote probe does; os only when neither reads. */
+export function localMemory(platform: string, sources: { meminfo?: string | null; vmStat?: string | null }, o: OsMemory = os): { used: number; total: number } {
+  const total = o.totalmem();
+  const parsed =
+    platform === "linux" && sources.meminfo ? parseMeminfo(sources.meminfo) : platform === "darwin" && sources.vmStat ? parseVmStat(sources.vmStat, total) : null;
+  return parsed ?? { used: total - o.freemem(), total };
+}
+
+async function probeLocalOnce(port: number, checkedAt: string, started: number, tools: LocalTools, signal: AbortSignal): Promise<MachineStatus> {
   const base = `http://127.0.0.1:${port}`;
-  const [gpuText, vmStat, version, ps] = await Promise.all([
-    execText("nvidia-smi", ["--query-gpu=name,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"]),
-    process.platform === "darwin" ? execText("vm_stat", []) : Promise.resolve(null),
-    getText(`${base}/api/version`),
-    getText(`${base}/api/ps`),
+  const [gpuText, vmStat, meminfo, version, ps] = await Promise.all([
+    tools.run("nvidia-smi", ["--query-gpu=name,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"]),
+    process.platform === "darwin" ? tools.run("vm_stat", []) : Promise.resolve(null),
+    process.platform === "linux" ? fs.readFile("/proc/meminfo", "utf8").catch(() => null) : Promise.resolve(null),
+    getText(`${base}/api/version`, signal),
+    getText(`${base}/api/ps`, signal),
   ]);
-  const total = os.totalmem();
-  // os.freemem on macOS counts only free pages; vm_stat gives what Activity Monitor calls used.
-  const mem = (vmStat && parseVmStat(vmStat, total)) || { used: total - os.freemem(), total };
+  const mem = localMemory(process.platform, { meminfo, vmStat });
   return {
     ...emptyStatus(checkedAt, 0, null),
     cpus: os.cpus().length,
@@ -310,16 +361,23 @@ async function probeLocalOnce(port: number, checkedAt: string, started: number):
   };
 }
 
+/** Answers only after every tool it started has exited, so a caller sharing this probe never overlaps a hung copy. */
 export async function probeLocal(port: number, options: ProbeOptions = {}): Promise<MachineStatus> {
   const deadlineMs = options.deadlineMs ?? PROBE_DEADLINE_MS;
   const started = Date.now();
   const checkedAt = (options.now?.() ?? new Date()).toISOString();
+  const tools = new LocalTools();
+  const abort = new AbortController();
   let timer: NodeJS.Timeout | undefined;
-  const late = new Promise<MachineStatus>((resolve) => {
-    timer = setTimeout(() => resolve(emptyStatus(checkedAt, Date.now() - started, `timed out after ${deadlineMs / 1000} s`)), deadlineMs);
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), deadlineMs);
   });
   try {
-    return await Promise.race([probeLocalOnce(port, checkedAt, started), late]);
+    const status = await Promise.race([probeLocalOnce(port, checkedAt, started, tools, abort.signal), late]);
+    if (status) return status;
+    abort.abort();
+    await tools.killAll();
+    return emptyStatus(checkedAt, Date.now() - started, `timed out after ${deadlineMs / 1000} s`);
   } finally {
     clearTimeout(timer);
   }
