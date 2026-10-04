@@ -221,6 +221,20 @@ if ((mode.startsWith("ask") || (mode === "relaunch" && !relaunched)) && me === "
 } else if (mode === "plan" || mode === "permission") {
   // The preset says opencode for both panes, and Aya holds an OpenCode pane until it draws OpenCode's bar.
   process.stdout.write(screen("opencode-idle.screen.txt"));
+} else if (mode === "monitor") {
+  // Claude Code's footer pill for running background tasks (2.1.289 bundle), on tab-right only; the args show a resume.
+  composer();
+  process.stdout.write(me === "tab-right" ? "  ⏵⏵ auto mode on · 2 shells, 1 monitor\r\n" : "  ⏵⏵ auto mode on\r\n");
+  const args = process.argv.slice(4);
+  const resumed = args.includes("--resume") || args.includes("--continue");
+  // Saved as claude saves a conversation, so Aya's restart resumes it instead of starting a new one.
+  const id = args[args.findIndex((a) => a === "--session-id" || a === "--resume") + 1];
+  if (id) {
+    const projects = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(require("node:os").homedir(), ".claude"), "projects", "e2e");
+    fs.mkdirSync(projects, { recursive: true });
+    fs.writeFileSync(path.join(projects, `${id}.jsonl`), "{}\n");
+  }
+  fs.appendFileSync(log, `LAUNCH ${resumed ? "resumed" : "fresh"}\n`);
 } else {
   composer();
 }
@@ -245,7 +259,7 @@ if (mode === "relaunch") {
     }
   }, 1000);
 }
-if (me === "tab-left" && !["quiet", "plan", "focused-cursor", "draft-briefly", "slow-echo", "lead-answers", "lead-waits", "lead-pauses", "lead-idle-hook", "lead-waits-dialog", "lead-restarts", "transcript-question"].includes(mode) && !relaunched) {
+if (me === "tab-left" && !["quiet", "monitor", "plan", "focused-cursor", "draft-briefly", "slow-echo", "lead-answers", "lead-waits", "lead-pauses", "lead-idle-hook", "lead-waits-dialog", "lead-restarts", "transcript-question"].includes(mode) && !relaunched) {
   setTimeout(() => {
     try {
       const text = codexPaste ? LONG_MESSAGE : mode === "relaunch" ? "peer report from life 1" : "round 5 ready";
