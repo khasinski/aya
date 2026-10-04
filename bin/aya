@@ -69,10 +69,11 @@ Usage:
                                      whether a role's pane of it reaches Aya
   aya machines [--json]              Show every registered machine: reachability,
                                      GPU, CPU, memory, Ollama and hot models
-  aya machines hosts                 List ~/.ssh/config Host aliases, marking added ones
+  aya machines hosts [--json]        List known ssh hosts: ~/.ssh/config aliases, remote
+                                     projects and added machines, with their sources
   aya machines add "sentence"        Draft machines from a sentence; the user adds them in Aya
-  aya machines add --ssh alias|--local [--id id] [--port n]...
-                                     Add ~/.ssh/config aliases or this machine; the user
+  aya machines add --ssh alias|user@host|--local [--id id] [--port n]...
+                                     Add known hosts, user@host or this machine; the user
                                      confirms in Aya (port: Ollama's on the host)
   aya machines remove id             Remove a machine from the registry
   aya machines occupy id "purpose"   Say you are using a machine (advisory, not enforced)

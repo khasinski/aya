@@ -5,7 +5,9 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { atomicTempPath } from "./atomic-write";
 import { oneAtATime, withFileLock } from "./keyed-queue";
-import { probeMachine, SSH_ALIAS_PATTERN, type MachineStatus, type Reach } from "./machines-probe";
+import { probeMachine, type MachineStatus, type Reach } from "./machines-probe";
+import { isSshTarget } from "./ssh";
+import { mergeKnownHosts, sshHostAliases, type KnownHost } from "./ssh-hosts";
 import { singleFlight } from "./single-flight";
 
 export const MACHINES_FILE_NAME = "machines.json";
@@ -14,7 +16,6 @@ export const DEFAULT_OLLAMA_PORT = 11434;
 export const STATUS_CACHE_MS = 3_000;
 const MACHINES_FILE_MODE = 0o600;
 const ID_PATTERN = /^[a-z0-9-]+$/;
-const SSH_INCLUDE_MAX_DEPTH = 16;
 const PURPOSE_MAX_CHARS = 200;
 const LOCAL_WORDS = new Set(["local"]);
 const LOCAL_PHRASES = [/\bthis machine\b/i];
@@ -49,6 +50,8 @@ export interface MachinesDeps {
   ayaHome: string;
   /** The user's home, for ~/.ssh/config. */
   userHome: string;
+  /** Remote projects, whose ssh targets are known hosts too. */
+  listRemoteProjects?: () => Promise<{ name: string; sshTarget: string }[]>;
   probe?: typeof probeMachine;
   now?: () => Date;
   /** Test seam: runs after the new registry is staged, just before the last check and the rename. */
@@ -81,8 +84,8 @@ function registryProblem(value: unknown): string | null {
     ids.add(machine.id);
     if (typeof machine.label !== "string") return `${at}: label is not text`;
     const reach = machine.reach as { ssh?: unknown } | string | undefined;
-    const reachOk = reach === "local" || (typeof reach === "object" && reach !== null && typeof reach.ssh === "string" && SSH_ALIAS_PATTERN.test(reach.ssh));
-    if (!reachOk) return `${at}: reach must be "local" or {"ssh": "<alias>"}`;
+    const reachOk = reach === "local" || (typeof reach === "object" && reach !== null && typeof reach.ssh === "string" && isSshTarget(reach.ssh));
+    if (!reachOk) return `${at}: reach must be "local" or {"ssh": "<alias or user@host>"}`;
     const port = (machine.ollama as { port?: unknown } | undefined)?.port;
     if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) return `${at}: ollama.port is not a port number`;
     const o = machine.occupancy as Record<string, unknown> | undefined;
@@ -151,55 +154,17 @@ export function mutateRegistry<T>(deps: MachinesDeps, change: (registry: Registr
   );
 }
 
-// ---- ~/.ssh/config ----
+// ---- known hosts ----
 
-function expandHome(p: string, userHome: string): string {
-  return p === "~" ? userHome : p.startsWith("~/") ? path.join(userHome, p.slice(2)) : p;
-}
-
-async function globFiles(pattern: string): Promise<string[]> {
-  if (!/[*?]/.test(pattern)) return [pattern];
-  const dir = path.dirname(pattern);
-  const re = new RegExp(`^${path.basename(pattern).replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
-  try {
-    return (await fs.readdir(dir)).filter((name) => re.test(name)).sort().map((name) => path.join(dir, name));
-  } catch {
-    return [];
-  }
-}
-
-/** `Host` aliases from ~/.ssh/config and every file it Includes; wildcard and negated patterns are skipped. */
-export async function sshHostAliases(userHome: string): Promise<string[]> {
-  const sshDir = path.join(userHome, ".ssh");
-  const aliases: string[] = [];
-  const seen = new Set<string>();
-  const visit = async (file: string, depth: number): Promise<void> => {
-    if (depth > SSH_INCLUDE_MAX_DEPTH || seen.has(file)) return;
-    seen.add(file);
-    let text: string;
-    try {
-      text = await fs.readFile(file, "utf8");
-    } catch {
-      return;
-    }
-    for (const raw of text.split("\n")) {
-      const m = /^\s*(\w+)(?:\s*=\s*|\s+)(.*)$/.exec(raw);
-      if (!m) continue;
-      const keyword = m[1].toLowerCase();
-      const values = m[2].replace(/#.*/, "").trim().split(/\s+/).filter(Boolean).map((v) => v.replace(/^"|"$/g, ""));
-      if (keyword === "host") {
-        for (const v of values) if (SSH_ALIAS_PATTERN.test(v) && !aliases.includes(v)) aliases.push(v);
-      } else if (keyword === "include") {
-        for (const v of values) {
-          const expanded = expandHome(v, userHome);
-          const full = path.isAbsolute(expanded) ? expanded : path.join(sshDir, expanded);
-          for (const f of await globFiles(full)) await visit(f, depth + 1);
-        }
-      }
-    }
-  };
-  await visit(path.join(sshDir, "config"), 0);
-  return aliases;
+/** ~/.ssh/config aliases, remote project targets and added machines, each with its sources (electron/ssh-hosts.ts). */
+export async function knownHosts(deps: MachinesDeps, registry?: Registry): Promise<KnownHost[]> {
+  const [aliases, remoteProjects, reg] = await Promise.all([
+    sshHostAliases(deps.userHome),
+    deps.listRemoteProjects?.().catch(() => []) ?? Promise.resolve([]),
+    registry ? Promise.resolve(registry) : loadRegistry(deps),
+  ]);
+  const machines = reg.machines.flatMap((m) => (m.reach === "local" ? [] : [{ id: m.id, ssh: m.reach.ssh }]));
+  return mergeKnownHosts({ aliases, remoteProjects, machines });
 }
 
 // ---- the one-sentence draft ----
@@ -214,14 +179,14 @@ export interface SentenceDraft {
   machines: DraftMachine[];
   /** Words like "laptop" that could be this machine or another: asked, not drafted. */
   unclear: string[];
-  /** Words used as a host name that are no ssh alias. */
+  /** Words used as a host name that are no known host. */
   unknown: string[];
   alreadyAdded: string[];
 }
 
-const idFor = (name: string) => name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "machine";
+const idFor = (name: string) => name.toLowerCase().replace(/^[^@]*@/, "").replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "machine";
 
-/** Deterministic: ssh aliases, `local` / "this machine", `port N` after a machine; nothing else is guessed. */
+/** Deterministic: known hosts (aliases, user@host), `local` / "this machine", `port N` after a machine; nothing else is guessed. */
 export function draftFromSentence(sentence: string, aliases: string[], registry: Registry): SentenceDraft {
   const draft: SentenceDraft = { machines: [], unclear: [], unknown: [], alreadyAdded: [] };
   const byLower = new Map(aliases.map((a) => [a.toLowerCase(), a]));
@@ -244,7 +209,7 @@ export function draftFromSentence(sentence: string, aliases: string[], registry:
   // A phrase becomes one word in place, so the draft keeps the sentence's order.
   let text = sentence;
   for (const phrase of LOCAL_PHRASES) text = text.replace(new RegExp(phrase.source, "gi"), ` ${LOCAL_PHRASE_WORD} `);
-  const words = text.split(/[^A-Za-z0-9._-]+/).map((w) => w.replace(/\.+$/, "")).filter(Boolean);
+  const words = text.split(/[^A-Za-z0-9._@+-]+/).map((w) => w.replace(/\.+$/, "")).filter(Boolean);
   words.forEach((word, i) => {
     const lower = word.toLowerCase();
     const prev = words[i - 1]?.toLowerCase();
@@ -256,6 +221,8 @@ export function draftFromSentence(sentence: string, aliases: string[], registry:
       return;
     }
     if (byLower.has(lower)) return add({ ssh: byLower.get(lower)! }, word);
+    // user@host names its own user and host, so it needs no Host block, as for a remote project.
+    if (word.includes("@") && isSshTarget(word)) return add({ ssh: word }, word);
     if (lower === LOCAL_PHRASE_WORD) return add("local", "this machine");
     if (LOCAL_WORDS.has(lower)) return add("local", word);
     if (AMBIGUOUS_WORDS.has(lower)) {
@@ -294,6 +261,11 @@ export function machineStatus(machine: Machine, deps: MachinesDeps): Promise<Mac
     inFlight.set(key, run);
   }
   return run();
+}
+
+/** A host that is not added yet, through the same shared, cached probe as an added machine. */
+export function checkHost(reach: Reach, deps: MachinesDeps, port = DEFAULT_OLLAMA_PORT): Promise<MachineStatus> {
+  return machineStatus({ id: "", label: "", reach, ollama: { port } }, deps);
 }
 
 /** Test-only: forget cached probes. */
@@ -369,7 +341,7 @@ function formatDraft(draft: SentenceDraft): string {
     lines.push("Nothing to add from that sentence.");
   }
   for (const w of draft.alreadyAdded) lines.push(`  ${w}: already added`);
-  for (const w of draft.unknown) lines.push(`  ${w}: no such Host in ~/.ssh/config (aya machines hosts lists them)`);
+  for (const w of draft.unknown) lines.push(`  ${w}: no such Host in ~/.ssh/config and no known host (aya machines hosts lists them)`);
   for (const w of draft.unclear) lines.push(`  Did you mean this machine by "${w}"? Say local to add it, or name its ssh alias.`);
   return `${lines.join("\n")}\n`;
 }
@@ -386,14 +358,14 @@ export interface MachinesAnswer {
 }
 
 const USAGE =
-  'usage: aya machines [--json] | hosts | add "<sentence>" | add --ssh <alias>|--local [--id id] [--port n]... | remove <id> | occupy <id> "<purpose>" | free <id>';
+  'usage: aya machines [--json] | hosts [--json] | add "<sentence>" | add --ssh <alias|user@host>|--local [--id id] [--port n]... | remove <id> | occupy <id> "<purpose>" | free <id>';
 
-function notAnAlias(value: string, aliases: string[]): Error {
-  const known = aliases.length ? aliases.join(", ") : "there are none";
-  return new Error(`"${value}" is not a Host alias in ~/.ssh/config (${known}); add a Host block for it first, nothing was saved`);
+function notAKnownHost(value: string, targets: string[]): Error {
+  const known = targets.length ? targets.join(", ") : "there are none";
+  return new Error(`"${value}" is not a Host alias in ~/.ssh/config or a known host (${known}); add a Host block for it or give user@host, nothing was saved`);
 }
 
-function parseManualAdd(argv: string[], registry: Registry, aliases: string[]): DraftMachine[] {
+function parseManualAdd(argv: string[], registry: Registry, targets: string[]): DraftMachine[] {
   const drafted: DraftMachine[] = [];
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
@@ -405,9 +377,10 @@ function parseManualAdd(argv: string[], registry: Registry, aliases: string[]): 
     if (value === undefined) throw new Error(`${flag} needs a value; ${USAGE}`);
     i++;
     if (flag === "--ssh") {
-      const alias = aliases.find((a) => a.toLowerCase() === value.toLowerCase());
-      if (!alias) throw notAnAlias(value, aliases);
-      drafted.push({ id: idFor(alias), reach: { ssh: alias }, port: DEFAULT_OLLAMA_PORT });
+      const known = targets.find((a) => a.toLowerCase() === value.toLowerCase());
+      const target = known ?? (value.includes("@") && isSshTarget(value) ? value : null);
+      if (!target) throw notAKnownHost(value, targets);
+      drafted.push({ id: idFor(target), reach: { ssh: target }, port: DEFAULT_OLLAMA_PORT });
       continue;
     }
     const last = drafted.at(-1);
@@ -469,17 +442,20 @@ export async function handleMachinesRequest(request: MachinesRequest, deps: Mach
     return { output: sub === "--json" ? `${JSON.stringify(status, null, 2)}\n` : formatMachines(status.machines, now()) };
   }
   if (sub === "hosts") {
-    const [aliases, registry] = await Promise.all([sshHostAliases(deps.userHome), loadRegistry(deps)]);
-    if (aliases.length === 0) return { output: "no Host aliases in ~/.ssh/config\n" };
-    const added = new Set(registry.machines.flatMap((m) => (m.reach === "local" ? [] : [m.reach.ssh])));
-    return { output: aliases.map((a) => `${a}${added.has(a) ? "  (added)" : ""}\n`).join("") };
+    if (rest[0] === "--json") return { output: `${JSON.stringify({ version: MACHINES_VERSION, hosts: await knownHosts(deps) }, null, 2)}\n` };
+    if (rest.length) throw new Error(USAGE);
+    const hosts = await knownHosts(deps);
+    if (hosts.length === 0) return { output: "no known ssh hosts: no Host aliases in ~/.ssh/config, no remote projects, no machines\n" };
+    const width = Math.max(...hosts.map((h) => h.target.length));
+    return { output: hosts.map((h) => `${h.target.padEnd(width)}  ${h.sources.join(", ")}${h.machineId ? "  (added)" : ""}\n`).join("") };
   }
   if (sub === "add") {
-    const [aliases, registry] = await Promise.all([sshHostAliases(deps.userHome), loadRegistry(deps)]);
-    if (rest[0]?.startsWith("--")) return addMachines(parseManualAdd(rest, registry, aliases), deps, pane, "", callerGone);
+    const registry = await loadRegistry(deps);
+    const targets = (await knownHosts(deps, registry)).map((h) => h.target);
+    if (rest[0]?.startsWith("--")) return addMachines(parseManualAdd(rest, registry, targets), deps, pane, "", callerGone);
     const sentence = rest.join(" ").trim();
     if (!sentence) throw new Error(USAGE);
-    const draft = draftFromSentence(sentence, aliases, registry);
+    const draft = draftFromSentence(sentence, targets, registry);
     const output = formatDraft(draft);
     if (draft.machines.length === 0) return { output };
     return addMachines(draft.machines, deps, pane, output, callerGone);

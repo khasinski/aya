@@ -166,7 +166,7 @@ test("manual add saves a versioned registry, mode 0600; --id and --port bind to 
 });
 
 const manualAddRefusals = [
-  { args: ["--ssh", "-oProxyCommand=x"], error: /not a Host alias in ~\/\.ssh\/config \(athena, mini\)/ },
+  { args: ["--ssh", "-oProxyCommand=x"], error: /not a Host alias in ~\/\.ssh\/config or a known host \(athena, mini\)/ },
   { args: ["--ssh", "203.0.113.10"], error: /not a Host alias/ },
   { args: ["--port", "1"], error: /comes after --ssh/ },
   { args: ["--ssh", "athena", "--port", "99999"], error: /not a port number/ },
@@ -185,12 +185,12 @@ for (const c of manualAddRefusals) {
   });
 }
 
-test("hosts: aliases from ~/.ssh/config, the added ones marked, the wildcard left out", async () => {
+test("hosts: aliases from ~/.ssh/config with their sources, the added ones marked, the wildcard left out", async () => {
   reset();
   await aya("add", "--ssh", "athena");
   const r = await aya("hosts");
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, "athena  (added)\nmini\n");
+  assert.equal(r.stdout, "athena  ssh-config, machine  (added)\nmini    ssh-config\n");
 });
 
 test("a sentence naming an added alias says so and drafts nothing", async () => {

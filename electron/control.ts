@@ -21,7 +21,7 @@ import {
 } from "./pane-target";
 import { AYA_HOME, CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
 import { handleMachinesRequest, type MachinesDeps } from "./machines";
-import { confirmAddInAya } from "./machines-dialog";
+import { ayaMachinesDeps } from "./machines-dialog";
 import { handleTeamAuthorRequest } from "./team-author";
 import { HOLD_BUSY, HOLD_DRAFT, isDialogHold } from "./pane-holds";
 import { debugAnswer } from "./team-debug";
@@ -420,7 +420,7 @@ async function handleRequest(
   }
   if (request.type === "machines") {
     const pane = caller.terminalId ? (await options.listProjects?.().catch(() => []))?.flatMap((p) => p.tabs).find((t) => t.id === caller.terminalId)?.name : undefined;
-    const deps = options.machines ?? { ayaHome: AYA_HOME, userHome: os.homedir(), confirmAdd: (ask, signal) => confirmAddInAya(ask, options.getWindow(), signal) };
+    const deps = options.machines ?? ayaMachinesDeps(AYA_HOME, os.homedir(), options.getWindow, options.listProjects);
     return { ...(await handleMachinesRequest(request, deps, pane, callerGone)) };
   }
   if (request.type === "pane-list") {

@@ -22,8 +22,9 @@ Controlling it comes later, and only after a test shows it can work.
 
 1. App-level. Not part of teams and not tied to roles. Aya provides the
    pieces; each user or team protocol decides how to use them.
-2. Ollama only, for now. A machine is `local`, or reached through a `Host`
-   alias in `~/.ssh/config`. Nothing is installed on the host and Ollama is
+2. Ollama only, for now. A machine is `local`, or reached over ssh by a
+   known host (a `Host` alias in `~/.ssh/config` or a remote project's
+   target) or by `user@host`, as remote projects are. Nothing is installed on the host and Ollama is
    never exposed on the network.
 3. Status uses read-only remote commands over ssh only: no port forwards,
    no tunnels, no writes on the host.
@@ -77,13 +78,14 @@ estimate for a model. Memory and GPU sizes in the text are GiB. If
 Commands:
 
 - `aya machines [--json]`: state of every machine.
-- `aya machines hosts`: `Host` aliases from `~/.ssh/config` (following
-  `Include`), with an "added" mark on those already registered.
+- `aya machines hosts [--json]`: the known ssh hosts, each with its sources:
+  `Host` aliases from `~/.ssh/config` (following `Include`), remote project
+  targets and added machines (marked "added").
 - `aya machines add "<sentence>"`: draft, probe, confirm in Aya (see Setup).
-- `aya machines add --ssh <alias> | --local [--id <id>] [--port <n>]`: the
-  manual form. `--ssh` takes only a `Host` alias from `~/.ssh/config`; an
-  address or an unknown name is refused with the list of aliases. It is
-  confirmed in Aya like a sentence.
+- `aya machines add --ssh <alias|user@host> | --local [--id <id>] [--port <n>]`:
+  the manual form. `--ssh` takes a known host or `user@host`; a bare unknown
+  name or address is refused with the list of known hosts. It is confirmed
+  in Aya like a sentence.
 - `aya machines remove <id>`.
 - `aya machines occupy <id> "<purpose>"` and `aya machines free <id>`:
   advisory occupancy. Aya records who and when and shows it to everyone.
@@ -135,13 +137,15 @@ written with `atomic-write.ts`, mode 0600.
 
 ## Probes
 
-- Remote: `ssh -o BatchMode=yes -o ConnectTimeout=5 <hardening> --
-  <alias> sh -s`, with a fixed read-only script on stdin, so the remote
+- Remote: through `electron/ssh.ts`, the one ssh layer remote projects use
+  too (same options, target check, deadline with a process-group kill and
+  error text): `ssh -o BatchMode=yes -o ConnectTimeout=5 <hardening> --
+  <target> sh -s`, with a fixed read-only script on stdin, so the remote
   login shell never parses it. The hardening overrides what the alias's
   config could add: `ClearAllForwardings=yes`, `PermitLocalCommand=no`,
   `ForwardAgent=no`, `ForwardX11=no`, `ControlMaster=no`,
-  `ControlPath=none`, `Tunnel=no`, `RequestTTY=no`. The alias must match
-  `^[A-Za-z0-9._-]+$` and comes after `--`.
+  `ControlPath=none`, `Tunnel=no`, `RequestTTY=no`. The target is an alias,
+  a host name or `user@host` that never starts with `-`, and comes after `--`.
   Only the validated port number is substituted into the script:
   `nproc`, `/proc/loadavg` or `sysctl -n vm.loadavg`, `/proc/meminfo` or
   `vm_stat` plus `sysctl -n hw.memsize`, `nvidia-smi
@@ -171,7 +175,12 @@ written with `atomic-write.ts`, mode 0600.
 Each step ships only after the one before it is used and the open question
 it depends on is answered.
 
-2. **Machines view with suggestions.** A top-bar chip and a panel over the
+2. **Machines view with suggestions.** Built so far: Settings -> Machines
+   (added cards with Free / Mark in use / Check now / Remove, the sentence
+   field, Suggested with Check, Check all and Add) and the shared host store
+   (`electron/ssh-hosts.ts`) under Open project -> Remote host, over IPC to
+   the same functions as `aya machines`. Not built yet: the top-bar chip and
+   "Set up ssh". Planned: a top-bar chip and a panel over the
    same status function, plus Settings -> Machines:
    - **Suggested machines.** Aya lists every Host alias in `~/.ssh/config`
      (with `Include`) that is not added yet, and `local`. Listing reads only
@@ -194,7 +203,7 @@ it depends on is answered.
    `aya machines`; suggestions live in Settings until the user adds them.
    - **One store of ssh hosts, one host picker.** Aya keeps one list of the
      ssh hosts it knows: the aliases in `~/.ssh/config`, the targets of
-     remote projects (`remote.target`, e.g. `user@host`) and the added
+     remote projects (`remote.sshTarget`, e.g. `user@host`) and the added
      machines, each marked with where it came from. The same picker serves
      Open project -> Remote host (today a free-text field with no
      suggestions) and Settings -> Machines, so a host used for a remote

@@ -6,7 +6,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-const { draftFromSentence, sshHostAliases } = await import("../dist-electron/machines.js");
+const { draftFromSentence } = await import("../dist-electron/machines.js");
+const { sshHostAliases } = await import("../dist-electron/ssh-hosts.js");
 
 const ALIASES = ["athena", "Mini", "gpu-2.lan"];
 const empty = { version: 1, machines: [] };
@@ -32,6 +33,10 @@ const cases = [
   { sentence: "zeus is the big box over ssh", expect: { machines: [], unknown: ["zeus"] } },
   { sentence: "use ssh hermes", expect: { machines: [], unknown: ["hermes"] } },
   { sentence: "it is a box", expect: { machines: [], unknown: [] } },
+  // user@host needs no Host block, as for a remote project; a known user@host target matches like an alias.
+  { sentence: "me@devbox is the 3090 box", expect: { machines: [{ id: "devbox", reach: { ssh: "me@devbox" }, port: 11434 }] } },
+  { sentence: "athena and me@athena", expect: { machines: [{ id: "athena", reach: { ssh: "athena" } }, { id: "athena-2", reach: { ssh: "me@athena" } }] } },
+  { sentence: "mail me@ or @athena", expect: { machines: [] } },
   { sentence: "athena", registry: withAthena, expect: { machines: [], alreadyAdded: ["athena"] } },
   { sentence: "this machine", registry: withLocal, expect: { machines: [], alreadyAdded: ["this machine"] } },
   { sentence: "athena athena", expect: { machines: [{ reach: { ssh: "athena" } }] } },

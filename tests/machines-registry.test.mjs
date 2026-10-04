@@ -156,14 +156,35 @@ test("without Aya's dialog (no confirmAdd) an add is refused and nothing is save
   assert.throws(() => readFileSync(file), /ENOENT/);
 });
 
-for (const target of ["203.0.113.10", "not-in-config", "user@a1"]) {
-  test(`--ssh ${target}: not an alias in ~/.ssh/config, refused with the list, no dialog`, async (t) => {
+// A bare unknown name is likely a typo; user@host names its user and host, as a remote project's target does.
+for (const target of ["203.0.113.10", "not-in-config", "@a1", "user@-a1", "user@a1;id"]) {
+  test(`--ssh ${target}: not a known host, refused with the list, no dialog`, async (t) => {
     const { deps, file, run } = setup(t, ["a1", "a2"]);
     let asked = 0;
     deps.confirmAdd = async () => (asked++, true);
-    await assert.rejects(run("add", "--ssh", target), /not a Host alias in ~\/\.ssh\/config.*a1, a2/);
+    await assert.rejects(run("add", "--ssh", target), /not a Host alias in ~\/\.ssh\/config or a known host \(a1, a2\)/);
     assert.equal(asked, 0);
     assert.throws(() => readFileSync(file), /ENOENT/);
+  });
+}
+
+// Hosts a remote project reaches are known too: a bare name is taken once a remote project uses it.
+const acceptedTargets = [
+  { target: "user@a1", remote: [], reach: { ssh: "user@a1" }, id: "a1" },
+  { target: "devbox", remote: [{ name: "web", sshTarget: "devbox" }], reach: { ssh: "devbox" }, id: "devbox" },
+  { target: "me@devbox", remote: [{ name: "web", sshTarget: "me@devbox" }], reach: { ssh: "me@devbox" }, id: "devbox" },
+  { target: "A1", remote: [], reach: { ssh: "a1" }, id: "a1" },
+];
+for (const c of acceptedTargets) {
+  test(`--ssh ${c.target} with remote projects ${JSON.stringify(c.remote)}: asked in Aya, saved as ${JSON.stringify(c.reach)}`, async (t) => {
+    const { deps, file, run } = setup(t, ["a1", "a2"]);
+    deps.listRemoteProjects = async () => c.remote;
+    let asked = 0;
+    deps.confirmAdd = async () => (asked++, true);
+    await run("add", "--ssh", c.target);
+    assert.equal(asked, 1);
+    const [m] = JSON.parse(readFileSync(file, "utf8")).machines;
+    assert.deepEqual([m.id, m.reach], [c.id, c.reach]);
   });
 }
 

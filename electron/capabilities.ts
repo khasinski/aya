@@ -206,14 +206,14 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   },
   {
     command: "machines hosts",
-    usage: "aya machines hosts",
-    summary: "List the Host aliases in ~/.ssh/config (Include files followed), marking the ones already added.",
+    usage: "aya machines hosts [--json]",
+    summary: "List the ssh hosts Aya knows with where each comes from: Host aliases in ~/.ssh/config (Include files followed), remote project targets and added machines.",
   },
   {
     command: "machines add",
     usage: 'aya machines add "sentence"',
     summary:
-      "Draft machines from one sentence: ssh aliases it names, and local or \"this machine\" for this one. Aya probes them read-only and asks the user in its own Add / Cancel dialog; the command prints the result.",
+      "Draft machines from one sentence: known ssh hosts and user@host targets it names, and local or \"this machine\" for this one. Aya probes them read-only and asks the user in its own Add / Cancel dialog; the command prints the result.",
     example: 'aya machines add "athena is the 4090 box, and this machine"',
     notes: [
       "Only the user's click in Aya adds a machine; there is no flag or answer that adds one from the command line.",
@@ -222,9 +222,9 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   },
   {
     command: "machines add --ssh",
-    usage: "aya machines add --ssh alias|--local [--id id] [--port n]...",
+    usage: "aya machines add --ssh alias|user@host|--local [--id id] [--port n]...",
     summary:
-      "Propose machines as given: --ssh takes only a Host alias from ~/.ssh/config, --local this machine; --id and --port apply to the machine before them, --port is Ollama's port on that host (11434 by default). The user confirms in Aya.",
+      "Propose machines as given: --ssh takes a known host (aya machines hosts) or user@host, --local this machine; --id and --port apply to the machine before them, --port is Ollama's port on that host (11434 by default). The user confirms in Aya.",
     example: "aya machines add --ssh athena --local --id laptop",
   },
   {
