@@ -4,7 +4,8 @@
 
 import { exec, execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile, realpath } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
+import * as path from "node:path";
 import { promisify } from "node:util";
 import type { ProjectGitInfo, Worktree, WorktreeStatus } from "./types";
 
@@ -276,12 +277,21 @@ export async function headCommit(directory: string): Promise<string | null> {
   }
 }
 
-/** A fingerprint of the working tree: `git status --porcelain` (untracked files too) and the diff of tracked
- *  files against HEAD, hashed as it streams. null when either cannot be read (outside a repo, no commit yet). */
+// Untracked files whose size and mtime join the fingerprint; a repo with more has its first ones counted.
+const UNTRACKED_FINGERPRINT_LIMIT = 5000;
+
+/** A fingerprint of the working tree: `git status --porcelain` (untracked files too), the size and mtime of each
+ *  untracked file (an edit inside one changes neither list nor diff), and the diff of tracked files against HEAD,
+ *  hashed as it streams. null when any cannot be read (outside a repo, no commit yet). */
 export async function workingTreeState(directory: string): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync("git", [NO_LOCKS, "status", "--porcelain=v1", "-z"], { cwd: directory, ...DIFF_OPTS });
     const hash = createHash("sha1").update(stdout).update("\0");
+    const { stdout: untracked } = await execFileAsync("git", [NO_LOCKS, "ls-files", "--others", "--exclude-standard", "-z"], { cwd: directory, ...DIFF_OPTS });
+    for (const file of untracked.split("\0").filter(Boolean).slice(0, UNTRACKED_FINGERPRINT_LIMIT)) {
+      const info = await stat(path.join(directory, file)).catch(() => null);
+      hash.update(`${file}\0${info ? `${info.size}:${info.mtimeMs}` : "-"}\0`);
+    }
     await new Promise<void>((resolve, reject) => {
       const child = spawn("git", [NO_LOCKS, "diff", "HEAD", "--no-ext-diff", "--no-color", "--binary"], { cwd: directory, env: GIT_ENV, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
       const timer = setTimeout(() => child.kill(), GIT_DIFF_TIMEOUT_MS);

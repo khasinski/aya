@@ -249,6 +249,9 @@ const request = {
   },
 };
 const connectDeadline = Date.now() + Number(connectWait || 0) * 1000;
+// Aya answers a send once its text, gap and Enter went in, so a pane that never frees up must not hold the caller
+// (an agent's tool call) forever.
+const REPLY_TIMEOUT_MS = Number(process.env.AYA_REPLY_TIMEOUT_MS) || 120_000;
 let response = "";
 
 function connect() {
@@ -258,6 +261,12 @@ function connect() {
   client.on("connect", () => {
     connected = true;
     client.write(`${JSON.stringify(request)}\n`);
+    const deadline = setTimeout(() => {
+      console.error(`aya: no answer from Aya after ${REPLY_TIMEOUT_MS / 1000} s; the command may still be in progress (a team message shows in aya team inbox once typed).`);
+      process.exitCode = 1;
+      client.destroy();
+    }, REPLY_TIMEOUT_MS);
+    client.on("close", () => clearTimeout(deadline));
   });
   client.on("data", (chunk) => {
     response += chunk;
@@ -291,7 +300,14 @@ function onEnd() {
     process.exitCode = 1;
     return;
   }
-  const parsed = JSON.parse(response);
+  let parsed;
+  try {
+    parsed = JSON.parse(response);
+  } catch {
+    console.error(`aya: Aya answered with something other than its reply: ${response.trim().slice(0, 200)}`);
+    process.exitCode = 1;
+    return;
+  }
   // Refused before anything happened (Aya is still starting): from a pane, ask again.
   if (!parsed.ok && parsed.retry && connectWait && Date.now() < connectDeadline) {
     response = "";
@@ -345,6 +361,10 @@ team_dir() {
   need="$2"
   teams="$(aya_home)/teams"
   if [ -n "${AYA_PROJECT_SLUG:-}" ]; then
+    # A slug names one directory under teams/, as a team names one under it.
+    case "$AYA_PROJECT_SLUG" in
+      .*|*/*) printf "aya: AYA_PROJECT_SLUG=%s does not name a project\n" "$AYA_PROJECT_SLUG" >&2; return 1 ;;
+    esac
     printf '%s\n' "$teams/$AYA_PROJECT_SLUG/$team"
     return
   fi
@@ -704,13 +724,15 @@ case "$command" in
     esac
     ;;
   team)
-    # A pane that outlived the app calls while Aya restarts: wait for its socket, do not give up.
-    if [ -n "${AYA_TERMINAL_ID:-}" ]; then
-      wait_for_socket
-    fi
     [ "$#" -eq 0 ] || shift
     action="${1:-}"
     [ "$#" -eq 0 ] || shift
+    # A pane that outlived the app calls while Aya restarts: wait for its socket, do not give up.
+    # stats and debug read the team's files and need no socket.
+    case "$action" in
+      stats|debug) ;;
+      *) [ -z "${AYA_TERMINAL_ID:-}" ] || wait_for_socket ;;
+    esac
     case "$action" in
       whoami) send_control team-whoami ;;
       inbox) send_control team-inbox ;;

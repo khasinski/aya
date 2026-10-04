@@ -316,7 +316,10 @@ test("workingTreeState: changes with every edit, also of a file already changed;
     const second = await git.workingTreeState(dir);
     assert.notEqual(second, first, "the same file edited again: its status line is the same, its diff is not");
     writeFileSync(join(dir, "notes.txt"), "x\n");
-    assert.notEqual(await git.workingTreeState(dir), second, "a new untracked file");
+    const third = await git.workingTreeState(dir);
+    assert.notEqual(third, second, "a new untracked file");
+    writeFileSync(join(dir, "notes.txt"), "x and more\n");
+    assert.notEqual(await git.workingTreeState(dir), third, "an untracked file edited: no status line or diff changes, its size and mtime do");
     assert.equal(readFileSync(join(dir, "solver.js"), "utf8"), "c\n");
   } finally {
     rmSync(dir, { recursive: true, force: true });

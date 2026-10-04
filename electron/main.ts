@@ -78,6 +78,7 @@ import {
   type RoleRef,
 } from "./pane-brief";
 import { closePane, createSpawnGate } from "./spawn-gate";
+import { oneAtATime } from "./keyed-queue";
 import {
   appleChat,
   type ChatOptions,
@@ -2162,14 +2163,19 @@ function registerIpc(): TeamRunner {
       if (sent === undefined && !spawnGate.spawning(validated.ptyId)) await removePaneBrief(AYA_HOME, validated.ptyId).catch(() => {});
     });
   });
-  ipcMain.handle("pty:write", async (_e, ptyId: unknown, data: unknown) => {
+  // One write per pane at a time: the Enter that answers a waiting agent asks the host about the screen first, and
+  // the keys typed right after it must not overtake it.
+  const paneWrites = oneAtATime();
+  ipcMain.handle("pty:write", (_e, ptyId: unknown, data: unknown) => {
     const id = requireString(ptyId, "pty:write.ptyId");
     const text = requireString(data, "pty:write.data");
-    await spawnGate.afterSpawn(id);
-    // The user's Enter answers a pane that asked for them (aya status waiting): the windows drop the status.
-    const answered = await noteUserAnswer(id, text, () => ptyHost.holdReason(id));
-    if (answered) broadcastStatus(answered);
-    return ptyHost.write(id, text);
+    return paneWrites(id, async () => {
+      await spawnGate.afterSpawn(id);
+      // The user's Enter answers a pane that asked for them (aya status waiting): the windows drop the status.
+      const answered = await noteUserAnswer(id, text, () => ptyHost.holdReason(id));
+      if (answered) broadcastStatus(answered);
+      return ptyHost.write(id, text);
+    });
   });
   ipcMain.handle(
     "pty:resize",
