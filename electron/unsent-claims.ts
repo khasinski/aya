@@ -93,6 +93,10 @@ const SENT_TO = new RegExp(String.raw`\b(?:sent|forwarded|delivered|passed)\b[^.
 const SENT_DO = new RegExp(String.raw`(?<!\p{L})(?:wy|prze)sła(?:łem|łam|ł|ła|ło|li|ły|no|ne|ny)(?!\p{L})[^.!?\n]{0,60}?(?<!\p{L})do\s+${NAME}`, "giu");
 // Not a claim: "haven't sent", "will be sent", "need to send", "nie wysłałem".
 const NOT_DONE = /(?:\b(?:not|never|will|would|should|could|can|must|going to|need to|needs to|about to|yet to|if|once|nie)|n't)\s+(?:\w+\s+){0,2}$/i;
+// A negative subject: "Nothing was sent to lead", "No report was sent to lead" ("no" only with its passive verb).
+const NOBODY_SENT = /(?:(?<!\p{L})(?:nothing|none|nobody|nic|niczego)\s+(?:\p{L}+\s+){0,2}|\bno\s+(?:\w+\s+){0,2}(?:was|were|been|got)\s+)$/iu;
+// A negative object right after the verb: "sent nothing to lead", "sent no report to lead", "wysłałem nic do lead".
+const SENT_NOTHING = /^\p{L}+\s+(?:nothing|none|no|nic|niczego)(?!\p{L})/iu;
 
 /** The roles the reply says it sent to: its command written as text, or the send told in words naming the role. */
 export function claimedRecipients(reply: string, roles: readonly string[], self: string): string[] {
@@ -102,7 +106,11 @@ export function claimedRecipients(reply: string, roles: readonly string[], self:
     for (const m of reply.matchAll(pattern)) {
       const role = byName.get(m[1].toLowerCase().replace(/[.]+$/, ""));
       if (!role) continue;
-      if (pattern !== COMMAND && NOT_DONE.test(reply.slice(Math.max(0, m.index - 40), m.index))) continue;
+      if (pattern !== COMMAND) {
+        const before = reply.slice(Math.max(0, m.index - 40), m.index);
+        const told = m[0].replace(/^\P{L}+/u, "");
+        if (NOT_DONE.test(before) || NOBODY_SENT.test(before) || SENT_NOTHING.test(told)) continue;
+      }
       found.add(role);
     }
   }

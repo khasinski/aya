@@ -82,6 +82,17 @@ const REPLIES = [
   ["the command run as a tool that failed before Aya logged it, no words: a tool call is no claim", (a) => a.tool(SEND, "aya: Aya is not running"), false, false, false],
   ["no claim", (a) => a.say("Found 3 failing tests in the parser; fixing them now."), false, false, false],
   ["a send not done yet", (a) => a.say("I haven't sent anything to lead yet; I will send the findings to lead after the rerun."), false, false, false],
+  ["a negative subject: 'No report was sent to lead'", (a) => a.say("No report was sent to lead."), false, false, false],
+  ["a negative subject: 'Nothing was sent to lead yet'", (a) => a.say("Nothing was sent to lead yet."), false, false, false],
+  ["a negative object: 'I sent nothing to lead'", (a) => a.say("I sent nothing to lead."), false, false, false],
+  ["a negative object: 'I sent no report to the lead'", (a) => a.say("I sent no report to the lead."), false, false, false],
+  ["a negative in Polish: 'Nie wysłałem nic do lead'", (a) => a.say("Nie wysłałem nic do lead."), false, false, false],
+  ["a negative in Polish: 'Nic nie wysłałem do lead'", (a) => a.say("Nic nie wysłałem do lead."), false, false, false],
+  ["a negative in Polish: 'Wysłałem nic do lead'", (a) => a.say("Wysłałem nic do lead."), false, false, false],
+  ["a claim after a negative clause: 'No blockers, so I sent the findings to lead'", (a) => a.say("No blockers, so I sent the findings to lead."), false, false, true],
+  ["a claim after 'no' with no passive verb: 'No worries I sent the findings to lead'", (a) => a.say("No worries I sent the findings to lead."), false, false, true],
+  ["a claim whose object starts with 'no': 'I sent notes to lead'", (a) => a.say("I sent notes to lead."), false, false, true],
+  ["a claim in Polish after a negative clause: 'Nic nie blokuje, wysłałem wyniki do lead'", (a) => a.say("Nic nie blokuje, wysłałem wyniki do lead."), false, false, true],
   ["'I sent the findings earlier' alone names no role", (a) => a.say("I sent the findings earlier."), false, false, false],
 ];
 
