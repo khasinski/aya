@@ -62,7 +62,7 @@ test.describe("a lead waiting on a teammate (aya status waiting --on)", () => {
     await expect(card.getByLabel("tester status")).toHaveText(/waiting on implementer since \d\d:\d\d/);
     await expect(card.getByLabel("ux-review lead waiting")).toHaveCount(0);
     await expect(window.locator(".aya-status-rail-row--waiting")).toHaveCount(0);
-    await expect.poll(() => countMatches(lead(), /Round \d+: no progress since/g), { timeout: TEAM_CLOCK_TIMEOUT_MS }).toBeGreaterThanOrEqual(2);
+    await expect.poll(() => countMatches(lead(), /Aya round \d+: no progress since/g), { timeout: TEAM_CLOCK_TIMEOUT_MS }).toBeGreaterThanOrEqual(2);
     expect(lead()).toMatch(/Said they wait \(aya status\): tester on implementer since/);
     expect(skipLines(seeded.ayaHome)).toEqual([]);
   });
