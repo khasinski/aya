@@ -490,6 +490,7 @@ export async function handleMachinesRequest(request: MachinesRequest, deps: Mach
     if (callerGone?.aborted) throw new Error("the command stopped waiting for the user's answer; nothing was removed");
     const machine = await mutateRegistry(deps, (registry) => {
       const found = findMachine(registry, rest[0]);
+      if (!sameReach(found.reach, asked.reach)) throw new Error(`${asked.id} changed while Aya asked; nothing was removed`);
       registry.machines = registry.machines.filter((m) => m !== found);
       return found;
     });

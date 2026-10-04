@@ -74,4 +74,5 @@ test("the add answer in Settings is a sentence, not the CLI's draft", () => {
   ];
   for (const [output, text] of cases) assert.equal(addAnswerText(output), text);
   assert.equal(addAnswerText("  an answer this Aya does not know yet\n"), "an answer this Aya does not know yet", "an unknown answer is shown as it came");
+  assert.equal(addAnswerText("Nothing to add from that sentence.\n  this machine: already added\n"), "Nothing to add from that sentence. this machine is already added.");
 });

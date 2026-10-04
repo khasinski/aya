@@ -203,7 +203,7 @@ export function addAnswerText(output: string): string {
   const lines = output.split("\n").map((l) => l.trim()).filter(Boolean);
   const added = lines.flatMap((l) => /^added (\S+)/.exec(l)?.[1] ?? []);
   const notes = lines.flatMap((l) => {
-    const already = /^(\S+): already added$/.exec(l);
+    const already = /^(.+): already added$/.exec(l);
     if (already) return [`${already[1]} is already added.`];
     const unknown = /^(\S+): no such Host/.exec(l);
     if (unknown) return [`${unknown[1]}: no such host in ~/.ssh/config and no known host.`];

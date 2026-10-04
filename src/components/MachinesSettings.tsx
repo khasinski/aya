@@ -492,10 +492,11 @@ export function MachinesSettings() {
       const before = new Set((machines ?? []).map((m) => m.id));
       const output = await window.aya.machinesCommand(argv);
       setAnswer(addAnswerText(output));
-      await reload();
       const added = /^added (\S+)/m.exec(output)?.[1];
+      // Only the sentence that was sent: anything typed since stays.
+      if (added && key === "sentence") setSentence((current) => (current.trim() === argv[1] ? "" : current));
+      await reload();
       if (added && !before.has(added)) setFocusMachine(added);
-      if (added && key === "sentence") setSentence("");
     } catch (err) {
       setAnswer(`Not added: ${message(err)}`);
     } finally {

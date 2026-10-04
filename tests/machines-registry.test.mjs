@@ -286,3 +286,16 @@ test("remove asks in Aya: Cancel keeps the machine, no dialog refuses, Remove ta
   assert.match((await run("remove", "a1")).output, /^removed a1/);
   await assert.rejects(run("remove", "a1"), /no machine "a1"/);
 });
+
+test("a machine replaced under the same id while Aya asks is not removed", async (t) => {
+  const { deps, run, ids } = await setup(t);
+  await run("add", "a1");
+  deps.confirmRemove = async () => {
+    await mutateRegistry(deps, (registry) => {
+      registry.machines = [{ id: "a1", label: "a1", reach: { ssh: "a2" }, ollama: { port: 11434 } }];
+    });
+    return true;
+  };
+  await assert.rejects(run("remove", "a1"), /a1 changed while Aya asked; nothing was removed/);
+  assert.deepEqual(ids(), ["a1"]);
+});
