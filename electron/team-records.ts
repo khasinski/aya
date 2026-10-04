@@ -15,6 +15,7 @@ export const TEAM_FILES = {
   deliveryNotes: "delivery-notes.json",
   refused: "refused.jsonl",
   status: "status.json",
+  claims: "claims.json",
 } as const;
 
 export const DEBUG_LOG_FILE = "debug.jsonl";

@@ -13,6 +13,7 @@ import { oneAtATime } from "./keyed-queue";
 import { noteRound, observe, quietTooLong, repoSince, resetProgress, roundsHeld, stalledWhenLastLooked, teamLiveness, type TeamProgress } from "./team-progress";
 import { pendingWaits, stalledText, supervisionText, type StatusWait } from "./team-supervision";
 import { digestOneLine, roundDigest } from "./team-digest";
+import { lookForClaims, readClaims, unsentClaims, withUnsentSection } from "./unsent-claims";
 import { statusSection } from "./team-status-command";
 import { openTeamStore, readText, type PendingTask, type TeamStore } from "./team-store";
 import { clock, ROUND_CHECK_MS, SILENCE_FIRST_MS, SILENCE_REPEAT_MS } from "./team-times";
@@ -384,6 +385,14 @@ export class TeamRunner {
     this.cancels.set(key, this.schedule(tick, ROUND_CHECK_MS));
   }
 
+  /** Reads the free roles' replies for sends they claim (unsent-claims.ts); a failed read only skips this look. */
+  private async lookForClaims(store: TeamStore, team: TeamDefinition, holds: Record<string, string | null>): Promise<void> {
+    const { screen, agentOf, busy } = this.deps;
+    if (!screen || !agentOf) return;
+    const look = { team: team.name, roles: team.roles.map((r) => r.id), holds, pane: (role: string) => store.paneOf(role), busy, screen, agentOf };
+    await lookForClaims(store, look).catch((err) => this.warn("[aya] team %s replies not read:", team.name, err));
+  }
+
   /** Roles whose agent is mid-turn now; null when Aya cannot tell. */
   private async busyRoles(store: TeamStore, roles: string[]): Promise<string[] | null> {
     const isBusy = this.deps.busy;
@@ -399,7 +408,9 @@ export class TeamRunner {
     const roles = team.roles.map((r) => r.id);
     const busy = await this.busyRoles(store, roles);
     const statusWaits = await this.statusWaits(store, roles);
-    return roundDigest({ roles, lead: team.lead, log: await store.annotatedLog(), progress, refused: await store.refusals(), turns: await store.turns(), busy, statusWaits, nowMs });
+    const [log, refused] = [await store.annotatedLog(), await store.refusals()];
+    const digest = roundDigest({ roles, lead: team.lead, log, progress, refused, turns: await store.turns(), busy, statusWaits, nowMs });
+    return withUnsentSection(digest, unsentClaims(await readClaims(store), log, refused, roles));
   }
 
   /** The roles' own `aya status waiting`: a question to the user (one from before a restart that is unconfirmed holds
@@ -429,6 +440,7 @@ export class TeamRunner {
     const tree = (await this.deps.treeState?.(project.directory).catch(() => null)) ?? null;
     const holds = Object.fromEntries(await Promise.all(team.roles.map(async (r) => [r.id, (await roleHold(this.deps, store, r.id)).hold] as const)));
     const progress = await observe(store, head, holds, now, tree, team.lead);
+    await this.lookForClaims(store, team, holds);
     if (debugOn()) await teamLiveness(store, team.roles.map((r) => r.id), this.deps.holdReason, { cadence: team.cadenceMinutes, lead: !!team.lead }, nowMs);
     const lead = team.lead;
     if (!lead) return;

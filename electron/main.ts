@@ -306,6 +306,8 @@ const teamDeps: TeamControlDeps = {
   busy: (terminalId) => ptyHost.paneBusy(terminalId),
   roleNoteReport: (project, team, assignments) => roleNoteReport(project, team, assignments, paneBriefDeps),
   launchNote,
+  screen: paneScreen,
+  agentOf: paneAgent,
   headCommit,
   treeState: workingTreeState,
   starting: () => !bootProjectsLoaded,

@@ -249,6 +249,12 @@ export function roleNote(
   return livePane(team, role, tabs) ? (team.paneNotes[role] ?? null) : null;
 }
 
+/** The role's reply says it sent to these roles and nothing from it arrived (electron/unsent-claims.ts unsentNote). */
+export function unsentLine(team: Partial<Pick<TeamSummary, "unsent">>, role: string): string | null {
+  const to = team.unsent?.[role];
+  return to?.length ? `${role} says it sent to ${to.join(", ")}, nothing arrived` : null;
+}
+
 /** Select values are aya team open targets: a new session of a preset, or a pane. */
 export const NEW_PANE_PREFIX = "new:";
 export const PANE_PREFIX = "pane:";

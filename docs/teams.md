@@ -588,6 +588,17 @@ messages about one commit over 12 minutes read as "progressing".)
   ones you still need." A pane that comes back in a new conversation, or plays no role, drops the
   note; a note never typed is dropped after a day. A crash or `/exit` is not a restart Aya makes, and
   gets no note.
+- **A send claimed, nothing arrived**: agents on small models wrote `aya team send lead "..."` as
+  text instead of running it, then said "I sent the findings earlier". At each look of the clock Aya
+  reads, once per turn, the reply of a role whose pane is free and idle: the rows under the message
+  that started its turn (found by that message's header, all of its text skipped), up to the
+  composer, without tool calls (Claude Code's `⏺ Tool(...)`, Codex's `• Ran ...`; OpenCode's tool
+  rows are not recorded, so only a `$ command` row counts as one). A claim names another role:
+  the command written as text, "sent ... to <role>" or "wysłałem ... do <role>", not after "not",
+  "will", "need to", "nie". When the log has no message from the role to that role after the turn
+  began, and no refused send, the role's row in the Teams window and the lead's round ("Said it
+  sent") say "<role> says it sent to <role>, nothing arrived", kept in `claims.json` until a message
+  from it to that role arrives. A turn whose message is not on the screen is not read.
 - **The lead ends the work**: a lead that has the answer ("no lower complexity is possible")
   runs `aya team pause "why"` from its own pane. It pauses the team as the Pause button does
   (no more rounds, sends or silence clock), the log says "<lead> (the lead) paused the team:

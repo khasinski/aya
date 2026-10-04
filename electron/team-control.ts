@@ -2,6 +2,7 @@
 // by the local assignments, and the team by the definition the user saved.
 
 import { teammateAnswered } from "./agent-status";
+import type { AgentKind } from "./presets";
 import type { TeamRequest } from "./control-protocol";
 import { HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_STARTING, NO_PANE_HOLD } from "./pane-holds";
 import { loadTeam, paneTeamRole } from "./team-files";
@@ -32,6 +33,9 @@ export interface TeamControlDeps {
   roleNoteReport?: (project: ProjectConfig, team: string, assignments: Record<string, string>) => Promise<{ roleNotes: Record<string, string | null>; staleNotes: string[] }>;
   /** What Aya widened for the pane and what else its launch means (launchNoteOf), null when nothing. */
   launchNote?: (terminalId: string) => Promise<string | null>;
+  /** The pane's rendered text and its agent: a reply that claims a send nobody got (unsent-claims.ts). */
+  screen?: (terminalId: string) => Promise<string | null>;
+  agentOf?: (terminalId: string) => Promise<AgentKind | undefined>;
 }
 
 type TypingDeps = Pick<TeamControlDeps, "deliver" | "holdReason" | "headCommit">;

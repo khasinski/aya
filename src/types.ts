@@ -1200,6 +1200,8 @@ export interface TeamSummary {
   paneNotes: Record<string, string | null>;
   /** Messages per role that are waiting in its inbox. */
   unread: Record<string, number>;
+  /** Per role, the roles its reply says it sent to while nothing from it reached them (electron/unsent-claims.ts). */
+  unsent?: Record<string, string[]>;
   liveness: TeamLiveness;
   log: TeamMessage[];
 }
