@@ -209,3 +209,52 @@ test("the pane's scan names the offer when it replaces an ordinary approval, and
     closeVtPane(id);
   }
 });
+
+// The offer can come up while an `aya pane send` waits for the pane's lock (another delivery drew it) or in the
+// ~150 ms between its text and its Enter: both must be seen under the lock, not only before it.
+async function sendsTo(socket, requests) {
+  return Promise.all(requests.map((req) => new Promise((resolve, reject) => {
+    const c = net.createConnection(socket);
+    let buf = "";
+    c.setEncoding("utf8");
+    c.on("data", (chunk) => (buf += chunk));
+    c.on("close", () => resolve(JSON.parse(buf.split("\n")[0])));
+    c.on("error", reject);
+    c.write(`${JSON.stringify({ type: "pane-send", target: "tester", ...req })}\n`);
+  })));
+}
+
+// [case, the write after which the offer is up, requests, replies ok, writes, error of the refused one]
+const RACES = [
+  ["no offer: both queued sends are typed", null, [{ text: "a", submit: true }, { text: "2", submit: false }], [true, true], ["a", "\r", "2"], null],
+  ["the first send's Enter draws the offer: the queued one types nothing", "\r", [{ text: "a", submit: true }, { text: "2", submit: false }], [true, false], ["a", "\r"], `pane "tester": ${OFFER}. Only the user answers it, in that pane; nothing was typed`],
+  ["the offer appears between text and Enter: no Enter", "a", [{ text: "a", submit: true }], [false], ["a"], `pane "tester": ${OFFER}; it appeared after the text was typed; Enter not sent, the text may sit in the offer or the composer`],
+];
+for (const [label, drawsAfter, requests, oks, wantWrites, error] of RACES) {
+  test(`aya pane send | ${label}`, async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aya-offer-race-"));
+    const socket = join(dir, "aya.sock");
+    const writes = [];
+    let offer = false;
+    const stop = startControlServerOn(socket, {
+      getWindow: () => null,
+      listProjects: async () => [{ slug: "aya", tabs: [{ id: "t1", name: "tester" }] }],
+      readPane: async () => "",
+      writePane: async (_id, data) => {
+        writes.push(data);
+        if (data === drawsAfter) offer = true;
+      },
+      paneHold: async () => (offer ? OFFER : null),
+    });
+    try {
+      // Both requests are read before the first takes the lock, so the second's pre-lock check sees a free pane.
+      const replies = await sendsTo(socket, requests);
+      assert.deepEqual(replies.map((r) => r.ok), oks, JSON.stringify(replies));
+      assert.deepEqual(writes, wantWrites);
+      assert.equal(replies.find((r) => !r.ok)?.error ?? null, error);
+    } finally {
+      stop();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}

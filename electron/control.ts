@@ -154,9 +154,20 @@ async function handlePaneRequest(
     return { terminalId, projectSlug, name, output: tailForPaneRead(output) };
   }
   // Any key, Enter or not, answers a select dialog; an unreadable screen is no reason to refuse.
-  const hold = await options.paneHold?.(terminalId).catch(() => null);
-  if (isUserOnlyHold(hold)) throw new Error(`pane "${name}": ${hold}. Only the user answers it, in that pane; nothing was typed`);
-  await deliverToPane(options.writePane, terminalId, name, request.text, request.submit === true);
+  // Read under the pane lock: a delivery queued ahead of this one, or this one's own text, can draw the offer.
+  const userOnly = async () => {
+    const hold = await options.paneHold?.(terminalId).catch(() => null);
+    return isUserOnlyHold(hold) ? hold! : null;
+  };
+  const guard = async () => {
+    const hold = await userOnly();
+    if (hold) throw new Error(`pane "${name}": ${hold}. Only the user answers it, in that pane; nothing was typed`);
+  };
+  const beforeEnter = async () => {
+    const hold = await userOnly();
+    if (hold) throw new PaneHeldError(`pane "${name}": ${hold}; it appeared after the text was typed; Enter not sent, the text may sit in the offer or the composer`, true);
+  };
+  await deliverToPane(options.writePane, terminalId, name, request.text, request.submit === true, guard, beforeEnter);
   return { terminalId, projectSlug, name };
 }
 
