@@ -3,23 +3,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
+import { lastStderrLine, requireSshTarget, runSsh, sshFailure } from "./ssh";
 
-export const SSH_ALIAS_PATTERN = /^[A-Za-z0-9._-]+$/;
-export const SSH_CONNECT_TIMEOUT_S = 5;
 export const PROBE_DEADLINE_MS = 10_000;
-/** The alias's config may add forwards (a public LocalForward), a LocalCommand or a shared master: a status probe gets none. */
-export const SSH_OPTIONS = [
-  "BatchMode=yes",
-  `ConnectTimeout=${SSH_CONNECT_TIMEOUT_S}`,
-  "ClearAllForwardings=yes",
-  "PermitLocalCommand=no",
-  "ForwardAgent=no",
-  "ForwardX11=no",
-  "ControlMaster=no",
-  "ControlPath=none",
-  "Tunnel=no",
-  "RequestTTY=no",
-];
 const OLLAMA_HTTP_TIMEOUT_MS = 3_000;
 const MAX_PROBE_OUTPUT_BYTES = 1_000_000;
 // Ollama's keep_alive -1 shows an expiry this far out; anything later reads as pinned.
@@ -207,72 +193,20 @@ export function parseRemoteProbe(output: string, checkedAt: string, probeMs: num
   };
 }
 
-/** The last stderr line ssh printed, which names the reason (timeout, auth, unknown host). */
-export function sshError(stderr: string, code: number | null): string {
-  const line = stderr.split("\n").map((l) => l.trim()).filter(Boolean).pop();
-  return line ? `ssh: ${line.replace(/^ssh:\s*/, "")}` : `ssh exited with ${code}`;
-}
-
-/** Runs `cmd` with `input` on stdin; settles on exit or kills it at the deadline. */
-function runWithDeadline(cmd: string, args: string[], input: string, deadlineMs: number): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
-  return new Promise((resolve) => {
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    let child: ReturnType<typeof spawn>;
-    try {
-      // Own process group: a ProxyCommand child holding our pipes dies with ssh at the deadline.
-      child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], detached: true });
-    } catch (err) {
-      resolve({ code: null, stdout, stderr: String(err), timedOut });
-      return;
-    }
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        if (child.pid) process.kill(-child.pid, "SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
-      }
-      // A grandchild outside the group may still hold the pipes: answer now, not at their close.
-      child.stdout?.destroy();
-      child.stderr?.destroy();
-      resolve({ code: null, stdout, stderr, timedOut });
-    }, deadlineMs);
-    child.stdout?.on("data", (chunk: Buffer) => {
-      if (stdout.length < MAX_PROBE_OUTPUT_BYTES) stdout += chunk.toString("utf8");
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      if (stderr.length < MAX_PROBE_OUTPUT_BYTES) stderr += chunk.toString("utf8");
-    });
-    child.stdin?.on("error", () => {});
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      resolve({ code: null, stdout, stderr: err.message, timedOut });
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout, stderr, timedOut });
-    });
-    child.stdin?.end(input);
-  });
-}
-
 export interface ProbeOptions {
   deadlineMs?: number;
   now?: () => Date;
 }
 
-export async function probeRemote(alias: string, port: number, options: ProbeOptions = {}): Promise<MachineStatus> {
-  if (!SSH_ALIAS_PATTERN.test(alias)) throw new Error(`"${alias}" is not a valid ssh alias`);
+export async function probeRemote(target: string, port: number, options: ProbeOptions = {}): Promise<MachineStatus> {
+  const host = requireSshTarget(target);
   const deadlineMs = options.deadlineMs ?? PROBE_DEADLINE_MS;
   const started = Date.now();
   const checkedAt = (options.now?.() ?? new Date()).toISOString();
-  const args = [...SSH_OPTIONS.flatMap((o) => ["-o", o]), "--", alias, "sh", "-s"];
-  const r = await runWithDeadline("ssh", args, remoteProbeScript(port), deadlineMs);
+  const r = await runSsh(host, ["sh", "-s"], { input: remoteProbeScript(port), deadlineMs, maxOutputBytes: MAX_PROBE_OUTPUT_BYTES });
   const probeMs = Date.now() - started;
-  if (r.timedOut) return emptyStatus(checkedAt, probeMs, `timed out after ${deadlineMs / 1000} s`);
-  if (r.code !== 0) return emptyStatus(checkedAt, probeMs, sshError(r.stderr, r.code));
+  const failed = sshFailure(r, host, deadlineMs) ?? (r.code !== 0 ? (lastStderrLine(r.stderr) ?? `the probe exited with ${r.code}`) : null);
+  if (failed) return emptyStatus(checkedAt, probeMs, failed);
   return parseRemoteProbe(r.stdout, checkedAt, probeMs);
 }
 

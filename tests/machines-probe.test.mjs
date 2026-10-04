@@ -124,7 +124,7 @@ const remoteCases = [
   { mode: "down", expect: { reachable: false, error: "ssh: connect to host box port 22: Operation timed out" } },
   { mode: "denied", expect: { reachable: false, error: "ssh: box: Permission denied (publickey)." } },
   { mode: "unknown", expect: { reachable: false, error: /^ssh: Could not resolve hostname box/ } },
-  { mode: "hang", deadlineMs: 300, expect: { reachable: false, error: "timed out after 0.3 s" } },
+  { mode: "hang", deadlineMs: 300, expect: { reachable: false, error: "ssh box did not finish within 0.3s." } },
 ];
 
 for (const c of remoteCases) {
@@ -158,8 +158,8 @@ test("probeRemote: forwards, local commands, agent/X11 and multiplexing off what
 
 test("probeRemote refuses an alias that could be an ssh option or shell text, before running ssh", async (t) => {
   const fake = ssh(t);
-  for (const alias of ["-oProxyCommand=x", "a b", "a;b", "", "$(id)"]) {
-    await assert.rejects(probeRemote(alias, 11434), /not a valid ssh alias/);
+  for (const alias of ["-oProxyCommand=x", "a b", "a;b", "", "$(id)", "u@-oProxyCommand=x", "@host"]) {
+    await assert.rejects(probeRemote(alias, 11434), /is not an ssh target|target is required/);
   }
   assert.throws(() => readFileSync(join(fake.dir, "calls")), /ENOENT/);
 });

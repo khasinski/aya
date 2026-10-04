@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type {
   Preset,
@@ -13,6 +12,7 @@ import { AYA_HOME_DIRNAME, REMOTE_SOCKET_NAME } from "./paths";
 import { REMOTE_PROTOCOL_VERSION, type RemoteMessage } from "./remote-protocol";
 import { shellQuote } from "./pane-command";
 import { socketPathLimit } from "./socket-path";
+import { requireSshTarget, runSsh, sshFailure } from "./ssh";
 
 export interface RemoteTimeouts {
   bridgeMs: number;
@@ -205,8 +205,7 @@ function runRemoteRequest(
   recentProjects: ProjectConfig[];
   response: RemoteMessage;
 }> {
-  const target = sshTarget.trim();
-  if (!target) throw new Error("Remote SSH target is required.");
+  const target = requireSshTarget(sshTarget);
   const id = randomUUID();
   const payload = Buffer.from(
     JSON.stringify({ ...request, id }),
@@ -225,15 +224,11 @@ function runRemoteRequest(
     // command error that still carried a valid snapshot - e.g. an old remote
     // Aya rejecting "project already exists" (see createRemoteProjectOnHost).
     let allProjects: ProjectConfig[] = [];
-    execFile(
-      "ssh",
-      [target, remoteCommand],
-      {
-        encoding: "utf8",
-        timeout: timeouts.sshKillMs,
-        maxBuffer: REMOTE_BRIDGE_MAX_BUFFER_BYTES,
-      },
-      (err, stdout, stderr) => {
+    void runSsh(target, [remoteCommand], {
+      deadlineMs: timeouts.sshKillMs,
+      maxOutputBytes: REMOTE_BRIDGE_MAX_BUFFER_BYTES,
+    }).then((run) => {
+        const { stdout, stderr } = run;
         let matchedError: Error | null = null;
         for (const line of stdout.split(/\r?\n/)) {
           const trimmed = line.trim();
@@ -311,25 +306,17 @@ function runRemoteRequest(
           );
           return;
         }
-        if (err?.killed) {
-          reject(
-            new Error(`ssh ${target} did not finish within ${seconds(timeouts.sshKillMs)}.`),
-          );
+        const failed = sshFailure(run, target, timeouts.sshKillMs);
+        if (failed) {
+          reject(new Error(failed));
           return;
         }
-        if (err) {
-          reject(
-            new Error(
-              detail ||
-                err.message ||
-                `Remote Aya connection failed for ${target}.`,
-            ),
-          );
+        if (run.code !== 0) {
+          reject(new Error(detail || `Remote Aya connection failed for ${target}.`));
           return;
         }
         reject(new Error(`Remote Aya connection closed before response (0).`));
-      },
-    );
+    });
   });
 }
 
