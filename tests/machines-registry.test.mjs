@@ -14,7 +14,7 @@ function setup(t, aliases = ["a1", "a2", "a3", "a4", "a5", "a6"]) {
   const userHome = join(root, "home");
   mkdirSync(join(userHome, ".ssh"), { recursive: true });
   writeFileSync(join(userHome, ".ssh", "config"), aliases.map((a) => `Host ${a}\n`).join(""));
-  const deps = { ayaHome: join(root, "aya"), userHome, confirmAdd: async () => true, probe: async () => ({ reachable: true }) };
+  const deps = { ayaHome: join(root, "aya"), userHome, confirmAdd: async () => true, confirmRemove: async () => true, probe: async () => ({ reachable: true }) };
   const file = join(deps.ayaHome, "machines.json");
   const run = (...argv) => handleMachinesRequest({ argv, tty: false, user: "u" }, deps);
   return { deps, file, run, ids: () => JSON.parse(readFileSync(file, "utf8")).machines.map((m) => m.id) };
@@ -265,6 +265,24 @@ test("Aya's dialog names each machine, what the probe found, and the pane that a
   });
   assert.equal(text.message, "Add 2 machines to Aya's machines?");
   assert.match(text.detail, /^Asked by pane "collector"\. Aya will only read their state over ssh; it never loads or unloads a model\./);
+  const local = addDialogText({ machines: [{ id: "local", reach: "local", port: 11434, status: ok }] });
+  assert.match(local.detail, /^Aya will only read its state; it never loads or unloads a model\./);
+  const one = addDialogText({ machines: [{ id: "athena", reach: { ssh: "athena" }, port: 11434, status: ok }] });
+  assert.match(one.detail, /^Aya will only read its state over ssh;/);
   assert.match(text.detail, /athena {2}\(ssh athena, Ollama port 11434\)\n {2}connected, 32 CPUs, RTX 4090, Ollama 0\.34\.4, 1 model\(s\) loaded/);
   assert.match(text.detail, /mini {2}\(ssh mini, Ollama port 11435\)\n {2}unreachable: ssh: connect timeout/);
+});
+
+test("remove asks in Aya: Cancel keeps the machine, no dialog refuses, Remove takes it out", async (t) => {
+  const { deps, run } = await setup(t);
+  await run("add", "a1");
+  const asked = [];
+  deps.confirmRemove = async (id) => (asked.push(id), false);
+  assert.match((await run("remove", "a1")).output, /^Not removed: cancelled in Aya\./);
+  assert.deepEqual(asked, ["a1"]);
+  delete deps.confirmRemove;
+  await assert.rejects(run("remove", "a1"), /needs the user's yes in Aya/);
+  deps.confirmRemove = async () => true;
+  assert.match((await run("remove", "a1")).output, /^removed a1/);
+  await assert.rejects(run("remove", "a1"), /no machine "a1"/);
 });

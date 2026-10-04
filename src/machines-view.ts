@@ -18,12 +18,19 @@ export function stateLine(reach: MachineReach, s: MachineStatus): string {
   return `${s.reachable ? "Connected" : "Unreachable"} · ${reachText(reach)} · checked ${clock(s.checkedAt)}`;
 }
 
-/** A row cell: the text shown and, for a small bar, how full it is (0..1). */
+/** A row cell: the text shown and, for a small bar, how full it is (0..1) and how close to its limit. */
 export interface Cell {
   text: string;
   frac: number | null;
+  level?: "warn" | "high";
 }
 const ratio = (used: number | null, total: number | null) => (used === null || !total ? null : Math.min(1, Math.max(0, used / total)));
+/** From the unclamped share: a load of 4x the cores is "high", not a full green bar. */
+export function levelOf(used: number | null, total: number | null): Cell["level"] {
+  if (used === null || !total) return undefined;
+  const share = used / total;
+  return share >= 1 ? "high" : share >= 0.8 ? "warn" : undefined;
+}
 const NONE: Cell = { text: "-", frac: null };
 
 export function gpuCell(s: MachineStatus): Cell {
@@ -31,7 +38,7 @@ export function gpuCell(s: MachineStatus): Cell {
   if (s.gpus.length === 0) return { text: "none", frac: null };
   if (utils.length === 0) return { text: "?", frac: null };
   const max = Math.max(...utils);
-  return { text: `${max}%${s.gpus.length > 1 ? ` x${s.gpus.length}` : ""}`, frac: max / 100 };
+  return { text: `${max}%${s.gpus.length > 1 ? ` x${s.gpus.length}` : ""}`, frac: max / 100, level: levelOf(max, 100) };
 }
 
 export function vramCell(s: MachineStatus): Cell {
@@ -39,14 +46,18 @@ export function vramCell(s: MachineStatus): Cell {
   const sum = (k: "memUsedMiB" | "memTotalMiB") => (s.gpus.some((g) => g[k] === null) ? null : s.gpus.reduce((a, g) => a + (g[k] ?? 0), 0));
   const used = sum("memUsedMiB");
   const total = sum("memTotalMiB");
-  return { text: `${gibFromMiB(used)}/${gibFromMiB(total)}`, frac: ratio(used, total) };
+  return { text: `${gibFromMiB(used)}/${gibFromMiB(total)}`, frac: ratio(used, total), level: levelOf(used, total) };
 }
 
 export const loadCell = (s: MachineStatus): Cell =>
-  s.load1 === null && s.cpus === null ? NONE : { text: `${s.load1 === null ? "?" : s.load1.toFixed(1)}/${s.cpus ?? "?"}`, frac: ratio(s.load1, s.cpus) };
+  s.load1 === null && s.cpus === null
+    ? NONE
+    : { text: `${s.load1 === null ? "?" : s.load1.toFixed(1)}/${s.cpus ?? "?"}`, frac: ratio(s.load1, s.cpus), level: levelOf(s.load1, s.cpus) };
 
 export const memoryCell = (s: MachineStatus): Cell =>
-  s.memTotalBytes === null ? NONE : { text: memoryText(s).replace(/ GB$/, ""), frac: ratio(s.memUsedBytes, s.memTotalBytes) };
+  s.memTotalBytes === null
+    ? NONE
+    : { text: memoryText(s).replace(/ GB$/, ""), frac: ratio(s.memUsedBytes, s.memTotalBytes), level: levelOf(s.memUsedBytes, s.memTotalBytes) };
 
 /** "hot 14m", "hot 2h", "pinned": how long a loaded model stays in memory, short enough for a column. */
 export function hotShort(expiresAt: string | null, pinned: boolean, now: Date): string {
@@ -185,4 +196,19 @@ export function suggestions(hosts: KnownHost[], machines: MachineView[]): { targ
     .map((h) => ({ target: h.target, label: h.target, sources: sourcesText(h), host: h }));
   if (!machines.some((m) => m.reach === "local")) out.push({ target: "local", label: "This machine", sources: "local" });
   return out;
+}
+
+/** The add command's answer as a sentence for Settings: what was added or why not, without the CLI's draft lines. */
+export function addAnswerText(output: string): string {
+  const lines = output.split("\n").map((l) => l.trim()).filter(Boolean);
+  const added = lines.flatMap((l) => /^added (\S+)/.exec(l)?.[1] ?? []);
+  const notes = lines.flatMap((l) => {
+    const already = /^(\S+): already added$/.exec(l);
+    if (already) return [`${already[1]} is already added.`];
+    const unknown = /^(\S+): no such Host/.exec(l);
+    if (unknown) return [`${unknown[1]}: no such host in ~/.ssh/config and no known host.`];
+    return /^(Not added|Nothing to add|Did you mean)/.test(l) ? [l] : [];
+  });
+  const head = added.length ? [`Added ${added.length > 1 ? `${added.slice(0, -1).join(", ")} and ${added[added.length - 1]}` : added[0]}.`] : [];
+  return [...head, ...notes].join(" ") || output.trim();
 }

@@ -42,7 +42,7 @@ const ollamaPort = ollama.address().port;
 const socket = join(root, "aya.sock");
 // Stands in for Aya's Add / Cancel dialog: records what the user was shown and answers `dialog.answer`,
 // after `dialog.holdMs` or once Aya closes it (`dialog.closed`), as the user clicking late would.
-const dialog = { answer: true, asked: [], holdMs: 0, closed: null, answered: null };
+const dialog = { answer: true, asked: [], holdMs: 0, closed: null, answered: null, removeAsked: [], removeAnswer: true };
 const stop = startControlServerOn(socket, {
   getWindow: () => null,
   openProject: () => {},
@@ -51,6 +51,7 @@ const stop = startControlServerOn(socket, {
     ayaHome,
     userHome: home,
     origin: "cli",
+    confirmRemove: async (id) => (dialog.removeAsked.push(id), dialog.removeAnswer ?? true),
     confirmAdd: async (ask, signal) => {
       dialog.asked.push(ask);
       if (dialog.holdMs) {
@@ -325,10 +326,18 @@ test("occupy and free: advisory, records who and when, shown in the status", asy
   assert.equal((await aya("occupy", "athena")).status, 1, "a purpose is required");
 });
 
-test("remove: gone from the registry; an unknown id is refused", async () => {
+test("remove: asks in Aya, Cancel keeps it; Remove takes it out; an unknown id is refused", async () => {
   reset();
   await aya("add", "athena and mini");
+  dialog.removeAsked = [];
+  dialog.removeAnswer = false;
+  const kept = await aya("remove", "athena");
+  assert.equal(kept.status, 0, kept.stderr);
+  assert.match(kept.stdout, /Not removed: cancelled in Aya/);
+  assert.deepEqual(registry().machines.map((m) => m.id), ["athena", "mini"]);
+  dialog.removeAnswer = true;
   const r = await aya("remove", "athena");
+  assert.deepEqual(dialog.removeAsked, ["athena", "athena"]);
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(registry().machines.map((m) => m.id), ["mini"]);
   const missing = await aya("remove", "athena");

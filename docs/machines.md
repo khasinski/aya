@@ -84,7 +84,7 @@ Commands:
 - `aya machines add "<sentence>"`: draft, probe, confirm in Aya (see Setup).
   There is no option form: `aya machines add --ssh athena` is refused with
   a pointer to the sentence (`aya machines add "athena"`).
-- `aya machines remove <id>`.
+- `aya machines remove <id>`: asks in Aya (Remove / Cancel), like add.
 - `aya machines occupy <id> "<purpose>"` and `aya machines free <id>`:
   advisory occupancy. Aya records who and when and shows it to everyone.
   It is never enforced: requests to Ollama are not checked against it.

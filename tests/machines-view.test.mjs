@@ -2,7 +2,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { gpuCell, health, hotShort, loadCell, memoryCell, modelCell, vramCell } from "../dist-test/machines-view.js";
+import { addAnswerText, gpuCell, health, hotShort, levelOf, loadCell, memoryCell, modelCell, vramCell } from "../dist-test/machines-view.js";
 
 const NOW = new Date("2026-10-04T15:00:00Z");
 const GIB = 2 ** 30;
@@ -53,4 +53,25 @@ test("bars: a fraction of the total, clamped, none without a total", () => {
   assert.equal(vramCell(status()).frac, 21504 / 24576);
   assert.equal(loadCell(status({ load1: 64, cpus: 32 })).frac, 1);
   assert.equal(memoryCell(status({ memTotalBytes: null })).frac, null);
+});
+
+test("a bar warns from 80% and is high from 100% of its limit, over the unclamped share", () => {
+  for (const [used, total, level] of [[0, 10, undefined], [7.9, 10, undefined], [8, 10, "warn"], [9.9, 10, "warn"], [10, 10, "high"], [38, 10, "high"], [null, 10, undefined], [5, 0, undefined], [5, null, undefined]]) {
+    assert.equal(levelOf(used, total), level, `${used}/${total}`);
+  }
+  const overloaded = loadCell(status({ load1: 38, cpus: 10 }));
+  assert.deepEqual([overloaded.text, overloaded.frac, overloaded.level], ["38.0/10", 1, "high"]);
+  assert.equal(memoryCell(status({ memUsedBytes: 60 * GIB, memTotalBytes: 64 * GIB })).level, "warn");
+});
+
+test("the add answer in Settings is a sentence, not the CLI's draft", () => {
+  const cases = [
+    ["Draft:\n  local  local  ollama port 11434\nadded local  local  ollama port 11434\n", "Added local."],
+    ["Draft:\n  a  ssh:a  ollama port 11434\n  b  ssh:b  ollama port 11434\nadded a  ssh:a  ollama port 11434\nadded b  ssh:b  ollama port 11434\n", "Added a and b."],
+    ["Draft:\n  local  local  ollama port 11434\nNot added: cancelled in Aya.\n", "Not added: cancelled in Aya."],
+    ["Nothing to add from that sentence.\n  zzz: no such Host in ~/.ssh/config and no known host (aya machines hosts lists them)\n", "Nothing to add from that sentence. zzz: no such host in ~/.ssh/config and no known host."],
+    ["Draft:\n  m  ssh:m  ollama port 11434\n  athena: already added\n  Did you mean this machine by \"laptop\"? Say local to add it, or name its ssh alias.\nadded m  ssh:m  ollama port 11434\n", 'Added m. athena is already added. Did you mean this machine by "laptop"? Say local to add it, or name its ssh alias.'],
+  ];
+  for (const [output, text] of cases) assert.equal(addAnswerText(output), text);
+  assert.equal(addAnswerText("  an answer this Aya does not know yet\n"), "an answer this Aya does not know yet", "an unknown answer is shown as it came");
 });

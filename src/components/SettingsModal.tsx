@@ -2587,6 +2587,8 @@ export function SettingsModal({
             <button className="aya-modal-btn" onClick={resetPresetsToDefaults}>
               Reset presets to defaults
             </button>
+          ) : activeTab === "machines" ? (
+            <span className="aya-settings-actions-note">Machines are saved as you change them.</span>
           ) : (
             <div />
           )}

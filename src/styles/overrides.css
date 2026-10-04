@@ -3311,6 +3311,17 @@ select.aya-modal-input {
   height: 100%;
   background: var(--accent);
 }
+.aya-machine-bar--warn > span {
+  background: var(--status-waiting);
+}
+.aya-machine-bar--high > span {
+  background: var(--status-error);
+}
+.aya-settings-actions-note {
+  align-self: center;
+  color: var(--fg-tertiary);
+  font-size: 12px;
+}
 .aya-machine-model-name {
   display: block;
   color: var(--fg-secondary);
@@ -3520,14 +3531,8 @@ select.aya-modal-input {
 }
 .aya-machines-answer {
   margin: 0 0 6px;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
   color: var(--fg-secondary);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  white-space: pre-wrap;
+  font-size: 12px;
 }
 /* Narrow Settings: load and RAM stay in the details row. */
 @container (max-width: 700px) {

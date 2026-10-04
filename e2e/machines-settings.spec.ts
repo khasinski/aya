@@ -16,8 +16,8 @@ async function shoot(app: ElectronApplication, window: Page, name: string) {
   await window.screenshot({ path: join(SHOTS, name), scale: "css" });
 }
 
-/** Stubs Aya's native Add / Cancel dialog in main; records what it was asked. */
-async function answerAddDialog(app: ElectronApplication, button: "Add" | "Cancel") {
+/** Stubs Aya's native Add / Cancel and Remove / Cancel dialogs in main; records what they asked. */
+async function answerAyaDialog(app: ElectronApplication, button: "Add" | "Remove" | "Cancel") {
   await app.evaluate(({ dialog }, response) => {
     const g = globalThis as unknown as { __asks: string[] };
     g.__asks = [];
@@ -26,7 +26,7 @@ async function answerAddDialog(app: ElectronApplication, button: "Add" | "Cancel
       g.__asks.push(`${opts.message}\n${opts.detail}`);
       return { response, checkboxChecked: false };
     };
-  }, button === "Add" ? 0 : 1);
+  }, button === "Cancel" ? 1 : 0);
 }
 const asks = (app: ElectronApplication) => app.evaluate(() => (globalThis as unknown as { __asks: string[] }).__asks);
 
@@ -80,17 +80,17 @@ test.describe("empty", () => {
     const panel = await openMachines(window, app);
     const registry = join(seeded.ayaHome, "machines.json");
 
-    await answerAddDialog(app, "Cancel");
+    await answerAyaDialog(app, "Cancel");
     await panel.getByRole("button", { name: "Add gpu-box" }).click();
     // Add sends the host's target as the sentence, so the answer is the sentence's: its draft, then the dialog's word.
-    await expect(panel.getByTestId("machines-answer")).toHaveText("Draft:\n  gpu-box  ssh:gpu-box  ollama port 11434\nNot added: cancelled in Aya.");
+    await expect(panel.getByTestId("machines-answer")).toHaveText("Not added: cancelled in Aya.");
     expect(await asks(app)).toHaveLength(1);
     expect(existsSync(registry)).toBe(false);
     await expect(panel.getByTestId("machine-row")).toHaveCount(0);
 
-    await answerAddDialog(app, "Add");
+    await answerAyaDialog(app, "Add");
     await panel.getByRole("button", { name: "Add gpu-box" }).click();
-    await expect(panel.getByTestId("machines-answer")).toContainText("added gpu-box  ssh:gpu-box  ollama port 11434");
+    await expect(panel.getByTestId("machines-answer")).toHaveText("Added gpu-box.");
     const [ask] = await asks(app);
     expect(ask).toContain("Add gpu-box to Aya's machines?");
     expect(ask).toContain("NVIDIA GeForce RTX 4090");
@@ -107,32 +107,40 @@ test.describe("empty", () => {
   // One path for every kind of suggestion: a user@host target and this machine reach the same dialog as the sentence.
   test("Add on a user@host suggestion and on This machine: the dialog asks for exactly that host", async ({ app, window, seeded }) => {
     const panel = await openMachines(window, app);
-    await answerAddDialog(app, "Add");
+    await answerAyaDialog(app, "Add");
     await panel.getByRole("button", { name: "Add me@devbox" }).click();
-    await expect(panel.getByTestId("machines-answer")).toContainText("added devbox  ssh:me@devbox  ollama port 11434");
+    await expect(panel.getByTestId("machines-answer")).toHaveText("Added devbox.");
     expect(JSON.parse(readFileSync(join(seeded.ayaHome, "machines.json"), "utf8")).machines.map((m: { reach: unknown }) => m.reach)).toEqual([{ ssh: "me@devbox" }]);
 
-    await answerAddDialog(app, "Cancel");
+    await answerAyaDialog(app, "Cancel");
     await panel.getByRole("button", { name: "Add This machine" }).click();
-    await expect(panel.getByTestId("machines-answer")).toHaveText(/^Draft:\n {2}local {2}local {2}ollama port 11434\nNot added: cancelled in Aya\.$/);
+    await expect(panel.getByTestId("machines-answer")).toHaveText("Not added: cancelled in Aya.");
     const [ask] = await asks(app);
     expect(ask).toContain("Add local to Aya's machines?");
   });
 
   test("the sentence goes through the same add: drafted, asked in Aya, unclear words named", async ({ app, window, seeded }) => {
     const panel = await openMachines(window, app);
-    await answerAddDialog(app, "Add");
+    await answerAyaDialog(app, "Add");
     await panel.getByRole("button", { name: "Find" }).click();
     await expect(panel.getByRole("alert")).toContainText("Write which machines to add");
     await expect(panel.getByLabel("Add machines in one sentence")).toHaveAttribute("aria-invalid", "true");
 
     await panel.getByLabel("Add machines in one sentence").fill("mini-lab is the small box, and the laptop");
     await panel.getByRole("button", { name: "Find" }).click();
-    await expect(panel.getByTestId("machines-answer")).toContainText("added mini-lab");
+    await expect(panel.getByTestId("machines-answer")).toContainText("Added mini-lab.");
+    await expect(panel.getByLabel("Add machines in one sentence")).toHaveValue("");
+    await expect(window.locator(".aya-settings-actions-note")).toHaveText("Machines are saved as you change them.");
     await expect(panel.getByTestId("machines-answer")).toContainText('Did you mean this machine by "laptop"?');
     await expect(panel.getByTestId("machine-state")).toHaveText("Ollama down");
     await expect(panel.getByTestId("machine-details")).toContainText("Ollama not answering on port 11434");
     expect(sshCalls(seeded.root).filter((c) => c.endsWith("mini-lab sh -s")).length).toBeGreaterThan(0);
+
+    // The answer is about the add; a removal clears it.
+    await answerAyaDialog(app, "Remove");
+    await rowAction(panel, "mini-lab", "Remove mini-lab");
+    await expect(panel.getByTestId("machine-row")).toHaveCount(0);
+    await expect(panel.getByTestId("machines-answer")).toHaveCount(0);
   });
 });
 
@@ -178,7 +186,11 @@ test.describe("added", () => {
     await rowAction(panel, "gpu-box", "Check now, gpu-box");
     await expect(gpu.getByTestId("machine-state")).toHaveText("Ready");
 
-    window.once("dialog", (d) => void d.accept());
+    await answerAyaDialog(app, "Cancel");
+    await rowAction(panel, "mini-lab", "Remove mini-lab");
+    expect(await asks(app)).toEqual(["Remove mini-lab from Aya's machines?\nAya stops reading its state; nothing changes on the machine."]);
+    await expect(rows).toHaveCount(2);
+    await answerAyaDialog(app, "Remove");
     await rowAction(panel, "mini-lab", "Remove mini-lab");
     await expect(rows).toHaveCount(1);
     await expect(panel.getByRole("heading", { level: 2, name: "Machines" })).toBeFocused();
@@ -243,7 +255,7 @@ test.describe("usage and history", () => {
 
     // Removing mini-lab leaves it a suggestion that still carries its history.
     await rowAction(panel, "mini-lab", "Check now, mini-lab");
-    window.once("dialog", (d) => void d.accept());
+    await answerAyaDialog(app, "Remove");
     await rowAction(panel, "mini-lab", "Remove mini-lab");
     await expect(panel.getByTestId("machine-row")).toHaveCount(1);
     const mini = panel.getByTestId("machine-suggestion").filter({ hasText: "mini-lab" });

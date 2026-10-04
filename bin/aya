@@ -72,7 +72,7 @@ Usage:
   aya machines hosts [--json]        List known ssh hosts: ~/.ssh/config aliases, remote
                                      projects and added machines, with their sources
   aya machines add "sentence"        Draft machines from a sentence; the user adds them in Aya
-  aya machines remove id             Remove a machine from the registry
+  aya machines remove id             Remove a machine (asks in Aya)
   aya machines occupy id "purpose"   Say you are using a machine (advisory, not enforced)
   aya machines free id               Clear a machine's occupancy
   aya capabilities                   Print these commands as JSON, for agents

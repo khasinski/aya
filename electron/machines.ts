@@ -61,6 +61,7 @@ export interface MachinesDeps {
   beforeCommit?: () => Promise<void>;
   /** Aya's own Add / Cancel dialog with the probe results; without it nothing can be added. It closes on `signal`. */
   confirmAdd?: (ask: AddAsk, signal?: AbortSignal) => Promise<boolean>;
+  confirmRemove?: (id: string, signal?: AbortSignal) => Promise<boolean>;
 }
 
 /** What the user is asked to add, with what a read-only probe found on each machine. */
@@ -483,6 +484,10 @@ export async function handleMachinesRequest(request: MachinesRequest, deps: Mach
   }
   if (sub === "remove") {
     if (rest.length !== 1) throw new Error(USAGE);
+    const asked = findMachine(await loadRegistry(deps), rest[0]);
+    if (!deps.confirmRemove) throw new Error("removing a machine needs the user's yes in Aya, and Aya's dialog is not available here; nothing was removed");
+    if (!(await deps.confirmRemove(asked.id, callerGone))) return { output: `Not removed: cancelled in Aya.\n` };
+    if (callerGone?.aborted) throw new Error("the command stopped waiting for the user's answer; nothing was removed");
     const machine = await mutateRegistry(deps, (registry) => {
       const found = findMachine(registry, rest[0]);
       registry.machines = registry.machines.filter((m) => m !== found);

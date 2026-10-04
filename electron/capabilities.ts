@@ -224,7 +224,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   {
     command: "machines remove",
     usage: "aya machines remove id",
-    summary: "Remove a machine from the registry; nothing on the machine changes.",
+    summary: "Remove a machine (asks in Aya); nothing on the machine changes.",
   },
   {
     command: "machines occupy",

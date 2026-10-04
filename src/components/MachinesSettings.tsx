@@ -23,6 +23,7 @@ import {
   suggestions,
   usageText,
   vramCell,
+  addAnswerText,
 } from "../machines-view";
 
 const DEFAULT_OLLAMA_PORT = 11434;
@@ -42,7 +43,7 @@ function Meter({ cell }: { cell: Cell }) {
     <>
       <span className="aya-machine-num">{cell.text}</span>
       {cell.frac !== null && (
-        <span className="aya-machine-bar" aria-hidden="true">
+        <span className={`aya-machine-bar${cell.level ? ` aya-machine-bar--${cell.level}` : ""}`} aria-hidden="true">
           <span style={{ width: `${Math.round(cell.frac * 100)}%` }} />
         </span>
       )}
@@ -158,11 +159,11 @@ function MachineRow({
       await onChanged();
     });
   };
+  // Aya's native Remove / Cancel dialog asks in main, as for Add.
   const remove = () => {
-    if (!window.confirm(`Remove ${machine.id} from Aya's machines? Aya stops reading its state; nothing changes on the machine.`)) return;
     void run("Remove", async () => {
-      await window.aya.machinesCommand(["remove", machine.id]);
-      onRemoved();
+      const output = await window.aya.machinesCommand(["remove", machine.id]);
+      if (/^removed /.test(output)) onRemoved();
     });
   };
 
@@ -490,10 +491,11 @@ export function MachinesSettings() {
     try {
       const before = new Set((machines ?? []).map((m) => m.id));
       const output = await window.aya.machinesCommand(argv);
-      setAnswer(output.trim());
+      setAnswer(addAnswerText(output));
       await reload();
       const added = /^added (\S+)/m.exec(output)?.[1];
       if (added && !before.has(added)) setFocusMachine(added);
+      if (added && key === "sentence") setSentence("");
     } catch (err) {
       setAnswer(`Not added: ${message(err)}`);
     } finally {
@@ -569,7 +571,7 @@ export function MachinesSettings() {
         </p>
       )}
       <div role="status" aria-live="polite">
-        {answer && <pre className="aya-machines-answer" data-testid="machines-answer">{answer}</pre>}
+        {answer && <p className="aya-machines-answer" data-testid="machines-answer">{answer}</p>}
       </div>
 
       {loadError && (
@@ -612,6 +614,7 @@ export function MachinesSettings() {
               onChanged={reload}
               onChecked={refreshHosts}
               onRemoved={() => {
+                setAnswer(null);
                 headingRef.current?.focus();
                 void reload();
               }}
