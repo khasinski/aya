@@ -154,6 +154,15 @@ A 22-round reviewer/implementer UX session hit:
   only. Closing a pane frees its role; restarting it keeps the role.
 - **Identity**: `aya team whoami` prints the pane's role, each route with
   what it carries, and the protocol; every team pane is reminded to run it.
+- **The whole team**: `aya team show [<team>] [--json]` prints every role with
+  its responsibilities, must-not and routes, which role leads, the cadence, the
+  protocol and the status command line, read-only. It shows the copy saved in
+  Aya, which is what runs, and says when the repo's `.aya/teams/<team>.md`
+  differs or is gone; a repo file never saved is refused, as it does not run.
+  With no team it shows the calling pane's team, else the project's only saved
+  team; outside a pane, `AYA_PROJECT_SLUG` names the project. A member reads
+  the team here instead of being pointed at the file by its path (libeval-crew,
+  2026-10-03); the role note and whoami name the command.
   Only Claude, Grok, Codex and OpenCode get a role note at start, through the
   CLI's own channel; any other CLI says it cannot tell it its role. The note is given whether or not the preset tells the agent about aya: Claude
   `--append-system-prompt`, Grok `--rules`, Codex `-c developer_instructions`,
@@ -278,7 +287,8 @@ A 22-round reviewer/implementer UX session hit:
   (and `--json`, `--now`) only reads that and prints the last run with its time ("last
   run 22:41") under "Status (from the team's command)", or "not run yet"; it
   never runs the command itself.
-  Not in `aya team whoami`: the roles get its output, not the command.
+  Not in `aya team whoami`: the roles get its output, not the command;
+  `aya team show` prints the line, so the lead can tell what its rounds carry.
   Security: the command is the user's own and runs with the user's rights, like
   a git hook. Aya runs only the copy saved in Aya, never a team file that came
   with a pull or a clone; the card names a new or changed command before "Save
@@ -729,3 +739,34 @@ Each was found by the PR #149 ship-gate, re-checked, and left as it is: closing 
 - **A Pause leaves a skipped round in the log**: a round that was being prepared when the team paused is not typed; the log gets one line from aya, `round N skipped: the team is paused`.
 - **The process-tree proof catches accidents, not a forger (R-D1)**: it trusts the pid the CLI sends; a missing or unknown pid is not refused; no pid start time, so a recycled pid passes; remote tabs are skipped. Pinned in `tests/caller-proof-forger.test.mjs`.
 - **`exec -a name claude` needs a shell with that form**: a preset using it fails (`exec: -a: not found`) when the account's login shell is dash. Aya runs presets in `$SHELL`, then the account shell, then `/bin/bash`; write the preset without `-a`.
+
+## Proposed: a role updates its own role text
+
+Not built. Roles drift during a run and cannot be fully written at the start
+(libeval-crew, 2026-10-03: the implementer's first piece went stale, the
+prompt-engineer took on the stage 7 prompt and the adapters, the judge changed
+mode). Today the user edits the file, runs `aya team save --replace`, and types
+"run aya team whoami" into each pane by hand.
+
+1. **A role proposes**: `aya team propose <role> "<new text>"` (a role for
+   itself, or the lead for any role) records a proposal beside the team and
+   changes nothing the team runs.
+2. **The user sees it**: the role's row in the Teams window shows "proposed
+   change" with the proposer, its reason and a diff of the old and new text,
+   and the lead's round digest lists it.
+3. **The user approves**: Approve, Edit then approve, or Reject, in the Teams
+   window only (an agent cannot approve, as it cannot set the status command),
+   and a rejection goes back to the proposer as a message from aya.
+4. **Aya saves it**: an approval is a Save team of the edited definition
+   (saved copy and repo file written, running rounds re-armed).
+5. **Aya tells the affected panes**: each role whose whoami output changed (the
+   role, and the roles whose routes name it) gets "your role changed: run aya
+   team whoami" through finding 9's mechanism, and shows "older brief" until it
+   runs it.
+
+What stays the user's: whether a proposal is approved, its final wording,
+adding or removing roles, the lead, the cadence and the status command (a
+proposal carries responsibilities and must-not only), and when a running team
+gets the change (approve now, or after a pause). Aya never applies a proposal
+on a timeout. Several open proposals for one role: the newest replaces the
+older, which the window says.
