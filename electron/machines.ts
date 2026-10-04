@@ -3,8 +3,8 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { writeFileAtomic } from "./atomic-write";
-import { oneAtATime } from "./keyed-queue";
+import { atomicTempPath } from "./atomic-write";
+import { oneAtATime, withFileLock } from "./keyed-queue";
 import { probeMachine, SSH_ALIAS_PATTERN, type MachineStatus, type Reach } from "./machines-probe";
 import { singleFlight } from "./single-flight";
 
@@ -51,6 +51,8 @@ export interface MachinesDeps {
   userHome: string;
   probe?: typeof probeMachine;
   now?: () => Date;
+  /** Test seam: runs after the new registry is staged, just before the last check and the rename. */
+  beforeCommit?: () => Promise<void>;
   /** Aya's own Add / Cancel dialog with the probe results; without it nothing can be added. It closes on `signal`. */
   confirmAdd?: (ask: AddAsk, signal?: AbortSignal) => Promise<boolean>;
 }
@@ -123,19 +125,30 @@ export async function loadRegistry(deps: MachinesDeps): Promise<Registry> {
 
 const registryQueue = oneAtATime();
 
-/** One registry change at a time: read, change, and write only if the file is still what was read. */
+/** One registry change at a time, across processes too (a lock file next to it): read, change, and rename the
+ *  staged file in only if the file is still what was read, checked after staging so the gap is one rename. */
 export function mutateRegistry<T>(deps: MachinesDeps, change: (registry: Registry) => T | Promise<T>): Promise<T> {
   const file = registryFile(deps);
-  return registryQueue(file, async () => {
-    const before = await readRegistryText(deps);
-    const registry = parseRegistry(before, file);
-    const result = await change(registry);
-    const problem = registryProblem(registry);
-    if (problem) throw new Error(`${problem}; nothing was saved`);
-    if ((await readRegistryText(deps)) !== before) throw new Error(`${file} changed while this command ran; nothing was saved, run it again`);
-    await writeFileAtomic(file, `${JSON.stringify(registry, null, 2)}\n`, MACHINES_FILE_MODE);
-    return result;
-  });
+  return registryQueue(file, () =>
+    withFileLock(`${file}.lock`, async () => {
+      const before = await readRegistryText(deps);
+      const registry = parseRegistry(before, file);
+      const result = await change(registry);
+      const problem = registryProblem(registry);
+      if (problem) throw new Error(`${problem}; nothing was saved`);
+      const staged = atomicTempPath(file);
+      try {
+        await fs.writeFile(staged, `${JSON.stringify(registry, null, 2)}\n`, { mode: MACHINES_FILE_MODE });
+        await deps.beforeCommit?.();
+        // An editor that ignores the lock can still land between this read and the rename; nothing narrower exists on POSIX.
+        if ((await readRegistryText(deps)) !== before) throw new Error(`${file} changed while this command ran; nothing was saved, run it again`);
+        await fs.rename(staged, file);
+      } finally {
+        await fs.rm(staged, { force: true });
+      }
+      return result;
+    }),
+  );
 }
 
 // ---- ~/.ssh/config ----

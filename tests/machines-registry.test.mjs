@@ -50,6 +50,56 @@ test("a file changed by someone else during a transaction is not overwritten", a
   assert.equal(readFileSync(file, "utf8"), theirs);
 });
 
+test("another process changing the registry during a transaction waits for it, and both changes are saved", async (t) => {
+  const { deps, file, ids } = setup(t);
+  const { spawn } = await import("node:child_process");
+  const { pathToFileURL } = await import("node:url");
+  const { resolve } = await import("node:path");
+  const other = `
+    const { mutateRegistry } = await import(${JSON.stringify(pathToFileURL(resolve("dist-electron/machines.js")).href)});
+    console.log("started");
+    await mutateRegistry(${JSON.stringify({ ayaHome: deps.ayaHome, userHome: deps.userHome })}, (r) => {
+      r.machines.push({ id: "theirs", label: "theirs", reach: { ssh: "a2" }, ollama: { port: 11434 } });
+    });
+    console.log("saved");`;
+  let child;
+  const otherDone = new Promise((done) => {
+    child = spawn(process.execPath, ["--input-type=module", "-e", other], { stdio: ["ignore", "pipe", "inherit"] });
+    let out = "";
+    child.stdout.on("data", (c) => (out += c));
+    child.on("close", (code) => done({ code, out }));
+  });
+  t.after(() => child.kill());
+  await mutateRegistry(deps, async (registry) => {
+    await new Promise((r) => child.stdout.once("data", r));
+    // Long enough for the other process to read, change and try to write while this one holds the registry.
+    await new Promise((r) => setTimeout(r, 500));
+    registry.machines.push({ id: "mine", label: "mine", reach: "local", ollama: { port: 11434 } });
+  });
+  const result = await otherDone;
+  assert.equal(result.code, 0);
+  assert.match(result.out, /saved/);
+  assert.deepEqual(ids(), ["mine", "theirs"]);
+  assert.throws(() => readFileSync(`${file}.lock`), /ENOENT/, "the lock is gone after both");
+});
+
+test("a file replaced by someone else between the last check and the rename is not overwritten", async (t) => {
+  const { deps, file } = setup(t);
+  mkdirSync(deps.ayaHome, { recursive: true });
+  writeFileSync(file, '{"version":1,"machines":[]}\n');
+  const theirs = '{"version":2,"machines":[]}\n';
+  deps.beforeCommit = async () => writeFileSync(file, theirs);
+  await assert.rejects(
+    mutateRegistry(deps, (registry) => {
+      registry.machines.push({ id: "x", label: "x", reach: "local", ollama: { port: 11434 } });
+    }),
+    /changed while this command ran; nothing was saved/,
+  );
+  assert.equal(readFileSync(file, "utf8"), theirs);
+  const { readdirSync } = await import("node:fs");
+  assert.deepEqual(readdirSync(deps.ayaHome).sort(), ["machines.json"], "no temp file or lock left behind");
+});
+
 const malformed = [
   { name: "machines is an object", text: '{"version":1,"machines":{"a":1}}', error: /machines is not a list/ },
   { name: "not JSON", text: "{oops", error: /not JSON/ },
