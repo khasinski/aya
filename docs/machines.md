@@ -79,9 +79,11 @@ Commands:
 - `aya machines [--json]`: state of every machine.
 - `aya machines hosts`: `Host` aliases from `~/.ssh/config` (following
   `Include`), with an "added" mark on those already registered.
-- `aya machines add "<sentence>"`: draft, show, confirm (see Setup).
+- `aya machines add "<sentence>"`: draft, probe, confirm in Aya (see Setup).
 - `aya machines add --ssh <alias> | --local [--id <id>] [--port <n>]`: the
-  manual form, saved at once.
+  manual form. `--ssh` takes only a `Host` alias from `~/.ssh/config`; an
+  address or an unknown name is refused with the list of aliases. It is
+  confirmed in Aya like a sentence.
 - `aya machines remove <id>`.
 - `aya machines occupy <id> "<purpose>"` and `aya machines free <id>`:
   advisory occupancy. Aya records who and when and shows it to everyone.
@@ -107,10 +109,12 @@ with "start Aya first" when Aya is not running.
    alias is never taken as local. The draft lists it under "unclear" and
    asks: "Did you mean this machine by 'laptop'? Say `local` to add it."
 3. Show the draft: id, reach, Ollama port, and the unclear words.
-4. Save on confirm. In a terminal (TTY) the command asks y/N. From an agent
-   pane (no TTY) it prints the draft and the exact manual command(s) that
-   save it, e.g. `aya machines add --ssh athena`, which the agent runs only
-   after the user says yes.
+4. Probe the drafted machines (read-only) and ask in Aya itself: a native
+   Add / Cancel dialog shows each machine, what the probe found and the
+   pane that asked. Only Add saves. The CLI caller, agent or terminal, is
+   never asked and has no flag that saves, so an agent cannot register a
+   machine on its own. The command waits for the dialog and prints
+   "added ..." or "Not added: cancelled in Aya".
 
 Aya Intelligence may later turn freer sentences into the same draft. It is
 not needed for step 1, and it never bypasses the confirm.
@@ -124,27 +128,40 @@ written with `atomic-write.ts`, mode 0600.
   (`[a-z0-9-]`), `label`, `reach: "local" | {ssh: alias}`,
   `ollama: {port}` (the port on the host, default 11434) and an optional
   `occupancy: {by, purpose, since}`.
-- A file with an unknown `version` is not rewritten; commands say so.
+- Changes (add, remove, occupy, free) run one at a time in main. Each
+  re-reads the file, and refuses to write if it changed meanwhile.
+- A file that is not JSON, has another `version` or a malformed machine is
+  never rewritten; commands say why.
 
 ## Probes
 
-- Remote: `ssh -o BatchMode=yes -o ConnectTimeout=5 -- <alias> sh -s`,
-  with a fixed read-only script on stdin, so the remote login shell never
-  parses it. The alias must match `^[A-Za-z0-9._-]+$` and comes after `--`.
+- Remote: `ssh -o BatchMode=yes -o ConnectTimeout=5 <hardening> --
+  <alias> sh -s`, with a fixed read-only script on stdin, so the remote
+  login shell never parses it. The hardening overrides what the alias's
+  config could add: `ClearAllForwardings=yes`, `PermitLocalCommand=no`,
+  `ForwardAgent=no`, `ForwardX11=no`, `ControlMaster=no`,
+  `ControlPath=none`, `Tunnel=no`, `RequestTTY=no`. The alias must match
+  `^[A-Za-z0-9._-]+$` and comes after `--`.
   Only the validated port number is substituted into the script:
   `nproc`, `/proc/loadavg` or `sysctl -n vm.loadavg`, `/proc/meminfo` or
   `vm_stat` plus `sysctl -n hw.memsize`, `nvidia-smi
   --query-gpu=name,utilization.gpu,memory.used,memory.total
   --format=csv,noheader,nounits` if present, and
-  `curl -s --max-time 3 http://127.0.0.1:<port>/api/version` and `/api/ps`.
+  `curl -q -s --noproxy '*' -X GET --max-time 3
+  http://127.0.0.1:<port>/api/version` and `/api/ps` (`-q` first, so the
+  host's `~/.curlrc` cannot add a body, a method or a proxy).
   Sections are separated by marker lines so a missing tool is an empty
   section, not a parse error.
-- Local: Node's `os` module (memory used from `vm_stat` on macOS, where
-  `os.freemem` counts only free pages), `nvidia-smi` if present, and the
+- Local: Node's `os` module, memory from `/proc/meminfo` `MemAvailable` on
+  Linux and `vm_stat` on macOS (the same parsers as the remote path), `nvidia-smi` if present, and the
   same two Ollama calls over HTTP to `127.0.0.1:<port>`. GPU is `n/a` on Apple
   Silicon (see Open questions).
 - The whole probe is killed after 10 s and reported as unreachable with
-  the error and `checkedAt`.
+  the error and `checkedAt`. Every process it started gets SIGKILL to its
+  process group, and the probe answers only after they exited.
+- `/api/version` answering while `/api/ps` fails gives `loaded: null` and
+  `modelsError`, shown as "models: unavailable (<why>)", never as "no model
+  loaded".
 - One probe per machine is in flight at a time and shared by every caller
   (`electron/single-flight.ts`), with a 3 s cache so a polling agent does
   not flood ssh.
@@ -232,8 +249,10 @@ Tests never ssh to a real host: a fake `ssh` on PATH replays fixtures, and
 | unknown word that looks like a host | listed as unknown, not drafted |
 | alias already added | marked "already added", not drafted again |
 
-CLI tests cover add (sentence, TTY refused / non-TTY draft, manual),
-hosts, remove, occupy, free and `--json` against a temp `AYA_HOME`.
+CLI tests cover add (sentence and manual, the dialog's Add and Cancel, a
+non-alias refused, a terminal caller never asked), hosts, remove, occupy,
+free, concurrent changes, malformed registries and `--json` against a temp
+`AYA_HOME`.
 
 ## Open questions
 

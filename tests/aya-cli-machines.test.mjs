@@ -40,7 +40,21 @@ await new Promise((r) => ollama.listen(0, "127.0.0.1", r));
 const ollamaPort = ollama.address().port;
 
 const socket = join(root, "aya.sock");
-const stop = startControlServerOn(socket, { getWindow: () => null, openProject: () => {}, listProjects: async () => [] });
+// Stands in for Aya's Add / Cancel dialog: records what the user was shown and answers `dialog.answer`.
+const dialog = { answer: true, asked: [] };
+const stop = startControlServerOn(socket, {
+  getWindow: () => null,
+  openProject: () => {},
+  listProjects: async () => [],
+  machines: {
+    ayaHome,
+    userHome: home,
+    confirmAdd: async (ask) => {
+      dialog.asked.push(ask);
+      return dialog.answer;
+    },
+  },
+});
 test.after(() => {
   stop();
   ollama.close();
@@ -61,6 +75,8 @@ function aya(...args) {
 
 const registry = () => JSON.parse(readFileSync(registryFile, "utf8"));
 const reset = () => {
+  dialog.answer = true;
+  dialog.asked = [];
   rmSync(registryFile, { force: true });
   rmSync(join(root, "ssh", "calls"), { force: true });
   clearMachineStatusCache();
@@ -73,17 +89,26 @@ test("no machines: says how to add one", async () => {
   assert.match(r.stdout, /no machines yet/);
 });
 
-test("add a sentence from a non-TTY caller: prints the draft and the exact command, saves nothing", async () => {
-  reset();
-  const r = await aya("add", "athena is the 4090 box, port 11434, and the laptop");
-  assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /Draft:\n {2}athena {2}ssh:athena {2}ollama port 11434/);
-  assert.match(r.stdout, /Did you mean this machine by "laptop"\?/);
-  assert.match(r.stdout, /Nothing saved\. After the user says yes, run:\n {2}aya machines add --ssh athena\n/);
-  assert.throws(() => statSync(registryFile), /ENOENT/);
-  const calls = (() => { try { return readFileSync(join(root, "ssh", "calls"), "utf8"); } catch { return ""; } })();
-  assert.equal(calls, "", "a draft does not ssh anywhere");
-});
+const sentenceAnswers = [
+  { answer: true, out: /added athena {2}ssh:athena {2}ollama port 11434\n$/, saved: ["athena"] },
+  { answer: false, out: /Not added: cancelled in Aya\.\n$/, saved: null },
+];
+for (const c of sentenceAnswers) {
+  test(`add a sentence: the draft is probed and shown in Aya's dialog, which says ${c.answer ? "Add" : "Cancel"}`, async () => {
+    reset();
+    fake.setMode("athena", `ok:${linuxFixture}`);
+    dialog.answer = c.answer;
+    const r = await aya("add", "athena is the 4090 box, port 11434, and the laptop");
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Draft:\n {2}athena {2}ssh:athena {2}ollama port 11434/);
+    assert.match(r.stdout, /Did you mean this machine by "laptop"\?/);
+    assert.match(r.stdout, c.out);
+    assert.equal(dialog.asked.length, 1);
+    assert.equal(dialog.asked[0].machines[0].status.gpus[0].name, "NVIDIA GeForce RTX 4090", "the dialog shows the probe");
+    if (c.saved) assert.deepEqual(registry().machines.map((m) => m.id), c.saved);
+    else assert.throws(() => statSync(registryFile), /ENOENT/);
+  });
+}
 
 test("add: only an ambiguous word drafts nothing, and an unknown host is named", async () => {
   reset();
@@ -92,7 +117,7 @@ test("add: only an ambiguous word drafts nothing, and an unknown host is named",
   assert.match(r.stdout, /Nothing to add from that sentence\./);
   assert.match(r.stdout, /zeus: no such Host in ~\/\.ssh\/config/);
   assert.match(r.stdout, /"laptop"/);
-  assert.doesNotMatch(r.stdout, /aya machines add --/);
+  assert.equal(dialog.asked.length, 0, "nothing to ask");
 });
 
 test("manual add saves a versioned registry, mode 0600; --id and --port bind to the machine before them", async () => {
@@ -110,11 +135,12 @@ test("manual add saves a versioned registry, mode 0600; --id and --port bind to 
 });
 
 const manualAddRefusals = [
-  { args: ["--ssh", "-oProxyCommand=x"], error: /not an ssh alias/ },
+  { args: ["--ssh", "-oProxyCommand=x"], error: /not a Host alias in ~\/\.ssh\/config \(athena, mini\)/ },
+  { args: ["--ssh", "203.0.113.10"], error: /not a Host alias/ },
   { args: ["--port", "1"], error: /comes after --ssh/ },
-  { args: ["--ssh", "a", "--port", "99999"], error: /not a port number/ },
-  { args: ["--ssh", "a", "--id", "Bad_Id"], error: /may use only/ },
-  { args: ["--ssh", "a", "--ssh", "b", "--id", "a"], error: /already added/ },
+  { args: ["--ssh", "athena", "--port", "99999"], error: /not a port number/ },
+  { args: ["--ssh", "athena", "--id", "Bad_Id"], error: /may use only/ },
+  { args: ["--ssh", "athena", "--ssh", "mini", "--id", "athena"], error: /already added/ },
   { args: ["--ssh"], error: /needs a value/ },
 ];
 for (const c of manualAddRefusals) {
@@ -124,6 +150,7 @@ for (const c of manualAddRefusals) {
     assert.equal(r.status, 1);
     assert.match(r.stderr, c.error);
     assert.throws(() => statSync(registryFile), /ENOENT/);
+    assert.equal(dialog.asked.length, 0, "refused before the dialog");
   });
 }
 
@@ -222,6 +249,7 @@ test("two callers at once share one probe per machine", async () => {
   reset();
   fake.setMode("athena", `ok:${linuxFixture}`);
   await aya("add", "--ssh", "athena");
+  rmSync(join(root, "ssh", "calls"));
   const [a, b] = await Promise.all([aya("--json"), aya("--json")]);
   assert.equal(a.status + b.status, 0);
   assert.equal(readFileSync(join(root, "ssh", "calls"), "utf8").trim().split("\n").length, 1);
@@ -278,30 +306,20 @@ test("there is no load or unload command", async () => {
 });
 
 const hasExpect = spawnSync("sh", ["-c", "command -v expect"]).status === 0;
-/** The CLI on a real pseudo-terminal (expect), answering the y/N question with `answer`; async, the server runs in this process. */
-function ayaOnTty(sentence, answer) {
-  const script = `set timeout 10; spawn ${cli} machines add {${sentence}}; expect {\\[y/N\\] } { send "${answer}\\r" }; expect eof`;
-  return new Promise((done, fail) => {
+
+test("on a terminal too, the CLI never asks: only Aya's dialog adds", { skip: !hasExpect && "expect is not installed" }, async () => {
+  reset();
+  dialog.answer = false;
+  const script = `set timeout 10; spawn ${cli} machines add --local; expect eof`;
+  const out = await new Promise((done, fail) => {
     const child = spawn("expect", ["-c", script], { env: { ...envWithoutAya(), AYA_SOCKET: socket, USER: "justi" } });
     let stdout = "";
     child.stdout.on("data", (c) => (stdout += c));
     child.on("error", fail);
-    child.on("close", (status) => done({ status, stdout }));
+    child.on("close", () => done(stdout));
   });
-}
-
-const ttyAnswers = [
-  { answer: "y", saved: [["athena", { ssh: "athena" }], ["local", "local"]], out: /added athena[\s\S]*added local/ },
-  { answer: "n", saved: null, out: /Nothing saved\./ },
-  { answer: "", saved: null, out: /Nothing saved\./ },
-];
-for (const c of ttyAnswers) {
-  test(`add a sentence on a terminal asks y/N: "${c.answer}"`, { skip: !hasExpect && "expect is not installed" }, async () => {
-    reset();
-    const r = await ayaOnTty("athena and this machine", c.answer);
-    assert.match(r.stdout, /Draft:\r?\n {2}athena {2}ssh:athena[\s\S]*Save these machines\? \[y\/N\]/);
-    assert.match(r.stdout, c.out);
-    if (c.saved) assert.deepEqual(registry().machines.map((m) => [m.id, m.reach]), c.saved);
-    else assert.throws(() => statSync(registryFile), /ENOENT/);
-  });
-}
+  assert.doesNotMatch(out, /\[y\/N\]/);
+  assert.match(out, /Not added: cancelled in Aya\./);
+  assert.equal(dialog.asked.length, 1);
+  assert.throws(() => statSync(registryFile), /ENOENT/);
+});

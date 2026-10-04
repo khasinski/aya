@@ -213,17 +213,18 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     command: "machines add",
     usage: 'aya machines add "sentence"',
     summary:
-      "Draft machines from one sentence: ssh aliases it names, and local or \"this machine\" for this one. Saves nothing; from a pane it prints the exact command that saves the draft.",
+      "Draft machines from one sentence: ssh aliases it names, and local or \"this machine\" for this one. Aya probes them read-only and asks the user in its own Add / Cancel dialog; the command prints the result.",
     example: 'aya machines add "athena is the 4090 box, and this machine"',
     notes: [
-      "Show the draft to the user and run the printed command only after the user's yes.",
+      "Only the user's click in Aya adds a machine; there is no flag or answer that adds one from the command line.",
       "A word like laptop is asked about, never taken as this machine.",
     ],
   },
   {
     command: "machines add --ssh",
     usage: "aya machines add --ssh alias|--local [--id id] [--port n]...",
-    summary: "Add machines as given and save them; --id and --port apply to the machine before them, --port is Ollama's port on that host (11434 by default).",
+    summary:
+      "Propose machines as given: --ssh takes only a Host alias from ~/.ssh/config, --local this machine; --id and --port apply to the machine before them, --port is Ollama's port on that host (11434 by default). The user confirms in Aya.",
     example: "aya machines add --ssh athena --local --id laptop",
   },
   {

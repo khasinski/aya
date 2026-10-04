@@ -51,6 +51,15 @@ export interface MachinesDeps {
   userHome: string;
   probe?: typeof probeMachine;
   now?: () => Date;
+  /** Aya's own Add / Cancel dialog with the probe results; without it nothing can be added. */
+  confirmAdd?: (ask: AddAsk) => Promise<boolean>;
+}
+
+/** What the user is asked to add, with what a read-only probe found on each machine. */
+export interface AddAsk {
+  machines: (DraftMachine & { status: MachineStatus })[];
+  /** The pane whose agent asked, when one did. */
+  pane?: string;
 }
 
 const registryFile = (deps: MachinesDeps) => path.join(deps.ayaHome, MACHINES_FILE_NAME);
@@ -343,36 +352,26 @@ function formatDraft(draft: SentenceDraft): string {
   return `${lines.join("\n")}\n`;
 }
 
-/** The manual command that saves exactly this draft. */
-export function addArgs(machines: DraftMachine[]): string[] {
-  return machines.flatMap((m) => [
-    ...(m.reach === "local" ? ["--local"] : ["--ssh", m.reach.ssh]),
-    ...(m.id !== (m.reach === "local" ? "local" : idFor(m.reach.ssh)) ? ["--id", m.id] : []),
-    ...(m.port !== DEFAULT_OLLAMA_PORT ? ["--port", String(m.port)] : []),
-  ]);
-}
-
-const shellQuote = (arg: string) => (/^[A-Za-z0-9._:/=-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`);
-
 // ---- the command ----
 
 export interface MachinesRequest {
   argv: string[];
-  /** Whether the CLI can ask y/N on the user's terminal. */
-  tty: boolean;
   user?: string;
 }
 
 export interface MachinesAnswer {
   output: string;
-  /** Asked on a TTY; on yes the CLI sends `request`. */
-  confirm?: { question: string; request: { type: "machines"; argv: string[] } };
 }
 
 const USAGE =
   'usage: aya machines [--json] | hosts | add "<sentence>" | add --ssh <alias>|--local [--id id] [--port n]... | remove <id> | occupy <id> "<purpose>" | free <id>';
 
-function parseManualAdd(argv: string[], registry: Registry): DraftMachine[] {
+function notAnAlias(value: string, aliases: string[]): Error {
+  const known = aliases.length ? aliases.join(", ") : "there are none";
+  return new Error(`"${value}" is not a Host alias in ~/.ssh/config (${known}); add a Host block for it first, nothing was saved`);
+}
+
+function parseManualAdd(argv: string[], registry: Registry, aliases: string[]): DraftMachine[] {
   const drafted: DraftMachine[] = [];
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
@@ -384,8 +383,9 @@ function parseManualAdd(argv: string[], registry: Registry): DraftMachine[] {
     if (value === undefined) throw new Error(`${flag} needs a value; ${USAGE}`);
     i++;
     if (flag === "--ssh") {
-      if (!SSH_ALIAS_PATTERN.test(value)) throw new Error(`"${value}" is not an ssh alias (letters, digits, . _ - only)`);
-      drafted.push({ id: idFor(value), reach: { ssh: value }, port: DEFAULT_OLLAMA_PORT });
+      const alias = aliases.find((a) => a.toLowerCase() === value.toLowerCase());
+      if (!alias) throw notAnAlias(value, aliases);
+      drafted.push({ id: idFor(alias), reach: { ssh: alias }, port: DEFAULT_OLLAMA_PORT });
       continue;
     }
     const last = drafted.at(-1);
@@ -410,6 +410,23 @@ function parseManualAdd(argv: string[], registry: Registry): DraftMachine[] {
   return drafted;
 }
 
+const sameReach = (a: Reach, b: Reach) => (a === "local" ? b === "local" : b !== "local" && a.ssh === b.ssh);
+
+/** Probes the draft read-only, asks the user in Aya, and saves only on the dialog's Add; the caller is never asked. */
+async function addMachines(drafted: DraftMachine[], deps: MachinesDeps, pane: string | undefined, before: string): Promise<MachinesAnswer> {
+  if (!deps.confirmAdd) throw new Error("adding a machine needs the user's yes in Aya, and Aya's dialog is not available here; nothing was saved");
+  const probe = deps.probe ?? probeMachine;
+  const machines = await Promise.all(drafted.map(async (m) => ({ ...m, status: await probe(m.reach, m.port, { now: deps.now }) })));
+  if (!(await deps.confirmAdd({ machines, ...(pane ? { pane } : {}) }))) return { output: `${before}Not added: cancelled in Aya.\n` };
+  await mutateRegistry(deps, (registry) => {
+    for (const m of drafted) {
+      if (registry.machines.some((x) => x.id === m.id || sameReach(x.reach, m.reach))) throw new Error(`${m.id} was already added meanwhile; nothing was saved`);
+    }
+    registry.machines.push(...drafted.map((m) => ({ id: m.id, label: m.id, reach: m.reach, ollama: { port: m.port } })));
+  });
+  return { output: `${before}${drafted.map((m) => `added ${m.id}  ${reachText(m.reach)}  ollama port ${m.port}\n`).join("")}` };
+}
+
 function findMachine(registry: Registry, id: string | undefined): Machine {
   const machine = registry.machines.find((m) => m.id === id);
   if (!machine) throw new Error(`no machine "${id ?? ""}"; aya machines lists them`);
@@ -431,22 +448,14 @@ export async function handleMachinesRequest(request: MachinesRequest, deps: Mach
     return { output: aliases.map((a) => `${a}${added.has(a) ? "  (added)" : ""}\n`).join("") };
   }
   if (sub === "add") {
-    if (rest[0]?.startsWith("--")) {
-      const drafted = await mutateRegistry(deps, (registry) => {
-        const machines = parseManualAdd(rest, registry);
-        registry.machines.push(...machines.map((m) => ({ id: m.id, label: m.id, reach: m.reach, ollama: { port: m.port } })));
-        return machines;
-      });
-      return { output: drafted.map((m) => `added ${m.id}  ${reachText(m.reach)}  ollama port ${m.port}\n`).join("") };
-    }
+    const [aliases, registry] = await Promise.all([sshHostAliases(deps.userHome), loadRegistry(deps)]);
+    if (rest[0]?.startsWith("--")) return addMachines(parseManualAdd(rest, registry, aliases), deps, pane, "");
     const sentence = rest.join(" ").trim();
     if (!sentence) throw new Error(USAGE);
-    const draft = draftFromSentence(sentence, await sshHostAliases(deps.userHome), await loadRegistry(deps));
+    const draft = draftFromSentence(sentence, aliases, registry);
     const output = formatDraft(draft);
     if (draft.machines.length === 0) return { output };
-    const argv = ["add", ...addArgs(draft.machines)];
-    if (request.tty) return { output, confirm: { question: "Save these machines? [y/N] ", request: { type: "machines", argv } } };
-    return { output: `${output}Nothing saved. After the user says yes, run:\n  aya machines ${argv.map(shellQuote).join(" ")}\n` };
+    return addMachines(draft.machines, deps, pane, output);
   }
   if (sub === "remove") {
     if (rest.length !== 1) throw new Error(USAGE);

@@ -341,7 +341,7 @@ aya team debug ux-fix -f                               # read and follow that lo
 
 # See your Ollama machines (read-only over ssh; see docs/machines.md)
 aya machines                                           # GPU, CPU, memory, hot models
-aya machines add "athena is the 4090 box"              # drafts from ~/.ssh/config, asks first
+aya machines add "athena is the 4090 box"              # from ~/.ssh/config; you confirm in Aya
 aya machines occupy athena "run5 timed collection"     # advisory: says who uses it
 
 # Every command above, as JSON, for an agent to read

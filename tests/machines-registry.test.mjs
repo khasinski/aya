@@ -70,3 +70,76 @@ for (const c of malformed) {
     });
   }
 }
+
+// Registration is the user's: every add waits for Aya's own dialog, never for the CLI caller.
+const confirmCases = [
+  { argv: ["add", "--ssh", "a1"], answer: true, saved: ["a1"] },
+  { argv: ["add", "--ssh", "a1"], answer: false, saved: null, out: /Not added: cancelled in Aya/ },
+  { argv: ["add", "a1 and this machine"], answer: true, saved: ["a1", "local"] },
+  { argv: ["add", "a1 and this machine"], answer: false, saved: null, out: /Not added/ },
+  { argv: ["add", "--local", "--id", "laptop"], answer: true, saved: ["laptop"] },
+];
+for (const c of confirmCases) {
+  test(`${c.argv.join(" ")}: the dialog says ${c.answer ? "Add" : "Cancel"}`, async (t) => {
+    const { deps, file, run, ids } = setup(t);
+    const asked = [];
+    deps.confirmAdd = async (ask) => {
+      asked.push(ask);
+      return c.answer;
+    };
+    deps.probe = async (reach) => ({ reachable: reach === "local", error: reach === "local" ? null : "ssh: down" });
+    const answer = await run(...c.argv);
+    assert.equal(asked.length, 1, "asked once, in Aya");
+    assert.deepEqual(asked[0].machines.map((m) => m.id), c.saved ?? asked[0].machines.map((m) => m.id));
+    assert.ok(asked[0].machines.every((m) => m.status && typeof m.status.reachable === "boolean"), "the dialog shows each probe");
+    if (c.saved) assert.deepEqual(ids(), c.saved);
+    else assert.throws(() => readFileSync(file), /ENOENT/);
+    if (c.out) assert.match(answer.output, c.out);
+    assert.equal(answer.confirm, undefined, "the CLI caller is never asked");
+  });
+}
+
+test("without Aya's dialog (no confirmAdd) an add is refused and nothing is saved", async (t) => {
+  const { deps, file, run } = setup(t);
+  delete deps.confirmAdd;
+  await assert.rejects(run("add", "--ssh", "a1"), /needs the user's yes in Aya/);
+  assert.throws(() => readFileSync(file), /ENOENT/);
+});
+
+for (const target of ["203.0.113.10", "not-in-config", "user@a1"]) {
+  test(`--ssh ${target}: not an alias in ~/.ssh/config, refused with the list, no dialog`, async (t) => {
+    const { deps, file, run } = setup(t, ["a1", "a2"]);
+    let asked = 0;
+    deps.confirmAdd = async () => (asked++, true);
+    await assert.rejects(run("add", "--ssh", target), /not a Host alias in ~\/\.ssh\/config.*a1, a2/);
+    assert.equal(asked, 0);
+    assert.throws(() => readFileSync(file), /ENOENT/);
+  });
+}
+
+test("a machine added by someone else while the dialog was open is not added twice", async (t) => {
+  const { deps, run, ids } = setup(t);
+  deps.confirmAdd = async () => {
+    await handleMachinesRequest({ argv: ["add", "--ssh", "a1"], tty: false }, { ...deps, confirmAdd: async () => true });
+    return true;
+  };
+  await assert.rejects(run("add", "--ssh", "a1"), /already added/);
+  assert.deepEqual(ids(), ["a1"]);
+});
+
+test("Aya's dialog names each machine, what the probe found, and the pane that asked", async () => {
+  const { addDialogText } = await import("../dist-electron/machines-dialog.js");
+  const ok = { reachable: true, error: null, cpus: 32, gpus: [{ name: "RTX 4090" }], ollama: { up: true, version: "0.34.4", loaded: [{}] } };
+  const down = { reachable: false, error: "ssh: connect timeout", gpus: [], ollama: { up: false, loaded: null } };
+  const text = addDialogText({
+    pane: "collector",
+    machines: [
+      { id: "athena", reach: { ssh: "athena" }, port: 11434, status: ok },
+      { id: "mini", reach: { ssh: "mini" }, port: 11435, status: down },
+    ],
+  });
+  assert.equal(text.message, "Add 2 machines to Aya's machines?");
+  assert.match(text.detail, /^Asked by pane "collector"\. Aya will only read their state over ssh; it never loads or unloads a model\./);
+  assert.match(text.detail, /athena {2}\(ssh athena, Ollama port 11434\)\n {2}connected, 32 CPUs, RTX 4090, Ollama 0\.34\.4, 1 model\(s\) loaded/);
+  assert.match(text.detail, /mini {2}\(ssh mini, Ollama port 11435\)\n {2}unreachable: ssh: connect timeout/);
+});
