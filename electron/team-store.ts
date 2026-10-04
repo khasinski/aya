@@ -446,7 +446,9 @@ export class TeamStore {
    *  False when the message was read or taken for typing since the caller looked: it is not typed twice. */
   beginTyping(role: string, id: number): Promise<boolean> {
     return this.serial(async () => {
-      await this.foldCrashedTyping(role);
+      // A reservation in flight (another send to the same role, not yet typed) keeps this one owed for the next pass;
+      // taking over would drop its mark when the first paste ends.
+      if (await this.foldCrashedTyping(role)) return false;
       const typing = await this.typingMarks();
       const taken = typing[role] === undefined ? 0 : markId(typing[role]);
       if (id <= Math.max((await this.rawReadMarks())[role] ?? 0, taken)) return false;
@@ -552,7 +554,8 @@ export class TeamStore {
     if (id === undefined) return false;
     if (typingNow.has(this.typingKey(role))) return true;
     debugLog(this, "reserve", { role, id: markId(id), state: "folded", pasting: typeof id === "number" });
-    if (typeof id === "number") {
+    // Marked read already (the crash came after markRead, before the mark was dropped): it was typed and seen.
+    if (typeof id === "number" && ((await this.rawReadMarks())[role] ?? 0) < id) {
       await this.raiseReadMark(role, id);
       await this.writeNotes(role, { [id]: CRASHED_MID_TYPING });
     }

@@ -172,12 +172,15 @@ export class TeamExistsError extends Error {
 }
 
 /** `create`: a new team, refused when one with its name already exists.
- *  `byAgent`: saved from a pane; the mark lands before the saved copy, so the window never lists the team without it. */
+ *  `byAgent`: saved from a pane; the mark lands before the saved copy, so the window never lists the team without it.
+ *  `fromWindow`: the Teams window's Save, the one place the status command is set. Every save over the control
+ *  socket keeps the saved one: an agent can shed its pane identity (unset AYA_TERMINAL_ID, setsid), so "not under a
+ *  pane" proves nothing about who typed the command. */
 export async function saveTeam(
   teamHome: string,
   project: ProjectConfig,
   given: TeamDefinition,
-  { create = false, byAgent = false }: { create?: boolean; byAgent?: boolean } = {},
+  { create = false, byAgent = false, fromWindow = false }: { create?: boolean; byAgent?: boolean; fromWindow?: boolean } = {},
 ): Promise<void> {
   refuseReservedRoles(given);
   refuseFieldLines(given);
@@ -186,7 +189,7 @@ export async function saveTeam(
   const file = teamFile(project, led.name);
   await oneSaveAtATime(file, async () => {
     // Read in the queue: a save queued ahead (the user clearing it) may change the command this one keeps.
-    const team = byAgent ? await withSavedStatusCommand(teamHome, project, led) : led;
+    const team = fromWindow ? led : await withSavedStatusCommand(teamHome, project, led);
     const text = serializeTeam(team);
     if (create && (await fs.stat(file).then(() => true, () => false))) throw new TeamExistsError(team.name, file);
     await writeFileAtomic(file, text);

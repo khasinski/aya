@@ -307,6 +307,15 @@ test("codex: resume of a thread that no longer exists, or is archived, starts fr
   assert.equal(await withLiveCodexResume("codex resume alive", home), "codex resume alive");
   assert.equal(await withLiveCodexResume("codex resume gone", home), "codex");
   assert.equal(await withLiveCodexResume("X=1 codex --model m resume gone", home), "X=1 codex --model m");
+  // The aya brief's -c follows `resume <id>` by the time the host checks it; the check still runs, and only resume goes.
+  assert.equal(
+    await withLiveCodexResume("codex resume gone -c 'developer_instructions=aya exists'", home),
+    "codex -c 'developer_instructions=aya exists'",
+  );
+  assert.equal(
+    await withLiveCodexResume("codex resume alive -c 'developer_instructions=aya exists'", home),
+    "codex resume alive -c 'developer_instructions=aya exists'",
+  );
   assert.equal(await withLiveCodexResume("codex resume --last", home), "codex resume --last");
   assert.equal(await withLiveCodexResume("codex", home), "codex");
   const archivedHome = scratch();

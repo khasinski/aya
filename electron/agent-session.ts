@@ -203,8 +203,9 @@ export async function restartGoneResume(command: string, alive: (id: string) => 
   return command;
 }
 
-// A trailing `resume <id>`: what a restore appends for a known thread.
-const TRAILING_CODEX_RESUME = /(\s+)resume\s+([A-Za-z0-9_.:/][A-Za-z0-9_.:/-]*)\s*$/;
+// `resume <id>`: what a restore appends for a known thread. Not anchored to the end: the aya brief's
+// `-c 'developer_instructions=...'` can follow it by the time the host sees the command.
+const CODEX_RESUME = /(\s+)resume\s+([A-Za-z0-9_.:/][A-Za-z0-9_.:/-]*)(?=\s|$)/;
 
 /** A restore of a thread codex no longer has starts fresh: `codex resume <gone>` exits at once and the pane would
  *  come back dead. A store that cannot be read is not "gone". */
@@ -213,10 +214,11 @@ export async function withLiveCodexResume(
   home: string,
   onError: (err: Error) => void = () => {},
 ): Promise<string> {
-  const match = TRAILING_CODEX_RESUME.exec(command);
+  const match = CODEX_RESUME.exec(command);
   if (!match || !launchesAgentDirectly(command)) return command;
+  const fresh = () => `${command.slice(0, match.index)}${command.slice(match.index + match[0].length)}`;
   const statePath = await newestDb(home, "state");
-  if (!statePath) return command.slice(0, match.index);
+  if (!statePath) return fresh();
   try {
     const { DatabaseSync } = await import("node:sqlite");
     const state = new DatabaseSync(statePath, { readOnly: true });
@@ -230,7 +232,7 @@ export async function withLiveCodexResume(
     onError(asError(err));
     return command;
   }
-  return command.slice(0, match.index);
+  return fresh();
 }
 
 /** A resume of a grok session whose folder is gone starts a new one under the

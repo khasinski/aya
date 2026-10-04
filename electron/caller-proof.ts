@@ -8,6 +8,9 @@ import { firstPositional } from "./codex-daemon";
 
 export const MAX_DEPTH = 256;
 export const TABLE_SHARE_MS = 200;
+// `aya status` fires from every agent's hooks, several times a turn across a team: those share one table for longer,
+// since a daemon that exists is seconds old, never milliseconds.
+export const STATUS_TABLE_SHARE_MS = 2_000;
 
 export type ProcessTable = Map<number, { ppid: number; command: string }>;
 
@@ -84,8 +87,8 @@ let recent: { at: number; read: Promise<ProcessTable | null> } | null = null;
 
 /** The table with `pid` in it: a read in flight or finished within TABLE_SHARE_MS is shared by a burst of
  *  requests while `pid` still has the parent that read shows, else the table is read again. */
-export async function processTable(pid: number, source: TableSource = LIVE_SOURCE): Promise<ProcessTable | null> {
-  if (recent && source.now() - recent.at < TABLE_SHARE_MS) {
+export async function processTable(pid: number, source: TableSource = LIVE_SOURCE, shareMs: number = TABLE_SHARE_MS): Promise<ProcessTable | null> {
+  if (recent && source.now() - recent.at < shareMs) {
     const table = await recent.read;
     const cached = table?.get(pid);
     if (cached && (await source.readPpid(pid)) === cached.ppid) return table;

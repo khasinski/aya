@@ -253,7 +253,12 @@ export class TeamRunner {
   async restore(): Promise<void> {
     for (const project of await this.deps.listProjects()) {
       for (const name of await runnableTeamNames(this.deps.teamHome, project)) {
-        await this.turns(teamKey(project.slug, name), () => this.restoreTeam(project, name));
+        try {
+          await this.turns(teamKey(project.slug, name), () => this.restoreTeam(project, name));
+        } catch (err) {
+          // One team whose files do not read must not leave the teams after it without a round clock.
+          this.warn(`[aya] team ${project.slug}/${name} not restored:`, err);
+        }
       }
     }
   }

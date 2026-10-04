@@ -431,3 +431,39 @@ describe("stores in independent directories", { concurrency: 16 }, () => {
     assert.deepEqual((await new TeamStore(dir).log()).map((m) => m.id), [2]);
   });
 });
+
+test("a second reservation while one is in flight is refused, not taken over", async () => {
+  const store = fresh();
+  try {
+    await store.append({ from: "tester", to: "implementer", commit: null, text: "one", delivered: false });
+    await store.append({ from: "reviewer", to: "implementer", commit: null, text: "two", delivered: false });
+    assert.equal(await store.beginTyping("implementer", 1), true);
+    assert.equal(await store.beginTyping("implementer", 2), false, "two waits for one's paste to end");
+    await store.typingBegan("implementer", 1);
+    await store.markRead("implementer", 1);
+    await store.endTyping("implementer");
+    assert.deepEqual((await store.unread("implementer")).map((m) => m.text), ["two"]);
+    assert.equal(await store.beginTyping("implementer", 2), true);
+    await store.endTyping("implementer");
+  } finally {
+    done(store);
+  }
+});
+
+test("a crash after markRead leaves no 'typed, not seen' note: the message was seen", async () => {
+  const store = fresh();
+  try {
+    await store.append({ from: "tester", to: "implementer", commit: null, text: "one", delivered: false });
+    // As an earlier Aya left it: the paste began, the message was marked read, the reservation was never dropped.
+    writeFileSync(join(store.dir, "typing.json"), JSON.stringify({ implementer: 1 }));
+    writeFileSync(join(store.dir, "read.json"), JSON.stringify({ implementer: 1 }));
+    await store.append({ from: "tester", to: "implementer", commit: null, text: "two", delivered: false });
+    assert.equal(await store.beginTyping("implementer", 2), true);
+    await store.endTyping("implementer");
+    const [one] = await store.annotatedLog();
+    assert.equal(one.held, undefined);
+    assert.equal(one.delivered, true);
+  } finally {
+    done(store);
+  }
+});
