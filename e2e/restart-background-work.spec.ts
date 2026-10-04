@@ -2,6 +2,7 @@
 // task pill ("2 shells, 1 monitor") asks first (Cancel keeps it, Restart restarts); a pane without it restarts
 // without asking; the resumed team pane then gets Aya's note, typed like its other messages.
 
+import { literal } from "./helpers/regex";
 import type { ElectronApplication, Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
 import { agentBin } from "./helpers/agent-bin";
@@ -55,7 +56,7 @@ test("Restart terminal asks when the pane shows background work, and the resumed
   await expect.poll(() => read("tab-right"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/^LAUNCH resumed$/m);
   expect(await asked(app)).toHaveLength(2);
   await expect.poll(() => read("tab-right"), { timeout: TEAM_DELIVERY_TIMEOUT_MS }).toContain(NOTE);
-  expect(read("tab-right")).toMatch(new RegExp(`\\[team ux-review \\| from aya \\| [^\\]]+\\] ${NOTE.replace(/[.;]/g, "\\$&")}`));
+  expect(read("tab-right")).toMatch(new RegExp(`\\[team ux-review \\| from aya \\| [^\\]]+\\] ${literal(NOTE)}`));
 
   // No pill: restarts without asking, and its resumed process gets no note, however many passes run.
   await restart(window, "shell 1");
@@ -63,6 +64,6 @@ test("Restart terminal asks when the pane shows background work, and the resumed
   expect(await asked(app)).toHaveLength(2);
   await window.waitForTimeout(2 * E2E_REDELIVERY_MS + 1_000);
   expect(read("tab-left")).not.toContain(NOTE);
-  expect(countMatches(read("tab-right"), new RegExp(NOTE.replace(/[.;]/g, "\\$&"), "g"))).toBe(1);
+  expect(countMatches(read("tab-right"), new RegExp(literal(NOTE), "g"))).toBe(1);
   expect(launches(read("tab-right"))).toBe(1);
 });

@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { teamProject } from "./helpers/team.mjs";
 import { TEST_TEAM_MINUTE_MS } from "./helpers/timings.mjs";
+import { literal } from "./helpers/regex.mjs";
 
 const { TeamRunner } = await import("../dist-electron/team-runner.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
@@ -289,7 +290,7 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
         const text = t.toLead().at(-1).text;
         assert.match(text, opening);
         assert.equal(text.split("Said it sent:").length - 1, claim ? 1 : 0, text);
-        if (claim) assert.match(text, new RegExp(`${CLAIM_LINE.replace(/[.]/g, "\\.")} Status \\(from the team's command\\): athena: gemma-best$`));
+        if (claim) assert.match(text, new RegExp(`${literal(CLAIM_LINE)} Status \\(from the team's command\\): athena: gemma-best$`));
       });
     }
   }

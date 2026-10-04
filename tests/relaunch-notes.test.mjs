@@ -1,6 +1,7 @@
 // A restart Aya makes on purpose stops what a CLI runs in the background (finding 16: "1 monitor couldn't be moved and
 // was stopped"): it asks first when a pane's screen shows such work, and tells the resumed team agent afterwards.
 
+import { literal } from "./helpers/regex.mjs";
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -169,7 +170,7 @@ describe("telling the resumed agent", () => {
         assert.equal(typed, told ? 1 : 0);
         assert.deepEqual(t.typed.map((x) => x.pane), told ? [pane] : []);
         if (told) {
-          assert.match(t.typed[0].text, new RegExp(`^\\[team ux-review \\| from aya \\| \\d\\d:\\d\\d\\] ${RELAUNCH_NOTE.replace(/[.;]/g, "\\$&")}$`));
+          assert.match(t.typed[0].text, new RegExp(`^\\[team ux-review \\| from aya \\| \\d\\d:\\d\\d\\] ${literal(RELAUNCH_NOTE)}$`));
           assert.ok((await t.store.log()).some((m) => m.from === "aya" && m.text === RELAUNCH_NOTE), "logged as Aya's message");
         }
         assert.equal(pane in notes(t), kept);
