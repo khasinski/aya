@@ -96,7 +96,8 @@ import { debugPane, watchDebugSwitch } from "./team-debug";
 import { userShell } from "./shell";
 import { registerTeamIpc } from "./team-ipc";
 import { askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, presetAgent, teamPaneDeps, type PaneHost } from "./team-panes";
-import { backgroundWorkOf, confirmRestart, noteRelaunch, type RelaunchDeps } from "./relaunch-notes";
+import { confirmRestart, type RelaunchDeps } from "./relaunch-notes";
+import { ordinaryQuitInstalls, restartStaleHost } from "./update-quit";
 import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
@@ -1137,7 +1138,8 @@ function configureAutoUpdates(win: BrowserWindow): void {
   if (!updateStatus.supported) return;
 
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  // Never on a quit by itself: an ordinary quit checks the panes' background work first (before-quit).
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowPrerelease = false;
 
   autoUpdater.on("checking-for-update", () => {
@@ -1514,6 +1516,10 @@ let appQuitting = false;
 const TEAM_QUIT_SETTLE_MS = 2_000;
 let teamsAtQuit: TeamRunner | null = null;
 let teamsStopped = false;
+// An ordinary quit with a downloaded update decides once whether it installs (update-quit.ts).
+let quitUpdateDecided = false;
+// The install an ordinary quit started holds the quit this long at most before it quits without it.
+const QUIT_INSTALL_SETTLE_MS = 15_000;
 
 // --- Aya Web (experimental): browser access over HTTP + WebSocket ---
 let webConfig: WebConfig | null = null;
@@ -2085,8 +2091,8 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   return win;
 }
 
-/** On launch, reap a stale PTY host (#28) even with live terminals: an update's terminals restart anyway. Best-effort;
- *  a pre-#73 host runs its own shutdown and may orphan a signal-ignoring child once (the sweep's job). */
+/** On launch, reap a stale PTY host (#28) even with live terminals, asking first when a pane shows background work
+ *  (a no keeps it, with Restart Aya's red dot). Best-effort; a pre-#73 host may orphan a signal-ignoring child once. */
 async function handleStaleHost(): Promise<void> {
   try {
     const expected = ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION);
@@ -2101,9 +2107,12 @@ async function handleStaleHost(): Promise<void> {
       ({ identity } = await ptyHost.hostStatus());
     }
     if (!isHostStale(expected, identity)) return;
-    // Past asking (the update is in): the panes' background work is read while the old host still shows it.
-    await noteRelaunch(relaunchDeps, await backgroundWorkOf(relaunchDeps)).catch(() => {});
-    await ptyHost.restart();
+    // The update is in, but the panes' background work still runs on the old host: ask, unless Restart to update did.
+    if (!(await restartStaleHost(relaunchDeps, (text) => askRestart("Restart terminals", text), () => ptyHost.restart()))) {
+      staleHostDetected = true;
+      setStaleMenuIcon();
+      return;
+    }
     // restart() swallows request errors by design (an old host may not honor
     // "shutdown"), so returning is NOT proof the host died. Verify: re-probe the
     // socket; a fresh current-version host (or none yet) means success, the SAME
@@ -2118,6 +2127,25 @@ async function handleStaleHost(): Promise<void> {
   } catch {
     // best-effort; a host that can't be queried is handled on next use
   }
+}
+
+/** An ordinary quit with a downloaded update: installs it (no relaunch) only when no pane shows background work, else
+ *  quits and leaves it for Restart to update, which asks. The marker is written for diagnoseRelaunch (#78). */
+async function installOnOrdinaryQuit(): Promise<void> {
+  const status = getUpdateStatus();
+  if (!(await ordinaryQuitInstalls(relaunchDeps, status.phase === "downloaded"))) return app.quit();
+  updateInstalling = true;
+  try {
+    if (status.downloadedVersion) markPendingUpdateSync(status.downloadedVersion);
+    autoUpdater.autoRunAppAfterInstall = false;
+    autoUpdater.quitAndInstall(false, false);
+  } catch {
+    updateInstalling = false;
+    await clearPendingUpdate();
+    return app.quit();
+  }
+  // The updater quits once the installer has it; a handoff that fails asynchronously must not keep Aya open.
+  setTimeout(() => app.quit(), QUIT_INSTALL_SETTLE_MS).unref();
 }
 
 /** Red dot on the "Restart Aya" menu item - the manual reap affordance (#52).
@@ -3189,23 +3217,17 @@ app.on("before-quit", (event) => {
       return;
     }
   }
+  if (!quitUpdateDecided && !updateInstalling && getUpdateStatus().phase === "downloaded") {
+    quitUpdateDecided = true;
+    event.preventDefault();
+    void installOnOrdinaryQuit().catch(() => app.quit());
+    return;
+  }
   appQuitting = true;
   try {
     cliAdoption.flush();
   } catch {
     // quitting anyway
-  }
-  // An ordinary quit installs too (see markPendingUpdateSync) and never reaches
-  // the updates:install handler, so every one is marked here; diagnoseRelaunch's
-  // grace window absorbs the relaunch that follows.
-  if (!updateInstalling) {
-    const pendingInstall = getUpdateStatus();
-    if (
-      pendingInstall.phase === "downloaded" &&
-      pendingInstall.downloadedVersion
-    ) {
-      markPendingUpdateSync(pendingInstall.downloadedVersion);
-    }
   }
   if (legacySweepTimer) {
     clearTimeout(legacySweepTimer);

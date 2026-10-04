@@ -130,6 +130,18 @@ export async function confirmRestart(deps: RelaunchDeps, action: string, ask: (t
   return true;
 }
 
+/** As confirmRestart, but a pane whose work the user already agreed to stop for its current process (a note left by
+ *  Restart to update, its pane not relaunched yet) is not asked about again. */
+export async function confirmRestartOnce(deps: RelaunchDeps, action: string, ask: (text: string) => Promise<boolean>): Promise<boolean> {
+  const work = await backgroundWorkOf(deps);
+  const notes = await readNotes(deps.file);
+  const pids = await Promise.all(work.map(async (w) => (await deps.pid(w.id).catch(() => undefined)) ?? null));
+  const unasked = work.filter((w, i) => notes[w.id]?.pid !== pids[i] || pids[i] === null);
+  if (unasked.length && !(await ask(restartWarning(action, unasked)))) return false;
+  await noteRelaunch(deps, unasked);
+  return true;
+}
+
 async function roleOfPane(team: TeamControlDeps, paneId: string) {
   for (const project of await team.listProjects()) {
     for (const name of await runnableTeamNames(team.teamHome, project)) {
