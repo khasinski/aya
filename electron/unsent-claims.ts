@@ -155,6 +155,7 @@ export interface ClaimLook {
 export async function lookForClaims(store: TeamStore, look: ClaimLook): Promise<void> {
   const log = await store.annotatedLog();
   const file = await readClaims(store);
+  const refused = await store.refusals();
   let changed = false;
   for (const role of look.roles) {
     const turn = turnOf(log, role);
@@ -167,7 +168,8 @@ export async function lookForClaims(store: TeamStore, look: ClaimLook): Promise<
     const reply = rows === null ? "" : replyText(rows, await look.agentOf(pane));
     // Not drawn yet: the agent has not answered this turn.
     if (rows !== null && !reply.trim()) continue;
-    const claims = file[role]?.claims ?? [];
+    // Answered ones go first: an old answered claim to a role must not stand in for a new one to it.
+    const claims = (file[role]?.claims ?? []).filter((c) => !sentAfter(log, refused, role, c.to, c));
     const kept = new Set(claims.map((c) => c.to));
     const fresh = claimedRecipients(reply, look.roles, role).filter((to) => !kept.has(to)).map((to) => ({ to, turn: turn.id, since: turn.time }));
     file[role] = { checked: turn.id, claims: [...claims, ...fresh] };
@@ -175,7 +177,6 @@ export async function lookForClaims(store: TeamStore, look: ClaimLook): Promise<
   }
   if (!changed) return;
   // Claims a message answered since are done with.
-  const refused = await store.refusals();
   for (const [role, entry] of Object.entries(file)) entry.claims = entry.claims.filter((c) => !sentAfter(log, refused, role, c.to, c));
   await writeFileAtomic(claimsPath(store), JSON.stringify(file));
 }

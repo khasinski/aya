@@ -210,6 +210,27 @@ describe("when a reply is read", () => {
     }
   });
 
+  test("an answered claim to a role does not hide a new claim to the same role", async () => {
+    const t = await setup();
+    try {
+      const turn = await t.store.append({ from: "lead", to: "tester", commit: null, text: TURN_TEXT, delivered: true });
+      await lookForClaims(t.store, look(screenOf("claude", turn, IN_WORDS), "claude"));
+      assert.equal((await shown(t)).window, NOTE);
+      const repeat = await t.store.append({ from: "lead", to: "tester", commit: null, text: "Where are they?", delivered: true });
+      await lookForClaims(t.store, look(screenOf("claude", repeat, IN_WORDS), "claude"));
+      assert.deepEqual((await readClaims(t.store)).tester.claims.map((c) => c.turn), [turn.id], "an open claim repeated stays the first one");
+      // The tester then really sends; the old claim is answered but still in the file until the next look.
+      await t.store.append({ from: "tester", to: "lead", commit: null, text: FINDINGS, delivered: true });
+      assert.equal((await shown(t)).window, null);
+      const again = await t.store.append({ from: "lead", to: "tester", commit: null, text: "Send the rerun too.", delivered: true });
+      await lookForClaims(t.store, look(screenOf("claude", again, IN_WORDS), "claude"));
+      assert.equal((await shown(t)).window, NOTE, "the new turn's claim stands");
+      assert.deepEqual((await readClaims(t.store)).tester.claims.map((c) => c.turn), [again.id]);
+    } finally {
+      t.cleanup();
+    }
+  });
+
   test("the message's own command text is not the agent's claim, and a message not on screen is not read", async () => {
     const t = await setup();
     try {
