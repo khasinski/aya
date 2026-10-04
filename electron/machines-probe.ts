@@ -6,6 +6,19 @@ import * as os from "node:os";
 export const SSH_ALIAS_PATTERN = /^[A-Za-z0-9._-]+$/;
 export const SSH_CONNECT_TIMEOUT_S = 5;
 export const PROBE_DEADLINE_MS = 10_000;
+/** The alias's config may add forwards (a public LocalForward), a LocalCommand or a shared master: a status probe gets none. */
+export const SSH_OPTIONS = [
+  "BatchMode=yes",
+  `ConnectTimeout=${SSH_CONNECT_TIMEOUT_S}`,
+  "ClearAllForwardings=yes",
+  "PermitLocalCommand=no",
+  "ForwardAgent=no",
+  "ForwardX11=no",
+  "ControlMaster=no",
+  "ControlPath=none",
+  "Tunnel=no",
+  "RequestTTY=no",
+];
 const OLLAMA_HTTP_TIMEOUT_MS = 3_000;
 const LOCAL_TOOL_TIMEOUT_MS = 5_000;
 const MAX_PROBE_OUTPUT_BYTES = 1_000_000;
@@ -48,6 +61,9 @@ export interface MachineStatus {
 
 export type Reach = "local" | { ssh: string };
 
+/** -q first, so the host's ~/.curlrc (a body, a method, a proxy) is never read; no proxy; GET only, no body. */
+const CURL_GET = "curl -q -s --noproxy '*' -X GET --max-time 3";
+
 /** The remote script; sections are marked so a missing tool leaves an empty section, not a parse error. */
 export function remoteProbeScript(port: number): string {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`bad Ollama port ${port}`);
@@ -59,8 +75,8 @@ export function remoteProbeScript(port: number): string {
     "echo @@vmstat; [ -r /proc/meminfo ] || vm_stat 2>/dev/null",
     "echo @@memsize; [ -r /proc/meminfo ] || sysctl -n hw.memsize 2>/dev/null",
     "echo @@gpu; command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null",
-    `echo @@version; curl -s --max-time 3 ${url}/api/version 2>/dev/null; echo`,
-    `echo @@ps; curl -s --max-time 3 ${url}/api/ps 2>/dev/null; echo`,
+    `echo @@version; ${CURL_GET} ${url}/api/version 2>/dev/null; echo`,
+    `echo @@ps; ${CURL_GET} ${url}/api/ps 2>/dev/null; echo`,
     "echo @@end",
     "",
   ].join("\n");
@@ -248,7 +264,7 @@ export async function probeRemote(alias: string, port: number, options: ProbeOpt
   const deadlineMs = options.deadlineMs ?? PROBE_DEADLINE_MS;
   const started = Date.now();
   const checkedAt = (options.now?.() ?? new Date()).toISOString();
-  const args = ["-o", "BatchMode=yes", "-o", `ConnectTimeout=${SSH_CONNECT_TIMEOUT_S}`, "--", alias, "sh", "-s"];
+  const args = [...SSH_OPTIONS.flatMap((o) => ["-o", o]), "--", alias, "sh", "-s"];
   const r = await runWithDeadline("ssh", args, remoteProbeScript(port), deadlineMs);
   const probeMs = Date.now() - started;
   if (r.timedOut) return emptyStatus(checkedAt, probeMs, `timed out after ${deadlineMs / 1000} s`);

@@ -83,7 +83,13 @@ for (const c of cases) {
 test("the remote script is fixed and read-only: only the port is substituted, a bad port is refused", () => {
   const script = remoteProbeScript(11434);
   assert.match(script, /http:\/\/127\.0\.0\.1:11434\/api\/ps/);
-  assert.doesNotMatch(script, /keep_alive|\/api\/(generate|chat|pull|delete|create)|-X|--data|\brm\b|>[^&/]/);
+  assert.doesNotMatch(script, /keep_alive|\/api\/(generate|chat|pull|delete|create)|-X (?!GET)|--data|-d |\brm\b|>[^&/]/);
+  // -q first: a remote ~/.curlrc could add a body (a keep_alive 0 unload) or a proxy. No proxy, an explicit GET.
+  const curls = script.split("\n").filter((line) => line.includes("curl"));
+  assert.deepEqual(curls.map((line) => line.slice(line.indexOf("curl"), line.indexOf(" 2>"))), [
+    "curl -q -s --noproxy '*' -X GET --max-time 3 http://127.0.0.1:11434/api/version",
+    "curl -q -s --noproxy '*' -X GET --max-time 3 http://127.0.0.1:11434/api/ps",
+  ]);
   for (const bad of [0, 70000, 1.5, NaN]) assert.throws(() => remoteProbeScript(bad), /bad Ollama port/);
 });
 
@@ -120,13 +126,18 @@ for (const c of remoteCases) {
   });
 }
 
-test("probeRemote: BatchMode, ConnectTimeout 5, the alias after --, and the script on stdin", async (t) => {
+test("probeRemote: forwards, local commands, agent/X11 and multiplexing off whatever ~/.ssh/config says; the script on stdin", async (t) => {
   const fake = ssh(t);
   fake.setMode("athena", `ok:${join(process.cwd(), "tests/fixtures/machines/linux-rtx4090.probe.txt")}`);
   const status = await probeRemote("athena", 11434);
   assert.equal(status.reachable, true);
   assert.equal(status.gpus[0].memTotalMiB, 24564);
-  assert.equal(readFileSync(join(fake.dir, "calls"), "utf8"), "-o BatchMode=yes -o ConnectTimeout=5 -- athena sh -s\n");
+  assert.equal(readFileSync(join(fake.dir, "calls"), "utf8"), [
+    "-o BatchMode=yes -o ConnectTimeout=5",
+    "-o ClearAllForwardings=yes -o PermitLocalCommand=no -o ForwardAgent=no -o ForwardX11=no",
+    "-o ControlMaster=no -o ControlPath=none -o Tunnel=no -o RequestTTY=no",
+    "-- athena sh -s\n",
+  ].join(" "));
   assert.equal(readFileSync(join(fake.dir, "stdin-athena"), "utf8"), remoteProbeScript(11434));
 });
 
