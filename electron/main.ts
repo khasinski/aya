@@ -2137,7 +2137,12 @@ const updates = updateInstaller({
   mark: markPendingUpdate,
   markSync: markPendingUpdateSync,
   clearMark: clearPendingUpdate,
-  updater: autoUpdater,
+  // Lazy: electron-updater builds its platform updater on first touch, which must not happen at module load.
+  updater: {
+    get autoRunAppAfterInstall() { return autoUpdater.autoRunAppAfterInstall; },
+    set autoRunAppAfterInstall(value: boolean) { autoUpdater.autoRunAppAfterInstall = value; },
+    quitAndInstall: (isSilent, isForceRunAfter) => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
+  },
   quit: () => app.quit(),
   failed: (message) => setUpdateStatus({ phase: "error", message }),
   settleMs: QUIT_INSTALL_SETTLE_MS,
