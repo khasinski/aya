@@ -133,7 +133,11 @@ test.describe("added", () => {
     await expect(gpu.getByTestId("machine-vram")).toHaveText("21.0/24.0");
     await expect(gpu.getByTestId("machine-load")).toHaveText("3.2/32");
     await expect(gpu.getByTestId("machine-model")).toHaveText(/^qwen3:32bhot 1[34]m$/);
-    await expect(gpu.getByTestId("machine-occupancy")).toHaveText("run5 timed collection · justi");
+    // The pill ellipsizes in its column; its text (the accessible name) and its tooltip are the whole line.
+    const pill = gpu.getByTestId("machine-occupancy");
+    await expect(pill).toHaveText(/^run5 timed collection · justi · since \d\d:\d\d$/);
+    await expect(pill).toHaveAccessibleName(/^run5 timed collection · justi · since \d\d:\d\d$/);
+    expect(await pill.getAttribute("title")).toBe(await pill.textContent());
     await expect(gpu.getByTestId("machine-details")).toContainText(/run5 timed collection · justi · since \d\d:\d\d/);
     await expect(gpu.getByTestId("machine-details")).toContainText("NVIDIA GeForce RTX 4090 · 97% · 21.0/24.0 GB VRAM");
     const mini = rows.nth(1);
@@ -287,8 +291,17 @@ test.describe("four machines", () => {
 
     await panel.getByRole("button", { name: "gpu-box details" }).click();
     await expect(rows.nth(0).getByTestId("machine-details")).toContainText("Used by: machine gpu-box");
+    const details = rows.nth(0).getByTestId("machine-details");
+    // Every details line wraps inside the row; nothing is cut off at the Settings width.
+    const clipped = await details.locator("p, li, dd").evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 1).map((e) => e.textContent));
+    expect(clipped).toEqual([]);
     await panel.getByRole("button", { name: "More, gpu-box" }).click();
-    await expect(panel.getByRole("group", { name: "Actions for gpu-box" })).toBeVisible();
+    const actions = panel.getByRole("group", { name: "Actions for gpu-box" });
+    await expect(actions).toBeVisible();
+    // The actions push the details down; they never cover them.
+    const a = await actions.boundingBox();
+    const d = await details.boundingBox();
+    expect(a && d && a.y + a.height <= d.y, "the actions sit above the details, not over them").toBe(true);
     await shoot(app, window, "after-expanded.png");
   });
 });

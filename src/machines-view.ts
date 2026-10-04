@@ -66,7 +66,8 @@ export function modelCell(s: MachineStatus, now: Date): { name: string; hot: str
   return { name: `${first.name}${rest.length ? ` +${rest.length}` : ""}`, hot: hotShort(first.expiresAt, first.pinned, now) };
 }
 
-export const occupancyShort = (o: NonNullable<MachineView["occupancy"]>) => `${o.purpose} · ${o.by}`;
+/** The in-use pill: everything occupancyText says, without the "In use" its column already says. */
+export const occupancyShort = (o: NonNullable<MachineView["occupancy"]>) => occupancyText(o).replace(/^In use: /, "");
 
 export function gpuText(s: MachineStatus): string {
   if (s.gpus.length === 0) return "none seen (nvidia-smi absent)";

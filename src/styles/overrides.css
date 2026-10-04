@@ -3135,18 +3135,18 @@ select.aya-modal-input {
   white-space: nowrap;
 }
 .aya-machines-header {
-  align-items: flex-end;
-  flex-wrap: wrap;
   margin-bottom: 10px;
 }
 .aya-machines-title {
-  flex: 1 1 260px;
+  flex: 1 1 auto;
   min-width: 0;
-  align-self: center;
+}
+.aya-machines-check-all {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .aya-machines-find {
-  flex: 1 1 400px;
-  min-width: 0;
+  margin: 0 0 4px;
 }
 .aya-machines-find .aya-modal-label {
   margin: 0 0 4px;
@@ -3158,6 +3158,7 @@ select.aya-modal-input {
   flex: 1;
 }
 .aya-machines-find .aya-modal-btn {
+  flex: 0 0 auto;
   white-space: nowrap;
 }
 .aya-machines-find-error {
@@ -3329,10 +3330,6 @@ select.aya-modal-input {
 .aya-mcol-why {
   color: var(--status-error);
 }
-.aya-machine-more {
-  position: relative;
-  display: inline-block;
-}
 .aya-machine-more-btn {
   padding: 3px 9px;
   font-size: 12px;
@@ -3341,25 +3338,20 @@ select.aya-modal-input {
   content: "\00A0\25BE" / "";
   color: var(--fg-tertiary);
 }
-.aya-machine-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 20;
-  display: grid;
-  min-width: 140px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  box-shadow: var(--shadow-card);
+.aya-machine-more-btn[aria-expanded="true"]::after {
+  content: "\00A0\25B4" / "";
 }
-.aya-machine-menu[hidden] {
-  display: none;
+.aya-machines-table .aya-machine-actions-row > td {
+  padding: 0 6px 6px;
+}
+.aya-machine-menu {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
 }
 .aya-machine-menu button {
-  padding: 6px 9px;
-  border: 0;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
   border-radius: 4px;
   background: none;
   color: var(--fg-primary);
@@ -3369,7 +3361,7 @@ select.aya-modal-input {
   cursor: pointer;
 }
 .aya-machine-menu button:hover {
-  background: var(--bg-tertiary);
+  background: var(--bg);
 }
 .aya-machine-menu button:disabled {
   opacity: 0.55;

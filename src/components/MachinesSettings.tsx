@@ -171,7 +171,22 @@ function MachineRow({
   const models = modelLines(status, now);
   const name = machine.label || machine.id;
   return (
-    <tbody className={`aya-machine-group${open ? " aya-machine-group--open" : ""}`} data-testid="machine-row">
+    <tbody
+      className={`aya-machine-group${open ? " aya-machine-group--open" : ""}`}
+      data-testid="machine-row"
+      onBlur={(e) => {
+        const to = e.relatedTarget as Node | null;
+        if (menu && !moreRef.current?.contains(to) && !menuRef.current?.contains(to)) setMenu(false);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && menu) {
+          // The settings dialog closes on Escape too; this one only closes the actions.
+          e.stopPropagation();
+          setMenu(false);
+          moreRef.current?.focus();
+        }
+      }}
+    >
       <tr className="aya-machine-row">
         <th scope="row" className="aya-mcol-name">
           <button
@@ -208,7 +223,8 @@ function MachineRow({
         )}
         <td className="aya-mcol-use">
           {machine.occupancy ? (
-            <span className="aya-machine-pill" data-testid="machine-occupancy" title={occupancyText(machine.occupancy)}>
+            // The whole text is in the DOM (its accessible name); only the pill's box ellipsizes it.
+            <span className="aya-machine-pill" data-testid="machine-occupancy" title={occupancyShort(machine.occupancy)}>
               {occupancyShort(machine.occupancy)}
             </span>
           ) : (
@@ -216,48 +232,38 @@ function MachineRow({
           )}
         </td>
         <td className="aya-mcol-more">
-          <div
-            className="aya-machine-more"
-            onBlur={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setMenu(false);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Escape" && menu) {
-                // The settings dialog closes on Escape too; this one only closes the menu.
-                e.stopPropagation();
-                setMenu(false);
-                moreRef.current?.focus();
-              }
-            }}
+          <button
+            ref={moreRef}
+            type="button"
+            className="aya-modal-btn aya-machine-more-btn"
+            aria-expanded={menu}
+            aria-controls={`${base}-menu`}
+            aria-label={`More, ${machine.id}`}
+            onClick={() => setMenu((m) => !m)}
           >
-            <button
-              ref={moreRef}
-              type="button"
-              className="aya-modal-btn aya-machine-more-btn"
-              aria-expanded={menu}
-              aria-controls={`${base}-menu`}
-              aria-label={`More, ${machine.id}`}
-              onClick={() => setMenu((m) => !m)}
-            >
-              More
+            More
+          </button>
+        </td>
+      </tr>
+      {/* A row of its own under the machine, so the actions push the details down instead of covering them. */}
+      <tr id={`${base}-menu`} className="aya-machine-sub aya-machine-actions-row" hidden={!menu}>
+        <td colSpan={COLUMNS}>
+          <div ref={menuRef} className="aya-machine-menu" role="group" aria-label={`Actions for ${machine.id}`}>
+            <button type="button" onClick={() => pick(() => void checkNow())} disabled={busy !== null} aria-label={`Check now, ${machine.id}`}>
+              Check now
             </button>
-            <div id={`${base}-menu`} ref={menuRef} className="aya-machine-menu" role="group" aria-label={`Actions for ${machine.id}`} hidden={!menu}>
-              <button type="button" onClick={() => pick(() => void checkNow())} disabled={busy !== null} aria-label={`Check now, ${machine.id}`}>
-                Check now
+            {machine.occupancy ? (
+              <button type="button" onClick={() => pick(() => void free())} disabled={busy !== null} aria-label={`Mark free, ${machine.id}`}>
+                Mark free
               </button>
-              {machine.occupancy ? (
-                <button type="button" onClick={() => pick(() => void free())} disabled={busy !== null} aria-label={`Mark free, ${machine.id}`}>
-                  Mark free
-                </button>
-              ) : (
-                <button type="button" onClick={() => pick(() => setMarking(true))} disabled={busy !== null || marking} aria-label={`Mark in use, ${machine.id}`}>
-                  Mark in use
-                </button>
-              )}
-              <button type="button" className="aya-machine-menu-danger" onClick={() => pick(remove)} disabled={busy !== null} aria-label={`Remove ${machine.id}`}>
-                Remove
+            ) : (
+              <button type="button" onClick={() => pick(() => setMarking(true))} disabled={busy !== null || marking} aria-label={`Mark in use, ${machine.id}`}>
+                Mark in use
               </button>
-            </div>
+            )}
+            <button type="button" className="aya-machine-menu-danger" onClick={() => pick(remove)} disabled={busy !== null} aria-label={`Remove ${machine.id}`}>
+              Remove
+            </button>
           </div>
         </td>
       </tr>
@@ -533,30 +539,30 @@ export function MachinesSettings() {
             Your own machines with Ollama, read over ssh. Aya asks before it adds one and never loads or unloads a model.
           </p>
         </div>
-        <form className="aya-machines-find" onSubmit={find} noValidate>
-          <label className="aya-modal-label" htmlFor="machines-sentence">
-            Add machines in one sentence
-          </label>
-          <div className="aya-modal-input-row">
-            <input
-              id="machines-sentence"
-              className="aya-modal-input"
-              value={sentence}
-              onChange={(e) => setSentence(e.target.value)}
-              placeholder="athena is my 4090 box, and this machine"
-              aria-describedby={sentenceError ? "machines-hint machines-sentence-error" : "machines-hint"}
-              aria-invalid={sentenceError ? true : undefined}
-              spellCheck={false}
-            />
-            <button type="submit" className="aya-modal-btn aya-modal-btn--primary" disabled={adding !== null}>
-              {adding === "sentence" ? "Finding..." : "Find"}
-            </button>
-            <button type="button" className="aya-modal-btn" onClick={() => void checkAll()} disabled={checkingAll || machines === null}>
-              {checkingAll ? "Checking..." : "Check all"}
-            </button>
-          </div>
-        </form>
+        <button type="button" className="aya-modal-btn aya-machines-check-all" onClick={() => void checkAll()} disabled={checkingAll || machines === null}>
+          {checkingAll ? "Checking..." : "Check all"}
+        </button>
       </div>
+      <form className="aya-machines-find" onSubmit={find} noValidate>
+        <label className="aya-modal-label" htmlFor="machines-sentence">
+          Add machines in one sentence
+        </label>
+        <div className="aya-modal-input-row">
+          <input
+            id="machines-sentence"
+            className="aya-modal-input"
+            value={sentence}
+            onChange={(e) => setSentence(e.target.value)}
+            placeholder="athena is my 4090 box, and this machine"
+            aria-describedby={sentenceError ? "machines-hint machines-sentence-error" : "machines-hint"}
+            aria-invalid={sentenceError ? true : undefined}
+            spellCheck={false}
+          />
+          <button type="submit" className="aya-modal-btn aya-modal-btn--primary" disabled={adding !== null}>
+            {adding === "sentence" ? "Finding..." : "Find"}
+          </button>
+        </div>
+      </form>
       {sentenceError && (
         <p id="machines-sentence-error" className="aya-machine-error aya-machines-find-error" role="alert">
           {sentenceError}
