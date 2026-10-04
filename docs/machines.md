@@ -1,7 +1,7 @@
 # Machines (design)
 
-Status: proposal, not implemented. One pool of the user's own machines
-running Ollama, for any pane, team or not.
+Status: step 1 implemented (`aya machines`), later steps proposed. One
+pool of the user's own machines running Ollama, for any pane, team or not.
 
 ## Why
 
@@ -15,354 +15,214 @@ An 8-hour measurement run by a team lead lost time three ways:
    them. A queue in front of a busy GPU also froze agent turns for up to
    70 minutes.
 
-The first need is to see the pool. Controlling it comes after.
+The first need is to see the pool and to say who is using a machine.
+Controlling it comes later, and only after a test shows it can work.
 
 ## Rules
 
 1. App-level. Not part of teams and not tied to roles. Aya provides the
-   pieces; each user or team protocol decides who reserves.
-2. Ollama only, for now. A machine is local, or reached through an alias in
-   `~/.ssh/config`. Nothing is installed on the host.
-3. The core is one read-only command, `aya machines`. It gives the state of
-   every machine. Everything else is a later step on top of it.
-4. Setup is one sentence. Aya fills in the structure, probes it and shows
-   it. Nothing is saved until the user confirms.
-5. Aya never queues requests. A request that cannot run now is refused,
-   with a message that says why and what to use instead.
-6. A client that talks to Ollama directly cannot be stopped, only seen.
-7. Models are identified by digest, not by name.
+   pieces; each user or team protocol decides how to use them.
+2. Ollama only, for now. A machine is `local`, or reached through a `Host`
+   alias in `~/.ssh/config`. Nothing is installed on the host and Ollama is
+   never exposed on the network.
+3. Status uses read-only remote commands over ssh only: no port forwards,
+   no tunnels, no writes on the host.
+4. Setup is one sentence. Aya drafts the registry entry, shows it and saves
+   nothing until the user confirms.
+5. Aya never loads, unloads or calls a model in step 1. Every model unload
+   Aya might do later needs the user's explicit approval at that moment.
+   Occupancy or a reservation never counts as that approval.
+6. Messages state facts. A refusal or warning never suggests "use the
+   laptop" or another machine: a hot model is not a fast machine.
+7. The JSON is versioned. Fields are added when a step ships, not reserved
+   in advance.
 
-## The core: `aya machines`
+## Step 1: `aya machines`
 
 ```
 $ aya machines
-athena  up    ssh:athena  GPU 97% 21.0/24.0 GB  CPU 3.2/32  mem 41/128 GB
-  qwen3:32b (ab12cd3) hot until 23:12 (14 min)
-  reserved: run5 exclusive until ~23:45 (pid 4242, pane "collector")
-laptop  up    local       GPU n/a  CPU 2.1/10  mem 20/32 GB
-  no model loaded
-mini    down  ssh:mini    ssh: connect timeout after 5 s (checked 23:01)
+athena  connected    ssh:athena  GPU 97% 21.0/24.0 GB  CPU 3.2/32  mem 41/128 GB
+        ollama 0.12.3  qwen3:32b hot until 23:12 (14 min)
+        occupied by justi since 22:40: run5 timed collection
+        probe 210 ms (checked 23:01:05)
+laptop  connected    local       GPU n/a  CPU 2.1/10  mem 20/32 GB
+        ollama 0.12.3  no model loaded
+mini    unreachable  ssh:mini    ssh: connect timeout (checked 23:01:05)
 ```
 
-`aya machines --json` returns the same data in a fixed shape. Agents parse
-the JSON; people read the text.
+`aya machines --json` returns the same data. Agents parse the JSON; people
+read the text.
 
 ```json
-{"machines": [{
-  "id": "athena", "reach": {"ssh": "athena"}, "reachable": true,
-  "checkedAt": "2026-10-03T21:01:05Z", "stale": false, "error": null,
-  "ollama": {"up": true, "version": "0.12.3", "url": "http://127.0.0.1:11501",
-    "loaded": [{"name": "qwen3:32b", "digest": "sha256:ab12cd3...",
-      "vramBytes": 21000000000, "expiresAt": "2026-10-03T21:12:00Z"}]},
-  "load": {"gpus": [{"name": "RTX 4090", "utilPct": 97,
+{"version": 1, "machines": [{
+  "id": "athena", "label": "athena", "reach": {"ssh": "athena"},
+  "ollama": {"port": 11434},
+  "status": {"reachable": true, "checkedAt": "2026-10-03T21:01:05Z",
+    "error": null, "probeMs": 210,
+    "cpus": 32, "load1": 3.2, "memUsedBytes": 44e9, "memTotalBytes": 137e9,
+    "gpus": [{"name": "RTX 4090", "utilPct": 97,
       "memUsedMiB": 21500, "memTotalMiB": 24564}],
-    "cpus": 32, "load1": 3.2, "memUsedBytes": 44e9, "memTotalBytes": 137e9},
-  "note": "2x... (probe at registration, editable)",
-  "leases": [], "reservation": null}]}
+    "ollama": {"up": true, "version": "0.12.3",
+      "loaded": [{"name": "qwen3:32b", "digest": "sha256:ab12...",
+        "vramBytes": 21000000000, "expiresAt": "2026-10-03T21:12:00Z"}]}},
+  "occupancy": {"by": "justi", "purpose": "run5 timed collection",
+    "since": "2026-10-03T20:40:00Z"}}]}
 ```
 
-`leases` and `reservation` exist from the start and stay empty until steps
-3 and 4, so the shape never changes. If `expires_at` is past year 2100,
-the model shows as `pinned` (keep_alive -1).
+`version` is bumped when a later step changes the shape. `probeMs` is the
+measured wall time of the probe (ssh round trip included), not a speed
+estimate for a model. If `expiresAt` is past year 2100 the model shows as `pinned`.
 
-Other commands:
+Commands:
 
-- `aya machines add "sentence"`: draft, probe, show, confirm (see Setup).
-- `aya machines remove <id>`: refused while a lease or reservation is
-  active, unless `--force`. A forced removal is logged.
-- `aya machines --brief`: one line per machine, for a team lead's round
-  (step 6).
+- `aya machines [--json]`: state of every machine.
+- `aya machines hosts`: `Host` aliases from `~/.ssh/config` (following
+  `Include`), with an "added" mark on those already registered.
+- `aya machines add "<sentence>"`: draft, show, confirm (see Setup).
+- `aya machines add --ssh <alias> | --local [--id <id>] [--port <n>]`: the
+  manual form, saved at once.
+- `aya machines remove <id>`.
+- `aya machines occupy <id> "<purpose>"` and `aya machines free <id>`:
+  advisory occupancy. Aya records who and when and shows it to everyone.
+  It is never enforced: requests to Ollama are not checked against it.
+
+There is no load or unload command.
 
 Like every `aya` command, these go through the control socket
-(`electron/control.ts`). They are listed in `electron/capabilities.ts`, and
-`tests/aya-capabilities.test.mjs` keeps `aya help` matching. If Aya is not
-running, the commands fail the way other commands do ("start Aya first").
+(`electron/control.ts`), are listed in `electron/capabilities.ts`, and fail
+with "start Aya first" when Aya is not running.
 
 ## Setup in one sentence
 
-`aya machines add "athena is my 4090 box over ssh, ollama on the default
-port; this mac is the laptop"`, or the same sentence typed into the
-Machines view.
+`aya machines add "athena is my 4090 box over ssh; this machine too"`.
 
-1. Draft. If the user has configured Aya Intelligence (Settings ->
-   Intelligence), it turns the sentence into the registry shape. It is
-   given the `Host` aliases from `~/.ssh/config` and allowed only those
-   aliases or `local`. Without a provider, a plain word matcher does the
-   same: alias names, plus "this mac/local/laptop" for local.
-2. Probe every drafted machine (see Probes).
-3. Show the filled structure next to the probe result, for example
-   "athena: ssh ok, 2x RTX 4090 48 GB, CUDA 12.4, Ollama 0.12.3, 7 models".
-4. Save on confirm. In a terminal (TTY), the command asks y/N. From an
-   agent pane (no TTY), it prints a draft id and the line
-   `aya machines add --confirm <id>`, which the agent runs only after the
-   user says yes. This is the same handshake as `aya team open`.
+1. Draft by deterministic matching, no model involved. The sentence is
+   split into words; a word that equals a `Host` alias from `~/.ssh/config`
+   (with `Include` files followed, wildcard patterns skipped) becomes an
+   ssh machine. `local` or the phrase "this machine" becomes the local
+   machine. A port number written as `port 11435` applies to the machine
+   named before it.
+2. An ambiguous word such as "laptop", "mac" or "desktop" that is not an
+   alias is never taken as local. The draft lists it under "unclear" and
+   asks: "Did you mean this machine by 'laptop'? Say `local` to add it."
+3. Show the draft: id, reach, Ollama port, and the unclear words.
+4. Save on confirm. In a terminal (TTY) the command asks y/N. From an agent
+   pane (no TTY) it prints the draft and the exact manual command(s) that
+   save it, e.g. `aya machines add --ssh athena`, which the agent runs only
+   after the user says yes.
 
-The probe result is saved as `note`. The user can edit it. As in Claude
-Science's Remote compute, it describes the machine and is not re-checked.
+Aya Intelligence may later turn freer sentences into the same draft. It is
+not needed for step 1, and it never bypasses the confirm.
 
-## Data model and where state lives
+## Data and where state lives
 
-Everything is under the Aya config home (`AYA_HOME`, by default `~/.aya`). Writes go through `atomic-write.ts` with mode
-0600.
+Everything is under the Aya config home (`AYA_HOME`, by default `~/.aya`),
+written with `atomic-write.ts`, mode 0600.
 
-- `machines.json` is the registry, written only by add, remove and note
-  edits. A machine has: `id` (`[a-z0-9-]`), `label`,
-  `reach: "local" | {ssh: alias}`, `ollama: {port: 11434}` (the port on the
-  host), `proxyPort` (fixed when the machine is added, from 11501 up, so a
-  long-lived pane's URL stays valid across restarts), and `note`.
-- `machines-state.json` holds reservations and the proxy's pid. Leases are
-  kept in memory and copied here only for display. A reservation has: `id`
-  (a name such as `run5`), `machine`, `mode: exclusive | shared`,
-  `allowedDigests[]`, `holder {pid, pidStartTime, terminalId?, label}`,
-  `state: declared | active`, `expectedEnd`, `createdAt`, `activatedAt`.
-- A lease has: `id`, `machine`, `terminalId | pid | "unknown"`, `model`,
-  `digest`, `path`, `startedAt`, and on end `endedAt` and `outcome`
-  (`done | error | client-gone | refused | timeout`).
-- `machines-log.jsonl` is append-only and capped at 5 MB with one rotation.
-  It records refusals, breaks, deviations, forced removals, stale-holder
-  cleanups and ended leases.
-
-The state survives a restart. On load, and every 15 s, each holder is
-checked by pid plus start time, as in `pty-host-registry.ts`, so a reused
-pid does not count. A dead holder releases its reservation and writes
-"holder exited" to the log.
+- `machines.json`: `{"version": 1, "machines": [...]}`. A machine has `id`
+  (`[a-z0-9-]`), `label`, `reach: "local" | {ssh: alias}`,
+  `ollama: {port}` (the port on the host, default 11434) and an optional
+  `occupancy: {by, purpose, since}`.
+- A file with an unknown `version` is not rewritten; commands say so.
 
 ## Probes
 
-- Remote: `ssh -o BatchMode=yes -o ConnectTimeout=5` plus Aya's own
-  `ControlMaster=auto`, `ControlPath=<AYA_HOME>/ssh/%C` and
-  `ControlPersist=60`, so repeated status calls reuse one connection. The
-  alias is checked against `^[A-Za-z0-9._-]+$` and passed after `--`.
-  The remote command is a fixed read-only script, with no user text in it:
-  `nproc`, `/proc/meminfo` or `vm_stat`, `/proc/loadavg` or
-  `sysctl vm.loadavg`, and `nvidia-smi
+- Remote: `ssh -o BatchMode=yes -o ConnectTimeout=5 -- <alias> sh -s`,
+  with a fixed read-only script on stdin, so the remote login shell never
+  parses it. The alias must match `^[A-Za-z0-9._-]+$` and comes after `--`.
+  Only the validated port number is substituted into the script:
+  `nproc`, `/proc/loadavg` or `sysctl -n vm.loadavg`, `/proc/meminfo` or
+  `vm_stat` plus `sysctl -n hw.memsize`, `nvidia-smi
   --query-gpu=name,utilization.gpu,memory.used,memory.total
-  --format=csv,noheader,nounits` if present. The whole call is killed after
-  8 s.
-- Local: the same facts from Node's `os` module. GPU is `n/a` on Apple
-  Silicon until `ioreg` is measured (see Open questions).
-- Ollama: `GET /api/version`, `/api/ps` and `/api/tags` (tags give the
-  name -> digest map). A remote host is reached through an ssh local forward
-  (`-N -L 127.0.0.1:<ephemeral>:127.0.0.1:<port>`, `ExitOnForwardFailure`,
-  `ServerAliveInterval=15`), so Ollama can stay bound to the host's
-  loopback.
-- Cadence: one status call probes every machine in parallel, with a 5 s
-  cache so a polling agent does not flood ssh. A machine that misses the
-  budget returns its last result with `stale: true` and its age. Background
-  polling runs only while the view is open, or while a reservation or lease
-  is active (detection needs it then).
+  --format=csv,noheader,nounits` if present, and
+  `curl -s --max-time 3 http://127.0.0.1:<port>/api/version` and `/api/ps`.
+  Sections are separated by marker lines so a missing tool is an empty
+  section, not a parse error.
+- Local: Node's `os` module, `nvidia-smi` if present, and the same two
+  Ollama calls over HTTP to `127.0.0.1:<port>`. GPU is `n/a` on Apple
+  Silicon (see Open questions).
+- The whole probe is killed after 10 s and reported as unreachable with
+  the error and `checkedAt`.
+- One probe per machine is in flight at a time and shared by every caller
+  (`electron/single-flight.ts`), with a 3 s cache so a polling agent does
+  not flood ssh.
 
-## Getting the URL into a pane (step 3)
+## Later steps
 
-Aya decides how its panes reach a model: it sets the URL itself, so no
-client has to cooperate.
+Each step ships only after the one before it is used and the open question
+it depends on is answered.
 
-- Each pane gets its own proxy port per machine, bound to
-  `127.0.0.1:<port>` and allocated when the pane first needs it. A plain
-  `host:port` is kept by every client (Ollama CLI, ollama-python, OpenAI
-  SDKs), so the port alone tells the proxy which pane is asking. No path
-  token and no peer-pid lookup.
-- `safeEnv` in `electron/pty.ts` adds `AYA_OLLAMA_<ID>_URL` for every
-  registered machine (id upper-cased, `-` becomes `_`), e.g.
-  `http://127.0.0.1:11531`. An OpenAI-compatible client adds `/v1`.
-- A preset field, `ollamaMachine: "athena"`, also sets `AYA_OLLAMA_URL` and
-  `OLLAMA_HOST` for that pane. It never sets `OPENAI_BASE_URL`, because that
-  would redirect Codex and similar agents.
-- A pane started before a machine was added: `aya machines url athena`
-  prints its URL.
-- A process outside Aya's panes that still uses a proxy port is served and
-  logged as `unknown`. The port is for attribution, not security: every
-  pane runs as the same user.
-
-## Proxy and leases (step 3)
-
-- The proxy runs in its own detached process, the machines host, built
-  like the pty host: its own unix socket, a registry record and a staleness
-  hash. It does not run in main, because main restarts with every Aya
-  restart or update and would cut a stream in the middle of a run. It does not run in
-  the pty host, because a proxy bug there would kill every pane. It exits
-  when there are no panes, leases or reservations, the same idle rule as
-  the pty host.
-- Each request: buffer the JSON body (64 MB cap) to read `model` and
-  `keep_alive`, map name -> digest from cached `/api/tags` (refreshed on a
-  miss), check the reservation, open a lease, then pipe the response back
-  without buffering, so streaming works.
-- A lease ends at the end of the response, on an upstream error, or when
-  the client disconnects. On a disconnect, the upstream request is aborted
-  so Ollama stops generating. No lease outlives its socket.
-- Timeouts: 5 s to connect upstream. A per-machine idle-stream timeout
-  (default 10 min, which allows for a cold model load) gets a 504, ends the
-  lease and writes to the log.
-- A refusal is HTTP 403 with `x-should-retry: false`, because OpenAI SDKs
-  retry 409, 429 and 5xx. The body follows the path, so each client shows
-  it as its own error:
-  - `/api/*`: `{"error": "athena reserved by run5 (exclusive) until
-    ~23:45; laptop has qwen3:32b hot, use AYA_OLLAMA_LAPTOP_URL"}`
-  - `/v1/*`: `{"error": {"message": "...", "type": "aya_reserved",
-    "code": "machine_reserved"}}`
-- Errors from Aya itself use the same shapes with a 502: "athena: ssh down
-  (connect timeout)" or "Ollama not answering on athena:11434".
-
-## Reservations (step 4)
-
-- `aya machines reserve athena --as run5 --model qwen3:32b@sha256:ab12
-  --exclusive|--shared --until 23:45` declares a reservation. It is visible
-  to everyone but not enforced yet.
-- `aya machines run run5 -- python collect.py` activates it, runs the
-  command as the holder, and releases the reservation when the command
-  exits. The pid sweep is the backstop if the wrapper is killed.
-  `aya machines reserve ... --now` activates for the calling pane right
-  away.
-- `aya machines release run5` releases it. Anyone may run
-  `aya machines break run5 --reason "..."`; the break is logged and every
-  pane's status tab shows it.
-- Exclusive: only the holder's requests, and only for allowed digests. Any
-  other request gets a refusal. Shared: anyone may use the allowed digests.
-  A different model is refused, because loading it would push the run's
-  model out of VRAM. Calibration with a cloud judge uses shared; timed
-  collection uses exclusive.
-- In both modes, a non-holder's `keep_alive: 0` for a reserved digest is
-  refused. With no reservation, everything passes, and Ollama's own queue
-  applies.
-- If `expectedEnd` passes, the reservation stays (its pid is still alive)
-  but shows as `overdue`, and the holder's pane gets an `aya notify`.
-
-## Detection (step 5)
-
-The proxy keeps the time of the last request it saw per machine and
-digest. Each poll of `/api/ps` (15 s while anything is active) compares:
-
-- `expires_at` moved later with no proxied request in that window: a
-  direct client used the model.
-- A model loaded that no lease asked for: a direct load.
-- A model gone before its `expires_at`: unloaded by hand or evicted.
-
-Each case writes a deviation to the log and appears in the view. During an
-exclusive reservation, it also raises an `aya notify` alarm. Detection
-never kills or blocks anything.
-
-## Machines view (step 2)
-
-- A top-bar chip next to the usage chips: `athena 97% | laptop` (a dot
-  per machine: green up, gray down, orange reserved).
-- Its panel shows one card per machine, with the same data as
-  `aya machines --json`: load bars, loaded models with "hot until",
-  in-flight leases (pane, model, elapsed), the reservation with a Break
-  button, and the last 5 deviations.
-- Settings -> Machines: the one-sentence field with its confirm card, a
-  list with Remove, and the editable note.
-- Main reads the same status function the CLI uses, over IPC
-  (`machines:get`). There is no second code path.
-
-## Failure modes
-
-| Failure | What clients see | What Aya does |
-|---|---|---|
-| ssh down | 502 within about 5 s, message names the host | forward restarted with backoff; status shows `down` and the error |
-| Ollama down, ssh up | 502 "Ollama not answering" | lease ended as `error` |
-| Upstream dies mid-stream | stream ends with an error chunk | lease `error`, log entry |
-| Client disconnects | n/a | upstream aborted, lease `client-gone` |
-| Machines host crashes | connection refused right away (no hang) | restarted on next need; leases with a dead proxy pid dropped from the file |
-| Aya not running | proxy keeps serving while the machines host lives; `aya machines` says start Aya | the pid sweep still runs in the machines host |
+2. **Machines view.** A top-bar chip and a panel over the same status
+   function, plus Settings -> Machines for the sentence and Remove.
+3. **Routing test (cheap, before any proxy).** With the user's approval
+   and during a window they pick, put a throwaway forwarding shim (a small
+   Node script on `127.0.0.1`, no Aya changes) in front of one machine's
+   Ollama and point the real collector and reviewer at it. Check:
+   - every inference request goes through the shim (compare the shim's
+     count with Ollama's own log for the same window);
+   - two concurrent clients can be told apart by port or header;
+   - streaming responses arrive unchanged;
+   - a client disconnect is visible, and whether the GPU work actually
+     stops (watch `nvidia-smi` after the abort).
+   If any client ignores the URL or keeps a configured one, the proxy plan
+   below does not hold for it, and the step stops there.
+4. **Proxy, per-pane ports and a detached machines host**, only if the
+   routing test passes. Leases per request, an endpoint allowlist, a
+   bounded admission limit per machine so no request waits in Ollama's
+   queue, and a client disconnect never treated as proof the GPU is idle.
+5. **Reservations**, enforced only through the proxy. Conflicting
+   reservations are refused; activation waits until running work ends and
+   never cancels it. `keep_alive: 0` and anything that could evict a model
+   are refused unless the user approves that unload in the moment.
+6. **Observation.** Diff `/api/ps` over time and label changes as
+   observations ("expiry moved with no proxied request"), never as proven
+   violations; it never blocks or kills anything.
+7. **Team line.** `aya machines --brief`, one line a team's cadence can ask
+   the lead to run each round. Teams only consume it.
 
 ## Security
 
-- Every listener, proxy and forward binds `127.0.0.1` only (not
-  `0.0.0.0` or `::`). The proxy is not exposed over Aya Web or remote
-  sessions.
-- To block DNS rebinding, requests with a `Host` other than
-  `127.0.0.1:<port>`/`localhost:<port>`, or with a browser `Origin`, are
-  rejected.
 - Aya stores no keys or passwords. ssh authentication stays with the
-  user's agent and config. Remote commands are fixed strings.
+  user's agent and config. Remote commands are fixed strings with only a
+  validated port number in them, and the alias is validated and placed
+  after `--`.
+- Step 1 opens no listener and no forward. Any later listener binds
+  `127.0.0.1` only and rejects a foreign `Host` or a browser `Origin`.
 
-## State x action test matrix
+## Step 1 test matrix
 
-Following `tests/team-states.test.mjs`: every state x action combination,
-with the outcome spelled out. The tests use a fake Ollama (a Node HTTP
-server serving `/api/ps`, `/api/tags` and streaming `/api/chat`) and a fake
-`ssh` on PATH.
+Tests never ssh to a real host: a fake `ssh` on PATH replays fixtures, and
+`AYA_HOME`/`HOME` are temp dirs.
 
-| Machine state | Reservation | Actor | Action | Expected |
-|---|---|---|---|---|
-| up, idle | none | any | `aya machines --json` | reachable, empty loaded |
-| ssh down | any | any | status | `reachable:false`, error text, under 8 s |
-| ssh slow | none | any | status | cached entry, `stale:true` |
-| up | none | pane A | chat, stream | lease open during, `done` after |
-| up | none | pane A | client aborts mid-stream | upstream aborted, lease `client-gone` |
-| Ollama down | none | pane A | chat | 502 Ollama shape, lease `error` |
-| up | exclusive A | pane A | allowed digest | served |
-| up | exclusive A | pane A | other digest | 403 naming the allowed digest |
-| up | exclusive A | pane B | any | 403 with holder, until, alternative |
-| up | exclusive A | pane B | `/v1` path | 403 OpenAI shape, `x-should-retry:false` |
-| up | shared A | pane B | allowed digest | served |
-| up | shared A | pane B | other model | 403 |
-| up | shared A | pane B | `keep_alive:0` | 403 |
-| up | declared | pane B | any | served; reservation shown as declared |
-| up | exclusive A | holder exits | sweep | released, "holder exited" logged |
-| up | exclusive A, pid reused | sweep | | released (start time differs) |
-| up | exclusive A | pane B | break | released, log entry with reason |
-| up | exclusive A | direct client | ps poll | deviation + alarm |
-| up | none | direct client | ps poll | deviation, no alarm |
-| any | any | Aya restart | status | reservations kept, dead holders released |
-| any | lease open | machines host killed | client | connection reset; next start drops lease |
-| lease open | any | `remove` | remove | refused; `--force` logged |
+| Probe input | Expected |
+|---|---|
+| Linux: `/proc` + `nvidia-smi` + Ollama with a loaded model | cpus, load, memory, GPU rows, version, loaded model with expiry |
+| macOS: `sysctl` + `vm_stat`, no GPU | memory from pages x page size, `gpus: []` |
+| Linux without `nvidia-smi` | `gpus: []`, everything else filled |
+| Ollama down (empty sections) | `ollama.up: false`, machine still reachable |
+| ssh exits 255 | unreachable, ssh error text, `checkedAt` |
+| ssh hangs | killed at 10 s, unreachable, "timed out" |
 
-## Delivery plan
+| Sentence | Expected draft |
+|---|---|
+| names an alias | one ssh machine with that alias |
+| "laptop" only | nothing drafted, "laptop" listed as unclear |
+| "this machine" or `local` | one local machine |
+| unknown word that looks like a host | listed as unknown, not drafted |
+| alias already added | marked "already added", not drafted again |
 
-1. Registry + probe + `aya machines [--json]` + `add` (sentence -> draft
-   -> probe -> confirm) + `remove`, plus capabilities entries. Read-only,
-   no proxy. Tests: probe parsing (fixtures from real `nvidia-smi`,
-   `/proc`, `vm_stat`), status rows in the matrix, sentence drafts.
-2. Machines view: chip, panel, Settings -> Machines over the same status
-   function.
-3. Machines host + proxy + leases + env vars + `aya machines url` + the
-   `ollamaMachine` preset field. Leases show in status.
-4. Reservations: reserve, run, release, break, refusals, digests, pid
-   sweep.
-5. Detection: `/api/ps` diff, deviation log, alarms in the view.
-6. Team line: `aya machines --brief`, and one line a team's cadence can
-   ask the lead to run in each round. Teams only consume it.
+CLI tests cover add (sentence, TTY refused / non-TTY draft, manual),
+hosts, remove, occupy, free and `--json` against a temp `AYA_HOME`.
 
 ## Open questions
 
-3. **Where should the proxy run in step 3?** The design puts it in a separate machines host. Shipping step 3 inside main first would be smaller, but every Aya restart or update would cut in-flight streams. Is that acceptable as an interim step?
-4. **Apple Silicon GPU load.** Can `ioreg` "Device Utilization %" be read without sudo on current macOS, or does local GPU stay `n/a`?
-5. **A cap on in-flight requests per machine without a reservation?** Claude Science has a per-host concurrency limit. The design leaves unreserved traffic to Ollama's own queue, which is the queue that froze agent turns for 70 minutes. Should a per-machine `maxInFlight` refuse past the limit?
-6. **Should refusals suggest an alternative?** The example points to "laptop has the model hot", but the laptop was the about 6x slower fallback. Should the suggestion be limited to machines whose probe note puts them in the same speed class, or should the refusal only state the facts?
-7. **`--confirm` for agents.** Is a draft id plus `aya machines add --confirm <id>` acceptable under "no flags"? The alternative is that only the UI saves, and the CLI prints the draft and a pointer to the view.
-
-## Everything over ssh
-
-Aya reaches every machine over ssh and never needs Ollama exposed on the
-network. ssh is required anyway for GPU/CPU/memory, the alias and key already
-exist, and nothing changes on the host. Exposing Ollama directly
-(`OLLAMA_HOST=0.0.0.0`) would open it to the whole network with no password,
-and anyone could load or delete models.
-
-| Task | Over ssh | Ollama exposed directly | Easier |
-|---|---|---|---|
-| 1. GPU, CPU, memory | `nvidia-smi`, `/proc` | not possible, Ollama does not report it | ssh, the only way |
-| 1. Hot models and until when | `ssh <alias> curl -s localhost:<port>/api/ps`, one command, no tunnel | `/api/ps` over the network, after opening the port | ssh |
-| 2. Machines view | same data as 1 | same as 1 | ssh |
-| 3. Per-request leases | `ssh -L` forward + Aya's proxy | Aya's proxy in front of an open port | ssh: one forward, the port stays closed |
-| 4. Reservations and refusals | as 3 | as 3, but anyone can bypass the proxy through the open port | ssh |
-| 5. Detecting direct clients | `/api/ps` over ssh | same over the network | about the same |
-| 6. A line for a team's round | from 1 | from 1 | about the same |
-
-Steps 1, 2 and 6 need only read-only commands over `ssh <alias>`: no forward
-and no change on the host. The forward to Ollama appears only with the proxy
-(step 3), also over ssh.
-
-## Feasibility (estimates, not measured)
-
-| Step | Feasibility | Size | Main risk |
-|---|---|---|---|
-| 1. `aya machines` + add/remove + probe | high | medium | parsing `nvidia-smi`, `/proc`, `vm_stat` on Linux and macOS |
-| 2. Machines view | high | small-medium | none: same status function as the CLI |
-| 3. Proxy + per-request leases | medium | large | a new detached process; streaming; a port per pane and machine |
-| 4. Run reservations | medium-high after 3 | medium | enforced only for clients that go through the proxy |
-| 5. Detection of direct clients | medium-low reliability | small | a heuristic over `/api/ps`; a warning, never a gate |
-| 6. A line for a team's round | high | small | none |
-
-Steps 1, 2 and 6 show today's blind spots (which model is hot, until when, GPU load) at low risk. Step 3 is the largest: a new background process and streaming.
+1. **Apple Silicon GPU load.** Can `ioreg` "Device Utilization %" be read
+   without sudo on current macOS, or does local GPU stay `n/a`?
+2. **Routing test outcome.** If the real collector cannot be pointed at a
+   proxy, is advisory occupancy plus visibility enough, or is a host-side
+   component acceptable after all?
+3. **Admission limit.** In step 4, should the per-machine limit be one
+   request in flight, or configurable per machine?
+4. **A speed hint.** `probeMs` measures ssh, not inference.
+   Is a measured tokens-per-second figure per machine and model worth a
+   user-approved benchmark command later?
