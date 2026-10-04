@@ -192,6 +192,18 @@ it depends on is answered.
    - The added list with state, occupancy ("who and why") and Remove.
    Only added machines show in the top-bar chip, its panel and
    `aya machines`; suggestions live in Settings until the user adds them.
+   - **One store of ssh hosts, one host picker.** Aya keeps one list of the
+     ssh hosts it knows: the aliases in `~/.ssh/config`, the targets of
+     remote projects (`remote.target`, e.g. `user@host`) and the added
+     machines, each marked with where it came from. The same picker serves
+     Open project -> Remote host (today a free-text field with no
+     suggestions) and Settings -> Machines, so a host used for a remote
+     project is offered as a machine and an added machine is offered as a
+     remote host. Both use the same hardened ssh options and the same
+     Check, which also shows the machine's state (GPU, loaded models) when
+     the host is a machine. The list only reads those sources; adding a
+     machine still needs the user's Add, and `~/.ssh/config` is written
+     only on the user's yes.
 3. **Routing test (cheap, before any proxy).** With the user's approval
    and during a window they pick, put a throwaway forwarding shim (a small
    Node script on `127.0.0.1`, no Aya changes) in front of one machine's
