@@ -93,6 +93,15 @@ const REPLIES = [
   ["a claim after 'no' with no passive verb: 'No worries I sent the findings to lead'", (a) => a.say("No worries I sent the findings to lead."), false, false, true],
   ["a claim whose object starts with 'no': 'I sent notes to lead'", (a) => a.say("I sent notes to lead."), false, false, true],
   ["a claim in Polish after a negative clause: 'Nic nie blokuje, wysłałem wyniki do lead'", (a) => a.say("Nic nie blokuje, wysłałem wyniki do lead."), false, false, true],
+  ["a negative object after a modifier: 'I sent absolutely nothing to lead'", (a) => a.say("I sent absolutely nothing to lead."), false, false, false],
+  ["a negative object after two modifiers: 'I sent really just no report to lead'", (a) => a.say("I sent really just no report to lead."), false, false, false],
+  ["a negative subject with auxiliaries: 'Nothing has been sent to lead'", (a) => a.say("Nothing has been sent to lead."), false, false, false],
+  ["'so far' is no clause break: 'Nothing so far was sent to lead'", (a) => a.say("Nothing so far was sent to lead."), false, false, false],
+  ["a negative in an earlier clause: 'I had nothing prepared but sent the findings to lead'", (a) => a.say("I had nothing prepared but sent the findings to lead."), false, false, true],
+  ["a hyphenated object: 'I sent no-nonsense feedback to lead'", (a) => a.say("I sent no-nonsense feedback to lead."), false, false, true],
+  ["'no' later in the object: 'I sent it with no delay to lead'", (a) => a.say("I sent it with no delay to lead."), false, false, true],
+  ["a 'not' in an earlier clause: 'I could not wait so sent the findings to lead'", (a) => a.say("I could not wait so sent the findings to lead."), false, false, true],
+  ["a 'nie' in an earlier Polish clause: 'Nie wiem ale wysłałem wyniki do lead'", (a) => a.say("Nie wiem ale wysłałem wyniki do lead."), false, false, true],
   ["'I sent the findings earlier' alone names no role", (a) => a.say("I sent the findings earlier."), false, false, false],
 ];
 

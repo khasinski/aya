@@ -94,9 +94,13 @@ const SENT_DO = new RegExp(String.raw`(?<!\p{L})(?:wy|prze)sła(?:łem|łam|ł|�
 // Not a claim: "haven't sent", "will be sent", "need to send", "nie wysłałem".
 const NOT_DONE = /(?:\b(?:not|never|will|would|should|could|can|must|going to|need to|needs to|about to|yet to|if|once|nie)|n't)\s+(?:\w+\s+){0,2}$/i;
 // A negative subject: "Nothing was sent to lead", "No report was sent to lead" ("no" only with its passive verb).
-const NOBODY_SENT = /(?:(?<!\p{L})(?:nothing|none|nobody|nic|niczego)\s+(?:\p{L}+\s+){0,2}|\bno\s+(?:\w+\s+){0,2}(?:was|were|been|got)\s+)$/iu;
-// A negative object right after the verb: "sent nothing to lead", "sent no report to lead", "wysłałem nic do lead".
-const SENT_NOTHING = /^\p{L}+\s+(?:nothing|none|no|nic|niczego)(?!\p{L})/iu;
+const NOBODY_SENT = /(?:(?<!\p{L})(?:nothing|none|nobody|nic|niczego)\s+(?:\p{L}+\s+){0,3}|\bno\s+(?:\w+\s+){0,2}(?:was|were|been|got)\s+)$/iu;
+// A negative object after the verb and its modifiers: "sent (absolutely) nothing to lead", "wysłałem nic do lead";
+// "no-nonsense" is a word of its own, and "sent it with no delay" keeps its claim.
+const MODIFIER = String.raw`(?:\p{L}+ly|just|still|yet|even|again|jeszcze|naprawdę|zupełnie|kompletnie|absolutnie)`;
+const SENT_NOTHING = new RegExp(String.raw`^\p{L}+\s+(?:${MODIFIER}\s+){0,2}(?:nothing|none|no|nic|niczego)(?![\p{L}-])`, "iu");
+// Where the send's own clause starts: a negative before it ("I had nothing prepared but sent ...") is another clause's.
+const CLAUSE_BREAK = /[,;:]|(?<!\p{L})(?:[Bb]ut|[Aa]nd|[Ss]o(?!\s+far)|[Tt]hen|[Aa]lthough|[Tt]hough|[Aa]le|[Ll]ecz|[Ww]ięc|[Pp]otem|i)(?!\p{L})/u;
 
 /** The roles the reply says it sent to: its command written as text, or the send told in words naming the role. */
 export function claimedRecipients(reply: string, roles: readonly string[], self: string): string[] {
@@ -107,7 +111,7 @@ export function claimedRecipients(reply: string, roles: readonly string[], self:
       const role = byName.get(m[1].toLowerCase().replace(/[.]+$/, ""));
       if (!role) continue;
       if (pattern !== COMMAND) {
-        const before = reply.slice(Math.max(0, m.index - 40), m.index);
+        const before = reply.slice(Math.max(0, m.index - 40), m.index).split(CLAUSE_BREAK).at(-1) ?? "";
         const told = m[0].replace(/^\P{L}+/u, "");
         if (NOT_DONE.test(before) || NOBODY_SENT.test(before) || SENT_NOTHING.test(told)) continue;
       }
