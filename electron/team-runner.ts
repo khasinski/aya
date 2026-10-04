@@ -285,12 +285,24 @@ export class TeamRunner {
     await this.arm(project.slug, name, team, store, "kept", armedBefore);
   }
 
-  /** After Save team: a running team's rounds follow the new definition. */
-  async refresh(slug: string, name: string): Promise<void> {
+  /** After Save team: a running team's rounds follow the new definition, and each role in `changed` (its whoami
+   *  text changed) is told to read it again; a held pane gets nothing later, its row says it works from the old one. */
+  async refresh(slug: string, name: string, changed: readonly string[] = []): Promise<void> {
     // Not "has a timer": a Save can land before the boot-time restore has armed the team.
     if (!(await openTeamStore(this.deps.teamHome, slug, name).state()).running) return;
-    const { store, team } = await this.open(slug, name);
+    const { project, store, team } = await this.open(slug, name);
     await this.arm(slug, name, team, store, "kept");
+    const paused = store.pausedSince();
+    const at = clock(new Date(this.now()).toISOString());
+    for (const role of changed.filter((r) => team.roles.some((t) => t.id === r))) {
+      const message = { team: team.name, from: TEAM_SYSTEM_SENDER, to: role, text: `Your role in this team changed at ${at}: run aya team whoami again and work by what it prints now.` };
+      try {
+        const typed = await typeFromAya(this.deps, project, store, message, undefined, paused);
+        if (!typed.entry) await logTyped(store, message, typed);
+      } catch (err) {
+        this.warn("[aya] team %s/%s: %s not told its role changed:", slug, name, role, err);
+      }
+    }
   }
 
   /** Types waiting inbox messages into panes that are free now; returns how many.

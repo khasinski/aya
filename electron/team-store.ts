@@ -64,7 +64,7 @@ function keptByTrim(log: TeamMessage[], owed: (m: TeamMessage) => boolean): Team
   return log.filter((m) => kept.has(m));
 }
 
-type StateFile = { paused?: boolean; pausedBy?: unknown; started?: boolean; lastRound?: unknown; roundClockAt?: unknown; silenceRoundAt?: unknown; agentAuthored?: boolean; pendingTask?: unknown };
+type StateFile = { paused?: boolean; pausedBy?: unknown; started?: boolean; lastRound?: unknown; roundClockAt?: unknown; silenceRoundAt?: unknown; agentAuthored?: boolean; pendingTask?: unknown; whoamiAt?: unknown; roleChangedAt?: unknown };
 
 export interface PendingTask {
   to: string;
@@ -93,6 +93,17 @@ type TypingMark = number | { queued: number };
 const markId = (mark: TypingMark): number => (typeof mark === "number" ? mark : mark.queued);
 // Typing reservations made by this process ("dir\0role"); one in typing.json that is not here was left by a crash.
 const typingNow = new Set<string>();
+
+/** A state field of per-role ISO times; anything else in it is dropped. */
+function isoRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([, at]) => typeof at === "string" && !Number.isNaN(Date.parse(at)))) as Record<string, string>;
+}
+
+function withoutKey(value: unknown, key: string): Record<string, string> {
+  const { [key]: _, ...rest } = isoRecord(value);
+  return rest;
+}
 
 export async function readText(file: string): Promise<string | null> {
   try {
@@ -134,9 +145,11 @@ export class TeamStore {
     return readJson(this.file(TEAM_FILES.assignments), {});
   }
 
-  /** One pane per role and one role per pane; taking one gives up the other. */
-  assign(role: string, paneId: string): Promise<void> {
-    return this.reassign(paneId, role);
+  /** One pane per role and one role per pane; taking one gives up the other. A pane given a role later has its own
+   *  launch note (pane-brief.ts), so an older-role mark from a Save before does not carry over. */
+  async assign(role: string, paneId: string): Promise<void> {
+    await this.reassign(paneId, role);
+    if (role in (await this.roleTimes("roleChangedAt"))) await this.updateState((state) => ({ ...state, roleChangedAt: withoutKey(state.roleChangedAt, role) }));
   }
 
   releasePane(paneId: string): Promise<void> {
@@ -202,6 +215,27 @@ export class TeamStore {
   async state(): Promise<{ paused: boolean; running: boolean }> {
     const state = await this.readState();
     return { paused: state.paused === true, running: state.started === true && state.paused !== true };
+  }
+
+  /** When the role's pane last ran aya team whoami (asked before it read the definition). */
+  noteWhoami(role: string, at: string): Promise<void> {
+    return this.updateState((state) => ({ ...state, whoamiAt: { ...isoRecord(state.whoamiAt), [role]: at } }));
+  }
+
+  /** A Save changed what whoami prints for these roles. */
+  noteRolesChanged(roles: readonly string[], at: string): Promise<void> {
+    if (!roles.length) return Promise.resolve();
+    return this.updateState((state) => ({ ...state, roleChangedAt: { ...isoRecord(state.roleChangedAt), ...Object.fromEntries(roles.map((r) => [r, at])) } }));
+  }
+
+  /** Per role, when a Save changed its whoami text, for roles that have not run whoami since. */
+  async olderRoles(): Promise<Record<string, string>> {
+    const [changed, read] = await Promise.all([this.roleTimes("roleChangedAt"), this.roleTimes("whoamiAt")]);
+    return Object.fromEntries(Object.entries(changed).filter(([role, at]) => !(role in read) || Date.parse(read[role]) < Date.parse(at)));
+  }
+
+  private async roleTimes(key: "whoamiAt" | "roleChangedAt"): Promise<Record<string, string>> {
+    return isoRecord((await this.readState())[key]);
   }
 
   /** Saved by an agent from a pane (aya team save): the agent proposes its panes. */

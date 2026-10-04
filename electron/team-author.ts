@@ -150,7 +150,7 @@ async function saveTeamText(
   project: ProjectConfig | null,
   callerId: string | undefined,
   deps: Pick<TeamControlDeps, "teamHome">,
-  refresh: (slug: string, name: string) => Promise<void>,
+  refresh: (slug: string, name: string, changed: string[]) => Promise<void>,
   underPane: boolean,
 ): Promise<string> {
   if (!project) {
@@ -160,17 +160,19 @@ async function saveTeamText(
   const name = teamTitle(request.text);
   if (name === null) throw new Error('the team file must start with "# <team-name>"');
   const team = parseTeamFile(name, request.text);
+  let changed: string[] = [];
   try {
     // The agent that saved it proposes its panes; the window's assign prompt would compete. The process tree
     // counts too: an agent can unset AYA_TERMINAL_ID, and a save it makes must not set the status command.
     const byAgent = underPane || project.tabs.some((t) => t.id === callerId);
-    await saveTeam(deps.teamHome, project, team, { create: !request.replace, byAgent });
+    changed = await saveTeam(deps.teamHome, project, team, { create: !request.replace, byAgent });
   } catch (err) {
     if (!(err instanceof TeamExistsError)) throw err;
     throw new Error(`team "${name}" already exists in ${err.file}; nothing was saved. Run aya team save again with --replace to overwrite it`);
   }
-  await refresh(project.slug, name);
-  return savedSummary(team, teamFile(project, name));
+  await refresh(project.slug, name, changed);
+  const told = changed.length ? `aya team whoami changed for ${changed.join(", ")}: Aya tells ${changed.length === 1 ? "its pane" : "their panes"} to run it again while the team runs\n` : "";
+  return savedSummary(team, teamFile(project, name)) + told;
 }
 
 /** `refresh` re-arms a running team's rounds, as the Teams window's Save does.
@@ -179,7 +181,7 @@ export async function handleTeamAuthorRequest(
   request: TeamAuthorRequest,
   callerId: string | undefined,
   deps: Pick<TeamControlDeps, "teamHome" | "listProjects">,
-  refresh: (slug: string, name: string) => Promise<void>,
+  refresh: (slug: string, name: string, changed: string[]) => Promise<void>,
   underPane = false,
 ): Promise<{ output: string }> {
   const project = await callerProject(await deps.listProjects(), callerId, request);

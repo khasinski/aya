@@ -63,8 +63,8 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
   ipcMain.handle("teams:save", async (_e, slug: unknown, team: unknown, create: unknown) => {
     const project = await teamProject(slug, "teams:save");
     const definition = validateTeamDefinition(team);
-    await saveTeam(teamHome, project, definition, { create: create === true, fromWindow: true });
-    await teamRunner.refresh(project.slug, definition.name);
+    const changed = await saveTeam(teamHome, project, definition, { create: create === true, fromWindow: true });
+    await teamRunner.refresh(project.slug, definition.name, changed);
   });
   ipcMain.handle("teams:release-pane", async (_e, slug: unknown, paneId: unknown) =>
     releasePaneLocked(teamDeps, (await teamProject(slug, "teams:release-pane")).slug, requireString(paneId, "teams:release-pane.paneId")),

@@ -442,7 +442,7 @@ async function handleRequest(
   if (request.type === "team-guide" || request.type === "team-save") {
     const { team, teamRunner } = options;
     if (!team || !teamRunner) throw new Error(TEAMS_UNAVAILABLE);
-    return handleTeamAuthorRequest(request, caller.terminalId, team, (slug, name) => teamRunner.refresh(slug, name), under !== null);
+    return handleTeamAuthorRequest(request, caller.terminalId, team, (slug, name, changed) => teamRunner.refresh(slug, name, changed), under !== null);
   }
   if (request.type === "presets" || request.type === "team-open" || request.type === "team-start") {
     if (!options.teamPanes) throw new Error(TEAMS_UNAVAILABLE);

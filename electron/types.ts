@@ -965,6 +965,8 @@ export interface TeamSummary {
   roleNotes: Record<string, string | null>;
   /** Panes that started with a role note of this team that they no longer play. */
   staleNotes: string[];
+  /** Per role with a pane: when a Save changed what its aya team whoami prints, while it has not run whoami since. */
+  olderRoles: Record<string, string>;
   /** Per role with a pane in the project: what Aya widened so the pane reaches it, null when nothing. */
   paneNotes: Record<string, string | null>;
   /** Messages per role that are waiting in its inbox. */

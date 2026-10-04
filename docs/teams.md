@@ -206,6 +206,19 @@ A 22-round reviewer/implementer UX session hit:
   and `aya pane send` to it are dropped. Either way the first message it gets tells it to run
   `aya team whoami`, and, for a pane started before an Aya update, to run
   `aya capabilities`.
+- **A role changed by a Save (N3.3)**: an agent reads `aya team whoami` once, so a Save (the
+  Teams window's, or `aya team save --replace`) that changes what whoami prints for a role (its
+  routes, must-not, responsibilities, the lead line, or the protocol every role shares) types
+  "Your role in this team changed at HH:MM: run aya team whoami again ..." from aya to that role's
+  pane while the team runs. A held pane does not get it later (Aya's own messages go stale). Until
+  the pane runs whoami, the role's row says "started with an older role: it changed at HH:MM and
+  its pane has not run aya team whoami since"; the team's `state.json` keeps per role when a Save
+  changed it (`roleChangedAt`) and when it last ran whoami (`whoamiAt`, taken before the definition
+  is read). A role without a pane gets neither; a pane given the role later starts from its own
+  launch note. A Save that changes only the cadence or the status command tells nobody, and
+  `aya team save` names the roles it told. A paused or not started team gets nothing typed: Start's
+  delivery test asks every role to run whoami, Resume does not, so the row note stays until it does.
+  (Live run 2026-10-03: a product-owner change at 07:00 was re-read at 08:41.)
 - **A borrowed id**: interactive Codex ran every pane's shell commands in
   one shared `codex app-server daemon`, with the env of the pane that
   started it, so `aya team whoami` in a later pane answered for that pane,
@@ -662,10 +675,6 @@ Known and accepted (found by the iterated Sol 6.1 review of the sudoku scenario)
 - **A crash between the paste and the round's number (N3.2)**: the round is typed, Aya goes down
   before it writes the number, and the next launch types "Aya round N" again. A repeated poke is
   harmless; a write-ahead number would leave a gap in the numbering when the paste then fails.
-- **A Save of the protocol or responsibilities does not tell running agents (N3.3)**: they read
-  `aya team whoami` once. A fix needs a new mechanism: on a Save that changes what whoami prints,
-  type "run aya team whoami again" to each role with a pane (a message from aya, dropped when held)
-  and show "older brief" on the role until its next `whoami` (a per-role whoami time in the state).
 - **A changed Config directory resumes a fresh session (N3.5)**: designed ("Gone needs
   certainty", `electron/claude-session.ts`), and not in the scenario.
 - **Claude's usage-limit screen (N4.1) and a multi-select "Submit" row (N4.4) have no rule**: the

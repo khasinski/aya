@@ -11,6 +11,7 @@ import { goesStale, type TeamStore, type TeamMessage } from "./team-store";
 import { TEAM_SYSTEM_SENDER } from "./team-definition";
 import type { ProjectConfig, TeamDefinition, TeamRole } from "./types";
 import { clock, WALL_MINUTE_MS } from "./team-times";
+import { whoamiText } from "./team-whoami";
 
 export interface TeamControlDeps {
   teamHome: string;
@@ -75,23 +76,6 @@ export async function teammateToWaitOn(callerId: string | undefined, on: string,
     throw new Error(`team ${team.name} has no role ${on}; its roles: ${team.roles.map((r) => r.id).filter((id) => id !== role.id).join(", ")}`);
   }
   return on;
-}
-
-function whoami({ team, role }: Membership): string {
-  const sends = role.sendsTo.map((r) => (r.what ? `${r.to}: ${r.what}` : r.to));
-  const lines = [
-    `team      ${team.name}`,
-    `you       ${role.id}`,
-    ...(sends.length ? sends.map((line, i) => `${i ? "         " : "sends to"}  ${line}`) : ["sends to  (nobody)"]),
-    `must not  ${role.mustNot}`,
-  ];
-  if (team.lead === role.id) lines.push("", 'you lead this team: when the work is done or cannot go on, end it with: aya team pause "why"');
-  lines.push("", 'give a role work with: aya team send <role> "text" (not aya team start: starting and resuming the team is the user\'s)');
-  lines.push("every role of the team, as it runs: aya team show");
-  lines.push('wait on a teammate with: aya status waiting --on <role> "what you need" (plain aya status waiting asks the user)');
-  if (role.responsibilities) lines.push("", role.responsibilities);
-  if (team.protocol) lines.push("", "protocol", team.protocol);
-  return `${lines.join("\n")}\n`;
 }
 
 /** A team's hold for a pane: the terminal host's, else why its launch mode cannot reach Aya. */
@@ -405,8 +389,13 @@ export async function handleTeamRequest(
   deps: TeamControlDeps,
   pause?: (slug: string, team: string, by: string) => Promise<void>,
 ): Promise<{ output: string; undo?: () => Promise<void> }> {
+  // Taken before the definition is read: a Save landing in between leaves the role marked older.
+  const askedAt = new Date().toISOString();
   const m = await membership(callerId, deps);
-  if (request.type === "team-whoami") return { output: whoami(m) };
+  if (request.type === "team-whoami") {
+    await m.store.noteWhoami(m.role.id, askedAt).catch((err: unknown) => console.warn("[aya] team whoami time not recorded:", err));
+    return { output: whoamiText(m.team, m.role) };
+  }
   if (request.type === "team-pause") return { output: await pauseByLead(m, request.text, pause) };
   if (request.type === "team-send") return { output: await send(m, request.role, request.text, deps) };
   const { taken: unread, giveBack } = await m.store.takeUnread(m.role.id);

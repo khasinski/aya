@@ -22,6 +22,7 @@ import {
   statusCommandOf,
 } from "./team-definition";
 import type { TeamControlDeps } from "./team-control";
+import { rolesWhoseWhoamiChanged } from "./team-whoami";
 import type { ProjectConfig, TeamDefinition, TeamLiveness, TeamMessage, TeamSummary } from "./types";
 
 export const LOG_TAIL = 50;
@@ -75,6 +76,7 @@ export async function listTeams(
         paneHolds: await perLivePane(assignments, project, holdReason),
         paneNotes: await perLivePane(assignments, project, launchNote),
         ...(roleNoteReport ? await roleNoteReport(project, name, assignments) : { roleNotes: {}, staleNotes: [] }),
+        olderRoles: Object.fromEntries(Object.entries(await store.olderRoles()).filter(([role]) => role in assignments)),
         unread: Object.fromEntries(await Promise.all((definition?.roles ?? []).map(async (r) => [r.id, (await store.owed(r.id)).length] as const))),
         liveness: await livenessOf(store, definition, holdReason),
         log,
@@ -175,18 +177,19 @@ export class TeamExistsError extends Error {
  *  `byAgent`: saved from a pane; the mark lands before the saved copy, so the window never lists the team without it.
  *  `fromWindow`: the Teams window's Save, the one place the status command is set. Every save over the control
  *  socket keeps the saved one: an agent can shed its pane identity (unset AYA_TERMINAL_ID, setsid), so "not under a
- *  pane" proves nothing about who typed the command. */
+ *  pane" proves nothing about who typed the command. Resolves to the roles with a pane whose whoami the save changed. */
 export async function saveTeam(
   teamHome: string,
   project: ProjectConfig,
   given: TeamDefinition,
   { create = false, byAgent = false, fromWindow = false }: { create?: boolean; byAgent?: boolean; fromWindow?: boolean } = {},
-): Promise<void> {
+): Promise<string[]> {
   refuseReservedRoles(given);
   refuseFieldLines(given);
   const led = withLead(given);
   refuseLossy(led, serializeTeam(led));
   const file = teamFile(project, led.name);
+  let changed: string[] = [];
   await oneSaveAtATime(file, async () => {
     // Read in the queue: a save queued ahead (the user clearing it) may change the command this one keeps.
     const team = fromWindow ? led : await withSavedStatusCommand(teamHome, project, led);
@@ -195,15 +198,29 @@ export async function saveTeam(
     await writeFileAtomic(file, text);
     const store = openTeamStore(teamHome, project.slug, team.name);
     if (byAgent) await store.markAgentAuthored();
+    const before = await store.savedDefinition();
     await store.saveDefinition(text);
     // A save in the window is the user's: it ends an earlier agent mark.
     if (!byAgent) await store.clearAgentAuthored();
     // A renamed or removed role would keep a pane no role id matches.
     const roles = new Set(team.roles.map((r) => r.id));
-    for (const [role, pane] of Object.entries(await store.assignments())) {
+    const assignments = await store.assignments();
+    for (const [role, pane] of Object.entries(assignments)) {
       if (!roles.has(role)) await store.releasePane(pane);
     }
+    changed = before === null ? [] : rolesWhoseWhoamiChanged(parsedOrNull(team.name, before), team).filter((role) => role in assignments);
+    await store.noteRolesChanged(changed, new Date().toISOString());
   });
+  return changed;
+}
+
+/** A saved copy that no longer parses: every role counts as changed. */
+function parsedOrNull(name: string, text: string): TeamDefinition | null {
+  try {
+    return parseTeamFile(name, text);
+  } catch {
+    return null;
+  }
 }
 
 /** Saves of one team file in turn: two creates (aya team save, the Teams window)

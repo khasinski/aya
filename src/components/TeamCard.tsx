@@ -14,6 +14,7 @@ import {
   cardStatusNote,
   leadWaitingLine,
   livePane,
+  olderRoleNote,
   roleStatus,
   startSummary,
   taskPlaceholder,
@@ -232,6 +233,11 @@ export function TeamCard({
                   {team.roleNotes[role.id] && (
                     <div className="aya-teams-role-alert" role="status" aria-label={`${role.id} role note`}>
                       ⚠ {team.roleNotes[role.id]}; its first message tells it to run aya team whoami
+                    </div>
+                  )}
+                  {team.olderRoles?.[role.id] && (
+                    <div className="aya-teams-role-alert" role="status" aria-label={`${role.id} older role`}>
+                      ⚠ {olderRoleNote(team.olderRoles[role.id])}
                     </div>
                   )}
                   {note && (
