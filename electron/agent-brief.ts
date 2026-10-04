@@ -35,6 +35,7 @@ export function teamNote(team: string, role: string): string {
     `You are the ${role} in the Aya team ${team}.`,
     "Run `aya team whoami` now, and again after /clear, /resume or a compaction:",
     "it gives your responsibilities, what you must not do, and who you send to.",
+    "`aya team show` prints the whole team: every role, the lead, the cadence and the protocol.",
     'Send with `aya team send <role> "text"`. A message starting with "[team" names its sender:',
     '"from user" is the user\'s own instruction (the task you were started with), do it;',
     '"from aya" is a round or delivery test from the app, do what it says;',

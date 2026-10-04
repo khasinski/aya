@@ -41,6 +41,10 @@ Usage:
                                      Type text into another pane and press
                                      Enter (--no-submit: type only)
   aya team whoami                    Print this pane's team role and protocol
+  aya team show [team] [--json]      Print the whole team as Aya runs it: every
+                                     role, the lead, cadence and protocol (no
+                                     team: this pane's, else the project's only
+                                     one; outside a pane set AYA_PROJECT_SLUG)
   aya team send role text            Send a message to the pane playing role
   aya team inbox                     Print messages that could not be typed in
   aya team pause ["why"]             The lead ends the team's work: pauses it, as the Pause button does
@@ -216,6 +220,9 @@ function requestFromArgs() {
   }
   if (kind === "team-pause") return { type: kind, text: process.argv[4] || undefined };
   if (kind === "presets") return { type: kind, json: process.argv[4] === "json" };
+  if (kind === "team-show") {
+    return { type: kind, team: process.argv[4] || undefined, json: process.argv[5] === "json", projectSlug: optionalEnv("AYA_PROJECT_SLUG"), cwd: process.cwd() };
+  }
   // Unlike whoami/send, these work outside a pane too: the slug or cwd names the project.
   if (kind === "team-guide" || kind === "team-save" || kind === "team-open" || kind === "team-start") {
     const scope = { projectSlug: optionalEnv("AYA_PROJECT_SLUG"), cwd: process.cwd() };
@@ -735,6 +742,21 @@ case "$command" in
     esac
     case "$action" in
       whoami) send_control team-whoami ;;
+      show)
+        team=""
+        json=""
+        for arg do
+          case "$arg" in
+            --json) json=json ;;
+            -*) usage_fail ;;
+            *)
+              if [ -n "$team" ]; then usage_fail; fi
+              team="$arg"
+              ;;
+          esac
+        done
+        send_control team-show "$team" "$json"
+        ;;
       inbox) send_control team-inbox ;;
       pause) send_control team-pause "$*" ;;
       new) send_control team-guide "$*" ;;

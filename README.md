@@ -328,6 +328,7 @@ aya pane send "reviewer" --no-submit "draft for review"
 
 # Work as a team (see "Run a team of agents")
 aya team whoami
+aya team show                                         # every role, lead, cadence, protocol
 aya team send implementer "Round 5: the alert freezes at zero"
 aya team inbox
 aya team pause "no lower complexity is possible"      # the lead ends the work
@@ -355,7 +356,7 @@ whichever pane started that process. Interactive Codex does this with its
 app-server daemon (measured on codex-cli 0.158.0), so Aya starts Codex panes
 with `--no-daemon` when the installed codex has it (not `codex exec` and other
 non-interactive subcommands). `aya` also sends its own pid, and the team
-commands that speak as the pane (`aya team whoami|send|inbox|pause`) are
+commands that speak as the pane (`aya team whoami|show|send|inbox|pause`) are
 refused when that pid does not run under the pane's process or runs through a
 `codex app-server`, naming this cause; restart that pane. The directory a
 command runs in is not checked (see docs/teams.md, "A borrowed id").

@@ -16,6 +16,9 @@ export type TeamAuthorRequest =
   | ({ type: "team-guide"; description?: string } & TeamAuthorScope)
   | ({ type: "team-save"; text: string; replace: boolean } & TeamAuthorScope);
 
+/** Read-only: no team names the caller pane's team, else the project's only saved one. */
+export type TeamShowRequest = { type: "team-show"; team?: string; json: boolean } & TeamAuthorScope;
+
 export type TeamPanesRequest =
   | { type: "presets"; json: boolean }
   | ({ type: "team-open"; team: string; panes: PanePick[]; replace: boolean } & TeamAuthorScope)
@@ -67,6 +70,7 @@ export type ControlRequest =
   | { type: "capabilities" }
   | TeamRequest
   | TeamAuthorRequest
+  | TeamShowRequest
   | TeamPanesRequest;
 
 /** The calling pane (AYA_TERMINAL_ID / AYA_PRESET_ID), sent with every request
@@ -146,6 +150,10 @@ export function parseControlRequest(value: unknown): ControlRequest {
     const text = optionalString(value.text);
     if (!text) throw new Error("team-save needs the team file's text");
     return { type, text, replace: value.replace === true, ...scope };
+  }
+  if (type === "team-show") {
+    const team = optionalString(value.team);
+    return { type, ...(team ? { team } : {}), json: value.json === true, ...scope };
   }
   if (type === "presets") return { type, json: value.json === true };
   if (type === "team-open") {

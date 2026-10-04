@@ -63,6 +63,8 @@ follow its responsibilities and never do what it says you must not do.
 
 - Run `aya team whoami` at the start, and again after `/clear`, `/resume` or a
   compaction; your role is not in your memory.
+- `aya team show` prints the whole team as Aya runs it: every role, who leads,
+  the cadence and the protocol. Read the team there, not from its file.
 - Send with `aya team send <role> "text"`, by role, never by tab name. Only the
   roles in your send-to list work; whoami says what each of them expects from
   you.

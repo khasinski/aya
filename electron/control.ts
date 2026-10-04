@@ -24,6 +24,7 @@ import { HOLD_BUSY, HOLD_DRAFT, isDialogHold } from "./pane-holds";
 import { debugAnswer } from "./team-debug";
 import { handleTeamRequest, oneLine, PaneHeldError, TEAMS_UNAVAILABLE, TextPastedError, TryAgainError, type TeamControlDeps } from "./team-control";
 import { handleTeamPanesRequest, THIS_PANE, type TeamPaneDeps } from "./team-panes";
+import { handleTeamShow } from "./team-show";
 import type { TeamRunner } from "./team-runner";
 import type { ControlStatusUpdate, ProjectConfig, PtyEvent } from "./types";
 
@@ -308,8 +309,8 @@ function deliverToPane(
 /** One pane-send per terminal at a time: each finishes its text, gap and Enter before the next begins. */
 const withPaneLock = oneAtATime();
 
-/** Requests that speak as the pane's role, so its id must be proven, not just carried. */
-const SPEAKS_AS_PANE = new Set<ControlRequest["type"]>(["team-whoami", "team-inbox", "team-send", "team-pause"]);
+/** Requests that speak as the pane's role, so its id must be proven, not just carried; team-show names the caller's role. */
+const SPEAKS_AS_PANE = new Set<ControlRequest["type"]>(["team-whoami", "team-inbox", "team-send", "team-pause", "team-show"]);
 
 /** Also team-open when a role goes to "this": the caller's id picks the pane that gets it. */
 const speaksAsPane = (request: ControlRequest): boolean =>
@@ -428,6 +429,10 @@ async function handleRequest(
     if (!options.team) throw new Error(TEAMS_UNAVAILABLE);
     const { teamRunner } = options;
     return handleTeamRequest(request, caller.terminalId, options.team, teamRunner && ((slug, name, by) => teamRunner.pause(slug, name, by)));
+  }
+  if (request.type === "team-show") {
+    if (!options.team) throw new Error(TEAMS_UNAVAILABLE);
+    return handleTeamShow(request, caller.terminalId, options.team);
   }
   if (request.type === "team-guide" || request.type === "team-save") {
     const { team, teamRunner } = options;

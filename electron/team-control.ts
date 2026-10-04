@@ -73,6 +73,7 @@ function whoami({ team, role }: Membership): string {
   ];
   if (team.lead === role.id) lines.push("", 'you lead this team: when the work is done or cannot go on, end it with: aya team pause "why"');
   lines.push("", 'give a role work with: aya team send <role> "text" (not aya team start: starting and resuming the team is the user\'s)');
+  lines.push("every role of the team, as it runs: aya team show");
   if (role.responsibilities) lines.push("", role.responsibilities);
   if (team.protocol) lines.push("", "protocol", team.protocol);
   return `${lines.join("\n")}\n`;

@@ -101,6 +101,17 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     notes: ["Run it after a start, /clear or /resume: your role is not in your memory."],
   },
   {
+    command: "team show",
+    usage: "aya team show [team] [--json]",
+    summary:
+      "Print the whole team as Aya runs it (its saved copy): every role with its responsibilities, must-not and who it sends to, which role leads, the cadence, the protocol and the status command line if any.",
+    example: "aya team show --json",
+    notes: [
+      "Read-only. Without a team: this pane's team, else the project's only saved team; outside a pane set AYA_PROJECT_SLUG.",
+      "Read the team here, not from its file: it says when the repo file differs from what runs.",
+    ],
+  },
+  {
     command: "team send",
     usage: "aya team send role text",
     summary: "Send a message to the pane playing role; the recipient sees who sent it, when, at which commit.",
