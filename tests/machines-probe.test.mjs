@@ -218,3 +218,34 @@ test("a hung local nvidia-smi is killed with its children at the deadline, befor
   while (alive(child) && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
   assert.equal(alive(child), false, "its child died with the group");
 });
+
+/** A fake nvidia-smi on PATH for one test; its script gets the test dir as $D. */
+async function fakeNvidiaSmi(t, body) {
+  const dir = mkdtempSync(join(tmpdir(), "aya-smi-"));
+  const { writeFileSync, chmodSync, mkdirSync } = await import("node:fs");
+  mkdirSync(join(dir, "bin"));
+  writeFileSync(join(dir, "bin", "nvidia-smi"), `#!/bin/sh\nD="${dir}"\n${body}\n`);
+  chmodSync(join(dir, "bin", "nvidia-smi"), 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = `${join(dir, "bin")}:${path}`;
+  t.after(() => {
+    process.env.PATH = path;
+    rmSync(dir, { recursive: true, force: true });
+  });
+  return dir;
+}
+
+test("nvidia-smi exits before its backgrounded writer prints: the probe waits for the output and sees the GPU", async (t) => {
+  await fakeNvidiaSmi(t, "(sleep 1; printf 'RTX 4090, 10, 20, 24564\\n') &\nexit 0");
+  const status = await probeLocal(1, { deadlineMs: 8000 });
+  assert.equal(status.reachable, true, status.error);
+  assert.deepEqual(status.gpus, [{ name: "RTX 4090", utilPct: 10, memUsedMiB: 20, memTotalMiB: 24564 }]);
+});
+
+test("nvidia-smi exits but its backgrounded writer hangs: the group is killed at the deadline, before the probe answers", async (t) => {
+  const dir = await fakeNvidiaSmi(t, 'sleep 30 &\necho $! > "$D/child"\nexit 0');
+  const status = await probeLocal(1, { deadlineMs: 2000 });
+  assert.equal(status.error, "timed out after 2 s");
+  const child = Number(readFileSync(join(dir, "child"), "utf8"));
+  assert.equal(alive(child), false, "the writer was reaped before the probe answered");
+});

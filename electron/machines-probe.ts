@@ -298,21 +298,22 @@ class LocalTools {
         this.running.delete(child);
         resolve(null);
       });
-      child.on("exit", (code) => {
+      // "close", not "exit": a backgrounded writer in the group can still hold stdout after the tool exits.
+      child.on("close", (code) => {
         this.running.delete(child);
         resolve(code === 0 ? out : null);
       });
     });
   }
 
-  /** SIGKILL to every group still running, resolved once each direct child has exited. */
+  /** SIGKILL to every group not yet done, resolved once each tool exited and its stdout closed. */
   async killAll(): Promise<void> {
     await Promise.all(
       [...this.running].map(
         (child) =>
           new Promise<void>((resolve) => {
-            if (child.exitCode !== null || child.signalCode !== null) return resolve();
-            child.once("exit", () => resolve());
+            child.once("close", () => resolve());
+            // The group outlives an exited leader while a member holds stdout, so it is signalled either way.
             try {
               if (child.pid) process.kill(-child.pid, "SIGKILL");
             } catch {
