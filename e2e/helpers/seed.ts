@@ -77,6 +77,9 @@ export interface SeedOptions {
   remoteProject?: boolean;
   /** Files written under HOME (shell rc files, say). */
   homeFiles?: Record<string, string>;
+  /** `ssh` on PATH is e2e/helpers/fake-ssh-machines.cjs: fixed probe answers per target, every call logged to
+   *  `<root>/ssh-calls.log`. No real host is ever reached. */
+  fakeSshMachines?: boolean;
   /** The claude config dir under HOME that holds a transcript
    *  for each of `tabSessionIds`, as Claude saves one per conversation. */
   claudeTranscriptsIn?: string;
@@ -403,6 +406,22 @@ export function seedEnv(opts: SeedOptions = {}): SeededEnv {
     prependPath(bin);
     // A login shell puts /usr/bin (the real ssh) back in front of PATH.
     homeFiles[".zprofile"] = homeFiles[".bash_profile"] = `export PATH=${shellQuote(bin)}:"$PATH"\n`;
+  }
+
+  if (opts.fakeSshMachines) {
+    if (opts.remoteProject) throw new Error("seed: fakeSshMachines and remoteProject each own ssh");
+    const bin = join(root, "ssh-bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(
+      join(bin, "ssh"),
+      `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(join(__dirname, "fake-ssh-machines.cjs"))} "$@"\n`,
+      { mode: 0o755 },
+    );
+    prependPath(bin);
+    launchEnv = { ...launchEnv, AYA_FAKE_SSH_LOG: join(root, "ssh-calls.log") };
+    // Aya merges the login shell's PATH in front at startup; that shell must find this ssh first too.
+    const front = `export PATH=${shellQuote(bin)}:"$PATH"\n`;
+    for (const rc of [".zprofile", ".zshrc", ".bash_profile", ".bashrc"]) homeFiles[rc] = `${homeFiles[rc] ?? ""}${front}`;
   }
 
   if (opts.fakeBins?.length) {
