@@ -21,6 +21,8 @@ export interface EditorTeam {
   lead: number | null;
   cadenceMinutes: number | null;
   protocol: string;
+  /** "" for none: the field is optional and a blank one is left out of the file. */
+  statusCommand: string;
   nextKey: number;
 }
 
@@ -72,6 +74,7 @@ export function toEditor(team: TeamDefinition): EditorTeam {
     lead: team.lead !== null && key.has(team.lead) ? (key.get(team.lead) as number) : null,
     cadenceMinutes: team.cadenceMinutes,
     protocol: team.protocol,
+    statusCommand: team.statusCommand ?? "",
     nextKey: team.roles.length,
   };
 }
@@ -90,6 +93,7 @@ export function fromEditor(t: EditorTeam): TeamDefinition {
     lead: t.lead !== null && id.has(t.lead) ? (id.get(t.lead) as string) : null,
     cadenceMinutes: t.cadenceMinutes,
     protocol: t.protocol,
+    ...(t.statusCommand.trim() ? { statusCommand: t.statusCommand.trim() } : {}),
   };
 }
 

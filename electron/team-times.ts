@@ -3,6 +3,9 @@
 
 import { TEAM_MINUTE_MS } from "./paths";
 
+/** A wall-clock minute: what people and agents take, never shortened in tests the way a cadence minute is. */
+export const WALL_MINUTE_MS = 60_000;
+
 /** No progress for this long: the lead is asked for a round. */
 export const SILENCE_FIRST_MIN = 30;
 /** After a round from the silence, the next after this long without progress. */

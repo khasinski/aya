@@ -250,7 +250,37 @@ A 22-round reviewer/implementer UX session hit:
   role's report is not cut by the others' talk), then the newest 1,000 of the rest.
 - **Cadence**: optional; Aya sends the round prompt to the lead every N minutes (the
   role named in `## Cadence` is the lead); a pause stops the team.
-  Write/measure turn-taking stays in the protocol.
+  Write/measure turn-taking stays in the protocol. The round carries a digest of now and what
+  changed since the last round (`electron/team-digest.ts`), each part only when it has something:
+  messages, new HEADs, held messages and skipped rounds since then; roles blocked 5 min or more on
+  a screen the clock saw (`progress.json`) or a held message, with who can clear it (a dialog, a
+  draft, a pane not running or missing: only the user); roles waiting on the lead (message number
+  and wait) and waits between other roles of 30 min or more; sends `aya team send` refused (no such
+  role, not in its sends-to, team paused, the send cap, a receiver without a pane), recorded in
+  `refused.jsonl` (append-only, the newest 100-200 kept, text cut to 40 characters; a refusal
+  before the caller's team is known has no team to record it in); and roles idle 20 min or more
+  (no message sent or typed to them, and not busy now). Totals stay in `aya team stats`;
+  `aya team stats <team> --now` prints the same digest from the files, with the
+  status command's last recorded run (below) at its end.
+- **Status command**: optional `## Status command`, one shell line (Teams editor:
+  Status command). Aya runs it with `sh` in the project directory for a running
+  local team (never paused, not started or remote), with no stdin, a pane-less
+  env (no `AYA_TERMINAL_ID`), 20 s and 2 KB of output (stderr kept, escape
+  sequences dropped), one run per team at a time, and hands the lead its output
+  with every round, whether the rhythm, a silence or a stall made it due
+  (`statusSection` in `electron/team-status-command.ts`). It is
+  for state Aya cannot know, e.g. which models a model server has loaded.
+  Each run is recorded in the team's `status.json`; `aya team stats <team>`
+  (and `--json`, `--now`) only reads that and prints the last run with its time ("last
+  run 22:41") under "Status (from the team's command)", or "not run yet"; it
+  never runs the command itself.
+  Not in `aya team whoami`: the roles get its output, not the command.
+  Security: the command is the user's own and runs with the user's rights, like
+  a git hook. Aya runs only the copy saved in Aya, never a team file that came
+  with a pull or a clone; the card names a new or changed command before "Save
+  this team" or "Use the repo version", and an agent's `aya team save` can
+  neither add nor change it (it keeps the saved one), since it would run
+  outside the agent's sandbox.
 - **Log and inbox**: every message is logged in `~/.aya/teams/`, outside
   the repo. Start team sends a delivery test.
 
@@ -655,7 +685,8 @@ nothing, on and off without a restart, rotation), `tests/aya-cli-debug.test.mjs`
 `aya team stats <team>` (`--json` for the same as JSON) counts what Aya did for the team, from its files only,
 so it works with Aya closed: run time (`log.jsonl`), messages per sender and receiver and per role, the last round
 (`state.json`), held messages by their note (`delivery-notes.json`), messages still in an inbox and each role's read
-mark (`read.json`), who waits on whom, and HEADs seen (`progress.json`). Rounds typed and skipped and why, hold
+mark (`read.json`), who waits on whom, HEADs seen (`progress.json`), and the status command's last run as a round
+recorded it (`status.json`; stats never runs the command). Rounds typed and skipped and why, hold
 decisions by reason, redelivery tries and pauses come from `debug.jsonl` (and `debug.1.jsonl`): without debug on,
 those rows say they need it rather than count zero. Hold reasons are grouped by kind (`#N` for message ids). It
 reads `electron/team-stats.ts` compiled beside the CLI (in the app, `app.asar.unpacked`).

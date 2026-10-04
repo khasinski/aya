@@ -25,6 +25,7 @@ export const SECTION_MARKER = "## ";
 const FIELD_RE = new RegExp(`^(${SENDS_TO_FIELD}|${MUST_NOT_FIELD}):\\s*(.*)$`);
 const SECTION_RE = new RegExp(`^${SECTION_MARKER}`, "m");
 export const MAX_CADENCE_MINUTES = 24 * 60;
+export const STATUS_COMMAND_SECTION = "Status command";
 
 export class TeamFileError extends Error {
   constructor(name: string, problem: string) {
@@ -82,6 +83,34 @@ function parseCadence(team: string, body: string): FileCadence {
   return { role: match[1], minutes };
 }
 
+/** Why a status command cannot be saved, or null. One line: it is one shell command, and its section ends at the line break. */
+export function statusCommandProblem(command: string): string | null {
+  const text = command.trim();
+  if (!text) return `"${SECTION_MARKER}${STATUS_COMMAND_SECTION}" is empty; write one shell command or remove the section`;
+  return text.includes("\n") ? "the status command must be one line; put a longer one in a script and name the script" : null;
+}
+
+/** The command a team runs: trimmed, and undefined when blank, as the team file keeps it. */
+export function statusCommandOf(command: string | undefined): string | undefined {
+  return command?.trim() || undefined;
+}
+
+/** The status command of a saved team file; undefined when it has none or no longer parses. */
+export function savedStatusCommand(name: string, text: string | null): string | undefined {
+  if (text === null) return undefined;
+  try {
+    return parseTeamFile(name, text).statusCommand;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseStatusCommand(team: string, body: string): string {
+  const problem = statusCommandProblem(body);
+  if (problem) throw new TeamFileError(team, problem);
+  return body.trim();
+}
+
 function parseLead(team: string, body: string): string {
   const lead = body.trim();
   if (!ID_RE.test(lead)) throw new TeamFileError(team, 'lead must read "<role>", one role id');
@@ -96,6 +125,7 @@ export function parseTeamFile(name: string, text: string): TeamDefinition {
   let cadence: FileCadence | null = null;
   let lead: string | null = null;
   let protocol = "";
+  let statusCommand: string | null = null;
   // The first chunk is the title and anything before the first section.
   for (const section of text.replace(/\r\n/g, "\n").split(SECTION_RE).slice(1)) {
     const newline = section.indexOf("\n");
@@ -106,6 +136,7 @@ export function parseTeamFile(name: string, text: string): TeamDefinition {
     else if (heading === "Lead") lead = parseLead(name, body);
     else if (heading === "Cadence") cadence = parseCadence(name, body);
     else if (heading === "Protocol") protocol = body.trim();
+    else if (heading === STATUS_COMMAND_SECTION) statusCommand = parseStatusCommand(name, body);
     else throw new TeamFileError(name, `unknown section "## ${heading}"`);
   }
 
@@ -123,7 +154,7 @@ export function parseTeamFile(name: string, text: string): TeamDefinition {
     throw new TeamFileError(name, `cadence names unknown role "${cadence.role}"`);
   }
   if (lead && !ids.includes(lead)) throw new TeamFileError(name, `lead names unknown role "${lead}"`);
-  return { name, roles, ...leadAndRhythm(lead, cadence), protocol };
+  return { name, roles, ...leadAndRhythm(lead, cadence), protocol, ...(statusCommand ? { statusCommand } : {}) };
 }
 
 /** The one rule for the lead and the rhythm: the role "## Cadence" names is the lead. A "## Lead" naming another goes to
@@ -159,6 +190,8 @@ export function serializeTeam(team: TeamDefinition): string {
   }
   if (team.lead) parts.push(`## Lead\n${team.lead}`);
   if (team.lead && team.cadenceMinutes !== null) parts.push(`## Cadence\n${team.lead} every ${team.cadenceMinutes} min`);
+  const statusCommand = statusCommandOf(team.statusCommand);
+  if (statusCommand) parts.push(`${SECTION_MARKER}${STATUS_COMMAND_SECTION}\n${statusCommand}`);
   if (team.protocol) parts.push(`## Protocol\n${team.protocol}`);
   return `${parts.join("\n\n")}\n`;
 }

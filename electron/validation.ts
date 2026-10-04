@@ -375,5 +375,6 @@ export function validateTeamDefinition(value: unknown, channel = "teams:save"): 
     cadenceMinutes: minutes === null || minutes === undefined ? null : typeof minutes === "number" ? minutes : fail(`${at}.cadenceMinutes`, "number"),
     ...(team.leadConflict === null || team.leadConflict === undefined ? {} : { leadConflict: requireString(team.leadConflict, `${at}.leadConflict`) }),
     protocol: requireString(team.protocol, `${at}.protocol`),
+    ...(team.statusCommand === null || team.statusCommand === undefined ? {} : { statusCommand: requireString(team.statusCommand, `${at}.statusCommand`) }),
   };
 }

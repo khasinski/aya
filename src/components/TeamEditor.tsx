@@ -126,6 +126,18 @@ export function TeamEditor({
         )}
       </label>
       <ErrorLine error={cadenceError} />
+      <label className="aya-teams-field">
+        <span>Status command</span>
+        {/* A textarea, not an input: an input turns a pasted line break into a space, silently making two commands one. */}
+        <textarea
+          className="aya-modal-input"
+          rows={1}
+          aria-label="Status command"
+          placeholder="Optional: one shell line run in the project; its output goes with each round to the lead"
+          value={team.statusCommand}
+          onChange={(e) => setTeam({ ...team, statusCommand: e.target.value })}
+        />
+      </label>
       <textarea
         className="aya-modal-input"
         aria-label="Protocol"

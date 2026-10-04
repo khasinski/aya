@@ -58,9 +58,11 @@ Usage:
                                      the first role
   aya team debug team [-f]          Print the team's last debug entries
                                      (-f: and follow them)
-  aya team stats team [--json]       Print what Aya did for the team: messages
+  aya team stats team [--json|--now]
+                                     Print what Aya did for the team: messages
                                      per sender and receiver, rounds, holds,
-                                     inboxes, read marks, commits
+                                     inboxes, read marks, commits (--now: the
+                                     lead's round digest instead)
   aya debug on|off|status            Turn on/off writing every team decision
                                      to the team's debug log
   aya presets [--json]               List presets, whether each is installed and
@@ -728,15 +730,15 @@ case "$command" in
         ;;
       stats)
         team="${1:-}"
-        json=""
+        flag=""
         [ "$#" -eq 0 ] || shift
         for arg do
           case "$arg" in
-            --json) json="--json" ;;
+            --json|--now) flag="$arg" ;;
             *) usage_fail ;;
           esac
         done
-        team_stats "$team" "$json"
+        team_stats "$team" "$flag"
         ;;
       save)
         replace=""

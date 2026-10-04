@@ -14,10 +14,15 @@ const root = mkdtempSync(join(tmpdir(), "aya-team-stats-"));
 isolateHome(root);
 process.on("exit", () => rmSync(root, { recursive: true, force: true }));
 
-const { teamStats, formatStats, holdKind } = await import("../dist-electron/team-stats.js");
-const { TEAM_FILES, DEBUG_LOG_FILE } = await import("../dist-electron/team-records.js");
+const { teamStats, formatStats, holdKind, readTeamFiles } = await import("../dist-electron/team-stats.js");
+const { TEAM_FILES, DEBUG_LOG_FILE, DEBUG_LOG_OLD_FILE, deliveryState } = await import("../dist-electron/team-records.js");
+const { duration } = await import("../dist-electron/team-digest.js");
+const { clock, WALL_MINUTE_MS } = await import("../dist-electron/team-times.js");
 
-const NOW = Date.parse("2026-10-03T11:00:00.000Z");
+// Stats count wall-clock minutes (MINUTE_MS): the literal pins it, and the runs below span minutes of it.
+const MINUTE_MS = 60_000;
+const START = Date.parse("2026-10-03T10:00:00.000Z");
+const NOW = START + 60 * MINUTE_MS;
 const SAVED = `# crew
 
 ## Role: lead
@@ -38,7 +43,7 @@ lead
 ## Cadence
 lead every 10 min
 `;
-const at = (min) => new Date(Date.parse("2026-10-03T10:00:00.000Z") + min * 60_000).toISOString();
+const at = (min) => new Date(START + min * MINUTE_MS).toISOString();
 const msg = (id, from, to, extra = {}) => ({ id, time: at(id), from, to, commit: "c1", text: "x", delivered: true, ...extra });
 const ev = (min, event, fields = {}) => ({ time: at(min), event, ...fields });
 const jsonl = (xs) => xs.map((x) => `${JSON.stringify(x)}\n`).join("");
@@ -169,6 +174,7 @@ const TABLE = [
       assert.equal(s.rounds.heldUnanswered, 1);
       assert.match(text, /typed \(debug\.jsonl\)\s+rhythm 1, silence 1/);
       assert.match(text, /^ +2 {2}skipped: is busy working$/m);
+      assert.match(text, /^ +1 {2}held: the lead did not answer the earlier rounds$/m);
     },
   ],
   [
@@ -215,7 +221,7 @@ const TABLE = [
   ],
   [
     "commits: HEAD and HEADs seen from progress.json, distinct HEADs on messages",
-    files({ log: [msg(1, "lead", "tester"), msg(2, "lead", "tester", { commit: "c2" }), msg(3, "lead", "tester", { commit: null }), msg(4, "tester", "lead", { commit: "c2" })], progress: { commit: "c2", knownCommits: ["c0", "c1", "c2"], repoChangedAt: at(2) } }),
+    files({ log: [msg(1, "lead", "tester"), msg(2, "lead", "tester", { commit: "c2" }), msg(3, "lead", "tester", { commit: null }), msg(4, "tester", "lead", { commit: "c2" }), msg(5, "tester", "lead", { commit: "" })], progress: { commit: "c2", knownCommits: ["c0", "c1", "c2"], repoChangedAt: at(2) } }),
     (s, text) => {
       assert.deepEqual(s.commits, { head: "c2", knownHeads: 3, inLog: 2, repoChangedAt: at(2) });
       assert.match(text, /HEADs seen \(progress\.json\)\s+3/);
@@ -229,6 +235,20 @@ const TABLE = [
       assert.deepEqual(s.readMarks.map((r) => r.role), ["a", "b"]);
       assert.deepEqual(s.holdEvents, [{ key: "x", count: 1 }]);
     },
+  ],
+  [
+    "an hour-long run reads in hours; a wait dated after now (a clock ahead) is 0 min, never negative",
+    files({ log: [msg(1, "lead", "tester"), msg(61, "tester", "implementer")] }),
+    (s, text) => {
+      assert.equal(s.runTime.minutes, 60);
+      assert.match(text, /, 1 h 0 min \(messages #1\.\.#61\)/);
+      assert.deepEqual(s.waits.map((w) => [w.waiter, w.on, w.minutes]), [["lead", "tester", 59], ["tester", "implementer", 0]]);
+    },
+  ],
+  [
+    "a reply the read mark passed reached its pane: its sender's question is answered, though the log says not delivered",
+    files({ log: [msg(1, "lead", "tester"), msg(2, "tester", "lead", { delivered: false })], read: { lead: 2, tester: 1 } }),
+    (s) => assert.deepEqual(s.waits.map((w) => [w.waiter, w.on]), [["tester", "lead"]]),
   ],
 ];
 
@@ -245,6 +265,31 @@ test("holdKind: one kind per reason, whatever ids, times and draft owners it nam
   assert.equal(holdKind("shows an approval prompt"), "shows an approval prompt");
 });
 
+test("deliveryState: the read mark, Aya's own messages and the notes decide what the window shows", () => {
+  const m = (from, extra = {}) => ({ id: 5, time: at(5), from, to: "tester", text: "x", delivered: false, ...extra });
+  assert.equal(deliveryState(m("lead"), undefined, 5).delivered, true, "the read mark reached it: typed");
+  assert.equal(deliveryState(m("lead"), undefined, 4).delivered, false, "before the read mark: still owed");
+  assert.equal(deliveryState(m("aya"), undefined, 5).delivered, false, "Aya's own go stale, not typed");
+  assert.deepEqual(deliveryState(m("lead"), { kind: "held", reason: "r" }, 5), { ...m("lead"), delivered: true, held: "r" });
+  assert.deepEqual(deliveryState(m("lead"), { kind: "held", reason: "r" }, 4), { ...m("lead"), held: "r" });
+  assert.deepEqual(deliveryState(m("lead"), { kind: "inbox" }, 0), { ...m("lead"), viaInbox: true, delivered: true });
+  assert.deepEqual(deliveryState(m("aya"), { kind: "inbox" }, 0), { ...m("aya"), viaInbox: true }, "read with the inbox, still held (stale)");
+  assert.deepEqual(deliveryState(m("lead"), { kind: "withheld", reason: "r" }, 0), { ...m("lead"), delivered: true, held: "r", typedOnly: true });
+  assert.equal(deliveryState(m("lead"), { kind: "withheld", reason: "r", afterEnter: true }, 0).afterEnter, true);
+});
+
+test("readTeamFiles: the rotated debug log first, a torn last line kept apart, absent files null", () => {
+  const dir = mkdtempSync(join(root, "files-"));
+  writeFileSync(join(dir, DEBUG_LOG_OLD_FILE), '{"event":"pause"}');
+  writeFileSync(join(dir, DEBUG_LOG_FILE), '{"event":"unpause"}\n');
+  writeFileSync(join(dir, TEAM_FILES.refused), "r\n");
+  const read = readTeamFiles(dir);
+  assert.equal(read.debug, '{"event":"pause"}\n{"event":"unpause"}\n');
+  assert.equal(read.refused, "r\n");
+  assert.equal(read.log, null);
+  assert.equal(readTeamFiles(mkdtempSync(join(root, "files-"))).debug, null);
+});
+
 test("the package unpacks every module team-stats.js loads: the CLI runs it with plain node, which cannot read app.asar", () => {
   const unpacked = new Set(JSON.parse(readFileSync("package.json", "utf8")).build.asarUnpack);
   const seen = new Set();
@@ -259,18 +304,20 @@ test("the package unpacks every module team-stats.js loads: the CLI runs it with
 });
 
 const cli = resolve("bin/aya");
+const CLI_TIMEOUT_MS = 10_000;
+const ayaHome = (h) => join(h, "aya");
 
 function teamHome(projects) {
   const h = mkdtempSync(join(root, "cli-"));
   for (const [project, team, write] of projects) {
-    const dir = join(h, "aya", "teams", project, team);
+    const dir = join(ayaHome(h), "teams", project, team);
     mkdirSync(dir, { recursive: true });
     write(dir);
   }
   return h;
 }
 const runCli = (h, args, extra = {}) =>
-  spawnSync("/bin/sh", [cli, ...args], { env: { ...envWithoutAya(), HOME: h, AYA_HOME: join(h, "aya"), ...extra }, encoding: "utf8", timeout: 10000 });
+  spawnSync("/bin/sh", [cli, ...args], { env: { ...envWithoutAya(), HOME: h, AYA_HOME: ayaHome(h), ...extra }, encoding: "utf8", timeout: CLI_TIMEOUT_MS });
 
 test("aya team stats <team> [--json]: the real CLI on a temp AYA_HOME, read-only, Aya not running", () => {
   const fixture = (dir) => {
@@ -281,7 +328,8 @@ test("aya team stats <team> [--json]: the real CLI on a temp AYA_HOME, read-only
     writeFileSync(join(dir, DEBUG_LOG_FILE), jsonl([ev(1, "hold", { to: "lead", id: 2, reason: "shows a numbered choice", typed: false })]));
   };
   const h = teamHome([["game", "crew", fixture]]);
-  const before = readFileSync(join(h, "aya", "teams", "game", "crew", TEAM_FILES.log), "utf8");
+  const logFile = join(ayaHome(h), "teams", "game", "crew", TEAM_FILES.log);
+  const before = readFileSync(logFile, "utf8");
   let r = runCli(h, ["team", "stats", "crew"]);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^team crew$/m);
@@ -296,7 +344,16 @@ test("aya team stats <team> [--json]: the real CLI on a temp AYA_HOME, read-only
   assert.equal(json.messages.total, 2);
   assert.deepEqual(json.inbox.map((i) => [i.role, i.count]), [["lead", 1]]);
   assert.deepEqual(json.needsDebug, []);
-  assert.equal(readFileSync(join(h, "aya", "teams", "game", "crew", TEAM_FILES.log), "utf8"), before, "nothing written");
+  // --now: the lead's round digest from the same files; message #2 waits on the lead.
+  const ranFrom = Date.now();
+  r = runCli(h, ["team", "stats", "crew", "--now"]);
+  const ranTo = Date.now();
+  assert.equal(r.status, 0, r.stderr);
+  // The CLI reads the wall clock: the wait is #2's age at some instant of the run, in whole minutes.
+  const waited = new Set([ranFrom, ranTo].map((t) => duration(Math.floor((t - Date.parse(at(2))) / WALL_MINUTE_MS))));
+  const head = `Since ${clock(at(1))} (no round before): +2 messages, no commits\n`;
+  assert.ok([...waited].some((w) => r.stdout.startsWith(`${head}Waiting on you: tester #2 for ${w}\n`)), r.stdout);
+  assert.equal(readFileSync(logFile, "utf8"), before, "nothing written");
 });
 
 test("aya team stats: no such team, a team in two projects, a bad flag", () => {
@@ -310,10 +367,15 @@ test("aya team stats: no such team, a team in two projects, a bad flag", () => {
   r = runCli(h, ["team", "stats", "crew"]);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /more than one project \(game, site\); set AYA_PROJECT_SLUG/);
+  assert.doesNotMatch(r.stderr, /no team/, "one reason, not two");
   r = runCli(h, ["team", "stats", "crew"], { AYA_PROJECT_SLUG: "site" });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /no messages yet/);
   r = runCli(h, ["team", "stats", "crew", "--bogus"]);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /Usage:/);
+  // team debug shares the lookup (team_dir): no such team is an error even when following.
+  r = runCli(h, ["team", "debug", "nope", "-f"]);
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /no debug log for team nope/);
 });

@@ -14,6 +14,9 @@ const { withAgentBrief, roleNoteGap, roleNoteReport, removePaneBrief, sweepPaneB
 
 const ROLE = { team: "ux-review", role: "tester" };
 const NOTE = /tester in the Aya team ux-review/;
+const BRIEF = /aya capabilities/;
+// Pinned, not imported: the CLIs whose team panes always take the brief (user decision 2026-10-03).
+const TEAM_BRIEF_AGENTS = ["claude", "codex"];
 const AGENTS = ["claude", "grok", "opencode", "codex", "cursor"];
 const SHAPES = {
   simple: (bin) => bin,
@@ -78,7 +81,6 @@ function told(spawn, deps) {
   return [spawn.command, ...files].join("\n");
 }
 
-const TEAM_BRIEF = { claude: true, codex: true, grok: false, opencode: false };
 const CHANNEL_TAKES_NOTE = { claude: true, grok: true, opencode: true, codex: true, cursor: false };
 const printedCodexArg = (command) => spawnSync("/bin/sh", ["-c", command.replace(/^codex/, "printf '%s\\n'")], { encoding: "utf8" }).stdout.split("\n")[1].replace(/^developer_instructions=/, "");
 
@@ -501,8 +503,8 @@ for (const agent of ["claude", "grok", "opencode", "codex"]) {
   const restart = agent === "codex" ? "start a new session" : "restart it";
   for (const [change, mutate, flagged] of [
     ["nothing changed", () => {}, false],
-    ["brief turned on after the start", (p) => void (p.agentBrief = true), !TEAM_BRIEF[agent]],
-    ["brief turned off after the start", (p) => void delete p.agentBrief, !TEAM_BRIEF[agent]],
+    ["brief turned on after the start", (p) => void (p.agentBrief = true), !TEAM_BRIEF_AGENTS.includes(agent)],
+    ["brief turned off after the start", (p) => void delete p.agentBrief, !TEAM_BRIEF_AGENTS.includes(agent)],
   ]) {
     for (const startedOn of [true, false]) {
       if (change === "brief turned on after the start" && startedOn) continue;
@@ -615,7 +617,6 @@ test("a CLI with no channel is not told the brief, and that is not reported as a
 // User decision 2026-10-03: the brief stays opt-in for ordinary panes, but a claude or codex pane playing a team
 // role always gets it, whatever the preset says and without changing the preset. The other CLIs keep their
 // behaviour: one row each (Antigravity has no per-pane channel, so neither brief nor note, and its gap says so).
-const BRIEF = /aya capabilities/;
 /** The text a CLI was handed: opencode's instructions file, else the command line itself. */
 function handed(out) {
   const config = out.command.match(/OPENCODE_CONFIG='([^']*)'/)?.[1];
@@ -625,7 +626,7 @@ function handed(out) {
 const BIN = { claude: "claude", codex: "codex", grok: "grok", opencode: "opencode", antigravity: "agy" };
 const PANES = ["plain pane", "team role pane", "role pane after restart"];
 const TEAM_BRIEF_CELLS = [
-  ...["claude", "codex"].flatMap((agent) =>
+  ...TEAM_BRIEF_AGENTS.flatMap((agent) =>
     ["unset", "true"].flatMap((presetBrief) =>
       PANES.map((pane) => ({ agent, presetBrief, pane, brief: presetBrief === "true" || pane !== "plain pane", note: pane !== "plain pane" })),
     ),

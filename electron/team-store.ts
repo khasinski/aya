@@ -5,12 +5,13 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { atomicTempPath, writeFileAtomic } from "./atomic-write";
 import { oneAtATime } from "./keyed-queue";
-import { debugLog } from "./team-debug";
+import { debugLog, MESSAGE_CHARS } from "./team-debug";
 import { OWNER_ONLY_FILE_MODE } from "./paths";
 import { ID_RE, TEAM_SYSTEM_SENDER, TEAM_USER_SENDER } from "./team-definition";
 import { FRESH_PROGRESS, parseProgress, type TeamProgress } from "./team-progress";
-import { deliveryState, goesStale, TEAM_FILES, unreadIn, type DeliveryNote } from "./team-records";
+import { DEBUG_LOG_FILE, DEBUG_LOG_OLD_FILE, debugTurns, deliveryState, goesStale, TEAM_FILES, unreadIn, type DeliveryNote } from "./team-records";
 import type { TeamMessage } from "./types";
+import { parseRefused, type RefusedSend } from "./team-digest";
 
 export type { TeamMessage, DeliveryNote };
 export { goesStale };
@@ -32,8 +33,18 @@ export const TEAM_LOG_READ_BYTES = 2 * 1024 * 1024;
 /** A trim keeps this much: half the read window, so the next trim is many messages away. */
 export const TEAM_LOG_TRIM_BYTES = TEAM_LOG_READ_BYTES / 2;
 export const DELIVERY_NOTES_KEEP = 500;
+// Refused sends are a few per hour even in a loop that hits the send cap; past the max the oldest half goes.
+export const REFUSED_MAX_ENTRIES = 200;
+export const REFUSED_KEEP_ENTRIES = 100;
 
 const CRASHED_MID_TYPING: DeliveryNote = { kind: "withheld", reason: "Aya went down while typing it; it may be in the composer without its Enter, or not there at all - check the pane" };
+
+/** Rewrites a JSONL file with `lines` through a temp file, owner-only from the first byte: messages may hold secrets. */
+async function replaceJsonl(file: string, lines: string[]): Promise<void> {
+  const tmp = atomicTempPath(file);
+  await fs.writeFile(tmp, lines.map((l) => `${l}\n`).join(""), { mode: OWNER_ONLY_FILE_MODE });
+  await fs.rename(tmp, file);
+}
 
 /** What a trim keeps within TEAM_LOG_TRIM_BYTES: messages still owed to their role first (a quiet role's must not be
  *  cut by the others' talk), then the newest TEAM_LOG_KEEP_ENTRIES of the rest; in log order. */
@@ -348,10 +359,7 @@ export class TeamStore {
       if (log.length >= TEAM_LOG_MAX_ENTRIES || size + JSON.stringify(entry).length + 1 > TEAM_LOG_READ_BYTES) {
         const unread = unreadIn(await this.readMarks());
         const kept = keptByTrim([...log, entry], (m) => unread(m) && !goesStale(m));
-        // Owner-only from the first byte: messages may hold secrets.
-        const tmp = atomicTempPath(this.file(TEAM_FILES.log));
-        await fs.writeFile(tmp, kept.map((m) => `${JSON.stringify(m)}\n`).join(""), { mode: OWNER_ONLY_FILE_MODE });
-        await fs.rename(tmp, this.file(TEAM_FILES.log));
+        await replaceJsonl(this.file(TEAM_FILES.log), kept.map((m) => JSON.stringify(m)));
       } else {
         await fs.appendFile(this.file(TEAM_FILES.log), `${JSON.stringify(entry)}\n`, {
           mode: OWNER_ONLY_FILE_MODE,
@@ -359,6 +367,29 @@ export class TeamStore {
       }
       return entry;
     });
+  }
+
+  /** Appends a send `aya team send` refused (refused.jsonl), with only the start of its text, as debug.jsonl keeps it. */
+  recordRefusal(refusal: Omit<RefusedSend, "time">): Promise<void> {
+    return this.serial(async () => {
+      const entry: RefusedSend = { time: new Date().toISOString(), ...refusal, text: refusal.text.slice(0, MESSAGE_CHARS) };
+      const file = this.file(TEAM_FILES.refused);
+      const kept = ((await readText(file)) ?? "").split("\n").filter(Boolean);
+      await fs.mkdir(this.dir, { recursive: true });
+      if (kept.length >= REFUSED_MAX_ENTRIES) await replaceJsonl(file, [...kept.slice(-REFUSED_KEEP_ENTRIES + 1), JSON.stringify(entry)]);
+      else await fs.appendFile(file, `${JSON.stringify(entry)}\n`, { mode: OWNER_ONLY_FILE_MODE });
+    });
+  }
+
+  /** The refused sends refused.jsonl keeps, oldest first; a torn line is skipped. */
+  /** Turns typed messages started, from the debug log; null when there is none (debug off). */
+  async turns(): Promise<{ role: string; time: string }[] | null> {
+    const parts = (await Promise.all([DEBUG_LOG_OLD_FILE, DEBUG_LOG_FILE].map((f) => readText(this.file(f))))).filter((t): t is string => t !== null);
+    return debugTurns(parts.length ? parts.join("\n") : null);
+  }
+
+  async refusals(): Promise<RefusedSend[]> {
+    return parseRefused(await readText(this.file(TEAM_FILES.refused)));
   }
 
   async sentSince(from: string, sinceMs: number): Promise<number> {

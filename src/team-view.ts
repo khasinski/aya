@@ -141,6 +141,23 @@ export function leadWarning(definition: Pick<TeamDefinition, "lead" | "leadConfl
   return definition.lead === null ? "no lead role: set one" : null;
 }
 
+/** The card's status note for a team: an unsaved team's definition is the repo parse, not a saved command. */
+export function cardStatusNote(team: Pick<TeamSummary, "definition" | "repoDefinition" | "unsaved" | "repoChanged">): ReturnType<typeof statusCommandNote> {
+  return statusCommandNote(team.unsaved ? null : team.definition, team.unsaved || team.repoChanged ? team.repoDefinition : null);
+}
+
+/** The card's word on the status command: the one saved, and a new one that "Save this team" or "Use the repo
+ *  version" would start running, named before the click since it runs with the user's rights. */
+export function statusCommandNote(
+  saved: Pick<TeamDefinition, "statusCommand"> | null,
+  repo: Pick<TeamDefinition, "statusCommand"> | null,
+): { text: string; tone: "note" | "warning" } | null {
+  const now = saved?.statusCommand;
+  const next = repo?.statusCommand;
+  if (next && next !== now) return { text: `Saving the repo version runs this status command each round, with your rights: ${next}`, tone: "warning" };
+  return now ? { text: `Status command, its output goes with the lead's rounds: ${now}`, tone: "note" } : null;
+}
+
 const askedAt = (asked: WaitingPanes[string]) => clock(new Date(asked.since).toISOString());
 
 /** The team line when the lead asks the user for something (`aya status waiting`); null otherwise. */

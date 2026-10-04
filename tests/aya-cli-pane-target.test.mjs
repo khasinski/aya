@@ -76,6 +76,7 @@ const READS = [
   ["id outside the given project", [LIBEVAL_WORKER, "--project", "other"], null, /no pane named/],
   ["id prefix is not a guess", [OTHER_WORKER.slice(0, 8)], null, /no pane named/],
   ["--project without a slug", ["worker", "--project"], null, /Usage/],
+  ["--project with an empty slug", ["--project", "", "worker"], null, /Usage/],
   ["two targets", ["worker", "solo"], null, /Usage/],
 ];
 
@@ -104,7 +105,8 @@ test("the ambiguity error advises --project only when the matches are in differe
   const within = await aya(["pane", "read", "twin"]);
   assert.match(within.stderr, /ambiguous/);
   assert.doesNotMatch(within.stderr, /--project/);
-  assert.match(within.stderr, /id/);
+  // The ids it advises are in the error itself, so the advice needs no second command.
+  assert.match(within.stderr, new RegExp(`other/twin ${DUP_A}, other/twin ${DUP_B}`));
   // The advice for the same-project case works: either id reads its pane.
   assert.equal((await aya(["pane", "read", DUP_B])).stdout, `screen of ${DUP_B}\n`);
 });
