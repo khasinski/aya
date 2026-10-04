@@ -8,9 +8,65 @@ export const clock = (iso: string) => new Date(iso).toTimeString().slice(0, 5);
 
 export const reachText = (reach: MachineReach) => (reach === "local" ? "this machine" : `ssh ${reach.ssh}`);
 
+/** The row's status word: Ollama down is its own state, since a connected host without Ollama cannot serve a model. */
+export function health(s: MachineStatus): { word: "Ready" | "Ollama down" | "Unreachable"; level: "ok" | "warn" | "down" } {
+  if (!s.reachable) return { word: "Unreachable", level: "down" };
+  return s.ollama.up ? { word: "Ready", level: "ok" } : { word: "Ollama down", level: "warn" };
+}
+
 export function stateLine(reach: MachineReach, s: MachineStatus): string {
   return `${s.reachable ? "Connected" : "Unreachable"} · ${reachText(reach)} · checked ${clock(s.checkedAt)}`;
 }
+
+/** A row cell: the text shown and, for a small bar, how full it is (0..1). */
+export interface Cell {
+  text: string;
+  frac: number | null;
+}
+const ratio = (used: number | null, total: number | null) => (used === null || !total ? null : Math.min(1, Math.max(0, used / total)));
+const NONE: Cell = { text: "-", frac: null };
+
+export function gpuCell(s: MachineStatus): Cell {
+  const utils = s.gpus.map((g) => g.utilPct).filter((u): u is number => u !== null);
+  if (s.gpus.length === 0) return { text: "none", frac: null };
+  if (utils.length === 0) return { text: "?", frac: null };
+  const max = Math.max(...utils);
+  return { text: `${max}%${s.gpus.length > 1 ? ` x${s.gpus.length}` : ""}`, frac: max / 100 };
+}
+
+export function vramCell(s: MachineStatus): Cell {
+  if (s.gpus.length === 0) return NONE;
+  const sum = (k: "memUsedMiB" | "memTotalMiB") => (s.gpus.some((g) => g[k] === null) ? null : s.gpus.reduce((a, g) => a + (g[k] ?? 0), 0));
+  const used = sum("memUsedMiB");
+  const total = sum("memTotalMiB");
+  return { text: `${gibFromMiB(used)}/${gibFromMiB(total)}`, frac: ratio(used, total) };
+}
+
+export const loadCell = (s: MachineStatus): Cell =>
+  s.load1 === null && s.cpus === null ? NONE : { text: `${s.load1 === null ? "?" : s.load1.toFixed(1)}/${s.cpus ?? "?"}`, frac: ratio(s.load1, s.cpus) };
+
+export const memoryCell = (s: MachineStatus): Cell =>
+  s.memTotalBytes === null ? NONE : { text: memoryText(s).replace(/ GB$/, ""), frac: ratio(s.memUsedBytes, s.memTotalBytes) };
+
+/** "hot 14m", "hot 2h", "pinned": how long a loaded model stays in memory, short enough for a column. */
+export function hotShort(expiresAt: string | null, pinned: boolean, now: Date): string {
+  if (pinned) return "pinned";
+  if (!expiresAt) return "loaded";
+  const min = Math.round((new Date(expiresAt).getTime() - now.getTime()) / 60_000);
+  if (min < 0) return "expired";
+  return min < 60 ? `hot ${min}m` : `hot ${Math.round(min / 60)}h`;
+}
+
+/** The loaded model column: the first model, how long it stays hot, and how many more. */
+export function modelCell(s: MachineStatus, now: Date): { name: string; hot: string } {
+  if (!s.reachable || !s.ollama.up) return { name: "-", hot: "" };
+  if (s.ollama.loaded === null) return { name: "unavailable", hot: "" };
+  if (s.ollama.loaded.length === 0) return { name: "none loaded", hot: "" };
+  const [first, ...rest] = s.ollama.loaded;
+  return { name: `${first.name}${rest.length ? ` +${rest.length}` : ""}`, hot: hotShort(first.expiresAt, first.pinned, now) };
+}
+
+export const occupancyShort = (o: NonNullable<MachineView["occupancy"]>) => `${o.purpose} · ${o.by}`;
 
 export function gpuText(s: MachineStatus): string {
   if (s.gpus.length === 0) return "none seen (nvidia-smi absent)";
