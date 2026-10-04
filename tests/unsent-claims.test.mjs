@@ -231,20 +231,24 @@ describe("when a reply is read", () => {
     }
   });
 
-  test("the message's own command text is not the agent's claim, and a message not on screen is not read", async () => {
+  test("the message's own command text is not the agent's claim; a message not on screen yet is read once it is", async () => {
     const t = await setup();
     try {
       const turn = await t.store.append({ from: "lead", to: "tester", commit: null, text: TURN_TEXT, delivered: true });
       await lookForClaims(t.store, look(screenOf("claude", turn, NO_CLAIM), "claude"));
       assert.equal((await shown(t)).window, null);
-      const next = await t.store.append({ from: "lead", to: "tester", commit: null, text: "Next task", delivered: true });
-      // The screen still shows the previous turn: its claim is not this turn's.
-      await lookForClaims(t.store, look(screenOf("claude", turn, IN_WORDS), "claude"));
-      assert.equal((await shown(t)).window, null);
-      assert.equal((await readClaims(t.store)).tester.checked, next.id, "settled");
+      assert.equal((await readClaims(t.store)).tester.checked, turn.id, "settled");
       let reads = 0;
       await lookForClaims(t.store, look("", "claude", { screen: async () => (reads++, "") }));
       assert.equal(reads, 0, "a settled turn's screen is not rendered again each look");
+      // Logged after its Enter, before the pane draws it: the screen still shows the previous turn, whose claim is not this one's.
+      const next = await t.store.append({ from: "lead", to: "tester", commit: null, text: "Next task", delivered: true });
+      await lookForClaims(t.store, look(screenOf("claude", turn, IN_WORDS), "claude"));
+      assert.equal((await shown(t)).window, null);
+      assert.equal((await readClaims(t.store)).tester.checked, turn.id, "not settled while its message is not drawn");
+      await lookForClaims(t.store, look(screenOf("claude", next, IN_WORDS), "claude"));
+      assert.equal((await shown(t)).window, NOTE, "its reply, drawn later, is read");
+      assert.equal((await readClaims(t.store)).tester.checked, next.id);
     } finally {
       t.cleanup();
     }

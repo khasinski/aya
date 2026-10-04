@@ -150,8 +150,8 @@ export interface ClaimLook {
   agentOf: (pane: string) => Promise<AgentKind | undefined>;
 }
 
-/** Reads each free, idle role's reply to its current turn once, and keeps what it claims; a turn whose reply is not
- *  drawn yet is read again at the next look. */
+/** Reads each free, idle role's reply to its current turn once, and keeps what it claims; a turn whose message or
+ *  reply is not drawn yet is read again at the next look. */
 export async function lookForClaims(store: TeamStore, look: ClaimLook): Promise<void> {
   const log = await store.annotatedLog();
   const file = await readClaims(store);
@@ -165,9 +165,10 @@ export async function lookForClaims(store: TeamStore, look: ClaimLook): Promise<
     const screen = await look.screen(pane).catch(() => null);
     if (screen === null) continue;
     const rows = replyRows(screen, look.team, turn);
-    const reply = rows === null ? "" : replyText(rows, await look.agentOf(pane));
-    // Not drawn yet: the agent has not answered this turn.
-    if (rows !== null && !reply.trim()) continue;
+    // The message not drawn yet (logged after its Enter, before the pane shows it) or no reply under it: read again later.
+    if (rows === null) continue;
+    const reply = replyText(rows, await look.agentOf(pane));
+    if (!reply.trim()) continue;
     // Answered ones go first: an old answered claim to a role must not stand in for a new one to it.
     const claims = (file[role]?.claims ?? []).filter((c) => !sentAfter(log, refused, role, c.to, c));
     const kept = new Set(claims.map((c) => c.to));
