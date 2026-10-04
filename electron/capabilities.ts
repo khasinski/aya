@@ -44,8 +44,16 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   {
     command: "status waiting",
     usage: "aya status waiting text",
-    summary: "Mark this pane as blocked on the user.",
+    summary: "Mark this pane as blocked on the user: a red dot, an attention item and a notification.",
     example: 'aya status waiting "Needs approval"',
+    notes: ["Only for what the user must answer; in a team, a wait on a teammate is aya status waiting --on role."],
+  },
+  {
+    command: "status waiting --on",
+    usage: "aya status waiting --on role text",
+    summary: "In a team: mark this role as waiting on a teammate; the Teams window shows \"waiting on role\", and the user is not asked.",
+    example: 'aya status waiting --on tester "Answer on the adapter test"',
+    notes: ["The role must be in your team and not your own.", "It ends when that role's message is typed into your pane, or when you set another status."],
   },
   {
     command: "status done",

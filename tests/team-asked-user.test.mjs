@@ -59,6 +59,8 @@ async function world({ cadence = false } = {}) {
     // What the hook script sends when Grok or Claude sits on an idle composer.
     "hook says waiting": () => recordAgentStatus("pane-l", "waiting", w.now, "Waiting for your next prompt", "hook"),
     "lead asks the user": () => recordAgentStatus("pane-l", "waiting", w.now, "need the staging password"),
+    // `aya status waiting --on implementer`: a wait on the team, not a question.
+    "lead waits on implementer": () => recordAgentStatus("pane-l", "waiting", w.now, "parser result", undefined, undefined, "implementer"),
     "hook ends the turn": () => recordAgentStatus("pane-l", "done", w.now, "Turn finished", "hook"),
     "lead answers": () => handleTeamRequest({ type: "team-send", role: "implementer", text: "decision: use the new parser" }, "pane-l", deps).catch(() => {}),
   };
@@ -70,7 +72,8 @@ async function world({ cadence = false } = {}) {
   };
   const rounds = () => w.typed.filter((t) => t.pane === "pane-l").flatMap((t) => t.text.match(/Round (\d+):/)?.[1] ?? []).map(Number);
   const skipped = async () => (await store.log()).filter((m) => m.from === "aya" && /skipped/.test(m.text)).map((m) => `${m.to}: ${m.text}`);
-  return { run, rounds, skipped, cleanup };
+  const typedTo = (pane) => w.typed.filter((t) => t.pane === pane).map((t) => t.text);
+  return { run, rounds, skipped, typedTo, cleanup };
 }
 
 const askedTest = (name, ...args) => {
@@ -99,6 +102,9 @@ const CASES = [
   ["a lead that asked the user: the stall round is skipped, and the log says why", {}, ["start", 10, "lead asks the user", 175, "check"], [], [ASKED]],
   ["a question before the last progress skips nothing", { cadence: true }, ["start", 10, "lead asks the user", 10, "lead answers", 71, "tick"], [1], []],
   ["a restart while the lead waits is not a skipped round", {}, ["start", 10, "lead asks the user", 5, "restart"], [], []],
+  ["a lead waiting on a teammate gets the periodic round", { cadence: true }, ["start", 50, "lead waits on implementer", 41, "tick"], [1], []],
+  ["a lead waiting on a teammate gets the quiet-team round", {}, ["start", 50, "lead waits on implementer", 41, "check"], [1], []],
+  ["... the hook ending that turn changes nothing", {}, ["start", 50, "lead waits on implementer", "hook ends the turn", 41, "check"], [1], []],
 ];
 
 for (const [name, opts, steps, expected, lines] of CASES) {
@@ -106,5 +112,19 @@ for (const [name, opts, steps, expected, lines] of CASES) {
     await t.run(...steps);
     assert.deepEqual(t.rounds(), expected, "rounds the lead got");
     assert.deepEqual(await t.skipped(), lines, "skipped rounds in the team log");
+  });
+}
+
+// [round, steps, what the round says of the wait]
+const SAID = [
+  ["the periodic round (digest)", { cadence: true }, ["start", 50, "lead answers", "lead waits on implementer", 41, "tick"], /Said they wait on a teammate: leader on implementer for 0 min: "parser result"\./],
+  ["the quiet-team round", {}, ["start", 50, "lead waits on implementer", 41, "check"], /Said they wait \(aya status\): leader on implementer since \d\d:\d\d \(\d+ min\)\./],
+];
+for (const [name, opts, steps, says] of SAID) {
+  askedTest(`asked the user | ${name} tells the lead who said it waits on a teammate`, opts, async (t) => {
+    await t.run(...steps);
+    const round = t.typedTo("pane-l").find((text) => /Round 1:/.test(text));
+    assert.match(round, says);
+    assert.doesNotMatch(round, /only the user/);
   });
 }

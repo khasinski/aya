@@ -28,7 +28,9 @@ Usage:
   aya notify [--title title] body    Show an Aya notification
   aya remote --stdio                 Bridge remote Aya over stdio
   aya status set text                Show agent status for this terminal
-  aya status waiting text            Mark this terminal as waiting
+  aya status waiting text            Mark this terminal as waiting for you
+  aya status waiting --on role text  In a team: mark this role as waiting on
+                                     a teammate (not on you)
   aya status done text               Mark this terminal as done
   aya status error text              Mark this terminal as errored
   aya status clear                   Clear agent status
@@ -183,6 +185,7 @@ function requestFromArgs() {
       type: "status",
       level: process.argv[4],
       text: process.argv[5] || undefined,
+      on: process.argv[6] || undefined,
       terminalId: optionalEnv("AYA_TERMINAL_ID"),
       projectSlug: optionalEnv("AYA_PROJECT_SLUG"),
       cwd: optionalEnv("AYA_PROJECT_DIR") || process.cwd(),
@@ -894,9 +897,15 @@ case "$command" in
         usage_fail
         ;;
     esac
+    on=""
+    if [ "$level" = "waiting" ] && [ "${1:-}" = "--on" ]; then
+      if [ "$#" -lt 2 ] || [ -z "$2" ]; then usage_fail; fi
+      on="$2"
+      shift 2
+    fi
     text="$*"
     if [ "$level" != "clear" ] && [ -z "$text" ]; then usage_fail; fi
-    send_control status "$level" "$text"
+    send_control status "$level" "$text" "$on"
     ;;
   *)
     open_project "$command"

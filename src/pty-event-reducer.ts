@@ -7,15 +7,17 @@
 // returns the same map reference so React's shallow check can skip a re-render.
 
 import { PRESET_ID_SHELL } from "./preset-ids";
-import type { ControlStatusLevel, PtyEvent, TerminalState, TerminalStatus } from "./types";
+import { WAITING_ON, type PtyEvent, type ReportedStatusLevel, type TerminalState, type TerminalStatus } from "./types";
 
 /** Map an agent-reported status level - from the control socket or an inline
  *  OSC 9001 `aya.status` sequence (integrations.md) - to the terminal's
  *  status field. Shared so both transports drive identical UI. */
 export function controlLevelToTerminalStatus(
-  level: ControlStatusLevel,
+  level: ReportedStatusLevel,
 ): TerminalStatus {
   if (level === "waiting") return "waiting";
+  // A wait on a teammate: the agent is idle and the user owes nothing.
+  if (level === WAITING_ON) return "idle";
   if (level === "done") return "idle";
   if (level === "error") return "error";
   return "running";
@@ -26,9 +28,11 @@ export function controlLevelToTerminalStatus(
  *  reads identically regardless of which transport delivered the update. */
 export function controlStatusEventTitle(
   terminalName: string,
-  level: ControlStatusLevel,
+  level: ReportedStatusLevel,
+  on?: string,
 ): string {
   if (level === "waiting") return `${terminalName} is waiting`;
+  if (level === WAITING_ON) return `${terminalName} is waiting on ${on ?? "a teammate"}`;
   if (level === "done") return `${terminalName} finished`;
   if (level === "error") return `${terminalName} reported an error`;
   return `${terminalName} updated status`;
@@ -81,14 +85,14 @@ export function clearedTerminalStatus(terminal: TerminalState): TerminalState {
  *  question: Claude's Notification hook arrives as "done" while its permission dialog is up, and only the screen ends it. */
 export function applyReportedStatus(
   terminal: TerminalState,
-  { level, text, updatedAt, restart }: NonNullable<TerminalState["externalStatus"]>,
+  { level, text, updatedAt, restart, on }: NonNullable<TerminalState["externalStatus"]>,
 ): TerminalState {
   const dialog = terminal.status === "waiting" && terminal.externalStatus?.level !== "waiting" && level !== "waiting";
   return {
     ...terminal,
     status: dialog ? "waiting" : controlLevelToTerminalStatus(level),
     bell: dialog ? terminal.bell : level === "waiting",
-    externalStatus: { level, text, updatedAt, ...(restart ? { restart } : {}) },
+    externalStatus: { level, text, updatedAt, ...(restart ? { restart } : {}), ...(level === WAITING_ON && on ? { on } : {}) },
   };
 }
 

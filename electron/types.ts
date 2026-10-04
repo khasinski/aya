@@ -471,16 +471,23 @@ export type QuestionRestart = "restored" | "unconfirmed";
 
 /** Panes whose agent ran `aya status waiting`, by pane id: its text, when (epoch ms), and whether it was asked
  *  before Aya was closed (electron/agent-status.ts: "unconfirmed" holds no round). */
-export type WaitingPanes = Record<string, { text: string; since: number; restart?: QuestionRestart }>;
+export type WaitingPanes = Record<string, { text: string; since: number; restart?: QuestionRestart; on?: string }>;
+
+/** `aya status waiting --on <role>`: a team role waits on a teammate, not on the user (no bell, no attention). */
+export const WAITING_ON = "waiting-on";
+
+/** What an agent reported, as the windows hold it: "waiting" needs the user, "waiting-on" names the teammate in `on`. */
+export type ReportedStatusLevel = ControlStatusLevel | typeof WAITING_ON;
 
 export interface ControlStatusUpdate {
   terminalId?: string;
   projectSlug?: string;
   cwd?: string;
-  level: ControlStatusLevel | "clear";
+  level: ReportedStatusLevel | "clear";
   text?: string;
   updatedAt: number;
   restart?: QuestionRestart;
+  on?: string;
 }
 
 export type MonitoredSessionLevel = ControlStatusLevel;

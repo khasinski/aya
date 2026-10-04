@@ -1,6 +1,6 @@
 // How the tab list and the teams window show teams: roles, unread, log lines.
 
-import type { RolePanes, TeamDefinition, TeamLiveness, TeamMessage, TeamStartResult, TeamSummary, WaitingPanes } from "./types";
+import { WAITING_ON, type RolePanes, type TeamDefinition, type TeamLiveness, type TeamMessage, type TeamStartResult, type TeamSummary, type TerminalState, type WaitingPanes } from "./types";
 
 // The sender electron/team-runner.ts logs Aya's own messages under.
 export const AYA_SENDER = "aya";
@@ -160,6 +160,17 @@ export function statusCommandNote(
 
 const askedAt = (asked: WaitingPanes[string]) => clock(new Date(asked.since).toISOString());
 
+/** The panes whose agent ran `aya status waiting`: a question to the user, or (with `on`) a wait on that teammate. */
+export function waitingPanesOf(terminals: Record<string, Pick<TerminalState, "externalStatus">>): WaitingPanes {
+  return Object.fromEntries(
+    Object.entries(terminals).flatMap(([id, t]) => {
+      const s = t.externalStatus;
+      if (s?.level === "waiting") return [[id, { text: s.text, since: s.updatedAt, ...(s.restart ? { restart: s.restart } : {}) }]];
+      return s?.level === WAITING_ON && s.on ? [[id, { text: s.text, since: s.updatedAt, on: s.on }]] : [];
+    }),
+  );
+}
+
 /** The team line when the lead asks the user for something (`aya status waiting`); null otherwise. */
 export function leadWaitingLine(
   team: Pick<TeamSummary, "assignments" | "running"> & { definition: Pick<TeamDefinition, "lead"> | null },
@@ -167,7 +178,8 @@ export function leadWaitingLine(
 ): { text: string; tone: "held" } | null {
   const lead = team.definition?.lead;
   const asked = lead && team.running ? waiting[team.assignments[lead]] : undefined;
-  if (!asked) return null;
+  // A lead waiting on a teammate asks the user nothing.
+  if (!asked || asked.on) return null;
   if (asked.restart === "unconfirmed") return { text: `${lead} asked you before the restart (${askedAt(asked)}), not confirmed since; rounds go on: ${asked.text}`, tone: "held" };
   const before = asked.restart === "restored" ? " (asked before the restart)" : "";
   return { text: `${lead} is waiting for you since ${askedAt(asked)}${before}: ${asked.text}`, tone: "held" };
@@ -191,8 +203,10 @@ export function roleStatus(
   const blocked = team.liveness?.blocked.find((b) => b.role === role);
   if (blocked) return { text: `${blocked.reason === HOLD_USAGE_LIMIT ? blocked.reason : "waiting for you"} since ${clock(blocked.since)}`, tone: "held" };
   const asked = waiting[pane];
-  if (asked) return { text: asked.restart === "unconfirmed" ? `asked before the restart (${askedAt(asked)}), not confirmed` : `waiting for you since ${askedAt(asked)}`, tone: "held" };
+  if (asked && !asked.on) return { text: asked.restart === "unconfirmed" ? `asked before the restart (${askedAt(asked)}), not confirmed` : `waiting for you since ${askedAt(asked)}`, tone: "held" };
   const hold = team.paneHolds[role] ?? null;
+  // Its own word that it waits on a teammate: the team's to answer, not the user's.
+  if (hold === null && asked?.on) return { text: `waiting on ${asked.on} since ${askedAt(asked)}`, tone: "ok" };
   if (hold === null) return { text: "ready", tone: "ok" };
   return { text: hold === HOLD_NOT_RUNNING ? "not running" : hold, tone: "held" };
 }

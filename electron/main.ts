@@ -52,7 +52,7 @@ import {
 } from "./cli-install";
 import { startConfigWatcher } from "./config-watcher";
 import { isHostStale } from "./pty-host-staleness";
-import { noteUserAnswer, onQuestionUnconfirmed, outstandingWaiting } from "./agent-status";
+import { noteUserAnswer, onStatusPushed, outstandingWaiting } from "./agent-status";
 import { deliverTeamMessage, paneOutputMarks, settledAfterSubmit, startControlServer, type ControlStatusSink, type TurnProbe } from "./control";
 import { confirmOpen, deliverOpenProject, replayOpensOnLoad } from "./open-delivery";
 import { createWindowSource } from "./window-for-open";
@@ -2376,7 +2376,7 @@ function registerIpc(): TeamRunner {
   ipcMain.handle("presets:list", async () => listPresets());
   ipcMain.handle("agent:waiting", () => outstandingWaiting());
   // A question from before the restart that the pane's session no longer confirms: the windows mark it.
-  onQuestionUnconfirmed(broadcastStatus);
+  onStatusPushed(broadcastStatus);
   ipcMain.handle("presets:save", async (_e, presets: unknown) => {
     await savePresets(validatePresetArray(presets));
     await syncAntigravityBrief();

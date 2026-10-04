@@ -4,7 +4,7 @@
 
 import { HOLD_APPROVAL, HOLD_APPROVE_AYA, HOLD_CHOICE, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, HOLD_USAGE_LIMIT, NO_PANE_HOLD } from "./pane-holds";
 import { TEAM_SYSTEM_SENDER } from "./team-definition";
-import { pendingWaits } from "./team-supervision";
+import { pendingWaits, type StatusWait } from "./team-supervision";
 import { clock, WALL_MINUTE_MS } from "./team-times";
 import type { TeamMessage } from "./types";
 
@@ -72,6 +72,8 @@ export interface DigestInput {
   turns: readonly { role: string; time: string }[] | null;
   /** Roles whose agent is mid-turn now; null when not known (Aya closed, the CLI reading files). */
   busy: readonly string[] | null;
+  /** What roles said with `aya status waiting` (on: the teammate, null: the user); absent when not known (the CLI). */
+  statusWaits?: readonly StatusWait[];
   nowMs: number;
 }
 
@@ -178,6 +180,13 @@ export function roundDigest(input: DigestInput): Digest {
   const sections: DigestSection[] = [];
   const add = (title: string, items: string[]) => void (items.length && sections.push({ title, items: capped(items) }));
   const blocked = blockedRows(input);
+  // A question to the user is the user's to answer; a wait on a teammate is the team's, so it is no block.
+  const said = input.statusWaits ?? [];
+  for (const w of said) {
+    if (w.on !== null || blocked.roles.has(w.role)) continue;
+    blocked.rows.push([w.role, `asked the user ${duration(minutes(w.since, nowMs))} ago: "${cut(w.text)}" (only the user)`]);
+    blocked.roles.add(w.role);
+  }
   add("Needs action", padded(blocked.rows));
 
   const waits = pendingWaits(log, roles);
@@ -193,8 +202,13 @@ export function roundDigest(input: DigestInput): Digest {
     refused.filter((r) => Date.parse(r.time) > sinceMs).map((r) => `${r.from} -> "${r.to}" (${r.reason}): "${cut(r.text)}"`),
   );
 
+  add(
+    "Said they wait on a teammate",
+    said.filter((w) => w.on !== null && !blocked.roles.has(w.role)).map((w) => `${w.role} on ${w.on} for ${duration(minutes(w.since, nowMs))}: "${cut(w.text)}"`),
+  );
+
   // Not idle: the lead (it reads this), a blocked role, one waiting on a reply, and one working now.
-  const waiting = new Set(waits.map((w) => w.waiter));
+  const waiting = new Set([...waits.map((w) => w.waiter), ...said.map((w) => w.role)]);
   const lastActive = (role: string) =>
     Math.max(
       ...log.filter((m) => m.from === role || (m.to === role && m.delivered && !m.typedOnly)).map((m) => Date.parse(m.time)),

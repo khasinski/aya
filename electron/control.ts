@@ -22,7 +22,7 @@ import { CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
 import { handleTeamAuthorRequest } from "./team-author";
 import { HOLD_BUSY, HOLD_DRAFT, isDialogHold } from "./pane-holds";
 import { debugAnswer } from "./team-debug";
-import { handleTeamRequest, oneLine, PaneHeldError, TEAMS_UNAVAILABLE, TextPastedError, TryAgainError, type TeamControlDeps } from "./team-control";
+import { handleTeamRequest, oneLine, PaneHeldError, TEAMS_UNAVAILABLE, teammateToWaitOn, TextPastedError, TryAgainError, type TeamControlDeps } from "./team-control";
 import { handleTeamPanesRequest, THIS_PANE, type TeamPaneDeps } from "./team-panes";
 import { handleTeamShow } from "./team-show";
 import type { TeamRunner } from "./team-runner";
@@ -480,8 +480,13 @@ async function handleRequest(
   }
   if (request.type === "status") {
     // A question belongs to the agent life that asked it: the pane's session goes with it (agent-status settleRestored).
-    const session = request.terminalId && request.level === "waiting" ? await paneSession(request.terminalId, options) : undefined;
-    const told = request.terminalId ? recordAgentStatus(request.terminalId, request.level, Date.now(), request.text, caller.via, session) : request;
+    // A wait on a teammate names a role of the caller's own team; a status with no pane has none.
+    if (request.on) {
+      if (!options.team) throw new Error(TEAMS_UNAVAILABLE);
+      await teammateToWaitOn(request.terminalId, request.on, options.team);
+    }
+    const session = request.terminalId && request.level === "waiting" && !request.on ? await paneSession(request.terminalId, options) : undefined;
+    const told = request.terminalId ? recordAgentStatus(request.terminalId, request.level, Date.now(), request.text, caller.via, session, request.on) : request;
     if (!told) return;
     const update: ControlStatusUpdate = {
       terminalId: request.terminalId,
@@ -490,6 +495,7 @@ async function handleRequest(
       level: told.level,
       text: request.text,
       updatedAt: Date.now(),
+      ...(told.on ? { on: told.on } : {}),
     };
     const targets = options.getWindows?.() ?? (win ? [win] : []);
     for (const target of targets) {

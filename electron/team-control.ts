@@ -1,6 +1,7 @@
 // `aya team whoami|send|inbox|pause`: the caller is known by its pane id, its role
 // by the local assignments, and the team by the definition the user saved.
 
+import { teammateAnswered } from "./agent-status";
 import type { TeamRequest } from "./control-protocol";
 import { HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_STARTING, NO_PANE_HOLD } from "./pane-holds";
 import { loadTeam, paneTeamRole } from "./team-files";
@@ -63,6 +64,19 @@ async function membership(callerId: string | undefined, deps: TeamControlDeps): 
   return { project, team, role, store: plays.store };
 }
 
+/** The role `aya status waiting --on <role>` names, checked against the caller's team: a wait on a teammate is the
+ *  team's, so a pane with no role, an unknown role or its own role is refused with what to run instead. */
+export async function teammateToWaitOn(callerId: string | undefined, on: string, deps: TeamControlDeps): Promise<string> {
+  const { team, role } = await membership(callerId, deps).catch((err: unknown) => {
+    throw new Error(`aya status waiting --on is for a wait on a team role (${err instanceof Error ? err.message : err}); to ask the user, drop --on`);
+  });
+  if (on === role.id) throw new Error(`${on} is your own role; name the teammate you wait on`);
+  if (!team.roles.some((r) => r.id === on)) {
+    throw new Error(`team ${team.name} has no role ${on}; its roles: ${team.roles.map((r) => r.id).filter((id) => id !== role.id).join(", ")}`);
+  }
+  return on;
+}
+
 function whoami({ team, role }: Membership): string {
   const sends = role.sendsTo.map((r) => (r.what ? `${r.to}: ${r.what}` : r.to));
   const lines = [
@@ -74,6 +88,7 @@ function whoami({ team, role }: Membership): string {
   if (team.lead === role.id) lines.push("", 'you lead this team: when the work is done or cannot go on, end it with: aya team pause "why"');
   lines.push("", 'give a role work with: aya team send <role> "text" (not aya team start: starting and resuming the team is the user\'s)');
   lines.push("every role of the team, as it runs: aya team show");
+  lines.push('wait on a teammate with: aya status waiting --on <role> "what you need" (plain aya status waiting asks the user)');
   if (role.responsibilities) lines.push("", role.responsibilities);
   if (team.protocol) lines.push("", "protocol", team.protocol);
   return `${lines.join("\n")}\n`;
@@ -194,6 +209,8 @@ export async function typeMessage(
     }
   }
   debugLog(store, failure ? "hold" : "turn", { to: message.to, from: message.from, id: message.id ?? null, ...(failure ? { reason: failure, typed } : { seen: unseen === null, why: unseen }) });
+  // The awaited teammate's message went in: the receiver waits on it no longer.
+  if (!failure && teammateAnswered(pane, message.from)) debugLog(store, "status", { role: message.to, change: "wait answered", on: message.from });
   return { commit, failure, typed, afterEnter: afterEnter || unseen !== null, reached: !failure || typed, unseen, reserved: Boolean(reserve) };
 }
 

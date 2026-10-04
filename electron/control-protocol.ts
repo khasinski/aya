@@ -1,4 +1,4 @@
-import type { ControlStatusUpdate, PanePick } from "./types";
+import type { PanePick } from "./types";
 
 export type TeamRequest =
   | { type: "team-whoami" }
@@ -36,8 +36,10 @@ export type ControlRequest =
     }
   | {
       type: "status";
-      level: ControlStatusUpdate["level"];
+      level: "active" | "waiting" | "done" | "error" | "clear";
       text?: string;
+      /** `aya status waiting --on <role>`: the teammate this role waits on. */
+      on?: string;
       terminalId?: string;
       projectSlug?: string;
       cwd?: string;
@@ -193,10 +195,13 @@ export function parseControlRequest(value: unknown): ControlRequest {
     ) {
       throw new Error("status.level must be active, waiting, done, error, or clear");
     }
+    const on = optionalString(value.on)?.trim();
+    if (on !== undefined && level !== "waiting") throw new Error("status.on goes only with waiting");
     return {
       type,
       level,
       text: optionalString(value.text),
+      ...(on ? { on } : {}),
       terminalId: optionalString(value.terminalId),
       projectSlug: optionalString(value.projectSlug),
       cwd: optionalString(value.cwd),

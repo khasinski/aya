@@ -1,7 +1,7 @@
 // Start team (a delivery test to every role), Aya-owned rounds on the team's
 // cadence, and the team pause. Rounds live in Aya, not in one agent session.
 
-import { outstandingWaiting, settleRestored } from "./agent-status";
+import { outstandingWaiting, settleRestored, teammateWaits } from "./agent-status";
 import { whileTeamNotSaved } from "./team-admin";
 import { whileProjectPanesFree } from "./team-panes";
 import { deliverAndLog, logTyped, oneLine, PaneHeldError, roleHold, systemLine, typeFromAya, typeLogged, type TeamControlDeps } from "./team-control";
@@ -11,7 +11,7 @@ import { HOLD_BUSY, NO_PANE_HOLD } from "./pane-holds";
 import { debugLog, debugOn } from "./team-debug";
 import { oneAtATime } from "./keyed-queue";
 import { noteRound, observe, quietTooLong, repoSince, resetProgress, roundsHeld, stalledWhenLastLooked, teamLiveness, type TeamProgress } from "./team-progress";
-import { pendingWaits, stalledText, supervisionText } from "./team-supervision";
+import { pendingWaits, stalledText, supervisionText, type StatusWait } from "./team-supervision";
 import { digestOneLine, roundDigest } from "./team-digest";
 import { statusSection } from "./team-status-command";
 import { openTeamStore, readText, type PendingTask, type TeamStore } from "./team-store";
@@ -379,7 +379,24 @@ export class TeamRunner {
   private async digest(store: TeamStore, team: TeamDefinition, progress: TeamProgress, nowMs: number) {
     const roles = team.roles.map((r) => r.id);
     const busy = await this.busyRoles(store, roles);
-    return roundDigest({ roles, lead: team.lead, log: await store.annotatedLog(), progress, refused: await store.refusals(), turns: await store.turns(), busy, nowMs });
+    const statusWaits = await this.statusWaits(store, roles);
+    return roundDigest({ roles, lead: team.lead, log: await store.annotatedLog(), progress, refused: await store.refusals(), turns: await store.turns(), busy, statusWaits, nowMs });
+  }
+
+  /** The roles' own `aya status waiting`: a question to the user (one from before a restart that is unconfirmed holds
+   *  nothing, as in askedTheUser) or a wait on a teammate. */
+  private async statusWaits(store: TeamStore, roles: string[]): Promise<StatusWait[]> {
+    const asked = outstandingWaiting();
+    const onTeam = teammateWaits();
+    const out: StatusWait[] = [];
+    for (const role of roles) {
+      const pane = await store.paneOf(role);
+      const question = pane ? asked[pane] : undefined;
+      const wait = pane ? onTeam[pane] : undefined;
+      if (question && question.restart !== "unconfirmed") out.push({ role, on: null, text: question.text, since: question.since });
+      else if (wait) out.push({ role, on: wait.on, text: wait.text, since: wait.since });
+    }
+    return out;
   }
 
   /** A look of the team's clock: records the repo, talk and screens. A round due on the rhythm, the silence or a stall
@@ -421,6 +438,7 @@ export class TeamRunner {
     const question = await this.askedTheUser(store, lead, Date.parse(progress.changedAt), project);
     if (question !== null) return skip(`${lead} asked the user${question ? `: ${oneLine(question)}` : ""}`);
     const waits = () => store.annotatedLog().then((log) => pendingWaits(log, team.roles.map((r) => r.id)));
+    const said = () => this.statusWaits(store, team.roles.map((r) => r.id));
     // A silence round was decided before the wait for the lead's pane: talk that went in meanwhile ends the silence.
     // Read once, as the lock is taken, before the paste (the second read, before the Enter, is the Pause's only).
     const talkedBefore = store.talkedSince();
@@ -441,9 +459,9 @@ export class TeamRunner {
       },
     };
     const body = onRepo
-      ? stalledText({ round, since: repoSince(progress), messages: progress.messages ?? 0, waits: await waits(), nowMs })
+      ? stalledText({ round, since: repoSince(progress), messages: progress.messages ?? 0, waits: await waits(), said: await said(), nowMs })
       : quiet
-        ? supervisionText({ round, quietSince: progress.changedAt, waits: await waits(), nowMs })
+        ? supervisionText({ round, quietSince: progress.changedAt, waits: await waits(), said: await said(), nowMs })
         : `Round ${round}: run your round as the team protocol says. ${digestOneLine(await this.digest(store, team, progress, nowMs))}`;
     // A round the lead's pane cannot take now stays due and is looked at again each minute: the user's command runs
     // only for a round that goes now, not on every look while it waits.

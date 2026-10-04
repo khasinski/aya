@@ -206,6 +206,7 @@ function StatusBarImpl({
           <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }}>
             smart_toy
           </span>
+          {externalStatus.on ? `waiting on ${externalStatus.on}: ` : ""}
           {externalStatus.text}
         </span>
       )}

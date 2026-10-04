@@ -4,9 +4,23 @@
 // that would show a badge in one place and nothing in the other.
 
 import { isTerminalDone } from "./pty-event-reducer";
-import type { ProjectConfig, TerminalState } from "./types";
+import { WAITING_ON, type ProjectConfig, type TerminalState } from "./types";
 
 export type AttentionLevel = "error" | "waiting" | "done" | "idle";
+
+/** A project's badge level; every level but "active" counts toward the attention count. */
+export type ProjectBadgeLevel = "active" | "done" | "waiting" | "error";
+
+/** What one terminal adds to its project's badge, or null for nothing (a wait on a teammate among them). */
+export function projectBadgeLevel(
+  t: Pick<TerminalState, "status" | "externalStatus" | "spawnFailure" | "bell" | "exitCode" | "presetId">,
+): ProjectBadgeLevel | null {
+  if (t.status === "error" || t.externalStatus?.level === "error" || t.spawnFailure) return "error";
+  if (t.bell || t.status === "waiting" || t.externalStatus?.level === "waiting") return "waiting";
+  if (isTerminalDone(t)) return "done";
+  if (t.externalStatus?.level === "active") return "active";
+  return null;
+}
 
 export interface AttentionRow {
   project: ProjectConfig;
@@ -58,6 +72,16 @@ export function attentionFor(
       level: "waiting",
       title: `${terminal.name} is waiting`,
       detail: terminal.externalStatus?.text ?? "Approval or input needed",
+    };
+  }
+  // A team role waiting on a teammate asks nothing of the user: listed with the idle ones, never counted.
+  if (terminal.externalStatus?.level === WAITING_ON) {
+    return {
+      project,
+      terminal,
+      level: "idle",
+      title: `${terminal.name} is waiting on ${terminal.externalStatus.on ?? "a teammate"}`,
+      detail: terminal.externalStatus.text,
     };
   }
   if (isTerminalDone(terminal)) {

@@ -7,7 +7,6 @@ import {
   clearedTerminalStatus,
   controlLevelToTerminalStatus,
   controlStatusEventTitle,
-  isTerminalDone,
 } from "./pty-event-reducer";
 import { forgetSpawn, wasSpawned } from "./spawnSession";
 import {
@@ -101,8 +100,11 @@ import {
   usePersistentPreference,
   type PreferenceCodec,
 } from "./hooks/usePersistentPreference";
+import { waitingPanesOf } from "./team-view";
+import { projectBadgeLevel, type ProjectBadgeLevel } from "./attention";
 import {
   BUILTIN_SHELL,
+  WAITING_ON,
   type AyaIntelligenceConfig,
   type Snippet,
   getPreset,
@@ -197,7 +199,6 @@ interface AutoSummaryStatus {
   lastEvent: string;
 }
 
-type ProjectBadgeLevel = "active" | "done" | "waiting" | "error";
 
 // Content comparators for useStable: badge/session records are rebuilt with
 // fresh value objects on every terminals-map change, so identity alone can't
@@ -867,18 +868,8 @@ export function App() {
     ? (activeTabByProject[activeProjectId] ?? null)
     : null;
   const activeTerminal = activeTabId ? (terminals[activeTabId] ?? null) : null;
-  // Panes whose agent ran `aya status waiting`: the Teams window shows a waiting lead.
-  const waitingPanes = useMemo<WaitingPanes>(
-    () =>
-      Object.fromEntries(
-        Object.entries(terminals).flatMap(([id, t]) =>
-          t.externalStatus?.level === "waiting"
-            ? [[id, { text: t.externalStatus.text, since: t.externalStatus.updatedAt, restart: t.externalStatus.restart }]]
-            : [],
-        ),
-      ),
-    [terminals],
-  );
+  // Panes whose agent ran `aya status waiting` (with `on`: --on a teammate): the Teams window shows who waits on whom.
+  const waitingPanes = useMemo<WaitingPanes>(() => waitingPanesOf(terminals), [terminals]);
 
   // The active project's own checkout — where a terminal with no worktree
   // binding runs. null for remote projects (no local working tree).
@@ -1998,14 +1989,14 @@ export function App() {
         }
         const text = update.text?.trim();
         if (!text) return prev;
-        const next = applyReportedStatus(terminal, { level: update.level, text, updatedAt: update.updatedAt, restart: update.restart });
+        const next = applyReportedStatus(terminal, { level: update.level, text, updatedAt: update.updatedAt, restart: update.restart, on: update.on });
         // A dialog still on screen: the pane did not finish, so no "finished" row either.
         if (next.status === controlLevelToTerminalStatus(update.level)) {
           appendProjectEvent({
             projectSlug: terminal.projectSlug,
             terminalId: terminal.id,
-            level: update.level === "active" ? "active" : update.level,
-            title: controlStatusEventTitle(terminal.name, update.level),
+            level: update.level === "active" || update.level === WAITING_ON ? "active" : update.level,
+            title: controlStatusEventTitle(terminal.name, update.level, update.on),
             detail: text,
             createdAt: update.updatedAt,
           });
@@ -3654,24 +3645,7 @@ export function App() {
         };
       };
       for (const t of Object.values(terminals)) {
-        let level: ProjectBadgeLevel | null = null;
-        if (
-          t.status === "error" ||
-          t.externalStatus?.level === "error" ||
-          t.spawnFailure
-        ) {
-          level = "error";
-        } else if (
-          t.bell ||
-          t.status === "waiting" ||
-          t.externalStatus?.level === "waiting"
-        ) {
-          level = "waiting";
-        } else if (isTerminalDone(t)) {
-          level = "done";
-        } else if (t.externalStatus?.level === "active") {
-          level = "active";
-        }
+        const level = projectBadgeLevel(t);
         if (!level) continue;
         addProjectBadge(t.projectSlug, level);
       }
