@@ -3,7 +3,7 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { atomicTempPath, writeFileAtomic } from "./atomic-write";
+import { replaceJsonl as replaceJsonlAtomic, writeFileAtomic } from "./atomic-write";
 import { oneAtATime } from "./keyed-queue";
 import { debugLog, MESSAGE_CHARS } from "./team-debug";
 import { OWNER_ONLY_FILE_MODE } from "./paths";
@@ -40,11 +40,7 @@ export const REFUSED_KEEP_ENTRIES = 100;
 const CRASHED_MID_TYPING: DeliveryNote = { kind: "withheld", reason: "Aya went down while typing it; it may be in the composer without its Enter, or not there at all - check the pane" };
 
 /** Rewrites a JSONL file with `lines` through a temp file, owner-only from the first byte: messages may hold secrets. */
-async function replaceJsonl(file: string, lines: string[]): Promise<void> {
-  const tmp = atomicTempPath(file);
-  await fs.writeFile(tmp, lines.map((l) => `${l}\n`).join(""), { mode: OWNER_ONLY_FILE_MODE });
-  await fs.rename(tmp, file);
-}
+const replaceJsonl = (file: string, lines: string[]) => replaceJsonlAtomic(file, lines, OWNER_ONLY_FILE_MODE);
 
 /** What a trim keeps within TEAM_LOG_TRIM_BYTES: messages still owed to their role first (a quiet role's must not be
  *  cut by the others' talk), then the newest TEAM_LOG_KEEP_ENTRIES of the rest; in log order. */

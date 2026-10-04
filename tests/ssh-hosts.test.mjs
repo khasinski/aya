@@ -90,3 +90,74 @@ test("knownHosts: a failing project list leaves the other sources", async (t) =>
   const hosts = await knownHosts({ ayaHome: join(root, "aya"), userHome: root, listRemoteProjects: async () => { throw new Error("boom"); } });
   assert.deepEqual(hosts, [{ target: "athena", sources: ["ssh-config"] }]);
 });
+
+// Source x saved or not x used by projects / panes / nothing: the merged entry and the lines `aya machines hosts` prints.
+const { hostDetailLines } = await import("../dist-electron/machines.js");
+const NOW = new Date(2026, 9, 3, 15, 0);
+const SAVED = { target: "box", addedAt: new Date(2026, 9, 1, 9, 5).toISOString(), addedFrom: "open-project", lastUsedAt: new Date(2026, 9, 3, 14, 50).toISOString(), lastUsedFor: "project" };
+const PANES = [{ name: "tester", role: "tester", team: "qa" }, { name: "implementer" }];
+const sourceInput = {
+  "ssh-config": { aliases: ["box"] },
+  "remote-project": { remoteProjects: [{ name: "web", sshTarget: "box" }] },
+  machine: { machines: [{ id: "box", ssh: "box", occupancy: { by: "justi", purpose: "run5", since: NOW.toISOString() } }] },
+};
+const usageInput = {
+  none: {},
+  projects: { remoteProjects: [{ name: "libeval", sshTarget: "box" }] },
+  panes: { remoteProjects: [{ name: "libeval", sshTarget: "box", panes: PANES }] },
+};
+for (const source of Object.keys(sourceInput)) {
+  for (const saved of [false, true]) {
+    for (const usage of Object.keys(usageInput)) {
+      test(`hosts: from ${source}, ${saved ? "saved" : "not saved"}, used by ${usage}`, () => {
+        const s = sourceInput[source];
+        const u = usageInput[usage];
+        const input = {
+          ...none,
+          ...s,
+          remoteProjects: [...(s.remoteProjects ?? []), ...(u.remoteProjects ?? [])],
+          saved: saved ? [SAVED] : [],
+          history: saved ? [{ at: SAVED.addedAt, target: "BOX", event: "added", from: "open-project" }, { at: SAVED.lastUsedAt, target: "box", event: "connected", project: "libeval" }] : [],
+        };
+        const [h, ...rest] = mergeKnownHosts(input);
+        assert.deepEqual(rest, []);
+        const projects = [...(source === "remote-project" ? ["web"] : []), ...(usage === "none" ? [] : ["libeval"])];
+        const used = [
+          ...(source === "machine" ? ["machine box (in use: run5, by justi)"] : []),
+          ...(projects.length ? [`project${projects.length > 1 ? "s" : ""} ${projects.join(", ")}`] : []),
+          ...(usage === "panes" ? ["panes tester (tester in team qa), implementer"] : []),
+        ];
+        assert.deepEqual(h.projects, projects.length ? projects : undefined);
+        assert.deepEqual(h.panes, usage === "panes" ? [{ name: "tester", role: "tester", team: "qa", project: "libeval" }, { name: "implementer", project: "libeval" }] : undefined);
+        assert.equal(h.sources.includes("saved"), saved);
+        assert.equal(h.machineId, source === "machine" ? "box" : undefined);
+        const lines = hostDetailLines(h, NOW);
+        assert.equal(lines[0], `used by: ${used.length ? used.join("; ") : "nothing in Aya now"}`);
+        if (saved) {
+          assert.deepEqual(lines.slice(1), ["added 1 Oct 09:05 from Open project; last used 14:50 (remote project)", "1 Oct 09:05 added from Open project", "14:50 connected (remote project libeval)"]);
+        } else {
+          assert.deepEqual(lines.slice(1), ["not saved: listed until it is used"]);
+        }
+      });
+    }
+  }
+}
+
+test("hosts: the most recently used first, the never used after them in source order; history capped per host", () => {
+  const iso = (h) => new Date(2026, 9, 3, h).toISOString();
+  const history = Array.from({ length: 9 }, (_, i) => ({ at: iso(i), target: "c", event: "connected", project: `p${i}` }));
+  const hosts = mergeKnownHosts({
+    ...none,
+    aliases: ["a", "b", "c", "d"],
+    saved: [
+      { target: "c", addedAt: iso(0), addedFrom: "cli", lastUsedAt: iso(9), lastUsedFor: "check" },
+      { target: "d", addedAt: iso(0), addedFrom: "cli", lastUsedAt: iso(12), lastUsedFor: "project" },
+      { target: "b", addedAt: iso(0), addedFrom: "settings" },
+      { target: "gone@old", addedAt: iso(0), addedFrom: "open-project", lastUsedAt: iso(1), lastUsedFor: "project" },
+    ],
+    history,
+  });
+  assert.deepEqual(hosts.map((h) => h.target), ["d", "c", "gone@old", "a", "b"]);
+  assert.deepEqual(hosts[1].history.map((e) => e.project), ["p4", "p5", "p6", "p7", "p8"]);
+  assert.deepEqual(hosts[2].sources, ["saved"]);
+});

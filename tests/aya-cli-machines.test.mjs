@@ -50,6 +50,7 @@ const stop = startControlServerOn(socket, {
   machines: {
     ayaHome,
     userHome: home,
+    origin: "cli",
     confirmAdd: async (ask, signal) => {
       dialog.asked.push(ask);
       if (dialog.holdMs) {
@@ -95,6 +96,8 @@ const reset = () => {
   dialog.closed = null;
   dialog.answered = null;
   rmSync(registryFile, { force: true });
+  rmSync(join(ayaHome, "ssh-hosts.json"), { force: true });
+  rmSync(join(ayaHome, "ssh-hosts-history.jsonl"), { force: true });
   rmSync(join(root, "ssh", "calls"), { force: true });
   clearMachineStatusCache();
 };
@@ -190,7 +193,11 @@ test("hosts: aliases from ~/.ssh/config with their sources, the added ones marke
   await aya("add", "--ssh", "athena");
   const r = await aya("hosts");
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, "athena  ssh-config, machine  (added)\nmini    ssh-config\n");
+  // The added host is saved by the add and listed first; mini is only in ~/.ssh/config.
+  assert.match(
+    r.stdout,
+    /^athena  ssh-config, machine, saved  \(added\)\n {8}used by: machine athena\n {8}added \d\d:\d\d from aya machines\n {8}\d\d:\d\d added as machine athena from aya machines\nmini    ssh-config\n {8}used by: nothing in Aya now\n {8}not saved: listed until it is used\n$/,
+  );
 });
 
 test("a sentence naming an added alias says so and drafts nothing", async () => {

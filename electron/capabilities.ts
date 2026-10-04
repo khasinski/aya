@@ -207,7 +207,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   {
     command: "machines hosts",
     usage: "aya machines hosts [--json]",
-    summary: "List the ssh hosts Aya knows with where each comes from: Host aliases in ~/.ssh/config (Include files followed), remote project targets and added machines.",
+    summary: "List the ssh hosts Aya knows with where each comes from (Host aliases in ~/.ssh/config, Include files followed; remote project targets; added machines; hosts used before), what uses each now (projects, panes with team roles, machine occupancy), when it was added and last used, and its newest history; most recently used first.",
   },
   {
     command: "machines add",

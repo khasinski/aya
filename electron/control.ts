@@ -420,7 +420,7 @@ async function handleRequest(
   }
   if (request.type === "machines") {
     const pane = caller.terminalId ? (await options.listProjects?.().catch(() => []))?.flatMap((p) => p.tabs).find((t) => t.id === caller.terminalId)?.name : undefined;
-    const deps = options.machines ?? ayaMachinesDeps(AYA_HOME, os.homedir(), options.getWindow, options.listProjects);
+    const deps = options.machines ?? ayaMachinesDeps(AYA_HOME, os.homedir(), options.getWindow, options.listProjects, "cli");
     return { ...(await handleMachinesRequest(request, deps, pane, callerGone)) };
   }
   if (request.type === "pane-list") {

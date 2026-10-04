@@ -7,7 +7,8 @@ import { atomicTempPath } from "./atomic-write";
 import { oneAtATime, withFileLock } from "./keyed-queue";
 import { probeMachine, type MachineStatus, type Reach } from "./machines-probe";
 import { isSshTarget } from "./ssh";
-import { mergeKnownHosts, sshHostAliases, type KnownHost } from "./ssh-hosts";
+import { loadSavedHosts, readHostHistory, recordHostUse, type HostEvent, type HostOrigin, type HostUse } from "./ssh-host-store";
+import { mergeKnownHosts, sshHostAliases, type HostPane, type KnownHost } from "./ssh-hosts";
 import { singleFlight } from "./single-flight";
 
 export const MACHINES_FILE_NAME = "machines.json";
@@ -50,8 +51,10 @@ export interface MachinesDeps {
   ayaHome: string;
   /** The user's home, for ~/.ssh/config. */
   userHome: string;
-  /** Remote projects, whose ssh targets are known hosts too. */
-  listRemoteProjects?: () => Promise<{ name: string; sshTarget: string }[]>;
+  /** Remote projects, whose ssh targets are known hosts too, with their panes. */
+  listRemoteProjects?: () => Promise<{ name: string; sshTarget: string; panes?: Omit<HostPane, "project">[] }[]>;
+  /** Where this caller's first use of a host is recorded as coming from; without it nothing is recorded. */
+  origin?: HostOrigin;
   probe?: typeof probeMachine;
   now?: () => Date;
   /** Test seam: runs after the new registry is staged, just before the last check and the rename. */
@@ -156,15 +159,26 @@ export function mutateRegistry<T>(deps: MachinesDeps, change: (registry: Registr
 
 // ---- known hosts ----
 
-/** ~/.ssh/config aliases, remote project targets and added machines, each with its sources (electron/ssh-hosts.ts). */
+/** ~/.ssh/config aliases, remote project targets, added machines and saved hosts, each with its sources, current
+ *  usage and newest history (electron/ssh-hosts.ts); a broken saved-hosts file only leaves those fields out. */
 export async function knownHosts(deps: MachinesDeps, registry?: Registry): Promise<KnownHost[]> {
-  const [aliases, remoteProjects, reg] = await Promise.all([
+  const [aliases, remoteProjects, reg, saved, history] = await Promise.all([
     sshHostAliases(deps.userHome),
     deps.listRemoteProjects?.().catch(() => []) ?? Promise.resolve([]),
     registry ? Promise.resolve(registry) : loadRegistry(deps),
+    loadSavedHosts(deps.ayaHome).catch(() => []),
+    readHostHistory(deps.ayaHome).catch(() => []),
   ]);
-  const machines = reg.machines.flatMap((m) => (m.reach === "local" ? [] : [{ id: m.id, ssh: m.reach.ssh }]));
-  return mergeKnownHosts({ aliases, remoteProjects, machines });
+  const machines = reg.machines.flatMap((m) => (m.reach === "local" ? [] : [{ id: m.id, ssh: m.reach.ssh, ...(m.occupancy ? { occupancy: m.occupancy } : {}) }]));
+  return mergeKnownHosts({ aliases, remoteProjects, machines, saved, history });
+}
+
+/** Records a use of an ssh host for its saved entry and history; bookkeeping never fails the action it records. */
+export async function noteHostUse(deps: Pick<MachinesDeps, "ayaHome" | "origin" | "now">, reach: Reach, use: HostUse): Promise<void> {
+  if (reach === "local" || !deps.origin) return;
+  await recordHostUse(deps.ayaHome, reach.ssh, deps.origin, use, deps.now?.() ?? new Date()).catch((err) =>
+    console.warn(`[aya] could not record the use of ${reach.ssh}: ${(err as Error).message}`),
+  );
 }
 
 // ---- the one-sentence draft ----
@@ -263,9 +277,11 @@ export function machineStatus(machine: Machine, deps: MachinesDeps): Promise<Mac
   return run();
 }
 
-/** A host that is not added yet, through the same shared, cached probe as an added machine. */
-export function checkHost(reach: Reach, deps: MachinesDeps, port = DEFAULT_OLLAMA_PORT): Promise<MachineStatus> {
-  return machineStatus({ id: "", label: "", reach, ollama: { port } }, deps);
+/** The user's Check of a host, through the same shared, cached probe as an added machine; its result is recorded. */
+export async function checkHost(reach: Reach, deps: MachinesDeps, port = DEFAULT_OLLAMA_PORT): Promise<MachineStatus> {
+  const status = await machineStatus({ id: "", label: "", reach, ollama: { port } }, deps);
+  await noteHostUse(deps, reach, { kind: "check", ok: status.reachable, why: status.error });
+  return status;
 }
 
 /** Test-only: forget cached probes. */
@@ -330,6 +346,55 @@ export function formatMachines(views: MachineView[], now = new Date()): string {
     }
   }
   return `${lines.join("\n")}\n`;
+}
+
+const ORIGIN_TEXT: Record<HostOrigin, string> = { "open-project": "Open project", settings: "Settings > Machines", cli: "aya machines" };
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "14:50" today, "3 Oct 14:50" another day. */
+export function whenText(iso: string, now: Date): string {
+  const at = new Date(iso);
+  const hm = at.toTimeString().slice(0, 5);
+  return at.toDateString() === now.toDateString() ? hm : `${at.getDate()} ${MONTHS[at.getMonth()]} ${hm}`;
+}
+
+const paneText = (p: HostPane) => (p.role ? `${p.name} (${p.role} in team ${p.team})` : p.name);
+
+/** The lines under a host in `aya machines hosts`: current usage, the saved entry and its newest history. */
+export function hostDetailLines(h: KnownHost, now: Date): string[] {
+  const used: string[] = [];
+  if (h.machineId) used.push(`machine ${h.machineId}${h.occupancy ? ` (in use: ${h.occupancy.purpose}, by ${h.occupancy.by})` : ""}`);
+  if (h.projects?.length) used.push(`project${h.projects.length > 1 ? "s" : ""} ${h.projects.join(", ")}`);
+  if (h.panes?.length) used.push(`pane${h.panes.length > 1 ? "s" : ""} ${h.panes.map(paneText).join(", ")}`);
+  const lines = [`used by: ${used.length ? used.join("; ") : "nothing in Aya now"}`];
+  const s = h.saved;
+  if (s) {
+    const last = s.lastUsedAt ? `; last used ${whenText(s.lastUsedAt, now)} (${s.lastUsedFor === "project" ? "remote project" : "Check"})` : "";
+    lines.push(`added ${whenText(s.addedAt, now)} from ${ORIGIN_TEXT[s.addedFrom]}${last}`);
+    if (s.lastCheck) lines.push(`last Check ${whenText(s.lastCheck.at, now)}: ${s.lastCheck.ok ? "reachable" : `not reachable, ${s.lastCheck.why ?? "?"}`}`);
+  } else {
+    lines.push("not saved: listed until it is used");
+  }
+  for (const e of h.history ?? []) lines.push(`${whenText(e.at, now)} ${historyText(e)}`);
+  return lines;
+}
+
+/** One history line without its time, for the CLI and the Settings row alike. */
+export function historyText(e: HostEvent): string {
+  const from = e.from ? ` from ${ORIGIN_TEXT[e.from]}` : "";
+  if (e.event === "added") return `added${e.machine ? ` as machine ${e.machine}` : ""}${from}`;
+  if (e.event === "removed") return `removed${e.machine ? ` machine ${e.machine}` : ""}${from}`;
+  if (e.event === "connected") return `connected${e.project ? ` (remote project ${e.project})` : " (Check)"}`;
+  return `Check failed: ${e.why ?? "?"}`;
+}
+
+export function formatHosts(hosts: KnownHost[], now: Date): string {
+  if (hosts.length === 0) return "no known ssh hosts: no Host aliases in ~/.ssh/config, no remote projects, no machines\n";
+  const width = Math.max(...hosts.map((h) => h.target.length));
+  const pad = " ".repeat(width + 2);
+  return hosts
+    .map((h) => [`${h.target.padEnd(width)}  ${h.sources.join(", ")}${h.machineId ? "  (added)" : ""}`, ...hostDetailLines(h, now).map((l) => pad + l)].join("\n") + "\n")
+    .join("");
 }
 
 function formatDraft(draft: SentenceDraft): string {
@@ -424,6 +489,7 @@ async function addMachines(drafted: DraftMachine[], deps: MachinesDeps, pane: st
     }
     registry.machines.push(...drafted.map((m) => ({ id: m.id, label: m.id, reach: m.reach, ollama: { port: m.port } })));
   });
+  for (const m of drafted) await noteHostUse(deps, m.reach, { kind: "machine-added", machine: m.id });
   return { output: `${before}${drafted.map((m) => `added ${m.id}  ${reachText(m.reach)}  ollama port ${m.port}\n`).join("")}` };
 }
 
@@ -444,10 +510,7 @@ export async function handleMachinesRequest(request: MachinesRequest, deps: Mach
   if (sub === "hosts") {
     if (rest[0] === "--json") return { output: `${JSON.stringify({ version: MACHINES_VERSION, hosts: await knownHosts(deps) }, null, 2)}\n` };
     if (rest.length) throw new Error(USAGE);
-    const hosts = await knownHosts(deps);
-    if (hosts.length === 0) return { output: "no known ssh hosts: no Host aliases in ~/.ssh/config, no remote projects, no machines\n" };
-    const width = Math.max(...hosts.map((h) => h.target.length));
-    return { output: hosts.map((h) => `${h.target.padEnd(width)}  ${h.sources.join(", ")}${h.machineId ? "  (added)" : ""}\n`).join("") };
+    return { output: formatHosts(await knownHosts(deps), now()) };
   }
   if (sub === "add") {
     const registry = await loadRegistry(deps);
@@ -462,12 +525,13 @@ export async function handleMachinesRequest(request: MachinesRequest, deps: Mach
   }
   if (sub === "remove") {
     if (rest.length !== 1) throw new Error(USAGE);
-    const id = await mutateRegistry(deps, (registry) => {
-      const machine = findMachine(registry, rest[0]);
-      registry.machines = registry.machines.filter((m) => m !== machine);
-      return machine.id;
+    const machine = await mutateRegistry(deps, (registry) => {
+      const found = findMachine(registry, rest[0]);
+      registry.machines = registry.machines.filter((m) => m !== found);
+      return found;
     });
-    return { output: `removed ${id}\n` };
+    await noteHostUse(deps, machine.reach, { kind: "machine-removed", machine: machine.id });
+    return { output: `removed ${machine.id}\n` };
   }
   if (sub === "free") {
     if (rest.length !== 1) throw new Error(USAGE);

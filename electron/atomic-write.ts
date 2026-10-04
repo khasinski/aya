@@ -45,3 +45,14 @@ export async function writeFileAtomic(
     throw err;
   }
 }
+
+/** Replaces a JSON-lines file in one rename, for the logs Aya trims to their newest lines. */
+export async function replaceJsonl(file: string, lines: string[], mode: number): Promise<void> {
+  const tmp = atomicTempPath(file);
+  try {
+    await fs.writeFile(tmp, lines.map((l) => `${l}\n`).join(""), { mode });
+    await fs.rename(tmp, file);
+  } finally {
+    await fs.rm(tmp, { force: true });
+  }
+}

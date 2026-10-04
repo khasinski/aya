@@ -213,6 +213,23 @@ it depends on is answered.
      the host is a machine. The list only reads those sources; adding a
      machine still needs the user's Add, and `~/.ssh/config` is written
      only on the user's yes.
+   - **Saved hosts with history and usage (built).** A host is saved on
+     its first use: a remote project opened (Open project -> Remote host),
+     a Check (Settings -> Machines) or a machine added (Settings or `aya
+     machines add`). `ssh-hosts.json` in the Aya config home
+     (`{"version": 1, "hosts": [...]}`, atomic, under a lock file) keeps the
+     name as typed, when and from where it was added, the last use (remote
+     project or Check) and the last Check result (reachable, or the one-line
+     ssh reason). `~/.ssh/config` hosts are listed unsaved until used.
+     `ssh-hosts-history.jsonl` logs added, removed, connected and Check
+     failed, trimmed atomically to the newest 500 lines; a machine's
+     removal is a line there and the saved host stays. No password, key
+     or command output is written. Current usage is computed on each read,
+     never saved: the remote projects on the host, their panes with any team
+     role, and the added machine with its occupancy. Settings -> Machines
+     shows it behind "Usage and history" on each row; `aya machines hosts
+     [--json]` prints it under each host; Remote host suggestions list
+     the most recently used hosts first.
 3. **Routing test (cheap, before any proxy).** With the user's approval
    and during a window they pick, put a throwaway forwarding shim (a small
    Node script on `127.0.0.1`, no Aya changes) in front of one machine's
