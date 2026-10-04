@@ -746,3 +746,36 @@ test("a Pause that lands while restore reads a team leaves it without a clock", 
     t.cleanup();
   }
 });
+
+test("restore arms the teams after one whose files fail to read", async () => {
+  const t = await setup();
+  const proto = TeamStore.prototype;
+  const progress = proto.progress;
+  try {
+    await t.runner.start("game", "ux-review");
+    t.runner.stopAll();
+    // A second running team, sorted first, whose progress file throws (a parse failure is handled closer in).
+    const broken = new TeamStore(teamDir(t.deps.teamHome, "game", "aaa-broken"));
+    await broken.saveDefinition(TEAM(true));
+    await broken.setPaused(false);
+    proto.progress = async function () {
+      if (this.dir.includes("aaa-broken")) throw new Error("progress unreadable");
+      return progress.call(this);
+    };
+    const warned = [];
+    const jobs = [];
+    const relaunched = new TeamRunner(t.deps, (fn, ms) => {
+      const job = { fn, ms, cancelled: false };
+      jobs.push(job);
+      return () => (job.cancelled = true);
+    }, () => t.now, (...args) => warned.push(args.join(" ")));
+    await relaunched.restore();
+    assert.equal(jobs.length, 1, "ux-review got its round clock");
+    assert.ok(warned.some((w) => w.includes("game/aaa-broken not restored")), warned.join("\n"));
+    relaunched.stopAll();
+  } finally {
+    proto.progress = progress;
+    t.runner.stopAll();
+    t.cleanup();
+  }
+});

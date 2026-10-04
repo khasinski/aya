@@ -81,10 +81,10 @@ for (const c of SAVES) {
   test(`save: ${c.name}`, async () => {
     const t = teamProject("aya-status-save-");
     try {
-      if (c.before !== null) await saveTeam(t.teamHome, t.project, { ...TEAM, statusCommand: c.before });
+      if (c.before !== null) await saveTeam(t.teamHome, t.project, { ...TEAM, statusCommand: c.before }, { fromWindow: true });
       const before = await savedText(t);
       const given = c.given === undefined ? TEAM : { ...TEAM, statusCommand: c.given };
-      const save = saveTeam(t.teamHome, t.project, given, { byAgent: c.byAgent });
+      const save = saveTeam(t.teamHome, t.project, given, { byAgent: c.byAgent, fromWindow: !c.byAgent });
       if (c.error) {
         await assert.rejects(save, c.error);
         assert.equal(await savedText(t), before, "nothing saved");
@@ -103,11 +103,11 @@ for (const c of SAVES) {
 test("save: an agent's save queued behind the window's clear does not restore the cleared command", async () => {
   const t = teamProject("aya-status-race-");
   try {
-    await saveTeam(t.teamHome, t.project, { ...TEAM, statusCommand: "ollama ps" });
+    await saveTeam(t.teamHome, t.project, { ...TEAM, statusCommand: "ollama ps" }, { fromWindow: true });
     const file = join(t.project.directory, ".aya", "teams", "crew.md");
     let release;
     const held = whileTeamNotSaved(file, () => new Promise((r) => (release = r)));
-    const windowClears = saveTeam(t.teamHome, t.project, TEAM);
+    const windowClears = saveTeam(t.teamHome, t.project, TEAM, { fromWindow: true });
     const agentSaves = saveTeam(t.teamHome, t.project, TEAM, { byAgent: true });
     // Lets the agent's save read whatever it reads outside the queue before the window's save runs.
     await new Promise((r) => setTimeout(r, 50));

@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import { recordAgentStatus } from "./agent-status";
-import { daemonIdentity, foreignPaneIdentity, paneAbove, processTable, unprovenIdentity } from "./caller-proof";
+import { STATUS_TABLE_SHARE_MS, daemonIdentity, foreignPaneIdentity, paneAbove, processTable, unprovenIdentity } from "./caller-proof";
 import { capabilitiesDocument } from "./capabilities";
 import {
   parseControlCaller,
@@ -319,9 +319,10 @@ const speaksAsPane = (request: ControlRequest): boolean =>
  *  `status` too: a question is a team's signal, it holds the named pane's rounds. */
 const ACTS_ON_PANE_PROJECT = new Set<ControlRequest["type"]>(["team-save", "team-open", "team-start", "status"]);
 
-async function daemonRefusal(caller: ControlCaller, options: ControlServerOptions): Promise<string | null> {
+async function daemonRefusal(caller: ControlCaller, options: ControlServerOptions, shareMs?: number): Promise<string | null> {
   if (!caller.terminalId || !caller.pid) return null;
-  const table = await (options.processTable ?? processTable)(caller.pid);
+  const read = options.processTable ?? ((pid: number) => processTable(pid, undefined, shareMs));
+  const table = await read(caller.pid);
   return table ? daemonIdentity(caller, table) : null;
 }
 
@@ -376,7 +377,7 @@ async function handleRequest(
   const refusal = speaksAsPane(request)
     ? await identityRefusal(caller, options)
     : ACTS_ON_PANE_PROJECT.has(request.type)
-      ? await daemonRefusal(caller, options)
+      ? await daemonRefusal(caller, options, request.type === "status" ? STATUS_TABLE_SHARE_MS : undefined)
       : null;
   if (refusal) throw new Error(refusal);
   const under = ACTS_AS_PANE_ROLE.has(request.type) ? await paneUnder(caller, options) : null;

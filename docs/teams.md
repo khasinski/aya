@@ -270,6 +270,10 @@ A 22-round reviewer/implementer UX session hit:
   with every round, whether the rhythm, a silence or a stall made it due
   (`statusSection` in `electron/team-status-command.ts`). It is
   for state Aya cannot know, e.g. which models a model server has loaded.
+  Only the Teams window's Save sets, changes or clears it: a save over the
+  control socket (`aya team save`, from a pane or not) keeps the saved one and
+  refuses a different one, since an agent can shed its pane identity (unset
+  `AYA_TERMINAL_ID`, `setsid`) and look like a terminal outside Aya.
   Each run is recorded in the team's `status.json`; `aya team stats <team>`
   (and `--json`, `--now`) only reads that and prints the last run with its time ("last
   run 22:41") under "Status (from the team's command)", or "not run yet"; it
