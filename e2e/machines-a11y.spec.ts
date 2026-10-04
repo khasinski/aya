@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "./fixtures";
-import { openMachines, seedBase, TWO_MACHINES } from "./helpers/machines";
+import { LIBEVAL_FILES, LIBEVAL_REMOTE, openMachines, seedBase, TWO_MACHINES } from "./helpers/machines";
 
 // WCAG 2.2 A checks for Settings > Machines read from the DOM and the keyboard, never from pixels:
 // every control has a name and is reached by Tab, headings do not skip, status is never color alone, no trap.
@@ -144,5 +144,43 @@ test.describe("added", () => {
     await expect(panel.getByTestId("machine-card")).toHaveCount(2);
     await expect(panel.getByTestId("machine-state").first()).toContainText("Connected");
     assertA(await audit(window, "added"));
+  });
+});
+
+test.describe("expanded", () => {
+  test.use({ seedOptions: { ...seedBase, ayaHomeFiles: { ...seedBase.ayaHomeFiles, ...LIBEVAL_FILES, "machines.json": TWO_MACHINES } } });
+  test("Settings > Machines, a host expanded: a real disclosure button, keyboard toggles, names, Tab order", async ({ app, window }) => {
+    await window.evaluate((req) => window.aya.createRemoteProject(req), LIBEVAL_REMOTE);
+    const panel = await openMachines(window, app);
+    // 4.1.2: each disclosure is a <button> with aria-expanded and aria-controls naming the region it shows.
+    const toggles = panel.getByRole("button", { name: /^Usage and history, / });
+    // gpu-box and mini-lab cards, old-server and me@devbox suggestions; "This machine" is no ssh host.
+    await expect(toggles).toHaveCount(4);
+    for (const t of await toggles.all()) {
+      expect(await t.evaluate((n) => n.tagName)).toBe("BUTTON");
+      await expect(t).toHaveAttribute("aria-expanded", "false");
+      const controls = await t.getAttribute("aria-controls");
+      expect(controls).toBeTruthy();
+      await expect(panel.locator(`#${controls}`)).toBeHidden();
+    }
+    const gpu = panel.getByRole("button", { name: "Usage and history, gpu-box" });
+    const region = panel.locator(`#${await gpu.getAttribute("aria-controls")}`);
+    // 2.1.1: Enter opens, Space closes, focus stays on the button.
+    await gpu.focus();
+    await window.keyboard.press("Enter");
+    await expect(gpu).toHaveAttribute("aria-expanded", "true");
+    await expect(region).toBeVisible();
+    await window.keyboard.press("Space");
+    await expect(gpu).toHaveAttribute("aria-expanded", "false");
+    await expect(region).toBeHidden();
+    await expect(gpu).toBeFocused();
+    await window.keyboard.press("Enter");
+    // 1.4.1 and 1.3.1: what the row says is text, the history a list.
+    await expect(region).toContainText("Used by: machine gpu-box");
+    await expect(region).toContainText("panes tester (tester in team qa), implementer");
+    await expect(region.getByRole("list")).toBeVisible();
+    // The caret is generated content, outside the name.
+    expect(await gpu.evaluate((n) => (n as HTMLElement).innerText.trim())).toBe("Usage and history");
+    assertA(await audit(window, "expanded"));
   });
 });

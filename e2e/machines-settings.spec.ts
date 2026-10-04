@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, type ElectronApplication, type Page } from "@playwright/test";
 import { test } from "./fixtures";
-import { openMachines, seedBase, TWO_MACHINES } from "./helpers/machines";
+import { LIBEVAL_FILES, LIBEVAL_REMOTE, NEUTRAL_PROMPT, openMachines, seedBase, SSH_CONFIG, TWO_MACHINES } from "./helpers/machines";
 
 // Settings > Machines and Open project > Remote host over one store of known ssh hosts.
 // ssh is e2e/helpers/fake-ssh-machines.cjs (fixed answers, every call logged); no real host, no model touched.
@@ -159,5 +159,79 @@ test.describe("added", () => {
     await expect(window.getByLabel("Remote host")).toHaveValue("me@devbox");
     await expect(items).toHaveCount(1);
     await expect(items.nth(0)).toHaveAttribute("aria-pressed", "true");
+  });
+});
+
+test.describe("usage and history", () => {
+  test.use({
+    seedOptions: {
+      ...seedBase,
+      homeFiles: { ".ssh/config": SSH_CONFIG, ...NEUTRAL_PROMPT },
+      launchEnv: { PS1: "$ " },
+      ayaHomeFiles: { ...seedBase.ayaHomeFiles, ...LIBEVAL_FILES, "machines.json": TWO_MACHINES },
+    },
+  });
+
+  test("a remote project open and a Check are saved; a row expands to its usage and history; removal keeps the line", async ({ app, window, seeded }) => {
+    const savedFile = join(seeded.ayaHome, "ssh-hosts.json");
+    expect(existsSync(savedFile), "nothing is saved before a host is used").toBe(false);
+    // Open project > Remote host's own call: re-opening libeval on gpu-box is a use of gpu-box.
+    await window.evaluate((req) => window.aya.createRemoteProject(req), LIBEVAL_REMOTE);
+    const afterOpen = JSON.parse(readFileSync(savedFile, "utf8"));
+    expect(afterOpen.hosts).toEqual([expect.objectContaining({ target: "gpu-box", addedFrom: "open-project", lastUsedFor: "project" })]);
+
+    const panel = await openMachines(window, app);
+    const gpu = panel.getByTestId("machine-card").nth(0);
+    const toggle = gpu.getByRole("button", { name: "Usage and history, gpu-box" });
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    const details = panel.locator(`#${await toggle.getAttribute("aria-controls")}`);
+    await expect(details).toBeHidden();
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(details).toBeVisible();
+    await expect(details).toContainText("Used by: machine gpu-box (in use: run5 timed collection, by justi); project libeval; panes tester (tester in team qa), implementer");
+    await expect(details).toContainText(/Added \d\d:\d\d from Open project; last used \d\d:\d\d \(remote project\)/);
+    await expect(details.getByRole("listitem")).toHaveText([/\d\d:\d\d added from Open project/, /\d\d:\d\d connected \(remote project libeval\)/]);
+
+    // A Check updates the open row in place; a failed one says why in text.
+    await panel.getByRole("button", { name: "Check old-server" }).click();
+    await expect(panel.getByTestId("machine-suggestion").filter({ hasText: "old-server" })).toContainText("Not reachable");
+    await gpu.getByRole("button", { name: "Check now, gpu-box" }).click();
+    await expect(details).toContainText(/Last Check \d\d:\d\d: reachable/);
+    await expect(details.getByRole("listitem").last()).toHaveText(/connected \(Check\)$/);
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await shoot(app, window, "4-machines-host-expanded.png");
+    if (SHOTS) await details.screenshot({ path: join(SHOTS, "4b-host-details.png") });
+
+    // Removing mini-lab leaves it a suggestion that still carries its history.
+    await panel.getByRole("button", { name: "Check now, mini-lab" }).click();
+    window.once("dialog", (d) => void d.accept());
+    await panel.getByRole("button", { name: "Remove mini-lab" }).click();
+    await expect(panel.getByTestId("machine-card")).toHaveCount(1);
+    const mini = panel.getByTestId("machine-suggestion").filter({ hasText: "mini-lab" });
+    await mini.getByRole("button", { name: "Usage and history, mini-lab" }).click();
+    await expect(mini.getByTestId("host-details").getByRole("listitem").last()).toHaveText(/removed machine mini-lab from Settings > Machines$/);
+    const history = readFileSync(join(seeded.ayaHome, "ssh-hosts-history.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(history.map((e: { target: string; event: string }) => `${e.target} ${e.event}`)).toEqual([
+      "gpu-box added",
+      "gpu-box connected",
+      "old-server added",
+      "old-server check-failed",
+      "gpu-box connected",
+      "mini-lab added",
+      "mini-lab connected",
+      "mini-lab removed",
+    ]);
+    expect(history.find((e: { event: string }) => e.event === "check-failed").why).toBe("ssh: old-server: Permission denied (publickey).");
+    await window.keyboard.press("Escape");
+
+    // Open project > Remote host: the most recently used first, with when.
+    await window.locator(".aya-tab-new").click();
+    await window.getByRole("button", { name: "Remote" }).click();
+    const items = window.getByTestId("remote-host-suggestions").getByRole("button");
+    await expect(items.nth(0)).toHaveText(/^mini-lab\s*ssh config · last used \d\d:\d\d$/);
+    await expect(items.nth(1)).toHaveText(/^gpu-box\s*ssh config · remote project libeval · machine · last used \d\d:\d\d$/);
+    await expect(items.nth(2)).toHaveText(/^old-server\s*ssh config · last used \d\d:\d\d$/);
+    await shoot(app, window, "5-remote-host-recent-first.png");
   });
 });

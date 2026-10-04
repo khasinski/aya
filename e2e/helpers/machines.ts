@@ -39,3 +39,21 @@ export async function openMachines(window: Page, app: ElectronApplication) {
   return panel;
 }
 
+
+// A remote project on gpu-box with two panes, one playing the tester role in a saved team "qa".
+export const LIBEVAL_REMOTE = { name: "libeval", directory: "/srv/libeval", hostId: "gpu-box", label: "gpu-box", sshTarget: "gpu-box" };
+export const LIBEVAL_FILES = {
+  "projects/gpu-box-libeval.json": JSON.stringify({
+    name: "libeval",
+    directory: "/srv/libeval",
+    tabs: [
+      { id: "lib-tester", presetId: "shell", name: "tester" },
+      { id: "lib-impl", presetId: "shell", name: "implementer" },
+    ],
+    remote: { hostId: "gpu-box", label: "gpu-box", sshTarget: "gpu-box", directory: "/srv/libeval" },
+  }),
+  "teams/gpu-box-libeval/qa/saved.md": "# qa\n",
+  "teams/gpu-box-libeval/qa/assignments.json": JSON.stringify({ tester: "lib-tester" }),
+};
+/** A neutral prompt, so no real host name shows in a screenshot. */
+export const NEUTRAL_PROMPT = { ".zshrc": "PS1='$ '\n", ".bashrc": "PS1='$ '\n", ".profile": "PS1='$ '\nexport PS1\n" };

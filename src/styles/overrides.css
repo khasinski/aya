@@ -3295,3 +3295,34 @@ select.aya-modal-input {
 .aya-host-suggestions-wrap {
   margin: 8px 0 8px;
 }
+
+.aya-host-details {
+  margin-top: 8px;
+}
+.aya-host-details-toggle {
+  font-size: 12px;
+}
+/* Generated content stays out of the button's name; aria-expanded carries the state. */
+.aya-host-details-toggle::before {
+  content: "\25B8\00A0" / "";
+}
+.aya-host-details-toggle[aria-expanded="true"]::before {
+  content: "\25BE\00A0" / "";
+}
+.aya-host-details-body {
+  margin: 6px 0 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--border, rgba(128, 128, 128, 0.35));
+  color: var(--fg-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.aya-machines .aya-host-details-body p {
+  margin: 2px 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.aya-host-details-body ul {
+  margin: 2px 0 0;
+  padding-left: 16px;
+}

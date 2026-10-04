@@ -4,12 +4,17 @@ import {
   cpuText,
   foundText,
   gpuText,
+  historyText,
+  keepOrder,
+  lastCheckText,
   memoryText,
   modelLines,
   occupancyText,
   ollamaText,
+  savedText,
   stateLine,
   suggestions,
+  usageText,
 } from "../machines-view";
 
 const DEFAULT_OLLAMA_PORT = 11434;
@@ -20,13 +25,56 @@ function Dot({ ok }: { ok: boolean }) {
   return <span className={`aya-machine-dot ${ok ? "aya-machine-dot--ok" : "aya-machine-dot--down"}`} aria-hidden="true" />;
 }
 
+/** A host's current usage and history behind a real disclosure button (WCAG 4.1.2: aria-expanded, aria-controls). */
+function HostDetails({ host, label }: { host: KnownHost; label: string }) {
+  const [open, setOpen] = useState(false);
+  const id = `host-details-${host.target.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  const now = new Date();
+  const check = lastCheckText(host, now);
+  return (
+    <div className="aya-host-details">
+      <button
+        type="button"
+        className="aya-modal-btn aya-host-details-toggle"
+        aria-expanded={open}
+        aria-controls={id}
+        aria-label={`Usage and history, ${label}`}
+        onClick={() => setOpen((o) => !o)}
+      >
+        Usage and history
+      </button>
+      <div id={id} hidden={!open} className="aya-host-details-body" data-testid="host-details">
+        <p>{usageText(host)}</p>
+        <p>{savedText(host, now)}</p>
+        {check && <p>{check}</p>}
+        {host.history?.length ? (
+          <>
+            <p id={`${id}-history`}>History, newest last:</p>
+            <ul aria-labelledby={`${id}-history`}>
+              {host.history.map((e, i) => (
+                <li key={`${e.at}-${i}`}>{historyText(e, now)}</li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <p>No history yet.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function MachineCard({
   machine,
+  host,
   onChanged,
+  onChecked,
   onRemoved,
 }: {
   machine: MachineView;
+  host?: KnownHost;
   onChanged: () => Promise<void>;
+  onChecked: () => Promise<void>;
   onRemoved: () => void;
 }) {
   const [status, setStatus] = useState<MachineStatus>(machine.status);
@@ -60,6 +108,7 @@ function MachineCard({
   const checkNow = () =>
     run("Check", async () => {
       setStatus(await window.aya.machinesCheck(machine.reach === "local" ? "local" : machine.reach.ssh, port));
+      await onChecked();
     });
   const free = () => run("Free", async () => {
     await window.aya.machinesCommand(["free", machine.id]);
@@ -191,6 +240,7 @@ function MachineCard({
           Remove
         </button>
       </div>
+      {host && <HostDetails host={host} label={machine.id} />}
     </article>
   );
 }
@@ -224,6 +274,13 @@ export function MachinesSettings() {
     void reload();
   }, [reload]);
 
+  /** After a Check: the rows show its result and history where they are. */
+  const refreshHosts = useCallback(async () => {
+    const fresh = await window.aya.machinesHosts().catch(() => null);
+    if (fresh) setHosts((shown) => keepOrder(shown, fresh));
+  }, []);
+  const hostFor = (target: string) => hosts?.find((h) => h.target.toLowerCase() === target.toLowerCase());
+
   useEffect(() => {
     if (!focusMachine || !machines) return;
     const heading = document.getElementById(`machine-${focusMachine}-name`);
@@ -238,6 +295,7 @@ export function MachinesSettings() {
     try {
       const status = await window.aya.machinesCheck(target);
       setChecks((c) => ({ ...c, [target]: status }));
+      await refreshHosts();
     } catch (err) {
       setChecks((c) => ({ ...c, [target]: { failed: message(err) } }));
     }
@@ -305,7 +363,9 @@ export function MachinesSettings() {
               <li key={m.id}>
                 <MachineCard
                   machine={m}
+                  host={m.reach === "local" ? undefined : hostFor(m.reach.ssh)}
                   onChanged={reload}
+                  onChecked={refreshHosts}
                   onRemoved={() => {
                     headingRef.current?.focus();
                     void reload();
@@ -401,6 +461,7 @@ export function MachinesSettings() {
                     <p className="aya-machine-error">Check failed: {result.failed}</p>
                   )}
                 </div>
+                {s.host && <HostDetails host={s.host} label={label} />}
               </li>
             );
           })}

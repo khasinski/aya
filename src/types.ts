@@ -1257,11 +1257,32 @@ export interface MachineView {
   status: MachineStatus;
 }
 
-export type HostSource = "ssh-config" | "remote-project" | "machine";
+export type HostSource = "ssh-config" | "remote-project" | "machine" | "saved";
+export type HostOrigin = "open-project" | "settings" | "cli";
+
+export interface HostEvent {
+  at: string;
+  target: string;
+  event: "added" | "removed" | "connected" | "check-failed";
+  from?: HostOrigin;
+  project?: string;
+  machine?: string;
+  why?: string;
+}
 
 export interface KnownHost {
   target: string;
   sources: HostSource[];
   machineId?: string;
   projects?: string[];
+  panes?: { name: string; project: string; role?: string; team?: string }[];
+  occupancy?: { by: string; pane?: string; purpose: string; since: string };
+  saved?: {
+    addedAt: string;
+    addedFrom: HostOrigin;
+    lastUsedAt?: string;
+    lastUsedFor?: "project" | "check";
+    lastCheck?: { ok: boolean; at: string; why?: string };
+  };
+  history?: HostEvent[];
 }
