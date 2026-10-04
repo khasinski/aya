@@ -1477,6 +1477,10 @@ let legacySweepTimer: NodeJS.Timeout | null = null;
 // Set in before-quit: an already-fired sweep callback checks it and bails
 // (clearTimeout can't stop a callback that is already running).
 let appQuitting = false;
+// A round typing at quit holds the quit this long at most for its Enter, while the pty host is still connected.
+const TEAM_QUIT_SETTLE_MS = 2_000;
+let teamsAtQuit: TeamRunner | null = null;
+let teamsStopped = false;
 
 // --- Aya Web (experimental): browser access over HTTP + WebSocket ---
 let webConfig: WebConfig | null = null;
@@ -2973,6 +2977,7 @@ app.whenReady().then(async () => {
   mainWindow = createWindow(savedState);
   startupWindowCreated = true;
   const teamRunner = registerIpc();
+  teamsAtQuit = teamRunner;
   configureAutoUpdates(mainWindow);
   // Before checking for a NEW update, surface a PREVIOUS one that silently
   // failed to install and rolled back (#78).
@@ -3126,7 +3131,16 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  if (!teamsStopped && teamsAtQuit) {
+    teamsStopped = true;
+    const typing = teamsAtQuit.stopAll();
+    if (typing) {
+      event.preventDefault();
+      void Promise.race([typing, new Promise((resolve) => setTimeout(resolve, TEAM_QUIT_SETTLE_MS))]).finally(() => app.quit());
+      return;
+    }
+  }
   appQuitting = true;
   try {
     cliAdoption.flush();

@@ -68,6 +68,9 @@ export class TeamRunner {
   // One team's Starts, Resumes, restores, clock looks and Remove run one after another: two overlapping ticks would type
   // the same round number, a Start and a Resume the task twice. Pause and Save do not wait: they bump the generation instead.
   private turns = oneAtATime();
+  // Set by stopAll at quit: no round starts typing after it, and one already typing is awaited to its Enter.
+  private quitting = false;
+  private typing = new Set<Promise<void>>();
 
   constructor(
     private deps: TeamControlDeps,
@@ -356,8 +359,12 @@ export class TeamRunner {
     return typed;
   }
 
-  stopAll(): void {
-    for (const key of [...this.cancels.keys()]) this.cancel(key);
+  /** At quit: stops every clock and resolves once a round already typing has its Enter recorded, null when none is.
+   *  No generation bump: that would leave a pasted round in the composer for the next life to type again on top. */
+  stopAll(): Promise<void> | null {
+    this.quitting = true;
+    for (const [key, cancel] of [...this.cancels]) (cancel(), this.cancels.delete(key));
+    return this.typing.size ? Promise.all(this.typing).then(() => undefined) : null;
   }
 
   /** One clock per running team: every ROUND_CHECK_MS it records what moved and whether a round is due. `fresh` starts the
@@ -467,7 +474,18 @@ export class TeamRunner {
       holdReason: async (pane: string) => (await this.deps.holdReason(pane)) ?? ((await this.deps.busy?.(pane)) ? HOLD_BUSY : null),
       deliver: async (pane: string, line: string, _cancelled?: () => boolean, entered?: () => Promise<void>, pasting?: () => Promise<void>) => {
         if (stale()) throw new PaneHeldError("the team was paused or changed while the round was prepared", false);
-        return this.deps.deliver(pane, line, () => stale() || talkedSince(), entered, pasting);
+        if (this.quitting) throw new PaneHeldError("Aya is quitting", false);
+        let done = () => {};
+        const typing = new Promise<void>((resolve) => (done = () => (this.typing.delete(typing), resolve())));
+        this.typing.add(typing);
+        const recorded = async () => {
+          try {
+            await entered?.();
+          } finally {
+            done();
+          }
+        };
+        return this.deps.deliver(pane, line, () => stale() || talkedSince(), recorded, pasting).finally(done);
       },
     };
     const body = onRepo
@@ -487,7 +505,7 @@ export class TeamRunner {
       await store.updateProgress(({ unreached, ...p }) => ({ ...p, ...(onRepo ? { stalledLogged: true } : {}), unanswered: { role: lead, rounds: (p.unanswered?.rounds ?? 0) + 1 } }));
     });
     debugLog(store, "round", { round, reason: onRepo ? "stall" : quiet ? "silence" : "rhythm", typed: typed.entry !== null, ...(talked ? { skipped: "talk came in while it waited for the lead's pane" } : {}) });
-    if (typed.entry || !typed.failure || talked) return;
+    if (typed.entry || !typed.failure || talked || this.quitting) return;
     // Text left in the composer without its Enter is logged as such; the composer's draft holds the next try.
     if (typed.typed) await logTyped(store, message, typed);
     const { failure } = typed;

@@ -239,3 +239,47 @@ test("a silence round leaves the rhythm's clock alone", async () => {
     t.cleanup();
   }
 });
+
+// Aya quits while a round is typed (finding 8): a surviving agent got the paste, so the Enter goes and the number is
+// recorded before the quit goes on; otherwise the next life types the same round again on top of it.
+clockTest("a quit while a round is typed lets its Enter go and records the round, and no round starts after it", async (t) => {
+  const { PaneHeldError } = await import("../dist-electron/team-control.js");
+  await t.w.runner.start("game", "ux-review");
+  const keys = [];
+  let release;
+  const gate = new Promise((resolve) => (release = resolve));
+  let probed;
+  const probe = new Promise((resolve) => (probed = resolve));
+  let pasted;
+  const inPaste = new Promise((resolve) => (pasted = resolve));
+  t.w.deps.deliver = async (pane, text, cancelled, entered, pasting) => {
+    await pasting?.();
+    if (cancelled?.()) throw new PaneHeldError("cancelled before the paste", false);
+    keys.push(`paste ${text.match(/Round \d+/)?.[0]}`);
+    pasted();
+    await gate;
+    if (cancelled?.()) throw new PaneHeldError("cancelled before the Enter; text left in the composer", true);
+    keys.push("enter");
+    await entered?.();
+    // The look for the agent's turn after the Enter takes seconds: the quit does not wait for it.
+    await probe;
+  };
+  t.w.now += BEAT * S + S;
+  const tick = t.check();
+  await inPaste;
+  const stopped = t.w.runner.stopAll();
+  assert.ok(stopped, "the quit waits: a round is typing");
+  release();
+  assert.equal(await Promise.race([stopped.then(() => "stopped"), new Promise((resolve) => setTimeout(resolve, 2_000, "still waiting"))]), "stopped");
+  assert.deepEqual(keys, ["paste Round 1", "enter"]);
+  assert.equal(await t.store.lastRound(), 1, "the number is used up before the quit goes on");
+  assert.ok((await t.store.log()).some((m) => m.from === "aya" && /^Round 1: /.test(m.text)), "the round is in the log");
+  probed();
+  await tick;
+  assert.equal(t.w.runner.stopAll(), null, "nothing typing: the quit goes on at once");
+  // A look that was already queued when the quit came types nothing and logs no skip.
+  t.w.now += BEAT * S;
+  for (const job of t.w.jobs) await job.fn();
+  assert.deepEqual(keys, ["paste Round 1", "enter"]);
+  assert.deepEqual(await t.skips(), []);
+});
