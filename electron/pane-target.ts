@@ -13,7 +13,8 @@ export interface PaneQuery {
   /** Exact terminal id; beats `name`, and no match is an error, not a
    *  fallback. Still scoped by `projectSlug` when one is set. */
   terminalId?: string;
-  /** Human-facing terminal name, matched case-insensitively. */
+  /** Human-facing terminal name, matched case-insensitively; a terminal id
+   *  when no name matches. */
   name?: string;
   /** Scopes the lookup to one project, so an agent's "reviewer" means the one
    *  in ITS project. The CLI fills this from AYA_PROJECT_SLUG. */
@@ -63,13 +64,19 @@ export function resolvePaneTarget(
 
   const matches = all.filter((c) => c.name.trim().toLowerCase() === wanted);
   if (matches.length === 0) {
+    // `aya pane list` prints ids and the CLI has one target slot: an id there names its pane.
+    const byId = all.find((c) => c.terminalId === query.name?.trim());
+    if (byId) return { ok: true, match: byId };
     return { ok: false, error: `no pane named "${query.name}"` };
   }
   if (matches.length > 1) {
-    const where = matches.map((m) => `${m.projectSlug}/${m.name}`).join(", ");
+    const where = matches.map((m) => `${m.projectSlug}/${m.name} ${m.terminalId}`).join(", ");
+    // --project cannot split two panes of one project; only an id can.
+    const oneProject = new Set(matches.map((m) => m.projectSlug)).size === 1;
+    const advice = oneProject ? "pass one of these ids" : "pass --project <slug> or one of these ids";
     return {
       ok: false,
-      error: `"${query.name}" is ambiguous (${where}); pass --project or an id`,
+      error: `"${query.name}" is ambiguous (${where}); ${advice}`,
     };
   }
   return { ok: true, match: matches[0] };

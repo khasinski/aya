@@ -9,9 +9,11 @@ import { debugLog } from "./team-debug";
 import { OWNER_ONLY_FILE_MODE } from "./paths";
 import { ID_RE, TEAM_SYSTEM_SENDER, TEAM_USER_SENDER } from "./team-definition";
 import { FRESH_PROGRESS, parseProgress, type TeamProgress } from "./team-progress";
+import { deliveryState, goesStale, TEAM_FILES, unreadIn, type DeliveryNote } from "./team-records";
 import type { TeamMessage } from "./types";
 
-export type { TeamMessage };
+export type { TeamMessage, DeliveryNote };
+export { goesStale };
 
 const PROJECT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -22,17 +24,6 @@ export function teamDir(ayaHome: string, project: string, team: string): string 
   return path.join(ayaHome, "teams", project, team);
 }
 
-const TEAM_FILES = {
-  assignments: "assignments.json",
-  state: "state.json",
-  saved: "saved.md",
-  log: "log.jsonl",
-  read: "read.json",
-  typing: "typing.json",
-  progress: "progress.json",
-  deliveryNotes: "delivery-notes.json",
-} as const;
-
 // A trim keeps messages still owed plus the newest; ids go on counting, so read marks are unaffected.
 export const TEAM_LOG_MAX_ENTRIES = 2_000;
 export const TEAM_LOG_KEEP_ENTRIES = 1_000;
@@ -42,28 +33,7 @@ export const TEAM_LOG_READ_BYTES = 2 * 1024 * 1024;
 export const TEAM_LOG_TRIM_BYTES = TEAM_LOG_READ_BYTES / 2;
 export const DELIVERY_NOTES_KEEP = 500;
 
-/** Why a logged message was not typed yet, or how it got to its receiver other than a plain paste: read with
- *  `aya team inbox`, or typed with its Enter withheld. */
-export type DeliveryNote = { kind: "held"; reason: string } | { kind: "inbox" } | { kind: "withheld"; reason: string; afterEnter?: boolean };
-
 const CRASHED_MID_TYPING: DeliveryNote = { kind: "withheld", reason: "Aya went down while typing it; it may be in the composer without its Enter, or not there at all - check the pane" };
-
-/** Aya's own rounds and delivery tests go stale while held (a later one replaces them); anything else stays owed. */
-export const goesStale = (m: Pick<TeamMessage, "from">): boolean => m.from === TEAM_SYSTEM_SENDER;
-
-/** Not typed yet and past its receiver's read mark; owed unless it goesStale. */
-const unreadIn = (read: Record<string, number>) => (m: TeamMessage): boolean => !m.delivered && m.id > (read[m.to] ?? 0);
-
-/** A logged message as the window shows it, from its log entry, delivery note and the receiver's read mark: held,
- *  reserved, written (at once, later, via the inbox) or typed without its Enter; a refused one is never logged. */
-function deliveryState(m: TeamMessage, note: DeliveryNote | undefined, readMark: number): TeamMessage {
-  // Aya's own were marked read with the inbox, not printed: they stay held (stale).
-  if (note?.kind === "inbox") return { ...m, viaInbox: true, ...(goesStale(m) ? {} : { delivered: true }) };
-  if (note?.kind === "withheld") return { ...m, delivered: true, held: note.reason, typedOnly: true, ...(note.afterEnter ? { afterEnter: true } : {}) };
-  // Taken for typing or typed later (the read mark passed it): it reached the pane.
-  if (!m.delivered && !goesStale(m) && m.id <= readMark) return { ...m, delivered: true, ...(note?.kind === "held" ? { held: note.reason } : {}) };
-  return note?.kind === "held" ? { ...m, held: note.reason } : m;
-}
 
 /** What a trim keeps within TEAM_LOG_TRIM_BYTES: messages still owed to their role first (a quiet role's must not be
  *  cut by the others' talk), then the newest TEAM_LOG_KEEP_ENTRIES of the rest; in log order. */

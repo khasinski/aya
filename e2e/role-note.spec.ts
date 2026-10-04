@@ -64,7 +64,8 @@ for (const [agent, optedIn, shape] of CELLS) {
       const status = card.getByLabel("tester role note");
       if (carriesAppended(shape)) {
         expect(carried, "the role note did not reach the CLI").toBe(true);
-        if (optedIn) expect(roleNoteText(agent, dump), "the brief goes with the note, Codex included").toContain("aya capabilities");
+        // A claude or codex team pane takes the brief even without the opt-in.
+        if (optedIn || agent === "claude" || agent === "codex") expect(roleNoteText(agent, dump), "the brief goes with the note, Codex included").toContain("aya capabilities");
         else expect(roleNoteText(agent, dump), "no brief without the opt-in").not.toContain("aya capabilities");
         // A tab with no saved session starts fresh, Codex too, so its note is carried and nothing is unknown.
         await expect(status).toHaveCount(0);

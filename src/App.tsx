@@ -727,6 +727,12 @@ export function App() {
   const [activeLeafByProject, setActiveLeafByProject] = useState<
     Record<string, string>
   >({});
+  // The terminal that inherited the active slot from a closed one. It is shown
+  // but gets no keyboard focus until the user picks it: keys typed across the
+  // close were meant for the closed pane and must not answer a prompt here.
+  const [closeFocusHold, setCloseFocusHold] = useState<
+    { slug: string; terminalId: string } | null
+  >(null);
   const [git, setGit] = useState<Record<string, GitInfo>>({});
   const [githubLinks, setGithubLinks] = useState<
     Record<string, GitHubLink | null>
@@ -2339,6 +2345,9 @@ export function App() {
         ...activeTabByProjectRef.current,
         [t.projectSlug]: nextActive,
       };
+      if (nextActive && activeProjectIdRef.current === t.projectSlug) {
+        setCloseFocusHold({ slug: t.projectSlug, terminalId: nextActive });
+      }
       setActiveTabByProject((p) =>
         p[t.projectSlug] === id ? { ...p, [t.projectSlug]: nextActive } : p,
       );
@@ -2456,6 +2465,7 @@ export function App() {
 
   const selectTerminalFromSidebar = useCallback(
     (id: string) => {
+      setCloseFocusHold(null);
       const terminal = terminalsRef.current[id];
       if (!terminal) return;
       const project = projectsRef.current.find((p) => p.slug === terminal.projectSlug);
@@ -2525,6 +2535,8 @@ export function App() {
    *  and the clear-on-focus effect follow a click, not just keyboard nav. */
   const setActiveSplitCell = useCallback(
     (slug: string, leafId: string) => {
+      // Before the split guard: a click on the pane is the pick that ends a hold in any layout.
+      setCloseFocusHold(null);
       if (!splitEnabledRef.current) return;
       setSingleViewByProject((prev) => ({ ...prev, [slug]: null }));
       updateProjectSplitTree(slug, (tree) => ({ tree, activeLeafId: leafId }));
@@ -3808,6 +3820,9 @@ export function App() {
     !!teamToPrompt ||
     !!pendingRepoImport;
   const closeFindPane = useCallback(() => setFindInPaneFor(null), []);
+  useEffect(() => {
+    if (closeFocusHold && closeFocusHold.slug !== activeProjectId) setCloseFocusHold(null);
+  }, [closeFocusHold, activeProjectId]);
   const ignoreSnippetsOpenChange = useCallback(() => undefined, []);
 
   const activeTheme = themes.find((t) => t.id === activeThemeId) ?? themes[0];
@@ -3877,8 +3892,15 @@ export function App() {
       if (!chromeBlocked) setShowSearch(true);
     },
     openSettings: () => openSettings(),
-    prevTab: () => cycleActiveProjectTab(-1),
-    nextTab: () => cycleActiveProjectTab(1),
+    // Navigation is a pick even when it lands on the held pane (one tab left, edge of a split).
+    prevTab: () => {
+      setCloseFocusHold(null);
+      cycleActiveProjectTab(-1);
+    },
+    nextTab: () => {
+      setCloseFocusHold(null);
+      cycleActiveProjectTab(1);
+    },
     selectProject: (oneBasedIndex) => {
       const target = projects[oneBasedIndex - 1];
       if (target) setActiveProjectId(target.slug);
@@ -3886,7 +3908,10 @@ export function App() {
     findInPane: () => {
       if (activeTabId) setFindInPaneFor(activeTabId);
     },
-    focusPane: focusSplitPane,
+    focusPane: (direction) => {
+      setCloseFocusHold(null);
+      focusSplitPane(direction);
+    },
     splitPaneRight: () => splitActivePane("right"),
     splitPaneBelow: () => splitActivePane("below"),
   });
@@ -4032,7 +4057,11 @@ export function App() {
                   restartTrigger={restartTriggers[terminal.id] ?? 0}
                   macOptionKeyMode={macOptionKeyMode}
                   isActivePane={isSplit && activeLeafId === leafId}
-                  isActive={(isSplit ? activeLeafId === leafId : true) && !anyOverlayOpen}
+                  isActive={
+                    (isSplit ? activeLeafId === leafId : true) &&
+                    !anyOverlayOpen &&
+                    closeFocusHold?.terminalId !== terminal.id
+                  }
                   onActivatePane={() =>
                     activeProjectId && setActiveSplitCell(activeProjectId, leafId)
                   }

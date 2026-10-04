@@ -21,6 +21,13 @@ test.describe("a team led by the implementer, who also has the rounds", () => {
     }).toPass({ timeout: TEAM_AGENT_READY_TIMEOUT_MS });
   }
 
+  test("the card names the cadence before Start, as the status line says it after", async ({ window }) => {
+    const card = (await openTeams(window)).getByTestId("team-ux-review");
+    await expect(card.getByLabel("ux-review status")).toHaveText("not started - the lead gets a round every 2 min");
+    await startTask(card, "retest the login");
+    await expect(card.getByLabel("ux-review status")).toContainText("the lead gets a round every 2 min");
+  });
+
   test("the field names the lead before Start; with no pick the lead gets the task", async ({ window, seeded }) => {
     const dialog = await openTeams(window);
     const card = dialog.getByTestId("team-ux-review");
@@ -28,6 +35,17 @@ test.describe("a team led by the implementer, who also has the rounds", () => {
     await expect(card.getByLabel("Task goes to for ux-review").locator("option:checked")).toHaveText("lead");
     await startTask(card, "retest the login");
     await expect(card.getByText("Started; task sent to implementer.")).toBeVisible();
+    // Info, not an error: it reads in the secondary text color, not the danger red.
+    const color = (value: string) =>
+      window.evaluate((v) => {
+        const probe = document.body.appendChild(document.createElement("span"));
+        probe.style.color = v;
+        const rgb = getComputedStyle(probe).color;
+        probe.remove();
+        return rgb;
+      }, value);
+    expect(await color("var(--fg-secondary)")).not.toBe(await color("var(--danger, #c0392b)"));
+    await expect(card.getByLabel("ux-review note")).toHaveCSS("color", await color("var(--fg-secondary)"));
     await expect.poll(() => teamLog(seeded.projectDir)("tab-right"), { timeout: TEAM_DELIVERY_TIMEOUT_MS }).toMatch(/from user \| \d\d:\d\d\] retest the login/);
     expect(teamLog(seeded.projectDir)("tab-left")).not.toMatch(/retest the login/);
   });

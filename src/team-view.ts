@@ -51,15 +51,22 @@ function taskHeld(task: { to: string; held: string | null; typedOnly?: boolean; 
   return task.typedOnly ? `task for ${task.to} is typed in its composer, Enter withheld: ${task.held}` : `task for ${task.to} waits in its inbox: ${task.held}`;
 }
 
+/** A line under a team: "info" reads neutral, "error" red. */
+export interface TeamNote {
+  text: string;
+  kind: "info" | "error";
+}
+
 /** The line under a team after Start; null when every role got the test and no task is named. A held task is
  *  named only while `log` still has it waiting or typed: once written, the line is stale. */
-export function startSummary(result: TeamStartResult, log?: TeamMessage[]): string | null {
-  if (result.alreadyRunning) return "Already running, nothing was sent.";
-  if (!result.started) return "Not started, nothing was sent: fix the roles marked below, then Start again.";
+export function startSummary(result: TeamStartResult, log?: TeamMessage[]): TeamNote | null {
+  if (result.alreadyRunning) return { text: "Already running, nothing was sent.", kind: "info" };
+  if (!result.started) return { text: "Not started, nothing was sent: fix the roles marked below, then Start again.", kind: "error" };
   const task = result.task && taskStillHeld(result.task, log) ? result.task : null;
-  if (!result.held.length) return task ? (task.held ? `Started; ${taskHeld(task)}.` : `Started; task sent to ${task.to}.`) : null;
+  const kind = result.held.length || task?.held ? "error" : "info";
+  if (!result.held.length) return task ? { text: task.held ? `Started; ${taskHeld(task)}.` : `Started; task sent to ${task.to}.`, kind } : null;
   const given = task ? (task.held ? ` The ${taskHeld(task)}.` : ` Task sent to ${task.to}.`) : "";
-  return `Started; the roles marked below did not get the delivery test.${given}`;
+  return { text: `Started; the roles marked below did not get the delivery test.${given}`, kind };
 }
 
 function taskStillHeld(task: NonNullable<TeamStartResult["task"]>, log: TeamMessage[] | undefined): boolean {
@@ -81,19 +88,22 @@ export function clock(iso: string): string {
   return `${String(time.getHours()).padStart(2, "0")}:${String(time.getMinutes()).padStart(2, "0")}`;
 }
 
+const everyRound = (min: number) => `the lead gets a round every ${min} min`;
 const messages = (n: number) => `${n} message${n === 1 ? "" : "s"}`;
 
 /** The team's line above its roles; null while there is nothing to say. Progress is a change to the repo
  *  (a commit or an edit); messages are talk. */
-export function livenessLine({ status, stalledSince, blocked, unreached, silence, repo, roundsHeld }: TeamLiveness): { text: string; tone: "ok" | "held" } | null {
-  if (status === "never started" || status === "paused") return null;
+export function livenessLine({ status, stalledSince, blocked, unreached, silence, repo, roundsHeld }: TeamLiveness): { text: string; tone: "ok" | "held" | "idle" } | null {
+  // Before Start the card names the rhythm Start begins; a team without a cadence has none to name.
+  if (status === "never started") return silence?.everyMin ? { text: `not started - ${everyRound(silence.everyMin)}`, tone: "idle" } : null;
+  if (status === "paused") return null;
   const waits = roundsHeld ? `rounds wait for ${roundsHeld.role} to answer (${roundsHeld.rounds} unanswered)` : null;
   if (status === "progressing") {
     if (!silence) return { text: waits ? `progressing - ${waits}` : "progressing", tone: "ok" };
     const asks =
       waits ??
       (silence.everyMin
-        ? `the lead gets a round every ${silence.everyMin} min`
+        ? everyRound(silence.everyMin)
         : silence.askAfterMin === null
           ? "no lead to ask"
           : `the lead is asked for a round after ${silence.askAfterMin} min without a message or a change to the repo`);
@@ -218,7 +228,7 @@ export function pendingMoves(
 }
 
 /** After Apply: which pane each role got, and that Start is the user's. */
-export function rolePanesSummary({ panes, leftWithoutPane }: RolePanes, running: boolean): string {
+export function rolePanesSummary({ panes, leftWithoutPane }: RolePanes, running: boolean): TeamNote {
   const given = `${panes.map((p) => `${p.role}: ${p.preset ? `new ${p.preset} pane` : p.name}`).join(", ")}.`;
   const left = leftWithoutPane.length ? ` Left without a pane: ${leftWithoutPane.join(", ")}.` : "";
   const because = (roles: string[], lead: string) =>
@@ -226,6 +236,9 @@ export function rolePanesSummary({ panes, leftWithoutPane }: RolePanes, running:
   const cantReach =
     because(panes.filter((p) => p.cantReach && !p.unsure).map((p) => p.role), "Can't reach") +
     because(panes.filter((p) => p.unsure).map((p) => p.role), "May not reach");
-  if (!running) return `${given}${left}${cantReach} Start the team when you are ready.`;
-  return `${given}${left}${panes.some((p) => p.notReached) ? " The roles marked below were not told their role." : ""}`;
+  // Before Start a pane not told its role yet is no problem: Start tells it.
+  const notTold = running && panes.some((p) => p.notReached);
+  const kind = left || cantReach || notTold ? "error" : "info";
+  if (!running) return { text: `${given}${left}${cantReach} Start the team when you are ready.`, kind };
+  return { text: `${given}${left}${notTold ? " The roles marked below were not told their role." : ""}`, kind };
 }

@@ -17,6 +17,7 @@ import {
   startSummary,
   taskPlaceholder,
   type PaneRole,
+  type TeamNote,
 } from "../team-view";
 import { ErrorLine, useAsyncAction } from "./use-async-action";
 
@@ -47,7 +48,7 @@ export function TeamCard({
   // Why a role's pane was not reached by the last Start or assignment, per role.
   const [notReached, setNotReached] = useState<Record<string, string>>({});
   // The line under the team: the last Start (re-read against the log) or the last Apply.
-  const [note, setNote] = useState<{ start: TeamStartResult } | { text: string } | null>(null);
+  const [note, setNote] = useState<{ start: TeamStartResult } | { apply: TeamNote } | null>(null);
   const act = async <T,>(work: () => Promise<T>) => {
     const result = await run(work);
     await onChanged();
@@ -71,7 +72,7 @@ export function TeamCard({
   const [picks, setPicks] = useState<Record<string, string>>({});
   const definition = team.definition;
   const leadWarned = leadWarning(definition);
-  const startNote = note && ("start" in note ? startSummary(note.start, team.log) : note.text);
+  const startNote = note && ("start" in note ? startSummary(note.start, team.log) : note.apply);
   const liveness = livenessLine(team.liveness);
   const leadWaiting = leadWaitingLine(team, waiting);
   const current = (role: string) => livePane(team, role, project.tabs) ?? "";
@@ -96,7 +97,7 @@ export function TeamCard({
     // A pick made while this Apply ran is the user's next one: keep it.
     setPicks((prev) => Object.fromEntries(Object.entries(prev).filter(([role, value]) => applied[role] !== value)));
     setNotReached((prev) => ({ ...prev, ...Object.fromEntries(result.panes.flatMap((p) => (p.notReached ? [[p.role, p.notReached]] : []))) }));
-    if (result.panes.length) setNote({ text: rolePanesSummary(result, team.running) });
+    if (result.panes.length) setNote({ apply: rolePanesSummary(result, team.running) });
   };
   const repoDefinition = team.repoDefinition;
   const saveRepoButton = (label: string) =>
@@ -170,7 +171,11 @@ export function TeamCard({
       )}
       <ErrorLine error={error ?? team.error} />
       {leadWarned && <div className="aya-teams-warning">{leadWarned}</div>}
-      {startNote && <div className="aya-teams-warning">{startNote}</div>}
+      {startNote && (
+        <div className={startNote.kind === "error" ? "aya-teams-warning" : "aya-teams-note"} aria-label={`${team.name} note`}>
+          {startNote.text}
+        </div>
+      )}
       {team.unsaved && (
         <div className="aya-teams-warning">
           This team file is not saved in Aya yet, so no agent sees it and it cannot start. Read it, then save it to run it.

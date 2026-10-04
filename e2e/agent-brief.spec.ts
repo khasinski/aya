@@ -202,15 +202,17 @@ test("a broken presets.json does not stop a pane from spawning", async ({ window
 const teamPane = (agent: string, agentBrief: boolean) =>
   teamSeed(IMPLEMENTER_FIRST_TEAM, { presetList: fakeAgent(agent, agentBrief).seedOptions.presetList, assignments: { tester: "tab-right" } });
 
-test.describe("a team pane without the brief opt-in", () => {
+test.describe("a claude team pane without the brief opt-in", () => {
   test.use(teamPane("claude", false));
 
-  test("still starts with its role note", async ({ window, seeded }) => {
+  // A team role turns the brief on for claude and codex; the preset stays opted out.
+  test("starts with the brief and its role note, and the preset is not changed", async ({ window, seeded }) => {
     await firstTerminalShown(window);
     const { args } = await paneLaunch(seeded);
     const note = args[args.indexOf("--append-system-prompt") + 1];
-    expect(note).toMatch(/tester in the Aya team ux-review/);
-    expect(note).not.toMatch(/aya capabilities/);
+    expect(note).toMatch(/aya capabilities[\s\S]*tester in the Aya team ux-review/);
+    const saved = JSON.parse(readFileSync(join(seeded.ayaHome, "presets.json"), "utf8")).presets[0];
+    expect(saved.agentBrief).toBeUndefined();
   });
 });
 

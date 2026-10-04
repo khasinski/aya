@@ -119,7 +119,7 @@ pathTest("Start | the delivery test and the task not seen: the role is marked, t
   assert.equal(result.task.typedOnly, true);
   assert.equal(result.task.afterEnter, true, "its Enter went: the reason says what came of it");
   const log = (await listTeams(t.teamHome, t.project))[0].log;
-  assert.equal(startSummary(result, log), `Started; the roles marked below did not get the delivery test. The task for implementer was ${NOT_SEEN}.`);
+  assert.equal(startSummary(result, log)?.text, `Started; the roles marked below did not get the delivery test. The task for implementer was ${NOT_SEEN}.`);
 });
 
 pathTest("a round to the lead not seen: named in the window, and the next look does not type it again", async (t) => {

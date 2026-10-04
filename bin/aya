@@ -15,6 +15,8 @@ LINUX_SOCKET_PATH_MAX_BYTES=107
 # "debug on": the switch in the config home and each team's log, as electron/team-debug.ts names them.
 DEBUG_SWITCH_FILE=debug.json
 DEBUG_LOG_FILE=debug.jsonl
+# Every saved team has it (electron/team-records.ts TEAM_FILES.saved): how team stats finds the team's project.
+TEAM_SAVED_FILE=saved.md
 
 usage() {
   cat >&2 <<'EOF'
@@ -30,9 +32,12 @@ Usage:
   aya status done text               Mark this terminal as done
   aya status error text              Mark this terminal as errored
   aya status clear                   Clear agent status
-  aya pane list                      List the panes/agents in this project
-  aya pane read name                 Print another pane's recent output
-  aya pane send name [--no-submit] text
+  aya pane list [--project slug]     List the panes/agents in this project
+  aya pane read target [--project slug]
+                                     Print another pane's recent output;
+                                     target is a pane name or an id from
+                                     aya pane list
+  aya pane send target [--no-submit] [--project slug] text
                                      Type text into another pane and press
                                      Enter (--no-submit: type only)
   aya team whoami                    Print this pane's team role and protocol
@@ -53,6 +58,9 @@ Usage:
                                      the first role
   aya team debug team [-f]          Print the team's last debug entries
                                      (-f: and follow them)
+  aya team stats team [--json]       Print what Aya did for the team: messages
+                                     per sender and receiver, rounds, holds,
+                                     inboxes, read marks, commits
   aya debug on|off|status            Turn on/off writing every team decision
                                      to the team's debug log
   aya presets [--json]               List presets, whether each is installed and
@@ -174,10 +182,11 @@ function requestFromArgs() {
       cwd: optionalEnv("AYA_PROJECT_DIR") || process.cwd(),
     };
   }
+  // --project beats the pane's own project, which otherwise scopes every lookup.
   if (kind === "pane-list") {
     return {
       type: "pane-list",
-      projectSlug: optionalEnv("AYA_PROJECT_SLUG"),
+      projectSlug: process.argv[4] || optionalEnv("AYA_PROJECT_SLUG"),
       selfTerminalId: optionalEnv("AYA_TERMINAL_ID"),
     };
   }
@@ -187,7 +196,7 @@ function requestFromArgs() {
     return {
       type: "pane-read",
       target: process.argv[4],
-      projectSlug: optionalEnv("AYA_PROJECT_SLUG"),
+      projectSlug: process.argv[5] || optionalEnv("AYA_PROJECT_SLUG"),
     };
   }
   if (kind === "pane-send") {
@@ -196,7 +205,7 @@ function requestFromArgs() {
       target: process.argv[4],
       text: process.argv[5],
       submit: process.argv[6] === "submit",
-      projectSlug: optionalEnv("AYA_PROJECT_SLUG"),
+      projectSlug: process.argv[7] || optionalEnv("AYA_PROJECT_SLUG"),
     };
   }
   if (kind === "team-whoami" || kind === "team-inbox") return { type: kind };
@@ -328,31 +337,39 @@ debug_switch() {
   fi
 }
 
-# The team's debug log: in AYA_PROJECT_SLUG's project, else in the one project that has the team.
+# The team's directory: in AYA_PROJECT_SLUG's project, else the one project whose team has `need` (a file name).
+team_dir() {
+  team="$1"
+  need="$2"
+  teams="$(aya_home)/teams"
+  if [ -n "${AYA_PROJECT_SLUG:-}" ]; then
+    printf '%s\n' "$teams/$AYA_PROJECT_SLUG/$team"
+    return
+  fi
+  dir=""
+  found=""
+  for candidate in "$teams"/*/"$team"; do
+    [ -e "$candidate/$need" ] || continue
+    found="${found:+$found, }$(basename "$(dirname "$candidate")")"
+    dir="$candidate"
+  done
+  case "$found" in
+    *,*)
+      printf "aya: team %s is in more than one project (%s); set AYA_PROJECT_SLUG to one of them\n" "$team" "$found" >&2
+      return 1
+      ;;
+  esac
+  printf '%s\n' "$dir"
+}
+
+# The team's debug log, in the team's directory (team_dir).
 team_debug() {
   team="${1:-}"
   case "$team" in
     ""|.*|*/*) usage_fail ;;
   esac
-  teams="$(aya_home)/teams"
-  if [ -n "${AYA_PROJECT_SLUG:-}" ]; then
-    file="$teams/$AYA_PROJECT_SLUG/$team/$DEBUG_LOG_FILE"
-  else
-    file=""
-    found=""
-    for candidate in "$teams"/*/"$team"/"$DEBUG_LOG_FILE"; do
-      [ -f "$candidate" ] || continue
-      project=$(basename "$(dirname "$(dirname "$candidate")")")
-      found="${found:+$found, }$project"
-      file="$candidate"
-    done
-    case "$found" in
-      *,*)
-        printf "aya: team %s is in more than one project (%s); set AYA_PROJECT_SLUG to one of them\n" "$team" "$found" >&2
-        exit 1
-        ;;
-    esac
-  fi
+  dir=$(team_dir "$team" "$DEBUG_LOG_FILE") || exit 1
+  file="${dir:+$dir/$DEBUG_LOG_FILE}"
   if [ -z "$file" ] || { [ ! -f "$file" ] && [ "${2:-}" != follow ]; }; then
     printf "aya: no debug log for team %s yet; turn it on with aya debug on, and it fills as the team runs\n" "$team" >&2
     exit 1
@@ -409,6 +426,38 @@ if (mode === "follow") {
   }, POLL_MS);
 }
 NODE
+}
+
+# Aya's compiled modules beside this script: the repo's or the app's (app.asar.unpacked) dist-electron.
+aya_modules_dir() {
+  self="$0"
+  while [ -L "$self" ]; do
+    link=$(readlink "$self")
+    case "$link" in
+      /*) self="$link" ;;
+      *) self="$(dirname "$self")/$link" ;;
+    esac
+  done
+  printf '%s/dist-electron\n' "$(cd "$(dirname "$self")/.." && pwd -P)"
+}
+
+# Read-only: counts what Aya did for the team from its files (electron/team-stats.ts), with Aya open or closed.
+team_stats() {
+  team="${1:-}"
+  case "$team" in
+    ""|.*|*/*) usage_fail ;;
+  esac
+  dir=$(team_dir "$team" "$TEAM_SAVED_FILE") || exit 1
+  if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+    printf "aya: no team %s in %s; it is made when the team is saved in Aya\n" "$team" "$(aya_home)/teams" >&2
+    exit 1
+  fi
+  stats="$(aya_modules_dir)/team-stats.js"
+  if [ ! -f "$stats" ]; then
+    printf "aya: team stats needs Aya's built files, not found at %s (npm run build:electron)\n" "$stats" >&2
+    exit 1
+  fi
+  exec node "$stats" "$dir" "$team" ${2:+"$2"}
 }
 
 remote_stdio() {
@@ -587,16 +636,44 @@ case "$command" in
     ;;
   pane)
     [ "$#" -eq 0 ] || shift
+    # --project <slug> counts anywhere before `--`: it scopes the target, so it is never
+    # part of a pane name or of the text sent. The rest is rotated back into "$@".
+    project=""
+    left=$#
+    literal=""
+    while [ "$left" -gt 0 ]; do
+      arg=$1
+      shift
+      left=$((left - 1))
+      if [ -z "$literal" ]; then
+        case "$arg" in
+          --) literal=1 ;;
+          --project)
+            if [ "$left" -eq 0 ] || [ -z "$1" ]; then usage_fail; fi
+            project=$1
+            shift
+            left=$((left - 1))
+            continue
+            ;;
+          --project=*)
+            project=${arg#--project=}
+            if [ -z "$project" ]; then usage_fail; fi
+            continue
+            ;;
+        esac
+      fi
+      set -- "$@" "$arg"
+    done
     action="${1:-}"
     [ "$#" -eq 0 ] || shift
     case "$action" in
       list|ls)
-        send_control pane-list
+        send_control pane-list "$project"
         ;;
       read)
         target="${1:-}"
-        if [ -z "$target" ]; then usage_fail; fi
-        send_control pane-read "$target"
+        if [ -z "$target" ] || [ "$#" -gt 1 ]; then usage_fail; fi
+        send_control pane-read "$target" "$project"
         ;;
       send)
         target="${1:-}"
@@ -617,7 +694,7 @@ case "$command" in
           text="${text:+$text }$arg"
         done
         if [ -z "$target" ] || [ -z "$text" ]; then usage_fail; fi
-        send_control pane-send "$target" "$text" "$submit"
+        send_control pane-send "$target" "$text" "$submit" "$project"
         ;;
       *)
         usage_fail
@@ -648,6 +725,18 @@ case "$command" in
           esac
         done
         team_debug "$team" "$follow"
+        ;;
+      stats)
+        team="${1:-}"
+        json=""
+        [ "$#" -eq 0 ] || shift
+        for arg do
+          case "$arg" in
+            --json) json="--json" ;;
+            *) usage_fail ;;
+          esac
+        done
+        team_stats "$team" "$json"
         ;;
       save)
         replace=""

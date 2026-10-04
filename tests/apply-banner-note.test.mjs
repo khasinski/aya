@@ -28,6 +28,6 @@ const ROWS = [
 
 for (const [label, panes, banner] of ROWS) {
   test(`Apply banner | ${label}`, () => {
-    assert.equal(rolePanesSummary({ panes, leftWithoutPane: [] }, false), banner);
+    assert.equal(rolePanesSummary({ panes, leftWithoutPane: [] }, false).text, banner);
   });
 }

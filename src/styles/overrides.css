@@ -2851,6 +2851,11 @@ select.aya-modal-input {
   margin: 6px 0;
   color: var(--danger, #c0392b);
 }
+.aya-teams-note {
+  font-size: 12px;
+  margin: 6px 0;
+  color: var(--fg-secondary);
+}
 .aya-teams-roles {
   display: grid;
   gap: 10px;
