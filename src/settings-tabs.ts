@@ -3,6 +3,7 @@ export type SettingsTab =
   | "intelligence"
   | "updates"
   | "diagnostics"
+  | "machines"
   | "themes"
   | "presets"
   | "snippets";

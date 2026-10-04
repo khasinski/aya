@@ -99,6 +99,9 @@ import { askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, teamPan
 import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
+import { checkHost, handleMachinesRequest, knownHosts, machinesStatus } from "./machines";
+import { ayaMachinesDeps } from "./machines-dialog";
+import { requireSshTarget } from "./ssh";
 import {
   createRemoteDirectory,
   createRemoteProjectOnHost,
@@ -2357,6 +2360,23 @@ function registerIpc(): TeamRunner {
   ipcMain.handle("remote:health", async (_e, sshTarget: unknown) =>
     checkRemoteHealth(requireString(sshTarget, "remote:health.sshTarget")),
   );
+  // Settings > Machines: the same functions `aya machines` runs; only the user's clicks reach them.
+  // A web client has no sender; Aya's dialog then opens without a parent window.
+  const machinesDeps = (sender: Electron.WebContents | null) =>
+    ayaMachinesDeps(AYA_HOME, os.homedir(), () => (sender ? BrowserWindow.fromWebContents(sender) : null), () => listProjects());
+  ipcMain.handle("machines:status", (e) => machinesStatus(machinesDeps(e.sender)));
+  ipcMain.handle("machines:hosts", (e) => knownHosts(machinesDeps(e.sender)));
+  ipcMain.handle("machines:check", (e, target: unknown, port: unknown) => {
+    const t = requireString(target, "machines:check.target");
+    const p = typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65535 ? port : undefined;
+    return checkHost(t === "local" ? "local" : { ssh: requireSshTarget(t) }, machinesDeps(e.sender), p);
+  });
+  ipcMain.handle("machines:command", async (e, argv: unknown) => {
+    if (!Array.isArray(argv) || !argv.every((a) => typeof a === "string") || !["add", "remove", "occupy", "free"].includes(argv[0])) {
+      throw new Error("machines:command takes add, remove, occupy or free with text arguments");
+    }
+    return (await handleMachinesRequest({ argv, user: os.userInfo().username }, machinesDeps(e.sender))).output;
+  });
   ipcMain.handle(
     "remote:create-project",
     async (_e, sshTarget: unknown, directory: unknown, name: unknown) =>

@@ -3116,3 +3116,182 @@ select.aya-modal-input {
   background: var(--accent, #4caf50);
   color: var(--bg-primary, #fff);
 }
+
+/* Settings > Machines and the shared host suggestions under Open project > Remote host. */
+.aya-machines h2.aya-modal-title,
+.aya-machines p.aya-modal-hint {
+  margin-top: 0;
+}
+.aya-machines-heading {
+  margin: 18px 0 8px;
+  color: var(--fg-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+.aya-machines-suggested-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.aya-machines-suggested-head .aya-machines-heading {
+  margin-bottom: 4px;
+}
+.aya-machines-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.aya-machine-card,
+.aya-machine-suggestion {
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+.aya-machine-card-head,
+.aya-machine-suggestion-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.aya-machine-name {
+  margin: 0;
+  color: var(--fg-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+.aya-machine-state,
+.aya-machine-sources {
+  color: var(--fg-tertiary);
+  font-size: 12px;
+}
+.aya-machine-target {
+  color: var(--fg-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.aya-machine-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  display: inline-block;
+}
+.aya-machine-dot--ok {
+  background: var(--status-active, #40c463);
+}
+.aya-machine-dot--down {
+  background: var(--status-error);
+}
+.aya-machine-pill {
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--status-waiting) 55%, var(--border));
+  border-radius: 999px;
+  color: var(--fg-primary);
+  background: color-mix(in srgb, var(--status-waiting) 14%, transparent);
+  font-size: 11px;
+}
+.aya-machine-facts {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  gap: 3px 10px;
+  margin: 9px 0 0 16px;
+  font-size: 12px;
+}
+.aya-machine-facts dt {
+  color: var(--fg-tertiary);
+}
+.aya-machine-facts dd {
+  margin: 0;
+  color: var(--fg-secondary);
+  overflow-wrap: anywhere;
+}
+.aya-machine-models {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.aya-machine-error {
+  margin: 8px 0 0;
+  color: var(--status-error);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.aya-machine-found {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 8px 0 0;
+  color: var(--fg-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.aya-machine-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+.aya-machine-card > .aya-machine-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+.aya-machine-occupy {
+  margin-top: 6px;
+}
+.aya-machines-find {
+  margin-top: 14px;
+}
+.aya-machines-find .aya-modal-hint {
+  margin: 4px 0 0;
+}
+.aya-machines-answer {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+.aya-host-suggestions {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.aya-host-suggestion {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+.aya-host-suggestion:hover,
+.aya-host-suggestion:focus-visible {
+  border-color: var(--accent);
+}
+.aya-host-suggestion small {
+  color: var(--fg-tertiary);
+  font-family: var(--font-sans);
+  font-size: 11px;
+}
+.aya-host-suggestions-wrap {
+  margin: 8px 0 8px;
+}

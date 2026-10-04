@@ -601,6 +601,11 @@ export interface AyaApi {
   ): Promise<string>;
   listRemotePresets(sshTarget: string): Promise<Preset[]>;
   checkRemoteHealth(sshTarget: string): Promise<RemoteHealthResult>;
+  /** Settings > Machines and the Remote host picker; the same functions as `aya machines`. */
+  machinesStatus(): Promise<{ version: number; machines: import("./machines").MachineView[] }>;
+  machinesHosts(): Promise<import("./ssh-hosts").KnownHost[]>;
+  machinesCheck(target: string, port?: number): Promise<import("./machines-probe").MachineStatus>;
+  machinesCommand(argv: string[]): Promise<string>;
   createRemoteProjectOnHost(
     sshTarget: string,
     directory: string,
