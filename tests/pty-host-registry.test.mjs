@@ -448,3 +448,30 @@ test("readHostRecords sweeps aged .tmp leftovers and spares young ones", () => {
 test("PS_ENV (shared with the sweep): process env pinned to C locale + UTC", () => {
   assert.deepEqual(PS_ENV, { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" });
 });
+
+// A newer build's launch: the stale host holding the socket runs the panes the user sees, and handleStaleHost asks
+// before stopping their background work (finding 16); the reaper must leave that one to it.
+// [case, record version, the socket host's pid, killed, record kept]
+const SOCKET_HOST_REAPS = [
+  ["a stale host off the socket is killed", "0.7.0", 9999, true, false],
+  ["the stale host holding the socket is left for the launch's question", "0.7.0", 5100, false, true],
+  ["no socket host known: the stale host is killed", "0.7.0", undefined, true, false],
+  ["a same-build host holding the socket is kept as before", "0.8.0", 5100, false, true],
+];
+
+for (const [name, version, socketHost, killedIt, kept] of SOCKET_HOST_REAPS) {
+  test(`reap with a socket host: ${name}`, () => {
+    const rec = { pid: 5100, pgid: 5100, version, scriptHash: version === "0.8.0" ? "new" : "old", startTime: "T5", nonce: "s" };
+    withReg([rec], (dir) => {
+      const killed = [];
+      reapStaleHostRecords(EXPECTED, SCRIPT, dir, {
+        selfPid: 1,
+        readProcInfo: () => ({ alive: true, startTime: "T5", command: `Aya ${SCRIPT}` }),
+        listProcs: () => [{ pid: 5100, ppid: 1 }],
+        kill: (pid) => killed.push(pid),
+      }, socketHost);
+      assert.deepEqual(killed, killedIt ? [-5100] : []);
+      assert.equal(readHostRecords(dir).length, kept ? 1 : 0);
+    });
+  });
+}

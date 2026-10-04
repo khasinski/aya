@@ -3019,9 +3019,14 @@ app.whenReady().then(async () => {
   // system-wide snapshot only runs when a kill actually happens).
   let keptCompatibleHosts: number[] = [];
   try {
+    // The host on the socket runs the panes the user sees: handleStaleHost below asks before it stops their work.
+    const socketHost = (await pathExists(PTY_HOST_SOCKET_PATH)) ? (await ptyHost.hostStatus()).pid : undefined;
     const summary = reapStaleHostRecords(
       ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION),
       PTY_HOST_SCRIPT,
+      undefined,
+      undefined,
+      socketHost,
     );
     keptCompatibleHosts = summary.keptCompatible;
     if (summary.reaped.length > 0) {
