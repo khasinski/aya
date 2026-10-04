@@ -255,7 +255,7 @@ clockTest("a quit while a round is typed lets its Enter go and records the round
   t.w.deps.deliver = async (pane, text, cancelled, entered, pasting) => {
     await pasting?.();
     if (cancelled?.()) throw new PaneHeldError("cancelled before the paste", false);
-    keys.push(`paste ${text.match(/Round \d+/)?.[0]}`);
+    keys.push(`paste ${text.match(/Aya round \d+/)?.[0]}`);
     pasted();
     await gate;
     if (cancelled?.()) throw new PaneHeldError("cancelled before the Enter; text left in the composer", true);
@@ -271,15 +271,15 @@ clockTest("a quit while a round is typed lets its Enter go and records the round
   assert.ok(stopped, "the quit waits: a round is typing");
   release();
   assert.equal(await Promise.race([stopped.then(() => "stopped"), new Promise((resolve) => setTimeout(resolve, 2_000, "still waiting"))]), "stopped");
-  assert.deepEqual(keys, ["paste Round 1", "enter"]);
+  assert.deepEqual(keys, ["paste Aya round 1", "enter"]);
   assert.equal(await t.store.lastRound(), 1, "the number is used up before the quit goes on");
-  assert.ok((await t.store.log()).some((m) => m.from === "aya" && /^Round 1: /.test(m.text)), "the round is in the log");
+  assert.ok((await t.store.log()).some((m) => m.from === "aya" && /^Aya round 1: /.test(m.text)), "the round is in the log");
   probed();
   await tick;
   assert.equal(t.w.runner.stopAll(), null, "nothing typing: the quit goes on at once");
   // A look that was already queued when the quit came types nothing and logs no skip.
   t.w.now += BEAT * S;
   for (const job of t.w.jobs) await job.fn();
-  assert.deepEqual(keys, ["paste Round 1", "enter"]);
+  assert.deepEqual(keys, ["paste Aya round 1", "enter"]);
   assert.deepEqual(await t.skips(), []);
 });

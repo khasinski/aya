@@ -259,7 +259,7 @@ test("the lead's rhythm round carries the claim (the runner reads the screens)",
     now += 31 * 60_000;
     await jobs.at(-1)();
     const round = typed.filter((x) => x.pane === "pane-lead").at(-1).text;
-    assert.match(round, /Round 1: run your round as the team protocol says\..* Said it sent: tester says it sent to lead, nothing arrived\.$/);
+    assert.match(round, /Aya round 1: run your round as the team protocol says\..* Said it sent: tester says it sent to lead, nothing arrived\.$/);
   } finally {
     t.cleanup();
   }

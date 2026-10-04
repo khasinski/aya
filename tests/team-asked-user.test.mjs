@@ -123,7 +123,7 @@ const SAID = [
 for (const [name, opts, steps, says] of SAID) {
   askedTest(`asked the user | ${name} tells the lead who said it waits on a teammate`, opts, async (t) => {
     await t.run(...steps);
-    const round = t.typedTo("pane-l").find((text) => /Round 1:/.test(text));
+    const round = t.typedTo("pane-l").find((text) => /Aya round 1:/.test(text));
     assert.match(round, says);
     assert.doesNotMatch(round, /only the user/);
   });
