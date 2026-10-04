@@ -58,7 +58,7 @@ test("Settings uses icon tabs and focused panes", async ({ window, app }) => {
   await expect(settings).toBeVisible();
 
   const tabs = settings.getByTestId("settings-tab");
-  await expect(tabs).toHaveCount(7);
+  await expect(tabs).toHaveCount(8);
   for (const label of [
     "General",
     "Intelligence",
@@ -67,6 +67,7 @@ test("Settings uses icon tabs and focused panes", async ({ window, app }) => {
     "Themes",
     "Presets",
     "Snippets",
+    "Machines",
   ]) {
     await expect(tabs.filter({ hasText: label })).toBeVisible();
   }

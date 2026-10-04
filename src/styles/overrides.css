@@ -3116,3 +3116,487 @@ select.aya-modal-input {
   background: var(--accent, #4caf50);
   color: var(--bg-primary, #fff);
 }
+
+/* Settings > Machines and the shared host suggestions under Open project > Remote host. */
+.aya-machines {
+  container-type: inline-size;
+  font-variant-numeric: tabular-nums;
+}
+.aya-machines h2.aya-modal-title,
+.aya-machines p.aya-modal-hint {
+  margin-top: 0;
+}
+.aya-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.aya-machines-header {
+  margin-bottom: 10px;
+}
+.aya-machines-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.aya-machines-check-all {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.aya-machines-find {
+  margin: 0 0 4px;
+}
+.aya-machines-find .aya-modal-label {
+  margin: 0 0 4px;
+}
+.aya-machines-find .aya-modal-input-row {
+  gap: 6px;
+}
+.aya-machines-find .aya-modal-input {
+  flex: 1;
+}
+.aya-machines-find .aya-modal-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.aya-machines-find-error {
+  margin-top: 0;
+}
+.aya-machines-heading {
+  margin: 14px 0 6px;
+  color: var(--fg-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+.aya-machines-empty {
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--fg-secondary);
+  font-size: 12px;
+}
+.aya-machine-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 4px 2px 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--fg-primary);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-machine-toggle:hover {
+  color: var(--accent);
+}
+.aya-machine-toggle:focus-visible,
+.aya-machine-menu button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* Generated content stays out of the button's name; aria-expanded carries the state. */
+.aya-machine-toggle::before {
+  content: "\25B8" / "";
+  flex: 0 0 auto;
+  width: 10px;
+  color: var(--fg-tertiary);
+  font-weight: 400;
+}
+.aya-machine-toggle[aria-expanded="true"]::before {
+  content: "\25BE" / "";
+}
+.aya-machines-section-toggle {
+  font-size: 13px;
+}
+
+/* Added machines: one row each under shared column headers. */
+.aya-machines-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  font-size: 12px;
+  table-layout: fixed;
+}
+.aya-machines-table th,
+.aya-machines-table td {
+  box-sizing: border-box;
+  padding: 0 6px;
+  text-align: left;
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-machines-table thead th {
+  height: 26px;
+  color: var(--fg-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+}
+.aya-machine-row > * {
+  height: 42px;
+}
+.aya-machine-group + .aya-machine-group .aya-machine-row > * {
+  border-top: 1px solid var(--border);
+}
+.aya-machine-group--open .aya-machine-row > * {
+  background: color-mix(in srgb, var(--bg-tertiary) 60%, transparent);
+}
+.aya-machines-table .aya-mcol-name {
+  width: auto;
+  font-weight: 600;
+}
+.aya-machines-table .aya-mcol-status {
+  width: 100px;
+  color: var(--fg-primary);
+}
+.aya-machines-table .aya-mcol-num {
+  width: 76px;
+  text-align: right;
+}
+.aya-machines-table .aya-mcol-gpu {
+  width: 50px;
+}
+.aya-machines-table .aya-mcol-cpu {
+  width: 84px;
+}
+.aya-machines-table .aya-mcol-model {
+  width: 140px;
+  padding-left: 14px;
+}
+.aya-machines-table .aya-mcol-use {
+  width: 128px;
+}
+.aya-machines-table .aya-mcol-more {
+  width: 66px;
+  overflow: visible;
+  text-align: right;
+}
+.aya-machines-table .aya-mcol-num {
+  position: relative;
+}
+.aya-machine-num {
+  color: var(--fg-primary);
+}
+/* Under the number without moving it off the row's text line. */
+.aya-machine-bar {
+  position: absolute;
+  right: 6px;
+  bottom: 7px;
+  height: 3px;
+  width: calc(100% - 12px);
+  max-width: 54px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--fg-tertiary) 22%, transparent);
+  overflow: hidden;
+}
+.aya-machine-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.aya-machine-bar--warn > span {
+  background: var(--status-waiting);
+}
+.aya-machine-bar--high > span {
+  background: var(--status-error);
+}
+.aya-settings-actions-note {
+  align-self: center;
+  color: var(--fg-tertiary);
+  font-size: 12px;
+}
+.aya-machine-model-name {
+  display: block;
+  color: var(--fg-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.aya-machine-model-name--loaded {
+  color: var(--fg-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.aya-machine-hot,
+.aya-machine-muted {
+  color: var(--fg-tertiary);
+  font-size: 11px;
+}
+.aya-mcol-why {
+  color: var(--status-error);
+}
+.aya-machine-more-btn {
+  padding: 3px 9px;
+  font-size: 12px;
+}
+.aya-machine-more-btn::after {
+  content: "\00A0\25BE" / "";
+  color: var(--fg-tertiary);
+}
+.aya-machine-more-btn[aria-expanded="true"]::after {
+  content: "\00A0\25B4" / "";
+}
+.aya-machines-table .aya-machine-actions-row > td {
+  padding: 0 6px 6px;
+}
+.aya-machine-menu {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.aya-machine-menu button {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--fg-primary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.aya-machine-menu button:hover {
+  background: var(--bg);
+}
+.aya-machine-menu button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.aya-machine-menu .aya-machine-menu-danger {
+  color: var(--status-error);
+}
+.aya-machine-sub > td {
+  padding: 6px 10px 8px 22px;
+  white-space: normal;
+}
+.aya-machine-details > td {
+  padding-top: 8px;
+  background: color-mix(in srgb, var(--bg-tertiary) 60%, transparent);
+}
+.aya-machine-details-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px 24px;
+}
+.aya-machine-facts {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 2px 10px;
+  margin: 0;
+  font-size: 12px;
+}
+.aya-machine-facts dt {
+  color: var(--fg-tertiary);
+}
+.aya-machine-facts dd {
+  margin: 0;
+  color: var(--fg-secondary);
+  overflow-wrap: anywhere;
+}
+.aya-machine-models {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.aya-machine-occupy {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.aya-machine-occupy-label {
+  color: var(--fg-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.aya-machine-occupy .aya-modal-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.aya-machines-sm {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+/* Suggested hosts: compact rows, Check and Add on the right. */
+.aya-machines-section-hint {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+.aya-machines-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+.aya-machine-suggestion {
+  padding: 3px 8px;
+}
+.aya-machine-suggestion + .aya-machine-suggestion {
+  border-top: 1px solid var(--border);
+}
+.aya-machine-suggestion-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 28px;
+}
+.aya-machine-target {
+  flex: 0 0 auto;
+  color: var(--fg-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.aya-machine-target--plain {
+  padding-left: 14px;
+}
+.aya-machine-sources {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--fg-tertiary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aya-machine-actions {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.aya-machine-dot {
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  display: inline-block;
+  vertical-align: 0;
+}
+.aya-machine-dot--ok {
+  background: var(--status-active, #40c463);
+}
+.aya-machine-dot--warn {
+  background: var(--status-waiting);
+}
+.aya-machine-dot--down {
+  background: var(--status-error);
+}
+.aya-machine-pill {
+  display: inline-block;
+  max-width: 100%;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--status-waiting) 55%, var(--border));
+  border-radius: 999px;
+  color: var(--fg-primary);
+  background: color-mix(in srgb, var(--status-waiting) 14%, transparent);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.aya-machine-error {
+  margin: 4px 0 0;
+  color: var(--status-error);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.aya-machine-found {
+  display: flex;
+  align-items: baseline;
+  margin: 0 0 3px 14px;
+  color: var(--fg-secondary);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.aya-machines-answer {
+  margin: 0 0 6px;
+  color: var(--fg-secondary);
+  font-size: 12px;
+}
+/* Narrow Settings: load and RAM stay in the details row. */
+@container (max-width: 700px) {
+  .aya-machines-table .aya-mcol-cpu,
+  .aya-machines-table .aya-mcol-mem {
+    display: none;
+  }
+  .aya-machine-details-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.aya-host-suggestions {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.aya-host-suggestion {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+.aya-host-suggestion:hover,
+.aya-host-suggestion:focus-visible {
+  border-color: var(--accent);
+}
+.aya-host-suggestion small {
+  color: var(--fg-tertiary);
+  font-family: var(--font-sans);
+  font-size: 11px;
+}
+.aya-host-suggestions-wrap {
+  margin: 8px 0 8px;
+}
+
+.aya-host-details-body {
+  margin: 2px 0 6px 14px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border, rgba(128, 128, 128, 0.35));
+  color: var(--fg-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.aya-machines .aya-host-history p {
+  margin: 2px 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.aya-host-history {
+  color: var(--fg-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.aya-host-history ul {
+  margin: 2px 0 0;
+  padding-left: 16px;
+}

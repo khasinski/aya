@@ -10,6 +10,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const { oneAtATime, withFileLock, STALE_LOCK_MS, LOCK_RETRY_MIN_MS, LOCK_RETRY_JITTER_MS } = await import("../dist-electron/keyed-queue.js");
+const { ownStartTime } = await import("../dist-electron/pty-host-registry.js");
+// A pid in a lock is the writer only while that pid's OS start time is the one recorded next to it.
+const OTHER_START = "Thu Jan  1 00:00:00 1970";
 
 function latch() {
   let open;
@@ -66,6 +69,8 @@ const withinTwoSeconds = (p) => Promise.race([p, tick(2000).then(() => assert.fa
 for (const [name, content, ageMs] of [
   ["a dead process's", () => String(spawnSync(process.execPath, ["-e", ""]).pid), 0],
   ["a live process's, older than 10 s", () => String(process.pid), STALE_LOCK_MS + 2_000],
+  ["a reused pid's (live, another start time)", () => `${process.pid} ${OTHER_START}`, 0],
+  ["a dead process's with its start time", () => `${spawnSync(process.execPath, ["-e", ""]).pid} ${OTHER_START}`, 0],
 ]) {
   test(`file lock | ${name} lock is taken over; the lock is gone after the work`, async (t) => {
     const dir = mkdtempSync(join(tmpdir(), "aya-lock-"));
@@ -79,12 +84,23 @@ for (const [name, content, ageMs] of [
   });
 }
 
+test("file lock | the lock names this process by pid and OS start time", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-lock-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const lock = join(dir, "x.lock");
+  const { readFileSync } = await import("node:fs");
+  const held = await withFileLock(lock, async () => readFileSync(lock, "utf8"));
+  assert.equal(held, `${process.pid} ${ownStartTime()}`);
+  assert.match(held, /^\d+ \w{3} \w{3} [ \d]\d \d\d:\d\d:\d\d \d{4}$/);
+});
+
 test("file lock | a lock is stale after 10 s; a held one is tried again every 5 to 25 ms", () => {
   assert.deepEqual([STALE_LOCK_MS, LOCK_RETRY_MIN_MS, LOCK_RETRY_JITTER_MS], [10_000, 5, 20]);
 });
 
 for (const [name, content, ageMs] of [
   ["a live process's", () => String(process.pid), 0],
+  ["a live process's with its own start time", () => `${process.pid} ${ownStartTime()}`, 0],
   ["one written but its pid not yet", () => "", 0],
   ["a live process's, 2 s short of stale,", () => String(process.pid), STALE_LOCK_MS - 2_000],
 ]) {

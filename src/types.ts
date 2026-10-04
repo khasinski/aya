@@ -761,6 +761,10 @@ export interface AyaApi {
   ): Promise<string>;
   listRemotePresets(sshTarget: string): Promise<Preset[]>;
   checkRemoteHealth(sshTarget: string): Promise<RemoteHealthResult>;
+  machinesStatus(): Promise<{ version: number; machines: MachineView[] }>;
+  machinesHosts(): Promise<KnownHost[]>;
+  machinesCheck(target: string, port?: number): Promise<MachineStatus>;
+  machinesCommand(argv: string[]): Promise<string>;
   createRemoteProjectOnHost(
     sshTarget: string,
     directory: string,
@@ -1211,4 +1215,74 @@ export interface RoleDraft {
   responsibilities: string;
   mustNot: string;
   sendsTo: SendRoute[];
+}
+
+// Machines (electron/machines.ts, machines-probe.ts, ssh-hosts.ts).
+export interface GpuLoad {
+  name: string;
+  utilPct: number | null;
+  memUsedMiB: number | null;
+  memTotalMiB: number | null;
+}
+
+export interface LoadedModel {
+  name: string;
+  digest: string | null;
+  vramBytes: number | null;
+  expiresAt: string | null;
+  pinned: boolean;
+}
+
+export interface MachineStatus {
+  reachable: boolean;
+  checkedAt: string;
+  error: string | null;
+  probeMs: number;
+  cpus: number | null;
+  load1: number | null;
+  memUsedBytes: number | null;
+  memTotalBytes: number | null;
+  gpus: GpuLoad[];
+  ollama: { up: boolean; version: string | null; loaded: LoadedModel[] | null; modelsError: string | null };
+}
+
+export type MachineReach = "local" | { ssh: string };
+
+export interface MachineView {
+  id: string;
+  label: string;
+  reach: MachineReach;
+  ollama: { port: number };
+  occupancy?: { by: string; pane?: string; purpose: string; since: string };
+  status: MachineStatus;
+}
+
+export type HostSource = "ssh-config" | "remote-project" | "machine" | "saved";
+export type HostOrigin = "open-project" | "settings" | "cli";
+
+export interface HostEvent {
+  at: string;
+  target: string;
+  event: "added" | "removed" | "connected" | "check-failed";
+  from?: HostOrigin;
+  project?: string;
+  machine?: string;
+  why?: string;
+}
+
+export interface KnownHost {
+  target: string;
+  sources: HostSource[];
+  machineId?: string;
+  projects?: string[];
+  panes?: { name: string; project: string; role?: string; team?: string }[];
+  occupancy?: { by: string; pane?: string; purpose: string; since: string };
+  saved?: {
+    addedAt: string;
+    addedFrom: HostOrigin;
+    lastUsedAt?: string;
+    lastUsedFor?: "project" | "check";
+    lastCheck?: { ok: boolean; at: string; why?: string };
+  };
+  history?: HostEvent[];
 }

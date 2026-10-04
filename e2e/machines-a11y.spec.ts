@@ -1,0 +1,263 @@
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { expect, type Page } from "@playwright/test";
+import { test } from "./fixtures";
+import { FOUR_MACHINES, LIBEVAL_FILES, LIBEVAL_REMOTE, openMachines, seedBase, TWO_MACHINES } from "./helpers/machines";
+
+// WCAG 2.2 A checks for Settings > Machines read from the DOM and the keyboard, never from pixels:
+// every control has a name and is reached by Tab, headings do not skip, status is never color alone, no trap.
+// AYA_WCAG_OUT=<dir> also saves the evidence each state produced.
+
+const MAX_TABS = 80;
+
+interface Control {
+  desc: string;
+  name: string;
+  visible: string;
+}
+
+/** The panel's enabled, visible interactive elements in DOM order, with their accessible name as the tree computes it. */
+async function controls(page: Page): Promise<Control[]> {
+  const panel = page.getByRole("tabpanel", { name: /Machines/ });
+  const found = panel.locator("button:not([disabled]), input:not([disabled]), a[href], select, textarea, [tabindex]:not([tabindex='-1'])");
+  const out: Control[] = [];
+  for (const el of await found.all()) {
+    if (!(await el.isVisible())) continue;
+    const desc = await el.evaluate((n) => `${n.tagName.toLowerCase()}${n.id ? `#${n.id}` : ""}[${(n.textContent ?? "").trim().slice(0, 30)}]`);
+    // Playwright's own accessible name, the one getByRole matches on.
+    const name = await el.evaluate((n) => {
+      const e = n as HTMLElement & { labels?: NodeListOf<HTMLLabelElement> };
+      const by = e.getAttribute("aria-labelledby");
+      if (e.getAttribute("aria-label")) return e.getAttribute("aria-label") ?? "";
+      if (by) return by.split(" ").map((id) => document.getElementById(id)?.textContent ?? "").join(" ").trim();
+      if (e.labels?.length) return [...e.labels].map((l) => l.textContent ?? "").join(" ").trim();
+      return (e.textContent ?? "").replace(/\s+/g, " ").trim();
+    });
+    const visible = await el.evaluate((n) => (n.tagName === "INPUT" ? "" : (n as HTMLElement).innerText.replace(/\s+/g, " ").trim()));
+    out.push({ desc, name, visible });
+  }
+  return out;
+}
+
+const describeActive = (page: Page) =>
+  page.evaluate(() => {
+    const a = document.activeElement as HTMLElement | null;
+    if (!a || a === document.body) return "body";
+    const inPanel = !!a.closest("#settings-panel-machines");
+    return `${inPanel ? "panel:" : ""}${a.tagName.toLowerCase()}${a.id ? `#${a.id}` : ""}[${(a.textContent ?? "").trim().slice(0, 30)}]`;
+  });
+
+async function audit(page: Page, state: string) {
+  const items = await controls(page);
+  // Start on the Machines tab itself, then walk forward and back.
+  await page.locator("#settings-tab-machines").focus();
+  const forward: string[] = [await describeActive(page)];
+  for (let i = 0; i < MAX_TABS; i++) {
+    await page.keyboard.press("Tab");
+    const now = await describeActive(page);
+    forward.push(now);
+    if (!now.startsWith("panel:") && forward.some((f) => f.startsWith("panel:"))) break;
+  }
+  const backward: string[] = [];
+  for (let i = 0; i < MAX_TABS; i++) {
+    await page.keyboard.press("Shift+Tab");
+    const now = await describeActive(page);
+    backward.push(now);
+    if (now.includes("#settings-tab-machines")) break;
+  }
+  const headings = await page.locator("#settings-panel-machines").evaluate((p) =>
+    [...p.querySelectorAll("h1,h2,h3,h4,h5,h6")].map((h) => ({ level: Number(h.tagName[1]), text: (h.textContent ?? "").trim() })),
+  );
+  const dots = await page.locator("#settings-panel-machines .aya-machine-dot").evaluateAll((ds) =>
+    ds.map((d) => ({ ariaHidden: d.getAttribute("aria-hidden"), text: (d.parentElement?.textContent ?? "").trim().slice(0, 60) })),
+  );
+  const page_ = await page.locator("#settings-panel-machines").evaluate((p) => ({
+    animated: [...p.querySelectorAll("*")].filter((n) => getComputedStyle(n).animationName !== "none").map((n) => n.className),
+    imgs: p.querySelectorAll("img, svg, [role=img]").length,
+    icons: [...p.querySelectorAll(".aya-settings-material")].map((n) => n.getAttribute("aria-hidden")),
+    lists: { ul: p.querySelectorAll("ul").length, dl: p.querySelectorAll("dl").length },
+    inputs: [...p.querySelectorAll("input")].map((i) => ({ id: i.id, labelFor: !!document.querySelector(`label[for="${i.id}"]`) })),
+    alerts: p.querySelectorAll("[role=alert]").length,
+    live: p.querySelectorAll("[aria-live]").length,
+    dialog: (() => {
+      const d = p.closest("[role=dialog]");
+      return d ? { label: d.getAttribute("aria-label"), modal: d.getAttribute("aria-modal") } : null;
+    })(),
+    tab: (() => {
+      const t = document.getElementById("settings-tab-machines");
+      return { role: t?.getAttribute("role"), selected: t?.getAttribute("aria-selected") };
+    })(),
+  }));
+  const table = await page.locator("#settings-panel-machines").evaluate((p) => {
+    const t = p.querySelector("table");
+    if (!t) return null;
+    return {
+      colHeaders: [...t.querySelectorAll("thead th[scope=col]")].map((h) => (h.textContent ?? "").trim()),
+      rows: t.querySelectorAll("tr.aya-machine-row").length,
+      rowHeaders: t.querySelectorAll("tr.aya-machine-row > th[scope=row]").length,
+    };
+  });
+  const disclosures = await page.locator("#settings-panel-machines [aria-expanded]").evaluateAll((ds) =>
+    ds.map((d) => {
+      const region = document.getElementById(d.getAttribute("aria-controls") ?? "");
+      const open = d.getAttribute("aria-expanded") === "true";
+      return { name: d.getAttribute("aria-label") ?? (d.textContent ?? "").trim(), tag: d.tagName, controls: !!region, hiddenMatches: !!region && region.hidden === !open };
+    }),
+  );
+  const evidence = { state, ...page_, table, disclosures, items, forward, backward, headings, dots, lang: await page.evaluate(() => document.documentElement.lang), title: await page.title() };
+  if (process.env.AYA_WCAG_OUT) writeFileSync(join(process.env.AYA_WCAG_OUT, `wcag-evidence-${state}.json`), JSON.stringify(evidence, null, 2));
+  return evidence;
+}
+
+function assertA(e: Awaited<ReturnType<typeof audit>>) {
+  // 4.1.2: every control has a name; 2.5.3: the name contains the visible label.
+  for (const c of e.items) {
+    expect(c.name, `${c.desc} has an accessible name`).not.toBe("");
+    if (c.visible) expect(c.name.toLowerCase(), `${c.desc}: name contains its visible label`).toContain(c.visible.toLowerCase());
+  }
+  // 2.1.1: every control in the panel is reached by Tab.
+  const reached = new Set(e.forward.filter((f) => f.startsWith("panel:")).map((f) => f.slice("panel:".length)));
+  for (const c of e.items) expect(reached.has(c.desc), `${c.desc} is reached by Tab`).toBe(true);
+  // 2.1.2: Tab leaves the panel forward, Shift+Tab gets back to the tab.
+  expect(e.forward.at(-1)?.startsWith("panel:"), "Tab leaves the panel").toBe(false);
+  expect(e.backward.at(-1), "Shift+Tab returns to the Machines tab").toContain("#settings-tab-machines");
+  // 1.3.1: headings start at h2 under the dialog and never skip a level.
+  expect(e.headings[0]).toEqual({ level: 2, text: "Machines" });
+  for (let i = 1; i < e.headings.length; i++) expect(e.headings[i].level - e.headings[i - 1].level).toBeLessThanOrEqual(1);
+  // 1.4.1: a dot is decoration next to text that says the same.
+  for (const d of e.dots) {
+    expect(d.ariaHidden).toBe("true");
+    expect(d.text).toMatch(/^(Ready|Ollama down|Unreachable|Checking\.\.\.)$|^(Reachable|Not reachable)/);
+  }
+  // 1.3.1: the machines table has column headers and each row a row header; 4.1.2: every disclosure names what it shows.
+  if (e.table) {
+    expect(e.table.colHeaders).toEqual(["Machine", "Status", "GPU", "VRAM GB", "Load/cores", "RAM GB", "Model", "In use", "Actions"]);
+    expect(e.table.rowHeaders).toBe(e.table.rows);
+  }
+  for (const d of e.disclosures) {
+    expect(d.tag, `${d.name} is a button`).toBe("BUTTON");
+    expect(d.controls, `${d.name} names the region it shows`).toBe(true);
+    expect(d.hiddenMatches, `${d.name}: aria-expanded matches what is shown`).toBe(true);
+  }
+}
+
+test.describe("empty", () => {
+  test.use({ seedOptions: seedBase });
+  test("Settings > Machines, empty: names, Tab order, headings, no trap", async ({ app, window }) => {
+    const panel = await openMachines(window, app);
+    await panel.getByRole("button", { name: "Check gpu-box" }).click();
+    await expect(panel.getByTestId("machine-found")).toBeVisible();
+    assertA(await audit(window, "empty"));
+    // 2.1.1: Space and Enter run a control; 2.1.2: Escape leaves the dialog from inside a field.
+    await panel.getByRole("button", { name: "Check old-server" }).focus();
+    await window.keyboard.press("Space");
+    await expect(panel.getByTestId("machine-suggestion").nth(2)).toContainText("Not reachable");
+    await panel.getByRole("button", { name: "Check mini-lab" }).focus();
+    await window.keyboard.press("Enter");
+    await expect(panel.getByTestId("machine-suggestion").nth(1)).toContainText("Ollama not answering");
+    await panel.getByLabel("Add machines in one sentence").focus();
+    await window.keyboard.press("Enter");
+    await expect(panel.getByRole("alert")).toContainText("Write which machines to add");
+    await window.keyboard.press("Escape");
+    await expect(window.locator(".aya-modal--settings")).toHaveCount(0);
+  });
+});
+
+test.describe("added", () => {
+  test.use({ seedOptions: { ...seedBase, ayaHomeFiles: { ...seedBase.ayaHomeFiles, "machines.json": TWO_MACHINES } } });
+  test("Settings > Machines, added: names, Tab order, headings, no trap", async ({ app, window }) => {
+    const panel = await openMachines(window, app);
+    await expect(panel.getByTestId("machine-row")).toHaveCount(2);
+    await expect(panel.getByTestId("machine-state")).toHaveText(["Ready", "Ollama down"]);
+    assertA(await audit(window, "added"));
+  });
+});
+
+test.describe("expanded", () => {
+  test.use({ seedOptions: { ...seedBase, ayaHomeFiles: { ...seedBase.ayaHomeFiles, ...LIBEVAL_FILES, "machines.json": TWO_MACHINES } } });
+  test("Settings > Machines, a row expanded: real disclosure buttons, keyboard toggles, names, Tab order", async ({ app, window }) => {
+    await window.evaluate((req) => window.aya.createRemoteProject(req), LIBEVAL_REMOTE);
+    const panel = await openMachines(window, app);
+    // 4.1.2: each disclosure is a <button> with aria-expanded and aria-controls naming the region it shows.
+    // gpu-box and mini-lab rows, old-server and me@devbox suggestions; "This machine" has no history.
+    const toggles = panel.getByRole("button", { name: /^\S+ (details|usage and history)$/ });
+    await expect(toggles).toHaveCount(4);
+    for (const t of await toggles.all()) {
+      expect(await t.evaluate((n) => n.tagName)).toBe("BUTTON");
+      await expect(t).toHaveAttribute("aria-expanded", "false");
+      const controls = await t.getAttribute("aria-controls");
+      expect(controls).toBeTruthy();
+      await expect(panel.locator(`#${controls}`)).toBeHidden();
+    }
+    const gpu = panel.getByRole("button", { name: "gpu-box details" });
+    const region = panel.locator(`#${await gpu.getAttribute("aria-controls")}`);
+    // 2.1.1: Enter opens, Space closes, focus stays on the button.
+    await gpu.focus();
+    await window.keyboard.press("Enter");
+    await expect(gpu).toHaveAttribute("aria-expanded", "true");
+    await expect(region).toBeVisible();
+    await window.keyboard.press("Space");
+    await expect(gpu).toHaveAttribute("aria-expanded", "false");
+    await expect(region).toBeHidden();
+    await expect(gpu).toBeFocused();
+    await window.keyboard.press("Enter");
+    // 1.4.1 and 1.3.1: what the row says is text, the facts a description list, the history a list.
+    await expect(region).toContainText("Used by: machine gpu-box");
+    await expect(region).toContainText("panes tester (tester in team qa), implementer");
+    await expect(region.locator("dl dt")).toContainText(["State", "GPU", "CPU", "Memory", "Ollama", "Models", "In use"]);
+    await expect(region.locator(".aya-host-history").getByRole("list")).toBeVisible();
+    // The caret is generated content, outside the name.
+    expect(await gpu.evaluate((n) => (n as HTMLElement).innerText.trim())).toBe("gpu-box");
+    // The suggestions section is a disclosure too; closing it hides the rows, not the heading.
+    const suggested = panel.getByRole("button", { name: "Suggested (3)" });
+    await expect(panel.getByRole("heading", { level: 3, name: "Suggested (3)" })).toBeVisible();
+    await suggested.click();
+    await expect(panel.getByTestId("machine-suggestion").first()).toBeHidden();
+    await suggested.click();
+    await expect(panel.getByTestId("machine-suggestion")).toHaveCount(3);
+    assertA(await audit(window, "expanded"));
+  });
+});
+
+test.describe("more", () => {
+  test.use({ seedOptions: { ...seedBase, ayaHomeFiles: { ...seedBase.ayaHomeFiles, "machines.json": FOUR_MACHINES } } });
+  test("Settings > Machines, four states and the More disclosure: keyboard in, Escape out, Tab order, names", async ({ app, window }) => {
+    const panel = await openMachines(window, app);
+    await expect(panel.getByTestId("machine-state")).toHaveText(["Ready", "Ollama down", "Ready", "Unreachable"]);
+    assertA(await audit(window, "four"));
+
+    const more = panel.getByRole("button", { name: "More, gpu-box" });
+    const menu = panel.getByRole("group", { name: "Actions for gpu-box" });
+    await expect(more).toHaveAttribute("aria-expanded", "false");
+    await expect(menu).toBeHidden();
+    // 2.1.1: Enter opens and moves focus to the first action; the actions follow More in Tab order.
+    await more.focus();
+    await window.keyboard.press("Enter");
+    await expect(more).toHaveAttribute("aria-expanded", "true");
+    await expect(menu.getByRole("button", { name: "Check now, gpu-box" })).toBeFocused();
+    await window.keyboard.press("Tab");
+    await expect(menu.getByRole("button", { name: "Mark free, gpu-box" })).toBeFocused();
+    await window.keyboard.press("Tab");
+    await expect(menu.getByRole("button", { name: "Remove gpu-box" })).toBeFocused();
+    // 2.1.2: Escape closes only the menu and returns focus to More; the dialog stays.
+    await window.keyboard.press("Escape");
+    await expect(menu).toBeHidden();
+    await expect(more).toBeFocused();
+    await expect(window.locator(".aya-modal--settings")).toHaveCount(1);
+    // Leaving by Tab closes it, so a hidden action is never in the way.
+    await window.keyboard.press("Space");
+    await expect(menu).toBeVisible();
+    await window.keyboard.press("Shift+Tab");
+    await window.keyboard.press("Shift+Tab");
+    await expect(menu).toBeHidden();
+    // An action closes the menu and keeps focus on More.
+    await more.click();
+    await menu.getByRole("button", { name: "Check now, gpu-box" }).click();
+    await expect(menu).toBeHidden();
+    await expect(more).toBeFocused();
+    // 1.4.1: the unreachable row says so and why, in text.
+    await expect(panel.getByTestId("machine-row").nth(3)).toContainText("Why: ssh: old-server: Permission denied (publickey).");
+    await window.keyboard.press("Escape");
+    await expect(window.locator(".aya-modal--settings")).toHaveCount(0);
+  });
+});

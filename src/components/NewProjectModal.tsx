@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type {
+  KnownHost,
   RemoteDirectoryListing,
   RemoteHealthResult,
   RemoteProjectCreateResult,
 } from "../types";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
+import { sourcesText } from "../machines-view";
 
 interface Props {
   defaultDirectory?: string;
@@ -30,6 +32,8 @@ interface Props {
     directory: string,
   ) => Promise<string>;
   onCheckRemoteHealth?: (sshTarget: string) => Promise<RemoteHealthResult>;
+  /** The known ssh hosts (~/.ssh/config, remote projects, machines), offered under Remote host. */
+  onListKnownHosts?: () => Promise<KnownHost[]>;
   onSubmitRemote?: (
     result: RemoteProjectCreateResult,
     sshTarget: string,
@@ -71,6 +75,7 @@ export function NewProjectModal({
   onCreateRemoteProject,
   onCreateRemoteDirectory,
   onCheckRemoteHealth,
+  onListKnownHosts,
   onSubmitRemote,
   onSubmit,
   onCancel,
@@ -84,6 +89,7 @@ export function NewProjectModal({
   const [remoteConnected, setRemoteConnected] = useState(false);
   const [directory, setDirectory] = useState(defaultDirectory || "~/");
   const [sshTarget, setSshTarget] = useState("");
+  const [knownHosts, setKnownHosts] = useState<KnownHost[]>([]);
   const [remotePath, setRemotePath] = useState("");
   const [remoteNewFolder, setRemoteNewFolder] = useState("");
   const [remoteListing, setRemoteListing] =
@@ -111,6 +117,17 @@ export function NewProjectModal({
     input?.focus();
     input?.setSelectionRange(input.value.length, input.value.length);
   }, [remoteVisible]);
+
+  useEffect(() => {
+    if (!remoteVisible || !onListKnownHosts) return;
+    let live = true;
+    onListKnownHosts()
+      .then((hosts) => live && setKnownHosts(hosts))
+      .catch(() => live && setKnownHosts([]));
+    return () => {
+      live = false;
+    };
+  }, [remoteVisible, onListKnownHosts]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -310,6 +327,9 @@ export function NewProjectModal({
     }
   };
 
+  const typed = sshTarget.trim().toLowerCase();
+  const hostSuggestions = knownHosts.filter((h) => !typed || h.target.toLowerCase().includes(typed));
+
   return (
     <div
       className="aya-modal-backdrop"
@@ -373,9 +393,10 @@ export function NewProjectModal({
 
         {remoteVisible && canUseRemote && (
           <div className="aya-remote-picker">
-            <label className="aya-modal-label">Remote host</label>
+            <label className="aya-modal-label" htmlFor="remote-host-input">Remote host</label>
             <div className="aya-modal-input-row">
               <input
+                id="remote-host-input"
                 className="aya-modal-input"
                 value={sshTarget}
                 onChange={(e) => setRemoteTarget(e.target.value)}
@@ -425,6 +446,29 @@ export function NewProjectModal({
                 </button>
               )}
             </div>
+            {!remoteConnected && hostSuggestions.length > 0 && (
+              <div className="aya-host-suggestions-wrap" data-testid="remote-host-suggestions">
+                <span id="remote-host-suggestions-label" className="aya-modal-hint">
+                  Known hosts
+                </span>
+                <ul className="aya-host-suggestions" aria-labelledby="remote-host-suggestions-label">
+                  {hostSuggestions.map((h) => (
+                    <li key={h.target}>
+                      <button
+                        type="button"
+                        className="aya-host-suggestion"
+                        onClick={() => setRemoteTarget(h.target)}
+                        disabled={submitting || remoteLoading}
+                        aria-pressed={h.target === sshTarget.trim()}
+                      >
+                        {h.target}
+                        <small>{sourcesText(h)}</small>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="aya-modal-hint aya-remote-help">
               Remote projects connect over SSH and require Aya to be installed
               and running on the other computer.

@@ -1,0 +1,72 @@
+@@nproc
+32
+@@loadavg
+0.09 0.02 0.01 1/885 2479961
+@@meminfo
+MemTotal:       31481720 kB
+MemFree:         9778308 kB
+MemAvailable:   20098224 kB
+Buffers:           37896 kB
+Cached:         10678780 kB
+SwapCached:      2998984 kB
+Active:          6182476 kB
+Inactive:       13838176 kB
+Active(anon):    5236624 kB
+Inactive(anon):  4219076 kB
+Active(file):     945852 kB
+Inactive(file):  9619100 kB
+Unevictable:           0 kB
+Mlocked:               0 kB
+SwapTotal:       8388604 kB
+SwapFree:        4501248 kB
+Zswap:                 0 kB
+Zswapped:              0 kB
+Dirty:              1124 kB
+Writeback:             0 kB
+AnonPages:       9297924 kB
+Mapped:          1708676 kB
+Shmem:            151824 kB
+KReclaimable:     221308 kB
+Slab:             502424 kB
+SReclaimable:     159408 kB
+SUnreclaim:       343016 kB
+KernelStack:       14720 kB
+PageTables:        45772 kB
+SecPageTables:      7044 kB
+NFS_Unstable:          0 kB
+Bounce:                0 kB
+WritebackTmp:          0 kB
+CommitLimit:    24129464 kB
+Committed_AS:   15620480 kB
+VmallocTotal:   34359738367 kB
+VmallocUsed:      132476 kB
+VmallocChunk:          0 kB
+Percpu:            48896 kB
+HardwareCorrupted:     0 kB
+AnonHugePages:         0 kB
+ShmemHugePages:        0 kB
+ShmemPmdMapped:        0 kB
+FileHugePages:     59392 kB
+FilePmdMapped:         0 kB
+CmaTotal:              0 kB
+CmaFree:               0 kB
+Unaccepted:            0 kB
+Balloon:               0 kB
+HugePages_Total:       0
+HugePages_Free:        0
+HugePages_Rsvd:        0
+HugePages_Surp:        0
+Hugepagesize:       2048 kB
+Hugetlb:               0 kB
+DirectMap4k:     2241976 kB
+DirectMap2M:    30455808 kB
+DirectMap1G:     1048576 kB
+@@vmstat
+@@memsize
+@@gpu
+NVIDIA GeForce RTX 4090, 0, 5247, 24564
+@@version
+{"version":"0.34.4"}
+@@ps
+{"models":[{"name":"gemma-best:latest","model":"gemma-best:latest","size":313775881,"digest":"f18b0e221a67c3b07ec8d0a98b2daef10871d6d56c998363f3e1b4f26f158db4","details":{"parent_model":"","format":"gguf","family":"gemma4","families":["gemma4"],"parameter_size":"7.5B","quantization_level":"Q4_K_M"},"expires_at":"2026-10-05T04:41:31.128931058+02:00","size_vram":313775881,"context_length":8192}]}
+@@end

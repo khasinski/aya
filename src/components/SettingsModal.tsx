@@ -25,6 +25,7 @@ import {
   presetSlug,
 } from "../types";
 import type { SettingsTab } from "../settings-tabs";
+import { MachinesSettings } from "./MachinesSettings";
 import { localSummaryUnavailableMessage } from "../local-summary-errors";
 import type { MacOptionKeyMode } from "../terminal-option-key";
 import type { TerminalSoundCue } from "../terminal-sound-prefs";
@@ -1001,6 +1002,7 @@ export function SettingsModal({
     { id: "intelligence", label: "Intelligence", icon: "auto_awesome", dirty: false },
     { id: "updates", label: "Updates", icon: "system_update", dirty: false },
     { id: "diagnostics", label: "Diagnostics", icon: "monitor_heart", dirty: false },
+    { id: "machines", label: "Machines", icon: "dns", dirty: false },
     { id: "themes", label: "Themes", icon: "palette", dirty: themesDirty },
     { id: "presets", label: "Presets", icon: "terminal", dirty: presetsDirty },
     { id: "snippets", label: "Snippets", icon: "bolt", dirty: snippetsDirty },
@@ -1015,6 +1017,9 @@ export function SettingsModal({
     >
       <div
         className="aya-modal aya-modal--settings"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
         onClick={(e) => e.stopPropagation()}
       >
         {showUsageConsent && (
@@ -1142,6 +1147,7 @@ export function SettingsModal({
               <button
                 key={item.id}
                 data-testid="settings-tab"
+                id={`settings-tab-${item.id}`}
                 type="button"
                 role="tab"
                 aria-selected={activeTab === item.id}
@@ -2082,6 +2088,8 @@ export function SettingsModal({
               </section>
             )}
 
+            {activeTab === "machines" && <MachinesSettings />}
+
             {activeTab === "diagnostics" && (
               <section className="aya-settings-pane">
                 <SettingsHeader icon="monitor_heart" title="Diagnostics">
@@ -2579,6 +2587,8 @@ export function SettingsModal({
             <button className="aya-modal-btn" onClick={resetPresetsToDefaults}>
               Reset presets to defaults
             </button>
+          ) : activeTab === "machines" ? (
+            <span className="aya-settings-actions-note">Machines are saved as you change them.</span>
           ) : (
             <div />
           )}

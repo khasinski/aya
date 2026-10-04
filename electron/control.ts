@@ -2,6 +2,7 @@ import type { BrowserWindow } from "electron";
 import { oneAtATime } from "./keyed-queue";
 import * as fs from "node:fs";
 import * as net from "node:net";
+import * as os from "node:os";
 import * as path from "node:path";
 import { recordAgentStatus } from "./agent-status";
 import { STATUS_TABLE_SHARE_MS, daemonIdentity, foreignPaneIdentity, paneAbove, processTable, unprovenIdentity } from "./caller-proof";
@@ -18,7 +19,9 @@ import {
   resolvePaneTarget,
   tailForPaneRead,
 } from "./pane-target";
-import { CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
+import { AYA_HOME, CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
+import { handleMachinesRequest, type MachinesDeps } from "./machines";
+import { ayaMachinesDeps } from "./machines-dialog";
 import { handleTeamAuthorRequest } from "./team-author";
 import { HOLD_BUSY, HOLD_DRAFT, isDialogHold } from "./pane-holds";
 import { debugAnswer } from "./team-debug";
@@ -106,6 +109,8 @@ export interface ControlServerOptions {
   teamPanes?: TeamPaneDeps;
   /** The process a pane runs: null when it has none, undefined when the host cannot say (it predates the request). */
   panePid?: (terminalId: string) => Promise<number | null | undefined>;
+  /** Where aya machines keeps its registry, finds ~/.ssh/config and asks the user; by default the Aya config home, the user's home and Aya's dialog. */
+  machines?: MachinesDeps;
   /** Test-only override of the process table read for the ancestry check. */
   processTable?: typeof processTable;
   /** Test-only override of the idle reap window. */
@@ -368,6 +373,7 @@ async function handleRequest(
   request: ControlRequest,
   caller: ControlCaller,
   options: ControlServerOptions,
+  callerGone?: AbortSignal,
 ): Promise<Record<string, unknown> | void> {
   try {
     await options.onRequest?.(request, caller);
@@ -411,6 +417,11 @@ async function handleRequest(
       clearTimeout(timer);
     }
     return;
+  }
+  if (request.type === "machines") {
+    const pane = caller.terminalId ? (await options.listProjects?.().catch(() => []))?.flatMap((p) => p.tabs).find((t) => t.id === caller.terminalId)?.name : undefined;
+    const deps = options.machines ?? ayaMachinesDeps(AYA_HOME, os.homedir(), options.getWindow, options.listProjects, "cli");
+    return { ...(await handleMachinesRequest(request, deps, pane, callerGone)) };
   }
   if (request.type === "pane-list") {
     if (!options.listProjects) throw new Error("pane control is not available");
@@ -521,9 +532,17 @@ export function startControlServerOn(
     socket.on("error", () => {
       handled = true;
     });
+    // The caller hung up before its answer (reply timeout, Ctrl-C). Only waits on the user read it: bin/aya never
+    // half-closes while it waits, while a client that sends with end() gets its answer from every other request.
+    const callerGone = new AbortController();
+    // A unix socket cannot be reset, so a hang-up arrives as "end"; "close" covers a socket error.
+    socket.on("close", () => {
+      if (!replied) callerGone.abort();
+    });
     socket.on("end", () => {
       // Destroy unless we still owe a reply - that window is why allowHalfOpen is on.
       if (!handled || replied) socket.destroy();
+      else callerGone.abort();
     });
     socket.setTimeout(options.idleTimeoutMs ?? CONTROL_CONNECTION_IDLE_MS, () => {
       if (!handled) socket.destroy();
@@ -555,7 +574,7 @@ export function startControlServerOn(
         try {
           const raw: unknown = JSON.parse(line);
           const [request, caller] = [parseControlRequest(raw), parseControlCaller(raw)];
-          const { undo, ...payload } = (await debugAnswer(options.team, request, caller, handleRequest(request, caller, options))) ?? {};
+          const { undo, ...payload } = (await debugAnswer(options.team, request, caller, handleRequest(request, caller, options, callerGone.signal))) ?? {};
           if (!(await sendJson(socket, { ok: true, ...payload })) && typeof undo === "function") await undo();
         } catch (err) {
           void sendJson(socket, {
