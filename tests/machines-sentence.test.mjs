@@ -11,6 +11,13 @@ const { draftFromSentence, sshHostAliases } = await import("../dist-electron/mac
 const ALIASES = ["athena", "Mini", "gpu-2.lan"];
 const empty = { version: 1, machines: [] };
 const withAthena = { version: 1, machines: [{ id: "athena", label: "athena", reach: { ssh: "athena" }, ollama: { port: 11434 } }] };
+const withAB = {
+  version: 1,
+  machines: [
+    { id: "a-b", label: "a-b", reach: { ssh: "a.b" }, ollama: { port: 11434 } },
+    { id: "a-b-2", label: "a-b-2", reach: "local", ollama: { port: 11434 } },
+  ],
+};
 const withLocal = { version: 1, machines: [{ id: "laptop", label: "laptop", reach: "local", ollama: { port: 11434 } }] };
 
 const cases = [
@@ -29,11 +36,15 @@ const cases = [
   { sentence: "this machine", registry: withLocal, expect: { machines: [], alreadyAdded: ["this machine"] } },
   { sentence: "athena athena", expect: { machines: [{ reach: { ssh: "athena" } }] } },
   { sentence: "port 99 athena", expect: { machines: [{ port: 11434 }] } },
+  // Two aliases that read as one id: the second gets the next free number, never the same id.
+  { sentence: "a.b and a_b", aliases: ["a.b", "a_b"], expect: { machines: [{ id: "a-b", reach: { ssh: "a.b" } }, { id: "a-b-2", reach: { ssh: "a_b" } }] } },
+  { sentence: "a_b", aliases: ["a.b", "a_b"], registry: withAB, expect: { machines: [{ id: "a-b-3", reach: { ssh: "a_b" } }] } },
+  { sentence: "local and this machine", aliases: ["local"], expect: { machines: [{ id: "local", reach: { ssh: "local" } }, { id: "local-2", reach: "local" }] } },
 ];
 
 for (const c of cases) {
   test(`sentence draft: "${c.sentence}"`, () => {
-    const draft = draftFromSentence(c.sentence, ALIASES, c.registry ?? empty);
+    const draft = draftFromSentence(c.sentence, c.aliases ?? ALIASES, c.registry ?? empty);
     assert.equal(draft.machines.length, c.expect.machines.length, JSON.stringify(draft));
     c.expect.machines.forEach((m, i) => {
       for (const [k, v] of Object.entries(m)) assert.deepEqual(draft.machines[i][k], v, `machines[${i}].${k}`);

@@ -127,6 +127,28 @@ test("a machine added by someone else while the dialog was open is not added twi
   assert.deepEqual(ids(), ["a1"]);
 });
 
+test("aliases a.b and a_b in one sentence: saved as a-b and a-b-2, and the registry still reads", async (t) => {
+  const { run, ids } = setup(t, ["a.b", "a_b"]);
+  await run("add", "a.b and a_b");
+  assert.deepEqual(ids(), ["a-b", "a-b-2"]);
+  assert.match((await run("remove", "a-b-2")).output, /removed a-b-2/);
+  assert.deepEqual(ids(), ["a-b"]);
+});
+
+test("a change that would leave two machines with one id is refused and the file is left as it is", async (t) => {
+  const { deps, file } = setup(t);
+  mkdirSync(deps.ayaHome, { recursive: true });
+  const before = '{"version":1,"machines":[{"id":"a","label":"a","reach":"local","ollama":{"port":1}}]}\n';
+  writeFileSync(file, before);
+  await assert.rejects(
+    mutateRegistry(deps, (registry) => {
+      registry.machines.push({ id: "a", label: "a", reach: { ssh: "a1" }, ollama: { port: 2 } });
+    }),
+    /id "a" is used twice; nothing was saved/,
+  );
+  assert.equal(readFileSync(file, "utf8"), before);
+});
+
 test("Aya's dialog names each machine, what the probe found, and the pane that asked", async () => {
   const { addDialogText } = await import("../dist-electron/machines-dialog.js");
   const ok = { reachable: true, error: null, cpus: 32, gpus: [{ name: "RTX 4090" }], ollama: { up: true, version: "0.34.4", loaded: [{}] } };

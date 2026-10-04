@@ -130,6 +130,8 @@ export function mutateRegistry<T>(deps: MachinesDeps, change: (registry: Registr
     const before = await readRegistryText(deps);
     const registry = parseRegistry(before, file);
     const result = await change(registry);
+    const problem = registryProblem(registry);
+    if (problem) throw new Error(`${problem}; nothing was saved`);
     if ((await readRegistryText(deps)) !== before) throw new Error(`${file} changed while this command ran; nothing was saved, run it again`);
     await writeFileAtomic(file, `${JSON.stringify(registry, null, 2)}\n`, MACHINES_FILE_MODE);
     return result;
@@ -211,13 +213,20 @@ export function draftFromSentence(sentence: string, aliases: string[], registry:
   const draft: SentenceDraft = { machines: [], unclear: [], unknown: [], alreadyAdded: [] };
   const byLower = new Map(aliases.map((a) => [a.toLowerCase(), a]));
   const registered = (reach: Reach) => registry.machines.some((m) => (reach === "local" ? m.reach === "local" : m.reach !== "local" && m.reach.ssh === reach.ssh));
+  // Aliases like a.b and a_b read as one id; the later one takes the next free number.
+  const freeId = (base: string) => {
+    const taken = (id: string) => registry.machines.some((m) => m.id === id) || draft.machines.some((m) => m.id === id);
+    let id = base;
+    for (let n = 2; taken(id); n++) id = `${base}-${n}`;
+    return id;
+  };
   const add = (reach: Reach, word: string) => {
     if (registered(reach)) {
       if (!draft.alreadyAdded.includes(word)) draft.alreadyAdded.push(word);
       return;
     }
     if (draft.machines.some((m) => JSON.stringify(m.reach) === JSON.stringify(reach))) return;
-    draft.machines.push({ id: reach === "local" ? "local" : idFor(reach.ssh), reach, port: DEFAULT_OLLAMA_PORT });
+    draft.machines.push({ id: freeId(reach === "local" ? "local" : idFor(reach.ssh)), reach, port: DEFAULT_OLLAMA_PORT });
   };
   // A phrase becomes one word in place, so the draft keeps the sentence's order.
   let text = sentence;
