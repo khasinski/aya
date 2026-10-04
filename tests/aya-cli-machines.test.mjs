@@ -188,6 +188,24 @@ test("the local machine: Ollama read over HTTP on its port, no ssh", async () =>
   assert.throws(() => readFileSync(join(root, "ssh", "calls")), /ENOENT/);
 });
 
+test("Ollama answers its version but not /api/ps: models unavailable, never \"no model loaded\"", async () => {
+  reset();
+  const half = createServer((req, res) => {
+    if (req.url === "/api/version") return res.end('{"version":"0.34.4"}');
+    res.statusCode = 500;
+    res.end("boom");
+  });
+  await new Promise((r) => half.listen(0, "127.0.0.1", r));
+  try {
+    await aya("add", "--local", "--port", String(half.address().port));
+    const r = await aya();
+    assert.match(r.stdout, /ollama 0\.34\.4 {2}models: unavailable \(\/api\/ps answered HTTP 500\)/);
+    assert.doesNotMatch(r.stdout, /no model loaded/);
+  } finally {
+    half.close();
+  }
+});
+
 test("Ollama not answering on the local port: the machine is connected, Ollama is down", async () => {
   reset();
   const closed = createServer();

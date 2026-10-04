@@ -256,6 +256,7 @@ export function formatMachines(views: MachineView[], now = new Date()): string {
       lines.push(`${v.id.padEnd(idWidth)}  ${state}  ${reachText(v.reach)}  ${gpu}  ${cpu}  mem ${gb(s.memUsedBytes)}/${gb(s.memTotalBytes)} GB`);
       const port = v.ollama.port;
       if (!s.ollama.up) lines.push(`${pad}ollama not answering on port ${port}`);
+      else if (s.ollama.loaded === null) lines.push(`${pad}ollama ${s.ollama.version ?? "?"}  models: unavailable (${s.ollama.modelsError})`);
       else if (s.ollama.loaded.length === 0) lines.push(`${pad}ollama ${s.ollama.version ?? "?"}  no model loaded`);
       else {
         lines.push(`${pad}ollama ${s.ollama.version ?? "?"}`);

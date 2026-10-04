@@ -43,7 +43,8 @@ export interface LoadedModel {
 export interface OllamaState {
   up: boolean;
   version: string | null;
-  loaded: LoadedModel[];
+  loaded: LoadedModel[] | null;
+  modelsError: string | null;
 }
 
 export interface MachineStatus {
@@ -152,25 +153,28 @@ function parseJson(text: string | undefined): unknown {
   }
 }
 
-export function parseOllama(versionText: string | undefined, psText: string | undefined): OllamaState {
+/** `loaded` null with `modelsError` when /api/ps gave no model list: unknown, never shown as "no model loaded". */
+export function parseOllama(versionText: string | undefined, psText: string | undefined, psWhy?: string): OllamaState {
   const version = parseJson(versionText) as { version?: unknown } | null;
   const ps = parseJson(psText) as { models?: unknown } | null;
-  const up = typeof version?.version === "string" || Array.isArray(ps?.models);
-  const models = Array.isArray(ps?.models) ? (ps.models as Record<string, unknown>[]) : [];
+  const models = Array.isArray(ps?.models) ? (ps.models as Record<string, unknown>[]) : null;
+  const up = typeof version?.version === "string" || models !== null;
   return {
     up,
     version: typeof version?.version === "string" ? version.version : null,
-    loaded: models.map((m) => {
-      const expiresAt = typeof m.expires_at === "string" ? m.expires_at : null;
-      const year = expiresAt ? new Date(expiresAt).getUTCFullYear() : NaN;
-      return {
-        name: String(m.name ?? m.model ?? "?"),
-        digest: typeof m.digest === "string" ? m.digest : null,
-        vramBytes: typeof m.size_vram === "number" ? m.size_vram : null,
-        expiresAt,
-        pinned: year > PINNED_AFTER_YEAR,
-      };
-    }),
+    loaded:
+      models?.map((m) => {
+        const expiresAt = typeof m.expires_at === "string" ? m.expires_at : null;
+        const year = expiresAt ? new Date(expiresAt).getUTCFullYear() : NaN;
+        return {
+          name: String(m.name ?? m.model ?? "?"),
+          digest: typeof m.digest === "string" ? m.digest : null,
+          vramBytes: typeof m.size_vram === "number" ? m.size_vram : null,
+          expiresAt,
+          pinned: year > PINNED_AFTER_YEAR,
+        };
+      }) ?? null,
+    modelsError: models !== null ? null : (psWhy ?? (psText ? "unexpected answer from /api/ps" : "no answer from /api/ps")),
   };
 }
 
@@ -184,7 +188,7 @@ const emptyStatus = (checkedAt: string, probeMs: number, error: string | null): 
   memUsedBytes: null,
   memTotalBytes: null,
   gpus: [],
-  ollama: { up: false, version: null, loaded: [] },
+  ollama: { up: false, version: null, loaded: null, modelsError: "not probed" },
 });
 
 /** A remote probe's whole output into a status; `@@end` missing means the script did not finish. */
@@ -320,12 +324,13 @@ class LocalTools {
   }
 }
 
-async function getText(url: string, signal: AbortSignal): Promise<string | undefined> {
+async function getText(url: string, signal: AbortSignal): Promise<{ text?: string; why?: string }> {
+  const what = new URL(url).pathname;
   try {
     const res = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(OLLAMA_HTTP_TIMEOUT_MS)]) });
-    return res.ok ? await res.text() : undefined;
+    return res.ok ? { text: await res.text() } : { why: `${what} answered HTTP ${res.status}` };
   } catch {
-    return undefined;
+    return { why: `no answer from ${what}` };
   }
 }
 
@@ -356,7 +361,7 @@ async function probeLocalOnce(port: number, checkedAt: string, started: number, 
     memUsedBytes: mem.used,
     memTotalBytes: mem.total,
     gpus: gpuText ? parseNvidiaSmi(gpuText) : [],
-    ollama: parseOllama(version, ps),
+    ollama: parseOllama(version.text, ps.text, ps.text === undefined ? ps.why : undefined),
     probeMs: Date.now() - started,
   };
 }

@@ -34,7 +34,7 @@ const cases = [
       reachable: true, cpus: 10, load1: 16.61,
       memTotalBytes: 68719476736, memUsedBytes: (1791108 + 431989 + 93508) * 16384,
       gpus: [],
-      ollama: { up: true, version: "0.34.4", loaded: [] },
+      ollama: { up: true, version: "0.34.4", loaded: [], modelsError: null },
     },
   },
   {
@@ -45,7 +45,22 @@ const cases = [
   {
     name: "Ollama down: version and ps empty, the machine still reachable",
     output: blank(blank(linux, "version"), "ps"),
-    expect: { reachable: true, cpus: 32, gpus: [{ name: "NVIDIA GeForce RTX 4090" }], ollama: { up: false, version: null, loaded: [] } },
+    expect: { reachable: true, cpus: 32, gpus: [{ name: "NVIDIA GeForce RTX 4090" }], ollama: { up: false, version: null, loaded: null } },
+  },
+  {
+    name: "Ollama answers its version but /api/ps does not: models unknown, not none",
+    output: blank(linux, "ps"),
+    expect: { ollama: { up: true, version: "0.34.4", loaded: null, modelsError: "no answer from /api/ps" } },
+  },
+  {
+    name: "Ollama /api/ps answers something else than a model list: models unknown",
+    output: linux.replace(/@@ps\n.*\n/, '@@ps\n{"models":{"a":1}}\n'),
+    expect: { ollama: { up: true, loaded: null, modelsError: "unexpected answer from /api/ps" } },
+  },
+  {
+    name: "Ollama /api/ps is not JSON: models unknown",
+    output: linux.replace(/@@ps\n.*\n/, "@@ps\n<html>proxy error</html>\n"),
+    expect: { ollama: { up: true, loaded: null, modelsError: "unexpected answer from /api/ps" } },
   },
   {
     name: "a model pinned with keep_alive -1",
