@@ -3,7 +3,7 @@
 // read the team's records their own way and both call roundDigest. Totals stay in `aya team stats`.
 
 import { HOLD_ACCOUNT_SETTING, HOLD_APPROVAL, HOLD_APPROVE_AYA, HOLD_CHOICE, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, HOLD_USAGE_LIMIT, NO_PANE_HOLD } from "./pane-holds";
-import { TEAM_SYSTEM_SENDER } from "./team-definition";
+import { AYA_ROUND_LOGGED, AYA_ROUND_SKIPPED, TEAM_SYSTEM_SENDER } from "./team-definition";
 import { pendingWaits, type StatusWait } from "./team-supervision";
 import { clock, WALL_MINUTE_MS } from "./team-times";
 import type { TeamMessage } from "./types";
@@ -101,7 +101,7 @@ const minutes = (sinceMs: number, nowMs: number) => Math.max(0, Math.floor((nowM
 export const duration = (min: number) => (min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`);
 const who = (onlyUser: boolean) => (onlyUser ? "only the user" : "the team");
 /** A round the lead got: one typed with its Enter withheld, or held, is no baseline, or what it would show is lost. */
-const isRound = (m: TeamMessage, lead: string | null) => m.from === TEAM_SYSTEM_SENDER && m.to === lead && m.delivered && !m.typedOnly && /^Round \d+:/.test(m.text);
+const isRound = (m: TeamMessage, lead: string | null) => m.from === TEAM_SYSTEM_SENDER && m.to === lead && m.delivered && !m.typedOnly && AYA_ROUND_LOGGED.test(m.text);
 const QUEUED = /^earlier message #\d+ for it is still waiting/;
 /** Still held for its receiver; Aya's own held rounds go stale, so they are no block. */
 const heldForRole = (m: TeamMessage) => !m.delivered && !!m.held && m.from !== TEAM_SYSTEM_SENDER;
@@ -154,7 +154,7 @@ function commitsSince(log: readonly TeamMessage[], prevIndex: number, head: stri
   return [...new Set(after)];
 }
 
-/** The lead's view of the team now and since the last round (the last "Round N:" Aya logged to the lead). */
+/** The lead's view of the team now and since the last round (the last "Aya round N:" Aya logged to the lead, "Round N:" in older logs). */
 export function roundDigest(input: DigestInput): Digest {
   const { roles, lead, log, progress, refused, turns, busy, nowMs } = input;
   let prevIndex = log.length - 1;
@@ -168,15 +168,15 @@ export function roundDigest(input: DigestInput): Digest {
   const messages = recent.filter((m) => m.from !== TEAM_SYSTEM_SENDER).length;
   const commits = commitsSince(log, prevIndex, progress?.commit);
   const held = recent.filter(heldForRole).length;
-  const skipped = recent.filter((m) => m.from === TEAM_SYSTEM_SENDER && m.to === lead && /^round \d+ skipped/.test(m.text)).length;
+  const skipped = recent.filter((m) => m.from === TEAM_SYSTEM_SENDER && m.to === lead && AYA_ROUND_SKIPPED.test(m.text)).length;
   const shown = commits.slice(-COMMITS_SHOWN).join(", ");
   const parts = [
     messages ? `+${counted(messages, "message")}` : "no messages",
     commits.length ? `+${counted(commits.length, "commit")} (${commits.length > COMMITS_SHOWN ? "..., " : ""}${shown})` : "no commits",
     ...(held ? [`${held} held`] : []),
-    ...(skipped ? [`${counted(skipped, "round")} skipped`] : []),
+    ...(skipped ? [`${counted(skipped, "Aya round")} skipped`] : []),
   ];
-  const header = sinceIso === null ? "No messages yet" : `Since ${clock(sinceIso)}${prev ? "" : " (no round before)"}: ${parts.join(", ")}`;
+  const header = sinceIso === null ? "No messages yet" : `Since ${clock(sinceIso)}${prev ? "" : " (no Aya round before)"}: ${parts.join(", ")}`;
 
   const sections: DigestSection[] = [];
   const add = (title: string, items: string[]) => void (items.length && sections.push({ title, items: capped(items) }));

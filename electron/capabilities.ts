@@ -123,7 +123,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     command: "team send",
     usage: "aya team send role text",
     summary: "Send a message to the pane playing role; the recipient sees who sent it, when, at which commit.",
-    example: 'aya team send implementer "Round 5: the alert freezes at zero"',
+    example: 'aya team send implementer "Update 5: the alert freezes at zero"',
     notes: ["Only roles listed in your send-to work.", "Written to the pane does not mean read."],
   },
   {

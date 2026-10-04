@@ -28,7 +28,7 @@ test.describe("an idle lead, reported by the status hook", () => {
     const card = dialog.getByTestId("team-ux-review");
     const lead = () => teamLog(seeded.projectDir)("tab-left");
     await expect.poll(() => lead(), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toContain("ANSWERED lead-idle-hook");
-    await expect.poll(() => countMatches(lead(), /Round \d+: no progress since/g), { timeout: TEAM_CLOCK_TIMEOUT_MS }).toBeGreaterThanOrEqual(2);
+    await expect.poll(() => countMatches(lead(), /Aya round \d+: no progress since/g), { timeout: TEAM_CLOCK_TIMEOUT_MS }).toBeGreaterThanOrEqual(2);
     await expect(card.getByLabel("ux-review lead waiting")).toHaveCount(0);
     await expect(card.getByLabel("tester status")).not.toContainText("waiting for you");
     expect(skipLines(seeded.ayaHome)).toEqual([]);
@@ -44,10 +44,10 @@ test.describe("a lead that asked the user", () => {
     const lead = () => teamLog(seeded.projectDir)("tab-left");
     await expect.poll(() => lead(), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toContain("ANSWERED lead-waits");
     await expect(card.getByLabel("ux-review lead waiting")).toHaveText(/tester is waiting for you since \d\d:\d\d: need the staging password/);
-    await expect.poll(() => skipLines(seeded.ayaHome), { timeout: TEAM_CLOCK_TIMEOUT_MS }).toEqual(["tester: round 2 skipped: tester asked the user: need the staging password"]);
+    await expect.poll(() => skipLines(seeded.ayaHome), { timeout: TEAM_CLOCK_TIMEOUT_MS }).toEqual(["tester: Aya round 2 skipped: tester asked the user: need the staging password"]);
     await window.waitForTimeout(QUIET_NO_ROUND_MS);
-    expect(countMatches(lead(), /Round \d+: no progress since/g)).toBe(1);
-    expect(skipLines(seeded.ayaHome)).toEqual(["tester: round 2 skipped: tester asked the user: need the staging password"]);
+    expect(countMatches(lead(), /Aya round \d+: no progress since/g)).toBe(1);
+    expect(skipLines(seeded.ayaHome)).toEqual(["tester: Aya round 2 skipped: tester asked the user: need the staging password"]);
   });
 });
 

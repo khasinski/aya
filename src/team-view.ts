@@ -97,7 +97,7 @@ function blockedWords(reason: string): string {
   return reason === HOLD_ACCOUNT_SETTING ? `is waiting for you: ${reason}` : "is waiting for you in its CLI";
 }
 
-const everyRound = (min: number) => `the lead gets a round every ${min} min`;
+const everyRound = (min: number) => `the lead gets an Aya round every ${min} min`;
 const messages = (n: number) => `${n} message${n === 1 ? "" : "s"}`;
 
 /** The team's line above its roles; null while there is nothing to say. Progress is a change to the repo
@@ -106,7 +106,7 @@ export function livenessLine({ status, stalledSince, blocked, unreached, silence
   // Before Start the card names the rhythm Start begins; a team without a cadence has none to name.
   if (status === "never started") return silence?.everyMin ? { text: `not started - ${everyRound(silence.everyMin)}`, tone: "idle" } : null;
   if (status === "paused") return null;
-  const waits = roundsHeld ? `rounds wait for ${roundsHeld.role} to answer (${roundsHeld.rounds} unanswered)` : null;
+  const waits = roundsHeld ? `Aya rounds wait for ${roundsHeld.role} to answer (${roundsHeld.rounds} unanswered)` : null;
   if (status === "progressing") {
     if (!silence) return { text: waits ? `progressing - ${waits}` : "progressing", tone: "ok" };
     const asks =
@@ -115,7 +115,7 @@ export function livenessLine({ status, stalledSince, blocked, unreached, silence
         ? everyRound(silence.everyMin)
         : silence.askAfterMin === null
           ? "no lead to ask"
-          : `the lead is asked for a round after ${silence.askAfterMin} min without a message or a change to the repo`);
+          : `the lead is asked for an Aya round after ${silence.askAfterMin} min without a message or a change to the repo`);
     return { text: `progressing - ${asks}; flagged after ${silence.stalledAfterMin} min without a change to the repo`, tone: "ok" };
   }
   if (status === "talking" && repo) {
@@ -124,11 +124,11 @@ export function livenessLine({ status, stalledSince, blocked, unreached, silence
   }
   if (status === "unreachable" && unreached) {
     const why = unreached.reason === NO_PANE_HOLD ? "it has no pane" : `its pane ${unreached.reason}`;
-    return { text: `no round typed to ${unreached.role} since ${clock(unreached.since)}: ${why}`, tone: "held" };
+    return { text: `no Aya round typed to ${unreached.role} since ${clock(unreached.since)}: ${why}`, tone: "held" };
   }
   if (status === "stalled") {
     const what = repo ? ` (${messages(repo.messages)})` : "";
-    return { text: `stalled: no change to the repo since ${clock(repo?.since ?? stalledSince ?? "")}${what} - rounds are paused until the repo changes`, tone: "held" };
+    return { text: `stalled: no change to the repo since ${clock(repo?.since ?? stalledSince ?? "")}${what} - Aya rounds are paused until the repo changes`, tone: "held" };
   }
   const since = stalledSince ? `stalled since ${clock(stalledSince)}` : "";
   const who = blocked.map((b) => `${b.role} ${blockedWords(b.reason)}`).join("; ");

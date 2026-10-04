@@ -330,7 +330,7 @@ aya pane send "reviewer" --no-submit "draft for review"
 # Work as a team (see "Run a team of agents")
 aya team whoami
 aya team show                                         # every role, lead, cadence, protocol
-aya team send implementer "Round 5: the alert freezes at zero"
+aya team send implementer "Update 5: the alert freezes at zero"
 aya team inbox
 aya team pause "no lower complexity is possible"      # the lead ends the work
 aya team new "a team that reviews and fixes the UX"   # guide for an agent

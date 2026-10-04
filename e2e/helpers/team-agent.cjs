@@ -188,7 +188,7 @@ if ((mode.startsWith("ask") || (mode === "relaunch" && !relaunched)) && me === "
   let input = "";
   process.stdin.on("data", (chunk) => {
     input += chunk;
-    if (/Round \d+:/.test(input)) process.exit(0);
+    if (/(?:Aya round|Round) \d+:/.test(input)) process.exit(0);
   });
 } else if (mode === "busy" && me === "tab-right") {
   // The recorded footer is wider than the e2e pane and would wrap; keep its shape, shortened.

@@ -271,7 +271,12 @@ A 22-round reviewer/implementer UX session hit:
   messages) it is cut to about 1 MB, keeping first every message still owed to its role (a quiet
   role's report is not cut by the others' talk), then the newest 1,000 of the rest.
 - **Cadence**: optional; Aya sends the round prompt to the lead every N minutes (the
-  role named in `## Cadence` is the lead); a pause stops the team.
+  role named in `## Cadence` is the lead); a pause stops the team. Aya's rounds say whose
+  they are ("Aya round 4: ...") in the pane, the team log, the window and `aya team stats`:
+  a lead numbering its own reports "Round 42" was read as Aya's (2026-10-03, "Runda 414 (Aya
+  round 75)"), so the team-author guide asks protocols to number their reports as updates
+  ("Update 4"). Logs from before the label ("Round 4:", "round 5 skipped") still read as
+  Aya's rounds in the digest.
   Write/measure turn-taking stays in the protocol. The round carries a digest of now and what
   changed since the last round (`electron/team-digest.ts`), each part only when it has something:
   messages, new HEADs, held messages and skipped rounds since then; roles blocked 5 min or more on
@@ -473,7 +478,7 @@ round is due on the cadence, the silence or a stall; one round at a time, and it
 clocks are written in one step. A due round that is not typed (the lead is busy, has a draft, is
 not running, asked the user, the team was paused meanwhile, or the team is stalled) stays due:
 the next look that finds the pane free types it, and the team log gets one line per round and
-reason ("round 5 skipped: is busy working"). A round due at relaunch is tried at each look
+reason ("Aya round 5 skipped: is busy working"). A round due at relaunch is tried at each look
 until the panes respawn.
 Messages reach a role in the order they were sent: while one is still waiting in its inbox, a
 newer one from a role or the user waits behind it ("earlier message #3 for it is still waiting;
@@ -533,7 +538,7 @@ messages about one commit over 12 minutes read as "progressing".)
   while it stays quiet. The clock is its own field in the team's state (`silenceRoundAt`), counted
   from the later of the last message or change and the last such round, so it survives a
   relaunch; a relaunch, Start and Resume start it over (a pause stops it). The round
-  is numbered with the cadence's rounds ("Round 4: no progress since 18:04 (31 min).
+  is numbered with the cadence's rounds ("Aya round 4: no progress since 18:04 (31 min).
   Unanswered: implementer waits for tester since 18:05 (30 min) ... If you cannot,
   ask the user with: aya status waiting ..."; a role waits for another until something
   that one sent after it reaches it, directly or passed on by other roles, so a message the
@@ -546,7 +551,7 @@ messages about one commit over 12 minutes read as "progressing".)
   it is free) and is not counted as missed; a lead whose pane cannot take it is counted as the cadence's
   rounds are (Unreachable). A lead that ran `aya status waiting` is left alone until
   the next progress, by the cadence's rounds too, and each round skipped for it leaves one line
-  in the team log ("round 5 skipped: lead asked the user: need the staging password"). Only the
+  in the team log ("Aya round 5 skipped: lead asked the user: need the staging password"). Only the
   agent's own `aya status waiting` is a question: Aya's status hook reports no Notification
   (Claude's and Grok's fire on dialogs and idle composers alike), and no hook ends a
   question. The question is kept in `agent-waiting.json` under the Aya home with the pane's session
@@ -593,11 +598,11 @@ messages about one commit over 12 minutes read as "progressing".)
   Unanswered rounds). The window says "stalled: no
   change to the repo since 22:52 (14 messages) - rounds are paused until the repo changes". The
   stall makes a round due, and that ordinary numbered round tells the lead, once per stall, with
-  who waits on whom ("Round 13: stalled: no change to the repo since 22:52 (14 messages).
+  who waits on whom ("Aya round 13: stalled: no change to the repo since 22:52 (14 messages).
   Unanswered: implementer waits for tester since 22:40 (12 min). Messages are not progress:
   decide the next change to the repo and who makes it, or end the work with aya team pause ...");
   it waits for a busy lead and is skipped for a lead that asked the user. Later rounds are skipped
-  while the stall lasts, one log line each ("round 14 skipped: stalled: no change to the repo since
+  while the stall lasts, one log line each ("Aya round 14 skipped: stalled: no change to the repo since
   22:52"). Only a change to the repo ends a stall, seen at the clock's next look. Start or Resume
   start both clocks over, and so does answering a screen a role had been blocked on for over 2
   minutes (a screen up for seconds does not). A team stalled at the clock's last look before Aya
@@ -610,8 +615,8 @@ messages about one commit over 12 minutes read as "progressing".)
   is any message from the lead (an "ok" too, and one still waiting in a busy peer's inbox: the
   lead read its rounds) or a change to the repo (a commit the team has not had, or a changed
   working tree), seen at the clock's next look; a round the pane did not take (busy, a draft) is
-  not unanswered. The team log gets one line per hold ("rounds held: tester did not answer rounds
-  1..3") and the window says "rounds wait for tester to answer (3 unanswered)". The count is kept
+  not unanswered. The team log gets one line per hold ("Aya rounds held: tester did not answer Aya rounds
+  1..3") and the window says "Aya rounds wait for tester to answer (3 unanswered)". The count is kept
   in `progress.json`, so a relaunch keeps the hold; Start and Resume end it, and the lead's next
   answer lets the due round through at the next look. Stalled runs on its own: the one round of a
   stall still goes to a held lead.
@@ -627,7 +632,7 @@ messages about one commit over 12 minutes read as "progressing".)
   for you in its CLI" and marks the role; answering the screen clears it at once.
   The screens are read by the team's clock at each look, so this needs no cadence or
   lead; the window hides a block at once when the pane no longer shows the screen. The
-  window says what watches a team: "progressing - the lead gets a round every 3 min" with a
+  window says what watches a team: "progressing - the lead gets an Aya round every 3 min" with a
   cadence, "the lead is asked for a round after 30 min without a message or a change to the
   repo" without one, then "flagged after 60 min without a change to the repo". A role
   counts as answered after two free reads in a row (one glitch does not wake a
@@ -636,7 +641,7 @@ messages about one commit over 12 minutes read as "progressing".)
 - **Unreachable**: the role the rounds go to has no pane, or a pane that took none of the last 3 scheduled
   rounds (its agent exited, it dropped to a shell, it is still starting, a draft sits in its
   composer). Nothing is typed then, so nothing goes silent and the team would read as
-  progressing; the window says "no round typed to implementer since 18:34: its pane is not
+  progressing; the window says "no Aya round typed to implementer since 18:34: its pane is not
   running" and stops saying it as soon as the pane takes a message again. A lead whose pane was
   closed is unreachable too ("...: it has no pane") until it is given a pane. A busy agent is not
   this (its rounds wait by design), a screen waiting for you is Blocked, and the retries of one
@@ -655,7 +660,7 @@ messages about one commit over 12 minutes read as "progressing".)
 Known and accepted (found by the iterated Sol 6.1 review of the sudoku scenario):
 
 - **A crash between the paste and the round's number (N3.2)**: the round is typed, Aya goes down
-  before it writes the number, and the next launch types "Round N" again. A repeated poke is
+  before it writes the number, and the next launch types "Aya round N" again. A repeated poke is
   harmless; a write-ahead number would leave a gap in the numbering when the paste then fails.
 - **A Save of the protocol or responsibilities does not tell running agents (N3.3)**: they read
   `aya team whoami` once. A fix needs a new mechanism: on a Save that changes what whoami prints,

@@ -16,7 +16,7 @@ import { digestOneLine, roundDigest } from "./team-digest";
 import { statusSection } from "./team-status-command";
 import { openTeamStore, readText, type PendingTask, type TeamStore } from "./team-store";
 import { clock, ROUND_CHECK_MS, SILENCE_FIRST_MS, SILENCE_REPEAT_MS } from "./team-times";
-import { TEAM_SYSTEM_SENDER, TEAM_USER_SENDER } from "./team-definition";
+import { TEAM_SYSTEM_SENDER, TEAM_USER_SENDER, ayaRound } from "./team-definition";
 import type { ProjectConfig, TeamDefinition, TeamStartResult } from "./types";
 
 /** Runs `fn` every `ms`; returns a cancel. Injected so tests need no clock. */
@@ -425,7 +425,7 @@ export class TeamRunner {
       await store.append({ from: TEAM_SYSTEM_SENDER, to: lead, commit: head, text, delivered: true });
     };
     // Once per round and reason: a lead busy for an hour is not a page of skips.
-    const skip = (why: string) => (debugLog(store, "round", { round, skipped: why }), logOnce(`round ${round} skipped: ${why}`));
+    const skip = (why: string) => (debugLog(store, "round", { round, skipped: why }), logOnce(`${ayaRound(round)} skipped: ${why}`));
     const pausedSkip = async () => ((await store.state()).paused ? skip("the team is paused") : debugLog(store, "round", { round, skipped: "the team was saved or re-armed meanwhile" }));
     if (stale()) return pausedSkip();
     // Told once per stall: rounds nobody can act on only pile up in the agent's queue; a change to the repo resumes them.
@@ -433,7 +433,7 @@ export class TeamRunner {
     // Rounds a lead does not answer pile up in its queue too: the next wait for its answer. The one round of a stall still goes.
     if (!onRepo && roundsHeld(progress)) {
       debugLog(store, "round", { round, held: "brake", unanswered: progress.unanswered?.rounds });
-      return logOnce(`rounds held: ${lead} did not answer rounds ${round - (progress.unanswered?.rounds ?? 0)}..${round - 1}`);
+      return logOnce(`Aya rounds held: ${lead} did not answer Aya rounds ${round - (progress.unanswered?.rounds ?? 0)}..${round - 1}`);
     }
     const question = await this.askedTheUser(store, lead, Date.parse(progress.changedAt), project);
     if (question !== null) return skip(`${lead} asked the user${question ? `: ${oneLine(question)}` : ""}`);
@@ -462,7 +462,7 @@ export class TeamRunner {
       ? stalledText({ round, since: repoSince(progress), messages: progress.messages ?? 0, waits: await waits(), said: await said(), nowMs })
       : quiet
         ? supervisionText({ round, quietSince: progress.changedAt, waits: await waits(), said: await said(), nowMs })
-        : `Round ${round}: run your round as the team protocol says. ${digestOneLine(await this.digest(store, team, progress, nowMs))}`;
+        : `${ayaRound(round)}: run your round as the team protocol says. ${digestOneLine(await this.digest(store, team, progress, nowMs))}`;
     // A round the lead's pane cannot take now stays due and is looked at again each minute: the user's command runs
     // only for a round that goes now, not on every look while it waits.
     const leadPane = await store.paneOf(lead);

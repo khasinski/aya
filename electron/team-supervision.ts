@@ -4,6 +4,7 @@
 import { TEAM_MINUTE_MS } from "./paths";
 import type { TeamMessage } from "./types";
 import { clock } from "./team-times";
+import { ayaRound } from "./team-definition";
 
 /** A role's own `aya status waiting`: on the user (`on` null) or `--on` a teammate; `since` in epoch ms. */
 export interface StatusWait {
@@ -65,13 +66,13 @@ const minutesSince = (iso: string, nowMs: number) => Math.max(0, Math.round((now
 
 /** The round typed to the lead when the team has been quiet: the numbered round, who waits on whom, what to do. Plain ASCII, one line. */
 export function supervisionText({ round, quietSince, waits, said, nowMs }: { round: number; quietSince: string; waits: readonly RoleWait[]; said?: readonly StatusWait[]; nowMs: number }): string {
-  return `Round ${round}: no progress since ${clock(quietSince)} (${minutesSince(quietSince, nowMs)} min). ${waitsText(waits, nowMs, said)} You lead this team: find out who is stuck and unblock them. ${ASK_USER}`;
+  return `${ayaRound(round)}: no progress since ${clock(quietSince)} (${minutesSince(quietSince, nowMs)} min). ${waitsText(waits, nowMs, said)} You lead this team: find out who is stuck and unblock them. ${ASK_USER}`;
 }
 
 /** The round due when the team stalls on the repo: talk is not progress; who waits on whom. Plain ASCII, one line. */
 export function stalledText({ round, since, messages, waits, said, nowMs }: { round: number; since: string; messages: number; waits: readonly RoleWait[]; said?: readonly StatusWait[]; nowMs: number }): string {
   return (
-    `Round ${round}: stalled: no change to the repo since ${clock(since)} (${messages} message${messages === 1 ? "" : "s"}). ${waitsText(waits, nowMs, said)} ` +
+    `${ayaRound(round)}: stalled: no change to the repo since ${clock(since)} (${messages} message${messages === 1 ? "" : "s"}). ${waitsText(waits, nowMs, said)} ` +
     'Messages are not progress: decide the next change to the repo and who makes it, or end the work with aya team pause "why". ' +
     ASK_USER
   );

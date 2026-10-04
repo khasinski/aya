@@ -50,7 +50,7 @@ reviewer
 reviewer every 30 min
 
 ## Protocol
-The reviewer leads: it gets the task and checks each round that no finding or fix waits too long on someone. Findings are hypotheses with a way to check them, not facts. Number the rounds and mark items [reported -> fixed -> confirmed].`;
+The reviewer leads: it gets the task and checks each round that no finding or fix waits too long on someone. Findings are hypotheses with a way to check them, not facts. Number the reviewer's reports as updates (Update 1, Update 2) and mark items [reported -> fixed -> confirmed].`;
 
 const ID_RULE = `lowercase letters a-z, digits and dashes, starting with a letter or digit, at most ${ID_MAX_LEN} characters`;
 
@@ -81,8 +81,8 @@ The team file
 - "${SENDS_TO_FIELD}:" is one line of roles defined in this file, never the role itself, each once, each with what it gets from this role in parentheses (no parentheses inside). Leave the line out for a role that sends nothing.
 - Every other line of a role is its responsibilities; none may start with "${SENDS_TO_FIELD}:", "${MUST_NOT_FIELD}:" or "${SECTION_MARKER}".
 - Required "${SECTION_MARKER}Lead": one line, the id of the role that leads the team; name it yourself. The lead gets the task, and checks that nobody waits too long on someone else and that work is going on at all: when the team has made no progress for a while, Aya asks the lead for a round that says who waits on whom. Pick the role that takes the request and hands out the work, and give the reason in one sentence in the protocol. The save refuses a team without it.
-- Optional "${SECTION_MARKER}Cadence": one line "<role> every <N> min", N from 1-${MAX_CADENCE_MINUTES}, with the lead's role: the rhythm belongs to the lead. The save refuses a Cadence and a Lead that name different roles (cadence and lead name different roles; make them the same). While the team runs, Aya prompts the lead to start a new round every N minutes. A team with no Cadence still has its lead; it just gets no rounds on a timer.
-- Optional "${SECTION_MARKER}Protocol": rules every role follows, free text; no line may start with "${SECTION_MARKER}".
+- Optional "${SECTION_MARKER}Cadence": one line "<role> every <N> min", N from 1-${MAX_CADENCE_MINUTES}, with the lead's role: the rhythm belongs to the lead. The save refuses a Cadence and a Lead that name different roles (cadence and lead name different roles; make them the same). While the team runs, Aya prompts the lead to start a new round every N minutes, typed as "Aya round <N>: ...". A team with no Cadence still has its lead; it just gets no rounds on a timer.
+- Optional "${SECTION_MARKER}Protocol": rules every role follows, free text; no line may start with "${SECTION_MARKER}". "Round" is Aya's word for its own numbered prompts to the lead ("Aya round 4"): if the protocol numbers the lead's or a role's reports, call them updates ("Update 4"), never rounds, so nobody mixes the two counters.
 - Leave out "${SECTION_MARKER}${STATUS_COMMAND_SECTION}": the user sets it in the Teams window, and the save refuses one from an agent.
 - No other "${SECTION_MARKER}" sections. Text between the title and the first section is dropped.
 

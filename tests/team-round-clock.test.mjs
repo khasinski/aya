@@ -64,7 +64,7 @@ async function world(opts = {}) {
     for (const job of w.jobs.filter((j) => !j.cancelled)) await job.fn();
   };
   const toLead = () => w.typed.filter((t) => t.pane === "pane-t" && /\| from aya \|/.test(t.text) && !/Delivery test/.test(t.text));
-  const skips = async () => (await store.log()).filter((m) => m.from === "aya" && /^round \d+ skipped: /.test(m.text)).map((m) => m.text);
+  const skips = async () => (await store.log()).filter((m) => m.from === "aya" && /^Aya round \d+ skipped: /.test(m.text)).map((m) => m.text);
   const talk = (from = "implementer") =>
     store.append({ from, to: from === "tester" ? "implementer" : "tester", commit: null, text: "report: still measuring the solver", delivered: true, time: new Date(w.now).toISOString() });
   return { w, store, check, toLead, skips, talk, cleanup: () => (w.runner.stopAll(), cleanup()) };
@@ -110,7 +110,7 @@ for (const [label, cause, reason] of SKIPS) {
     await t.check();
     await t.check();
     assert.deepEqual(t.toLead(), [], "nothing typed");
-    assert.deepEqual(await t.skips(), [`round 1 skipped: ${reason}`], "one line, however many checks");
+    assert.deepEqual(await t.skips(), [`Aya round 1 skipped: ${reason}`], "one line, however many checks");
   });
 }
 
@@ -123,7 +123,7 @@ clockTest("a due round is logged as skipped when the team is paused while it is 
   };
   await t.check();
   assert.deepEqual(t.toLead(), []);
-  assert.deepEqual(await t.skips(), ["round 1 skipped: the team is paused"]);
+  assert.deepEqual(await t.skips(), ["Aya round 1 skipped: the team is paused"]);
 });
 
 // [who talks every beat, whether its talk answers the lead's rounds] The repo never changes either way.
@@ -139,7 +139,7 @@ for (const [label, talker, braked] of STALLS) {
       await t.talk(talker);
       await t.check();
     }
-    const held = (await t.store.log()).filter((m) => m.from === "aya" && /^rounds held: /.test(m.text));
+    const held = (await t.store.log()).filter((m) => m.from === "aya" && /^Aya rounds held: /.test(m.text));
     assert.equal(held.length > 0, braked, `the brake is ${braked ? "on" : "off"} before the stall`);
     const stalledRounds = t.toLead().filter((r) => /stalled: no change to the repo/.test(r.text));
     assert.equal(stalledRounds.length, 1, "the lead is told once");
@@ -152,7 +152,7 @@ for (const [label, talker, braked] of STALLS) {
     assert.equal(t.toLead().length, typed, "no round while stalled");
     const skipped = await t.skips();
     assert.equal(skipped.length, 1, skipped.join("\n"));
-    assert.match(skipped[0], new RegExp(`^round ${typed + 1} skipped: stalled: no change to the repo since \\d\\d:\\d\\d`));
+    assert.match(skipped[0], new RegExp(`^Aya round ${typed + 1} skipped: stalled: no change to the repo since \\d\\d:\\d\\d`));
   });
 }
 
@@ -162,11 +162,11 @@ test("a round whose Enter did not go through is logged as left in the composer a
   try {
     await t.w.runner.start("game", "ux-review");
     t.w.deps.deliver = async (pane, text) => {
-      if (/Round 1:/.test(text)) throw new TextPastedError("enter failed");
+      if (/Aya round 1:/.test(text)) throw new TextPastedError("enter failed");
     };
     t.w.now += BEAT * S;
     await t.check();
-    const entry = (await t.store.log()).filter((m) => m.from === "aya" && /^Round 1:/.test(m.text)).at(-1);
+    const entry = (await t.store.log()).filter((m) => m.from === "aya" && /^Aya round 1:/.test(m.text)).at(-1);
     assert.equal(entry.typedOnly, true, "the log says it sits in the composer");
     assert.equal(await t.store.lastRound(), 0, "a round that was not submitted does not use up a number");
     assert.deepEqual(await t.skips(), [], "it is not a skipped round: its text is there");
@@ -207,14 +207,14 @@ clockTest("the window's words follow the rhythm: a 1 min cadence is 'a round eve
   await t.w.runner.start("game", "ux-review");
   const [team] = await listTeams(t.w.deps.teamHome, (await t.w.deps.listProjects())[0], t.w.deps.holdReason);
   const line = livenessLine(team.liveness).text;
-  assert.match(line, /the lead gets a round every 1 min/);
+  assert.match(line, /the lead gets an Aya round every 1 min/);
   assert.doesNotMatch(line, /after 30 min/);
   const quiet = await world({ cadence: false });
   try {
     quiet.w.now = Date.now();
     await quiet.w.runner.start("game", "ux-review");
     const [q] = await listTeams(quiet.w.deps.teamHome, (await quiet.w.deps.listProjects())[0], quiet.w.deps.holdReason);
-    assert.match(livenessLine(q.liveness).text, /the lead is asked for a round after 30 min/);
+    assert.match(livenessLine(q.liveness).text, /the lead is asked for an Aya round after 30 min/);
   } finally {
     quiet.cleanup();
   }

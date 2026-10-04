@@ -55,7 +55,7 @@ test("supervisionText | short, one line, ASCII, no em-dash, with and without wai
   }
   // A clock set back (log written in the future) never prints a negative age.
   assert.match(sup.supervisionText({ round: 4, quietSince: "2026-09-30T09:50:00.000Z", waits, nowMs: nowMs - 3_600_000 }), /\(0 min\)/);
-  assert.match(withWaits, /^Round 4: no progress since /, "it is a numbered round, on the shared count");
+  assert.match(withWaits, /^Aya round 4: no progress since /, "it is a numbered round, on the shared count");
 });
 
 const def = (lead) => ({ name: "ux-review", roles: [{ id: "tester" }, { id: "implementer" }], lead, cadenceMinutes: 30 });

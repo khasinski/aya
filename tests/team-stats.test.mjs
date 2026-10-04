@@ -89,7 +89,7 @@ const TABLE = [
       assert.equal(s.pauses, null);
       assert.deepEqual(s.heldMessages, [{ key: "held: shows an approval prompt", count: 1 }]);
       assert.equal(text.match(/needs aya debug on/g).length, 5, text);
-      assert.match(text, /last round \(state\.json\)\s+7/);
+      assert.match(text, /last Aya round \(state\.json\)\s+7/);
     },
   ],
   [
@@ -174,7 +174,7 @@ const TABLE = [
       assert.equal(s.rounds.heldUnanswered, 1);
       assert.match(text, /typed \(debug\.jsonl\)\s+rhythm 1, silence 1/);
       assert.match(text, /^ +2 {2}skipped: is busy working$/m);
-      assert.match(text, /^ +1 {2}held: the lead did not answer the earlier rounds$/m);
+      assert.match(text, /^ +1 {2}held: the lead did not answer the earlier Aya rounds$/m);
     },
   ],
   [
@@ -337,7 +337,7 @@ test("aya team stats <team> [--json]: the real CLI on a temp AYA_HOME, read-only
   assert.match(r.stdout, /^ +1 {2}tester -> lead$/m);
   assert.match(r.stdout, /^ +1 {2}shows a numbered choice$/m);
   assert.match(r.stdout, /^ {2}lead +1 \(oldest #2, /m);
-  assert.match(r.stdout, /last round \(state\.json\)\s+4/);
+  assert.match(r.stdout, /last Aya round \(state\.json\)\s+4/);
   r = runCli(h, ["team", "stats", "crew", "--json"]);
   assert.equal(r.status, 0, r.stderr);
   const json = JSON.parse(r.stdout);
@@ -351,7 +351,7 @@ test("aya team stats <team> [--json]: the real CLI on a temp AYA_HOME, read-only
   assert.equal(r.status, 0, r.stderr);
   // The CLI reads the wall clock: the wait is #2's age at some instant of the run, in whole minutes.
   const waited = new Set([ranFrom, ranTo].map((t) => duration(Math.floor((t - Date.parse(at(2))) / WALL_MINUTE_MS))));
-  const head = `Since ${clock(at(1))} (no round before): +2 messages, no commits\n`;
+  const head = `Since ${clock(at(1))} (no Aya round before): +2 messages, no commits\n`;
   assert.ok([...waited].some((w) => r.stdout.startsWith(`${head}Waiting on you: tester #2 for ${w}\n`)), r.stdout);
   assert.equal(readFileSync(logFile, "utf8"), before, "nothing written");
 });

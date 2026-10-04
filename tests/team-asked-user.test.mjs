@@ -70,7 +70,7 @@ async function world({ cadence = false } = {}) {
       else await ACTIONS[step]();
     }
   };
-  const rounds = () => w.typed.filter((t) => t.pane === "pane-l").flatMap((t) => t.text.match(/Round (\d+):/)?.[1] ?? []).map(Number);
+  const rounds = () => w.typed.filter((t) => t.pane === "pane-l").flatMap((t) => t.text.match(/Aya round (\d+):/)?.[1] ?? []).map(Number);
   const skipped = async () => (await store.log()).filter((m) => m.from === "aya" && /skipped/.test(m.text)).map((m) => `${m.to}: ${m.text}`);
   const typedTo = (pane) => w.typed.filter((t) => t.pane === pane).map((t) => t.text);
   return { run, rounds, skipped, typedTo, cleanup };
@@ -88,7 +88,7 @@ const askedTest = (name, ...args) => {
   });
 };
 
-const ASKED = "leader: round 1 skipped: leader asked the user: need the staging password";
+const ASKED = "leader: Aya round 1 skipped: leader asked the user: need the staging password";
 
 // [name, options, steps (numbers are seconds), rounds the lead got, skip lines in the log]
 const CASES = [

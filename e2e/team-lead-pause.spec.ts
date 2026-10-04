@@ -17,8 +17,8 @@ test.describe("a lead who decides the work is finished", () => {
     await expect(card.getByText("paused", { exact: true })).toBeVisible();
     await expect(card.getByRole("button", { name: "Resume" })).toBeVisible();
     await expect(card).toContainText("tester (the lead) paused the team: no lower complexity is possible");
-    const rounds = countMatches(lead(), /Round \d+: .*no progress since/g);
+    const rounds = countMatches(lead(), /Aya round \d+: .*no progress since/g);
     await window.waitForTimeout(24 * QUIET_MINUTE_MS);
-    expect(countMatches(lead(), /Round \d+: .*no progress since/g), "a paused team gets no more rounds").toBe(rounds);
+    expect(countMatches(lead(), /Aya round \d+: .*no progress since/g), "a paused team gets no more rounds").toBe(rounds);
   });
 });

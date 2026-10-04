@@ -18,12 +18,12 @@ test.describe("a running team whose tester waits on OpenCode's plan question", (
   test("real ticks type rounds until the repo's clock runs out, then skip them; the window says stalled and who waits", async ({ window, seeded }) => {
     const dialog = await openTeams(window);
     const card = dialog.getByTestId("team-ux-review");
-    const rounds = () => (teamLog(seeded.projectDir)("tab-right").match(/Round \d+:/g) ?? []).length;
+    const rounds = () => (teamLog(seeded.projectDir)("tab-right").match(/Aya round \d+:/g) ?? []).length;
     await expect(card.getByLabel("ux-review status")).toContainText(/stalled since \d\d:\d\d/, { timeout: TEAM_AGENT_READY_TIMEOUT_MS });
     await expect(card.getByLabel("ux-review status")).toContainText("tester is waiting for you in its CLI");
     await expect(card.getByLabel("tester status")).toContainText(/waiting for you since \d\d:\d\d/);
     await expect(card.getByLabel("implementer status")).toHaveText("ready");
-    await expect.poll(() => teamLog(seeded.projectDir)("tab-right")).toMatch(/Round \d+: stalled: no change to the repo/);
+    await expect.poll(() => teamLog(seeded.projectDir)("tab-right")).toMatch(/Aya round \d+: stalled: no change to the repo/);
     const typed = rounds();
     expect(typed, "a round every 5 min of the 60 before the stall").toBeGreaterThan(3);
     await window.waitForTimeout(3 * ROUND_MS);
