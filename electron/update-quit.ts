@@ -1,7 +1,7 @@
 // A downloaded update replaces the PTY host: the next launch restarts it, which stops what panes run in the background
 // (finding 16). Only a confirmed update or a quit with no such work installs it.
 
-import { backgroundWorkOf, confirmRestartOnce, type RelaunchDeps } from "./relaunch-notes";
+import { backgroundWorkKnown, confirmRestartOnce, type RelaunchDeps } from "./relaunch-notes";
 
 /** Whether a quit installs the downloaded update: an explicit one was confirmed before it quit; an ordinary quit
  *  installs only when no pane shows background work, and leaves the update for an explicit, confirmed one otherwise. */
@@ -9,10 +9,10 @@ export function quitInstalls({ downloaded, backgroundWork, explicit }: { downloa
   return downloaded && (explicit || !backgroundWork);
 }
 
-/** An ordinary quit's choice, read off the panes now; panes that cannot be read count as work. */
+/** An ordinary quit's choice, read off the panes now; a running pane that cannot be read counts as work. */
 export async function ordinaryQuitInstalls(deps: RelaunchDeps, downloaded: boolean): Promise<boolean> {
   if (!downloaded) return false;
-  const work = await backgroundWorkOf(deps).catch(() => null);
+  const work = await backgroundWorkKnown(deps).catch(() => null);
   return quitInstalls({ downloaded, backgroundWork: work === null || work.length > 0, explicit: false });
 }
 

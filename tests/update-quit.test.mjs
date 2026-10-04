@@ -48,12 +48,38 @@ describe("a quit with a downloaded update", () => {
     test(`downloaded ${downloaded ? "yes" : "no"} | background work ${work ? "yes" : "no"} | ${how} quit: ${installs ? "installs" : "does not install"}`, async () => {
       assert.equal(quitInstalls({ downloaded, backgroundWork: work, explicit: how === "explicit" }), installs);
       if (how === "ordinary") {
-        const deps = relaunch(work ? { "pane-t": MONITOR, "pane-x": IDLE } : { "pane-t": IDLE });
+        const deps = relaunch(work ? { "pane-t": MONITOR, "pane-x": IDLE } : { "pane-t": IDLE, "pane-x": IDLE });
         try {
           assert.equal(await ordinaryQuitInstalls(deps, downloaded), installs, "read off the panes' screens");
         } finally {
           rmSync(deps.root, { recursive: true, force: true });
         }
+      }
+    });
+  }
+
+  // A pane runs when the host gives it a process (pid a number) or cannot say (undefined); null: not running.
+  // [case, pane-t's screen ("throws" when reading fails), pane-t's pid ("throws" when asking fails), installs]
+  const UNREADABLE = [
+    ["a running pane whose screen read fails: unknown, no install", "throws", 100, false],
+    ["a running pane with no screen: unknown, no install", null, 100, false],
+    ["a pane whose process the host cannot name, no screen: unknown, no install", null, undefined, false],
+    ["a pane whose process cannot be asked, screen read fails: unknown, no install", "throws", "throws", false],
+    ["a pane that is not running, no screen: installs", null, null, true],
+    ["a pane that is not running, screen read fails: installs", "throws", null, true],
+    ["a running pane read idle: installs", IDLE, 100, true],
+  ];
+  for (const [name, screen, pid, installs] of UNREADABLE) {
+    test(name, async () => {
+      const deps = relaunch({}, {
+        panes: async () => [{ id: "pane-t", name: "tester" }],
+        screen: async () => (screen === "throws" ? Promise.reject(new Error("render failed")) : screen),
+        pid: async () => (pid === "throws" ? Promise.reject(new Error("host busy")) : pid),
+      });
+      try {
+        assert.equal(await ordinaryQuitInstalls(deps, true), installs);
+      } finally {
+        rmSync(deps.root, { recursive: true, force: true });
       }
     });
   }

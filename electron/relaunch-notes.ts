@@ -107,6 +107,21 @@ export async function backgroundWorkOf(deps: RelaunchDeps, ids?: readonly string
   return out;
 }
 
+/** As backgroundWorkOf for all panes, but null when a pane that runs (or may run) cannot be read: its work is unknown. */
+export async function backgroundWorkKnown(deps: RelaunchDeps): Promise<PaneWork[] | null> {
+  const out: PaneWork[] = [];
+  for (const { id, name } of await deps.panes()) {
+    const screen = await deps.screen(id).catch(() => null);
+    if (screen === null) {
+      if ((await deps.pid(id).catch(() => undefined)) !== null) return null;
+      continue;
+    }
+    const work = backgroundWorkShown(screen, await deps.agentOf(id));
+    if (work) out.push({ id, name, work });
+  }
+  return out;
+}
+
 /** The warning before a restart that stops `work`; `action` names the restart. */
 export function restartWarning(action: string, work: readonly PaneWork[]): string {
   const shown = work.map((w) => `${w.name}: ${w.work}`).join("; ");
