@@ -33,6 +33,9 @@ export type {
 };
 
 import type { SplitNode } from "./split-tree";
+import type { MachineView } from "./machines";
+import type { MachineStatus } from "./machines-probe";
+import type { KnownHost } from "./ssh-hosts";
 
 export interface WorkingTab {
   id: string;
@@ -602,9 +605,9 @@ export interface AyaApi {
   listRemotePresets(sshTarget: string): Promise<Preset[]>;
   checkRemoteHealth(sshTarget: string): Promise<RemoteHealthResult>;
   /** Settings > Machines and the Remote host picker; the same functions as `aya machines`. */
-  machinesStatus(): Promise<{ version: number; machines: import("./machines").MachineView[] }>;
-  machinesHosts(): Promise<import("./ssh-hosts").KnownHost[]>;
-  machinesCheck(target: string, port?: number): Promise<import("./machines-probe").MachineStatus>;
+  machinesStatus(): Promise<{ version: number; machines: MachineView[] }>;
+  machinesHosts(): Promise<KnownHost[]>;
+  machinesCheck(target: string, port?: number): Promise<MachineStatus>;
   machinesCommand(argv: string[]): Promise<string>;
   createRemoteProjectOnHost(
     sshTarget: string,
