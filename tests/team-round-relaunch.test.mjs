@@ -77,7 +77,7 @@ const MOMENTS = {
 // A second process stands for the Aya that went down; `cue` is the text of the message it dies on.
 const KINDS = {
   "a round": {
-    cue: /Round/,
+    cue: /Aya round \d+:/,
     run: `
       let tick;
       const runner = new TeamRunner(deps, (fn) => ((tick = fn), () => {}), () => now);
@@ -130,10 +130,10 @@ for (const kind of Object.keys(KINDS)) {
       const cued = (await t.store.annotatedLog()).filter((m) => KINDS[kind].cue.test(m.text));
       if (kind === "a round") {
         assert.equal(await t.store.lastRound(), entered ? 1 : 0, "the round counts once its Enter went, not before");
-        assert.deepEqual(cued.map((m) => [m.text.slice(0, 8), m.delivered]), entered ? [["Round 1:", true]] : [], "the log has it as typed once its Enter went");
+        assert.deepEqual(cued.map((m) => [m.text.slice(0, 12), m.delivered]), entered ? [["Aya round 1:", true]] : [], "the log has it as typed once its Enter went");
         for (const job of t.jobs) await job();
-        const rounds = t.typed.filter((w) => w.pane === "pane-t").map((w) => w.text.replace(/^.*\] /, "").slice(0, 8));
-        assert.deepEqual(rounds, [entered ? "Round 2:" : "Round 1:"], "the next round has the next number");
+        const rounds = t.typed.filter((w) => w.pane === "pane-t").map((w) => w.text.replace(/^.*\] /, "").slice(0, 12));
+        assert.deepEqual(rounds, [entered ? "Aya round 2:" : "Aya round 1:"], "the next round has the next number");
         assert.equal(await t.store.lastRound(), entered ? 2 : 1);
         return;
       }
@@ -150,7 +150,7 @@ relaunchTest("Aya goes down between a round's number and its log entry: the numb
     const { TeamRunner } = require(${JSON.stringify(`${DIST}/team-runner.js`)});
     const { TeamStore } = require(${JSON.stringify(`${DIST}/team-store.js`)});
     const append = TeamStore.prototype.append;
-    TeamStore.prototype.append = function (m) { return /^Round/.test(m.text) ? process.exit(7) : append.call(this, m); };
+    TeamStore.prototype.append = function (m) { return /^Aya round \\d+:/.test(m.text) ? process.exit(7) : append.call(this, m); };
     const project = ${JSON.stringify(t.project)};
     let now = ${START};
     const deps = {
@@ -166,7 +166,7 @@ relaunchTest("Aya goes down between a round's number and its log entry: the numb
   t.clock.now = START + 2 * CADENCE_MS;
   await t.runner().restore();
   for (const job of t.jobs) await job();
-  assert.deepEqual(t.typed.map((w) => w.text.replace(/^.*\] /, "").slice(0, 8)), ["Round 2:"]);
+  assert.deepEqual(t.typed.map((w) => w.text.replace(/^.*\] /, "").slice(0, 12)), ["Aya round 2:"]);
 });
 
 // In one life: the turn proof's outcome is a note on the entry written at the Enter, never a second entry, and never
@@ -189,7 +189,7 @@ for (const [label, proof, held] of [
     const deliver = t.deps.deliver;
     t.deps.deliver = async (pane, text, cancelled, entered) => {
       await deliver(pane, text, cancelled, entered);
-      if (!/Round/.test(text)) return null;
+      if (!/Aya round/.test(text)) return null;
       reached();
       await proven;
       return proof();
@@ -198,18 +198,18 @@ for (const [label, proof, held] of [
     const tick = t.jobs.at(-1)();
     await atEnter;
     assert.equal(await t.store.lastRound(), 1, "the number is taken at the Enter");
-    assert.equal((await t.store.log()).filter((m) => /^Round 1:/.test(m.text)).length, 1, "and the round is logged as typed");
-    // Quit now: the next life types Round 2, whatever the proof says later.
+    assert.equal((await t.store.log()).filter((m) => /^Aya round 1:/.test(m.text)).length, 1, "and the round is logged as typed");
+    // Quit now: the next life types Aya round 2, whatever the proof says later.
     if (quit) r.stopAll();
     release();
     await tick;
-    const rounds = (await t.store.annotatedLog()).filter((m) => /^Round|^round/.test(m.text));
-    assert.deepEqual(rounds.map((m) => [m.text.slice(0, 8), m.delivered, m.held ?? null, m.typedOnly ?? false]), [["Round 1:", true, held, held !== null]]);
+    const rounds = (await t.store.annotatedLog()).filter((m) => /^Aya round/.test(m.text));
+    assert.deepEqual(rounds.map((m) => [m.text.slice(0, 12), m.delivered, m.held ?? null, m.typedOnly ?? false]), [["Aya round 1:", true, held, held !== null]]);
     const next = t.runner();
     await next.restore();
     t.clock.now += CADENCE_MS;
     await t.jobs.at(-1)();
-    assert.deepEqual(t.typed.filter((w) => /Round/.test(w.text)).map((w) => w.text.replace(/^.*\] /, "").slice(0, 8)), ["Round 1:", "Round 2:"]);
+    assert.deepEqual(t.typed.filter((w) => /Aya round/.test(w.text)).map((w) => w.text.replace(/^.*\] /, "").slice(0, 12)), ["Aya round 1:", "Aya round 2:"]);
   });
 }
 
@@ -220,13 +220,13 @@ for (const [what, method] of [["its log entry", "append"], ["its number", "recor
     try {
       await t.runner().start("game", "ux-review");
       TeamStore.prototype[method] = function (...args) {
-        return method === "recordRound" || /^Round/.test(args[0].text) ? Promise.reject(new Error("disk full")) : real.apply(this, args);
+        return method === "recordRound" || /^Aya round \d+:/.test(args[0].text) ? Promise.reject(new Error("disk full")) : real.apply(this, args);
       };
       t.clock.now += CADENCE_MS;
       await t.jobs.at(-1)();
       TeamStore.prototype[method] = real;
       assert.equal(await t.store.lastRound(), method === "recordRound" ? 0 : 1);
-      assert.equal((await t.store.log()).filter((m) => /^Round 1:/.test(m.text) && m.delivered).length, method === "append" ? 0 : 1);
+      assert.equal((await t.store.log()).filter((m) => /^Aya round 1:/.test(m.text) && m.delivered).length, method === "append" ? 0 : 1);
       assert.match(t.warned.join("\n"), /tester: typed into its pane, but not recorded \(disk full\)/);
     } finally {
       TeamStore.prototype[method] = real;
@@ -249,7 +249,7 @@ for (const probed of [true, false]) {
     let looks = 0;
     const seen = [];
     const probe = { hold: async () => null, outputMark: () => 0, outputPaused: () => true, windowMs: 300, sleep: async () => void looks++ };
-    const unseen = await deliverTeamMessage(async (_id, data) => void writes.push(data), "pane-x", "Round 4: go", async () => null, undefined, probed ? probe : undefined, async () => {
+    const unseen = await deliverTeamMessage(async (_id, data) => void writes.push(data), "pane-x", "Aya round 4: go", async () => null, undefined, probed ? probe : undefined, async () => {
       seen.push({ writes: [...writes], looks });
     });
     assert.deepEqual(seen, [{ writes: [writes[0], "\r"], looks: 0 }]);

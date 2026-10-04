@@ -1,4 +1,4 @@
-import type { ControlStatusUpdate, PanePick } from "./types";
+import type { PanePick } from "./types";
 
 export type TeamRequest =
   | { type: "team-whoami" }
@@ -15,6 +15,9 @@ interface TeamAuthorScope {
 export type TeamAuthorRequest =
   | ({ type: "team-guide"; description?: string } & TeamAuthorScope)
   | ({ type: "team-save"; text: string; replace: boolean } & TeamAuthorScope);
+
+/** Read-only: no team names the caller pane's team, else the project's only saved one. */
+export type TeamShowRequest = { type: "team-show"; team?: string; json: boolean } & TeamAuthorScope;
 
 export type TeamPanesRequest =
   | { type: "presets"; json: boolean }
@@ -33,8 +36,10 @@ export type ControlRequest =
     }
   | {
       type: "status";
-      level: ControlStatusUpdate["level"];
+      level: "active" | "waiting" | "done" | "error" | "clear";
       text?: string;
+      /** `aya status waiting --on <role>`: the teammate this role waits on. */
+      on?: string;
       terminalId?: string;
       projectSlug?: string;
       cwd?: string;
@@ -67,6 +72,7 @@ export type ControlRequest =
   | { type: "capabilities" }
   | TeamRequest
   | TeamAuthorRequest
+  | TeamShowRequest
   | TeamPanesRequest;
 
 /** The calling pane (AYA_TERMINAL_ID / AYA_PRESET_ID), sent with every request
@@ -147,6 +153,10 @@ export function parseControlRequest(value: unknown): ControlRequest {
     if (!text) throw new Error("team-save needs the team file's text");
     return { type, text, replace: value.replace === true, ...scope };
   }
+  if (type === "team-show") {
+    const team = optionalString(value.team);
+    return { type, ...(team ? { team } : {}), json: value.json === true, ...scope };
+  }
   if (type === "presets") return { type, json: value.json === true };
   if (type === "team-open") {
     const team = optionalString(value.team);
@@ -185,10 +195,13 @@ export function parseControlRequest(value: unknown): ControlRequest {
     ) {
       throw new Error("status.level must be active, waiting, done, error, or clear");
     }
+    const on = optionalString(value.on)?.trim();
+    if (on !== undefined && level !== "waiting") throw new Error("status.on goes only with waiting");
     return {
       type,
       level,
       text: optionalString(value.text),
+      ...(on ? { on } : {}),
       terminalId: optionalString(value.terminalId),
       projectSlug: optionalString(value.projectSlug),
       cwd: optionalString(value.cwd),

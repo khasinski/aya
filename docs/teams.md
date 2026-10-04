@@ -90,7 +90,7 @@ dimension has been run end to end against every real CLI.
 |---|---|---|---|
 | CLI launch mode | sandbox, approval policy, plan/build agent, shared daemon, resume flag | Codex workspace-write: `aya` gets EPERM on the socket (21) | Covered for sandbox, agent and daemon (the table above); approval policy shows as a hold, never auto-approved. Limit: real-Codex reachability rests on the stand-in |
 | CLI identity | Claude, Codex, Grok, OpenCode, shell, ... | Codex eats Enter after 600+ characters (3) | Screen rules per CLI. Grok busy is read off its recorded 1.0.46 turn (the [stop] spinner row above the composer, Ctrl+c:cancel in the hint row), so a round is held while it works. Limit: Grok and OpenCode never run for real in a team; custom CLIs (kilo, pi, Cursor, ...) have no composer rule: no draft hold, and their start-up hold waits for a screen that has drawn and not changed for 1 s (at most 8 s after the spawn) |
-| Pane screen state | free, starting up, approval, trust dialog, numbered choice, draft, pasted text, shell, exited, busy | message typed before the composer is drawn (2) | Covered, incl. a dismissed numbered dialog, a message that quotes approval wording, and an answer saying "waiting for approval" above a drawn composer (live run 10c), for Claude (also with up to three rows under its composer, as a statusLine draws), Codex, OpenCode and Grok in any mode: each composer is the recorded one, and a recorded Codex approval and OpenCode question replace the composer, so a drawn composer means no dialog. Limit: Grok outside always-approve and Claude's statusLine rows are not recorded; Grok's permission prompt is read by its wording in the grok 1.0.46 binary ("Yes, allow once", "Allow Execute?"), not from a capture; real-CLI timing of the start-up window is measured on Claude and Codex only |
+| Pane screen state | free, starting up, approval, trust dialog, numbered choice, draft, pasted text, shell, exited, busy | message typed before the composer is drawn (2) | Covered, incl. a dismissed numbered dialog, a message that quotes approval wording, and an answer saying "waiting for approval" above a drawn composer (live run 10c), for Claude (also with up to three rows under its composer, as a statusLine draws), Codex, OpenCode and Grok in any mode: each composer is the recorded one, and a recorded Codex approval and OpenCode question replace the composer, so a drawn composer means no dialog. Claude Code's one-time offer to block reads outside the working directories (auto mode, an account's first outside read; recorded 2.1.289 at 120 and 64 columns) is its own hold: its answer is written to the account's settings, so the hold, the pane's waiting line, the round and the Teams window name it as account-wide, and `aya pane send` refuses to type into it (only the user answers it); Codex 0.160.0 has no such offer, its "don't ask again" options are per command and stay an approval. Limit: Grok outside always-approve and Claude's statusLine rows are not recorded; Grok's permission prompt is read by its wording in the grok 1.0.46 binary ("Yes, allow once", "Allow Execute?"), not from a capture; real-CLI timing of the start-up window is measured on Claude and Codex only |
 | Pane lifecycle | no pane, not opened, spawning, running, exited, killed mid-spawn, respawned | Start sends into a pane that is not running (22) | Covered |
 | Env inheritance / identity | launcher env, daemon env, AYA_* per pane, HOME in tests | panes inherit CLAUDE_CODE_*, so --continue finds nothing (7) | Session markers of all four CLIs are stripped. Limit: Grok and OpenCode values are measured by the author only; a build launched from a pane adopts the outer Aya's home |
 | App readiness / instance | socket up before the renderer, no window, Dev vs prod, shared instance | open acked and dropped before the page loaded (12) | Covered for `aya open` and `aya team` (it waits out the boot gap). Limit: a cwd-only `aya team start` from a plain shell during boot is not retried |
@@ -139,6 +139,19 @@ A 22-round reviewer/implementer UX session hit:
   when. A lead that cannot unblock the work runs `aya status waiting "..."`, the
   card says "waiting for you" and Aya stops asking until something moves.
 
+- **Waiting on a teammate is not waiting on you**: a role that waits on another
+  role runs `aya status waiting --on <role> "..."` (the role note and `aya team
+  whoami` tell it so). Its row says "waiting on <role> since HH:MM"; no red dot, no
+  attention count, no notification, and a lead waiting on a teammate still gets
+  its rounds. The role must be one of the team's other roles (anything else is
+  refused with the roles it could name; outside a team `--on` is refused). It ends
+  when that role's message is typed into the pane, or when the agent sets another
+  status; Aya's hooks do not end it. Plain `aya status waiting` stays the question
+  to the user. The lead's round lists both: a question under "Needs action"
+  ("asked the user ... (only the user)"), a wait on a teammate under "Said they
+  wait on a teammate"; neither role counts as idle. A wait on a teammate lives in
+  memory only: an Aya restart forgets it.
+
 - **Define team** in the repo, in `.aya/teams/<name>.md`: roles,
   responsibilities, what each role must not do, who it sends to and what
   it sends there (`Sends to: implementer (findings to fix), tester`), a
@@ -154,6 +167,15 @@ A 22-round reviewer/implementer UX session hit:
   only. Closing a pane frees its role; restarting it keeps the role.
 - **Identity**: `aya team whoami` prints the pane's role, each route with
   what it carries, and the protocol; every team pane is reminded to run it.
+- **The whole team**: `aya team show [<team>] [--json]` prints every role with
+  its responsibilities, must-not and routes, which role leads, the cadence, the
+  protocol and the status command line, read-only. It shows the copy saved in
+  Aya, which is what runs, and says when the repo's `.aya/teams/<team>.md`
+  differs or is gone; a repo file never saved is refused, as it does not run.
+  With no team it shows the calling pane's team, else the project's only saved
+  team; outside a pane, `AYA_PROJECT_SLUG` names the project. A member reads
+  the team here instead of being pointed at the file by its path (libeval-crew,
+  2026-10-03); the role note and whoami name the command.
   Only Claude, Grok, Codex and OpenCode get a role note at start, through the
   CLI's own channel; any other CLI says it cannot tell it its role. The note is given whether or not the preset tells the agent about aya: Claude
   `--append-system-prompt`, Grok `--rules`, Codex `-c developer_instructions`,
@@ -184,6 +206,19 @@ A 22-round reviewer/implementer UX session hit:
   and `aya pane send` to it are dropped. Either way the first message it gets tells it to run
   `aya team whoami`, and, for a pane started before an Aya update, to run
   `aya capabilities`.
+- **A role changed by a Save (N3.3)**: an agent reads `aya team whoami` once, so a Save (the
+  Teams window's, or `aya team save --replace`) that changes what whoami prints for a role (its
+  routes, must-not, responsibilities, the lead line, or the protocol every role shares) types
+  "Your role in this team changed at HH:MM: run aya team whoami again ..." from aya to that role's
+  pane while the team runs. A held pane does not get it later (Aya's own messages go stale). Until
+  the pane runs whoami, the role's row says "started with an older role: it changed at HH:MM and
+  its pane has not run aya team whoami since"; the team's `state.json` keeps per role when a Save
+  changed it (`roleChangedAt`) and when it last ran whoami (`whoamiAt`, taken before the definition
+  is read). A role without a pane gets neither; a pane given the role later starts from its own
+  launch note. A Save that changes only the cadence or the status command tells nobody, and
+  `aya team save` names the roles it told. A paused or not started team gets nothing typed: Start's
+  delivery test asks every role to run whoami, Resume does not, so the row note stays until it does.
+  (Live run 2026-10-03: a product-owner change at 07:00 was re-read at 08:41.)
 - **A borrowed id**: interactive Codex ran every pane's shell commands in
   one shared `codex app-server daemon`, with the env of the pane that
   started it, so `aya team whoami` in a later pane answered for that pane,
@@ -249,7 +284,12 @@ A 22-round reviewer/implementer UX session hit:
   messages) it is cut to about 1 MB, keeping first every message still owed to its role (a quiet
   role's report is not cut by the others' talk), then the newest 1,000 of the rest.
 - **Cadence**: optional; Aya sends the round prompt to the lead every N minutes (the
-  role named in `## Cadence` is the lead); a pause stops the team.
+  role named in `## Cadence` is the lead); a pause stops the team. Aya's rounds say whose
+  they are ("Aya round 4: ...") in the pane, the team log, the window and `aya team stats`:
+  a lead numbering its own reports "Round 42" was read as Aya's (2026-10-03, "Runda 414 (Aya
+  round 75)"), so the team-author guide asks protocols to number their reports as updates
+  ("Update 4"). Logs from before the label ("Round 4:", "round 5 skipped") still read as
+  Aya's rounds in the digest.
   Write/measure turn-taking stays in the protocol. The round carries a digest of now and what
   changed since the last round (`electron/team-digest.ts`), each part only when it has something:
   messages, new HEADs, held messages and skipped rounds since then; roles blocked 5 min or more on
@@ -278,7 +318,8 @@ A 22-round reviewer/implementer UX session hit:
   (and `--json`, `--now`) only reads that and prints the last run with its time ("last
   run 22:41") under "Status (from the team's command)", or "not run yet"; it
   never runs the command itself.
-  Not in `aya team whoami`: the roles get its output, not the command.
+  Not in `aya team whoami`: the roles get its output, not the command;
+  `aya team show` prints the line, so the lead can tell what its rounds carry.
   Security: the command is the user's own and runs with the user's rights, like
   a git hook. Aya runs only the copy saved in Aya, never a team file that came
   with a pull or a clone; the card names a new or changed command before "Save
@@ -450,7 +491,7 @@ round is due on the cadence, the silence or a stall; one round at a time, and it
 clocks are written in one step. A due round that is not typed (the lead is busy, has a draft, is
 not running, asked the user, the team was paused meanwhile, or the team is stalled) stays due:
 the next look that finds the pane free types it, and the team log gets one line per round and
-reason ("round 5 skipped: is busy working"). A round due at relaunch is tried at each look
+reason ("Aya round 5 skipped: is busy working"). A round due at relaunch is tried at each look
 until the panes respawn.
 Messages reach a role in the order they were sent: while one is still waiting in its inbox, a
 newer one from a role or the user waits behind it ("earlier message #3 for it is still waiting;
@@ -510,7 +551,7 @@ messages about one commit over 12 minutes read as "progressing".)
   while it stays quiet. The clock is its own field in the team's state (`silenceRoundAt`), counted
   from the later of the last message or change and the last such round, so it survives a
   relaunch; a relaunch, Start and Resume start it over (a pause stops it). The round
-  is numbered with the cadence's rounds ("Round 4: no progress since 18:04 (31 min).
+  is numbered with the cadence's rounds ("Aya round 4: no progress since 18:04 (31 min).
   Unanswered: implementer waits for tester since 18:05 (30 min) ... If you cannot,
   ask the user with: aya status waiting ..."; a role waits for another until something
   that one sent after it reaches it, directly or passed on by other roles, so a message the
@@ -523,7 +564,7 @@ messages about one commit over 12 minutes read as "progressing".)
   it is free) and is not counted as missed; a lead whose pane cannot take it is counted as the cadence's
   rounds are (Unreachable). A lead that ran `aya status waiting` is left alone until
   the next progress, by the cadence's rounds too, and each round skipped for it leaves one line
-  in the team log ("round 5 skipped: lead asked the user: need the staging password"). Only the
+  in the team log ("Aya round 5 skipped: lead asked the user: need the staging password"). Only the
   agent's own `aya status waiting` is a question: Aya's status hook reports no Notification
   (Claude's and Grok's fire on dialogs and idle composers alike), and no hook ends a
   question. The question is kept in `agent-waiting.json` under the Aya home with the pane's session
@@ -535,6 +576,29 @@ messages about one commit over 12 minutes read as "progressing".)
   dialog on its screen), as does the agent's next status; its next message lifts the hold on rounds. A team with no lead gets no round, only the status. The limits
   (30 / 10 / 60 min) live in `electron/team-times.ts`; `AYA_E2E_TEAM_MINUTE_MS`
   scales them.
+- **A restart stops background work**: leaving a CLI stops the background tasks and monitors its
+  session ran (Claude Code: "1 monitor couldn't be moved and was stopped"). A restart Aya makes on
+  purpose (Restart terminal, Restart the PTY host, Restart to update, Restart Aya with a stale host)
+  asks first when a pane's screen shows such work: Claude Code's footer pill ("1 shell", "2 shells,
+  1 monitor", "3 background tasks", read from the 2.1.289 bundle) or Codex's "/ps to view" line.
+  A yes keeps a note in `relaunch-notes.json` under the Aya home (an update the next launch finds,
+  with the old PTY host still running, is noted without a question); once that pane runs a new process
+  resumed into its conversation and plays a role, Aya types it one message, held like its other
+  messages: "Aya restarted this pane; background tasks and monitors you had are gone; start again the
+  ones you still need." A pane that comes back in a new conversation, or plays no role, drops the
+  note; a note never typed is dropped after a day. A crash or `/exit` is not a restart Aya makes, and
+  gets no note.
+- **A send claimed, nothing arrived**: agents on small models wrote `aya team send lead "..."` as
+  text instead of running it, then said "I sent the findings earlier". At each look of the clock Aya
+  reads, once per turn, the reply of a role whose pane is free and idle: the rows under the message
+  that started its turn (found by that message's header, all of its text skipped), up to the
+  composer, without tool calls (Claude Code's `⏺ Tool(...)`, Codex's `• Ran ...`; OpenCode's tool
+  rows are not recorded, so only a `$ command` row counts as one). A claim names another role:
+  the command written as text, "sent ... to <role>" or "wysłałem ... do <role>", not after "not",
+  "will", "need to", "nie". When the log has no message from the role to that role after the turn
+  began, and no refused send, the role's row in the Teams window and the lead's round ("Said it
+  sent") say "<role> says it sent to <role>, nothing arrived", kept in `claims.json` until a message
+  from it to that role arrives. A turn whose message is not on the screen is not read.
 - **The lead ends the work**: a lead that has the answer ("no lower complexity is possible")
   runs `aya team pause "why"` from its own pane. It pauses the team as the Pause button does
   (no more rounds, sends or silence clock), the log says "<lead> (the lead) paused the team:
@@ -570,11 +634,11 @@ messages about one commit over 12 minutes read as "progressing".)
   Unanswered rounds). The window says "stalled: no
   change to the repo since 22:52 (14 messages) - rounds are paused until the repo changes". The
   stall makes a round due, and that ordinary numbered round tells the lead, once per stall, with
-  who waits on whom ("Round 13: stalled: no change to the repo since 22:52 (14 messages).
+  who waits on whom ("Aya round 13: stalled: no change to the repo since 22:52 (14 messages).
   Unanswered: implementer waits for tester since 22:40 (12 min). Messages are not progress:
   decide the next change to the repo and who makes it, or end the work with aya team pause ...");
   it waits for a busy lead and is skipped for a lead that asked the user. Later rounds are skipped
-  while the stall lasts, one log line each ("round 14 skipped: stalled: no change to the repo since
+  while the stall lasts, one log line each ("Aya round 14 skipped: stalled: no change to the repo since
   22:52"). Only a change to the repo ends a stall, seen at the clock's next look. Start or Resume
   start both clocks over, and so does answering a screen a role had been blocked on for over 2
   minutes (a screen up for seconds does not). A team stalled at the clock's last look before Aya
@@ -587,8 +651,8 @@ messages about one commit over 12 minutes read as "progressing".)
   is any message from the lead (an "ok" too, and one still waiting in a busy peer's inbox: the
   lead read its rounds) or a change to the repo (a commit the team has not had, or a changed
   working tree), seen at the clock's next look; a round the pane did not take (busy, a draft) is
-  not unanswered. The team log gets one line per hold ("rounds held: tester did not answer rounds
-  1..3") and the window says "rounds wait for tester to answer (3 unanswered)". The count is kept
+  not unanswered. The team log gets one line per hold ("Aya rounds held: tester did not answer Aya rounds
+  1..3") and the window says "Aya rounds wait for tester to answer (3 unanswered)". The count is kept
   in `progress.json`, so a relaunch keeps the hold; Start and Resume end it, and the lead's next
   answer lets the due round through at the next look. Stalled runs on its own: the one round of a
   stall still goes to a held lead.
@@ -604,7 +668,7 @@ messages about one commit over 12 minutes read as "progressing".)
   for you in its CLI" and marks the role; answering the screen clears it at once.
   The screens are read by the team's clock at each look, so this needs no cadence or
   lead; the window hides a block at once when the pane no longer shows the screen. The
-  window says what watches a team: "progressing - the lead gets a round every 3 min" with a
+  window says what watches a team: "progressing - the lead gets an Aya round every 3 min" with a
   cadence, "the lead is asked for a round after 30 min without a message or a change to the
   repo" without one, then "flagged after 60 min without a change to the repo". A role
   counts as answered after two free reads in a row (one glitch does not wake a
@@ -613,7 +677,7 @@ messages about one commit over 12 minutes read as "progressing".)
 - **Unreachable**: the role the rounds go to has no pane, or a pane that took none of the last 3 scheduled
   rounds (its agent exited, it dropped to a shell, it is still starting, a draft sits in its
   composer). Nothing is typed then, so nothing goes silent and the team would read as
-  progressing; the window says "no round typed to implementer since 18:34: its pane is not
+  progressing; the window says "no Aya round typed to implementer since 18:34: its pane is not
   running" and stops saying it as soon as the pane takes a message again. A lead whose pane was
   closed is unreachable too ("...: it has no pane") until it is given a pane. A busy agent is not
   this (its rounds wait by design), a screen waiting for you is Blocked, and the retries of one
@@ -632,12 +696,8 @@ messages about one commit over 12 minutes read as "progressing".)
 Known and accepted (found by the iterated Sol 6.1 review of the sudoku scenario):
 
 - **A crash between the paste and the round's number (N3.2)**: the round is typed, Aya goes down
-  before it writes the number, and the next launch types "Round N" again. A repeated poke is
+  before it writes the number, and the next launch types "Aya round N" again. A repeated poke is
   harmless; a write-ahead number would leave a gap in the numbering when the paste then fails.
-- **A Save of the protocol or responsibilities does not tell running agents (N3.3)**: they read
-  `aya team whoami` once. A fix needs a new mechanism: on a Save that changes what whoami prints,
-  type "run aya team whoami again" to each role with a pane (a message from aya, dropped when held)
-  and show "older brief" on the role until its next `whoami` (a per-role whoami time in the state).
 - **A changed Config directory resumes a fresh session (N3.5)**: designed ("Gone needs
   certainty", `electron/claude-session.ts`), and not in the scenario.
 - **Claude's usage-limit screen (N4.1) and a multi-select "Submit" row (N4.4) have no rule**: the
@@ -729,3 +789,34 @@ Each was found by the PR #149 ship-gate, re-checked, and left as it is: closing 
 - **A Pause leaves a skipped round in the log**: a round that was being prepared when the team paused is not typed; the log gets one line from aya, `round N skipped: the team is paused`.
 - **The process-tree proof catches accidents, not a forger (R-D1)**: it trusts the pid the CLI sends; a missing or unknown pid is not refused; no pid start time, so a recycled pid passes; remote tabs are skipped. Pinned in `tests/caller-proof-forger.test.mjs`.
 - **`exec -a name claude` needs a shell with that form**: a preset using it fails (`exec: -a: not found`) when the account's login shell is dash. Aya runs presets in `$SHELL`, then the account shell, then `/bin/bash`; write the preset without `-a`.
+
+## Proposed: a role updates its own role text
+
+Not built. Roles drift during a run and cannot be fully written at the start
+(libeval-crew, 2026-10-03: the implementer's first piece went stale, the
+prompt-engineer took on the stage 7 prompt and the adapters, the judge changed
+mode). Today the user edits the file, runs `aya team save --replace`, and types
+"run aya team whoami" into each pane by hand.
+
+1. **A role proposes**: `aya team propose <role> "<new text>"` (a role for
+   itself, or the lead for any role) records a proposal beside the team and
+   changes nothing the team runs.
+2. **The user sees it**: the role's row in the Teams window shows "proposed
+   change" with the proposer, its reason and a diff of the old and new text,
+   and the lead's round digest lists it.
+3. **The user approves**: Approve, Edit then approve, or Reject, in the Teams
+   window only (an agent cannot approve, as it cannot set the status command),
+   and a rejection goes back to the proposer as a message from aya.
+4. **Aya saves it**: an approval is a Save team of the edited definition
+   (saved copy and repo file written, running rounds re-armed).
+5. **Aya tells the affected panes**: each role whose whoami output changed (the
+   role, and the roles whose routes name it) gets "your role changed: run aya
+   team whoami" through finding 9's mechanism, and shows "older brief" until it
+   runs it.
+
+What stays the user's: whether a proposal is approved, its final wording,
+adding or removing roles, the lead, the cadence and the status command (a
+proposal carries responsibilities and must-not only), and when a running team
+gets the change (approve now, or after a pause). Aya never applies a proposal
+on a timeout. Several open proposals for one role: the newest replaces the
+older, which the window says.

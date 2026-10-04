@@ -51,7 +51,7 @@ async function world({ cadence = true } = {}) {
   const schedule = (fn, ms) => (w.scheduled.push({ fn, ms }), () => {});
   const make = () => ((w.scheduled.length = 0), (w.runner = new TeamRunner(w.deps, schedule, () => w.now)));
   make();
-  const rounds = () => w.typed.filter((t) => t.pane === "pane-i").flatMap((t) => t.text.match(/Round (\d+):/)?.[1] ?? []).map(Number);
+  const rounds = () => w.typed.filter((t) => t.pane === "pane-i").flatMap((t) => t.text.match(/Aya round (\d+):/)?.[1] ?? []).map(Number);
   // The lead answers each round "ok", so the stall below is not the round brake.
   let answered = 0;
   const look = async () => {
@@ -192,14 +192,14 @@ describe("liveness with independent teams", { concurrency: 16 }, () => {
     });
   }
 
-  const skips = async (t) => (await t.store.log()).filter((m) => m.from === "aya" && /^round \d+ skipped: /.test(m.text)).map((m) => m.text);
+  const skips = async (t) => (await t.store.log()).filter((m) => m.from === "aya" && /^Aya round \d+ skipped: /.test(m.text)).map((m) => m.text);
 
   liveTest("a skipped round is logged once in the team log, never typed, and says why", async (t) => {
     await t.run("start", ...ticks(STALL + 4));
     const skipped = await skips(t);
     assert.equal(skipped.length, 1, skipped.join("\n"));
-    assert.match(skipped[0], new RegExp(`^round ${STALL + 1} skipped: stalled: no change to the repo since \\d\\d:\\d\\d$`));
-    assert.equal((await t.store.log()).filter((m) => m.text.startsWith("Round")).length, STALL, "no round typed while stalled");
+    assert.match(skipped[0], new RegExp(`^Aya round ${STALL + 1} skipped: stalled: no change to the repo since \\d\\d:\\d\\d$`));
+    assert.equal((await t.store.log()).filter((m) => /^Aya round \d+:/.test(m.text)).length, STALL, "no round typed while stalled");
   });
 
   const BLOCKED_CASES = [
@@ -308,7 +308,7 @@ describe("liveness with independent teams", { concurrency: 16 }, () => {
     const deliver = t.w.deps.deliver;
     let resumed;
     t.w.deps.deliver = async (pane, text) => {
-      if (/Round 3:/.test(text)) resumed = t.w.runner.resume("game", "ux-review");
+      if (/Aya round 3:/.test(text)) resumed = t.w.runner.resume("game", "ux-review");
       return deliver(pane, text);
     };
     await t.run("tick");
@@ -457,7 +457,7 @@ describe("liveness with independent teams", { concurrency: 16 }, () => {
     await t.run("start", "tester held", "peer to blocked tester", "tick", "user resolves");
     const deliver = t.w.deps.deliver;
     t.w.deps.deliver = async (pane, text) => {
-      if (!/Round/.test(text)) throw new PaneHeldError("shows an approval prompt", true);
+      if (!/Aya round/.test(text)) throw new PaneHeldError("shows an approval prompt", true);
       return deliver(pane, text);
     };
     await t.w.runner.redeliverWaiting();
@@ -619,7 +619,7 @@ describe("liveness with independent teams", { concurrency: 16 }, () => {
     const t = await world();
     try {
       await t.run("start", "implementer pane closed", ...ticks(K));
-      assert.match(livenessLine(await t.liveness()).text, /^no round typed to implementer since \d\d:\d\d: it has no pane$/);
+      assert.match(livenessLine(await t.liveness()).text, /^no Aya round typed to implementer since \d\d:\d\d: it has no pane$/);
     } finally {
       t.cleanup();
     }

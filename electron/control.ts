@@ -20,10 +20,11 @@ import {
 } from "./pane-target";
 import { CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
 import { handleTeamAuthorRequest } from "./team-author";
-import { HOLD_BUSY, HOLD_DRAFT, isDialogHold } from "./pane-holds";
+import { HOLD_BUSY, HOLD_DRAFT, isDialogHold, isUserOnlyHold } from "./pane-holds";
 import { debugAnswer } from "./team-debug";
-import { handleTeamRequest, oneLine, PaneHeldError, TEAMS_UNAVAILABLE, TextPastedError, TryAgainError, type TeamControlDeps } from "./team-control";
+import { handleTeamRequest, oneLine, PaneHeldError, TEAMS_UNAVAILABLE, teammateToWaitOn, TextPastedError, TryAgainError, type TeamControlDeps } from "./team-control";
 import { handleTeamPanesRequest, THIS_PANE, type TeamPaneDeps } from "./team-panes";
+import { handleTeamShow } from "./team-show";
 import type { TeamRunner } from "./team-runner";
 import type { ControlStatusUpdate, ProjectConfig, PtyEvent } from "./types";
 
@@ -91,6 +92,8 @@ export interface ControlServerOptions {
   /** Write bytes to one pane's PTY. Only `false` means not delivered; anything
    *  else - including `undefined` - counts as delivered. */
   writePane?: (terminalId: string, data: string) => Promise<boolean | void>;
+  /** Why the pane must not be typed into now (vt-state paneHold); pane-send refuses only a dialog for the user alone. */
+  paneHold?: (terminalId: string) => Promise<string | null>;
   /** All live windows (and window-like sinks); status updates are broadcast
    *  because the terminal they describe may be in an unfocused window. */
   getWindows?: () => ControlStatusSink[];
@@ -150,7 +153,21 @@ async function handlePaneRequest(
     const output = await options.readPane(terminalId);
     return { terminalId, projectSlug, name, output: tailForPaneRead(output) };
   }
-  await deliverToPane(options.writePane, terminalId, name, request.text, request.submit === true);
+  // Any key, Enter or not, answers a select dialog; an unreadable screen is no reason to refuse.
+  // Read under the pane lock: a delivery queued ahead of this one, or this one's own text, can draw the offer.
+  const userOnly = async () => {
+    const hold = await options.paneHold?.(terminalId).catch(() => null);
+    return isUserOnlyHold(hold) ? hold! : null;
+  };
+  const guard = async () => {
+    const hold = await userOnly();
+    if (hold) throw new Error(`pane "${name}": ${hold}. Only the user answers it, in that pane; nothing was typed`);
+  };
+  const beforeEnter = async () => {
+    const hold = await userOnly();
+    if (hold) throw new PaneHeldError(`pane "${name}": ${hold}; it appeared after the text was typed; Enter not sent, the text may sit in the offer or the composer`, true);
+  };
+  await deliverToPane(options.writePane, terminalId, name, request.text, request.submit === true, guard, beforeEnter);
   return { terminalId, projectSlug, name };
 }
 
@@ -308,8 +325,8 @@ function deliverToPane(
 /** One pane-send per terminal at a time: each finishes its text, gap and Enter before the next begins. */
 const withPaneLock = oneAtATime();
 
-/** Requests that speak as the pane's role, so its id must be proven, not just carried. */
-const SPEAKS_AS_PANE = new Set<ControlRequest["type"]>(["team-whoami", "team-inbox", "team-send", "team-pause"]);
+/** Requests that speak as the pane's role, so its id must be proven, not just carried; team-show names the caller's role. */
+const SPEAKS_AS_PANE = new Set<ControlRequest["type"]>(["team-whoami", "team-inbox", "team-send", "team-pause", "team-show"]);
 
 /** Also team-open when a role goes to "this": the caller's id picks the pane that gets it. */
 const speaksAsPane = (request: ControlRequest): boolean =>
@@ -429,10 +446,14 @@ async function handleRequest(
     const { teamRunner } = options;
     return handleTeamRequest(request, caller.terminalId, options.team, teamRunner && ((slug, name, by) => teamRunner.pause(slug, name, by)));
   }
+  if (request.type === "team-show") {
+    if (!options.team) throw new Error(TEAMS_UNAVAILABLE);
+    return handleTeamShow(request, caller.terminalId, options.team);
+  }
   if (request.type === "team-guide" || request.type === "team-save") {
     const { team, teamRunner } = options;
     if (!team || !teamRunner) throw new Error(TEAMS_UNAVAILABLE);
-    return handleTeamAuthorRequest(request, caller.terminalId, team, (slug, name) => teamRunner.refresh(slug, name), under !== null);
+    return handleTeamAuthorRequest(request, caller.terminalId, team, (slug, name, changed) => teamRunner.refresh(slug, name, changed), under !== null);
   }
   if (request.type === "presets" || request.type === "team-open" || request.type === "team-start") {
     if (!options.teamPanes) throw new Error(TEAMS_UNAVAILABLE);
@@ -475,8 +496,13 @@ async function handleRequest(
   }
   if (request.type === "status") {
     // A question belongs to the agent life that asked it: the pane's session goes with it (agent-status settleRestored).
-    const session = request.terminalId && request.level === "waiting" ? await paneSession(request.terminalId, options) : undefined;
-    const told = request.terminalId ? recordAgentStatus(request.terminalId, request.level, Date.now(), request.text, caller.via, session) : request;
+    // A wait on a teammate names a role of the caller's own team; a status with no pane has none.
+    if (request.on) {
+      if (!options.team) throw new Error(TEAMS_UNAVAILABLE);
+      await teammateToWaitOn(request.terminalId, request.on, options.team);
+    }
+    const session = request.terminalId && request.level === "waiting" && !request.on ? await paneSession(request.terminalId, options) : undefined;
+    const told = request.terminalId ? recordAgentStatus(request.terminalId, request.level, Date.now(), request.text, caller.via, session, request.on) : request;
     if (!told) return;
     const update: ControlStatusUpdate = {
       terminalId: request.terminalId,
@@ -485,6 +511,7 @@ async function handleRequest(
       level: told.level,
       text: request.text,
       updatedAt: Date.now(),
+      ...(told.on ? { on: told.on } : {}),
     };
     const targets = options.getWindows?.() ?? (win ? [win] : []);
     for (const target of targets) {

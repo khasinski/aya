@@ -44,8 +44,16 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   {
     command: "status waiting",
     usage: "aya status waiting text",
-    summary: "Mark this pane as blocked on the user.",
+    summary: "Mark this pane as blocked on the user: a red dot, an attention item and a notification.",
     example: 'aya status waiting "Needs approval"',
+    notes: ["Only for what the user must answer; in a team, a wait on a teammate is aya status waiting --on role."],
+  },
+  {
+    command: "status waiting --on",
+    usage: "aya status waiting --on role text",
+    summary: "In a team: mark this role as waiting on a teammate; the Teams window shows \"waiting on role\", and the user is not asked.",
+    example: 'aya status waiting --on tester "Answer on the adapter test"',
+    notes: ["The role must be in your team and not your own.", "It ends when that role's message is typed into your pane, or when you set another status."],
   },
   {
     command: "status done",
@@ -101,10 +109,21 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     notes: ["Run it after a start, /clear or /resume: your role is not in your memory."],
   },
   {
+    command: "team show",
+    usage: "aya team show [team] [--json]",
+    summary:
+      "Print the whole team as Aya runs it (its saved copy): every role with its responsibilities, must-not and who it sends to, which role leads, the cadence, the protocol and the status command line if any.",
+    example: "aya team show --json",
+    notes: [
+      "Read-only. Without a team: this pane's team, else the project's only saved team; outside a pane set AYA_PROJECT_SLUG.",
+      "Read the team here, not from its file: it says when the repo file differs from what runs.",
+    ],
+  },
+  {
     command: "team send",
     usage: "aya team send role text",
     summary: "Send a message to the pane playing role; the recipient sees who sent it, when, at which commit.",
-    example: 'aya team send implementer "Round 5: the alert freezes at zero"',
+    example: 'aya team send implementer "Update 5: the alert freezes at zero"',
     notes: ["Only roles listed in your send-to work.", "Written to the pane does not mean read."],
   },
   {

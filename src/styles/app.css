@@ -890,7 +890,8 @@ body {
   background: var(--fg-tertiary);
 }
 .aya-statusbar-item--warn   { color: var(--status-waiting); }
-.aya-statusbar-item--agent-active { color: var(--fg-secondary); }
+.aya-statusbar-item--agent-active,
+.aya-statusbar-item--agent-waiting-on { color: var(--fg-secondary); }
 .aya-statusbar-item--agent-done { color: var(--status-active); }
 .aya-statusbar-item--agent-error { color: var(--status-error); }
 .aya-statusbar-popover--checkouts {

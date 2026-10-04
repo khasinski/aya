@@ -31,7 +31,7 @@ const TWO_ROLE_TEMPLATE: TeamDefinition = {
   lead: "reviewer",
   cadenceMinutes: DEFAULT_CADENCE_MINUTES,
   protocol:
-    "Findings are hypotheses with a measurement request, not facts. Number rounds and mark items [reported -> confirmed]. Reports are one-way unless a question is asked.",
+    "Findings are hypotheses with a measurement request, not facts. Number your reports as updates (Update 1, Update 2) and mark items [reported -> confirmed]. Reports are one-way unless a question is asked.",
 };
 
 interface Props {

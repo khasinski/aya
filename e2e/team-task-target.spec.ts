@@ -7,7 +7,7 @@ import { TEAM_STATE_DIR, TEAM_AGENT_READY_TIMEOUT_MS, TEAM_DELIVERY_TIMEOUT_MS, 
 
 const CADENCE_MIN = 2;
 const TEAM = `${HANDOFF_TEAM}\n## Lead\nimplementer\n\n## Cadence\nimplementer every ${CADENCE_MIN} min\n`;
-const RHYTHM = `the lead gets a round every ${CADENCE_MIN} min`;
+const RHYTHM = `the lead gets an Aya round every ${CADENCE_MIN} min`;
 
 /** The note color as computed, checked to differ from the danger red so a match means neutral. */
 async function neutralColor(window: Page): Promise<string> {

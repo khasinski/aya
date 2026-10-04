@@ -31,7 +31,7 @@ Must not: skip a report
 leader
 `;
 const QUESTION = "need the staging password";
-const SKIPPED = `leader: round 1 skipped: leader asked the user: ${QUESTION}`;
+const SKIPPED = `leader: Aya round 1 skipped: leader asked the user: ${QUESTION}`;
 const BEFORE = `leader: question from before the restart: ${QUESTION}`;
 
 async function world(sessionWhenAsked) {
@@ -62,7 +62,7 @@ async function world(sessionWhenAsked) {
       else await ACTIONS[step]();
     }
   };
-  const rounds = () => w.typed.filter((t) => t.pane === "pane-l").flatMap((t) => t.text.match(/Round (\d+):/)?.[1] ?? []).map(Number);
+  const rounds = () => w.typed.filter((t) => t.pane === "pane-l").flatMap((t) => t.text.match(/Aya round (\d+):/)?.[1] ?? []).map(Number);
   const lines = async () => (await store.log()).filter((m) => m.from === "aya" && /skipped|from before the restart/.test(m.text)).map((m) => `${m.to}: ${m.text}`);
   return { run, rounds, lines, cleanup };
 }

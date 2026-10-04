@@ -60,7 +60,7 @@ async function world(opts = {}) {
     await w.jobs.at(-1)?.();
   };
   const live = () => teamLiveness(store, ROLES, w.deps.holdReason, { cadence: opts.cadence === false ? null : 1, lead: opts.lead !== false }, w.now);
-  const rounds = () => w.typed.filter((t) => t.pane === "pane-t" && /\| from aya \|/.test(t.text)).flatMap((t) => t.text.match(/Round (\d+):/)?.[1] ?? []).map(Number);
+  const rounds = () => w.typed.filter((t) => t.pane === "pane-t" && /\| from aya \|/.test(t.text)).flatMap((t) => t.text.match(/Aya round (\d+):/)?.[1] ?? []).map(Number);
   const restart = () => (make(), w.runner.restore());
   return { w, store, look, live, rounds, restart, cleanup: () => (w.runner.stopAll(), cleanup()) };
 }
@@ -170,5 +170,5 @@ stallTest("the round due at a stall names who waits on whom: no message of its o
   for (let s = 0; s <= T; s += BEAT) await t.look(BEAT);
   const stalled = t.w.typed.filter((m) => /stalled: no change to the repo/.test(m.text));
   assert.equal(stalled.length, 1);
-  assert.match(stalled[0].text, /Round \d+: stalled: no change to the repo since \d\d:\d\d \(1 message\)\. Unanswered: implementer waits for tester since \d\d:\d\d/);
+  assert.match(stalled[0].text, /Aya round \d+: stalled: no change to the repo since \d\d:\d\d \(1 message\)\. Unanswered: implementer waits for tester since \d\d:\d\d/);
 });

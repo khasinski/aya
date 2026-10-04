@@ -22,7 +22,7 @@ const NOW = Date.parse("2026-10-03T12:00:00.000Z");
 const ago = (min) => new Date(NOW - min * WALL_MINUTE_MS).toISOString();
 let next = 1;
 const msg = (from, to, min, extra = {}) => ({ id: next++, time: ago(min), from, to, commit: "c0", text: "x", delivered: true, ...extra });
-const round = (min, n = 1) => msg("aya", "lead", min, { text: `Round ${n}: run your round as the team protocol says.` });
+const round = (min, n = 1) => msg("aya", "lead", min, { text: `Aya round ${n}: run your round as the team protocol says.` });
 // Every role reported and got the lead's answer 2 min ago, so nobody waits on the lead: the baseline rows change.
 const busyTeam = () => ["tester", "implementer", "reviewer"].flatMap((r) => [msg(r, "lead", 3), msg("lead", r, 2)]);
 const input = (over = {}) => ({ roles: ROLES, lead: "lead", log: [], progress: null, refused: [], turns: null, busy: [], nowMs: NOW, ...over });
@@ -57,15 +57,28 @@ const TABLE = [
   [
     "without a previous round the deltas run from the first message (its HEAD the base) and say so",
     () => input({ log: [msg("lead", "tester", 40, { commit: "a1" }), msg("tester", "lead", 39, { commit: "b2" })] }),
-    (d) => assert.equal(d.header, `Since ${clock(ago(40))} (no round before): +2 messages, +1 commit (b2)`),
+    (d) => assert.equal(d.header, `Since ${clock(ago(40))} (no Aya round before): +2 messages, +1 commit (b2)`),
   ],
   [
     "held messages and skipped rounds since the last round are in the header",
     () => {
-      const log = [...busyTeam(), round(30), msg("aya", "lead", 20, { text: "round 2 skipped: is busy working" }), msg("tester", "implementer", 2, { delivered: false, held: H.HOLD_APPROVAL })];
+      const log = [...busyTeam(), round(30), msg("aya", "lead", 20, { text: "Aya round 2 skipped: is busy working" }), msg("tester", "implementer", 2, { delivered: false, held: H.HOLD_APPROVAL })];
       return input({ log });
     },
-    (d) => assert.match(d.header, /: \+1 message, no commits, 1 held, 1 round skipped$/),
+    (d) => assert.match(d.header, /: \+1 message, no commits, 1 held, 1 Aya round skipped$/),
+  ],
+  ...[
+    ["a log from before the label: \"Round N:\" and \"round N skipped\"", "Round 1: run your round as the team protocol says.", "round 2 skipped: is busy working"],
+    ["a log with both labels: the newer \"Aya round N:\" is the baseline", "Aya round 1: run your round as the team protocol says.", "Aya round 2 skipped: is busy working"],
+  ].map(([label, typed, skipped]) => [
+    `${label} still reads as Aya's rounds: the baseline and the skipped count`,
+    () => input({ log: [msg("aya", "lead", 50, { text: "Round 7: older" }), msg("tester", "lead", 40), ...busyTeam(), msg("aya", "lead", 30, { text: typed }), msg("aya", "lead", 20, { text: skipped })] }),
+    (d) => assert.equal(d.header, `Since ${clock(ago(30))}: no messages, no commits, 1 Aya round skipped`),
+  ]),
+  [
+    "a lead's own \"Round 42\" or \"Update 4\" is no Aya round: from the lead, it is a message, not a baseline",
+    () => input({ log: [msg("lead", "tester", 30, { text: "Round 42: tester, rerun stage 7" }), msg("lead", "tester", 20, { text: "Update 4: done" })] }),
+    (d) => assert.equal(d.header, `Since ${clock(ago(30))} (no Aya round before): +2 messages, no commits`),
   ],
   ...[
     ["typed only, its Enter withheld", { typedOnly: true, held: "Enter withheld: a draft" }],
@@ -74,7 +87,7 @@ const TABLE = [
     `a round the lead never got (${how}) is no baseline: the sends refused before it stay news`,
     () => {
       const refused = [{ time: ago(20), from: "tester", to: "qa", reason: "no such role", text: "a finding" }];
-      return input({ log: [...busyTeam(), round(30, 1), msg("tester", "lead", 25), msg("aya", "lead", 10, { text: "Round 2: run your round as the team protocol says.", ...extra })], refused });
+      return input({ log: [...busyTeam(), round(30, 1), msg("tester", "lead", 25), msg("aya", "lead", 10, { text: "Aya round 2: run your round as the team protocol says.", ...extra })], refused });
     },
     (d) => {
       assert.equal(d.header, `Since ${clock(ago(30))}: +1 message, no commits`);

@@ -11,6 +11,7 @@ Use Aya's CLI for user-visible coordination while working in an Aya terminal.
 
 - `aya status set "Running tests"`: show active status for this terminal.
 - `aya status waiting "Needs approval"`: mark this terminal as waiting for the user.
+- `aya status waiting --on tester "Answer on the adapter test"`: in a team, mark this role as waiting on a teammate; the user is not asked.
 - `aya status done "Build passed"`: mark this terminal as done.
 - `aya status error "Tests failed"`: mark this terminal as errored.
 - `aya status clear`: clear the agent-provided status.
@@ -63,6 +64,8 @@ follow its responsibilities and never do what it says you must not do.
 
 - Run `aya team whoami` at the start, and again after `/clear`, `/resume` or a
   compaction; your role is not in your memory.
+- `aya team show` prints the whole team as Aya runs it: every role, who leads,
+  the cadence and the protocol. Read the team there, not from its file.
 - Send with `aya team send <role> "text"`, by role, never by tab name. Only the
   roles in your send-to list work; whoami says what each of them expects from
   you.

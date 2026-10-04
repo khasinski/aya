@@ -1,6 +1,8 @@
 // `aya team whoami|send|inbox|pause`: the caller is known by its pane id, its role
 // by the local assignments, and the team by the definition the user saved.
 
+import { teammateAnswered } from "./agent-status";
+import type { AgentKind } from "./presets";
 import type { TeamRequest } from "./control-protocol";
 import { HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_STARTING, NO_PANE_HOLD } from "./pane-holds";
 import { loadTeam, paneTeamRole } from "./team-files";
@@ -10,6 +12,7 @@ import { goesStale, type TeamStore, type TeamMessage } from "./team-store";
 import { TEAM_SYSTEM_SENDER } from "./team-definition";
 import type { ProjectConfig, TeamDefinition, TeamRole } from "./types";
 import { clock, WALL_MINUTE_MS } from "./team-times";
+import { whoamiText } from "./team-whoami";
 
 export interface TeamControlDeps {
   teamHome: string;
@@ -30,6 +33,9 @@ export interface TeamControlDeps {
   roleNoteReport?: (project: ProjectConfig, team: string, assignments: Record<string, string>) => Promise<{ roleNotes: Record<string, string | null>; staleNotes: string[] }>;
   /** What Aya widened for the pane and what else its launch means (launchNoteOf), null when nothing. */
   launchNote?: (terminalId: string) => Promise<string | null>;
+  /** The pane's rendered text and its agent: a reply that claims a send nobody got (unsent-claims.ts). */
+  screen?: (terminalId: string) => Promise<string | null>;
+  agentOf?: (terminalId: string) => Promise<AgentKind | undefined>;
 }
 
 type TypingDeps = Pick<TeamControlDeps, "deliver" | "holdReason" | "headCommit">;
@@ -63,19 +69,17 @@ async function membership(callerId: string | undefined, deps: TeamControlDeps): 
   return { project, team, role, store: plays.store };
 }
 
-function whoami({ team, role }: Membership): string {
-  const sends = role.sendsTo.map((r) => (r.what ? `${r.to}: ${r.what}` : r.to));
-  const lines = [
-    `team      ${team.name}`,
-    `you       ${role.id}`,
-    ...(sends.length ? sends.map((line, i) => `${i ? "         " : "sends to"}  ${line}`) : ["sends to  (nobody)"]),
-    `must not  ${role.mustNot}`,
-  ];
-  if (team.lead === role.id) lines.push("", 'you lead this team: when the work is done or cannot go on, end it with: aya team pause "why"');
-  lines.push("", 'give a role work with: aya team send <role> "text" (not aya team start: starting and resuming the team is the user\'s)');
-  if (role.responsibilities) lines.push("", role.responsibilities);
-  if (team.protocol) lines.push("", "protocol", team.protocol);
-  return `${lines.join("\n")}\n`;
+/** The role `aya status waiting --on <role>` names, checked against the caller's team: a wait on a teammate is the
+ *  team's, so a pane with no role, an unknown role or its own role is refused with what to run instead. */
+export async function teammateToWaitOn(callerId: string | undefined, on: string, deps: TeamControlDeps): Promise<string> {
+  const { team, role } = await membership(callerId, deps).catch((err: unknown) => {
+    throw new Error(`aya status waiting --on is for a wait on a team role (${err instanceof Error ? err.message : err}); to ask the user, drop --on`);
+  });
+  if (on === role.id) throw new Error(`${on} is your own role; name the teammate you wait on`);
+  if (!team.roles.some((r) => r.id === on)) {
+    throw new Error(`team ${team.name} has no role ${on}; its roles: ${team.roles.map((r) => r.id).filter((id) => id !== role.id).join(", ")}`);
+  }
+  return on;
 }
 
 /** A team's hold for a pane: the terminal host's, else why its launch mode cannot reach Aya. */
@@ -193,6 +197,8 @@ export async function typeMessage(
     }
   }
   debugLog(store, failure ? "hold" : "turn", { to: message.to, from: message.from, id: message.id ?? null, ...(failure ? { reason: failure, typed } : { seen: unseen === null, why: unseen }) });
+  // The awaited teammate's message went in: the receiver waits on it no longer.
+  if (!failure && teammateAnswered(pane, message.from)) debugLog(store, "status", { role: message.to, change: "wait answered", on: message.from });
   return { commit, failure, typed, afterEnter: afterEnter || unseen !== null, reached: !failure || typed, unseen, reserved: Boolean(reserve) };
 }
 
@@ -387,8 +393,13 @@ export async function handleTeamRequest(
   deps: TeamControlDeps,
   pause?: (slug: string, team: string, by: string) => Promise<void>,
 ): Promise<{ output: string; undo?: () => Promise<void> }> {
+  // Taken before the definition is read: a Save landing in between leaves the role marked older.
+  const askedAt = new Date().toISOString();
   const m = await membership(callerId, deps);
-  if (request.type === "team-whoami") return { output: whoami(m) };
+  if (request.type === "team-whoami") {
+    await m.store.noteWhoami(m.role.id, askedAt).catch((err: unknown) => console.warn("[aya] team whoami time not recorded:", err));
+    return { output: whoamiText(m.team, m.role) };
+  }
   if (request.type === "team-pause") return { output: await pauseByLead(m, request.text, pause) };
   if (request.type === "team-send") return { output: await send(m, request.role, request.text, deps) };
   const { taken: unread, giveBack } = await m.store.takeUnread(m.role.id);

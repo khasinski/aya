@@ -1,7 +1,7 @@
 // Start team (a delivery test to every role), Aya-owned rounds on the team's
 // cadence, and the team pause. Rounds live in Aya, not in one agent session.
 
-import { outstandingWaiting, settleRestored } from "./agent-status";
+import { outstandingWaiting, settleRestored, teammateWaits } from "./agent-status";
 import { whileTeamNotSaved } from "./team-admin";
 import { whileProjectPanesFree } from "./team-panes";
 import { deliverAndLog, logTyped, oneLine, PaneHeldError, roleHold, systemLine, typeFromAya, typeLogged, type TeamControlDeps } from "./team-control";
@@ -11,12 +11,13 @@ import { HOLD_BUSY, NO_PANE_HOLD } from "./pane-holds";
 import { debugLog, debugOn } from "./team-debug";
 import { oneAtATime } from "./keyed-queue";
 import { noteRound, observe, quietTooLong, repoSince, resetProgress, roundsHeld, stalledWhenLastLooked, teamLiveness, type TeamProgress } from "./team-progress";
-import { pendingWaits, stalledText, supervisionText } from "./team-supervision";
+import { pendingWaits, stalledText, supervisionText, type StatusWait } from "./team-supervision";
 import { digestOneLine, roundDigest } from "./team-digest";
+import { lookForClaims, readClaims, unsentClaims, unsentSection } from "./unsent-claims";
 import { statusSection } from "./team-status-command";
 import { openTeamStore, readText, type PendingTask, type TeamStore } from "./team-store";
 import { clock, ROUND_CHECK_MS, SILENCE_FIRST_MS, SILENCE_REPEAT_MS } from "./team-times";
-import { TEAM_SYSTEM_SENDER, TEAM_USER_SENDER } from "./team-definition";
+import { TEAM_SYSTEM_SENDER, TEAM_USER_SENDER, ayaRound } from "./team-definition";
 import type { ProjectConfig, TeamDefinition, TeamStartResult } from "./types";
 
 /** Runs `fn` every `ms`; returns a cancel. Injected so tests need no clock. */
@@ -55,8 +56,9 @@ export function resumeRefusal(pausedBy: string | null, by: string): string | nul
   return `the lead (${pausedBy}) paused this team; only ${pausedBy} or the user can resume it; nothing was sent`;
 }
 
-/** Every lead round ends with the status command's output, whatever made it due: a lead-only team gets no rhythm round. */
-const withStatus = (text: string, status: string | null): string => (status ? `${text} ${status}` : text);
+/** Every lead round, whatever made it due, ends with the open "says it sent" claims and then the status command's
+ *  output: a lead-only team gets no rhythm round. */
+const withSections = (text: string, ...sections: (string | null)[]): string => [text, ...sections.filter((s) => s)].join(" ");
 
 export class TeamRunner {
   private cancels = new Map<string, () => void>();
@@ -68,6 +70,9 @@ export class TeamRunner {
   // One team's Starts, Resumes, restores, clock looks and Remove run one after another: two overlapping ticks would type
   // the same round number, a Start and a Resume the task twice. Pause and Save do not wait: they bump the generation instead.
   private turns = oneAtATime();
+  // Set by stopAll at quit: no round starts typing after it, and one already typing is awaited to its Enter.
+  private quitting = false;
+  private typing = new Set<Promise<void>>();
 
   constructor(
     private deps: TeamControlDeps,
@@ -285,12 +290,24 @@ export class TeamRunner {
     await this.arm(project.slug, name, team, store, "kept", armedBefore);
   }
 
-  /** After Save team: a running team's rounds follow the new definition. */
-  async refresh(slug: string, name: string): Promise<void> {
+  /** After Save team: a running team's rounds follow the new definition, and each role in `changed` (its whoami
+   *  text changed) is told to read it again; a held pane gets nothing later, its row says it works from the old one. */
+  async refresh(slug: string, name: string, changed: readonly string[] = []): Promise<void> {
     // Not "has a timer": a Save can land before the boot-time restore has armed the team.
     if (!(await openTeamStore(this.deps.teamHome, slug, name).state()).running) return;
-    const { store, team } = await this.open(slug, name);
+    const { project, store, team } = await this.open(slug, name);
     await this.arm(slug, name, team, store, "kept");
+    const paused = store.pausedSince();
+    const at = clock(new Date(this.now()).toISOString());
+    for (const role of changed.filter((r) => team.roles.some((t) => t.id === r))) {
+      const message = { team: team.name, from: TEAM_SYSTEM_SENDER, to: role, text: `Your role in this team changed at ${at}: run aya team whoami again and work by what it prints now.` };
+      try {
+        const typed = await typeFromAya(this.deps, project, store, message, undefined, paused);
+        if (!typed.entry) await logTyped(store, message, typed);
+      } catch (err) {
+        this.warn("[aya] team %s/%s: %s not told its role changed:", slug, name, role, err);
+      }
+    }
   }
 
   /** Types waiting inbox messages into panes that are free now; returns how many.
@@ -344,8 +361,12 @@ export class TeamRunner {
     return typed;
   }
 
-  stopAll(): void {
-    for (const key of [...this.cancels.keys()]) this.cancel(key);
+  /** At quit: stops every clock and resolves once a round already typing has its Enter recorded, null when none is.
+   *  No generation bump: that would leave a pasted round in the composer for the next life to type again on top. */
+  stopAll(): Promise<void> | null {
+    this.quitting = true;
+    for (const [key, cancel] of [...this.cancels]) (cancel(), this.cancels.delete(key));
+    return this.typing.size ? Promise.all(this.typing).then(() => undefined) : null;
   }
 
   /** One clock per running team: every ROUND_CHECK_MS it records what moved and whether a round is due. `fresh` starts the
@@ -365,6 +386,14 @@ export class TeamRunner {
     this.cancels.set(key, this.schedule(tick, ROUND_CHECK_MS));
   }
 
+  /** Reads the free roles' replies for sends they claim (unsent-claims.ts); a failed read only skips this look. */
+  private async lookForClaims(store: TeamStore, team: TeamDefinition, holds: Record<string, string | null>): Promise<void> {
+    const { screen, agentOf, busy } = this.deps;
+    if (!screen || !agentOf) return;
+    const look = { team: team.name, roles: team.roles.map((r) => r.id), holds, pane: (role: string) => store.paneOf(role), busy, screen, agentOf };
+    await lookForClaims(store, look).catch((err) => this.warn("[aya] team %s replies not read:", team.name, err));
+  }
+
   /** Roles whose agent is mid-turn now; null when Aya cannot tell. */
   private async busyRoles(store: TeamStore, roles: string[]): Promise<string[] | null> {
     const isBusy = this.deps.busy;
@@ -379,7 +408,30 @@ export class TeamRunner {
   private async digest(store: TeamStore, team: TeamDefinition, progress: TeamProgress, nowMs: number) {
     const roles = team.roles.map((r) => r.id);
     const busy = await this.busyRoles(store, roles);
-    return roundDigest({ roles, lead: team.lead, log: await store.annotatedLog(), progress, refused: await store.refusals(), turns: await store.turns(), busy, nowMs });
+    const statusWaits = await this.statusWaits(store, roles);
+    const [log, refused] = [await store.annotatedLog(), await store.refusals()];
+    return roundDigest({ roles, lead: team.lead, log, progress, refused, turns: await store.turns(), busy, statusWaits, nowMs });
+  }
+
+  private async unsent(store: TeamStore, team: TeamDefinition): Promise<string | null> {
+    const roles = team.roles.map((r) => r.id);
+    return unsentSection(unsentClaims(await readClaims(store), await store.annotatedLog(), await store.refusals(), roles));
+  }
+
+  /** The roles' own `aya status waiting`: a question to the user (one from before a restart that is unconfirmed holds
+   *  nothing, as in askedTheUser) or a wait on a teammate. */
+  private async statusWaits(store: TeamStore, roles: string[]): Promise<StatusWait[]> {
+    const asked = outstandingWaiting();
+    const onTeam = teammateWaits();
+    const out: StatusWait[] = [];
+    for (const role of roles) {
+      const pane = await store.paneOf(role);
+      const question = pane ? asked[pane] : undefined;
+      const wait = pane ? onTeam[pane] : undefined;
+      if (question && question.restart !== "unconfirmed") out.push({ role, on: null, text: question.text, since: question.since });
+      else if (wait) out.push({ role, on: wait.on, text: wait.text, since: wait.since });
+    }
+    return out;
   }
 
   /** A look of the team's clock: records the repo, talk and screens. A round due on the rhythm, the silence or a stall
@@ -393,6 +445,7 @@ export class TeamRunner {
     const tree = (await this.deps.treeState?.(project.directory).catch(() => null)) ?? null;
     const holds = Object.fromEntries(await Promise.all(team.roles.map(async (r) => [r.id, (await roleHold(this.deps, store, r.id)).hold] as const)));
     const progress = await observe(store, head, holds, now, tree, team.lead);
+    await this.lookForClaims(store, team, holds);
     if (debugOn()) await teamLiveness(store, team.roles.map((r) => r.id), this.deps.holdReason, { cadence: team.cadenceMinutes, lead: !!team.lead }, nowMs);
     const lead = team.lead;
     if (!lead) return;
@@ -408,7 +461,7 @@ export class TeamRunner {
       await store.append({ from: TEAM_SYSTEM_SENDER, to: lead, commit: head, text, delivered: true });
     };
     // Once per round and reason: a lead busy for an hour is not a page of skips.
-    const skip = (why: string) => (debugLog(store, "round", { round, skipped: why }), logOnce(`round ${round} skipped: ${why}`));
+    const skip = (why: string) => (debugLog(store, "round", { round, skipped: why }), logOnce(`${ayaRound(round)} skipped: ${why}`));
     const pausedSkip = async () => ((await store.state()).paused ? skip("the team is paused") : debugLog(store, "round", { round, skipped: "the team was saved or re-armed meanwhile" }));
     if (stale()) return pausedSkip();
     // Told once per stall: rounds nobody can act on only pile up in the agent's queue; a change to the repo resumes them.
@@ -416,11 +469,12 @@ export class TeamRunner {
     // Rounds a lead does not answer pile up in its queue too: the next wait for its answer. The one round of a stall still goes.
     if (!onRepo && roundsHeld(progress)) {
       debugLog(store, "round", { round, held: "brake", unanswered: progress.unanswered?.rounds });
-      return logOnce(`rounds held: ${lead} did not answer rounds ${round - (progress.unanswered?.rounds ?? 0)}..${round - 1}`);
+      return logOnce(`Aya rounds held: ${lead} did not answer Aya rounds ${round - (progress.unanswered?.rounds ?? 0)}..${round - 1}`);
     }
     const question = await this.askedTheUser(store, lead, Date.parse(progress.changedAt), project);
     if (question !== null) return skip(`${lead} asked the user${question ? `: ${oneLine(question)}` : ""}`);
     const waits = () => store.annotatedLog().then((log) => pendingWaits(log, team.roles.map((r) => r.id)));
+    const said = () => this.statusWaits(store, team.roles.map((r) => r.id));
     // A silence round was decided before the wait for the lead's pane: talk that went in meanwhile ends the silence.
     // Read once, as the lock is taken, before the paste (the second read, before the Enter, is the Pause's only).
     const talkedBefore = store.talkedSince();
@@ -437,19 +491,30 @@ export class TeamRunner {
       holdReason: async (pane: string) => (await this.deps.holdReason(pane)) ?? ((await this.deps.busy?.(pane)) ? HOLD_BUSY : null),
       deliver: async (pane: string, line: string, _cancelled?: () => boolean, entered?: () => Promise<void>, pasting?: () => Promise<void>) => {
         if (stale()) throw new PaneHeldError("the team was paused or changed while the round was prepared", false);
-        return this.deps.deliver(pane, line, () => stale() || talkedSince(), entered, pasting);
+        if (this.quitting) throw new PaneHeldError("Aya is quitting", false);
+        let done = () => {};
+        const typing = new Promise<void>((resolve) => (done = () => (this.typing.delete(typing), resolve())));
+        this.typing.add(typing);
+        const recorded = async () => {
+          try {
+            await entered?.();
+          } finally {
+            done();
+          }
+        };
+        return this.deps.deliver(pane, line, () => stale() || talkedSince(), recorded, pasting).finally(done);
       },
     };
     const body = onRepo
-      ? stalledText({ round, since: repoSince(progress), messages: progress.messages ?? 0, waits: await waits(), nowMs })
+      ? stalledText({ round, since: repoSince(progress), messages: progress.messages ?? 0, waits: await waits(), said: await said(), nowMs })
       : quiet
-        ? supervisionText({ round, quietSince: progress.changedAt, waits: await waits(), nowMs })
-        : `Round ${round}: run your round as the team protocol says. ${digestOneLine(await this.digest(store, team, progress, nowMs))}`;
+        ? supervisionText({ round, quietSince: progress.changedAt, waits: await waits(), said: await said(), nowMs })
+        : `${ayaRound(round)}: run your round as the team protocol says. ${digestOneLine(await this.digest(store, team, progress, nowMs))}`;
     // A round the lead's pane cannot take now stays due and is looked at again each minute: the user's command runs
     // only for a round that goes now, not on every look while it waits.
     const leadPane = await store.paneOf(lead);
     const goesNow = leadPane !== null && (await deps.holdReason(leadPane)) === null;
-    const text = withStatus(body, goesNow ? await statusSection({ project, store, team }) : null);
+    const text = withSections(body, await this.unsent(store, team), goesNow ? await statusSection({ project, store, team }) : null);
     const message = { team: team.name, from: TEAM_SYSTEM_SENDER, to: lead, text };
     // The number is used up at the Enter, whatever the turn shows after: a relaunch in between types the next one.
     const typed = await typeFromAya(deps, project, store, message, async () => {
@@ -457,7 +522,7 @@ export class TeamRunner {
       await store.updateProgress(({ unreached, ...p }) => ({ ...p, ...(onRepo ? { stalledLogged: true } : {}), unanswered: { role: lead, rounds: (p.unanswered?.rounds ?? 0) + 1 } }));
     });
     debugLog(store, "round", { round, reason: onRepo ? "stall" : quiet ? "silence" : "rhythm", typed: typed.entry !== null, ...(talked ? { skipped: "talk came in while it waited for the lead's pane" } : {}) });
-    if (typed.entry || !typed.failure || talked) return;
+    if (typed.entry || !typed.failure || talked || this.quitting) return;
     // Text left in the composer without its Enter is logged as such; the composer's draft holds the next try.
     if (typed.typed) await logTyped(store, message, typed);
     const { failure } = typed;

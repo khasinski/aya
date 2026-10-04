@@ -309,8 +309,8 @@ export type PtyEvent =
   // Derived from the pane's real rendered screen (electron/vt-state.ts):
   // whether an approval prompt is on screen RIGHT NOW. Unlike the raw-byte
   // heuristic it also reports when the prompt goes away, so it is emitted on
-  // both edges.
-  | { type: "vt-status"; ptyId: string; waiting: boolean };
+  // both edges. `dialog` names a dialog Aya tells apart (an account-wide offer).
+  | { type: "vt-status"; ptyId: string; waiting: boolean; dialog?: string };
 
 export interface WaitingNotificationRequest {
   projectSlug: string;
@@ -471,16 +471,23 @@ export type QuestionRestart = "restored" | "unconfirmed";
 
 /** Panes whose agent ran `aya status waiting`, by pane id: its text, when (epoch ms), and whether it was asked
  *  before Aya was closed (electron/agent-status.ts: "unconfirmed" holds no round). */
-export type WaitingPanes = Record<string, { text: string; since: number; restart?: QuestionRestart }>;
+export type WaitingPanes = Record<string, { text: string; since: number; restart?: QuestionRestart; on?: string }>;
+
+/** `aya status waiting --on <role>`: a team role waits on a teammate, not on the user (no bell, no attention). */
+export const WAITING_ON = "waiting-on";
+
+/** What an agent reported, as the windows hold it: "waiting" needs the user, "waiting-on" names the teammate in `on`. */
+export type ReportedStatusLevel = ControlStatusLevel | typeof WAITING_ON;
 
 export interface ControlStatusUpdate {
   terminalId?: string;
   projectSlug?: string;
   cwd?: string;
-  level: ControlStatusLevel | "clear";
+  level: ReportedStatusLevel | "clear";
   text?: string;
   updatedAt: number;
   restart?: QuestionRestart;
+  on?: string;
 }
 
 export type MonitoredSessionLevel = ControlStatusLevel;
@@ -557,6 +564,8 @@ export interface AyaApi {
    *  session transcripts for the tab's cwd (history, not terminal output). */
   harnessSearch(req: HarnessSearchRequest): Promise<HarnessSearchHit[]>;
   restartPtyHost(): Promise<void>;
+  /** Asks first when the pane shows background tasks or monitors a restart stops; false: the user kept it. */
+  confirmPaneRestart(ptyId: string): Promise<boolean>;
   onPtyEvent(handler: (event: PtyEvent) => void): () => void;
 
   // Project config
@@ -958,10 +967,14 @@ export interface TeamSummary {
   roleNotes: Record<string, string | null>;
   /** Panes that started with a role note of this team that they no longer play. */
   staleNotes: string[];
+  /** Per role with a pane: when a Save changed what its aya team whoami prints, while it has not run whoami since. */
+  olderRoles: Record<string, string>;
   /** Per role with a pane in the project: what Aya widened so the pane reaches it, null when nothing. */
   paneNotes: Record<string, string | null>;
   /** Messages per role that are waiting in its inbox. */
   unread: Record<string, number>;
+  /** Per role, the roles its reply says it sent to while nothing from it reached them (electron/unsent-claims.ts). */
+  unsent?: Record<string, string[]>;
   liveness: TeamLiveness;
   log: TeamMessage[];
 }

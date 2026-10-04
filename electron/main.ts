@@ -52,7 +52,7 @@ import {
 } from "./cli-install";
 import { startConfigWatcher } from "./config-watcher";
 import { isHostStale } from "./pty-host-staleness";
-import { noteUserAnswer, onQuestionUnconfirmed, outstandingWaiting } from "./agent-status";
+import { noteUserAnswer, onStatusPushed, outstandingWaiting } from "./agent-status";
 import { deliverTeamMessage, paneOutputMarks, settledAfterSubmit, startControlServer, type ControlStatusSink, type TurnProbe } from "./control";
 import { confirmOpen, deliverOpenProject, replayOpensOnLoad } from "./open-delivery";
 import { createWindowSource } from "./window-for-open";
@@ -95,7 +95,9 @@ import { reachedAyaPanes } from "./reached-aya";
 import { debugPane, watchDebugSwitch } from "./team-debug";
 import { userShell } from "./shell";
 import { registerTeamIpc } from "./team-ipc";
-import { askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, teamPaneDeps, type PaneHost } from "./team-panes";
+import { askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, presetAgent, teamPaneDeps, type PaneHost } from "./team-panes";
+import { confirmRestart, type RelaunchDeps } from "./relaunch-notes";
+import { restartStaleHost, updateInstaller } from "./update-quit";
 import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
@@ -151,7 +153,7 @@ import {
 import { scanHarnesses } from "./harnesses";
 import { isInternalNavigationUrl, parseExternalUrl } from "./navigation";
 import { createWorktree, removeWorktree } from "./git";
-import { listPresets, savePresets } from "./presets";
+import { listPresets, savePresets, type AgentKind } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
 import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath, readClaudeUsageAccounts } from "./usage";
 import {
@@ -305,10 +307,42 @@ const teamDeps: TeamControlDeps = {
   busy: (terminalId) => ptyHost.paneBusy(terminalId),
   roleNoteReport: (project, team, assignments) => roleNoteReport(project, team, assignments, paneBriefDeps),
   launchNote,
+  screen: paneScreen,
+  agentOf: paneAgent,
   headCommit,
   treeState: workingTreeState,
   starting: () => !bootProjectsLoaded,
 };
+/** A pane's rendered text, as `aya pane read` gets it; null when it is not running. */
+async function paneScreen(terminalId: string): Promise<string | null> {
+  const size = await ptyHost.getSize(terminalId);
+  return size ? paneReadText(await ptyHost.getBuffer(terminalId), size) : null;
+}
+/** The agent a pane runs, from its tab's preset. */
+async function paneAgent(terminalId: string): Promise<AgentKind | undefined> {
+  const tab = (await listProjects()).flatMap((p) => p.tabs).find((t) => t.id === terminalId);
+  const preset = tab && (await listPresets()).find((p) => p.id === tab.presetId);
+  return preset ? presetAgent(preset) : undefined;
+}
+// Restarts that stop the panes' background tasks and monitors warn first, and the resumed team agents are told.
+const relaunchDeps: RelaunchDeps = {
+  file: path.join(AYA_HOME, "relaunch-notes.json"),
+  panes: async (ids) => (await listProjects()).flatMap((p) => p.tabs).filter((t) => !ids || ids.includes(t.id)).map(({ id, name }) => ({ id, name })),
+  agentOf: paneAgent,
+  screen: paneScreen,
+  pid: (terminalId) => ptyHost.getPid(terminalId),
+  command: async (terminalId) => {
+    const launch = await ptyHost.launch(terminalId);
+    return typeof launch === "object" && launch !== null ? launch.command : null;
+  },
+};
+/** A native yes/no before a restart that stops background work; `yes` names the restart. */
+async function askRestart(yes: string, text: string): Promise<boolean> {
+  const options = { type: "warning" as const, buttons: [yes, "Cancel"], defaultId: 1, cancelId: 1, message: "Background tasks will stop", detail: text };
+  const parent = focusedAyaWindow();
+  return (await (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options))).response === 0;
+}
+const confirmLosingWork = (action: string, yes: string, ids?: readonly string[]) => confirmRestart(relaunchDeps, action, (text) => askRestart(yes, text), ids);
 const paneOpens = new RendererRequests();
 // aya team open and the Teams window's Apply panes open panes through this.
 const teamPaneHost: PaneHost = {
@@ -363,7 +397,7 @@ let updateCheckInFlight: Promise<UpdateStatus> | null = null;
 // True from the moment we hand off to ShipIt until we quit (#78). A second
 // install click must not spawn a second ShipIt - overlapping install requests
 // are a suspected cause of the silent-rollback failure.
-let updateInstalling = false;
+const updateLatch = { installing: false };
 // Sticky #78 warning: the phase it used to live in is replaced by the startup
 // auto-check 12 s later, so it is merged in separately and cleared on apply.
 let rollbackNotice: string | null = null;
@@ -1061,7 +1095,7 @@ async function reconcilePendingUpdate(win: BrowserWindow | null): Promise<void> 
   const diagnosis = diagnoseRelaunch(pending, app.getVersion());
   if (diagnosis === "none") return;
   await clearPendingUpdate();
-  updateInstalling = false;
+  updateLatch.installing = false;
   if (diagnosis === "applied") {
     rollbackNotice = null; // an install landed; retire any earlier warning
     return; // it worked; stay quiet
@@ -1104,7 +1138,8 @@ function configureAutoUpdates(win: BrowserWindow): void {
   if (!updateStatus.supported) return;
 
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  // Never on a quit by itself: an ordinary quit checks the panes' background work first (before-quit).
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowPrerelease = false;
 
   autoUpdater.on("checking-for-update", () => {
@@ -1169,7 +1204,7 @@ function configureAutoUpdates(win: BrowserWindow): void {
     // is the only place an async install failure can release the latch. The
     // marker is deliberately kept: `error` also fires for unrelated checks, and
     // deleting it there would cost the whole #78 detector.
-    updateInstalling = false;
+    updateLatch.installing = false;
     setUpdateStatus({
       phase: "error",
       message: error instanceof Error ? error.message : String(error),
@@ -1477,6 +1512,12 @@ let legacySweepTimer: NodeJS.Timeout | null = null;
 // Set in before-quit: an already-fired sweep callback checks it and bails
 // (clearTimeout can't stop a callback that is already running).
 let appQuitting = false;
+// A round typing at quit holds the quit this long at most for its Enter, while the pty host is still connected.
+const TEAM_QUIT_SETTLE_MS = 2_000;
+let teamsAtQuit: TeamRunner | null = null;
+let teamsStopped = false;
+// The install an ordinary quit started holds the quit this long at most before it quits without it.
+const QUIT_INSTALL_SETTLE_MS = 15_000;
 
 // --- Aya Web (experimental): browser access over HTTP + WebSocket ---
 let webConfig: WebConfig | null = null;
@@ -1607,6 +1648,8 @@ function installApplicationMenu(): void {
     id: "restart-aya",
     label: `Restart ${WINDOW_TITLE}`,
     click: async () => {
+      // Only a stale host is restarted with Aya; a current one keeps its panes running.
+      if (staleHostDetected && !(await confirmLosingWork(`Restarting ${WINDOW_TITLE}`, "Restart").catch(() => true))) return;
       try {
         if (staleHostDetected) await ptyHost.restart();
       } catch {
@@ -2046,8 +2089,8 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
   return win;
 }
 
-/** On launch, reap a stale PTY host (#28) even with live terminals: an update's terminals restart anyway. Best-effort;
- *  a pre-#73 host runs its own shutdown and may orphan a signal-ignoring child once (the sweep's job). */
+/** On launch, reap a stale PTY host (#28) even with live terminals, asking first when a pane shows background work
+ *  (a no keeps it, with Restart Aya's red dot). Best-effort; a pre-#73 host may orphan a signal-ignoring child once. */
 async function handleStaleHost(): Promise<void> {
   try {
     const expected = ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION);
@@ -2062,7 +2105,12 @@ async function handleStaleHost(): Promise<void> {
       ({ identity } = await ptyHost.hostStatus());
     }
     if (!isHostStale(expected, identity)) return;
-    await ptyHost.restart();
+    // The update is in, but the panes' background work still runs on the old host: ask, unless Restart to update did.
+    if (!(await restartStaleHost(relaunchDeps, (text) => askRestart("Restart terminals", text), () => ptyHost.restart()))) {
+      staleHostDetected = true;
+      setStaleMenuIcon();
+      return;
+    }
     // restart() swallows request errors by design (an old host may not honor
     // "shutdown"), so returning is NOT proof the host died. Verify: re-probe the
     // socket; a fresh current-version host (or none yet) means success, the SAME
@@ -2078,6 +2126,27 @@ async function handleStaleHost(): Promise<void> {
     // best-effort; a host that can't be queried is handled on next use
   }
 }
+
+/** Restart to update (asks before stopping background work) and an ordinary quit's update (installs only past no
+ *  background work, else leaves it for Restart to update). Markers are written for diagnoseRelaunch (#78). */
+const updates = updateInstaller({
+  status: getUpdateStatus,
+  relaunch: relaunchDeps,
+  ask: (text) => askRestart("Restart to update", text),
+  latch: updateLatch,
+  mark: markPendingUpdate,
+  markSync: markPendingUpdateSync,
+  clearMark: clearPendingUpdate,
+  // Lazy: electron-updater builds its platform updater on first touch, which must not happen at module load.
+  updater: {
+    get autoRunAppAfterInstall() { return autoUpdater.autoRunAppAfterInstall; },
+    set autoRunAppAfterInstall(value: boolean) { autoUpdater.autoRunAppAfterInstall = value; },
+    quitAndInstall: (isSilent, isForceRunAfter) => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
+  },
+  quit: () => app.quit(),
+  failed: (message) => setUpdateStatus({ phase: "error", message }),
+  settleMs: QUIT_INSTALL_SETTLE_MS,
+});
 
 /** Red dot on the "Restart Aya" menu item - the manual reap affordance (#52).
  *  No-op until the application menu is installed. */
@@ -2127,6 +2196,7 @@ function registerIpc(): TeamRunner {
     team: teamDeps,
     paneHost: teamPaneHost,
     intelligenceChat,
+    relaunch: relaunchDeps,
   });
   ipcMain.handle("teams:panes-opened", (_e, requestId: unknown, error: unknown) =>
     paneOpens.answer(requireString(requestId, "teams:panes-opened.requestId"), error),
@@ -2186,6 +2256,11 @@ function registerIpc(): TeamRunner {
         requirePositiveInt(rows, "pty:resize.rows"),
       ),
   );
+  ipcMain.handle("pty:confirm-restart", async (_e, ptyId: unknown) => {
+    const id = requireString(ptyId, "pty:confirm-restart.ptyId");
+    const name = (await relaunchDeps.panes([id]))[0]?.name ?? "this pane";
+    return confirmLosingWork(`Restarting ${name}`, "Restart", [id]);
+  });
   ipcMain.handle("pty:kill", async (_e, ptyId: unknown) => {
     const id = requireString(ptyId, "pty:kill.ptyId");
     await removePaneBrief(AYA_HOME, id).catch(() => {});
@@ -2233,6 +2308,8 @@ function registerIpc(): TeamRunner {
     });
   });
   ipcMain.handle("pty-host:restart", async () => {
+    // Thrown, not returned: the window then leaves the panes as they are.
+    if (!(await confirmLosingWork("Restarting the PTY host", "Restart"))) throw new Error("restart cancelled");
     await ptyHost.restart();
     // Clear only on success: if restart() throws, the stale state is still
     // true and the red icon must stay so the user can retry.
@@ -2376,7 +2453,7 @@ function registerIpc(): TeamRunner {
   ipcMain.handle("presets:list", async () => listPresets());
   ipcMain.handle("agent:waiting", () => outstandingWaiting());
   // A question from before the restart that the pane's session no longer confirms: the windows mark it.
-  onQuestionUnconfirmed(broadcastStatus);
+  onStatusPushed(broadcastStatus);
   ipcMain.handle("presets:save", async (_e, presets: unknown) => {
     await savePresets(validatePresetArray(presets));
     await syncAntigravityBrief();
@@ -2667,38 +2744,7 @@ function registerIpc(): TeamRunner {
   ipcMain.handle("app:diagnostics", async () => diagnosticsReport());
   ipcMain.handle("updates:status", async () => getUpdateStatus());
   ipcMain.handle("updates:check", async () => checkForUpdates());
-  ipcMain.handle("updates:install", async () => {
-    const status = getUpdateStatus();
-    if (status.phase !== "downloaded") {
-      throw new Error("No downloaded update is ready to install.");
-    }
-    // One ShipIt at a time (#78): a double-click used to be able to fire two
-    // quitAndInstall handoffs, and overlapping installs are a suspected cause
-    // of the silent rollback.
-    if (updateInstalling) return;
-    updateInstalling = true;
-    try {
-      // Written before the handoff, since quitAndInstall quits. Inside the try:
-      // a failed marker write must not strand the latch with no updater error.
-      if (status.downloadedVersion) {
-        await markPendingUpdate(status.downloadedVersion);
-      }
-      autoUpdater.quitAndInstall(false, true);
-    } catch (err) {
-      // A synchronous handoff failure IS observable - surface it instead of
-      // leaving the button dead. (The dangerous case is the async ShipIt
-      // failure, which this can't see; that one is caught on next launch, and
-      // the updater's own `error` event releases the latch meanwhile.)
-      updateInstalling = false;
-      await clearPendingUpdate();
-      setUpdateStatus({
-        phase: "error",
-        message: `Couldn't start the update: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      });
-    }
-  });
+  ipcMain.handle("updates:install", () => updates.install());
   ipcMain.handle("app:open-notification-settings", async () => {
     if (process.platform === "darwin") {
       await shell.openExternal(
@@ -2939,9 +2985,14 @@ app.whenReady().then(async () => {
   // system-wide snapshot only runs when a kill actually happens).
   let keptCompatibleHosts: number[] = [];
   try {
+    // The host on the socket runs the panes the user sees: handleStaleHost below asks before it stops their work.
+    const socketHost = (await pathExists(PTY_HOST_SOCKET_PATH)) ? (await ptyHost.hostStatus()).pid : undefined;
     const summary = reapStaleHostRecords(
       ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION),
       PTY_HOST_SCRIPT,
+      undefined,
+      undefined,
+      socketHost,
     );
     keptCompatibleHosts = summary.keptCompatible;
     if (summary.reaped.length > 0) {
@@ -2973,6 +3024,7 @@ app.whenReady().then(async () => {
   mainWindow = createWindow(savedState);
   startupWindowCreated = true;
   const teamRunner = registerIpc();
+  teamsAtQuit = teamRunner;
   configureAutoUpdates(mainWindow);
   // Before checking for a NEW update, surface a PREVIOUS one that silently
   // failed to install and rolled back (#78).
@@ -3006,6 +3058,7 @@ app.whenReady().then(async () => {
     // Returned, not fire-and-forget: the boolean is how pane-send learns the
     // pane was dead, and dropping it made host rejections unhandled.
     writePane: (terminalId, data) => ptyHost.write(terminalId, data),
+    paneHold: (terminalId) => ptyHost.holdReason(terminalId),
     team: teamDeps,
     teamRunner,
     teamPanes: teamPaneDeps(teamDeps, teamPaneHost, teamRunner),
@@ -3125,24 +3178,22 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  if (!teamsStopped && teamsAtQuit) {
+    teamsStopped = true;
+    const typing = teamsAtQuit.stopAll();
+    if (typing) {
+      event.preventDefault();
+      void Promise.race([typing, new Promise((resolve) => setTimeout(resolve, TEAM_QUIT_SETTLE_MS))]).finally(() => app.quit());
+      return;
+    }
+  }
+  if (updates.beforeQuit(event)) return;
   appQuitting = true;
   try {
     cliAdoption.flush();
   } catch {
     // quitting anyway
-  }
-  // An ordinary quit installs too (see markPendingUpdateSync) and never reaches
-  // the updates:install handler, so every one is marked here; diagnoseRelaunch's
-  // grace window absorbs the relaunch that follows.
-  if (!updateInstalling) {
-    const pendingInstall = getUpdateStatus();
-    if (
-      pendingInstall.phase === "downloaded" &&
-      pendingInstall.downloadedVersion
-    ) {
-      markPendingUpdateSync(pendingInstall.downloadedVersion);
-    }
   }
   if (legacySweepTimer) {
     clearTimeout(legacySweepTimer);

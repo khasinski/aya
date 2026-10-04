@@ -7,15 +7,17 @@
 // returns the same map reference so React's shallow check can skip a re-render.
 
 import { PRESET_ID_SHELL } from "./preset-ids";
-import type { ControlStatusLevel, PtyEvent, TerminalState, TerminalStatus } from "./types";
+import { WAITING_ON, type PtyEvent, type ReportedStatusLevel, type TerminalState, type TerminalStatus } from "./types";
 
 /** Map an agent-reported status level - from the control socket or an inline
  *  OSC 9001 `aya.status` sequence (integrations.md) - to the terminal's
  *  status field. Shared so both transports drive identical UI. */
 export function controlLevelToTerminalStatus(
-  level: ControlStatusLevel,
+  level: ReportedStatusLevel,
 ): TerminalStatus {
   if (level === "waiting") return "waiting";
+  // A wait on a teammate: the agent is idle and the user owes nothing.
+  if (level === WAITING_ON) return "idle";
   if (level === "done") return "idle";
   if (level === "error") return "error";
   return "running";
@@ -26,9 +28,11 @@ export function controlLevelToTerminalStatus(
  *  reads identically regardless of which transport delivered the update. */
 export function controlStatusEventTitle(
   terminalName: string,
-  level: ControlStatusLevel,
+  level: ReportedStatusLevel,
+  on?: string,
 ): string {
   if (level === "waiting") return `${terminalName} is waiting`;
+  if (level === WAITING_ON) return `${terminalName} is waiting on ${on ?? "a teammate"}`;
   if (level === "done") return `${terminalName} finished`;
   if (level === "error") return `${terminalName} reported an error`;
   return `${terminalName} updated status`;
@@ -81,14 +85,14 @@ export function clearedTerminalStatus(terminal: TerminalState): TerminalState {
  *  question: Claude's Notification hook arrives as "done" while its permission dialog is up, and only the screen ends it. */
 export function applyReportedStatus(
   terminal: TerminalState,
-  { level, text, updatedAt, restart }: NonNullable<TerminalState["externalStatus"]>,
+  { level, text, updatedAt, restart, on }: NonNullable<TerminalState["externalStatus"]>,
 ): TerminalState {
   const dialog = terminal.status === "waiting" && terminal.externalStatus?.level !== "waiting" && level !== "waiting";
   return {
     ...terminal,
     status: dialog ? "waiting" : controlLevelToTerminalStatus(level),
     bell: dialog ? terminal.bell : level === "waiting",
-    externalStatus: { level, text, updatedAt, ...(restart ? { restart } : {}) },
+    externalStatus: { level, text, updatedAt, ...(restart ? { restart } : {}), ...(level === WAITING_ON && on ? { on } : {}) },
   };
 }
 
@@ -138,15 +142,19 @@ export function applyPtyEvent(
     if (!t || t.exitCode !== null) return prev;
     // The screen is the one source of a CLI dialog: it raises the bell over any reported status, and ends
     // the dialog's waiting, back to what was reported. Only the agent's own question outlives the screen.
-    if (!event.waiting && (t.status !== "waiting" || t.externalStatus?.level === "waiting")) return prev;
+    const screenDialog = event.waiting ? event.dialog : undefined;
+    const { screenDialog: shown, ...unnamed } = t;
+    if (!event.waiting && (t.status !== "waiting" || t.externalStatus?.level === "waiting")) {
+      return shown === undefined ? prev : { ...prev, [event.ptyId]: unnamed };
+    }
     // A dialog opening proves a turn runs: a done reported before it is the previous turn's (the hook has no turn start).
-    const { externalStatus, ...rest } = t;
+    const { externalStatus, ...rest } = unnamed;
     const reported = event.waiting && t.status !== "waiting" && externalStatus?.level === "done" ? undefined : externalStatus;
     const status = event.waiting ? "waiting" : reported ? controlLevelToTerminalStatus(reported.level) : "running";
-    if (t.status === status && t.bell === event.waiting) return prev;
+    if (t.status === status && t.bell === event.waiting && shown === screenDialog) return prev;
     return {
       ...prev,
-      [event.ptyId]: { ...rest, ...(reported ? { externalStatus: reported } : {}), status, bell: event.waiting },
+      [event.ptyId]: { ...rest, ...(reported ? { externalStatus: reported } : {}), ...(screenDialog ? { screenDialog } : {}), status, bell: event.waiting },
     };
   }
 

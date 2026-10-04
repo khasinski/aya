@@ -50,7 +50,7 @@ reviewer
 reviewer every 30 min
 
 ## Protocol
-The reviewer leads: it gets the task and checks each round that no finding or fix waits too long on someone. Findings are hypotheses with a way to check them, not facts. Number the rounds and mark items [reported -> fixed -> confirmed].`;
+The reviewer leads: it gets the task and checks each round that no finding or fix waits too long on someone. Findings are hypotheses with a way to check them, not facts. Number the reviewer's reports as updates (Update 1, Update 2) and mark items [reported -> fixed -> confirmed].`;
 
 const ID_RULE = `lowercase letters a-z, digits and dashes, starting with a letter or digit, at most ${ID_MAX_LEN} characters`;
 
@@ -81,8 +81,8 @@ The team file
 - "${SENDS_TO_FIELD}:" is one line of roles defined in this file, never the role itself, each once, each with what it gets from this role in parentheses (no parentheses inside). Leave the line out for a role that sends nothing.
 - Every other line of a role is its responsibilities; none may start with "${SENDS_TO_FIELD}:", "${MUST_NOT_FIELD}:" or "${SECTION_MARKER}".
 - Required "${SECTION_MARKER}Lead": one line, the id of the role that leads the team; name it yourself. The lead gets the task, and checks that nobody waits too long on someone else and that work is going on at all: when the team has made no progress for a while, Aya asks the lead for a round that says who waits on whom. Pick the role that takes the request and hands out the work, and give the reason in one sentence in the protocol. The save refuses a team without it.
-- Optional "${SECTION_MARKER}Cadence": one line "<role> every <N> min", N from 1-${MAX_CADENCE_MINUTES}, with the lead's role: the rhythm belongs to the lead. The save refuses a Cadence and a Lead that name different roles (cadence and lead name different roles; make them the same). While the team runs, Aya prompts the lead to start a new round every N minutes. A team with no Cadence still has its lead; it just gets no rounds on a timer.
-- Optional "${SECTION_MARKER}Protocol": rules every role follows, free text; no line may start with "${SECTION_MARKER}".
+- Optional "${SECTION_MARKER}Cadence": one line "<role> every <N> min", N from 1-${MAX_CADENCE_MINUTES}, with the lead's role: the rhythm belongs to the lead. The save refuses a Cadence and a Lead that name different roles (cadence and lead name different roles; make them the same). While the team runs, Aya prompts the lead to start a new round every N minutes, typed as "Aya round <N>: ...". A team with no Cadence still has its lead; it just gets no rounds on a timer.
+- Optional "${SECTION_MARKER}Protocol": rules every role follows, free text; no line may start with "${SECTION_MARKER}". "Round" is Aya's word for its own numbered prompts to the lead ("Aya round 4"): if the protocol numbers the lead's or a role's reports, call them updates ("Update 4"), never rounds, so nobody mixes the two counters.
 - Leave out "${SECTION_MARKER}${STATUS_COMMAND_SECTION}": the user sets it in the Teams window, and the save refuses one from an agent.
 - No other "${SECTION_MARKER}" sections. Text between the title and the first section is dropped.
 
@@ -150,7 +150,7 @@ async function saveTeamText(
   project: ProjectConfig | null,
   callerId: string | undefined,
   deps: Pick<TeamControlDeps, "teamHome">,
-  refresh: (slug: string, name: string) => Promise<void>,
+  refresh: (slug: string, name: string, changed: string[]) => Promise<void>,
   underPane: boolean,
 ): Promise<string> {
   if (!project) {
@@ -160,17 +160,19 @@ async function saveTeamText(
   const name = teamTitle(request.text);
   if (name === null) throw new Error('the team file must start with "# <team-name>"');
   const team = parseTeamFile(name, request.text);
+  let changed: string[] = [];
   try {
     // The agent that saved it proposes its panes; the window's assign prompt would compete. The process tree
     // counts too: an agent can unset AYA_TERMINAL_ID, and a save it makes must not set the status command.
     const byAgent = underPane || project.tabs.some((t) => t.id === callerId);
-    await saveTeam(deps.teamHome, project, team, { create: !request.replace, byAgent });
+    changed = await saveTeam(deps.teamHome, project, team, { create: !request.replace, byAgent });
   } catch (err) {
     if (!(err instanceof TeamExistsError)) throw err;
     throw new Error(`team "${name}" already exists in ${err.file}; nothing was saved. Run aya team save again with --replace to overwrite it`);
   }
-  await refresh(project.slug, name);
-  return savedSummary(team, teamFile(project, name));
+  await refresh(project.slug, name, changed);
+  const told = changed.length ? `aya team whoami changed for ${changed.join(", ")}: Aya tells ${changed.length === 1 ? "its pane" : "their panes"} to run it again while the team runs\n` : "";
+  return savedSummary(team, teamFile(project, name)) + told;
 }
 
 /** `refresh` re-arms a running team's rounds, as the Teams window's Save does.
@@ -179,7 +181,7 @@ export async function handleTeamAuthorRequest(
   request: TeamAuthorRequest,
   callerId: string | undefined,
   deps: Pick<TeamControlDeps, "teamHome" | "listProjects">,
-  refresh: (slug: string, name: string) => Promise<void>,
+  refresh: (slug: string, name: string, changed: string[]) => Promise<void>,
   underPane = false,
 ): Promise<{ output: string }> {
   const project = await callerProject(await deps.listProjects(), callerId, request);

@@ -51,7 +51,7 @@ test("after 3 rounds that could not be typed the window names the implementer, a
     .getByTestId("team-ux-review")
     .getByLabel("ux-review status");
   await expect(status).toContainText(
-    /no round typed to implementer since \d\d:\d\d: its pane is not running/,
+    /no Aya round typed to implementer since \d\d:\d\d: its pane is not running/,
     { timeout: TEAM_AGENT_READY_TIMEOUT_MS },
   );
   await expect(status).not.toContainText(/progressing|quiet/);
@@ -80,7 +80,7 @@ test("the run of missed rounds is kept across a quit, and a respawned agent taki
       ),
     ).unreached;
   const line =
-    /no round typed to implementer since \d\d:\d\d: its pane is not running/;
+    /no Aya round typed to implementer since \d\d:\d\d: its pane is not running/;
   const open = async () => {
     const app = await launchApp(env);
     const window = await app.firstWindow();

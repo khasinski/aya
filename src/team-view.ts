@@ -1,6 +1,6 @@
 // How the tab list and the teams window show teams: roles, unread, log lines.
 
-import type { RolePanes, TeamDefinition, TeamLiveness, TeamMessage, TeamStartResult, TeamSummary, WaitingPanes } from "./types";
+import { WAITING_ON, type RolePanes, type TeamDefinition, type TeamLiveness, type TeamMessage, type TeamStartResult, type TeamSummary, type TerminalState, type WaitingPanes } from "./types";
 
 // The sender electron/team-runner.ts logs Aya's own messages under.
 export const AYA_SENDER = "aya";
@@ -79,6 +79,9 @@ function taskStillHeld(task: NonNullable<TeamStartResult["task"]>, log: TeamMess
 export const HOLD_NOT_RUNNING = "is not running (exited, or its tab was not opened yet)";
 // electron/pane-holds.ts HOLD_USAGE_LIMIT: a blocked role whose CLI ran out says so, not "waiting for you".
 export const HOLD_USAGE_LIMIT = "is out of credits or at its usage limit";
+// electron/pane-holds.ts HOLD_ACCOUNT_SETTING: the offer is named, so no one answers it as a routine approval.
+export const HOLD_ACCOUNT_SETTING =
+  "Claude Code offers an account-wide setting: block reads outside the working directories; your choice applies to every session on this account";
 // electron/pane-holds.ts NO_PANE_HOLD: a role whose pane was closed or never given.
 export const NO_PANE_HOLD = "no pane assigned";
 
@@ -88,7 +91,17 @@ export function clock(iso: string): string {
   return `${String(time.getHours()).padStart(2, "0")}:${String(time.getMinutes()).padStart(2, "0")}`;
 }
 
-const everyRound = (min: number) => `the lead gets a round every ${min} min`;
+/** A blocked role as the team line says it: the holds that name themselves, else a dialog for the user. */
+function blockedWords(reason: string): string {
+  if (reason === HOLD_USAGE_LIMIT) return reason;
+  return reason === HOLD_ACCOUNT_SETTING ? `is waiting for you: ${reason}` : "is waiting for you in its CLI";
+}
+
+/** A role row's note while its pane works from the role text before a Save (team-admin.ts olderRoles). */
+export const olderRoleNote = (changedAt: string): string =>
+  `started with an older role: it changed at ${clock(changedAt)} and its pane has not run aya team whoami since`;
+
+const everyRound = (min: number) => `the lead gets an Aya round every ${min} min`;
 const messages = (n: number) => `${n} message${n === 1 ? "" : "s"}`;
 
 /** The team's line above its roles; null while there is nothing to say. Progress is a change to the repo
@@ -97,7 +110,7 @@ export function livenessLine({ status, stalledSince, blocked, unreached, silence
   // Before Start the card names the rhythm Start begins; a team without a cadence has none to name.
   if (status === "never started") return silence?.everyMin ? { text: `not started - ${everyRound(silence.everyMin)}`, tone: "idle" } : null;
   if (status === "paused") return null;
-  const waits = roundsHeld ? `rounds wait for ${roundsHeld.role} to answer (${roundsHeld.rounds} unanswered)` : null;
+  const waits = roundsHeld ? `Aya rounds wait for ${roundsHeld.role} to answer (${roundsHeld.rounds} unanswered)` : null;
   if (status === "progressing") {
     if (!silence) return { text: waits ? `progressing - ${waits}` : "progressing", tone: "ok" };
     const asks =
@@ -106,7 +119,7 @@ export function livenessLine({ status, stalledSince, blocked, unreached, silence
         ? everyRound(silence.everyMin)
         : silence.askAfterMin === null
           ? "no lead to ask"
-          : `the lead is asked for a round after ${silence.askAfterMin} min without a message or a change to the repo`);
+          : `the lead is asked for an Aya round after ${silence.askAfterMin} min without a message or a change to the repo`);
     return { text: `progressing - ${asks}; flagged after ${silence.stalledAfterMin} min without a change to the repo`, tone: "ok" };
   }
   if (status === "talking" && repo) {
@@ -115,14 +128,14 @@ export function livenessLine({ status, stalledSince, blocked, unreached, silence
   }
   if (status === "unreachable" && unreached) {
     const why = unreached.reason === NO_PANE_HOLD ? "it has no pane" : `its pane ${unreached.reason}`;
-    return { text: `no round typed to ${unreached.role} since ${clock(unreached.since)}: ${why}`, tone: "held" };
+    return { text: `no Aya round typed to ${unreached.role} since ${clock(unreached.since)}: ${why}`, tone: "held" };
   }
   if (status === "stalled") {
     const what = repo ? ` (${messages(repo.messages)})` : "";
-    return { text: `stalled: no change to the repo since ${clock(repo?.since ?? stalledSince ?? "")}${what} - rounds are paused until the repo changes`, tone: "held" };
+    return { text: `stalled: no change to the repo since ${clock(repo?.since ?? stalledSince ?? "")}${what} - Aya rounds are paused until the repo changes`, tone: "held" };
   }
   const since = stalledSince ? `stalled since ${clock(stalledSince)}` : "";
-  const who = blocked.map((b) => `${b.role} ${b.reason === HOLD_USAGE_LIMIT ? b.reason : "is waiting for you in its CLI"}`).join("; ");
+  const who = blocked.map((b) => `${b.role} ${blockedWords(b.reason)}`).join("; ");
   return { text: since ? `${since} - ${who}` : who, tone: "held" };
 }
 
@@ -160,6 +173,17 @@ export function statusCommandNote(
 
 const askedAt = (asked: WaitingPanes[string]) => clock(new Date(asked.since).toISOString());
 
+/** The panes whose agent ran `aya status waiting`: a question to the user, or (with `on`) a wait on that teammate. */
+export function waitingPanesOf(terminals: Record<string, Pick<TerminalState, "externalStatus">>): WaitingPanes {
+  return Object.fromEntries(
+    Object.entries(terminals).flatMap(([id, t]) => {
+      const s = t.externalStatus;
+      if (s?.level === "waiting") return [[id, { text: s.text, since: s.updatedAt, ...(s.restart ? { restart: s.restart } : {}) }]];
+      return s?.level === WAITING_ON && s.on ? [[id, { text: s.text, since: s.updatedAt, on: s.on }]] : [];
+    }),
+  );
+}
+
 /** The team line when the lead asks the user for something (`aya status waiting`); null otherwise. */
 export function leadWaitingLine(
   team: Pick<TeamSummary, "assignments" | "running"> & { definition: Pick<TeamDefinition, "lead"> | null },
@@ -167,7 +191,8 @@ export function leadWaitingLine(
 ): { text: string; tone: "held" } | null {
   const lead = team.definition?.lead;
   const asked = lead && team.running ? waiting[team.assignments[lead]] : undefined;
-  if (!asked) return null;
+  // A lead waiting on a teammate asks the user nothing.
+  if (!asked || asked.on) return null;
   if (asked.restart === "unconfirmed") return { text: `${lead} asked you before the restart (${askedAt(asked)}), not confirmed since; rounds go on: ${asked.text}`, tone: "held" };
   const before = asked.restart === "restored" ? " (asked before the restart)" : "";
   return { text: `${lead} is waiting for you since ${askedAt(asked)}${before}: ${asked.text}`, tone: "held" };
@@ -189,10 +214,16 @@ export function roleStatus(
   const pane = livePane(team, role, tabs);
   if (!pane) return { text: "no pane", tone: "none" };
   const blocked = team.liveness?.blocked.find((b) => b.role === role);
-  if (blocked) return { text: `${blocked.reason === HOLD_USAGE_LIMIT ? blocked.reason : "waiting for you"} since ${clock(blocked.since)}`, tone: "held" };
+  if (blocked) {
+    const since = clock(blocked.since);
+    if (blocked.reason === HOLD_USAGE_LIMIT) return { text: `${blocked.reason} since ${since}`, tone: "held" };
+    return { text: `waiting for you since ${since}${blocked.reason === HOLD_ACCOUNT_SETTING ? `: ${blocked.reason}` : ""}`, tone: "held" };
+  }
   const asked = waiting[pane];
-  if (asked) return { text: asked.restart === "unconfirmed" ? `asked before the restart (${askedAt(asked)}), not confirmed` : `waiting for you since ${askedAt(asked)}`, tone: "held" };
+  if (asked && !asked.on) return { text: asked.restart === "unconfirmed" ? `asked before the restart (${askedAt(asked)}), not confirmed` : `waiting for you since ${askedAt(asked)}`, tone: "held" };
   const hold = team.paneHolds[role] ?? null;
+  // Its own word that it waits on a teammate: the team's to answer, not the user's.
+  if (hold === null && asked?.on) return { text: `waiting on ${asked.on} since ${askedAt(asked)}`, tone: "ok" };
   if (hold === null) return { text: "ready", tone: "ok" };
   return { text: hold === HOLD_NOT_RUNNING ? "not running" : hold, tone: "held" };
 }
@@ -216,6 +247,12 @@ export function roleNote(
   tabs: { id: string }[],
 ): string | null {
   return livePane(team, role, tabs) ? (team.paneNotes[role] ?? null) : null;
+}
+
+/** The role's reply says it sent to these roles and nothing from it arrived (electron/unsent-claims.ts unsentNote). */
+export function unsentLine(team: Partial<Pick<TeamSummary, "unsent">>, role: string): string | null {
+  const to = team.unsent?.[role];
+  return to?.length ? `${role} says it sent to ${to.join(", ")}, nothing arrived` : null;
 }
 
 /** Select values are aya team open targets: a new session of a preset, or a pane. */

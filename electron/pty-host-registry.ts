@@ -295,12 +295,14 @@ const defaultDeps = (): ReapDeps => ({
 });
 
 /** On launch: KEEP a matching host, kill the GROUP of a verified stale one (kill(-pgid) reaches the leader
- *  too, so no unverified kill(pid)), GC gone or reused pids unsignalled, SKIP what cannot be judged this launch. */
+ *  too, so no unverified kill(pid)), GC gone or reused pids unsignalled, SKIP what cannot be judged this launch.
+ *  The stale host holding the socket (`socketHost`) is skipped: handleStaleHost asks before stopping its panes' work. */
 export function reapStaleHostRecords(
   expected: { version: string; scriptHash: string },
   hostScript: string,
   dir: string = HOST_REGISTRY_DIR,
   deps: ReapDeps = defaultDeps(),
+  socketHost?: number,
 ): ReapSummary {
   const summary: ReapSummary = {
     reaped: [],
@@ -346,6 +348,10 @@ export function reapStaleHostRecords(
         removeHostRecord(rec.pid, dir);
         summary.gc.push(rec.pid);
       }
+      continue;
+    }
+    if (rec.pid === socketHost) {
+      summary.skipped.push(rec.pid);
       continue;
     }
     // Stale record. Only signal if we are CERTAIN this pid is that exact host.
