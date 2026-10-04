@@ -27,7 +27,7 @@ test("hook scripts are executable and tag their aya calls via=hook", () => {
 test("the generated status-hook scripts are unchanged", () => {
   assert.equal(
     sha(claude.statusHookScriptSource("/opt/aya/bin/aya")),
-    "055b0f7e4b0d9815e6c8cdc97410dacd4be28dbd4c7c6ff6fe3964daa856afde",
+    "fe84973e298190bdae61530b19f695275e77842be880f216638358dac8fadbef",
   );
   assert.equal(
     sha(codex.codexNotifyScriptSource("/opt/aya/bin/aya")),

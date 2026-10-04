@@ -44,6 +44,10 @@ test("a delivery-test exchange collapses to one line with who answered", () => {
     ["a longer reply is a real message", [...test3(), m("dev", "ux", "ok, starting on it")], ["tests 0/3", "peer ok, starting on it"]],
     ["a role answers once", [...test3(), m("dev", "ux", "ok"), m("dev", "ux", "ok")], ["tests 1/3", "peer ok"]],
     ["a role not tested is not an answer", [m("aya", "dev", "Delivery test: x"), m("ux", "dev", "ok")], ["tests 0/1", "peer ok"]],
+    // The test asks for "ok"; another one-word message is the role's own, shown as such.
+    ["a one-word message before the ok is a real message", [...test3(), m("dev", "ux", "done"), m("dev", "ux", "ok")], ["tests 0/3", "peer done", "peer ok"]],
+    ["the ok in another case or with a full stop is still the answer", [...test3(), m("dev", "ux", "OK."), m("ux", "dev", "Ok")], ["tests 2/3"]],
+    ["a one-word message that is not ok, alone, is a real message", [...test3(), m("qa", "dev", "blocked")], ["tests 0/3", "peer blocked"]],
     ["two Starts are two lines, and an answer joins the latest", [...test3(), m("dev", "ux", "ok"), m("dev", "ux", "fixed"), ...test3(), m("ux", "dev", "ok")], ["tests 1/3", "peer fixed", "tests 1/3"]],
   ];
   for (const [name, log, expected] of cases) assert.deepEqual(kinds(teamChat(log)), expected, name);
@@ -67,4 +71,24 @@ test("only what went wrong is loud: held, or typed after a hold", () => {
     teamChat([m("dev", "ux", "fine"), m("ux", "dev", "stuck", { delivered: false, held: "busy" })]).map((e) => e.abnormal),
     [false, true],
   );
+});
+
+// A delivery test or its answer that is held is flagged on the group line and on its own row.
+test("a delivery-test group names the messages that did not go in", () => {
+  const held = { delivered: false, held: "shows an approval prompt" };
+  const rows = [
+    ["all went in", [...test3(), m("dev", "ux", "ok")], []],
+    ["one test is held", [m("aya", "dev", "Delivery test: run aya team whoami.", held), m("aya", "ux", "Delivery test: run aya team whoami.")], [1]],
+    ["a held test and a held answer", [m("aya", "dev", "Delivery test: run aya team whoami.", held), m("aya", "ux", "Delivery test: run aya team whoami."), m("ux", "dev", "ok", held)], [1, 3]],
+    ["typed with Enter withheld counts too", [m("aya", "dev", "Delivery test: run aya team whoami.", { typedOnly: true, held: "shows an approval prompt" })], [1]],
+    ["written later is flagged as the chat flags it", [m("aya", "dev", "Delivery test: run aya team whoami.", { held: "shows an approval prompt" })], [1]],
+  ];
+  for (const [label, entries, want] of rows) {
+    next = 0;
+    const base = entries.map((e) => ({ ...e }));
+    base.forEach((e, i) => (e.id = i + 1));
+    const [group] = teamChat(base, ["dev", "ux"]);
+    assert.equal(group.kind, "delivery-test", label);
+    assert.deepEqual(group.abnormalIds, want, label);
+  }
 });

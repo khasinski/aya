@@ -3,7 +3,7 @@
 // footer that stays on screen however long the card grows.
 
 import { test, expect } from "./fixtures";
-import { agentPreset, openTeams, TEAM_STATE_DIR, teamSeed } from "./helpers/team";
+import { openTeams, TEAM_STATE_DIR, teamSeed, SHELL_PRESET, CLAUDE_PRESET } from "./helpers/team";
 
 const TEAM = `# ux-review
 
@@ -20,8 +20,6 @@ Sends to: developer (failing tests with output)
 Must not: change the timer code to make a test pass
 `;
 
-const SHELL = { id: "shell", name: "Shell", icon: "$", color: "", command: "$SHELL" };
-const CLAUDE = { ...agentPreset("quiet", "claude"), id: "claude", name: "Claude Code" };
 let id = 0;
 const msg = (from: string, to: string, text: string, extra = {}) =>
   JSON.stringify({ id: ++id, time: new Date(Date.now() - (60 - id) * 60_000).toISOString(), from, to, commit: "d95af8a", text, delivered: true, ...extra });
@@ -39,7 +37,7 @@ const LOG = [
 
 test.use(
   teamSeed(TEAM, {
-    presetList: [SHELL, CLAUDE],
+    presetList: [SHELL_PRESET, CLAUDE_PRESET],
     assignments: { developer: "tab-left", "ux-reviewer": "tab-right" },
     ayaHomeFiles: { [`${TEAM_STATE_DIR}/state.json`]: JSON.stringify({ started: true, paused: false }), [`${TEAM_STATE_DIR}/log.jsonl`]: `${LOG}\n` },
   }),

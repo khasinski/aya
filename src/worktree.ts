@@ -5,7 +5,7 @@
 
 import type { ProjectConfig, TerminalState, WorkingTab } from "./types";
 
-/** The project's canonical base directory — the cwd a plain (non-worktree) tab
+/** The project's canonical base directory - the cwd a plain (non-worktree) tab
  *  runs in. Remote projects live at their remote directory. */
 export function projectBaseCwd(project: ProjectConfig): string {
   return project.remote ? project.remote.directory : project.directory;
@@ -14,7 +14,7 @@ export function projectBaseCwd(project: ProjectConfig): string {
 /** The checkout the git surface (branch / dirty / diff / GitHub link) should
  *  describe: the active terminal's worktree cwd when that tab is bound to one,
  *  otherwise the project's own base directory. A plain tab spawns in the base
- *  cwd, so this is a no-op for it — but a tab running in a worktree would
+ *  cwd, so this is a no-op for it - but a tab running in a worktree would
  *  otherwise report the main checkout's branch and its (usually empty) diff. */
 export function gitContextCwd(
   baseCwd: string,
@@ -35,5 +35,7 @@ export function tabFromTerminal(t: TerminalState, baseCwd: string): WorkingTab {
     name: t.name,
     ...(t.cwd && t.cwd !== baseCwd ? { cwd: t.cwd } : {}),
     ...(t.sessionId ? { sessionId: t.sessionId } : {}),
+    ...(t.sharedDir ? { sharedDir: true as const } : {}),
+    ...(t.teamLaunch ? { teamLaunch: true } : {}),
   };
 }

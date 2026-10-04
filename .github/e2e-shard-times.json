@@ -1,0 +1,486 @@
+{
+  "run": 37114179982,
+  "head": "2aa70547a08804b34a1791c703bb6e169739cf6d",
+  "files": {
+    "isolated:adversarial-probes.spec.ts": {
+      "ms": 15850,
+      "tests": 8
+    },
+    "isolated:agent-brief.spec.ts": {
+      "ms": 21224,
+      "tests": 11
+    },
+    "isolated:agent-resume.spec.ts": {
+      "ms": 1512,
+      "tests": 1
+    },
+    "isolated:agent-session-resume.spec.ts": {
+      "ms": 100045,
+      "tests": 30
+    },
+    "isolated:appearance.spec.ts": {
+      "ms": 5538,
+      "tests": 3
+    },
+    "isolated:attention-center.spec.ts": {
+      "ms": 3089,
+      "tests": 2
+    },
+    "isolated:aya-capabilities.spec.ts": {
+      "ms": 2636,
+      "tests": 1
+    },
+    "isolated:boot-reused-host.spec.ts": {
+      "ms": 3242,
+      "tests": 1
+    },
+    "isolated:bsp-split.spec.ts": {
+      "ms": 11449,
+      "tests": 6
+    },
+    "isolated:classic-launcher.spec.ts": {
+      "ms": 1646,
+      "tests": 1
+    },
+    "isolated:classic-split.spec.ts": {
+      "ms": 3412,
+      "tests": 2
+    },
+    "isolated:claude-session-id.spec.ts": {
+      "ms": 28703,
+      "tests": 4
+    },
+    "isolated:cli-install.spec.ts": {
+      "ms": 8779,
+      "tests": 5
+    },
+    "isolated:close-tab-burst.spec.ts": {
+      "ms": 1614,
+      "tests": 1
+    },
+    "isolated:config-hot-reload.spec.ts": {
+      "ms": 4357,
+      "tests": 2
+    },
+    "isolated:dialog-outlives-hook.spec.ts": {
+      "ms": 2376,
+      "tests": 1
+    },
+    "isolated:drag-reorder.spec.ts": {
+      "ms": 1128,
+      "tests": 1
+    },
+    "isolated:first-launch-probe.spec.ts": {
+      "ms": 76950,
+      "tests": 2
+    },
+    "isolated:fixture-leaves-no-host.spec.ts": {
+      "ms": 7631,
+      "tests": 2
+    },
+    "isolated:focus-pane.spec.ts": {
+      "ms": 2631,
+      "tests": 2
+    },
+    "isolated:focus-scenarios.spec.ts": {
+      "ms": 9636,
+      "tests": 6
+    },
+    "isolated:focus-tab.spec.ts": {
+      "ms": 2603,
+      "tests": 2
+    },
+    "isolated:focus.spec.ts": {
+      "ms": 2281,
+      "tests": 2
+    },
+    "isolated:grok-usage-ring.spec.ts": {
+      "ms": 7605,
+      "tests": 4
+    },
+    "isolated:missing-dir.spec.ts": {
+      "ms": 3491,
+      "tests": 3
+    },
+    "isolated:multi-window.spec.ts": {
+      "ms": 5102,
+      "tests": 3
+    },
+    "isolated:new-project.spec.ts": {
+      "ms": 4911,
+      "tests": 3
+    },
+    "isolated:new-terminal-launcher.spec.ts": {
+      "ms": 7525,
+      "tests": 4
+    },
+    "isolated:open-before-ready.spec.ts": {
+      "ms": 6492,
+      "tests": 3
+    },
+    "isolated:open-loaded-window.spec.ts": {
+      "ms": 22314,
+      "tests": 10
+    },
+    "isolated:open-while-quitting.spec.ts": {
+      "ms": 6430,
+      "tests": 3
+    },
+    "isolated:opencode-resume.spec.ts": {
+      "ms": 6255,
+      "tests": 4
+    },
+    "isolated:pane-env-restart.spec.ts": {
+      "ms": 1956,
+      "tests": 1
+    },
+    "isolated:pane-env.spec.ts": {
+      "ms": 1620,
+      "tests": 1
+    },
+    "isolated:pane-read.spec.ts": {
+      "ms": 3189,
+      "tests": 1
+    },
+    "isolated:pane-send-submit.spec.ts": {
+      "ms": 6725,
+      "tests": 3
+    },
+    "isolated:parallel-isolation.spec.ts": {
+      "ms": 2455,
+      "tests": 2
+    },
+    "isolated:path-repair.spec.ts": {
+      "ms": 1243,
+      "tests": 1
+    },
+    "isolated:presets-editor.spec.ts": {
+      "ms": 3678,
+      "tests": 2
+    },
+    "isolated:project-config-watch.spec.ts": {
+      "ms": 5228,
+      "tests": 3
+    },
+    "isolated:project-preset-import.spec.ts": {
+      "ms": 7453,
+      "tests": 5
+    },
+    "isolated:project-tabs.spec.ts": {
+      "ms": 2211,
+      "tests": 2
+    },
+    "isolated:projects-left-launcher-empty.spec.ts": {
+      "ms": 1348,
+      "tests": 1
+    },
+    "isolated:projects-left-no-split.spec.ts": {
+      "ms": 5385,
+      "tests": 4
+    },
+    "isolated:pty-host-lost.spec.ts": {
+      "ms": 1415,
+      "tests": 1
+    },
+    "isolated:pty-host-reap.spec.ts": {
+      "ms": 19114,
+      "tests": 4
+    },
+    "isolated:pty-kill-orphan.spec.ts": {
+      "ms": 9231,
+      "tests": 2
+    },
+    "isolated:reached-aya-remount.spec.ts": {
+      "ms": 55273,
+      "tests": 2
+    },
+    "isolated:recent-projects-menu.spec.ts": {
+      "ms": 866,
+      "tests": 1
+    },
+    "isolated:respawn-resume.spec.ts": {
+      "ms": 2038,
+      "tests": 2
+    },
+    "isolated:restart-active-terminal.spec.ts": {
+      "ms": 9128,
+      "tests": 3
+    },
+    "isolated:role-note-order.spec.ts": {
+      "ms": 78808,
+      "tests": 12
+    },
+    "isolated:role-note.spec.ts": {
+      "ms": 11722,
+      "tests": 7
+    },
+    "isolated:search-actions.spec.ts": {
+      "ms": 3017,
+      "tests": 2
+    },
+    "isolated:search.spec.ts": {
+      "ms": 5934,
+      "tests": 3
+    },
+    "isolated:settings-autoresume.spec.ts": {
+      "ms": 4703,
+      "tests": 3
+    },
+    "isolated:settings-microphone.spec.ts": {
+      "ms": 0,
+      "tests": 1
+    },
+    "isolated:settings-path-suggestions.spec.ts": {
+      "ms": 1425,
+      "tests": 1
+    },
+    "isolated:shortcuts.spec.ts": {
+      "ms": 9146,
+      "tests": 6
+    },
+    "isolated:sidebar-close-terminal.spec.ts": {
+      "ms": 6776,
+      "tests": 3
+    },
+    "isolated:slow-login-shell.spec.ts": {
+      "ms": 8569,
+      "tests": 1
+    },
+    "isolated:smoke.spec.ts": {
+      "ms": 2930,
+      "tests": 1
+    },
+    "isolated:snippet-exited-terminal.spec.ts": {
+      "ms": 3363,
+      "tests": 2
+    },
+    "isolated:snippets-editor.spec.ts": {
+      "ms": 6940,
+      "tests": 4
+    },
+    "isolated:snippets.spec.ts": {
+      "ms": 6400,
+      "tests": 3
+    },
+    "isolated:socket-path-length.spec.ts": {
+      "ms": 1117,
+      "tests": 2
+    },
+    "isolated:spawn-failure-banner.spec.ts": {
+      "ms": 3283,
+      "tests": 2
+    },
+    "isolated:status-clear.spec.ts": {
+      "ms": 8528,
+      "tests": 5
+    },
+    "isolated:status-rail.spec.ts": {
+      "ms": 4562,
+      "tests": 3
+    },
+    "isolated:statusbar-git.spec.ts": {
+      "ms": 1839,
+      "tests": 1
+    },
+    "isolated:statusbar-worktree.spec.ts": {
+      "ms": 11077,
+      "tests": 3
+    },
+    "isolated:team-before-ready.spec.ts": {
+      "ms": 3678,
+      "tests": 1
+    },
+    "isolated:team-busy.spec.ts": {
+      "ms": 10737,
+      "tests": 1
+    },
+    "isolated:team-codex-paste.spec.ts": {
+      "ms": 11885,
+      "tests": 1
+    },
+    "isolated:team-debug.spec.ts": {
+      "ms": 10957,
+      "tests": 1
+    },
+    "isolated:team-delivery-test-held.spec.ts": {
+      "ms": 1200,
+      "tests": 1
+    },
+    "isolated:team-draft.spec.ts": {
+      "ms": 17894,
+      "tests": 8
+    },
+    "isolated:team-flow.spec.ts": {
+      "ms": 4581,
+      "tests": 3
+    },
+    "isolated:team-hold-after-paste.spec.ts": {
+      "ms": 6686,
+      "tests": 1
+    },
+    "isolated:team-lead-answered.spec.ts": {
+      "ms": 8225,
+      "tests": 1
+    },
+    "isolated:team-lead-asked.spec.ts": {
+      "ms": 31383,
+      "tests": 3
+    },
+    "isolated:team-lead-pause.spec.ts": {
+      "ms": 14983,
+      "tests": 1
+    },
+    "isolated:team-lead-waiting-restart.spec.ts": {
+      "ms": 1078,
+      "tests": 1
+    },
+    "isolated:team-lead.spec.ts": {
+      "ms": 3548,
+      "tests": 3
+    },
+    "isolated:team-liveness-exit.spec.ts": {
+      "ms": 22047,
+      "tests": 2
+    },
+    "isolated:team-liveness.spec.ts": {
+      "ms": 20895,
+      "tests": 2
+    },
+    "isolated:team-new.spec.ts": {
+      "ms": 4261,
+      "tests": 1
+    },
+    "isolated:team-not-reached.spec.ts": {
+      "ms": 16928,
+      "tests": 1
+    },
+    "isolated:team-opencode-boot.spec.ts": {
+      "ms": 10337,
+      "tests": 1
+    },
+    "isolated:team-opencode-draft.spec.ts": {
+      "ms": 9540,
+      "tests": 1
+    },
+    "isolated:team-panes.spec.ts": {
+      "ms": 59189,
+      "tests": 10
+    },
+    "isolated:team-pause-owner.spec.ts": {
+      "ms": 9933,
+      "tests": 1
+    },
+    "isolated:team-question-restored.spec.ts": {
+      "ms": 11301,
+      "tests": 1
+    },
+    "isolated:team-relaunch-states.spec.ts": {
+      "ms": 31521,
+      "tests": 2
+    },
+    "isolated:team-relaunch.spec.ts": {
+      "ms": 19434,
+      "tests": 2
+    },
+    "isolated:team-roles.spec.ts": {
+      "ms": 11856,
+      "tests": 6
+    },
+    "isolated:team-round-brake.spec.ts": {
+      "ms": 17996,
+      "tests": 1
+    },
+    "isolated:team-settle-boot.spec.ts": {
+      "ms": 9865,
+      "tests": 1
+    },
+    "isolated:team-silence.spec.ts": {
+      "ms": 26938,
+      "tests": 2
+    },
+    "isolated:team-spawn-prep.spec.ts": {
+      "ms": 24410,
+      "tests": 2
+    },
+    "isolated:team-starting.spec.ts": {
+      "ms": 13083,
+      "tests": 2
+    },
+    "isolated:team-supervision.spec.ts": {
+      "ms": 16896,
+      "tests": 1
+    },
+    "isolated:team-task-target.spec.ts": {
+      "ms": 5466,
+      "tests": 2
+    },
+    "isolated:team-transcript-question.spec.ts": {
+      "ms": 7992,
+      "tests": 1
+    },
+    "isolated:team-transcript-waiting.spec.ts": {
+      "ms": 18898,
+      "tests": 4
+    },
+    "isolated:team-turn-not-seen.spec.ts": {
+      "ms": 17374,
+      "tests": 2
+    },
+    "isolated:teams-card.spec.ts": {
+      "ms": 8352,
+      "tests": 4
+    },
+    "isolated:teams-ui.spec.ts": {
+      "ms": 15669,
+      "tests": 7
+    },
+    "isolated:teams.spec.ts": {
+      "ms": 45179,
+      "tests": 9
+    },
+    "isolated:terminal-vt.spec.ts": {
+      "ms": 4807,
+      "tests": 4
+    },
+    "isolated:themes.spec.ts": {
+      "ms": 1387,
+      "tests": 1
+    },
+    "isolated:timeouts.spec.ts": {
+      "ms": 20,
+      "tests": 10
+    },
+    "isolated:topbar-two-line.spec.ts": {
+      "ms": 1060,
+      "tests": 1
+    },
+    "isolated:usage.spec.ts": {
+      "ms": 7169,
+      "tests": 6
+    },
+    "isolated:web-mode.spec.ts": {
+      "ms": 1932,
+      "tests": 2
+    },
+    "isolated:webgl-context-loss.spec.ts": {
+      "ms": 2961,
+      "tests": 1
+    },
+    "isolated:zoom.spec.ts": {
+      "ms": 2213,
+      "tests": 2
+    },
+    "shared-resources:diagnostics.spec.ts": {
+      "ms": 2472,
+      "tests": 2
+    },
+    "shared-resources:team-relaunch-stale-host.spec.ts": {
+      "ms": 13727,
+      "tests": 1
+    },
+    "shared-resources:terminal-polish.spec.ts": {
+      "ms": 1946,
+      "tests": 2
+    }
+  }
+}

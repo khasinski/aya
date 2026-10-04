@@ -1,0 +1,8 @@
+  >_ OpenAI Codex (v0.158.0)
+     ~/Projects/aya-wt-links
+› [team team1 | from aya | 15:15 | 0aa04db] Delivery test: run aya team whoami,
+  then send one word to reviewer with: aya team send reviewer "ok".
+• Working (1s • esc to interrupt)
+› [2mAsk Codex to do anything[22m
+  GPT-6-Luna medium · ~/Projects/aya-wt-links · ⠼
+  ← for agents · ? for shortcuts                       ⚠ 1 warning · f2 to view

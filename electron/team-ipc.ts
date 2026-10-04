@@ -2,12 +2,12 @@
 
 import type { IpcMain } from "electron";
 import type { ChatOptions } from "./intelligence-chat";
-import { assignRole, listTeams, releasePaneEverywhere, saveTeam } from "./team-admin";
+import { listTeams, saveTeam } from "./team-admin";
 import type { TeamControlDeps } from "./team-control";
 import { draftRole, ROLE_DRAFT_CHAT, type Chat } from "./team-draft";
 import { projectBySlug } from "./team-files";
-import { openTeamPanes, presetChoices, teamPaneDeps, type PaneHost } from "./team-panes";
-import { panePick } from "./control-protocol";
+import { assignRoleLocked, openTeamPanes, presetChoices, releasePaneLocked, teamPaneDeps, type PaneHost } from "./team-panes";
+import { assertTeamTextFits, panePick } from "./control-protocol";
 import { TeamRunner } from "./team-runner";
 import type { ProjectConfig } from "./types";
 import { requireString, validateTeamDefinition } from "./validation";
@@ -30,18 +30,26 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
   const teamRunner = new TeamRunner(teamDeps);
   const redelivery = setInterval(
     () => void teamRunner.redeliverWaiting().catch((err) => console.warn("[aya] held team messages not retried:", err)),
-    TEAM_REDELIVERY_MS,
+    // E2E only: a spec that waits on a held message should not wait a production period.
+    Number(process.env.AYA_E2E_TEAM_REDELIVERY_MS) || TEAM_REDELIVERY_MS,
   );
   deps.onBeforeQuit(() => {
     clearInterval(redelivery);
     teamRunner.stopAll();
   });
   void teamRunner.restore().catch((err) => console.warn("[aya] team rounds not restored:", err));
-  ipcMain.handle("teams:start", (_e, slug: unknown, team: unknown, task: unknown) => {
-    const text = task === undefined || task === null || task === "" ? undefined : requireString(task, "teams:start.task");
-    return teamRunner.start(requireString(slug, "teams:start.projectSlug"), requireString(team, "teams:start.team"), text ? { text } : undefined);
+  ipcMain.handle("teams:start", (_e, slug: unknown, team: unknown, task: unknown, to: unknown) => {
+    const optional = (value: unknown, name: string) => (value === undefined || value === null || value === "" ? undefined : requireString(value, name));
+    const text = optional(task, "teams:start.task");
+    if (text) assertTeamTextFits(text, "task");
+    const role = optional(to, "teams:start.to");
+    return teamRunner.start(
+      requireString(slug, "teams:start.projectSlug"),
+      requireString(team, "teams:start.team"),
+      text ? { text, ...(role ? { to: role } : {}) } : undefined,
+    );
   });
-  for (const action of ["pause", "resume"] as const) {
+  for (const action of ["pause", "resume", "remove"] as const) {
     const channel = `teams:${action}`;
     ipcMain.handle(channel, (_e, slug: unknown, team: unknown) =>
       teamRunner[action](requireString(slug, `${channel}.projectSlug`), requireString(team, `${channel}.team`)),
@@ -50,7 +58,7 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
   const teamProject = async (slug: unknown, channel: string): Promise<ProjectConfig> =>
     projectBySlug(await teamDeps.listProjects(), requireString(slug, `${channel}.projectSlug`));
   ipcMain.handle("teams:list", async (_e, slug: unknown) =>
-    listTeams(teamHome, await teamProject(slug, "teams:list"), teamDeps.holdReason),
+    listTeams(teamHome, await teamProject(slug, "teams:list"), teamDeps.holdReason, teamDeps.roleNoteReport, teamDeps.launchNote),
   );
   ipcMain.handle("teams:save", async (_e, slug: unknown, team: unknown, create: unknown) => {
     const project = await teamProject(slug, "teams:save");
@@ -59,18 +67,13 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
     await teamRunner.refresh(project.slug, definition.name);
   });
   ipcMain.handle("teams:release-pane", async (_e, slug: unknown, paneId: unknown) =>
-    releasePaneEverywhere(
-      teamHome,
-      await teamProject(slug, "teams:release-pane"),
-      requireString(paneId, "teams:release-pane.paneId"),
-    ),
+    releasePaneLocked(teamDeps, (await teamProject(slug, "teams:release-pane")).slug, requireString(paneId, "teams:release-pane.paneId")),
   );
-  // Returns why the newly assigned pane was not told its role, or null.
   ipcMain.handle("teams:assign", async (_e, slug: unknown, team: unknown, role: unknown, paneId: unknown) => {
     const project = await teamProject(slug, "teams:assign");
     const [teamName, roleId] = [requireString(team, "teams:assign.team"), requireString(role, "teams:assign.role")];
     const pane = paneId === null ? null : requireString(paneId, "teams:assign.paneId");
-    await assignRole(teamHome, project, teamName, roleId, pane);
+    await assignRoleLocked(teamDeps, project.slug, teamName, roleId, pane);
     return pane ? teamRunner.introduce(project.slug, teamName, roleId) : null;
   });
   ipcMain.handle("teams:draft-role", async (_e, team: unknown, roleId: unknown, config: unknown) =>
@@ -81,7 +84,7 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
     ),
   );
   const panes = teamPaneDeps(teamDeps, deps.paneHost, teamRunner);
-  ipcMain.handle("teams:presets", async () => presetChoices(panes));
+  ipcMain.handle("teams:presets", async () => presetChoices(panes, null));
   ipcMain.handle("teams:open-panes", async (_e, slug: unknown, team: unknown, picks: unknown, release: unknown) => {
     const project = await teamProject(slug, "teams:open-panes");
     const invalid = new Error("Invalid IPC payload for teams:open-panes.panes: expected [{role, target}].");

@@ -1,6 +1,7 @@
 // A kill must cancel its in-flight spawn however long the preflight takes: a
 // slow shell startup (command probe) plus a lookup that runs to its timeout
-// outlast any fixed-lifetime kill marker.
+// outlast any fixed-lifetime kill marker. The CLI is only on the PATH .profile
+// builds: one already on Aya's PATH is found without a shell.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -19,12 +20,12 @@ writeFileSync(
   `#!/bin/sh\nif [ "$1" = session ]; then touch '${lookups}'; fi\nexec sleep 30\n`,
 );
 chmodSync(join(bin, "opencode"), 0o755);
-writeFileSync(join(home, ".profile"), "sleep 2\n");
+writeFileSync(join(home, ".profile"), `sleep 2\nPATH='${bin}':$PATH\n`);
 process.env.AYA_HOME = join(root, "aya-home");
 process.env.HOME = home;
 process.env.XDG_DATA_HOME = join(root, "xdg-data");
 process.env.SHELL = "/bin/sh";
-process.env.PATH = `${bin}:/usr/bin:/bin`;
+process.env.PATH = "/usr/bin:/bin";
 
 const { activePtyCount, killPty, spawnPty } = await import("../dist-electron/pty.js");
 

@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { SILENCE_REPEAT_MIN, STALL_AFTER_MIN } from "../dist-electron/team-times.js";
+import { QUIET_MINUTE_MS, QUIET_NO_ROUND_MS, RHYTHM_MINUTE_MS, TEAM_AGENT_READY_TIMEOUT_MS } from "./helpers/team";
 import { AGENT_START_TIMEOUT_MS, AGENT_TEST_TIMEOUT_MS, PER_TEST_TIMEOUT_MS, globalTimeout } from "./timeouts";
 
 const CI_CEILING = 15 * 60_000;
@@ -40,4 +42,13 @@ test("PWDEBUG removes the deadline, and outranks CI", () => {
 
 test("the config uses these constants, not its own copies", () => {
   expect(test.info().timeout).toBe(PER_TEST_TIMEOUT_MS);
+});
+
+test("a quiet-team spec stalls within the ready wait, and its no-round wait outlasts the repeat window", () => {
+  expect(STALL_AFTER_MIN * QUIET_MINUTE_MS).toBeLessThan(TEAM_AGENT_READY_TIMEOUT_MS);
+  expect(QUIET_NO_ROUND_MS).toBeGreaterThan(SILENCE_REPEAT_MIN * QUIET_MINUTE_MS);
+});
+
+test("a rhythm spec's stall comes after the test", () => {
+  expect(STALL_AFTER_MIN * RHYTHM_MINUTE_MS).toBeGreaterThan(PER_TEST_TIMEOUT_MS);
 });

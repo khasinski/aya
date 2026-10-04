@@ -7,8 +7,12 @@ export const LOCAL_SUMMARY_MAX_LINES = 30;
 /** Persisted schema version for ProjectCollectionState; electron/validation.ts. */
 export const PROJECT_STATE_VERSION = 1;
 
-/** Largest team cadence electron/teams.ts accepts. */
+/** Largest team cadence electron/team-definition.ts accepts. */
 export const MAX_CADENCE_MINUTES = 24 * 60;
+
+/** electron/team-runner.ts deliveryTest: its text opens with the prefix and asks the role to send the answer back. */
+export const DELIVERY_TEST_PREFIX = "Delivery test:";
+export const DELIVERY_TEST_ANSWER = "ok";
 
 /** electron/usage-hook.ts HOOK_THROTTLE_SECONDS, in the minutes the UI shows. */
 export const HOOK_THROTTLE_MINUTES = 5;

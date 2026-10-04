@@ -10,12 +10,12 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { killPty, spawnPty } from "../dist-electron/pty.js";
 
 // pty.ts logs lifecycle events to $AYA_HOME/pty-events.log (resolved lazily at
 // the first append), so redirect it before any spawnPty call - otherwise unit
 // runs write into the user's real ~/.aya.
 process.env.AYA_HOME = mkdtempSync(join(tmpdir(), "aya-pty-test-"));
+const { killPty, spawnPty } = await import("../dist-electron/pty.js");
 const { fakeSink } = await import("./helpers/pty-host.mjs");
 
 const baseReq = (over) => ({

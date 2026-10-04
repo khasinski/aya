@@ -1,0 +1,12 @@
+                                                                ▄                                   
+                               █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█                              
+                               █  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀                              
+                               ▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀                              
+             ┃                                                                                      
+             ┃  Ask anything… "What is the tech stack of this project?"                             
+             ┃                                                                                      
+             ┃  Build · Big Pickle OpenCode Zen                                                     
+             ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀            
+                                                             tab agents  ctrl+p commands            
+                      ● Tip Run /connect to add an AI provider and start coding                     
+  /work/project                                                                         1.18.30  

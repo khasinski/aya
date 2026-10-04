@@ -3,7 +3,8 @@ import type { ControlStatusUpdate, PanePick } from "./types";
 export type TeamRequest =
   | { type: "team-whoami" }
   | { type: "team-inbox" }
-  | { type: "team-send"; role: string; text: string };
+  | { type: "team-send"; role: string; text: string }
+  | { type: "team-pause"; text?: string };
 
 /** Where `aya team new|save` was run, when it is not a pane: AYA_PROJECT_SLUG, cwd. */
 interface TeamAuthorScope {
@@ -75,8 +76,8 @@ export interface ControlCaller {
   presetId?: string;
   /** "hook" when the call comes from Aya's automatic-status hook, not the agent. */
   via?: string;
-  /** The directory the command runs in, to tell a borrowed pane id (caller-identity.ts). */
-  cwd?: string;
+  /** The `aya` process itself, so Aya can check it runs under the pane it names (caller-proof.ts). */
+  pid?: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -92,12 +93,12 @@ export function parseControlCaller(value: unknown): ControlCaller {
   const terminalId = optionalString(value.caller.terminalId);
   const presetId = optionalString(value.caller.presetId);
   const via = optionalString(value.caller.via);
-  const cwd = optionalString(value.caller.cwd);
+  const pid = value.caller.pid;
   return {
     ...(terminalId ? { terminalId } : {}),
     ...(presetId ? { presetId } : {}),
     ...(via ? { via } : {}),
-    ...(cwd ? { cwd } : {}),
+    ...(typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? { pid } : {}),
   };
 }
 
@@ -106,6 +107,15 @@ export function panePick(value: unknown): PanePick {
   const target = isRecord(value) ? optionalString(value.target) : undefined;
   if (!role || !target) throw new Error("each pane needs a role and a target");
   return { role, target };
+}
+
+/** Longest team message or Start task: every one is typed into a pane and kept in the team's log. */
+export const TEAM_MESSAGE_MAX_CHARS = 8_000;
+
+export function assertTeamTextFits(text: string, what = "message"): void {
+  if (text.length > TEAM_MESSAGE_MAX_CHARS) {
+    throw new Error(`the ${what} is ${text.length} characters, the most is ${TEAM_MESSAGE_MAX_CHARS}; shorten it, or put the detail in a file in the repo and send its path; nothing was sent`);
+  }
 }
 
 export function parseControlRequest(value: unknown): ControlRequest {
@@ -122,10 +132,16 @@ export function parseControlRequest(value: unknown): ControlRequest {
     const role = optionalString(value.role);
     const text = typeof value.text === "string" ? value.text : "";
     if (!role || !text) throw new Error("team-send needs a role and text");
+    assertTeamTextFits(text);
     return { type, role, text };
   }
+  if (type === "team-pause") {
+    const text = optionalString(value.text);
+    if (text) assertTeamTextFits(text, "reason");
+    return { type, ...(text ? { text } : {}) };
+  }
+  const scope = { projectSlug: optionalString(value.projectSlug), cwd: optionalString(value.cwd) };
   if (type === "team-guide" || type === "team-save") {
-    const scope = { projectSlug: optionalString(value.projectSlug), cwd: optionalString(value.cwd) };
     if (type === "team-guide") return { type, description: optionalString(value.description), ...scope };
     const text = optionalString(value.text);
     if (!text) throw new Error("team-save needs the team file's text");
@@ -136,14 +152,15 @@ export function parseControlRequest(value: unknown): ControlRequest {
     const team = optionalString(value.team);
     const panes = Array.isArray(value.panes) ? value.panes.map(panePick) : [];
     if (!team) throw new Error("team-open needs a team");
-    return { type, team, panes, replace: value.replace === true, projectSlug: optionalString(value.projectSlug), cwd: optionalString(value.cwd) };
+    return { type, team, panes, replace: value.replace === true, ...scope };
   }
   if (type === "team-start") {
     const team = optionalString(value.team);
     if (!team) throw new Error("team-start needs a team");
     const task = optionalString(value.task);
+    if (task) assertTeamTextFits(task, "task");
     const to = optionalString(value.to);
-    return { type, team, ...(task ? { task } : {}), ...(to ? { to } : {}), projectSlug: optionalString(value.projectSlug), cwd: optionalString(value.cwd) };
+    return { type, team, ...(task ? { task } : {}), ...(to ? { to } : {}), ...scope };
   }
   if (type === "capabilities") return { type };
   if (type === "notify") {

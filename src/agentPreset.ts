@@ -4,14 +4,14 @@
 // silently treats it as disabled - the mismatch that lost agent sessions when
 // a restored tab respawned without --continue.
 
-import type { Preset } from "./types";
+import type { Preset, SpawnCommand } from "./types";
 
 type Agent = NonNullable<Preset["agent"]>;
 
 /** How Aya resumes a given agent CLI's prior session.
  *
  *  `continueLatest` is the "just pick up the most recent session for this cwd"
- *  form — no session id needed, so it fires on any restore. It is only set for
+ *  form - no session id needed, so it fires on any restore. It is only set for
  *  agents whose flags were VERIFIED against the installed CLI (claude, codex,
  *  opencode, kilo, pi, antigravity). Getting one of these wrong breaks every restore of
  *  that agent, so an unverified guess must never land here.
@@ -34,35 +34,41 @@ interface AgentSpec {
   /** Matches the agent's binary at the start of a command. */
   binary: RegExp;
   continueLatest?: string;
+  /** `continueLatest` picks the cwd's newest session, a sibling pane's when panes share the folder: such a pane resumes
+   *  a known id or starts fresh. */
+  latestIsPerDir?: boolean;
   sessionResume?: (sessionId: string) => string;
   resumeFlag: RegExp;
 }
 
-const GENERIC_RESUME_FLAG = /(?:^|\s)(?:-c|--continue|-r|--resume|--session|--conversation)(?:[=\s]|$)/;
+const GENERIC_RESUME_FLAG = /(?:^|\s)(?:-c|--continue|-r|--resume|--session|--session-id|--conversation)(?:[=\s]|$)/;
 
 const AGENT_SPECS: Record<Exclude<Agent, "custom">, AgentSpec> = {
   claude: {
     binary: /^claude(?:\s|$)/,
     continueLatest: "--continue",
+    latestIsPerDir: true,
     sessionResume: (id) => `--resume ${id}`,
     resumeFlag: /(?:^|\s)(?:-c|--continue|-r|--resume|--session-id)(?:[=\s]|$)/,
   },
   codex: {
     binary: /^codex(?:\s|$)/,
     continueLatest: "resume --last",
+    latestIsPerDir: true,
     sessionResume: (id) => `resume ${id}`,
     resumeFlag: /(?:^|\s)resume(?:\s|$)/,
   },
   // opencode, kilo (an opencode fork) and pi share this vocabulary. All three
   // were verified against the installed CLIs: `--continue` takes the latest
   // session, `--session <id>` takes a specific one. Note pi's `--resume` opens
-  // an interactive picker — same trap as claude's bare `--resume` — so it is
+  // an interactive picker - same trap as claude's bare `--resume` - so it is
   // deliberately not used here. opencode's `--continue` spans every git
   // worktree of the repo, so the pty host swaps it for this cwd's own session
   // (electron/opencode-session.ts).
   opencode: {
     binary: /^opencode(?:\s|$)/,
     continueLatest: "--continue",
+    latestIsPerDir: true,
     sessionResume: (id) => `--session ${id}`,
     resumeFlag: GENERIC_RESUME_FLAG,
   },
@@ -129,6 +135,16 @@ const AGENT_SPECS: Record<Exclude<Agent, "custom">, AgentSpec> = {
 };
 
 const KNOWN_AGENTS = Object.keys(AGENT_SPECS) as Array<Exclude<Agent, "custom">>;
+
+// Mirrored by electron/agent-session.ts; a test holds the two equal.
+const BEFORE_PROGRAM = /^\s*(?:[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"(?:[^"\\]|\\.)*"|\\.|[^\s'"\\])*\s+)*(?:exec\s+)?(?:\S*\/)?/;
+
+/** Whether the program after `NAME=value` assignments and a plain `exec` is an agent's own binary; a flag appended to
+ *  a wrapper (bash -c, env, ssh, docker) lands on the wrapper. */
+export function launchesAgentDirectly(command: string): boolean {
+  const program = command.slice(BEFORE_PROGRAM.exec(command)?.[0].length ?? 0);
+  return KNOWN_AGENTS.some((agent) => AGENT_SPECS[agent].binary.test(program));
+}
 
 /** Best-effort agent classification from a preset's command, used when the
  *  preset has no explicit `agent` field (older presets predate it). Mirrors the
@@ -199,16 +215,13 @@ export function commandHasResumeFlag(preset: Preset, command: string): boolean {
   return spec.resumeFlag.test(command);
 }
 
-/** Build the spawn command for a (possibly restored) terminal. Appends a
- *  resume/continue arg only when the preset auto-resumes, the terminal was
- *  restored from disk, the command is non-empty, and no resume flag is present.
- *  A known `sessionId` resumes that exact session; otherwise the agent's
- *  "continue latest" form is used. Agents with neither are left untouched.
- *  Returns the original command (verbatim) when anything above rules it out. */
+/** A restored terminal's command with its resume arg: a known `sessionId`, else "continue latest" unless `sharesDir`
+ *  makes that a sibling's session; verbatim unless an auto-resuming preset's restored command has no resume flag. */
 export function commandWithAutoResume(
   preset: Preset,
   restored: boolean | undefined,
   sessionId?: string,
+  sharesDir = false,
 ): string {
   const command = preset.command.trim();
   if (
@@ -220,21 +233,52 @@ export function commandWithAutoResume(
     return preset.command;
   }
   const arg =
-    (sessionId ? sessionResumeArg(preset, sessionId) : null) ??
-    resumeArg(preset);
+    (sessionId && launchesAgentDirectly(command) ? sessionResumeArg(preset, sessionId) : null) ??
+    (sharesDir && agentSpec(preset)?.latestIsPerDir ? null : resumeArg(preset));
   return arg ? `${command} ${arg}` : preset.command;
 }
 
 const BRIEF_HINTS = new Map<Agent, string>([
   ["claude", "Adds a short note via --append-system-prompt when the pane starts."],
-  ["codex", "Adds a marked section to this account's AGENTS.md (removed when off)."],
+  ["codex", "Adds a short note via -c developer_instructions when the pane starts; not when your Codex config or the command already sets developer_instructions, which Aya never replaces."],
   ["grok", "Adds a short note via --rules when the pane starts."],
-  ["opencode", "Adds a short note to opencode's instructions for Aya panes only (OPENCODE_CONFIG_CONTENT)."],
+  ["opencode", "Adds a short note to opencode's instructions for Aya panes only (OPENCODE_CONFIG)."],
   ["antigravity", "Adds one always-on Antigravity rule, shared by all agy presets (deleted when none opts in)."],
 ]);
 
-/** Null hides the toggle: the harness has no channel. Mirrors briefChannel in
- *  electron/agent-brief.ts; a test holds them equal. */
+/** Null hides the toggle: the harness has no channel. Mirrors roleChannel in electron/agent-brief.ts plus
+ *  Antigravity's own rule file; a test holds them equal. */
 export function agentBriefHint(agent: Agent | undefined): string | null {
   return (agent ? BRIEF_HINTS.get(agent) : undefined) ?? null;
+}
+
+/** What to spawn for a pane: `command`, and `sharedDirCommand` for when a peer of the same agent (`peerCwds`) turns
+ *  out, by real path at the host, to run in the same folder. */
+export function resumeSpawn(
+  preset: Preset,
+  pane: { id: string; cwd: string; restored?: boolean; sessionId?: string; sharedDir?: boolean },
+  panes: Array<{ id: string; preset: Preset; cwd: string }>,
+): SpawnCommand {
+  const command = commandWithAutoResume(preset, pane.restored, pane.sessionId, pane.sharedDir);
+  const sharedDirCommand = commandWithAutoResume(preset, pane.restored, pane.sessionId, true);
+  if (sharedDirCommand === command) return { command };
+  const agent = effectiveAgent(preset);
+  const peerCwds = panes
+    .filter((p) => p.id !== pane.id && effectiveAgent(p.preset) === agent)
+    .map((p) => p.cwd);
+  return peerCwds.length > 0 ? { command, sharedDirCommand, peerCwds } : { command };
+}
+
+const withoutTrailingSlash = (cwd: string) => (cwd.length > 1 ? cwd.replace(/\/+$/, "") : cwd);
+
+/** The panes with a peer of the same "continue latest" agent in their folder, by its
+ *  spelling (the pty host also compares live peers by real path). */
+export function sharingPaneIds(panes: Array<{ id: string; preset: Preset; cwd: string }>): Set<string> {
+  const groups = new Map<string, string[]>();
+  for (const pane of panes) {
+    if (!agentSpec(pane.preset)?.latestIsPerDir) continue;
+    const key = `${effectiveAgent(pane.preset)}\0${withoutTrailingSlash(pane.cwd)}`;
+    groups.set(key, [...(groups.get(key) ?? []), pane.id]);
+  }
+  return new Set([...groups.values()].filter((ids) => ids.length > 1).flat());
 }

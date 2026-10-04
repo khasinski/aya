@@ -10,7 +10,7 @@
 
 import { promises as fs } from "node:fs";
 import { writeFileAtomic } from "./atomic-write";
-import { scanHarnesses } from "./harnesses";
+import { probeHarnesses } from "./harnesses";
 import { PRESETS_FILE } from "./paths";
 
 /** Agent CLIs Aya knows how to classify and resume. "custom" is anything
@@ -180,10 +180,14 @@ const SHELL_PRESET: Preset = {
 // of a read+parse. Gating on mtime (rather than invalidating in savePresets)
 // also picks up hand-edits to presets.json.
 let presetsCache: { mtimeMs: number; presets: Preset[] } | null = null;
+// A first-launch seed not saved because a login shell did not answer: kept for this
+// launch only, so the next one scans again instead of saving those CLIs as missing.
+let unsavedSeed: Preset[] | null = null;
 
-/** Test hook: forget the cached presets.json parse. */
+/** Test hook: forget the cached presets.json parse (and an unsaved seed, as a restart does). */
 export function resetPresetsCache(): void {
   presetsCache = null;
+  unsavedSeed = null;
 }
 
 export async function listPresets(): Promise<Preset[]> {
@@ -211,7 +215,8 @@ export async function listPresets(): Promise<Preset[]> {
       // First launch — scan PATH for installed harnesses and seed only
       // those, plus the shell fallback. User can add more later in
       // Settings via the "Suggested" section.
-      const found = await scanHarnesses();
+      if (unsavedSeed) return [...unsavedSeed];
+      const { found, unanswered } = await probeHarnesses();
       const seeded: Preset[] = [
         ...found.map((h) => ({
           id: h.id,
@@ -222,8 +227,9 @@ export async function listPresets(): Promise<Preset[]> {
         })),
         SHELL_PRESET,
       ];
-      await savePresets(seeded);
-      return seeded;
+      if (unanswered.length) unsavedSeed = seeded;
+      else await savePresets(seeded);
+      return [...seeded];
     }
     throw err;
   }

@@ -14,9 +14,9 @@ import * as path from "node:path";
 import { codexHomeFor } from "./agent-brief";
 import type { UsageAccount, UsageData } from "./usage";
 import { expandUserPath, usageAccountFromData } from "./usage";
+import { CODEX_CONFIG_FILENAME, CODEX_DIRNAME } from "./constants";
 
-// Codex's home when neither CODEX_HOME nor a preset names one.
-export const CODEX_DIRNAME = ".codex";
+export { CODEX_CONFIG_FILENAME, CODEX_DIRNAME };
 export const CODEX_DEFAULT_DIR = `~/${CODEX_DIRNAME}`;
 // Rollout JSONL root inside a Codex home (also walked by transcript search).
 export const CODEX_SESSIONS_SUBDIR = "sessions";

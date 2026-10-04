@@ -182,8 +182,7 @@ test("the caller's via tag survives parsing, so hook traffic can be told apart",
     { terminalId: "t1", presetId: "claude", via: "hook" },
   );
   assert.deepEqual(parseControlCaller({ caller: { terminalId: "t1" } }), { terminalId: "t1" });
-  assert.deepEqual(parseControlCaller({ caller: { terminalId: "t1", cwd: "/w" } }), { terminalId: "t1", cwd: "/w" });
-  assert.deepEqual(parseControlCaller({ caller: { terminalId: "t1", cwd: " " } }), { terminalId: "t1" });
+  assert.deepEqual(parseControlCaller({ caller: { terminalId: "t1", cwd: "/w" } }), { terminalId: "t1" }, "the cwd proves nothing; the pid does");
 });
 
 test("team-send needs a role and non-empty text", () => {
@@ -251,4 +250,21 @@ test("team-start parses its team, and a task and --to only when given", () => {
     cwd: undefined,
   });
   assert.throws(() => parseControlRequest({ type: "team-start" }), { message: "team-start needs a team" });
+});
+
+const { TEAM_MESSAGE_MAX_CHARS } = await import("../dist-electron/control-protocol.js");
+
+test("a team message is capped: the most is accepted, one more is refused with a clear error", () => {
+  assert.equal(TEAM_MESSAGE_MAX_CHARS, 8000);
+  const at = "x".repeat(TEAM_MESSAGE_MAX_CHARS);
+  assert.equal(parseControlRequest({ type: "team-send", role: "reviewer", text: at }).text, at);
+  assert.throws(
+    () => parseControlRequest({ type: "team-send", role: "reviewer", text: `${at}x` }),
+    /^Error: the message is 8001 characters, the most is 8000; shorten it, or put the detail in a file in the repo and send its path; nothing was sent$/,
+  );
+});
+
+test("a Start task is capped like a message", () => {
+  assert.throws(() => parseControlRequest({ type: "team-start", team: "ux", task: "x".repeat(TEAM_MESSAGE_MAX_CHARS + 1) }), new RegExp(`the most is ${TEAM_MESSAGE_MAX_CHARS}`));
+  assert.equal(parseControlRequest({ type: "team-start", team: "ux", task: "x".repeat(TEAM_MESSAGE_MAX_CHARS) }).task.length, TEAM_MESSAGE_MAX_CHARS);
 });

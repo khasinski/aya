@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { isStorableSplitTree, MAX_SPLIT_COLS, MAX_SPLIT_ROWS, pruneSplitTreeTerminals } from "./split-tree";
 import { writeFileAtomic } from "./atomic-write";
+import { oneAtATime } from "./keyed-queue";
 import {
   OPEN_PROJECTS_FILE,
   PROJECTS_DIR,
@@ -57,6 +58,8 @@ export function normalizeTab(raw: unknown): WorkingTab | null {
     name,
     ...(cwd ? { cwd } : {}),
     ...(sessionId ? { sessionId } : {}),
+    ...(r.sharedDir === true ? { sharedDir: true as const } : {}),
+    ...(r.teamLaunch === true ? { teamLaunch: true } : {}),
   };
 }
 
@@ -364,10 +367,15 @@ export async function createRemoteProject(req: {
   return project;
 }
 
-export async function updateProject(project: ProjectConfig): Promise<void> {
-  await ensureDir();
-  const filePath = path.join(PROJECTS_DIR, `${project.slug}.json`);
-  await writeFileAtomic(filePath, JSON.stringify(toDisk(project), null, 2) + "\n");
+// Saves of one project run in call order: renames of unordered writes let an
+// older save land last and drop the session id a pane just learned.
+const oneSaveAtATime = oneAtATime();
+
+export function updateProject(project: ProjectConfig): Promise<void> {
+  return oneSaveAtATime(project.slug, async () => {
+    await ensureDir();
+    await writeFileAtomic(path.join(PROJECTS_DIR, `${project.slug}.json`), JSON.stringify(toDisk(project), null, 2) + "\n");
+  });
 }
 
 function toDisk(project: ProjectConfig): unknown {

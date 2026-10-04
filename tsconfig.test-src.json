@@ -15,7 +15,6 @@
   "include": [
     "src/agentPreset.ts",
     "src/attention.ts",
-    "src/bell.ts",
     "src/colors.ts",
     "src/control-status-target.ts",
     "src/team-edit.ts",

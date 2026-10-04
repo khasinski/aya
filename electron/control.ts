@@ -1,8 +1,10 @@
 import type { BrowserWindow } from "electron";
+import { oneAtATime } from "./keyed-queue";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
-import { foreignIdentity } from "./caller-identity";
+import { recordAgentStatus } from "./agent-status";
+import { daemonIdentity, foreignPaneIdentity, paneAbove, processTable, unprovenIdentity } from "./caller-proof";
 import { capabilitiesDocument } from "./capabilities";
 import {
   parseControlCaller,
@@ -18,10 +20,12 @@ import {
 } from "./pane-target";
 import { CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
 import { handleTeamAuthorRequest } from "./team-author";
-import { handleTeamRequest, PaneHeldError, type TeamControlDeps } from "./team-control";
-import { handleTeamPanesRequest, type TeamPaneDeps } from "./team-panes";
+import { HOLD_BUSY, HOLD_DRAFT, isDialogHold } from "./pane-holds";
+import { debugAnswer } from "./team-debug";
+import { handleTeamRequest, oneLine, PaneHeldError, TEAMS_UNAVAILABLE, TextPastedError, TryAgainError, type TeamControlDeps } from "./team-control";
+import { handleTeamPanesRequest, THIS_PANE, type TeamPaneDeps } from "./team-panes";
 import type { TeamRunner } from "./team-runner";
-import type { ControlStatusUpdate, ProjectConfig } from "./types";
+import type { ControlStatusUpdate, ProjectConfig, PtyEvent } from "./types";
 
 // Max control-socket message size before rejecting the request (bytes).
 export const CONTROL_REQUEST_MAX_SIZE_BYTES = 64_000;
@@ -40,6 +44,29 @@ export const CONTROL_LINGER_MS = 2_000;
 /** 150 ms idle gap before pane-send's Enter: in one chunk it reads as a paste and
  *  never submits. Measured: codex-cli 0.153.4 needs 50 ms, Claude Code 120 ms. */
 export const PANE_SEND_SUBMIT_DELAY_MS = 150;
+
+// Claude redraws its composer a moment after Enter: until then the screen still shows our line.
+export const SUBMIT_ECHO_GRACE_MS = 3000;
+const SUBMIT_ECHO_POLL_MS = 50;
+
+/** How long after its Enter a team message has to show that it started a turn. No recorded submit
+ *  measures it (no model calls); twice the most Claude takes to redraw its composer. */
+export const TURN_START_WINDOW_MS = 2 * SUBMIT_ECHO_GRACE_MS;
+const TURN_START_POLL_MS = 100;
+export const TURN_NOT_SEEN = "typed, not seen to start a turn";
+const TURN_MET_DIALOG = (hold: string) => `typed, but a dialog came up after its Enter: ${hold}`;
+
+/** What the pane shows after a team message's Enter: whether the agent took it. */
+export interface TurnProbe {
+  /** The terminal host's own hold (not settledAfterSubmit's: that one waits out Aya's echo). */
+  hold: (terminalId: string, pasted?: string) => Promise<string | null>;
+  /** Moves whenever the pane writes output. */
+  outputMark: (terminalId: string) => number;
+  /** Whether the pane's output paused within the last second: only then is output after Enter a sign. */
+  outputPaused: (terminalId: string) => boolean;
+  windowMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
 
 /** Bracketed-paste markers; src/snippet-payload.ts names the same pair. */
 export const PASTE_START = "\x1b[200~";
@@ -69,16 +96,18 @@ export interface ControlServerOptions {
   getWindows?: () => ControlStatusSink[];
   /** Settles once the open reached a loaded page; rejects with the reason. */
   openProject: (directory: string) => Promise<void> | void;
-  /** Every parsed request, with the pane it came from (adoption, #117). */
-  onRequest?: (request: ControlRequest, caller: ControlCaller) => void;
+  /** Every parsed request, with the pane it came from (adoption, #117); awaited before the request runs. */
+  onRequest?: (request: ControlRequest, caller: ControlCaller) => void | Promise<void>;
   /** What `aya team` runs on (the same deps as the team runner); teams are off without it. */
   team?: TeamControlDeps;
   /** Told of a team saved with aya team save, as after the Teams window's Save. */
-  teamRunner?: Pick<TeamRunner, "refresh">;
+  teamRunner?: Pick<TeamRunner, "refresh" | "pause">;
   /** What aya presets and aya team open run on, as the Teams window's Apply panes. */
   teamPanes?: TeamPaneDeps;
-  /** Git worktrees of a project directory: a pane working in one is still its project's. */
-  worktrees?: (directory: string) => Promise<string[]>;
+  /** The process a pane runs: null when it has none, undefined when the host cannot say (it predates the request). */
+  panePid?: (terminalId: string) => Promise<number | null | undefined>;
+  /** Test-only override of the process table read for the ancestry check. */
+  processTable?: typeof processTable;
   /** Test-only override of the idle reap window. */
   idleTimeoutMs?: number;
   /** Test-only override of OPEN_DELIVERY_TIMEOUT_MS. */
@@ -91,8 +120,12 @@ function focusWindow(win: BrowserWindow | null): void {
   win.focus();
 }
 
-function sendJson(socket: net.Socket, value: unknown): void {
-  socket.write(`${JSON.stringify(value)}\n`);
+/** Whether the reply was handed to the socket: false when the peer is gone (EPIPE) or the socket closed. */
+function sendJson(socket: net.Socket, value: unknown): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (socket.destroyed) return resolve(false);
+    socket.write(`${JSON.stringify(value)}\n`, (err) => resolve(!err));
+  });
 }
 
 /** pane-read / pane-send: let one terminal observe or drive another. Both
@@ -121,24 +154,117 @@ async function handlePaneRequest(
   return { terminalId, projectSlug, name };
 }
 
-/** A team message as a bracketed paste, then Enter: raw typing let Codex swallow
- *  the Enter after 600+ characters (measured). Shells are held, so paste is safe.
- *  `holdReason` is asked again once the pane lock is held: a send queued behind
- *  another can find the approval prompt that one raised. (Not again before
- *  Enter: the pasted text itself reads as a draft there.) */
+const lastSubmitted = new Map<string, { text: string; at: number }>();
+
+/** A hold read that does not take Aya's own just-submitted line, still on screen, for the
+ *  user's draft: it waits (up to the grace) for the composer to clear, and reports a real draft at once. */
+export function settledAfterSubmit(
+  hold: (terminalId: string, pasted?: string) => Promise<string | null>,
+  { graceMs = SUBMIT_ECHO_GRACE_MS, pollMs = SUBMIT_ECHO_POLL_MS }: { graceMs?: number; pollMs?: number } = {},
+): typeof hold {
+  return async (terminalId, pasted) => {
+    let reason = await hold(terminalId, pasted);
+    while (pasted === undefined && reason === HOLD_DRAFT) {
+      const echo = lastSubmitted.get(terminalId);
+      if (!echo || Date.now() - echo.at >= graceMs || (await hold(terminalId, echo.text)) !== null) break;
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      reason = await hold(terminalId);
+    }
+    return reason;
+  };
+}
+
+/** A team message as a bracketed paste (typed raw, Codex swallowed the Enter), then Enter; holds and Pause are checked
+ *  under the pane lock and again before Enter, which on a dialog approves it. `probe`: resolves to why no turn was seen. */
 export function deliverTeamMessage(
   writePane: NonNullable<ControlServerOptions["writePane"]>,
   terminalId: string,
   text: string,
-  holdReason?: (terminalId: string) => Promise<string | null>,
-): Promise<void> {
-  const guard = holdReason
+  holdReason?: (terminalId: string, pasted?: string) => Promise<string | null>,
+  cancelled?: () => boolean,
+  probe?: TurnProbe,
+  entered?: () => Promise<void>,
+  pasting?: () => Promise<void>,
+): Promise<string | null> {
+  const pasted = oneLine(text);
+  const guard = async () => {
+    const hold = await holdReason?.(terminalId);
+    if (hold) throw new PaneHeldError(hold);
+    await pasting?.();
+    // Paused or changed while this waited for the pane lock: nothing is typed (no await between here and the paste).
+    if (cancelled?.()) throw new PaneHeldError("the team was paused or changed before it was typed; nothing typed", false);
+  };
+  const beforeEnter = async () => {
+    if (cancelled?.()) throw new PaneHeldError("the team was paused or changed while it was typed; text left in the composer, Enter not sent", true);
+    const hold = await holdReason?.(terminalId, pasted);
+    if (hold && hold !== HOLD_DRAFT) {
+      throw new PaneHeldError(`${hold}; it appeared after the text was typed; text left in the composer, Enter not sent`, true);
+    }
+  };
+  let before: { draft: boolean; mark: number; paused: boolean } | undefined;
+  const snapshot = probe
     ? async () => {
-        const hold = await holdReason(terminalId);
-        if (hold) throw new PaneHeldError(hold);
+        await beforeEnter();
+        before = { draft: (await probe.hold(terminalId)) === HOLD_DRAFT, mark: probe.outputMark(terminalId), paused: probe.outputPaused(terminalId) };
       }
-    : undefined;
-  return deliverToPane(writePane, terminalId, terminalId, `${PASTE_START}${text}${PASTE_END}`, true, guard);
+    : beforeEnter;
+  let unseen: string | null = null;
+  const afterEnter = async () => {
+    await entered?.();
+    if (probe) unseen = await turnUnseen(probe, terminalId, pasted, before!);
+  };
+  return deliverToPane(writePane, terminalId, terminalId, `${PASTE_START}${pasted}${PASTE_END}`, true, guard, snapshot, afterEnter).then(() => {
+    // Text the agent did not take still sits there: the next read must see it as a draft at once.
+    if (!unseen) lastSubmitted.set(terminalId, { text: pasted, at: Date.now() });
+    return unseen;
+  });
+}
+
+/** Why the Enter just sent started no turn, or null: a dialog came up, or for the whole window the composer kept the
+ *  text (when shown) or a pane whose output had paused wrote nothing (Grok idle writes ~14 times a second). */
+async function turnUnseen(probe: TurnProbe, terminalId: string, pasted: string, before: { draft: boolean; mark: number; paused: boolean }): Promise<string | null> {
+  const sleep = probe.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  for (let waited = 0; waited < (probe.windowMs ?? TURN_START_WINDOW_MS); waited += TURN_START_POLL_MS) {
+    await sleep(TURN_START_POLL_MS);
+    const shown = await probe.hold(terminalId, pasted);
+    if (isDialogHold(shown)) return TURN_MET_DIALOG(shown);
+    if (before.draft ? tookTheText(await probe.hold(terminalId)) : before.paused && probe.outputMark(terminalId) !== before.mark) return null;
+  }
+  return TURN_NOT_SEEN;
+}
+
+// The composer no longer holds the text: free, or busy (agy draws its turn without its composer).
+const tookTheText = (hold: string | null): boolean => hold === null || hold === HOLD_BUSY;
+
+/** A gap in a pane's output this long is a pause; output after Enter is a sign only within OUTPUT_PAUSE_WITHIN_MS of one. */
+export const OUTPUT_PAUSE_MS = 300;
+export const OUTPUT_PAUSE_WITHIN_MS = 1_000;
+
+/** Counts each pane's output from the host's event stream, and when its last pause ended, for TurnProbe. */
+export function paneOutputMarks(now: () => number = Date.now): {
+  sink: { isDestroyed(): boolean; send(channel: "pty:event", event: PtyEvent): void };
+  mark: (terminalId: string) => number;
+  outputPaused: (terminalId: string) => boolean;
+} {
+  const marks = new Map<string, { count: number; last: number; pauseEnded: number }>();
+  return {
+    sink: {
+      isDestroyed: () => false,
+      send: (_channel, event) => {
+        if (event.type === "data" && !event.replay) {
+          const at = now();
+          const prior = marks.get(event.ptyId);
+          const pauseEnded = !prior || at - prior.last >= OUTPUT_PAUSE_MS ? at : prior.pauseEnded;
+          marks.set(event.ptyId, { count: (prior?.count ?? 0) + 1, last: at, pauseEnded });
+        } else if (event.type === "exit") marks.delete(event.ptyId);
+      },
+    },
+    mark: (terminalId) => marks.get(terminalId)?.count ?? 0,
+    outputPaused: (terminalId) => {
+      const m = marks.get(terminalId);
+      return !m || now() - m.last >= OUTPUT_PAUSE_MS || now() - m.pauseEnded <= OUTPUT_PAUSE_WITHIN_MS;
+    },
+  };
 }
 
 /** Types text into a pane, then Enter when `submit`. Serialized per terminal:
@@ -150,6 +276,8 @@ function deliverToPane(
   text: string,
   submit: boolean,
   guard?: () => Promise<void>,
+  beforeEnter?: () => Promise<void>,
+  afterEnter?: () => Promise<void>,
 ): Promise<void> {
   return withPaneLock(terminalId, async () => {
     await guard?.();
@@ -161,38 +289,79 @@ function deliverToPane(
       );
     }
     if (submit) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, PANE_SEND_SUBMIT_DELAY_MS),
-      );
-      if ((await writePane(terminalId, "\r")) === false) {
-        throw new Error(`pane "${name}" exited before the text was submitted`);
+      try {
+        await new Promise((resolve) =>
+          setTimeout(resolve, PANE_SEND_SUBMIT_DELAY_MS),
+        );
+        await beforeEnter?.();
+        if ((await writePane(terminalId, "\r")) === false) throw new TextPastedError(`pane "${name}" exited before the text was submitted`);
+      } catch (err) {
+        if (err instanceof TextPastedError || err instanceof PaneHeldError) throw err;
+        throw new TextPastedError(`pane "${name}" did not take the Enter after the text: ${err instanceof Error ? err.message : err}`);
       }
+      // Under the lock: the next paste must not be read as this one's composer.
+      await afterEnter?.();
     }
   });
 }
 
-/** One in-flight pane-send per terminal, chained so each completes its whole
- *  text+gap+Enter sequence before the next begins. Dropped once the chain drains. */
-const paneLocks = new Map<string, Promise<unknown>>();
+/** One pane-send per terminal at a time: each finishes its text, gap and Enter before the next begins. */
+const withPaneLock = oneAtATime();
 
-async function withPaneLock<T>(
-  terminalId: string,
-  run: () => Promise<T>,
-): Promise<T> {
-  const prior = paneLocks.get(terminalId) ?? Promise.resolve();
-  // Ignore HOW the predecessor finished: a failed send must not cancel the queue.
-  const mine = prior.catch(() => {}).then(run);
-  paneLocks.set(terminalId, mine);
-  try {
-    return await mine;
-  } finally {
-    // Only the last sender in the chain clears the slot.
-    if (paneLocks.get(terminalId) === mine) paneLocks.delete(terminalId);
-  }
+/** Requests that speak as the pane's role, so its id must be proven, not just carried. */
+const SPEAKS_AS_PANE = new Set<ControlRequest["type"]>(["team-whoami", "team-inbox", "team-send", "team-pause"]);
+
+/** Also team-open when a role goes to "this": the caller's id picks the pane that gets it. */
+const speaksAsPane = (request: ControlRequest): boolean =>
+  SPEAKS_AS_PANE.has(request.type) || (request.type === "team-open" && request.panes.some((p) => p.target === THIS_PANE));
+
+/** Requests that act on the pane or project whose id they carry: a Codex daemon's id may be another project's pane.
+ *  `status` too: a question is a team's signal, it holds the named pane's rounds. */
+const ACTS_ON_PANE_PROJECT = new Set<ControlRequest["type"]>(["team-save", "team-open", "team-start", "status"]);
+
+async function daemonRefusal(caller: ControlCaller, options: ControlServerOptions): Promise<string | null> {
+  if (!caller.terminalId || !caller.pid) return null;
+  const table = await (options.processTable ?? processTable)(caller.pid);
+  return table ? daemonIdentity(caller, table) : null;
 }
 
-/** Requests that act the same whichever pane sends them. */
-const IDENTITY_FREE = new Set<ControlRequest["type"]>(["open", "focus", "capabilities", "presets"]);
+/** Why the caller's process does not run under its pane's process, else null; also null
+ *  when nothing can be shown (older CLI, unknown pane, `ps` silent). */
+async function identityRefusal(caller: ControlCaller, options: ControlServerOptions): Promise<string | null> {
+  const { terminalId: id, pid: callerPid } = caller;
+  if (!id || !callerPid || !options.panePid) return null;
+  const pid = await options.panePid(id);
+  if (pid === undefined) return null;
+  const hasLocalTab = async () => (await options.listProjects?.())?.some((p) => !p.remote && p.tabs.some((t) => t.id === id));
+  if (pid === null && !(await hasLocalTab())) return null;
+  const table = await (options.processTable ?? processTable)(callerPid);
+  return table ? unprovenIdentity(caller, pid, table) : null;
+}
+
+/** The session the pane's agent runs, as the project file has it, when known. */
+async function paneSession(terminalId: string, options: ControlServerOptions): Promise<string | undefined> {
+  const projects = await options.listProjects?.().catch(() => []);
+  return projects?.flatMap((p) => p.tabs).find((t) => t.id === terminalId)?.sessionId;
+}
+
+/** The local pane the caller's process runs under, from the process tree; null when none or unknown. */
+async function paneUnder(caller: ControlCaller, options: ControlServerOptions): Promise<string | null> {
+  if (!caller.pid || !options.panePid || !options.listProjects) return null;
+  const table = await (options.processTable ?? processTable)(caller.pid);
+  if (!table) return null;
+  const pids = new Map<number, string>();
+  for (const project of await options.listProjects()) {
+    if (project.remote) continue;
+    for (const tab of project.tabs) {
+      const pid = await options.panePid(tab.id);
+      if (pid) pids.set(pid, tab.id);
+    }
+  }
+  return paneAbove(caller.pid, table, pids);
+}
+
+/** Requests that act as the role of the pane whose id they carry (start resumes its pause, save replaces its team file). */
+const ACTS_AS_PANE_ROLE = new Set<ControlRequest["type"]>(["team-save", "team-start"]);
 
 async function handleRequest(
   request: ControlRequest,
@@ -200,14 +369,19 @@ async function handleRequest(
   options: ControlServerOptions,
 ): Promise<Record<string, unknown> | void> {
   try {
-    options.onRequest?.(request, caller);
+    await options.onRequest?.(request, caller);
   } catch {
     // measurement must never fail a command
   }
-  if (caller.terminalId && caller.cwd && options.listProjects && !IDENTITY_FREE.has(request.type)) {
-    const refusal = await foreignIdentity(await options.listProjects(), caller, options.worktrees ?? (async () => []));
-    if (refusal) throw new Error(refusal);
-  }
+  const refusal = speaksAsPane(request)
+    ? await identityRefusal(caller, options)
+    : ACTS_ON_PANE_PROJECT.has(request.type)
+      ? await daemonRefusal(caller, options)
+      : null;
+  if (refusal) throw new Error(refusal);
+  const under = ACTS_AS_PANE_ROLE.has(request.type) ? await paneUnder(caller, options) : null;
+  const foreign = foreignPaneIdentity(caller.terminalId, under);
+  if (foreign) throw new Error(foreign);
   const win = options.getWindow();
   if (request.type === "capabilities") {
     return {
@@ -249,18 +423,23 @@ async function handleRequest(
   if (request.type === "pane-read" || request.type === "pane-send") {
     return handlePaneRequest(request, options);
   }
-  if (request.type === "team-whoami" || request.type === "team-send" || request.type === "team-inbox") {
-    if (!options.team) throw new Error("teams are not available");
-    return handleTeamRequest(request, caller.terminalId, options.team);
+  if (request.type === "team-whoami" || request.type === "team-send" || request.type === "team-inbox" || request.type === "team-pause") {
+    if (!options.team) throw new Error(TEAMS_UNAVAILABLE);
+    const { teamRunner } = options;
+    return handleTeamRequest(request, caller.terminalId, options.team, teamRunner && ((slug, name, by) => teamRunner.pause(slug, name, by)));
   }
   if (request.type === "team-guide" || request.type === "team-save") {
     const { team, teamRunner } = options;
-    if (!team || !teamRunner) throw new Error("teams are not available");
+    if (!team || !teamRunner) throw new Error(TEAMS_UNAVAILABLE);
     return handleTeamAuthorRequest(request, caller.terminalId, team, (slug, name) => teamRunner.refresh(slug, name));
   }
   if (request.type === "presets" || request.type === "team-open" || request.type === "team-start") {
-    if (!options.teamPanes) throw new Error("teams are not available");
-    return handleTeamPanesRequest(request, caller.terminalId, options.teamPanes);
+    if (!options.teamPanes) throw new Error(TEAMS_UNAVAILABLE);
+    // A role's pane may not resume a pause that is not its own: the process tree tells it, even with its id unset
+    // (an id naming another pane than the tree's was refused above).
+    const from = caller.terminalId ?? under;
+    const panes = request.type === "team-start" ? (from ? [from] : []) : undefined;
+    return handleTeamPanesRequest(request, caller.terminalId, options.teamPanes, panes);
   }
   if (request.type === "focus") {
     focusWindow(win);
@@ -294,11 +473,15 @@ async function handleRequest(
     return;
   }
   if (request.type === "status") {
+    // A question belongs to the agent life that asked it: the pane's session goes with it (agent-status settleRestored).
+    const session = request.terminalId && request.level === "waiting" ? await paneSession(request.terminalId, options) : undefined;
+    const told = request.terminalId ? recordAgentStatus(request.terminalId, request.level, Date.now(), request.text, caller.via, session) : request;
+    if (!told) return;
     const update: ControlStatusUpdate = {
       terminalId: request.terminalId,
       projectSlug: request.projectSlug,
       cwd: request.cwd,
-      level: request.level,
+      level: told.level,
       text: request.text,
       updatedAt: Date.now(),
     };
@@ -359,7 +542,7 @@ export function startControlServerOn(
         // write onto the socket we just ended (ERR_STREAM_WRITE_AFTER_END).
         handled = true;
         buffer = "";
-        sendJson(socket, { ok: false, error: "request too large" });
+        void sendJson(socket, { ok: false, error: "request too large" });
         finish();
         return;
       }
@@ -370,16 +553,14 @@ export function startControlServerOn(
       void (async () => {
         try {
           const raw: unknown = JSON.parse(line);
-          const payload = await handleRequest(
-            parseControlRequest(raw),
-            parseControlCaller(raw),
-            options,
-          );
-          sendJson(socket, { ok: true, ...(payload ?? {}) });
+          const [request, caller] = [parseControlRequest(raw), parseControlCaller(raw)];
+          const { undo, ...payload } = (await debugAnswer(options.team, request, caller, handleRequest(request, caller, options))) ?? {};
+          if (!(await sendJson(socket, { ok: true, ...payload })) && typeof undo === "function") await undo();
         } catch (err) {
-          sendJson(socket, {
+          void sendJson(socket, {
             ok: false,
             error: err instanceof Error ? err.message : String(err),
+            ...(err instanceof TryAgainError ? { retry: true } : {}),
           });
         } finally {
           finish();

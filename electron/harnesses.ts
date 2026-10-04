@@ -1,14 +1,8 @@
 // Detect agent CLIs installed on the user's PATH so the first-launch
 // preset list contains only what's actually usable, and so Settings can
 // suggest harnesses the user hasn't added yet.
-//
-// All probes run through `$SHELL -l -c 'command -v <bin>'` so login-shell
-// PATH (mise, asdf, brew, etc.) is respected — otherwise we'd miss
-// binaries installed via version managers.
 
-import { execFile } from "node:child_process";
-import { COMMAND_PROBE_TIMEOUT_MS } from "./constants";
-import { userShell } from "./shell";
+import { scanCommands } from "./command-probe";
 
 export interface HarnessDef {
   /** Canonical id; used as the preset id when seeded. */
@@ -21,8 +15,6 @@ export interface HarnessDef {
   /** Default launch command. Plain binary in v1; user can edit later. */
   command: string;
 }
-
-// Timeout for the login-shell PATH probe used to detect a harness binary.
 
 /** Known agent harnesses + interactive AI CLIs we'll probe for. Add new
  *  ones here as the ecosystem grows. */
@@ -181,30 +173,14 @@ export const KNOWN_HARNESSES: readonly HarnessDef[] = [
   },
 ];
 
-/** Strict allow-list for binary tokens passed to `command -v`. Harnesses are
- *  hard-coded today, but keeping this explicit prevents a future dynamic list
- *  from accidentally smuggling shell syntax into the PATH probe. */
-export function isSafeBinaryName(s: string): boolean {
-  return /^[a-zA-Z0-9_.-]+$/.test(s);
+/** The known harnesses on the user's PATH, and the ones a login shell did not answer
+ *  for in time (unknown, not missing). */
+export async function probeHarnesses(): Promise<{ found: HarnessDef[]; unanswered: HarnessDef[] }> {
+  const answers = await scanCommands(KNOWN_HARNESSES.map((h) => h.binary));
+  const pick = (answer: string) => KNOWN_HARNESSES.filter((h) => answers.get(h.binary) === answer);
+  return { found: pick("found"), unanswered: pick("no answer") };
 }
 
-async function commandExists(binary: string): Promise<boolean> {
-  if (!isSafeBinaryName(binary)) return false;
-  return new Promise((resolve) => {
-    execFile(
-      userShell(),
-      ["-l", "-c", `command -v -- ${binary} >/dev/null 2>&1`],
-      { timeout: COMMAND_PROBE_TIMEOUT_MS, windowsHide: true },
-      (err) => resolve(err === null),
-    );
-  });
-}
-
-/** Probe every known harness in parallel; return the subset present on
- *  the user's PATH. Total time bounded by the slowest single probe. */
 export async function scanHarnesses(): Promise<HarnessDef[]> {
-  const checks = await Promise.all(
-    KNOWN_HARNESSES.map(async (h) => ({ h, found: await commandExists(h.binary) })),
-  );
-  return checks.filter((x) => x.found).map((x) => x.h);
+  return (await probeHarnesses()).found;
 }

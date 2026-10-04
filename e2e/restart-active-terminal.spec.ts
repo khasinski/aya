@@ -6,7 +6,7 @@ import {
 } from "@playwright/test";
 import { join } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
-import { seedEnv, type SeededEnv } from "./helpers/seed";
+import { appEnv, seedEnv, type SeededEnv } from "./helpers/seed";
 import {
   APP_GRACEFUL_CLOSE_TIMEOUT_MS,
   APP_PROCESS_EXIT_TIMEOUT_MS,
@@ -46,26 +46,11 @@ function writeProjectState(ayaHome: string, state: unknown): void {
   writeFileSync(projectStatePath(ayaHome), JSON.stringify(state));
 }
 
-async function launch(
-  ayaHome: string,
-  userDataDir: string,
-  root: string,
-): Promise<ElectronApplication> {
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (typeof v === "string" && k !== "ELECTRON_RUN_AS_NODE" && k !== "AYA_DEV") {
-      env[k] = v;
-    }
-  }
-  env.AYA_HOME = ayaHome;
-  env.AYA_E2E_PTY_SHUTDOWN = "1";
-  if (!process.env.CI) {
-    env.AYA_E2E_HEADLESS = "1";
-  }
-  env.CODEX_HOME = join(root, "codex-home");
+async function launch(seeded: SeededEnv): Promise<ElectronApplication> {
+  const env = appEnv(seeded);
   const args = [
     join(APP_ROOT, "dist-electron", "main.js"),
-    `--user-data-dir=${userDataDir}`,
+    `--user-data-dir=${seeded.userDataDir}`,
   ];
   if (process.env.CI) {
     args.push("--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage");
@@ -117,7 +102,7 @@ test("the last-active terminal stays active across a restart (#18)", async () =>
   const s = seed();
   // First launch: the project opens on its first tab ("shell 1"). Switch to
   // the second terminal via the sidebar.
-  let app = await launch(s.ayaHome, s.userDataDir, s.root);
+  let app = await launch(s);
   let win = await app.firstWindow();
   await win.waitForLoadState("domcontentloaded");
   await win.locator(".aya-sidebar-row", { hasText: "shell 2" }).click();
@@ -129,7 +114,7 @@ test("the last-active terminal stays active across a restart (#18)", async () =>
 
   // Relaunch the same home. The terminal that was active should still be
   // active — not reset to the first one.
-  app = await launch(s.ayaHome, s.userDataDir, s.root);
+  app = await launch(s);
   win = await app.firstWindow();
   await win.waitForLoadState("domcontentloaded");
   await expect(win.locator(".aya-sidebar-row--active")).toHaveText(/shell 2/);
@@ -154,7 +139,7 @@ test("a dangling persisted activeTab falls back to the first terminal", async ()
     activeTab: { "e2e-proj": "tab-deleted" },
     singleView: { "e2e-proj": "tab-deleted" },
   });
-  const app = await launch(s.ayaHome, s.userDataDir, s.root);
+  const app = await launch(s);
   const win = await app.firstWindow();
   await win.waitForLoadState("domcontentloaded");
   // Falls back to the first tab (shell 1) and actually renders THAT terminal:
@@ -195,7 +180,7 @@ test("the last-active project is restored across a restart (#18)", async () => {
     recent: ["proj-b", "e2e-proj"],
     activeProject: "proj-b",
   });
-  const app = await launch(s.ayaHome, s.userDataDir, s.root);
+  const app = await launch(s);
   const win = await app.firstWindow();
   await win.waitForLoadState("domcontentloaded");
   // The active project tab is Bravo (the saved one), not the first/default e2e.

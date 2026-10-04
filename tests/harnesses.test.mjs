@@ -3,7 +3,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { KNOWN_HARNESSES, isSafeBinaryName } from "../dist-electron/harnesses.js";
+import { KNOWN_HARNESSES } from "../dist-electron/harnesses.js";
+import { isSafeBinaryName } from "../dist-electron/command-probe.js";
 
 test("known harnesses have unique ids, binaries, and commands", () => {
   const ids = new Set();

@@ -7,8 +7,7 @@ import type { TeamAuthorRequest } from "./control-protocol";
 import { TeamExistsError, saveTeam } from "./team-admin";
 import type { TeamControlDeps } from "./team-control";
 import { WHAT_WORDS } from "./team-draft";
-import { teamFile, teamNames } from "./team-files";
-import { openTeamStore } from "./team-store";
+import { runnableTeamNames, teamFile } from "./team-files";
 import {
   ID_MAX_LEN,
   MAX_CADENCE_MINUTES,
@@ -20,7 +19,7 @@ import {
   TEAM_USER_SENDER,
   parseTeamFile,
   teamTitle,
-} from "./teams";
+} from "./team-definition";
 import type { ProjectConfig, TeamDefinition } from "./types";
 
 export const GUIDE_EXAMPLE_START = "----- example: a complete team file -----";
@@ -43,11 +42,14 @@ ${SENDS_TO_FIELD}: fixer (failing tests with output)
 ${MUST_NOT_FIELD}: change the game code to pass a test
 Runs the tests after each fix and adds a test for every fixed finding.
 
+## Lead
+reviewer
+
 ## Cadence
 reviewer every 30 min
 
 ## Protocol
-Findings are hypotheses with a way to check them, not facts. Number the rounds and mark items [reported -> fixed -> confirmed].`;
+The reviewer leads: it gets the task and checks each round that no finding or fix waits too long on someone. Findings are hypotheses with a way to check them, not facts. Number the rounds and mark items [reported -> fixed -> confirmed].`;
 
 const ID_RULE = `lowercase letters a-z, digits and dashes, starting with a letter or digit, at most ${ID_MAX_LEN} characters`;
 
@@ -61,10 +63,10 @@ Steps
    If it prints a problem, nothing was saved: fix what it names and save again. If the team already exists, ask the user before saving again with --replace.
 4. Tell the user the team is saved and what each role does.
 5. Give each role a pane. Run: aya presets and aya pane list
-   aya presets lists this Aya's presets, the agent each runs and whether its CLI is installed; aya pane list lists the panes already open. Propose to the user which pane plays which role, one role per pane. A role can take a new session of an installed preset (several roles may take the same preset: each gets its own pane), this pane you run in, or a pane already open. Different agents for roles that check each other's work can help. Then wait for the user's yes, and with it run:
+   aya presets lists this Aya's presets, the agent each runs, whether its CLI is installed and whether a role's pane of it reaches Aya (the way a CLI is launched, a sandbox or a plan agent, can keep its aya calls from ever reaching Aya); aya pane list lists the panes already open. Propose to the user which pane plays which role, one role per pane. A role can take a new session of an installed preset whose "reaches aya" is not "no" (several roles may take the same preset: each gets its own pane), this pane you run in, or a pane already open; aya team open says when an open pane can't reach Aya, and why. Different agents for roles that check each other's work can help. Then wait for the user's yes, and with it run:
    aya team open <team> <role>=<target> [<role>=<target> ...]
    where <target> is a preset id, this, or a pane's name or id. If a pane is named like a preset id, it says so: write new:<preset> or pane:<name>. Never open panes without the user's yes. If it prints a problem, nothing was opened: fix what it names and run it again.
-6. Ask the user whether to start the team now, and with what task. Run it only on the user's word: aya team start <team> "<task>". The task goes to the cadence role, else the first role (--to <role> picks another), and it prints who got the task. The user can also press Start in the Teams window.
+6. Ask the user whether to start the team now, and with what task. Run it only on the user's word: aya team start <team> "<task>". The task goes to the lead (--to <role> picks another), and it prints who got the task. The user can also press Start in the Teams window.
 
 The team file
 - The first line is "# <name>". The name is the team's file name: ${ID_RULE}.
@@ -77,7 +79,8 @@ The team file
 - "${MUST_NOT_FIELD}:" is required, on one line.
 - "${SENDS_TO_FIELD}:" is one line of roles defined in this file, never the role itself, each once, each with what it gets from this role in parentheses (no parentheses inside). Leave the line out for a role that sends nothing.
 - Every other line of a role is its responsibilities; none may start with "${SENDS_TO_FIELD}:", "${MUST_NOT_FIELD}:" or "${SECTION_MARKER}".
-- Optional "${SECTION_MARKER}Cadence": one line "<role> every <N> min", N from 1-${MAX_CADENCE_MINUTES}. While the team runs, Aya prompts that role to start a new round every N minutes.
+- Required "${SECTION_MARKER}Lead": one line, the id of the role that leads the team; name it yourself. The lead gets the task, and checks that nobody waits too long on someone else and that work is going on at all: when the team has made no progress for a while, Aya asks the lead for a round that says who waits on whom. Pick the role that takes the request and hands out the work, and give the reason in one sentence in the protocol. The save refuses a team without it.
+- Optional "${SECTION_MARKER}Cadence": one line "<role> every <N> min", N from 1-${MAX_CADENCE_MINUTES}, with the lead's role: the rhythm belongs to the lead. The save refuses a Cadence and a Lead that name different roles (cadence and lead name different roles; make them the same). While the team runs, Aya prompts the lead to start a new round every N minutes. A team with no Cadence still has its lead; it just gets no rounds on a timer.
 - Optional "${SECTION_MARKER}Protocol": rules every role follows, free text; no line may start with "${SECTION_MARKER}".
 - No other "${SECTION_MARKER}" sections. Text between the title and the first section is dropped.
 
@@ -155,13 +158,12 @@ async function saveTeamText(
   if (name === null) throw new Error('the team file must start with "# <team-name>"');
   const team = parseTeamFile(name, request.text);
   try {
-    await saveTeam(deps.teamHome, project, team, { create: !request.replace });
+    // The agent that saved it proposes its panes; the window's assign prompt would compete.
+    await saveTeam(deps.teamHome, project, team, { create: !request.replace, byAgent: project.tabs.some((t) => t.id === callerId) });
   } catch (err) {
     if (!(err instanceof TeamExistsError)) throw err;
     throw new Error(`team "${name}" already exists in ${err.file}; nothing was saved. Run aya team save again with --replace to overwrite it`);
   }
-  // The agent that saved it proposes its panes; the window's assign prompt would compete.
-  if (project.tabs.some((t) => t.id === callerId)) await openTeamStore(deps.teamHome, project.slug, name).markAgentAuthored();
   await refresh(project.slug, name);
   return savedSummary(team, teamFile(project, name));
 }
@@ -175,5 +177,5 @@ export async function handleTeamAuthorRequest(
 ): Promise<{ output: string }> {
   const project = await callerProject(await deps.listProjects(), callerId, request);
   if (request.type === "team-save") return { output: await saveTeamText(request, project, callerId, deps, refresh) };
-  return { output: teamGuide(request.description, project ? await teamNames(project) : []) };
+  return { output: teamGuide(request.description, project ? await runnableTeamNames(deps.teamHome, project) : []) };
 }

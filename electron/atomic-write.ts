@@ -21,6 +21,7 @@ export function atomicTempPath(filePath: string): string {
 export async function writeFileAtomic(
   filePath: string,
   data: string,
+  mode?: number,
 ): Promise<void> {
   const dir = path.dirname(filePath);
   await fs.mkdir(dir, { recursive: true });
@@ -29,7 +30,7 @@ export async function writeFileAtomic(
   // secure RNG so the temp path isn't predictable (symlink-attack hygiene).
   const tmpPath = atomicTempPath(filePath);
   try {
-    await fs.writeFile(tmpPath, data);
+    await fs.writeFile(tmpPath, data, { mode });
     await fs.rename(tmpPath, filePath);
     // Remember what we just wrote so the config watcher can tell our own
     // saves apart from edits made outside the app (see config-echo.ts).

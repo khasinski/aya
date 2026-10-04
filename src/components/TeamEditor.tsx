@@ -5,9 +5,12 @@ import {
   cadenceProblem,
   DEFAULT_CADENCE_MINUTES,
   fromEditor,
+  leadProblem,
   removeRole,
   roleId,
   roleIdProblem,
+  setCadence,
+  setLead,
   setSend,
   toEditor,
   updateRole,
@@ -37,8 +40,9 @@ export function TeamEditor({
   const [drafting, setDrafting] = useState<number | null>(null);
   const save = useAsyncAction();
   const built = fromEditor(team);
-  const cadenceError = team.cadence && cadenceProblem(team.cadence.minutes);
-  const invalid = Boolean(cadenceError) || team.roles.some((r) => roleIdProblem(r.id));
+  const cadenceError = team.cadenceMinutes === null ? null : cadenceProblem(team.cadenceMinutes);
+  const leadError = leadProblem(team);
+  const invalid = Boolean(cadenceError) || leadError !== null || team.roles.some((r) => roleIdProblem(r.id));
   const draftRole = async (role: EditorRole) => {
     setDrafting(role.key);
     try {
@@ -78,18 +82,13 @@ export function TeamEditor({
         Add role
       </button>
       <label className="aya-teams-field">
-        <span>Rounds</span>
+        <span>Lead</span>
         <select
-          aria-label="Round role"
-          value={team.cadence ? String(team.cadence.key) : ""}
-          onChange={(e) =>
-            setTeam({
-              ...team,
-              cadence: e.target.value ? { key: Number(e.target.value), minutes: team.cadence?.minutes ?? DEFAULT_CADENCE_MINUTES } : null,
-            })
-          }
+          aria-label="Lead role"
+          value={team.lead === null ? "" : String(team.lead)}
+          onChange={(e) => setTeam(setLead(team, e.target.value ? Number(e.target.value) : null))}
         >
-          <option value="">No rounds</option>
+          <option value="">Pick the lead</option>
           {team.roles
             .filter((r) => r.id)
             .map((r) => (
@@ -98,7 +97,19 @@ export function TeamEditor({
               </option>
             ))}
         </select>
-        {team.cadence && (
+      </label>
+      <ErrorLine error={leadError} />
+      <label className="aya-teams-field">
+        <span>Rounds</span>
+        <select
+          aria-label="Rounds"
+          value={team.cadenceMinutes === null ? "" : "lead"}
+          onChange={(e) => setTeam(setCadence(team, e.target.value ? DEFAULT_CADENCE_MINUTES : null))}
+        >
+          <option value="">No rounds</option>
+          <option value="lead">To the lead</option>
+        </select>
+        {team.cadenceMinutes !== null && (
           <>
             every
             <input
@@ -107,8 +118,8 @@ export function TeamEditor({
               min={1}
               max={MAX_CADENCE_MINUTES}
               aria-label="Round minutes"
-              value={team.cadence.minutes}
-              onChange={(e) => setTeam({ ...team, cadence: team.cadence && { ...team.cadence, minutes: Number(e.target.value) } })}
+              value={team.cadenceMinutes}
+              onChange={(e) => setTeam(setCadence(team, Number(e.target.value)))}
             />
             min
           </>

@@ -15,13 +15,16 @@ const ayaOnPath = (process.env.PATH || "")
       return false;
     }
   });
+// Atomic: a reader polling for the file must never see it half written.
 fs.writeFileSync(
-  out,
+  `${out}.tmp`,
   JSON.stringify({
     args,
     ayaOnPath: ayaOnPath || null,
     pathEntries: (process.env.PATH || "").split(path.delimiter),
     opencodeConfigContent: process.env.OPENCODE_CONFIG_CONTENT ?? null,
+    opencodeConfig: process.env.OPENCODE_CONFIG ?? null,
   }),
 );
+fs.renameSync(`${out}.tmp`, out);
 setInterval(() => {}, 60_000);

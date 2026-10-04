@@ -41,7 +41,8 @@ test("a role nobody sends to, or that sends to nobody, is flagged", async ({ win
   const dialog = await openNewTeam(window);
   await dialog.getByRole("button", { name: "Add role" }).click();
   await dialog.getByLabel("Role 3 name").fill("tester");
-  await dialog.getByLabel("Round role").selectOption("implementer");
+  // The rounds go to the lead: leading makes the implementer the role that only gets Aya's rounds.
+  await dialog.getByLabel("Lead role").selectOption({ label: "implementer" });
   // team1 as saved by hand: reviewer -> tester, implementer -> reviewer, tester -> reviewer.
   await dialog.getByLabel("Role 1 sends to implementer").uncheck();
   await dialog.getByLabel("Role 1 sends to tester").check();

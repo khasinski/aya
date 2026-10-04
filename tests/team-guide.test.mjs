@@ -9,7 +9,7 @@ import { teamProject } from "./helpers/team.mjs";
 
 const { teamGuide, handleTeamAuthorRequest, GUIDE_EXAMPLE_START, GUIDE_EXAMPLE_END } = await import("../dist-electron/team-author.js");
 const { ID_MAX_LEN, MAX_CADENCE_MINUTES, MIN_TEAM_ROLES, MUST_NOT_FIELD, SENDS_TO_FIELD, TEAM_SYSTEM_SENDER, TEAM_USER_SENDER, parseTeamFile } =
-  await import("../dist-electron/teams.js");
+  await import("../dist-electron/team-definition.js");
 const { WHAT_WORDS } = await import("../dist-electron/team-draft.js");
 
 const guide = teamGuide(undefined, []);
@@ -42,7 +42,7 @@ test("the example is a complete file the real save accepts, every route with a w
   const text = example(guide);
   const team = parseTeamFile("ux-fix", text);
   assert.ok(team.roles.length >= 3);
-  assert.ok(team.cadence);
+  assert.ok(team.cadenceMinutes);
   assert.ok(team.protocol);
   for (const role of team.roles) {
     assert.ok(role.responsibilities, role.id);
@@ -81,6 +81,8 @@ test("the last step proposes a pane per role and opens panes only after the user
   assert.match(last, /aya presets/);
   assert.match(last, /aya pane list/);
   assert.match(last, /installed/);
+  assert.match(last, /whether a role's pane of it reaches Aya/);
+  assert.match(last, /preset whose "reaches aya" is not "no"/, "the proposer skips presets that cannot reach Aya");
   assert.match(last, /one role per pane/);
   assert.match(last, /several roles may take the same preset: each gets its own pane/);
   assert.match(last, /this pane you run in/);

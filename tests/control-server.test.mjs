@@ -18,6 +18,7 @@ const {
   PASTE_START,
   deliverTeamMessage,
 } = await import("../dist-electron/control.js");
+const { TextPastedError } = await import("../dist-electron/team-control.js");
 
 function mkSocketPath() {
   const dir = mkdtempSync(join(tmpdir(), "aya-ctrl-"));
@@ -300,6 +301,35 @@ test("control server: status is forwarded to every window sink", async () => {
       Number.isInteger(updatedAt) && updatedAt >= before && updatedAt <= Date.now(),
       `updatedAt ${updatedAt} must be a timestamp taken during the dispatch`,
     );
+  });
+});
+
+test("control server: a pane's status is remembered for the team lead's quiet-team clock, waiting only until it changes", async () => {
+  const { agentWaitingSince } = await import("../dist-electron/agent-status.js");
+  const { options } = recordingOptions();
+  await withServer(options, async (socket) => {
+    const send = (level) => rpc(socket, `${JSON.stringify({ type: "status", level, text: "x", terminalId: "pane-lead-w" })}\n`);
+    assert.equal(agentWaitingSince("pane-lead-w"), null);
+    const before = Date.now();
+    await send("waiting");
+    const since = agentWaitingSince("pane-lead-w");
+    assert.ok(since !== null && since >= before && since <= Date.now(), `waiting since ${since}`);
+    await send("done");
+    assert.equal(agentWaitingSince("pane-lead-w"), null, "any later status ends it");
+    await send("waiting");
+    await send("clear");
+    assert.equal(agentWaitingSince("pane-lead-w"), null);
+  });
+});
+
+test("control server: the status hook's waiting reaches the windows as the done it is recorded as", async () => {
+  const { options } = recordingOptions();
+  const sent = [];
+  options.getWindows = () => [{ isDestroyed: () => false, webContents: { send: (_channel, update) => sent.push(update.level) } }];
+  await withServer(options, async (socket) => {
+    const frame = { type: "status", level: "waiting", text: "x", terminalId: "pane-hook-w", caller: { via: "hook" } };
+    assert.deepEqual(await rpc(socket, `${JSON.stringify(frame)}\n`), { ok: true });
+    assert.deepEqual(sent, ["done"]);
   });
 });
 
@@ -771,4 +801,52 @@ test("control server: aya team without the team deps reports teams are unavailab
     assert.equal(res.ok, false);
     assert.equal(res.error, "teams are not available");
   });
+});
+
+test("deliverTeamMessage: an Enter that fails after the paste throws TextPastedError, a failed paste does not", async () => {
+  const pasteRefused = async () => false;
+  const enterRefused = async (_id, data) => data !== "\r";
+  await assert.rejects(() => deliverTeamMessage(enterRefused, "t1", "hi"), (err) => err instanceof TextPastedError);
+  await assert.rejects(() => deliverTeamMessage(pasteRefused, "t1", "hi"), (err) => !(err instanceof TextPastedError) && /did not accept the text/.test(err.message));
+});
+
+test("deliverTeamMessage: any failure of the Enter after the paste (a rejected write, a failing hold check) is TextPastedError", async () => {
+  const enterThrows = async (_id, data) => {
+    if (data === "\r") throw new Error("host disconnected");
+    return true;
+  };
+  await assert.rejects(() => deliverTeamMessage(enterThrows, "t1", "hi"), (err) => err instanceof TextPastedError && /host disconnected/.test(err.message));
+  const writes = [];
+  const record = async (_id, data) => void writes.push(data);
+  const holdCheckThrows = async (_id, pasted) => {
+    if (pasted === undefined) return null;
+    throw new Error("probe failed");
+  };
+  await assert.rejects(() => deliverTeamMessage(record, "t1", "hi", holdCheckThrows), (err) => err instanceof TextPastedError);
+  assert.equal(writes.length, 1, "the paste went out, the Enter did not");
+});
+
+test("deliverTeamMessage: a refused Enter and a hold that appeared after the paste keep their own error, unwrapped", async () => {
+  const { PaneHeldError } = await import("../dist-electron/team-control.js");
+  const enterRefused = async (_id, data) => data !== "\r";
+  await assert.rejects(() => deliverTeamMessage(enterRefused, "t1", "hi"), (err) => err instanceof TextPastedError && err.message === 'pane "t1" exited before the text was submitted');
+  let asked = 0;
+  const holdAfterPaste = async () => (++asked > 1 ? "shows an approval prompt" : null);
+  await assert.rejects(
+    () => deliverTeamMessage(async () => true, "t1", "hi", holdAfterPaste),
+    (err) => err instanceof PaneHeldError && !(err instanceof TextPastedError) && err.typed === true && /approval prompt; it appeared after the text was typed/.test(err.message),
+  );
+});
+
+test("control server: a team call from an unknown pane while Aya is starting is a retryable error, else a plain one", async () => {
+  for (const starting of [true, false]) {
+    const { options } = recordingOptions();
+    const team = { teamHome: "/nowhere", listProjects: async () => [], deliver: async () => {}, headCommit: async () => null, holdReason: async () => null, starting: () => starting };
+    await withServer({ ...options, team }, async (socket) => {
+      const res = await rpc(socket, `${JSON.stringify({ type: "team-whoami", caller: { terminalId: "pane-x" } })}\n`);
+      assert.equal(res.ok, false);
+      assert.equal(res.retry, starting ? true : undefined);
+      assert.match(res.error, starting ? /Aya is still starting/ : /belongs to no open project/);
+    });
+  }
 });

@@ -4,6 +4,8 @@ import * as net from "node:net";
 import * as path from "node:path";
 import type { WebContents } from "electron";
 import { PTY_HOST_SOCKET_PATH } from "./paths";
+import { PTY_HOST_NOT_CONNECTED, PTY_HOST_UNKNOWN_REQUEST } from "./constants";
+import { LAUNCH_STARTING, LAUNCH_UNREACHABLE, LAUNCH_UNSUPPORTED, type LaunchAnswer, type PaneLaunch } from "./launch-mode";
 import type { PaneSize } from "./pane-render";
 import {
   asPaneSize,
@@ -33,14 +35,15 @@ const DISPOSED_MESSAGE = "PTY host client is disposed";
 export const PANE_HOLD_UNKNOWN =
   "cannot be checked: the terminal host did not answer (after an update, use Settings > Diagnostics > PTY host > Restart)";
 
+const PANE_ENDED_EVENTS: ReadonlySet<string> = new Set(["exit", "no-session"]);
+
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
 }
 
-/** Anything PTY events can be forwarded to. Every BrowserWindow's WebContents
- *  satisfies this shape; the Aya Web server registers a virtual sink that
- *  fans events out to its WebSocket clients. */
+/** Anything PTY events can be forwarded to: a window's WebContents, or Aya Web's virtual sink for its
+ *  WebSocket clients. */
 export interface PtyEventSink {
   isDestroyed(): boolean;
   send(channel: "pty:event", event: PtyEvent): void;
@@ -64,6 +67,12 @@ export class PtyHostClient {
   // window that doesn't host the terminal does a single cheap no-op per event.
   private readonly sinks = new Set<PtyEventSink>();
   private disposed = false;
+  // Panes this client spawned and has not seen end: the ones a lost host takes
+  // down without a word.
+  private readonly live = new Set<string>();
+  // The app asked this host to go (restart, shutdown): the renderer already
+  // knows, so the close that follows is not a loss. Cleared on the next connect.
+  private hostAsked = false;
 
   constructor(private readonly hostScript: string) {}
 
@@ -89,12 +98,25 @@ export class PtyHostClient {
     // before the spawn line, found no PTY, and were silently dropped (typed
     // input during app boot vanished; caught by e2e as dead terminals).
     const { attachIfReused, ...rest } = req;
-    await this.request({ id: 0, type: "spawn", req: rest }, (request) => {
-      if (!resolveSpawnAttach(rest.attachOnly, attachIfReused, this.reusedHost)) {
-        return request;
-      }
-      return { ...request, req: { ...rest, attachOnly: true } };
-    });
+    // Before the request: a no-session or exit event for it arrives ahead of the reply.
+    this.live.add(req.ptyId);
+    try {
+      await this.request({ id: 0, type: "spawn", req: rest }, (request) => {
+        if (!resolveSpawnAttach(rest.attachOnly, attachIfReused, this.reusedHost)) {
+          return request;
+        }
+        return { ...request, req: { ...rest, attachOnly: true } };
+      });
+    } catch (err) {
+      this.live.delete(req.ptyId);
+      throw err;
+    }
+  }
+
+  /** Whether spawning `req` now would start a process, not replay or attach to one. */
+  async willStart(req: SpawnRequest): Promise<boolean> {
+    if (req.attachOnly || (await this.getSize(req.ptyId)) !== null) return false;
+    return !resolveSpawnAttach(false, req.attachIfReused, this.reusedHost);
   }
 
   /** Resolves false only when the host positively reports the data went
@@ -111,6 +133,7 @@ export class PtyHostClient {
 
   async kill(ptyId: string): Promise<void> {
     await this.request({ id: 0, type: "kill", ptyId });
+    this.live.delete(ptyId);
   }
 
   /** Quit path: every later request rejects instead of starting a host, which
@@ -120,9 +143,9 @@ export class PtyHostClient {
   }
 
   async shutdown(): Promise<void> {
+    this.hostAsked = true;
     await this.request({ id: 0, type: "shutdown" });
-    this.socket?.destroy();
-    this.socket = null;
+    this.dropSocket();
   }
 
   /** Running host's identity + live PTY count + its pid (hosts from the
@@ -165,13 +188,21 @@ export class PtyHostClient {
    *  request spawns a fresh host. Best-effort: a dead/old host that can't
    *  shut down cleanly still gets disconnected here. */
   async restart(): Promise<void> {
+    this.hostAsked = true;
     try {
       await this.request({ id: 0, type: "shutdown" });
     } catch {
       // old host may not honor shutdown; we still drop the socket below
     }
-    this.socket?.destroy();
-    this.socket = null;
+    this.dropSocket();
+  }
+
+  /** Close now, not on the socket's later "close": by then a new connection may hold panes and requests. */
+  private dropSocket(): void {
+    const socket = this.socket;
+    if (!socket) return;
+    socket.destroy();
+    this.onClose();
   }
 
   async search(query: string): Promise<BufferSearchHit[]> {
@@ -184,37 +215,57 @@ export class PtyHostClient {
   }
 
   /** Why a message must not be typed into the pane now, or null. Fails closed:
-   *  a host that does not answer (or predates the request) cannot vouch that
-   *  Enter will not answer an approval prompt. */
-  async holdReason(ptyId: string): Promise<string | null> {
-    try {
-      const result = await this.request({ id: 0, type: "hold", ptyId });
-      return typeof result === "string" ? result : null;
-    } catch {
-      return PANE_HOLD_UNKNOWN;
-    }
+   *  a host that does not answer (or predates the request) cannot vouch that Enter will not answer a prompt. */
+  holdReason(ptyId: string, pasted?: string): Promise<string | null> {
+    const request: PtyHostRequest = pasted ? { id: 0, type: "hold", ptyId, pasted } : { id: 0, type: "hold", ptyId };
+    return this.ask(request, (r) => (typeof r === "string" ? r : null), () => PANE_HOLD_UNKNOWN);
+  }
+
+  /** Whether the pane's agent is mid-turn. Fails open: it only skips Aya's rounds. */
+  paneBusy(ptyId: string): Promise<boolean> {
+    return this.ask({ id: 0, type: "busy", ptyId }, (r) => r === true, () => false);
+  }
+
+  /** How a live pane was launched; null when it is gone or not at the host yet. */
+  launch(ptyId: string): Promise<LaunchAnswer> {
+    return this.ask<LaunchAnswer>(
+      { id: 0, type: "launch", ptyId },
+      (r) => {
+        const result = r as PaneLaunch | typeof LAUNCH_STARTING | null;
+        if (result === LAUNCH_STARTING) return result;
+        return typeof result?.command === "string" && typeof result.cwd === "string" ? result : null;
+      },
+      (err) => (err instanceof Error && err.message === PTY_HOST_UNKNOWN_REQUEST ? LAUNCH_UNSUPPORTED : LAUNCH_UNREACHABLE),
+    );
   }
 
   /** A live pane's size, or null when the pane is gone or the host predates
    *  the request (it answers "unknown request"). */
-  async getSize(ptyId: string): Promise<PaneSize | null> {
-    try {
-      return asPaneSize(await this.request({ id: 0, type: "size", ptyId }));
-    } catch {
-      return null;
-    }
+  getSize(ptyId: string): Promise<PaneSize | null> {
+    return this.ask({ id: 0, type: "size", ptyId }, asPaneSize, () => null);
   }
 
-  /** Live cwd of a PTY's child, or null when it can't be determined. A host
-   *  left over from a build that predates this request answers "unknown
-   *  request" — that rejection is a null here, not an error the caller has to
-   *  care about (the status bar just keeps using the spawn cwd). */
-  async getCwd(ptyId: string): Promise<string | null> {
+  /** Live cwd of a PTY's child, or null when it can't be determined (an older host answers "unknown request"; the
+   *  status bar then keeps the spawn cwd). */
+  getCwd(ptyId: string): Promise<string | null> {
+    return this.ask({ id: 0, type: "cwd", ptyId }, (r) => (typeof r === "string" && r.length > 0 ? r : null), () => null);
+  }
+
+  /** The pid of the process a pane runs, null when it has none, undefined when the host cannot say. */
+  getPid(ptyId: string): Promise<number | null | undefined> {
+    return this.ask(
+      { id: 0, type: "pid", ptyId },
+      (r) => (r === null ? null : typeof r === "number" && r > 0 ? r : undefined),
+      () => undefined,
+    );
+  }
+
+  /** A request whose failure is an answer too: `failed` says what it means. */
+  private async ask<T>(request: PtyHostRequest, parse: (result: unknown) => T, failed: (err: unknown) => T): Promise<T> {
     try {
-      const result = await this.request({ id: 0, type: "cwd", ptyId });
-      return typeof result === "string" && result.length > 0 ? result : null;
-    } catch {
-      return null;
+      return parse(await this.request(request));
+    } catch (err) {
+      return failed(err);
     }
   }
 
@@ -229,7 +280,7 @@ export class PtyHostClient {
     if (this.disposed) throw new Error(DISPOSED_MESSAGE);
     await this.connect();
     const socket = this.socket;
-    if (!socket || socket.destroyed) throw new Error("PTY host is not connected");
+    if (!socket || socket.destroyed) throw new Error(PTY_HOST_NOT_CONNECTED);
     const id = this.nextId++;
     const withId = { ...(finalize ? finalize(request) : request), id } as PtyHostRequest;
     return new Promise((resolve, reject) => {
@@ -273,9 +324,12 @@ export class PtyHostClient {
       socket.setEncoding("utf8");
       socket.once("connect", () => {
         this.socket = socket;
+        this.hostAsked = false;
         this.buffer = "";
         socket.on("data", (chunk) => this.onData(String(chunk)));
-        socket.on("close", () => this.onClose());
+        socket.on("close", () => {
+          if (this.socket === socket) this.onClose();
+        });
         socket.on("error", () => {
           // close handles pending rejection
         });
@@ -324,13 +378,7 @@ export class PtyHostClient {
       if (events.length === 0) return;
       const merged = coalesceAdjacentData(events);
       events = [];
-      for (const wc of this.sinks) {
-        if (wc.isDestroyed()) {
-          this.sinks.delete(wc);
-          continue;
-        }
-        for (const event of merged) wc.send("pty:event", event);
-      }
+      this.sendToSinks(merged);
     };
     while (this.buffer.includes("\n")) {
       const idx = this.buffer.indexOf("\n");
@@ -347,6 +395,7 @@ export class PtyHostClient {
         continue;
       }
       if ("type" in message && message.type === "event") {
+        if (PANE_ENDED_EVENTS.has(message.event.type)) this.live.delete(message.event.ptyId);
         events.push(message.event);
         continue;
       }
@@ -366,8 +415,23 @@ export class PtyHostClient {
     else pending.reject(new Error(message.error));
   }
 
+  private sendToSinks(events: PtyEvent[]): void {
+    for (const wc of this.sinks) {
+      if (wc.isDestroyed()) {
+        this.sinks.delete(wc);
+        continue;
+      }
+      for (const event of events) wc.send("pty:event", event);
+    }
+  }
+
   private onClose(): void {
     this.socket = null;
+    // Not gated on dispose: that is the quit, whose closing windows keep a no-session in memory only.
+    const lost = this.hostAsked ? [] : [...this.live];
+    this.live.clear();
+    // The host took its panes down without a word: stopped and restartable, as for a pane it has no session for.
+    this.sendToSinks(lost.map((ptyId) => ({ type: "no-session", ptyId })));
     for (const [, pending] of this.pending) {
       pending.reject(new Error("PTY host disconnected"));
     }
@@ -375,11 +439,8 @@ export class PtyHostClient {
   }
 }
 
-/** Resolve the wire-level attachOnly flag for a spawn request. Pure and
- *  exported for unit tests: `attachOnly` (the tab already ran this renderer
- *  session) always attaches; `attachIfReused` attaches only when the client
- *  is talking to a host it did NOT spawn - a fresh host cannot hold the
- *  session, so forcing attach there would wrongly stop every boot tab. */
+/** `attachOnly` always attaches; `attachIfReused` only on a host this client did not spawn (a fresh host
+ *  cannot hold the session, so attaching there would stop every boot tab). */
 export function resolveSpawnAttach(
   attachOnly: boolean | undefined,
   attachIfReused: boolean | undefined,

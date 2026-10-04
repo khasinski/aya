@@ -424,3 +424,46 @@ test("without AYA_HOME the bridge reaches ~/.aya even when AYA_DEV=1", async () 
   }));
   assert.deepEqual(ids, ["shell", "claude-yolo"]);
 });
+
+test("the bridge names a too-long socket path instead of a generic connection error", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const long = join(tmpdir(), "x".repeat(120), "aya-remote.sock");
+  const run = spawnSync(process.execPath, ["-e", remoteNodeBridge(2_000), "id-1", Buffer.from("{}").toString("base64")], {
+    env: { ...process.env, AYA_REMOTE_SOCKET: long },
+    encoding: "utf8",
+  });
+  const error = JSON.parse(run.stdout.trim().split("\n")[0]);
+  assert.equal(error.code, "app_unavailable");
+  assert.match(error.message, /socket path is \d+ bytes, the limit is (104|107)/);
+  assert.match(error.message, /shorter AYA_HOME/);
+});
+
+test("the bridge's socket path limit: exactly the limit is a plain connection error, one byte more names the limit", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const { socketPathLimit } = await import("../dist-electron/socket-path.js");
+  const limit = socketPathLimit();
+  const bridgeError = (socket) => {
+    const run = spawnSync(process.execPath, ["-e", remoteNodeBridge(2_000), "id-1", Buffer.from("{}").toString("base64")], {
+      env: { ...process.env, AYA_REMOTE_SOCKET: socket },
+      encoding: "utf8",
+    });
+    return JSON.parse(run.stdout.trim().split("\n")[0]);
+  };
+  // "\u00e9" is 2 bytes in 1 character: the limit counts bytes.
+  const rows = [
+    ["limit bytes, ascii", "x".repeat(limit - 1), false],
+    ["limit + 1 bytes, ascii", "x".repeat(limit), true],
+    ["limit bytes, multibyte", "x".repeat(limit - 3) + "\u00e9", false],
+    ["limit + 1 bytes, multibyte", "x".repeat(limit - 2) + "\u00e9", true],
+    ["fewer characters than the limit, more bytes", "\u00e9".repeat(Math.ceil(limit / 2)), true],
+  ];
+  for (const [name, tail, refused] of rows) {
+    const socket = "/" + tail;
+    const bytes = Buffer.byteLength(socket);
+    assert.equal(bytes, name.includes("+ 1") ? limit + 1 : name.startsWith("fewer") ? bytes : limit, name);
+    const error = bridgeError(socket);
+    assert.equal(error.code, "app_unavailable", name);
+    if (refused) assert.match(error.message, new RegExp(`socket path is ${bytes} bytes, the limit is ${limit}`), name);
+    else assert.match(error.message, /not accepting remote connections/, name);
+  }
+});

@@ -1,12 +1,10 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { teamChat, type ChatEntry } from "../team-chat";
-import { messageDeliveryText, USER_SENDER } from "../team-view";
+import { clock, messageDeliveryText, USER_SENDER } from "../team-view";
 import type { TeamMessage } from "../types";
 
 // Within this many px of the bottom, a new message scrolls into view.
 const STICK_TO_BOTTOM_PX = 24;
-
-const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 function Alert({ message }: { message: TeamMessage }) {
   return <div className="aya-chat-alert">⚠ {messageDeliveryText(message)}</div>;
@@ -18,12 +16,14 @@ function Entry({ entry, pane }: { entry: ChatEntry; pane: (role: string) => stri
     return (
       <div className="aya-chat-entry aya-chat-system">
         <button className="aya-chat-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
-          {clock(entry.time)} Delivery test: {entry.answered.length}/{entry.tested.length} answered {open ? "▾" : "▸"}
+          {clock(entry.time)} Delivery test: {entry.answered.length}/{entry.tested.length} answered
+          {entry.abnormalIds.length > 0 && ` · ⚠ ${entry.abnormalIds.length} held`} {open ? "▾" : "▸"}
         </button>
         {open &&
           entry.messages.map((m) => (
             <div key={m.id} className="aya-chat-sub">
               {clock(m.time)} {m.from} → {m.to}: {m.text}
+              {entry.abnormalIds.includes(m.id) && <Alert message={m} />}
             </div>
           ))}
       </div>

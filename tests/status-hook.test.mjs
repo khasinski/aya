@@ -19,11 +19,11 @@ import {
 
 const CMD = "'/Users/x/.aya/aya-status-hook.sh'";
 
-test("the three events we register are Notification, PostToolUse, Stop", () => {
+test("the three events we register are PostToolUse, Stop, StopFailure", () => {
   assert.deepEqual([...STATUS_HOOK_EVENTS].sort(), [
-    "Notification",
     "PostToolUse",
     "Stop",
+    "StopFailure",
   ]);
 });
 
@@ -93,7 +93,7 @@ test("the generated script maps each event to the right aya status level and no-
   assert.match(src, /AYA_SOCKET:-.*\|\| exit 0/);
   assert.match(src, /AYA_TERMINAL_ID:-.*\|\| exit 0/);
   // Event → level mapping.
-  assert.match(src, /Notification\)[\s\S]*status waiting/);
+  assert.doesNotMatch(src, /status waiting/);
   assert.match(src, /PostToolUse\)[\s\S]*status active "running \$TOOL"/);
   assert.match(src, /Stop\)[\s\S]*status done/);
   // The bundled CLI path is baked as the PATH fallback.

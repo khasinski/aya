@@ -9,10 +9,9 @@ import * as net from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { envWithoutAya } from "./helpers/env.mjs";
+import { CLI_SHELLS, shellOptions } from "./helpers/cli-shells.mjs";
 
 const cli = resolve("bin/aya");
-// Linux runs /bin/sh as dash, where a failed shift ends the script.
-const SHELLS = ["/bin/sh", "/bin/dash"].filter(existsSync);
 const FILE = "# ux-fix\n\n## Role: a\nMust not: x\n";
 
 async function aya(args, { shell = "/bin/sh", reply = { ok: true, output: "from the app\n" }, stdin = "", files = {} } = {}) {
@@ -55,8 +54,8 @@ async function aya(args, { shell = "/bin/sh", reply = { ok: true, output: "from 
   }
 }
 
-for (const shell of SHELLS) {
-  test(`team new sends the description as one text and prints the guide (${shell})`, async () => {
+for (const shell of CLI_SHELLS) {
+  test(`team new sends the description as one text and prints the guide (${shell})`, shellOptions(shell), async () => {
     const { status, stdout, request, dir } = await aya(["new", "a", "team", "for", "UX"], { shell });
     assert.equal(status, 0);
     assert.equal(stdout, "from the app\n");
@@ -67,20 +66,22 @@ for (const shell of SHELLS) {
     assert.ok(request.cwd.endsWith(dir.split("/").pop()), request.cwd);
   });
 
-  test(`team whoami tells the app where the command runs, to catch a borrowed pane id (${shell})`, async () => {
-    const { status, request, dir } = await aya(["whoami"], { shell });
+  test(`team whoami sends its pane id and its own pid, the proof of that id (${shell})`, shellOptions(shell), async () => {
+    const { status, request } = await aya(["whoami"], { shell });
     assert.equal(status, 0);
-    assert.deepEqual(request, { type: "team-whoami", caller: { terminalId: "pane-1", cwd: dir } });
+    const { pid, ...caller } = request.caller;
+    assert.deepEqual({ ...request, caller }, { type: "team-whoami", caller: { terminalId: "pane-1" } });
+    assert.ok(Number.isInteger(pid) && pid > 0, "the CLI sends its own pid");
   });
 
-  test(`team new without a description asks for the guide alone (${shell})`, async () => {
+  test(`team new without a description asks for the guide alone (${shell})`, shellOptions(shell), async () => {
     const { status, request } = await aya(["new"], { shell });
     assert.equal(status, 0);
     assert.equal(request.type, "team-guide");
     assert.equal(request.description, undefined);
   });
 
-  test(`team save sends the file's text, --replace in either place (${shell})`, async () => {
+  test(`team save sends the file's text, --replace in either place (${shell})`, shellOptions(shell), async () => {
     for (const args of [["save", "t.md"], ["save", "t.md", "--replace"], ["save", "--replace", "t.md"]]) {
       const { status, stdout, request } = await aya(args, { shell, files: { "t.md": FILE } });
       assert.equal(status, 0, args.join(" "));
@@ -92,13 +93,13 @@ for (const shell of SHELLS) {
     }
   });
 
-  test(`team save - reads the file from stdin (${shell})`, async () => {
+  test(`team save - reads the file from stdin (${shell})`, shellOptions(shell), async () => {
     const { status, request } = await aya(["save", "-"], { shell, stdin: FILE });
     assert.equal(status, 0);
     assert.equal(request.text, FILE.trimEnd());
   });
 
-  test(`team save refuses a missing, empty or absent file before anything reaches the app (${shell})`, async () => {
+  test(`team save refuses a missing, empty or absent file before anything reaches the app (${shell})`, shellOptions(shell), async () => {
     for (const [args, message] of [
       [["save"], /Usage/],
       [["save", "--replace"], /Usage/],
@@ -114,7 +115,7 @@ for (const shell of SHELLS) {
     }
   });
 
-  test(`team save prints the app's problem and exits 1 (${shell})`, async () => {
+  test(`team save prints the app's problem and exits 1 (${shell})`, shellOptions(shell), async () => {
     const reply = { ok: false, error: 'team "ux-fix": role "a" needs a "Must not:" line' };
     const { status, stdout, stderr } = await aya(["save", "t.md"], { shell, reply, files: { "t.md": FILE } });
     assert.equal(status, 1);

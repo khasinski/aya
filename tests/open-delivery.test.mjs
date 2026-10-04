@@ -118,3 +118,42 @@ test("a destroyed window rejects at once", async () => {
   await assert.rejects(deliverOpenProject(win, "/p"), /window closed before it loaded/);
   assert.deepEqual(sent, []);
 });
+
+test("an open the page never confirmed is sent again after its next load, a confirmed one is not", async () => {
+  const { confirmOpen, replayOpensOnLoad } = await import("../dist-electron/open-delivery.js");
+  const w = fakeWindow();
+  replayOpensOnLoad(w.win);
+  await deliverOpenProject(w.win, "/a");
+  await deliverOpenProject(w.win, "/b");
+  await deliverOpenProject(w.win, "/a");
+  confirmOpen(w.win.webContents, "/a");
+  w.sent.length = 0;
+  w.finishLoad();
+  assert.deepEqual(w.sent, [["open-project", "/b"], ["open-project", "/a"]]);
+  confirmOpen(w.win.webContents, "/b");
+  confirmOpen(w.win.webContents, "/a");
+  w.sent.length = 0;
+  w.finishLoad();
+  assert.deepEqual(w.sent, []);
+});
+
+test("the first load replays nothing: the waiting open sends itself once", async () => {
+  const { replayOpensOnLoad } = await import("../dist-electron/open-delivery.js");
+  const w = fakeWindow({ loading: true });
+  replayOpensOnLoad(w.win);
+  const delivery = deliverOpenProject(w.win, "/p");
+  w.finishLoad();
+  await delivery;
+  assert.deepEqual(w.sent, [["open-project", "/p"]]);
+});
+
+test("confirming an open never sent keeps the others to replay", async () => {
+  const { confirmOpen, replayOpensOnLoad } = await import("../dist-electron/open-delivery.js");
+  const w = fakeWindow();
+  replayOpensOnLoad(w.win);
+  await deliverOpenProject(w.win, "/a");
+  confirmOpen(w.win.webContents, "/never-sent");
+  w.sent.length = 0;
+  w.finishLoad();
+  assert.deepEqual(w.sent, [["open-project", "/a"]]);
+});
