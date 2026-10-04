@@ -135,7 +135,7 @@ test("the CLI gives up before the user clicks Add: Aya closes the dialog, nothin
   fake.setMode("athena", "down");
   dialog.holdMs = 5000;
   const answered = new Promise((r) => (dialog.answered = r));
-  const r = await ayaWith({ AYA_REPLY_TIMEOUT_MS: "1000" }, "add", "--ssh", "athena");
+  const r = await ayaWith({ AYA_REPLY_TIMEOUT_MS: "1000" }, "add", "athena");
   assert.equal(r.status, 1);
   assert.match(r.stderr, /no answer from Aya after 1 s; nothing was added, Aya closed its dialog/);
   await answered;
@@ -154,43 +154,55 @@ test("add: only an ambiguous word drafts nothing, and an unknown host is named",
   assert.equal(dialog.asked.length, 0, "nothing to ask");
 });
 
-test("manual add saves a versioned registry, mode 0600; --id and --port bind to the machine before them", async () => {
+test("add saves a versioned registry, mode 0600; port N binds to the machine before it", async () => {
   reset();
-  const r = await aya("add", "--ssh", "athena", "--local", "--id", "laptop", "--port", String(ollamaPort));
+  const r = await aya("add", `athena and local port ${ollamaPort}`);
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(registry(), {
     version: 1,
     machines: [
       { id: "athena", label: "athena", reach: { ssh: "athena" }, ollama: { port: 11434 } },
-      { id: "laptop", label: "laptop", reach: "local", ollama: { port: ollamaPort } },
+      { id: "local", label: "local", reach: "local", ollama: { port: ollamaPort } },
     ],
   });
   assert.equal(statSync(registryFile).mode & 0o777, 0o600);
 });
 
-const manualAddRefusals = [
-  { args: ["--ssh", "-oProxyCommand=x"], error: /not a Host alias in ~\/\.ssh\/config or a known host \(athena, mini\)/ },
-  { args: ["--ssh", "203.0.113.10"], error: /not a Host alias/ },
-  { args: ["--port", "1"], error: /comes after --ssh/ },
-  { args: ["--ssh", "athena", "--port", "99999"], error: /not a port number/ },
-  { args: ["--ssh", "athena", "--id", "Bad_Id"], error: /may use only/ },
-  { args: ["--ssh", "athena", "--ssh", "mini", "--id", "athena"], error: /already added/ },
-  { args: ["--ssh"], error: /needs a value/ },
-];
-for (const c of manualAddRefusals) {
-  test(`manual add refused, nothing saved: ${c.args.join(" ")}`, async () => {
+// One-sentence UX: the old option form is refused with a pointer to the sentence, before any probe or dialog.
+const optionForms = [["--ssh", "athena"], ["--local"], ["--ssh"], ["--local", "--id", "laptop", "--port", "11435"], ["athena", "--port", "1"]];
+for (const args of optionForms) {
+  test(`add ${args.join(" ")}: refused with the sentence form, nothing probed or saved`, async () => {
     reset();
-    const r = await aya("add", ...c.args);
+    const r = await aya("add", ...args);
     assert.equal(r.status, 1);
-    assert.match(r.stderr, c.error);
+    assert.match(r.stderr, /aya machines add takes one sentence, not options: for example aya machines add "athena"/);
     assert.throws(() => statSync(registryFile), /ENOENT/);
     assert.equal(dialog.asked.length, 0, "refused before the dialog");
   });
 }
 
+// A sentence never turns an ssh option or a bare unknown address into a machine.
+for (const sentence of ["-oProxyCommand=x", "203.0.113.10", "ssh -oProxyCommand=x"]) {
+  test(`add "${sentence}": nothing drafted, nothing asked or saved`, async () => {
+    reset();
+    const r = await aya("add", sentence);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Nothing to add from that sentence\./);
+    assert.throws(() => statSync(registryFile), /ENOENT/);
+    assert.equal(dialog.asked.length, 0);
+  });
+}
+
+test("add \"athena port 99999\": a port out of range is not taken, Ollama's default stays", async () => {
+  reset();
+  const r = await aya("add", "athena port 99999");
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(registry().machines.map((m) => [m.id, m.ollama.port]), [["athena", 11434]]);
+});
+
 test("hosts: aliases from ~/.ssh/config with their sources, the added ones marked, the wildcard left out", async () => {
   reset();
-  await aya("add", "--ssh", "athena");
+  await aya("add", "athena");
   const r = await aya("hosts");
   assert.equal(r.status, 0, r.stderr);
   // The added host is saved by the add and listed first; mini is only in ~/.ssh/config.
@@ -202,7 +214,7 @@ test("hosts: aliases from ~/.ssh/config with their sources, the added ones marke
 
 test("a sentence naming an added alias says so and drafts nothing", async () => {
   reset();
-  await aya("add", "--ssh", "athena");
+  await aya("add", "athena");
   const r = await aya("add", "athena");
   assert.match(r.stdout, /athena: already added/);
   assert.doesNotMatch(r.stdout, /run:/);
@@ -226,7 +238,7 @@ for (const row of statusRows) {
   test(`aya machines: ${row.name}`, async () => {
     reset();
     fake.setMode("athena", row.mode);
-    await aya("add", "--ssh", "athena");
+    await aya("add", "athena");
     const text = await aya();
     assert.equal(text.status, 0, text.stderr);
     for (const re of row.text) assert.match(text.stdout, re);
@@ -245,10 +257,10 @@ for (const row of statusRows) {
 
 test("the local machine: Ollama read over HTTP on its port, no ssh", async () => {
   reset();
-  await aya("add", "--local", "--id", "laptop", "--port", String(ollamaPort));
+  await aya("add", `local port ${ollamaPort}`);
   const r = await aya();
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /^laptop {2}connected {4}local {2}GPU /m);
+  assert.match(r.stdout, /^local {2}connected {4}local {2}GPU /m);
   assert.match(r.stdout, /ollama 0\.34\.4 {2}no model loaded/);
   assert.throws(() => readFileSync(join(root, "ssh", "calls")), /ENOENT/);
 });
@@ -262,7 +274,7 @@ test("Ollama answers its version but not /api/ps: models unavailable, never \"no
   });
   await new Promise((r) => half.listen(0, "127.0.0.1", r));
   try {
-    await aya("add", "--local", "--port", String(half.address().port));
+    await aya("add", `local port ${half.address().port}`);
     const r = await aya();
     assert.match(r.stdout, /ollama 0\.34\.4 {2}models: unavailable \(\/api\/ps answered HTTP 500\)/);
     assert.doesNotMatch(r.stdout, /no model loaded/);
@@ -277,7 +289,7 @@ test("Ollama not answering on the local port: the machine is connected, Ollama i
   await new Promise((r) => closed.listen(0, "127.0.0.1", r));
   const port = closed.address().port;
   await new Promise((r) => closed.close(r));
-  await aya("add", "--local", "--port", String(port));
+  await aya("add", `local port ${port}`);
   const r = await aya();
   assert.match(r.stdout, /^local {2}connected {4}local/m);
   assert.match(r.stdout, new RegExp(`ollama not answering on port ${port}`));
@@ -286,7 +298,7 @@ test("Ollama not answering on the local port: the machine is connected, Ollama i
 test("two callers at once share one probe per machine", async () => {
   reset();
   fake.setMode("athena", `ok:${linuxFixture}`);
-  await aya("add", "--ssh", "athena");
+  await aya("add", "athena");
   rmSync(join(root, "ssh", "calls"));
   const [a, b] = await Promise.all([aya("--json"), aya("--json")]);
   assert.equal(a.status + b.status, 0);
@@ -296,7 +308,7 @@ test("two callers at once share one probe per machine", async () => {
 test("occupy and free: advisory, records who and when, shown in the status", async () => {
   reset();
   fake.setMode("athena", "down");
-  await aya("add", "--ssh", "athena");
+  await aya("add", "athena");
   const occupied = await aya("occupy", "athena", "run5 timed collection");
   assert.equal(occupied.status, 0, occupied.stderr);
   assert.match(occupied.stdout, /Advisory only: nothing is blocked/);
@@ -315,7 +327,7 @@ test("occupy and free: advisory, records who and when, shown in the status", asy
 
 test("remove: gone from the registry; an unknown id is refused", async () => {
   reset();
-  await aya("add", "--ssh", "athena", "--ssh", "mini");
+  await aya("add", "athena and mini");
   const r = await aya("remove", "athena");
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(registry().machines.map((m) => m.id), ["mini"]);
@@ -328,7 +340,7 @@ test("a registry from a newer Aya is read as an error and never rewritten", asyn
   reset();
   const newer = '{"version": 2, "machines": [], "leases": []}\n';
   writeFileSync(registryFile, newer);
-  const r = await aya("add", "--ssh", "athena");
+  const r = await aya("add", "athena");
   assert.equal(r.status, 1);
   assert.match(r.stderr, /has version 2, this Aya reads version 1/);
   assert.equal(readFileSync(registryFile, "utf8"), newer);
@@ -348,7 +360,7 @@ const hasExpect = spawnSync("sh", ["-c", "command -v expect"]).status === 0;
 test("on a terminal too, the CLI never asks: only Aya's dialog adds", { skip: !hasExpect && "expect is not installed" }, async () => {
   reset();
   dialog.answer = false;
-  const script = `set timeout 10; spawn ${cli} machines add --local; expect eof`;
+  const script = `set timeout 10; spawn ${cli} machines add local; expect eof`;
   const out = await new Promise((done, fail) => {
     const child = spawn("expect", ["-c", script], { env: { ...envWithoutAya(), AYA_SOCKET: socket, USER: "justi" } });
     let stdout = "";

@@ -423,52 +423,10 @@ export interface MachinesAnswer {
 }
 
 const USAGE =
-  'usage: aya machines [--json] | hosts [--json] | add "<sentence>" | add --ssh <alias|user@host>|--local [--id id] [--port n]... | remove <id> | occupy <id> "<purpose>" | free <id>';
+  'usage: aya machines [--json] | hosts [--json] | add "<sentence>" | remove <id> | occupy <id> "<purpose>" | free <id>';
 
-function notAKnownHost(value: string, targets: string[]): Error {
-  const known = targets.length ? targets.join(", ") : "there are none";
-  return new Error(`"${value}" is not a Host alias in ~/.ssh/config or a known host (${known}); add a Host block for it or give user@host, nothing was saved`);
-}
-
-function parseManualAdd(argv: string[], registry: Registry, targets: string[]): DraftMachine[] {
-  const drafted: DraftMachine[] = [];
-  for (let i = 0; i < argv.length; i++) {
-    const flag = argv[i];
-    const value = argv[i + 1];
-    if (flag === "--local") {
-      drafted.push({ id: "local", reach: "local", port: DEFAULT_OLLAMA_PORT });
-      continue;
-    }
-    if (value === undefined) throw new Error(`${flag} needs a value; ${USAGE}`);
-    i++;
-    if (flag === "--ssh") {
-      const known = targets.find((a) => a.toLowerCase() === value.toLowerCase());
-      const target = known ?? (value.includes("@") && isSshTarget(value) ? value : null);
-      if (!target) throw notAKnownHost(value, targets);
-      drafted.push({ id: idFor(target), reach: { ssh: target }, port: DEFAULT_OLLAMA_PORT });
-      continue;
-    }
-    const last = drafted.at(-1);
-    if (!last) throw new Error(`${flag} comes after --ssh <alias> or --local; ${USAGE}`);
-    if (flag === "--id") {
-      if (!ID_PATTERN.test(value)) throw new Error(`id "${value}" may use only a-z, 0-9 and -`);
-      last.id = value;
-    } else if (flag === "--port") {
-      const port = Number(value);
-      if (!/^\d+$/.test(value) || port < 1 || port > 65535) throw new Error(`port "${value}" is not a port number`);
-      last.port = port;
-    } else {
-      throw new Error(`unknown option ${flag}; ${USAGE}`);
-    }
-  }
-  if (drafted.length === 0) throw new Error(USAGE);
-  const ids = new Set(registry.machines.map((m) => m.id));
-  for (const m of drafted) {
-    if (ids.has(m.id)) throw new Error(`a machine "${m.id}" is already added; pick another with --id, nothing was saved`);
-    ids.add(m.id);
-  }
-  return drafted;
-}
+// One-sentence UX: the sentence and a suggestion's Add are the only ways in, so options get a pointer, not a parse.
+const ADD_TAKES_A_SENTENCE = 'aya machines add takes one sentence, not options: for example aya machines add "athena", or "this machine, port 11435"; nothing was added';
 
 const sameReach = (a: Reach, b: Reach) => (a === "local" ? b === "local" : b !== "local" && a.ssh === b.ssh);
 
@@ -513,9 +471,9 @@ export async function handleMachinesRequest(request: MachinesRequest, deps: Mach
     return { output: formatHosts(await knownHosts(deps), now()) };
   }
   if (sub === "add") {
+    if (rest.some((arg) => arg.startsWith("--"))) throw new Error(ADD_TAKES_A_SENTENCE);
     const registry = await loadRegistry(deps);
     const targets = (await knownHosts(deps, registry)).map((h) => h.target);
-    if (rest[0]?.startsWith("--")) return addMachines(parseManualAdd(rest, registry, targets), deps, pane, "", callerGone);
     const sentence = rest.join(" ").trim();
     if (!sentence) throw new Error(USAGE);
     const draft = draftFromSentence(sentence, targets, registry);

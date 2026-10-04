@@ -648,7 +648,7 @@ export function MachinesSettings() {
                 result={checks[s.target]}
                 adding={adding}
                 onCheck={() => void check(s.target)}
-                onAdd={() => void add(s.target === "local" ? ["add", "--local"] : ["add", "--ssh", s.target], s.target)}
+                onAdd={() => void add(["add", s.target], s.target)}
               />
             ))}
           </ul>

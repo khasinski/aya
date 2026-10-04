@@ -82,10 +82,8 @@ Commands:
   `Host` aliases from `~/.ssh/config` (following `Include`), remote project
   targets and added machines (marked "added").
 - `aya machines add "<sentence>"`: draft, probe, confirm in Aya (see Setup).
-- `aya machines add --ssh <alias|user@host> | --local [--id <id>] [--port <n>]`:
-  the manual form. `--ssh` takes a known host or `user@host`; a bare unknown
-  name or address is refused with the list of known hosts. It is confirmed
-  in Aya like a sentence.
+  There is no option form: `aya machines add --ssh athena` is refused with
+  a pointer to the sentence (`aya machines add "athena"`).
 - `aya machines remove <id>`.
 - `aya machines occupy <id> "<purpose>"` and `aya machines free <id>`:
   advisory occupancy. Aya records who and when and shows it to everyone.
@@ -176,20 +174,25 @@ Each step ships only after the one before it is used and the open question
 it depends on is answered.
 
 2. **Machines view with suggestions.** Built so far: Settings -> Machines
-   (added cards with Free / Mark in use / Check now / Remove, the sentence
-   field, Suggested with Check, Check all and Add) and the shared host store
-   (`electron/ssh-hosts.ts`) under Open project -> Remote host, over IPC to
-   the same functions as `aya machines`. Not built yet: the top-bar chip and
-   "Set up ssh". Planned: a top-bar chip and a panel over the
-   same status function, plus Settings -> Machines:
+   over IPC to the same functions as `aya machines`:
+   - a table with one row per added machine (status, GPU, VRAM, load,
+     RAM, hot model, in use); the row opens its details (state, GPU, CPU,
+     memory, Ollama, models, in use, and the host's usage and history),
+     and **More** shows Check now, Mark in use / Mark free and Remove;
+   - the sentence field and Suggested (Check, Check all, Add);
+   - the shared host store (`electron/ssh-hosts.ts`), whose hosts are
+     also the suggestions under Open project -> Remote host.
+   Not built yet: the top-bar chip and "Set up ssh". Planned: a top-bar
+   chip and a panel over the same status function, plus:
    - **Suggested machines.** Aya lists every Host alias in `~/.ssh/config`
      (with `Include`) that is not added yet, and `local`. Listing reads only
      the config file; it connects to nothing. A "Check" per host, or "Check
      all" on the user's click, runs the step 1 read-only probe with
      `BatchMode=yes` and a short timeout, and shows: reachable or why not,
      GPU, memory, Ollama and its models. Hosts with Ollama and a GPU come
-     first, unreachable ones last. "Add" saves a suggestion after the user
-     sees what it found; nothing is added on its own. Aya never probes
+     first, unreachable ones last. "Add" sends the host's exact target as
+     the sentence (`aya machines add "<target>"`): the same draft and the
+     same Add / Cancel dialog, nothing added on its own. Aya never probes
      hosts the user did not ask it to check, because a config can name
      servers the user does not want touched.
    - **A host that is not in the config yet.** "Set up ssh" asks for the

@@ -22,15 +22,15 @@ function setup(t, aliases = ["a1", "a2", "a3", "a4", "a5", "a6"]) {
 
 test("six adds at once: all six are saved", async (t) => {
   const { run, ids } = setup(t);
-  await Promise.all(["a1", "a2", "a3", "a4", "a5", "a6"].map((a) => run("add", "--ssh", a)));
+  await Promise.all(["a1", "a2", "a3", "a4", "a5", "a6"].map((a) => run("add", a)));
   assert.deepEqual(ids().sort(), ["a1", "a2", "a3", "a4", "a5", "a6"]);
 });
 
 test("add, remove and occupy at once: the removed machine stays removed, the others keep their changes", async (t) => {
   const { run, ids, file } = setup(t);
-  await run("add", "--ssh", "a1");
-  await run("add", "--ssh", "a2");
-  await Promise.all([run("remove", "a1"), run("add", "--ssh", "a3"), run("occupy", "a2", "timed run")]);
+  await run("add", "a1");
+  await run("add", "a2");
+  await Promise.all([run("remove", "a1"), run("add", "a3"), run("occupy", "a2", "timed run")]);
   assert.deepEqual(ids().sort(), ["a2", "a3"]);
   assert.equal(JSON.parse(readFileSync(file, "utf8")).machines.find((m) => m.id === "a2").occupancy.purpose, "timed run");
 });
@@ -110,7 +110,7 @@ const malformed = [
   { name: "a newer version", text: '{"version":2,"machines":[]}', error: /has version 2, this Aya reads version 1/ },
 ];
 for (const c of malformed) {
-  for (const argv of [["add", "--ssh", "a1"], ["remove", "a"], ["occupy", "a", "x"], ["free", "a"]]) {
+  for (const argv of [["add", "a1"], ["remove", "a"], ["occupy", "a", "x"], ["free", "a"]]) {
     test(`a registry with ${c.name}: ${argv[0]} is refused and the file is left as it is`, async (t) => {
       const { deps, file, run } = setup(t);
       mkdirSync(deps.ayaHome, { recursive: true });
@@ -123,11 +123,11 @@ for (const c of malformed) {
 
 // Registration is the user's: every add waits for Aya's own dialog, never for the CLI caller.
 const confirmCases = [
-  { argv: ["add", "--ssh", "a1"], answer: true, drafted: ["a1"], saved: ["a1"] },
-  { argv: ["add", "--ssh", "a1"], answer: false, drafted: ["a1"], saved: null, out: /Not added: cancelled in Aya/ },
+  { argv: ["add", "a1"], answer: true, drafted: ["a1"], saved: ["a1"] },
+  { argv: ["add", "a1"], answer: false, drafted: ["a1"], saved: null, out: /Not added: cancelled in Aya/ },
   { argv: ["add", "a1 and this machine"], answer: true, drafted: ["a1", "local"], saved: ["a1", "local"] },
   { argv: ["add", "a1 and this machine"], answer: false, drafted: ["a1", "local"], saved: null, out: /Not added/ },
-  { argv: ["add", "--local", "--id", "laptop"], answer: true, drafted: ["laptop"], saved: ["laptop"] },
+  { argv: ["add", "local"], answer: true, drafted: ["local"], saved: ["local"] },
 ];
 for (const c of confirmCases) {
   test(`${c.argv.join(" ")}: the dialog says ${c.answer ? "Add" : "Cancel"}`, async (t) => {
@@ -152,21 +152,53 @@ for (const c of confirmCases) {
 test("without Aya's dialog (no confirmAdd) an add is refused and nothing is saved", async (t) => {
   const { deps, file, run } = setup(t);
   delete deps.confirmAdd;
-  await assert.rejects(run("add", "--ssh", "a1"), /needs the user's yes in Aya/);
+  await assert.rejects(run("add", "a1"), /needs the user's yes in Aya/);
   assert.throws(() => readFileSync(file), /ENOENT/);
 });
 
 // A bare unknown name is likely a typo; user@host names its user and host, as a remote project's target does.
-for (const target of ["203.0.113.10", "not-in-config", "@a1", "user@-a1", "user@a1;id"]) {
-  test(`--ssh ${target}: not a known host, refused with the list, no dialog`, async (t) => {
+for (const target of ["203.0.113.10", "not-in-config", "@a1", "user@-a1"]) {
+  test(`add "${target}": not a known host, nothing drafted, no dialog`, async (t) => {
     const { deps, file, run } = setup(t, ["a1", "a2"]);
     let asked = 0;
     deps.confirmAdd = async () => (asked++, true);
-    await assert.rejects(run("add", "--ssh", target), /not a Host alias in ~\/\.ssh\/config or a known host \(a1, a2\)/);
+    const answer = await run("add", target);
+    assert.match(answer.output, /^Nothing to add from that sentence\./);
     assert.equal(asked, 0);
     assert.throws(() => readFileSync(file), /ENOENT/);
   });
 }
+
+// One-sentence UX: options are refused with a pointer to the sentence, before the registry, a probe or the dialog.
+const optionForms = [["add", "--ssh", "a1"], ["add", "--local"], ["add", "--ssh"], ["add", "--local", "--id", "laptop"], ["add", "a1", "--port", "1"], ["add", "--"]];
+for (const argv of optionForms) {
+  test(`${argv.join(" ")}: refused with the sentence form, nothing probed, asked or saved`, async (t) => {
+    const { deps, file, run } = setup(t, ["a1", "a2"]);
+    let asked = 0;
+    let probed = 0;
+    deps.confirmAdd = async () => (asked++, true);
+    deps.probe = async () => (probed++, { reachable: true });
+    await assert.rejects(run(...argv), /^Error: aya machines add takes one sentence, not options: for example aya machines add "athena", or "this machine, port 11435"; nothing was added$/);
+    assert.deepEqual([asked, probed], [0, 0]);
+    assert.throws(() => readFileSync(file), /ENOENT/);
+  });
+}
+
+// Settings' Suggested Add sends ["add", <target>]: every kind of suggestion must draft exactly that host through the sentence path.
+const { suggestions } = await import("../dist-test/machines-view.js");
+const { knownHosts } = await import("../dist-electron/machines.js");
+test("each Suggested target, sent as the sentence, drafts exactly its own host, and local drafts this machine", async (t) => {
+  const { deps, run } = setup(t, ["a1", "web.lan", "a_b", "port"]);
+  deps.listRemoteProjects = async () => [{ name: "web", sshTarget: "me@devbox" }];
+  const rows = suggestions(await knownHosts(deps), []);
+  assert.deepEqual(rows.map((s) => s.target).sort(), ["a1", "a_b", "local", "me@devbox", "port", "web.lan"]);
+  for (const s of rows) {
+    let asked;
+    deps.confirmAdd = async (ask) => ((asked = ask), false);
+    await run("add", s.target);
+    assert.deepEqual(asked?.machines.map((m) => m.reach), [s.target === "local" ? "local" : { ssh: s.target }], s.target);
+  }
+});
 
 // Hosts a remote project reaches are known too: a bare name is taken once a remote project uses it.
 const acceptedTargets = [
@@ -176,12 +208,12 @@ const acceptedTargets = [
   { target: "A1", remote: [], reach: { ssh: "a1" }, id: "a1" },
 ];
 for (const c of acceptedTargets) {
-  test(`--ssh ${c.target} with remote projects ${JSON.stringify(c.remote)}: asked in Aya, saved as ${JSON.stringify(c.reach)}`, async (t) => {
+  test(`add "${c.target}" with remote projects ${JSON.stringify(c.remote)}: asked in Aya, saved as ${JSON.stringify(c.reach)}`, async (t) => {
     const { deps, file, run } = setup(t, ["a1", "a2"]);
     deps.listRemoteProjects = async () => c.remote;
     let asked = 0;
     deps.confirmAdd = async () => (asked++, true);
-    await run("add", "--ssh", c.target);
+    await run("add", c.target);
     assert.equal(asked, 1);
     const [m] = JSON.parse(readFileSync(file, "utf8")).machines;
     assert.deepEqual([m.id, m.reach], [c.id, c.reach]);
@@ -191,10 +223,10 @@ for (const c of acceptedTargets) {
 test("a machine added by someone else while the dialog was open is not added twice", async (t) => {
   const { deps, run, ids } = setup(t);
   deps.confirmAdd = async () => {
-    await handleMachinesRequest({ argv: ["add", "--ssh", "a1"], tty: false }, { ...deps, confirmAdd: async () => true });
+    await handleMachinesRequest({ argv: ["add", "a1"], tty: false }, { ...deps, confirmAdd: async () => true });
     return true;
   };
-  await assert.rejects(run("add", "--ssh", "a1"), /already added/);
+  await assert.rejects(run("add", "a1"), /already added/);
   assert.deepEqual(ids(), ["a1"]);
 });
 

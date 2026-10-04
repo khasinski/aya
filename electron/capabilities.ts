@@ -218,14 +218,8 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     notes: [
       "Only the user's click in Aya adds a machine; there is no flag or answer that adds one from the command line.",
       "A word like laptop is asked about, never taken as this machine.",
+      "\"port N\" right after a machine sets Ollama's port on it (11434 by default); options like --ssh are refused, the sentence is the only form.",
     ],
-  },
-  {
-    command: "machines add --ssh",
-    usage: "aya machines add --ssh alias|user@host|--local [--id id] [--port n]...",
-    summary:
-      "Propose machines as given: --ssh takes a known host (aya machines hosts) or user@host, --local this machine; --id and --port apply to the machine before them, --port is Ollama's port on that host (11434 by default). The user confirms in Aya.",
-    example: "aya machines add --ssh athena --local --id laptop",
   },
   {
     command: "machines remove",

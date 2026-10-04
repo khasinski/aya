@@ -82,7 +82,8 @@ test.describe("empty", () => {
 
     await answerAddDialog(app, "Cancel");
     await panel.getByRole("button", { name: "Add gpu-box" }).click();
-    await expect(panel.getByTestId("machines-answer")).toHaveText("Not added: cancelled in Aya.");
+    // Add sends the host's target as the sentence, so the answer is the sentence's: its draft, then the dialog's word.
+    await expect(panel.getByTestId("machines-answer")).toHaveText("Draft:\n  gpu-box  ssh:gpu-box  ollama port 11434\nNot added: cancelled in Aya.");
     expect(await asks(app)).toHaveLength(1);
     expect(existsSync(registry)).toBe(false);
     await expect(panel.getByTestId("machine-row")).toHaveCount(0);
@@ -101,6 +102,21 @@ test.describe("empty", () => {
     await expect(panel.getByTestId("machines-empty")).toHaveCount(0);
     expect(JSON.parse(readFileSync(registry, "utf8")).machines.map((m: { id: string }) => m.id)).toEqual(["gpu-box"]);
     await expect(panel.getByTestId("machine-suggestion").locator(".aya-machine-target")).toHaveText(["mini-lab", "old-server", "me@devbox", "This machine"]);
+  });
+
+  // One path for every kind of suggestion: a user@host target and this machine reach the same dialog as the sentence.
+  test("Add on a user@host suggestion and on This machine: the dialog asks for exactly that host", async ({ app, window, seeded }) => {
+    const panel = await openMachines(window, app);
+    await answerAddDialog(app, "Add");
+    await panel.getByRole("button", { name: "Add me@devbox" }).click();
+    await expect(panel.getByTestId("machines-answer")).toContainText("added devbox  ssh:me@devbox  ollama port 11434");
+    expect(JSON.parse(readFileSync(join(seeded.ayaHome, "machines.json"), "utf8")).machines.map((m: { reach: unknown }) => m.reach)).toEqual([{ ssh: "me@devbox" }]);
+
+    await answerAddDialog(app, "Cancel");
+    await panel.getByRole("button", { name: "Add This machine" }).click();
+    await expect(panel.getByTestId("machines-answer")).toHaveText(/^Draft:\n {2}local {2}local {2}ollama port 11434\nNot added: cancelled in Aya\.$/);
+    const [ask] = await asks(app);
+    expect(ask).toContain("Add local to Aya's machines?");
   });
 
   test("the sentence goes through the same add: drafted, asked in Aya, unclear words named", async ({ app, window, seeded }) => {

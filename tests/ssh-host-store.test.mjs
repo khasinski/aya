@@ -142,7 +142,7 @@ test("add, Check and remove through aya machines: the host stays saved and the r
   const down = { reachable: false, checkedAt: at(0).toISOString(), error: "ssh: connect to host athena port 22: Operation timed out", probeMs: 5, cpus: null, load1: null, memUsedBytes: null, memTotalBytes: null, gpus: [], ollama: { up: false, version: null, loaded: null, modelsError: null } };
   let clock = 0;
   const deps = { ayaHome, userHome, origin: "cli", probe: async () => down, confirmAdd: async () => true, now: () => at(clock) };
-  await machines.handleMachinesRequest({ argv: ["add", "--ssh", "athena"] }, deps);
+  await machines.handleMachinesRequest({ argv: ["add", "athena"] }, deps);
   clock = 3;
   await machines.checkHost({ ssh: "athena" }, deps);
   clock = 7;
