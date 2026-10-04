@@ -91,11 +91,12 @@ if (codexPaste) {
       redraw();
       fs.appendFileSync(log, "DIALOG-ANSWERED\n");
     }
-    if (["lead-answers", "lead-waits", "lead-pauses", "lead-idle-hook", "lead-waits-dialog"].includes(mode) && me === "tab-left" && String(chunk).includes("no progress since") && !(mode === "lead-waits-dialog" && askedOnce)) {
+    if (["lead-answers", "lead-waits", "lead-waits-on", "lead-pauses", "lead-idle-hook", "lead-waits-dialog"].includes(mode) && me === "tab-left" && String(chunk).includes("no progress since") && !(mode === "lead-waits-dialog" && askedOnce)) {
       askedOnce = true;
       const args = {
         "lead-answers": ["team", "send", "implementer", "decision: ship the retry, I reran the timer test and it is green"],
         "lead-waits": ["status", "waiting", "need the staging password"],
+        "lead-waits-on": ["status", "waiting", "--on", "implementer", "need the parser result"],
         "lead-pauses": ["team", "pause", "no lower complexity is possible"],
         "lead-idle-hook": ["status", "waiting", "Waiting for your next prompt"],
         "lead-waits-dialog": ["status", "waiting", "need the staging password"],

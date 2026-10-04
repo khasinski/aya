@@ -315,6 +315,7 @@ aya focus
 aya notify --title "Aya" "Needs approval"
 aya status set "Running tests"
 aya status waiting "Needs approval"
+aya status waiting --on tester "Answer on the adapter test"   # in a team: waits on a teammate, not on you
 aya status done "Build passed"
 aya status error "Tests failed"
 aya status clear

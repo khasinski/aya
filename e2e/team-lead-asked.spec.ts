@@ -51,6 +51,23 @@ test.describe("a lead that asked the user", () => {
   });
 });
 
+test.describe("a lead waiting on a teammate (aya status waiting --on)", () => {
+  test.use(seed("lead-waits-on"));
+
+  test("is not waiting for you: its row names the teammate, no attention, and the rounds go on", async ({ window, seeded }) => {
+    const dialog = await openTeams(window);
+    const card = dialog.getByTestId("team-ux-review");
+    const lead = () => teamLog(seeded.projectDir)("tab-left");
+    await expect.poll(() => lead(), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toContain("ANSWERED lead-waits-on");
+    await expect(card.getByLabel("tester status")).toHaveText(/waiting on implementer since \d\d:\d\d/);
+    await expect(card.getByLabel("ux-review lead waiting")).toHaveCount(0);
+    await expect(window.locator(".aya-status-rail-row--waiting")).toHaveCount(0);
+    await expect.poll(() => countMatches(lead(), /Round \d+: no progress since/g), { timeout: TEAM_CLOCK_TIMEOUT_MS }).toBeGreaterThanOrEqual(2);
+    expect(lead()).toMatch(/Said they wait \(aya status\): tester on implementer since/);
+    expect(skipLines(seeded.ayaHome)).toEqual([]);
+  });
+});
+
 test.describe("a lead that asked the user, then shows a permission dialog", () => {
   test.use(seed("lead-waits-dialog"));
 

@@ -139,6 +139,19 @@ A 22-round reviewer/implementer UX session hit:
   when. A lead that cannot unblock the work runs `aya status waiting "..."`, the
   card says "waiting for you" and Aya stops asking until something moves.
 
+- **Waiting on a teammate is not waiting on you**: a role that waits on another
+  role runs `aya status waiting --on <role> "..."` (the role note and `aya team
+  whoami` tell it so). Its row says "waiting on <role> since HH:MM"; no red dot, no
+  attention count, no notification, and a lead waiting on a teammate still gets
+  its rounds. The role must be one of the team's other roles (anything else is
+  refused with the roles it could name; outside a team `--on` is refused). It ends
+  when that role's message is typed into the pane, or when the agent sets another
+  status; Aya's hooks do not end it. Plain `aya status waiting` stays the question
+  to the user. The lead's round lists both: a question under "Needs action"
+  ("asked the user ... (only the user)"), a wait on a teammate under "Said they
+  wait on a teammate"; neither role counts as idle. A wait on a teammate lives in
+  memory only: an Aya restart forgets it.
+
 - **Define team** in the repo, in `.aya/teams/<name>.md`: roles,
   responsibilities, what each role must not do, who it sends to and what
   it sends there (`Sends to: implementer (findings to fix), tester`), a

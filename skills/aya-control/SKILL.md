@@ -11,6 +11,7 @@ Use Aya's CLI for user-visible coordination while working in an Aya terminal.
 
 - `aya status set "Running tests"`: show active status for this terminal.
 - `aya status waiting "Needs approval"`: mark this terminal as waiting for the user.
+- `aya status waiting --on tester "Answer on the adapter test"`: in a team, mark this role as waiting on a teammate; the user is not asked.
 - `aya status done "Build passed"`: mark this terminal as done.
 - `aya status error "Tests failed"`: mark this terminal as errored.
 - `aya status clear`: clear the agent-provided status.
