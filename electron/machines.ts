@@ -4,6 +4,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
+import { oneAtATime } from "./keyed-queue";
 import { probeMachine, SSH_ALIAS_PATTERN, type MachineStatus, type Reach } from "./machines-probe";
 import { singleFlight } from "./single-flight";
 
@@ -18,9 +19,9 @@ const PURPOSE_MAX_CHARS = 200;
 const LOCAL_WORDS = new Set(["local"]);
 const LOCAL_PHRASES = [/\bthis machine\b/i];
 const LOCAL_PHRASE_WORD = "this-machine";
-/** Words people use for a machine that say nothing about how to reach it: asked, never taken as local. */
 /** Words that start a clause like a host name would ("it is ..."), never a host. */
 const NOT_HOSTS = new Set(["it", "this", "that", "there", "which", "ollama", "ssh", "and", "also", "my", "the"]);
+/** Words people use for a machine that say nothing about how to reach it: asked, never taken as local. */
 const AMBIGUOUS_WORDS = new Set(["laptop", "notebook", "mac", "macbook", "imac", "desktop", "workstation", "pc", "computer"]);
 
 export interface Occupancy {
@@ -54,23 +55,76 @@ export interface MachinesDeps {
 
 const registryFile = (deps: MachinesDeps) => path.join(deps.ayaHome, MACHINES_FILE_NAME);
 
-export async function loadRegistry(deps: MachinesDeps): Promise<Registry> {
-  let text: string;
-  try {
-    text = await fs.readFile(registryFile(deps), "utf8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { version: MACHINES_VERSION, machines: [] };
-    throw err;
+/** Why `value` is not a registry this Aya reads, or null; a file that fails is never rewritten. */
+function registryProblem(value: unknown): string | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return "it is not a JSON object";
+  const r = value as Record<string, unknown>;
+  if (!Array.isArray(r.machines)) return "machines is not a list";
+  const ids = new Set<string>();
+  for (const [i, m] of (r.machines as unknown[]).entries()) {
+    const at = `machine ${i + 1}`;
+    if (typeof m !== "object" || m === null) return `${at} is not an object`;
+    const machine = m as Record<string, unknown>;
+    if (typeof machine.id !== "string" || !ID_PATTERN.test(machine.id)) return `${at}: id must use a-z, 0-9 and -`;
+    if (ids.has(machine.id)) return `${at}: id "${machine.id}" is used twice`;
+    ids.add(machine.id);
+    if (typeof machine.label !== "string") return `${at}: label is not text`;
+    const reach = machine.reach as { ssh?: unknown } | string | undefined;
+    const reachOk = reach === "local" || (typeof reach === "object" && reach !== null && typeof reach.ssh === "string" && SSH_ALIAS_PATTERN.test(reach.ssh));
+    if (!reachOk) return `${at}: reach must be "local" or {"ssh": "<alias>"}`;
+    const port = (machine.ollama as { port?: unknown } | undefined)?.port;
+    if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) return `${at}: ollama.port is not a port number`;
+    const o = machine.occupancy as Record<string, unknown> | undefined;
+    if (o !== undefined && (typeof o !== "object" || o === null || typeof o.by !== "string" || typeof o.purpose !== "string" || typeof o.since !== "string")) {
+      return `${at}: occupancy needs by, purpose and since`;
+    }
   }
-  const parsed = JSON.parse(text) as Partial<Registry>;
-  if (parsed.version !== MACHINES_VERSION) {
-    throw new Error(`${registryFile(deps)} has version ${parsed.version}, this Aya reads version ${MACHINES_VERSION}; it was left as it is`);
-  }
-  return { version: MACHINES_VERSION, machines: Array.isArray(parsed.machines) ? parsed.machines : [] };
+  return null;
 }
 
-async function saveRegistry(deps: MachinesDeps, registry: Registry): Promise<void> {
-  await writeFileAtomic(registryFile(deps), `${JSON.stringify(registry, null, 2)}\n`, MACHINES_FILE_MODE);
+async function readRegistryText(deps: MachinesDeps): Promise<string | null> {
+  try {
+    return await fs.readFile(registryFile(deps), "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+function parseRegistry(text: string | null, file: string): Registry {
+  if (text === null) return { version: MACHINES_VERSION, machines: [] };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`${file} is not JSON; nothing was changed, fix or move it`);
+  }
+  const version = (parsed as { version?: unknown } | null)?.version;
+  if (version !== MACHINES_VERSION) {
+    throw new Error(`${file} has version ${version}, this Aya reads version ${MACHINES_VERSION}; it was left as it is`);
+  }
+  const problem = registryProblem(parsed);
+  if (problem) throw new Error(`${file} is not a registry this Aya can read (${problem}); nothing was changed, fix or move it`);
+  return { version: MACHINES_VERSION, machines: (parsed as Registry).machines };
+}
+
+export async function loadRegistry(deps: MachinesDeps): Promise<Registry> {
+  return parseRegistry(await readRegistryText(deps), registryFile(deps));
+}
+
+const registryQueue = oneAtATime();
+
+/** One registry change at a time: read, change, and write only if the file is still what was read. */
+export function mutateRegistry<T>(deps: MachinesDeps, change: (registry: Registry) => T | Promise<T>): Promise<T> {
+  const file = registryFile(deps);
+  return registryQueue(file, async () => {
+    const before = await readRegistryText(deps);
+    const registry = parseRegistry(before, file);
+    const result = await change(registry);
+    if ((await readRegistryText(deps)) !== before) throw new Error(`${file} changed while this command ran; nothing was saved, run it again`);
+    await writeFileAtomic(file, `${JSON.stringify(registry, null, 2)}\n`, MACHINES_FILE_MODE);
+    return result;
+  });
 }
 
 // ---- ~/.ssh/config ----
@@ -377,16 +431,17 @@ export async function handleMachinesRequest(request: MachinesRequest, deps: Mach
     return { output: aliases.map((a) => `${a}${added.has(a) ? "  (added)" : ""}\n`).join("") };
   }
   if (sub === "add") {
-    const registry = await loadRegistry(deps);
     if (rest[0]?.startsWith("--")) {
-      const drafted = parseManualAdd(rest, registry);
-      registry.machines.push(...drafted.map((m) => ({ id: m.id, label: m.id, reach: m.reach, ollama: { port: m.port } })));
-      await saveRegistry(deps, registry);
+      const drafted = await mutateRegistry(deps, (registry) => {
+        const machines = parseManualAdd(rest, registry);
+        registry.machines.push(...machines.map((m) => ({ id: m.id, label: m.id, reach: m.reach, ollama: { port: m.port } })));
+        return machines;
+      });
       return { output: drafted.map((m) => `added ${m.id}  ${reachText(m.reach)}  ollama port ${m.port}\n`).join("") };
     }
     const sentence = rest.join(" ").trim();
     if (!sentence) throw new Error(USAGE);
-    const draft = draftFromSentence(sentence, await sshHostAliases(deps.userHome), registry);
+    const draft = draftFromSentence(sentence, await sshHostAliases(deps.userHome), await loadRegistry(deps));
     const output = formatDraft(draft);
     if (draft.machines.length === 0) return { output };
     const argv = ["add", ...addArgs(draft.machines)];
@@ -395,29 +450,33 @@ export async function handleMachinesRequest(request: MachinesRequest, deps: Mach
   }
   if (sub === "remove") {
     if (rest.length !== 1) throw new Error(USAGE);
-    const registry = await loadRegistry(deps);
-    const machine = findMachine(registry, rest[0]);
-    registry.machines = registry.machines.filter((m) => m !== machine);
-    await saveRegistry(deps, registry);
-    return { output: `removed ${machine.id}\n` };
+    const id = await mutateRegistry(deps, (registry) => {
+      const machine = findMachine(registry, rest[0]);
+      registry.machines = registry.machines.filter((m) => m !== machine);
+      return machine.id;
+    });
+    return { output: `removed ${id}\n` };
   }
-  if (sub === "occupy" || sub === "free") {
-    const registry = await loadRegistry(deps);
-    const machine = findMachine(registry, rest[0]);
-    const previous = machine.occupancy;
-    if (sub === "free") {
-      if (rest.length !== 1) throw new Error(USAGE);
+  if (sub === "free") {
+    if (rest.length !== 1) throw new Error(USAGE);
+    return mutateRegistry(deps, (registry) => {
+      const machine = findMachine(registry, rest[0]);
+      const previous = machine.occupancy;
       delete machine.occupancy;
-      await saveRegistry(deps, registry);
       return { output: previous ? `${machine.id} is free (was: ${previous.purpose}, by ${previous.by})\n` : `${machine.id} was not occupied\n` };
-    }
+    });
+  }
+  if (sub === "occupy") {
     const purpose = rest.slice(1).join(" ").trim();
-    if (!purpose) throw new Error(`say what it is for: aya machines occupy ${machine.id} "<purpose>"`);
+    if (!purpose) throw new Error(`say what it is for: aya machines occupy ${rest[0] ?? "<id>"} "<purpose>"`);
     if (purpose.length > PURPOSE_MAX_CHARS) throw new Error(`the purpose is ${purpose.length} characters, the most is ${PURPOSE_MAX_CHARS}`);
-    machine.occupancy = { by: request.user || "unknown", ...(pane ? { pane } : {}), purpose, since: now().toISOString() };
-    await saveRegistry(deps, registry);
-    const was = previous ? ` (replaces: ${previous.purpose}, by ${previous.by})` : "";
-    return { output: `${machine.id} occupied: ${purpose}${was}. Advisory only: nothing is blocked.\n` };
+    return mutateRegistry(deps, (registry) => {
+      const machine = findMachine(registry, rest[0]);
+      const previous = machine.occupancy;
+      machine.occupancy = { by: request.user || "unknown", ...(pane ? { pane } : {}), purpose, since: now().toISOString() };
+      const was = previous ? ` (replaces: ${previous.purpose}, by ${previous.by})` : "";
+      return { output: `${machine.id} occupied: ${purpose}${was}. Advisory only: nothing is blocked.\n` };
+    });
   }
   throw new Error(USAGE);
 }
