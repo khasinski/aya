@@ -725,6 +725,8 @@ export interface AyaApi {
    *  session transcripts for the tab's cwd (history, not terminal output). */
   harnessSearch(req: HarnessSearchRequest): Promise<HarnessSearchHit[]>;
   restartPtyHost(): Promise<void>;
+  /** Asks first when the pane shows background tasks or monitors a restart stops; false: the user kept it. */
+  confirmPaneRestart(ptyId: string): Promise<boolean>;
   onPtyEvent(handler: (event: PtyEvent) => void): () => void;
 
   listProjects(): Promise<ProjectConfig[]>;

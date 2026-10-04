@@ -3216,6 +3216,8 @@ export function App() {
     // yet (exit event still in flight) can still hit that window; the gate
     // covers every state the user can actually observe when clicking.
     const maybeAlive = t.exitCode === null && !t.stopped;
+    // A live pane's background tasks and monitors stop with it: asked first when its screen shows some.
+    if (maybeAlive && !(await window.aya.confirmPaneRestart(id).catch(() => true))) return;
     if (maybeAlive) {
       // Await the kill so the main-side ptys map is empty by the time the
       // new spawn IPC arrives — otherwise spawnPty treats it as a re-mount

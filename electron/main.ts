@@ -95,7 +95,8 @@ import { reachedAyaPanes } from "./reached-aya";
 import { debugPane, watchDebugSwitch } from "./team-debug";
 import { userShell } from "./shell";
 import { registerTeamIpc } from "./team-ipc";
-import { askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, teamPaneDeps, type PaneHost } from "./team-panes";
+import { askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, presetAgent, teamPaneDeps, type PaneHost } from "./team-panes";
+import { backgroundWorkOf, confirmRestart, noteRelaunch, type RelaunchDeps } from "./relaunch-notes";
 import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
@@ -151,7 +152,7 @@ import {
 import { scanHarnesses } from "./harnesses";
 import { isInternalNavigationUrl, parseExternalUrl } from "./navigation";
 import { createWorktree, removeWorktree } from "./git";
-import { listPresets, savePresets } from "./presets";
+import { listPresets, savePresets, type AgentKind } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
 import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath, readClaudeUsageAccounts } from "./usage";
 import {
@@ -309,6 +310,36 @@ const teamDeps: TeamControlDeps = {
   treeState: workingTreeState,
   starting: () => !bootProjectsLoaded,
 };
+/** A pane's rendered text, as `aya pane read` gets it; null when it is not running. */
+async function paneScreen(terminalId: string): Promise<string | null> {
+  const size = await ptyHost.getSize(terminalId);
+  return size ? paneReadText(await ptyHost.getBuffer(terminalId), size) : null;
+}
+/** The agent a pane runs, from its tab's preset. */
+async function paneAgent(terminalId: string): Promise<AgentKind | undefined> {
+  const tab = (await listProjects()).flatMap((p) => p.tabs).find((t) => t.id === terminalId);
+  const preset = tab && (await listPresets()).find((p) => p.id === tab.presetId);
+  return preset ? presetAgent(preset) : undefined;
+}
+// Restarts that stop the panes' background tasks and monitors warn first, and the resumed team agents are told.
+const relaunchDeps: RelaunchDeps = {
+  file: path.join(AYA_HOME, "relaunch-notes.json"),
+  panes: async (ids) => (await listProjects()).flatMap((p) => p.tabs).filter((t) => !ids || ids.includes(t.id)).map(({ id, name }) => ({ id, name })),
+  agentOf: paneAgent,
+  screen: paneScreen,
+  pid: (terminalId) => ptyHost.getPid(terminalId),
+  command: async (terminalId) => {
+    const launch = await ptyHost.launch(terminalId);
+    return typeof launch === "object" && launch !== null ? launch.command : null;
+  },
+};
+/** A native yes/no before a restart that stops background work; `yes` names the restart. */
+async function askRestart(yes: string, text: string): Promise<boolean> {
+  const options = { type: "warning" as const, buttons: [yes, "Cancel"], defaultId: 1, cancelId: 1, message: "Background tasks will stop", detail: text };
+  const parent = focusedAyaWindow();
+  return (await (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options))).response === 0;
+}
+const confirmLosingWork = (action: string, yes: string, ids?: readonly string[]) => confirmRestart(relaunchDeps, action, (text) => askRestart(yes, text), ids);
 const paneOpens = new RendererRequests();
 // aya team open and the Teams window's Apply panes open panes through this.
 const teamPaneHost: PaneHost = {
@@ -1611,6 +1642,8 @@ function installApplicationMenu(): void {
     id: "restart-aya",
     label: `Restart ${WINDOW_TITLE}`,
     click: async () => {
+      // Only a stale host is restarted with Aya; a current one keeps its panes running.
+      if (staleHostDetected && !(await confirmLosingWork(`Restarting ${WINDOW_TITLE}`, "Restart").catch(() => true))) return;
       try {
         if (staleHostDetected) await ptyHost.restart();
       } catch {
@@ -2066,6 +2099,8 @@ async function handleStaleHost(): Promise<void> {
       ({ identity } = await ptyHost.hostStatus());
     }
     if (!isHostStale(expected, identity)) return;
+    // Past asking (the update is in): the panes' background work is read while the old host still shows it.
+    await noteRelaunch(relaunchDeps, await backgroundWorkOf(relaunchDeps)).catch(() => {});
     await ptyHost.restart();
     // restart() swallows request errors by design (an old host may not honor
     // "shutdown"), so returning is NOT proof the host died. Verify: re-probe the
@@ -2131,6 +2166,7 @@ function registerIpc(): TeamRunner {
     team: teamDeps,
     paneHost: teamPaneHost,
     intelligenceChat,
+    relaunch: relaunchDeps,
   });
   ipcMain.handle("teams:panes-opened", (_e, requestId: unknown, error: unknown) =>
     paneOpens.answer(requireString(requestId, "teams:panes-opened.requestId"), error),
@@ -2190,6 +2226,11 @@ function registerIpc(): TeamRunner {
         requirePositiveInt(rows, "pty:resize.rows"),
       ),
   );
+  ipcMain.handle("pty:confirm-restart", async (_e, ptyId: unknown) => {
+    const id = requireString(ptyId, "pty:confirm-restart.ptyId");
+    const name = (await relaunchDeps.panes([id]))[0]?.name ?? "this pane";
+    return confirmLosingWork(`Restarting ${name}`, "Restart", [id]);
+  });
   ipcMain.handle("pty:kill", async (_e, ptyId: unknown) => {
     const id = requireString(ptyId, "pty:kill.ptyId");
     await removePaneBrief(AYA_HOME, id).catch(() => {});
@@ -2237,6 +2278,8 @@ function registerIpc(): TeamRunner {
     });
   });
   ipcMain.handle("pty-host:restart", async () => {
+    // Thrown, not returned: the window then leaves the panes as they are.
+    if (!(await confirmLosingWork("Restarting the PTY host", "Restart"))) throw new Error("restart cancelled");
     await ptyHost.restart();
     // Clear only on success: if restart() throws, the stale state is still
     // true and the red icon must stay so the user can retry.
@@ -2679,6 +2722,9 @@ function registerIpc(): TeamRunner {
     // One ShipIt at a time (#78): a double-click used to be able to fire two
     // quitAndInstall handoffs, and overlapping installs are a suspected cause
     // of the silent rollback.
+    if (updateInstalling) return;
+    // An update replaces the PTY host, so every pane restarts.
+    if (!(await confirmLosingWork("Restarting to update", "Restart to update"))) return;
     if (updateInstalling) return;
     updateInstalling = true;
     try {

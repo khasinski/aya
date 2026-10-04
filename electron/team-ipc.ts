@@ -8,6 +8,7 @@ import { draftRole, ROLE_DRAFT_CHAT, type Chat } from "./team-draft";
 import { projectBySlug } from "./team-files";
 import { assignRoleLocked, openTeamPanes, presetChoices, releasePaneLocked, teamPaneDeps, type PaneHost } from "./team-panes";
 import { assertTeamTextFits, panePick } from "./control-protocol";
+import { deliverRelaunchNotes, type RelaunchDeps } from "./relaunch-notes";
 import { TeamRunner } from "./team-runner";
 import type { ProjectConfig } from "./types";
 import { requireString, validateTeamDefinition } from "./validation";
@@ -22,14 +23,28 @@ export interface TeamIpcDeps {
   team: TeamControlDeps;
   paneHost: PaneHost;
   intelligenceChat: (config: unknown, opts: ChatOptions) => Chat;
+  /** Panes Aya restarted while they ran background work: told once they come back resumed. */
+  relaunch?: RelaunchDeps;
 }
 
 export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
   const { ipcMain, team: teamDeps } = deps;
   const { teamHome } = teamDeps;
   const teamRunner = new TeamRunner(teamDeps);
+  const { relaunch } = deps;
+  // One pass at a time: two would both type a note before either drops it.
+  let relaunching: Promise<unknown> | null = null;
+  const tellRelaunched = () => {
+    if (!relaunch || relaunching) return;
+    relaunching = deliverRelaunchNotes(teamDeps, relaunch)
+      .catch((err) => console.warn("[aya] relaunch notes not typed:", err))
+      .finally(() => (relaunching = null));
+  };
   const redelivery = setInterval(
-    () => void teamRunner.redeliverWaiting().catch((err) => console.warn("[aya] held team messages not retried:", err)),
+    () => {
+      void teamRunner.redeliverWaiting().catch((err) => console.warn("[aya] held team messages not retried:", err));
+      tellRelaunched();
+    },
     // E2E only: a spec that waits on a held message should not wait a production period.
     Number(process.env.AYA_E2E_TEAM_REDELIVERY_MS) || TEAM_REDELIVERY_MS,
   );
