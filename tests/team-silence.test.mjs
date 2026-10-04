@@ -7,7 +7,7 @@ process.env.AYA_HOME = mkdtempSync(join(tmpdir(), "aya-silence-home-"));
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { teamProject } from "./helpers/team.mjs";
@@ -270,6 +270,29 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
     assert.match(text, /Aya round 1: no progress since /);
     assert.match(text, STATUS_LINE);
   });
+
+  // An open "says it sent" claim rides on every lead round, before the status command's output; none, no section.
+  const CLAIM_LINE = "Said it sent: implementer says it sent to tester, nothing arrived.";
+  const claimed = (t) =>
+    writeFileSync(join(t.store.dir, "claims.json"), JSON.stringify({ implementer: { checked: 0, claims: [{ to: "tester", turn: 0, since: "2026-09-30T09:59:00.000Z" }] } }));
+  // [round, team options, steps, first words of the round]
+  const ROUND_KINDS = [
+    ["rhythm", { cadence: true }, ["start", 10, "lead reports", 80, "tick"], /Aya round 1: run your round as the team protocol says\./],
+    ["silence", {}, ["start", 91, "check"], /Aya round 1: no progress since /],
+    ["stall", {}, ["start", 91, "check", 30, "check", 30, "check", 30, "check"], /Aya round 4: stalled: /],
+  ];
+  for (const [kind, opts, steps, opening] of ROUND_KINDS) {
+    for (const claim of [true, false]) {
+      silenceTest(`a ${kind} round ${claim ? "carries the open claim once, before the status" : "has no claim section without a claim"}`, { ...opts, status: STATUS }, async (t) => {
+        if (claim) claimed(t);
+        await t.run(...steps);
+        const text = t.toLead().at(-1).text;
+        assert.match(text, opening);
+        assert.equal(text.split("Said it sent:").length - 1, claim ? 1 : 0, text);
+        if (claim) assert.match(text, new RegExp(`${CLAIM_LINE.replace(/[.]/g, "\\.")} Status \\(from the team's command\\): athena: gemma-best$`));
+      });
+    }
+  }
 
   // A round the lead's pane does not take stays due and is looked at again each minute: the command runs once it goes.
   for (const [how, block, unblock] of [["busy", "lead busy", "lead free"], ["a draft", "lead draft", "lead free"]]) {

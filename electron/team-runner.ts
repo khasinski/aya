@@ -13,7 +13,7 @@ import { oneAtATime } from "./keyed-queue";
 import { noteRound, observe, quietTooLong, repoSince, resetProgress, roundsHeld, stalledWhenLastLooked, teamLiveness, type TeamProgress } from "./team-progress";
 import { pendingWaits, stalledText, supervisionText, type StatusWait } from "./team-supervision";
 import { digestOneLine, roundDigest } from "./team-digest";
-import { lookForClaims, readClaims, unsentClaims, withUnsentSection } from "./unsent-claims";
+import { lookForClaims, readClaims, unsentClaims, unsentSection } from "./unsent-claims";
 import { statusSection } from "./team-status-command";
 import { openTeamStore, readText, type PendingTask, type TeamStore } from "./team-store";
 import { clock, ROUND_CHECK_MS, SILENCE_FIRST_MS, SILENCE_REPEAT_MS } from "./team-times";
@@ -56,8 +56,9 @@ export function resumeRefusal(pausedBy: string | null, by: string): string | nul
   return `the lead (${pausedBy}) paused this team; only ${pausedBy} or the user can resume it; nothing was sent`;
 }
 
-/** Every lead round ends with the status command's output, whatever made it due: a lead-only team gets no rhythm round. */
-const withStatus = (text: string, status: string | null): string => (status ? `${text} ${status}` : text);
+/** Every lead round, whatever made it due, ends with the open "says it sent" claims and then the status command's
+ *  output: a lead-only team gets no rhythm round. */
+const withSections = (text: string, ...sections: (string | null)[]): string => [text, ...sections.filter((s) => s)].join(" ");
 
 export class TeamRunner {
   private cancels = new Map<string, () => void>();
@@ -409,8 +410,12 @@ export class TeamRunner {
     const busy = await this.busyRoles(store, roles);
     const statusWaits = await this.statusWaits(store, roles);
     const [log, refused] = [await store.annotatedLog(), await store.refusals()];
-    const digest = roundDigest({ roles, lead: team.lead, log, progress, refused, turns: await store.turns(), busy, statusWaits, nowMs });
-    return withUnsentSection(digest, unsentClaims(await readClaims(store), log, refused, roles));
+    return roundDigest({ roles, lead: team.lead, log, progress, refused, turns: await store.turns(), busy, statusWaits, nowMs });
+  }
+
+  private async unsent(store: TeamStore, team: TeamDefinition): Promise<string | null> {
+    const roles = team.roles.map((r) => r.id);
+    return unsentSection(unsentClaims(await readClaims(store), await store.annotatedLog(), await store.refusals(), roles));
   }
 
   /** The roles' own `aya status waiting`: a question to the user (one from before a restart that is unconfirmed holds
@@ -509,7 +514,7 @@ export class TeamRunner {
     // only for a round that goes now, not on every look while it waits.
     const leadPane = await store.paneOf(lead);
     const goesNow = leadPane !== null && (await deps.holdReason(leadPane)) === null;
-    const text = withStatus(body, goesNow ? await statusSection({ project, store, team }) : null);
+    const text = withSections(body, await this.unsent(store, team), goesNow ? await statusSection({ project, store, team }) : null);
     const message = { team: team.name, from: TEAM_SYSTEM_SENDER, to: lead, text };
     // The number is used up at the Enter, whatever the turn shows after: a relaunch in between types the next one.
     const typed = await typeFromAya(deps, project, store, message, async () => {

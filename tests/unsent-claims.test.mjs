@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { teamProject } from "./helpers/team.mjs";
 
 const { renderPaneText } = await import("../dist-electron/pane-render.js");
-const { claimedRecipients, lookForClaims, readClaims, unsentClaims, withUnsentSection } = await import("../dist-electron/unsent-claims.js");
+const { claimedRecipients, lookForClaims, readClaims, unsentClaims, unsentSection } = await import("../dist-electron/unsent-claims.js");
 const { typedTeamMessage } = await import("../dist-electron/team-control.js");
 const { digestOneLine } = await import("../dist-electron/team-digest.js");
 const { listTeams } = await import("../dist-electron/team-admin.js");
@@ -132,7 +132,7 @@ async function shown(t) {
   const [summary] = await listTeams(t.teamHome, t.project);
   const window = unsentLine(summary, "tester");
   const unsent = unsentClaims(await readClaims(t.store), await t.store.annotatedLog(), await t.store.refusals(), ROLES);
-  const round = digestOneLine(withUnsentSection({ header: "Since 19:30: no messages", sections: [] }, unsent));
+  const round = [digestOneLine({ header: "Since 19:30: no messages", sections: [] }), unsentSection(unsent)].filter(Boolean).join(" ");
   return { window, round };
 }
 

@@ -5,7 +5,7 @@
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
 import type { AgentKind } from "./presets";
-import type { RefusedSend, Digest } from "./team-digest";
+import type { RefusedSend } from "./team-digest";
 import { TEAM_FILES } from "./team-records";
 import { readText, type TeamStore } from "./team-store";
 import { typedTeamMessage } from "./team-control";
@@ -190,8 +190,8 @@ export async function lookForClaims(store: TeamStore, look: ClaimLook): Promise<
   await writeFileAtomic(claimsPath(store), JSON.stringify(file));
 }
 
-/** The lead's round with the open claims as their own section. */
-export function withUnsentSection(digest: Digest, unsent: Record<string, string[]>): Digest {
+/** The open claims as a lead round's section, one line; null when there are none. */
+export function unsentSection(unsent: Record<string, string[]>): string | null {
   const items = Object.entries(unsent).flatMap(([role, tos]) => tos.map((to) => unsentNote(role, to)));
-  return items.length ? { ...digest, sections: [...digest.sections, { title: "Said it sent", items }] } : digest;
+  return items.length ? `Said it sent: ${items.join("; ")}.` : null;
 }
