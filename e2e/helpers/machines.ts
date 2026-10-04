@@ -23,6 +23,15 @@ export const TWO_MACHINES = JSON.stringify({
     { id: "mini-lab", label: "mini-lab", reach: { ssh: "mini-lab" }, ollama: { port: 11434 } },
   ],
 });
+/** One of each row state: busy and in use, idle, Ollama down, unreachable. */
+export const FOUR_MACHINES = JSON.stringify({
+  version: 1,
+  machines: [
+    ...JSON.parse(TWO_MACHINES).machines,
+    { id: "spare-box", label: "spare-box", reach: { ssh: "spare-box" }, ollama: { port: 11434 } },
+    { id: "old-server", label: "old-server", reach: { ssh: "old-server" }, ollama: { port: 11434 } },
+  ],
+});
 export const seedBase = {
   fakeSshMachines: true,
   homeFiles: { ".ssh/config": SSH_CONFIG },

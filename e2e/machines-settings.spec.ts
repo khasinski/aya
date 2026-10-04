@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, type ElectronApplication, type Page } from "@playwright/test";
+import { expect, type ElectronApplication, type Locator, type Page } from "@playwright/test";
 import { test } from "./fixtures";
-import { LIBEVAL_FILES, LIBEVAL_REMOTE, NEUTRAL_PROMPT, openMachines, seedBase, SSH_CONFIG, TWO_MACHINES } from "./helpers/machines";
+import { FOUR_MACHINES, LIBEVAL_FILES, LIBEVAL_REMOTE, NEUTRAL_PROMPT, openMachines, seedBase, SSH_CONFIG, TWO_MACHINES } from "./helpers/machines";
 
 // Settings > Machines and Open project > Remote host over one store of known ssh hosts.
 // ssh is e2e/helpers/fake-ssh-machines.cjs (fixed answers, every call logged); no real host, no model touched.
@@ -30,6 +30,13 @@ async function answerAddDialog(app: ElectronApplication, button: "Add" | "Cancel
 }
 const asks = (app: ElectronApplication) => app.evaluate(() => (globalThis as unknown as { __asks: string[] }).__asks);
 
+/** Runs one of a row's actions through its More disclosure, as a user does. */
+async function rowAction(panel: Locator, machine: string, action: string) {
+  const more = panel.getByRole("button", { name: `More, ${machine}` });
+  if ((await more.getAttribute("aria-expanded")) !== "true") await more.click();
+  await panel.getByRole("button", { name: action }).click();
+}
+
 const sshCalls = (root: string) => {
   const log = join(root, "ssh-calls.log");
   return existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : [];
@@ -40,10 +47,13 @@ test.describe("empty", () => {
 
   test("empty state: the line, the sentence field, suggestions from all sources, nothing probed until Check", async ({ app, window, seeded }) => {
     const panel = await openMachines(window, app);
-    await expect(panel.getByText("Your own machines with Ollama. Aya reads their state over ssh; it never loads or unloads a model.")).toBeVisible();
+    await expect(panel.getByText("Your own machines with Ollama, read over ssh. Aya asks before it adds one and never loads or unloads a model.")).toBeVisible();
     await expect(panel.getByLabel("Add machines in one sentence")).toBeVisible();
     await expect(panel.getByRole("button", { name: "Find" })).toBeVisible();
-    await expect(panel.getByTestId("machine-card")).toHaveCount(0);
+    await expect(panel.getByRole("button", { name: "Check all" })).toBeVisible();
+    await expect(panel.getByTestId("machine-row")).toHaveCount(0);
+    await expect(panel.getByTestId("machines-empty")).toHaveText("No machines yet. Add one from the suggestions below, or name them in one sentence above.");
+    await expect(panel.getByRole("button", { name: "Suggested (5)" })).toHaveAttribute("aria-expanded", "true");
 
     const rows = panel.getByTestId("machine-suggestion");
     await expect(rows).toHaveCount(5);
@@ -56,7 +66,7 @@ test.describe("empty", () => {
     const found = rows.nth(0).getByTestId("machine-found");
     await expect(found).toContainText("Reachable · GPU NVIDIA GeForce RTX 4090");
     await expect(found).toContainText("Ollama 0.12.3 · qwen3:32b · hot until");
-    await shoot(app, window, "1-machines-empty-checked.png");
+    await shoot(app, window, "after-empty.png");
 
     await panel.getByRole("button", { name: "Check old-server" }).click();
     await expect(rows.nth(2)).toContainText("Not reachable: ssh: old-server: Permission denied (publickey).");
@@ -66,7 +76,7 @@ test.describe("empty", () => {
     expect(calls[0]).toContain("-o ClearAllForwardings=yes");
   });
 
-  test("Add opens Aya's own dialog: Cancel saves nothing, Add saves and shows the card", async ({ app, window, seeded }) => {
+  test("Add opens Aya's own dialog: Cancel saves nothing, Add saves and shows the row", async ({ app, window, seeded }) => {
     const panel = await openMachines(window, app);
     const registry = join(seeded.ayaHome, "machines.json");
 
@@ -75,7 +85,7 @@ test.describe("empty", () => {
     await expect(panel.getByTestId("machines-answer")).toHaveText("Not added: cancelled in Aya.");
     expect(await asks(app)).toHaveLength(1);
     expect(existsSync(registry)).toBe(false);
-    await expect(panel.getByTestId("machine-card")).toHaveCount(0);
+    await expect(panel.getByTestId("machine-row")).toHaveCount(0);
 
     await answerAddDialog(app, "Add");
     await panel.getByRole("button", { name: "Add gpu-box" }).click();
@@ -83,10 +93,12 @@ test.describe("empty", () => {
     const [ask] = await asks(app);
     expect(ask).toContain("Add gpu-box to Aya's machines?");
     expect(ask).toContain("NVIDIA GeForce RTX 4090");
-    const card = panel.getByTestId("machine-card");
-    await expect(card).toHaveCount(1);
-    await expect(card.getByTestId("machine-state")).toContainText("Connected · ssh gpu-box · checked");
-    await expect(card.getByRole("heading", { level: 4, name: "gpu-box" })).toBeFocused();
+    const row = panel.getByTestId("machine-row");
+    await expect(row).toHaveCount(1);
+    await expect(row.getByTestId("machine-state")).toHaveText("Ready");
+    await expect(row.getByTestId("machine-reach")).toContainText("Connected · ssh gpu-box · checked");
+    await expect(panel.getByRole("button", { name: "gpu-box details" })).toBeFocused();
+    await expect(panel.getByTestId("machines-empty")).toHaveCount(0);
     expect(JSON.parse(readFileSync(registry, "utf8")).machines.map((m: { id: string }) => m.id)).toEqual(["gpu-box"]);
     await expect(panel.getByTestId("machine-suggestion").locator(".aya-machine-target")).toHaveText(["mini-lab", "old-server", "me@devbox", "This machine"]);
   });
@@ -102,7 +114,8 @@ test.describe("empty", () => {
     await panel.getByRole("button", { name: "Find" }).click();
     await expect(panel.getByTestId("machines-answer")).toContainText("added mini-lab");
     await expect(panel.getByTestId("machines-answer")).toContainText('Did you mean this machine by "laptop"?');
-    await expect(panel.getByTestId("machine-card")).toContainText("Ollama not answering on port 11434");
+    await expect(panel.getByTestId("machine-state")).toHaveText("Ollama down");
+    await expect(panel.getByTestId("machine-details")).toContainText("Ollama not answering on port 11434");
     expect(sshCalls(seeded.root).filter((c) => c.endsWith("mini-lab sh -s")).length).toBeGreaterThan(0);
   });
 });
@@ -110,39 +123,44 @@ test.describe("empty", () => {
 test.describe("added", () => {
   test.use({ seedOptions: { ...seedBase, ayaHomeFiles: { ...seedBase.ayaHomeFiles, "machines.json": TWO_MACHINES } } });
 
-  test("added machines: a card each with state, GPU, models, occupancy; Free and Mark in use; suggestions below", async ({ app, window, seeded }) => {
+  test("added machines: a row each with state, GPU, model, occupancy; Mark free and Mark in use through More; suggestions below", async ({ app, window, seeded }) => {
     const panel = await openMachines(window, app);
-    const cards = panel.getByTestId("machine-card");
-    await expect(cards).toHaveCount(2);
-    const gpu = cards.nth(0);
-    await expect(gpu.getByTestId("machine-state")).toContainText("Connected · ssh gpu-box · checked");
-    await expect(gpu).toContainText("NVIDIA GeForce RTX 4090 · 97% · 21.0/24.0 GB VRAM");
-    await expect(gpu).toContainText("load 3.2 on 32 cores");
-    await expect(gpu).toContainText(/qwen3:32b · hot until \d\d:\d\d \(1[34] min\)/);
-    await expect(gpu.getByTestId("machine-occupancy")).toHaveText(/^In use: run5 timed collection · justi · since \d\d:\d\d$/);
-    const mini = cards.nth(1);
-    await expect(mini.getByTestId("machine-state")).toContainText("Connected · ssh mini-lab");
-    await expect(mini).toContainText("Ollama not answering on port 11434");
+    const rows = panel.getByTestId("machine-row");
+    await expect(rows).toHaveCount(2);
+    const gpu = rows.nth(0);
+    await expect(gpu.getByTestId("machine-state")).toHaveText("Ready");
+    await expect(gpu.getByTestId("machine-gpu")).toHaveText("97%");
+    await expect(gpu.getByTestId("machine-vram")).toHaveText("21.0/24.0");
+    await expect(gpu.getByTestId("machine-load")).toHaveText("3.2/32");
+    await expect(gpu.getByTestId("machine-model")).toHaveText(/^qwen3:32bhot 1[34]m$/);
+    await expect(gpu.getByTestId("machine-occupancy")).toHaveText("run5 timed collection · justi");
+    await expect(gpu.getByTestId("machine-details")).toContainText(/run5 timed collection · justi · since \d\d:\d\d/);
+    await expect(gpu.getByTestId("machine-details")).toContainText("NVIDIA GeForce RTX 4090 · 97% · 21.0/24.0 GB VRAM");
+    const mini = rows.nth(1);
+    await expect(mini.getByTestId("machine-state")).toHaveText("Ollama down");
+    await expect(mini.getByTestId("machine-gpu")).toHaveText("none");
+    await expect(mini.getByTestId("machine-model")).toHaveText("-");
     await expect(panel.getByTestId("machine-suggestion").locator(".aya-machine-target")).toHaveText(["old-server", "me@devbox", "This machine"]);
     await shoot(app, window, "2-machines-added.png");
 
-    await gpu.getByRole("button", { name: "Free gpu-box" }).click();
+    await rowAction(panel, "gpu-box", "Mark free, gpu-box");
     await expect(gpu.getByTestId("machine-occupancy")).toHaveCount(0);
-    await gpu.getByRole("button", { name: "Mark in use, gpu-box" }).click();
+    await expect(panel.getByRole("button", { name: "More, gpu-box" })).toBeFocused();
+    await rowAction(panel, "gpu-box", "Mark in use, gpu-box");
     const purpose = gpu.getByLabel("What is gpu-box in use for?");
     await expect(purpose).toBeFocused();
     await purpose.fill("eval sweep");
     await gpu.getByRole("button", { name: "Save" }).click();
-    await expect(gpu.getByTestId("machine-occupancy")).toContainText("In use: eval sweep ·");
+    await expect(gpu.getByTestId("machine-occupancy")).toContainText("eval sweep ·");
     const saved = JSON.parse(readFileSync(join(seeded.ayaHome, "machines.json"), "utf8"));
     expect(saved.machines[0].occupancy.purpose).toBe("eval sweep");
 
-    await gpu.getByRole("button", { name: "Check now, gpu-box" }).click();
-    await expect(gpu.getByTestId("machine-state")).toContainText("Connected");
+    await rowAction(panel, "gpu-box", "Check now, gpu-box");
+    await expect(gpu.getByTestId("machine-state")).toHaveText("Ready");
 
     window.once("dialog", (d) => void d.accept());
-    await mini.getByRole("button", { name: "Remove mini-lab" }).click();
-    await expect(cards).toHaveCount(1);
+    await rowAction(panel, "mini-lab", "Remove mini-lab");
+    await expect(rows).toHaveCount(1);
     await expect(panel.getByRole("heading", { level: 2, name: "Machines" })).toBeFocused();
   });
 
@@ -181,8 +199,8 @@ test.describe("usage and history", () => {
     expect(afterOpen.hosts).toEqual([expect.objectContaining({ target: "gpu-box", addedFrom: "open-project", lastUsedFor: "project" })]);
 
     const panel = await openMachines(window, app);
-    const gpu = panel.getByTestId("machine-card").nth(0);
-    const toggle = gpu.getByRole("button", { name: "Usage and history, gpu-box" });
+    const gpu = panel.getByTestId("machine-row").nth(0);
+    const toggle = gpu.getByRole("button", { name: "gpu-box details" });
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     const details = panel.locator(`#${await toggle.getAttribute("aria-controls")}`);
     await expect(details).toBeHidden();
@@ -191,25 +209,25 @@ test.describe("usage and history", () => {
     await expect(details).toBeVisible();
     await expect(details).toContainText("Used by: machine gpu-box (in use: run5 timed collection, by justi); project libeval; panes tester (tester in team qa), implementer");
     await expect(details).toContainText(/Added \d\d:\d\d from Open project; last used \d\d:\d\d \(remote project\)/);
-    await expect(details.getByRole("listitem")).toHaveText([/\d\d:\d\d added from Open project/, /\d\d:\d\d connected \(remote project libeval\)/]);
+    await expect(details.locator(".aya-host-history").getByRole("listitem")).toHaveText([/\d\d:\d\d added from Open project/, /\d\d:\d\d connected \(remote project libeval\)/]);
 
     // A Check updates the open row in place; a failed one says why in text.
     await panel.getByRole("button", { name: "Check old-server" }).click();
     await expect(panel.getByTestId("machine-suggestion").filter({ hasText: "old-server" })).toContainText("Not reachable");
-    await gpu.getByRole("button", { name: "Check now, gpu-box" }).click();
+    await rowAction(panel, "gpu-box", "Check now, gpu-box");
     await expect(details).toContainText(/Last Check \d\d:\d\d: reachable/);
-    await expect(details.getByRole("listitem").last()).toHaveText(/connected \(Check\)$/);
+    await expect(details.locator(".aya-host-history").getByRole("listitem").last()).toHaveText(/connected \(Check\)$/);
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
     await shoot(app, window, "4-machines-host-expanded.png");
     if (SHOTS) await details.screenshot({ path: join(SHOTS, "4b-host-details.png") });
 
     // Removing mini-lab leaves it a suggestion that still carries its history.
-    await panel.getByRole("button", { name: "Check now, mini-lab" }).click();
+    await rowAction(panel, "mini-lab", "Check now, mini-lab");
     window.once("dialog", (d) => void d.accept());
-    await panel.getByRole("button", { name: "Remove mini-lab" }).click();
-    await expect(panel.getByTestId("machine-card")).toHaveCount(1);
+    await rowAction(panel, "mini-lab", "Remove mini-lab");
+    await expect(panel.getByTestId("machine-row")).toHaveCount(1);
     const mini = panel.getByTestId("machine-suggestion").filter({ hasText: "mini-lab" });
-    await mini.getByRole("button", { name: "Usage and history, mini-lab" }).click();
+    await mini.getByRole("button", { name: "mini-lab usage and history" }).click();
     await expect(mini.getByTestId("host-details").getByRole("listitem").last()).toHaveText(/removed machine mini-lab from Settings > Machines$/);
     const history = readFileSync(join(seeded.ayaHome, "ssh-hosts-history.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
     expect(history.map((e: { target: string; event: string }) => `${e.target} ${e.event}`)).toEqual([
@@ -233,5 +251,44 @@ test.describe("usage and history", () => {
     await expect(items.nth(1)).toHaveText(/^gpu-box\s*ssh config · remote project libeval · machine · last used \d\d:\d\d$/);
     await expect(items.nth(2)).toHaveText(/^old-server\s*ssh config · last used \d\d:\d\d$/);
     await shoot(app, window, "5-remote-host-recent-first.png");
+  });
+});
+
+test.describe("four machines", () => {
+  test.use({
+    seedOptions: {
+      ...seedBase,
+      homeFiles: { ".ssh/config": SSH_CONFIG, ...NEUTRAL_PROMPT },
+      launchEnv: { PS1: "$ " },
+      ayaHomeFiles: { ...seedBase.ayaHomeFiles, ...LIBEVAL_FILES, "machines.json": FOUR_MACHINES },
+    },
+  });
+
+  test("one compact row per state: busy and in use, Ollama down, idle, unreachable with its reason; suggestions stay on screen", async ({ app, window }) => {
+    await window.evaluate((req) => window.aya.createRemoteProject(req), LIBEVAL_REMOTE);
+    const panel = await openMachines(window, app);
+    const rows = panel.getByTestId("machine-row");
+    await expect(rows).toHaveCount(4);
+    await expect(rows.getByTestId("machine-state")).toHaveText(["Ready", "Ollama down", "Ready", "Unreachable"]);
+    const spare = rows.nth(2);
+    await expect(spare.getByTestId("machine-gpu")).toHaveText("0%");
+    await expect(spare.getByTestId("machine-model")).toHaveText("none loaded");
+    await expect(spare.getByTestId("machine-occupancy")).toHaveCount(0);
+    await expect(spare).toContainText("free");
+    await expect(rows.nth(3)).toContainText("Why: ssh: old-server: Permission denied (publickey).");
+    // The point of the layout: a machine is one line, not a card.
+    for (const row of await rows.all()) {
+      const box = await row.locator("tr.aya-machine-row").boundingBox();
+      expect(box?.height, "a machine row is one line").toBeLessThanOrEqual(48);
+    }
+    await expect(panel.getByTestId("machine-suggestion")).toHaveCount(2);
+    for (const s of await panel.getByTestId("machine-suggestion").all()) expect((await s.boundingBox())?.height).toBeLessThanOrEqual(36);
+    await shoot(app, window, "after-added.png");
+
+    await panel.getByRole("button", { name: "gpu-box details" }).click();
+    await expect(rows.nth(0).getByTestId("machine-details")).toContainText("Used by: machine gpu-box");
+    await panel.getByRole("button", { name: "More, gpu-box" }).click();
+    await expect(panel.getByRole("group", { name: "Actions for gpu-box" })).toBeVisible();
+    await shoot(app, window, "after-expanded.png");
   });
 });

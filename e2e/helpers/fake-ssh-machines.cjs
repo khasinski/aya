@@ -32,6 +32,9 @@ const HOSTS = {
       version: "0.12.3",
       models: [{ name: "qwen3:32b", model: "qwen3:32b", digest: "ab12cd34ef56", size_vram: 21000000000, expires_at: inMinutes(14) }],
     }),
+  // Idle: a GPU and Ollama up, nothing loaded.
+  "spare-box": () =>
+    probe({ cores: 16, load: 0.1, totalGiB: 64, availGiB: 58, gpu: "NVIDIA GeForce RTX 3090, 0, 300, 24576", version: "0.12.3", models: [] }),
   // Up, but Ollama is not answering on its port.
   "mini-lab": () => probe({ cores: 10, load: 0.8, totalGiB: 32, availGiB: 20 }),
 };
