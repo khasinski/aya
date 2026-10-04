@@ -73,11 +73,11 @@ for (const c of malformed) {
 
 // Registration is the user's: every add waits for Aya's own dialog, never for the CLI caller.
 const confirmCases = [
-  { argv: ["add", "--ssh", "a1"], answer: true, saved: ["a1"] },
-  { argv: ["add", "--ssh", "a1"], answer: false, saved: null, out: /Not added: cancelled in Aya/ },
-  { argv: ["add", "a1 and this machine"], answer: true, saved: ["a1", "local"] },
-  { argv: ["add", "a1 and this machine"], answer: false, saved: null, out: /Not added/ },
-  { argv: ["add", "--local", "--id", "laptop"], answer: true, saved: ["laptop"] },
+  { argv: ["add", "--ssh", "a1"], answer: true, drafted: ["a1"], saved: ["a1"] },
+  { argv: ["add", "--ssh", "a1"], answer: false, drafted: ["a1"], saved: null, out: /Not added: cancelled in Aya/ },
+  { argv: ["add", "a1 and this machine"], answer: true, drafted: ["a1", "local"], saved: ["a1", "local"] },
+  { argv: ["add", "a1 and this machine"], answer: false, drafted: ["a1", "local"], saved: null, out: /Not added/ },
+  { argv: ["add", "--local", "--id", "laptop"], answer: true, drafted: ["laptop"], saved: ["laptop"] },
 ];
 for (const c of confirmCases) {
   test(`${c.argv.join(" ")}: the dialog says ${c.answer ? "Add" : "Cancel"}`, async (t) => {
@@ -90,7 +90,7 @@ for (const c of confirmCases) {
     deps.probe = async (reach) => ({ reachable: reach === "local", error: reach === "local" ? null : "ssh: down" });
     const answer = await run(...c.argv);
     assert.equal(asked.length, 1, "asked once, in Aya");
-    assert.deepEqual(asked[0].machines.map((m) => m.id), c.saved ?? asked[0].machines.map((m) => m.id));
+    assert.deepEqual(asked[0].machines.map((m) => m.id), c.drafted, "the dialog shows exactly the drafted machines");
     assert.ok(asked[0].machines.every((m) => m.status && typeof m.status.reachable === "boolean"), "the dialog shows each probe");
     if (c.saved) assert.deepEqual(ids(), c.saved);
     else assert.throws(() => readFileSync(file), /ENOENT/);
