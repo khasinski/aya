@@ -41,11 +41,11 @@ Controlling it comes later, and only after a test shows it can work.
 
 ```
 $ aya machines
-athena  connected    ssh:athena  GPU 97% 21.0/24.0 GB  CPU 3.2/32  mem 41/128 GB
+athena  connected    ssh:athena  GPU 97% 21.0/24.0 GB  CPU 3.2/32  mem 41.0/125.7 GB
         ollama 0.12.3  qwen3:32b hot until 23:12 (14 min)
         occupied by justi since 22:40: run5 timed collection
         probe 210 ms (checked 23:01:05)
-laptop  connected    local       GPU n/a  CPU 2.1/10  mem 20/32 GB
+laptop  connected    local       GPU n/a  CPU 2.1/10  mem 20.1/32.0 GB
         ollama 0.12.3  no model loaded
 mini    unreachable  ssh:mini    ssh: connect timeout (checked 23:01:05)
 ```
@@ -71,7 +71,8 @@ read the text.
 
 `version` is bumped when a later step changes the shape. `probeMs` is the
 measured wall time of the probe (ssh round trip included), not a speed
-estimate for a model. If `expiresAt` is past year 2100 the model shows as `pinned`.
+estimate for a model. Memory and GPU sizes in the text are GiB. If
+`expiresAt` is past year 2100 the model shows as `pinned`.
 
 Commands:
 
@@ -138,8 +139,9 @@ written with `atomic-write.ts`, mode 0600.
   `curl -s --max-time 3 http://127.0.0.1:<port>/api/version` and `/api/ps`.
   Sections are separated by marker lines so a missing tool is an empty
   section, not a parse error.
-- Local: Node's `os` module, `nvidia-smi` if present, and the same two
-  Ollama calls over HTTP to `127.0.0.1:<port>`. GPU is `n/a` on Apple
+- Local: Node's `os` module (memory used from `vm_stat` on macOS, where
+  `os.freemem` counts only free pages), `nvidia-smi` if present, and the
+  same two Ollama calls over HTTP to `127.0.0.1:<port>`. GPU is `n/a` on Apple
   Silicon (see Open questions).
 - The whole probe is killed after 10 s and reported as unreachable with
   the error and `checkedAt`.

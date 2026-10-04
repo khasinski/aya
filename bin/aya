@@ -67,6 +67,15 @@ Usage:
                                      to the team's debug log
   aya presets [--json]               List presets, whether each is installed and
                                      whether a role's pane of it reaches Aya
+  aya machines [--json]              Show every registered machine: reachability,
+                                     GPU, CPU, memory, Ollama and hot models
+  aya machines hosts                 List ~/.ssh/config Host aliases, marking added ones
+  aya machines add "sentence"        Draft machines from a sentence; asks before saving
+  aya machines add --ssh alias|--local [--id id] [--port n]...
+                                     Add machines as given (port: Ollama's on the host)
+  aya machines remove id             Remove a machine from the registry
+  aya machines occupy id "purpose"   Say you are using a machine (advisory, not enforced)
+  aya machines free id               Clear a machine's occupancy
   aya capabilities                   Print these commands as JSON, for agents
 EOF
 }
@@ -216,6 +225,9 @@ function requestFromArgs() {
   }
   if (kind === "team-pause") return { type: kind, text: process.argv[4] || undefined };
   if (kind === "presets") return { type: kind, json: process.argv[4] === "json" };
+  if (kind === "machines") {
+    return { type: kind, argv: process.argv.slice(4), tty: process.env.AYA_MACHINES_TTY === "1", user: optionalEnv("USER") };
+  }
   // Unlike whoami/send, these work outside a pane too: the slug or cwd names the project.
   if (kind === "team-guide" || kind === "team-save" || kind === "team-open" || kind === "team-start") {
     const scope = { projectSlug: optionalEnv("AYA_PROJECT_SLUG"), cwd: process.cwd() };
@@ -236,7 +248,7 @@ function requestFromArgs() {
 
 // Which pane is calling, on every request: Aya counts per harness how many
 // panes ever use this CLI (#117). Absent outside Aya.
-const request = {
+let request = {
   ...requestFromArgs(),
   caller: {
     terminalId: optionalEnv("AYA_TERMINAL_ID"),
@@ -321,6 +333,28 @@ function onEnd() {
   }
   // pane read / pane list / capabilities: the payload IS the answer.
   if (typeof parsed.output === "string") process.stdout.write(parsed.output);
+  // aya machines add "sentence" on a terminal: stdin is this script, so the answer is read from /dev/tty.
+  if (parsed.confirm && process.env.AYA_MACHINES_TTY === "1") {
+    process.stdout.write(parsed.confirm.question);
+    let answer = "";
+    try {
+      const fs = require("node:fs");
+      const tty = fs.openSync("/dev/tty", "r");
+      const buffer = Buffer.alloc(256);
+      const n = fs.readSync(tty, buffer, 0, buffer.length, null);
+      fs.closeSync(tty);
+      answer = buffer.toString("utf8", 0, n).trim();
+    } catch {
+      answer = "";
+    }
+    if (!/^y(es)?$/i.test(answer)) {
+      process.stdout.write("Nothing saved.\n");
+      return;
+    }
+    request = { ...parsed.confirm.request, caller: request.caller };
+    response = "";
+    connect();
+  }
 }
 
 connect();
@@ -630,6 +664,13 @@ case "$command" in
     ;;
   capabilities)
     send_control capabilities
+    ;;
+  machines)
+    shift
+    # Asking y/N needs a terminal on both ends; an agent's tool call gets the command to run instead.
+    if [ -t 0 ] && [ -t 1 ]; then AYA_MACHINES_TTY=1; else AYA_MACHINES_TTY=""; fi
+    export AYA_MACHINES_TTY
+    send_control machines "$@"
     ;;
   presets)
     [ "$#" -eq 0 ] || shift

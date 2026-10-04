@@ -2,6 +2,7 @@ import type { BrowserWindow } from "electron";
 import { oneAtATime } from "./keyed-queue";
 import * as fs from "node:fs";
 import * as net from "node:net";
+import * as os from "node:os";
 import * as path from "node:path";
 import { recordAgentStatus } from "./agent-status";
 import { STATUS_TABLE_SHARE_MS, daemonIdentity, foreignPaneIdentity, paneAbove, processTable, unprovenIdentity } from "./caller-proof";
@@ -18,7 +19,8 @@ import {
   resolvePaneTarget,
   tailForPaneRead,
 } from "./pane-target";
-import { CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
+import { AYA_HOME, CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
+import { handleMachinesRequest, type MachinesDeps } from "./machines";
 import { handleTeamAuthorRequest } from "./team-author";
 import { HOLD_BUSY, HOLD_DRAFT, isDialogHold } from "./pane-holds";
 import { debugAnswer } from "./team-debug";
@@ -106,6 +108,8 @@ export interface ControlServerOptions {
   teamPanes?: TeamPaneDeps;
   /** The process a pane runs: null when it has none, undefined when the host cannot say (it predates the request). */
   panePid?: (terminalId: string) => Promise<number | null | undefined>;
+  /** Where aya machines keeps its registry and finds ~/.ssh/config; the Aya config home and the user's home by default. */
+  machines?: MachinesDeps;
   /** Test-only override of the process table read for the ancestry check. */
   processTable?: typeof processTable;
   /** Test-only override of the idle reap window. */
@@ -411,6 +415,10 @@ async function handleRequest(
       clearTimeout(timer);
     }
     return;
+  }
+  if (request.type === "machines") {
+    const pane = caller.terminalId ? (await options.listProjects?.().catch(() => []))?.flatMap((p) => p.tabs).find((t) => t.id === caller.terminalId)?.name : undefined;
+    return { ...(await handleMachinesRequest(request, options.machines ?? { ayaHome: AYA_HOME, userHome: os.homedir() }, pane)) };
   }
   if (request.type === "pane-list") {
     if (!options.listProjects) throw new Error("pane control is not available");

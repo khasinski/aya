@@ -1,0 +1,37 @@
+@@nproc
+10
+@@loadavg
+{ 16.61 19.83 19.23 }
+@@meminfo
+@@vmstat
+Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                                    31436.
+Pages active:                                1791108.
+Pages inactive:                              1787495.
+Pages speculative:                              2088.
+Pages throttled:                                   0.
+Pages wired down:                             431989.
+Pages purgeable:                                3480.
+"Translation faults":                    75672290969.
+Pages copy-on-write:                     14451097004.
+Pages zero filled:                       17799433153.
+Pages reactivated:                         245334356.
+Pages purged:                               49390916.
+File-backed pages:                            537750.
+Anonymous pages:                             3042941.
+Pages stored in compressor:                  1022918.
+Pages occupied by compressor:                  93508.
+Decompressions:                            126635313.
+Compressions:                              185697088.
+Pageins:                                   492273382.
+Pageouts:                                    1202693.
+Swapins:                                     5574306.
+Swapouts:                                    7067943.
+@@memsize
+68719476736
+@@gpu
+@@version
+{"version":"0.34.4"}
+@@ps
+{"models":[]}
+@@end

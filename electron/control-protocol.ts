@@ -65,6 +65,8 @@ export type ControlRequest =
       selfTerminalId?: string;
     }
   | { type: "capabilities" }
+  // aya machines: argv as typed after "machines"; tty when the CLI can ask y/N.
+  | { type: "machines"; argv: string[]; tty: boolean; user?: string }
   | TeamRequest
   | TeamAuthorRequest
   | TeamPanesRequest;
@@ -163,6 +165,11 @@ export function parseControlRequest(value: unknown): ControlRequest {
     return { type, team, ...(task ? { task } : {}), ...(to ? { to } : {}), ...scope };
   }
   if (type === "capabilities") return { type };
+  if (type === "machines") {
+    const argv = Array.isArray(value.argv) ? value.argv : [];
+    if (!argv.every((a): a is string => typeof a === "string")) throw new Error("machines.argv must be strings");
+    return { type, argv, tty: value.tty === true, user: optionalString(value.user) };
+  }
   if (type === "notify") {
     const body = optionalString(value.body);
     if (!body) throw new Error("notify.body is required");
