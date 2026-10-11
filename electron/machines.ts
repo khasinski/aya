@@ -160,14 +160,14 @@ export async function knownHosts(deps: MachinesDeps, registry?: Registry): Promi
   const add = (target: string, source: KnownHost["sources"][number]) => {
     const t = target.trim();
     if (!isSshTarget(t)) return;
-    const host = hosts.get(t.toLowerCase()) ?? { target: t, sources: [] };
+    const host = hosts.get(sshKey(t)) ?? { target: t, sources: [] };
     if (!host.sources.includes(source)) host.sources.push(source);
-    hosts.set(t.toLowerCase(), host);
+    hosts.set(sshKey(t), host);
   };
   for (const alias of aliases) add(alias, "ssh config");
   for (const p of projects) add(p.sshTarget, "remote project");
   for (const m of reg.machines) {
-    const host = m.reach === "local" ? undefined : hosts.get(m.reach.ssh.toLowerCase());
+    const host = m.reach === "local" ? undefined : hosts.get(sshKey(m.reach.ssh));
     if (host && !host.machine) host.machine = m.id;
   }
   return [...hosts.values()];
@@ -191,13 +191,17 @@ export interface SentenceDraft {
 }
 
 const idFor = (name: string) => name.toLowerCase().replace(/^[^@]*@/, "").replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "machine";
-/** ssh lowercases the host it is given, and knownHosts merges hosts the same way. */
-const sameReach = (a: Reach, b: Reach) => (a === "local" ? b === "local" : b !== "local" && a.ssh.toLowerCase() === b.ssh.toLowerCase());
+/** ssh lowercases the host it is given, but a user name keeps its case: Alice@box and alice@box can be two accounts. */
+const sshKey = (target: string) => {
+  const at = target.lastIndexOf("@");
+  return at < 0 ? target.toLowerCase() : `${target.slice(0, at)}@${target.slice(at + 1).toLowerCase()}`;
+};
+const sameReach = (a: Reach, b: Reach) => (a === "local" ? b === "local" : b !== "local" && sshKey(a.ssh) === sshKey(b.ssh));
 
 /** Deterministic: known hosts (aliases, user@host), `local` / "this machine", `port N` after a machine; nothing else is guessed. */
 export function draftFromSentence(sentence: string, aliases: string[], registry: Registry): SentenceDraft {
   const draft: SentenceDraft = { machines: [], unclear: [], unknown: [], alreadyAdded: [] };
-  const byLower = new Map(aliases.map((a) => [a.toLowerCase(), a]));
+  const byKey = new Map(aliases.map((a) => [sshKey(a), a]));
   // Aliases like a.b and a_b read as one id; the later one takes the next free number.
   const freeId = (base: string) => {
     const taken = (id: string) => registry.machines.some((m) => m.id === id) || draft.machines.some((m) => m.id === id);
@@ -231,11 +235,12 @@ export function draftFromSentence(sentence: string, aliases: string[], registry:
       if (named && port >= 1 && port <= 65535) named.port = port;
       return;
     }
-    if (byLower.has(lower)) return add({ ssh: byLower.get(lower)! }, word);
+    // "this machine" always means this machine; a `Host local` alias does win over the bare word local.
+    if (lower === LOCAL_PHRASE_WORD) return add("local", "this machine");
+    const known = byKey.get(sshKey(word));
+    if (known) return add({ ssh: known }, word);
     // user@host names its own user and host, so it needs no Host block, as for a remote project.
     if (word.includes("@") && isSshTarget(word)) return add({ ssh: word }, word);
-    // A `Host local` alias wins over the word local (above); "this machine" always means this machine.
-    if (lower === LOCAL_PHRASE_WORD) return add("local", "this machine");
     if (LOCAL_WORDS.has(lower)) return add("local", word);
     // A machine that is asked about or unknown ends the one before it: its `port N` must not land there.
     if (AMBIGUOUS_WORDS.has(lower)) {
@@ -400,6 +405,8 @@ async function addMachines(drafted: DraftMachine[], deps: MachinesDeps, pane: st
   if (callerGone?.aborted) throw gone;
   if (!yes) return { output: `${before}Not added: cancelled in Aya.\n` };
   await mutateRegistry(deps, (registry) => {
+    // The write may wait behind another change; a caller that left meanwhile gets nothing saved.
+    if (callerGone?.aborted) throw gone;
     for (const m of drafted) {
       if (registry.machines.some((x) => x.id === m.id || sameReach(x.reach, m.reach))) throw new Error(`${m.id} was already added meanwhile; nothing was saved`);
     }

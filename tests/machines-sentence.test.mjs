@@ -52,6 +52,11 @@ const cases = [
   { sentence: "athena and ssh foo port 11435", expect: { machines: [{ id: "athena", port: 11434 }], unknown: ["foo"] } },
   // ssh lowercases the host, so a case variant of an added target is the same machine.
   { sentence: "me@devbox", registry: { version: 1, machines: [{ id: "devbox", reach: { ssh: "me@Devbox" }, ollama: { port: 11434 } }] }, expect: { machines: [], alreadyAdded: ["me@devbox"] } },
+  // ...but a user name keeps its case: Alice@box and alice@box can be two accounts.
+  { sentence: "alice@box", registry: { version: 1, machines: [{ id: "box", reach: { ssh: "Alice@box" }, ollama: { port: 11434 } }] }, expect: { machines: [{ id: "box-2", reach: { ssh: "alice@box" } }] } },
+  { sentence: "alice@box", aliases: ["Alice@box"], expect: { machines: [{ id: "box", reach: { ssh: "alice@box" } }] } },
+  // "this machine" is this machine even when ~/.ssh/config has a Host with that name.
+  { sentence: "this machine", aliases: ["this-machine"], expect: { machines: [{ id: "local", reach: "local" }] } },
   { sentence: "local and this machine", aliases: ["local"], expect: { machines: [{ id: "local", reach: { ssh: "local" } }, { id: "local-2", reach: "local" }] } },
 ];
 

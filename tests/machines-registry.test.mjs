@@ -257,3 +257,18 @@ test("aya machines prints no control character from the host, and names pinned a
   assert.match(out, /evil\?\]9001;aya\.status=done\? pinned/);
   assert.match(out, /old hot until \d\d:\d\d \(expired\)/);
 });
+
+test("an add the user approved is not saved when the caller leaves while the write waits its turn", async (t) => {
+  const { deps, file, run } = setup(t);
+  await run("add", "a1");
+  let letGo;
+  const busy = mutateRegistry(deps, () => new Promise((resolve) => (letGo = resolve)));
+  const caller = new AbortController();
+  const add = handleMachinesRequest({ argv: ["add", "a2"], user: "u" }, deps, undefined, caller.signal);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  caller.abort();
+  letGo();
+  await busy;
+  await assert.rejects(add, /stopped waiting/);
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")).machines.map((m) => m.id), ["a1"]);
+});
