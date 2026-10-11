@@ -7,13 +7,13 @@ import { seedBase, THREE_MACHINES } from "./helpers/machines";
 
 test.use({ seedOptions: { ...seedBase, ayaHomeFiles: { ...seedBase.ayaHomeFiles, "machines.json": THREE_MACHINES } } });
 
-test("what the machines popover shows can be selected and copied with Cmd+C", async ({ app, window }) => {
+test("what the machines popover shows can be selected and copied with the copy shortcut", async ({ app, window }) => {
   await window.getByTestId("machines-toggle").click();
   const line = window.getByRole("dialog", { name: "Machines" }).getByText("qwen3:32b", { exact: false });
   await line.click({ clickCount: 3 });
   expect(await window.evaluate(() => window.getSelection()?.toString() ?? "")).toContain("qwen3:32b");
   await app.evaluate(({ clipboard }) => clipboard.writeText(""));
-  await window.keyboard.press("Meta+c");
+  await window.keyboard.press("ControlOrMeta+c");
   await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toContain("qwen3:32b · 19.6 GiB");
 });
 
@@ -29,7 +29,7 @@ test("a copy of the whole popover pastes one line per fact, without the button l
     selection?.addRange(range);
   });
   await app.evaluate(({ clipboard }) => clipboard.writeText(""));
-  await window.keyboard.press("Meta+c");
+  await window.keyboard.press("ControlOrMeta+c");
   await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toContain("gpu-box · RTX 4090\n");
   const text = await app.evaluate(({ clipboard }) => clipboard.readText());
   expect(text).toContain("mini-lab · Ollama not running\nold-server · Unreachable: Permission denied (publickey).");
