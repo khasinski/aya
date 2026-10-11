@@ -3136,6 +3136,8 @@ select.aya-modal-input {
   background: var(--status-error);
 }
 .aya-statusbar-popover--machines {
+  /* The status bar is not selectable; this popover is, so its facts can be copied into a pane or a note. */
+  user-select: text;
   width: min(460px, calc(100vw - 24px));
   overflow-y: auto;
 }

@@ -70,7 +70,7 @@ test.describe("none added", () => {
 test.describe("three added", () => {
   test.use({ seedOptions: { ...seedBase, ayaHomeFiles: { ...seedBase.ayaHomeFiles, "machines.json": THREE_MACHINES } } });
 
-  test("the status bar names each state in words; the popover says what is loaded and who claimed it; Release clears the claim", async ({ app, window, seeded }) => {
+  test("the status bar icon names each state in its name and tooltip; the popover says what is loaded and who claimed it; Release clears the claim", async ({ app, window, seeded }) => {
     const bar = window.getByTestId("machines-toggle");
     await expect(bar).toHaveAccessibleName("Machines: gpu-box ready, claimed; mini-lab ollama down; old-server unreachable");
     // The bar shows the icon only, so many machines never fill it; their states are in the name, the tooltip and the popover.
