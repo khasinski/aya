@@ -51,6 +51,8 @@ export interface WorkingTab {
   sharedDir?: true;
   /** Opened for a team role: every launch gets a mode that reaches Aya. */
   teamLaunch?: boolean;
+  /** A tab opened on a machine from the machines popover: it runs `ssh -- <sshTarget>` instead of its preset's command. */
+  sshTarget?: string;
 }
 
 export interface SplitLayout {

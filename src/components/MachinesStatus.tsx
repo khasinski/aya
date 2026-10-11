@@ -9,7 +9,7 @@ import { barLabel, claimText, clock, hardware, health, loadText, MACHINES_CHANGE
 const POLL_MS = 30_000;
 const ICON_SIZE_SM_PX = 13;
 
-export function MachinesStatus({ onManage }: { onManage: () => void }) {
+export function MachinesStatus({ onManage, onOpenTerminal }: { onManage: () => void; onOpenTerminal?: (sshTarget: string) => void }) {
   const [machines, setMachines] = useState<MachineView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -52,14 +52,18 @@ export function MachinesStatus({ onManage }: { onManage: () => void }) {
     const onPointerDown = (event: PointerEvent) => {
       if (!hostRef.current?.contains(event.target as Node)) setOpen(false);
     };
+    // Captured before a focused terminal sees it: Escape closes the popover and is not typed into the pane.
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
     };
     window.addEventListener("pointerdown", onPointerDown, true);
-    window.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
     return () => {
       window.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
     };
   }, [open, refresh]);
 
@@ -123,6 +127,21 @@ export function MachinesStatus({ onManage }: { onManage: () => void }) {
                 <li key={m.id} className="aya-machines-entry" data-testid="machine-entry">
                   {/* One line of inline text, so a copy pastes "gpu-box · RTX 4090 · Ready", not three lines. */}
                   <div className="aya-machines-entry-head">
+                    {/* Every fix (a reboot, `ollama serve`, an install) starts with a shell there. */}
+                    {onOpenTerminal && m.reach !== "local" && (
+                      <button
+                        className="aya-statusbar-popover-action aya-machines-terminal"
+                        type="button"
+                        title={`Open a terminal on ${m.id} (ssh ${m.reach.ssh})`}
+                        aria-label={`Open a terminal on ${m.id}`}
+                        onClick={() => {
+                          setOpen(false);
+                          if (m.reach !== "local") onOpenTerminal(m.reach.ssh);
+                        }}
+                      >
+                        Terminal
+                      </button>
+                    )}
                     <strong>{m.id}</strong>
                     {ok && hardware(m.status) && <span className="aya-machines-muted"> · {hardware(m.status)}</span>}
                     <span className="aya-machines-muted"> · </span>

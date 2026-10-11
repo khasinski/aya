@@ -3166,6 +3166,10 @@ select.aya-modal-input {
 .aya-machines-entry-head .aya-machine-dot {
   vertical-align: middle;
 }
+.aya-machines-terminal {
+  float: right;
+  margin-left: 8px;
+}
 .aya-machines-state--warn {
   color: var(--status-waiting);
 }

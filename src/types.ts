@@ -223,6 +223,8 @@ export interface WorkingTab {
   sharedDir?: true;
   /** Opened for a team role: every launch is widened to reach Aya, unless Aya may not lift the block. */
   teamLaunch?: boolean;
+  /** A tab opened on a machine from the machines popover: it runs `ssh -- <sshTarget>` instead of its preset's command. */
+  sshTarget?: string;
 }
 
 export interface SplitLayout {
@@ -963,6 +965,8 @@ export interface TerminalState {
    *  Agent presets may append --resume only in this case. */
   restored?: boolean;
   /** Opened for a team role (WorkingTab.teamLaunch). */
+  /** Opened on a machine (WorkingTab.sshTarget). */
+  sshTarget?: string;
   teamLaunch?: boolean;
   /** Last session id the agent reported over OSC 9001, mirrored from (and
    *  persisted back to) the project's WorkingTab so a restore can resume this

@@ -532,6 +532,8 @@ function terminalSpawn(
   panes: Array<{ id: string; preset: Preset; cwd: string }>,
   homeDir: string,
 ): SpawnCommand {
+  // A tab opened on a machine runs ssh here, never wrapped for a remote project and never resumed.
+  if (terminal.sshTarget) return { command: `ssh -- ${shellQuote(terminal.sshTarget)}` };
   const key = sessionDir(project, terminal);
   const spawn = resumeSpawn(
     preset,
@@ -1576,6 +1578,7 @@ export function App() {
             ...(tab.sessionId ? { sessionId: tab.sessionId } : {}),
             ...(tab.sharedDir ? { sharedDir: true as const } : {}),
             ...(tab.teamLaunch ? { teamLaunch: true } : {}),
+            ...(tab.sshTarget ? { sshTarget: tab.sshTarget } : {}),
           };
         }
         return next;
@@ -2164,7 +2167,7 @@ export function App() {
   );
 
   const launchTerminal = useCallback(
-    (preset: Preset, cwd?: string) => {
+    (preset: Preset, cwd?: string, sshTarget?: string) => {
       const slug = activeProjectIdRef.current;
       if (!slug) return;
       const project = findProject(projectsRef.current, slug);
@@ -2177,13 +2180,14 @@ export function App() {
         id,
         projectSlug: slug,
         presetId: preset.id,
-        name: defaultTabName(preset),
+        name: sshTarget ? `ssh ${sshTarget}` : defaultTabName(preset),
         cwd:
           cwd ??
           (project.remote ? project.remote.directory : effectiveCwd(project)),
         status: "running",
         bell: false,
         exitCode: null,
+        ...(sshTarget ? { sshTarget } : {}),
       };
       setTerminals((prev) => {
         const next = { ...prev, [id]: term };
@@ -3282,6 +3286,12 @@ export function App() {
     launchTerminal(shellPreset);
   }, [launchTerminal]);
 
+  /** A tab on one of the user's machines, from the machines popover: `ssh -- <target>` in the active project. */
+  const openMachineTerminal = useCallback(
+    (sshTarget: string) => launchTerminal(getPreset(presetsRef.current, PRESET_ID_SHELL), undefined, sshTarget),
+    [launchTerminal],
+  );
+
   /** Cycle through the active project's terminal tabs in display order. */
   const cycleActiveProjectTab = useCallback((delta: number) => {
     const slug = activeProjectIdRef.current;
@@ -4283,6 +4293,7 @@ export function App() {
         onOpenAttentionCenter={openAttentionCenter}
         onOpenTeams={() => setShowTeams(true)}
         onOpenSettings={openSettings}
+        onOpenMachineTerminal={activeProject ? openMachineTerminal : undefined}
         onOpenProjectDirectory={openProjectDirectory}
       />
       {currentMissingDir && (

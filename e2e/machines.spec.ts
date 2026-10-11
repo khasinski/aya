@@ -87,8 +87,8 @@ test.describe("three added", () => {
     await expect(entries.nth(0)).toContainText("GPU 97% · VRAM 21.0/24.0 GB · ssh gpu-box");
     await expect(entries.nth(0)).toContainText(/qwen3:32b · 19\.6 GB · until \d\d:\d\d \(1[34] min\)/);
     await expect(entries.nth(0)).toContainText("Claimed: run5 timed collection · justi (pane lead) · since");
-    await expect(entries.nth(1)).toHaveText("mini-lab · Ollama not running");
-    await expect(entries.nth(2)).toHaveText("old-server · Unreachable: Permission denied (publickey).");
+    await expect(entries.nth(1)).toContainText("mini-lab · Ollama not running");
+    await expect(entries.nth(2)).toContainText("old-server · Unreachable: Permission denied (publickey).");
     await shoot(app, window, "status-popover.png");
 
     await entries.nth(0).getByRole("button", { name: "Release" }).click();
@@ -96,6 +96,24 @@ test.describe("three added", () => {
     await expect(bar).toHaveAccessibleName("Machines: gpu-box ready; mini-lab ollama not running; old-server unreachable");
     expect(JSON.parse(readFileSync(join(seeded.ayaHome, "machines.json"), "utf8")).machines[0].claim).toBeUndefined();
 
+    // Terminal opens a tab running ssh to that machine, the first step of any fix there. The pane's ssh is the
+    // user's own, not the fake one, so the spawn is recorded here instead of run: no test reaches a network.
+    await app.evaluate(({ ipcMain }) => {
+      const spawns: unknown[] = [];
+      (globalThis as { machineSpawns?: unknown[] }).machineSpawns = spawns;
+      ipcMain.removeHandler("pty:spawn");
+      ipcMain.handle("pty:spawn", (_event, req) => {
+        spawns.push(req);
+      });
+    });
+    await entries.nth(1).getByRole("button", { name: "Open a terminal on mini-lab" }).click();
+    await expect(popover).toHaveCount(0);
+    await expect(window.locator(".aya-sidebar-row").filter({ hasText: "ssh mini-lab" })).toHaveCount(1);
+    await expect
+      .poll(() => app.evaluate(() => ((globalThis as { machineSpawns?: { command: string }[] }).machineSpawns ?? []).map((r) => r.command)))
+      .toContain("ssh -- 'mini-lab'");
+    await bar.click();
+    await expect(window.getByRole("dialog", { name: "Machines" })).toBeVisible();
     await window.keyboard.press("Escape");
     await expect(popover).toHaveCount(0);
     await bar.click();

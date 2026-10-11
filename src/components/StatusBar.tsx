@@ -44,6 +44,8 @@ interface Props {
   onOpenAttentionCenter: () => void;
   onOpenTeams: () => void;
   onOpenSettings: (tab: SettingsTab) => void;
+  /** Opens a tab running ssh to a machine; absent with no project to open it in. */
+  onOpenMachineTerminal?: (sshTarget: string) => void;
 }
 
 /** Last path segment — how a worktree is named in the UI (git itself has no
@@ -70,6 +72,7 @@ function StatusBarImpl({
   onOpenAttentionCenter,
   onOpenTeams,
   onOpenSettings,
+  onOpenMachineTerminal,
 }: Props) {
   const waiting = terminal?.status === "waiting";
   // The main checkout's (symlink-resolved) path — the same shape gitDirectory
@@ -214,7 +217,7 @@ function StatusBarImpl({
         </span>
       )}
       <div className="aya-statusbar-spacer" />
-      <MachinesStatus onManage={() => onOpenSettings("machines")} />
+      <MachinesStatus onManage={() => onOpenSettings("machines")} onOpenTerminal={onOpenMachineTerminal} />
       <button
         data-testid="snippet-toggle"
         className={`aya-statusbar-item aya-statusbar-button aya-pane-snippettoggle aya-statusbar-snippet ${

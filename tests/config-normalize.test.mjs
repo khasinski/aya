@@ -375,3 +375,11 @@ test("normalizeTab keeps teamLaunch true, drops anything else", () => {
   assert.equal(normalizeTab({ id: "a", presetId: "codex", name: "x", teamLaunch: true }).teamLaunch, true);
   assert.equal("teamLaunch" in normalizeTab({ id: "b", presetId: "codex", name: "x", teamLaunch: "yes" }), false);
 });
+
+test("normalizeTab keeps a machine tab's ssh target only when it is a plain alias or user@host", () => {
+  assert.equal(normalizeTab({ id: "a", presetId: "shell", name: "ssh athena", sshTarget: "athena" }).sshTarget, "athena");
+  assert.equal(normalizeTab({ id: "b", presetId: "shell", name: "x", sshTarget: "me@devbox" }).sshTarget, "me@devbox");
+  for (const bad of ["-oProxyCommand=touch /tmp/x", "athena; rm -rf ~", "", 7]) {
+    assert.equal("sshTarget" in normalizeTab({ id: "c", presetId: "shell", name: "x", sshTarget: bad }), false, String(bad));
+  }
+});
