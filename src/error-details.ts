@@ -3,7 +3,9 @@ const COMPONENT_STACK_LINES = 6;
 
 /** What the error screen shows and lets the user copy: the error, then where in the window it happened. */
 export function errorDetails(error: unknown, componentStack?: string | null): string {
-  const head = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  const message = typeof error === "object" && error !== null ? (error as { message?: unknown }).message : undefined;
+  const head =
+    error instanceof Error ? `${error.name}: ${error.message}` : typeof message === "string" ? message : String(error);
   const stack = (componentStack ?? "")
     .split("\n")
     .map((line) => line.trim())

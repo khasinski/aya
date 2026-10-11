@@ -3212,10 +3212,12 @@ select.aya-modal-input {
 }
 
 /* The window's error screen (ErrorBoundary): what failed and a way back. */
+/* Its own scroll: body is overflow: hidden, and a long error in a short window must still show Reload. */
 .aya-crash {
-  max-width: 640px;
-  margin: 15vh auto 0;
-  padding: 0 24px;
+  box-sizing: border-box;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 15vh max(24px, calc((100vw - 640px) / 2)) 24px;
 }
 .aya-crash-text {
   color: var(--fg-secondary);

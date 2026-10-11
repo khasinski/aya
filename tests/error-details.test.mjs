@@ -16,3 +16,7 @@ test("a thrown non-Error and a missing stack still give one readable line", () =
   assert.equal(errorDetails("boom", null), "boom");
   assert.equal(errorDetails(null), "null");
 });
+
+test("a thrown plain object with a message shows the message, not [object Object]", () => {
+  assert.equal(errorDetails({ message: "request failed" }), "request failed");
+});
