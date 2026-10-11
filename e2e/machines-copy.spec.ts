@@ -21,6 +21,9 @@ test("a copy of the whole popover pastes one line per fact, without the button l
   await window.getByTestId("machines-toggle").click();
   const popover = window.getByRole("dialog", { name: "Machines" });
   await expect(popover.getByTestId("machine-entry")).toHaveCount(3);
+  // A person clicks in the popover before selecting, which takes focus from the terminal; without that, Ctrl+C on
+  // Linux goes to the pane as an interrupt, not to the Edit menu's copy.
+  await popover.getByText("old-server", { exact: true }).click();
   await popover.evaluate((node) => {
     const range = document.createRange();
     range.selectNodeContents(node);
