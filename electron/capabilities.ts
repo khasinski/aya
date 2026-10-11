@@ -228,7 +228,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   {
     command: "machines claim",
     usage: 'aya machines claim id "purpose" [--replace]',
-    summary: "Say you are using a machine and for what; Aya shows it in aya machines and in its status bar. Refused while someone else holds the claim.",
+    summary: "Say you are using a machine and for what; Aya shows it in aya machines and in the machines popover of its status bar. Refused while someone else holds the claim.",
     example: 'aya machines claim athena "run5 timed collection until 23:45"',
     notes: ["Advisory: Ollama is not blocked. Never pass --replace without the user's yes."],
   },

@@ -25,7 +25,7 @@ So the first need is to see every machine at a glance and to say who is using on
 
 ## Where you see it
 
-**Status bar.** Once a machine is added, the status bar shows each one with a dot and words, for example `● athena 97% claimed  ● laptop  ● mini unreachable`. The words carry GPU use, any trouble (`ollama down`, `unreachable`) and the claim; the colour is never the only signal. A slow answer that arrives after a newer one is dropped. The item polls every 30 s while Aya is visible.
+**Status bar.** Once a machine is added, the status bar shows one machines icon, so six machines never fill the bar. Its tooltip and accessible name say each machine's state in words, for example `Machines: athena ready, claimed; mini unreachable`. With no machine added, there is no icon. The item polls every 30 s while Aya is visible; a slow answer that arrives after a newer one is dropped.
 
 **Popover.** Clicking the item opens a popover with one entry per machine:
 

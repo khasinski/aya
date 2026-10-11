@@ -1,9 +1,9 @@
-// The status bar's machines item: each added Ollama machine at a glance, and a popover with what is loaded and who
-// claimed it. Hidden until a machine is added (Settings > Machines or `aya machines add`).
+// The status bar's machines item: one icon, so six machines never fill the bar; its popover says what each has loaded
+// and who claimed it. Hidden until a machine is added (Settings > Machines or `aya machines add`).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MachineView } from "../types";
-import { barLabel, barText, claimText, clock, hardware, health, loadText, MACHINES_CHANGED_EVENT, modelLines, reachText } from "../machines-view";
+import { barLabel, claimText, clock, hardware, health, loadText, MACHINES_CHANGED_EVENT, modelLines, reachText } from "../machines-view";
 
 /** Each poll probes every machine (over ssh for remote ones); half a minute keeps the bar current at little cost. */
 const POLL_MS = 30_000;
@@ -83,27 +83,17 @@ export function MachinesStatus({ onManage }: { onManage: () => void }) {
     <div className="aya-statusbar-popover-host" ref={hostRef}>
       <button
         data-testid="machines-toggle"
-        className="aya-statusbar-item aya-statusbar-button aya-machines-bar"
+        className="aya-statusbar-item aya-statusbar-button"
         type="button"
         aria-label={error ? `Machines: ${error}` : barLabel(machines)}
         aria-expanded={open}
-        title="Your Ollama machines"
+        title={error ? `Machines: ${error}` : barLabel(machines)}
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => setOpen((o) => !o)}
       >
         <span style={{ fontFamily: "Material Symbols Outlined", fontSize: ICON_SIZE_SM_PX }} aria-hidden="true">
           dns
         </span>
-        {error ? (
-          <span className="aya-machines-bar-item">machines: error</span>
-        ) : (
-          machines.map((m) => (
-            <span key={m.id} className="aya-machines-bar-item" aria-hidden="true">
-              <span className={`aya-machine-dot aya-machine-dot--${health(m.status).level}`} />
-              {barText(m)}
-            </span>
-          ))
-        )}
       </button>
       {open && (
         <div className="aya-statusbar-popover aya-statusbar-popover--machines" role="dialog" aria-label="Machines">

@@ -2,7 +2,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addAnswerText, barLabel, barText, claimText, hardware, health, hotText, loadText, modelLines } from "../dist-test/machines-view.js";
+import { addAnswerText, barLabel, claimText, hardware, health, hotText, loadText, modelLines } from "../dist-test/machines-view.js";
 
 const NOW = new Date("2026-10-04T15:00:00Z");
 const GIB = 2 ** 30;
@@ -21,16 +21,16 @@ const status = (over = {}) => ({
   ...over,
 });
 const view = (s, over = {}) => ({ id: "athena", reach: { ssh: "athena" }, ollama: { port: 11434 }, status: s, ...over });
-const shown = (s) => ({ health: health(s).word, level: health(s).level, hw: hardware(s), load: loadText(s), models: modelLines(s, 11434, NOW), bar: barText(view(s)) });
+const shown = (s) => ({ health: health(s).word, level: health(s).level, hw: hardware(s), load: loadText(s), models: modelLines(s, 11434, NOW) });
 
 const mac = { cpuName: "Apple M2 Max", cpus: 12, load1: 4.5, memUsedBytes: 30 * GIB, memTotalBytes: 64 * GIB, gpus: [] };
 const CASES = [
-  ["busy GPU, model hot", status(), { health: "Ready", level: "ok", hw: "RTX 4090", load: "GPU 97% · VRAM 21.0/24.0 GB", models: ["qwen3:32b · 19.2 GB · until 15:14 (14 min)"].map((l) => l.replace("15:14", new Date("2026-10-04T15:14:30Z").toTimeString().slice(0, 5))), bar: "athena 97%" }],
-  ["a Mac: its chip, CPU and RAM instead of a GPU", status({ ...mac, ollama: { up: true, version: "0.12.3", loaded: [], modelsError: null } }), { health: "Ready", level: "ok", hw: "Apple M2 Max", load: "CPU 4.5/12 · RAM 30.0/64.0 GB", models: ["No model loaded"], bar: "athena" }],
-  ["Ollama down", status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null } }), { health: "Ollama down", level: "warn", hw: "Apple M2 Max", load: "CPU 4.5/12 · RAM 30.0/64.0 GB", models: ["Ollama not answering on port 11434"], bar: "athena ollama down" }],
-  ["models list unavailable: never \"no model loaded\"", status({ ollama: { up: true, version: "0.12.3", loaded: null, modelsError: "no answer from /api/ps" } }), { health: "Ready", level: "ok", hw: "RTX 4090", load: "GPU 97% · VRAM 21.0/24.0 GB", models: ["Models unavailable (no answer from /api/ps)"], bar: "athena 97%" }],
-  ["two GPUs, a pinned model", status({ gpus: [{ name: "NVIDIA RTX A6000", utilPct: 10, memUsedMiB: 1024, memTotalMiB: 8192 }, { name: "NVIDIA RTX A6000", utilPct: 60, memUsedMiB: 2048, memTotalMiB: 8192 }], ollama: { up: true, version: "1", loaded: [{ name: "m1", vramBytes: null, expiresAt: null, pinned: true }], modelsError: null } }), { health: "Ready", level: "ok", hw: "RTX A6000 + RTX A6000", load: "GPU 60% · VRAM 3.0/16.0 GB", models: ["m1 · pinned"], bar: "athena 60%" }],
-  ["unreachable", status({ reachable: false, error: "ssh: Permission denied", cpuName: null, cpus: null, load1: null, memUsedBytes: null, memTotalBytes: null, gpus: [], ollama: { up: false, version: null, loaded: null, modelsError: null } }), { health: "Unreachable", level: "down", hw: "", load: "CPU ?/? · RAM ?/? GB", models: [], bar: "athena unreachable" }],
+  ["busy GPU, model hot", status(), { health: "Ready", level: "ok", hw: "RTX 4090", load: "GPU 97% · VRAM 21.0/24.0 GB", models: ["qwen3:32b · 19.2 GB · until 15:14 (14 min)"].map((l) => l.replace("15:14", new Date("2026-10-04T15:14:30Z").toTimeString().slice(0, 5))) }],
+  ["a Mac: its chip, CPU and RAM instead of a GPU", status({ ...mac, ollama: { up: true, version: "0.12.3", loaded: [], modelsError: null } }), { health: "Ready", level: "ok", hw: "Apple M2 Max", load: "CPU 4.5/12 · RAM 30.0/64.0 GB", models: ["No model loaded"] }],
+  ["Ollama down", status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null } }), { health: "Ollama down", level: "warn", hw: "Apple M2 Max", load: "CPU 4.5/12 · RAM 30.0/64.0 GB", models: ["Ollama not answering on port 11434"] }],
+  ["models list unavailable: never \"no model loaded\"", status({ ollama: { up: true, version: "0.12.3", loaded: null, modelsError: "no answer from /api/ps" } }), { health: "Ready", level: "ok", hw: "RTX 4090", load: "GPU 97% · VRAM 21.0/24.0 GB", models: ["Models unavailable (no answer from /api/ps)"] }],
+  ["two GPUs, a pinned model", status({ gpus: [{ name: "NVIDIA RTX A6000", utilPct: 10, memUsedMiB: 1024, memTotalMiB: 8192 }, { name: "NVIDIA RTX A6000", utilPct: 60, memUsedMiB: 2048, memTotalMiB: 8192 }], ollama: { up: true, version: "1", loaded: [{ name: "m1", vramBytes: null, expiresAt: null, pinned: true }], modelsError: null } }), { health: "Ready", level: "ok", hw: "RTX A6000 + RTX A6000", load: "GPU 60% · VRAM 3.0/16.0 GB", models: ["m1 · pinned"] }],
+  ["unreachable", status({ reachable: false, error: "ssh: Permission denied", cpuName: null, cpus: null, load1: null, memUsedBytes: null, memTotalBytes: null, gpus: [], ollama: { up: false, version: null, loaded: null, modelsError: null } }), { health: "Unreachable", level: "down", hw: "", load: "CPU ?/? · RAM ?/? GB", models: [] }],
 ];
 for (const [name, s, want] of CASES) test(`shown: ${name}`, () => assert.deepEqual(shown(s), want));
 
@@ -45,7 +45,6 @@ test("a claim says what for, who, which pane and since when; its age once it is 
   const since = new Date(claim.since).toTimeString().slice(0, 5);
   assert.equal(claimText(claim, NOW), `run5 timed collection · justi (pane lead) · since ${since}`);
   assert.equal(claimText({ ...claim, pane: undefined }, new Date("2026-10-04T21:30:00Z")), `run5 timed collection · justi · since ${since} (7 h ago)`);
-  assert.equal(barText(view(status(), { claim })), "athena 97% claimed");
 });
 
 test("the status bar button names every machine's state in words", () => {

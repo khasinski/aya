@@ -3117,14 +3117,7 @@ select.aya-modal-input {
   color: var(--bg-primary, #fff);
 }
 
-/* Machines: the status bar item, its popover and Settings > Machines. */
-.aya-machines-bar {
-  gap: 10px;
-}
-.aya-machines-bar-item {
-  display: inline-flex;
-  align-items: center;
-}
+/* Machines: the status bar popover and Settings > Machines. */
 .aya-machine-dot {
   display: inline-block;
   flex: 0 0 auto;

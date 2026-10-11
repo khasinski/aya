@@ -58,7 +58,7 @@ test.describe("none added", () => {
     await expect(panel).toContainText("ssh mini-lab · Ollama port 11435");
 
     await window.keyboard.press("Escape");
-    await expect(window.getByTestId("machines-toggle")).toContainText("gpu-box 97%");
+    await expect(window.getByTestId("machines-toggle")).toHaveAccessibleName(/^Machines: gpu-box ready; mini-lab /);
 
     const again = await openMachinesSettings(window, app);
     await again.getByRole("listitem").filter({ hasText: "mini-lab" }).getByRole("button", { name: "Remove" }).click();
@@ -73,12 +73,9 @@ test.describe("three added", () => {
   test("the status bar names each state in words; the popover says what is loaded and who claimed it; Release clears the claim", async ({ app, window, seeded }) => {
     const bar = window.getByTestId("machines-toggle");
     await expect(bar).toHaveAccessibleName("Machines: gpu-box ready, claimed; mini-lab ollama down; old-server unreachable");
-    await expect(bar).toContainText("gpu-box 97% claimed");
-    // Trouble is in words too, never only the dot's colour.
-    await expect(bar).toContainText("mini-lab ollama down");
-    await expect(bar).toContainText("old-server unreachable");
-    await expect(bar.locator(".aya-machine-dot--warn")).toHaveCount(1);
-    await expect(bar.locator(".aya-machine-dot--down")).toHaveCount(1);
+    // The bar shows the icon only, so many machines never fill it; their states are in the name, the tooltip and the popover.
+    await expect(bar).toHaveText("dns");
+    await expect(bar).toHaveAttribute("title", "Machines: gpu-box ready, claimed; mini-lab ollama down; old-server unreachable");
 
     await bar.click();
     const popover = window.getByRole("dialog", { name: "Machines" });
@@ -97,8 +94,7 @@ test.describe("three added", () => {
 
     await entries.nth(0).getByRole("button", { name: "Release" }).click();
     await expect(entries.nth(0)).not.toContainText("Claimed");
-    await expect(bar).toContainText("gpu-box 97%");
-    await expect(bar).not.toContainText("claimed");
+    await expect(bar).toHaveAccessibleName("Machines: gpu-box ready; mini-lab ollama down; old-server unreachable");
     expect(JSON.parse(readFileSync(join(seeded.ayaHome, "machines.json"), "utf8")).machines[0].claim).toBeUndefined();
 
     await window.keyboard.press("Escape");
