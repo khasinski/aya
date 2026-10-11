@@ -16,3 +16,23 @@ test("what the machines popover shows can be selected and copied with Cmd+C", as
   await window.keyboard.press("Meta+c");
   await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toContain("qwen3:32b · 19.6 GB");
 });
+
+test("a copy of the whole popover pastes one line per fact, without the button labels", async ({ app, window }) => {
+  await window.getByTestId("machines-toggle").click();
+  const popover = window.getByRole("dialog", { name: "Machines" });
+  await expect(popover.getByTestId("machine-entry")).toHaveCount(3);
+  await popover.evaluate((node) => {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+  await app.evaluate(({ clipboard }) => clipboard.writeText(""));
+  await window.keyboard.press("Meta+c");
+  await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toContain("gpu-box · RTX 4090 · Ready");
+  const text = await app.evaluate(({ clipboard }) => clipboard.readText());
+  expect(text).toContain("mini-lab · Apple M2 Pro · Ollama down\nload 0.8 on 10 CPUs · RAM 12.0/32.0 GB · ssh mini-lab");
+  expect(text).toContain("old-server · Unreachable");
+  expect(text).not.toMatch(/Manage|Release/);
+});

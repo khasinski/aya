@@ -3136,10 +3136,14 @@ select.aya-modal-input {
   background: var(--status-error);
 }
 .aya-statusbar-popover--machines {
-  /* The status bar is not selectable; this popover is, so its facts can be copied into a pane or a note. */
-  user-select: text;
   width: min(460px, calc(100vw - 24px));
   overflow-y: auto;
+  /* The status bar is not selectable; this popover is, so its facts can be copied into a pane or a note. */
+  user-select: text;
+}
+/* ...but not its buttons: "Manage" and "Release" stay out of what is copied. */
+.aya-statusbar-popover--machines button {
+  user-select: none;
 }
 .aya-machines-list {
   margin: 0;
@@ -3157,15 +3161,10 @@ select.aya-modal-input {
   border-top: 1px solid var(--border);
 }
 .aya-machines-entry-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
   color: var(--fg-primary);
 }
-.aya-machines-state {
-  display: inline-flex;
-  align-items: center;
-  margin-left: auto;
+.aya-machines-entry-head .aya-machine-dot {
+  vertical-align: middle;
 }
 .aya-machines-state--warn {
   color: var(--status-waiting);

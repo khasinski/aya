@@ -2,7 +2,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addAnswerText, barLabel, claimText, gpuErrorText, hardware, health, hotText, loadText, modelLines } from "../dist-test/machines-view.js";
+import { addAnswerText, barLabel, claimText, gpuErrorText, hardware, shortCpuName, health, hotText, loadText, modelLines } from "../dist-test/machines-view.js";
 
 const NOW = new Date("2026-10-04T15:00:00Z");
 const GIB = 2 ** 30;
@@ -25,11 +25,11 @@ const shown = (s) => ({ health: health(s).word, level: health(s).level, hw: hard
 const mac = { cpuName: "Apple M2 Max", cpus: 12, load1: 4.5, memUsedBytes: 30 * GIB, memTotalBytes: 64 * GIB, gpus: [] };
 const CASES = [
   ["busy GPU, model hot", status(), { health: "Ready", level: "ok", hw: "RTX 4090", load: "GPU 97% · VRAM 21.0/24.0 GB", models: ["qwen3:32b · 19.2 GB · until 15:14 (14 min)"].map((l) => l.replace("15:14", new Date("2026-10-04T15:14:30Z").toTimeString().slice(0, 5))) }],
-  ["a Mac: its chip, CPU and RAM instead of a GPU", status({ ...mac, ollama: { up: true, version: "0.12.3", loaded: [], modelsError: null } }), { health: "Ready", level: "ok", hw: "Apple M2 Max", load: "CPU 4.5/12 · RAM 30.0/64.0 GB", models: ["No model loaded"] }],
-  ["Ollama down", status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null } }), { health: "Ollama down", level: "warn", hw: "Apple M2 Max", load: "CPU 4.5/12 · RAM 30.0/64.0 GB", models: ["Ollama not answering on port 11434"] }],
+  ["a Mac: its chip, CPU and RAM instead of a GPU", status({ ...mac, ollama: { up: true, version: "0.12.3", loaded: [], modelsError: null } }), { health: "Ready", level: "ok", hw: "Apple M2 Max", load: "load 4.5 on 12 CPUs · RAM 30.0/64.0 GB", models: ["No model loaded"] }],
+  ["Ollama down", status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null } }), { health: "Ollama down", level: "warn", hw: "Apple M2 Max", load: "load 4.5 on 12 CPUs · RAM 30.0/64.0 GB", models: ["Ollama not answering on port 11434"] }],
   ["models list unavailable: never \"no model loaded\"", status({ ollama: { up: true, version: "0.12.3", loaded: null, modelsError: "no answer from /api/ps" } }), { health: "Ready", level: "ok", hw: "RTX 4090", load: "GPU 97% · VRAM 21.0/24.0 GB", models: ["Models unavailable (no answer from /api/ps)"] }],
   ["two GPUs, a pinned model", status({ gpus: [{ name: "NVIDIA RTX A6000", utilPct: 10, memUsedMiB: 1024, memTotalMiB: 8192 }, { name: "NVIDIA RTX A6000", utilPct: 60, memUsedMiB: 2048, memTotalMiB: 8192 }], ollama: { up: true, version: "1", loaded: [{ name: "m1", vramBytes: null, expiresAt: null, pinned: true }], modelsError: null } }), { health: "Ready", level: "ok", hw: "RTX A6000 + RTX A6000", load: "GPU 60% · VRAM 3.0/16.0 GB", models: ["m1 · pinned"] }],
-  ["unreachable", status({ reachable: false, error: "ssh: Permission denied", cpuName: null, cpus: null, load1: null, memUsedBytes: null, memTotalBytes: null, gpus: [], ollama: { up: false, version: null, loaded: null, modelsError: null } }), { health: "Unreachable", level: "down", hw: "", load: "CPU ?/? · RAM ?/? GB", models: [] }],
+  ["unreachable", status({ reachable: false, error: "ssh: Permission denied", cpuName: null, cpus: null, load1: null, memUsedBytes: null, memTotalBytes: null, gpus: [], ollama: { up: false, version: null, loaded: null, modelsError: null } }), { health: "Unreachable", level: "down", hw: "", load: "load ? on ? CPUs · RAM ?/? GB", models: [] }],
 ];
 for (const [name, s, want] of CASES) test(`shown: ${name}`, () => assert.deepEqual(shown(s), want));
 
@@ -73,4 +73,11 @@ test("a broken NVIDIA driver is its own state, with nvidia-smi's words; the CPU 
   assert.match(barLabel([view(s)]), /athena gpu error/);
   // Ollama down outranks it: with no Ollama, the GPU does not matter yet.
   assert.equal(health({ ...s, ollama: { up: false, version: null, loaded: null, modelsError: null } }).word, "Ollama down");
+});
+
+test("a CPU is named by its model: no (R), vendor, clock or core count; Apple keeps its name", () => {
+  assert.equal(shortCpuName("Intel(R) Xeon(R) CPU E3-1245 V2 @ 3.40GHz"), "Xeon E3-1245 V2");
+  assert.equal(shortCpuName("AMD Ryzen 9 9950X3D 16-Core Processor"), "Ryzen 9 9950X3D");
+  assert.equal(shortCpuName("Intel(R) Core(TM) i7-8700K CPU @ 3.70GHz"), "Core i7-8700K");
+  assert.equal(shortCpuName("Apple M5 Max"), "Apple M5 Max");
 });

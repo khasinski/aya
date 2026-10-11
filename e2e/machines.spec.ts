@@ -81,14 +81,14 @@ test.describe("three added", () => {
     const popover = window.getByRole("dialog", { name: "Machines" });
     const entries = popover.getByTestId("machine-entry");
     await expect(entries).toHaveCount(3);
-    await expect(entries.nth(0)).toContainText("gpu-boxRTX 4090Ready");
+    await expect(entries.nth(0)).toContainText("gpu-box · RTX 4090 · Ready");
     await expect(entries.nth(0)).toContainText("GPU 97% · VRAM 21.0/24.0 GB · ssh gpu-box");
     await expect(entries.nth(0)).toContainText(/qwen3:32b · 19\.6 GB · until \d\d:\d\d \(1[34] min\)/);
     await expect(entries.nth(0)).toContainText("Claimed: run5 timed collection · justi (pane lead) · since");
-    await expect(entries.nth(1)).toContainText("mini-labApple M2 ProOllama down");
-    await expect(entries.nth(1)).toContainText("CPU 0.8/10 · RAM 12.0/32.0 GB · ssh mini-lab");
+    await expect(entries.nth(1)).toContainText("mini-lab · Apple M2 Pro · Ollama down");
+    await expect(entries.nth(1)).toContainText("load 0.8 on 10 CPUs · RAM 12.0/32.0 GB · ssh mini-lab");
     await expect(entries.nth(1)).toContainText("Ollama not answering on port 11434");
-    await expect(entries.nth(2)).toContainText("old-serverUnreachable");
+    await expect(entries.nth(2)).toContainText("old-server · Unreachable");
     await expect(entries.nth(2)).toContainText("ssh old-server: ssh: old-server: Permission denied (publickey).");
     await shoot(app, window, "status-popover.png");
 

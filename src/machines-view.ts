@@ -19,10 +19,21 @@ export function health(s: MachineStatus): { word: "Ready" | "GPU error" | "Ollam
 /** nvidia-smi's failure, word for word, so the user sees why the GPU is not used. */
 export const gpuErrorText = (s: MachineStatus) => (s.reachable && s.gpuError ? `nvidia-smi failed: ${s.gpuError}` : null);
 
-/** "RTX 4090", or the CPU's name without an NVIDIA GPU: what tells a GPU box from a laptop. */
+/** "Xeon E3-1245 V2" for "Intel(R) Xeon(R) CPU E3-1245 V2 @ 3.40GHz", "Ryzen 9 9950X3D" for "AMD Ryzen 9 9950X3D 16-Core
+ *  Processor": the model, without marks, vendor, clock or core count. Apple's chips keep "Apple". */
+export const shortCpuName = (name: string) =>
+  name
+    .replace(/\((?:R|TM)\)/gi, "")
+    .replace(/\s*@.*$/, "")
+    .replace(/\b\d+-Core Processor\b|\bProcessor\b|\bCPU\b/gi, "")
+    .replace(/^(?:Intel|AMD)\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim() || name;
+
+/** "RTX 4090", or the CPU's model without an NVIDIA GPU: what tells a GPU box from a laptop. */
 export function hardware(s: MachineStatus): string {
   if (s.gpus.length) return s.gpus.map((g) => g.name.replace(/^NVIDIA\s+(GeForce\s+)?/i, "")).join(" + ");
-  return s.cpuName ?? "";
+  return s.cpuName ? shortCpuName(s.cpuName) : "";
 }
 
 const maxGpuUtil = (s: MachineStatus) => {
@@ -36,7 +47,8 @@ export function loadText(s: MachineStatus): string {
     const sum = (k: "memUsedMiB" | "memTotalMiB") => (s.gpus.some((g) => g[k] === null) ? null : s.gpus.reduce((a, g) => a + (g[k] ?? 0), 0));
     return `GPU ${maxGpuUtil(s) ?? "?"}% · VRAM ${gibFromMiB(sum("memUsedMiB"))}/${gibFromMiB(sum("memTotalMiB"))} GB`;
   }
-  return `CPU ${s.load1 === null ? "?" : s.load1.toFixed(1)}/${s.cpus ?? "?"} · RAM ${gib(s.memUsedBytes)}/${gib(s.memTotalBytes)} GB`;
+  // Load average over the core count, said in words: "CPU 18.5/10" read like an error.
+  return `load ${s.load1 === null ? "?" : s.load1.toFixed(1)} on ${s.cpus ?? "?"} CPUs · RAM ${gib(s.memUsedBytes)}/${gib(s.memTotalBytes)} GB`;
 }
 
 /** "until 16:28 (14 min)": whole minutes left, never rounded up. */

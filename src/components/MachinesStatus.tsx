@@ -116,9 +116,11 @@ export function MachinesStatus({ onManage }: { onManage: () => void }) {
               const h = health(m.status);
               return (
                 <li key={m.id} className="aya-machines-entry" data-testid="machine-entry">
+                  {/* One line of inline text, so a copy pastes "gpu-box · RTX 4090 · Ready", not three lines. */}
                   <div className="aya-machines-entry-head">
                     <strong>{m.id}</strong>
-                    <span className="aya-machines-muted">{hardware(m.status)}</span>
+                    {hardware(m.status) && <span className="aya-machines-muted"> · {hardware(m.status)}</span>}
+                    <span className="aya-machines-muted"> · </span>
                     <span className={`aya-machines-state aya-machines-state--${h.level}`}>
                       <span className={`aya-machine-dot aya-machine-dot--${h.level}`} aria-hidden="true" />
                       {h.word}
