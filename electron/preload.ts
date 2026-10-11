@@ -159,6 +159,7 @@ const api: AyaApi = {
   cliStatus: () => ipcRenderer.invoke("app:cli-status"),
   installCli: () => ipcRenderer.invoke("app:install-cli"),
   getDiagnostics: () => ipcRenderer.invoke("app:diagnostics"),
+  reloadWindow: () => ipcRenderer.invoke("window:reload"),
   getUpdateStatus: () => ipcRenderer.invoke("updates:status"),
   checkForUpdates: () => ipcRenderer.invoke("updates:check"),
   installUpdate: () => ipcRenderer.invoke("updates:install"),

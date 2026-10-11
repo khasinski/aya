@@ -315,6 +315,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     cliStatus: noopAsync,
     installCli: noopAsync,
     getDiagnostics: noopAsync,
+    reloadWindow: async () => window.location.reload(),
     getUpdateStatus: noopAsync,
     checkForUpdates: noopAsync,
     installUpdate: noopAsync,

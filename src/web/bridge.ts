@@ -178,6 +178,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
     cliStatus: inv("app:cli-status"),
     installCli: inv("app:install-cli"),
     getDiagnostics: inv("app:diagnostics"),
+    reloadWindow: async () => window.location.reload(),
     getUpdateStatus: inv("updates:status"),
     checkForUpdates: inv("updates:check"),
     installUpdate: inv("updates:install"),

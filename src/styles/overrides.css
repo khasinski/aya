@@ -3210,3 +3210,25 @@ select.aya-modal-input {
 .aya-machines-add {
   margin-top: 12px;
 }
+
+/* The window's error screen (ErrorBoundary): what failed and a way back. */
+.aya-crash {
+  max-width: 640px;
+  margin: 15vh auto 0;
+  padding: 0 24px;
+}
+.aya-crash-text {
+  color: var(--fg-secondary);
+  margin: 8px 0 16px;
+}
+.aya-crash-details {
+  margin-top: 20px;
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  user-select: text;
+  color: var(--fg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}

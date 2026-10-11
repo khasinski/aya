@@ -22,6 +22,7 @@
     "src/team-flow.ts",
     "src/team-view.ts",
     "src/units.ts",
+    "src/error-details.ts",
     "src/diff-navigation.ts",
     "src/double-shift.ts",
     "src/focus-reporting.ts",

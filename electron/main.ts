@@ -2758,6 +2758,12 @@ function registerIpc(): TeamRunner {
   ipcMain.handle("app:cli-status", async () => cliStatus());
   ipcMain.handle("app:install-cli", async () => installCli());
   ipcMain.handle("app:diagnostics", async () => diagnosticsReport());
+  // The window's error screen reloads through here: a location.reload() from the page started and
+  // was cancelled (measured in e2e, Electron 43), while webContents.reload() is not. Aya Web reloads
+  // in its own page, so a stub event (sender: null) is a no-op.
+  ipcMain.handle("window:reload", (e) => {
+    e.sender?.reload();
+  });
   ipcMain.handle("updates:status", async () => getUpdateStatus());
   ipcMain.handle("updates:check", async () => checkForUpdates());
   ipcMain.handle("updates:install", () => updates.install());

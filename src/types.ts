@@ -890,6 +890,8 @@ export interface AyaApi {
   cliStatus(): Promise<CliStatus>;
   installCli(): Promise<CliStatus>;
   getDiagnostics(): Promise<DiagnosticsReport>;
+  /** Reloads this window; its terminals keep running in the pty host. */
+  reloadWindow(): Promise<void>;
   getUpdateStatus(): Promise<UpdateStatus>;
   checkForUpdates(): Promise<UpdateStatus>;
   installUpdate(): Promise<void>;

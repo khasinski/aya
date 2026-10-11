@@ -17,6 +17,7 @@ import {
   type FormEvent,
 } from "react";
 import { createRoot } from "react-dom/client";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { createWebAya } from "./bridge";
 import { connectWebTransport, webSocketUrl } from "./transport";
 
@@ -224,5 +225,9 @@ void (async () => {
   } catch {
     authenticated = false;
   }
-  root.render(<WebBoot authenticated={authenticated} />);
+  root.render(
+    <ErrorBoundary>
+      <WebBoot authenticated={authenticated} />
+    </ErrorBoundary>,
+  );
 })();
