@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import * as net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,10 +22,22 @@ test("the socket has no group or other bits as soon as listen returns, 0600 once
   const socketPath = join(dir, "aya.sock");
   const server = net.createServer();
   t.after(() => server.close());
-  const umask = currentUmask();
+  // A permissive umask, as a user's shell has: a runner's 077 would make the check pass without the helper.
+  const runnerUmask = process.umask(0o022);
+  t.after(() => process.umask(runnerUmask));
   const listening = new Promise((resolve) => listenOwnerOnly(server, socketPath, resolve));
   assert.equal(statSync(socketPath).mode & 0o077, 0, "nobody but the owner, before any callback ran");
-  assert.equal(currentUmask(), umask, "the process umask is restored right away");
+  assert.equal(currentUmask(), 0o022, "the process umask is restored right away");
   await listening;
   assert.equal(statSync(socketPath).mode & 0o777, 0o600);
+});
+
+// Every Unix socket Aya listens on goes through the helper; only Aya Web listens on a TCP port.
+test("every listen() in electron/ but Aya Web's TCP server is listenOwnerOnly", () => {
+  const dir = new URL("../electron/", import.meta.url);
+  const direct = readdirSync(dir)
+    .filter((f) => f.endsWith(".ts") && f !== "owner-socket.ts" && f !== "web-server.ts")
+    .filter((f) => /\.listen\(/.test(readFileSync(new URL(f, dir), "utf8")));
+  assert.deepEqual(direct, []);
+  assert.match(readFileSync(new URL("web-server.ts", dir), "utf8"), /server\.listen\(config\.port, config\.host/);
 });
