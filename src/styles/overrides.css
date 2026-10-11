@@ -3141,9 +3141,13 @@ select.aya-modal-input {
   /* The status bar is not selectable; this popover is, so its facts can be copied into a pane or a note. */
   user-select: text;
 }
-/* ...but not its buttons: "Manage" and "Release" stay out of what is copied. */
+/* ...but not its buttons: "Manage", "Terminal" and "Release" stay out of what is copied. They share one font:
+   with font: inherit, Manage took the title's and the others the mono of the entries. */
 .aya-statusbar-popover--machines button {
   user-select: none;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
 }
 .aya-machines-list {
   margin: 0;
