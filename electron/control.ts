@@ -1,5 +1,6 @@
 import type { BrowserWindow } from "electron";
 import { oneAtATime } from "./keyed-queue";
+import { listenOwnerOnly } from "./owner-socket";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
@@ -19,7 +20,7 @@ import {
   resolvePaneTarget,
   tailForPaneRead,
 } from "./pane-target";
-import { AYA_HOME, CONTROL_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
+import { AYA_HOME, CONTROL_SOCKET_PATH } from "./paths";
 import { handleMachinesRequest, type MachinesDeps } from "./machines";
 import { ayaMachinesDeps } from "./machines-dialog";
 import { handleTeamAuthorRequest } from "./team-author";
@@ -616,13 +617,7 @@ export function startControlServerOn(
     });
   });
 
-  server.listen(socketPath, () => {
-    try {
-      fs.chmodSync(socketPath, SOCKET_FILE_PERMISSIONS);
-    } catch {
-      // best effort
-    }
-  });
+  listenOwnerOnly(server, socketPath);
 
   return () => {
     server.close();

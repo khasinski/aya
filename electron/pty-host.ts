@@ -2,7 +2,8 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
-import { PTY_HOST_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
+import { listenOwnerOnly } from "./owner-socket";
+import { PTY_HOST_SOCKET_PATH } from "./paths";
 import { hostBuildHash, UNKNOWN_SCRIPT_HASH, type HostIdentity } from "./pty-host-staleness";
 import {
   writeHostRecord,
@@ -269,12 +270,7 @@ function start(): void {
     });
   });
 
-  server.listen(PTY_HOST_SOCKET_PATH, () => {
-    try {
-      fs.chmodSync(PTY_HOST_SOCKET_PATH, SOCKET_FILE_PERMISSIONS);
-    } catch {
-      // best effort
-    }
+  listenOwnerOnly(server, PTY_HOST_SOCKET_PATH, () => {
     // A host whose app died before connecting gets no disconnect to arm this.
     scheduleIdleShutdown();
     ptyLog.append("host-start", {

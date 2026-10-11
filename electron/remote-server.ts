@@ -3,7 +3,8 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ProjectConfig } from "./types";
-import { REMOTE_SOCKET_PATH, SOCKET_FILE_PERMISSIONS } from "./paths";
+import { listenOwnerOnly } from "./owner-socket";
+import { REMOTE_SOCKET_PATH } from "./paths";
 import {
   REMOTE_PROTOCOL_VERSION,
   remoteError,
@@ -170,13 +171,7 @@ export function startRemoteServerOn(
     });
   });
 
-  server.listen(socketPath, () => {
-    try {
-      fs.chmodSync(socketPath, SOCKET_FILE_PERMISSIONS);
-    } catch {
-      // best effort
-    }
-  });
+  listenOwnerOnly(server, socketPath);
 
   return () => {
     server.close();
