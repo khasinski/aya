@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { DEFAULT_CADENCE_MINUTES } from "../team-edit";
 import { paneRoles } from "../team-view";
 import type { AyaIntelligenceConfig, PresetChoice, ProjectConfig, TeamDefinition, TeamSummary, WaitingPanes } from "../types";
@@ -34,6 +34,46 @@ const TWO_ROLE_TEMPLATE: TeamDefinition = {
     "Findings are hypotheses with a measurement request, not facts. Number your reports as updates (Update 1, Update 2) and mark items [reported -> confirmed]. Reports are one-way unless a question is asked.",
 };
 
+/** The role notes come in seconds after the dialog opens and grow the card above its log. Until the
+ *  user scrolls the dialog, the end of the first log stays where it was if any of its newest message
+ *  showed (a held message there is what the card is opened for), as the browser's scroll anchoring
+ *  would, which it does not do while the dialog is at its top. */
+function useKeepLogEndInView(body: RefObject<HTMLDivElement | null>, contentKey: unknown) {
+  useEffect(() => {
+    const el = body.current;
+    if (!el) return;
+    // gap: from the log's bottom to the dialog's bottom edge; seen: some of the newest message shows.
+    const measure = () => {
+      const log = el.querySelector('[role="log"]');
+      const newest = log?.lastElementChild;
+      if (!log || !newest) return null;
+      const edge = el.getBoundingClientRect().bottom;
+      return { gap: edge - log.getBoundingClientRect().bottom, seen: newest.getBoundingClientRect().top < edge };
+    };
+    let before = measure();
+    let moved = false;
+    let ours = el.scrollTop;
+    const onScroll = () => {
+      if (Math.abs(el.scrollTop - ours) > 1) moved = true;
+      before = measure();
+    };
+    const resized = new ResizeObserver(() => {
+      const now = measure();
+      if (now && before && !moved && before.seen && now.gap < before.gap) {
+        el.scrollTop += before.gap - now.gap;
+        ours = el.scrollTop;
+      }
+      before = measure();
+    });
+    for (const child of el.children) resized.observe(child);
+    el.addEventListener("scroll", onScroll);
+    return () => {
+      resized.disconnect();
+      el.removeEventListener("scroll", onScroll);
+    };
+  }, [body, contentKey]);
+}
+
 interface Props {
   project: ProjectConfig;
   intelligence: AyaIntelligenceConfig;
@@ -47,6 +87,8 @@ export function TeamsModal({ project, intelligence, waiting, onClose }: Props) {
   const [presets, setPresets] = useState<PresetChoice[]>([]);
   const list = useAsyncAction();
   const { run } = list;
+  const body = useRef<HTMLDivElement>(null);
+  useKeepLogEndInView(body, editing ? null : teams.map((t) => t.name).join("\n"));
 
   const reload = useCallback(async () => {
     const next = await run(() => window.aya.teamList(project.slug));
@@ -101,7 +143,7 @@ export function TeamsModal({ project, intelligence, waiting, onClose }: Props) {
             </div>
             <ErrorLine error={list.error} />
             {/* Only the cards scroll: the title and the buttons stay on screen. */}
-            <div className="aya-teams-body">
+            <div ref={body} className="aya-teams-body">
             {teams.length === 0 && <div className="aya-modal-hint">No team yet.</div>}
             {teams.map((team) => (
               <TeamCard
