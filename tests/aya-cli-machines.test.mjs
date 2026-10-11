@@ -307,7 +307,7 @@ test("Ollama answers its version but not /api/ps: models unavailable, never \"no
   }
 });
 
-test("Ollama not answering on the local port: the machine is connected, Ollama is down", async () => {
+test("nothing on the local Ollama port: the machine is connected, and Ollama is named silent for this host's reason", async () => {
   reset();
   const closed = createServer();
   await new Promise((r) => closed.listen(0, "127.0.0.1", r));
@@ -316,7 +316,8 @@ test("Ollama not answering on the local port: the machine is connected, Ollama i
   await aya("add", `local port ${port}`);
   const r = await aya();
   assert.match(r.stdout, /^local {2}.* {2}local$/m);
-  assert.match(r.stdout, new RegExp(`ollama not answering on port ${port}`));
+  // Which of the three depends on this host: no ollama here (CI), installed and not running, or running on another port.
+  assert.match(r.stdout, new RegExp(`\\n +ollama (not installed|not running \\(nothing on port ${port}\\)|not answering on port ${port})\\n`));
 });
 
 test("two callers at once share one probe per machine", async () => {
