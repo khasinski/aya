@@ -191,6 +191,11 @@ test("Aya's dialog names each machine, what the probe found, and the pane that a
   const local = addDialogText({ machines: [{ id: "local", reach: "local", port: 11434, status: mac }] });
   assert.match(local.detail, /^Aya will only read its state; it never loads or unloads a model\./);
   assert.match(local.detail, /connected, 12 CPUs, Apple M2 Max, Ollama not answering/);
+  // The same three states as the popover and aya machines.
+  const silent = (installed, running) => addDialogText({ machines: [{ id: "m", reach: "local", port: 11434, status: { ...mac, ollama: { up: false, loaded: null, installed, running } } }] }).detail;
+  assert.match(silent(false, false), /Ollama not installed/);
+  assert.match(silent(true, false), /Ollama not running/);
+  assert.match(silent(true, true), /Ollama not answering/);
   const one = addDialogText({ machines: [{ id: "athena", reach: { ssh: "athena" }, port: 11434, status: ok }] });
   assert.match(one.detail, /^Aya will only read its state over ssh;/);
   assert.match(text.detail, /athena {2}\(ssh athena, Ollama port 11434\)\n {2}connected, 32 CPUs, RTX 4090, Ollama 0\.34\.4, 1 model\(s\) loaded/);

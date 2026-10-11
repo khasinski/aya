@@ -235,6 +235,24 @@ test("a hung local nvidia-smi is killed with its children at the deadline, befor
   assert.equal(alive(child), false, "its child died with the group");
 });
 
+test("an nvidia-smi that fails on stderr only is a GPU error, never a machine that looks ready without its GPU", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-smi-err-"));
+  const { writeFileSync, chmodSync, mkdirSync } = await import("node:fs");
+  mkdirSync(join(dir, "bin"));
+  writeFileSync(join(dir, "bin", "nvidia-smi"), "#!/bin/sh\necho 'NVIDIA-SMI has failed because it could not communicate with the NVIDIA driver.' >&2\nexit 9\n");
+  chmodSync(join(dir, "bin", "nvidia-smi"), 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = `${join(dir, "bin")}:${path}`;
+  t.after(() => {
+    process.env.PATH = path;
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const status = await probeMachine("local", 1);
+  assert.equal(status.reachable, true);
+  assert.deepEqual(status.gpus, []);
+  assert.equal(status.gpuError, "NVIDIA-SMI has failed because it could not communicate with the NVIDIA driver.");
+});
+
 test("an /api/ps entry that is not an object is skipped, never a crash that hides every machine", () => {
   const o = parseOllama('{"version":"0.12.3"}', '{"models":[null, 7, [], {"name":"qwen3:32b","size_vram":1}]}');
   assert.equal(o.up, true);

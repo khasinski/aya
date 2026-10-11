@@ -12,7 +12,11 @@ function found(s: MachineStatus): string {
   if (!s.reachable) return `unreachable: ${s.error}`;
   const gpu = s.gpus.length ? s.gpus.map((g) => g.name).join(", ") : (s.cpuName ?? "no NVIDIA GPU");
   const ollama = !s.ollama.up
-    ? "Ollama not answering"
+    ? s.ollama.installed === false
+      ? "Ollama not installed"
+      : s.ollama.running === false
+        ? "Ollama not running"
+        : "Ollama not answering"
     : `Ollama ${s.ollama.version ?? "?"}, ${s.ollama.loaded === null ? "models unknown" : `${s.ollama.loaded.length} model(s) loaded`}`;
   return `connected, ${s.cpus ?? "?"} CPUs, ${gpu}, ${ollama}`;
 }

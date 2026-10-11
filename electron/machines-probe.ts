@@ -65,7 +65,8 @@ export function probeScript(port: number): string {
     "echo @@meminfo; cat /proc/meminfo 2>/dev/null",
     "echo @@vmstat; [ -r /proc/meminfo ] || vm_stat 2>/dev/null",
     "echo @@memsize; [ -r /proc/meminfo ] || sysctl -n hw.memsize 2>/dev/null",
-    "echo @@gpu; command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null",
+    // stderr too: a failure printed there is still "GPU error", not a machine that looks Ready without its GPU.
+    "echo @@gpu; command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>&1",
     // ssh's sh -s has a bare PATH (no Homebrew), so the usual install places are looked at too.
     'echo @@ollamabin; command -v ollama 2>/dev/null || for f in /usr/local/bin/ollama /opt/homebrew/bin/ollama /usr/bin/ollama /Applications/Ollama.app; do [ -e "$f" ] && echo "$f" && break; done',
     "echo @@ollamaproc; pgrep -x ollama 2>/dev/null | head -n 1",

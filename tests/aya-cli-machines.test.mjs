@@ -50,7 +50,18 @@ const stop = startControlServerOn(socket, {
   machines: {
     ayaHome,
     userHome: home,
-    confirmRemove: async (id) => (dialog.removeAsked.push(id), dialog.removeAnswer ?? true),
+    confirmRemove: async (id, signal) => {
+      dialog.removeAsked.push(id);
+      if (dialog.holdMs) {
+        await new Promise((r) => {
+          const timer = setTimeout(r, dialog.holdMs);
+          signal?.addEventListener("abort", () => (clearTimeout(timer), r()));
+        });
+      }
+      const answer = dialog.removeAnswer ?? true;
+      dialog.answered?.();
+      return answer;
+    },
     confirmAdd: async (ask, signal) => {
       dialog.asked.push(ask);
       if (dialog.holdMs) {
@@ -135,11 +146,25 @@ test("the CLI gives up before the user clicks Add: Aya closes the dialog, nothin
   const answered = new Promise((r) => (dialog.answered = r));
   const r = await ayaWith({ AYA_REPLY_TIMEOUT_MS: "1000" }, "add", "athena");
   assert.equal(r.status, 1);
-  assert.match(r.stderr, /no answer from Aya after 1 s; nothing was added, Aya closed its dialog/);
+  assert.match(r.stderr, /no answer from Aya after 1 s; nothing was added, and answering Aya's dialog now changes nothing\. Run the add again/);
   await answered;
   assert.equal(dialog.closed, true, "Aya closed the dialog when the caller left");
   await new Promise((r) => setTimeout(r, 200));
   assert.throws(() => statSync(registryFile), /ENOENT/, "a late Add registers nothing");
+});
+
+test("the CLI gives up before the user clicks Remove: nothing is removed, and the CLI says so instead of 'may still be in progress'", async () => {
+  reset();
+  fake.setMode("athena", "down");
+  assert.equal((await aya("add", "athena")).status, 0);
+  dialog.holdMs = 5000;
+  const answered = new Promise((r) => (dialog.answered = r));
+  const r = await ayaWith({ AYA_REPLY_TIMEOUT_MS: "1000" }, "remove", "athena");
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /no answer from Aya after 1 s; nothing was removed, and answering Aya's dialog now changes nothing\. Run the remove again/);
+  await answered;
+  await new Promise((r) => setTimeout(r, 200));
+  assert.deepEqual(registry().machines.map((m) => m.id), ["athena"], "a late Remove removes nothing");
 });
 
 test("add: only an ambiguous word drafts nothing, and an unknown host is named", async () => {

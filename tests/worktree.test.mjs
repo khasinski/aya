@@ -48,6 +48,11 @@ test("projectBaseCwd is the project directory locally, the remote dir for remote
   );
 });
 
+test("tabFromTerminal keeps a machine tab's ssh target, so a restore runs the same ssh", () => {
+  assert.equal(tabFromTerminal(term({ sshTarget: "athena" }), "/home/me/repo").sshTarget, "athena");
+  assert.equal("sshTarget" in tabFromTerminal(term(), "/home/me/repo"), false);
+});
+
 test("tabFromTerminal keeps a worktree cwd (differs from the base)", () => {
   const tab = tabFromTerminal(
     term({ cwd: "/home/me/repo-feature" }),
