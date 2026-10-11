@@ -79,6 +79,17 @@ test("the log reads as a chat: oldest first, opened at the newest, the delivery 
   await expect(chat.getByText("Delivery test: run aya team whoami, then send one word to ux-reviewer.")).toBeVisible();
 });
 
+// On a slow machine the notes are in before the dialog first paints (CI): the card still fits the dialog.
+test("the team's name and its newest message show together when the role notes were in before the dialog opened", async ({ window }) => {
+  const first = await openTeams(window);
+  await expect(first.getByTestId("team-ux-review").getByText(/may not reach Aya/)).toHaveCount(2);
+  await first.getByRole("button", { name: "Close", exact: true }).click();
+  const card = (await openTeams(window)).getByTestId("team-ux-review");
+  await expect(card.getByText(/may not reach Aya/)).toHaveCount(2);
+  await expect(card.getByText("ux-review", { exact: true })).toBeInViewport();
+  await expect(card.getByRole("log", { name: "ux-review messages" }).locator(".aya-chat-entry").last()).toBeInViewport({ ratio: 0.5 });
+});
+
 // The panes' launch notes come in seconds after start and push the log down the card: what stays is the log's own scroll.
 test("the log opens at its newest message again after the role notes came in and the page reloaded", async ({ window }) => {
   const atNewest = (chat: Locator) => chat.evaluate((el) => el.scrollTop > 0 && el.scrollTop + el.clientHeight >= el.scrollHeight - 1);

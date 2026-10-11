@@ -34,44 +34,39 @@ const TWO_ROLE_TEMPLATE: TeamDefinition = {
     "Findings are hypotheses with a measurement request, not facts. Number your reports as updates (Update 1, Update 2) and mark items [reported -> confirmed]. Reports are one-way unless a question is asked.",
 };
 
-/** The role notes come in seconds after the dialog opens and grow the card above its log. Until the
- *  user scrolls the dialog, the end of the first log stays where it was if any of its newest message
- *  showed (a held message there is what the card is opened for), as the browser's scroll anchoring
- *  would, which it does not do while the dialog is at its top. */
-function useKeepLogEndInView(body: RefObject<HTMLDivElement | null>, contentKey: unknown) {
-  // Kept across a re-attach (a team added or renamed): once the user scrolled, their position wins.
-  const moved = useRef(false);
+// The first team's log gives up height down to this, so its card fits the dialog.
+const LOG_MIN_PX = 120;
+// Within this many px of its bottom, the log counts as showing its newest message (as TeamChat's).
+const LOG_AT_BOTTOM_PX = 24;
+
+/** The role notes come in seconds after the dialog opens (on a slow machine before it first
+ *  paints) and grow the card above its log, so the newest message, a held one included, went below
+ *  the dialog's edge. The first team's log now shrinks so its card fits the dialog, down to
+ *  LOG_MIN_PX, and keeps showing its newest message: the team's name, status and newest message
+ *  show together, and the dialog itself never scrolls on its own. */
+function useFitFirstLog(body: RefObject<HTMLDivElement | null>, contentKey: unknown) {
   useEffect(() => {
     const el = body.current;
     if (!el) return;
-    // gap: from the log's bottom to the dialog's bottom edge; seen: some of the newest message shows.
-    const measure = () => {
-      const log = el.querySelector('[role="log"]');
-      const newest = log?.lastElementChild;
-      if (!log || !newest) return null;
-      const edge = el.getBoundingClientRect().bottom;
-      return { gap: edge - log.getBoundingClientRect().bottom, seen: newest.getBoundingClientRect().top < edge };
+    const fit = () => {
+      const log = el.querySelector<HTMLElement>('[role="log"]');
+      const card = log?.closest<HTMLElement>(".aya-teams-card");
+      if (!log || !card) return;
+      const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < LOG_AT_BOTTOM_PX;
+      log.style.maxHeight = "";
+      const natural = parseFloat(getComputedStyle(log).maxHeight);
+      // "Full height": the log takes what it needs and the dialog scrolls.
+      if (Number.isNaN(natural)) return;
+      const rest = card.getBoundingClientRect().height - log.getBoundingClientRect().height;
+      const above = card.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+      const room = Math.floor(el.clientHeight - above - rest);
+      log.style.maxHeight = `${Math.min(natural, Math.max(LOG_MIN_PX, room))}px`;
+      if (atBottom) log.scrollTop = log.scrollHeight;
     };
-    let before = measure();
-    let ours = el.scrollTop;
-    const onScroll = () => {
-      if (Math.abs(el.scrollTop - ours) > 1) moved.current = true;
-      before = measure();
-    };
-    const resized = new ResizeObserver(() => {
-      const now = measure();
-      if (now && before && !moved.current && before.seen && now.gap < before.gap) {
-        el.scrollTop += before.gap - now.gap;
-        ours = el.scrollTop;
-      }
-      before = measure();
-    });
+    const resized = new ResizeObserver(fit);
+    resized.observe(el);
     for (const child of el.children) resized.observe(child);
-    el.addEventListener("scroll", onScroll);
-    return () => {
-      resized.disconnect();
-      el.removeEventListener("scroll", onScroll);
-    };
+    return () => resized.disconnect();
   }, [body, contentKey]);
 }
 
@@ -89,7 +84,7 @@ export function TeamsModal({ project, intelligence, waiting, onClose }: Props) {
   const list = useAsyncAction();
   const { run } = list;
   const body = useRef<HTMLDivElement>(null);
-  useKeepLogEndInView(body, editing ? null : teams.map((t) => t.name).join("\n"));
+  useFitFirstLog(body, editing ? null : teams.map((t) => t.name).join("\n"));
 
   const reload = useCallback(async () => {
     const next = await run(() => window.aya.teamList(project.slug));
