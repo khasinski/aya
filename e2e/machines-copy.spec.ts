@@ -14,7 +14,7 @@ test("what the machines popover shows can be selected and copied with Cmd+C", as
   expect(await window.evaluate(() => window.getSelection()?.toString() ?? "")).toContain("qwen3:32b");
   await app.evaluate(({ clipboard }) => clipboard.writeText(""));
   await window.keyboard.press("Meta+c");
-  await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toContain("qwen3:32b · 19.6 GB");
+  await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toContain("qwen3:32b · 19.6 GiB");
 });
 
 test("a copy of the whole popover pastes one line per fact, without the button labels", async ({ app, window }) => {

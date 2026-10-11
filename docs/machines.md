@@ -54,11 +54,11 @@ Listing the hosts connects to nothing.
 
 ```
 $ aya machines
-athena  RTX 4090 GPU 97% VRAM 21.0/24.0 GB  CPU 3.2/32  RAM 41.0/125.7 GB  ssh:athena
+athena  RTX 4090 GPU 97% VRAM 21.0/24.0 GiB  CPU 3.2/32  RAM 41.0/125.7 GiB  ssh:athena
         ollama 0.12.3
-          qwen3:32b 19.6 GB hot until 23:12 (14 min)
+          qwen3:32b 19.6 GiB hot until 23:12 (14 min)
         claimed by justi (pane "lead") since 22:40: run5 timed collection
-laptop  Apple M2 Max  CPU 2.1/12  RAM 20.1/32.0 GB  local
+laptop  Apple M2 Max  CPU 2.1/12  RAM 20.1/32.0 GiB  local
         ollama 0.12.3, no model loaded
         not claimed
 mini    unreachable  ssh:mini  ssh: connect to host mini port 22: Operation timed out
@@ -80,6 +80,8 @@ checked 23:01:05
 - `aya machines release <id>` clears the claim.
 
 There is no load or unload command.
+
+Sizes are binary gibibytes everywhere in Aya (`electron/units.ts`, `src/units.ts`), labelled GiB: RAM and VRAM read as their spec says (128.0 GiB on a 128 GB Mac, 24.0 GiB on an RTX 4090). `ollama ps` counts decimal GB, so the same model shows 8.5 GiB here and 9.1 GB there; the label tells the units apart.
 
 ## Data
 

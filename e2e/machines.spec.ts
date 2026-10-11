@@ -84,8 +84,8 @@ test.describe("three added", () => {
     await expect(popover).toContainText(/^Machines · 1 of 3 ready · checked \d\d:\d\d/);
     // The ready machine in full; each one in trouble is one line with its reason.
     await expect(entries.nth(0)).toContainText("gpu-box · RTX 4090 · Ready");
-    await expect(entries.nth(0)).toContainText("GPU 97% · VRAM 21.0/24.0 GB · ssh gpu-box");
-    await expect(entries.nth(0)).toContainText(/qwen3:32b · 19\.6 GB · until \d\d:\d\d \(1[34] min\)/);
+    await expect(entries.nth(0)).toContainText("GPU 97% · VRAM 21.0/24.0 GiB · ssh gpu-box");
+    await expect(entries.nth(0)).toContainText(/qwen3:32b · 19\.6 GiB · until \d\d:\d\d \(1[34] min\)/);
     await expect(entries.nth(0)).toContainText("Claimed: run5 timed collection · justi (pane lead) · since");
     await expect(entries.nth(1)).toContainText("mini-lab · Ollama not running");
     await expect(entries.nth(2)).toContainText("old-server · Unreachable: Permission denied (publickey).");

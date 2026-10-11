@@ -1,9 +1,8 @@
 // Text for the machines status bar item and Settings > Machines: the facts `aya machines` prints, so color is never the only signal.
 
 import type { MachineClaim, MachineReach, MachineStatus, MachineView } from "./types";
+import { gib, gibFromMiB } from "./units";
 
-const gib = (bytes: number | null) => (bytes === null ? "?" : (bytes / 2 ** 30).toFixed(1));
-const gibFromMiB = (mib: number | null) => (mib === null ? "?" : (mib / 1024).toFixed(1));
 export const clock = (iso: string) => new Date(iso).toTimeString().slice(0, 5);
 
 export const reachText = (reach: MachineReach) => (reach === "local" ? "this machine" : `ssh ${reach.ssh}`);
@@ -68,10 +67,10 @@ const maxGpuUtil = (s: MachineStatus) => {
 export function loadText(s: MachineStatus): string {
   if (s.gpus.length) {
     const sum = (k: "memUsedMiB" | "memTotalMiB") => (s.gpus.some((g) => g[k] === null) ? null : s.gpus.reduce((a, g) => a + (g[k] ?? 0), 0));
-    return `GPU ${maxGpuUtil(s) ?? "?"}% · VRAM ${gibFromMiB(sum("memUsedMiB"))}/${gibFromMiB(sum("memTotalMiB"))} GB`;
+    return `GPU ${maxGpuUtil(s) ?? "?"}% · VRAM ${gibFromMiB(sum("memUsedMiB"))}/${gibFromMiB(sum("memTotalMiB"))} GiB`;
   }
   // Load average over the core count, said in words: "CPU 18.5/10" read like an error.
-  return `load ${s.load1 === null ? "?" : s.load1.toFixed(1)} on ${s.cpus ?? "?"} CPUs · RAM ${gib(s.memUsedBytes)}/${gib(s.memTotalBytes)} GB`;
+  return `load ${s.load1 === null ? "?" : s.load1.toFixed(1)} on ${s.cpus ?? "?"} CPUs · RAM ${gib(s.memUsedBytes)}/${gib(s.memTotalBytes)} GiB`;
 }
 
 /** "until 16:28 (14 min)": whole minutes left, never rounded up. */
@@ -89,7 +88,7 @@ export function modelLines(s: MachineStatus, now: Date): string[] {
   if (!s.ollama.up) return [];
   if (s.ollama.loaded === null) return [`Models unavailable (${s.ollama.modelsError ?? "?"})`];
   if (s.ollama.loaded.length === 0) return ["No model loaded"];
-  return s.ollama.loaded.map((m) => [m.name, ...(m.vramBytes === null ? [] : [`${gib(m.vramBytes)} GB`]), hotText(m.expiresAt, m.pinned, now)].join(" · "));
+  return s.ollama.loaded.map((m) => [m.name, ...(m.vramBytes === null ? [] : [`${gib(m.vramBytes)} GiB`]), hotText(m.expiresAt, m.pinned, now)].join(" · "));
 }
 
 /** "run5 timed collection · justi (pane lead) · since 15:49", with its age once it is an hour old. */

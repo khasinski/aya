@@ -9,6 +9,7 @@ import { probeMachine, type MachineStatus, type Reach } from "./machines-probe";
 import { isSshTarget } from "./ssh";
 import { sshHostAliases } from "./ssh-hosts";
 import { singleFlight } from "./single-flight";
+import { gib, gibFromMiB } from "./units";
 
 export const MACHINES_FILE_NAME = "machines.json";
 export const MACHINES_VERSION = 1;
@@ -297,9 +298,7 @@ export async function machinesStatus(deps: MachinesDeps): Promise<{ version: num
 
 // ---- text ----
 
-// GiB for memory and GPU alike, so a 24564 MiB card and 32 GB of RAM read on one scale.
-const gb = (bytes: number | null) => (bytes === null ? "?" : (bytes / 2 ** 30).toFixed(1));
-const gbFromMiB = (mib: number | null) => (mib === null ? "?" : (mib / 1024).toFixed(1));
+// GiB for memory and GPU alike (units.ts), so a 24564 MiB card and 32 GiB of RAM read on one scale.
 const clock = (iso: string) => new Date(iso).toTimeString().slice(0, 8);
 const hhmm = (iso: string) => clock(iso).slice(0, 5);
 const reachText = (reach: Reach) => (reach === "local" ? "local" : `ssh:${reach.ssh}`);
@@ -316,9 +315,9 @@ function hotUntil(expiresAt: string | null, pinned: boolean, now: Date): string 
 
 /** The machine line: GPU name and use first (the incidents were a slower box and a shared GPU), then CPU and memory. */
 function machineLine(s: MachineStatus): string {
-  const gpus = s.gpus.map((g) => `${shortGpuName(g.name)} GPU ${g.utilPct ?? "?"}% VRAM ${gbFromMiB(g.memUsedMiB)}/${gbFromMiB(g.memTotalMiB)} GB`);
+  const gpus = s.gpus.map((g) => `${shortGpuName(g.name)} GPU ${g.utilPct ?? "?"}% VRAM ${gibFromMiB(g.memUsedMiB)}/${gibFromMiB(g.memTotalMiB)} GiB`);
   const cpu = `${s.gpus.length ? "" : `${s.cpuName ?? "no NVIDIA GPU"}  `}CPU ${s.load1 === null ? "?" : s.load1.toFixed(1)}/${s.cpus ?? "?"}`;
-  return [...gpus, cpu, `RAM ${gb(s.memUsedBytes)}/${gb(s.memTotalBytes)} GB`].join("  ");
+  return [...gpus, cpu, `RAM ${gib(s.memUsedBytes)}/${gib(s.memTotalBytes)} GiB`].join("  ");
 }
 
 function modelLines(s: MachineStatus, port: number, now: Date): string[] {
@@ -332,7 +331,7 @@ function modelLines(s: MachineStatus, port: number, now: Date): string[] {
   if (s.ollama.loaded.length === 0) return [`${version}, no model loaded`];
   return [
     version,
-    ...s.ollama.loaded.map((m) => `  ${m.name}${m.vramBytes === null ? "" : ` ${gb(m.vramBytes)} GB`} ${hotUntil(m.expiresAt, m.pinned, now)}`),
+    ...s.ollama.loaded.map((m) => `  ${m.name}${m.vramBytes === null ? "" : ` ${gib(m.vramBytes)} GiB`} ${hotUntil(m.expiresAt, m.pinned, now)}`),
   ];
 }
 
