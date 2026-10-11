@@ -1241,6 +1241,7 @@ export interface MachineStatus {
   memUsedBytes: number | null;
   memTotalBytes: number | null;
   gpus: GpuLoad[];
+  gpuError: string | null;
   ollama: { up: boolean; version: string | null; loaded: LoadedModel[] | null; modelsError: string | null };
 }
 

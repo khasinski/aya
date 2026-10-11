@@ -8,11 +8,16 @@ export const clock = (iso: string) => new Date(iso).toTimeString().slice(0, 5);
 
 export const reachText = (reach: MachineReach) => (reach === "local" ? "this machine" : `ssh ${reach.ssh}`);
 
-/** Ollama down is its own state: a connected host without Ollama cannot serve a model. */
-export function health(s: MachineStatus): { word: "Ready" | "Ollama down" | "Unreachable"; level: "ok" | "warn" | "down" } {
+/** Ollama down is its own state: a connected host without Ollama cannot serve a model. A broken NVIDIA driver is
+ *  one too: Ollama answers, but on the CPU, several times slower. */
+export function health(s: MachineStatus): { word: "Ready" | "GPU error" | "Ollama down" | "Unreachable"; level: "ok" | "warn" | "down" } {
   if (!s.reachable) return { word: "Unreachable", level: "down" };
-  return s.ollama.up ? { word: "Ready", level: "ok" } : { word: "Ollama down", level: "warn" };
+  if (!s.ollama.up) return { word: "Ollama down", level: "warn" };
+  return s.gpuError ? { word: "GPU error", level: "warn" } : { word: "Ready", level: "ok" };
 }
+
+/** nvidia-smi's failure, word for word, so the user sees why the GPU is not used. */
+export const gpuErrorText = (s: MachineStatus) => (s.reachable && s.gpuError ? `nvidia-smi failed: ${s.gpuError}` : null);
 
 /** "RTX 4090", or the CPU's name without an NVIDIA GPU: what tells a GPU box from a laptop. */
 export function hardware(s: MachineStatus): string {

@@ -39,6 +39,9 @@ export interface MachineStatus {
   memUsedBytes: number | null;
   memTotalBytes: number | null;
   gpus: GpuLoad[];
+  /** nvidia-smi's own failure ("Failed to initialize NVML: Driver/library version mismatch") when it read no GPU:
+   *  an NVIDIA card Ollama cannot use, so models run on the CPU. */
+  gpuError: string | null;
   ollama: OllamaState;
 }
 
@@ -115,16 +118,19 @@ export function parseVmStat(text: string, totalBytes: number | null): { used: nu
   return totalBytes ? { used, total: totalBytes } : null;
 }
 
-export function parseNvidiaSmi(text: string): GpuLoad[] {
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [name, util, used, total] = line.split(",").map((part) => part.trim());
-      return { name, utilPct: num(util), memUsedMiB: num(used), memTotalMiB: num(total) };
-    })
-    .filter((gpu) => gpu.name && !/^(NVIDIA-SMI has failed|No devices)/i.test(gpu.name));
+/** Only well-formed CSV rows are GPUs; anything else nvidia-smi printed is its failure, never a GPU's name. */
+export function parseNvidiaSmi(text: string): { gpus: GpuLoad[]; error: string | null } {
+  const gpus: GpuLoad[] = [];
+  const other: string[] = [];
+  for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    const parts = line.split(",").map((part) => part.trim());
+    const [name, util, used, total] = parts;
+    if (parts.length === 4 && name && num(total) !== null) gpus.push({ name, utilPct: num(util), memUsedMiB: num(used), memTotalMiB: num(total) });
+    else other.push(line);
+  }
+  // "No devices were found" means no NVIDIA GPU, which is no error.
+  const error = gpus.length ? null : (other.find((line) => !/^No devices/i.test(line)) ?? null);
+  return { gpus, error };
 }
 
 function parseJson(text: string | undefined): unknown {
@@ -173,6 +179,7 @@ const emptyStatus = (checkedAt: string, error: string | null): MachineStatus => 
   memUsedBytes: null,
   memTotalBytes: null,
   gpus: [],
+  gpuError: null,
   ollama: { up: false, version: null, loaded: null, modelsError: "not probed" },
 });
 
@@ -181,6 +188,7 @@ export function parseProbe(output: string, checkedAt: string): MachineStatus {
   const s = splitSections(output);
   if (!s.has("end")) return emptyStatus(checkedAt, "the probe script did not finish");
   const mem = parseMeminfo(s.get("meminfo") ?? "") ?? parseVmStat(s.get("vmstat") ?? "", num(s.get("memsize")));
+  const nvidia = parseNvidiaSmi(s.get("gpu") ?? "");
   return {
     ...emptyStatus(checkedAt, null),
     cpuName: s.get("cpuname")?.split("\n")[0].trim() || null,
@@ -188,7 +196,8 @@ export function parseProbe(output: string, checkedAt: string): MachineStatus {
     load1: parseLoad1(s.get("loadavg") ?? ""),
     memUsedBytes: mem?.used ?? null,
     memTotalBytes: mem?.total ?? null,
-    gpus: parseNvidiaSmi(s.get("gpu") ?? ""),
+    gpus: nvidia.gpus,
+    gpuError: nvidia.error,
     ollama: parseOllama(s.get("version"), s.get("ps")),
   };
 }

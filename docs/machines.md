@@ -29,8 +29,9 @@ So the first need is to see every machine at a glance and to say who is using on
 
 **Popover.** Clicking the item opens a popover with one entry per machine:
 
-- name, GPU (or CPU) model, and state: Ready, Ollama down or Unreachable;
+- name, GPU (or CPU) model, and state: Ready, GPU error, Ollama down or Unreachable;
 - GPU use and VRAM, or CPU load and RAM when there is no NVIDIA GPU, plus how the machine is reached;
+- when `nvidia-smi` fails (say, a driver that does not match its library), its message: the card is there, but Ollama runs on the CPU;
 - each loaded model with its size and how long it stays hot;
 - the claim (what for, who, which pane, since when) with Release.
 
@@ -95,7 +96,7 @@ Locally and over ssh alike, `sh -s` reads one fixed script on stdin. The only th
 
 - the CPU name;
 - `nproc`, the load average and memory, from `/proc` on Linux or `sysctl` and `vm_stat` on macOS;
-- `nvidia-smi` if present;
+- `nvidia-smi` if present; only well-formed rows are GPUs, and anything else it prints is kept as its failure;
 - `curl -q -s --noproxy '*' -X GET` to `127.0.0.1:<port>/api/version` and `/api/ps`. `-q` comes first, so the host's `~/.curlrc` cannot add a body, a method or a proxy.
 
 Marker lines separate the sections, so a missing tool leaves an empty section, not a parse error.

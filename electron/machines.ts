@@ -348,6 +348,7 @@ export function formatMachines(views: MachineView[], now = new Date()): string {
       lines.push(`${head}unreachable  ${reachText(v.reach)}  ${s.error}`);
     } else {
       lines.push(`${head}${machineLine(s)}  ${reachText(v.reach)}`);
+      if (s.gpuError) lines.push(`${pad}nvidia-smi failed: ${s.gpuError}`);
       lines.push(...modelLines(s, v.ollama.port, now).map((l) => pad + l));
     }
     lines.push(pad + (v.claim ? `claimed by ${claimWho(v.claim)} since ${hhmm(v.claim.since)}: ${v.claim.purpose}` : "not claimed"));

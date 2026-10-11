@@ -24,7 +24,7 @@ const cases = [
     expect: {
       reachable: true, cpuName: "AMD Ryzen 9 7950X 16-Core Processor", cpus: 32, load1: 0.09,
       memTotalBytes: 31481720 * 1024, memUsedBytes: (31481720 - 20098224) * 1024,
-      gpus: [{ name: "NVIDIA GeForce RTX 4090", utilPct: 0, memUsedMiB: 5247, memTotalMiB: 24564 }],
+      gpus: [{ name: "NVIDIA GeForce RTX 4090", utilPct: 0, memUsedMiB: 5247, memTotalMiB: 24564 }], gpuError: null,
       ollama: { up: true, version: "0.34.4", loaded: [{ name: "gemma-best:latest", vramBytes: 313775881, expiresAt: "2026-10-05T04:41:31.128931058+02:00", pinned: false }] },
     },
   },
@@ -41,7 +41,18 @@ const cases = [
   {
     name: "Linux without nvidia-smi",
     output: blank(linux, "gpu"),
-    expect: { reachable: true, cpus: 32, gpus: [], ollama: { up: true } },
+    expect: { reachable: true, cpus: 32, gpus: [], gpuError: null, ollama: { up: true } },
+  },
+  {
+    // Seen on a real host: nvidia-smi prints its failure on stdout; those lines are no GPUs.
+    name: "an NVIDIA driver that does not match its library: no GPU, the failure kept, the CPU named",
+    output: linux.replace(/@@gpu\n[\s\S]*?(?=@@)/, "@@gpu\nFailed to initialize NVML: Driver/library version mismatch\nNVML library version: 595.99\n"),
+    expect: { reachable: true, cpuName: "AMD Ryzen 9 7950X 16-Core Processor", gpus: [], gpuError: "Failed to initialize NVML: Driver/library version mismatch", ollama: { up: true } },
+  },
+  {
+    name: "nvidia-smi with no device: no GPU and no error",
+    output: linux.replace(/@@gpu\n[\s\S]*?(?=@@)/, "@@gpu\nNo devices were found\n"),
+    expect: { gpus: [], gpuError: null },
   },
   {
     name: "Ollama down: version and ps empty, the machine still reachable",

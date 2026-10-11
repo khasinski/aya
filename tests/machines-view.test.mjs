@@ -2,7 +2,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addAnswerText, barLabel, claimText, hardware, health, hotText, loadText, modelLines } from "../dist-test/machines-view.js";
+import { addAnswerText, barLabel, claimText, gpuErrorText, hardware, health, hotText, loadText, modelLines } from "../dist-test/machines-view.js";
 
 const NOW = new Date("2026-10-04T15:00:00Z");
 const GIB = 2 ** 30;
@@ -62,4 +62,15 @@ test("the add answer in Settings is a sentence, not the CLI's draft", () => {
     ["Nothing to add from that sentence.\n  this machine: already added\n", "Nothing to add from that sentence. this machine is already added."],
   ];
   for (const [output, text] of cases) assert.equal(addAnswerText(output), text);
+});
+
+test("a broken NVIDIA driver is its own state, with nvidia-smi's words; the CPU names the machine", () => {
+  const s = status({ ...mac, gpuError: "Failed to initialize NVML: Driver/library version mismatch" });
+  assert.deepEqual(health(s), { word: "GPU error", level: "warn" });
+  assert.equal(hardware(s), "Apple M2 Max");
+  assert.equal(gpuErrorText(s), "nvidia-smi failed: Failed to initialize NVML: Driver/library version mismatch");
+  assert.equal(gpuErrorText(status(mac)), null);
+  assert.match(barLabel([view(s)]), /athena gpu error/);
+  // Ollama down outranks it: with no Ollama, the GPU does not matter yet.
+  assert.equal(health({ ...s, ollama: { up: false, version: null, loaded: null, modelsError: null } }).word, "Ollama down");
 });

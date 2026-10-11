@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MachineView } from "../types";
-import { barLabel, claimText, clock, hardware, health, loadText, MACHINES_CHANGED_EVENT, modelLines, reachText } from "../machines-view";
+import { barLabel, claimText, clock, gpuErrorText, hardware, health, loadText, MACHINES_CHANGED_EVENT, modelLines, reachText } from "../machines-view";
 
 /** Each poll probes every machine (over ssh for remote ones); half a minute keeps the bar current at little cost. */
 const POLL_MS = 30_000;
@@ -127,6 +127,7 @@ export function MachinesStatus({ onManage }: { onManage: () => void }) {
                   <div className="aya-machines-muted">
                     {m.status.reachable ? `${loadText(m.status)} · ${reachText(m.reach)}` : `${reachText(m.reach)}: ${m.status.error}`}
                   </div>
+                  {gpuErrorText(m.status) && <div className="aya-machines-error">{gpuErrorText(m.status)}</div>}
                   {modelLines(m.status, m.ollama.port, now).map((line) => (
                     <div key={line}>{line}</div>
                   ))}
