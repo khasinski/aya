@@ -17,7 +17,7 @@ test.describe("a running team whose implementer is busy working", () => {
     const log = teamLog(seeded.projectDir);
     await expect.poll(() => log("tab-right"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toContain("round 5 ready");
     await window.waitForTimeout(5 * ROUND_MS);
-    expect(log("tab-right"), "rounds are held while the agent is busy").not.toMatch(/Round \d+:/);
+    expect(log("tab-right"), "rounds are held while the agent is busy").not.toMatch(/Aya round \d+:/);
     const dialog = await openTeams(window);
     await expect(dialog.getByTestId("team-ux-review").getByLabel("ux-review status")).not.toContainText("stalled");
   });

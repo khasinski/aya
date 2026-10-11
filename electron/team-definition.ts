@@ -12,6 +12,12 @@ export const RESERVED_ROLE_PROBLEM = `"${TEAM_SYSTEM_SENDER}" is reserved for Ay
 /** The sender of a task the user gives with Start; no new or saved role may take it. A team saved before it was
  *  reserved still runs, but takes no task (TeamRunner.start), so "user" there is only its role. */
 export const TEAM_USER_SENDER = "user";
+/** Aya's own rounds to the lead say whose they are: a lead numbering its own reports "Round 42" was read as Aya's. */
+export const ayaRound = (n: number): string => `Aya round ${n}`;
+/** A round Aya typed, as logged now ("Aya round N:") or by Aya before the label ("Round N:"). */
+export const AYA_ROUND_LOGGED = /^(?:Aya round|Round) \d+:/;
+/** A round Aya skipped, as logged now ("Aya round N skipped") or before ("round N skipped"). */
+export const AYA_ROUND_SKIPPED = /^(?:Aya round|round) \d+ skipped/;
 
 /** Why a role cannot be saved under this id, or null. Loading an already saved
  *  team refuses only "aya" (parseTeamFile): "user" became reserved later. */

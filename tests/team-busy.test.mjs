@@ -72,7 +72,7 @@ async function world(cli, screen) {
     w.now += 5 * TEST_TEAM_MINUTE_MS;
     await w.scheduled.at(-1)();
   };
-  w.rounds = () => w.typed.filter((t) => t.pane === "pane-t" && /Round \d+:/.test(t.text));
+  w.rounds = () => w.typed.filter((t) => t.pane === "pane-t" && /Aya round \d+:/.test(t.text));
   w.close = () => (closeVtPane("pane-t"), cleanup());
   await w.show(screen);
   await w.store.setPaused(false);
@@ -89,8 +89,8 @@ for (const cli of Object.keys(SCREENS)) {
         await w.tick();
         assert.equal(w.rounds().length, free ? 1 : 0);
         const last = (await w.store.log()).at(-1);
-        if (screen === "busy") assert.equal(last.text, "round 1 skipped: is busy working");
-        if (screen === "approval") assert.equal(last.text, "round 1 skipped: shows an approval prompt");
+        if (screen === "busy") assert.equal(last.text, "Aya round 1 skipped: is busy working");
+        if (screen === "approval") assert.equal(last.text, "Aya round 1 skipped: shows an approval prompt");
         assert.equal(await w.store.lastRound(), free ? 1 : 0, "a held round does not use up a round number");
       } finally {
         w.close();
@@ -124,7 +124,7 @@ test("5 busy rounds, then the agent finishes: it sees exactly one round, the lat
     await w.show("free");
     await w.tick();
     assert.equal(w.rounds().length, 1);
-    assert.match(w.rounds()[0].text, /Round 1:/);
+    assert.match(w.rounds()[0].text, /Aya round 1:/);
     await w.tick();
     assert.equal(w.rounds().length, 2, "back to one round per tick");
   } finally {
@@ -147,7 +147,7 @@ test("a busy-skipped tick, a re-arm, then both timers firing on a free agent: on
     assert.equal(w.rounds().length, 0, "the superseded arm types nothing");
     await Promise.all([oldTimer(), newTimer()]);
     assert.equal(w.rounds().length, 1, "one round for the two timers");
-    assert.match(w.rounds()[0].text, /Round 1:/);
+    assert.match(w.rounds()[0].text, /Aya round 1:/);
   } finally {
     w.close();
   }
@@ -223,7 +223,7 @@ for (const cli of ["claude", "codex", "opencode"]) {
       await w.tick();
       assert.equal(w.rounds().length, 0);
       // The busy fixtures quote an `aya team whoami` message, so the prompt below can read as an aya approval.
-      assert.match((await w.store.log()).at(-1).text, /^round 1 skipped: (shows an approval prompt|waiting for you to approve an aya command)$/);
+      assert.match((await w.store.log()).at(-1).text, /^Aya round 1 skipped: (shows an approval prompt|waiting for you to approve an aya command)$/);
     } finally {
       w.close();
     }

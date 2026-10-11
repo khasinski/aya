@@ -151,7 +151,7 @@ export const QUIET_NO_ROUND_MS = 18 * QUIET_MINUTE_MS;
 /** A rhythm spec's cadence "minute": an every-1-min rhythm beats each second, the 60 min stall comes after the test. */
 export const RHYTHM_MINUTE_MS = 1_000;
 
-export const roundsIn = (log: string) => [...log.matchAll(/Round (\d+): run your round/g)].map((m) => Number(m[1]));
+export const roundsIn = (log: string) => [...log.matchAll(/Aya round (\d+): run your round/g)].map((m) => Number(m[1]));
 
 /** Where the seeded ux-review team keeps its local state, relative to AYA_HOME. */
 export const TEAM_STATE_DIR = "teams/e2e-proj/ux-review";

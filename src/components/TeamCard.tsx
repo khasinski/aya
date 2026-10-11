@@ -8,12 +8,14 @@ import {
   pendingMoves,
   roleNote,
   notReachedLine,
+  unsentLine,
   rolePanesSummary,
   livenessLine,
   leadWarning,
   cardStatusNote,
   leadWaitingLine,
   livePane,
+  olderRoleNote,
   roleStatus,
   startSummary,
   taskPlaceholder,
@@ -216,6 +218,7 @@ export function TeamCard({
             const status = roleStatus(team, role.id, project.tabs, waiting);
             const note = roleNote(team, role.id, project.tabs);
             const notReachedNow = notReachedLine(team, role.id, project.tabs, notReached[role.id]);
+            const unsent = unsentLine(team, role.id);
             return (
               <div key={role.id} className="aya-teams-role-row">
                 <div>
@@ -234,9 +237,19 @@ export function TeamCard({
                       ⚠ {team.roleNotes[role.id]}; its first message tells it to run aya team whoami
                     </div>
                   )}
+                  {team.olderRoles?.[role.id] && (
+                    <div className="aya-teams-role-alert" role="status" aria-label={`${role.id} older role`}>
+                      ⚠ {olderRoleNote(team.olderRoles[role.id])}
+                    </div>
+                  )}
                   {note && (
                     <div className="aya-teams-mustnot" aria-label={`${role.id} launch note`}>
                       {note}
+                    </div>
+                  )}
+                  {unsent && (
+                    <div className="aya-teams-role-alert" role="status" aria-label={`${role.id} unsent`}>
+                      ⚠ {unsent}
                     </div>
                   )}
                   {notReachedNow && (

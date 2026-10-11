@@ -44,7 +44,7 @@ async function world() {
   };
   w.runner = new TeamRunner(w.deps, (fn) => (w.jobs.push(fn), () => {}), () => w.now, () => {});
   const send = (from, to, text) => handleTeamRequest({ type: "team-send", role: to, text }, from, w.deps).catch(() => {});
-  const roundText = () => w.typed.filter((t) => t.pane === "pane-t" && /Round \d+:/.test(t.text)).at(-1)?.text ?? "";
+  const roundText = () => w.typed.filter((t) => t.pane === "pane-t" && /Aya round \d+:/.test(t.text)).at(-1)?.text ?? "";
   return { w, store, send, roundText, cleanup: () => (w.runner.stopAll(), cleanup()) };
 }
 
@@ -54,7 +54,7 @@ const REPLY = {
   "read via the lead's inbox": { act: async (t) => void (await handleTeamRequest({ type: "team-inbox" }, "pane-t", t.w.deps)), lead: null, implementer: /implementer waits for tester/ },
 };
 
-for (const [kind, waitMs, first] of [["quiet round", 91_000, /Round 1: no progress since/], ["stall round", 181_000, /stalled: no change to the repo/]])
+for (const [kind, waitMs, first] of [["quiet round", 91_000, /Aya round 1: no progress since/], ["stall round", 181_000, /stalled: no change to the repo/]])
 for (const [reply, { act, lead, implementer }] of Object.entries(REPLY)) {
   test(`${kind} | the implementer's reply ${reply} -> ${lead ? "the lead still waits" : "the lead's question is answered"}`, async () => {
     const t = await world();

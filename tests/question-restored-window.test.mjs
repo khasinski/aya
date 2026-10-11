@@ -24,7 +24,7 @@ function restoredQuestion(asked) {
   status.recordAgentStatus(PANE, "waiting", SINCE, QUESTION, undefined, asked);
   status.__reloadAgentStatusForTests();
   const told = [];
-  status.onQuestionUnconfirmed((update) => told.push(update));
+  status.onStatusPushed((update) => told.push(update));
   return told;
 }
 

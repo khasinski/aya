@@ -331,7 +331,8 @@ function TerminalViewComponent({
       ? presetAgent
       : null;
   const lastActivityLabel = lastActivity ? formatLastActivity(lastActivity) : null;
-  const headerStatusText = terminal.externalStatus?.text ?? lastActivityLabel;
+  const reported = terminal.externalStatus;
+  const headerStatusText = reported ? `${reported.on ? `waiting on ${reported.on}: ` : ""}${reported.text}` : lastActivityLabel;
   const headerStatusTitle = terminal.externalStatus
     ? new Date(terminal.externalStatus.updatedAt).toLocaleString()
     : lastActivity

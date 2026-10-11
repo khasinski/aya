@@ -38,6 +38,7 @@ const api: AyaApi = {
   ptySearch: (query) => ipcRenderer.invoke("pty:search", query),
   harnessSearch: (req) => ipcRenderer.invoke("harness:search", req),
   restartPtyHost: () => ipcRenderer.invoke("pty-host:restart"),
+  confirmPaneRestart: (ptyId: string) => ipcRenderer.invoke("pty:confirm-restart", ptyId),
   onPtyEvent: (handler) => {
     const listener = (_e: unknown, event: PtyEvent) => handler(event);
     ipcRenderer.on("pty:event", listener);

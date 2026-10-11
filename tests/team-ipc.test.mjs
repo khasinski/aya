@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 const { registerTeamIpc, TEAM_REDELIVERY_MS } = await import("../dist-electron/team-ipc.js");
 const { ROLE_DRAFT_CHAT } = await import("../dist-electron/team-draft.js");
 const { TEAM_MESSAGE_MAX_CHARS } = await import("../dist-electron/control-protocol.js");
+const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
 
 function register({
   listProjects = async () => [],
@@ -173,7 +174,7 @@ test("teams:save edits an existing team unless asked to create; teams:assign rep
   }
 });
 
-test("teams:save hands the saved team to the runner, so running rounds follow it", async () => {
+test("teams:save hands the saved team to the runner, with the roles whose whoami it changed", async () => {
   const root = mkdtempSync(join(tmpdir(), "aya-team-ipc-"));
   const directory = join(root, "game");
   mkdirSync(directory);
@@ -182,17 +183,20 @@ test("teams:save hands the saved team to the runner, so running rounds follow it
   const refreshed = [];
   t.runner.refresh = async (...args) => void refreshed.push(args);
   try {
-    await t.invoke("teams:save", "game", {
+    const team = (mustNot) => ({
       name: "ux-review",
       roles: [
-        { id: "tester", sendsTo: [], mustNot: "edit code", responsibilities: "" },
+        { id: "tester", sendsTo: [], mustNot, responsibilities: "" },
         { id: "implementer", sendsTo: [], mustNot: "skip a report", responsibilities: "" },
       ],
       lead: "tester",
       cadenceMinutes: null,
       protocol: "",
     });
-    assert.deepEqual(refreshed, [["game", "ux-review"]]);
+    await t.invoke("teams:save", "game", team("edit code"));
+    await new TeamStore(teamDir(join(root, "aya"), "game", "ux-review")).assign("tester", "pane-t");
+    await t.invoke("teams:save", "game", team("rewrite the tests"));
+    assert.deepEqual(refreshed, [["game", "ux-review", []], ["game", "ux-review", ["tester"]]]);
   } finally {
     t.teardowns.forEach((fn) => fn());
     rmSync(root, { recursive: true, force: true });

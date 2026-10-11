@@ -239,6 +239,18 @@ const USAGE_LIMIT_RULES: Partial<Record<AgentKind, RegExp>> = {
   codex: /\bYour workspace is out of credits\b|\bUsage limit reached\b/,
 };
 
+// A dialog offering a setting for the whole account, read by the options that write it (Claude Code 2.1.289 in auto
+// mode, recorded at 120 and 64 columns: own-screens/claude-offer*). Codex 0.160.0 has none: its "don't ask again"
+// options are an approval's, for one command prefix or host.
+const ACCOUNT_SETTING_RULES: Partial<Record<AgentKind, RegExp>> = {
+  claude: /\bkeep\s+allowing\s+any\s+reads\s+outside\s+the\s+working\s+directories\b|\bblock\s+reads\s+outside\s+the\s+working\s+directories\s+from\s+now\s+on\b/,
+};
+
+export function screenOffersAccountSetting(rows: readonly string[], agent: AgentKind | undefined): boolean {
+  const rule = agent && ACCOUNT_SETTING_RULES[agent];
+  return !!rule && rule.test(regionText(rows, "tail"));
+}
+
 export function screenShowsUsageLimit(rows: readonly string[], agent: AgentKind | undefined): boolean {
   const rule = agent && USAGE_LIMIT_RULES[agent];
   return !!rule && rule.test(regionText(rows, "tail"));

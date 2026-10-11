@@ -18,10 +18,10 @@ test.describe("a team with no rhythm and a silent implementer, and a lead who an
     const lead = () => teamLog(seeded.projectDir)("tab-left");
     const implementer = () => teamLog(seeded.projectDir)("tab-right");
     await expect(card.getByLabel("ux-review status")).not.toContainText("no rounds to watch");
-    await expect.poll(() => lead(), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/Round 1: .*no progress since \d\d:\d\d/);
+    await expect.poll(() => lead(), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/Aya round 1: .*no progress since \d\d:\d\d/);
     await expect.poll(() => lead()).toContain("ANSWERED lead-answers");
     await expect.poll(() => implementer()).toMatch(/from tester \| \d\d:\d\d\] decision: ship the retry/);
-    expect(countMatches(implementer(), /Round \d+: run your round/g), "no rhythm, so no periodic round").toBe(0);
+    expect(countMatches(implementer(), /Aya round \d+: run your round/g), "no rhythm, so no periodic round").toBe(0);
     // The lead's decision is a message, not a change to the repo: talking, and stalled on the repo once 12 s have passed.
     await expect(card.getByLabel("ux-review status")).toContainText(/no change to the repo since \d\d:\d\d \(1 message\)/, { timeout: TEAM_CLOCK_TIMEOUT_MS });
     await expect(card.getByLabel("ux-review status")).not.toContainText("stalled since");
@@ -35,10 +35,10 @@ test.describe("a team with no rhythm where nobody answers", () => {
     const dialog = await openTeams(window);
     const card = dialog.getByTestId("team-ux-review");
     const log = () => teamLog(seeded.projectDir)("tab-left");
-    const rounds = () => countMatches(log(), /Round \d+: /g);
+    const rounds = () => countMatches(log(), /Aya round \d+: /g);
     await expect(card.getByLabel("ux-review status")).toContainText(/stalled: no change to the repo since \d\d:\d\d/, { timeout: TEAM_AGENT_READY_TIMEOUT_MS });
-    await expect.poll(() => log()).toMatch(new RegExp(`Round ${SILENCE_ROUNDS + 1}: stalled: no change to the repo`));
-    expect(countMatches(log(), /Round \d+: .*no progress since/g)).toBe(SILENCE_ROUNDS);
+    await expect.poll(() => log()).toMatch(new RegExp(`Aya round ${SILENCE_ROUNDS + 1}: stalled: no change to the repo`));
+    expect(countMatches(log(), /Aya round \d+: .*no progress since/g)).toBe(SILENCE_ROUNDS);
     await window.waitForTimeout(QUIET_NO_ROUND_MS);
     expect(rounds(), "a stalled team gets no more rounds").toBe(SILENCE_ROUNDS + 1);
   });

@@ -7,11 +7,12 @@ process.env.AYA_HOME = mkdtempSync(join(tmpdir(), "aya-silence-home-"));
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { teamProject } from "./helpers/team.mjs";
 import { TEST_TEAM_MINUTE_MS } from "./helpers/timings.mjs";
+import { literal } from "./helpers/regex.mjs";
 
 const { TeamRunner } = await import("../dist-electron/team-runner.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
@@ -82,7 +83,7 @@ async function world(opts = {}) {
   };
   make();
   const toLead = () => w.typed.filter((t) => t.pane === paneT && /\| from aya \|/.test(t.text) && !/Delivery test/.test(t.text));
-  const rounds = () => toLead().flatMap((t) => t.text.match(/Round (\d+):/)?.[1] ?? []).map(Number);
+  const rounds = () => toLead().flatMap((t) => t.text.match(/Aya round (\d+):/)?.[1] ?? []).map(Number);
   const send = (from, to, text) => handleTeamRequest({ type: "team-send", role: to, text }, from, w.deps).catch(() => {});
   const live = () => teamLiveness(store, ROLES, w.deps.holdReason, { cadence: opts.cadence ? 30 : null, lead: opts.lead !== false }, w.now, async () => w.commit);
   const ACTIONS = {
@@ -142,7 +143,7 @@ const silenceTest = (name, ...args) => {
 describe("silence with independent teams", { concurrency: 16 }, () => {
   const CASES = [
     ["R6.1 quiet for just under the limit: nothing", {}, ["start", 89, "check"], [], "progressing"],
-    ["R6.1 quiet past the limit: the lead gets Round 1", {}, ["implementer waits on tester", "start", 91, "check"], [1], "progressing"],
+    ["R6.1 quiet past the limit: the lead gets Aya round 1", {}, ["implementer waits on tester", "start", 91, "check"], [1], "progressing"],
     ["R6.1 exactly at the limit: the round is due", {}, ["start", 90, "check"], [1], "progressing"],
     ["R6.1 the same with a rhythm: still one round, not a second", { cadence: true }, ["start", 91, "check"], [1], "progressing"],
     ["R6.2 progress just before the limit zeroes the clock", {}, ["start", 89, "lead answers", "check", 2, "check"], [], "talking"],
@@ -213,7 +214,7 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
   silenceTest("the round names who waits on whom and since when, from the log", async (t) => {
     await t.run("implementer waits on tester", "start", 91, "check");
     const text = t.toLead().at(-1).text;
-    assert.match(text, /Round 1:/);
+    assert.match(text, /Aya round 1:/);
     assert.match(text, /implementer waits for tester since \d\d:\d\d \(\d+ min\)/);
     assert.match(text, /aya status waiting/);
     assert.doesNotMatch(text, /Supervision from Aya/);
@@ -221,11 +222,11 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
 
   silenceTest("a cadence round due with the quiet clock carries its text: who waits on whom", { cadence: true }, async (t) => {
     await t.run("implementer waits on tester", "start", 90, "tick");
-    assert.match(t.toLead().at(-1).text, /^\[team ux-review \| from aya \| [^\]]+\] Round 1: no progress since .*implementer waits for tester/);
+    assert.match(t.toLead().at(-1).text, /^\[team ux-review \| from aya \| [^\]]+\] Aya round 1: no progress since .*implementer waits for tester/);
     const plain = await world({ cadence: true });
     try {
       await plain.run("start", 10, "lead reports", 80, "tick");
-      assert.match(plain.toLead().at(-1).text, /Round 1: run your round as the team protocol says\./);
+      assert.match(plain.toLead().at(-1).text, /Aya round 1: run your round as the team protocol says\./);
     } finally {
       plain.cleanup();
     }
@@ -234,14 +235,14 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
   silenceTest("a rhythm round carries the digest: what changed since, then only the sections with news", { cadence: true }, async (t) => {
     await t.run("start", 10, "lead reports", 80, "tick");
     const text = t.toLead().at(-1).text;
-    assert.match(text, /Round 1: run your round as the team protocol says\. Since \d\d:\d\d \(no round before\): \+1 message, no commits\./);
+    assert.match(text, /Aya round 1: run your round as the team protocol says\. Since \d\d:\d\d \(no Aya round before\): \+1 message, no commits\./);
     assert.doesNotMatch(text, /Load since|Needs action|Waiting on you|Refused sends/);
   });
 
   silenceTest("a rhythm round ends with the team's status command output", { cadence: true, status: "echo athena: gemma-best; echo laptop: nothing loaded" }, async (t) => {
     await t.run("start", 10, "lead reports", 80, "tick");
     const text = t.toLead().at(-1).text;
-    assert.match(text, /Round 1: run your round as the team protocol says\..*Status \(from the team's command\): athena: gemma-best \| laptop: nothing loaded/);
+    assert.match(text, /Aya round 1: run your round as the team protocol says\..*Status \(from the team's command\): athena: gemma-best \| laptop: nothing loaded/);
     assert.equal(text.split("Status (from the team's command)").length, 2, "the section's title once");
   });
 
@@ -251,7 +252,7 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
   silenceTest("a silence round ends with the team's status command output", { status: STATUS }, async (t) => {
     await t.run("start", 91, "check");
     const text = t.toLead().at(-1).text;
-    assert.match(text, /Round 1: no progress since /);
+    assert.match(text, /Aya round 1: no progress since /);
     assert.match(text, STATUS_LINE);
     assert.equal(text.split("Status (from the team's command)").length, 2, "the section's title once");
   });
@@ -259,7 +260,7 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
   silenceTest("a stall round ends with the team's status command output", { status: STATUS }, async (t) => {
     await t.run("start", 91, "check", 30, "check", 30, "check", 30, "check");
     const text = t.toLead().at(-1).text;
-    assert.match(text, /Round 4: stalled: /);
+    assert.match(text, /Aya round 4: stalled: /);
     assert.match(text, STATUS_LINE);
     assert.equal(text.split("Status (from the team's command)").length, 2, "the section's title once");
   });
@@ -267,9 +268,32 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
   silenceTest("a cadence round due with the quiet clock carries the status too", { cadence: true, status: STATUS }, async (t) => {
     await t.run("implementer waits on tester", "start", 90, "tick");
     const text = t.toLead().at(-1).text;
-    assert.match(text, /Round 1: no progress since /);
+    assert.match(text, /Aya round 1: no progress since /);
     assert.match(text, STATUS_LINE);
   });
+
+  // An open "says it sent" claim rides on every lead round, before the status command's output; none, no section.
+  const CLAIM_LINE = "Said it sent: implementer says it sent to tester, nothing arrived.";
+  const claimed = (t) =>
+    writeFileSync(join(t.store.dir, "claims.json"), JSON.stringify({ implementer: { checked: 0, claims: [{ to: "tester", turn: 0, since: "2026-09-30T09:59:00.000Z" }] } }));
+  // [round, team options, steps, first words of the round]
+  const ROUND_KINDS = [
+    ["rhythm", { cadence: true }, ["start", 10, "lead reports", 80, "tick"], /Aya round 1: run your round as the team protocol says\./],
+    ["silence", {}, ["start", 91, "check"], /Aya round 1: no progress since /],
+    ["stall", {}, ["start", 91, "check", 30, "check", 30, "check", 30, "check"], /Aya round 4: stalled: /],
+  ];
+  for (const [kind, opts, steps, opening] of ROUND_KINDS) {
+    for (const claim of [true, false]) {
+      silenceTest(`a ${kind} round ${claim ? "carries the open claim once, before the status" : "has no claim section without a claim"}`, { ...opts, status: STATUS }, async (t) => {
+        if (claim) claimed(t);
+        await t.run(...steps);
+        const text = t.toLead().at(-1).text;
+        assert.match(text, opening);
+        assert.equal(text.split("Said it sent:").length - 1, claim ? 1 : 0, text);
+        if (claim) assert.match(text, new RegExp(`${literal(CLAIM_LINE)} Status \\(from the team's command\\): athena: gemma-best$`));
+      });
+    }
+  }
 
   // A round the lead's pane does not take stays due and is looked at again each minute: the command runs once it goes.
   for (const [how, block, unblock] of [["busy", "lead busy", "lead free"], ["a draft", "lead draft", "lead free"]]) {
@@ -293,7 +317,7 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
     await t.send(t.w.paneIds.lead, "implementer", "decision: ship it");
     await t.run("commit", 90, "tick");
     const text = t.toLead().at(-1).text;
-    assert.match(text, /Round 2: run your round as the team protocol says\. Since \d\d:\d\d: \+1 message, \+1 commit \([^)]*\), 1 held\..*Refused sends: implementer -> "author" \(no such role\): "a finding"\.$/);
+    assert.match(text, /Aya round 2: run your round as the team protocol says\. Since \d\d:\d\d: \+1 message, \+1 commit \([^)]*\), 1 held\..*Refused sends: implementer -> "author" \(no such role\): "a finding"\.$/);
   });
 
   silenceTest("a rhythm round names idle roles from the panes' busy state", { cadence: true }, async (t) => {
@@ -324,12 +348,12 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
 
   silenceTest("a failing status command is one line in the round, and the round still goes out", { cadence: true, status: "exit 3" }, async (t) => {
     await t.run("start", 10, "lead reports", 80, "tick");
-    assert.match(t.toLead().at(-1).text, /Round 1: run your round as the team protocol says\..*Status \(from the team's command\): status command failed: exit 3/);
+    assert.match(t.toLead().at(-1).text, /Aya round 1: run your round as the team protocol says\..*Status \(from the team's command\): status command failed: exit 3/);
   });
 
   silenceTest("the round with nobody waiting says so", async (t) => {
     await t.run("start", 91, "check");
-    assert.match(t.toLead().at(-1).text, /Round 1: .*No role has an unanswered message/);
+    assert.match(t.toLead().at(-1).text, /Aya round 1: .*No role has an unanswered message/);
   });
 
   test("every running team arms one clock on Start, with a lead or without", async () => {
@@ -347,7 +371,7 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
   silenceTest("no extra supervision message: three silence rounds, the round due at the stall says so, then nothing", async (t) => {
     await t.run("implementer waits on tester", "start", 91, "check", 30, "check", 30, "check", 30, "check", 120, "check");
     const aya = t.toLead();
-    assert.deepEqual(aya.map((m) => m.text.match(/Round (\d): (no progress|stalled)/)?.slice(1).join(" ")), ["1 no progress", "2 no progress", "3 no progress", "4 stalled"]);
+    assert.deepEqual(aya.map((m) => m.text.match(/Aya round (\d): (no progress|stalled)/)?.slice(1).join(" ")), ["1 no progress", "2 no progress", "3 no progress", "4 stalled"]);
     assert.match(aya[3].text, /implementer waits for tester/, "the stall round names who waits on whom");
     assert.ok(!aya.some((m) => /Supervision from Aya/.test(m.text)));
   });
@@ -355,7 +379,7 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
   silenceTest("a busy lead is tried once per window, so the log is not flooded", async (t) => {
     await t.run("start", "lead busy", 91);
     for (let i = 0; i < 12; i++) await t.run(2, "check");
-    const fromAya = (await t.store.log()).filter((m) => m.from === "aya" && m.to === "tester" && /Round/.test(m.text));
+    const fromAya = (await t.store.log()).filter((m) => m.from === "aya" && m.to === "tester" && /Aya round/.test(m.text));
     assert.ok(fromAya.length <= 1, `${fromAya.length} messages in one window`);
     assert.equal((await t.store.progress()).unreached, undefined, "a busy lead is working, never a missed round");
   });
@@ -375,8 +399,8 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
     const t = await world();
     try {
       await t.run("start", "lead pane replaced", 91, "check");
-      assert.equal(t.w.typed.filter((m) => m.pane === t.w.paneIds.replacement && /Round 1:/.test(m.text)).length, 1);
-      assert.equal(t.w.typed.filter((m) => m.pane === t.w.paneIds.lead && /Round 1:/.test(m.text)).length, 0);
+      assert.equal(t.w.typed.filter((m) => m.pane === t.w.paneIds.replacement && /Aya round 1:/.test(m.text)).length, 1);
+      assert.equal(t.w.typed.filter((m) => m.pane === t.w.paneIds.lead && /Aya round 1:/.test(m.text)).length, 0);
     } finally {
       t.cleanup();
     }
@@ -384,7 +408,7 @@ describe("silence with independent teams", { concurrency: 16 }, () => {
     try {
       await closed.run("start", "lead pane closed", 91, "check");
       assert.deepEqual(closed.rounds(), []);
-      const missed = (await closed.store.log()).filter((m) => m.from === "aya" && /^round 1 skipped: /.test(m.text));
+      const missed = (await closed.store.log()).filter((m) => m.from === "aya" && /^Aya round 1 skipped: /.test(m.text));
       assert.equal(missed.length, 1, "the miss is logged once, as a skipped round");
     } finally {
       closed.cleanup();

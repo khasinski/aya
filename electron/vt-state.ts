@@ -3,8 +3,8 @@
 
 import { Terminal } from "@xterm/headless";
 import { MIN_PTY_COLS, MIN_PTY_ROWS } from "./constants";
-import { asksToRunAya, evaluateScreen, screenIsBusy, screenShowsUsageLimit } from "./agent-screen-rules";
-import { HOLD_APPROVAL, HOLD_APPROVE_AYA, HOLD_BUSY, HOLD_CHOICE, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, HOLD_USAGE_LIMIT } from "./pane-holds";
+import { asksToRunAya, evaluateScreen, screenIsBusy, screenOffersAccountSetting, screenShowsUsageLimit } from "./agent-screen-rules";
+import { HOLD_ACCOUNT_SETTING, HOLD_APPROVAL, HOLD_APPROVE_AYA, HOLD_BUSY, HOLD_CHOICE, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, HOLD_USAGE_LIMIT } from "./pane-holds";
 import type { AgentKind } from "./presets";
 
 // Only the visible screen matters for "what is on screen right now", and
@@ -26,6 +26,8 @@ export interface VtPane {
   /** A plain shell: typed text would run as a command. */
   shell: boolean;
   lastWaiting: boolean;
+  /** The dialog's name while one Aya names is up (an account-wide offer), else undefined. */
+  lastDialog: string | undefined;
   /** The agent has finished starting: its composer was on screen once, or (no composer rule) its screen settled. */
   composerSeen: boolean;
   /** When the mirror opened and when the pane last wrote (null: nothing yet): a pane with no composer rule is up once quiet. */
@@ -34,7 +36,7 @@ export interface VtPane {
   /** Pending trailing scan, so a pane that goes quiet right after painting a
    *  prompt still gets scanned once more. */
   timer: ReturnType<typeof setTimeout> | null;
-  onChange: (waiting: boolean) => void;
+  onChange: (waiting: boolean, dialog?: string) => void;
 }
 
 const panes = new Map<string, VtPane>();
@@ -43,7 +45,7 @@ export function openVtPane(
   ptyId: string,
   cols: number,
   rows: number,
-  onChange: (waiting: boolean) => void,
+  onChange: (waiting: boolean, dialog?: string) => void,
   agent?: AgentKind,
   shell = false,
 ): void {
@@ -57,6 +59,7 @@ export function openVtPane(
     agent,
     shell,
     lastWaiting: false,
+    lastDialog: undefined,
     composerSeen: false,
     openedAt: Date.now(),
     lastOutputAt: null,
@@ -124,14 +127,20 @@ function scanPane(ptyId: string): void {
   // No opinion (an empty screen): say nothing rather than assert a state change.
   if (verdict === null) return;
   const waiting = verdict === "waiting";
-  if (waiting === pane.lastWaiting) return;
+  const dialog = waiting && screenOffersAccountSetting(rows, pane.agent) ? HOLD_ACCOUNT_SETTING : undefined;
+  if (waiting === pane.lastWaiting && dialog === pane.lastDialog) return;
   pane.lastWaiting = waiting;
-  pane.onChange(waiting);
+  pane.lastDialog = dialog;
+  pane.onChange(waiting, dialog);
 }
 
 /** Whether the pane's screen last showed a dialog: its edges are one-shot, so a window attaching later asks. */
 export function vtPaneWaiting(ptyId: string): boolean {
   return panes.get(ptyId)?.lastWaiting ?? false;
+}
+
+export function vtPaneDialog(ptyId: string): string | undefined {
+  return panes.get(ptyId)?.lastDialog;
 }
 
 /** Whether the pane's mirror is on the alt screen; undefined for no mirror. */
@@ -291,7 +300,7 @@ export async function paneHold(ptyId: string, pasted?: string): Promise<string |
   const composer = composerState(pane.terminal);
   const dialog = evaluateScreen(rows, pane.agent) === "waiting" ? (asksToRunAya(rows) ? HOLD_APPROVE_AYA : HOLD_APPROVAL) : composer === "numbered-choice" ? HOLD_CHOICE : null;
   // Only while its dialog is up: once answered, the message left in the transcript is history.
-  if (dialog) return screenShowsUsageLimit(rows, pane.agent) ? HOLD_USAGE_LIMIT : dialog;
+  if (dialog) return screenOffersAccountSetting(rows, pane.agent) ? HOLD_ACCOUNT_SETTING : screenShowsUsageLimit(rows, pane.agent) ? HOLD_USAGE_LIMIT : dialog;
   if (firstComposer(pane, composer, screen)) pane.composerSeen = true;
   // Measured: a message typed before the composer is drawn goes nowhere.
   if (!pane.composerSeen && COMPOSER_AGENTS.has(pane.agent)) return HOLD_STARTING;

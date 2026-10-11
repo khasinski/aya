@@ -66,7 +66,7 @@ async function world({ cadence = false } = {}) {
     await handleTeamRequest({ type: "team-send", role: "tester", text }, "pane-i", w.deps).catch(() => {});
     w.holds["pane-t"] = null;
   };
-  const rounds = () => w.typed.filter((t) => t.pane === "pane-t" && /Round \d+:/.test(t.text)).map((t) => Number(t.text.match(/Round (\d+):/)[1]));
+  const rounds = () => w.typed.filter((t) => t.pane === "pane-t" && /Aya round \d+:/.test(t.text)).map((t) => Number(t.text.match(/Aya round (\d+):/)[1]));
   const skips = async () => (await store.log()).filter((m) => m.from === "aya" && /skipped/.test(m.text)).map((m) => m.text);
   const check = () => w.jobs.at(-1)();
   return { w, store, heldReport, rounds, skips, check, cleanup: () => (w.runner.stopAll(), cleanup()) };

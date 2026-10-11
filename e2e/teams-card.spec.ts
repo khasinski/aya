@@ -2,6 +2,7 @@
 // picks, the log as a chat with the delivery-test exchange collapsed, and a
 // footer that stays on screen however long the card grows.
 
+import type { Locator } from "@playwright/test";
 import { test, expect } from "./fixtures";
 import { openTeams, TEAM_STATE_DIR, teamSeed, SHELL_PRESET, CLAUDE_PRESET } from "./helpers/team";
 
@@ -73,6 +74,17 @@ test("the log reads as a chat: oldest first, opened at the newest, the delivery 
   await expect(chat.getByText("Delivery test: run aya team whoami, then send one word to ux-reviewer.")).toHaveCount(0);
   await chat.getByRole("button", { name: /Delivery test: 3\/3 answered/ }).click();
   await expect(chat.getByText("Delivery test: run aya team whoami, then send one word to ux-reviewer.")).toBeVisible();
+});
+
+// The panes' launch notes come in seconds after start and push the log down the card: what stays is the log's own scroll.
+test("the log opens at its newest message again after the role notes came in and the page reloaded", async ({ window }) => {
+  const atNewest = (chat: Locator) => chat.evaluate((el) => el.scrollTop > 0 && el.scrollTop + el.clientHeight >= el.scrollHeight - 1);
+  const card = (await openTeams(window)).getByTestId("team-ux-review");
+  await expect(card.getByText(/may not reach Aya/)).toHaveCount(2);
+  await window.reload();
+  const chat = (await openTeams(window)).getByTestId("team-ux-review").getByRole("log", { name: "ux-review messages" });
+  await expect(chat.locator(".aya-chat-entry").last()).toContainText("2 failing: timer.test.ts resumes from 0 after reload.");
+  await expect.poll(() => atNewest(chat)).toBe(true);
 });
 
 test("the footer stays on screen however long the card is", async ({ window }) => {

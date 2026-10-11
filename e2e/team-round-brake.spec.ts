@@ -17,8 +17,8 @@ test.describe("a lead that does not answer its rounds", () => {
   test("gets three rounds, then none until it answers; the window says the rounds wait for it", async ({ window, seeded }) => {
     const card = (await openTeams(window)).getByTestId("team-ux-review");
     const lead = () => teamLog(seeded.projectDir)("tab-left");
-    const rounds = () => (lead().match(/Round \d+: run your round/g) ?? []).length;
-    await expect(card.getByLabel("ux-review status")).toContainText(`rounds wait for tester to answer (${UNANSWERED_ROUNDS} unanswered)`, { timeout: TEAM_AGENT_READY_TIMEOUT_MS });
+    const rounds = () => (lead().match(/Aya round \d+: run your round/g) ?? []).length;
+    await expect(card.getByLabel("ux-review status")).toContainText(`Aya rounds wait for tester to answer (${UNANSWERED_ROUNDS} unanswered)`, { timeout: TEAM_AGENT_READY_TIMEOUT_MS });
     expect(rounds()).toBe(UNANSWERED_ROUNDS);
     await window.waitForTimeout(5 * RHYTHM_MINUTE_MS);
     expect(rounds(), "five more beats, no round").toBe(UNANSWERED_ROUNDS);

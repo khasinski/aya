@@ -21,6 +21,7 @@ import {
   openVtPane,
   resizeVtPane,
   vtPaneAltScreen,
+  vtPaneDialog,
   vtPaneWaiting,
   writeVtPane,
 } from "./vt-state";
@@ -81,6 +82,9 @@ function loadNodePty(): typeof PtyModule {
 
 const ptys = new Map<string, PtyModule.IPty>();
 const launches = new Map<string, PaneLaunch>();
+
+const vtStatusEvent = (ptyId: string, waiting: boolean, dialog: string | undefined): PtyEvent =>
+  dialog ? { type: "vt-status", ptyId, waiting, dialog } : { type: "vt-status", ptyId, waiting };
 
 // Per-PTY rolling buffer of recent output, used to repaint xterm.js when the
 // renderer remounts (Vite HMR, React strict-mode double-mount, etc.). The PTY
@@ -554,7 +558,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
         replay: true,
       });
     }
-    if (vtPaneWaiting(req.ptyId) && !sink.isDestroyed()) sink.sendPtyEvent({ type: "vt-status", ptyId: req.ptyId, waiting: true });
+    if (vtPaneWaiting(req.ptyId) && !sink.isDestroyed()) sink.sendPtyEvent(vtStatusEvent(req.ptyId, true, vtPaneDialog(req.ptyId)));
     return;
   }
   const inFlight = spawning.get(req.ptyId);
@@ -743,9 +747,9 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<v
       req.ptyId,
       req.cols,
       req.rows,
-      (waiting) => {
+      (waiting, dialog) => {
         if (sink.isDestroyed()) return;
-        sink.sendPtyEvent({ type: "vt-status", ptyId: req.ptyId, waiting });
+        sink.sendPtyEvent(vtStatusEvent(req.ptyId, waiting, dialog));
       },
       req.agent,
       isShellCommand(req.command),

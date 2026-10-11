@@ -203,21 +203,21 @@ test("liveness lines: nothing for a team not running, a stall and a blocked role
   assert.equal(livenessLine(live("never started")), null);
   assert.equal(livenessLine(live("paused")), null);
   assert.equal(livenessLine(live("progressing")).text, "progressing");
-  assert.equal(livenessLine(live("progressing", { roundsHeld: { role: "tester", rounds: 2 } })).text, "progressing - rounds wait for tester to answer (2 unanswered)");
+  assert.equal(livenessLine(live("progressing", { roundsHeld: { role: "tester", rounds: 2 } })).text, "progressing - Aya rounds wait for tester to answer (2 unanswered)");
   const silence = { askAfterMin: 30, stalledAfterMin: 60 };
   assert.equal(
     livenessLine(live("progressing", { silence })).text,
-    "progressing - the lead is asked for a round after 30 min without a message or a change to the repo; flagged after 60 min without a change to the repo",
+    "progressing - the lead is asked for an Aya round after 30 min without a message or a change to the repo; flagged after 60 min without a change to the repo",
     "a team with no cadence says what watches it, not 'no rounds to watch'",
   );
   assert.equal(livenessLine(live("progressing", { silence: { askAfterMin: null, stalledAfterMin: 60 } })).text, "progressing - no lead to ask; flagged after 60 min without a change to the repo");
   assert.equal(livenessLine(live("progressing", { silence })).tone, "ok");
-  assert.equal(livenessLine(live("progressing", { silence: { ...silence, everyMin: 3 } })).text, "progressing - the lead gets a round every 3 min; flagged after 60 min without a change to the repo");
+  assert.equal(livenessLine(live("progressing", { silence: { ...silence, everyMin: 3 } })).text, "progressing - the lead gets an Aya round every 3 min; flagged after 60 min without a change to the repo");
   const since = "2026-09-30T18:34:00.000Z";
   // Rounds nobody answers are no stall, so there is no "idle" or "no reply" line.
-  assert.match(livenessLine(live("stalled", { stalledSince: since })).text, /^stalled: no change to the repo since \d\d:\d\d - rounds are paused until the repo changes$/);
+  assert.match(livenessLine(live("stalled", { stalledSince: since })).text, /^stalled: no change to the repo since \d\d:\d\d - Aya rounds are paused until the repo changes$/);
   const repo = { since, messages: 1 };
-  assert.match(livenessLine(live("stalled", { stalledSince: since, repo, silence })).text, /^stalled: no change to the repo since \d\d:\d\d \(1 message\) - rounds are paused until the repo changes$/);
+  assert.match(livenessLine(live("stalled", { stalledSince: since, repo, silence })).text, /^stalled: no change to the repo since \d\d:\d\d \(1 message\) - Aya rounds are paused until the repo changes$/);
   const clock = (iso) => new Date(iso).toTimeString().slice(0, 5);
   const earlier = "2026-09-30T15:07:00.000Z";
   assert.equal(livenessLine(live("stalled", { stalledSince: since, repo: { since: earlier, messages: 1 } })).text.split(" since ")[1].slice(0, 5), clock(earlier), "the repo's last change, not the stall's start");
@@ -229,7 +229,7 @@ test("liveness lines: nothing for a team not running, a stall and a blocked role
   const unreached = { role: "implementer", reason: "is not running (exited, or its tab was not opened yet)", since };
   const line = livenessLine(live("unreachable", { unreached }));
   assert.equal(line.tone, "held");
-  assert.match(line.text, /^no round typed to implementer since \d\d:\d\d: its pane is not running/);
+  assert.match(line.text, /^no Aya round typed to implementer since \d\d:\d\d: its pane is not running/);
   const team = { assignments: { tester: "p1" }, paneHolds: { tester: "shows an approval prompt" }, liveness: live("blocked", { blocked }) };
   assert.match(roleStatus(team, "tester", [{ id: "p1" }]).text, /^waiting for you since \d\d:\d\d$/);
 });
@@ -264,7 +264,7 @@ test("startSummary: a team already running says nothing was sent; taskPlaceholde
 // Before Start the card already says what rhythm Start begins, in the words the running line uses.
 const CADENCE_ROWS = [
   // [label, status, silence, expected line]
-  ["a cadence, not started: the rhythm, neutral", "never started", { askAfterMin: 30, everyMin: 10, stalledAfterMin: 60 }, { text: "not started - the lead gets a round every 10 min", tone: "idle" }],
+  ["a cadence, not started: the rhythm, neutral", "never started", { askAfterMin: 30, everyMin: 10, stalledAfterMin: 60 }, { text: "not started - the lead gets an Aya round every 10 min", tone: "idle" }],
   ["a lead, no cadence, not started: nothing", "never started", { askAfterMin: 30, everyMin: null, stalledAfterMin: 60 }, null],
   ["no lead, no cadence, not started: nothing", "never started", { askAfterMin: null, stalledAfterMin: 60 }, null],
   ["no silence read, not started: nothing", "never started", undefined, null],
@@ -280,7 +280,7 @@ test("livenessLine before Start | the rhythm reads as it does once the team runs
   const silence = { askAfterMin: 30, everyMin: 10, stalledAfterMin: 60 };
   const running = view.livenessLine({ status: "progressing", stalledSince: null, blocked: [], unreached: null, silence }).text;
   const before = view.livenessLine({ status: "never started", stalledSince: null, blocked: [], unreached: null, silence }).text;
-  const rhythm = "the lead gets a round every 10 min";
+  const rhythm = "the lead gets an Aya round every 10 min";
   assert.ok(running.includes(rhythm) && before.includes(rhythm), `${running} | ${before}`);
 });
 

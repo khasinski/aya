@@ -15,7 +15,7 @@ test("a question from before the restart that no session confirms: rounds go on,
   const leadLine = card.getByLabel("ux-review lead waiting");
   await expect(leadLine).toHaveText(/tester is waiting for you since \d\d:\d\d \(asked before the restart\): need the staging password/);
   const lead = () => teamLog(seeded.projectDir)("tab-left");
-  await expect.poll(() => lead(), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/Round 1: no progress since/);
+  await expect.poll(() => lead(), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/Aya round 1: no progress since/);
   await expect(leadLine).toHaveText(/tester asked you before the restart \(\d\d:\d\d\), not confirmed since; rounds go on: need the staging password/);
   await expect(card.getByLabel("tester status")).toContainText(/asked before the restart \(\d\d:\d\d\), not confirmed/);
   // The other order: a window that loads after main stopped holding on it reads the mark at its start.

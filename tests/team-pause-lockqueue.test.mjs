@@ -99,7 +99,7 @@ test("sudoku step 9: Pause while the leader's round waits for the pane lock leav
       listProjects: async () => [t.project],
       deliver: (pane, text, cancelled) => {
         const sent = deliverTeamMessage(write, pane, text, async () => null, cancelled);
-        if (/Round \d+:/.test(text)) roundQueued();
+        if (/Aya round \d+:/.test(text)) roundQueued();
         return sent;
       },
       headCommit: async () => null,
@@ -117,7 +117,7 @@ test("sudoku step 9: Pause while the leader's round waits for the pane lock leav
     release();
     await report;
     await tick;
-    const rounds = writes.filter((w) => w.id === "pane-l" && /Round \d+:/.test(w.data));
+    const rounds = writes.filter((w) => w.id === "pane-l" && /Aya round \d+:/.test(w.data));
     assert.deepEqual(rounds, [], "nothing of the round reached the leader's composer after the Pause");
     assert.equal(await store.lastRound(), 0, "the round was not typed: its number is not used up");
     const entry = (await store.log()).filter((m) => m.from === "aya" && m.to === "leader").at(-1);

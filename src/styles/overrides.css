@@ -721,7 +721,8 @@
   color: #6e7781;
   white-space: nowrap;
 }
-.aya-pane-header-activity--active {
+.aya-pane-header-activity--active,
+.aya-pane-header-activity--waiting-on {
   color: var(--fg-secondary);
 }
 .aya-pane-header-activity--waiting {

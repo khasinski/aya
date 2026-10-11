@@ -7,7 +7,7 @@ import { HOOK_VIA } from "./constants";
 import { AYA_HOME } from "./paths";
 import { isDialogHold } from "./pane-holds";
 import { PANE_HOLD_UNKNOWN } from "./pty-host-client";
-import type { ControlStatusLevel, ControlStatusUpdate, QuestionRestart } from "./types";
+import { WAITING_ON, type ControlStatusLevel, type ControlStatusUpdate, type QuestionRestart, type ReportedStatusLevel } from "./types";
 
 const WAITING_FILE = "agent-waiting.json";
 // Marks a question the agent asked, not a hook's idle composer (older files hold those too).
@@ -15,9 +15,11 @@ const ASKED_BY = "agent";
 
 type Level = ControlStatusLevel | "clear";
 interface Latest {
-  level: Level;
+  level: ReportedStatusLevel | "clear";
   at: number;
   text: string;
+  /** The teammate a "waiting-on" names: a wait on the team, not a question to the user. */
+  on?: string;
   /** The pane's session when the agent asked: a question belongs to that agent life. */
   session?: string;
   /** Read from the last life's file: it holds only while the pane runs `session` (settleRestored); "unconfirmed"
@@ -25,7 +27,7 @@ interface Latest {
   restored?: QuestionRestart;
 }
 let latest: Map<string, Latest> | null = null;
-let unconfirmedListener: ((update: ControlStatusUpdate) => void) | null = null;
+let pushListener: ((update: ControlStatusUpdate) => void) | null = null;
 
 const waitingFile = () => path.join(process.env.AYA_HOME?.trim() ? path.resolve(process.env.AYA_HOME) : AYA_HOME, WAITING_FILE);
 
@@ -66,7 +68,8 @@ function persistWaiting(): void {
 }
 
 /** Records a status; returns what the windows are told, or null for nothing. Aya's own hooks (`via` hook) report turns:
- *  their Notification fires on an idle composer too, so it is a finished turn, and none ends a question the agent asked. */
+ *  their Notification fires on an idle composer too, so it is a finished turn, and none ends a wait the agent set
+ *  (PostToolUse fires right after that very aya call). `on`: waiting on that teammate, not on the user. */
 export function recordAgentStatus(
   terminalId: string,
   level: Level,
@@ -74,13 +77,31 @@ export function recordAgentStatus(
   text = "",
   via?: string,
   session?: string,
-): { level: Level; text: string } | null {
-  if (via === HOOK_VIA && agentWaitingSince(terminalId) !== null) return null;
-  const hadQuestion = statuses().get(terminalId)?.level === "waiting";
-  const recorded = via === HOOK_VIA && level === "waiting" ? "done" : level;
-  statuses().set(terminalId, { level: recorded, at, text, ...(session ? { session } : {}) });
-  if (hadQuestion || recorded === "waiting") persistWaiting();
-  return { level: recorded, text };
+  on?: string,
+): { level: ReportedStatusLevel | "clear"; text: string; on?: string } | null {
+  const before = statuses().get(terminalId)?.level;
+  if (via === HOOK_VIA && (agentWaitingSince(terminalId) !== null || before === WAITING_ON)) return null;
+  const recorded = level === "waiting" && on ? WAITING_ON : via === HOOK_VIA && level === "waiting" ? "done" : level;
+  const named = recorded === WAITING_ON ? on : undefined;
+  statuses().set(terminalId, { level: recorded, at, text, ...(session ? { session } : {}), ...(named ? { on: named } : {}) });
+  if (before === "waiting" || recorded === "waiting") persistWaiting();
+  return { level: recorded, text, ...(named ? { on: named } : {}) };
+}
+
+/** A message from `from` was typed into the pane: a wait on that teammate is over. The windows are told; true if it was one. */
+export function teammateAnswered(terminalId: string, from: string, at: number = Date.now()): boolean {
+  const status = statuses().get(terminalId);
+  if (status?.level !== WAITING_ON || status.on !== from) return false;
+  statuses().set(terminalId, { level: "clear", at, text: "" });
+  pushListener?.({ terminalId, level: "clear", updatedAt: at });
+  return true;
+}
+
+/** The waits on a teammate (`aya status waiting --on`) still set, by pane: who, since when (epoch ms), the agent's text. */
+export function teammateWaits(): Record<string, { on: string; since: number; text: string }> {
+  return Object.fromEntries(
+    [...statuses()].flatMap(([id, s]) => (s.level === WAITING_ON && s.on ? [[id, { on: s.on, since: s.at, text: s.text }]] : [])),
+  );
 }
 
 /** When the pane's agent asked the user (`aya status waiting`) and has set nothing else since (epoch ms), else null.
@@ -98,8 +119,9 @@ export function outstandingWaiting(): Record<string, { text: string; since: numb
   );
 }
 
-export function onQuestionUnconfirmed(listener: (update: ControlStatusUpdate) => void): void {
-  unconfirmedListener = listener;
+/** Changes Aya makes on its own (a question unconfirmed after a restart, a teammate's answer) reach the windows here. */
+export function onStatusPushed(listener: (update: ControlStatusUpdate) => void): void {
+  pushListener = listener;
 }
 
 /** A question read back after a restart whose pane no longer runs the asking session (or either is unknown) stays shown
@@ -110,7 +132,7 @@ export function settleRestored(terminalId: string, currentSession: string | unde
   if (question.session && question.session === currentSession) return null;
   question.restored = "unconfirmed";
   persistWaiting();
-  unconfirmedListener?.({ terminalId, level: "waiting", text: question.text, updatedAt: question.at, restart: "unconfirmed" });
+  pushListener?.({ terminalId, level: "waiting", text: question.text, updatedAt: question.at, restart: "unconfirmed" });
   return question.text;
 }
 
@@ -122,7 +144,7 @@ export function __reloadAgentStatusForTests(): void {
 /** Tests only: forget this life's statuses and the file. */
 export function __resetAgentStatusForTests(): void {
   latest = new Map();
-  unconfirmedListener = null;
+  pushListener = null;
   fs.rmSync(waitingFile(), { force: true });
 }
 

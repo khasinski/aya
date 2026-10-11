@@ -68,9 +68,9 @@ async function world(opts = {}) {
   const looks = async (n, seconds = BEAT) => {
     for (let i = 0; i < n; i++) await look(seconds);
   };
-  const rounds = () => w.typed.filter((t) => t.pane === "pane-t" && /\| from aya \|/.test(t.text)).flatMap((t) => t.text.match(/Round (\d+)\b/)?.[1] ?? []).map(Number);
-  const held = async () => (await store.log()).filter((m) => m.from === "aya" && /^rounds held: /.test(m.text)).map((m) => m.text);
-  const skips = async () => (await store.log()).filter((m) => m.from === "aya" && /^round \d+ skipped: /.test(m.text)).map((m) => m.text);
+  const rounds = () => w.typed.filter((t) => t.pane === "pane-t" && /\| from aya \|/.test(t.text)).flatMap((t) => t.text.match(/Aya round (\d+)\b/)?.[1] ?? []).map(Number);
+  const held = async () => (await store.log()).filter((m) => m.from === "aya" && /^Aya rounds held: /.test(m.text)).map((m) => m.text);
+  const skips = async () => (await store.log()).filter((m) => m.from === "aya" && /^Aya round \d+ skipped: /.test(m.text)).map((m) => m.text);
   const say = (from, to, text) => store.append({ from, to, commit: null, text, delivered: true, time: new Date(w.now).toISOString() });
   const live = () => teamLiveness(store, ["tester", "implementer"], w.deps.holdReason, { cadence: opts.cadence === false ? null : 1, lead: true }, w.now);
   const restart = () => (make(), w.runner.restore());
@@ -94,7 +94,7 @@ brakeTest("a lead that does not answer gets three rounds, then none until it ans
   await t.w.runner.start("game", "ux-review");
   await t.looks(10);
   assert.deepEqual(t.rounds(), [1, 2, 3], "three rounds, then quiet");
-  assert.deepEqual(await t.held(), ["rounds held: tester did not answer rounds 1..3"], "one line, however many looks");
+  assert.deepEqual(await t.held(), ["Aya rounds held: tester did not answer Aya rounds 1..3"], "one line, however many looks");
   assert.deepEqual(await t.skips(), [], "no skipped line per held round");
   assert.notEqual((await t.live()).status, "stalled", "the brake is no stall");
 });
@@ -116,7 +116,7 @@ for (const [label, answer] of ANSWERS) {
     assert.deepEqual(t.rounds(), [1, 2, 3, 4], "the held round goes at the next look");
     await t.looks(10);
     assert.deepEqual(t.rounds(), [1, 2, 3, 4, 5, 6]);
-    assert.deepEqual(await t.held(), ["rounds held: tester did not answer rounds 1..3", "rounds held: tester did not answer rounds 4..6"]);
+    assert.deepEqual(await t.held(), ["Aya rounds held: tester did not answer Aya rounds 1..3", "Aya rounds held: tester did not answer Aya rounds 4..6"]);
   });
 }
 
@@ -144,7 +144,7 @@ brakeTest("an answer before the third round starts the count over: rounds in a r
   await t.say("tester", "implementer", "split the solver work in two");
   await t.looks(10);
   assert.deepEqual(t.rounds(), [1, 2, 3, 4, 5]);
-  assert.deepEqual(await t.held(), ["rounds held: tester did not answer rounds 3..5"]);
+  assert.deepEqual(await t.held(), ["Aya rounds held: tester did not answer Aya rounds 3..5"]);
 });
 
 brakeTest("a round the lead's pane did not take (busy) is not one it failed to answer", async (t) => {
@@ -155,7 +155,7 @@ brakeTest("a round the lead's pane did not take (busy) is not one it failed to a
   t.w.busy.delete("pane-t");
   await t.looks(5);
   assert.deepEqual(t.rounds(), [1, 2, 3]);
-  assert.ok((await t.skips()).includes(`round 3 skipped: ${HOLD_BUSY}`), "the busy look skipped round 3, it did not count it");
+  assert.ok((await t.skips()).includes(`Aya round 3 skipped: ${HOLD_BUSY}`), "the busy look skipped round 3, it did not count it");
 });
 
 brakeTest("the silence's rounds are held too: a team without a rhythm", { cadence: false }, async (t) => {
@@ -168,7 +168,7 @@ brakeTest("the silence's rounds are held too: a team without a rhythm", { cadenc
   await t.restart();
   await t.looks(8, 12);
   assert.deepEqual(t.rounds(), [1, 2, 3], "no silence round 90 s after the relaunch");
-  assert.deepEqual(await t.held(), ["rounds held: tester did not answer rounds 1..3"]);
+  assert.deepEqual(await t.held(), ["Aya rounds held: tester did not answer Aya rounds 1..3"]);
   await t.say("tester", "implementer", "reviewer, the fix is in, please check");
   await t.look(SILENCE);
   assert.deepEqual(t.rounds(), [1, 2, 3, 4], "after the answer rounds go again");
@@ -181,7 +181,7 @@ brakeTest("stalled runs on its own: a held team is stalled after 60 min without 
   const live = await t.live();
   assert.equal(live.status, "stalled");
   assert.deepEqual(t.rounds(), [1, 2, 3, 4]);
-  assert.match(t.w.typed.at(-1).text, /Round 4: stalled: no change to the repo/, "the stall's round is no round on the rhythm");
+  assert.match(t.w.typed.at(-1).text, /Aya round 4: stalled: no change to the repo/, "the stall's round is no round on the rhythm");
   await t.looks(6);
   assert.deepEqual(t.rounds(), [1, 2, 3, 4], "and nothing after it");
 });
@@ -192,7 +192,7 @@ brakeTest("the brake survives a relaunch: still held, the line not repeated", as
   await t.restart();
   await t.looks(6);
   assert.deepEqual(t.rounds(), [1, 2, 3]);
-  assert.deepEqual(await t.held(), ["rounds held: tester did not answer rounds 1..3"]);
+  assert.deepEqual(await t.held(), ["Aya rounds held: tester did not answer Aya rounds 1..3"]);
 });
 
 test("a Resume or a Start ends the brake", async () => {
@@ -218,10 +218,10 @@ brakeTest("the window says, in a few words, that rounds wait for the lead's answ
   await t.looks(4);
   const live = await t.live();
   assert.deepEqual(live.roundsHeld, { role: "tester", rounds: 3 });
-  assert.match(livenessLine(live).text, /^progressing - rounds wait for tester to answer \(3 unanswered\); flagged after 60 min/);
+  assert.match(livenessLine(live).text, /^progressing - Aya rounds wait for tester to answer \(3 unanswered\); flagged after 60 min/);
   await t.say("implementer", "tester", "report: still measuring the solver");
   await t.look(1);
-  assert.match(livenessLine(await t.live()).text, /^talking - .*; rounds wait for tester to answer \(3 unanswered\)/, "while the others talk");
+  assert.match(livenessLine(await t.live()).text, /^talking - .*; Aya rounds wait for tester to answer \(3 unanswered\)/, "while the others talk");
   await t.w.runner.pause("game", "ux-review");
   assert.equal((await t.live()).roundsHeld, null, "a paused team shows no hold");
   await t.w.runner.start("game", "ux-review");
@@ -237,7 +237,7 @@ brakeTest("a Save that makes another role the lead: its rounds go, the old lead'
   assert.deepEqual(t.rounds(), [1, 2, 3]);
   await t.save(TEAM({ lead: "implementer" }));
   await t.looks(2);
-  const toImplementer = t.w.typed.filter((m) => m.pane === "pane-i" && /Round \d+:/.test(m.text));
+  const toImplementer = t.w.typed.filter((m) => m.pane === "pane-i" && /Aya round \d+:/.test(m.text));
   assert.equal(toImplementer.length, 2, "the new lead gets the rounds on the rhythm");
   assert.equal((await t.live()).roundsHeld ?? null, null);
 });
@@ -255,7 +255,7 @@ brakeTest("a hold after a stall that ended without an answer names every unanswe
   await t.looks(3);
   assert.notEqual((await t.live()).status, "stalled");
   assert.deepEqual(t.rounds(), [1, 2, 3, 4]);
-  assert.deepEqual(await t.held(), ["rounds held: tester did not answer rounds 1..3", "rounds held: tester did not answer rounds 1..4"]);
+  assert.deepEqual(await t.held(), ["Aya rounds held: tester did not answer Aya rounds 1..3", "Aya rounds held: tester did not answer Aya rounds 1..4"]);
 });
 
 test("the brake waits after three unanswered rounds: specs that count with UNANSWERED_ROUNDS hold it here", async () => {

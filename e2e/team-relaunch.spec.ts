@@ -79,9 +79,8 @@ test.describe("the pty host outliving the app", () => {
 
   test("keeps the agents running, and the held report is typed once the reused pane is free", async ({ seeded }) => {
     test.setTimeout(TEAM_RELAUNCH_TEST_TIMEOUT_MS);
-    // Keep the original cadence here: the same agent logs every submitted round
-    // across both lives, including one whose record could be in flight at quit.
-    const env = relaunchEnv(seeded, 4_000, "0", E2E_REDELIVERY_MS);
+    // The same agent logs every round across both lives: at a 1 s cadence a quit often lands while one is typed.
+    const env = relaunchEnv(seeded, RELAUNCH_MINUTE_MS, "0", E2E_REDELIVERY_MS);
     const read = teamLog(seeded.projectDir);
     const first = await launch(env);
     await expect.poll(() => read("tab-left"), { timeout: TEAM_AGENT_READY_TIMEOUT_MS }).toMatch(/FAIL .*implementer: shows an approval prompt/);

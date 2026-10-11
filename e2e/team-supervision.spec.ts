@@ -20,6 +20,6 @@ test.describe("a quiet team, and a lead who cannot unblock it", () => {
     await expect(card.getByLabel("ux-review status")).toContainText(/stalled: no change to the repo since \d\d:\d\d \(0 messages\)/, { timeout: TEAM_CLOCK_TIMEOUT_MS });
     // Several more repeat windows pass; the lead has asked the user and is not asked again, by the silence or the stall.
     await window.waitForTimeout(QUIET_NO_ROUND_MS);
-    expect(countMatches(lead(), /Round \d+: (?:no progress since|stalled: no change to the repo)/g)).toBe(1);
+    expect(countMatches(lead(), /Aya round \d+: (?:no progress since|stalled: no change to the repo)/g)).toBe(1);
   });
 });

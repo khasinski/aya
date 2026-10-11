@@ -66,7 +66,7 @@ test("a Pause that lands while the round is being typed: the Enter is not sent a
       listProjects: async () => [t.project],
       // The paste goes in, then the user clicks Pause, then the Enter would follow.
       deliver: async (pane, text, cancelled) => {
-        if (pane === "pane-l" && /Round/.test(text)) {
+        if (pane === "pane-l" && /Aya round \d+:/.test(text)) {
           writes.push("paste");
           await pauseNow?.();
           if (cancelled?.()) throw new PaneHeldError("the team was paused or changed while it was typed; text left in the composer, Enter not sent", true);

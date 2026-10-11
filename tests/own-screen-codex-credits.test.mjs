@@ -81,7 +81,7 @@ test("real screen | Codex out of credits as the lead: no round typed, one log li
   });
   assert.deepEqual(result.typed, [], "nothing typed into the dialog");
   assert.equal(result.round, 0, "a held round does not use up a round number");
-  assert.deepEqual(result.log.filter((t) => /skipped/.test(t)), [`round 1 skipped: ${HOLD_USAGE_LIMIT}`]);
+  assert.deepEqual(result.log.filter((t) => /skipped/.test(t)), [`Aya round 1 skipped: ${HOLD_USAGE_LIMIT}`]);
   assert.equal(result.live.status, "blocked");
   assert.deepEqual(result.live.blocked.map((b) => [b.role, b.reason]), [["tester", HOLD_USAGE_LIMIT]]);
   assert.equal(result.live.unreached, null, "out of credits is blocked, not unreachable");

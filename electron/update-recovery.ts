@@ -118,7 +118,7 @@ export async function markPendingUpdate(targetVersion: string): Promise<void> {
   await writeFileAtomic(PENDING_UPDATE_FILE, JSON.stringify(marker) + "\n");
 }
 
-/** Sync marker for the quit path (`before-quit` awaits nothing). On macOS
+/** Sync marker for an ordinary quit that installs (installOnOrdinaryQuit). On macOS
  *  electron-updater registers NO quit handler: Squirrel applies on exit. */
 export function markPendingUpdateSync(targetVersion: string): void {
   try {

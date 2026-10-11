@@ -459,7 +459,7 @@ for (const [action, run] of [
   });
 }
 
-const roundTexts = (t) => t.typed.map((w) => w.text.replace(/^.*\] /, "")).filter((x) => x.startsWith("Round"));
+const roundTexts = (t) => t.typed.map((w) => w.text.replace(/^.*\] /, "")).filter((x) => x.startsWith("Aya round"));
 
 runnerTest("a Save that lands while a tick is delivering does not repeat the round and does not stop the ones after it", async (t) => {
   await t.runner.start("game", "ux-review");
@@ -469,7 +469,7 @@ runnerTest("a Save that lands while a tick is delivering does not repeat the rou
   const gate = new Promise((resolve) => (release = resolve));
   const deliver = t.deps.deliver;
   t.deps.deliver = async (pane, text, ...rest) => {
-    if (/Round/.test(text)) {
+    if (/Aya round/.test(text)) {
       reached();
       await gate;
     }
@@ -485,10 +485,10 @@ runnerTest("a Save that lands while a tick is delivering does not repeat the rou
   assert.deepEqual(roundTexts(t).length, 1, "the look that finds the round already typed ends");
   await t.beat(t.scheduled.at(-1));
   // 30 min with no progress: the rounds carry the silence's text; their numbers are what this checks.
-  assert.deepEqual(roundTexts(t).map((x) => x.slice(0, 8)), ["Round 1:", "Round 2:"]);
+  assert.deepEqual(roundTexts(t).map((x) => x.slice(0, 12)), ["Aya round 1:", "Aya round 2:"]);
 });
 
-runnerTest("a Save during a gated delivery: the tick after it types Round N+1 once when that round is already due", async (t) => {
+runnerTest("a Save during a gated delivery: the tick after it types Aya round N+1 once when that round is already due", async (t) => {
   let clock = Date.now();
   const jobs = [];
   const runner = new TeamRunner(t.deps, (fn, ms) => {
@@ -503,7 +503,7 @@ runnerTest("a Save during a gated delivery: the tick after it types Round N+1 on
   const gate = new Promise((resolve) => (release = resolve));
   const deliver = t.deps.deliver;
   t.deps.deliver = async (pane, text, ...rest) => {
-    if (/Round/.test(text)) {
+    if (/Aya round/.test(text)) {
       reached();
       await gate;
     }
@@ -518,7 +518,7 @@ runnerTest("a Save during a gated delivery: the tick after it types Round N+1 on
   assert.equal(await t.store.lastRound(), 1);
   clock += CADENCE_MS;
   await jobs.at(-1).fn();
-  assert.deepEqual(roundTexts(t).map((x) => x.slice(0, 7)), ["Round 1", "Round 2"], "a late timer after the resync still types the due round, once");
+  assert.deepEqual(roundTexts(t).map((x) => x.slice(0, 11)), ["Aya round 1", "Aya round 2"], "a late timer after the resync still types the due round, once");
   assert.equal(await t.store.lastRound(), 2);
 });
 
@@ -542,8 +542,8 @@ runnerTest("Pause during a tick's awaits: no round is typed after it", async (t)
   await tick;
   assert.equal(t.typed.length, typedBefore, "nothing typed after the pause");
   assert.equal(await t.store.lastRound(), 0);
-  assert.deepEqual((await t.store.log()).filter((m) => m.delivered && /Round/.test(m.text)), [], "no round is logged as typed");
-  assert.deepEqual((await t.store.log()).filter((m) => /^round 1 skipped: /.test(m.text)).map((m) => m.text), ["round 1 skipped: the team is paused"]);
+  assert.deepEqual((await t.store.log()).filter((m) => m.delivered && /^Aya round \d+:/.test(m.text)), [], "no round is logged as typed");
+  assert.deepEqual((await t.store.log()).filter((m) => /^Aya round 1 skipped: /.test(m.text)).map((m) => m.text), ["Aya round 1 skipped: the team is paused"]);
   assert.deepEqual((await t.store.log()).filter((m) => m.typedOnly), [], "nothing is logged as sitting in a composer");
   assert.equal((await t.store.state()).paused, true);
 });
@@ -571,10 +571,10 @@ runnerTest("a Save during a tick's awaits: the old tick types nothing, the new a
   release();
   await oldTick;
   assert.equal(t.typed.length, typedBefore, "the superseded tick typed nothing");
-  assert.deepEqual((await t.store.log()).filter((m) => m.delivered && /Round/.test(m.text)), []);
+  assert.deepEqual((await t.store.log()).filter((m) => m.delivered && /Aya round/.test(m.text)), []);
   assert.deepEqual((await t.store.log()).filter((m) => m.typedOnly), []);
   await t.beat(t.scheduled.at(-1), 0);
-  assert.deepEqual(roundTexts(t).map((x) => x.slice(0, 8)), ["Round 1:"]);
+  assert.deepEqual(roundTexts(t).map((x) => x.slice(0, 12)), ["Aya round 1:"]);
   assert.equal(await t.store.lastRound(), 1);
 });
 
@@ -670,7 +670,7 @@ for (const [busy, held, expected] of [
     if (expected === "typed") assert.equal(roundTexts(t).length, before + 1);
     else {
       assert.equal(roundTexts(t).length, before, "nothing typed");
-      assert.equal(log.at(-1).text, `round 1 skipped: ${expected}`);
+      assert.equal(log.at(-1).text, `Aya round 1 skipped: ${expected}`);
     }
   });
 }
@@ -683,7 +683,7 @@ runnerTest("two looks of the clock that overlap (the first still typing) type th
   const gate = new Promise((resolve) => (release = resolve));
   const deliver = t.deps.deliver;
   t.deps.deliver = async (pane, text, ...rest) => {
-    if (/Round/.test(text)) {
+    if (/Aya round/.test(text)) {
       reached();
       await gate;
     }

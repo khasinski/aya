@@ -1,0 +1,1 @@
+{"cols": 120, "rows": 40, "cmd": ["claude", "--bare", "--permission-mode", "auto", "--model", "gemma12b-best-128k"], "cwd": "/private/tmp/claude-501/-Users-alice-Projects-aya/f0892bdc-fc1a-44ba-bfa0-56135ce72280/scratchpad/f1415/proj", "claude": "2.1.289", "note": "throwaway CLAUDE_CONFIG_DIR and HOME, local model; the offer was never answered", "seconds": 211.2}

@@ -102,3 +102,11 @@ test("the guide names every reserved sender, from the parser's constants", () =>
   assert.equal(TEAM_USER_SENDER, "user");
   assert.match(guide, new RegExp(`"${TEAM_SYSTEM_SENDER}" and "${TEAM_USER_SENDER}" are reserved`));
 });
+
+test("rounds are Aya's word: the guide steers protocols to number reports as updates, and no example numbers rounds", () => {
+  assert.match(guide, /"Aya round <N>: \.\.\."/, "the cadence rule shows how Aya labels its own rounds");
+  assert.match(guide, /call them updates \("Update 4"\), never rounds/);
+  const file = example(guide);
+  assert.doesNotMatch(file, /number(ed)? (the )?rounds|round is numbered/i);
+  assert.match(file, /Update 1/);
+});

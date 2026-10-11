@@ -266,13 +266,13 @@ export function formatStats(s: TeamStats): string {
   }
 
   section("rounds");
-  out.push(row("last round (state.json)", s.rounds.last));
+  out.push(row("last Aya round (state.json)", s.rounds.last));
   if (s.rounds.typed === null) out.push(row("typed, skipped and why", NEEDS_DEBUG));
   else {
     out.push(row("typed (debug.jsonl)", s.rounds.typed.length ? s.rounds.typed.map((t) => `${t.key} ${t.count}`).join(", ") : 0));
     out.push(row("tried, not typed", s.rounds.notTyped ?? 0));
     if (s.rounds.skipped?.length) counts(s.rounds.skipped, "skipped: ");
-    if (s.rounds.heldUnanswered) out.push(countRow(s.rounds.heldUnanswered, "held: the lead did not answer the earlier rounds"));
+    if (s.rounds.heldUnanswered) out.push(countRow(s.rounds.heldUnanswered, "held: the lead did not answer the earlier Aya rounds"));
   }
 
   section("held messages, by their note now (delivery-notes.json)");

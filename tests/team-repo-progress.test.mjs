@@ -179,19 +179,19 @@ progressTest("the stall round: one, to the lead, naming the last change to the r
   await t.run("start", "check", ...talkChecked(T - 10), 11, "check");
   const rounds = t.toLead();
   assert.equal(rounds.length, 1, "one round, at the stall; no quiet round while they talk");
-  assert.match(rounds[0].text, new RegExp(`Round 1: stalled: no change to the repo since ${hhmm("2026-10-01T20:52:14Z")} \\(11 messages\\)\\.`));
+  assert.match(rounds[0].text, new RegExp(`Aya round 1: stalled: no change to the repo since ${hhmm("2026-10-01T20:52:14Z")} \\(11 messages\\)\\.`));
   assert.match(rounds[0].text, /aya status waiting/);
   await t.run(20, "check", 20, "check", ...talk(20), "check");
   assert.equal(t.toLead().length, 1, "once per stall, however long it lasts or they talk");
   const live = await t.live();
   assert.equal(live.repo.messages, 13);
-  assert.equal(livenessLine(live).text, `stalled: no change to the repo since ${hhmm(live.repo.since)} (13 messages) - rounds are paused until the repo changes`);
+  assert.equal(livenessLine(live).text, `stalled: no change to the repo since ${hhmm(live.repo.since)} (13 messages) - Aya rounds are paused until the repo changes`);
   // A change ends it; another T_stall of talk is a new stall, and a new round.
   await t.run(5, "edit", "check");
   assert.equal((await t.live()).status, "progressing");
   await t.run(...talkChecked(T), 1, "check");
   assert.deepEqual(
-    t.toLead().map((r) => r.text.match(/Round (\d+): (\w+)/).slice(1).join(" ")),
+    t.toLead().map((r) => r.text.match(/Aya round (\d+): (\w+)/).slice(1).join(" ")),
     ["1 stalled", "2 stalled"],
   );
 });

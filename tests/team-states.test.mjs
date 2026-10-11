@@ -112,7 +112,7 @@ const MIN_MS = TEAM_MINUTE_MS;
 const CADENCE_MS = 30 * MIN_MS;
 const look = (w, ms = 0) => ((w.now += ms), w.scheduled.at(-1).fn());
 const beat = (w) => look(w, CADENCE_MS);
-const roundsTo = (w) => w.toImplementer().filter((t) => /Round \d+:/.test(t.text));
+const roundsTo = (w) => w.toImplementer().filter((t) => /Aya round \d+:/.test(t.text));
 
 // The cells each action can tell apart: a team state only where the action reads it, the draft only
 // where its note is written (typeMessage).
@@ -192,14 +192,14 @@ for (const teamState of TEAM_STATES) {
       assert.equal(w.scheduled.length, 1);
       await beat(w);
       if (paneState === "free") {
-        assert.match(w.toImplementer()[0].text, /Round 5:/, "numbering goes on from the last session");
+        assert.match(w.toImplementer()[0].text, /Aya round 5:/, "numbering goes on from the last session");
       } else {
         assert.equal(w.typed.length, 0, "a held pane skips the round");
-        assert.deepEqual([(await w.lastLog()).from, (await w.lastLog()).text], ["aya", `round 5 skipped: ${reason(paneState)}`]);
+        assert.deepEqual([(await w.lastLog()).from, (await w.lastLog()).text], ["aya", `Aya round 5 skipped: ${reason(paneState)}`]);
         w.paneState = "free";
         if (paneState === "no pane") await w.store.assign("implementer", "pane-i");
         await look(w);
-        assert.match(w.toImplementer()[0].text, /Round 5:/, "a skipped round keeps its number");
+        assert.match(w.toImplementer()[0].text, /Aya round 5:/, "a skipped round keeps its number");
       }
     });
 
@@ -269,16 +269,16 @@ const ROUND_CASES = [
 for (const [actions, rounds] of ROUND_CASES) {
   worldTest(`round numbers | ${actions.join(" > ")}`, "never started", "free", async (w) => {
     for (const action of actions) await ROUND_ACTIONS[action](w);
-    const typed = w.toImplementer().flatMap((t) => t.text.match(/Round (\d+):/)?.[1] ?? []);
+    const typed = w.toImplementer().flatMap((t) => t.text.match(/Aya round (\d+):/)?.[1] ?? []);
     assert.deepEqual(typed.map(Number), rounds);
   });
 }
 
-worldTest("a state.json from before round numbers were kept starts at Round 1", "never started", "free", async (w) => {
+worldTest("a state.json from before round numbers were kept starts at Aya round 1", "never started", "free", async (w) => {
   writeFileSync(join(w.store.dir, "state.json"), JSON.stringify({ paused: false, started: true }));
   await w.restart();
   await beat(w);
-  assert.match(w.toImplementer()[0].text, /^.*Round 1:/);
+  assert.match(w.toImplementer()[0].text, /^.*Aya round 1:/);
   const { roundClockAt, silenceRoundAt: _, ...rest } = JSON.parse(readFileSync(join(w.store.dir, "state.json"), "utf-8"));
   assert.deepEqual(rest, { paused: false, started: true, lastRound: 1 });
   assert.equal(typeof roundClockAt, "number", "the tick starts the clock");
@@ -322,8 +322,8 @@ for (const teamState of ["running", "paused"]) {
 
           if (teamState === "running") {
             await beat(w);
-            const round = texts(w).filter((t) => /^Round \d+:/.test(t));
-            assert.deepEqual(round.map((t) => t.slice(0, 8)), free ? ["Round 4:"] : [], "numbering goes on from the last session");
+            const round = texts(w).filter((t) => /^Aya round \d+:/.test(t));
+            assert.deepEqual(round.map((t) => t.slice(0, 12)), free ? ["Aya round 4:"] : [], "numbering goes on from the last session");
           }
 
           w.paneState = "free";
@@ -332,7 +332,7 @@ for (const teamState of ["running", "paused"]) {
           assert.equal(late, owed ? 1 : 0, "a message held for a busy pane goes out once it is free");
           if (teamState === "running" && !free) {
             await look(w);
-            assert.equal(texts(w).filter((t) => /^Round 4:/.test(t)).length, 1, "the skipped round keeps its number");
+            assert.equal(texts(w).filter((t) => /^Aya round 4:/.test(t)).length, 1, "the skipped round keeps its number");
           }
         });
       }
@@ -381,7 +381,7 @@ for (const teamState of ["running", "paused"]) {
       assert.deepEqual(texts(w), peer ? ["peer report"] : []);
       if (teamState === "running") {
         await beat(w);
-        assert.match(w.toImplementer().at(-1).text, /Round 4:/);
+        assert.match(w.toImplementer().at(-1).text, /Aya round 4:/);
       }
     });
   }
@@ -423,7 +423,7 @@ worldTest("round clock | a relaunch every 10 min under a 30 min cadence still fi
     if (roundsTo(w).length > before) fired.push(life);
   }
   assert.deepEqual(fired, [2], "the third relaunch is 30 min after Start, so its round is due at once");
-  assert.match(w.toImplementer().at(-1).text, /Round 1:/);
+  assert.match(w.toImplementer().at(-1).text, /Aya round 1:/);
 });
 
 worldTest("round clock | a typed round moves the base", "never started", "free", async (w) => {
@@ -470,14 +470,14 @@ const dueRelaunch = async (w) => {
   w.paneState = "approval prompt";
   await w.restart();
 };
-const skipsOf = async (w) => (await w.store.log()).filter((m) => /^round \d+ skipped: /.test(m.text)).map((m) => m.text);
+const skipsOf = async (w) => (await w.store.log()).filter((m) => /^Aya round \d+ skipped: /.test(m.text)).map((m) => m.text);
 
 worldTest("held first round | typed at the first look that finds the pane free, then not again", "never started", "free", async (w) => {
   await dueRelaunch(w);
   await look(w);
   w.paneState = "free";
   await look(w, MIN_MS);
-  assert.match(w.toImplementer().at(-1).text, /Round 1:/);
+  assert.match(w.toImplementer().at(-1).text, /Aya round 1:/);
   await look(w, MIN_MS);
   assert.equal(roundsTo(w).length, 1, "a typed round is not typed again");
 });
@@ -491,7 +491,7 @@ worldTest("held first round | a pane held for good is never typed into, over fiv
     for (let i = 0; i < 10; i++) await look(w, MIN_MS);
   }
   assert.equal(roundsTo(w).length, 0);
-  assert.deepEqual(await skipsOf(w), [`round 1 skipped: ${HOLD_APPROVAL}`]);
+  assert.deepEqual(await skipsOf(w), [`Aya round 1 skipped: ${HOLD_APPROVAL}`]);
 });
 
 worldTest("held first round | a Pause stops the owed round", "never started", "free", async (w) => {
@@ -703,7 +703,7 @@ worldTest("a Save while a due tick is typing on a free pane: the round is typed 
   const second = look(w);
   release();
   await Promise.all([first, second]);
-  assert.deepEqual(texts(w).filter((t) => /^Round/.test(t)).map((t) => t.slice(0, 8)), ["Round 1:"]);
+  assert.deepEqual(texts(w).filter((t) => /^Aya round/.test(t)).map((t) => t.slice(0, 12)), ["Aya round 1:"]);
   assert.equal(await w.store.lastRound(), 1);
 });
 
@@ -831,7 +831,7 @@ worldTest("held first round | a tick of an older arm types nothing, whether it s
   await w.runner.refresh("game", "ux-review");
   w.now += CADENCE_MS;
   await older();
-  assert.equal(w.toImplementer().filter((t) => /Round/.test(t.text)).length, 0, "a tick started after the re-arm");
+  assert.equal(w.toImplementer().filter((t) => /Aya round/.test(t.text)).length, 0, "a tick started after the re-arm");
 
   let release;
   const gate = new Promise((resolve) => (release = resolve));
@@ -848,7 +848,7 @@ worldTest("held first round | a tick of an older arm types nothing, whether it s
   await w.runner.refresh("game", "ux-review");
   release();
   await opening;
-  assert.equal(w.toImplementer().filter((t) => /Round/.test(t.text)).length, 0, "a tick opening the team when the re-arm landed");
+  assert.equal(w.toImplementer().filter((t) => /Aya round/.test(t.text)).length, 0, "a tick opening the team when the re-arm landed");
 });
 
 // [command, config, measured reach]; the measurements are in docs/teams.md, "States a team depends on".

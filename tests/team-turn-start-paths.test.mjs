@@ -128,7 +128,7 @@ pathTest("a round to the lead not seen: named in the window, and the next look d
   const tick = () => t.w.jobs.at(-1).fn();
   t.w.now += 91_000;
   await tick();
-  const rounds = () => t.w.typed.filter((x) => x.pane === "pane-t" && /Round|no progress/.test(x.text)).length;
+  const rounds = () => t.w.typed.filter((x) => x.pane === "pane-t" && /Aya round|no progress/.test(x.text)).length;
   assert.equal(rounds(), 1);
   const round = (await listTeams(t.teamHome, t.project))[0].log.filter((m) => m.from === "aya" && m.to === "tester").at(-1);
   assert.equal(messageDeliveryText(round), NOT_SEEN);
