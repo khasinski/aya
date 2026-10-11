@@ -72,10 +72,10 @@ test.describe("three added", () => {
 
   test("the status bar icon names each state in its name and tooltip; the popover says what is loaded and who claimed it; Release clears the claim", async ({ app, window, seeded }) => {
     const bar = window.getByTestId("machines-toggle");
-    await expect(bar).toHaveAccessibleName("Machines: gpu-box ready, claimed; mini-lab ollama down; old-server unreachable");
+    await expect(bar).toHaveAccessibleName("Machines: gpu-box ready, claimed; mini-lab ollama not running; old-server unreachable");
     // The bar shows the icon only, so many machines never fill it; their states are in the name, the tooltip and the popover.
     await expect(bar).toHaveText("dns");
-    await expect(bar).toHaveAttribute("title", "Machines: gpu-box ready, claimed; mini-lab ollama down; old-server unreachable");
+    await expect(bar).toHaveAttribute("title", "Machines: gpu-box ready, claimed; mini-lab ollama not running; old-server unreachable");
 
     await bar.click();
     const popover = window.getByRole("dialog", { name: "Machines" });
@@ -87,13 +87,13 @@ test.describe("three added", () => {
     await expect(entries.nth(0)).toContainText("GPU 97% · VRAM 21.0/24.0 GB · ssh gpu-box");
     await expect(entries.nth(0)).toContainText(/qwen3:32b · 19\.6 GB · until \d\d:\d\d \(1[34] min\)/);
     await expect(entries.nth(0)).toContainText("Claimed: run5 timed collection · justi (pane lead) · since");
-    await expect(entries.nth(1)).toHaveText("mini-lab · Ollama down");
+    await expect(entries.nth(1)).toHaveText("mini-lab · Ollama not running");
     await expect(entries.nth(2)).toHaveText("old-server · Unreachable: Permission denied (publickey).");
     await shoot(app, window, "status-popover.png");
 
     await entries.nth(0).getByRole("button", { name: "Release" }).click();
     await expect(entries.nth(0)).not.toContainText("Claimed");
-    await expect(bar).toHaveAccessibleName("Machines: gpu-box ready; mini-lab ollama down; old-server unreachable");
+    await expect(bar).toHaveAccessibleName("Machines: gpu-box ready; mini-lab ollama not running; old-server unreachable");
     expect(JSON.parse(readFileSync(join(seeded.ayaHome, "machines.json"), "utf8")).machines[0].claim).toBeUndefined();
 
     await window.keyboard.press("Escape");

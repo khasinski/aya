@@ -256,6 +256,11 @@ test("aya machines prints no control character from the host, and names pinned a
   assert.doesNotMatch(out, /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
   assert.match(out, /evil\?\]9001;aya\.status=done\? pinned/);
   assert.match(out, /old hot until \d\d:\d\d \(expired\)/);
+  const silent = (installed, running) =>
+    formatMachines([{ id: "m", reach: "local", ollama: { port: 11435 }, status: { ...status, ollama: { up: false, version: null, loaded: null, modelsError: null, installed, running } } }]);
+  assert.match(silent(false, false), /\n {3}ollama not installed\n/);
+  assert.match(silent(true, false), /\n {3}ollama not running \(nothing on port 11435\)\n/);
+  assert.match(silent(true, true), /\n {3}ollama not answering on port 11435\n/);
   const broken = formatMachines([{ id: "d", reach: "local", ollama: { port: 11434 }, status: { ...status, gpuError: "Failed to initialize NVML: Driver/library version mismatch" } }]);
   assert.match(broken, /^d {2}CPU {2}CPU 1\.0\/8 .*\n {3}nvidia-smi failed: Failed to initialize NVML: Driver\/library version mismatch\n/);
 });

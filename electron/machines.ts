@@ -322,7 +322,11 @@ function machineLine(s: MachineStatus): string {
 }
 
 function modelLines(s: MachineStatus, port: number, now: Date): string[] {
-  if (!s.ollama.up) return [`ollama not answering on port ${port}`];
+  if (!s.ollama.up) {
+    if (s.ollama.installed === false) return ["ollama not installed"];
+    if (s.ollama.running === false) return [`ollama not running (nothing on port ${port})`];
+    return [`ollama not answering on port ${port}`];
+  }
   const version = `ollama ${s.ollama.version ?? "?"}`;
   if (s.ollama.loaded === null) return [`${version}, models unavailable (${s.ollama.modelsError})`];
   if (s.ollama.loaded.length === 0) return [`${version}, no model loaded`];

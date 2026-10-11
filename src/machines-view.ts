@@ -8,11 +8,17 @@ export const clock = (iso: string) => new Date(iso).toTimeString().slice(0, 5);
 
 export const reachText = (reach: MachineReach) => (reach === "local" ? "this machine" : `ssh ${reach.ssh}`);
 
-/** Ollama down is its own state: a connected host without Ollama cannot serve a model. A broken NVIDIA driver is
- *  one too: Ollama answers, but on the CPU, several times slower. */
-export function health(s: MachineStatus): { word: "Ready" | "GPU error" | "Ollama down" | "Unreachable"; level: "ok" | "warn" | "down" } {
+type HealthWord = "Ready" | "GPU error" | "Ollama not answering" | "Ollama not running" | "Ollama not installed" | "Unreachable";
+
+/** Each state says what is true and so what to do: a silent Ollama port is told apart by whether Ollama is installed
+ *  and whether its process runs. A broken NVIDIA driver is a state too: Ollama answers, but on the CPU. */
+export function health(s: MachineStatus): { word: HealthWord; level: "ok" | "warn" | "down" } {
   if (!s.reachable) return { word: "Unreachable", level: "down" };
-  if (!s.ollama.up) return { word: "Ollama down", level: "warn" };
+  if (!s.ollama.up) {
+    if (s.ollama.installed === false) return { word: "Ollama not installed", level: "warn" };
+    if (s.ollama.running === false) return { word: "Ollama not running", level: "warn" };
+    return { word: "Ollama not answering", level: "warn" };
+  }
   return s.gpuError ? { word: "GPU error", level: "warn" } : { word: "Ready", level: "ok" };
 }
 
@@ -25,12 +31,13 @@ export function troubleText(s: MachineStatus): string {
   return last ? `${word}: ${last}` : word;
 }
 
-const HEALTH_ORDER = { ok: 0, warn: 1, down: 2 } as const;
+/** The least broken first: one that only needs a reboot or `ollama serve` before one that needs an install or the network. */
+const HEALTH_ORDER: HealthWord[] = ["Ready", "GPU error", "Ollama not answering", "Ollama not running", "Ollama not installed", "Unreachable"];
 
 /** Ready machines first, then those in trouble, the least broken first; the user's order within each. */
 export function readyFirst<T extends { status: MachineStatus }>(views: T[]): T[] {
   return views
-    .map((v, i) => ({ v, i, rank: HEALTH_ORDER[health(v.status).level] * 2 + (health(v.status).word === "Ollama down" ? 1 : 0) }))
+    .map((v, i) => ({ v, i, rank: HEALTH_ORDER.indexOf(health(v.status).word) }))
     .sort((a, b) => a.rank - b.rank || a.i - b.i)
     .map((x) => x.v);
 }
@@ -76,9 +83,10 @@ export function hotText(expiresAt: string | null, pinned: boolean, now: Date): s
 }
 
 /** One line per loaded model; "unavailable" when /api/ps gave no list, never "no model loaded". */
-export function modelLines(s: MachineStatus, port: number, now: Date): string[] {
+export function modelLines(s: MachineStatus, now: Date): string[] {
   if (!s.reachable) return [];
-  if (!s.ollama.up) return [`Ollama not answering on port ${port}`];
+  // Only a ready machine lists its models; one in trouble is a single line (troubleText).
+  if (!s.ollama.up) return [];
   if (s.ollama.loaded === null) return [`Models unavailable (${s.ollama.modelsError ?? "?"})`];
   if (s.ollama.loaded.length === 0) return ["No model loaded"];
   return s.ollama.loaded.map((m) => [m.name, ...(m.vramBytes === null ? [] : [`${gib(m.vramBytes)} GB`]), hotText(m.expiresAt, m.pinned, now)].join(" · "));

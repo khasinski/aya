@@ -20,13 +20,15 @@ const status = (over = {}) => ({
   ...over,
 });
 const view = (s, over = {}) => ({ id: "athena", reach: { ssh: "athena" }, ollama: { port: 11434 }, status: s, ...over });
-const shown = (s) => ({ health: health(s).word, level: health(s).level, hw: hardware(s), load: loadText(s), models: modelLines(s, 11434, NOW) });
+const shown = (s) => ({ health: health(s).word, level: health(s).level, hw: hardware(s), load: loadText(s), models: modelLines(s, NOW) });
 
 const mac = { cpuName: "Apple M2 Max", cpus: 12, load1: 4.5, memUsedBytes: 30 * GIB, memTotalBytes: 64 * GIB, gpus: [] };
 const CASES = [
   ["busy GPU, model hot", status(), { health: "Ready", level: "ok", hw: "RTX 4090", load: "GPU 97% · VRAM 21.0/24.0 GB", models: ["qwen3:32b · 19.2 GB · until 15:14 (14 min)"].map((l) => l.replace("15:14", new Date("2026-10-04T15:14:30Z").toTimeString().slice(0, 5))) }],
   ["a Mac: its chip, CPU and RAM instead of a GPU", status({ ...mac, ollama: { up: true, version: "0.12.3", loaded: [], modelsError: null } }), { health: "Ready", level: "ok", hw: "Apple M2 Max", load: "load 4.5 on 12 CPUs · RAM 30.0/64.0 GB", models: ["No model loaded"] }],
-  ["Ollama down", status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null } }), { health: "Ollama down", level: "warn", hw: "Apple M2 Max", load: "load 4.5 on 12 CPUs · RAM 30.0/64.0 GB", models: ["Ollama not answering on port 11434"] }],
+  ["Ollama installed, not running", status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null, installed: true, running: false } }), { health: "Ollama not running", level: "warn", hw: "Apple M2 Max", load: "load 4.5 on 12 CPUs · RAM 30.0/64.0 GB", models: [] }],
+  ["no Ollama on the host", status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null, installed: false, running: false } }), { health: "Ollama not installed", level: "warn", hw: "Apple M2 Max", load: "load 4.5 on 12 CPUs · RAM 30.0/64.0 GB", models: [] }],
+  ["Ollama runs but its port is silent", status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null, installed: true, running: true } }), { health: "Ollama not answering", level: "warn", hw: "Apple M2 Max", load: "load 4.5 on 12 CPUs · RAM 30.0/64.0 GB", models: [] }],
   ["models list unavailable: never \"no model loaded\"", status({ ollama: { up: true, version: "0.12.3", loaded: null, modelsError: "no answer from /api/ps" } }), { health: "Ready", level: "ok", hw: "RTX 4090", load: "GPU 97% · VRAM 21.0/24.0 GB", models: ["Models unavailable (no answer from /api/ps)"] }],
   ["two GPUs, a pinned model", status({ gpus: [{ name: "NVIDIA RTX A6000", utilPct: 10, memUsedMiB: 1024, memTotalMiB: 8192 }, { name: "NVIDIA RTX A6000", utilPct: 60, memUsedMiB: 2048, memTotalMiB: 8192 }], ollama: { up: true, version: "1", loaded: [{ name: "m1", vramBytes: null, expiresAt: null, pinned: true }], modelsError: null } }), { health: "Ready", level: "ok", hw: "RTX A6000 + RTX A6000", load: "GPU 60% · VRAM 3.0/16.0 GB", models: ["m1 · pinned"] }],
   ["unreachable", status({ reachable: false, error: "ssh: Permission denied", cpuName: null, cpus: null, load1: null, memUsedBytes: null, memTotalBytes: null, gpus: [], ollama: { up: false, version: null, loaded: null, modelsError: null } }), { health: "Unreachable", level: "down", hw: "", load: "load ? on ? CPUs · RAM ?/? GB", models: [] }],
@@ -70,8 +72,8 @@ test("a broken NVIDIA driver is its own state, with nvidia-smi's words; the CPU 
   assert.equal(hardware(s), "Apple M2 Max");
   assert.equal(troubleText(s), "GPU error: Driver/library version mismatch");
   assert.match(barLabel([view(s)]), /athena gpu error/);
-  // Ollama down outranks it: with no Ollama, the GPU does not matter yet.
-  assert.equal(health({ ...s, ollama: { up: false, version: null, loaded: null, modelsError: null } }).word, "Ollama down");
+  // A silent Ollama outranks it: with no Ollama, the GPU does not matter yet.
+  assert.equal(health({ ...s, ollama: { up: false, version: null, loaded: null, modelsError: null, installed: true, running: false } }).word, "Ollama not running");
 });
 
 test("a CPU is named by its model: no (R), vendor, clock or core count; Apple keeps its name", () => {
@@ -84,13 +86,13 @@ test("a CPU is named by its model: no (R), vendor, clock or core count; Apple ke
 test("a machine in trouble is one line: its state and the reason's last clause", () => {
   assert.equal(troubleText(status({ reachable: false, error: "ssh: connect to host 192.168.0.65 port 22: Operation timed out" })), "Unreachable: Operation timed out");
   assert.equal(troubleText(status({ reachable: false, error: "the probe did not finish within 10s." })), "Unreachable: the probe did not finish within 10s.");
-  assert.equal(troubleText(status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null } })), "Ollama down");
+  assert.equal(troubleText(status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null, installed: false, running: false } })), "Ollama not installed");
 });
 
 test("ready machines come first, then the least broken; the user's order within each", () => {
   const v = (id, s) => ({ id, status: s });
   const down = status({ reachable: false, error: "x" });
-  const noOllama = status({ ollama: { up: false, version: null, loaded: null, modelsError: null } });
+  const noOllama = status({ ollama: { up: false, version: null, loaded: null, modelsError: null, installed: true, running: false } });
   const gpuError = status({ ...mac, gpuError: "Failed to initialize NVML: Driver/library version mismatch" });
   const order = readyFirst([v("desktop", down), v("macbook", noOllama), v("darwine", gpuError), v("local", status()), v("athena", down), v("lab", status())]);
   assert.deepEqual(order.map((x) => x.id), ["local", "lab", "darwine", "macbook", "desktop", "athena"]);

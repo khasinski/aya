@@ -136,7 +136,7 @@ export function MachinesStatus({ onManage }: { onManage: () => void }) {
                       <div className="aya-machines-muted">
                         {loadText(m.status)} · {reachText(m.reach)}
                       </div>
-                      {modelLines(m.status, m.ollama.port, now).map((line) => (
+                      {modelLines(m.status, now).map((line) => (
                         <div key={line}>{line}</div>
                       ))}
                     </>

@@ -1242,7 +1242,7 @@ export interface MachineStatus {
   memTotalBytes: number | null;
   gpus: GpuLoad[];
   gpuError: string | null;
-  ollama: { up: boolean; version: string | null; loaded: LoadedModel[] | null; modelsError: string | null };
+  ollama: { up: boolean; version: string | null; loaded: LoadedModel[] | null; modelsError: string | null; installed: boolean | null; running: boolean | null };
 }
 
 export type MachineReach = "local" | { ssh: string };

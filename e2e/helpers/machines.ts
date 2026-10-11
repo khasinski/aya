@@ -10,7 +10,7 @@ export const REMOTE_PROJECT = JSON.stringify({
   remote: { hostId: "devbox", label: "devbox", sshTarget: "me@devbox", directory: "/home/me/web" },
 });
 const SINCE = new Date(Date.now() - 25 * 60_000).toISOString();
-/** One of each state: busy and claimed, Ollama down, unreachable. */
+/** One of each state: busy and claimed, Ollama not running, unreachable. */
 export const THREE_MACHINES = JSON.stringify({
   version: 1,
   machines: [

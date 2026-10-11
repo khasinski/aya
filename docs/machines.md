@@ -34,7 +34,7 @@ So the first need is to see every machine at a glance and to say who is using on
 - each loaded model with its size and how long it stays hot;
 - the claim (what for, who, which pane, since when) with Release.
 
-Every other machine is one line with its state and the last clause of the reason, the least broken first: `darwine · GPU error: Driver/library version mismatch` (nvidia-smi fails, so Ollama runs on the CPU), `macbook · Ollama down`, `athena · Unreachable: Operation timed out`. A claim shows on these too.
+Every other machine is one line with its state and the last clause of the reason, the least broken first: `darwine · GPU error: Driver/library version mismatch` (nvidia-smi fails, so Ollama runs on the CPU), `macbook · Ollama not running`, `ragnarok · Ollama not installed`, `athena · Unreachable: Operation timed out`. A claim shows on these too.
 
 The popover's text can be selected and copied; each line pastes as one line, without the button labels.
 
@@ -100,6 +100,7 @@ Locally and over ssh alike, `sh -s` reads one fixed script on stdin. The only th
 - the CPU name;
 - `nproc`, the load average and memory, from `/proc` on Linux or `sysctl` and `vm_stat` on macOS;
 - `nvidia-smi` if present; only well-formed rows are GPUs, and anything else it prints is kept as its failure;
+- whether an `ollama` binary or Ollama.app is in its usual places (ssh's `sh -s` has no Homebrew on its PATH) and whether an `ollama` process runs, so a silent port reads as `not installed`, `not running` or `not answering`;
 - `curl -q -s --noproxy '*' -X GET` to `127.0.0.1:<port>/api/version` and `/api/ps`. `-q` comes first, so the host's `~/.curlrc` cannot add a body, a method or a proxy.
 
 Marker lines separate the sections, so a missing tool leaves an empty section, not a parse error.

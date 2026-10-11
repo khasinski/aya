@@ -11,7 +11,7 @@ if (process.env.AYA_FAKE_SSH_LOG) fs.appendFileSync(process.env.AYA_FAKE_SSH_LOG
 const GIB_KB = 1024 * 1024;
 const inMinutes = (min) => new Date(Date.now() + min * 60_000).toISOString();
 
-function probe({ cpuName, cores, load, totalGiB, availGiB, gpu, version, models }) {
+function probe({ cpuName, cores, load, totalGiB, availGiB, gpu, version, models, ollamaBin = "/usr/local/bin/ollama", ollamaPid = version ? "4242" : "" }) {
   return [
     "@@cpuname", cpuName ?? "",
     "@@nproc", String(cores),
@@ -19,6 +19,8 @@ function probe({ cpuName, cores, load, totalGiB, availGiB, gpu, version, models 
     "@@meminfo", `MemTotal:       ${totalGiB * GIB_KB} kB`, `MemFree:        ${GIB_KB} kB`, `MemAvailable:   ${availGiB * GIB_KB} kB`,
     "@@vmstat", "@@memsize",
     "@@gpu", gpu ?? "",
+    "@@ollamabin", ollamaBin,
+    "@@ollamaproc", ollamaPid,
     "@@version", version ? JSON.stringify({ version }) : "",
     "@@ps", models ? JSON.stringify({ models }) : "",
     "@@end", "",
@@ -36,7 +38,7 @@ const HOSTS = {
   // Idle: a GPU and Ollama up, nothing loaded.
   "spare-box": () =>
     probe({ cores: 16, load: 0.1, totalGiB: 64, availGiB: 58, gpu: "NVIDIA GeForce RTX 3090, 0, 300, 24576", version: "0.12.3", models: [] }),
-  // Up, but Ollama is not answering on its port.
+  // Up, Ollama installed but not running.
   "mini-lab": () => probe({ cpuName: "Apple M2 Pro", cores: 10, load: 0.8, totalGiB: 32, availGiB: 20 }),
 };
 

@@ -26,6 +26,10 @@ export interface OllamaState {
   version: string | null;
   loaded: LoadedModel[] | null;
   modelsError: string | null;
+  /** Whether an ollama binary or Ollama.app is on the host, and an `ollama` process runs; null when not read.
+   *  They tell "not installed", "not running" and "runs but does not answer" apart when the port is silent. */
+  installed: boolean | null;
+  running: boolean | null;
 }
 
 export interface MachineStatus {
@@ -62,6 +66,9 @@ export function probeScript(port: number): string {
     "echo @@vmstat; [ -r /proc/meminfo ] || vm_stat 2>/dev/null",
     "echo @@memsize; [ -r /proc/meminfo ] || sysctl -n hw.memsize 2>/dev/null",
     "echo @@gpu; command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null",
+    // ssh's sh -s has a bare PATH (no Homebrew), so the usual install places are looked at too.
+    'echo @@ollamabin; command -v ollama 2>/dev/null || for f in /usr/local/bin/ollama /opt/homebrew/bin/ollama /usr/bin/ollama /Applications/Ollama.app; do [ -e "$f" ] && echo "$f" && break; done',
+    "echo @@ollamaproc; pgrep -x ollama 2>/dev/null | head -n 1",
     `echo @@version; ${CURL_GET} ${url}/api/version 2>/dev/null; echo`,
     `echo @@ps; ${CURL_GET} ${url}/api/ps 2>/dev/null; echo`,
     "echo @@end",
@@ -166,6 +173,8 @@ export function parseOllama(versionText: string | undefined, psText: string | un
         };
       }) ?? null,
     modelsError: models !== null ? null : psText ? "unexpected answer from /api/ps" : "no answer from /api/ps",
+    installed: null,
+    running: null,
   };
 }
 
@@ -180,7 +189,7 @@ const emptyStatus = (checkedAt: string, error: string | null): MachineStatus => 
   memTotalBytes: null,
   gpus: [],
   gpuError: null,
-  ollama: { up: false, version: null, loaded: null, modelsError: "not probed" },
+  ollama: { up: false, version: null, loaded: null, modelsError: "not probed", installed: null, running: null },
 });
 
 /** A probe's whole output into a status; `@@end` missing means the script did not finish. */
@@ -189,6 +198,7 @@ export function parseProbe(output: string, checkedAt: string): MachineStatus {
   if (!s.has("end")) return emptyStatus(checkedAt, "the probe script did not finish");
   const mem = parseMeminfo(s.get("meminfo") ?? "") ?? parseVmStat(s.get("vmstat") ?? "", num(s.get("memsize")));
   const nvidia = parseNvidiaSmi(s.get("gpu") ?? "");
+  const present = (section: string) => (s.has(section) ? (s.get(section) ?? "").trim() !== "" : null);
   return {
     ...emptyStatus(checkedAt, null),
     cpuName: s.get("cpuname")?.split("\n")[0].trim() || null,
@@ -198,7 +208,7 @@ export function parseProbe(output: string, checkedAt: string): MachineStatus {
     memTotalBytes: mem?.total ?? null,
     gpus: nvidia.gpus,
     gpuError: nvidia.error,
-    ollama: parseOllama(s.get("version"), s.get("ps")),
+    ollama: { ...parseOllama(s.get("version"), s.get("ps")), installed: present("ollamabin"), running: present("ollamaproc") },
   };
 }
 

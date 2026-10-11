@@ -55,9 +55,25 @@ const cases = [
     expect: { gpus: [], gpuError: null },
   },
   {
-    name: "Ollama down: version and ps empty, the machine still reachable",
+    name: "Ollama silent: version and ps empty, the machine still reachable",
     output: blank(blank(linux, "version"), "ps"),
     expect: { reachable: true, cpus: 32, gpus: [{ name: "NVIDIA GeForce RTX 4090" }], ollama: { up: false, version: null, loaded: null } },
+  },
+  {
+    // Under ssh's sh -s, Homebrew's ollama is found by its path, not by PATH.
+    name: "Ollama installed but not running: the binary found, no process",
+    output: blank(blank(linux, "version"), "ps").replace("@@version", "@@ollamabin\n/opt/homebrew/bin/ollama\n@@ollamaproc\n@@version"),
+    expect: { ollama: { up: false, installed: true, running: false } },
+  },
+  {
+    name: "no Ollama on the host: neither a binary nor a process",
+    output: blank(blank(linux, "version"), "ps").replace("@@version", "@@ollamabin\n@@ollamaproc\n@@version"),
+    expect: { ollama: { up: false, installed: false, running: false } },
+  },
+  {
+    name: "an older probe without the install sections: installed and running unknown",
+    output: blank(blank(linux, "version"), "ps"),
+    expect: { ollama: { up: false, installed: null, running: null } },
   },
   {
     name: "Ollama answers its version but /api/ps does not: models unknown, not none",
