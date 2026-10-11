@@ -2,7 +2,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addAnswerText, barLabel, claimText, gpuErrorText, hardware, shortCpuName, health, hotText, loadText, modelLines } from "../dist-test/machines-view.js";
+import { addAnswerText, barLabel, claimText, hardware, shortCpuName, health, hotText, loadText, modelLines, readyFirst, troubleText } from "../dist-test/machines-view.js";
 
 const NOW = new Date("2026-10-04T15:00:00Z");
 const GIB = 2 ** 30;
@@ -68,8 +68,7 @@ test("a broken NVIDIA driver is its own state, with nvidia-smi's words; the CPU 
   const s = status({ ...mac, gpuError: "Failed to initialize NVML: Driver/library version mismatch" });
   assert.deepEqual(health(s), { word: "GPU error", level: "warn" });
   assert.equal(hardware(s), "Apple M2 Max");
-  assert.equal(gpuErrorText(s), "nvidia-smi failed: Failed to initialize NVML: Driver/library version mismatch");
-  assert.equal(gpuErrorText(status(mac)), null);
+  assert.equal(troubleText(s), "GPU error: Driver/library version mismatch");
   assert.match(barLabel([view(s)]), /athena gpu error/);
   // Ollama down outranks it: with no Ollama, the GPU does not matter yet.
   assert.equal(health({ ...s, ollama: { up: false, version: null, loaded: null, modelsError: null } }).word, "Ollama down");
@@ -80,4 +79,19 @@ test("a CPU is named by its model: no (R), vendor, clock or core count; Apple ke
   assert.equal(shortCpuName("AMD Ryzen 9 9950X3D 16-Core Processor"), "Ryzen 9 9950X3D");
   assert.equal(shortCpuName("Intel(R) Core(TM) i7-8700K CPU @ 3.70GHz"), "Core i7-8700K");
   assert.equal(shortCpuName("Apple M5 Max"), "Apple M5 Max");
+});
+
+test("a machine in trouble is one line: its state and the reason's last clause", () => {
+  assert.equal(troubleText(status({ reachable: false, error: "ssh: connect to host 192.168.0.65 port 22: Operation timed out" })), "Unreachable: Operation timed out");
+  assert.equal(troubleText(status({ reachable: false, error: "the probe did not finish within 10s." })), "Unreachable: the probe did not finish within 10s.");
+  assert.equal(troubleText(status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null } })), "Ollama down");
+});
+
+test("ready machines come first, then the least broken; the user's order within each", () => {
+  const v = (id, s) => ({ id, status: s });
+  const down = status({ reachable: false, error: "x" });
+  const noOllama = status({ ollama: { up: false, version: null, loaded: null, modelsError: null } });
+  const gpuError = status({ ...mac, gpuError: "Failed to initialize NVML: Driver/library version mismatch" });
+  const order = readyFirst([v("desktop", down), v("macbook", noOllama), v("darwine", gpuError), v("local", status()), v("athena", down), v("lab", status())]);
+  assert.deepEqual(order.map((x) => x.id), ["local", "lab", "darwine", "macbook", "desktop", "athena"]);
 });

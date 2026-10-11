@@ -27,13 +27,16 @@ So the first need is to see every machine at a glance and to say who is using on
 
 **Status bar.** Once a machine is added, the status bar shows one machines icon, so six machines never fill the bar. Its tooltip and accessible name say each machine's state in words, for example `Machines: athena ready, claimed; mini unreachable`. With no machine added, there is no icon. The item polls every 30 s while Aya is visible; a slow answer that arrives after a newer one is dropped.
 
-**Popover.** Clicking the item opens a popover with one entry per machine:
+**Popover.** Clicking the icon opens a popover titled with how many machines are ready, for example `Machines · 1 of 6 ready · checked 13:14`. Ready machines come first, each in full:
 
-- name, GPU (or CPU) model, and state: Ready, GPU error, Ollama down or Unreachable;
-- GPU use and VRAM, or CPU load and RAM when there is no NVIDIA GPU, plus how the machine is reached;
-- when `nvidia-smi` fails (say, a driver that does not match its library), its message: the card is there, but Ollama runs on the CPU;
+- name, GPU (or CPU) model, and Ready;
+- GPU use and VRAM, or load and RAM when there is no NVIDIA GPU (`load 8.8 on 18 CPUs`), plus how the machine is reached;
 - each loaded model with its size and how long it stays hot;
 - the claim (what for, who, which pane, since when) with Release.
+
+Every other machine is one line with its state and the last clause of the reason, the least broken first: `darwine · GPU error: Driver/library version mismatch` (nvidia-smi fails, so Ollama runs on the CPU), `macbook · Ollama down`, `athena · Unreachable: Operation timed out`. A claim shows on these too.
+
+The popover's text can be selected and copied; each line pastes as one line, without the button labels.
 
 Manage opens Settings > Machines.
 

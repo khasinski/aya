@@ -32,7 +32,6 @@ test("a copy of the whole popover pastes one line per fact, without the button l
   await window.keyboard.press("Meta+c");
   await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toContain("gpu-box · RTX 4090 · Ready");
   const text = await app.evaluate(({ clipboard }) => clipboard.readText());
-  expect(text).toContain("mini-lab · Apple M2 Pro · Ollama down\nload 0.8 on 10 CPUs · RAM 12.0/32.0 GB · ssh mini-lab");
-  expect(text).toContain("old-server · Unreachable");
+  expect(text).toContain("mini-lab · Ollama down\nold-server · Unreachable: Permission denied (publickey).");
   expect(text).not.toMatch(/Manage|Release/);
 });

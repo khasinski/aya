@@ -16,8 +16,24 @@ export function health(s: MachineStatus): { word: "Ready" | "GPU error" | "Ollam
   return s.gpuError ? { word: "GPU error", level: "warn" } : { word: "Ready", level: "ok" };
 }
 
-/** nvidia-smi's failure, word for word, so the user sees why the GPU is not used. */
-export const gpuErrorText = (s: MachineStatus) => (s.reachable && s.gpuError ? `nvidia-smi failed: ${s.gpuError}` : null);
+/** A machine that cannot serve a model on its GPU, in one line: its state and the reason's last clause
+ *  ("Unreachable: Operation timed out", "GPU error: Driver/library version mismatch"). */
+export function troubleText(s: MachineStatus): string {
+  const word = health(s).word;
+  const why = !s.reachable ? s.error : s.ollama.up ? s.gpuError : null;
+  const last = why?.split(": ").pop()?.trim();
+  return last ? `${word}: ${last}` : word;
+}
+
+const HEALTH_ORDER = { ok: 0, warn: 1, down: 2 } as const;
+
+/** Ready machines first, then those in trouble, the least broken first; the user's order within each. */
+export function readyFirst<T extends { status: MachineStatus }>(views: T[]): T[] {
+  return views
+    .map((v, i) => ({ v, i, rank: HEALTH_ORDER[health(v.status).level] * 2 + (health(v.status).word === "Ollama down" ? 1 : 0) }))
+    .sort((a, b) => a.rank - b.rank || a.i - b.i)
+    .map((x) => x.v);
+}
 
 /** "Xeon E3-1245 V2" for "Intel(R) Xeon(R) CPU E3-1245 V2 @ 3.40GHz", "Ryzen 9 9950X3D" for "AMD Ryzen 9 9950X3D 16-Core
  *  Processor": the model, without marks, vendor, clock or core count. Apple's chips keep "Apple". */

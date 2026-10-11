@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MachineView } from "../types";
-import { barLabel, claimText, clock, gpuErrorText, hardware, health, loadText, MACHINES_CHANGED_EVENT, modelLines, reachText } from "../machines-view";
+import { barLabel, claimText, clock, hardware, health, loadText, MACHINES_CHANGED_EVENT, modelLines, reachText, readyFirst, troubleText } from "../machines-view";
 
 /** Each poll probes every machine (over ssh for remote ones); half a minute keeps the bar current at little cost. */
 const POLL_MS = 30_000;
@@ -78,6 +78,7 @@ export function MachinesStatus({ onManage }: { onManage: () => void }) {
   if (machines.length === 0 && !error) return null;
   const now = new Date();
   const checked = machines.map((m) => m.status.checkedAt).sort()[0];
+  const ready = machines.filter((m) => health(m.status).level === "ok").length;
 
   return (
     <div className="aya-statusbar-popover-host" ref={hostRef}>
@@ -98,7 +99,9 @@ export function MachinesStatus({ onManage }: { onManage: () => void }) {
       {open && (
         <div className="aya-statusbar-popover aya-statusbar-popover--machines" role="dialog" aria-label="Machines">
           <div className="aya-statusbar-popover-title">
-            <span>Machines{checked ? ` · checked ${clock(checked)}` : ""}</span>
+            <span>
+              Machines · {ready} of {machines.length} ready{checked ? ` · checked ${clock(checked)}` : ""}
+            </span>
             <button
               className="aya-statusbar-popover-action"
               type="button"
@@ -112,27 +115,32 @@ export function MachinesStatus({ onManage }: { onManage: () => void }) {
           </div>
           {error && <div className="aya-statusbar-popover-empty aya-machines-error">{error}</div>}
           <ul className="aya-machines-list">
-            {machines.map((m) => {
+            {/* What can serve a model comes first, in full; anything in trouble is one line, so six machines need no scrolling. */}
+            {readyFirst(machines).map((m) => {
               const h = health(m.status);
+              const ok = h.level === "ok";
               return (
                 <li key={m.id} className="aya-machines-entry" data-testid="machine-entry">
                   {/* One line of inline text, so a copy pastes "gpu-box · RTX 4090 · Ready", not three lines. */}
                   <div className="aya-machines-entry-head">
                     <strong>{m.id}</strong>
-                    {hardware(m.status) && <span className="aya-machines-muted"> · {hardware(m.status)}</span>}
+                    {ok && hardware(m.status) && <span className="aya-machines-muted"> · {hardware(m.status)}</span>}
                     <span className="aya-machines-muted"> · </span>
                     <span className={`aya-machines-state aya-machines-state--${h.level}`}>
                       <span className={`aya-machine-dot aya-machine-dot--${h.level}`} aria-hidden="true" />
-                      {h.word}
+                      {ok ? h.word : troubleText(m.status)}
                     </span>
                   </div>
-                  <div className="aya-machines-muted">
-                    {m.status.reachable ? `${loadText(m.status)} · ${reachText(m.reach)}` : `${reachText(m.reach)}: ${m.status.error}`}
-                  </div>
-                  {gpuErrorText(m.status) && <div className="aya-machines-error">{gpuErrorText(m.status)}</div>}
-                  {modelLines(m.status, m.ollama.port, now).map((line) => (
-                    <div key={line}>{line}</div>
-                  ))}
+                  {ok && (
+                    <>
+                      <div className="aya-machines-muted">
+                        {loadText(m.status)} · {reachText(m.reach)}
+                      </div>
+                      {modelLines(m.status, m.ollama.port, now).map((line) => (
+                        <div key={line}>{line}</div>
+                      ))}
+                    </>
+                  )}
                   {m.claim && (
                     <div className="aya-machines-claim">
                       <span>Claimed: {claimText(m.claim, now)}</span>
