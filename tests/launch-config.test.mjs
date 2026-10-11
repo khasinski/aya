@@ -4,8 +4,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { writeExecutable } from "./helpers/executable.mjs";
 import { join, relative } from "node:path";
 import { paneLaunchMode, readLaunchConfig, roleLaunchCheck } from "../dist-electron/launch-config.js";
 
@@ -161,8 +162,7 @@ test("the socket is matched by its real path, as Claude Code matches it", async 
 
 function fakeCodex(dir, help) {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "codex"), `#!/bin/sh\necho '      ${help}'\n`);
-  chmodSync(join(dir, "codex"), 0o755);
+  writeExecutable(join(dir, "codex"), `#!/bin/sh\necho '      ${help}'\n`);
 }
 
 test("a preset checked for a role's pane: as the host would launch it, --no-daemon included", async (t) => {

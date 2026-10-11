@@ -4,9 +4,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
+import { writeExecutable } from "./helpers/executable.mjs";
 import { join } from "node:path";
 import {
   OLLAMA_BASE_URL,
@@ -85,11 +86,10 @@ function fakeHelper(stdout, code = null) {
   const dir = mkdtempSync(join(tmpdir(), "aya-apple-"));
   const file = join(dir, "helper");
   const answer = code ?? (stdout === null ? "setInterval(()=>{},1000);" : `process.stdout.write(${JSON.stringify(stdout)});`);
-  writeFileSync(
+  writeExecutable(
     file,
     `#!${process.execPath}\nlet s="";process.stdin.on("data",c=>s+=c).on("end",()=>{require("fs").writeFileSync(${JSON.stringify(join(dir, "req.json"))},s);${answer}});\n`,
   );
-  chmodSync(file, 0o755);
   return { file, dir, done: () => rmSync(dir, { recursive: true, force: true }) };
 }
 

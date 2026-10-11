@@ -7,6 +7,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, s
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
+import { writeExecutable } from "./helpers/executable.mjs";
 import { join } from "node:path";
 
 const { teamNote, briefText } = await import("../dist-electron/agent-brief.js");
@@ -433,7 +434,7 @@ test("opencode: a login shell too slow to answer costs the note, visibly; a late
   try {
     await withRig(presetOf("opencode"), ROLE, async ({ root, deps, start, gap }) => {
       const shell = join(root, "sh");
-      const script = (body) => (writeFileSync(shell, `#!/bin/sh\n${body}\nexec /bin/sh -c "$3"\n`), chmodSync(shell, 0o755));
+      const script = (body) => writeExecutable(shell, `#!/bin/sh\n${body}\nexec /bin/sh -c "$3"\n`);
       process.env.SHELL = shell;
       LOGIN_ENV_TIMEOUT.ms = 1500;
       forgetLoginShellEnv();

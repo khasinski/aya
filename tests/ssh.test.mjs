@@ -1,9 +1,10 @@
 // The ssh layer of aya machines (electron/ssh.ts) against a fake ssh on PATH.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { writeExecutable } from "./helpers/executable.mjs";
 import { installFakeSsh } from "./helpers/fake-ssh.mjs";
 
 const { runSsh, sshFailure, isSshTarget, requireSshTarget } = await import("../dist-electron/ssh.js");
@@ -91,8 +92,7 @@ for (const f of failures) {
 test("runSsh at the deadline kills ssh's whole process group, a ProxyCommand-like child included", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "aya-ssh-group-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  writeFileSync(join(dir, "ssh"), `#!/bin/sh\nsleep 30 &\necho $! > "${dir}/child"\nwait\n`);
-  chmodSync(join(dir, "ssh"), 0o755);
+  writeExecutable(join(dir, "ssh"), `#!/bin/sh\nsleep 30 &\necho $! > "${dir}/child"\nwait\n`);
   const path = process.env.PATH;
   process.env.PATH = `${dir}:${path}`;
   t.after(() => (process.env.PATH = path));

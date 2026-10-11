@@ -4,10 +4,11 @@
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { protocolShell } from "./helpers/login-shell.mjs";
+import { writeExecutable } from "./helpers/executable.mjs";
 import { waitFor } from "./helpers/wait-for.mjs";
 import { NON_TUI, codexSupportsNoDaemon, noDaemonCommand, withNoDaemon } from "../dist-electron/codex-daemon.js";
 
@@ -94,8 +95,7 @@ describe("Codex daemon policy with isolated installs", { concurrency: 2 }, () =>
 
   function fakeCodex(help, bin = mkdtempSync(path.join(tmpdir(), "codex-bin-"))) {
     const log = path.join(bin, "calls.log");
-    writeFileSync(path.join(bin, "codex"), `#!/bin/sh\necho "$*" >> '${log}'\nwhile IFS= read -r line; do printf '%s\\n' "$line"; done <<'EOF'\n${help}\nEOF\n`);
-    chmodSync(path.join(bin, "codex"), 0o755);
+    writeExecutable(path.join(bin, "codex"), `#!/bin/sh\necho "$*" >> '${log}'\nwhile IFS= read -r line; do printf '%s\\n' "$line"; done <<'EOF'\n${help}\nEOF\n`);
     return { bin, log, env: { PATH: `${bin}:/usr/bin:/bin`, HOME: bin } };
   }
 

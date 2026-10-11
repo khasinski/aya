@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { writeExecutable } from "./helpers/executable.mjs";
 import { installFakeSsh } from "./helpers/fake-ssh.mjs";
 
 const { parseOllama, parseProbe, probeMachine, probeScript, PROBE_DEADLINE_MS } = await import("../dist-electron/machines-probe.js");
@@ -213,10 +214,9 @@ test("this machine: the same script through sh, no ssh; Ollama on an unused port
 
 test("a hung local nvidia-smi is killed with its children at the deadline, before the probe answers", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "aya-smi-"));
-  const { writeFileSync, chmodSync, mkdirSync } = await import("node:fs");
+  const { mkdirSync } = await import("node:fs");
   mkdirSync(join(dir, "bin"));
-  writeFileSync(join(dir, "bin", "nvidia-smi"), `#!/bin/sh\necho $$ > "${dir}/pid"\nsleep 30 &\necho $! > "${dir}/child"\nwait\n`);
-  chmodSync(join(dir, "bin", "nvidia-smi"), 0o755);
+  writeExecutable(join(dir, "bin", "nvidia-smi"), `#!/bin/sh\necho $$ > "${dir}/pid"\nsleep 30 &\necho $! > "${dir}/child"\nwait\n`);
   const path = process.env.PATH;
   process.env.PATH = `${join(dir, "bin")}:${path}`;
   t.after(() => {

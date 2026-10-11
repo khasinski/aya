@@ -4,9 +4,10 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { writeExecutable } from "./helpers/executable.mjs";
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), "aya-ptyhost-codex-")));
 const cwd = join(root, "project");
@@ -15,7 +16,7 @@ mkdirSync(cwd);
 function fakeCodex(dir, helpOption) {
   mkdirSync(dir, { recursive: true });
   const file = join(dir, "codex");
-  writeFileSync(
+  writeExecutable(
     file,
     [
       "#!/bin/sh",
@@ -24,7 +25,6 @@ function fakeCodex(dir, helpOption) {
       "",
     ].join("\n"),
   );
-  chmodSync(file, 0o755);
   return file;
 }
 

@@ -4,9 +4,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { rpc } from "./helpers/control-rpc.mjs";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { writeExecutable } from "./helpers/executable.mjs";
 
 const { startControlServerOn } = await import("../dist-electron/control.js");
 const { MAX_DEPTH, PS_TABLE_MAX_BUFFER_BYTES, TABLE_SHARE_MS, paneAbove, parseProcesses, processTable, readProcessTable, unprovenIdentity } = await import(
@@ -229,7 +230,7 @@ test("unprovenIdentity: a parent loop ends the walk instead of hanging", () => {
 
 test("the process table is what ps prints, and unknown when ps fails", async () => {
   const bin = mkdtempSync(join(tmpdir(), "aya-ps-"));
-  const fakePs = (script) => writeFileSync(join(bin, "ps"), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+  const fakePs = (script) => writeExecutable(join(bin, "ps"), `#!/bin/sh\n${script}\n`);
   const path = process.env.PATH;
   process.env.PATH = `${bin}:${path}`;
   try {
@@ -250,7 +251,7 @@ async function withFakePs(body, run) {
   const bin = mkdtempSync(join(tmpdir(), "aya-ps-"));
   const count = join(bin, "count");
   // `ps -o ppid= -p N` (the one-pid probe) answers 1 and is not counted as a table read
-  const write = (text) => writeFileSync(join(bin, "ps"), `#!/bin/sh\ncase "$*" in *-p*) echo 1; exit 0;; esac\necho x >> "${count}"\nprintf '${text}'\n`, { mode: 0o755 });
+  const write = (text) => writeExecutable(join(bin, "ps"), `#!/bin/sh\ncase "$*" in *-p*) echo 1; exit 0;; esac\necho x >> "${count}"\nprintf '${text}'\n`);
   const runs = () => (existsSync(count) ? readFileSync(count, "utf8").split("\n").filter(Boolean).length : 0);
   const path = process.env.PATH;
   process.env.PATH = `${bin}:${path}`;
