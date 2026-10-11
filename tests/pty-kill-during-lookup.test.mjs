@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { protocolShell } from "./helpers/login-shell.mjs";
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), "aya-kill-lookup-")));
 const bin = join(root, "bin");
@@ -29,7 +30,8 @@ chmodSync(join(bin, "opencode"), 0o755);
 process.env.AYA_HOME = join(root, "aya-home");
 process.env.HOME = join(root, "home");
 process.env.XDG_DATA_HOME = join(root, "xdg-data");
-process.env.SHELL = "/bin/sh";
+// Not /bin/sh -l: macOS /etc/profile would put an installed opencode before the fake one.
+process.env.SHELL = protocolShell();
 process.env.PATH = `${bin}:/usr/bin:/bin`;
 
 const { activePtyCount, isPtyStarting, killPty, spawnPty } = await import("../dist-electron/pty.js");

@@ -7,15 +7,14 @@ import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { protocolShell } from "./helpers/login-shell.mjs";
 import { waitFor } from "./helpers/wait-for.mjs";
 import { NON_TUI, codexSupportsNoDaemon, noDaemonCommand, withNoDaemon } from "../dist-electron/codex-daemon.js";
 
 // Cache, quoting and binary-selection cases need the shell protocol, not the machine's /etc/profile;
 // the rc and login-PATH cases keep the real shells, whose startup files are under test.
-const probeDir = mkdtempSync(path.join(tmpdir(), "codex-probe-sh-"));
-const PROBE_SHELL = path.join(probeDir, "sh");
-writeFileSync(PROBE_SHELL, '#!/bin/sh\n[ "$#" -eq 4 ] && [ "$1" = "-l" ] && [ "$2" = "-i" ] && [ "$3" = "-c" ] || exit 2\neval "$4"\n', { mode: 0o755 });
-test.after(() => rmSync(probeDir, { recursive: true, force: true }));
+const PROBE_SHELL = protocolShell();
+test.after(() => rmSync(path.dirname(PROBE_SHELL), { recursive: true, force: true }));
 
 // Each probe owns its install, HOME, cwd and log. Two concurrent cases overlap
 // independent probes while bounding shell pressure on the full suite.
