@@ -142,7 +142,10 @@ function parseJson(text: string | undefined): unknown {
 export function parseOllama(versionText: string | undefined, psText: string | undefined): OllamaState {
   const version = parseJson(versionText) as { version?: unknown } | null;
   const ps = parseJson(psText) as { models?: unknown } | null;
-  const models = Array.isArray(ps?.models) ? (ps.models as Record<string, unknown>[]) : null;
+  // An entry that is not an object is skipped: one odd answer never takes down the status of every machine.
+  const models = Array.isArray(ps?.models)
+    ? (ps.models as unknown[]).filter((m): m is Record<string, unknown> => typeof m === "object" && m !== null && !Array.isArray(m))
+    : null;
   const up = typeof version?.version === "string" || models !== null;
   return {
     up,

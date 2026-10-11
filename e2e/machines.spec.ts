@@ -74,6 +74,9 @@ test.describe("three added", () => {
     const bar = window.getByTestId("machines-toggle");
     await expect(bar).toHaveAccessibleName("Machines: gpu-box ready, claimed; mini-lab ollama down; old-server unreachable");
     await expect(bar).toContainText("gpu-box 97% claimed");
+    // Trouble is in words too, never only the dot's colour.
+    await expect(bar).toContainText("mini-lab ollama down");
+    await expect(bar).toContainText("old-server unreachable");
     await expect(bar.locator(".aya-machine-dot--warn")).toHaveCount(1);
     await expect(bar.locator(".aya-machine-dot--down")).toHaveCount(1);
 

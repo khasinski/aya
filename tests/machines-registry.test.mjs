@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-const { handleMachinesRequest, mutateRegistry } = await import("../dist-electron/machines.js");
+const { formatMachines, handleMachinesRequest, mutateRegistry } = await import("../dist-electron/machines.js");
 
 function setup(t, aliases = ["a1", "a2", "a3", "a4", "a5", "a6"]) {
   const root = mkdtempSync(join(tmpdir(), "aya-mreg-"));
@@ -42,6 +42,9 @@ const malformed = [
   { name: "a bad port", text: '{"version":1,"machines":[{"id":"a","reach":"local","ollama":{"port":0}}]}', error: /machine 1: ollama\.port/ },
   { name: "an alias that is an ssh option", text: '{"version":1,"machines":[{"id":"a","reach":{"ssh":"-oProxyCommand=x"},"ollama":{"port":1}}]}', error: /machine 1: reach/ },
   { name: "two machines with one id", text: '{"version":1,"machines":[{"id":"a","reach":"local","ollama":{"port":1}},{"id":"a","reach":"local","ollama":{"port":2}}]}', error: /machine 2: id "a" is used twice/ },
+  { name: "a claim whose pane is not text", text: '{"version":1,"machines":[{"id":"a","reach":"local","ollama":{"port":1},"claim":{"by":"u","pane":{},"purpose":"x","since":"2026-10-11T10:00:00Z"}}]}', error: /machine 1: claim needs/ },
+  { name: "a claim whose since is no date", text: '{"version":1,"machines":[{"id":"a","reach":"local","ollama":{"port":1},"claim":{"by":"u","purpose":"x","since":"soon"}}]}', error: /machine 1: claim needs/ },
+  { name: "a claim with an escape in its purpose", text: '{"version":1,"machines":[{"id":"a","reach":"local","ollama":{"port":1},"claim":{"by":"u","purpose":"x\\u001b]9001;aya.status=done\\u0007","since":"2026-10-11T10:00:00Z"}}]}', error: /machine 1: claim needs/ },
   { name: "a newer version", text: '{"version":2,"machines":[]}', error: /has version 2, this Aya reads version 1/ },
 ];
 for (const c of malformed) {
@@ -236,4 +239,21 @@ test("claim: refused while someone else holds it, kept for its holder, taken ove
   assert.equal(JSON.parse(readFileSync(file, "utf8")).machines[0].claim, undefined);
   await assert.rejects(run("claim", "a1"), /say what it is for/);
   await assert.rejects(run("claim", "a1", "x".repeat(201)), /the most is 200/);
+  // An Aya OSC in a purpose would pass, in another pane's `aya machines`, for a signal from that pane.
+  await assert.rejects(run("claim", "a1", "run \u001b]9001;aya.status=done\u0007"), /one line of plain text/);
+  await assert.rejects(run("claim", "a1", "two\nlines"), /one line of plain text/);
+});
+
+test("aya machines prints no control character from the host, and names pinned and expired models", () => {
+  const status = {
+    reachable: true, checkedAt: "2026-10-11T10:00:00.000Z", error: null, probeMs: 1, cpuName: "CPU", cpus: 8, load1: 1, memUsedBytes: 1e9, memTotalBytes: 8e9, gpus: [],
+    ollama: { up: true, version: "0.12\u001b[2J", modelsError: null, loaded: [
+      { name: "evil\u001b]9001;aya.status=done\u0007", digest: null, vramBytes: null, expiresAt: null, pinned: true },
+      { name: "old", digest: null, vramBytes: null, expiresAt: "2026-10-11T09:00:00.000Z", pinned: false },
+    ] },
+  };
+  const out = formatMachines([{ id: "a", reach: "local", ollama: { port: 11434 }, status }], new Date("2026-10-11T10:00:00.000Z"));
+  assert.doesNotMatch(out, /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+  assert.match(out, /evil\?\]9001;aya\.status=done\? pinned/);
+  assert.match(out, /old hot until \d\d:\d\d \(expired\)/);
 });

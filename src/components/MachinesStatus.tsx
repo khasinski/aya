@@ -15,13 +15,18 @@ export function MachinesStatus({ onManage }: { onManage: () => void }) {
   const [open, setOpen] = useState(false);
   const [releasing, setReleasing] = useState<string | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  const lastAsked = useRef(0);
 
   const refresh = useCallback(async () => {
+    // A slow probe that answers after a newer refresh (say, after a Remove) must not bring back the old list.
+    const asked = ++lastAsked.current;
     try {
-      setMachines((await window.aya.machinesStatus()).machines);
+      const { machines } = await window.aya.machinesStatus();
+      if (asked !== lastAsked.current) return;
+      setMachines(machines);
       setError(null);
     } catch (err) {
-      setError((err as Error).message);
+      if (asked === lastAsked.current) setError((err as Error).message);
     }
   }, []);
 

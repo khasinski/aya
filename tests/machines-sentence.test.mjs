@@ -47,6 +47,11 @@ const cases = [
   // Two aliases that read as one id: the second gets the next free number, never the same id.
   { sentence: "a.b and a_b", aliases: ["a.b", "a_b"], expect: { machines: [{ id: "a-b", reach: { ssh: "a.b" } }, { id: "a-b-2", reach: { ssh: "a_b" } }] } },
   { sentence: "a_b", aliases: ["a.b", "a_b"], registry: withAB, expect: { machines: [{ id: "a-b-3", reach: { ssh: "a_b" } }] } },
+  // A port after a word Aya asks about, or an unknown host, is not given to the machine before it.
+  { sentence: "athena and laptop port 11435", expect: { machines: [{ id: "athena", port: 11434 }], unclear: ["laptop"] } },
+  { sentence: "athena and ssh foo port 11435", expect: { machines: [{ id: "athena", port: 11434 }], unknown: ["foo"] } },
+  // ssh lowercases the host, so a case variant of an added target is the same machine.
+  { sentence: "me@devbox", registry: { version: 1, machines: [{ id: "devbox", reach: { ssh: "me@Devbox" }, ollama: { port: 11434 } }] }, expect: { machines: [], alreadyAdded: ["me@devbox"] } },
   { sentence: "local and this machine", aliases: ["local"], expect: { machines: [{ id: "local", reach: { ssh: "local" } }, { id: "local-2", reach: "local" }] } },
 ];
 

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { installFakeSsh } from "./helpers/fake-ssh.mjs";
 
-const { parseProbe, probeMachine, probeScript, PROBE_DEADLINE_MS } = await import("../dist-electron/machines-probe.js");
+const { parseOllama, parseProbe, probeMachine, probeScript, PROBE_DEADLINE_MS } = await import("../dist-electron/machines-probe.js");
 const probeRemote = (alias, port, options) => probeMachine({ ssh: alias }, port, options);
 
 const fixture = (name) => readFileSync(join("tests/fixtures/machines", name), "utf8");
@@ -207,4 +207,10 @@ test("a hung local nvidia-smi is killed with its children at the deadline, befor
   while ((alive(pid) || alive(child)) && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
   assert.equal(alive(pid), false, "nvidia-smi died with the group");
   assert.equal(alive(child), false, "its child died with the group");
+});
+
+test("an /api/ps entry that is not an object is skipped, never a crash that hides every machine", () => {
+  const o = parseOllama('{"version":"0.12.3"}', '{"models":[null, 7, [], {"name":"qwen3:32b","size_vram":1}]}');
+  assert.equal(o.up, true);
+  assert.deepEqual(o.loaded.map((m) => m.name), ["qwen3:32b"]);
 });

@@ -25,7 +25,7 @@ So the first need is to see every machine at a glance and to say who is using on
 
 ## Where you see it
 
-**Status bar.** Once a machine is added, the status bar shows each one with a dot and words, for example `● athena 97% claimed  ● laptop  ● mini`. The words carry GPU use and the claim; the colour is never the only signal. The item polls every 30 s while Aya is visible.
+**Status bar.** Once a machine is added, the status bar shows each one with a dot and words, for example `● athena 97% claimed  ● laptop  ● mini unreachable`. The words carry GPU use, any trouble (`ollama down`, `unreachable`) and the claim; the colour is never the only signal. A slow answer that arrives after a newer one is dropped. The item polls every 30 s while Aya is visible.
 
 **Popover.** Clicking the item opens a popover with one entry per machine:
 
@@ -40,7 +40,7 @@ Manage opens Settings > Machines.
 
 - the added machines, each with Remove;
 - one field that takes the same sentence as the CLI (`athena`, `user@host`, `local`, `port 11435`);
-- one-click Add for each known host and this machine.
+- one-click Add for each known host and this machine ("this machine" always means this one, even with a `Host local` alias).
 
 Listing the hosts connects to nothing.
 
@@ -64,13 +64,13 @@ checked 23:01:05
 - `aya machines hosts [--json]` lists the known ssh hosts and which of them are added.
 - `aya machines add "athena is the 4090 box, and this machine"` drafts by deterministic matching, with no model involved:
   - a known host or `user@host` becomes an ssh machine;
-  - `local` or "this machine" becomes this machine;
-  - `port N` sets the port of the machine named right before it;
+  - `local` or "this machine" becomes this machine; a `Host local` alias wins over the word `local`, never over "this machine";
+  - `port N` sets the port of the machine named right before it; after a word Aya asks about or an unknown host, it sets nothing;
   - a word like "laptop" is asked about, never taken as local.
 
   Aya then probes the drafted machines and asks in its own Add / Cancel dialog. If the CLI stops waiting, Aya closes the dialog and adds nothing. Options such as `--ssh` are refused.
 - `aya machines remove <id>` asks in Aya, like add.
-- `aya machines claim <id> "<purpose>"` records who claimed the machine and when. It is refused while someone else holds the claim, unless `--replace` is given; agents never pass `--replace` without the user's yes. The holder may change its own claim.
+- `aya machines claim <id> "<purpose>"` records who claimed the machine and when. The purpose is one line of plain text, at most 200 characters. It is refused while someone else holds the claim, unless `--replace` is given; agents never pass `--replace` without the user's yes. The holder may change its own claim.
 - `aya machines release <id>` clears the claim.
 
 There is no load or unload command.
@@ -112,6 +112,9 @@ The target never starts with `-`. Remote projects keep their own ssh call, which
 
 Limits:
 
+- Text from a host (model names, ssh errors) and from `~/.ssh/config` reaches the terminal with every control character replaced by `?`, so it can neither redraw the screen nor pass for an Aya OSC signal from the pane that ran the command.
+- An `/api/ps` entry that is not an object is skipped; one odd answer never hides the other machines.
+- `~/.ssh/config` and its Includes are read only as regular files up to 1 MB.
 - After 10 s the probe's process group gets SIGKILL, and the machine shows as unreachable with the reason.
 - If `/api/version` answers but `/api/ps` does not, the models show as "unavailable", never as "no model loaded".
 - Each machine has one probe in flight, shared by every caller and cached for 3 s.

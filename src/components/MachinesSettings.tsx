@@ -44,7 +44,7 @@ export function MachinesSettings() {
   };
 
   const suggestions = [
-    ...(machines.some((m) => m.reach === "local") ? [] : [{ target: "local", label: "this machine" }]),
+    ...(machines.some((m) => m.reach === "local") ? [] : [{ target: "this machine", label: "this machine" }]),
     ...hosts.filter((h) => !h.machine).map((h) => ({ target: h.target, label: h.target })),
   ];
 

@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { SSH_ALIAS_PATTERN } from "./ssh";
 
 const SSH_INCLUDE_MAX_DEPTH = 16;
+const SSH_CONFIG_MAX_BYTES = 1024 * 1024;
 
 function expandHome(p: string, userHome: string): string {
   return p === "~" ? userHome : p.startsWith("~/") ? path.join(userHome, p.slice(2)) : p;
@@ -31,6 +32,9 @@ export async function sshHostAliases(userHome: string): Promise<string[]> {
     seen.add(file);
     let text: string;
     try {
+      // Only regular files of sane size: an `Include /dev/zero` or a huge file must not eat Aya's memory.
+      const stat = await fs.stat(file);
+      if (!stat.isFile() || stat.size > SSH_CONFIG_MAX_BYTES) return;
       text = await fs.readFile(file, "utf8");
     } catch {
       return;

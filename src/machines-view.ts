@@ -57,10 +57,12 @@ export function claimText(c: MachineClaim, now: Date): string {
   return `${c.purpose} · ${c.by}${c.pane ? ` (pane ${c.pane})` : ""} · since ${clock(c.since)}${hours >= 1 ? ` (${hours} h ago)` : ""}`;
 }
 
-/** The status bar's words for one machine: its name, GPU use when it has one, and whether it is claimed. */
+/** The status bar's words for one machine: its name, GPU use when it has one, any trouble, and whether it is claimed.
+ *  Trouble is spelled out, so the dot's colour is never the only signal. */
 export function barText(v: MachineView): string {
   const util = v.status.reachable ? maxGpuUtil(v.status) : null;
-  return [v.id, ...(util === null ? [] : [`${util}%`]), ...(v.claim ? ["claimed"] : [])].join(" ");
+  const h = health(v.status);
+  return [v.id, ...(util === null ? [] : [`${util}%`]), ...(h.level === "ok" ? [] : [h.word.toLowerCase()]), ...(v.claim ? ["claimed"] : [])].join(" ");
 }
 
 /** The status bar button's accessible name: every machine with its state in words. */

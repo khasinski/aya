@@ -17,6 +17,8 @@ export const STATUS_CACHE_MS = 3_000;
 const MACHINES_FILE_MODE = 0o600;
 const ID_PATTERN = /^[a-z0-9-]+$/;
 const PURPOSE_MAX_CHARS = 200;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
+const CONTROL_CHARS_ALL = new RegExp(CONTROL_CHARS.source, "g");
 const LOCAL_WORDS = new Set(["local"]);
 const LOCAL_PHRASES = [/\bthis machine\b/i];
 const LOCAL_PHRASE_WORD = "this-machine";
@@ -87,8 +89,13 @@ function registryProblem(value: unknown): string | null {
     const port = (machine.ollama as { port?: unknown } | undefined)?.port;
     if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) return `${at}: ollama.port is not a port number`;
     const c = machine.claim as Record<string, unknown> | undefined;
-    if (c !== undefined && (typeof c !== "object" || c === null || typeof c.by !== "string" || typeof c.purpose !== "string" || typeof c.since !== "string")) {
-      return `${at}: claim needs by, purpose and since`;
+    const claimOk =
+      c === undefined ||
+      (typeof c === "object" && c !== null && typeof c.by === "string" && c.by !== "" && typeof c.purpose === "string" && c.purpose !== "" &&
+        typeof c.since === "string" && !Number.isNaN(Date.parse(c.since)) && (c.pane === undefined || typeof c.pane === "string") &&
+        ![c.by, c.purpose, c.pane].some((t) => typeof t === "string" && CONTROL_CHARS.test(t)));
+    if (!claimOk) {
+      return `${at}: claim needs by, purpose and since (a date), and pane if any, all plain text`;
     }
   }
   return null;
@@ -184,7 +191,8 @@ export interface SentenceDraft {
 }
 
 const idFor = (name: string) => name.toLowerCase().replace(/^[^@]*@/, "").replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "machine";
-const sameReach = (a: Reach, b: Reach) => (a === "local" ? b === "local" : b !== "local" && a.ssh === b.ssh);
+/** ssh lowercases the host it is given, and knownHosts merges hosts the same way. */
+const sameReach = (a: Reach, b: Reach) => (a === "local" ? b === "local" : b !== "local" && a.ssh.toLowerCase() === b.ssh.toLowerCase());
 
 /** Deterministic: known hosts (aliases, user@host), `local` / "this machine", `port N` after a machine; nothing else is guessed. */
 export function draftFromSentence(sentence: string, aliases: string[], registry: Registry): SentenceDraft {
@@ -226,14 +234,20 @@ export function draftFromSentence(sentence: string, aliases: string[], registry:
     if (byLower.has(lower)) return add({ ssh: byLower.get(lower)! }, word);
     // user@host names its own user and host, so it needs no Host block, as for a remote project.
     if (word.includes("@") && isSshTarget(word)) return add({ ssh: word }, word);
+    // A `Host local` alias wins over the word local (above); "this machine" always means this machine.
     if (lower === LOCAL_PHRASE_WORD) return add("local", "this machine");
     if (LOCAL_WORDS.has(lower)) return add("local", word);
+    // A machine that is asked about or unknown ends the one before it: its `port N` must not land there.
     if (AMBIGUOUS_WORDS.has(lower)) {
+      named = null;
       if (!draft.unclear.includes(word)) draft.unclear.push(word);
       return;
     }
     const usedAsHost = next === "is" ? i === 0 || /^(and|also|then)$/.test(prev ?? "") : prev === "ssh" || prev === "host";
-    if (usedAsHost && !NOT_HOSTS.has(lower) && /^[A-Za-z][A-Za-z0-9._-]*$/.test(word) && !draft.unknown.includes(word)) draft.unknown.push(word);
+    if (usedAsHost && !NOT_HOSTS.has(lower) && /^[A-Za-z][A-Za-z0-9._-]*$/.test(word)) {
+      named = null;
+      if (!draft.unknown.includes(word)) draft.unknown.push(word);
+    }
   });
   return draft;
 }
@@ -313,6 +327,10 @@ function modelLines(s: MachineStatus, port: number, now: Date): string[] {
   ];
 }
 
+/** Model names and ssh errors come from the host, aliases from ~/.ssh/config: no control character reaches the terminal,
+ *  where an escape could rewrite the screen or pass for an Aya OSC signal from the pane that ran the command. */
+const printable = (line: string) => line.replace(CONTROL_CHARS_ALL, "?");
+
 export function formatMachines(views: MachineView[], now = new Date()): string {
   if (views.length === 0) return 'no machines yet; add one in Settings > Machines or with aya machines add "<sentence>"\n';
   const idWidth = Math.max(...views.map((v) => v.id.length));
@@ -331,13 +349,13 @@ export function formatMachines(views: MachineView[], now = new Date()): string {
   }
   const oldest = views.map((v) => v.status.checkedAt).sort()[0];
   lines.push(`checked ${clock(oldest)}`);
-  return `${lines.join("\n")}\n`;
+  return `${lines.map(printable).join("\n")}\n`;
 }
 
 function formatHosts(hosts: KnownHost[]): string {
   if (hosts.length === 0) return "no known ssh hosts: no Host aliases in ~/.ssh/config and no remote projects\n";
   const width = Math.max(...hosts.map((h) => h.target.length));
-  return hosts.map((h) => `${h.target.padEnd(width)}  ${h.sources.join(", ")}${h.machine ? `  (added as ${h.machine})` : ""}\n`).join("");
+  return hosts.map((h) => printable(`${h.target.padEnd(width)}  ${h.sources.join(", ")}${h.machine ? `  (added as ${h.machine})` : ""}`) + "\n").join("");
 }
 
 function formatDraft(draft: SentenceDraft): string {
@@ -447,6 +465,7 @@ export async function handleMachinesRequest(request: MachinesRequest, deps: Mach
     const [id, ...words] = rest.filter((a) => a !== "--replace");
     const purpose = words.join(" ").trim();
     if (!purpose) throw new Error(`say what it is for: aya machines claim ${id ?? "<id>"} "<purpose>"`);
+    if (CONTROL_CHARS.test(purpose)) throw new Error("the purpose must be one line of plain text");
     if (purpose.length > PURPOSE_MAX_CHARS) throw new Error(`the purpose is ${purpose.length} characters, the most is ${PURPOSE_MAX_CHARS}`);
     const by = request.user || "unknown";
     return mutateRegistry(deps, (registry) => {

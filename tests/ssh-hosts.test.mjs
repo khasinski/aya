@@ -38,3 +38,14 @@ test("knownHosts: a failing project list leaves the other sources", async (t) =>
   const hosts = await knownHosts({ ayaHome: join(root, "aya"), userHome: root, listRemoteProjects: async () => { throw new Error("boom"); } });
   assert.deepEqual(hosts, [{ target: "athena", sources: ["ssh config"] }]);
 });
+
+test("an Include of a device or a huge file is skipped, the other hosts still listed", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "aya-ssh-include-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const userHome = join(root, "home");
+  mkdirSync(join(userHome, ".ssh"), { recursive: true });
+  writeFileSync(join(userHome, ".ssh", "big"), `Host hidden\n${"#".repeat(1024 * 1024)}\n`);
+  writeFileSync(join(userHome, ".ssh", "config"), "Include /dev/zero\nInclude big\nHost athena\n");
+  const hosts = await knownHosts({ ayaHome: join(root, "aya"), userHome });
+  assert.deepEqual(hosts.map((h) => h.target), ["athena"]);
+});
