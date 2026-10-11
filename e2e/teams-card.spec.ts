@@ -73,7 +73,7 @@ test("the log reads as a chat: oldest first, opened at the newest, the delivery 
   await expect(entries.last()).toBeInViewport();
   // The role notes come in seconds after the dialog opened and grow the card above the log: its end stays in view.
   await expect(card.getByText(/may not reach Aya/)).toHaveCount(2);
-  await expect(entries.last()).toBeInViewport();
+  await expect(entries.last()).toBeInViewport({ ratio: 0.5 });
   await expect(chat.getByText("Delivery test: run aya team whoami, then send one word to ux-reviewer.")).toHaveCount(0);
   await chat.getByRole("button", { name: /Delivery test: 3\/3 answered/ }).click();
   await expect(chat.getByText("Delivery test: run aya team whoami, then send one word to ux-reviewer.")).toBeVisible();

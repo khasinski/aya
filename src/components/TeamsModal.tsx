@@ -39,6 +39,8 @@ const TWO_ROLE_TEMPLATE: TeamDefinition = {
  *  showed (a held message there is what the card is opened for), as the browser's scroll anchoring
  *  would, which it does not do while the dialog is at its top. */
 function useKeepLogEndInView(body: RefObject<HTMLDivElement | null>, contentKey: unknown) {
+  // Kept across a re-attach (a team added or renamed): once the user scrolled, their position wins.
+  const moved = useRef(false);
   useEffect(() => {
     const el = body.current;
     if (!el) return;
@@ -51,15 +53,14 @@ function useKeepLogEndInView(body: RefObject<HTMLDivElement | null>, contentKey:
       return { gap: edge - log.getBoundingClientRect().bottom, seen: newest.getBoundingClientRect().top < edge };
     };
     let before = measure();
-    let moved = false;
     let ours = el.scrollTop;
     const onScroll = () => {
-      if (Math.abs(el.scrollTop - ours) > 1) moved = true;
+      if (Math.abs(el.scrollTop - ours) > 1) moved.current = true;
       before = measure();
     };
     const resized = new ResizeObserver(() => {
       const now = measure();
-      if (now && before && !moved && before.seen && now.gap < before.gap) {
+      if (now && before && !moved.current && before.seen && now.gap < before.gap) {
         el.scrollTop += before.gap - now.gap;
         ours = el.scrollTop;
       }
