@@ -762,8 +762,7 @@ export interface AyaApi {
   listRemotePresets(sshTarget: string): Promise<Preset[]>;
   checkRemoteHealth(sshTarget: string): Promise<RemoteHealthResult>;
   machinesStatus(): Promise<{ version: number; machines: MachineView[] }>;
-  machinesHosts(): Promise<KnownHost[]>;
-  machinesCheck(target: string, port?: number): Promise<MachineStatus>;
+  machinesSetup(): Promise<{ machines: Machine[]; hosts: KnownHost[] }>;
   machinesCommand(argv: string[]): Promise<string>;
   createRemoteProjectOnHost(
     sshTarget: string,
@@ -1217,7 +1216,7 @@ export interface RoleDraft {
   sendsTo: SendRoute[];
 }
 
-// Machines (electron/machines.ts, machines-probe.ts, ssh-hosts.ts).
+// Machines (electron/machines.ts, electron/machines-probe.ts).
 export interface GpuLoad {
   name: string;
   utilPct: number | null;
@@ -1238,6 +1237,7 @@ export interface MachineStatus {
   checkedAt: string;
   error: string | null;
   probeMs: number;
+  cpuName: string | null;
   cpus: number | null;
   load1: number | null;
   memUsedBytes: number | null;
@@ -1248,41 +1248,26 @@ export interface MachineStatus {
 
 export type MachineReach = "local" | { ssh: string };
 
+export interface MachineClaim {
+  by: string;
+  pane?: string;
+  purpose: string;
+  since: string;
+}
+
 export interface MachineView {
   id: string;
-  label: string;
   reach: MachineReach;
   ollama: { port: number };
-  occupancy?: { by: string; pane?: string; purpose: string; since: string };
+  claim?: MachineClaim;
   status: MachineStatus;
 }
 
-export type HostSource = "ssh-config" | "remote-project" | "machine" | "saved";
-export type HostOrigin = "open-project" | "settings" | "cli";
-
-export interface HostEvent {
-  at: string;
-  target: string;
-  event: "added" | "removed" | "connected" | "check-failed";
-  from?: HostOrigin;
-  project?: string;
-  machine?: string;
-  why?: string;
-}
+/** A machine as saved, without its status: what Settings > Machines lists. */
+export type Machine = Omit<MachineView, "status">;
 
 export interface KnownHost {
   target: string;
-  sources: HostSource[];
-  machineId?: string;
-  projects?: string[];
-  panes?: { name: string; project: string; role?: string; team?: string }[];
-  occupancy?: { by: string; pane?: string; purpose: string; since: string };
-  saved?: {
-    addedAt: string;
-    addedFrom: HostOrigin;
-    lastUsedAt?: string;
-    lastUsedFor?: "project" | "check";
-    lastCheck?: { ok: boolean; at: string; why?: string };
-  };
-  history?: HostEvent[];
+  sources: ("ssh config" | "remote project")[];
+  machine?: string;
 }

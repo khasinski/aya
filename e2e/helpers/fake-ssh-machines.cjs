@@ -11,8 +11,9 @@ if (process.env.AYA_FAKE_SSH_LOG) fs.appendFileSync(process.env.AYA_FAKE_SSH_LOG
 const GIB_KB = 1024 * 1024;
 const inMinutes = (min) => new Date(Date.now() + min * 60_000).toISOString();
 
-function probe({ cores, load, totalGiB, availGiB, gpu, version, models }) {
+function probe({ cpuName, cores, load, totalGiB, availGiB, gpu, version, models }) {
   return [
+    "@@cpuname", cpuName ?? "",
     "@@nproc", String(cores),
     "@@loadavg", `${load} 1.00 0.50 1/300 4242`,
     "@@meminfo", `MemTotal:       ${totalGiB * GIB_KB} kB`, `MemFree:        ${GIB_KB} kB`, `MemAvailable:   ${availGiB * GIB_KB} kB`,
@@ -36,7 +37,7 @@ const HOSTS = {
   "spare-box": () =>
     probe({ cores: 16, load: 0.1, totalGiB: 64, availGiB: 58, gpu: "NVIDIA GeForce RTX 3090, 0, 300, 24576", version: "0.12.3", models: [] }),
   // Up, but Ollama is not answering on its port.
-  "mini-lab": () => probe({ cores: 10, load: 0.8, totalGiB: 32, availGiB: 20 }),
+  "mini-lab": () => probe({ cpuName: "Apple M2 Pro", cores: 10, load: 0.8, totalGiB: 32, availGiB: 20 }),
 };
 
 const fail = (line) => {

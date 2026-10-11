@@ -1,4 +1,4 @@
-// The one place Aya runs a non-interactive ssh command: remote projects and machines alike.
+// The non-interactive ssh commands `aya machines` runs (docs/machines.md), and the same runner for its local probe.
 
 import { spawn } from "node:child_process";
 
@@ -44,7 +44,7 @@ export interface SshRun {
   stdout: string;
   stderr: string;
   timedOut: boolean;
-  /** ssh itself could not be started (not installed). */
+  /** The command could not be started (not installed). */
   spawnError: string | null;
 }
 
@@ -59,7 +59,11 @@ const seconds = (ms: number) => `${ms / 1000}s`;
 
 /** Runs `ssh <hardened options> -- <target> <remoteCommand>`; at the deadline its whole process group gets SIGKILL. */
 export function runSsh(target: string, remoteCommand: string[], options: SshRunOptions): Promise<SshRun> {
-  const args = sshArgs(target, remoteCommand);
+  return runProcess("ssh", sshArgs(target, remoteCommand), options);
+}
+
+/** Runs `command` in its own process group with `input` on stdin; at the deadline the whole group gets SIGKILL. */
+export function runProcess(command: string, args: string[], options: SshRunOptions): Promise<SshRun> {
   const cap = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   return new Promise((resolve) => {
     let stdout = "";
@@ -75,7 +79,7 @@ export function runSsh(target: string, remoteCommand: string[], options: SshRunO
     let child: ReturnType<typeof spawn>;
     try {
       // Own process group: a ProxyCommand child holding our pipes dies with ssh at the deadline.
-      child = spawn("ssh", args, { stdio: ["pipe", "pipe", "pipe"], detached: true });
+      child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], detached: true });
     } catch (err) {
       resolve({ code: null, stdout, stderr, timedOut, spawnError: String(err) });
       return;

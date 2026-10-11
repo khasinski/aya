@@ -50,7 +50,6 @@ const stop = startControlServerOn(socket, {
   machines: {
     ayaHome,
     userHome: home,
-    origin: "cli",
     confirmRemove: async (id) => (dialog.removeAsked.push(id), dialog.removeAnswer ?? true),
     confirmAdd: async (ask, signal) => {
       dialog.asked.push(ask);
@@ -97,8 +96,6 @@ const reset = () => {
   dialog.closed = null;
   dialog.answered = null;
   rmSync(registryFile, { force: true });
-  rmSync(join(ayaHome, "ssh-hosts.json"), { force: true });
-  rmSync(join(ayaHome, "ssh-hosts-history.jsonl"), { force: true });
   rmSync(join(root, "ssh", "calls"), { force: true });
   clearMachineStatusCache();
 };
@@ -162,8 +159,8 @@ test("add saves a versioned registry, mode 0600; port N binds to the machine bef
   assert.deepEqual(registry(), {
     version: 1,
     machines: [
-      { id: "athena", label: "athena", reach: { ssh: "athena" }, ollama: { port: 11434 } },
-      { id: "local", label: "local", reach: "local", ollama: { port: ollamaPort } },
+      { id: "athena", reach: { ssh: "athena" }, ollama: { port: 11434 } },
+      { id: "local", reach: "local", ollama: { port: ollamaPort } },
     ],
   });
   assert.equal(statSync(registryFile).mode & 0o777, 0o600);
@@ -201,16 +198,14 @@ test("add \"athena port 99999\": a port out of range is not taken, Ollama's defa
   assert.deepEqual(registry().machines.map((m) => [m.id, m.ollama.port]), [["athena", 11434]]);
 });
 
-test("hosts: aliases from ~/.ssh/config with their sources, the added ones marked, the wildcard left out", async () => {
+test("hosts: aliases from ~/.ssh/config, the added ones marked, the wildcard left out", async () => {
   reset();
   await aya("add", "athena");
   const r = await aya("hosts");
   assert.equal(r.status, 0, r.stderr);
-  // The added host is saved by the add and listed first; mini is only in ~/.ssh/config.
-  assert.match(
-    r.stdout,
-    /^athena  ssh-config, machine, saved  \(added\)\n {8}used by: machine athena\n {8}added \d\d:\d\d from aya machines\n {8}\d\d:\d\d added as machine athena from aya machines\nmini    ssh-config\n {8}used by: nothing in Aya now\n {8}not saved: listed until it is used\n$/,
-  );
+  assert.equal(r.stdout, "athena  ssh config  (added as athena)\nmini    ssh config\n");
+  const json = JSON.parse((await aya("hosts", "--json")).stdout);
+  assert.deepEqual(json, { version: 1, hosts: [{ target: "athena", sources: ["ssh config"], machine: "athena" }, { target: "mini", sources: ["ssh config"] }] });
 });
 
 test("a sentence naming an added alias says so and drafts nothing", async () => {
@@ -225,13 +220,16 @@ const statusRows = [
   {
     name: "connected over ssh with a GPU and a hot model",
     mode: `ok:${linuxFixture}`,
-    text: [/^athena {2}connected {4}ssh:athena {2}GPU 0% 5\.1\/24\.0 GB {2}CPU 0\.1\/32 {2}mem 10\.9\/30\.0 GB$/m, /gemma-best:latest \(f18b0e2\) hot until /, /probe \d+ ms \(checked /],
+    text: [
+      /^athena {2}RTX 4090 GPU 0% VRAM 5\.1\/24\.0 GB {2}CPU 0\.1\/32 {2}RAM 10\.9\/30\.0 GB {2}ssh:athena\n {8}ollama 0\.34\.4\n {10}gemma-best:latest 0\.3 GB hot until /m,
+      /\n {8}not claimed\nchecked \d\d:\d\d:\d\d\n$/,
+    ],
     json: { reachable: true, error: null, cpus: 32, ollama: { up: true, version: "0.34.4" } },
   },
   {
     name: "unreachable: the ssh error and when it was checked",
     mode: "down",
-    text: [/^athena {2}unreachable {2}ssh:athena {2}ssh: connect to host athena port 22: Operation timed out \(checked \d\d:\d\d:\d\d\)$/m],
+    text: [/^athena {2}unreachable {2}ssh:athena {2}ssh: connect to host athena port 22: Operation timed out\n {8}not claimed\n/m],
     json: { reachable: false, error: "ssh: connect to host athena port 22: Operation timed out", ollama: { up: false } },
   },
 ];
@@ -256,13 +254,13 @@ for (const row of statusRows) {
   });
 }
 
-test("the local machine: Ollama read over HTTP on its port, no ssh", async () => {
+test("the local machine: the same probe through sh, Ollama read on its port, no ssh", async () => {
   reset();
   await aya("add", `local port ${ollamaPort}`);
   const r = await aya();
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /^local {2}connected {4}local {2}GPU /m);
-  assert.match(r.stdout, /ollama 0\.34\.4 {2}no model loaded/);
+  assert.match(r.stdout, /^local {2}.*CPU [\d.]+\/\d+ {2}RAM [\d.]+\/[\d.]+ GB {2}local$/m);
+  assert.match(r.stdout, /ollama 0\.34\.4, no model loaded/);
   assert.throws(() => readFileSync(join(root, "ssh", "calls")), /ENOENT/);
 });
 
@@ -277,7 +275,7 @@ test("Ollama answers its version but not /api/ps: models unavailable, never \"no
   try {
     await aya("add", `local port ${half.address().port}`);
     const r = await aya();
-    assert.match(r.stdout, /ollama 0\.34\.4 {2}models: unavailable \(\/api\/ps answered HTTP 500\)/);
+    assert.match(r.stdout, /ollama 0\.34\.4, models unavailable \(unexpected answer from \/api\/ps\)/);
     assert.doesNotMatch(r.stdout, /no model loaded/);
   } finally {
     half.close();
@@ -292,7 +290,7 @@ test("Ollama not answering on the local port: the machine is connected, Ollama i
   await new Promise((r) => closed.close(r));
   await aya("add", `local port ${port}`);
   const r = await aya();
-  assert.match(r.stdout, /^local {2}connected {4}local/m);
+  assert.match(r.stdout, /^local {2}.* {2}local$/m);
   assert.match(r.stdout, new RegExp(`ollama not answering on port ${port}`));
 });
 
@@ -306,24 +304,28 @@ test("two callers at once share one probe per machine", async () => {
   assert.equal(readFileSync(join(root, "ssh", "calls"), "utf8").trim().split("\n").length, 1);
 });
 
-test("occupy and free: advisory, records who and when, shown in the status", async () => {
+test("claim and release: advisory, records who and when, shown in the status; someone else's claim is not taken", async () => {
   reset();
   fake.setMode("athena", "down");
   await aya("add", "athena");
-  const occupied = await aya("occupy", "athena", "run5 timed collection");
-  assert.equal(occupied.status, 0, occupied.stderr);
-  assert.match(occupied.stdout, /Advisory only: nothing is blocked/);
-  const { occupancy } = registry().machines[0];
-  assert.equal(occupancy.by, "justi");
-  assert.equal(occupancy.purpose, "run5 timed collection");
-  assert.ok(Math.abs(Date.parse(occupancy.since) - Date.now()) < 60_000);
-  assert.match((await aya()).stdout, /occupied by justi since \d\d:\d\d:\d\d: run5 timed collection/);
-  const again = await aya("occupy", "athena", "reviewer");
-  assert.match(again.stdout, /replaces: run5 timed collection, by justi/);
-  const freed = await aya("free", "athena");
-  assert.match(freed.stdout, /athena is free \(was: reviewer, by justi\)/);
-  assert.equal(registry().machines[0].occupancy, undefined);
-  assert.equal((await aya("occupy", "athena")).status, 1, "a purpose is required");
+  const claimed = await aya("claim", "athena", "run5 timed collection");
+  assert.equal(claimed.status, 0, claimed.stderr);
+  assert.match(claimed.stdout, /Advisory: nothing is blocked/);
+  const { claim } = registry().machines[0];
+  assert.equal(claim.by, "justi");
+  assert.equal(claim.purpose, "run5 timed collection");
+  assert.ok(Math.abs(Date.parse(claim.since) - Date.now()) < 60_000);
+  assert.match((await aya()).stdout, /claimed by justi since \d\d:\d\d: run5 timed collection/);
+  const refused = await ayaWith({ USER: "ola" }, "claim", "athena", "reviewer");
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /athena is claimed by justi since \d\d:\d\d: run5 timed collection\. Not changed; ask the user, or add --replace/);
+  assert.equal(registry().machines[0].claim.by, "justi");
+  const taken = await ayaWith({ USER: "ola" }, "claim", "athena", "reviewer", "--replace");
+  assert.match(taken.stdout, /took it over from justi: run5 timed collection/);
+  const released = await aya("release", "athena");
+  assert.match(released.stdout, /athena released \(was: reviewer, by ola\)/);
+  assert.equal(registry().machines[0].claim, undefined);
+  assert.equal((await aya("claim", "athena")).status, 1, "a purpose is required");
 });
 
 test("remove: asks in Aya, Cancel keeps it; Remove takes it out; an unknown id is refused", async () => {

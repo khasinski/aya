@@ -66,8 +66,7 @@ const api: AyaApi = {
   checkRemoteHealth: (sshTarget) =>
     ipcRenderer.invoke("remote:health", sshTarget),
   machinesStatus: () => ipcRenderer.invoke("machines:status"),
-  machinesHosts: () => ipcRenderer.invoke("machines:hosts"),
-  machinesCheck: (target, port) => ipcRenderer.invoke("machines:check", target, port),
+  machinesSetup: () => ipcRenderer.invoke("machines:setup"),
   machinesCommand: (argv) => ipcRenderer.invoke("machines:command", argv),
   createRemoteProjectOnHost: (sshTarget, directory, name) =>
     ipcRenderer.invoke("remote:create-project", sshTarget, directory, name),

@@ -4282,6 +4282,7 @@ export function App() {
         onToggleSnippets={toggleSnippetsDrawer}
         onOpenAttentionCenter={openAttentionCenter}
         onOpenTeams={() => setShowTeams(true)}
+        onOpenSettings={openSettings}
         onOpenProjectDirectory={openProjectDirectory}
       />
       {currentMissingDir && (
@@ -4310,7 +4311,6 @@ export function App() {
           onCreateRemoteProject={window.aya.createRemoteProjectOnHost}
           onCreateRemoteDirectory={window.aya.createRemoteDirectory}
           onCheckRemoteHealth={window.aya.checkRemoteHealth}
-          onListKnownHosts={window.aya.machinesHosts}
           onSubmitRemote={onCreateRemoteProject}
           onSubmit={submitProjectFromModal}
           onCancel={() => {

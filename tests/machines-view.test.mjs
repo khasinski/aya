@@ -1,8 +1,8 @@
-// Settings > Machines row cells: one table over the states a machine can be in, so each column says the same thing as `aya machines`.
+// The status bar item and its popover: one table over the states a machine can be in, so each says what `aya machines` says.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addAnswerText, gpuCell, health, hotShort, levelOf, loadCell, memoryCell, modelCell, vramCell } from "../dist-test/machines-view.js";
+import { addAnswerText, barLabel, barText, claimText, hardware, health, hotText, loadText, modelLines } from "../dist-test/machines-view.js";
 
 const NOW = new Date("2026-10-04T15:00:00Z");
 const GIB = 2 ** 30;
@@ -11,57 +11,47 @@ const status = (over = {}) => ({
   checkedAt: NOW.toISOString(),
   error: null,
   probeMs: 10,
+  cpuName: "AMD Ryzen 9 7950X",
   cpus: 32,
   load1: 3.2,
   memUsedBytes: 41 * GIB,
   memTotalBytes: 125 * GIB,
-  gpus: [{ name: "RTX 4090", utilPct: 97, memUsedMiB: 21504, memTotalMiB: 24576 }],
-  ollama: { up: true, version: "0.12.3", loaded: [{ name: "qwen3:32b", digest: null, vramBytes: null, expiresAt: "2026-10-04T15:14:00Z", pinned: false }], modelsError: null },
+  gpus: [{ name: "NVIDIA GeForce RTX 4090", utilPct: 97, memUsedMiB: 21504, memTotalMiB: 24576 }],
+  ollama: { up: true, version: "0.12.3", loaded: [{ name: "qwen3:32b", digest: null, vramBytes: 19.2 * GIB, expiresAt: "2026-10-04T15:14:30Z", pinned: false }], modelsError: null },
   ...over,
 });
-const row = (s) => ({
-  health: health(s).word,
-  level: health(s).level,
-  gpu: gpuCell(s).text,
-  vram: vramCell(s).text,
-  load: loadCell(s).text,
-  mem: memoryCell(s).text,
-  model: Object.values(modelCell(s, NOW)).filter(Boolean).join(" "),
-});
+const view = (s, over = {}) => ({ id: "athena", reach: { ssh: "athena" }, ollama: { port: 11434 }, status: s, ...over });
+const shown = (s) => ({ health: health(s).word, level: health(s).level, hw: hardware(s), load: loadText(s), models: modelLines(s, 11434, NOW), bar: barText(view(s)) });
 
+const mac = { cpuName: "Apple M2 Max", cpus: 12, load1: 4.5, memUsedBytes: 30 * GIB, memTotalBytes: 64 * GIB, gpus: [] };
 const CASES = [
-  ["busy GPU, model hot", status(), { health: "Ready", level: "ok", gpu: "97%", vram: "21.0/24.0", load: "3.2/32", mem: "41.0/125.0", model: "qwen3:32b hot 14m" }],
-  ["idle GPU, nothing loaded", status({ gpus: [{ name: "RTX 3090", utilPct: 0, memUsedMiB: 307, memTotalMiB: 24576 }], ollama: { up: true, version: "0.12.3", loaded: [], modelsError: null } }), { health: "Ready", level: "ok", gpu: "0%", vram: "0.3/24.0", load: "3.2/32", mem: "41.0/125.0", model: "none loaded" }],
-  ["Ollama down, no GPU", status({ gpus: [], ollama: { up: false, version: null, loaded: null, modelsError: null } }), { health: "Ollama down", level: "warn", gpu: "none", vram: "-", load: "3.2/32", mem: "41.0/125.0", model: "-" }],
-  ["models list unavailable", status({ ollama: { up: true, version: "0.12.3", loaded: null, modelsError: "timeout" } }), { health: "Ready", level: "ok", gpu: "97%", vram: "21.0/24.0", load: "3.2/32", mem: "41.0/125.0", model: "unavailable" }],
-  ["two GPUs, two models", status({ gpus: [{ name: "a", utilPct: 10, memUsedMiB: 1024, memTotalMiB: 8192 }, { name: "b", utilPct: 60, memUsedMiB: 2048, memTotalMiB: 8192 }], ollama: { up: true, version: "1", loaded: [{ name: "m1", expiresAt: null, pinned: true }, { name: "m2", expiresAt: null, pinned: false }], modelsError: null } }), { health: "Ready", level: "ok", gpu: "60% x2", vram: "3.0/16.0", load: "3.2/32", mem: "41.0/125.0", model: "m1 +1 pinned" }],
-  ["unreachable", status({ reachable: false, error: "Permission denied", cpus: null, load1: null, memUsedBytes: null, memTotalBytes: null, gpus: [], ollama: { up: false, version: null, loaded: null, modelsError: null } }), { health: "Unreachable", level: "down", gpu: "none", vram: "-", load: "-", mem: "-", model: "-" }],
+  ["busy GPU, model hot", status(), { health: "Ready", level: "ok", hw: "RTX 4090", load: "GPU 97% · VRAM 21.0/24.0 GB", models: ["qwen3:32b · 19.2 GB · until 15:14 (14 min)"].map((l) => l.replace("15:14", new Date("2026-10-04T15:14:30Z").toTimeString().slice(0, 5))), bar: "athena 97%" }],
+  ["a Mac: its chip, CPU and RAM instead of a GPU", status({ ...mac, ollama: { up: true, version: "0.12.3", loaded: [], modelsError: null } }), { health: "Ready", level: "ok", hw: "Apple M2 Max", load: "CPU 4.5/12 · RAM 30.0/64.0 GB", models: ["No model loaded"], bar: "athena" }],
+  ["Ollama down", status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null } }), { health: "Ollama down", level: "warn", hw: "Apple M2 Max", load: "CPU 4.5/12 · RAM 30.0/64.0 GB", models: ["Ollama not answering on port 11434"], bar: "athena" }],
+  ["models list unavailable: never \"no model loaded\"", status({ ollama: { up: true, version: "0.12.3", loaded: null, modelsError: "no answer from /api/ps" } }), { health: "Ready", level: "ok", hw: "RTX 4090", load: "GPU 97% · VRAM 21.0/24.0 GB", models: ["Models unavailable (no answer from /api/ps)"], bar: "athena 97%" }],
+  ["two GPUs, a pinned model", status({ gpus: [{ name: "NVIDIA RTX A6000", utilPct: 10, memUsedMiB: 1024, memTotalMiB: 8192 }, { name: "NVIDIA RTX A6000", utilPct: 60, memUsedMiB: 2048, memTotalMiB: 8192 }], ollama: { up: true, version: "1", loaded: [{ name: "m1", vramBytes: null, expiresAt: null, pinned: true }], modelsError: null } }), { health: "Ready", level: "ok", hw: "RTX A6000 + RTX A6000", load: "GPU 60% · VRAM 3.0/16.0 GB", models: ["m1 · pinned"], bar: "athena 60%" }],
+  ["unreachable", status({ reachable: false, error: "ssh: Permission denied", cpuName: null, cpus: null, load1: null, memUsedBytes: null, memTotalBytes: null, gpus: [], ollama: { up: false, version: null, loaded: null, modelsError: null } }), { health: "Unreachable", level: "down", hw: "", load: "CPU ?/? · RAM ?/? GB", models: [], bar: "athena" }],
 ];
+for (const [name, s, want] of CASES) test(`shown: ${name}`, () => assert.deepEqual(shown(s), want));
 
-for (const [name, s, want] of CASES) test(`row cells: ${name}`, () => assert.deepEqual(row(s), want));
-
-test("hotShort: minutes under an hour, hours after, pinned and expired named", () => {
+test("hot time: whole minutes left, never rounded up; pinned and expired named", () => {
   const at = (min) => new Date(NOW.getTime() + min * 60_000).toISOString();
-  assert.deepEqual(
-    [hotShort(at(14), false, NOW), hotShort(at(59), false, NOW), hotShort(at(60), false, NOW), hotShort(at(150), false, NOW), hotShort(at(-2), false, NOW), hotShort(null, true, NOW), hotShort(null, false, NOW)],
-    ["hot 14m", "hot 59m", "hot 1h", "hot 3h", "expired", "pinned", "loaded"],
-  );
+  const left = (min) => hotText(at(min), false, NOW).replace(/^until \d\d:\d\d /, "");
+  assert.deepEqual([left(14.9), left(90.5), left(0.2), hotText(at(-2), false, NOW), hotText(null, true, NOW), hotText(null, false, NOW)], ["(14 min)", "(90 min)", "(0 min)", "expired", "pinned", "loaded"]);
 });
 
-test("bars: a fraction of the total, clamped, none without a total", () => {
-  assert.equal(gpuCell(status()).frac, 0.97);
-  assert.equal(vramCell(status()).frac, 21504 / 24576);
-  assert.equal(loadCell(status({ load1: 64, cpus: 32 })).frac, 1);
-  assert.equal(memoryCell(status({ memTotalBytes: null })).frac, null);
+test("a claim says what for, who, which pane and since when; its age once it is an hour old", () => {
+  const claim = { by: "justi", pane: "lead", purpose: "run5 timed collection", since: "2026-10-04T14:20:00Z" };
+  const since = new Date(claim.since).toTimeString().slice(0, 5);
+  assert.equal(claimText(claim, NOW), `run5 timed collection · justi (pane lead) · since ${since}`);
+  assert.equal(claimText({ ...claim, pane: undefined }, new Date("2026-10-04T21:30:00Z")), `run5 timed collection · justi · since ${since} (7 h ago)`);
+  assert.equal(barText(view(status(), { claim })), "athena 97% claimed");
 });
 
-test("a bar warns from 80% and is high from 100% of its limit, over the unclamped share", () => {
-  for (const [used, total, level] of [[0, 10, undefined], [7.9, 10, undefined], [8, 10, "warn"], [9.9, 10, "warn"], [10, 10, "high"], [38, 10, "high"], [null, 10, undefined], [5, 0, undefined], [5, null, undefined]]) {
-    assert.equal(levelOf(used, total), level, `${used}/${total}`);
-  }
-  const overloaded = loadCell(status({ load1: 38, cpus: 10 }));
-  assert.deepEqual([overloaded.text, overloaded.frac, overloaded.level], ["38.0/10", 1, "high"]);
-  assert.equal(memoryCell(status({ memUsedBytes: 60 * GIB, memTotalBytes: 64 * GIB })).level, "warn");
+test("the status bar button names every machine's state in words", () => {
+  const down = status({ reachable: false, error: "x", gpus: [] });
+  const claim = { by: "u", purpose: "p", since: NOW.toISOString() };
+  assert.equal(barLabel([view(status(), { claim }), view(down, { id: "mini" })]), "Machines: athena ready, claimed; mini unreachable");
 });
 
 test("the add answer in Settings is a sentence, not the CLI's draft", () => {
@@ -71,8 +61,7 @@ test("the add answer in Settings is a sentence, not the CLI's draft", () => {
     ["Draft:\n  local  local  ollama port 11434\nNot added: cancelled in Aya.\n", "Not added: cancelled in Aya."],
     ["Nothing to add from that sentence.\n  zzz: no such Host in ~/.ssh/config and no known host (aya machines hosts lists them)\n", "Nothing to add from that sentence. zzz: no such host in ~/.ssh/config and no known host."],
     ["Draft:\n  m  ssh:m  ollama port 11434\n  athena: already added\n  Did you mean this machine by \"laptop\"? Say local to add it, or name its ssh alias.\nadded m  ssh:m  ollama port 11434\n", 'Added m. athena is already added. Did you mean this machine by "laptop"? Say local to add it, or name its ssh alias.'],
+    ["Nothing to add from that sentence.\n  this machine: already added\n", "Nothing to add from that sentence. this machine is already added."],
   ];
   for (const [output, text] of cases) assert.equal(addAnswerText(output), text);
-  assert.equal(addAnswerText("  an answer this Aya does not know yet\n"), "an answer this Aya does not know yet", "an unknown answer is shown as it came");
-  assert.equal(addAnswerText("Nothing to add from that sentence.\n  this machine: already added\n"), "Nothing to add from that sentence. this machine is already added.");
 });

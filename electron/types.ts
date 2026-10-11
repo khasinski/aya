@@ -33,9 +33,7 @@ export type {
 };
 
 import type { SplitNode } from "./split-tree";
-import type { MachineView } from "./machines";
-import type { MachineStatus } from "./machines-probe";
-import type { KnownHost } from "./ssh-hosts";
+import type { KnownHost, Machine, MachineView } from "./machines";
 
 export interface WorkingTab {
   id: string;
@@ -604,10 +602,11 @@ export interface AyaApi {
   ): Promise<string>;
   listRemotePresets(sshTarget: string): Promise<Preset[]>;
   checkRemoteHealth(sshTarget: string): Promise<RemoteHealthResult>;
-  /** Settings > Machines and the Remote host picker; the same functions as `aya machines`. */
+  /** The status bar and Settings > Machines; the same functions as `aya machines`. */
   machinesStatus(): Promise<{ version: number; machines: MachineView[] }>;
-  machinesHosts(): Promise<KnownHost[]>;
-  machinesCheck(target: string, port?: number): Promise<MachineStatus>;
+  /** The added machines and the known ssh hosts, without probing any. */
+  machinesSetup(): Promise<{ machines: Machine[]; hosts: KnownHost[] }>;
+  /** `aya machines add | remove | claim | release`, as the user's own click: no dialog. */
   machinesCommand(argv: string[]): Promise<string>;
   createRemoteProjectOnHost(
     sshTarget: string,

@@ -1,3 +1,5 @@
+@@cpuname
+AMD Ryzen 9 7950X 16-Core Processor
 @@nproc
 32
 @@loadavg

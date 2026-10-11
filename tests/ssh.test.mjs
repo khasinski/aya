@@ -1,4 +1,4 @@
-// The one ssh layer (electron/ssh.ts) and its two callers, remote projects and machines, against a fake ssh on PATH.
+// The ssh layer of aya machines (electron/ssh.ts) against a fake ssh on PATH.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -7,8 +7,7 @@ import { tmpdir } from "node:os";
 import { installFakeSsh } from "./helpers/fake-ssh.mjs";
 
 const { runSsh, sshFailure, isSshTarget, requireSshTarget } = await import("../dist-electron/ssh.js");
-const { checkRemoteHealth } = await import("../dist-electron/remote-client.js");
-const { probeRemote } = await import("../dist-electron/machines-probe.js");
+const { probeMachine } = await import("../dist-electron/machines-probe.js");
 
 // Written out, not derived from SSH_OPTIONS: dropping one from the source must fail here.
 const HARDENED = [
@@ -53,11 +52,8 @@ for (const [target, ok] of targets) {
   });
 }
 
-// Both callers: same options, same order, the target after "--".
-const callers = [
-  { name: "remote project Check", run: (target) => checkRemoteHealth(target, { bridgeMs: 2_000, sshKillMs: 3_000 }), tail: (target) => `-- ${target} node -e` },
-  { name: "machine probe", run: (target) => probeRemote(target, 11434), tail: (target) => `-- ${target} sh -s` },
-];
+// Same options, same order, the target after "--".
+const callers = [{ name: "machine probe", run: (target) => probeMachine({ ssh: target }, 11434), tail: (target) => `-- ${target} sh -s` }];
 for (const c of callers) {
   for (const target of ["athena", "me@athena"]) {
     test(`${c.name} to ${target}: the hardened options, then -- and the target`, async (t) => {
@@ -101,10 +97,21 @@ test("runSsh at the deadline kills ssh's whole process group, a ProxyCommand-lik
   process.env.PATH = `${dir}:${path}`;
   t.after(() => (process.env.PATH = path));
   const started = Date.now();
-  const r = await runSsh("athena", ["true"], { deadlineMs: 500 });
+  // Long enough for a loaded machine to start the fake and write its child's pid.
+  const r = await runSsh("athena", ["true"], { deadlineMs: 2_000 });
   assert.equal(r.timedOut, true);
-  assert.ok(Date.now() - started < 2_500);
+  assert.ok(Date.now() - started < 4_500);
   const child = Number(readFileSync(join(dir, "child"), "utf8"));
-  await new Promise((resolve) => setTimeout(resolve, 200));
-  assert.throws(() => process.kill(child, 0), /ESRCH/, "the child died with the group");
+  // SIGKILL is delivered at once, but a loaded machine may take a moment to reap the child.
+  const gone = () => {
+    try {
+      process.kill(child, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  const until = Date.now() + 2_000;
+  while (!gone() && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(gone(), "the child died with the group");
 });

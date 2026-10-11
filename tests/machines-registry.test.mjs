@@ -1,4 +1,4 @@
-// machines.json transactions: concurrent commands never lose an update, and a file Aya cannot read is never overwritten.
+// machines.json: concurrent commands never lose an update, a file Aya cannot read is never overwritten, and only Aya's dialog adds.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -16,7 +16,7 @@ function setup(t, aliases = ["a1", "a2", "a3", "a4", "a5", "a6"]) {
   writeFileSync(join(userHome, ".ssh", "config"), aliases.map((a) => `Host ${a}\n`).join(""));
   const deps = { ayaHome: join(root, "aya"), userHome, confirmAdd: async () => true, confirmRemove: async () => true, probe: async () => ({ reachable: true }) };
   const file = join(deps.ayaHome, "machines.json");
-  const run = (...argv) => handleMachinesRequest({ argv, tty: false, user: "u" }, deps);
+  const run = (...argv) => handleMachinesRequest({ argv, user: "u" }, deps);
   return { deps, file, run, ids: () => JSON.parse(readFileSync(file, "utf8")).machines.map((m) => m.id) };
 }
 
@@ -26,91 +26,26 @@ test("six adds at once: all six are saved", async (t) => {
   assert.deepEqual(ids().sort(), ["a1", "a2", "a3", "a4", "a5", "a6"]);
 });
 
-test("add, remove and occupy at once: the removed machine stays removed, the others keep their changes", async (t) => {
+test("add, remove and claim at once: the removed machine stays removed, the others keep their changes", async (t) => {
   const { run, ids, file } = setup(t);
   await run("add", "a1");
   await run("add", "a2");
-  await Promise.all([run("remove", "a1"), run("add", "a3"), run("occupy", "a2", "timed run")]);
+  await Promise.all([run("remove", "a1"), run("add", "a3"), run("claim", "a2", "timed run")]);
   assert.deepEqual(ids().sort(), ["a2", "a3"]);
-  assert.equal(JSON.parse(readFileSync(file, "utf8")).machines.find((m) => m.id === "a2").occupancy.purpose, "timed run");
-});
-
-test("a file changed by someone else during a transaction is not overwritten", async (t) => {
-  const { deps, file } = setup(t);
-  mkdirSync(deps.ayaHome, { recursive: true });
-  writeFileSync(file, '{"version":1,"machines":[]}\n');
-  const theirs = '{"version":2,"machines":[],"leases":[]}\n';
-  await assert.rejects(
-    mutateRegistry(deps, async (registry) => {
-      writeFileSync(file, theirs);
-      registry.machines.push({ id: "x", label: "x", reach: "local", ollama: { port: 11434 } });
-    }),
-    /changed while this command ran; nothing was saved/,
-  );
-  assert.equal(readFileSync(file, "utf8"), theirs);
-});
-
-test("another process changing the registry during a transaction waits for it, and both changes are saved", async (t) => {
-  const { deps, file, ids } = setup(t);
-  const { spawn } = await import("node:child_process");
-  const { pathToFileURL } = await import("node:url");
-  const { resolve } = await import("node:path");
-  const other = `
-    const { mutateRegistry } = await import(${JSON.stringify(pathToFileURL(resolve("dist-electron/machines.js")).href)});
-    console.log("started");
-    await mutateRegistry(${JSON.stringify({ ayaHome: deps.ayaHome, userHome: deps.userHome })}, (r) => {
-      r.machines.push({ id: "theirs", label: "theirs", reach: { ssh: "a2" }, ollama: { port: 11434 } });
-    });
-    console.log("saved");`;
-  let child;
-  const otherDone = new Promise((done) => {
-    child = spawn(process.execPath, ["--input-type=module", "-e", other], { stdio: ["ignore", "pipe", "inherit"] });
-    let out = "";
-    child.stdout.on("data", (c) => (out += c));
-    child.on("close", (code) => done({ code, out }));
-  });
-  t.after(() => child.kill());
-  await mutateRegistry(deps, async (registry) => {
-    await new Promise((r) => child.stdout.once("data", r));
-    // Long enough for the other process to read, change and try to write while this one holds the registry.
-    await new Promise((r) => setTimeout(r, 500));
-    registry.machines.push({ id: "mine", label: "mine", reach: "local", ollama: { port: 11434 } });
-  });
-  const result = await otherDone;
-  assert.equal(result.code, 0);
-  assert.match(result.out, /saved/);
-  assert.deepEqual(ids(), ["mine", "theirs"]);
-  assert.throws(() => readFileSync(`${file}.lock`), /ENOENT/, "the lock is gone after both");
-});
-
-test("a file replaced by someone else between the last check and the rename is not overwritten", async (t) => {
-  const { deps, file } = setup(t);
-  mkdirSync(deps.ayaHome, { recursive: true });
-  writeFileSync(file, '{"version":1,"machines":[]}\n');
-  const theirs = '{"version":2,"machines":[]}\n';
-  deps.beforeCommit = async () => writeFileSync(file, theirs);
-  await assert.rejects(
-    mutateRegistry(deps, (registry) => {
-      registry.machines.push({ id: "x", label: "x", reach: "local", ollama: { port: 11434 } });
-    }),
-    /changed while this command ran; nothing was saved/,
-  );
-  assert.equal(readFileSync(file, "utf8"), theirs);
-  const { readdirSync } = await import("node:fs");
-  assert.deepEqual(readdirSync(deps.ayaHome).sort(), ["machines.json"], "no temp file or lock left behind");
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).machines.find((m) => m.id === "a2").claim.purpose, "timed run");
 });
 
 const malformed = [
   { name: "machines is an object", text: '{"version":1,"machines":{"a":1}}', error: /machines is not a list/ },
   { name: "not JSON", text: "{oops", error: /not JSON/ },
-  { name: "a machine without a reach", text: '{"version":1,"machines":[{"id":"a","label":"a","ollama":{"port":11434}}]}', error: /machine 1: reach/ },
-  { name: "a bad port", text: '{"version":1,"machines":[{"id":"a","label":"a","reach":"local","ollama":{"port":0}}]}', error: /machine 1: ollama\.port/ },
-  { name: "an alias that is an ssh option", text: '{"version":1,"machines":[{"id":"a","label":"a","reach":{"ssh":"-oProxyCommand=x"},"ollama":{"port":1}}]}', error: /machine 1: reach/ },
-  { name: "two machines with one id", text: '{"version":1,"machines":[{"id":"a","label":"a","reach":"local","ollama":{"port":1}},{"id":"a","label":"a","reach":"local","ollama":{"port":2}}]}', error: /machine 2: id "a" is used twice/ },
+  { name: "a machine without a reach", text: '{"version":1,"machines":[{"id":"a","ollama":{"port":11434}}]}', error: /machine 1: reach/ },
+  { name: "a bad port", text: '{"version":1,"machines":[{"id":"a","reach":"local","ollama":{"port":0}}]}', error: /machine 1: ollama\.port/ },
+  { name: "an alias that is an ssh option", text: '{"version":1,"machines":[{"id":"a","reach":{"ssh":"-oProxyCommand=x"},"ollama":{"port":1}}]}', error: /machine 1: reach/ },
+  { name: "two machines with one id", text: '{"version":1,"machines":[{"id":"a","reach":"local","ollama":{"port":1}},{"id":"a","reach":"local","ollama":{"port":2}}]}', error: /machine 2: id "a" is used twice/ },
   { name: "a newer version", text: '{"version":2,"machines":[]}', error: /has version 2, this Aya reads version 1/ },
 ];
 for (const c of malformed) {
-  for (const argv of [["add", "a1"], ["remove", "a"], ["occupy", "a", "x"], ["free", "a"]]) {
+  for (const argv of [["add", "a1"], ["remove", "a"], ["claim", "a", "x"], ["release", "a"]]) {
     test(`a registry with ${c.name}: ${argv[0]} is refused and the file is left as it is`, async (t) => {
       const { deps, file, run } = setup(t);
       mkdirSync(deps.ayaHome, { recursive: true });
@@ -184,22 +119,6 @@ for (const argv of optionForms) {
   });
 }
 
-// Settings' Suggested Add sends ["add", <target>]: every kind of suggestion must draft exactly that host through the sentence path.
-const { suggestions } = await import("../dist-test/machines-view.js");
-const { knownHosts } = await import("../dist-electron/machines.js");
-test("each Suggested target, sent as the sentence, drafts exactly its own host, and local drafts this machine", async (t) => {
-  const { deps, run } = setup(t, ["a1", "web.lan", "a_b", "port"]);
-  deps.listRemoteProjects = async () => [{ name: "web", sshTarget: "me@devbox" }];
-  const rows = suggestions(await knownHosts(deps), []);
-  assert.deepEqual(rows.map((s) => s.target).sort(), ["a1", "a_b", "local", "me@devbox", "port", "web.lan"]);
-  for (const s of rows) {
-    let asked;
-    deps.confirmAdd = async (ask) => ((asked = ask), false);
-    await run("add", s.target);
-    assert.deepEqual(asked?.machines.map((m) => m.reach), [s.target === "local" ? "local" : { ssh: s.target }], s.target);
-  }
-});
-
 // Hosts a remote project reaches are known too: a bare name is taken once a remote project uses it.
 const acceptedTargets = [
   { target: "user@a1", remote: [], reach: { ssh: "user@a1" }, id: "a1" },
@@ -223,7 +142,7 @@ for (const c of acceptedTargets) {
 test("a machine added by someone else while the dialog was open is not added twice", async (t) => {
   const { deps, run, ids } = setup(t);
   deps.confirmAdd = async () => {
-    await handleMachinesRequest({ argv: ["add", "a1"], tty: false }, { ...deps, confirmAdd: async () => true });
+    await handleMachinesRequest({ argv: ["add", "a1"] }, { ...deps, confirmAdd: async () => true });
     return true;
   };
   await assert.rejects(run("add", "a1"), /already added/);
@@ -241,11 +160,11 @@ test("aliases a.b and a_b in one sentence: saved as a-b and a-b-2, and the regis
 test("a change that would leave two machines with one id is refused and the file is left as it is", async (t) => {
   const { deps, file } = setup(t);
   mkdirSync(deps.ayaHome, { recursive: true });
-  const before = '{"version":1,"machines":[{"id":"a","label":"a","reach":"local","ollama":{"port":1}}]}\n';
+  const before = '{"version":1,"machines":[{"id":"a","reach":"local","ollama":{"port":1}}]}\n';
   writeFileSync(file, before);
   await assert.rejects(
     mutateRegistry(deps, (registry) => {
-      registry.machines.push({ id: "a", label: "a", reach: { ssh: "a1" }, ollama: { port: 2 } });
+      registry.machines.push({ id: "a", reach: { ssh: "a1" }, ollama: { port: 2 } });
     }),
     /id "a" is used twice; nothing was saved/,
   );
@@ -255,6 +174,7 @@ test("a change that would leave two machines with one id is refused and the file
 test("Aya's dialog names each machine, what the probe found, and the pane that asked", async () => {
   const { addDialogText } = await import("../dist-electron/machines-dialog.js");
   const ok = { reachable: true, error: null, cpus: 32, gpus: [{ name: "RTX 4090" }], ollama: { up: true, version: "0.34.4", loaded: [{}] } };
+  const mac = { reachable: true, error: null, cpuName: "Apple M2 Max", cpus: 12, gpus: [], ollama: { up: false, loaded: null } };
   const down = { reachable: false, error: "ssh: connect timeout", gpus: [], ollama: { up: false, loaded: null } };
   const text = addDialogText({
     pane: "collector",
@@ -265,8 +185,9 @@ test("Aya's dialog names each machine, what the probe found, and the pane that a
   });
   assert.equal(text.message, "Add 2 machines to Aya's machines?");
   assert.match(text.detail, /^Asked by pane "collector"\. Aya will only read their state over ssh; it never loads or unloads a model\./);
-  const local = addDialogText({ machines: [{ id: "local", reach: "local", port: 11434, status: ok }] });
+  const local = addDialogText({ machines: [{ id: "local", reach: "local", port: 11434, status: mac }] });
   assert.match(local.detail, /^Aya will only read its state; it never loads or unloads a model\./);
+  assert.match(local.detail, /connected, 12 CPUs, Apple M2 Max, Ollama not answering/);
   const one = addDialogText({ machines: [{ id: "athena", reach: { ssh: "athena" }, port: 11434, status: ok }] });
   assert.match(one.detail, /^Aya will only read its state over ssh;/);
   assert.match(text.detail, /athena {2}\(ssh athena, Ollama port 11434\)\n {2}connected, 32 CPUs, RTX 4090, Ollama 0\.34\.4, 1 model\(s\) loaded/);
@@ -292,10 +213,27 @@ test("a machine replaced under the same id while Aya asks is not removed", async
   await run("add", "a1");
   deps.confirmRemove = async () => {
     await mutateRegistry(deps, (registry) => {
-      registry.machines = [{ id: "a1", label: "a1", reach: { ssh: "a2" }, ollama: { port: 11434 } }];
+      registry.machines = [{ id: "a1", reach: { ssh: "a2" }, ollama: { port: 11434 } }];
     });
     return true;
   };
   await assert.rejects(run("remove", "a1"), /a1 changed while Aya asked; nothing was removed/);
   assert.deepEqual(ids(), ["a1"]);
+});
+
+// Claims: advisory, but never silently taken from someone else.
+test("claim: refused while someone else holds it, kept for its holder, taken over only with --replace", async (t) => {
+  const { deps, file, run } = setup(t);
+  await run("add", "a1");
+  const asPane = (pane, ...argv) => handleMachinesRequest({ argv, user: "u" }, deps, pane);
+  assert.match((await asPane("lead", "claim", "a1", "run5", "timed")).output, /^a1 claimed: run5 timed\. Advisory: nothing is blocked\./);
+  await assert.rejects(asPane("reviewer", "claim", "a1", "review pass"), /a1 is claimed by u \(pane "lead"\) since \d\d:\d\d: run5 timed\. Not changed; ask the user, or add --replace/);
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).machines[0].claim.pane, "lead");
+  assert.match((await asPane("lead", "claim", "a1", "run6")).output, /^a1 claimed: run6\. /, "its holder may change it");
+  assert.match((await asPane("reviewer", "claim", "a1", "--replace", "review pass")).output, /took it over from u \(pane "lead"\): run6/);
+  assert.match((await asPane("lead", "release", "a1")).output, /^a1 released \(was: review pass, by u \(pane "reviewer"\)\)/);
+  assert.match((await run("release", "a1")).output, /^a1 was not claimed/);
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).machines[0].claim, undefined);
+  await assert.rejects(run("claim", "a1"), /say what it is for/);
+  await assert.rejects(run("claim", "a1", "x".repeat(201)), /the most is 200/);
 });

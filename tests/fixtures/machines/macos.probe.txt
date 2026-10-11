@@ -1,3 +1,5 @@
+@@cpuname
+Apple M2 Max
 @@nproc
 10
 @@loadavg

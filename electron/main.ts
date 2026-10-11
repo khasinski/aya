@@ -99,9 +99,8 @@ import { askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, teamPan
 import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
-import { checkHost, handleMachinesRequest, knownHosts, machinesStatus, noteHostUse } from "./machines";
+import { handleMachinesRequest, knownHosts, loadRegistry, machinesStatus } from "./machines";
 import { ayaMachinesDeps } from "./machines-dialog";
-import { requireSshTarget } from "./ssh";
 import {
   createRemoteDirectory,
   createRemoteProjectOnHost,
@@ -2330,16 +2329,13 @@ function registerIpc(): TeamRunner {
       throw new Error("projects:create-remote.req must be an object");
     }
     const r = req as Record<string, unknown>;
-    const project = await createRemoteProject({
+    return createRemoteProject({
       name: requireString(r.name, "projects:create-remote.name"),
       directory: requireString(r.directory, "projects:create-remote.directory"),
       hostId: requireString(r.hostId, "projects:create-remote.hostId"),
       label: requireString(r.label, "projects:create-remote.label"),
       sshTarget: requireString(r.sshTarget, "projects:create-remote.sshTarget"),
     });
-    // Open project > Remote host opens or re-opens the project: either is a use of its host.
-    if (project.remote) await noteHostUse({ ayaHome: AYA_HOME, origin: "open-project" }, { ssh: project.remote.sshTarget }, { kind: "project", project: project.name });
-    return project;
   });
   ipcMain.handle(
     "remote:list-directory",
@@ -2363,22 +2359,19 @@ function registerIpc(): TeamRunner {
   ipcMain.handle("remote:health", async (_e, sshTarget: unknown) =>
     checkRemoteHealth(requireString(sshTarget, "remote:health.sshTarget")),
   );
-  // Settings > Machines: the same functions `aya machines` runs; only the user's clicks reach them.
-  // A web client has no sender; Aya's dialog then opens without a parent window.
-  const machinesDeps = (sender: Electron.WebContents | null) =>
-    ayaMachinesDeps(AYA_HOME, os.homedir(), () => (sender ? BrowserWindow.fromWebContents(sender) : null), () => listProjects(), "settings");
-  ipcMain.handle("machines:status", (e) => machinesStatus(machinesDeps(e.sender)));
-  ipcMain.handle("machines:hosts", (e) => knownHosts(machinesDeps(e.sender)));
-  ipcMain.handle("machines:check", (e, target: unknown, port: unknown) => {
-    const t = requireString(target, "machines:check.target");
-    const p = typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65535 ? port : undefined;
-    return checkHost(t === "local" ? "local" : { ssh: requireSshTarget(t) }, machinesDeps(e.sender), p);
+  // The status bar and Settings > Machines: the same functions `aya machines` runs. A click in Aya is the user's
+  // own yes, so these adds and removes ask no dialog; only an agent's `aya machines add` does.
+  const machinesDeps = { ...ayaMachinesDeps(AYA_HOME, os.homedir(), () => null, () => listProjects()), confirmAdd: async () => true, confirmRemove: async () => true };
+  ipcMain.handle("machines:status", () => machinesStatus(machinesDeps));
+  ipcMain.handle("machines:setup", async () => {
+    const registry = await loadRegistry(machinesDeps);
+    return { machines: registry.machines, hosts: await knownHosts(machinesDeps, registry) };
   });
-  ipcMain.handle("machines:command", async (e, argv: unknown) => {
-    if (!Array.isArray(argv) || !argv.every((a) => typeof a === "string") || !["add", "remove", "occupy", "free"].includes(argv[0])) {
-      throw new Error("machines:command takes add, remove, occupy or free with text arguments");
+  ipcMain.handle("machines:command", async (_e, argv: unknown) => {
+    if (!Array.isArray(argv) || !argv.every((a) => typeof a === "string") || !["add", "remove", "claim", "release"].includes(argv[0])) {
+      throw new Error("machines:command takes add, remove, claim or release with text arguments");
     }
-    return (await handleMachinesRequest({ argv, user: os.userInfo().username }, machinesDeps(e.sender))).output;
+    return (await handleMachinesRequest({ argv, user: os.userInfo().username }, machinesDeps)).output;
   });
   ipcMain.handle(
     "remote:create-project",

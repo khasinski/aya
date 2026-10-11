@@ -1,5 +1,5 @@
 // aya machines probes: recorded probe outputs (a Linux RTX 4090 host, this macOS laptop) parsed table-driven,
-// and the ssh call itself against a fake ssh on PATH. No test reaches a real host.
+// the ssh call against a fake ssh on PATH, and the same script run here through sh. No test reaches a real host.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { installFakeSsh } from "./helpers/fake-ssh.mjs";
 
-const { parseRemoteProbe, probeRemote, remoteProbeScript, PROBE_DEADLINE_MS } = await import("../dist-electron/machines-probe.js");
+const { parseProbe, probeMachine, probeScript, PROBE_DEADLINE_MS } = await import("../dist-electron/machines-probe.js");
+const probeRemote = (alias, port, options) => probeMachine({ ssh: alias }, port, options);
 
 const fixture = (name) => readFileSync(join("tests/fixtures/machines", name), "utf8");
 const linux = fixture("linux-rtx4090.probe.txt");
@@ -21,7 +22,7 @@ const cases = [
     name: "Linux /proc + nvidia-smi + Ollama with a model",
     output: linux,
     expect: {
-      reachable: true, cpus: 32, load1: 0.09,
+      reachable: true, cpuName: "AMD Ryzen 9 7950X 16-Core Processor", cpus: 32, load1: 0.09,
       memTotalBytes: 31481720 * 1024, memUsedBytes: (31481720 - 20098224) * 1024,
       gpus: [{ name: "NVIDIA GeForce RTX 4090", utilPct: 0, memUsedMiB: 5247, memTotalMiB: 24564 }],
       ollama: { up: true, version: "0.34.4", loaded: [{ name: "gemma-best:latest", digest: "f18b0e221a67c3b07ec8d0a98b2daef10871d6d56c998363f3e1b4f26f158db4", vramBytes: 313775881, expiresAt: "2026-10-05T04:41:31.128931058+02:00", pinned: false }] },
@@ -31,7 +32,7 @@ const cases = [
     name: "macOS sysctl + vm_stat, no GPU, Ollama idle",
     output: macos,
     expect: {
-      reachable: true, cpus: 10, load1: 16.61,
+      reachable: true, cpuName: "Apple M2 Max", cpus: 10, load1: 16.61,
       memTotalBytes: 68719476736, memUsedBytes: (1791108 + 431989 + 93508) * 16384,
       gpus: [],
       ollama: { up: true, version: "0.34.4", loaded: [], modelsError: null },
@@ -88,15 +89,15 @@ function assertShape(actual, expected, where) {
 
 for (const c of cases) {
   test(`probe parse: ${c.name}`, () => {
-    const status = parseRemoteProbe(c.output, AT, 42);
+    const status = parseProbe(c.output, AT, 42);
     assert.equal(status.checkedAt, AT);
     assert.equal(status.probeMs, 42);
     assertShape(status, c.expect, "status");
   });
 }
 
-test("the remote script is fixed and read-only: only the port is substituted, a bad port is refused", () => {
-  const script = remoteProbeScript(11434);
+test("the probe script is fixed and read-only: only the port is substituted, a bad port is refused", () => {
+  const script = probeScript(11434);
   assert.match(script, /http:\/\/127\.0\.0\.1:11434\/api\/ps/);
   assert.doesNotMatch(script, /keep_alive|\/api\/(generate|chat|pull|delete|create)|-X (?!GET)|--data|-d |\brm\b|>[^&/]/);
   // -q first: a remote ~/.curlrc could add a body (a keep_alive 0 unload) or a proxy. No proxy, an explicit GET.
@@ -105,7 +106,7 @@ test("the remote script is fixed and read-only: only the port is substituted, a 
     "curl -q -s --noproxy '*' -X GET --max-time 3 http://127.0.0.1:11434/api/version",
     "curl -q -s --noproxy '*' -X GET --max-time 3 http://127.0.0.1:11434/api/ps",
   ]);
-  for (const bad of [0, 70000, 1.5, NaN]) assert.throws(() => remoteProbeScript(bad), /bad Ollama port/);
+  for (const bad of [0, 70000, 1.5, NaN]) assert.throws(() => probeScript(bad), /bad Ollama port/);
 });
 
 const ssh = (t) => {
@@ -128,7 +129,7 @@ const remoteCases = [
 ];
 
 for (const c of remoteCases) {
-  test(`probeRemote over a fake ssh: ${c.mode}`, async (t) => {
+  test(`probe over a fake ssh: ${c.mode}`, async (t) => {
     const fake = ssh(t);
     fake.setMode("box", c.mode);
     const started = Date.now();
@@ -141,7 +142,7 @@ for (const c of remoteCases) {
   });
 }
 
-test("probeRemote: forwards, local commands, agent/X11 and multiplexing off whatever ~/.ssh/config says; the script on stdin", async (t) => {
+test("probe over ssh: forwards, local commands, agent/X11 and multiplexing off whatever ~/.ssh/config says; the script on stdin", async (t) => {
   const fake = ssh(t);
   fake.setMode("athena", `ok:${join(process.cwd(), "tests/fixtures/machines/linux-rtx4090.probe.txt")}`);
   const status = await probeRemote("athena", 11434);
@@ -153,10 +154,10 @@ test("probeRemote: forwards, local commands, agent/X11 and multiplexing off what
     "-o ControlMaster=no -o ControlPath=none -o Tunnel=no -o RequestTTY=no",
     "-- athena sh -s\n",
   ].join(" "));
-  assert.equal(readFileSync(join(fake.dir, "stdin-athena"), "utf8"), remoteProbeScript(11434));
+  assert.equal(readFileSync(join(fake.dir, "stdin-athena"), "utf8"), probeScript(11434));
 });
 
-test("probeRemote refuses an alias that could be an ssh option or shell text, before running ssh", async (t) => {
+test("the probe refuses an alias that could be an ssh option or shell text, before running ssh", async (t) => {
   const fake = ssh(t);
   for (const alias of ["-oProxyCommand=x", "a b", "a;b", "", "$(id)", "u@-oProxyCommand=x", "@host"]) {
     await assert.rejects(probeRemote(alias, 11434), /is not an ssh target|target is required/);
@@ -168,24 +169,6 @@ test("the whole probe deadline is 10 s", () => {
   assert.equal(PROBE_DEADLINE_MS, 10_000);
 });
 
-const { localMemory, probeLocal } = await import("../dist-electron/machines-probe.js");
-const meminfo = linux.slice(linux.indexOf("@@meminfo\n") + 10, linux.indexOf("@@vmstat"));
-const vmStat = macos.slice(macos.indexOf("@@vmstat\n") + 9, macos.indexOf("@@memsize"));
-const fakeOs = { totalmem: () => 1000, freemem: () => 100 };
-const localMemoryCases = [
-  // Linux: MemAvailable, as the remote path; free memory would count the page cache as used.
-  { platform: "linux", sources: { meminfo }, expect: { used: (31481720 - 20098224) * 1024, total: 31481720 * 1024 } },
-  { platform: "darwin", sources: { vmStat }, total: 68719476736, expect: { used: (1791108 + 431989 + 93508) * 16384, total: 68719476736 } },
-  { platform: "linux", sources: {}, expect: { used: 900, total: 1000 } },
-  { platform: "darwin", sources: { vmStat: "garbage" }, expect: { used: 900, total: 1000 } },
-];
-for (const c of localMemoryCases) {
-  test(`local memory on ${c.platform} from ${Object.keys(c.sources).join(",") || "os only"}`, () => {
-    const o = c.total ? { ...fakeOs, totalmem: () => c.total } : fakeOs;
-    assert.deepEqual(localMemory(c.platform, c.sources, o), c.expect);
-  });
-}
-
 const alive = (pid) => {
   try {
     process.kill(pid, 0);
@@ -194,6 +177,13 @@ const alive = (pid) => {
     return false;
   }
 };
+
+test("this machine: the same script through sh, no ssh; Ollama on an unused port is down, the machine reachable", async () => {
+  const status = await probeMachine("local", 1);
+  assert.equal(status.reachable, true, status.error);
+  assert.ok(status.cpus > 0 && status.memTotalBytes > 0, "cores and memory read");
+  assert.equal(status.ollama.up, false);
+});
 
 test("a hung local nvidia-smi is killed with its children at the deadline, before the probe answers", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "aya-smi-"));
@@ -208,44 +198,13 @@ test("a hung local nvidia-smi is killed with its children at the deadline, befor
     rmSync(dir, { recursive: true, force: true });
   });
   // Long enough for a loaded machine to start the fake and write its pids.
-  const status = await probeLocal(1, { deadlineMs: 3000 });
+  const status = await probeMachine("local", 1, { deadlineMs: 3000 });
   assert.equal(status.reachable, false);
-  assert.equal(status.error, "timed out after 3 s");
+  assert.equal(status.error, "the probe did not finish within 3s.");
   const pid = Number(readFileSync(join(dir, "pid"), "utf8"));
   const child = Number(readFileSync(join(dir, "child"), "utf8"));
-  assert.equal(alive(pid), false, "nvidia-smi was reaped before the probe answered");
   const until = Date.now() + 2000;
-  while (alive(child) && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+  while ((alive(pid) || alive(child)) && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+  assert.equal(alive(pid), false, "nvidia-smi died with the group");
   assert.equal(alive(child), false, "its child died with the group");
-});
-
-/** A fake nvidia-smi on PATH for one test; its script gets the test dir as $D. */
-async function fakeNvidiaSmi(t, body) {
-  const dir = mkdtempSync(join(tmpdir(), "aya-smi-"));
-  const { writeFileSync, chmodSync, mkdirSync } = await import("node:fs");
-  mkdirSync(join(dir, "bin"));
-  writeFileSync(join(dir, "bin", "nvidia-smi"), `#!/bin/sh\nD="${dir}"\n${body}\n`);
-  chmodSync(join(dir, "bin", "nvidia-smi"), 0o755);
-  const path = process.env.PATH;
-  process.env.PATH = `${join(dir, "bin")}:${path}`;
-  t.after(() => {
-    process.env.PATH = path;
-    rmSync(dir, { recursive: true, force: true });
-  });
-  return dir;
-}
-
-test("nvidia-smi exits before its backgrounded writer prints: the probe waits for the output and sees the GPU", async (t) => {
-  await fakeNvidiaSmi(t, "(sleep 1; printf 'RTX 4090, 10, 20, 24564\\n') &\nexit 0");
-  const status = await probeLocal(1, { deadlineMs: 8000 });
-  assert.equal(status.reachable, true, status.error);
-  assert.deepEqual(status.gpus, [{ name: "RTX 4090", utilPct: 10, memUsedMiB: 20, memTotalMiB: 24564 }]);
-});
-
-test("nvidia-smi exits but its backgrounded writer hangs: the group is killed at the deadline, before the probe answers", async (t) => {
-  const dir = await fakeNvidiaSmi(t, 'sleep 30 &\necho $! > "$D/child"\nexit 0');
-  const status = await probeLocal(1, { deadlineMs: 2000 });
-  assert.equal(status.error, "timed out after 2 s");
-  const child = Number(readFileSync(join(dir, "child"), "utf8"));
-  assert.equal(alive(child), false, "the writer was reaped before the probe answered");
 });

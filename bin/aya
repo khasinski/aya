@@ -67,14 +67,15 @@ Usage:
                                      to the team's debug log
   aya presets [--json]               List presets, whether each is installed and
                                      whether a role's pane of it reaches Aya
-  aya machines [--json]              Show every registered machine: reachability,
-                                     GPU, CPU, memory, Ollama and hot models
-  aya machines hosts [--json]        List known ssh hosts: ~/.ssh/config aliases, remote
-                                     projects and added machines, with their sources
-  aya machines add "sentence"        Draft machines from a sentence; the user adds them in Aya
+  aya machines [--json]              Show the Ollama machines: GPU, CPU, memory,
+                                     hot models and who claimed each
+  aya machines hosts [--json]        List known ssh hosts and which are added
+  aya machines add "sentence"        Propose machines; the user adds them in Aya
   aya machines remove id             Remove a machine (asks in Aya)
-  aya machines occupy id "purpose"   Say you are using a machine (advisory, not enforced)
-  aya machines free id               Clear a machine's occupancy
+  aya machines claim id "purpose" [--replace]
+                                     Say you use a machine (advisory; refused while
+                                     someone else holds it, unless --replace)
+  aya machines release id            Clear a machine's claim
   aya capabilities                   Print these commands as JSON, for agents
 EOF
 }

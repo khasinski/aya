@@ -22,8 +22,9 @@ Use Aya's CLI for user-visible coordination while working in an Aya terminal.
 - `aya pane read "reviewer"`: print another pane's recent output as plain text.
 - `aya pane send "reviewer" "run the tests"`: type text into another pane and press Enter.
 - `aya pane send "reviewer" --no-submit "run the tests"`: type it without pressing Enter.
-- `aya machines [--json]`: the user's Ollama machines (GPU, memory, hot models, who uses them).
-- `aya machines add "athena and this machine"`: propose machines in one sentence; only the user's Add in Aya saves them. There are no options such as `--ssh`.
+- `aya machines [--json]`: the user's Ollama machines (GPU, memory, hot models, who claimed them). Read it before a timed run.
+- `aya machines claim athena "run5 timed collection"` / `aya machines release athena`: say you use a machine; refused while someone else holds it.
+- `aya machines add "athena and this machine"`: propose machines in one sentence; only the user's Add in Aya saves them.
 
 ## When To Use
 

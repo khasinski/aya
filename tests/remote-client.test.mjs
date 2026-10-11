@@ -76,9 +76,7 @@ function mkFakeSsh() {
   writeFileSync(
     sshPath,
     `#!/bin/sh
-# Aya's hardened options come first; the target and the remote command follow "--".
-while [ "$1" != "--" ]; do shift; done
-shift 2
+shift
 exec sh -c "$1"
 `,
   );

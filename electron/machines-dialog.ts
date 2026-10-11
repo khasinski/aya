@@ -4,15 +4,13 @@ import type { BrowserWindow } from "electron";
 import type { AddAsk, MachinesDeps } from "./machines";
 import type { ProjectConfig } from "./types";
 import type { MachineStatus } from "./machines-probe";
-import type { HostOrigin } from "./ssh-host-store";
-import { paneTeamRole } from "./team-files";
 
 const ACTION_BUTTON = 0;
 const CANCEL_BUTTON = 1;
 
 function found(s: MachineStatus): string {
   if (!s.reachable) return `unreachable: ${s.error}`;
-  const gpu = s.gpus.length ? s.gpus.map((g) => g.name).join(", ") : "no NVIDIA GPU";
+  const gpu = s.gpus.length ? s.gpus.map((g) => g.name).join(", ") : (s.cpuName ?? "no NVIDIA GPU");
   const ollama = !s.ollama.up
     ? "Ollama not answering"
     : `Ollama ${s.ollama.version ?? "?"}, ${s.ollama.loaded === null ? "models unknown" : `${s.ollama.loaded.length} model(s) loaded`}`;
@@ -56,34 +54,12 @@ export async function confirmRemoveInAya(id: string, win: BrowserWindow | null, 
   return response === ACTION_BUTTON;
 }
 
-/** A remote project's panes, each with the team role it plays, if any (team roles live under the Aya config home). */
-async function remotePanes(ayaHome: string, project: ProjectConfig): Promise<{ name: string; role?: string; team?: string }[]> {
-  return Promise.all(
-    project.tabs.map(async (tab) => {
-      const played = await paneTeamRole(ayaHome, project, tab.id).catch(() => null);
-      return played ? { name: tab.name, role: played.role, team: played.team } : { name: tab.name };
-    }),
-  );
-}
-
-/** The deps every caller in Aya uses (the control socket and the Settings IPC), so the CLI and the UI share one path. */
-export function ayaMachinesDeps(
-  ayaHome: string,
-  userHome: string,
-  getWindow: () => BrowserWindow | null,
-  listProjects?: () => Promise<ProjectConfig[]>,
-  origin?: HostOrigin,
-): MachinesDeps {
+/** The deps every caller in Aya uses (the control socket and Settings), so the CLI and the UI share one path. */
+export function ayaMachinesDeps(ayaHome: string, userHome: string, getWindow: () => BrowserWindow | null, listProjects?: () => Promise<ProjectConfig[]>): MachinesDeps {
   return {
     ayaHome,
     userHome,
-    origin,
-    listRemoteProjects: async () =>
-      Promise.all(
-        ((await listProjects?.()) ?? []).flatMap((p) =>
-          p.remote ? [remotePanes(ayaHome, p).then((panes) => ({ name: p.name, sshTarget: p.remote!.sshTarget, panes }))] : [],
-        ),
-      ),
+    listRemoteProjects: async () => ((await listProjects?.()) ?? []).flatMap((p) => (p.remote ? [{ name: p.name, sshTarget: p.remote.sshTarget }] : [])),
     confirmAdd: (ask, signal) => confirmAddInAya(ask, getWindow(), signal),
     confirmRemove: (id, signal) => confirmRemoveInAya(id, getWindow(), signal),
   };

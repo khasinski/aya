@@ -198,27 +198,26 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     command: "machines",
     usage: "aya machines [--json]",
     summary:
-      "Show every registered machine, read-only: connected or unreachable (with the error and when it was checked), GPU use and memory, CPU load and cores, memory, Ollama's version and each loaded model with the time it stays hot until, and who occupies the machine.",
+      "Show the user's Ollama machines, read-only: reachable or why not, GPU name, use and VRAM, CPU and RAM, each loaded model with how long it stays hot, and who claimed the machine.",
     notes: [
-      "Read it before choosing where to run a model: a hot model on a slower machine is not a fast alternative.",
+      "Read it before starting a timed run or choosing where a model runs: a hot model on a slower machine is not a fast alternative.",
       "Aya never loads, unloads or calls a model; unloading one (keep_alive 0) needs the user's explicit yes every time.",
     ],
   },
   {
     command: "machines hosts",
     usage: "aya machines hosts [--json]",
-    summary: "List the ssh hosts Aya knows with where each comes from (Host aliases in ~/.ssh/config, Include files followed; remote project targets; added machines; hosts used before), what uses each now (projects, panes with team roles, machine occupancy), when it was added and last used, and its newest history; most recently used first.",
+    summary: "List the ssh hosts Aya knows (Host aliases in ~/.ssh/config, remote project targets) and which are added as machines.",
   },
   {
     command: "machines add",
     usage: 'aya machines add "sentence"',
     summary:
-      "Draft machines from one sentence: known ssh hosts and user@host targets it names, and local or \"this machine\" for this one. Aya probes them read-only and asks the user in its own Add / Cancel dialog; the command prints the result.",
+      "Propose machines in one sentence: known ssh hosts, user@host, and local or \"this machine\". Aya probes them read-only and asks the user in its own Add / Cancel dialog.",
     example: 'aya machines add "athena is the 4090 box, and this machine"',
     notes: [
-      "Only the user's click in Aya adds a machine; there is no flag or answer that adds one from the command line.",
-      "A word like laptop is asked about, never taken as this machine.",
-      "\"port N\" right after a machine sets Ollama's port on it (11434 by default); options like --ssh are refused, the sentence is the only form.",
+      "Only the user's click in Aya adds a machine; no flag or answer adds one from the command line.",
+      "\"port N\" right after a machine sets Ollama's port on it (11434 by default).",
     ],
   },
   {
@@ -227,16 +226,16 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     summary: "Remove a machine (asks in Aya); nothing on the machine changes.",
   },
   {
-    command: "machines occupy",
-    usage: 'aya machines occupy id "purpose"',
-    summary: "Tell everyone you are using a machine and for what; Aya records who and when and shows it in aya machines.",
-    example: 'aya machines occupy athena "run5 timed collection until 23:45"',
-    notes: ["Advisory only: nothing is blocked. Check aya machines first and do not take a machine someone else occupies without asking the user."],
+    command: "machines claim",
+    usage: 'aya machines claim id "purpose" [--replace]',
+    summary: "Say you are using a machine and for what; Aya shows it in aya machines and in its status bar. Refused while someone else holds the claim.",
+    example: 'aya machines claim athena "run5 timed collection until 23:45"',
+    notes: ["Advisory: Ollama is not blocked. Never pass --replace without the user's yes."],
   },
   {
-    command: "machines free",
-    usage: "aya machines free id",
-    summary: "Clear a machine's occupancy when your work on it ends.",
+    command: "machines release",
+    usage: "aya machines release id",
+    summary: "Clear a machine's claim when your work on it ends.",
   },
   {
     command: "capabilities",
