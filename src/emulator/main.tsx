@@ -8,6 +8,7 @@
 // module tree runs (ptyEventBus and many components read it at import time),
 // so App is imported dynamically only after the mock bridge is installed.
 
+import "../fonts";
 import "@xterm/xterm/css/xterm.css";
 import "../styles/armillary.css";
 import "../styles/app.css";

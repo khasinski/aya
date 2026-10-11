@@ -1,8 +1,37 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
+// The Electron window loads only its own files: a script injected through text it
+// shows (an agent's output, a team message) can neither run nor send data out.
+// 'unsafe-inline' styles: index.html's <style> and the ones xterm.js adds itself.
+const RENDERER_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
+  "img-src 'self' data:",
+  "media-src 'self' data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+].join("; ");
+
+// Build only: in dev the React plugin injects an inline script that this CSP would
+// block. Only index.html (the Electron window); web.html is served by Aya Web.
+function rendererCsp(): Plugin {
+  return {
+    name: "aya-renderer-csp",
+    apply: "build",
+    transformIndexHtml(html, ctx) {
+      if (!ctx.path.endsWith("/index.html")) return html;
+      return [{ tag: "meta", attrs: { "http-equiv": "Content-Security-Policy", content: RENDERER_CSP }, injectTo: "head-prepend" }];
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), rendererCsp()],
   base: "./",
   server: {
     // Non-default port so Aya doesn't fight other Vite projects on 5173.

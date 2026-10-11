@@ -43,6 +43,9 @@
     "ws": "^8.21.1"
   },
   "devDependencies": {
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fontsource/source-sans-3": "^5.3.1",
+    "@material-symbols/font-400": "^0.48.0",
     "@playwright/test": "^1.60.0",
     "@types/node": "^25.9.1",
     "@types/plist": "^3.0.5",

@@ -1,3 +1,4 @@
+import "./fonts";
 import "@xterm/xterm/css/xterm.css";
 import "./styles/armillary.css";
 import "./styles/app.css";

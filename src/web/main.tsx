@@ -4,6 +4,7 @@
 // so the App component is imported dynamically only after the WebSocket
 // bridge is connected and installed.
 
+import "../fonts";
 import "@xterm/xterm/css/xterm.css";
 import "../styles/armillary.css";
 import "../styles/app.css";
