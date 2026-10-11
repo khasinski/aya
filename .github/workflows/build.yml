@@ -35,6 +35,27 @@ jobs:
       - name: Build renderer and Electron main
         run: npm run build
 
+  # Aya's users are on macOS, where login shells read /etc/profile (path_helper) and a new
+  # executable is checked on its first run: #161 and #162 failed only there, never on Linux.
+  test-macos:
+    name: Test (macOS)
+    runs-on: macos-15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
   e2e:
     name: E2E (Electron) ${{ matrix.shard }}/12
     runs-on: ubuntu-24.04
