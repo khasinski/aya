@@ -25,7 +25,7 @@ const cases = [
       reachable: true, cpuName: "AMD Ryzen 9 7950X 16-Core Processor", cpus: 32, load1: 0.09,
       memTotalBytes: 31481720 * 1024, memUsedBytes: (31481720 - 20098224) * 1024,
       gpus: [{ name: "NVIDIA GeForce RTX 4090", utilPct: 0, memUsedMiB: 5247, memTotalMiB: 24564 }],
-      ollama: { up: true, version: "0.34.4", loaded: [{ name: "gemma-best:latest", digest: "f18b0e221a67c3b07ec8d0a98b2daef10871d6d56c998363f3e1b4f26f158db4", vramBytes: 313775881, expiresAt: "2026-10-05T04:41:31.128931058+02:00", pinned: false }] },
+      ollama: { up: true, version: "0.34.4", loaded: [{ name: "gemma-best:latest", vramBytes: 313775881, expiresAt: "2026-10-05T04:41:31.128931058+02:00", pinned: false }] },
     },
   },
   {
@@ -89,9 +89,8 @@ function assertShape(actual, expected, where) {
 
 for (const c of cases) {
   test(`probe parse: ${c.name}`, () => {
-    const status = parseProbe(c.output, AT, 42);
+    const status = parseProbe(c.output, AT);
     assert.equal(status.checkedAt, AT);
-    assert.equal(status.probeMs, 42);
     assertShape(status, c.expect, "status");
   });
 }

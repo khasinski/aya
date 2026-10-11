@@ -1226,7 +1226,6 @@ export interface GpuLoad {
 
 export interface LoadedModel {
   name: string;
-  digest: string | null;
   vramBytes: number | null;
   expiresAt: string | null;
   pinned: boolean;
@@ -1236,7 +1235,6 @@ export interface MachineStatus {
   reachable: boolean;
   checkedAt: string;
   error: string | null;
-  probeMs: number;
   cpuName: string | null;
   cpus: number | null;
   load1: number | null;

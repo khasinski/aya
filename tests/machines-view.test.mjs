@@ -10,14 +10,13 @@ const status = (over = {}) => ({
   reachable: true,
   checkedAt: NOW.toISOString(),
   error: null,
-  probeMs: 10,
   cpuName: "AMD Ryzen 9 7950X",
   cpus: 32,
   load1: 3.2,
   memUsedBytes: 41 * GIB,
   memTotalBytes: 125 * GIB,
   gpus: [{ name: "NVIDIA GeForce RTX 4090", utilPct: 97, memUsedMiB: 21504, memTotalMiB: 24576 }],
-  ollama: { up: true, version: "0.12.3", loaded: [{ name: "qwen3:32b", digest: null, vramBytes: 19.2 * GIB, expiresAt: "2026-10-04T15:14:30Z", pinned: false }], modelsError: null },
+  ollama: { up: true, version: "0.12.3", loaded: [{ name: "qwen3:32b", vramBytes: 19.2 * GIB, expiresAt: "2026-10-04T15:14:30Z", pinned: false }], modelsError: null },
   ...over,
 });
 const view = (s, over = {}) => ({ id: "athena", reach: { ssh: "athena" }, ollama: { port: 11434 }, status: s, ...over });

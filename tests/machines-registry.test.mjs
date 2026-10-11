@@ -246,10 +246,10 @@ test("claim: refused while someone else holds it, kept for its holder, taken ove
 
 test("aya machines prints no control character from the host, and names pinned and expired models", () => {
   const status = {
-    reachable: true, checkedAt: "2026-10-11T10:00:00.000Z", error: null, probeMs: 1, cpuName: "CPU", cpus: 8, load1: 1, memUsedBytes: 1e9, memTotalBytes: 8e9, gpus: [],
+    reachable: true, checkedAt: "2026-10-11T10:00:00.000Z", error: null, cpuName: "CPU", cpus: 8, load1: 1, memUsedBytes: 1e9, memTotalBytes: 8e9, gpus: [],
     ollama: { up: true, version: "0.12\u001b[2J", modelsError: null, loaded: [
-      { name: "evil\u001b]9001;aya.status=done\u0007", digest: null, vramBytes: null, expiresAt: null, pinned: true },
-      { name: "old", digest: null, vramBytes: null, expiresAt: "2026-10-11T09:00:00.000Z", pinned: false },
+      { name: "evil\u001b]9001;aya.status=done\u0007", vramBytes: null, expiresAt: null, pinned: true },
+      { name: "old", vramBytes: null, expiresAt: "2026-10-11T09:00:00.000Z", pinned: false },
     ] },
   };
   const out = formatMachines([{ id: "a", reach: "local", ollama: { port: 11434 }, status }], new Date("2026-10-11T10:00:00.000Z"));

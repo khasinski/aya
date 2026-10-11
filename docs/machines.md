@@ -60,7 +60,7 @@ mini    unreachable  ssh:mini  ssh: connect to host mini port 22: Operation time
 checked 23:01:05
 ```
 
-- `aya machines --json` returns the same data, plus `probeMs`. `probeMs` is the probe's wall time, ssh included; it is not a model speed.
+- `aya machines --json` returns the same data as JSON.
 - `aya machines hosts [--json]` lists the known ssh hosts and which of them are added.
 - `aya machines add "athena is the 4090 box, and this machine"` drafts by deterministic matching, with no model involved:
   - a known host or `user@host` becomes an ssh machine;

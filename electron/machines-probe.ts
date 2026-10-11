@@ -16,7 +16,6 @@ export interface GpuLoad {
 
 export interface LoadedModel {
   name: string;
-  digest: string | null;
   vramBytes: number | null;
   expiresAt: string | null;
   pinned: boolean;
@@ -33,7 +32,6 @@ export interface MachineStatus {
   reachable: boolean;
   checkedAt: string;
   error: string | null;
-  probeMs: number;
   /** The CPU's name ("Apple M2 Max", "AMD Ryzen 9 7950X"), what tells a laptop from a GPU box without NVIDIA. */
   cpuName: string | null;
   cpus: number | null;
@@ -156,7 +154,6 @@ export function parseOllama(versionText: string | undefined, psText: string | un
         const year = expiresAt ? new Date(expiresAt).getUTCFullYear() : NaN;
         return {
           name: String(m.name ?? m.model ?? "?"),
-          digest: typeof m.digest === "string" ? m.digest : null,
           vramBytes: typeof m.size_vram === "number" ? m.size_vram : null,
           expiresAt,
           pinned: year > PINNED_AFTER_YEAR,
@@ -166,11 +163,10 @@ export function parseOllama(versionText: string | undefined, psText: string | un
   };
 }
 
-const emptyStatus = (checkedAt: string, probeMs: number, error: string | null): MachineStatus => ({
+const emptyStatus = (checkedAt: string, error: string | null): MachineStatus => ({
   reachable: error === null,
   checkedAt,
   error,
-  probeMs,
   cpuName: null,
   cpus: null,
   load1: null,
@@ -181,12 +177,12 @@ const emptyStatus = (checkedAt: string, probeMs: number, error: string | null): 
 });
 
 /** A probe's whole output into a status; `@@end` missing means the script did not finish. */
-export function parseProbe(output: string, checkedAt: string, probeMs: number): MachineStatus {
+export function parseProbe(output: string, checkedAt: string): MachineStatus {
   const s = splitSections(output);
-  if (!s.has("end")) return emptyStatus(checkedAt, probeMs, "the probe script did not finish");
+  if (!s.has("end")) return emptyStatus(checkedAt, "the probe script did not finish");
   const mem = parseMeminfo(s.get("meminfo") ?? "") ?? parseVmStat(s.get("vmstat") ?? "", num(s.get("memsize")));
   return {
-    ...emptyStatus(checkedAt, probeMs, null),
+    ...emptyStatus(checkedAt, null),
     cpuName: s.get("cpuname")?.split("\n")[0].trim() || null,
     cpus: num(s.get("nproc")),
     load1: parseLoad1(s.get("loadavg") ?? ""),
@@ -206,11 +202,9 @@ export interface ProbeOptions {
 export async function probeMachine(reach: Reach, port: number, options: ProbeOptions = {}): Promise<MachineStatus> {
   const host = reach === "local" ? null : requireSshTarget(reach.ssh);
   const deadlineMs = options.deadlineMs ?? PROBE_DEADLINE_MS;
-  const started = Date.now();
   const checkedAt = (options.now?.() ?? new Date()).toISOString();
   const run = { input: probeScript(port), deadlineMs, maxOutputBytes: MAX_PROBE_OUTPUT_BYTES };
   const r = host ? await runSsh(host, ["sh", "-s"], run) : await runProcess("sh", ["-s"], run);
-  const probeMs = Date.now() - started;
   const failed = host
     ? sshFailure(r, host, deadlineMs)
     : r.spawnError
@@ -218,7 +212,7 @@ export async function probeMachine(reach: Reach, port: number, options: ProbeOpt
       : r.timedOut
         ? `the probe did not finish within ${deadlineMs / 1000}s.`
         : null;
-  if (failed) return emptyStatus(checkedAt, probeMs, failed);
-  if (r.code !== 0) return emptyStatus(checkedAt, probeMs, lastStderrLine(r.stderr) ?? `the probe exited with ${r.code}`);
-  return parseProbe(r.stdout, checkedAt, probeMs);
+  if (failed) return emptyStatus(checkedAt, failed);
+  if (r.code !== 0) return emptyStatus(checkedAt, lastStderrLine(r.stderr) ?? `the probe exited with ${r.code}`);
+  return parseProbe(r.stdout, checkedAt);
 }
