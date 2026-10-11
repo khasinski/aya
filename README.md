@@ -220,6 +220,7 @@ Common commands:
 
 ```sh
 npm test          # typecheck + Electron build + test source build + node tests
+npm run test:coverage  # the same, plus coverage per file (a file no test loads is not listed)
 npm run build    # renderer + Electron main build
 npm run package  # build and package with electron-builder
 ```

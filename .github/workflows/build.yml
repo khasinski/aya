@@ -29,8 +29,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run tests
-        run: npm test
+      # The same tests as npm test, plus a per-file coverage table at the end of the log.
+      - name: Run tests with coverage
+        run: npm run test:coverage
 
       - name: Build renderer and Electron main
         run: npm run build

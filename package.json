@@ -26,6 +26,7 @@
     "build:test-src": "tsc -p tsconfig.test-src.json",
     "build": "npm run build:renderer && npm run build:electron",
     "test": "npm run typecheck:renderer && npm run build:electron && npm run build:test-src && node --import ./tests/helpers/preload-guard.mjs --test \"tests/**/*.test.mjs\"",
+    "test:coverage": "npm run typecheck:renderer && npm run build:electron && npm run build:test-src && node --import ./tests/helpers/preload-guard.mjs --test --experimental-test-coverage --test-coverage-include=\"dist-electron/**/*.js\" --test-coverage-include=\"dist-test/**/*.js\" \"tests/**/*.test.mjs\"",
     "test:file": "node --import ./tests/helpers/preload-guard.mjs --test",
     "test:e2e": "npm run build && playwright test",
     "test:e2e:headed": "npm run build && playwright test --headed",
