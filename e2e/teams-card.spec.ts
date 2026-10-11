@@ -87,7 +87,10 @@ test("the team's name and its newest message show together when the role notes w
   const card = (await openTeams(window)).getByTestId("team-ux-review");
   await expect(card.getByText(/may not reach Aya/)).toHaveCount(2);
   await expect(card.getByText("ux-review", { exact: true })).toBeInViewport();
-  await expect(card.getByRole("log", { name: "ux-review messages" }).locator(".aya-chat-entry").last()).toBeInViewport({ ratio: 0.5 });
+  const chat = card.getByRole("log", { name: "ux-review messages" });
+  await expect(chat.locator(".aya-chat-entry").last()).toBeInViewport({ ratio: 0.5 });
+  // Shrunk to fit, the log still sits at its newest message, not short of it.
+  await expect.poll(() => chat.evaluate((el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 1)).toBe(true);
 });
 
 // The panes' launch notes come in seconds after start and push the log down the card: what stays is the log's own scroll.
