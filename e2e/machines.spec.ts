@@ -83,7 +83,9 @@ test.describe("three added", () => {
     await expect(entries).toHaveCount(3);
     await expect(popover).toContainText(/^Machines · 1 of 3 ready · checked \d\d:\d\d/);
     // The ready machine in full; each one in trouble is one line with its reason.
-    await expect(entries.nth(0)).toContainText("gpu-box · RTX 4090 · Ready");
+    await expect(entries.nth(0)).toContainText("gpu-box · RTX 4090");
+    await expect(entries.nth(0)).not.toContainText("Ready");
+    await expect(entries.nth(0).getByRole("img", { name: "Ready" })).toHaveCount(1);
     await expect(entries.nth(0)).toContainText("GPU 97% · VRAM 21.0/24.0 GiB · ssh gpu-box");
     await expect(entries.nth(0)).toContainText(/qwen3:32b · 19\.6 GiB · until \d\d:\d\d \(1[34] min\)/);
     await expect(entries.nth(0)).toContainText("Claimed: run5 timed collection · justi (pane lead) · since");

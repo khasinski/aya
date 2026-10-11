@@ -142,13 +142,20 @@ export function MachinesStatus({ onManage, onOpenTerminal }: { onManage: () => v
                         Terminal
                       </button>
                     )}
+                    {/* The dot leads; a ready machine needs no word (screen readers hear it from the dot), one in
+                        trouble says what and why, so colour is never the only signal. */}
+                    <span
+                      className={`aya-machine-dot aya-machine-dot--${h.level}`}
+                      {...(ok ? { role: "img", "aria-label": h.word } : { "aria-hidden": true })}
+                    />
                     <strong>{m.id}</strong>
                     {ok && hardware(m.status) && <span className="aya-machines-muted"> · {hardware(m.status)}</span>}
-                    <span className="aya-machines-muted"> · </span>
-                    <span className={`aya-machines-state aya-machines-state--${h.level}`}>
-                      <span className={`aya-machine-dot aya-machine-dot--${h.level}`} aria-hidden="true" />
-                      {ok ? h.word : troubleText(m.status)}
-                    </span>
+                    {!ok && (
+                      <>
+                        <span className="aya-machines-muted"> · </span>
+                        <span className={`aya-machines-state aya-machines-state--${h.level}`}>{troubleText(m.status)}</span>
+                      </>
+                    )}
                   </div>
                   {ok && (
                     <>

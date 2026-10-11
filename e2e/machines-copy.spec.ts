@@ -30,7 +30,7 @@ test("a copy of the whole popover pastes one line per fact, without the button l
   });
   await app.evaluate(({ clipboard }) => clipboard.writeText(""));
   await window.keyboard.press("Meta+c");
-  await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toContain("gpu-box · RTX 4090 · Ready");
+  await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toContain("gpu-box · RTX 4090\n");
   const text = await app.evaluate(({ clipboard }) => clipboard.readText());
   expect(text).toContain("mini-lab · Ollama not running\nold-server · Unreachable: Permission denied (publickey).");
   expect(text).not.toMatch(/Manage|Release/);

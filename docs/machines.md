@@ -29,12 +29,12 @@ So the first need is to see every machine at a glance and to say who is using on
 
 **Popover.** Clicking the icon opens a popover titled with how many machines are ready, for example `Machines · 1 of 6 ready · checked 13:14`. Ready machines come first, each in full:
 
-- name, GPU (or CPU) model, and Ready;
+- a green dot, the name and the GPU (or CPU) model; a ready machine needs no word;
 - GPU use and VRAM, or load and RAM when there is no NVIDIA GPU (`load 8.8 on 18 CPUs`), plus how the machine is reached;
 - each loaded model with its size and how long it stays hot;
 - the claim (what for, who, which pane, since when) with Release.
 
-Every other machine is one line with its state and the last clause of the reason, the least broken first: `darwine · GPU error: Driver/library version mismatch` (nvidia-smi fails, so Ollama runs on the CPU), `macbook · Ollama not running`, `ragnarok · Ollama not installed`, `athena · Unreachable: Operation timed out`. A claim shows on these too.
+Every other machine is one line: a dot, its name, its state and the last clause of the reason, the least broken first: `darwine · GPU error: Driver/library version mismatch` (nvidia-smi fails, so Ollama runs on the CPU), `macbook · Ollama not running`, `ragnarok · Ollama not installed`, `athena · Unreachable: Operation timed out`. A claim shows on these too.
 
 Each remote machine has Terminal: it opens a tab in the active project that runs `ssh -- <alias>`, since every fix (a reboot, `ollama serve`, an install) starts with a shell there. The tab is saved with its target, so it comes back as the same ssh session, and Escape closes the popover before a focused terminal sees it.
 
