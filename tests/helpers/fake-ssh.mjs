@@ -1,5 +1,6 @@
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { writeExecutable } from "./executable.mjs";
 
 /** A fake `ssh` in `<dir>/bin`: per alias, `<dir>/<alias>.mode` says ok:<fixture file> | down | hang | denied.
  *  Every call appends its argv to `<dir>/calls` and saves the script it got on stdin. Never reaches a real host. */
@@ -25,8 +26,7 @@ case "$mode" in
   *) echo "ssh: Could not resolve hostname $alias: nodename nor servname provided, or not known" >&2; exit 255 ;;
 esac
 `;
-  writeFileSync(join(bin, "ssh"), script);
-  chmodSync(join(bin, "ssh"), 0o755);
+  writeExecutable(join(bin, "ssh"), script);
   return {
     bin,
     setMode(alias, mode) {
