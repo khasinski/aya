@@ -125,6 +125,7 @@ test("each read releases its terminal", async (t) => {
 });
 
 test("without a known size the buffer is still rendered, at the fallback size, never returned raw", async () => {
+  assert.deepEqual(PANE_READ_FALLBACK_SIZE, { cols: 80, rows: 24 }, "the window's own fallback (TerminalView)");
   const raw = "\x1b[31mred\x1b[0m plain\r\nline2\x1b[1A\x1b[5Gxx";
   assert.equal(await paneReadText(raw, null), "red xxain\nline2");
   // A cursor placed past the fallback's bottom right lands in its last cell.

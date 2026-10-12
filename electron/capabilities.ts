@@ -89,6 +89,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     notes: [
       "target is a pane name or an id from aya pane list; --project picks the project a name is looked up in.",
       "There is no 'wait until done': poll, and leave time between reads.",
+      "When Aya cannot tell the pane's size (a terminal host from an older build, a pane that just exited), the output is rendered at 80x24: a TUI that places text by cursor position may read differently.",
     ],
   },
   {
