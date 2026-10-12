@@ -228,6 +228,7 @@ import {
 import { captureIpcHandlers } from "./web-ipc";
 import { startWebServer, type WebServerHandle } from "./web-server";
 import { parseSummaryResponse, summaryPrompt } from "./summary-prompt";
+import { printable } from "./printable";
 import type {
   AyaIntelligenceConfig,
   CliStatus,
@@ -2744,7 +2745,8 @@ function registerIpc(): TeamRunner {
     );
     const notification = new Notification({
       title: "Aya - waiting for input",
-      body,
+      // Tab and project names come from config files an agent can write too: shown as text (printable.ts).
+      body: printable(body),
       silent: false,
     });
     notification.on("click", () => {

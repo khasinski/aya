@@ -80,6 +80,16 @@ test("with no window, or a destroyed one, the dialog still asks, without a paren
   }
 });
 
+test("what the probe found and the pane's name reach the dialog as text", () => {
+  // An ssh error and a pane name are outside text; a native dialog shows them, so each acting character is its escape.
+  const text = addDialogText({
+    pane: `col\x1b[2Jlector`,
+    machines: [{ id: "athena", reach: { ssh: "athena" }, port: 11434, status: { reachable: false, error: `refused\x1b]0;owned\x07 ${String.fromCharCode(0x202e)}x`, gpus: [], ollama: { up: false, loaded: null } } }],
+  });
+  assert.match(text.detail, /^Asked by pane "col\\u001b\[2Jlector"\./);
+  assert.match(text.detail, /unreachable: refused\\u001b\]0;owned\\u0007 \\u202ex$/);
+});
+
 test("Remove: the button names the action, Cancel is the default, and the text says nothing changes on the machine", async (t) => {
   const win = liveWindow();
   const calls = fakeElectron(t, 1);

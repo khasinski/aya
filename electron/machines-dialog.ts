@@ -1,6 +1,7 @@
 // The user's yes for aya machines add: a native dialog in Aya, never an answer the CLI caller can give.
 
 import type { BrowserWindow } from "electron";
+import { printable } from "./printable";
 import type { AddAsk, MachinesDeps } from "./machines";
 import type { ProjectConfig } from "./types";
 import type { MachineStatus } from "./machines-probe";
@@ -27,9 +28,10 @@ export function addDialogText(ask: AddAsk): { message: string; detail: string } 
   const lines = ask.machines.map((m) => `${m.id}  (${m.reach === "local" ? "this machine" : `ssh ${m.reach.ssh}`}, Ollama port ${m.port})\n  ${found(m.status)}`);
   const who = ask.pane ? `Asked by pane "${ask.pane}". ` : "";
   const overSsh = ask.machines.some((m) => m.reach !== "local") ? " over ssh" : "";
+  // What the probe found (ssh errors, model names) and the pane's name come from outside Aya: shown as text (printable.ts).
   return {
-    message: count === 1 ? `Add ${ask.machines[0].id} to Aya's machines?` : `Add ${count} machines to Aya's machines?`,
-    detail: `${who}Aya will only read ${count === 1 ? "its" : "their"} state${overSsh}; it never loads or unloads a model.\n\n${lines.join("\n\n")}`,
+    message: printable(count === 1 ? `Add ${ask.machines[0].id} to Aya's machines?` : `Add ${count} machines to Aya's machines?`),
+    detail: printable(`${who}Aya will only read ${count === 1 ? "its" : "their"} state${overSsh}; it never loads or unloads a model.\n\n${lines.join("\n\n")}`),
   };
 }
 

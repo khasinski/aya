@@ -494,11 +494,11 @@ async function handleRequest(
     // Lazy: plain Node tests import this module and must not load Electron.
     const { Notification } = require("electron") as typeof import("electron");
     if (!Notification.isSupported()) return;
-    // The title and body are an agent's words: as one plain line (printable.ts oneLine), so a bidi override cannot
-    // reorder what the user reads in a system notification.
+    // The title and body are an agent's words, shown as text (printable.ts): a bidi override or a control character
+    // shows as its escape instead of reordering or breaking what the user reads. Emoji (ZWJ) and line breaks stay.
     const notification = new Notification({
-      title: oneLine(request.title ?? "") || "Aya",
-      body: oneLine(request.body),
+      title: printable(request.title || "Aya"),
+      body: printable(request.body),
       silent: false,
     });
     notification.on("click", () => {
