@@ -114,3 +114,14 @@ test("a script path with a backslash or a quote is still recognised as ours: ins
     assert.doesNotMatch(withoutCodexNotify(once.toml, scriptPath), /^notify/m, `${scriptPath}: uninstall removes our line`);
   }
 });
+
+test("a user's notify that merely mentions Aya's script (a wrapper's argument) is not ours: never claimed or removed", async () => {
+  const { withCodexNotify, withoutCodexNotify, notifyIsOurs } = await import("../dist-electron/status-hook-codex.js");
+  const scriptPath = "/home/u/.aya/aya-status-codex-notify.sh";
+  const theirs = `notify = ["/usr/bin/wrapper", "${scriptPath}"]\n`;
+  assert.equal(notifyIsOurs(theirs, scriptPath), false);
+  assert.equal(withCodexNotify(theirs, scriptPath).conflict, true);
+  assert.equal(withoutCodexNotify(theirs, scriptPath), theirs);
+  // Aya's own line, reformatted or with a comment, is still Aya's.
+  assert.equal(notifyIsOurs(`  notify=[ "${scriptPath}" ]  # set by Aya\n`, scriptPath), true);
+});

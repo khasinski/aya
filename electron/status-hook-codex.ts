@@ -57,10 +57,13 @@ function tomlString(s: string): string {
   return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-/** Whether a notify line names our script as we write it: quoted and escaped (tomlString). The raw path does not
- *  appear in the line when it holds a backslash or a quote, so a raw match missed our own line there. */
+/** Whether a notify line is ours: the line codexNotifyLine writes, give or take spaces and a trailing comment, and
+ *  nothing else. A line that merely contains the path (a user's wrapper given our script as an argument) is the
+ *  user's and is never claimed or removed; the raw path is not even in our line when it holds a backslash or a
+ *  quote, which is why a substring match also missed our own line there. */
 function namesOurScript(line: string, scriptPath: string): boolean {
-  return line.includes(tomlString(scriptPath));
+  const quoted = tomlString(scriptPath).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^\\s*notify\\s*=\\s*\\[\\s*${quoted}\\s*\\]\\s*(#.*)?$`).test(line);
 }
 
 /** The `notify = [...]` line we write. */
