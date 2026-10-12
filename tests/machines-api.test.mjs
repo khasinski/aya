@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, statSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,6 +12,10 @@ import { loadRegistry, machinesSetup, machinesUiSetup, machinesStatus, machineSt
 import { startControlServerOn } from "../dist-electron/control.js";
 import { health, modelLines } from "../dist-test/machines-view.js";
 import { probeScript } from "../dist-electron/machines-probe.js";
+import { configureDialogText } from "../dist-electron/machines-dialog.js";
+
+// The CJS fs that dist-electron/atomic-write.js calls, so one rename can be made to fail.
+const fsCjs = createRequire(import.meta.url)("node:fs");
 
 const TOKEN = "fixture-private-token";
 const NOW = new Date("2026-10-12T12:00:00Z");
@@ -27,7 +32,7 @@ function registry(t) {
   clearMachineStatusCache();
   const root = mkdtempSync(join(tmpdir(), "aya-api-"));
   t.after(() => { clearMachineStatusCache(); rmSync(root, { recursive: true, force: true }); });
-  const deps = { ayaHome: join(root, "aya"), userHome: join(root, "home"), now: () => NOW, probe: async (_reach, _port, options) => { assert.equal(options.hardwareOnly, true); return hardware(); }, confirmRemove: async () => true };
+  const deps = { ayaHome: join(root, "aya"), userHome: join(root, "home"), now: () => NOW, probe: async (_reach, _port, options) => { assert.equal(options.hardwareOnly, true); return hardware(); }, confirmRemove: async () => true, confirmConfigure: async () => true };
   mkdirSync(deps.ayaHome); mkdirSync(deps.userHome);
   const file = join(deps.ayaHome, "machines.json");
   const old = { version: 1, machines: [{ id: "darwine", reach: { ssh: "darwine" }, ollama: { port: 11435 } }] };
@@ -112,6 +117,17 @@ for (const [name, code, body, error] of [
   const state = await probeApi(base, TOKEN);
   assert.deepEqual(state, { up: false, models: null, error });
   assert.ok(!JSON.stringify(state).includes(TOKEN));
+});
+
+test("an empty model list is an available API serving no models, in the CLI and the status view", async (t) => {
+  const base = await server(t, (_req, res) => res.end('{"data":[]}'));
+  const api = await probeApi(base, TOKEN);
+  assert.deepEqual(api, { up: true, models: [], error: null });
+  const status = { ...hardware(), api };
+  const view = { id: "darwine", reach: { ssh: "darwine" }, ollama: { port: 11434 }, api: { baseUrl: normalizeApiUrl(base) }, status };
+  const text = formatMachines([view], NOW);
+  assert.match(text, /API available \(OpenAI-compatible\)\n\s+No models served by API\n/);
+  assert.deepEqual(modelLines(status, NOW), ["No models served by API"]);
 });
 
 test("API timeout covers a stalled response body", async (t) => {
@@ -276,4 +292,106 @@ test("CLI reads the token from stdin, never argv or replies; public JSON stays r
   assert.ok(!JSON.stringify(observed).includes(TOKEN), "measurement hooks never receive the credential");
   const bad = await cli(["configure", "darwine", "openai-compatible", base, "--token-stdin"], TOKEN + "\nextra\n");
   assert.notEqual(bad.code, 0); assert.ok(!JSON.stringify(bad).includes(TOKEN));
+});
+
+test("configure asks in Aya with the URL and what happens to the token; Cancel changes nothing", async (t) => {
+  const { deps, file, configure } = registry(t);
+  const url = "http://host:8080/v1";
+  await configure(url);
+  const before = readFileSync(file, "utf8");
+  const asks = [];
+  let answer = false;
+  deps.confirmConfigure = async (ask) => { asks.push(ask); return answer; };
+  const config = (...argv) => handleMachinesRequest({ argv: ["configure", "darwine", ...argv] }, deps, "lead");
+
+  assert.equal((await config("ollama", "11434")).output, "Not configured: cancelled in Aya.\n");
+  assert.equal(readFileSync(file, "utf8"), before, "Cancel leaves machines.json as it was");
+  assert.equal(await machineToken(deps.ayaHome, "darwine", url), TOKEN, "Cancel keeps the saved token");
+
+  await config("openai-compatible", "http://host:8080/");
+  await config("openai-compatible", "http://other:8080");
+  await config("openai-compatible", url, "--clear-token");
+  await handleMachinesRequest({ argv: ["configure", "darwine", "openai-compatible", url, "--token-stdin"], token: "new-private-token" }, deps, "lead");
+  assert.deepEqual(asks, [
+    { id: "darwine", backend: "ollama", target: "11434", token: "removed", pane: "lead" },
+    { id: "darwine", backend: "openai-compatible", target: url, token: "kept", pane: "lead" },
+    { id: "darwine", backend: "openai-compatible", target: "http://other:8080/v1", token: "removed", pane: "lead" },
+    { id: "darwine", backend: "openai-compatible", target: url, token: "removed", pane: "lead" },
+    { id: "darwine", backend: "openai-compatible", target: url, token: "stored", pane: "lead" },
+  ]);
+  assert.equal(readFileSync(file, "utf8"), before, "nothing was saved while every answer was Cancel");
+  assert.ok(!JSON.stringify(asks).includes(TOKEN) && !JSON.stringify(asks).includes("new-private-token"), "the dialog never sees a token");
+
+  answer = true;
+  assert.equal((await config("ollama", "11434")).output, "darwine configured: Ollama port 11434\n");
+  assert.equal(asks.at(-1).token, "removed");
+  assert.equal((await loadRegistry(deps)).machines[0].api, undefined);
+  assert.equal(await machineToken(deps.ayaHome, "darwine", url), null);
+  await config("openai-compatible", url);
+  assert.equal(asks.at(-1).token, "none", "a machine without a token loses nothing");
+});
+
+test("the configure dialog names the change and the token's fate, and shows outside text as text", () => {
+  const api = configureDialogText({ id: "darwine", backend: "openai-compatible", target: "http://host:8080/v1", token: "removed", pane: "lead\u001b[31m" });
+  assert.equal(api.message, "Change darwine to an OpenAI-compatible API?");
+  assert.match(api.detail, /^Asked by pane "lead\\u001b\[31m"\. API URL: http:\/\/host:8080\/v1\n\nThe saved API token is deleted; it cannot be recovered\.\n\nAya only reads/);
+  assert.ok(!api.detail.includes("\u001b"), "an escape from the pane's name is shown, not run");
+  const ollama = configureDialogText({ id: "darwine", backend: "ollama", target: "11434", token: "none" });
+  assert.equal(ollama.message, "Change darwine to Ollama on port 11434?");
+  assert.equal(ollama.detail, "Aya only reads its state and model list; nothing changes on the machine.");
+});
+
+test("configure without Aya's dialog, or on a machine changed while Aya asked, changes nothing", async (t) => {
+  const { deps, file, configure } = registry(t);
+  await configure("http://host:8080");
+  const before = readFileSync(file, "utf8");
+  delete deps.confirmConfigure;
+  await assert.rejects(handleMachinesRequest({ argv: ["configure", "darwine", "ollama"] }, deps), /needs the user's yes in Aya/);
+  deps.confirmConfigure = async () => {
+    // Settings switches the machine to another URL while the pane's question is open.
+    const changed = JSON.parse(readFileSync(file, "utf8"));
+    changed.machines[0].api.baseUrl = "http://elsewhere:8080/v1";
+    writeFileSync(file, JSON.stringify(changed));
+    return true;
+  };
+  await assert.rejects(handleMachinesRequest({ argv: ["configure", "darwine", "ollama"] }, deps), /changed while Aya asked; nothing was changed/);
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).machines[0].api.baseUrl, "http://elsewhere:8080/v1");
+  assert.equal(await machineToken(deps.ayaHome, "darwine", "http://host:8080/v1"), TOKEN);
+  writeFileSync(file, before);
+});
+
+test("a failed machines.json write keeps the saved token, for configure and for remove", async (t) => {
+  const { deps, file, configure } = registry(t);
+  const url = "http://host:8080/v1";
+  await configure(url);
+  const before = readFileSync(file, "utf8");
+  const rename = fsCjs.promises.rename;
+  t.mock.method(fsCjs.promises, "rename", async (from, to) => {
+    if (to === file) throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+    return rename(from, to);
+  });
+  for (const argv of [["configure", "darwine", "ollama"], ["configure", "darwine", "openai-compatible", "http://other:8080"], ["remove", "darwine"]]) {
+    await assert.rejects(handleMachinesRequest({ argv }, deps), /ENOSPC/, argv.join(" "));
+    assert.equal(readFileSync(file, "utf8"), before, `${argv.join(" ")}: machines.json unchanged`);
+    assert.equal(await machineToken(deps.ayaHome, "darwine", url), TOKEN, `${argv.join(" ")}: the token stays with the unchanged machine`);
+  }
+});
+
+test("a credentials file that cannot be updated after the registry is saved is reported, not hidden", async (t) => {
+  const { deps, configure } = registry(t);
+  const url = "http://host:8080/v1";
+  await configure(url);
+  const auth = join(deps.ayaHome, MACHINES_AUTH_FILE);
+  const rename = fsCjs.promises.rename;
+  let failAuth = true;
+  t.mock.method(fsCjs.promises, "rename", async (from, to) => {
+    if (failAuth && to === auth) throw Object.assign(new Error("EIO: i/o error"), { code: "EIO" });
+    return rename(from, to);
+  });
+  await assert.rejects(handleMachinesRequest({ argv: ["configure", "darwine", "ollama"] }, deps), (err) => err.message === "darwine now uses Ollama port 11434, but its API token could not be updated; configure it again");
+  assert.equal((await loadRegistry(deps)).machines[0].ollama.port, 11434, "the registry change itself was saved");
+  failAuth = false;
+  await configure(url);
+  failAuth = true;
+  await assert.rejects(handleMachinesRequest({ argv: ["remove", "darwine"] }, deps), (err) => err.message === `removed darwine, but its saved API token could not be deleted from ${MACHINES_AUTH_FILE}`);
 });

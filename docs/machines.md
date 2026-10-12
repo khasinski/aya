@@ -76,6 +76,7 @@ checked 23:01:05
 
   Aya then probes the drafted machines and asks in its own Add / Cancel dialog. If the CLI stops waiting, Aya closes the dialog and adds nothing. Options such as `--ssh` are refused.
 - `aya machines remove <id>` asks in Aya, like add.
+- `aya machines configure <id> ...` asks in Aya before it changes the backend, naming the URL or port and what happens to the saved API token. Cancel changes nothing. In Settings, Save backend is the yes.
 - `aya machines claim <id> "<purpose>"` records who claimed the machine and when. The purpose is one line of plain text, at most 200 characters. It is refused while someone else holds the claim, unless `--replace` is given; agents never pass `--replace` without the user's yes. The holder may change its own claim.
 - `aya machines release <id>` clears the claim.
 

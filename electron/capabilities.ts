@@ -243,12 +243,12 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   {
     command: "machines configure ollama",
     usage: "aya machines configure id ollama [port]",
-    summary: "Select Ollama and edit its port; switching from an API removes that API's stored token.",
+    summary: "Select Ollama and edit its port; switching from an API removes that API's stored token. Asks the user in Aya first.",
   },
   {
     command: "machines configure openai-compatible",
     usage: "aya machines configure id openai-compatible url [--token-stdin | --clear-token]",
-    summary: "Choose a machine's backend and edit its endpoint. Bearer tokens come only from stdin, are stored privately and are never returned in status/setup/JSON. Changing the URL never transfers the saved token.",
+    summary: "Choose a machine's backend and edit its endpoint. Bearer tokens come only from stdin, are stored privately and are never returned in status/setup/JSON. Changing the URL never transfers the saved token. Asks the user in Aya first; Cancel changes nothing.",
     example: "aya machines configure darwine openai-compatible http://192.168.0.203:8080 --token-stdin",
   },
   {

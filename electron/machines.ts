@@ -11,7 +11,7 @@ import { sshHostAliases } from "./ssh-hosts";
 import { singleFlight } from "./single-flight";
 import { gib, gibFromMiB } from "./units";
 import { normalizeApiUrl, probeApi, type ApiBackend } from "./machines-api";
-import { machineToken, savedTokenPreview, saveMachineToken, validateMachineToken } from "./machines-auth";
+import { MACHINES_AUTH_FILE, machineToken, savedTokenPreview, saveMachineToken, validateMachineToken } from "./machines-auth";
 import { discoverApiEndpoints, type ApiDiscovery } from "./machines-discovery";
 
 export const MACHINES_FILE_NAME = "machines.json";
@@ -68,6 +68,20 @@ export interface MachinesDeps {
   /** Aya's own Add / Cancel dialog with the probe results; without it nothing can be added. It closes on `signal`. */
   confirmAdd?: (ask: AddAsk, signal?: AbortSignal) => Promise<boolean>;
   confirmRemove?: (id: string, signal?: AbortSignal) => Promise<boolean>;
+  /** Aya's own Change / Cancel dialog before a backend or its token changes; Settings passes its own click. */
+  confirmConfigure?: (ask: ConfigureAsk, signal?: AbortSignal) => Promise<boolean>;
+}
+
+/** What `aya machines configure` would change, shown to the user before anything is saved. */
+export interface ConfigureAsk {
+  id: string;
+  backend: "ollama" | "openai-compatible";
+  /** The normalized API URL, or the Ollama port. */
+  target: string;
+  /** What happens to the machine's saved API token. */
+  token: "stored" | "kept" | "removed" | "none";
+  /** The pane whose agent asked, when one did. */
+  pane?: string;
 }
 
 /** What the user is asked to add, with what a read-only probe found on each machine. */
@@ -180,8 +194,9 @@ export async function machinesDiscover(id: string, deps: MachinesDeps): Promise<
 
 const registryQueue = oneAtATime();
 
-/** One registry change at a time (only Aya's main process writes it): read, change, check, write atomically. */
-export function mutateRegistry<T>(deps: MachinesDeps, change: (registry: Registry) => T | Promise<T>): Promise<T> {
+/** One registry change at a time (only Aya's main process writes it): read, change, check, write atomically.
+ *  `afterSave` runs in the same turn once machines.json is written: a second file that must stay as it was when that write fails. */
+export function mutateRegistry<T>(deps: MachinesDeps, change: (registry: Registry) => T | Promise<T>, afterSave?: () => Promise<void>): Promise<T> {
   const file = registryFile(deps);
   return registryQueue(file, async () => {
     const registry = await loadRegistry(deps);
@@ -189,6 +204,7 @@ export function mutateRegistry<T>(deps: MachinesDeps, change: (registry: Registr
     const problem = registryProblem(registry);
     if (problem) throw new Error(`${problem}; nothing was saved`);
     await writeFileAtomic(file, `${JSON.stringify(registry, null, 2)}\n`, MACHINES_FILE_MODE);
+    await afterSave?.();
     return result;
   });
 }
@@ -520,11 +536,19 @@ export async function handleMachinesRequest(request: MachinesRequest, deps: Mach
     if (!deps.confirmRemove) throw new Error("removing a machine needs the user's yes in Aya, and Aya's dialog is not available here; nothing was removed");
     if (!(await deps.confirmRemove(asked.id, callerGone))) return { output: `Not removed: cancelled in Aya.\n` };
     if (callerGone?.aborted) throw new Error("the command stopped waiting for the user's answer; nothing was removed");
+    let hadApi = false;
     await mutateRegistry(deps, async (registry) => {
       const found = findMachine(registry, rest[0]);
       if (!sameReach(found.reach, asked.reach)) throw new Error(`${asked.id} changed while Aya asked; nothing was removed`);
-      if (found.api) await saveMachineToken(deps.ayaHome, found.id, null);
+      // Read first, so an unreadable credentials file stops the removal before machines.json changes.
+      if (found.api) await machineToken(deps.ayaHome, found.id, found.api.baseUrl);
+      hadApi = !!found.api;
       registry.machines = registry.machines.filter((m) => m !== found);
+    }, async () => {
+      // The token goes only once the machine is gone: a failed registry write keeps both.
+      if (!hadApi) return;
+      try { await saveMachineToken(deps.ayaHome, asked.id, null); }
+      catch { throw new Error(`removed ${asked.id}, but its saved API token could not be deleted from ${MACHINES_AUTH_FILE}`); }
     });
     return { output: `removed ${asked.id}\n` };
   }
@@ -539,14 +563,32 @@ export async function handleMachinesRequest(request: MachinesRequest, deps: Mach
     const baseUrl = api ? normalizeApiUrl(value) : null;
     const port = api ? DEFAULT_OLLAMA_PORT : value === undefined ? DEFAULT_OLLAMA_PORT : Number(value);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Ollama port must be 1..65535");
+    const clear = flag === "--clear-token";
+    const asked = findMachine(await loadRegistry(deps), id);
+    // Read whenever the credentials will change: an unreadable file stops here, before the user is asked or machines.json changes.
+    const saved = api || asked.api ? await machineToken(deps.ayaHome, asked.id, asked.api?.baseUrl ?? "") : null;
+    const token: ConfigureAsk["token"] = request.token !== undefined ? "stored"
+      : !saved ? "none"
+      : !clear && asked.api?.baseUrl === baseUrl ? "kept" : "removed";
+    if (!deps.confirmConfigure) throw new Error("configuring a machine needs the user's yes in Aya, and Aya's dialog is not available here; nothing was changed");
+    const ask: ConfigureAsk = { id: asked.id, backend: api ? "openai-compatible" : "ollama", target: baseUrl ?? String(port), token, ...(pane ? { pane } : {}) };
+    if (!(await deps.confirmConfigure(ask, callerGone))) return { output: `Not configured: cancelled in Aya.\n` };
+    if (callerGone?.aborted) throw new Error("the command stopped waiting for the user's answer; nothing was changed");
+    const label = api ? "OpenAI-compatible API" : `Ollama port ${port}`;
     await mutateRegistry(deps, async (registry) => {
       const machine = findMachine(registry, id);
-      if (api || machine.api) await saveMachineToken(deps.ayaHome, machine.id, baseUrl, request.token, flag === "--clear-token");
+      if (!sameReach(machine.reach, asked.reach) || machine.api?.baseUrl !== asked.api?.baseUrl || machine.ollama.port !== asked.ollama.port) {
+        throw new Error(`${asked.id} changed while Aya asked; nothing was changed`);
+      }
       if (baseUrl) machine.api = { baseUrl };
       else { delete machine.api; machine.ollama = { port }; }
-    });
-    clearMachineStatusCache();
-    return { output: `${id} configured: ${api ? "OpenAI-compatible API" : `Ollama port ${port}`}\n` };
+    }, async () => {
+      // Credentials change only once machines.json is saved, so a failed registry write never costs the saved token.
+      if (!api && !asked.api) return;
+      try { await saveMachineToken(deps.ayaHome, asked.id, baseUrl, request.token, clear); }
+      catch { throw new Error(`${asked.id} now uses ${label}, but its API token could not be updated; configure it again`); }
+    }).finally(clearMachineStatusCache);
+    return { output: `${asked.id} configured: ${label}\n` };
   }
   if (sub === "release") {
     if (rest.length !== 1) throw new Error(USAGE);

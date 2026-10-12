@@ -212,3 +212,27 @@ test("Electron API transport sends only bearer auth, forbids redirects and bound
     expect(seen.every((req) => req.authorization === `Bearer ${token}` && req.cookie === undefined)).toBe(true);
   } finally { api.closeAllConnections(); await new Promise<void>((r) => api.close(() => r())); }
 });
+
+test("the machines popover refreshes when Aya's window regains focus", async ({ window }) => {
+  let model = "first-model";
+  const api = createServer((_req, res) => {
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ data: [{ id: model }] }));
+  });
+  await new Promise<void>((r) => api.listen(0, "127.0.0.1", r));
+  try {
+    const address = api.address();
+    if (!address || typeof address === "string") throw new Error("no API port");
+    const url = `http://127.0.0.1:${address.port}`;
+    await window.evaluate((u) => window.aya.machinesConfigure(["configure", "darwine", "openai-compatible", u]), url);
+    await window.getByTestId("machines-toggle").click();
+    const popover = window.getByRole("dialog", { name: "Machines" });
+    await expect(popover).toContainText("first-model · served by API");
+    model = "second-model";
+    // The status poll runs every 30 s, so only focus can refresh this soon. Main reuses a probe for 3 s: focus until it shows.
+    await expect(async () => {
+      await window.evaluate(() => window.dispatchEvent(new Event("focus")));
+      await expect(popover).toContainText("second-model · served by API", { timeout: 500 });
+    }).toPass({ timeout: 10_000 });
+  } finally { api.closeAllConnections(); await new Promise<void>((r) => api.close(() => r())); }
+});

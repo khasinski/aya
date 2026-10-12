@@ -2441,8 +2441,8 @@ function registerIpc(): TeamRunner {
     checkRemoteHealth(requireString(sshTarget, "remote:health.sshTarget")),
   );
   // The status bar and Settings > Machines: the same functions `aya machines` runs. A click in Aya is the user's
-  // own yes, so these adds and removes ask no dialog; only an agent's `aya machines add` does.
-  const machinesDeps = { ...ayaMachinesDeps(AYA_HOME, os.homedir(), () => null, () => listProjects()), confirmAdd: async () => true, confirmRemove: async () => true };
+  // own yes, so these adds, removes and backend changes ask no dialog; an agent's `aya machines add`, `remove` and `configure` do.
+  const machinesDeps = { ...ayaMachinesDeps(AYA_HOME, os.homedir(), () => null, () => listProjects()), confirmAdd: async () => true, confirmRemove: async () => true, confirmConfigure: async () => true };
   ipcMain.handle("machines:status", () => machinesStatus(machinesDeps));
   ipcMain.handle("machines:setup", (e) => e.sender ? machinesUiSetup(machinesDeps) : machinesSetup(machinesDeps));
   ipcMain.handle("machines:discover", (_e, id: unknown) => machinesDiscover(requireString(id, "machines:discover.id"), machinesDeps));

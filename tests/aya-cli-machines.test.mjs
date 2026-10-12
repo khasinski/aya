@@ -42,7 +42,7 @@ const ollamaPort = ollama.address().port;
 const socket = join(root, "aya.sock");
 // Stands in for Aya's Add / Cancel dialog: records what the user was shown and answers `dialog.answer`,
 // after `dialog.holdMs` or once Aya closes it (`dialog.closed`), as the user clicking late would.
-const dialog = { answer: true, asked: [], holdMs: 0, closed: null, answered: null, removeAsked: [], removeAnswer: true };
+const dialog = { answer: true, asked: [], holdMs: 0, closed: null, answered: null, removeAsked: [], removeAnswer: true, configureAsked: [], configureAnswer: true };
 const stop = startControlServerOn(socket, {
   getWindow: () => null,
   openProject: () => {},
@@ -61,6 +61,10 @@ const stop = startControlServerOn(socket, {
       const answer = dialog.removeAnswer ?? true;
       dialog.answered?.();
       return answer;
+    },
+    confirmConfigure: async (ask) => {
+      dialog.configureAsked.push(ask);
+      return dialog.configureAnswer;
     },
     confirmAdd: async (ask, signal) => {
       dialog.asked.push(ask);
@@ -371,6 +375,26 @@ test("remove: asks in Aya, Cancel keeps it; Remove takes it out; an unknown id i
   const missing = await aya("remove", "athena");
   assert.equal(missing.status, 1);
   assert.match(missing.stderr, /no machine "athena"/);
+});
+
+test("configure: asks in Aya, Cancel keeps the backend; Change saves it", async () => {
+  reset();
+  await aya("add", "athena");
+  dialog.configureAsked = [];
+  dialog.configureAnswer = false;
+  const kept = await aya("configure", "athena", "ollama", "11435");
+  assert.equal(kept.status, 0, kept.stderr);
+  assert.match(kept.stdout, /Not configured: cancelled in Aya/);
+  assert.equal(registry().machines[0].ollama.port, 11434);
+  dialog.configureAnswer = true;
+  const r = await aya("configure", "athena", "ollama", "11435");
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, "athena configured: Ollama port 11435\n");
+  assert.deepEqual(dialog.configureAsked, [
+    { id: "athena", backend: "ollama", target: "11435", token: "none" },
+    { id: "athena", backend: "ollama", target: "11435", token: "none" },
+  ]);
+  assert.equal(registry().machines[0].ollama.port, 11435);
 });
 
 test("a registry from a newer Aya is read as an error and never rewritten", async () => {

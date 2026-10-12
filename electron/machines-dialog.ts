@@ -1,8 +1,8 @@
-// The user's yes for aya machines add: a native dialog in Aya, never an answer the CLI caller can give.
+// The user's yes for aya machines add, remove and configure: a native dialog in Aya, never an answer the CLI caller can give.
 
 import type { BrowserWindow } from "electron";
 import { printable } from "./printable";
-import type { AddAsk, MachinesDeps } from "./machines";
+import type { AddAsk, ConfigureAsk, MachinesDeps } from "./machines";
 import type { ProjectConfig } from "./types";
 import type { MachineStatus } from "./machines-probe";
 
@@ -60,6 +60,34 @@ export async function confirmRemoveInAya(id: string, win: BrowserWindow | null, 
   return response === ACTION_BUTTON;
 }
 
+const TOKEN_EFFECT: Record<ConfigureAsk["token"], string> = {
+  stored: "The token piped to the command is saved for this URL, replacing any saved token.",
+  kept: "The saved API token is kept.",
+  removed: "The saved API token is deleted; it cannot be recovered.",
+  none: "",
+};
+
+/** The dialog's text, apart from Electron so it can be read in a test. */
+export function configureDialogText(ask: ConfigureAsk): { message: string; detail: string } {
+  const to = ask.backend === "ollama" ? `Ollama on port ${ask.target}` : "an OpenAI-compatible API";
+  const who = ask.pane ? `Asked by pane "${ask.pane}". ` : "";
+  const url = ask.backend === "ollama" ? "" : `API URL: ${ask.target}\n\n`;
+  const effect = TOKEN_EFFECT[ask.token];
+  // The pane's name and the URL come from the caller: shown as text (printable.ts).
+  return {
+    message: printable(`Change ${ask.id} to ${to}?`),
+    detail: printable(`${who}${url}${effect ? `${effect}\n\n` : ""}Aya only reads its state and model list; nothing changes on the machine.`),
+  };
+}
+
+/** The user's yes before a pane changes a machine's backend or its token: the same native dialog as Remove. */
+export async function confirmConfigureInAya(ask: ConfigureAsk, win: BrowserWindow | null, signal?: AbortSignal): Promise<boolean> {
+  const { dialog } = require("electron") as typeof import("electron");
+  const options = { type: "question" as const, buttons: ["Change", "Cancel"], defaultId: CANCEL_BUTTON, cancelId: CANCEL_BUTTON, noLink: true, signal, ...configureDialogText(ask) };
+  const { response } = win && !win.isDestroyed() ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
+  return response === ACTION_BUTTON;
+}
+
 /** The deps every caller in Aya uses (the control socket and Settings), so the CLI and the UI share one path. */
 export function ayaMachinesDeps(ayaHome: string, userHome: string, getWindow: () => BrowserWindow | null, listProjects?: () => Promise<ProjectConfig[]>): MachinesDeps {
   return {
@@ -68,5 +96,6 @@ export function ayaMachinesDeps(ayaHome: string, userHome: string, getWindow: ()
     listRemoteProjects: async () => ((await listProjects?.()) ?? []).flatMap((p) => (p.remote ? [{ name: p.name, sshTarget: p.remote.sshTarget }] : [])),
     confirmAdd: (ask, signal) => confirmAddInAya(ask, getWindow(), signal),
     confirmRemove: (id, signal) => confirmRemoveInAya(id, getWindow(), signal),
+    confirmConfigure: (ask, signal) => confirmConfigureInAya(ask, getWindow(), signal),
   };
 }

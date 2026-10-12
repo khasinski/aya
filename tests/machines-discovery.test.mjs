@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { resolve, join } from "node:path";
-import { discoverApiEndpoints, resolveDiscoveryHost, discoveryHostname, API_DISCOVERY_PORTS } from "../dist-electron/machines-discovery.js";
+import { discoverApiEndpoints, resolveDiscoveryHost, discoveryHostname } from "../dist-electron/machines-discovery.js";
 import { machinesDiscover } from "../dist-electron/machines.js";
 import { probeApi } from "../dist-electron/machines-api.js";
 import { runProcess } from "../dist-electron/ssh.js";
@@ -60,7 +60,8 @@ test("discovery probes exactly one resolved host and four ports with no token; a
       return port === 8080 ? { up: false, models: null, error: "API authentication failed" } : port === 1234 ? { up: true, models: ["fixture"], error: null } : { up: false, models: null, error: "API returned an invalid model list" };
     },
   });
-  assert.deepEqual(seen, API_DISCOVERY_PORTS.map((p) => `http://192.168.0.203:${p}/v1`));
+  // The documented ports (docs/machines.md), spelled out: a change to API_DISCOVERY_PORTS must fail here.
+  assert.deepEqual(seen, [8080, 8000, 1234, 5000].map((p) => `http://192.168.0.203:${p}/v1`));
   assert.deepEqual(result, { candidates: [{ baseUrl: "http://192.168.0.203:8080/v1", kind: "auth-required" }, { baseUrl: "http://192.168.0.203:1234/v1", kind: "confirmed" }], error: null });
 });
 
