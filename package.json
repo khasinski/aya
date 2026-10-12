@@ -90,6 +90,13 @@
       }
     ],
     "afterPack": "scripts/after-pack-prune.cjs",
+    "electronFuses": {
+      "runAsNode": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    },
     "files": [
       "bin/**",
       "dist/**",
