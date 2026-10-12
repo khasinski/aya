@@ -1894,10 +1894,13 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
     backgroundColor: COLOR_DARK_BG,
     show: false,
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      // One file from vite.preload.config.mts: a sandboxed preload cannot require its own modules.
+      preload: path.join(__dirname, "preload.bundle.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false, // node-pty needs the preload to have node access
+      // node-pty runs only in the pty-host, so the window needs no Node: a script injected into it
+      // gets Chromium's sandbox, not the user's rights.
+      sandbox: true,
       // In headless e2e the window is never shown, so Chromium would throttle
       // requestAnimationFrame and xterm's render loop would never paint - the
       // tests that read rendered rows then time out. Keep the hidden test
