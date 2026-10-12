@@ -38,6 +38,8 @@ test("a typed command is saved as its own section and shown on the card; a blank
     await expect(field).toHaveValue("ollama ps --verbose");
     await field.fill("");
   });
+  // The card is gone while the editor is open, so its note counts 0 before the save lands: wait for the card back.
+  await expect(card).toBeVisible();
   await expect(card.getByLabel(`${NAME} status command`)).toHaveCount(0);
   expect(readFileSync(file, "utf8")).not.toMatch(/Status command/);
 });

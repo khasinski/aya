@@ -242,7 +242,9 @@ describe("Codex daemon policy with isolated installs", { concurrency: 2 }, () =>
         assert.equal(existsSync(fake.log), ends === "eof", ends === "eof" ? "codex ran after the read ended" : "codex never ran");
         const ownedPids = readFileSync(pids, "utf8").split("\n").filter(Boolean).map(Number);
         try {
-          await waitFor(() => ownedPids.every((pid) => !alive(pid)), 300, 10);
+          // A killed process answers kill(pid, 0) as a zombie until it is reaped: at load ~8 that took up to 359 ms
+          // (ps: Z <defunct>), past the old 300 ms. 2 s still fails a probe that leaves the rc's `sleep 7` running.
+          await waitFor(() => ownedPids.every((pid) => !alive(pid)), 2000, 10);
           for (const pid of ownedPids) assert.equal(alive(pid), false, `pid ${pid} is gone`);
         } finally {
           // Only the shell and sleep recorded by this case's rc, including on mutant failure.
