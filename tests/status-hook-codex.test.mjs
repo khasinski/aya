@@ -102,3 +102,15 @@ test("the generated notify program maps agent-turn-complete to done and no-ops e
   // The bundled CLI path is baked as the PATH fallback.
   assert.match(src, /app\.asar\.unpacked\/bin\/aya/);
 });
+
+test("a script path with a backslash or a quote is still recognised as ours: install twice, status, uninstall", async () => {
+  // The line is written quoted and escaped (tomlString), so the raw path is not in it; a raw match called it a conflict.
+  const { withCodexNotify, withoutCodexNotify, notifyIsOurs } = await import("../dist-electron/status-hook-codex.js");
+  for (const scriptPath of ["/home/a\\b/.aya/aya-status-codex-notify.sh", '/home/a"b/.aya/aya-status-codex-notify.sh']) {
+    const once = withCodexNotify("", scriptPath);
+    assert.equal(once.installed, true, scriptPath);
+    assert.deepEqual(withCodexNotify(once.toml, scriptPath), once, `${scriptPath}: a second install changes nothing`);
+    assert.equal(notifyIsOurs(once.toml, scriptPath), true, scriptPath);
+    assert.doesNotMatch(withoutCodexNotify(once.toml, scriptPath), /^notify/m, `${scriptPath}: uninstall removes our line`);
+  }
+});

@@ -57,6 +57,12 @@ function tomlString(s: string): string {
   return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+/** Whether a notify line names our script as we write it: quoted and escaped (tomlString). The raw path does not
+ *  appear in the line when it holds a backslash or a quote, so a raw match missed our own line there. */
+function namesOurScript(line: string, scriptPath: string): boolean {
+  return line.includes(tomlString(scriptPath));
+}
+
 /** The `notify = [...]` line we write. */
 export function codexNotifyLine(scriptPath: string): string {
   return `notify = [${tomlString(scriptPath)}]`;
@@ -79,7 +85,7 @@ export function findTopLevelNotify(toml: string): string | null {
 /** True when the top-level notify (if any) already points at `scriptPath`. */
 export function notifyIsOurs(toml: string, scriptPath: string): boolean {
   const line = findTopLevelNotify(toml);
-  return line !== null && line.includes(scriptPath);
+  return line !== null && namesOurScript(line, scriptPath);
 }
 
 export interface CodexNotifyMerge {
@@ -100,7 +106,7 @@ export function withCodexNotify(
 ): CodexNotifyMerge {
   const existing = findTopLevelNotify(toml);
   if (existing !== null) {
-    return existing.includes(scriptPath)
+    return namesOurScript(existing, scriptPath)
       ? { toml, installed: true, conflict: false }
       : { toml, installed: false, conflict: true };
   }
@@ -118,7 +124,7 @@ export function withoutCodexNotify(toml: string, scriptPath: string): string {
     const line = raw.trim();
     if (line.startsWith("[")) sawHeader = true;
     const isOurs =
-      !sawHeader && /^notify\s*=/.test(line) && raw.includes(scriptPath);
+      !sawHeader && /^notify\s*=/.test(line) && namesOurScript(raw, scriptPath);
     if (!isOurs) kept.push(raw);
   }
   return kept.join("\n");
@@ -170,7 +176,7 @@ export async function statusCodexHookStatus(): Promise<CodexStatusHookStatus> {
   const configPath = codexConfigPath();
   const toml = await readConfigToml();
   const topNotify = findTopLevelNotify(toml);
-  const ours = topNotify !== null && topNotify.includes(scriptPath);
+  const ours = topNotify !== null && namesOurScript(topNotify, scriptPath);
   const scriptExists = await pathExists(scriptPath);
   return {
     configured: ours && scriptExists,
