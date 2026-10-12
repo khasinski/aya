@@ -211,12 +211,12 @@ function isHexColor(s: unknown): s is string {
   return typeof s === "string" && /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(s);
 }
 
+// rgb(r, g, b) or rgba(r, g, b, a), whole: a prefix check let "rgba(not-a-color)" through to the renderer.
+const RGB_COLOR = /^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*(?:,\s*(?:0|1|0?\.\d+|1\.0+)\s*)?\)$/;
+
 function isColor(s: unknown): s is string {
-  // Accept hex (#rrggbb / #rrggbbaa) and rgba(...) — the only forms we emit.
-  return (
-    isHexColor(s) ||
-    (typeof s === "string" && /^rgba?\(/.test(s))
-  );
+  // Accept hex (#rrggbb / #rrggbbaa) and rgb()/rgba() - the only forms we emit.
+  return isHexColor(s) || (typeof s === "string" && RGB_COLOR.test(s));
 }
 
 function isThemeColors(x: unknown): x is ThemeColors {
@@ -328,7 +328,7 @@ export function parseItermColors(xml: string, fallbackName: string): Theme {
   const fg = colorFromItermDict(data["Foreground Color"]);
   const cursor = colorFromItermDict(data["Cursor Color"]) ?? fg;
   if (!bg || !fg) {
-    throw new Error("iTerm2 theme is missing Background or Foreground Color");
+    throw new Error("iTerm2 theme has no usable Background or Foreground Color");
   }
 
   const selection = colorFromItermDict(data["Selection Color"]);
@@ -385,9 +385,12 @@ export function parseWindowsTerminalJson(
     }
     return importedColor(v, k);
   };
+  // Absent is fine; present but not a string is a value the user expects to see, so it fails like a bad string.
   const opt = (k: string): string | undefined => {
     const v = data[k];
-    return typeof v === "string" ? importedColor(v, k) : undefined;
+    if (v === undefined) return undefined;
+    if (typeof v !== "string") throw new Error(`Windows Terminal theme field "${k}" is not a color: ${JSON.stringify(v)}`);
+    return importedColor(v, k);
   };
   const name =
     typeof data.name === "string" && data.name.trim() ? data.name : fallbackName;

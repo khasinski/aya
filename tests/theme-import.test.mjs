@@ -131,3 +131,20 @@ test("iTerm2: a component that is not a finite number (nan) refuses the import i
   assert.notEqual(nan, ITERM_FIXTURE, "the fixture line was replaced");
   assert.throws(() => parseTheme(nan, "nan"), /no usable "Ansi 3 Color"/);
 });
+
+test("Windows Terminal: an rgb()/rgba() value is checked whole, and a present non-string field is refused, not dropped", () => {
+  const rgba = JSON.parse(CAMPBELL);
+  rgba.selectionBackground = "rgba(255, 255, 255, 0.25)";
+  assert.equal(parseTheme(JSON.stringify(rgba), "rgba").colors.selectionBackground, "rgba(255, 255, 255, 0.25)");
+  for (const [field, value] of [["red", "rgba(not-a-color)"], ["selectionBackground", 123], ["cursorColor", null]]) {
+    const bad = JSON.parse(CAMPBELL);
+    bad[field] = value;
+    assert.throws(() => parseTheme(JSON.stringify(bad), "bad"), new RegExp(`field "${field}" is not a color`), `${field}: ${JSON.stringify(value)}`);
+  }
+});
+
+test("iTerm2: a background with a nan component is unusable, and the message says so, not missing", () => {
+  const nanBg = ITERM_FIXTURE.replace(`<key>Background Color</key>${ansiColor(0, 0, 0)}`, `<key>Background Color</key>${ansiColor("nan", 0, 0)}`);
+  assert.notEqual(nanBg, ITERM_FIXTURE);
+  assert.throws(() => parseTheme(nanBg, "nan"), /no usable Background or Foreground Color/);
+});
