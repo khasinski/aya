@@ -565,11 +565,16 @@ export async function handleMachinesRequest(request: MachinesRequest, deps: Mach
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Ollama port must be 1..65535");
     const clear = flag === "--clear-token";
     const asked = findMachine(await loadRegistry(deps), id);
-    // Read whenever the credentials will change: an unreadable file stops here, before the user is asked or machines.json changes.
-    const saved = api || asked.api ? await machineToken(deps.ayaHome, asked.id, asked.api?.baseUrl ?? "") : null;
-    const token: ConfigureAsk["token"] = request.token !== undefined ? "stored"
-      : !saved ? "none"
-      : !clear && asked.api?.baseUrl === baseUrl ? "kept" : "removed";
+    // What happens to the token saved for the machine's current URL. Reading it also stops an unreadable credentials
+    // file here, before the user is asked or machines.json changes.
+    const tokenFate = async (machine: Machine): Promise<ConfigureAsk["token"]> => {
+      if (!api && !machine.api) return "none";
+      const saved = await machineToken(deps.ayaHome, machine.id, machine.api?.baseUrl ?? "");
+      if (request.token !== undefined) return "stored";
+      if (!saved) return "none";
+      return !clear && machine.api?.baseUrl === baseUrl ? "kept" : "removed";
+    };
+    const token = await tokenFate(asked);
     if (!deps.confirmConfigure) throw new Error("configuring a machine needs the user's yes in Aya, and Aya's dialog is not available here; nothing was changed");
     const ask: ConfigureAsk = { id: asked.id, backend: api ? "openai-compatible" : "ollama", target: baseUrl ?? String(port), token, ...(pane ? { pane } : {}) };
     if (!(await deps.confirmConfigure(ask, callerGone))) return { output: `Not configured: cancelled in Aya.\n` };
@@ -577,7 +582,8 @@ export async function handleMachinesRequest(request: MachinesRequest, deps: Mach
     const label = api ? "OpenAI-compatible API" : `Ollama port ${port}`;
     await mutateRegistry(deps, async (registry) => {
       const machine = findMachine(registry, id);
-      if (!sameReach(machine.reach, asked.reach) || machine.api?.baseUrl !== asked.api?.baseUrl || machine.ollama.port !== asked.ollama.port) {
+      // Token writes happen only in this queue, so what the user was told about the token still holds after this check.
+      if (!sameReach(machine.reach, asked.reach) || machine.api?.baseUrl !== asked.api?.baseUrl || machine.ollama.port !== asked.ollama.port || (await tokenFate(machine)) !== token) {
         throw new Error(`${asked.id} changed while Aya asked; nothing was changed`);
       }
       if (baseUrl) machine.api = { baseUrl };
@@ -585,7 +591,9 @@ export async function handleMachinesRequest(request: MachinesRequest, deps: Mach
     }, async () => {
       // Credentials change only once machines.json is saved, so a failed registry write never costs the saved token.
       if (!api && !asked.api) return;
-      try { await saveMachineToken(deps.ayaHome, asked.id, baseUrl, request.token, clear); }
+      // Without a new token, only the current URL's token is kept: one left for another URL (a failed earlier write) goes.
+      const keepNone = clear || (request.token === undefined && asked.api?.baseUrl !== baseUrl);
+      try { await saveMachineToken(deps.ayaHome, asked.id, baseUrl, request.token, keepNone); }
       catch { throw new Error(`${asked.id} now uses ${label}, but its API token could not be updated; configure it again`); }
     }).finally(clearMachineStatusCache);
     return { output: `${asked.id} configured: ${label}\n` };

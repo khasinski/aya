@@ -1,4 +1,4 @@
-// The native dialogs that are the user's yes for aya machines add and remove, with
+// The native dialogs that are the user's yes for aya machines add, remove and configure, with
 // Electron's dialog replaced by a recorder: Cancel must be the default and the
 // Escape answer, only the action button may say yes, and a destroyed window must
 // not take the dialog down with it.
@@ -11,7 +11,7 @@ import { join } from "node:path";
 const require = createRequire(import.meta.url);
 const MODULE = join(process.cwd(), "dist-electron", "machines-dialog.js");
 const electronId = createRequire(MODULE).resolve("electron");
-const { addDialogText, ayaMachinesDeps, confirmAddInAya, confirmRemoveInAya } = await import(MODULE);
+const { addDialogText, ayaMachinesDeps, configureDialogText, confirmAddInAya, confirmConfigureInAya, confirmRemoveInAya } = await import(MODULE);
 
 /** Electron as the module sees it: a dialog that records each call and answers `response`. */
 function fakeElectron(t, response) {
@@ -104,6 +104,25 @@ test("Remove: the button names the action, Cancel is the default, and the text s
   assert.equal(await confirmRemoveInAya("athena", win), true);
 });
 
+test("Configure: only the Change button is a yes; Cancel is the default and the Escape answer", async (t) => {
+  const ask = { id: "darwine", backend: "ollama", target: "11434", token: "removed", pane: "lead" };
+  const win = liveWindow();
+  const signal = new AbortController().signal;
+  const calls = fakeElectron(t, 0);
+  assert.equal(await confirmConfigureInAya(ask, win, signal), true);
+  const [parent, options] = calls[0];
+  assert.equal(parent, win);
+  assert.deepEqual(options.buttons, ["Change", "Cancel"]);
+  assert.deepEqual([options.defaultId, options.cancelId], [1, 1]);
+  assert.equal(options.noLink, true);
+  assert.equal(options.signal, signal, "the caller can close the dialog");
+  assert.deepEqual({ message: options.message, detail: options.detail }, configureDialogText(ask));
+  for (const response of [1, 2, -1]) {
+    fakeElectron(t, response);
+    assert.equal(await confirmConfigureInAya(ask, win), false, `response ${response}`);
+  }
+});
+
 test("ayaMachinesDeps: remote projects only, and each dialog asks over the window open at that moment", async (t) => {
   let current = null;
   const projects = [
@@ -122,4 +141,7 @@ test("ayaMachinesDeps: remote projects only, and each dialog asks over the windo
   assert.equal(calls[0][0], current, "Add asked over the window open now, not at setup");
   assert.equal(calls[1][0], current);
   assert.equal(calls[1][1].message, "Remove athena from Aya's machines?");
+  assert.equal(await deps.confirmConfigure({ id: "athena", backend: "ollama", target: "11434", token: "none" }), true);
+  assert.equal(calls[2][0], current);
+  assert.equal(calls[2][1].message, "Change athena to Ollama on port 11434?");
 });

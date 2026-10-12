@@ -64,7 +64,7 @@ const TOKEN_EFFECT: Record<ConfigureAsk["token"], string> = {
   stored: "The token piped to the command is saved for this URL, replacing any saved token.",
   kept: "The saved API token is kept.",
   removed: "The saved API token is deleted; it cannot be recovered.",
-  none: "",
+  none: "No API token is saved for this URL.",
 };
 
 /** The dialog's text, apart from Electron so it can be read in a test. */
@@ -72,7 +72,8 @@ export function configureDialogText(ask: ConfigureAsk): { message: string; detai
   const to = ask.backend === "ollama" ? `Ollama on port ${ask.target}` : "an OpenAI-compatible API";
   const who = ask.pane ? `Asked by pane "${ask.pane}". ` : "";
   const url = ask.backend === "ollama" ? "" : `API URL: ${ask.target}\n\n`;
-  const effect = TOKEN_EFFECT[ask.token];
+  // An Ollama machine that never had an API has no token to speak of.
+  const effect = ask.backend === "ollama" && ask.token === "none" ? "" : TOKEN_EFFECT[ask.token];
   // The pane's name and the URL come from the caller: shown as text (printable.ts).
   return {
     message: printable(`Change ${ask.id} to ${to}?`),

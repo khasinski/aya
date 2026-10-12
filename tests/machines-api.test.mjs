@@ -336,6 +336,8 @@ test("the configure dialog names the change and the token's fate, and shows outs
   assert.equal(api.message, "Change darwine to an OpenAI-compatible API?");
   assert.match(api.detail, /^Asked by pane "lead\\u001b\[31m"\. API URL: http:\/\/host:8080\/v1\n\nThe saved API token is deleted; it cannot be recovered\.\n\nAya only reads/);
   assert.ok(!api.detail.includes("\u001b"), "an escape from the pane's name is shown, not run");
+  const bare = configureDialogText({ id: "darwine", backend: "openai-compatible", target: "http://host:8080/v1", token: "none" });
+  assert.equal(bare.detail, "API URL: http://host:8080/v1\n\nNo API token is saved for this URL.\n\nAya only reads its state and model list; nothing changes on the machine.");
   const ollama = configureDialogText({ id: "darwine", backend: "ollama", target: "11434", token: "none" });
   assert.equal(ollama.message, "Change darwine to Ollama on port 11434?");
   assert.equal(ollama.detail, "Aya only reads its state and model list; nothing changes on the machine.");
@@ -347,6 +349,8 @@ test("configure without Aya's dialog, or on a machine changed while Aya asked, c
   const before = readFileSync(file, "utf8");
   delete deps.confirmConfigure;
   await assert.rejects(handleMachinesRequest({ argv: ["configure", "darwine", "ollama"] }, deps), /needs the user's yes in Aya/);
+  assert.equal(readFileSync(file, "utf8"), before, "no dialog: machines.json unchanged");
+  assert.equal(await machineToken(deps.ayaHome, "darwine", "http://host:8080/v1"), TOKEN, "no dialog: the token stays");
   deps.confirmConfigure = async () => {
     // Settings switches the machine to another URL while the pane's question is open.
     const changed = JSON.parse(readFileSync(file, "utf8"));
@@ -394,4 +398,36 @@ test("a credentials file that cannot be updated after the registry is saved is r
   await configure(url);
   failAuth = true;
   await assert.rejects(handleMachinesRequest({ argv: ["remove", "darwine"] }, deps), (err) => err.message === `removed darwine, but its saved API token could not be deleted from ${MACHINES_AUTH_FILE}`);
+});
+
+test("a token saved in Settings while a pane's question is open is not deleted by that answer", async (t) => {
+  const { deps, file } = registry(t);
+  const url = "http://host:8080/v1";
+  await handleMachinesRequest({ argv: ["configure", "darwine", "openai-compatible", url] }, deps);
+  assert.equal(await machineToken(deps.ayaHome, "darwine", url), null);
+  const asks = [];
+  deps.confirmConfigure = async (ask) => {
+    asks.push(ask);
+    // Meanwhile the user saves a token for the same URL in Settings (its click is the yes).
+    await handleMachinesRequest({ argv: ["configure", "darwine", "openai-compatible", url, "--token-stdin"], token: "late-private-token" }, { ...deps, confirmConfigure: async () => true });
+    return true;
+  };
+  await assert.rejects(handleMachinesRequest({ argv: ["configure", "darwine", "ollama"] }, deps, "lead"), /changed while Aya asked; nothing was changed/);
+  assert.equal(asks[0].token, "none", "the pane's question said there was no token to lose");
+  assert.equal(await machineToken(deps.ayaHome, "darwine", url), "late-private-token");
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).machines[0].api.baseUrl, url);
+});
+
+test("a token left for an earlier URL is not revived by configuring that URL again", async (t) => {
+  const { deps, file, configure } = registry(t);
+  const a = "http://host-a:8080/v1";
+  await configure("http://host-b:8080");
+  // What a failed credentials write after a URL change leaves: the registry on B, a token still stored for A.
+  writeFileSync(join(deps.ayaHome, MACHINES_AUTH_FILE), JSON.stringify({ version: 1, entries: [{ id: "darwine", baseUrl: a, token: TOKEN }] }), { mode: 0o600 });
+  const asks = [];
+  deps.confirmConfigure = async (ask) => { asks.push(ask); return true; };
+  await handleMachinesRequest({ argv: ["configure", "darwine", "openai-compatible", a] }, deps);
+  assert.equal(asks[0].token, "none");
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).machines[0].api.baseUrl, a);
+  assert.equal(await machineToken(deps.ayaHome, "darwine", a), null, "the user was told no token: none is sent to A");
 });
