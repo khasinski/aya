@@ -4,10 +4,10 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import * as net from "node:net";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { connectWhenListening } from "./helpers/unix-socket.mjs";
 import { waitFor } from "./helpers/wait-for.mjs";
 
 const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
@@ -27,9 +27,7 @@ async function withHost(body) {
   const clients = [];
   let nextId = 1;
   const connect = async () => {
-    await waitFor(() => existsSync(sock), 10_000);
-    const socket = net.createConnection(sock);
-    await new Promise((resolve, reject) => socket.once("connect", resolve).once("error", reject));
+    const socket = await connectWhenListening(sock);
     socket.on("error", () => {});
     const pending = new Map();
     let buf = "";
