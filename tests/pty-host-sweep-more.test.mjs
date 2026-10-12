@@ -265,7 +265,7 @@ test("readSnapshot asks ps for the whole table in the C locale with the large bu
   assert.deepEqual(rows, [{ uid: 501, pid: 4000, ppid: 1, pgid: 4000, command: "/bin/zsh -l" }]);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].file, "ps");
-  assert.deepEqual(calls[0].args, ["-Axo", "uid=,pid=,ppid=,pgid=,command="]);
+  assert.deepEqual(calls[0].args, ["-A", "-o", "uid=,pid=,ppid=,pgid=,command="]);
   assert.equal(calls[0].opts.env.LC_ALL, "C");
   assert.equal(calls[0].opts.maxBuffer, PS_SNAPSHOT_MAX_BUFFER_BYTES);
 
@@ -346,7 +346,7 @@ test("default deps: uid from process.getuid, AYA_HOME scope, our own group from 
   const psCalls = [];
   const fakePs = (file, args) => {
     psCalls.push(args.join(" "));
-    if (args[0] === "-Axo") return table;
+    if (args[0] === "-A") return table;
     if (args[0] === "eww") {
       const out = env[args[2]];
       if (out === undefined) throw Object.assign(new Error("no such pid"), { status: 1 });
@@ -396,7 +396,7 @@ test("default deps: without process.getuid (no uid) the sweep takes no snapshot 
     process.getuid = realGetuid;
   }
   assert.deepEqual(summary, { sweptHosts: [], sweptOrphans: [], skipped: [], truncated: 0 });
-  assert.ok(!psCalls.some((c) => c.startsWith("-Axo")), "no process table is read");
+  assert.ok(!psCalls.some((c) => c.startsWith("-A ")), "no process table is read");
 });
 
 test("default deps: a self probe that fails does not stop the sweep", () => {
@@ -411,7 +411,7 @@ test("default deps: a self probe that fails does not stop the sweep", () => {
   try {
     summary = withFakePs(
       (file, args) => {
-        if (args[0] === "-Axo") return `${uid} 9920 1 7777 claude`;
+        if (args[0] === "-A") return `${uid} 9920 1 7777 claude`;
         if (args[0] === "eww" && args[2] === "9920") return `7777 ${ORPHAN_ENV}`;
         throw Object.assign(new Error("ps failed"), { status: 1 }); // self probe and leader probe
       },
