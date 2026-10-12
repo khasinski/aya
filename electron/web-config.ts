@@ -183,4 +183,6 @@ export async function saveWebConfig(config: WebConfig): Promise<void> {
     JSON.stringify(config, null, 2) + "\n",
     OWNER_ONLY_FILE_MODE,
   );
+  // The creation mode passes through the umask; an odd one could leave the owner unable to read the file back.
+  await fs.chmod(WEB_CONFIG_FILE, OWNER_ONLY_FILE_MODE);
 }

@@ -10,8 +10,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const home = mkdtempSync(join(tmpdir(), "aya-web-owner-"));
+// A permissive umask, as most users have: under 077 a default-mode write would come out 0600 anyway and prove nothing.
+const umask = process.umask(0o022);
 process.env.AYA_HOME = home;
 test.after(() => {
+  process.umask(umask);
   chmodSync(join(home, "web.json"), 0o600);
   rmSync(home, { recursive: true, force: true });
 });
