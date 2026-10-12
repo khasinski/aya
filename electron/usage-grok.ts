@@ -361,10 +361,12 @@ export async function readGrokUsage(
   let limit: GrokLimit | null = null;
   for (const home of homes.length > 0 ? homes : [DEFAULT_GROK_HOME]) {
     for (const file of await recentSessionLogs(home, sinceMs)) {
+      // Read and cached under the real path too: a symlink retargeted to another log with the same mtime must not
+      // get the old log's cached rows.
       const real = await fs.realpath(file).catch(() => file);
       if (seen.has(real)) continue;
       seen.add(real);
-      allRows.push(...(await rowsForFile(file)));
+      allRows.push(...(await rowsForFile(real)));
     }
     const found = await readGrokLimit(home, nowMs);
     if (found && (!limit || loggedAfter(found, limit))) limit = found;

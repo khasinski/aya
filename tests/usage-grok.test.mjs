@@ -110,7 +110,7 @@ test("distinct models across rows are merged and sorted", () => {
 
 // The weekly limit comes from the "billing: fetched credits config" line Grok
 // 1.0.41 writes to logs/unified.jsonl; the chip's ring shows it.
-import { appendFileSync, chmodSync, mkdtempSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdtempSync, mkdirSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -326,5 +326,34 @@ test("a home given again through a symlink counts its sessions once", async () =
   } finally {
     rmSync(link, { force: true });
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a home symlink moved to another home with the same log mtime reads the new log, not the old one's cached rows", async () => {
+  const make = (turns) => {
+    const home = mkdtempSync(join(tmpdir(), "aya-grok-"));
+    const session = join(home, "sessions", "proj", "s1");
+    mkdirSync(session, { recursive: true });
+    const log = join(session, "updates.jsonl");
+    writeFileSync(log, Array.from({ length: turns }, (_, i) => turnLine({}, NOW - (i + 1) * 60 * 1000)).join("\n") + "\n");
+    return { home, log };
+  };
+  const one = make(1);
+  const two = make(2);
+  // The same mtime on both logs, so only the path can tell their cached rows apart.
+  const when = new Date(NOW - 30 * 1000);
+  utimesSync(one.log, when, when);
+  utimesSync(two.log, when, when);
+  const link = `${one.home}-link`;
+  symlinkSync(one.home, link);
+  try {
+    resetGrokUsageCache();
+    assert.equal((await readGrokUsage([link], NOW)).turns, 1);
+    rmSync(link);
+    symlinkSync(two.home, link);
+    assert.equal((await readGrokUsage([link], NOW)).turns, 2);
+  } finally {
+    rmSync(link, { force: true });
+    for (const { home } of [one, two]) rmSync(home, { recursive: true, force: true });
   }
 });
