@@ -8,8 +8,6 @@
   <true/>
   <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
-  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
-  <true/>
   <!-- Audio Input (Hardened Runtime). Without this, the hardened runtime blocks
        microphone access for Aya AND every process it spawns, so terminal tools
        the user runs (e.g. a /voice dictation plugin) fail with "no permissions".
