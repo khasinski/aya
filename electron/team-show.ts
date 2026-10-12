@@ -8,6 +8,7 @@ import { paneTeamRole, runnableTeamNames, teamFile } from "./team-files";
 import { ID_RE, parseTeamFile } from "./team-definition";
 import { openTeamStore, readText, savedTeamNames } from "./team-store";
 import { PROJECT_AYA_DIRNAME } from "./paths";
+import { printableJson, printableText } from "./printable";
 import type { ProjectConfig, TeamDefinition } from "./types";
 
 /** How the repo's .aya/teams/<team>.md compares with the saved copy shown. */
@@ -97,10 +98,11 @@ export function formatTeamShow(show: TeamShow): string {
     if (role.responsibilities) lines.push(indent(role.responsibilities));
   }
   if (show.protocol) lines.push("", "protocol", show.protocol);
-  return `${lines.join("\n")}\n`;
+  // The team's text goes to a terminal (printable.ts).
+  return printableText(`${lines.join("\n")}\n`);
 }
 
 export async function handleTeamShow(request: TeamShowRequest, callerId: string | undefined, deps: ShowDeps): Promise<{ output: string }> {
   const show = await teamShow(request, callerId, deps);
-  return { output: request.json ? `${JSON.stringify(show, null, 2)}\n` : formatTeamShow(show) };
+  return { output: request.json ? `${printableJson(show)}\n` : formatTeamShow(show) };
 }

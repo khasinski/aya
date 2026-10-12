@@ -13,6 +13,7 @@ import { TEAM_SYSTEM_SENDER } from "./team-definition";
 import type { ProjectConfig, TeamDefinition, TeamRole } from "./types";
 import { clock, WALL_MINUTE_MS } from "./team-times";
 import { whoamiText } from "./team-whoami";
+import { printableText } from "./printable";
 
 export interface TeamControlDeps {
   teamHome: string;
@@ -398,7 +399,8 @@ export async function handleTeamRequest(
   const m = await membership(callerId, deps);
   if (request.type === "team-whoami") {
     await m.store.noteWhoami(m.role.id, askedAt).catch((err: unknown) => console.warn("[aya] team whoami time not recorded:", err));
-    return { output: whoamiText(m.team, m.role) };
+    // The team's text goes to the role's terminal (printable.ts). whoamiText stays raw: a Save compares it.
+    return { output: printableText(whoamiText(m.team, m.role)) };
   }
   if (request.type === "team-pause") return { output: await pauseByLead(m, request.text, pause) };
   if (request.type === "team-send") return { output: await send(m, request.role, request.text, deps) };

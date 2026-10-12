@@ -46,9 +46,9 @@ git log --oneline -1
 const REPO_EDIT = TEAM.replace("Fixes findings.", "Fixes findings and writes the prompts.");
 const OTHER = "# docs\n\n## Role: writer\nMust not: guess\nWrites.\n\n## Role: editor\nMust not: rewrite\nEdits.\n\n## Lead\nwriter\n";
 
-async function setup({ repo = "same", secondTeam = false } = {}) {
+async function setup({ repo = "same", secondTeam = false, teamFile = TEAM } = {}) {
   const tabs = [{ id: "pane-t" }, { id: "pane-i" }, { id: "pane-x" }];
-  const t = teamProject("aya-team-show-", { teamFile: TEAM, tabs, saved: repo !== "only" });
+  const t = teamProject("aya-team-show-", { teamFile, tabs, saved: repo !== "only" });
   const repoFile = join(t.directory, ".aya", "teams", "ux-review.md");
   if (repo === "differs") writeFileSync(repoFile, REPO_EDIT);
   if (repo === "missing") rmSync(repoFile);
@@ -66,10 +66,10 @@ async function setup({ repo = "same", secondTeam = false } = {}) {
     listProjects,
     team: { teamHome: t.teamHome, listProjects, deliver: async () => null, headCommit: async () => null, holdReason: async () => null },
   });
-  const aya = (env, ...args) =>
+  const team = (sub, env, ...args) =>
     new Promise((done, fail) => {
       // cwd outside the project: only the pane id or the slug may name it.
-      const child = spawn("/bin/sh", [cli, "team", "show", ...args], { cwd: t.root, env: { ...envWithoutAya(), AYA_SOCKET: socket, ...env } });
+      const child = spawn("/bin/sh", [cli, "team", sub, ...args], { cwd: t.root, env: { ...envWithoutAya(), AYA_SOCKET: socket, ...env } });
       let stdout = "";
       let stderr = "";
       child.stdout.on("data", (c) => (stdout += c));
@@ -77,7 +77,8 @@ async function setup({ repo = "same", secondTeam = false } = {}) {
       child.on("error", fail);
       child.on("close", (status) => done({ status, stdout, stderr }));
     });
-  return { aya, cleanup: () => (stop(), t.cleanup()) };
+  const aya = (env, ...args) => team("show", env, ...args);
+  return { aya, team, cleanup: () => (stop(), t.cleanup()) };
 }
 
 const IN_ROLE_PANE = { AYA_TERMINAL_ID: "pane-t" };
@@ -193,6 +194,38 @@ test("team show refuses extra words and unknown flags before Aya hears of it", a
       assert.equal(status, 1, args.join(" "));
       assert.match(stderr, /Usage/, args.join(" "));
     }
+  } finally {
+    t.cleanup();
+  }
+});
+
+// A team file is written by agents: its text must reach the terminal as text. ESC starts a sequence (here: clear the
+// screen, retitle the window, colour), CR returns to the line start, C1 CSI is ESC [ in one byte, U+202E reverses
+// what follows. Each shows as "?"; tab and newline stay. In --json each is a \\uXXXX escape, JSON.stringify's own
+// for C0, Aya's for DEL, C1 and bidi, which JSON.stringify leaves raw.
+const HOSTILE = TEAM.replace("Must not: edit code", "Must not: edit\x1b]0;owned\x07 code")
+  .replace("Writes down what a player sees.", "Writes\x1b[2J down\rSAYS\u009b31m red\u202eTXT\tok")
+  .replace("Number the rounds.", "Number\x07 the\x7f rounds.");
+const UNPRINTABLE = /[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/;
+
+test("team show and team whoami print the team's control characters as ?, and --json keeps them escaped", async () => {
+  const t = await setup({ teamFile: HOSTILE });
+  try {
+    for (const [sub, args] of [["show", []], ["whoami", []]]) {
+      const { status, stdout, stderr } = await t.team(sub, IN_ROLE_PANE, ...args);
+      assert.equal(status, 0, `${sub}: ${stderr}`);
+      assert.doesNotMatch(stdout, UNPRINTABLE, sub);
+      assert.match(stdout, /must not\s+edit\?\]0;owned\? code$/m, sub);
+      assert.match(stdout, /Writes\?\[2J down\?SAYS\?31m red\?TXT\tok$/m, sub);
+      assert.match(stdout, /^protocol\nNumber\? the\? rounds\.$/m, sub);
+    }
+    const { status, stdout } = await t.aya(IN_ROLE_PANE, "--json");
+    assert.equal(status, 0);
+    assert.doesNotMatch(stdout, UNPRINTABLE, "JSON escapes them");
+    const show = JSON.parse(stdout);
+    assert.equal(show.roles[0].mustNot, "edit\x1b]0;owned\x07 code", "the data is the team's, unchanged");
+    assert.equal(show.protocol, "Number\x07 the\x7f rounds.");
+    assert.equal(show.roles[0].responsibilities, "Plays the build each round.\nWrites\x1b[2J down\rSAYS\u009b31m red\u202eTXT\tok");
   } finally {
     t.cleanup();
   }
