@@ -88,7 +88,7 @@ export function modelLines(s: MachineStatus, now: Date): string[] {
   if (!s.ollama.up) return [];
   if (s.ollama.loaded === null) return [`Models unavailable (${s.ollama.modelsError ?? "?"})`];
   if (s.ollama.loaded.length === 0) return ["No model loaded"];
-  return s.ollama.loaded.map((m) => [m.name, ...(m.vramBytes === null ? [] : [`${gib(m.vramBytes)} GiB`]), hotText(m.expiresAt, m.pinned, now)].join(" · "));
+  return s.ollama.loaded.map((m) => [m.name, ...(m.vramBytes === null ? [] : [`${gib(m.vramBytes)} GiB (reported by Ollama)`]), hotText(m.expiresAt, m.pinned, now)].join(" · "));
 }
 
 /** "run5 timed collection · justi (pane lead) · since 15:49", with its age once it is an hour old. */

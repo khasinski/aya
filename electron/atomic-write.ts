@@ -30,7 +30,9 @@ export async function writeFileAtomic(
   // secure RNG so the temp path isn't predictable (symlink-attack hygiene).
   const tmpPath = atomicTempPath(filePath);
   try {
-    await fs.writeFile(tmpPath, data, { mode });
+    // "wx": the temp file is created here or not at all. A file or symlink planted at the (random) temp path is an
+    // error, never followed, so a save cannot write through it to somewhere else.
+    await fs.writeFile(tmpPath, data, { mode, flag: "wx" });
     await fs.rename(tmpPath, filePath);
     // Remember what we just wrote so the config watcher can tell our own
     // saves apart from edits made outside the app (see config-echo.ts).

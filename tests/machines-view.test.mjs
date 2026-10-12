@@ -24,7 +24,7 @@ const shown = (s) => ({ health: health(s).word, level: health(s).level, hw: hard
 
 const mac = { cpuName: "Apple M2 Max", cpus: 12, load1: 4.5, memUsedBytes: 30 * GIB, memTotalBytes: 64 * GIB, gpus: [] };
 const CASES = [
-  ["busy GPU, model hot", status(), { health: "Ready", level: "ok", hw: "RTX 4090", load: "GPU 97% · VRAM 21.0/24.0 GiB", models: ["qwen3:32b · 19.2 GiB · until 15:14 (14 min)"].map((l) => l.replace("15:14", new Date("2026-10-04T15:14:30Z").toTimeString().slice(0, 5))) }],
+  ["busy GPU, model hot", status(), { health: "Ready", level: "ok", hw: "RTX 4090", load: "GPU 97% · VRAM 21.0/24.0 GiB", models: ["qwen3:32b · 19.2 GiB (reported by Ollama) · until 15:14 (14 min)"].map((l) => l.replace("15:14", new Date("2026-10-04T15:14:30Z").toTimeString().slice(0, 5))) }],
   ["a Mac: its chip, CPU and RAM instead of a GPU", status({ ...mac, ollama: { up: true, version: "0.12.3", loaded: [], modelsError: null } }), { health: "Ready", level: "ok", hw: "Apple M2 Max", load: "load 4.5 on 12 CPUs · RAM 30.0/64.0 GiB", models: ["No model loaded"] }],
   ["Ollama installed, not running", status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null, installed: true, running: false } }), { health: "Ollama not running", level: "warn", hw: "Apple M2 Max", load: "load 4.5 on 12 CPUs · RAM 30.0/64.0 GiB", models: [] }],
   ["no Ollama on the host", status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null, installed: false, running: false } }), { health: "Ollama not installed", level: "warn", hw: "Apple M2 Max", load: "load 4.5 on 12 CPUs · RAM 30.0/64.0 GiB", models: [] }],

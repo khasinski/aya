@@ -261,7 +261,8 @@ export function sweepLegacyAyaProcesses(
       !probe ||
       probe.pgid !== cand.pgid || // moved groups since the snapshot (pid reuse)
       !probe.commandWithEnv.includes(AYA_CHILD_MARKER) || // not an Aya terminal descendant
-      !probe.commandWithEnv.includes(AYA_HOME_MARKER) // safeEnv always sets BOTH markers
+      !probe.commandWithEnv.includes(AYA_HOME_MARKER) || // safeEnv always sets BOTH markers
+      scopeFromEnvDump(probe.commandWithEnv, deps.homedir) !== deps.ayaHome // another instance's terminal (dev, e2e)
     ) {
       summary.skipped.push(cand.pid);
       continue;

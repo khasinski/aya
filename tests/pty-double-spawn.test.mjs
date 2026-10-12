@@ -16,6 +16,11 @@ import { join } from "node:path";
 // the first append), so redirect it before any spawnPty call - otherwise unit
 // runs write into the user's real ~/.aya.
 process.env.AYA_HOME = mkdtempSync(join(tmpdir(), "aya-pty-test-"));
+// The missing binary is confirmed by a login shell (command-probe), which gives up after COMMAND_PROBE_TIMEOUT_MS and
+// then lets the spawn go ahead. The user's own shell and rc files took longer than that under load (a failed run on
+// 2026-10-12), so this case asks a plain /bin/sh with an empty HOME: the same question, answered in milliseconds.
+process.env.SHELL = "/bin/sh";
+process.env.HOME = mkdtempSync(join(tmpdir(), "aya-pty-home-"));
 const { spawnPty } = await import("../dist-electron/pty.js");
 const { fakeSink } = await import("./helpers/pty-host.mjs");
 

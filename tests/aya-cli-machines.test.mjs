@@ -246,7 +246,7 @@ const statusRows = [
     name: "connected over ssh with a GPU and a hot model",
     mode: `ok:${linuxFixture}`,
     text: [
-      /^athena {2}RTX 4090 GPU 0% VRAM 5\.1\/24\.0 GiB {2}CPU 0\.1\/32 {2}RAM 10\.9\/30\.0 GiB {2}ssh:athena\n {8}ollama 0\.34\.4\n {10}gemma-best:latest 0\.3 GiB hot until /m,
+      /^athena {2}RTX 4090 GPU 0% VRAM 5\.1\/24\.0 GiB {2}CPU 0\.1\/32 {2}RAM 10\.9\/30\.0 GiB {2}ssh:athena\n {8}ollama 0\.34\.4\n {10}gemma-best:latest 0\.3 GiB \(reported by Ollama\) hot until /m,
       /\n {8}not claimed\nchecked \d\d:\d\d:\d\d\n$/,
     ],
     json: { reachable: true, error: null, cpus: 32, ollama: { up: true, version: "0.34.4" } },
