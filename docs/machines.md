@@ -121,7 +121,7 @@ The target never starts with `-`. Remote projects keep their own ssh call, which
 
 Limits:
 
-- Text from a host (model names, ssh errors) and from `~/.ssh/config` reaches the terminal with every control character replaced by `?`, so it can neither redraw the screen nor pass for an Aya OSC signal from the pane that ran the command.
+- Text from a host (model names, ssh errors) and from `~/.ssh/config` reaches the terminal with every control character shown as its `\uXXXX` escape, as in every reply Aya's CLI prints, so it can neither redraw the screen nor pass for an Aya OSC signal from the pane that ran the command.
 - An `/api/ps` entry that is not an object is skipped; one odd answer never hides the other machines.
 - `~/.ssh/config` and its Includes are read only as regular files up to 1 MB.
 - After 10 s the probe's process group gets SIGKILL, and the machine shows as unreachable with the reason.

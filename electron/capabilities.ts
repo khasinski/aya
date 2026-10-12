@@ -84,7 +84,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
   {
     command: "pane read",
     usage: "aya pane read target [--project slug]",
-    summary: "Print another pane's recent output as plain text, as its screen shows it, newest last.",
+    summary: "Print another pane's recent output as plain text, as its screen shows it, newest last; a control character in it shows as its \\uXXXX escape.",
     example: 'aya pane read "reviewer"',
     notes: [
       "target is a pane name or an id from aya pane list; --project picks the project a name is looked up in.",

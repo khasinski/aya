@@ -195,6 +195,28 @@ test("a snapshot that fails is reported and the server closes the connection", a
   );
 });
 
+test("the stream holds nothing a terminal would act on, and parses to the same data", async (t) => {
+  // aya remote --stdio prints this stream; a project name from a team or agent may hold C1 CSI or a bidi override.
+  const name = "game\u009b31m\u202eTXT\x1b]0;owned\x07";
+  const { socket } = start(t, { getSnapshot: async () => ({ ...EMPTY_SNAPSHOT, projects: [{ slug: "game", name, directory: "/g", tabs: [] }] }) });
+  const raw = await new Promise((resolve, reject) => {
+    const client = net.createConnection(socket);
+    let text = "";
+    client.setEncoding("utf8");
+    client.on("data", (chunk) => {
+      text += chunk;
+      if (text.split("\n").length > 2) {
+        client.destroy();
+        resolve(text);
+      }
+    });
+    client.on("error", reject);
+  });
+  assert.doesNotMatch(raw, /[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028-\u202e\u2066-\u206f]/);
+  const snapshot = raw.split("\n").map((l) => l && JSON.parse(l)).find((m) => m && m.type === "snapshot");
+  assert.equal(snapshot.snapshot.projects[0].name, name);
+});
+
 test("without host info the hello names this machine", async (t) => {
   const { socket } = start(t);
   const [hello] = await talk(socket, [], (m) => m.length >= 1);

@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ProjectConfig } from "./types";
 import { listenOwnerOnly } from "./owner-socket";
+import { printable } from "./printable";
 import { REMOTE_SOCKET_PATH } from "./paths";
 import {
   REMOTE_PROTOCOL_VERSION,
@@ -21,8 +22,10 @@ export interface RemoteServerOptions {
   host?: RemoteHostInfo;
 }
 
+// The stream is JSON for the other Aya, but `aya remote --stdio` run by hand prints it to a terminal: printable keeps
+// the JSON and its data and leaves nothing there to act on, as on the control socket (control.ts printableReply).
 function sendJson(socket: net.Socket, value: unknown): void {
-  socket.write(`${JSON.stringify(value)}\n`);
+  socket.write(`${printable(JSON.stringify(value))}\n`);
 }
 
 function defaultHostInfo(): RemoteHostInfo {

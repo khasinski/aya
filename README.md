@@ -70,7 +70,7 @@ run commands.
   waiting state is read off each pane's real screen (a headless VT mirror), not
   a fragile byte-stream heuristic, so it also clears when the agent repaints.
 - **Agents drive each other.** `aya pane read "reviewer"` returns another pane's
-  output as plain text, as its screen shows it, and `aya pane send` types into
+  output as plain text, as its screen shows it (a control character as its `\uXXXX` escape), and `aya pane send` types into
   it, so one agent hands work to another and collects the result. Panes are addressed by tab name within a project.
 - **Teams of agents.** A team file in `.aya/teams/` gives panes roles (who
   they are, what they must not do, who they report to). Agents learn their
