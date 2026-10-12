@@ -113,6 +113,7 @@
       "dist-electron/team-stats.js",
       "dist-electron/team-records.js",
       "dist-electron/team-definition.js",
+      "dist-electron/printable.js",
       "dist-electron/team-supervision.js",
       "dist-electron/team-digest.js",
       "dist-electron/pane-holds.js",
