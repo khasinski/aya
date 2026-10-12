@@ -363,6 +363,9 @@ test("aya team stats prints the status command and its recorded output as text, 
   const fixture = (dir) => {
     writeFileSync(join(dir, TEAM_FILES.saved), `${SAVED}\n## Status command\n${command}\n`);
     writeFileSync(join(dir, TEAM_FILES.status), JSON.stringify({ command, ranAt: at(3), output, failure: "exit 1\x1b[2J" }));
+    // What the counts and the round's digest quote: a hold reason from a pane, a refused send's role, reason and text.
+    writeFileSync(join(dir, DEBUG_LOG_FILE), jsonl([ev(4, "hold", { to: "lead", id: 1, reason: "shows\u009b31m a prompt", typed: false })]));
+    writeFileSync(join(dir, TEAM_FILES.refused), jsonl([{ time: new Date(Date.now() - 5 * MINUTE_MS).toISOString(), from: "tester", to: "nobody\u009bX", reason: "no such role\u202eR", text: "hi\x1b[2J there" }]));
   };
   const h = teamHome([["game", "crew", fixture]]);
   const UNPRINTABLE = /[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028-\u202e\u2066-\u206f]/;
@@ -373,6 +376,8 @@ test("aya team stats prints the status command and its recorded output as text, 
     assert.match(r.stdout, /command: git log\?\]0;owned\? -1$/m);
     assert.match(r.stdout, /^  abc1234 fix\?31m red\?TXT$/m);
     assert.match(r.stdout, /^  exit 1\?\[2J$/m);
+    if (flag.length) assert.match(r.stdout, /^Refused sends: tester -> "nobody\?X" \(no such role\?R\): "hi\?\[2J there"$/m);
+    else assert.match(r.stdout, /^ +1 {2}shows\?31m a prompt$/m);
   }
   const r = runCli(h, ["team", "stats", "crew", "--json"]);
   assert.equal(r.status, 0, r.stderr);

@@ -144,6 +144,26 @@ for (const shell of CLI_SHELLS) {
   });
 }
 
+test("aya team debug prints what agents sent as text: a bare value and a quoted one", () => {
+  const h = home();
+  try {
+    // A value with no space, quote or = is printed bare, so an ESC in it would have reached the terminal as is;
+    // a quoted one goes through JSON.stringify, which leaves C1 and bidi raw.
+    teamLog(h, "game", "ux-review", [
+      entry(1, "socket", { command: "team-send", to: "tester", text: "\x1b]0;owned\x07" }),
+      entry(2, "socket", { command: "team-send", to: "tester", text: "red \u009b31m and \u202eTXT" }),
+    ]);
+    const r = run("/bin/sh", h, ["team", "debug", "ux-review"]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stdout, /[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028-\u202e\u2066-\u206f]/);
+    const out = r.stdout.trim().split("\n");
+    assert.match(out[0], /text=\?\]0;owned\?$/);
+    assert.match(out[1], /text="red \?31m and \?TXT"$/);
+  } finally {
+    h.cleanup();
+  }
+});
+
 test("aya debug on reaches a running Aya with no restart", async () => {
   const h = home();
   mkdirSync(h.aya, { recursive: true });
