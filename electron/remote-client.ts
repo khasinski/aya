@@ -341,16 +341,16 @@ function runRemoteRequest(
           if (err) {
             // Not err.message: it is "Command failed: ssh <target> node -e <the whole bridge>", whose text also sent
             // healthFailureStage to the wrong stage.
-            // 255 is ssh's own failure; any other code is the remote bridge's, which then said nothing.
+            // An exit code: 255 is ssh's own failure, any other the remote bridge's, which then said nothing. No exit
+            // code (stdout over maxBuffer, no ssh binary): Node's own message names the cause and not the command.
             const code = (err as { code?: unknown }).code;
-            reject(
-              new Error(
-                detail ||
-                  (code === 255 || typeof code !== "number"
-                    ? `ssh ${target} failed${typeof code === "number" ? ` (exit ${code})` : ""}.`
-                    : `Remote Aya did not respond on ${target}: its bridge exited ${code} with no output.`),
-              ),
-            );
+            const why =
+              typeof code !== "number"
+                ? err.message
+                : code === 255
+                  ? `ssh ${target} failed (exit 255).`
+                  : `Remote Aya did not respond on ${target}: its bridge exited ${code} with no output.`;
+            reject(new Error(detail || why));
             return;
           }
           reject(new Error(`Remote Aya connection closed before response (0).`));
