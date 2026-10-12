@@ -13,6 +13,7 @@ import {
   selectOrphanCandidates,
   sweepLegacyAyaProcesses,
   MAX_ORPHAN_PROBES,
+  readSnapshot,
 } from "../dist-electron/pty-host-sweep.js";
 import { AYA_DEV_HOME_DIRNAME, AYA_DEV_ON, AYA_DEV_VAR, AYA_HOME_DIRNAME } from "../dist-electron/paths.js";
 
@@ -337,4 +338,10 @@ test("sweep: empty snapshot or missing uid is a total no-op", () => {
     ).sweptHosts,
     [],
   );
+});
+test("readSnapshot reads the real process table on this OS (procps on Linux refuses -Axo)", () => {
+  const self = readSnapshot().find((r) => r.pid === process.pid);
+  assert.ok(self, "this process is in the table, so ps ran and its output parsed");
+  assert.equal(self.uid, process.getuid());
+  assert.equal(self.ppid, process.ppid);
 });

@@ -87,7 +87,7 @@ export function scopeFromEnvDump(commandWithEnv: string, homedir: string): strin
   return path.join(homedir, AYA_HOME_DIRNAME);
 }
 
-/** Parse `ps -Axo uid=,pid=,ppid=,pgid=,command=` output. Malformed lines are
+/** Parse `ps -A -o uid=,pid=,ppid=,pgid=,command=` output. Malformed lines are
  *  dropped (fail-closed: an unparseable row can never become a kill target). */
 export function parseSnapshot(psOutput: string): ProcRow[] {
   const rows: ProcRow[] = [];
@@ -281,7 +281,7 @@ export function sweepLegacyAyaProcesses(
 /** Full system snapshot: uid, pid, ppid, pgid, command per process. */
 export function readSnapshot(): ProcRow[] {
   try {
-    const out = execFileSync("ps", ["-Axo", "uid=,pid=,ppid=,pgid=,command="], {
+    const out = execFileSync("ps", ["-A", "-o", "uid=,pid=,ppid=,pgid=,command="], {
       encoding: "utf8",
       env: PS_ENV,
       maxBuffer: PS_SNAPSHOT_MAX_BUFFER_BYTES,
