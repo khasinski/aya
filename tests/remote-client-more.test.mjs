@@ -22,6 +22,8 @@ writeExecutable(
   join(root, "ssh"),
   `#!/bin/sh
 root="${root}"
+# ssh -- <target> <command>: skip the "--" that ends ssh's options.
+[ "$1" = "--" ] && shift
 target="$1"
 echo "$target" >> "$root/calls"
 mode=$(cat "$root/$target.mode" 2>/dev/null)
