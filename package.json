@@ -69,7 +69,7 @@
     "wait-on": "^9.0.10"
   },
   "overrides": {
-    "shell-quote": "^1.8.4"
+    "shell-quote": "^1.11.0"
   },
   "build": {
     "appId": "com.aya.app",
