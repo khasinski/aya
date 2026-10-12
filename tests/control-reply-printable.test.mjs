@@ -1,9 +1,9 @@
 // The control server's reply is where every command's text is made printable (control.ts printableReply), so no
 // command has to remember to. One server whose every dependency carries characters that act on a terminal (a
-// window title OSC, C1 CSI, a bidi override), and each command that quotes such text, in its output or its error,
-// through the real CLI: none reaches stdout or stderr raw, and each shows as its escape. The outputs that do not
-// cross this socket have their own: the remote socket (remote-server-commands), team stats and team debug.
-// focus, notify, status and capabilities print nothing from outside Aya.
+// window title OSC, C1 CSI, a bidi override), and each command that quotes outside text, in its output or its
+// error, through the real CLI: none reaches stdout or stderr raw, and each shows as its escape. Outside text
+// includes the caller's own (its role argument, its AYA_TERMINAL_ID). The outputs that do not cross this socket
+// have their own tests: the remote socket (remote-server-commands), team stats and team debug.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -39,7 +39,7 @@ const TEAM = `# crew
 ## Role: tester
 Sends to: lead
 Must not: guess
-Tests.
+Tests ${HOSTILE}.
 
 ## Role: lead
 Sends to: tester
@@ -111,6 +111,10 @@ const CASES = [
   ["presets", "a preset's name", ["presets"], {}, "stdout", 0],
   ["team new", "the request quoted back", ["team", "new", `ux ${HOSTILE}`], {}, "stdout", 0],
   ["team send", "the role named, in the refusal", ["team", "send", `r${HOSTILE}`, "x"], AS_TESTER, "stderr", 1],
+  ["team show", "a role's responsibilities", ["team", "show", "crew"], {}, "stdout", 0],
+  ["team whoami", "the caller's responsibilities", ["team", "whoami"], AS_TESTER, "stdout", 0],
+  ["status", "the teammate waited on, in the refusal", ["status", "waiting", "--on", `r${HOSTILE}`, "x"], AS_TESTER, "stderr", 1],
+  ["capabilities", "the caller's own AYA_TERMINAL_ID", ["capabilities"], { AYA_TERMINAL_ID: `pane${HOSTILE}` }, "stdout", 0],
 ];
 
 for (const [command, source, args, env, stream, status] of CASES) {
@@ -121,6 +125,10 @@ for (const [command, source, args, env, stream, status] of CASES) {
     assert.ok(r[stream].includes(SHOWN), r[stream]);
   });
 }
+
+test("aya focus prints nothing", async () => {
+  assert.deepEqual(await aya(["focus"]), { status: 0, stdout: "", stderr: "" });
+});
 
 test("a pane's screen keeps its tab and newline, and only those", async () => {
   const r = await aya(["pane", "read", PANE]);
