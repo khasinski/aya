@@ -233,6 +233,23 @@ jobs:
           test -x "$cli"
           "$cli" help
 
+      # The fuses electron-builder flips (package.json electronFuses) exist only in
+      # the packaged binary, so only this job can see them. runAsNode must stay on:
+      # the pty-host is this binary run as Node.
+      - name: Check the Electron fuses in the packaged binary
+        run: |
+          app=release/linux-unpacked/aya
+          npx @electron/fuses read --app "$app" | tee fuses.txt
+          for want in "RunAsNode is Enabled" "EnableNodeOptionsEnvironmentVariable is Disabled" \
+            "EnableNodeCliInspectArguments is Disabled" "EnableEmbeddedAsarIntegrityValidation is Enabled" \
+            "OnlyLoadAppFromAsar is Enabled"; do
+            grep -qF "$want" fuses.txt || { echo "::error::expected fuse: $want"; exit 1; }
+          done
+          probe="$RUNNER_TEMP/node-options-probe.cjs"
+          echo 'require("fs").writeFileSync(process.env.PROBE_MARK, "ran")' > "$probe"
+          ELECTRON_RUN_AS_NODE=1 PROBE_MARK="$RUNNER_TEMP/node-options-ran" NODE_OPTIONS="--require $probe" "$app" -e 'console.log("run as node:", process.versions.node)'
+          test ! -e "$RUNNER_TEMP/node-options-ran" || { echo "::error::NODE_OPTIONS ran code in the packaged binary"; exit 1; }
+
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
