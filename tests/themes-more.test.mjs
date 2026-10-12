@@ -244,7 +244,7 @@ function itermPlist(overrides = {}) {
 test("iTerm2: an ANSI color that is a string, not a dict, is reported by its index", () => {
   assert.throws(
     () => parseItermColors(itermPlist({ "Ansi 4 Color": "<string>#0000ff</string>" }), "X"),
-    /missing "Ansi 4 Color"/,
+    /no usable "Ansi 4 Color"/,
   );
 });
 
@@ -258,36 +258,38 @@ test("iTerm2: an ANSI color with any component that is not a number is reported"
       "</dict>";
     assert.throws(
       () => parseItermColors(itermPlist({ "Ansi 9 Color": dict }), "X"),
-      /missing "Ansi 9 Color"/,
+      /no usable "Ansi 9 Color"/,
       `${channel} as a string`,
     );
   }
 });
 
 test("iTerm2: a missing last ANSI slot (15) is reported", () => {
-  assert.throws(() => parseItermColors(itermPlist({ "Ansi 15 Color": null }), "X"), /missing "Ansi 15 Color"/);
+  assert.throws(() => parseItermColors(itermPlist({ "Ansi 15 Color": null }), "X"), /no usable "Ansi 15 Color"/);
 });
 
 test("iTerm2: a missing or malformed background or foreground is reported", () => {
   for (const key of ["Background Color", "Foreground Color"]) {
-    assert.throws(() => parseItermColors(itermPlist({ [key]: null }), "X"), /missing Background or Foreground/);
+    assert.throws(() => parseItermColors(itermPlist({ [key]: null }), "X"), /no usable Background or Foreground/);
     assert.throws(
       () => parseItermColors(itermPlist({ [key]: "<dict><key>Red Component</key><real>1</real></dict>" }), "X"),
-      /missing Background or Foreground/,
+      /no usable Background or Foreground/,
     );
   }
 });
 
-test("iTerm2: components outside 0..1, huge or infinite, are clamped to 00..ff", () => {
+test("iTerm2: finite components outside 0..1, however large, are clamped to 00..ff; an infinite one is refused", () => {
   const t = parseItermColors(
     itermPlist({
-      "Background Color": colorDict(-5, 2, 1e400),
+      "Background Color": colorDict(-5, 2, 1e308),
       "Foreground Color": colorDict(1e308, -1e308, 0.5),
     }),
     "Clamp",
   );
   assert.equal(t.colors.background, "#00ffff");
   assert.equal(t.colors.foreground, "#ff0080");
+  // 1e400 parses as Infinity: not a component, like nan (#192).
+  assert.throws(() => parseItermColors(itermPlist({ "Background Color": colorDict(-5, 2, 1e400) }), "X"), /no usable Background or Foreground/);
 });
 
 test("iTerm2: no cursor or selection color falls back to the foreground and leaves selection unset", () => {
