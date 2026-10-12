@@ -234,100 +234,118 @@ function runRemoteRequest(
         maxBuffer: REMOTE_BRIDGE_MAX_BUFFER_BYTES,
       },
       (err, stdout, stderr) => {
-        let matchedError: Error | null = null;
-        for (const line of stdout.split(/\r?\n/)) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          let message: RemoteMessage;
-          try {
-            message = JSON.parse(trimmed) as RemoteMessage;
-          } catch {
-            reject(new Error("Remote Aya returned invalid JSON."));
-            return;
-          }
-          if (message.type === "hello") {
-            host = requireHost(message.host);
-            continue;
-          }
-          if (message.type === "snapshot") {
-            presets = requirePresets(message.snapshot.presets);
-            allProjects = requireProjects(message.snapshot.projects);
-            recentProjects = orderRecentProjects(
-              allProjects,
-              requireRecentProjectSlugs(message.snapshot.projectState),
-            );
-            continue;
-          }
-          if (message.type === "error" && message.id === id) {
-            matchedError = new Error(message.message || message.code);
-            continue;
-          }
-          if ("id" in message && message.id === id) {
-            if (!host) {
-              reject(new Error("Remote Aya response arrived before hello."));
+        // The remote side's output is untrusted: whatever in it throws (a host that is not a host, a null line, a
+        // snapshot without its fields) rejects this request. Uncaught here, it was an exception in the main process
+        // and a request that never settled.
+        try {
+          let matchedError: Error | null = null;
+          // An error with no id is about the connection (snapshot_failed): the reason, unless our answer still came.
+          let connectionError: Error | null = null;
+          for (const line of stdout.split(/\r?\n/)) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            let message: RemoteMessage;
+            try {
+              message = JSON.parse(trimmed) as RemoteMessage;
+            } catch {
+              reject(new Error("Remote Aya returned invalid JSON."));
               return;
             }
-            resolve({ host, presets, recentProjects, response: message });
+            if (!isRecord(message)) {
+              reject(new Error("Remote Aya returned a message that is not an object."));
+              return;
+            }
+            if (message.type === "hello") {
+              host = requireHost(message.host);
+              continue;
+            }
+            if (message.type === "snapshot") {
+              presets = requirePresets(message.snapshot.presets);
+              allProjects = requireProjects(message.snapshot.projects);
+              recentProjects = orderRecentProjects(
+                allProjects,
+                requireRecentProjectSlugs(message.snapshot.projectState),
+              );
+              continue;
+            }
+            if (message.type === "error" && message.id === id) {
+              matchedError = new Error(message.message || message.code);
+              continue;
+            }
+            if (message.type === "error" && !("id" in message && message.id)) {
+              connectionError ??= new Error(message.message || message.code);
+              continue;
+            }
+            if ("id" in message && message.id === id) {
+              if (!host) {
+                reject(new Error("Remote Aya response arrived before hello."));
+                return;
+              }
+              resolve({ host, presets, recentProjects, response: message });
+              return;
+            }
+          }
+          if (matchedError) {
+            // Carry the snapshot context (parsed before the error) so callers can
+            // recover from a benign command failure without a second round-trip.
+            if (host) {
+              (matchedError as RemoteRequestError).remoteContext = {
+                host,
+                presets,
+                projects: allProjects,
+              };
+            }
+            reject(matchedError);
             return;
           }
-        }
-        if (matchedError) {
-          // Carry the snapshot context (parsed before the error) so callers can
-          // recover from a benign command failure without a second round-trip.
-          if (host) {
-            (matchedError as RemoteRequestError).remoteContext = {
-              host,
-              presets,
-              projects: allProjects,
-            };
+          if (connectionError) {
+            reject(connectionError);
+            return;
           }
-          reject(matchedError);
-          return;
+          const detail = stderr.trim();
+          if (
+            detail &&
+            /node: command not found|command not found: node|node: not found/i.test(
+              detail,
+            )
+          ) {
+            reject(
+              new Error(
+                `Node is not available on ${target}. Install Node or make it available over ssh.`,
+              ),
+            );
+            return;
+          }
+          if (
+            detail &&
+            /aya: command not found|command not found: aya|aya: not found/i.test(
+              detail,
+            )
+          ) {
+            reject(
+              new Error(
+                `Aya is not installed on ${target}. Install Aya there and make sure it has been started.`,
+              ),
+            );
+            return;
+          }
+          if (err?.killed) {
+            reject(
+              new Error(`ssh ${target} did not finish within ${seconds(timeouts.sshKillMs)}.`),
+            );
+            return;
+          }
+          if (err) {
+            // Not err.message: it is "Command failed: ssh <target> node -e <the whole bridge>", whose text also sent
+            // healthFailureStage to the wrong stage.
+            const code = (err as { code?: unknown }).code;
+            reject(new Error(detail || `ssh ${target} failed${typeof code === "number" ? ` (exit ${code})` : ""}.`));
+            return;
+          }
+          reject(new Error(`Remote Aya connection closed before response (0).`));
+        } catch (bad) {
+          reject(bad instanceof Error ? bad : new Error(String(bad)));
         }
-        const detail = stderr.trim();
-        if (
-          detail &&
-          /node: command not found|command not found: node|node: not found/i.test(
-            detail,
-          )
-        ) {
-          reject(
-            new Error(
-              `Node is not available on ${target}. Install Node or make it available over ssh.`,
-            ),
-          );
-          return;
-        }
-        if (
-          detail &&
-          /aya: command not found|command not found: aya|aya: not found/i.test(
-            detail,
-          )
-        ) {
-          reject(
-            new Error(
-              `Aya is not installed on ${target}. Install Aya there and make sure it has been started.`,
-            ),
-          );
-          return;
-        }
-        if (err?.killed) {
-          reject(
-            new Error(`ssh ${target} did not finish within ${seconds(timeouts.sshKillMs)}.`),
-          );
-          return;
-        }
-        if (err) {
-          reject(
-            new Error(
-              detail ||
-                err.message ||
-                `Remote Aya connection failed for ${target}.`,
-            ),
-          );
-          return;
-        }
-        reject(new Error(`Remote Aya connection closed before response (0).`));
       },
     );
   });
