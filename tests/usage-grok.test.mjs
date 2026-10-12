@@ -110,13 +110,14 @@ test("distinct models across rows are merged and sorted", () => {
 
 // The weekly limit comes from the "billing: fetched credits config" line Grok
 // 1.0.41 writes to logs/unified.jsonl; the chip's ring shows it.
-import { appendFileSync, chmodSync, mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdtempSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   extractGrokLimit,
   readGrokLimit,
   readGrokUsage,
+  resetGrokUsageCache,
 } from "../dist-electron/usage-grok.js";
 
 const creditsLine = (pct, end, ts = "2026-09-26T19:48:33.830Z") =>
@@ -294,4 +295,36 @@ test("a huge or long-unread log is read from its tail, never whole", async () =>
 
 test("timestamps below 1e12 are read as seconds", () => {
   assert.equal(SECONDS_EPOCH_CEILING, 1e12);
+});
+
+test("the newest limit across homes is chosen by time, whatever the ts string's offset or milliseconds", async () => {
+  // A: 21:00+02:00 is 19:00Z; B: 19:30Z is newer. As strings A sorts after B, so a string comparison took A.
+  const a = grokHome([creditsLine(10, END, "2026-09-26T21:00:00+02:00")]);
+  const b = grokHome([creditsLine(60, END, "2026-09-26T19:30:00.000Z")]);
+  // The same instant to the second, spelled with and without milliseconds: "Z" sorts after ".".
+  const c = grokHome([creditsLine(20, END, "2026-09-26T19:48:33Z")]);
+  const d = grokHome([creditsLine(70, END, "2026-09-26T19:48:33.830Z")]);
+  try {
+    for (const homes of [[a, b], [b, a]]) assert.equal((await readGrokUsage(homes, NOW)).limit.pct, 60, homes.join(" "));
+    for (const homes of [[c, d], [d, c]]) assert.equal((await readGrokUsage(homes, NOW)).limit.pct, 70, homes.join(" "));
+  } finally {
+    for (const home of [a, b, c, d]) rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a home given again through a symlink counts its sessions once", async () => {
+  const home = mkdtempSync(join(tmpdir(), "aya-grok-"));
+  const session = join(home, "sessions", "proj", "s1");
+  mkdirSync(session, { recursive: true });
+  writeFileSync(join(session, "updates.jsonl"), `${turnLine({}, NOW - 60 * 60 * 1000)}\n`);
+  const link = `${home}-link`;
+  symlinkSync(home, link);
+  try {
+    resetGrokUsageCache();
+    assert.equal((await readGrokUsage([home], NOW)).turns, 1);
+    assert.equal((await readGrokUsage([home, link], NOW)).turns, 1, "the same log through the symlink is the same log");
+  } finally {
+    rmSync(link, { force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
 });

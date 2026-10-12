@@ -341,9 +341,16 @@ async function rowsForFile(file: string): Promise<GrokUsageRow[]> {
   return rows;
 }
 
+/** Whether `a` was logged after `b`, by time: the log's ts strings may differ in offset or milliseconds, and a
+ *  string comparison then ranks them wrong ("...19:48:33Z" sorts after "...19:48:33.830Z"). */
+function loggedAfter(a: GrokLimit, b: GrokLimit): boolean {
+  return Date.parse(a.updatedAt) > Date.parse(b.updatedAt);
+}
+
 /** Aggregate Grok usage over the rolling window across every session under the
- *  given homes (deduped by resolved path). null when there is nothing in the
- *  window - the chip then hides. */
+ *  given homes (deduped by real path, so a home given twice, or once through a
+ *  symlink, counts once). null when there is nothing in the window - the chip
+ *  then hides. */
 export async function readGrokUsage(
   homes: string[] = [DEFAULT_GROK_HOME],
   nowMs: number = Date.now(),
@@ -354,12 +361,13 @@ export async function readGrokUsage(
   let limit: GrokLimit | null = null;
   for (const home of homes.length > 0 ? homes : [DEFAULT_GROK_HOME]) {
     for (const file of await recentSessionLogs(home, sinceMs)) {
-      if (seen.has(file)) continue;
-      seen.add(file);
+      const real = await fs.realpath(file).catch(() => file);
+      if (seen.has(real)) continue;
+      seen.add(real);
       allRows.push(...(await rowsForFile(file)));
     }
     const found = await readGrokLimit(home, nowMs);
-    if (found && (!limit || found.updatedAt > limit.updatedAt)) limit = found;
+    if (found && (!limit || loggedAfter(found, limit))) limit = found;
   }
   const usage = sumGrokUsage(allRows, nowMs);
   if (!limit) return usage;
