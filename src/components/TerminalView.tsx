@@ -750,7 +750,9 @@ function TerminalViewComponent({
       event.stopPropagation();
       void window.aya.openUrl(url);
     };
-    containerRef.current.addEventListener("click", onTerminalLinkClick, true);
+    // The cleanup removes it from this node: by then the ref may point elsewhere.
+    const container = containerRef.current;
+    container.addEventListener("click", onTerminalLinkClick, true);
 
     // GPU-accelerated renderer - eliminates the column-drift you get with
     // the default DOM renderer when fonts (especially JetBrains Mono with
@@ -993,11 +995,7 @@ function TerminalViewComponent({
     }
 
     return () => {
-      containerRef.current?.removeEventListener(
-        "click",
-        onTerminalLinkClick,
-        true,
-      );
+      container.removeEventListener("click", onTerminalLinkClick, true);
       unsubscribe();
       onDataDisposable.dispose();
       onResizeDisposable.dispose();
@@ -1230,7 +1228,16 @@ function TerminalViewComponent({
       rows: Math.max(term.rows, TERMINAL_FALLBACK_ROWS),
       ...(terminal.teamLaunch ? { teamLaunch: true } : {}),
     });
-  }, [restartTrigger, terminal.id, presetAgent, preset.configDir, terminal.teamLaunch]);
+  }, [
+    restartTrigger,
+    terminal.id,
+    terminal.projectSlug,
+    terminal.presetId,
+    presetAgent,
+    preset.configDir,
+    terminal.teamLaunch,
+    markRestoring,
+  ]);
 
   useEffect(() => {
     markRestoring(true);

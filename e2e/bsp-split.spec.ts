@@ -53,6 +53,25 @@ test("splitting one pane leaves its neighbour exactly where it was", async ({
   expect(Math.abs(after.height - before.height)).toBeLessThan(4);
 });
 
+test("a new terminal opens in the empty pane a split just focused, not in the pane it came from", async ({
+  window,
+  app,
+}) => {
+  await fireShortcut(app, "focus-pane-left");
+  await expect(
+    window.locator('.aya-pane--active-split[data-terminal-name="shell 1"]'),
+  ).toBeVisible();
+  // The split focuses the new, empty pane but leaves the active terminal as it was.
+  await fireShortcut(app, "split-pane-below");
+  await expect(window.locator(".aya-pane-empty--active")).toBeVisible();
+
+  await fireShortcut(app, "new-shell");
+  await expect(window.locator(".aya-pane-empty")).toHaveCount(0);
+  await expect(pane(window, "shell 1")).toBeVisible();
+  await expect(pane(window, "shell 2")).toBeVisible();
+  await expect(window.getByTestId("terminal-pane")).toHaveCount(3);
+});
+
 test("a nested split divides only its own half", async ({ window, app }) => {
   await expect(window.locator(".aya-sidebar-row--active")).toHaveText(/shell 1/);
   const leftBefore = await boxOf(window, "shell 1");

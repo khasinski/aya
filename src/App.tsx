@@ -2237,7 +2237,7 @@ export function App() {
         detail: command,
       });
     },
-    [activeTabByProject, appendProjectEvent, effectiveCwd],
+    [activeTabByProject, activeLeafByProject, appendProjectEvent, effectiveCwd],
   );
 
   // aya team open / Apply panes: main picked the ids and assigns the roles
@@ -2801,7 +2801,7 @@ export function App() {
       delete next[slug];
       return next;
     });
-  }, []);
+  }, [updateProjectCollection]);
 
   /** Hand a project to another window: drop ALL local state for it WITHOUT
    *  killing its PTYs (they live in the detached host; the adopting window
@@ -2848,7 +2848,7 @@ export function App() {
       delete next[slug];
       return next;
     });
-  }, []);
+  }, [updateProjectCollection]);
 
   /** Move a project (its tab + running terminals) to another Aya window, or
    *  tear it out into a new one. Local projects only for now - a remote
@@ -3192,7 +3192,7 @@ export function App() {
         title: `${terminal.name} restarted`,
       });
     }
-  }, [appendProjectEvent]);
+  }, [appendProjectEvent, lastActivityRef]);
 
   // Per-terminal counter — bumped each time we forcibly restart (right-click
   // → Restart). TerminalView watches the prop and triggers a fresh ptySpawn
@@ -3262,7 +3262,7 @@ export function App() {
       title: `${t.name} restarted`,
     });
     setRestartTriggers((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
-  }, [appendProjectEvent]);
+  }, [appendProjectEvent, lastActivityRef]);
 
   /** Open a shell terminal in the active project. Used by Cmd/Ctrl+T. Falls
    *  back to BUILTIN_SHELL if the user has deleted their shell preset so the
