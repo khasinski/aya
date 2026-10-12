@@ -494,9 +494,11 @@ async function handleRequest(
     // Lazy: plain Node tests import this module and must not load Electron.
     const { Notification } = require("electron") as typeof import("electron");
     if (!Notification.isSupported()) return;
+    // The title and body are an agent's words: as one plain line (printable.ts oneLine), so a bidi override cannot
+    // reorder what the user reads in a system notification.
     const notification = new Notification({
-      title: request.title || "Aya",
-      body: request.body,
+      title: oneLine(request.title ?? "") || "Aya",
+      body: oneLine(request.body),
       silent: false,
     });
     notification.on("click", () => {
