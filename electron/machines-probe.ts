@@ -1,6 +1,7 @@
 // Read-only probes of a machine for `aya machines` (docs/machines.md).
 
 import { lastStderrLine, requireSshTarget, runProcess, runSsh, sshFailure } from "./ssh";
+import type { ApiState } from "./machines-api";
 
 export const PROBE_DEADLINE_MS = 10_000;
 const MAX_PROBE_OUTPUT_BYTES = 1_000_000;
@@ -44,10 +45,10 @@ export interface MachineStatus {
   memUsedBytes: number | null;
   memTotalBytes: number | null;
   gpus: GpuLoad[];
-  /** nvidia-smi's own failure ("Failed to initialize NVML: Driver/library version mismatch") when it read no GPU:
-   *  an NVIDIA card Ollama cannot use, so models run on the CPU. */
+  /** A failure of GPU telemetry; this does not determine where a serving model runs. */
   gpuError: string | null;
   ollama: OllamaState;
+  api?: ApiState;
 }
 
 export type Reach = "local" | { ssh: string };
@@ -56,10 +57,10 @@ export type Reach = "local" | { ssh: string };
 const CURL_GET = "curl -q -s --noproxy '*' -X GET --max-time 3";
 
 /** The probe script, for macOS and Linux alike; sections are marked so a missing tool leaves an empty section, not a parse error. */
-export function probeScript(port: number): string {
+export function probeScript(port: number, hardwareOnly = false): string {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`bad Ollama port ${port}`);
   const url = `http://127.0.0.1:${port}`;
-  return [
+  const lines = [
     "echo @@cpuname; sysctl -n machdep.cpu.brand_string 2>/dev/null || sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo 2>/dev/null | head -n 1",
     "echo @@nproc; nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null",
     "echo @@loadavg; cat /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null",
@@ -75,7 +76,8 @@ export function probeScript(port: number): string {
     `echo @@ps; ${CURL_GET} ${url}/api/ps 2>/dev/null; echo`,
     "echo @@end",
     "",
-  ].join("\n");
+  ];
+  return (hardwareOnly ? lines.filter((line) => !/^echo @@(?:ollamabin|ollamaproc|version|ps);/.test(line)) : lines).join("\n");
 }
 
 export function splitSections(output: string): Map<string, string> {
@@ -217,6 +219,7 @@ export function parseProbe(output: string, checkedAt: string): MachineStatus {
 export interface ProbeOptions {
   deadlineMs?: number;
   now?: () => Date;
+  hardwareOnly?: boolean;
 }
 
 /** One probe, read-only: the same script on stdin of `sh -s` here or over ssh, so both read the same way. */
@@ -224,7 +227,7 @@ export async function probeMachine(reach: Reach, port: number, options: ProbeOpt
   const host = reach === "local" ? null : requireSshTarget(reach.ssh);
   const deadlineMs = options.deadlineMs ?? PROBE_DEADLINE_MS;
   const checkedAt = (options.now?.() ?? new Date()).toISOString();
-  const run = { input: probeScript(port), deadlineMs, maxOutputBytes: MAX_PROBE_OUTPUT_BYTES };
+  const run = { input: probeScript(port, options.hardwareOnly), deadlineMs, maxOutputBytes: MAX_PROBE_OUTPUT_BYTES };
   const r = host ? await runSsh(host, ["sh", "-s"], run) : await runProcess("sh", ["-s"], run);
   const failed = host
     ? sshFailure(r, host, deadlineMs)

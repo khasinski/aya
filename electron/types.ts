@@ -33,7 +33,8 @@ export type {
 };
 
 import type { SplitNode } from "./split-tree";
-import type { KnownHost, Machine, MachineView } from "./machines";
+import type { KnownHost, MachineSetup, MachineView } from "./machines";
+import type { ApiDiscovery } from "./machines-discovery";
 
 export interface WorkingTab {
   id: string;
@@ -616,9 +617,11 @@ export interface AyaApi {
   /** The status bar and Settings > Machines; the same functions as `aya machines`. */
   machinesStatus(): Promise<{ version: number; machines: MachineView[] }>;
   /** The added machines and the known ssh hosts, without probing any. */
-  machinesSetup(): Promise<{ machines: Machine[]; hosts: KnownHost[] }>;
+  machinesSetup(): Promise<{ machines: MachineSetup[]; hosts: KnownHost[] }>;
   /** `aya machines add | remove | claim | release`, as the user's own click: no dialog. */
   machinesCommand(argv: string[]): Promise<string>;
+  machinesConfigure(argv: string[], token?: string): Promise<string>;
+  machinesDiscover(id: string): Promise<ApiDiscovery>;
   createRemoteProjectOnHost(
     sshTarget: string,
     directory: string,
@@ -762,6 +765,7 @@ export interface AyaApi {
   checkForUpdates(): Promise<UpdateStatus>;
   installUpdate(): Promise<void>;
   openNotificationSettings(): Promise<void>;
+  openLocalNetworkSettings(): Promise<void>;
   /** Current macOS microphone authorization (read-only; "unsupported" off-mac). */
   micStatus(): Promise<MicPermissionStatus>;
   /** Triggers the system mic prompt when status is not-determined; resolves to

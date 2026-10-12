@@ -405,7 +405,8 @@ async function handleRequest(
   callerGone?: AbortSignal,
 ): Promise<Record<string, unknown> | void> {
   try {
-    await options.onRequest?.(request, caller);
+    const observed = request.type === "machines" && request.token !== undefined ? { ...request, token: undefined } : request;
+    await options.onRequest?.(observed, caller);
   } catch {
     // measurement must never fail a command
   }

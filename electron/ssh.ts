@@ -53,6 +53,8 @@ export interface SshRunOptions {
   input?: string;
   deadlineMs: number;
   maxOutputBytes?: number;
+  /** Child-only environment; discovery disables the shell used by SSH Match exec. */
+  env?: NodeJS.ProcessEnv;
 }
 
 const seconds = (ms: number) => `${ms / 1000}s`;
@@ -79,7 +81,7 @@ export function runProcess(command: string, args: string[], options: SshRunOptio
     let child: ReturnType<typeof spawn>;
     try {
       // Own process group: a ProxyCommand child holding our pipes dies with ssh at the deadline.
-      child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], detached: true });
+      child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], detached: true, ...(options.env ? { env: options.env } : {}) });
     } catch (err) {
       resolve({ code: null, stdout, stderr, timedOut, spawnError: String(err) });
       return;

@@ -28,6 +28,7 @@ function probe({ cpuName, cores, load, totalGiB, availGiB, gpu, version, models,
 }
 
 const HOSTS = {
+  "darwine": () => probe({ cpuName: "AMD Ryzen", cores: 16, load: 0.1, totalGiB: 64, availGiB: 58, gpu: "Failed to initialize NVML: Driver/library version mismatch" }),
   "gpu-box": () =>
     probe({
       cores: 32, load: 3.2, totalGiB: 125, availGiB: 84,
@@ -48,6 +49,10 @@ const fail = (line) => {
 };
 
 const answer = HOSTS[target];
+if (args.includes("-G") && !command && answer) {
+  process.stdout.write("hostname 127.0.0.1\n");
+  process.exit(0);
+}
 if (command !== "sh -s" || !answer) {
   if (target === "old-server") fail("old-server: Permission denied (publickey).");
   fail(`ssh: connect to host ${target.replace(/^.*@/, "")} port 22: Connection refused`);

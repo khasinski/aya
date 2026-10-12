@@ -68,7 +68,9 @@ const api: AyaApi = {
     ipcRenderer.invoke("remote:health", sshTarget),
   machinesStatus: () => ipcRenderer.invoke("machines:status"),
   machinesSetup: () => ipcRenderer.invoke("machines:setup"),
+  machinesDiscover: (id) => ipcRenderer.invoke("machines:discover", id),
   machinesCommand: (argv) => ipcRenderer.invoke("machines:command", argv),
+  machinesConfigure: (argv, token) => ipcRenderer.invoke("machines:configure", argv, token),
   createRemoteProjectOnHost: (sshTarget, directory, name) =>
     ipcRenderer.invoke("remote:create-project", sshTarget, directory, name),
   updateProject: (project) => ipcRenderer.invoke("projects:update", project),
@@ -165,6 +167,7 @@ const api: AyaApi = {
   installUpdate: () => ipcRenderer.invoke("updates:install"),
   openNotificationSettings: () =>
     ipcRenderer.invoke("app:open-notification-settings"),
+  openLocalNetworkSettings: () => ipcRenderer.invoke("app:open-local-network-settings"),
   micStatus: () => ipcRenderer.invoke("mic:status"),
   requestMicAccess: () => ipcRenderer.invoke("mic:request"),
   openMicrophoneSettings: () => ipcRenderer.invoke("mic:open-settings"),

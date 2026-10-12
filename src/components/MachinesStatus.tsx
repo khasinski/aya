@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MachineView } from "../types";
-import { barLabel, claimText, clock, hardware, health, loadText, MACHINES_CHANGED_EVENT, modelLines, reachText, readyFirst, troubleText } from "../machines-view";
+import { barLabel, claimText, clock, hardware, health, loadText, MACHINES_CHANGED_EVENT, modelLines, needsLocalNetworkSettings, reachText, readyFirst, troubleText } from "../machines-view";
 
 /** Each poll probes every machine (over ssh for remote ones); half a minute keeps the bar current at little cost. */
 const POLL_MS = 30_000;
@@ -39,10 +39,12 @@ export function MachinesStatus({ onManage, onOpenTerminal }: { onManage: () => v
     const timer = window.setInterval(tick, POLL_MS);
     document.addEventListener("visibilitychange", tick);
     window.addEventListener(MACHINES_CHANGED_EVENT, tick);
+    window.addEventListener("focus", tick);
     return () => {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", tick);
       window.removeEventListener(MACHINES_CHANGED_EVENT, tick);
+      window.removeEventListener("focus", tick);
     };
   }, [refresh]);
 
@@ -127,7 +129,7 @@ export function MachinesStatus({ onManage, onOpenTerminal }: { onManage: () => v
                 <li key={m.id} className="aya-machines-entry" data-testid="machine-entry">
                   {/* One line of inline text, so a copy pastes "gpu-box · RTX 4090 · Ready", not three lines. */}
                   <div className="aya-machines-entry-head">
-                    {/* Every fix (a reboot, `ollama serve`, an install) starts with a shell there. */}
+                    {/* Open a shell on the machine for inspection. */}
                     {onOpenTerminal && m.reach !== "local" && (
                       <button
                         className="aya-statusbar-popover-action aya-machines-terminal"
@@ -157,11 +159,20 @@ export function MachinesStatus({ onManage, onOpenTerminal }: { onManage: () => v
                       </>
                     )}
                   </div>
-                  {ok && (
+                  {needsLocalNetworkSettings(m, window.aya.platform) && <div className="aya-machines-muted">
+                    Check this app under Privacy &amp; Security → Local Network.{" "}
+                    <button className="aya-statusbar-popover-action" type="button" onClick={() => {
+                      void window.aya.openLocalNetworkSettings().catch(() => setError("Could not open Local Network settings"));
+                    }}>Privacy &amp; Security settings</button>
+                  </div>}
+                  {(ok || m.status.api || (m.status.reachable && m.status.ollama.up)) && (
                     <>
-                      <div className="aya-machines-muted">
+                      {m.status.api?.up && <div>API available (OpenAI-compatible)</div>}
+                      {m.status.reachable && <div className="aya-machines-muted">
                         {loadText(m.status)} · {reachText(m.reach)}
-                      </div>
+                      </div>}
+                      {!m.status.reachable && m.status.api && <div className="aya-machines-state aya-machines-state--warn">Host telemetry unavailable: {m.status.error}</div>}
+                      {m.status.gpuError && <div className="aya-machines-state aya-machines-state--warn">GPU telemetry unavailable: {m.status.gpuError}</div>}
                       {modelLines(m.status, now).map((line) => (
                         <div key={line}>{line}</div>
                       ))}

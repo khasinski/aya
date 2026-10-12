@@ -2097,7 +2097,7 @@ export function SettingsModal({
             {activeTab === "machines" && (
               <section className="aya-settings-pane">
                 <SettingsHeader icon="dns" title="Machines">
-                  Your Ollama machines: this one, or others over ssh. Their state shows in the status bar; Aya never loads or unloads a model.
+                  Your model servers: Ollama or an OpenAI-compatible API. Their state shows in the status bar; Aya never loads or unloads a model.
                 </SettingsHeader>
                 <MachinesSettings />
               </section>

@@ -773,8 +773,10 @@ export interface AyaApi {
   listRemotePresets(sshTarget: string): Promise<Preset[]>;
   checkRemoteHealth(sshTarget: string): Promise<RemoteHealthResult>;
   machinesStatus(): Promise<{ version: number; machines: MachineView[] }>;
-  machinesSetup(): Promise<{ machines: Machine[]; hosts: KnownHost[] }>;
+  machinesSetup(): Promise<{ machines: MachineSetup[]; hosts: KnownHost[] }>;
   machinesCommand(argv: string[]): Promise<string>;
+  machinesConfigure(argv: string[], token?: string): Promise<string>;
+  machinesDiscover(id: string): Promise<ApiDiscovery>;
   createRemoteProjectOnHost(
     sshTarget: string,
     directory: string,
@@ -896,6 +898,8 @@ export interface AyaApi {
   checkForUpdates(): Promise<UpdateStatus>;
   installUpdate(): Promise<void>;
   openNotificationSettings(): Promise<void>;
+  /** Opens macOS Privacy & Security; the user selects Local Network. Never changes the permission. */
+  openLocalNetworkSettings(): Promise<void>;
   /** Current macOS microphone authorization (read-only; "unsupported" off-mac). */
   micStatus(): Promise<MicPermissionStatus>;
   /** Triggers the system mic prompt when status is not-determined; resolves to
@@ -1240,6 +1244,8 @@ export interface RoleDraft {
 }
 
 // Machines (electron/machines.ts, electron/machines-probe.ts).
+export interface ApiCandidate { baseUrl: string; kind: "confirmed" | "auth-required" }
+export interface ApiDiscovery { candidates: ApiCandidate[]; error: string | null }
 export interface GpuLoad {
   name: string;
   utilPct: number | null;
@@ -1266,6 +1272,7 @@ export interface MachineStatus {
   gpus: GpuLoad[];
   gpuError: string | null;
   ollama: { up: boolean; version: string | null; loaded: LoadedModel[] | null; modelsError: string | null; installed: boolean | null; running: boolean | null };
+  api?: { up: boolean; models: string[] | null; error: string | null };
 }
 
 export type MachineReach = "local" | { ssh: string };
@@ -1281,12 +1288,18 @@ export interface MachineView {
   id: string;
   reach: MachineReach;
   ollama: { port: number };
+  api?: { baseUrl: string; tokenConfigured?: boolean };
   claim?: MachineClaim;
   status: MachineStatus;
 }
 
 /** A machine as saved, without its status: what Settings > Machines lists. */
 export type Machine = Omit<MachineView, "status">;
+
+/** Local desktop settings only; the stored token itself never crosses the bridge. */
+export interface MachineSetup extends Machine {
+  api?: NonNullable<Machine["api"]> & { savedTokenPreview?: string };
+}
 
 export interface KnownHost {
   target: string;

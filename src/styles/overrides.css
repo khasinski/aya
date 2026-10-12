@@ -3199,6 +3199,7 @@ select.aya-modal-input {
 }
 .aya-machines-added-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   padding: 6px 0;
@@ -3210,6 +3211,22 @@ select.aya-modal-input {
 .aya-machines-add {
   margin-top: 12px;
 }
+.aya-machines-backend {
+  flex-basis: 100%;
+  display: grid;
+  gap: 8px;
+  padding: 6px 0 10px;
+}
+.aya-machines-backend label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.aya-machines-backend .aya-modal-input { flex: 1; min-width: 0; }
+.aya-machines-discovery { display: grid; gap: 6px; }
+.aya-machines-discovery-candidate { display: flex; align-items: center; gap: 10px; }
+.aya-machines-discovery-candidate span { min-width: 0; overflow-wrap: anywhere; }
+.aya-machines-discovery-candidate small { display: block; }
 
 /* The window's error screen (ErrorBoundary): what failed and a way back. */
 /* Its own scroll: body is overflow: hidden, and a long error in a short window must still show Reload. */

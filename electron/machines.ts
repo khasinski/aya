@@ -10,6 +10,9 @@ import { isSshTarget } from "./ssh";
 import { sshHostAliases } from "./ssh-hosts";
 import { singleFlight } from "./single-flight";
 import { gib, gibFromMiB } from "./units";
+import { normalizeApiUrl, probeApi, type ApiBackend } from "./machines-api";
+import { machineToken, savedTokenPreview, saveMachineToken, validateMachineToken } from "./machines-auth";
+import { discoverApiEndpoints, type ApiDiscovery } from "./machines-discovery";
 
 export const MACHINES_FILE_NAME = "machines.json";
 export const MACHINES_VERSION = 1;
@@ -39,7 +42,13 @@ export interface Machine {
   id: string;
   reach: Reach;
   ollama: { port: number };
+  api?: ApiBackend;
   claim?: Claim;
+}
+
+/** Local desktop settings metadata, never registry/status/CLI or windowless Web responses. */
+export interface MachineSetup extends Machine {
+  api?: ApiBackend & { savedTokenPreview?: string };
 }
 
 export interface Registry {
@@ -88,6 +97,11 @@ function registryProblem(value: unknown): string | null {
     if (!reachOk) return `${at}: reach must be "local" or {"ssh": "<alias or user@host>"}`;
     const port = (machine.ollama as { port?: unknown } | undefined)?.port;
     if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) return `${at}: ollama.port is not a port number`;
+    if (machine.api !== undefined) {
+      const api = machine.api as { baseUrl?: unknown } | null;
+      if (!api || typeof api.baseUrl !== "string") return `${at}: API needs a base URL`;
+      try { normalizeApiUrl(api.baseUrl); } catch { return `${at}: invalid API base URL`; }
+    }
     const c = machine.claim as Record<string, unknown> | undefined;
     const claimOk =
       c === undefined ||
@@ -122,7 +136,46 @@ export async function loadRegistry(deps: MachinesDeps): Promise<Registry> {
   }
   const problem = registryProblem(parsed);
   if (problem) throw new Error(`${file} is not a registry this Aya can read (${problem}); nothing was changed, fix or move it`);
-  return { version: MACHINES_VERSION, machines: (parsed as Registry).machines };
+  // Pick public fields rather than spreading disk objects into setup/status. Credentials never belong here.
+  return { version: MACHINES_VERSION, machines: (parsed as Registry).machines.map((m) => ({
+    id: m.id, reach: m.reach === "local" ? "local" : { ssh: m.reach.ssh }, ollama: { port: m.ollama.port },
+    ...(m.api ? { api: { baseUrl: normalizeApiUrl(m.api.baseUrl) } } : {}),
+    ...(m.claim ? { claim: { by: m.claim.by, purpose: m.claim.purpose, since: m.claim.since, ...(m.claim.pane ? { pane: m.claim.pane } : {}) } } : {}),
+  })) };
+}
+
+export async function machinesSetup(deps: MachinesDeps): Promise<{ machines: Machine[]; hosts: KnownHost[] }> {
+  const registry = await loadRegistry(deps);
+  const machines = await Promise.all(registry.machines.map(async (m) => m.api ? {
+    ...m, api: { baseUrl: m.api.baseUrl, tokenConfigured: !!(await machineToken(deps.ayaHome, m.id, m.api.baseUrl)) },
+  } : m));
+  return { machines, hosts: await knownHosts(deps, registry) };
+}
+
+export async function machinesUiSetup(deps: MachinesDeps): Promise<{ machines: MachineSetup[]; hosts: KnownHost[] }> {
+  const registry = await loadRegistry(deps);
+  const machines = await Promise.all(registry.machines.map(async (m): Promise<MachineSetup> => {
+    if (!m.api) return m;
+    const token = await machineToken(deps.ayaHome, m.id, m.api.baseUrl);
+    return { ...m, api: { baseUrl: m.api.baseUrl, tokenConfigured: !!token, ...(token ? { savedTokenPreview: savedTokenPreview(token) } : {}) } };
+  }));
+  return { machines, hosts: await knownHosts(deps, registry) };
+}
+
+const discoveries = new Map<string, Promise<ApiDiscovery>>();
+/** Only a saved machine's reach can be scanned; callers cannot supply arbitrary hosts/ports or credentials. */
+export async function machinesDiscover(id: string, deps: MachinesDeps): Promise<ApiDiscovery> {
+  if (!ID_PATTERN.test(id)) return { candidates: [], error: "Select an added machine first." };
+  try {
+    const machine = (await loadRegistry(deps)).machines.find((m) => m.id === id);
+    if (!machine) return { candidates: [], error: "This machine is no longer configured." };
+    const key = JSON.stringify([deps.ayaHome, machine.id, machine.reach]);
+    const pending = discoveries.get(key);
+    if (pending) return pending;
+    const request = discoverApiEndpoints(machine.reach).finally(() => discoveries.delete(key));
+    discoveries.set(key, request);
+    return request;
+  } catch { return { candidates: [], error: "Could not read the selected machine." }; }
 }
 
 const registryQueue = oneAtATime();
@@ -265,17 +318,25 @@ export interface MachineView extends Machine {
 
 const statusCache = new Map<string, { at: number; status: MachineStatus }>();
 const inFlight = new Map<string, () => Promise<MachineStatus>>();
+let statusGeneration = 0;
 
 /** One probe per machine in flight, shared by every caller, and reused for STATUS_CACHE_MS. */
 export function machineStatus(machine: Machine, deps: MachinesDeps): Promise<MachineStatus> {
-  const key = JSON.stringify([machine.reach, machine.ollama.port]);
+  const key = JSON.stringify([deps.ayaHome, machine.id, machine.reach, machine.ollama.port, machine.api?.baseUrl]);
   const cached = statusCache.get(key);
   if (cached && Date.now() - cached.at < STATUS_CACHE_MS) return Promise.resolve(cached.status);
   let run = inFlight.get(key);
   if (!run) {
+    const generation = statusGeneration;
     run = singleFlight(async () => {
-      const status = await (deps.probe ?? probeMachine)(machine.reach, machine.ollama.port, { now: deps.now });
-      statusCache.set(key, { at: Date.now(), status });
+      const hardware = (deps.probe ?? probeMachine)(machine.reach, machine.ollama.port, { now: deps.now, ...(machine.api ? { hardwareOnly: true } : {}) });
+      const api = machine.api ? (async () => {
+        try { return await probeApi(machine.api!.baseUrl, await machineToken(deps.ayaHome, machine.id, machine.api!.baseUrl)); }
+        catch { return { up: false, models: null, error: "API credentials unavailable" }; }
+      })() : null;
+      const [status, apiStatus] = await Promise.all([hardware, api]);
+      if (apiStatus) status.api = apiStatus;
+      if (generation === statusGeneration) statusCache.set(key, { at: Date.now(), status });
       return status;
     });
     inFlight.set(key, run);
@@ -285,6 +346,7 @@ export function machineStatus(machine: Machine, deps: MachinesDeps): Promise<Mac
 
 /** Test-only: forget cached probes. */
 export function clearMachineStatusCache(): void {
+  statusGeneration += 1;
   statusCache.clear();
   inFlight.clear();
 }
@@ -320,6 +382,10 @@ function machineLine(s: MachineStatus): string {
 }
 
 function modelLines(s: MachineStatus, port: number, now: Date): string[] {
+  if (s.api) return [
+    s.api.up ? "API available (OpenAI-compatible)" : (s.api.error ?? "API not answering"),
+    ...(s.api.up ? (s.api.models?.length ? s.api.models.map((id) => `  ${id} (served by API)`) : ["  No models served by API"]) : []),
+  ];
   if (!s.ollama.up) {
     if (s.ollama.installed === false) return ["ollama not installed"];
     if (s.ollama.running === false) return [`ollama not running (nothing on port ${port})`];
@@ -344,9 +410,10 @@ export function formatMachines(views: MachineView[], now = new Date()): string {
     const head = `${v.id.padEnd(idWidth)}  `;
     if (!s.reachable) {
       lines.push(`${head}unreachable  ${reachText(v.reach)}  ${s.error}`);
+      if (s.api) lines.push(...modelLines(s, v.ollama.port, now).map((l) => pad + l));
     } else {
       lines.push(`${head}${machineLine(s)}  ${reachText(v.reach)}`);
-      if (s.gpuError) lines.push(`${pad}nvidia-smi failed: ${s.gpuError}`);
+      if (s.gpuError) lines.push(`${pad}GPU telemetry unavailable: nvidia-smi failed: ${s.gpuError}`);
       lines.push(...modelLines(s, v.ollama.port, now).map((l) => pad + l));
     }
     lines.push(pad + (v.claim ? `claimed by ${claimWho(v.claim)} since ${hhmm(v.claim.since)}: ${v.claim.purpose}` : "not claimed"));
@@ -381,6 +448,8 @@ function formatDraft(draft: SentenceDraft): string {
 export interface MachinesRequest {
   argv: string[];
   user?: string;
+  /** Private input from stdin or a password field, never argv or output. */
+  token?: string;
 }
 
 export interface MachinesAnswer {
@@ -388,7 +457,7 @@ export interface MachinesAnswer {
 }
 
 const USAGE =
-  'usage: aya machines [--json] | hosts [--json] | add "<sentence>" | remove <id> | claim <id> "<purpose>" [--replace] | release <id>';
+  'usage: aya machines [--json] | hosts [--json] | add "<sentence>" | remove <id> | configure <id> ollama [port] | configure <id> openai-compatible <url> [--token-stdin | --clear-token] | claim <id> "<purpose>" [--replace] | release <id>';
 
 const ADD_TAKES_A_SENTENCE = 'aya machines add takes one sentence, not options: for example aya machines add "athena", or "this machine, port 11435"; nothing was added';
 
@@ -423,6 +492,7 @@ function findMachine(registry: Registry, id: string | undefined): Machine {
 export async function handleMachinesRequest(request: MachinesRequest, deps: MachinesDeps, pane?: string, callerGone?: AbortSignal): Promise<MachinesAnswer> {
   const [sub, ...rest] = request.argv;
   const now = () => deps.now?.() ?? new Date();
+  if (request.token !== undefined && sub !== "configure") throw new Error("API token input is only accepted by configure");
   if (sub === undefined || sub === "--json") {
     if (rest.length) throw new Error(USAGE);
     const status = await machinesStatus(deps);
@@ -450,12 +520,33 @@ export async function handleMachinesRequest(request: MachinesRequest, deps: Mach
     if (!deps.confirmRemove) throw new Error("removing a machine needs the user's yes in Aya, and Aya's dialog is not available here; nothing was removed");
     if (!(await deps.confirmRemove(asked.id, callerGone))) return { output: `Not removed: cancelled in Aya.\n` };
     if (callerGone?.aborted) throw new Error("the command stopped waiting for the user's answer; nothing was removed");
-    await mutateRegistry(deps, (registry) => {
+    await mutateRegistry(deps, async (registry) => {
       const found = findMachine(registry, rest[0]);
       if (!sameReach(found.reach, asked.reach)) throw new Error(`${asked.id} changed while Aya asked; nothing was removed`);
+      if (found.api) await saveMachineToken(deps.ayaHome, found.id, null);
       registry.machines = registry.machines.filter((m) => m !== found);
     });
     return { output: `removed ${asked.id}\n` };
+  }
+  if (sub === "configure") {
+    const [id, backend, value, flag] = rest;
+    const api = backend === "openai-compatible";
+    if ((api && (!value || rest.length > 4 || (flag !== undefined && !["--token-stdin", "--clear-token"].includes(flag)))) ||
+        (!api && (backend !== "ollama" || rest.length > 3)) ||
+        (flag === "--token-stdin" && request.token === undefined) ||
+        (request.token !== undefined && (!api || flag !== "--token-stdin"))) throw new Error(USAGE);
+    if (request.token !== undefined) validateMachineToken(request.token);
+    const baseUrl = api ? normalizeApiUrl(value) : null;
+    const port = api ? DEFAULT_OLLAMA_PORT : value === undefined ? DEFAULT_OLLAMA_PORT : Number(value);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Ollama port must be 1..65535");
+    await mutateRegistry(deps, async (registry) => {
+      const machine = findMachine(registry, id);
+      if (api || machine.api) await saveMachineToken(deps.ayaHome, machine.id, baseUrl, request.token, flag === "--clear-token");
+      if (baseUrl) machine.api = { baseUrl };
+      else { delete machine.api; machine.ollama = { port }; }
+    });
+    clearMachineStatusCache();
+    return { output: `${id} configured: ${api ? "OpenAI-compatible API" : `Ollama port ${port}`}\n` };
   }
   if (sub === "release") {
     if (rest.length !== 1) throw new Error(USAGE);

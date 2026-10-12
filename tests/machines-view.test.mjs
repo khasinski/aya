@@ -2,7 +2,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addAnswerText, barLabel, claimText, hardware, shortCpuName, health, hotText, loadText, modelLines, readyFirst, troubleText } from "../dist-test/machines-view.js";
+import { addAnswerText, barLabel, claimText, hardware, shortCpuName, health, hotText, loadText, modelLines, needsLocalNetworkSettings, readyFirst, troubleText } from "../dist-test/machines-view.js";
 
 const NOW = new Date("2026-10-04T15:00:00Z");
 const GIB = 2 ** 30;
@@ -21,6 +21,18 @@ const status = (over = {}) => ({
 });
 const view = (s, over = {}) => ({ id: "athena", reach: { ssh: "athena" }, ollama: { port: 11434 }, status: s, ...over });
 const shown = (s) => ({ health: health(s).word, level: health(s).level, hw: hardware(s), load: loadText(s), models: modelLines(s, NOW) });
+
+test("Local Network settings is a macOS LAN repair hint for transport errors, not auth, loopback or public endpoints", () => {
+  const view = (url, error = "API host unreachable", up = false) => ({ id: "m", reach: "local", ollama: { port: 11434 }, api: { baseUrl: url }, status: status({ api: { up, models: up ? ["qwen"] : null, error } }) });
+  for (const url of ["http://192.168.0.203/v1", "http://10.0.0.1/v1", "http://172.16.0.1/v1", "http://169.254.1.1/v1", "http://darwine.local/v1", "http://darwine/v1", "http://[fd12::1]/v1", "http://[fe80::1]/v1"]) {
+    assert.equal(needsLocalNetworkSettings(view(url), "darwin"), true, url);
+    assert.equal(needsLocalNetworkSettings(view(url, "API network access denied"), "darwin"), true, url);
+    assert.equal(needsLocalNetworkSettings(view(url), "linux"), false, url);
+    assert.equal(needsLocalNetworkSettings(view(url, "API authentication failed"), "darwin"), false, url);
+    assert.equal(needsLocalNetworkSettings(view(url, null, true), "darwin"), false, url);
+  }
+  for (const url of ["http://127.0.0.1/v1", "http://localhost/v1", "http://[::1]/v1", "https://example.com/v1", "http://172.32.0.1/v1", "http://8.8.8.8/v1", "not a URL"]) assert.equal(needsLocalNetworkSettings(view(url), "darwin"), false, url);
+});
 
 const mac = { cpuName: "Apple M2 Max", cpus: 12, load1: 4.5, memUsedBytes: 30 * GIB, memTotalBytes: 64 * GIB, gpus: [] };
 const CASES = [

@@ -1,6 +1,6 @@
 # Machines
 
-One list of the user's own machines running Ollama, for any pane, team or not.
+One list of the user's own machines running Ollama or an OpenAI-compatible API, for any pane, team or not.
 Aya shows each one's state and who claimed it. It never loads, unloads or calls a model.
 
 ## Why
@@ -16,7 +16,7 @@ So the first need is to see every machine at a glance and to say who is using on
 ## Rules
 
 1. **App-level.** Machines are not part of teams and are not tied to roles.
-2. **Ollama only.** A machine is `local`, or reached over ssh by a `Host` alias from `~/.ssh/config`, a remote project's target, or `user@host`. Nothing is installed on the host, and Ollama is never exposed on the network.
+2. **Ollama by default.** A machine is `local`, or reached over ssh by a `Host` alias from `~/.ssh/config`, a remote project's target, or `user@host`. Nothing is installed on the host. An optional API backend uses a URL supplied by the user.
 3. **Read-only probes.** Status comes from a fixed read-only script, run over ssh with no forwards and no tunnels, and with no writes on the host.
 4. **Only the user adds a machine.** In Aya, the click is the yes. `aya machines add` from a pane asks in Aya's own dialog, and the caller has no flag that saves.
 5. **No model control.** Aya never loads, unloads or calls a model. A claim is advisory and never counts as approval to unload.
@@ -34,7 +34,7 @@ So the first need is to see every machine at a glance and to say who is using on
 - each loaded model with its memory reported by Ollama and how long it stays hot;
 - the claim (what for, who, which pane, since when) with Release.
 
-Every other machine is one line: a dot, its name, its state and the last clause of the reason, the least broken first: `darwine · GPU error: Driver/library version mismatch` (nvidia-smi fails, so Ollama runs on the CPU), `macbook · Ollama not running`, `ragnarok · Ollama not installed`, `athena · Unreachable: Operation timed out`. A claim shows on these too.
+API availability and host/GPU telemetry are independent. An API can serve models while `nvidia-smi` fails: the models stay visible alongside `GPU telemetry unavailable` and the NVML error. This does not tell us whether inference runs on the GPU or CPU. An unavailable Ollama or host shows its reason; claims remain visible in every state.
 
 Each remote machine has Terminal: it opens a tab in the active project that runs `ssh -- <alias>`, since every fix (a reboot, `ollama serve`, an install) starts with a shell there. The tab is saved with its target, so it comes back as the same ssh session, and Escape closes the popover before a focused terminal sees it.
 
@@ -87,6 +87,20 @@ Per-model memory is labelled `reported by Ollama`: it comes from `/api/ps` and c
 
 ## Data
 
+Ollama remains the default for existing version 1 registries. An optional `api: { baseUrl }` selects one OpenAI-compatible backend instead. Settings > Machines edits the backend, URL and bearer token. Model IDs from `GET /v1/models` are labelled `served by API`; the API does not report loaded memory or expiry.
+
+Selecting OpenAI-compatible API with an empty URL starts read-only endpoint discovery for that machine. Local machines use loopback; SSH aliases are resolved by local `ssh -G`, using only the validated hostname. Discovery disables forwards, proxies, canonicalization and the shell used by `Match exec`; aliases depending on such commands need a manual URL. It checks HTTP `/v1/models` on ports 8080, 8000, 1234 and 5000, concurrently with a 1.5 s deadline and 256 KB response limit per port. It uses no token or browser cookies, follows no redirects, and never scans a subnet or reads server configuration.
+
+A valid HTTP200 model list confirms an endpoint. HTTP401/403 is an unconfirmed candidate requiring authentication, not proof of API compatibility. One candidate of either kind automatically fills an untouched empty URL, without an extra selection click; an authentication candidate remains labelled compatibility unconfirmed and asks for a bearer token. Multiple results, or results arriving after credential edits, offer a choice. Editing the URL, changing backend/machine or closing settings ignores old results; editing credentials prevents automatic filling. A saved URL stays intact. Search again optionally retries discovery, and manual URL entry remains available. Discovery writes nothing: only Save backend applies the configuration.
+
+Configure an existing machine with `aya machines configure darwine openai-compatible http://192.168.0.203:8080 --token-stdin`, piping the token into stdin from a trusted secret source. Never put it in the command arguments. Without `--token-stdin`, an existing token is kept only for the same normalized URL; a new URL starts without a token. `--clear-token` removes it. `aya machines configure darwine ollama 11434` restores Ollama.
+
+Tokens are stored in `machines-auth.json` in the Aya config home, written atomically with mode 0600. They are bound to the machine and normalized API URL, absent from `machines.json`, setup, status and JSON replies, and removed when the machine is removed. The settings password field never receives a saved token. Local desktop setup metadata includes a masked `Saved token` preview generated in main: the first four characters followed by eight mask dots; tokens shorter than eight characters show only the fixed mask. The preview does not reveal the full token or its length, disappears for an edited URL, a different backend or a pending clear, and updates after replacing the token on Save. Public/windowless Web setup returns only whether a token is configured; the preview never enters the registry, status, CLI JSON, logs or cache keys. API probes have a timeout and response-size limit, follow no redirects, and report sanitized errors rather than response bodies.
+
+Known network errors are shown as `API host unreachable` or `API network access denied`. On macOS, a LAN API with either error offers `Privacy & Security settings` and the path `Privacy & Security → Local Network`. The button opens the parent pane: the direct Local Network anchor did not reach the intended page on macOS 26.6. This is a repair suggestion, not a claim that macOS permissions are definitely the cause; Aya never changes the permission. API availability refreshes when Aya regains focus.
+
+Electron main probes use Chromium's `net.fetch`, the application's network transport. Plain Node tools use Node fetch. The API request sends the configured bearer header and omits browser cookies; both transports retain the same deadline, response limit and redirect prohibition.
+
 `machines.json` lives in the Aya config home (`~/.aya`), mode 0600:
 
 ```json
@@ -132,7 +146,7 @@ Limits:
 
 ## Security
 
-- Aya stores no keys or passwords; ssh authentication stays with the user's agent and config.
+- SSH authentication stays with the user's agent and config; API bearer tokens use the separate private store described above.
 - No listener and no forward is opened.
 
 ## Later

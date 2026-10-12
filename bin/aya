@@ -73,11 +73,15 @@ Usage:
                                      to the team's debug log
   aya presets [--json]               List presets, whether each is installed and
                                      whether a role's pane of it reaches Aya
-  aya machines [--json]              Show the Ollama machines: GPU, CPU, memory,
-                                     hot models and who claimed each
+  aya machines [--json]              Show machines: GPU, CPU, memory, API or
+                                     Ollama models and who claimed each
   aya machines hosts [--json]        List known ssh hosts and which are added
   aya machines add "sentence"        Propose machines; the user adds them in Aya
   aya machines remove id             Remove a machine (asks in Aya)
+  aya machines configure id ollama [port]
+  aya machines configure id openai-compatible url [--token-stdin | --clear-token]
+                                     Configure the backend; a token comes only
+                                     from stdin, never from command arguments
   aya machines claim id "purpose" [--replace]
                                      Say you use a machine (advisory; refused while
                                      someone else holds it, unless --replace)
@@ -233,7 +237,26 @@ function requestFromArgs() {
   if (kind === "team-pause") return { type: kind, text: process.argv[4] || undefined };
   if (kind === "presets") return { type: kind, json: process.argv[4] === "json" };
   if (kind === "machines") {
-    return { type: kind, argv: process.argv.slice(4), user: optionalEnv("USER") };
+    const argv = process.argv.slice(4);
+    let token;
+    if (argv.includes("--token-stdin")) {
+      if (argv.length !== 5 || argv[0] !== "configure" || argv[2] !== "openai-compatible" || argv[4] !== "--token-stdin") throw new Error("--token-stdin is only for configuring an OpenAI-compatible API");
+      // Node's source is stdin (heredoc); fd 3 is the caller's original stdin.
+      const fs = require("node:fs");
+      const chunks = [];
+      let size = 0;
+      const buffer = Buffer.alloc(1024);
+      for (;;) {
+        const n = fs.readSync(3, buffer, 0, buffer.length, null);
+        if (!n) break;
+        size += n;
+        if (size > 4098) throw new Error("API token input exceeds the size limit");
+        chunks.push(Buffer.from(buffer.subarray(0, n)));
+      }
+      token = Buffer.concat(chunks).toString("utf8").replace(/\r?\n$/, "");
+      if (!token || /[\u0000-\u0020\u007f-\u009f]/.test(token)) throw new Error("API token must be one non-empty line");
+    }
+    return { type: kind, argv, user: optionalEnv("USER"), ...(token !== undefined ? { token } : {}) };
   }
   if (kind === "team-show") {
     return { type: kind, team: process.argv[4] || undefined, json: process.argv[5] === "json", projectSlug: optionalEnv("AYA_PROJECT_SLUG"), cwd: process.cwd() };
@@ -665,7 +688,7 @@ case "$command" in
     ;;
   machines)
     shift
-    send_control machines "$@"
+    send_control machines "$@" 3<&0
     ;;
   presets)
     [ "$#" -eq 0 ] || shift

@@ -218,7 +218,7 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
     command: "machines",
     usage: "aya machines [--json]",
     summary:
-      "Show the user's Ollama machines, read-only: reachable or why not, GPU name, use and VRAM, CPU and RAM, each loaded model with how long it stays hot, and who claimed the machine.",
+      "Show model servers, read-only: host/GPU telemetry, Ollama loaded models or OpenAI-compatible API served models, and claims. API availability is independent of GPU telemetry.",
     notes: [
       "Read it before starting a timed run or choosing where a model runs: a hot model on a slower machine is not a fast alternative.",
       "Aya never loads, unloads or calls a model; unloading one (keep_alive 0) needs the user's explicit yes every time.",
@@ -239,6 +239,17 @@ export const AYA_CAPABILITIES: readonly Capability[] = [
       "Only the user's click in Aya adds a machine; no flag or answer adds one from the command line.",
       "\"port N\" right after a machine sets Ollama's port on it (11434 by default).",
     ],
+  },
+  {
+    command: "machines configure ollama",
+    usage: "aya machines configure id ollama [port]",
+    summary: "Select Ollama and edit its port; switching from an API removes that API's stored token.",
+  },
+  {
+    command: "machines configure openai-compatible",
+    usage: "aya machines configure id openai-compatible url [--token-stdin | --clear-token]",
+    summary: "Choose a machine's backend and edit its endpoint. Bearer tokens come only from stdin, are stored privately and are never returned in status/setup/JSON. Changing the URL never transfers the saved token.",
+    example: "aya machines configure darwine openai-compatible http://192.168.0.203:8080 --token-stdin",
   },
   {
     command: "machines remove",

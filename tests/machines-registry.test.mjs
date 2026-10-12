@@ -267,7 +267,7 @@ test("aya machines names pinned and expired models, the host's model names as th
   assert.match(silent(true, false), /\n {3}ollama not running \(nothing on port 11435\)\n/);
   assert.match(silent(true, true), /\n {3}ollama not answering on port 11435\n/);
   const broken = formatMachines([{ id: "d", reach: "local", ollama: { port: 11434 }, status: { ...status, gpuError: "Failed to initialize NVML: Driver/library version mismatch" } }]);
-  assert.match(broken, /^d {2}CPU {2}CPU 1\.0\/8 .*\n {3}nvidia-smi failed: Failed to initialize NVML: Driver\/library version mismatch\n/);
+  assert.match(broken, /^d {2}CPU {2}CPU 1\.0\/8 .*\n {3}GPU telemetry unavailable: nvidia-smi failed: Failed to initialize NVML: Driver\/library version mismatch\n/);
 });
 
 test("an add the user approved is not saved when the caller leaves while the write waits its turn", async (t) => {

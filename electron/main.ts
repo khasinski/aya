@@ -101,7 +101,7 @@ import { restartStaleHost, updateInstaller } from "./update-quit";
 import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
-import { handleMachinesRequest, knownHosts, loadRegistry, machinesStatus } from "./machines";
+import { handleMachinesRequest, machinesDiscover, machinesSetup, machinesUiSetup, machinesStatus } from "./machines";
 import { ayaMachinesDeps } from "./machines-dialog";
 import {
   createRemoteDirectory,
@@ -2444,9 +2444,13 @@ function registerIpc(): TeamRunner {
   // own yes, so these adds and removes ask no dialog; only an agent's `aya machines add` does.
   const machinesDeps = { ...ayaMachinesDeps(AYA_HOME, os.homedir(), () => null, () => listProjects()), confirmAdd: async () => true, confirmRemove: async () => true };
   ipcMain.handle("machines:status", () => machinesStatus(machinesDeps));
-  ipcMain.handle("machines:setup", async () => {
-    const registry = await loadRegistry(machinesDeps);
-    return { machines: registry.machines, hosts: await knownHosts(machinesDeps, registry) };
+  ipcMain.handle("machines:setup", (e) => e.sender ? machinesUiSetup(machinesDeps) : machinesSetup(machinesDeps));
+  ipcMain.handle("machines:discover", (_e, id: unknown) => machinesDiscover(requireString(id, "machines:discover.id"), machinesDeps));
+  ipcMain.handle("machines:configure", async (_e, argv: unknown, token: unknown) => {
+    if (!Array.isArray(argv) || !argv.every((a) => typeof a === "string") || argv[0] !== "configure" || (token !== undefined && typeof token !== "string")) {
+      throw new Error("machines:configure needs configuration arguments and optional token input");
+    }
+    return (await handleMachinesRequest({ argv, ...(typeof token === "string" ? { token } : {}) }, machinesDeps)).output;
   });
   ipcMain.handle("machines:command", async (_e, argv: unknown) => {
     if (!Array.isArray(argv) || !argv.every((a) => typeof a === "string") || !["add", "remove", "claim", "release"].includes(argv[0])) {
@@ -2772,6 +2776,12 @@ function registerIpc(): TeamRunner {
       await shell.openExternal(
         "x-apple.systempreferences:com.apple.Notifications-Settings.extension",
       );
+    }
+  });
+  ipcMain.handle("app:open-local-network-settings", async () => {
+    if (process.platform === "darwin") {
+      // The Local Network anchor is unreliable on macOS 26. Open the parent pane; the UI names the next step.
+      await shell.openExternal("x-apple.systempreferences:com.apple.preference.security");
     }
   });
   // Microphone access surfaced read-only in Settings: Aya never records, but
