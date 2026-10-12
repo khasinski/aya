@@ -52,13 +52,17 @@ export async function renderPaneText(
   }
 }
 
-/** Rendered text when the pane's size is known; an older pty host cannot
- *  report it, and then the raw buffer is all there is. */
+// The window's own size for a pane it cannot measure (TerminalView's fallback). Wrapped lines are joined again, so
+// only a TUI that places text by cursor position can read differently from its real size.
+export const PANE_READ_FALLBACK_SIZE: PaneSize = { cols: 80, rows: 24 };
+
+/** Rendered text, at the pane's size when known. A host from an older build cannot report it, and a pane that
+ *  exits between the two reads has none: its buffer is still rendered, at the fallback size, never returned raw
+ *  (escape codes and spinner frames, not what the pane showed). */
 export function paneReadText(
   buffer: string,
   size: PaneSize | null,
 ): Promise<string> {
-  return size
-    ? renderPaneText(buffer, size.cols, size.rows, size.alt)
-    : Promise.resolve(buffer);
+  const { cols, rows, alt } = size ?? PANE_READ_FALLBACK_SIZE;
+  return renderPaneText(buffer, cols, rows, alt);
 }

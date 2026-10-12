@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import xterm from "@xterm/headless";
 import {
+  PANE_READ_FALLBACK_SIZE,
   PANE_RENDER_SCROLLBACK_LINES,
   paneReadText,
   renderPaneText,
@@ -123,9 +124,11 @@ test("each read releases its terminal", async (t) => {
   assert.equal(dispose.mock.callCount(), 1);
 });
 
-test("without a known size the raw buffer is returned unchanged", async () => {
-  const raw = "\x1b[31mred\x1b[0m";
-  assert.equal(await paneReadText(raw, null), raw);
+test("without a known size the buffer is still rendered, at the fallback size, never returned raw", async () => {
+  const raw = "\x1b[31mred\x1b[0m plain\r\nline2\x1b[1A\x1b[5Gxx";
+  assert.equal(await paneReadText(raw, null), "red xxain\nline2");
+  // A cursor placed past the fallback's bottom right lands in its last cell.
+  assert.equal(await paneReadText("\x1b[99;99HZ", null), `${"\n".repeat(PANE_READ_FALLBACK_SIZE.rows - 1)}${" ".repeat(PANE_READ_FALLBACK_SIZE.cols - 1)}Z`);
 });
 
 test("the host's alt-screen word reaches the render", async () => {
