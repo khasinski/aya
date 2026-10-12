@@ -338,3 +338,23 @@ test("sweep: empty snapshot or missing uid is a total no-op", () => {
     [],
   );
 });
+test("sweep S2: an orphan from another Aya's scope (dev build, an isolated AYA_HOME) is left to that Aya", () => {
+  // The same check S1 makes for hosts: the scope in the orphan's env must be this Aya's own.
+  const rows = [row({ pid: 300, pgid: 8888 }), row({ pid: 301, pgid: 8888 }), row({ pid: 302, pgid: 8888 })];
+  const envs = {
+    300: ORPHAN_ENV,
+    301: `claude AYA_TERMINAL_ID=x AYA_HOME=/tmp/aya-e2e-1/aya PATH=/b`,
+    302: `claude AYA_TERMINAL_ID=x AYA_HOME= AYA_DEV=1 PATH=/b`,
+  };
+  const killed = [];
+  const summary = sweepLegacyAyaProcesses(
+    new Set(),
+    baseDeps({
+      snapshot: () => rows,
+      envProbe: (pid) => ({ pgid: 8888, commandWithEnv: envs[pid] }),
+      kill: (pid) => killed.push(pid),
+    }),
+  );
+  assert.deepEqual(killed, [300], "only this scope's orphan");
+  assert.deepEqual(summary.skipped.sort((a, b) => a - b), [301, 302]);
+});
