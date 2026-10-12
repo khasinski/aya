@@ -13,6 +13,7 @@ import { AYA_HOME_DIRNAME, REMOTE_SOCKET_NAME } from "./paths";
 import { REMOTE_PROTOCOL_VERSION, type RemoteMessage } from "./remote-protocol";
 import { shellQuote } from "./pane-command";
 import { socketPathLimit } from "./socket-path";
+import { isSshTarget, requireSshTarget } from "./ssh";
 
 export interface RemoteTimeouts {
   bridgeMs: number;
@@ -205,8 +206,9 @@ function runRemoteRequest(
   recentProjects: ProjectConfig[];
   response: RemoteMessage;
 }> {
-  const target = sshTarget.trim();
-  if (!target) throw new Error("Remote SSH target is required.");
+  // Never an option: a target such as -oProxyCommand=... would run a local command. The project config checks its
+  // own targets, but this is reached from the window too.
+  const target = requireSshTarget(sshTarget);
   const id = randomUUID();
   const payload = Buffer.from(
     JSON.stringify({ ...request, id }),
@@ -227,7 +229,7 @@ function runRemoteRequest(
     let allProjects: ProjectConfig[] = [];
     execFile(
       "ssh",
-      [target, remoteCommand],
+      ["--", target, remoteCommand],
       {
         encoding: "utf8",
         timeout: timeouts.sshKillMs,
@@ -260,6 +262,7 @@ function runRemoteRequest(
               continue;
             }
             if (message.type === "snapshot") {
+              if (!isRecord(message.snapshot)) throw new Error("Remote Aya sent a snapshot without its data.");
               presets = requirePresets(message.snapshot.presets);
               allProjects = requireProjects(message.snapshot.projects);
               recentProjects = orderRecentProjects(
@@ -338,8 +341,16 @@ function runRemoteRequest(
           if (err) {
             // Not err.message: it is "Command failed: ssh <target> node -e <the whole bridge>", whose text also sent
             // healthFailureStage to the wrong stage.
+            // 255 is ssh's own failure; any other code is the remote bridge's, which then said nothing.
             const code = (err as { code?: unknown }).code;
-            reject(new Error(detail || `ssh ${target} failed${typeof code === "number" ? ` (exit ${code})` : ""}.`));
+            reject(
+              new Error(
+                detail ||
+                  (code === 255 || typeof code !== "number"
+                    ? `ssh ${target} failed${typeof code === "number" ? ` (exit ${code})` : ""}.`
+                    : `Remote Aya did not respond on ${target}: its bridge exited ${code} with no output.`),
+              ),
+            );
             return;
           }
           reject(new Error(`Remote Aya connection closed before response (0).`));
@@ -417,15 +428,9 @@ export async function checkRemoteHealth(
 ): Promise<RemoteHealthResult> {
   const target = sshTarget.trim();
   const checkedAt = new Date().toISOString();
-  if (!target) {
-    return {
-      ok: false,
-      sshTarget,
-      checkedAt,
-      checks: [
-        { stage: "ssh", ok: false, message: "Remote SSH target is required." },
-      ],
-    };
+  if (!isSshTarget(target)) {
+    const message = target ? `"${target}" is not an ssh target: use a Host alias from ~/.ssh/config or user@host` : "Remote SSH target is required.";
+    return { ok: false, sshTarget, checkedAt, checks: [{ stage: "ssh", ok: false, message }] };
   }
   try {
     const { host, presets, recentProjects } = await runRemoteRequest(

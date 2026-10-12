@@ -75,7 +75,9 @@ function mkFakeSsh() {
   const sshPath = join(dir, "ssh");
   writeFileSync(
     sshPath,
+    // ssh -- <target> <command>: the "--" ends ssh's options, so a target can never read as one.
     `#!/bin/sh
+[ "$1" = "--" ] && shift
 shift
 exec sh -c "$1"
 `,
