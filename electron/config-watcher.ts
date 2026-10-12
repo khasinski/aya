@@ -14,7 +14,7 @@ import { mkdirSync, watch, type FSWatcher } from "node:fs";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import type { BrowserWindow } from "electron";
-import { isEcho, recordWrite } from "./config-echo";
+import { forgetWrite, isEcho, recordWrite } from "./config-echo";
 import {
   isProjectConfigFilename,
   sliceForFilename,
@@ -45,9 +45,17 @@ export function startConfigWatcher(win: BrowserWindow): () => void {
   const watchers: FSWatcher[] = [];
   const observed = new Map<string, ObservedContent>();
   let pollTimer: NodeJS.Timeout | null = null;
+  // The first poll only learns what is on disk; a file first seen by a later one is new, made after the start.
+  let baselined = false;
 
   const send = (slice: ConfigSlice) => {
     if (!win.isDestroyed()) win.webContents.send("config:changed", { slice });
+  };
+
+  // A reported delete: the renderer drops the project, so bytes restored later must reload it, even the app's own.
+  const sendDeleted = (slice: ConfigSlice, filePath: string) => {
+    forgetWrite(filePath);
+    send(slice);
   };
 
   const emitIfExternal = async (
@@ -62,7 +70,7 @@ export function startConfigWatcher(win: BrowserWindow): () => void {
     try {
       content = await fs.readFile(filePath, "utf-8");
     } catch {
-      if (emitWhenMissing) send(slice);
+      if (emitWhenMissing) sendDeleted(slice, filePath);
       return;
     }
     if (isEcho(filePath, content)) return;
@@ -114,14 +122,13 @@ export function startConfigWatcher(win: BrowserWindow): () => void {
     emitWhenMissing: boolean,
   ) => {
     const content = await readObserved(filePath);
-    if (!observed.has(filePath)) {
-      observed.set(filePath, content);
-      return;
-    }
-    if (observed.get(filePath) === content) return;
+    const known = observed.has(filePath);
+    const before = observed.get(filePath);
     observed.set(filePath, content);
+    if (!known && !baselined) return;
+    if (known && before === content) return;
     if (content === MISSING) {
-      if (emitWhenMissing) send(slice);
+      if (emitWhenMissing) sendDeleted(slice, filePath);
       return;
     }
     if (isEcho(filePath, content)) return;
@@ -159,7 +166,7 @@ export function startConfigWatcher(win: BrowserWindow): () => void {
         value !== MISSING
       ) {
         observed.set(filePath, MISSING);
-        send("projects");
+        sendDeleted("projects", filePath);
       }
     }
   };
@@ -170,7 +177,9 @@ export function startConfigWatcher(win: BrowserWindow): () => void {
       pollTimer.unref();
       void pollOnce();
     };
-    void pollOnce();
+    void pollOnce().then(() => {
+      baselined = true;
+    });
     pollTimer = setTimeout(tick, WATCH_POLL_MS);
     pollTimer.unref();
   };

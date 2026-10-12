@@ -28,6 +28,12 @@ export function recordWrite(filePath: string, content: string): void {
   lastWrittenHash.set(filePath, hashConfig(content));
 }
 
+/** Forget what we last wrote to `filePath`: once its delete is reported, the same bytes coming back (a `git checkout`
+ *  of the file) are someone else's restore, not our save. */
+export function forgetWrite(filePath: string): void {
+  lastWrittenHash.delete(filePath);
+}
+
 /** True if `content` is exactly what we last wrote to `filePath`, i.e. the
  *  change came from our own save. False if we never wrote that file, or its
  *  content is different because someone edited it outside the app. */
