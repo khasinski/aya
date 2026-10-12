@@ -65,7 +65,10 @@ test("a started host whose socket never accepts fails the request at the deadlin
   const startedAt = Date.now();
   try {
     await assert.rejects(client.getBuffer("t1"), { code: "ECONNREFUSED" });
-    assert.ok(Date.now() - startedAt >= PTY_HOST_SOCKET_WAIT_TIMEOUT_MS, "the client gave up before its deadline");
+    const waited = Date.now() - startedAt;
+    assert.ok(waited >= PTY_HOST_SOCKET_WAIT_TIMEOUT_MS, `the client gave up before its deadline (${waited} ms)`);
+    // Loose, for a loaded runner: past it the client kept retrying long after its deadline.
+    assert.ok(waited < 2 * PTY_HOST_SOCKET_WAIT_TIMEOUT_MS, `the client kept trying ${waited} ms`);
   } finally {
     client.dispose();
   }
