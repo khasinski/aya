@@ -18,9 +18,10 @@ mkdirSync(process.env.AYA_HOME, { recursive: true });
 const codexHome = join(root, "codex-home", "nested");
 process.env.CODEX_HOME = codexHome;
 
+// Registered before the imports, so a failing import leaves no temp dir behind.
+test.after(() => rmSync(root, { recursive: true, force: true }));
 const codex = await import("../dist-electron/status-hook-codex.js");
 const { bundledAyaCliPath } = await import("../dist-electron/cli-path.js");
-test.after(() => rmSync(root, { recursive: true, force: true }));
 
 const CONFIG = join(codexHome, "config.toml");
 const SCRIPT = codex.STATUS_HOOK_CODEX_SCRIPT_FILE;

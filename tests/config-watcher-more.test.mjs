@@ -32,13 +32,14 @@ const home = mkdtempSync(join(tmpdir(), "aya-config-watcher-more-"));
 process.env.AYA_HOME = home;
 const projectsDir = join(home, "projects");
 
-const { startConfigWatcher } = await import("../dist-electron/config-watcher.js");
-const { writeFileAtomic } = await import("../dist-electron/atomic-write.js");
-
+// Registered before the imports, so a failing import leaves no temp dir behind.
 test.after(() => {
   rmSync(home, { recursive: true, force: true });
   delete process.env.AYA_HOME;
 });
+
+const { startConfigWatcher } = await import("../dist-electron/config-watcher.js");
+const { writeFileAtomic } = await import("../dist-electron/atomic-write.js");
 
 let version = 0;
 // A project config with content no earlier write in this file had.
@@ -85,7 +86,12 @@ async function startWatched(t, { destroyed = false } = {}) {
   // report the files a test wrote just before the watch began, so let those
   // late events play out and count changes from a quiet start.
   await waitFor(() => pollsDone >= 1 && pending.size === 0, 15000);
-  await settle();
+  // Quiet means three polls with nothing sent; a late event restarts the count (up to five rounds).
+  for (let round = 0; round < 5; round += 1) {
+    received.length = 0;
+    await settle();
+    if (received.length === 0) break;
+  }
   received.length = 0;
   win.destroyedChecks = 0;
   return { received, win, settle };
