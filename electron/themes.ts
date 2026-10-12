@@ -306,7 +306,8 @@ function colorFromItermDict(d: unknown): string | null {
   const r = c["Red Component"];
   const g = c["Green Component"];
   const b = c["Blue Component"];
-  if (typeof r !== "number" || typeof g !== "number" || typeof b !== "number") {
+  // A plist <real>nan</real> is a number too, and would come out as "#NaN00ff".
+  if (typeof r !== "number" || typeof g !== "number" || typeof b !== "number" || ![r, g, b].every(Number.isFinite)) {
     return null;
   }
   return `#${toHex(r * 255)}${toHex(g * 255)}${toHex(b * 255)}`;
@@ -319,7 +320,7 @@ export function parseItermColors(xml: string, fallbackName: string): Theme {
   for (let i = 0; i < 16; i++) {
     const c = colorFromItermDict(data[`Ansi ${i} Color`]);
     if (!c) {
-      throw new Error(`iTerm2 theme is missing "Ansi ${i} Color"`);
+      throw new Error(`iTerm2 theme has no usable "Ansi ${i} Color"`);
     }
     ansi.push(c);
   }
@@ -361,6 +362,15 @@ export function parseItermColors(xml: string, fallbackName: string): Theme {
   };
 }
 
+/** A Windows Terminal color as Aya stores it: #rgb (valid there) is spelled out as #rrggbb; anything else must already
+ *  be a color Aya keeps (isColor), or the import fails naming the field, instead of saving a theme that vanishes. */
+function importedColor(value: string, field: string): string {
+  const short = /^#([0-9a-fA-F])([0-9a-fA-F])([0-9a-fA-F])$/.exec(value);
+  const color = short ? `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}` : value;
+  if (!isColor(color)) throw new Error(`Windows Terminal theme field "${field}" is not a color: ${JSON.stringify(value)}`);
+  return color;
+}
+
 /** Windows Terminal calls the magenta channels `purple` / `brightPurple`.
  *  Everything else lines up with xterm.js naming. */
 export function parseWindowsTerminalJson(
@@ -373,11 +383,11 @@ export function parseWindowsTerminalJson(
     if (typeof v !== "string") {
       throw new Error(`Windows Terminal theme is missing field "${k}"`);
     }
-    return v;
+    return importedColor(v, k);
   };
   const opt = (k: string): string | undefined => {
     const v = data[k];
-    return typeof v === "string" ? v : undefined;
+    return typeof v === "string" ? importedColor(v, k) : undefined;
   };
   const name =
     typeof data.name === "string" && data.name.trim() ? data.name : fallbackName;
@@ -414,10 +424,13 @@ export function parseWindowsTerminalJson(
  *  often have no extension after download. */
 export function parseTheme(content: string, sourceName: string): Theme {
   const trimmed = content.trimStart();
-  if (trimmed.startsWith("<?xml") || trimmed.startsWith("<plist")) {
-    return parseItermColors(content, sourceName);
-  }
-  return parseWindowsTerminalJson(content, sourceName);
+  const theme =
+    trimmed.startsWith("<?xml") || trimmed.startsWith("<plist")
+      ? parseItermColors(content, sourceName)
+      : parseWindowsTerminalJson(content, sourceName);
+  // saveThemes keeps only what isTheme accepts: an import it would drop must fail here, where the user sees why.
+  if (!isTheme(theme)) throw new Error("the imported theme has a color Aya cannot use");
+  return theme;
 }
 
 function makeImportedId(name: string): string {
