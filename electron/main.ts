@@ -228,7 +228,7 @@ import {
 import { captureIpcHandlers } from "./web-ipc";
 import { startWebServer, type WebServerHandle } from "./web-server";
 import { parseSummaryResponse, summaryPrompt } from "./summary-prompt";
-import { printable } from "./printable";
+import { restartDialog, waitingNotification } from "./native-ui-text";
 import type {
   AyaIntelligenceConfig,
   CliStatus,
@@ -341,7 +341,7 @@ const relaunchDeps: RelaunchDeps = {
 };
 /** A native yes/no before a restart that stops background work; `yes` names the restart. */
 async function askRestart(yes: string, text: string): Promise<boolean> {
-  const options = { type: "warning" as const, buttons: [yes, "Cancel"], defaultId: 1, cancelId: 1, message: "Background tasks will stop", detail: text };
+  const options = restartDialog(yes, text);
   const parent = focusedAyaWindow();
   return (await (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options))).response === 0;
 }
@@ -2743,12 +2743,7 @@ function registerIpc(): TeamRunner {
       (req as Record<string, unknown> | null)?.body,
       "app:notify-waiting.body",
     );
-    const notification = new Notification({
-      title: "Aya - waiting for input",
-      // Tab and project names come from config files an agent can write too: shown as text (printable.ts).
-      body: printable(body),
-      silent: false,
-    });
+    const notification = new Notification(waitingNotification(body));
     notification.on("click", () => {
       if (!win || win.isDestroyed()) return;
       if (win.isMinimized()) win.restore();
