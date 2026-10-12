@@ -3,8 +3,10 @@
 // not show: ESC starts a sequence that can move the cursor, retitle the window or rewrite what is on screen, and a
 // carriage return or a bidi override can make a line read as something else.
 
-// C0 but tab and newline, DEL, C1, and the bidi marks, embeddings, overrides and isolates.
-const UNPRINTABLE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
+// C0 but tab and newline, DEL, C1; the bidi marks (Arabic letter mark, LRM, RLM), embeddings, overrides and
+// isolates; the deprecated format controls U+206A-206F; and the line and paragraph separators. Zero-width
+// joiners and spaces stay: they act on nothing, and emoji need ZWJ. Written as escapes: raw, they would act here.
+const UNPRINTABLE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u206f]/g;
 
 /** `text` with every character that would act on a terminal shown as "?". */
 export function printableText(text: string): string {

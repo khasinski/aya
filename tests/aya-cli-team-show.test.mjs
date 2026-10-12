@@ -205,8 +205,10 @@ test("team show refuses extra words and unknown flags before Aya hears of it", a
 // for C0, Aya's for DEL, C1 and bidi, which JSON.stringify leaves raw.
 const HOSTILE = TEAM.replace("Must not: edit code", "Must not: edit\x1b]0;owned\x07 code")
   .replace("Writes down what a player sees.", "Writes\x1b[2J down\rSAYS\u009b31m red\u202eTXT\tok")
-  .replace("Number the rounds.", "Number\x07 the\x7f rounds.");
-const UNPRINTABLE = /[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/;
+  .replace("Number the rounds.", "Number\x07 the\x7f rounds.")
+  .replace("Sends to: implementer (findings with proof)", "Sends to: implementer (findings\x1b[8m with proof)")
+  .replace("git log --oneline -1", "git log\u2028 --oneline -1");
+const UNPRINTABLE = /[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028-\u202e\u2066-\u206f]/;
 
 test("team show and team whoami print the team's control characters as ?, and --json keeps them escaped", async () => {
   const t = await setup({ teamFile: HOSTILE });
@@ -218,7 +220,10 @@ test("team show and team whoami print the team's control characters as ?, and --
       assert.match(stdout, /must not\s+edit\?\]0;owned\? code$/m, sub);
       assert.match(stdout, /Writes\?\[2J down\?SAYS\?31m red\?TXT\tok$/m, sub);
       assert.match(stdout, /^protocol\nNumber\? the\? rounds\.$/m, sub);
+      assert.match(stdout, /sends to\s+implementer: findings\?\[8m with proof$/m, sub);
     }
+    // whoami does not print the status command; show does.
+    assert.match((await t.aya(IN_ROLE_PANE)).stdout, /^status\s+git log\? --oneline -1\b/m);
     const { status, stdout } = await t.aya(IN_ROLE_PANE, "--json");
     assert.equal(status, 0);
     assert.doesNotMatch(stdout, UNPRINTABLE, "JSON escapes them");
