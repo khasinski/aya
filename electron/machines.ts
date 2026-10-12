@@ -330,7 +330,7 @@ function modelLines(s: MachineStatus, port: number, now: Date): string[] {
   if (s.ollama.loaded.length === 0) return [`${version}, no model loaded`];
   return [
     version,
-    ...s.ollama.loaded.map((m) => `  ${m.name}${m.vramBytes === null ? "" : ` ${gib(m.vramBytes)} GiB`} ${hotUntil(m.expiresAt, m.pinned, now)}`),
+    ...s.ollama.loaded.map((m) => `  ${m.name}${m.vramBytes === null ? "" : ` ${gib(m.vramBytes)} GiB (reported by Ollama)`} ${hotUntil(m.expiresAt, m.pinned, now)}`),
   ];
 }
 

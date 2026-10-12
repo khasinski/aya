@@ -420,12 +420,18 @@ export function SettingsModal({
     void window.aya.getUpdateStatus().then((status) => {
       if (!cancelled) setUpdateStatus(status);
     });
-    void window.aya.webStatus().then((status) => {
-      if (cancelled) return;
-      setAyaWeb(status);
-      setAyaWebPortDraft(String(status.port));
-      setAyaWebUserDraft(status.user);
-    });
+    void window.aya
+      .webStatus()
+      .then((status) => {
+        if (cancelled) return;
+        setAyaWeb(status);
+        setAyaWebPortDraft(String(status.port));
+        setAyaWebUserDraft(status.user);
+      })
+      // A web.json Aya cannot read now (permissions) is reported, not replaced: say why the controls stay off.
+      .catch((err: unknown) => {
+        if (!cancelled) setAyaWebError(err instanceof Error ? err.message : String(err));
+      });
     if (window.aya.platform === "darwin") {
       setLocalSummaryStatus("checking");
       void window.aya

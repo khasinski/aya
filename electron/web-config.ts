@@ -151,13 +151,23 @@ export function defaultWebConfig(): WebConfig {
 /** Load ~/.aya/web.json, creating (and persisting) a disabled default config
  *  with a freshly generated password on first use or when the file is
  *  malformed. */
+/** The saved config; a fresh default when there is none or it is malformed. A file that exists but cannot be read
+ *  now (EACCES, EMFILE, EISDIR) is an error, not a file to replace: replacing it would silently drop the user's
+ *  password and turn Aya Web off. */
 export async function loadWebConfig(): Promise<WebConfig> {
+  let raw: string | null = null;
   try {
-    const raw = await fs.readFile(WEB_CONFIG_FILE, "utf-8");
-    const parsed = normalizeWebConfig(JSON.parse(raw));
-    if (parsed) return parsed;
-  } catch {
-    // ENOENT or malformed — fall through to a fresh default.
+    raw = await fs.readFile(WEB_CONFIG_FILE, "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  if (raw !== null) {
+    try {
+      const parsed = normalizeWebConfig(JSON.parse(raw));
+      if (parsed) return parsed;
+    } catch {
+      // Malformed JSON: replaced by a fresh default below.
+    }
   }
   const fresh = defaultWebConfig();
   await saveWebConfig(fresh);
@@ -165,10 +175,14 @@ export async function loadWebConfig(): Promise<WebConfig> {
 }
 
 export async function saveWebConfig(config: WebConfig): Promise<void> {
+  // Owner-only from the moment the file exists: it holds credential material, the first-run password in plain text
+  // among it. Written with the default mode and chmodded after, it was readable by other users in between. The temp
+  // file is created 0600 and renamed over web.json, so an older, wider file is replaced, not kept.
   await writeFileAtomic(
     WEB_CONFIG_FILE,
     JSON.stringify(config, null, 2) + "\n",
+    OWNER_ONLY_FILE_MODE,
   );
-  // Owner-only: the file holds credential material.
+  // The creation mode passes through the umask; an odd one could leave the owner unable to read the file back.
   await fs.chmod(WEB_CONFIG_FILE, OWNER_ONLY_FILE_MODE);
 }

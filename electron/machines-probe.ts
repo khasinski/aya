@@ -16,6 +16,7 @@ export interface GpuLoad {
 
 export interface LoadedModel {
   name: string;
+  /** Ollama's /api/ps size_vram, which can understate actual GPU memory use. */
   vramBytes: number | null;
   expiresAt: string | null;
   pinned: boolean;

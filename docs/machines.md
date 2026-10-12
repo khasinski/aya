@@ -31,7 +31,7 @@ So the first need is to see every machine at a glance and to say who is using on
 
 - a green dot, the name and the GPU (or CPU) model; a ready machine needs no word;
 - GPU use and VRAM, or load and RAM when there is no NVIDIA GPU (`load 8.8 on 18 CPUs`), plus how the machine is reached;
-- each loaded model with its size and how long it stays hot;
+- each loaded model with its memory reported by Ollama and how long it stays hot;
 - the claim (what for, who, which pane, since when) with Release.
 
 Every other machine is one line: a dot, its name, its state and the last clause of the reason, the least broken first: `darwine · GPU error: Driver/library version mismatch` (nvidia-smi fails, so Ollama runs on the CPU), `macbook · Ollama not running`, `ragnarok · Ollama not installed`, `athena · Unreachable: Operation timed out`. A claim shows on these too.
@@ -56,7 +56,7 @@ Listing the hosts connects to nothing.
 $ aya machines
 athena  RTX 4090 GPU 97% VRAM 21.0/24.0 GiB  CPU 3.2/32  RAM 41.0/125.7 GiB  ssh:athena
         ollama 0.12.3
-          qwen3:32b 19.6 GiB hot until 23:12 (14 min)
+          qwen3:32b 19.6 GiB (reported by Ollama) hot until 23:12 (14 min)
         claimed by justi (pane "lead") since 22:40: run5 timed collection
 laptop  Apple M2 Max  CPU 2.1/12  RAM 20.1/32.0 GiB  local
         ollama 0.12.3, no model loaded
@@ -82,6 +82,8 @@ checked 23:01:05
 There is no load or unload command.
 
 Sizes are binary gibibytes everywhere in Aya (`electron/units.ts`, `src/units.ts`), labelled GiB: RAM and VRAM read as their spec says (128.0 GiB on a 128 GB Mac, 24.0 GiB on an RTX 4090). `ollama ps` counts decimal GB, so the same model shows 8.5 GiB here and 9.1 GB there; the label tells the units apart.
+
+Per-model memory is labelled `reported by Ollama`: it comes from `/api/ps` and can understate actual GPU use. The machine's total VRAM use comes from `nvidia-smi`.
 
 ## Data
 
