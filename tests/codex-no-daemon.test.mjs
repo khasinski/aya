@@ -190,6 +190,17 @@ describe("Codex daemon policy with isolated installs", { concurrency: 2 }, () =>
     assert.equal(withNoDaemon("FOO=1 exec codex resume abc"), "FOO=1 exec codex --no-daemon resume abc");
   });
 
+  test("left to its default, the app's probe gives up after a few seconds, not after the tests' long wait", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "codex-cwd-"));
+    const fake = fakeCodex("");
+    writeFileSync(path.join(fake.bin, "codex"), "#!/bin/sh\nsleep 10\necho '      --no-daemon'\n");
+    const started = Date.now();
+    // codexSupportsNoDaemon itself, not probe(): this is the default the app runs with (COMMAND_PROBE_TIMEOUT_MS).
+    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, fake.env, "codex"), true, "timed out: the flag wins");
+    const took = Date.now() - started;
+    assert.ok(took < 8000, `the default limit held for ${took} ms`);
+  });
+
   test("a probe that times out adds the flag, is not cached, and is asked again", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "codex-cwd-"));
     const fake = fakeCodex("");
