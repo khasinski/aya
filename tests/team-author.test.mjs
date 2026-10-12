@@ -303,9 +303,9 @@ test("a team file's own text in a save error reaches the terminal as text, not a
     });
   // The file an agent wrote, quoted back by the parser: the title before it is checked, a role name, a route.
   const cases = [
-    ["title", GOOD.replace("# ux-fix", "# ux\x1b]0;owned\x07fix"), /team "ux\?\]0;owned\?fix": the file name must be/],
-    ["role", GOOD.replace("## Role: fixer", "## Role: fix\x1b[2Jer"), /role "fix\?\[2Jer" must be lowercase/],
-    ["route", GOOD.replace("Sends to: fixer (findings with proof)", "Sends to: fix\u009b31mer (findings)"), /sends to unknown role "fix\?31mer"/],
+    ["title", GOOD.replace("# ux-fix", "# ux\x1b]0;owned\x07fix"), /team "ux\\u001b\]0;owned\\u0007fix": the file name must be/],
+    ["role", GOOD.replace("## Role: fixer", "## Role: fix\x1b[2Jer"), /role "fix\\u001b\[2Jer" must be lowercase/],
+    ["route", GOOD.replace("Sends to: fixer (findings with proof)", "Sends to: fix\u009b31mer (findings)"), /sends to unknown role "fix\\u009b31mer"/],
   ];
   try {
     for (const [name, text, error] of cases) {

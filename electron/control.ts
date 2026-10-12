@@ -26,7 +26,8 @@ import { ayaMachinesDeps } from "./machines-dialog";
 import { handleTeamAuthorRequest } from "./team-author";
 import { HOLD_BUSY, HOLD_DRAFT, isDialogHold, isUserOnlyHold } from "./pane-holds";
 import { debugAnswer } from "./team-debug";
-import { handleTeamRequest, oneLine, PaneHeldError, TEAMS_UNAVAILABLE, teammateToWaitOn, TextPastedError, TryAgainError, type TeamControlDeps } from "./team-control";
+import { oneLine, printable } from "./printable";
+import { handleTeamRequest, PaneHeldError, TEAMS_UNAVAILABLE, teammateToWaitOn, TextPastedError, TryAgainError, type TeamControlDeps } from "./team-control";
 import { handleTeamPanesRequest, THIS_PANE, type TeamPaneDeps } from "./team-panes";
 import { handleTeamShow } from "./team-show";
 import type { TeamRunner } from "./team-runner";
@@ -129,11 +130,21 @@ function focusWindow(win: BrowserWindow | null): void {
   win.focus();
 }
 
+/** A reply as the CLI prints it: bin/aya writes `output` and `error` to the terminal as they are, so this is the one
+ *  place every command's text, now and later, is made printable (printable.ts). */
+function printableReply<T extends { output?: unknown; error?: unknown }>(reply: T): T {
+  return {
+    ...reply,
+    ...(typeof reply.output === "string" ? { output: printable(reply.output) } : {}),
+    ...(typeof reply.error === "string" ? { error: printable(reply.error) } : {}),
+  };
+}
+
 /** Whether the reply was handed to the socket: false when the peer is gone (EPIPE) or the socket closed. */
-function sendJson(socket: net.Socket, value: unknown): Promise<boolean> {
+function sendJson(socket: net.Socket, reply: { ok: boolean; output?: unknown; error?: unknown }): Promise<boolean> {
   return new Promise((resolve) => {
     if (socket.destroyed) return resolve(false);
-    socket.write(`${JSON.stringify(value)}\n`, (err) => resolve(!err));
+    socket.write(`${JSON.stringify(printableReply(reply))}\n`, (err) => resolve(!err));
   });
 }
 

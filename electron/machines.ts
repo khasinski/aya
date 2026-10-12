@@ -19,7 +19,6 @@ const MACHINES_FILE_MODE = 0o600;
 const ID_PATTERN = /^[a-z0-9-]+$/;
 const PURPOSE_MAX_CHARS = 200;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
-const CONTROL_CHARS_ALL = new RegExp(CONTROL_CHARS.source, "g");
 const LOCAL_WORDS = new Set(["local"]);
 const LOCAL_PHRASES = [/\bthis machine\b/i];
 const LOCAL_PHRASE_WORD = "this-machine";
@@ -335,10 +334,6 @@ function modelLines(s: MachineStatus, port: number, now: Date): string[] {
   ];
 }
 
-/** Model names and ssh errors come from the host, aliases from ~/.ssh/config: no control character reaches the terminal,
- *  where an escape could rewrite the screen or pass for an Aya OSC signal from the pane that ran the command. */
-const printable = (line: string) => line.replace(CONTROL_CHARS_ALL, "?");
-
 export function formatMachines(views: MachineView[], now = new Date()): string {
   if (views.length === 0) return 'no machines yet; add one in Settings > Machines or with aya machines add "<sentence>"\n';
   const idWidth = Math.max(...views.map((v) => v.id.length));
@@ -358,13 +353,13 @@ export function formatMachines(views: MachineView[], now = new Date()): string {
   }
   const oldest = views.map((v) => v.status.checkedAt).sort()[0];
   lines.push(`checked ${clock(oldest)}`);
-  return `${lines.map(printable).join("\n")}\n`;
+  return `${lines.join("\n")}\n`;
 }
 
 function formatHosts(hosts: KnownHost[]): string {
   if (hosts.length === 0) return "no known ssh hosts: no Host aliases in ~/.ssh/config and no remote projects\n";
   const width = Math.max(...hosts.map((h) => h.target.length));
-  return hosts.map((h) => printable(`${h.target.padEnd(width)}  ${h.sources.join(", ")}${h.machine ? `  (added as ${h.machine})` : ""}`) + "\n").join("");
+  return hosts.map((h) => `${h.target.padEnd(width)}  ${h.sources.join(", ")}${h.machine ? `  (added as ${h.machine})` : ""}\n`).join("");
 }
 
 function formatDraft(draft: SentenceDraft): string {

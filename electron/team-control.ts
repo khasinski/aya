@@ -13,7 +13,7 @@ import { TEAM_SYSTEM_SENDER } from "./team-definition";
 import type { ProjectConfig, TeamDefinition, TeamRole } from "./types";
 import { clock, WALL_MINUTE_MS } from "./team-times";
 import { whoamiText } from "./team-whoami";
-import { printableText } from "./printable";
+import { oneLine } from "./printable";
 
 export interface TeamControlDeps {
   teamHome: string;
@@ -123,16 +123,6 @@ export async function roleHold(
 ): Promise<{ pane: string | null; hold: string | null }> {
   const pane = await store.paneOf(role);
   return { pane, hold: pane ? await deps.holdReason(pane) : NO_PANE_HOLD };
-}
-
-// Every Zs but U+0020: a different space is a different token, so 16 of them would carry ~4 bits per gap.
-const BLANK_OR_LINE = /[\p{Cc}\p{Zl}\p{Zp}\u2800\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+/gu;
-const HIDDEN = /[\p{Cf}\p{Default_Ignorable_Code_Point}\p{Co}\p{Cn}\p{Cs}]/gu;
-
-/** A peer's text as one plain line: controls (Enter, ESC[201~ ending a paste early) become a space; format, ignorable,
- *  private-use and unassigned characters (bidi overrides, zero-width joiners, tags) hide or reorder text and go. */
-export function oneLine(text: string): string {
-  return text.replace(BLANK_OR_LINE, " ").replace(HIDDEN, "").trim();
 }
 
 /** The header marks a message as a peer's dated report, not the user's instruction. */
@@ -399,8 +389,7 @@ export async function handleTeamRequest(
   const m = await membership(callerId, deps);
   if (request.type === "team-whoami") {
     await m.store.noteWhoami(m.role.id, askedAt).catch((err: unknown) => console.warn("[aya] team whoami time not recorded:", err));
-    // The team's text goes to the role's terminal (printable.ts). whoamiText stays raw: a Save compares it.
-    return { output: printableText(whoamiText(m.team, m.role)) };
+    return { output: whoamiText(m.team, m.role) };
   }
   if (request.type === "team-pause") return { output: await pauseByLead(m, request.text, pause) };
   if (request.type === "team-send") return { output: await send(m, request.role, request.text, deps) };

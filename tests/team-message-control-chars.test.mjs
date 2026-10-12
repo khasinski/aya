@@ -5,7 +5,8 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
 const { deliverTeamMessage, PASTE_START, PASTE_END } = await import("../dist-electron/control.js");
-const { typedTeamMessage, oneLine } = await import("../dist-electron/team-control.js");
+const { typedTeamMessage } = await import("../dist-electron/team-control.js");
+const { oneLine } = await import("../dist-electron/printable.js");
 
 const MESSAGES = {
   short: "round 5 ready",

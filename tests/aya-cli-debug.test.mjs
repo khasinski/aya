@@ -157,8 +157,8 @@ test("aya team debug prints what agents sent as text: a bare value and a quoted 
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stdout, /[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028-\u202e\u2066-\u206f]/);
     const out = r.stdout.trim().split("\n");
-    assert.match(out[0], /text=\?\]0;owned\?$/);
-    assert.match(out[1], /text="red \?31m and \?TXT"$/);
+    assert.match(out[0], /text=\\u001b\]0;owned\\u0007$/);
+    assert.match(out[1], /text="red \\u009b31m and \\u202eTXT"$/);
   } finally {
     h.cleanup();
   }

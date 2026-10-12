@@ -373,11 +373,11 @@ test("aya team stats prints the status command and its recorded output as text, 
     const r = runCli(h, ["team", "stats", "crew", ...flag]);
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stdout, UNPRINTABLE, flag.join(" ") || "plain");
-    assert.match(r.stdout, /command: git log\?\]0;owned\? -1$/m);
-    assert.match(r.stdout, /^  abc1234 fix\?31m red\?TXT$/m);
-    assert.match(r.stdout, /^  exit 1\?\[2J$/m);
-    if (flag.length) assert.match(r.stdout, /^Refused sends: tester -> "nobody\?X" \(no such role\?R\): "hi\?\[2J there"$/m);
-    else assert.match(r.stdout, /^ +1 {2}shows\?31m a prompt$/m);
+    assert.match(r.stdout, /command: git log\\u001b\]0;owned\\u0007 -1$/m);
+    assert.match(r.stdout, /^  abc1234 fix\\u009b31m red\\u202eTXT$/m);
+    assert.match(r.stdout, /^  exit 1\\u001b\[2J$/m);
+    if (flag.length) assert.match(r.stdout, /^Refused sends: tester -> "nobody\\u009bX" \(no such role\\u202eR\): "hi\\u001b\[2J there"$/m);
+    else assert.match(r.stdout, /^ +1 {2}shows\\u009b31m a prompt$/m);
   }
   const r = runCli(h, ["team", "stats", "crew", "--json"]);
   assert.equal(r.status, 0, r.stderr);

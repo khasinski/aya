@@ -429,8 +429,9 @@ team_debug() {
   exec node - "$file" "${2:-}" "$(aya_modules_dir)/printable.js" <<'NODE'
 const fs = require("node:fs");
 const [file, mode, printableModule] = process.argv.slice(2);
-// The log holds what agents sent (team-send's text) and what their panes showed: printed as text, never acted on.
-const { printableText } = require(printableModule);
+// The log holds what agents sent (team-send's text) and what their panes showed. Not a control-socket reply, so the
+// same rule as one is applied here (electron/printable.ts).
+const { printable } = require(printableModule);
 const LAST = 50;
 const POLL_MS = 300;
 // The longest event name the runner logs, "round-check": the fields line up after it.
@@ -447,7 +448,7 @@ function show(line) {
   const at = new Date(time);
   const clock = Number.isNaN(at.getTime()) ? "--:--:--" : at.toTimeString().slice(0, 8);
   const shown = Object.entries(fields).map(([k, v]) => `${k}=${typeof v === "string" && !/[\s"=]/.test(v) && v ? v : JSON.stringify(v)}`);
-  process.stdout.write(printableText(`${clock} ${String(event).padEnd(EVENT_WIDTH)} ${shown.join(" ")}`.trimEnd()) + "\n");
+  process.stdout.write(printable(`${clock} ${String(event).padEnd(EVENT_WIDTH)} ${shown.join(" ")}`.trimEnd()) + "\n");
 }
 
 // From `from` to the end, or from the start when the file is shorter now (rotated).

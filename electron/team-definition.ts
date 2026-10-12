@@ -2,7 +2,6 @@
 // sections instead of YAML, so people and agents can read and edit it.
 
 import type { SendRoute, TeamDefinition, TeamRole } from "./types";
-import { printableText } from "./printable";
 
 export const ID_MAX_LEN = 40;
 export const ID_RE = new RegExp(`^[a-z0-9][a-z0-9-]{0,${ID_MAX_LEN - 1}}$`);
@@ -36,9 +35,7 @@ export const STATUS_COMMAND_SECTION = "Status command";
 
 export class TeamFileError extends Error {
   constructor(name: string, problem: string) {
-    // It quotes the file (its title before it is checked, role names, routes), which agents write, and `aya team
-    // save` prints it to a terminal (printable.ts).
-    super(printableText(`team "${name}": ${problem}`));
+    super(`team "${name}": ${problem}`);
   }
 }
 

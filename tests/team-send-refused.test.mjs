@@ -13,7 +13,8 @@ isolateHome(home.root);
 process.on("exit", () => home.cleanup());
 
 const { TeamStore, teamDir, REFUSED_MAX_ENTRIES, REFUSED_KEEP_ENTRIES } = await import("../dist-electron/team-store.js");
-const { handleTeamRequest, oneLine, TEAM_SENDS_PER_MINUTE } = await import("../dist-electron/team-control.js");
+const { handleTeamRequest, TEAM_SENDS_PER_MINUTE } = await import("../dist-electron/team-control.js");
+const { oneLine } = await import("../dist-electron/printable.js");
 const { digestFromFiles, readTeamFiles } = await import("../dist-electron/team-stats.js");
 const { MESSAGE_CHARS } = await import("../dist-electron/team-debug.js");
 

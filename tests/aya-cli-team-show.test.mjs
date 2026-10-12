@@ -201,8 +201,8 @@ test("team show refuses extra words and unknown flags before Aya hears of it", a
 
 // A team file is written by agents: its text must reach the terminal as text. ESC starts a sequence (here: clear the
 // screen, retitle the window, colour), CR returns to the line start, C1 CSI is ESC [ in one byte, U+202E reverses
-// what follows. Each shows as "?"; tab and newline stay. In --json each is a \\uXXXX escape, JSON.stringify's own
-// for C0, Aya's for DEL, C1 and bidi, which JSON.stringify leaves raw.
+// what follows. The control server's reply shows each as its \uXXXX escape (control.ts printableReply); tab and
+// newline stay, and --json parses to the team's text unchanged.
 const HOSTILE = TEAM.replace("Must not: edit code", "Must not: edit\x1b]0;owned\x07 code")
   .replace("Writes down what a player sees.", "Writes\x1b[2J down\rSAYS\u009b31m red\u202eTXT\tok")
   .replace("Number the rounds.", "Number\x07 the\x7f rounds.")
@@ -210,20 +210,20 @@ const HOSTILE = TEAM.replace("Must not: edit code", "Must not: edit\x1b]0;owned\
   .replace("git log --oneline -1", "git log\u2028 --oneline -1");
 const UNPRINTABLE = /[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028-\u202e\u2066-\u206f]/;
 
-test("team show and team whoami print the team's control characters as ?, and --json keeps them escaped", async () => {
+test("team show and team whoami print the team's control characters as their escapes, and --json the same data", async () => {
   const t = await setup({ teamFile: HOSTILE });
   try {
     for (const [sub, args] of [["show", []], ["whoami", []]]) {
       const { status, stdout, stderr } = await t.team(sub, IN_ROLE_PANE, ...args);
       assert.equal(status, 0, `${sub}: ${stderr}`);
       assert.doesNotMatch(stdout, UNPRINTABLE, sub);
-      assert.match(stdout, /must not\s+edit\?\]0;owned\? code$/m, sub);
-      assert.match(stdout, /Writes\?\[2J down\?SAYS\?31m red\?TXT\tok$/m, sub);
-      assert.match(stdout, /^protocol\nNumber\? the\? rounds\.$/m, sub);
-      assert.match(stdout, /sends to\s+implementer: findings\?\[8m with proof$/m, sub);
+      assert.match(stdout, /must not\s+edit\\u001b\]0;owned\\u0007 code$/m, sub);
+      assert.match(stdout, /Writes\\u001b\[2J down\\u000dSAYS\\u009b31m red\\u202eTXT\tok$/m, sub);
+      assert.match(stdout, /^protocol\nNumber\\u0007 the\\u007f rounds\.$/m, sub);
+      assert.match(stdout, /sends to\s+implementer: findings\\u001b\[8m with proof$/m, sub);
     }
     // whoami does not print the status command; show does.
-    assert.match((await t.aya(IN_ROLE_PANE)).stdout, /^status\s+git log\? --oneline -1\b/m);
+    assert.match((await t.aya(IN_ROLE_PANE)).stdout, /^status\s+git log\\u2028 --oneline -1\b/m);
     const { status, stdout } = await t.aya(IN_ROLE_PANE, "--json");
     assert.equal(status, 0);
     assert.doesNotMatch(stdout, UNPRINTABLE, "JSON escapes them");

@@ -4,7 +4,8 @@
 import { outstandingWaiting, settleRestored, teammateWaits } from "./agent-status";
 import { whileTeamNotSaved } from "./team-admin";
 import { whileProjectPanesFree } from "./team-panes";
-import { deliverAndLog, logTyped, oneLine, PaneHeldError, roleHold, systemLine, typeFromAya, typeLogged, type TeamControlDeps } from "./team-control";
+import { oneLine } from "./printable";
+import { deliverAndLog, logTyped, PaneHeldError, roleHold, systemLine, typeFromAya, typeLogged, type TeamControlDeps } from "./team-control";
 import { TEAM_MINUTE_MS } from "./paths";
 import { loadTeam, projectBySlug, runnableTeamNames, teamFile } from "./team-files";
 import { HOLD_BUSY, NO_PANE_HOLD } from "./pane-holds";

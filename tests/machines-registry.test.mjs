@@ -249,7 +249,8 @@ test("claim: refused while someone else holds it, kept for its holder, taken ove
   await assert.rejects(run("claim", "a1", "two\nlines"), /one line of plain text/);
 });
 
-test("aya machines prints no control character from the host, and names pinned and expired models", () => {
+// The host's text is made printable where every reply is (control.ts printableReply, control-reply-printable.test.mjs).
+test("aya machines names pinned and expired models, the host's model names as they came", () => {
   const status = {
     reachable: true, checkedAt: "2026-10-11T10:00:00.000Z", error: null, cpuName: "CPU", cpus: 8, load1: 1, memUsedBytes: 1e9, memTotalBytes: 8e9, gpus: [],
     ollama: { up: true, version: "0.12\u001b[2J", modelsError: null, loaded: [
@@ -258,8 +259,7 @@ test("aya machines prints no control character from the host, and names pinned a
     ] },
   };
   const out = formatMachines([{ id: "a", reach: "local", ollama: { port: 11434 }, status }], new Date("2026-10-11T10:00:00.000Z"));
-  assert.doesNotMatch(out, /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
-  assert.match(out, /evil\?\]9001;aya\.status=done\? pinned/);
+  assert.match(out, /evil\x1b\]9001;aya\.status=done\x07 pinned/);
   assert.match(out, /old hot until \d\d:\d\d \(expired\)/);
   const silent = (installed, running) =>
     formatMachines([{ id: "m", reach: "local", ollama: { port: 11435 }, status: { ...status, ollama: { up: false, version: null, loaded: null, modelsError: null, installed, running } } }]);
