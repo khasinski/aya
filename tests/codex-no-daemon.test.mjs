@@ -15,6 +15,12 @@ import { NON_TUI, codexSupportsNoDaemon, noDaemonCommand, withNoDaemon } from ".
 // Cache, quoting and binary-selection cases need the shell protocol, not the machine's /etc/profile;
 // the rc and login-PATH cases keep the real shells, whose startup files are under test.
 const PROBE_SHELL = protocolShell();
+// The app's probe gives up after COMMAND_PROBE_TIMEOUT_MS (2.5 s) and then adds the flag, on purpose. A case that
+// needs codex's real answer waits longer: under load a login shell and the fake codex took more than 2.5 s, and the
+// timeout's own answer (true) failed the cases expecting an old codex (false) three times on 2026-10-12. The cases
+// about the timeout pass their own short one.
+const ANSWER_TIMEOUT_MS = 30_000;
+const probe = (shell, cwd, env, written, timeoutMs = ANSWER_TIMEOUT_MS) => codexSupportsNoDaemon(shell, cwd, env, written, timeoutMs);
 test.after(() => rmSync(path.dirname(PROBE_SHELL), { recursive: true, force: true }));
 
 // Each probe owns its install, HOME, cwd and log. Two concurrent cases overlap
@@ -108,16 +114,16 @@ describe("Codex daemon policy with isolated installs", { concurrency: 2 }, () =>
     const oldFile = path.join(old.bin, "codex");
     const SAME_MTIME = 1_000_000_000;
     utimesSync(oldFile, SAME_MTIME, SAME_MTIME);
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, old.env, oldFile), false);
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, old.env, oldFile), false);
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, old.env, "codex"), false);
+    assert.equal(await probe(PROBE_SHELL, cwd, old.env, oldFile), false);
+    assert.equal(await probe(PROBE_SHELL, cwd, old.env, oldFile), false);
+    assert.equal(await probe(PROBE_SHELL, cwd, old.env, "codex"), false);
     assert.equal(calls(old), 1);
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, neu.env, "codex"), true);
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, neu.env, "codex"), true);
+    assert.equal(await probe(PROBE_SHELL, cwd, neu.env, "codex"), true);
+    assert.equal(await probe(PROBE_SHELL, cwd, neu.env, "codex"), true);
     assert.equal(calls(neu), 1);
     fakeCodex("Options:\n      --no-daemon   (upgraded)", old.bin);
     utimesSync(oldFile, SAME_MTIME, SAME_MTIME);
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, old.env, "codex"), true, "same mtime, new size");
+    assert.equal(await probe(PROBE_SHELL, cwd, old.env, "codex"), true, "same mtime, new size");
     assert.equal(calls(old), 2);
   });
 
@@ -128,7 +134,7 @@ describe("Codex daemon policy with isolated installs", { concurrency: 2 }, () =>
     const fake = fakeCodex("      --no-daemon", bin);
     // Kept off PATH, so only the path the preset names can reach it.
     const env = { ...fake.env, PATH: "/usr/bin:/bin" };
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, env, path.join(bin, "codex")), true);
+    assert.equal(await probe(PROBE_SHELL, cwd, env, path.join(bin, "codex")), true);
     assert.equal(calls(fake), 1);
     assert.deepEqual(readdirSync(cwd), [], "nothing in the path ran");
   });
@@ -140,9 +146,9 @@ describe("Codex daemon policy with isolated installs", { concurrency: 2 }, () =>
     const notRunnable = mkdtempSync(path.join(tmpdir(), "codex-noexec-"));
     writeFileSync(path.join(notRunnable, "codex"), "not a program");
     const behind = (fake) => ({ ...fake.env, PATH: `${notRunnable}:${fake.env.PATH}` });
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, behind(neu), "codex"), true);
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, behind(old), "codex"), false);
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, behind(neu), "codex"), true);
+    assert.equal(await probe(PROBE_SHELL, cwd, behind(neu), "codex"), true);
+    assert.equal(await probe(PROBE_SHELL, cwd, behind(old), "codex"), false);
+    assert.equal(await probe(PROBE_SHELL, cwd, behind(neu), "codex"), true);
   });
 
   test("a codex only the login shell finds is asked every time", async () => {
@@ -151,14 +157,14 @@ describe("Codex daemon policy with isolated installs", { concurrency: 2 }, () =>
     const home = mkdtempSync(path.join(tmpdir(), "codex-home-"));
     writeFileSync(path.join(home, ".profile"), `PATH='${hidden.bin}':$PATH\nexport PATH\n`);
     const env = { PATH: "/usr/bin:/bin", HOME: home };
-    assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, env, "codex"), false);
-    assert.equal(await codexSupportsNoDaemon("/bin/sh", cwd, env, "codex"), false);
+    assert.equal(await probe("/bin/sh", cwd, env, "codex"), false);
+    assert.equal(await probe("/bin/sh", cwd, env, "codex"), false);
     assert.equal(calls(hidden), 2);
   });
 
   test("codexSupportsNoDaemon: a missing codex is a no, not a throw", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "codex-cwd-"));
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, { PATH: "/usr/bin:/bin" }, "/nonexistent/codex"), false);
+    assert.equal(await probe(PROBE_SHELL, cwd, { PATH: "/usr/bin:/bin" }, "/nonexistent/codex"), false);
   });
 
   // --no-daemon, the wrapper rule, agentProgram (agent-session.ts) and launch mode must agree on "the program is
@@ -190,14 +196,14 @@ describe("Codex daemon policy with isolated installs", { concurrency: 2 }, () =>
     const ready = path.join(fake.bin, "ready");
     // The same file throughout, so the cache key cannot change between the asks.
     writeFileSync(path.join(fake.bin, "codex"), `#!/bin/sh\necho x >> '${fake.log}'\n[ -f '${ready}' ] || sleep 4\necho '  -m, --model'\n`);
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, fake.env, "codex", 700), true, "unknown: the flag wins, as identity matters more");
+    assert.equal(await probe(PROBE_SHELL, cwd, fake.env, "codex", 700), true, "unknown: the flag wins, as identity matters more");
     writeFileSync(ready, "");
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, fake.env, "codex"), false, "a real answer after the timeout");
+    assert.equal(await probe(PROBE_SHELL, cwd, fake.env, "codex"), false, "a real answer after the timeout");
     // Not "2 calls": on a loaded machine the first probe can be killed before its script ran. The later asks have
-    // the default timeout, and the real answer proves the second ask ran again instead of reading a cached guess.
+    // the answer timeout, and the real answer proves the second ask ran again instead of reading a cached guess.
     const asked = calls(fake);
     assert.ok(asked >= 1, "the second ask ran the probe");
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, fake.env, "codex"), false);
+    assert.equal(await probe(PROBE_SHELL, cwd, fake.env, "codex"), false);
     assert.equal(calls(fake), asked, "a real answer is cached");
   });
 
@@ -206,9 +212,9 @@ describe("Codex daemon policy with isolated installs", { concurrency: 2 }, () =>
     const fake = fakeCodex("");
     const ready = path.join(fake.bin, "ready");
     writeFileSync(path.join(fake.bin, "codex"), `#!/bin/sh\nif [ -f '${ready}' ]; then echo '      --no-daemon'; else exit 3; fi\n`);
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, fake.env, "codex"), false);
+    assert.equal(await probe(PROBE_SHELL, cwd, fake.env, "codex"), false);
     writeFileSync(ready, "");
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, fake.env, "codex"), true);
+    assert.equal(await probe(PROBE_SHELL, cwd, fake.env, "codex"), true);
   });
 
   // A login shell's rc can block: SIGTERM to the shell does not end `sleep`; a stdin read ends only
@@ -234,7 +240,7 @@ describe("Codex daemon policy with isolated installs", { concurrency: 2 }, () =>
         const pids = path.join(fake.bin, "rc.pids");
         for (const f of [".bash_profile", ".zshrc"]) writeFileSync(path.join(fake.bin, f), rc(pids));
         const started = Date.now();
-        const answer = await codexSupportsNoDaemon(shell, cwd, { ...fake.env, ZDOTDIR: fake.bin }, "codex", ends === "timeout" ? 600 : 5000);
+        const answer = await probe(shell, cwd, { ...fake.env, ZDOTDIR: fake.bin }, "codex", ends === "timeout" ? 600 : 5000);
         const took = Date.now() - started;
         assert.equal(answer, true, "a timeout adds the flag; a closed stdin ends the read and codex answers");
         assert.ok(took < (ends === "timeout" ? 2500 : 4000), `returned after ${took} ms`);
@@ -259,9 +265,9 @@ describe("Codex daemon policy with isolated installs", { concurrency: 2 }, () =>
       const cwd = mkdtempSync(path.join(tmpdir(), "codex-cwd-"));
       const fake = fakeCodex("      --no-daemon");
       const env = { PATH: "/usr/bin:/bin", HOME: fake.bin };
-      assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, env, spelling), true);
+      assert.equal(await probe(PROBE_SHELL, cwd, env, spelling), true);
       assert.equal(calls(fake), 1, "codex --help ran");
-      assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, env, spelling), true);
+      assert.equal(await probe(PROBE_SHELL, cwd, env, spelling), true);
       assert.equal(calls(fake), 1, "the install is keyed by its expanded path");
     });
   }
@@ -283,7 +289,7 @@ describe("Codex daemon policy with isolated installs", { concurrency: 2 }, () =>
     const onPath = fakeCodex("  -m, --model <MODEL>");
     const named = fakeCodex("      --no-daemon");
     writeFileSync(path.join(named.bin, "codex"), `#!/bin/sh\npwd >> '${named.log}'\necho '      --no-daemon'\n`);
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, onPath.env, path.join(named.bin, "codex")), true);
+    assert.equal(await probe(PROBE_SHELL, cwd, onPath.env, path.join(named.bin, "codex")), true);
     assert.equal(existsSync(onPath.log), false, "the codex on PATH was not asked");
     assert.equal(readFileSync(named.log, "utf8").trim(), cwd);
   });
@@ -299,13 +305,13 @@ describe("Codex daemon policy with isolated installs", { concurrency: 2 }, () =>
     // Same size, same mtime, different answer: only the path tells the installs apart.
     const yes = install("      --no-daemon", MTIME);
     const no = install("      --no-dameon", MTIME);
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, yes.env, "codex"), true);
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, no.env, "codex"), false);
+    assert.equal(await probe(PROBE_SHELL, cwd, yes.env, "codex"), true);
+    assert.equal(await probe(PROBE_SHELL, cwd, no.env, "codex"), false);
     // Same file, same size, new mtime: asked again.
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, yes.env, "codex"), true);
+    assert.equal(await probe(PROBE_SHELL, cwd, yes.env, "codex"), true);
     assert.equal(calls(yes), 1);
     utimesSync(path.join(yes.bin, "codex"), MTIME + 5, MTIME + 5);
-    assert.equal(await codexSupportsNoDaemon(PROBE_SHELL, cwd, yes.env, "codex"), true);
+    assert.equal(await probe(PROBE_SHELL, cwd, yes.env, "codex"), true);
     assert.equal(calls(yes), 2, "a touched file is asked again");
   });
 
