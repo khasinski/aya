@@ -17,15 +17,17 @@ const state = join(root, "state");
 mkdirSync(bin);
 mkdirSync(state);
 const LOG = join(state, "calls.log");
-// One line per call: the directory, the notifier variable, the arguments.
+// One line per call: the directory, the notifier variable, the arguments. The paths come in
+// through the environment (copied by the module at load, below), never as shell source.
+process.env.FAKE_GH_STATE = state;
 writeFileSync(
   join(bin, "gh"),
   `#!/bin/sh
-printf '%s|%s|%s\\n' "$PWD" "$GH_NO_UPDATE_NOTIFIER" "$*" >> "${LOG}"
+printf '%s|%s|%s\\n' "$PWD" "$GH_NO_UPDATE_NOTIFIER" "$*" >> "$FAKE_GH_STATE/calls.log"
 case "$1" in
-  --version) [ -e "${state}/broken" ] && exit 1; echo "gh version 9.9.9"; exit 0 ;;
-  pr) [ -e "${state}/pr" ] && { cat "${state}/pr"; exit 0; }; echo "no pull requests found" >&2; exit 1 ;;
-  browse) [ -e "${state}/no-remote" ] && exit 1; echo "https://github.com/acme/repo/tree/$4"; exit 0 ;;
+  --version) [ -e "$FAKE_GH_STATE/broken" ] && exit 1; echo "gh version 9.9.9"; exit 0 ;;
+  pr) [ -e "$FAKE_GH_STATE/pr" ] && { cat "$FAKE_GH_STATE/pr"; exit 0; }; echo "no pull requests found" >&2; exit 1 ;;
+  browse) [ -e "$FAKE_GH_STATE/no-remote" ] && exit 1; echo "https://github.com/acme/repo/tree/$4"; exit 0 ;;
 esac
 exit 2
 `,
@@ -39,8 +41,11 @@ test.after(() => rmSync(root, { recursive: true, force: true }));
 
 function repo(branch) {
   const dir = realpathSync(mkdtempSync(join(root, "repo-")));
-  const git = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: dir, stdio: "ignore" });
-  git("init", "-q", "-b", branch);
+  // None of the user's or the system's git config, hooks or templates.
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+  const git = (...args) =>
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.hooksPath=/dev/null", ...args], { cwd: dir, env, stdio: "ignore" });
+  git("init", "-q", "--template=", "-b", branch);
   git("commit", "-q", "--allow-empty", "-m", "first");
   return { dir, git };
 }

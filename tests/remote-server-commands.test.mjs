@@ -6,10 +6,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as net from "node:net";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { hostname, tmpdir } from "node:os";
+import { hostname, tmpdir, userInfo } from "node:os";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 
-const { startRemoteServerOn } = await import("../dist-electron/remote-server.js");
+// startRemoteServer listens at REMOTE_SOCKET_PATH, which paths.js reads from AYA_HOME at load.
+const AYA_HOME = mkdtempSync(join(tmpdir(), "aya-remote-home-"));
+process.env.AYA_HOME = AYA_HOME;
+const require = createRequire(import.meta.url);
+const MODULE = join(process.cwd(), "dist-electron", "remote-server.js");
+const { startRemoteServer, startRemoteServerOn } = await import(MODULE);
+test.after(() => rmSync(AYA_HOME, { recursive: true, force: true }));
 
 const EMPTY_SNAPSHOT = {
   projects: [],
@@ -191,8 +198,9 @@ test("a snapshot that fails is reported and the server closes the connection", a
 test("without host info the hello names this machine", async (t) => {
   const { socket } = start(t);
   const [hello] = await talk(socket, [], (m) => m.length >= 1);
-  assert.equal(hello.host.id, hostname());
-  assert.equal(hello.host.platform, process.platform);
+  assert.deepEqual(hello.host, { id: hostname(), name: hostname(), platform: process.platform, user: userInfo().username });
+  assert.deepEqual(hello.app, { version: "0.6.0-test" });
+  assert.equal(hello.protocol, 1);
   assert.equal(hello.permissions.mode, "read-only");
 });
 
@@ -206,8 +214,37 @@ test("a stale socket file is replaced on start, and stop removes the socket", as
   // A plain file where the socket goes, as a crashed run could leave behind.
   writeFileSync(socket, "stale");
   const stop = startRemoteServerOn(socket, { appVersion: "t", getSnapshot: async () => EMPTY_SNAPSHOT, createProject: async () => ({}) });
+  let stopped = false;
+  t.after(() => stopped || stop());
   const [hello] = await talk(socket, [], (m) => m.length >= 1);
   assert.equal(hello.type, "hello");
   stop();
+  stopped = true;
   assert.equal(existsSync(socket), false);
+});
+
+test("startRemoteServer listens in AYA_HOME and stops when Aya quits", async (t) => {
+  const electronId = createRequire(MODULE).resolve("electron");
+  const saved = require.cache[electronId];
+  const onQuit = [];
+  require.cache[electronId] = {
+    id: electronId,
+    filename: electronId,
+    loaded: true,
+    exports: { app: { once: (event, fn) => onQuit.push([event, fn]) } },
+  };
+  t.after(() => {
+    if (saved) require.cache[electronId] = saved;
+    else delete require.cache[electronId];
+  });
+  const stop = startRemoteServer({ appVersion: "t", getSnapshot: async () => EMPTY_SNAPSHOT, createProject: async () => ({}) });
+  let quit = false;
+  t.after(() => quit || stop());
+  const socket = join(AYA_HOME, "aya-remote.sock");
+  const [hello] = await talk(socket, [], (m) => m.length >= 1);
+  assert.equal(hello.type, "hello");
+  assert.deepEqual(onQuit.map(([event]) => event), ["before-quit"]);
+  onQuit[0][1]();
+  quit = true;
+  assert.equal(existsSync(socket), false, "quitting Aya removed the socket");
 });

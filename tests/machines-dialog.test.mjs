@@ -54,6 +54,8 @@ test("Add: only the Add button is a yes; Cancel is the default and the Escape an
   assert.equal(options.cancelId, 1);
   assert.equal(options.noLink, true);
   assert.equal(options.signal, signal, "the caller can close the dialog");
+  assert.equal(options.message, "Add athena to Aya's machines?");
+  // The wording itself is pinned in machines-registry.test.mjs; here, that the dialog shows it.
   assert.deepEqual({ message: options.message, detail: options.detail }, addDialogText(ASK));
 });
 
