@@ -65,7 +65,8 @@ import { userShell } from "./shell";
 import { registerTeamIpc } from "./team-ipc";
 import { askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, presetAgent, teamPaneDeps, type PaneHost } from "./team-panes";
 import { confirmRestart, type RelaunchDeps } from "./relaunch-notes";
-import { restartStaleHost, updateInstaller } from "./update-quit";
+import { restartStaleHost } from "./update-quit";
+import { createUpdates, UPDATE_AUTO_CHECK_DELAY_MS } from "./updates";
 import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
@@ -86,15 +87,6 @@ import {
   AGENT_BRIEF_FILES_FILE,
 } from "./paths";
 import { createPtyLog } from "./pty-log";
-import {
-  diagnoseRelaunch,
-  readPendingUpdate,
-  markPendingUpdate,
-  markPendingUpdateSync,
-  clearPendingUpdate,
-  cleanShipItCache,
-  shouldCleanShipItCache,
-} from "./update-recovery";
 import { watchOmarchyTheme } from "./omarchy";
 import { isInternalNavigationUrl, parseExternalUrl } from "./navigation";
 import { listPresets, type AgentKind } from "./presets";
@@ -148,7 +140,6 @@ import type {
   DiagnosticsReport,
   SpawnRequest,
   ProjectCollectionState,
-  UpdateStatus,
   WebServerStatus,
 } from "./types";
 
@@ -275,7 +266,6 @@ const teamPaneHost: PaneHost = {
     return () => roles.forEach(({ ptyId }) => pendingPaneRoles.delete(ptyId));
   },
 };
-const UPDATE_AUTO_CHECK_DELAY_MS = 12_000;
 // Cap of $PATH entries returned to the renderer diagnostics view.
 const MAX_PATH_ENTRIES_RETURNED = 40;
 // Delay before re-probing a host that answered the version handshake with
@@ -288,22 +278,6 @@ const MACOS_FULLSCREEN_HACK_DELAY_MS = 250;
 // terminal children of dead hosts). Off the startup path: nothing it targets
 // can interfere with the fresh session, so first paint never pays for it.
 const LEGACY_SWEEP_DELAY_MS = 5_000;
-let updateStatus: UpdateStatus = {
-  phase: "idle",
-  supported: false,
-  currentVersion: "0.0.0",
-};
-let updateEventsConfigured = false;
-let updateCheckInFlight: Promise<UpdateStatus> | null = null;
-// True from the moment we hand off to ShipIt until we quit (#78). A second
-// install click must not spawn a second ShipIt - overlapping install requests
-// are a suspected cause of the silent-rollback failure.
-const updateLatch = { installing: false };
-// Sticky #78 warning: the phase it used to live in is replaced by the startup
-// auto-check 12 s later, so it is merged in separately and cleared on apply.
-let rollbackNotice: string | null = null;
-// Where to send a user whose auto-update silently failed (#78).
-const RELEASES_URL = "https://github.com/khasinski/aya/releases/latest";
 let macosWindowHack:
   | {
       apply(handle: Buffer): void;
@@ -469,213 +443,6 @@ async function diagnosticsReport(): Promise<DiagnosticsReport> {
       hookScriptPath: usageHook.scriptPath,
     },
   };
-}
-
-function updatesSupportedMessage(): string {
-  if (IS_DEV || !app.isPackaged) return "Updates are disabled in development builds.";
-  if (process.platform === "darwin") return "";
-  if (process.platform === "linux") {
-    return process.env.APPIMAGE
-      ? ""
-      : "Automatic install is only available for the AppImage build on Linux.";
-  }
-  return "Automatic updates are not supported on this platform.";
-}
-
-function updateStatusBase(): Pick<
-  UpdateStatus,
-  "supported" | "currentVersion" | "rollbackNotice"
-> {
-  return {
-    supported: updatesSupportedMessage() === "",
-    currentVersion: app.getVersion(),
-    // Merged into every status write so it survives the 12 s auto-check.
-    ...(rollbackNotice ? { rollbackNotice } : {}),
-  };
-}
-
-function setUpdateStatus(
-  next: Omit<UpdateStatus, "supported" | "currentVersion">,
-  // Kept for call-site compat; updates are app-wide, so the status is
-  // broadcast to every live window regardless of which one was passed.
-  _win: BrowserWindow | null = null,
-): UpdateStatus {
-  updateStatus = {
-    ...updateStatusBase(),
-    ...next,
-  };
-  eachAyaWindow((win) => {
-    win.webContents.send("updates:status", updateStatus);
-  });
-  return updateStatus;
-}
-
-function getUpdateStatus(): UpdateStatus {
-  if (updatesSupportedMessage()) {
-    return {
-      ...updateStatusBase(),
-      phase: "unsupported",
-      message: updatesSupportedMessage(),
-    };
-  }
-  return {
-    ...updateStatus,
-    ...updateStatusBase(),
-  };
-}
-
-function updateVersion(info: unknown): string | undefined {
-  return typeof info === "object" &&
-    info !== null &&
-    typeof (info as { version?: unknown }).version === "string"
-    ? (info as { version: string }).version
-    : undefined;
-}
-
-/** A requested update against the version we came back as (#78): a silent ShipIt rollback looks like success,
- *  so its state is cleaned, the update marked errored, and the user pointed at the releases page. */
-async function reconcilePendingUpdate(win: BrowserWindow | null): Promise<void> {
-  const pending = await readPendingUpdate();
-  const diagnosis = diagnoseRelaunch(pending, app.getVersion());
-  if (diagnosis === "none") return;
-  await clearPendingUpdate();
-  updateLatch.installing = false;
-  if (diagnosis === "applied") {
-    rollbackNotice = null; // an install landed; retire any earlier warning
-    return; // it worked; stay quiet
-  }
-  // Rolled back: the install silently failed and we relaunched the old bundle.
-  diagnosticsLog.append("update-rolled-back", {
-    target: pending?.targetVersion,
-    current: app.getVersion(),
-    attempts: pending?.attempts,
-  });
-  // The notice is cheap and true either way; the recursive wipe can land under
-  // a live install, so it waits for a repeat failure.
-  if (shouldCleanShipItCache(pending)) await cleanShipItCache();
-  rollbackNotice = `The update to ${pending?.targetVersion} didn't install - still on ${app.getVersion()}. Try the DMG from the releases page.`;
-  setUpdateStatus({
-    phase: "error",
-    message: rollbackNotice,
-  });
-  const message = `Update to ${pending?.targetVersion} didn't apply`;
-  const detail = `Aya is still on ${app.getVersion()}. The in-app update failed to install and rolled back to the current version. You can install the latest release manually.`;
-  const opts: Electron.MessageBoxOptions = {
-    type: "warning",
-    buttons: ["Open releases page", "Later"],
-    defaultId: 0,
-    cancelId: 1,
-    message,
-    detail,
-  };
-  const choice =
-    win && !win.isDestroyed()
-      ? await dialog.showMessageBox(win, opts)
-      : await dialog.showMessageBox(opts);
-  if (choice.response === 0) await shell.openExternal(RELEASES_URL);
-}
-
-function configureAutoUpdates(win: BrowserWindow): void {
-  if (updateEventsConfigured) return;
-  updateEventsConfigured = true;
-  updateStatus = getUpdateStatus();
-  if (!updateStatus.supported) return;
-
-  autoUpdater.autoDownload = true;
-  // Never on a quit by itself: an ordinary quit checks the panes' background work first (before-quit).
-  autoUpdater.autoInstallOnAppQuit = false;
-  autoUpdater.allowPrerelease = false;
-
-  autoUpdater.on("checking-for-update", () => {
-    setUpdateStatus({ phase: "checking", message: "Checking for updates." }, win);
-  });
-  autoUpdater.on("update-available", (info) => {
-    setUpdateStatus(
-      {
-        phase: "available",
-        availableVersion: updateVersion(info),
-        message: "Update found. Downloading in the background.",
-        checkedAt: new Date().toISOString(),
-      },
-      win,
-    );
-  });
-  autoUpdater.on("update-not-available", (info) => {
-    setUpdateStatus(
-      {
-        phase: "not-available",
-        availableVersion: updateVersion(info),
-        message: "Aya is up to date.",
-        checkedAt: new Date().toISOString(),
-      },
-      win,
-    );
-  });
-  autoUpdater.on("download-progress", (progress) => {
-    setUpdateStatus(
-      {
-        phase: "downloading",
-        percent:
-          typeof progress.percent === "number"
-            ? Math.max(0, Math.min(100, progress.percent))
-            : undefined,
-        message: "Downloading update.",
-      },
-      win,
-    );
-  });
-  autoUpdater.on("update-downloaded", (info) => {
-    const downloadedVersion = updateVersion(info);
-    setUpdateStatus(
-      {
-        phase: "downloaded",
-        downloadedVersion,
-        message: downloadedVersion
-          ? `Aya ${downloadedVersion} is ready to install.`
-          : "Update is ready to install.",
-      },
-      win,
-    );
-    if (Notification.isSupported()) {
-      new Notification({
-        title: "Aya update ready",
-        body: "Restart Aya to install the update.",
-      }).show();
-    }
-  });
-  autoUpdater.on("error", (error) => {
-    // quitAndInstall reports a failed handoff HERE rather than throwing, so this
-    // is the only place an async install failure can release the latch. The
-    // marker is deliberately kept: `error` also fires for unrelated checks, and
-    // deleting it there would cost the whole #78 detector.
-    updateLatch.installing = false;
-    setUpdateStatus({
-      phase: "error",
-      message: error instanceof Error ? error.message : String(error),
-      checkedAt: new Date().toISOString(),
-    });
-  });
-}
-
-async function checkForUpdates(): Promise<UpdateStatus> {
-  if (updatesSupportedMessage()) return getUpdateStatus();
-  if (updateCheckInFlight) return updateCheckInFlight;
-  updateCheckInFlight = (async () => {
-    try {
-      setUpdateStatus({ phase: "checking", message: "Checking for updates." });
-      await autoUpdater.checkForUpdates();
-      return getUpdateStatus();
-    } catch (err) {
-      return setUpdateStatus({
-        phase: "error",
-        message: err instanceof Error ? err.message : String(err),
-        checkedAt: new Date().toISOString(),
-      });
-    } finally {
-      updateCheckInFlight = null;
-    }
-  })();
-  return updateCheckInFlight;
 }
 
 function configureAppIdentity(): void {
@@ -931,8 +698,6 @@ let appQuitting = false;
 const TEAM_QUIT_SETTLE_MS = 2_000;
 let teamsAtQuit: TeamRunner | null = null;
 let teamsStopped = false;
-// The install an ordinary quit started holds the quit this long at most before it quits without it.
-const QUIT_INSTALL_SETTLE_MS = 15_000;
 
 // --- Aya Web (experimental): browser access over HTTP + WebSocket ---
 let webConfig: WebConfig | null = null;
@@ -1548,25 +1313,22 @@ async function handleStaleHost(): Promise<void> {
   }
 }
 
-/** Restart to update (asks before stopping background work) and an ordinary quit's update (installs only past no
- *  background work, else leaves it for Restart to update). Markers are written for diagnoseRelaunch (#78). */
-const updates = updateInstaller({
-  status: getUpdateStatus,
-  relaunch: relaunchDeps,
-  ask: (text) => askRestart("Restart to update", text),
-  latch: updateLatch,
-  mark: markPendingUpdate,
-  markSync: markPendingUpdateSync,
-  clearMark: clearPendingUpdate,
-  // Lazy: electron-updater builds its platform updater on first touch, which must not happen at module load.
-  updater: {
-    get autoRunAppAfterInstall() { return autoUpdater.autoRunAppAfterInstall; },
-    set autoRunAppAfterInstall(value: boolean) { autoUpdater.autoRunAppAfterInstall = value; },
-    quitAndInstall: (isSilent, isForceRunAfter) => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
+const updates = createUpdates({
+  app,
+  autoUpdater: () => autoUpdater,
+  isDev: IS_DEV,
+  platform: process.platform,
+  env: process.env,
+  eachAyaWindow,
+  diagnosticsLog: { append: (event, fields) => diagnosticsLog.append(event, fields) },
+  dialog,
+  shell,
+  notifications: {
+    isSupported: () => Notification.isSupported(),
+    create: (options) => new Notification(options),
   },
-  quit: () => app.quit(),
-  failed: (message) => setUpdateStatus({ phase: "error", message }),
-  settleMs: QUIT_INSTALL_SETTLE_MS,
+  relaunchDeps,
+  askRestart,
 });
 
 /** The terminal host's state, the one account behind Aya's launch check, the Restart Aya red dot and Diagnostics. */
@@ -1806,8 +1568,8 @@ function registerIpc(): TeamRunner {
     cliStatus,
     installCli,
     diagnosticsReport,
-    updateStatus: getUpdateStatus,
-    checkForUpdates,
+    updateStatus: updates.getUpdateStatus,
+    checkForUpdates: updates.checkForUpdates,
     installUpdate: () => updates.install(),
   });
 
@@ -2023,18 +1785,18 @@ app.whenReady().then(async () => {
   startupWindowCreated = true;
   const teamRunner = registerIpc();
   teamsAtQuit = teamRunner;
-  configureAutoUpdates(mainWindow);
+  updates.configureAutoUpdates(mainWindow);
   // Before checking for a NEW update, surface a PREVIOUS one that silently
   // failed to install and rolled back (#78).
-  void reconcilePendingUpdate(mainWindow);
+  void updates.reconcilePendingUpdate(mainWindow);
   // Live-follow Omarchy theme switches: re-broadcast so the renderer re-skins.
   const stopOmarchyWatch = watchOmarchyTheme(() => {
     eachAyaWindow((win) => win.webContents.send("omarchy:changed"));
   });
   app.once("before-quit", stopOmarchyWatch);
-  if (getUpdateStatus().supported) {
+  if (updates.getUpdateStatus().supported) {
     setTimeout(() => {
-      void checkForUpdates();
+      void updates.checkForUpdates();
     }, UPDATE_AUTO_CHECK_DELAY_MS);
   }
   startControlServer({
