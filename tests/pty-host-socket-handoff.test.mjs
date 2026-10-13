@@ -4,8 +4,9 @@
 // every agent a second time while the unreachable host kept the first copies running.
 
 import { test } from "node:test";
+import { spawn } from "node:child_process";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -73,4 +74,44 @@ test("after a restart, the old host's exit leaves the new host's socket in place
   pids.add(reached);
   assert.equal(reached, newPid, "a later client reaches the same host");
   await nextStart.shutdown();
+});
+
+test("a host whose socket another host replaced leaves that socket alone when it exits", async (t) => {
+  const home = mkdtempSync(join(tmpdir(), "aya-handoff2-"));
+  const socket = join(home, "pty-host.sock");
+  const hosts = [];
+  const startHost = () => {
+    const child = spawn(process.execPath, [HOST_SCRIPT], {
+      detached: true,
+      stdio: "ignore",
+      env: { ...process.env, AYA_HOME: home },
+    });
+    hosts.push(child.pid);
+    return child.pid;
+  };
+  t.after(() => {
+    for (const pid of hosts) {
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  const first = startHost();
+  await waitFor(() => existsSync(socket));
+  const firstInode = statSync(socket).ino;
+  // A second host takes the path over without the first one closing (what a client does when it cannot reach the
+  // host on the socket): it removes the file and binds its own.
+  const second = startHost();
+  await waitFor(() => existsSync(socket) && statSync(socket).ino !== firstInode);
+  const secondInode = statSync(socket).ino;
+
+  process.kill(first, "SIGTERM");
+  await waitFor(() => !isAlive(first), 10_000);
+  assert.equal(isAlive(second), true);
+  assert.equal(existsSync(socket), true, "the second host's socket survives the first host's exit");
+  assert.equal(statSync(socket).ino, secondInode);
 });

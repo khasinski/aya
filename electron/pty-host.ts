@@ -52,6 +52,9 @@ const LOG_HASH_PREFIX_CHARS = 8;
 const clients = new Set<net.Socket>();
 let idleTimer: NodeJS.Timeout | null = null;
 let server: net.Server | null = null;
+// The socket file this host bound, by device and inode. When this host exits after a restart, the path may already
+// belong to its successor, and removing it then would leave that host serving with no socket.
+let ownSocket: { dev: number; ino: number } | null = null;
 
 // Guards against overlapping shutdowns (a socket "shutdown" request racing a
 // SIGTERM): the SECOND shutdownPtyChildren call would find the ptys map already
@@ -77,8 +80,18 @@ function beginShutdown(reason: string): void {
 }
 
 /** Stop accepting and remove the socket: on a clean shutdown BEFORE exit (a restarting client must not
- *  reach this dying process), and again on exit signals. */
+ *  reach this dying process), and again on exit signals. Only while pty-host.sock is still the file this host
+ *  bound: a restart starts the next host as soon as this one answers "shutdown", and this one exits only after its
+ *  panes are gone, by when the path is the new host's socket (2026-10-13: removed here, it left the new host
+ *  unreachable and the next Aya started a third). That covers server.close() too, which unlinks the bound path
+ *  whatever file is there now; a host whose path another took over keeps its listener until it exits, and nobody
+ *  can reach it by that path anyway. */
 function closeSocket(): void {
+  if (!socketPathIsOurs()) {
+    ownSocket = null;
+    return;
+  }
+  ownSocket = null;
   try {
     server?.close();
   } catch {
@@ -95,6 +108,17 @@ function closeSocket(): void {
   // unreapable orphans (no record to find them by). The record is removed only
   // after a clean shutdown confirms the children are dead (see the shutdown
   // handler); otherwise the next launch GCs it once the pid is verified gone.
+}
+
+/** True while pty-host.sock is the file this host bound (same device and inode). */
+function socketPathIsOurs(): boolean {
+  if (!ownSocket) return false;
+  try {
+    const st = fs.lstatSync(PTY_HOST_SOCKET_PATH);
+    return st.dev === ownSocket.dev && st.ino === ownSocket.ino;
+  } catch {
+    return false;
+  }
 }
 
 function sendLine(socket: net.Socket, value: PtyHostResponse | PtyHostEventMessage): void {
@@ -281,6 +305,12 @@ function start(): void {
   });
 
   listenOwnerOnly(server, PTY_HOST_SOCKET_PATH, () => {
+    try {
+      const st = fs.lstatSync(PTY_HOST_SOCKET_PATH);
+      ownSocket = { dev: st.dev, ino: st.ino };
+    } catch {
+      // no file to own; nothing is removed on exit
+    }
     // A host whose app died before connecting gets no disconnect to arm this.
     scheduleIdleShutdown();
     ptyLog.append("host-start", {
