@@ -2036,6 +2036,8 @@ export function App() {
         return;
       }
       setPendingRepoImport({ project, presets: suggestions.slice(0, MAX_SUGGESTED_PRESETS) });
+    }).catch(() => {
+      // A repo file Aya cannot read (say, no permission) offers nothing, as a missing one does.
     });
     return () => {
       cancelled = true;
