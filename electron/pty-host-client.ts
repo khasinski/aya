@@ -40,11 +40,21 @@ export function openHostStderr(file: string = PTY_HOST_STDERR_FILE, maxBytes = P
     } catch {
       // no file yet
     }
-    return fs.openSync(
+    const fd = fs.openSync(
       file,
       fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
       0o600,
     );
+    try {
+      // The creation mode covers a new file only: an older one with wider permissions is narrowed, and anything but
+      // a regular file (a FIFO would stall the host's writes) is not used.
+      if (!fs.fstatSync(fd).isFile()) throw new Error("not a regular file");
+      fs.fchmodSync(fd, 0o600);
+      return fd;
+    } catch (err) {
+      fs.closeSync(fd);
+      throw err;
+    }
   } catch {
     return "ignore";
   }

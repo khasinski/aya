@@ -4,8 +4,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
+  chmodSync,
   closeSync,
   existsSync,
   lstatSync,
@@ -180,6 +181,18 @@ test("openHostStderr appends, moves a full file to .1, and never writes through 
     assert.equal(readFileSync(`${file}.1`, "utf8"), "first\nsecond\n");
     assert.equal(readFileSync(file, "utf8"), "third\n");
 
+    // A file left with wider permissions is narrowed to the owner before anything is written to it.
+    const wide = join(dir, "wide.log");
+    writeFileSync(wide, "");
+    chmodSync(wide, 0o644);
+    closeSync(openHostStderr(wide));
+    assert.equal(lstatSync(wide).mode & 0o777, 0o600);
+
+    // A FIFO at the path would stall the host's writes: it is not used.
+    const fifo = join(dir, "fifo.log");
+    execFileSync("mkfifo", [fifo]);
+    assert.equal(openHostStderr(fifo), "ignore");
+
     // A link planted at the path is not followed: the host's stderr is dropped instead.
     const target = join(dir, "elsewhere");
     writeFileSync(target, "");
@@ -190,4 +203,57 @@ test("openHostStderr appends, moves a full file to .1, and never writes through 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("the real host installs the guard: an error thrown inside it is logged and the host serves on", async (t) => {
+  const home = mkdtempSync(join(tmpdir(), "aya-host-guarded-"));
+  const injector = join(home, "inject.cjs");
+  // Preloaded into the real host script: once it is serving, an exception and a rejection nobody handles.
+  writeFileSync(
+    injector,
+    `setTimeout(() => { throw new Error("injected throw"); }, 300);
+     setTimeout(() => { Promise.reject(new Error("injected rejection")); }, 400);`,
+  );
+  const host = spawn(process.execPath, ["--require", injector, HOST_SCRIPT], {
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, AYA_HOME: home },
+  });
+  t.after(() => {
+    try {
+      process.kill(-host.pid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+    rmSync(home, { recursive: true, force: true });
+  });
+  const logFile = join(home, "pty-events.log");
+  const events = () =>
+    existsSync(logFile)
+      ? readFileSync(logFile, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
+      : [];
+  await waitFor(() => events().filter((e) => e.ev === "host-uncaught").length === 2);
+  await delay(300);
+  assert.equal(isAlive(host.pid), true, "the host is still running");
+  const uncaught = events().filter((e) => e.ev === "host-uncaught");
+  assert.match(uncaught[0].error, /injected throw/);
+  assert.match(uncaught[1].error, /injected rejection/);
+  // And it still answers on its socket.
+  const answer = await new Promise((resolve, reject) => {
+    const socket = net.createConnection(join(home, "pty-host.sock"), () => {
+      socket.write(`${JSON.stringify({ id: 7, type: "version" })}\n`);
+    });
+    socket.setEncoding("utf8");
+    let buffer = "";
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      if (buffer.includes("\n")) {
+        socket.destroy();
+        resolve(JSON.parse(buffer.slice(0, buffer.indexOf("\n"))));
+      }
+    });
+    socket.on("error", reject);
+  });
+  assert.equal(answer.id, 7);
+  assert.equal(answer.ok, true);
 });
