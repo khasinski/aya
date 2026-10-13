@@ -47,6 +47,7 @@
     "src/types.ts",
     "src/uuid.ts",
     "src/web/protocol.ts",
+    "src/web-host-options.ts",
     "src/window-events.ts",
     "src/web/shortcuts.ts",
     "src/worktree.ts"

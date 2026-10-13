@@ -18,9 +18,11 @@
 //
 // SECURITY: sessions are in-memory (restart = re-login), the cookie is
 // HttpOnly + SameSite=Strict, login is rate-limited per client address, and
-// browser requests must carry a same-host Origin. There is no TLS — the
-// server is meant to be reached over a trusted network (LAN, Tailscale,
-// WireGuard or an SSH tunnel), which the Settings UI says out loud.
+// browser requests must carry a same-host Origin. There is no TLS, so by
+// default the server listens on 127.0.0.1 (reach it through an SSH tunnel) and
+// answers only a loopback Host; every network or one interface (LAN,
+// Tailscale, WireGuard) is the user's choice in Settings, which says the
+// traffic is plain text.
 
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
@@ -29,7 +31,7 @@ import * as path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { listProjectState, saveProjectState } from "./config";
 import { validateProjectCollectionState } from "./validation";
-import { verifyWebPassword, type WebConfig } from "./web-config";
+import { isLoopbackHost, verifyWebPassword, type WebConfig } from "./web-config";
 import {
   hasCapturedIpcHandler,
   invokeCapturedIpcHandler,
@@ -132,6 +134,21 @@ function originAllowed(req: http.IncomingMessage): boolean {
   } catch {
     return false;
   }
+}
+
+/** A server on a loopback address answers only requests addressed to this computer by an IP literal or
+ *  localhost. Another name in Host means a page whose DNS now points at 127.0.0.1 (DNS rebinding): to the
+ *  browser it is that page's own origin, so the Origin check above passes it. */
+export function hostHeaderAllowed(listenHost: string, hostHeader: string | undefined): boolean {
+  if (!isLoopbackHost(listenHost)) return true;
+  if (!hostHeader) return false;
+  let hostname: string;
+  try {
+    hostname = new URL(`http://${hostHeader}`).hostname;
+  } catch {
+    return false;
+  }
+  return hostname === "localhost" || hostname === "[::1]" || isLoopbackHost(hostname);
 }
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -300,7 +317,13 @@ export async function startWebServer(
     });
   };
 
+  const config = options.getConfig();
+
   const server = http.createServer((req, res) => {
+    if (!hostHeaderAllowed(config.host, req.headers.host)) {
+      sendJson(res, 421, { error: "bad_host" });
+      return;
+    }
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "aya"}`);
     if (req.method === "POST" && url.pathname === "/api/login") {
       void handleLogin(req, res);
@@ -341,7 +364,12 @@ export async function startWebServer(
 
   server.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "aya"}`);
-    if (url.pathname !== "/ws" || !originAllowed(req) || !sessionFor(req)) {
+    if (
+      url.pathname !== "/ws" ||
+      !hostHeaderAllowed(config.host, req.headers.host) ||
+      !originAllowed(req) ||
+      !sessionFor(req)
+    ) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
       return;
@@ -398,7 +426,6 @@ export async function startWebServer(
     });
   });
 
-  const config = options.getConfig();
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(config.port, config.host, () => {

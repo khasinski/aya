@@ -528,15 +528,25 @@ export interface WebServerStatus {
   generatedPassword: string | null;
   /** URLs the server is reachable at (one per non-internal IPv4 interface). */
   urls: string[];
+  /** This computer's non-internal IPv4 addresses, offered in Settings as listen addresses. */
+  addresses: WebInterfaceAddress[];
   /** Currently connected browser clients. */
   clients: number;
   /** Last start failure (e.g. port in use), or null. */
   error: string | null;
 }
 
+export interface WebInterfaceAddress {
+  /** The OS interface name, e.g. en0 or utun4. */
+  name: string;
+  address: string;
+}
+
 export interface WebConfigureRequest {
   enabled?: boolean;
   port?: number;
+  /** Listen address: 127.0.0.1, 0.0.0.0 or one interface address; must be an IP literal. */
+  host?: string;
   user?: string;
   /** New custom password; stored as a hash, never echoed back. */
   password?: string;

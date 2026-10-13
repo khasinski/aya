@@ -217,12 +217,13 @@ import { loadWindowState, trackWindowState } from "./window-state";
 import { resolveDropTarget, WindowProjectSlices } from "./window-slices";
 import {
   generateWebPassword,
-  isWildcardHost,
   loadWebConfig,
-  LOOPBACK_HOST,
+  normalizeWebHost,
   normalizeWebPort,
   saveWebConfig,
   webCredentials,
+  webInterfaceAddresses,
+  webServerUrls,
   type WebConfig,
 } from "./web-config";
 import { captureIpcHandlers } from "./web-ipc";
@@ -1561,22 +1562,6 @@ async function applyWebServerState(): Promise<void> {
   }
 }
 
-/** Reachable URLs for the settings UI: the pinned address, or every
- *  non-internal IPv4 when listening on all interfaces. */
-function webServerUrls(config: WebConfig): string[] {
-  if (!isWildcardHost(config.host)) {
-    return [`http://${config.host}:${config.port}`];
-  }
-  const hosts: string[] = [];
-  for (const infos of Object.values(os.networkInterfaces())) {
-    for (const info of infos ?? []) {
-      if (info.family === "IPv4" && !info.internal) hosts.push(info.address);
-    }
-  }
-  if (hosts.length === 0) hosts.push(LOOPBACK_HOST);
-  return hosts.map((host) => `http://${host}:${config.port}`);
-}
-
 function webStatus(): WebServerStatus {
   const config = webConfig;
   if (!config) {
@@ -1588,10 +1573,12 @@ function webStatus(): WebServerStatus {
       user: "",
       generatedPassword: null,
       urls: [],
+      addresses: [],
       clients: 0,
       error: webServerError,
     };
   }
+  const interfaces = os.networkInterfaces();
   return {
     enabled: config.enabled,
     running: webServer !== null,
@@ -1599,7 +1586,8 @@ function webStatus(): WebServerStatus {
     host: config.host,
     user: config.user,
     generatedPassword: config.generatedPassword ?? null,
-    urls: webServerUrls(config),
+    urls: webServerUrls(config, interfaces),
+    addresses: webInterfaceAddresses(interfaces),
     clients: webServer?.clientCount() ?? 0,
     error: webServerError,
   };
@@ -2833,6 +2821,12 @@ function registerIpc(): TeamRunner {
     const next: WebConfig = { ...webConfig };
     if (typeof r.enabled === "boolean") next.enabled = r.enabled;
     if (r.port !== undefined) next.port = normalizeWebPort(r.port);
+    if (r.host !== undefined) {
+      const host = normalizeWebHost(r.host);
+      if (!host) throw new Error("web:configure: host must be an IP address");
+      next.host = host;
+      next.hostChosen = true;
+    }
     if (typeof r.user === "string" && r.user.trim()) {
       next.user = r.user.trim();
     }

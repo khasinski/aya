@@ -91,7 +91,7 @@ test("normalizeWebConfig backfills defaults for optional fields", () => {
   const parsed = normalizeWebConfig({ ...creds });
   assert.equal(parsed.enabled, false);
   assert.equal(parsed.port, DEFAULT_WEB_PORT);
-  assert.equal(parsed.host, "0.0.0.0");
+  assert.equal(parsed.host, "127.0.0.1");
   assert.ok(parsed.user.length > 0);
   assert.equal(parsed.generatedPassword, undefined);
 });
@@ -105,11 +105,12 @@ test("isWildcardHost: 0.0.0.0 and :: listen everywhere, anything else is pinned"
   assert.equal(LOOPBACK_HOST, "127.0.0.1");
 });
 
-test("wildcard host constants: the default listen host is the IPv4 wildcard", () => {
+test("host constants: the default listen host is loopback, not a wildcard", () => {
   assert.equal(IPV4_WILDCARD_HOST, "0.0.0.0");
   assert.equal(IPV6_WILDCARD_HOST, "::");
-  assert.equal(DEFAULT_WEB_HOST, "0.0.0.0");
-  assert.equal(defaultWebConfig().host, "0.0.0.0");
+  assert.equal(DEFAULT_WEB_HOST, "127.0.0.1");
+  assert.equal(defaultWebConfig().host, "127.0.0.1");
+  assert.equal("hostChosen" in defaultWebConfig(), false);
 });
 
 test("secret sizes and the port ceiling are pinned", () => {

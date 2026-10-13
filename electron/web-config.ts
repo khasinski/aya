@@ -8,6 +8,7 @@
 
 import * as crypto from "node:crypto";
 import { promises as fs } from "node:fs";
+import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { writeFileAtomic } from "./atomic-write";
@@ -19,12 +20,60 @@ export const WEB_CONFIG_FILE = path.join(AYA_HOME, "web.json");
 export const DEFAULT_WEB_PORT = 7683;
 export const IPV4_WILDCARD_HOST = "0.0.0.0";
 export const IPV6_WILDCARD_HOST = "::";
-export const DEFAULT_WEB_HOST = IPV4_WILDCARD_HOST;
 export const LOOPBACK_HOST = "127.0.0.1";
+// This computer only: there is no TLS, so the password and the session cookie would cross any other network in
+// plain text. Every network, or one interface such as Tailscale, is the user's choice in Settings.
+export const DEFAULT_WEB_HOST = LOOPBACK_HOST;
 
 /** True for a listen address that binds every interface (IPv4 or IPv6). */
 export function isWildcardHost(host: string): boolean {
   return host === IPV4_WILDCARD_HOST || host === IPV6_WILDCARD_HOST;
+}
+
+/** True for an address only this computer can reach. */
+export function isLoopbackHost(host: string): boolean {
+  return host === "::1" || (net.isIPv4(host) && host.startsWith("127."));
+}
+
+/** A listen address Settings may save: an IP literal, wildcards included. Null for anything else (a name would be
+ *  resolved by the OS at every start and could move). */
+export function normalizeWebHost(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const host = value.trim();
+  return net.isIP(host) ? host : null;
+}
+
+export interface WebInterfaceAddress {
+  name: string;
+  address: string;
+}
+
+/** The non-internal IPv4 addresses in an os.networkInterfaces() result, in its order. */
+export function webInterfaceAddresses(
+  interfaces: NodeJS.Dict<os.NetworkInterfaceInfo[]>,
+): WebInterfaceAddress[] {
+  const out: WebInterfaceAddress[] = [];
+  for (const [name, infos] of Object.entries(interfaces)) {
+    for (const info of infos ?? []) {
+      if (info.family === "IPv4" && !info.internal) out.push({ name, address: info.address });
+    }
+  }
+  return out;
+}
+
+/** Reachable URLs for Settings: the pinned address, or every non-internal IPv4 one when listening on all
+ *  interfaces. */
+export function webServerUrls(
+  config: Pick<WebConfig, "host" | "port">,
+  interfaces: NodeJS.Dict<os.NetworkInterfaceInfo[]>,
+): string[] {
+  const urlHost = (host: string) => (net.isIPv6(host) ? `[${host}]` : host);
+  if (!isWildcardHost(config.host)) {
+    return [`http://${urlHost(config.host)}:${config.port}`];
+  }
+  const hosts = webInterfaceAddresses(interfaces).map((entry) => entry.address);
+  if (hosts.length === 0) hosts.push(LOOPBACK_HOST);
+  return hosts.map((host) => `http://${host}:${config.port}`);
 }
 
 const SCRYPT_KEYLEN = 32;
@@ -36,9 +85,12 @@ export const MAX_TCP_PORT = 65535;
 export interface WebConfig {
   enabled: boolean;
   port: number;
-  /** Listen address. 0.0.0.0 = every interface (remote access is the point);
-   *  users can pin it to a VPN/Tailscale interface address instead. */
+  /** Listen address: 127.0.0.1 by default, 0.0.0.0 for every interface, or one interface address such as
+   *  Tailscale's. */
   host: string;
+  /** True once the user picked the address in Settings. Configs written before the loopback default saved 0.0.0.0
+   *  without anyone choosing it; see normalizeWebConfig. */
+  hostChosen?: boolean;
   user: string;
   passwordHash: string; // scrypt, hex
   passwordSalt: string; // hex
@@ -122,13 +174,18 @@ export function normalizeWebConfig(raw: unknown): WebConfig | null {
     typeof r.user === "string" && r.user.trim()
       ? r.user.trim()
       : defaultWebUser();
+  const enabled = r.enabled === true;
+  const hostChosen = r.hostChosen === true;
+  let host =
+    typeof r.host === "string" && r.host.trim() ? r.host.trim() : DEFAULT_WEB_HOST;
+  // Before the loopback default every config saved 0.0.0.0 on first run. One that is off and whose address nobody
+  // picked moves to this computer only; one that is on keeps serving where its user reaches it today.
+  if (!enabled && !hostChosen && host === IPV4_WILDCARD_HOST) host = DEFAULT_WEB_HOST;
   return {
-    enabled: r.enabled === true,
+    enabled,
     port: normalizeWebPort(r.port),
-    host:
-      typeof r.host === "string" && r.host.trim()
-        ? r.host.trim()
-        : DEFAULT_WEB_HOST,
+    host,
+    ...(hostChosen ? { hostChosen } : {}),
     user,
     passwordHash: r.passwordHash,
     passwordSalt: r.passwordSalt,
