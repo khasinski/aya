@@ -32,7 +32,6 @@ import {
   createProject,
   createRemoteProject,
   getOrCreateProject,
-  expandPath,
   listProjects,
   listProjectState,
   saveProjectState,
@@ -109,16 +108,7 @@ import {
   listRemotePresets,
   listRemoteDirectory,
 } from "./remote-client";
-import {
-  getGitChangedFiles,
-  getGitDiff,
-  getGitInfo,
-  getGitRoot,
-  headCommit,
-  listWorktreeStatus,
-  workingTreeState,
-} from "./git";
-import { getGitHubLink, isGitHubCliAvailable } from "./github";
+import { headCommit, workingTreeState } from "./git";
 import {
   AYA_HOME,
   CLI_ADOPTION_FILE,
@@ -153,7 +143,6 @@ import {
 } from "./omarchy";
 import { scanHarnesses } from "./harnesses";
 import { isInternalNavigationUrl, parseExternalUrl } from "./navigation";
-import { createWorktree, removeWorktree } from "./git";
 import { listPresets, savePresets, type AgentKind } from "./presets";
 import { listSnippets, saveSnippets } from "./snippets";
 import { DEFAULT_CLAUDE_CONFIG_DIR, expandUserPath, readClaudeUsageAccounts } from "./usage";
@@ -206,8 +195,6 @@ import {
   validateSnippetArray,
   validatePresetArray,
   validateProjectCollectionState,
-  optionalTrimmed,
-  requireRecord,
   validateProjectConfig,
   validateSpawnRequest,
   validateThemesFile,
@@ -227,6 +214,7 @@ import {
   type WebConfig,
 } from "./web-config";
 import { captureIpcHandlers } from "./web-ipc";
+import { registerEnvIpc } from "./ipc/env-ipc";
 import { startWebServer, type WebServerHandle } from "./web-server";
 import { parseSummaryResponse, summaryPrompt } from "./summary-prompt";
 import { restartDialog, waitingNotification } from "./native-ui-text";
@@ -253,7 +241,6 @@ const WINDOW_TITLE = IS_DEV ? "Aya Dev" : "Aya";
 // Settings -> Diagnostics.
 const cliAdoption = createCliAdoptionStore(CLI_ADOPTION_FILE);
 // Maximum number of entries returned by path completion
-const MAX_PATH_COMPLETION_ENTRIES = 100;
 // Maximum number of keyboard-navigable projects (Cmd/Ctrl+1..9)
 const MAX_KEYBOARD_PROJECTS = 9;
 // Minimum dimensions of the main application window (px)
@@ -1358,35 +1345,6 @@ function findDirInArgv(argv: readonly string[]): string | null {
     }
   }
   return null;
-}
-
-async function completeDirectoryPath(rawPrefix: string): Promise<string[]> {
-  const raw = rawPrefix || "~/";
-  const normalizedRaw = raw === "~" ? "~/" : raw;
-  const endsWithSlash = normalizedRaw.endsWith("/");
-  const expanded = expandPath(normalizedRaw);
-  const lookupDir = endsWithSlash ? expanded : path.dirname(expanded);
-  const namePrefix = endsWithSlash ? "" : path.basename(expanded);
-  const rawDirPrefix = endsWithSlash
-    ? normalizedRaw
-    : normalizedRaw.slice(0, normalizedRaw.length - namePrefix.length);
-
-  let entries: import("node:fs").Dirent[];
-  try {
-    entries = await fs.readdir(lookupDir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  return entries
-    .filter((entry) => entry.isDirectory())
-    .filter((entry) => {
-      if (!namePrefix && entry.name.startsWith(".")) return false;
-      return entry.name.startsWith(namePrefix);
-    })
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .slice(0, MAX_PATH_COMPLETION_ENTRIES)
-    .map((entry) => `${rawDirPrefix}${entry.name}/`);
 }
 
 /** An "open this project" request (another process, or our own argv) for the renderer, which switches to,
@@ -2679,107 +2637,14 @@ function registerIpc(): TeamRunner {
     return parseTheme(content, fallbackName);
   });
 
-  ipcMain.handle("env:cwd", async () => process.cwd());
-  ipcMain.handle("env:home", async () => os.homedir());
-  ipcMain.handle("env:expand", async (_e, p: unknown) =>
-    expandPath(requireString(p, "env:expand.path")),
-  );
-  ipcMain.handle("env:complete-path", async (_e, p: unknown) =>
-    completeDirectoryPath(requireString(p, "env:complete-path.path")),
-  );
-  ipcMain.handle("env:git", async (_e, directory: unknown) =>
-    getGitInfo(requireString(directory, "env:git.directory")),
-  );
-  ipcMain.handle("env:git-changed-files", async (_e, directory: unknown) =>
-    getGitChangedFiles(requireString(directory, "env:git-changed-files.directory")),
-  );
-  ipcMain.handle("env:git-diff", async (_e, directory: unknown) =>
-    getGitDiff(requireString(directory, "env:git-diff.directory")),
-  );
-  ipcMain.handle("env:git-root", async (_e, directory: unknown) =>
-    getGitRoot(requireString(directory, "env:git-root.directory")),
-  );
-  ipcMain.handle("env:git-worktree-status", async (_e, directory: unknown) =>
-    listWorktreeStatus(requireString(directory, "env:git-worktree-status.directory")),
-  );
-  ipcMain.handle("env:github-link", async (_e, directory: unknown) =>
-    getGitHubLink(requireString(directory, "env:github-link.directory")),
-  );
-  ipcMain.handle("env:git-worktree-add", async (_e, req: unknown) => {
-    const r = requireRecord(req, "env:git-worktree-add");
-    return createWorktree(
-      requireString(r.directory, "env:git-worktree-add.directory"),
-      requireString(r.path, "env:git-worktree-add.path"),
-      optionalTrimmed(r.branch),
-      optionalTrimmed(r.base),
-    );
-  });
-  ipcMain.handle("env:git-worktree-remove", async (_e, req: unknown) => {
-    const r = requireRecord(req, "env:git-worktree-remove");
-    return removeWorktree(
-      requireString(r.directory, "env:git-worktree-remove.directory"),
-      requireString(r.path, "env:git-worktree-remove.path"),
-      r.force === true,
-    );
-  });
-  ipcMain.handle("env:github-cli-available", async () =>
-    isGitHubCliAvailable(),
-  );
-  ipcMain.handle("env:pick-dir", async (e) => {
-    const win = senderWindow(e);
-    const options = {
-      title: "Pick a project directory",
-      defaultPath: app.getPath("home"),
-      properties: ["openDirectory" as const, "createDirectory" as const],
-    };
-    const result = win
-      ? await dialog.showOpenDialog(win, options)
-      : await dialog.showOpenDialog(options);
-    if (result.canceled || result.filePaths.length === 0) return null;
-    return result.filePaths[0];
-  });
-  ipcMain.handle("env:pick-sound", async (e) => {
-    const win = senderWindow(e);
-    const options = {
-      title: "Pick a notification sound",
-      properties: ["openFile" as const],
-      filters: [
-        { name: "Audio", extensions: ["wav", "mp3", "ogg", "m4a", "aac", "flac"] },
-        { name: "All files", extensions: ["*"] },
-      ],
-    };
-    const result = win
-      ? await dialog.showOpenDialog(win, options)
-      : await dialog.showOpenDialog(options);
-    if (result.canceled || result.filePaths.length === 0) return null;
-    return result.filePaths[0];
-  });
-  ipcMain.handle("env:dir-exists", async (_e, p: unknown) => {
-    try {
-      const stat = await fs.stat(
-        expandPath(requireString(p, "env:dir-exists.path")),
-      );
-      return stat.isDirectory();
-    } catch {
-      return false;
-    }
-  });
-  ipcMain.handle("env:create-dir", async (_e, p: unknown) => {
-    await fs.mkdir(expandPath(requireString(p, "env:create-dir.path")), {
-      recursive: true,
-    });
-  });
-  ipcMain.handle("env:open-path", async (_e, p: unknown) => {
-    const expanded = expandPath(requireString(p, "env:open-path.path"));
-    const error = await shell.openPath(expanded);
-    if (error) throw new Error(error);
-  });
-  ipcMain.handle("env:open-url", async (_e, value: unknown) => {
-    await openExternalUrl(requireString(value, "env:open-url.url"));
-  });
-  ipcMain.handle("env:clipboard-read", async () => clipboard.readText());
-  ipcMain.handle("env:clipboard-write", async (_e, value: unknown) => {
-    clipboard.writeText(requireString(value, "env:clipboard-write.text"));
+  registerEnvIpc({
+    ipcMain,
+    senderWindow,
+    dialog,
+    shell,
+    clipboard,
+    home: () => app.getPath("home"),
+    openExternalUrl,
   });
   ipcMain.handle("app:is-fullscreen", async (e) => {
     const win = senderWindow(e);
