@@ -201,7 +201,7 @@ import {
 } from "./validation";
 import { withSharedDirCommand } from "./agent-session";
 import { loadWindowState, trackWindowState } from "./window-state";
-import { resolveDropTarget, WindowProjectSlices } from "./window-slices";
+import { WindowProjectSlices } from "./window-slices";
 import {
   generateWebPassword,
   loadWebConfig,
@@ -215,6 +215,7 @@ import {
 } from "./web-config";
 import { captureIpcHandlers } from "./web-ipc";
 import { registerEnvIpc } from "./ipc/env-ipc";
+import { registerWindowIpc } from "./ipc/window-ipc";
 import { startWebServer, type WebServerHandle } from "./web-server";
 import { parseSummaryResponse, summaryPrompt } from "./summary-prompt";
 import { restartDialog, waitingNotification } from "./native-ui-text";
@@ -2375,65 +2376,6 @@ function registerIpc(): TeamRunner {
     const disk = await listProjectState().catch(() => null);
     return saveProjectState(windowSlices.mergeSave(valid, win.id, disk));
   });
-  // Multi-window: targets for "Move to window…" (every live window but the
-  // caller, labeled by its last-saved active project).
-  ipcMain.handle("windows:list-others", async (e) => {
-    const self = senderWindow(e);
-    return [...ayaWindows]
-      .filter((w) => !w.isDestroyed() && w !== self)
-      .map((w) => ({
-        id: w.id,
-        activeProject: windowSlices.activeProjectOf(w.id),
-      }));
-  });
-  // Adopt a (released) project into another window - the source renderer drops
-  // its local state first (WITHOUT killing PTYs), then calls this; the target
-  // window runs the ordinary switch-or-create open flow and re-attaches to the
-  // live PTYs exactly like after an app restart.
-  // Where would a tab released at this screen point land? Pure hit-test over
-  // the live windows' bounds; the source window wins overlaps (see
-  // resolveDropTarget).
-  ipcMain.handle(
-    "windows:resolve-drop",
-    async (e, x: unknown, y: unknown) => {
-      if (typeof x !== "number" || typeof y !== "number") {
-        throw new Error("windows:resolve-drop: x/y must be numbers");
-      }
-      const self = senderWindow(e);
-      const candidates = [...ayaWindows]
-        .filter((w) => !w.isDestroyed() && w.isVisible())
-        .map((w) => ({ id: w.id, bounds: w.getBounds(), isSelf: w === self }));
-      return resolveDropTarget(x, y, candidates);
-    },
-  );
-  ipcMain.handle(
-    "windows:adopt-project",
-    async (_e, directory: unknown, target: unknown, at: unknown) => {
-      const dir = requireString(directory, "windows:adopt-project.directory");
-      const dropAt =
-        at &&
-        typeof at === "object" &&
-        typeof (at as Record<string, unknown>).x === "number" &&
-        typeof (at as Record<string, unknown>).y === "number"
-          ? (at as { x: number; y: number })
-          : undefined;
-      let win: BrowserWindow | null = null;
-      if (target === "new") {
-        win = await openNewWindow(dropAt);
-      } else if (typeof target === "number") {
-        win =
-          [...ayaWindows].find((w) => w.id === target && !w.isDestroyed()) ??
-          null;
-      }
-      if (!win) throw new Error("windows:adopt-project: target window not found");
-      if (win.isMinimized()) win.restore();
-      win.focus();
-      dispatchOpenProject(win, dir).catch(logOpenFailure(dir));
-    },
-  );
-  ipcMain.on("open-project:done", (event, dir: unknown) => {
-    if (typeof dir === "string") confirmOpen(event.sender, dir);
-  });
   ipcMain.handle("projects:create", async (_e, name: unknown, dir: unknown) =>
     createProject(
       requireString(name, "projects:create.name"),
@@ -2637,6 +2579,17 @@ function registerIpc(): TeamRunner {
     return parseTheme(content, fallbackName);
   });
 
+  registerWindowIpc({
+    ipcMain,
+    senderWindow,
+    windows: () => ayaWindows,
+    activeProjectOf: (id) => windowSlices.activeProjectOf(id),
+    openNewWindow,
+    openProjectIn: (win, dir) => void dispatchOpenProject(win, dir).catch(logOpenFailure(dir)),
+    confirmOpen,
+    isFullScreen: isAyaFullScreen,
+    setFullScreen: setAyaFullScreen,
+  });
   registerEnvIpc({
     ipcMain,
     senderWindow,
@@ -2645,32 +2598,6 @@ function registerIpc(): TeamRunner {
     clipboard,
     home: () => app.getPath("home"),
     openExternalUrl,
-  });
-  ipcMain.handle("app:is-fullscreen", async (e) => {
-    const win = senderWindow(e);
-    return win ? isAyaFullScreen(win) : false;
-  });
-  ipcMain.handle("app:is-maximized", async (e) => {
-    const win = senderWindow(e);
-    return win ? win.isMaximized() : false;
-  });
-  ipcMain.handle("app:minimize", (e) => {
-    const win = senderWindow(e);
-    if (win && !win.isDestroyed()) win.minimize();
-  });
-  ipcMain.handle("app:toggle-maximize", (e) => {
-    const win = senderWindow(e);
-    if (!win || win.isDestroyed()) return;
-    if (win.isMaximized()) win.unmaximize();
-    else win.maximize();
-  });
-  ipcMain.handle("app:close", (e) => {
-    const win = senderWindow(e);
-    if (win && !win.isDestroyed()) win.close();
-  });
-  ipcMain.handle("app:set-fullscreen", async (e, value: unknown) => {
-    const win = senderWindow(e);
-    if (win) setAyaFullScreen(win, !!value);
   });
   ipcMain.handle("app:notify-waiting", async (e, req: unknown) => {
     if (!Notification.isSupported()) return;
@@ -2704,12 +2631,6 @@ function registerIpc(): TeamRunner {
   ipcMain.handle("app:cli-status", async () => cliStatus());
   ipcMain.handle("app:install-cli", async () => installCli());
   ipcMain.handle("app:diagnostics", async () => diagnosticsReport());
-  // The window's error screen reloads through here: a location.reload() from the page started and
-  // was cancelled (measured in e2e, Electron 43), while webContents.reload() is not. Aya Web reloads
-  // in its own page, so a stub event (sender: null) is a no-op.
-  ipcMain.handle("window:reload", (e) => {
-    e.sender?.reload();
-  });
   ipcMain.handle("updates:status", async () => getUpdateStatus());
   ipcMain.handle("updates:check", async () => checkForUpdates());
   ipcMain.handle("updates:install", () => updates.install());
