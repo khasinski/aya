@@ -67,8 +67,7 @@ import {
   type PaneBriefDeps,
   type RoleRef,
 } from "./pane-brief";
-import { closePane, createSpawnGate } from "./spawn-gate";
-import { oneAtATime } from "./keyed-queue";
+import { createSpawnGate } from "./spawn-gate";
 import {
   appleChat,
   type ChatOptions,
@@ -126,7 +125,6 @@ import { DEFAULT_CODEX_HOME } from "./usage-codex";
 import { usageHookStatus } from "./usage-hook";
 import { refreshStatusHookScript, migrateStatusHookCommand } from "./status-hook";
 import { refreshStatusCodexHookScript } from "./status-hook-codex";
-import { searchHarnessSessions } from "./harness-search";
 import {
   LOCAL_SUMMARY_MAX_LINES,
   normalizeLocalSummaryError,
@@ -139,9 +137,9 @@ import { homeSocketProblems } from "./socket-path";
 import { PTY_HOST_SCRIPT_NAME } from "./pty-host-staleness";
 import { liveHostRecords, reapStaleHostRecords } from "./pty-host-registry";
 import { gatherHostHealth, probeSocketPid, type HostHealth } from "./pty-host-health";
-import { COMMAND_PROBE_TIMEOUT_MS, HOOK_VIA, PTY_HOST_NOT_CONNECTED, PTY_HOST_UNKNOWN_REQUEST } from "./constants";
+import { COMMAND_PROBE_TIMEOUT_MS, HOOK_VIA } from "./constants";
 import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
-import { requirePositiveInt, requireString, validateSpawnRequest } from "./validation";
+import { requireString } from "./validation";
 import { withSharedDirCommand } from "./agent-session";
 import { loadWindowState, trackWindowState } from "./window-state";
 import { WindowProjectSlices } from "./window-slices";
@@ -161,6 +159,7 @@ import { registerSettingsIpc } from "./ipc/settings-ipc";
 import { registerRemoteIpc } from "./ipc/remote-ipc";
 import { registerProjectsIpc } from "./ipc/projects-ipc";
 import { registerAyaWebIpc } from "./ipc/aya-web-ipc";
+import { registerPtyIpc } from "./ipc/pty-ipc";
 import { startWebServer, type WebServerHandle } from "./web-server";
 import { parseSummaryResponse, summaryPrompt } from "./summary-prompt";
 import { restartDialog } from "./native-ui-text";
@@ -2137,6 +2136,30 @@ function setStaleMenuIcon(): void {
   }
 }
 
+/** Settings > Diagnostics > PTY host > Restart (and Aya Web): asks, then replaces the host. Throws when cancelled,
+ *  or when the old host did not exit, so the window leaves its panes as they are. */
+async function restartHostFromWindow(): Promise<void> {
+  if (!(await confirmLosingWork("Restarting the PTY host", "Restart"))) throw new Error("restart cancelled");
+  const exited = await ptyHost.restart();
+  // The red dot follows what the host now is: off for a current host, still on if the restart did not take.
+  await hostHealth();
+  if (!exited) {
+    showStaleHost(true);
+    throw new Error(
+      `The old terminal host did not exit within ${PTY_HOST_EXIT_WAIT_MS / 1000} s; its terminals may still run. Settings > Diagnostics lists it, with Stop other hosts.`,
+    );
+  }
+}
+
+/** Settings > Diagnostics > Stop other hosts: hosts Aya does not use and that are not on the socket, re-verified now
+ *  and asked about here, not in the window (Aya Web reaches this too). */
+async function stopOtherHostsFromWindow(): Promise<number[]> {
+  const health = await hostHealth();
+  if (health.otherHosts.length === 0) return [];
+  if (!(await askStopOtherHosts(health.otherHosts.length, "Settings found"))) return [];
+  return stopHosts(health.otherHosts.map((host) => host.pid));
+}
+
 function registerIpc(): TeamRunner {
   // Aya Web reuses these handlers over WebSocket - record every registration
   // (must run before the first ipcMain.handle below).
@@ -2172,10 +2195,8 @@ function registerIpc(): TeamRunner {
     paneHost: teamPaneHost,
     intelligenceChat,
     relaunch: relaunchDeps,
+    answerPaneOpen: (requestId, error) => paneOpens.answer(requestId, error),
   });
-  ipcMain.handle("teams:panes-opened", (_e, requestId: unknown, error: unknown) =>
-    paneOpens.answer(requireString(requestId, "teams:panes-opened.requestId"), error),
-  );
   const prepareSpawn = async (validated: SpawnRequest): Promise<SpawnRequest> => {
     if (SPAWN_PREP_DELAY_MS) await new Promise((done) => setTimeout(done, SPAWN_PREP_DELAY_MS));
     const request = await withSharedDirCommand(validated);
@@ -2201,108 +2222,25 @@ function registerIpc(): TeamRunner {
       .catch(() => {});
     return true;
   };
-  ipcMain.handle("pty:spawn", (_e, req: unknown) => {
-    const validated = validateSpawnRequest(req);
-    return spawnGate.spawn(validated.ptyId, () => prepareSpawn(validated), sendSpawn).then(async (sent) => {
-      // Closed while preparing: the brief files it wrote after the close are no one's.
-      if (sent === undefined && !spawnGate.spawning(validated.ptyId)) await removePaneBrief(AYA_HOME, validated.ptyId).catch(() => {});
-    });
-  });
-  // One write per pane at a time: the Enter that answers a waiting agent asks the host about the screen first, and
-  // the keys typed right after it must not overtake it.
-  const paneWrites = oneAtATime();
-  ipcMain.handle("pty:write", (_e, ptyId: unknown, data: unknown) => {
-    const id = requireString(ptyId, "pty:write.ptyId");
-    const text = requireString(data, "pty:write.data");
-    return paneWrites(id, async () => {
-      await spawnGate.afterSpawn(id);
+  registerPtyIpc({
+    ipcMain,
+    host: ptyHost,
+    gate: spawnGate,
+    prepareSpawn,
+    sendSpawn,
+    forgetBrief: (ptyId) => removePaneBrief(AYA_HOME, ptyId),
+    noteTyping: async (ptyId, text) => {
       // The user's Enter answers a pane that asked for them (aya status waiting): the windows drop the status.
-      const answered = await noteUserAnswer(id, text, () => ptyHost.holdReason(id));
+      const answered = await noteUserAnswer(ptyId, text, () => ptyHost.holdReason(ptyId));
       if (answered) broadcastStatus(answered);
-      return ptyHost.write(id, text);
-    });
-  });
-  ipcMain.handle(
-    "pty:resize",
-    async (_e, ptyId: unknown, cols: unknown, rows: unknown) =>
-      ptyHost.resize(
-        requireString(ptyId, "pty:resize.ptyId"),
-        requirePositiveInt(cols, "pty:resize.cols"),
-        requirePositiveInt(rows, "pty:resize.rows"),
-      ),
-  );
-  ipcMain.handle("pty:confirm-restart", async (_e, ptyId: unknown) => {
-    const id = requireString(ptyId, "pty:confirm-restart.ptyId");
-    const name = (await relaunchDeps.panes([id]))[0]?.name ?? "this pane";
-    return confirmLosingWork(`Restarting ${name}`, "Restart", [id]);
-  });
-  ipcMain.handle("pty:kill", async (_e, ptyId: unknown) => {
-    const id = requireString(ptyId, "pty:kill.ptyId");
-    await removePaneBrief(AYA_HOME, id).catch(() => {});
-    return closePane(spawnGate, id, { hasPane: paneRunning, kill: (ptyId) => ptyHost.kill(ptyId) });
-  });
-  ipcMain.handle("pty:buffer", async (_e, ptyId: unknown) => {
-    try {
-      return await ptyHost.getBuffer(requireString(ptyId, "pty:buffer.ptyId"));
-    } catch (err) {
-      if (
-        err instanceof Error &&
-        [PTY_HOST_UNKNOWN_REQUEST, PTY_HOST_NOT_CONNECTED].some((m) => err.message.includes(m))
-      ) {
-        return "";
-      }
-      throw err;
-    }
-  });
-  // Live cwd of a terminal's process (null when unavailable) - the client
-  // already turns an old host's "unknown request" into null.
-  ipcMain.handle("pty:cwd", async (_e, ptyId: unknown) =>
-    ptyHost.getCwd(requireString(ptyId, "pty:cwd.ptyId")),
-  );
-  ipcMain.handle("pty:search", async (_e, query: unknown) =>
-    ptyHost.search(requireString(query, "pty:search.query")),
-  );
-  ipcMain.handle("harness:search", async (_e, req: unknown) => {
-    if (typeof req !== "object" || req === null) {
-      throw new Error("harness:search: request must be an object");
-    }
-    const r = req as Record<string, unknown>;
-    const agent = requireString(r.agent, "harness:search.agent");
-    if (agent !== "claude" && agent !== "codex") {
-      throw new Error("harness:search.agent must be 'claude' or 'codex'");
-    }
-    return searchHarnessSessions({
-      agent,
-      cwd: requireString(r.cwd, "harness:search.cwd"),
-      configDir:
-        r.configDir === undefined
-          ? undefined
-          : requireString(r.configDir, "harness:search.configDir"),
-      command: r.command === undefined ? undefined : requireString(r.command, "harness:search.command"),
-      query: requireString(r.query, "harness:search.query"),
-    });
-  });
-  ipcMain.handle("pty-host:restart", async () => {
-    // Thrown, not returned: the window then leaves the panes as they are.
-    if (!(await confirmLosingWork("Restarting the PTY host", "Restart"))) throw new Error("restart cancelled");
-    const exited = await ptyHost.restart();
-    // The red dot follows what the host now is: off for a current host, still on if the restart did not take.
-    await hostHealth();
-    if (!exited) {
-      showStaleHost(true);
-      // Thrown, so the window does not mark its panes stopped while their processes may still run.
-      throw new Error(
-        `The old terminal host did not exit within ${PTY_HOST_EXIT_WAIT_MS / 1000} s; its terminals may still run. Settings > Diagnostics lists it, with Stop other hosts.`,
-      );
-    }
-  });
-  // Hosts Aya does not use and that are not on the socket, re-verified now: their terminals show in no window.
-  // Asked here, not in the window: Aya Web reaches this handler too.
-  ipcMain.handle("pty-host:stop-others", async () => {
-    const health = await hostHealth();
-    if (health.otherHosts.length === 0) return [];
-    if (!(await askStopOtherHosts(health.otherHosts.length, "Settings found"))) return [];
-    return stopHosts(health.otherHosts.map((host) => host.pid));
+    },
+    confirmRestartPane: async (ptyId) => {
+      const name = (await relaunchDeps.panes([ptyId]))[0]?.name ?? "this pane";
+      return confirmLosingWork(`Restarting ${name}`, "Restart", [ptyId]);
+    },
+    restartHost: restartHostFromWindow,
+    stopOtherHosts: stopOtherHostsFromWindow,
+    waiting: outstandingWaiting,
   });
 
   registerProjectsIpc({
@@ -2312,7 +2250,6 @@ function registerIpc(): TeamRunner {
     mergeSave: (state, windowId, disk) => windowSlices.mergeSave(state, windowId, disk),
   });
   registerRemoteIpc({ ipcMain, ayaHome: AYA_HOME });
-  ipcMain.handle("agent:waiting", () => outstandingWaiting());
   // A question from before the restart that the pane's session no longer confirms: the windows mark it.
   onStatusPushed(broadcastStatus);
   registerUsageIpc(ipcMain);

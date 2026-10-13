@@ -25,6 +25,8 @@ export interface TeamIpcDeps {
   intelligenceChat: (config: unknown, opts: ChatOptions) => Chat;
   /** Panes Aya restarted while they ran background work: told once they come back resumed. */
   relaunch?: RelaunchDeps;
+  /** A window answers a request to open a team's panes (teams:panes-opened). */
+  answerPaneOpen: (requestId: string, error: unknown) => void;
 }
 
 export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
@@ -53,6 +55,9 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
     teamRunner.stopAll();
   });
   void teamRunner.restore().catch((err) => console.warn("[aya] team rounds not restored:", err));
+  ipcMain.handle("teams:panes-opened", (_e, requestId: unknown, error: unknown) =>
+    deps.answerPaneOpen(requireString(requestId, "teams:panes-opened.requestId"), error),
+  );
   ipcMain.handle("teams:start", (_e, slug: unknown, team: unknown, task: unknown, to: unknown) => {
     const optional = (value: unknown, name: string) => (value === undefined || value === null || value === "" ? undefined : requireString(value, name));
     const text = optional(task, "teams:start.task");

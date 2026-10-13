@@ -22,6 +22,7 @@ function register({
   const handlers = new Map();
   const teardowns = [];
   const chats = [];
+  const answered = [];
   const runner = registerTeamIpc({
     ipcMain: { handle: (channel, listener) => void handlers.set(channel, listener) },
     onBeforeQuit: (fn) => void teardowns.push(fn),
@@ -47,9 +48,10 @@ function register({
       chats.push({ config, opts });
       return async () => '{"mustNot": "edit code"}';
     },
+    answerPaneOpen: (requestId, error) => void answered.push([requestId, error]),
   });
   const invoke = async (channel, ...args) => handlers.get(channel)({}, ...args);
-  return { handlers, teardowns, chats, runner, invoke };
+  return { handlers, teardowns, chats, runner, invoke, answered };
 }
 
 test("TEAM_REDELIVERY_MS is 15 s", () => {
@@ -82,6 +84,7 @@ test("registers the teams:* channels in order and one quit teardown", () => {
     assert.deepEqual(
       [...t.handlers.keys()],
       [
+        "teams:panes-opened",
         "teams:start",
         "teams:pause",
         "teams:resume",
@@ -96,6 +99,10 @@ test("registers the teams:* channels in order and one quit teardown", () => {
       ],
     );
     assert.equal(t.teardowns.length, 1);
+    // A window's answer to "open these panes" reaches the waiting request.
+    t.handlers.get("teams:panes-opened")({}, "req-1", null);
+    assert.deepEqual(t.answered, [["req-1", null]]);
+    assert.throws(() => t.handlers.get("teams:panes-opened")({}, 7, null), /teams:panes-opened\.requestId/);
     assert.equal(typeof t.runner.redeliverWaiting, "function");
   } finally {
     t.teardowns.forEach((fn) => fn());

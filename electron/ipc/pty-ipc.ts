@@ -1,0 +1,122 @@
+// Terminal IPC: spawning, typing into, resizing, restarting and closing panes, reading their buffer and cwd,
+// searching buffers and agent transcripts, and the host itself (restart, stop the others). What a spawn needs
+// prepared, how the user's Enter is noted, and how the host is replaced stay with their owners in main.ts.
+
+import type { IpcMain } from "electron";
+import { PTY_HOST_NOT_CONNECTED, PTY_HOST_UNKNOWN_REQUEST } from "../constants";
+import { searchHarnessSessions } from "../harness-search";
+import { oneAtATime } from "../keyed-queue";
+import type { PtyHostClient } from "../pty-host-client";
+import { closePane, type createSpawnGate } from "../spawn-gate";
+import type { SpawnRequest } from "../types";
+import { requirePositiveInt, requireString, validateSpawnRequest } from "../validation";
+
+export interface PtyIpcDeps {
+  ipcMain: Pick<IpcMain, "handle">;
+  host: Pick<PtyHostClient, "write" | "resize" | "kill" | "getBuffer" | "getCwd" | "search" | "getSize">;
+  gate: ReturnType<typeof createSpawnGate>;
+  /** Shared-dir command, the agent brief, Aya Dev's own CLI first. */
+  prepareSpawn: (req: SpawnRequest) => Promise<SpawnRequest>;
+  /** Hands the prepared spawn to the host. */
+  sendSpawn: (req: SpawnRequest) => Promise<boolean>;
+  /** Removes the brief files written for a pane. */
+  forgetBrief: (ptyId: string) => Promise<void>;
+  /** The user's typing reached a pane: an Enter that answers a waiting agent drops its status in every window. */
+  noteTyping: (ptyId: string, text: string) => Promise<void>;
+  /** Asks before restarting a pane that shows background work. */
+  confirmRestartPane: (ptyId: string) => Promise<boolean>;
+  /** Replaces the host after asking; throws when cancelled or when the old host did not exit. */
+  restartHost: () => Promise<void>;
+  /** Stops running hosts Aya does not use, after asking; the pids signalled. */
+  stopOtherHosts: () => Promise<number[]>;
+  /** Questions agents are waiting on. */
+  waiting: () => unknown;
+}
+
+export function registerPtyIpc(deps: PtyIpcDeps): void {
+  const { ipcMain, host, gate } = deps;
+  ipcMain.handle("pty:spawn", (_e, req: unknown) => {
+    const validated = validateSpawnRequest(req);
+    return gate.spawn(validated.ptyId, () => deps.prepareSpawn(validated), deps.sendSpawn).then(async (sent) => {
+      // Closed while preparing: the brief files it wrote after the close are no one's.
+      if (sent === undefined && !gate.spawning(validated.ptyId)) await deps.forgetBrief(validated.ptyId).catch(() => {});
+    });
+  });
+  // One write per pane at a time: the Enter that answers a waiting agent asks the host about the screen first, and
+  // the keys typed right after it must not overtake it.
+  const paneWrites = oneAtATime();
+  ipcMain.handle("pty:write", (_e, ptyId: unknown, data: unknown) => {
+    const id = requireString(ptyId, "pty:write.ptyId");
+    const text = requireString(data, "pty:write.data");
+    return paneWrites(id, async () => {
+      await gate.afterSpawn(id);
+      await deps.noteTyping(id, text);
+      return host.write(id, text);
+    });
+  });
+  ipcMain.handle(
+    "pty:resize",
+    async (_e, ptyId: unknown, cols: unknown, rows: unknown) =>
+      host.resize(
+        requireString(ptyId, "pty:resize.ptyId"),
+        requirePositiveInt(cols, "pty:resize.cols"),
+        requirePositiveInt(rows, "pty:resize.rows"),
+      ),
+  );
+  ipcMain.handle("pty:confirm-restart", async (_e, ptyId: unknown) =>
+    deps.confirmRestartPane(requireString(ptyId, "pty:confirm-restart.ptyId")),
+  );
+  ipcMain.handle("pty:kill", async (_e, ptyId: unknown) => {
+    const id = requireString(ptyId, "pty:kill.ptyId");
+    await deps.forgetBrief(id).catch(() => {});
+    return closePane(gate, id, {
+      hasPane: async (paneId) => (await host.getSize(paneId)) !== null,
+      kill: (paneId) => host.kill(paneId),
+    });
+  });
+  ipcMain.handle("pty:buffer", async (_e, ptyId: unknown) => {
+    try {
+      return await host.getBuffer(requireString(ptyId, "pty:buffer.ptyId"));
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        [PTY_HOST_UNKNOWN_REQUEST, PTY_HOST_NOT_CONNECTED].some((m) => err.message.includes(m))
+      ) {
+        return "";
+      }
+      throw err;
+    }
+  });
+  // Live cwd of a terminal's process (null when unavailable) - the client
+  // already turns an old host's "unknown request" into null.
+  ipcMain.handle("pty:cwd", async (_e, ptyId: unknown) =>
+    host.getCwd(requireString(ptyId, "pty:cwd.ptyId")),
+  );
+  ipcMain.handle("pty:search", async (_e, query: unknown) =>
+    host.search(requireString(query, "pty:search.query")),
+  );
+  ipcMain.handle("harness:search", async (_e, req: unknown) => {
+    if (typeof req !== "object" || req === null) {
+      throw new Error("harness:search: request must be an object");
+    }
+    const r = req as Record<string, unknown>;
+    const agent = requireString(r.agent, "harness:search.agent");
+    if (agent !== "claude" && agent !== "codex") {
+      throw new Error("harness:search.agent must be 'claude' or 'codex'");
+    }
+    return searchHarnessSessions({
+      agent,
+      cwd: requireString(r.cwd, "harness:search.cwd"),
+      configDir:
+        r.configDir === undefined
+          ? undefined
+          : requireString(r.configDir, "harness:search.configDir"),
+      command: r.command === undefined ? undefined : requireString(r.command, "harness:search.command"),
+      query: requireString(r.query, "harness:search.query"),
+    });
+  });
+  ipcMain.handle("pty-host:restart", async () => deps.restartHost());
+  // Asked in main, not in the window: Aya Web reaches this handler too.
+  ipcMain.handle("pty-host:stop-others", async () => deps.stopOtherHosts());
+  ipcMain.handle("agent:waiting", () => deps.waiting());
+}
