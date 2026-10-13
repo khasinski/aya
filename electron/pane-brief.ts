@@ -21,6 +21,7 @@ import { isShellCommand } from "./pane-command";
 import { CODEX_CONFIG_FILENAME } from "./usage-codex";
 import { userShell } from "./shell";
 import { presetAgent } from "./team-panes";
+import { paneTeamRole } from "./team-files";
 import type { Preset } from "./presets";
 import type { ProjectConfig, SpawnRequest, WorkingTab } from "./types";
 
@@ -59,6 +60,42 @@ export interface PaneBriefDeps {
   /** Whether this spawn request will start a process (not replay or attach to a live pane). */
   starts: (spawn: SpawnRequest) => Promise<boolean>;
   running: (ptyId: string) => Promise<boolean>;
+}
+
+export interface PaneBriefWiringDeps extends Omit<PaneBriefDeps, "shellEnv" | "paneRole" | "records"> {
+  listProjects: () => Promise<ProjectConfig[]>;
+  recordsFile: string;
+}
+
+export function createPaneBriefDeps(deps: PaneBriefWiringDeps): {
+  paneBriefDeps: PaneBriefDeps;
+  expectRoles: (roles: { ptyId: string; team: string; role: string }[]) => () => void;
+} {
+  /** Roles of panes that `team open` is about to open: they spawn before the role is saved. */
+  const pendingPaneRoles = new Map<string, RoleRef>();
+  const paneBriefDeps: PaneBriefDeps = {
+    ayaHome: deps.ayaHome,
+    defaultCodexHome: deps.defaultCodexHome,
+    expand: deps.expand,
+    shellEnv: loginShellEnv,
+    listPresets: deps.listPresets,
+    paneRole: async (spawn) => {
+      const pending = pendingPaneRoles.get(spawn.ptyId);
+      if (pending) return pending;
+      const project = (await deps.listProjects()).find((p) => p.slug === spawn.projectSlug);
+      return project ? paneTeamRole(deps.ayaHome, project, spawn.ptyId) : null;
+    },
+    records: fileLaunchRecords(deps.recordsFile),
+    starts: deps.starts,
+    running: deps.running,
+  };
+  return {
+    paneBriefDeps,
+    expectRoles: (roles) => {
+      for (const { ptyId, team, role } of roles) pendingPaneRoles.set(ptyId, { team, role });
+      return () => roles.forEach(({ ptyId }) => pendingPaneRoles.delete(ptyId));
+    },
+  };
 }
 
 // rc files run after Aya's own environment is fixed, so process.env cannot say what a pane sees.

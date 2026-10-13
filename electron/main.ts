@@ -19,7 +19,6 @@ import { installApplicationMenu, setStaleMenuIcon } from "./app-menu";
 import { showAyaAboutPanel } from "./about-panel";
 import { installWindowZoom } from "./zoom";
 import { statSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import * as os from "node:os";
 import * as path from "node:path";
 import { getOrCreateProject, listProjects, listProjectState, saveProjectState } from "./config";
@@ -29,27 +28,19 @@ import { createCliSetup, findExecutableOnPath, pathEntries } from "./cli-setup";
 import { startConfigWatcher } from "./config-watcher";
 import { noteUserAnswer, onStatusPushed, outstandingWaiting } from "./agent-status";
 import { deliverTeamMessage, paneOutputMarks, settledAfterSubmit, startControlServer, type ControlStatusSink, type TurnProbe } from "./control";
-import { confirmOpen, deliverOpenProject, replayOpensOnLoad } from "./open-delivery";
+import { confirmOpen, dispatchOpenProject, findDirInArgv, logOpenFailure, replayOpensOnLoad } from "./open-delivery";
 import { createWindowSource } from "./window-for-open";
 import { createCliAdoptionStore } from "./cli-adoption";
 import { dropCodexBriefSections, rewriteIfChanged } from "./codex-brief";
-import {
-  briefText,
-  antigravityBriefFile,
-  withOwnedBrief,
-  withoutOwnedBrief,
-} from "./agent-brief";
-import { paneTeamRole } from "./team-files";
+import { syncAntigravityBrief } from "./agent-brief";
 import { pathExists } from "./path-exists";
 import {
-  fileLaunchRecords,
+  createPaneBriefDeps,
   loginShellEnv,
   removePaneBrief,
   roleNoteReport,
   sweepPaneBriefs,
   withAgentBrief,
-  type PaneBriefDeps,
-  type RoleRef,
 } from "./pane-brief";
 import { createSpawnGate } from "./spawn-gate";
 import {
@@ -89,7 +80,7 @@ import {
 import { createPtyLog } from "./pty-log";
 import { createGpuDeathHandler, diagnosticsReport } from "./diagnostics";
 import { watchOmarchyTheme } from "./omarchy";
-import { isInternalNavigationUrl, parseExternalUrl } from "./navigation";
+import { isInternalNavigationUrl, openExternalUrl, parseExternalUrl } from "./navigation";
 import { listPresets, type AgentKind } from "./presets";
 import { expandUserPath } from "./usage";
 import { DEFAULT_CODEX_HOME } from "./usage-codex";
@@ -245,10 +236,7 @@ const teamPaneHost: PaneHost = {
     return askWindowToOpenPanes(windowId === null ? null : BrowserWindow.fromId(windowId), paneOpens, projectSlug, panes, !bootProjectsLoaded);
   },
   newPaneId,
-  expectRoles: (roles) => {
-    for (const { ptyId, team, role } of roles) pendingPaneRoles.set(ptyId, { team, role });
-    return () => roles.forEach(({ ptyId }) => pendingPaneRoles.delete(ptyId));
-  },
+  expectRoles: (roles) => expectPaneRoles(roles),
 };
 // macOS needs a moment after fullscreen transitions before the window hack
 // can be re-applied.
@@ -305,35 +293,18 @@ const { cliStatus, installCli, healDeadCliShims } = createCliSetup({
   isDev: IS_DEV,
 });
 
-/** One Aya-owned rules file for every antigravity preset: present while any
- *  of them opts in, deleted once none does (or none is left). */
-async function syncAntigravityBrief(): Promise<void> {
-  const presets = (await listPresets()).filter((p) => p.agent === "antigravity");
-  const file = antigravityBriefFile(os.homedir());
-  const on = presets.some((p) => p.agentBrief === true);
-  await rewriteIfChanged(file, (c) =>
-    on ? withOwnedBrief(c, briefText(true)) : withoutOwnedBrief(c),
-  ).catch((err) => console.warn(`[aya] could not sync the aya brief at ${file}:`, err));
-}
+const antigravityBriefDeps = { listPresets, home: () => os.homedir(), rewrite: rewriteIfChanged };
 
-/** Roles of panes that `team open` is about to open: they spawn before the role is saved. */
-const pendingPaneRoles = new Map<string, RoleRef>();
-const paneBriefDeps: PaneBriefDeps = {
+const { paneBriefDeps, expectRoles: expectPaneRoles } = createPaneBriefDeps({
   ayaHome: AYA_HOME,
   defaultCodexHome: DEFAULT_CODEX_HOME,
   expand: expandUserPath,
-  shellEnv: loginShellEnv,
   listPresets: () => listPresets(),
-  paneRole: async (spawn) => {
-    const pending = pendingPaneRoles.get(spawn.ptyId);
-    if (pending) return pending;
-    const project = (await listProjects()).find((p) => p.slug === spawn.projectSlug);
-    return project ? paneTeamRole(AYA_HOME, project, spawn.ptyId) : null;
-  },
-  records: fileLaunchRecords(PANE_LAUNCH_ROLES_FILE),
+  listProjects: () => listProjects(),
+  recordsFile: PANE_LAUNCH_ROLES_FILE,
   starts: (spawn) => ptyHost.willStart(spawn),
   running: paneRunning,
-};
+});
 
 const { EXPECTED_HOST_VERSION, handleStaleHost, hostHealth, restartHostFromWindow, stopOtherHostsFromWindow,
   staleHostDetected } = createPtyHostHealth({
@@ -428,60 +399,6 @@ if (IS_DEV) {
 /** The repo's build/ icon, for dev; a packaged app's dock icon comes from the bundle. */
 function devIconPath(): string {
   return path.join(__dirname, "..", "build", "icon.png");
-}
-
-async function openExternalUrl(raw: string): Promise<void> {
-  const parsed = parseExternalUrl(raw);
-  if (!parsed) throw new Error("Unsupported external URL.");
-  if (parsed.protocol === "file:") {
-    const error = await shell.openPath(fileURLToPath(parsed));
-    if (error) throw new Error(error);
-    return;
-  }
-  await shell.openExternal(parsed.toString());
-}
-
-/** The first positional argv value that is an existing directory (`aya /path/to/project`); in dev argv
- *  includes Electron's own args. */
-function findDirInArgv(argv: readonly string[]): string | null {
-  for (let i = 1; i < argv.length; i++) {
-    const a = argv[i];
-    if (!a || a.startsWith("-")) continue;
-    // Skip arguments that obviously aren't user-supplied paths.
-    if (a.endsWith("main.js") || a.includes("node_modules/electron")) continue;
-    if (a === ".") {
-      // Relative-to-cwd. We get a sensible cwd from `second-instance`'s
-      // workingDirectory arg; the initial argv case handles "." via
-      // process.cwd().
-      try {
-        return path.resolve(process.cwd());
-      } catch {
-        continue;
-      }
-    }
-    try {
-      const resolved = path.resolve(a);
-      if (statSync(resolved).isDirectory()) return resolved;
-    } catch {
-      // Not a real directory - keep searching.
-      continue;
-    }
-  }
-  return null;
-}
-
-/** An "open this project" request (another process, or our own argv) for the renderer, which switches to,
- *  creates, or ignores the project. */
-function dispatchOpenProject(
-  win: BrowserWindow | null,
-  dir: string | null,
-): Promise<void> {
-  if (!win || !dir) return Promise.resolve();
-  return deliverOpenProject(win, dir);
-}
-
-function logOpenFailure(dir: string | null): (err: unknown) => void {
-  return (err) => console.warn(`[aya] could not open ${dir}:`, err);
 }
 
 function dispatchShortcut(action: string): void {
@@ -711,11 +628,11 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
       return;
     }
     event.preventDefault();
-    if (parseExternalUrl(url)) void openExternalUrl(url);
+    if (parseExternalUrl(url)) void openExternalUrl(url, { shell });
   };
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (parseExternalUrl(url)) void openExternalUrl(url);
+    if (parseExternalUrl(url)) void openExternalUrl(url, { shell });
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (event, url) => {
@@ -915,7 +832,7 @@ function registerIpc(): TeamRunner {
     senderWindow,
     dialog,
     home: () => app.getPath("home"),
-    presetsSaved: syncAntigravityBrief,
+    presetsSaved: () => syncAntigravityBrief(antigravityBriefDeps),
     intelligence: {
       summarize: (req) => summarizeLocal(intelligenceDeps, validateLocalSummaryRequest(req)),
       ollamaStatus: (model) => ollamaStatus(intelligenceDeps, model),
@@ -929,7 +846,7 @@ function registerIpc(): TeamRunner {
     windows: () => ayaWindows,
     activeProjectOf: (id) => windowSlices.activeProjectOf(id),
     openNewWindow,
-    openProjectIn: (win, dir) => void dispatchOpenProject(win, dir).catch(logOpenFailure(dir)),
+    openProjectIn: (win, dir) => void dispatchOpenProject({ window: win }, dir).catch(logOpenFailure(dir)),
     confirmOpen,
     isFullScreen: isAyaFullScreen,
     setFullScreen: setAyaFullScreen,
@@ -941,7 +858,7 @@ function registerIpc(): TeamRunner {
     shell,
     clipboard,
     home: () => app.getPath("home"),
-    openExternalUrl,
+    openExternalUrl: (raw) => openExternalUrl(raw, { shell }),
   });
   registerSystemIpc({
     ipcMain,
@@ -1022,7 +939,7 @@ async function openFromOutside(dir: string | null): Promise<void> {
     if (target.isMinimized()) target.restore();
     target.focus();
   }
-  await dispatchOpenProject(target, dir);
+  await dispatchOpenProject({ window: target }, dir);
 }
 
 /** Every window, and Aya Web's clients through a window-like sink (harness status dots must work in the browser too). */
@@ -1108,7 +1025,7 @@ app.whenReady().then(async () => {
   // Codex gets the brief at launch now; AGENTS.md files earlier versions wrote lose it once.
   void dropCodexBriefSections(AGENT_BRIEF_FILES_FILE);
   // Presets can change on disk without a save through Settings.
-  void syncAntigravityBrief();
+  void syncAntigravityBrief(antigravityBriefDeps);
   // Needs the repaired PATH to see the user's shims; not awaited - it only
   // touches files and nothing below depends on it.
   void healDeadCliShims();
@@ -1243,7 +1160,7 @@ app.whenReady().then(async () => {
       const target = await windowForOpen();
       if (target.isMinimized()) target.restore();
       target.focus();
-      await dispatchOpenProject(target, directory);
+      await dispatchOpenProject({ window: target }, directory);
     },
   });
   if (!socketProblems.remote) startRemoteServer({
@@ -1318,7 +1235,7 @@ app.whenReady().then(async () => {
   // Honor an initial directory argument on first launch - the renderer
   // applies the same switch-or-create logic as for second-instance.
   const initialDir = findDirInArgv(process.argv);
-  dispatchOpenProject(mainWindow, initialDir).catch(logOpenFailure(initialDir));
+  dispatchOpenProject({ window: mainWindow }, initialDir).catch(logOpenFailure(initialDir));
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length > 0) return;

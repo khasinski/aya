@@ -11,7 +11,7 @@ import { writeExecutable } from "./helpers/executable.mjs";
 import { join } from "node:path";
 
 const { teamNote, briefText } = await import("../dist-electron/agent-brief.js");
-const { withAgentBrief, roleNoteGap, roleNoteReport, removePaneBrief, sweepPaneBriefs, fileLaunchRecords, loginShellEnv, forgetLoginShellEnv, LOGIN_ENV_TIMEOUT, TOLD_DIGEST_HEX_CHARS } = await import("../dist-electron/pane-brief.js");
+const { createPaneBriefDeps, withAgentBrief, roleNoteGap, roleNoteReport, removePaneBrief, sweepPaneBriefs, fileLaunchRecords, loginShellEnv, forgetLoginShellEnv, LOGIN_ENV_TIMEOUT, TOLD_DIGEST_HEX_CHARS } = await import("../dist-electron/pane-brief.js");
 
 const ROLE = { team: "ux-review", role: "tester" };
 const NOTE = /tester in the Aya team ux-review/;
@@ -654,3 +654,71 @@ for (const { agent, presetBrief, pane, brief, note } of TEAM_BRIEF_CELLS) {
     });
   });
 }
+
+function wiringRig(t) {
+  const root = mkdtempSync(join(tmpdir(), "aya-pane-brief-wiring-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const calls = [];
+  const project = { slug: "project", directory: join(root, "project"), tabs: [] };
+  const input = {
+    ayaHome: join(root, "aya"),
+    defaultCodexHome: join(root, "codex"),
+    expand: (p) => p,
+    listPresets: async () => (calls.push(["presets"]), [presetOf("claude")]),
+    listProjects: async () => (calls.push(["projects"]), [project]),
+    recordsFile: join(root, "launch-roles.json"),
+    starts: async (spawn) => (calls.push(["starts", spawn]), true),
+    running: async (id) => (calls.push(["running", id]), false),
+  };
+  return { root, input, project, calls, ...createPaneBriefDeps(input) };
+}
+
+test("brief wiring uses the supplied host and presets and persists launch records at the supplied path", async (t) => {
+  const { input, calls, paneBriefDeps: deps } = wiringRig(t);
+  assert.deepEqual(calls, [], "creating deps performs no project, preset or host queries");
+  assert.equal(deps.ayaHome, input.ayaHome);
+  assert.equal(deps.defaultCodexHome, input.defaultCodexHome);
+  assert.equal(deps.expand, input.expand);
+  assert.equal(deps.shellEnv, loginShellEnv);
+  const spawn = { ptyId: "pane", presetId: "p", command: "claude", cols: 80, rows: 24 };
+  await withAgentBrief(spawn, deps);
+  assert.deepEqual(calls, [["starts", spawn], ["presets"], ["projects"]]);
+  assert.deepEqual(await deps.records.get("pane"), { role: null, carried: false });
+  assert.deepEqual(JSON.parse(readFileSync(input.recordsFile, "utf8")), { pane: { role: null, carried: false } });
+  assert.equal(await deps.running("pane"), false);
+  assert.deepEqual(calls.at(-1), ["running", "pane"]);
+});
+
+test("pending roles take precedence before a project or assignment is saved, and cleanup forgets them", async (t) => {
+  const { paneBriefDeps: deps, expectRoles, calls } = wiringRig(t);
+  const forget = expectRoles([{ ptyId: "a", team: "review", role: "tester" }, { ptyId: "b", team: "review", role: "lead" }]);
+  assert.deepEqual(await deps.paneRole({ ptyId: "a", projectSlug: "missing" }), { team: "review", role: "tester" });
+  assert.deepEqual(await deps.paneRole({ ptyId: "b" }), { team: "review", role: "lead" });
+  assert.deepEqual(calls, [], "pending roles do not wait on project reads");
+  const keep = expectRoles([{ ptyId: "c", team: "other", role: "lead" }]);
+  forget();
+  assert.equal(await deps.paneRole({ ptyId: "a", projectSlug: "missing" }), null);
+  assert.equal(await deps.paneRole({ ptyId: "b" }), null);
+  assert.deepEqual(await deps.paneRole({ ptyId: "c" }), { team: "other", role: "lead" });
+  keep();
+  assert.equal(await deps.paneRole({ ptyId: "c" }), null);
+});
+
+test("brief wiring falls back to a pane's saved team role in the matching project", async (t) => {
+  const { openTeamStore } = await import("../dist-electron/team-store.js");
+  const { input, project, paneBriefDeps: deps, expectRoles } = wiringRig(t);
+  const store = openTeamStore(input.ayaHome, project.slug, "review");
+  await store.saveDefinition("# review\n");
+  await store.assign("tester", "pane");
+  const spawn = { ptyId: "pane", projectSlug: project.slug };
+  const saved = await deps.paneRole(spawn);
+  assert.equal(saved.team, "review");
+  assert.equal(saved.role, "tester");
+  assert.equal(saved.store.dir, store.dir, "the store returned by paneTeamRole is retained");
+  const forget = expectRoles([{ ptyId: "pane", team: "new-team", role: "lead" }]);
+  assert.deepEqual(await deps.paneRole(spawn), { team: "new-team", role: "lead" });
+  forget();
+  assert.equal((await deps.paneRole(spawn)).role, "tester");
+  assert.equal(await deps.paneRole({ ...spawn, projectSlug: "other-project" }), null);
+  assert.equal(await deps.paneRole({ ...spawn, ptyId: "unassigned" }), null);
+});

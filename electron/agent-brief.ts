@@ -3,6 +3,7 @@
 
 import * as path from "node:path";
 import { shellQuote, simpleCommand } from "./pane-command";
+import type { Preset } from "./presets";
 
 /** How a pane's brief and role note reach its CLI at launch; Antigravity's brief is a file of its own. */
 export type RoleChannel =
@@ -239,4 +240,21 @@ export function withOwnedBrief(content: string, brief: string): string {
 export function withoutOwnedBrief(content: string): string {
   const rest = withoutBriefSection(content);
   return rest.replace(new RegExp(`^${ALWAYS_ON}?`), "").trim() ? rest : "";
+}
+
+export interface AntigravityBriefDeps {
+  listPresets: () => Promise<Preset[]>;
+  home: () => string;
+  rewrite: (file: string, change: (content: string) => string) => Promise<void>;
+}
+
+/** One Aya-owned rules file for every antigravity preset: present while any
+ *  of them opts in, deleted once none does (or none is left). */
+export async function syncAntigravityBrief(deps: AntigravityBriefDeps): Promise<void> {
+  const presets = (await deps.listPresets()).filter((p) => p.agent === "antigravity");
+  const file = antigravityBriefFile(deps.home());
+  const on = presets.some((p) => p.agentBrief === true);
+  await deps.rewrite(file, (c) =>
+    on ? withOwnedBrief(c, briefText(true)) : withoutOwnedBrief(c),
+  ).catch((err) => console.warn(`[aya] could not sync the aya brief at ${file}:`, err));
 }

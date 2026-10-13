@@ -1,3 +1,10 @@
+import type { Shell } from "electron";
+import { fileURLToPath } from "node:url";
+
+export interface ExternalUrlDeps {
+  shell: Pick<Shell, "openPath" | "openExternal">;
+}
+
 const EXTERNAL_URL_PROTOCOLS = new Set([
   "http:",
   "https:",
@@ -39,4 +46,15 @@ export function isInternalNavigationUrl(
   } catch {
     return false;
   }
+}
+
+export async function openExternalUrl(raw: string, deps: ExternalUrlDeps): Promise<void> {
+  const parsed = parseExternalUrl(raw);
+  if (!parsed) throw new Error("Unsupported external URL.");
+  if (parsed.protocol === "file:") {
+    const error = await deps.shell.openPath(fileURLToPath(parsed));
+    if (error) throw new Error(error);
+    return;
+  }
+  await deps.shell.openExternal(parsed.toString());
 }

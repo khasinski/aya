@@ -4,10 +4,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { rewriteIfChanged } from "../dist-electron/codex-brief.js";
 import {
   BRIEF_BEGIN,
   BRIEF_END,
   antigravityBriefFile,
+  syncAntigravityBrief,
   roleChannel,
   briefText,
   teamNote,
@@ -286,4 +291,91 @@ test("the Settings toggle's hint text per harness", () => {
   );
   assert.equal(agentBriefHint(undefined), null);
   assert.equal(agentBriefHint("toString"), null);
+});
+
+function antigravityRig(t, presets) {
+  const root = mkdtempSync(join(tmpdir(), "aya-antigravity-sync-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const deps = { listPresets: async () => presets, home: () => root, rewrite: rewriteIfChanged };
+  return { deps, file: antigravityBriefFile(root) };
+}
+
+test("sync creates one conditional Antigravity brief while any preset opts in, then removes it", async (t) => {
+  const presets = [{ agent: "antigravity", agentBrief: false }, { agent: "antigravity", agentBrief: true }];
+  const { deps, file } = antigravityRig(t, presets);
+  await syncAntigravityBrief(deps);
+  const first = ownedBriefContent(briefText(true));
+  assert.equal(readFileSync(file, "utf8"), first);
+  await syncAntigravityBrief(deps);
+  // The existing section updater adds a blank line after frontmatter on the second sync.
+  assert.equal(readFileSync(file, "utf8"), first.replace(BRIEF_BEGIN, `\n${BRIEF_BEGIN}`));
+  const modified = statSync(file).mtimeMs;
+  await syncAntigravityBrief(deps);
+  assert.equal(statSync(file).mtimeMs, modified, "the unchanged brief is not rewritten");
+  presets[1].agentBrief = false;
+  await syncAntigravityBrief(deps);
+  assert.equal(existsSync(file), false);
+  presets[1].agentBrief = true;
+  await syncAntigravityBrief(deps);
+  presets.splice(0);
+  await syncAntigravityBrief(deps);
+  assert.equal(existsSync(file), false, "removing every preset removes the owned file");
+});
+
+test("sync ignores other harnesses and requires a boolean true from an Antigravity preset", async (t) => {
+  const presets = [{ agent: "claude", agentBrief: true }, { agent: "antigravity", agentBrief: "true" }];
+  const { deps, file } = antigravityRig(t, presets);
+  await syncAntigravityBrief(deps);
+  assert.equal(existsSync(file), false);
+});
+
+test("sync preserves a user's rule and text appended to Aya's owned rule", async (t) => {
+  const presets = [{ agent: "antigravity", agentBrief: true }];
+  const { deps, file } = antigravityRig(t, presets);
+  await syncAntigravityBrief(deps);
+  const edited = readFileSync(file, "utf8") + "my own rule\n";
+  writeFileSync(file, edited);
+  presets[0].agentBrief = false;
+  await syncAntigravityBrief(deps);
+  assert.equal(readFileSync(file, "utf8"), withoutOwnedBrief(edited));
+  const mine = "---\ntrigger: always_on\n---\nmy own rule\n";
+  writeFileSync(file, mine);
+  presets[0].agentBrief = true;
+  await syncAntigravityBrief(deps);
+  assert.equal(readFileSync(file, "utf8"), mine);
+  presets[0].agentBrief = false;
+  await syncAntigravityBrief(deps);
+  assert.equal(readFileSync(file, "utf8"), mine);
+});
+
+test("sync waits for presets before reading home and rewriting, and warns on a failed rewrite", async (t) => {
+  const { deps, file } = antigravityRig(t, []);
+  const calls = [];
+  let release;
+  const failure = new Error("write failed");
+  t.mock.method(console, "warn", (...args) => calls.push(["warn", ...args]));
+  deps.listPresets = () => (calls.push(["presets"]), new Promise((resolve) => (release = resolve)));
+  const home = deps.home;
+  deps.home = () => (calls.push(["home"]), home());
+  deps.rewrite = async (path, change) => {
+    calls.push(["rewrite", path, change("")]);
+    throw failure;
+  };
+  const synced = syncAntigravityBrief(deps);
+  assert.deepEqual(calls, [["presets"]]);
+  release([{ agent: "antigravity", agentBrief: true }]);
+  await synced;
+  assert.deepEqual(calls, [
+    ["presets"], ["home"], ["rewrite", file, ownedBriefContent(briefText(true))],
+    ["warn", `[aya] could not sync the aya brief at ${file}:`, failure],
+  ]);
+});
+
+test("sync propagates a preset-list failure without reading home or rewriting", async () => {
+  const failure = new Error("presets failed");
+  await assert.rejects(syncAntigravityBrief({
+    listPresets: async () => { throw failure; },
+    home: () => assert.fail("home should not be read"),
+    rewrite: async () => assert.fail("no rewrite expected"),
+  }), (err) => err === failure);
 });

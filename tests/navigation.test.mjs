@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   isInternalNavigationUrl,
   parseExternalUrl,
+  openExternalUrl,
 } from "../dist-electron/navigation.js";
 
 test("parseExternalUrl accepts browser, file, and editor links only", () => {
@@ -42,4 +43,56 @@ test("internal navigation allows file URLs in production", () => {
     false,
   );
   assert.equal(isInternalNavigationUrl("https://example.com", options), false);
+});
+
+function externalShell(over = {}) {
+  const calls = [];
+  const deps = { shell: {
+    openPath: async (file) => (calls.push(["path", file]), ""),
+    openExternal: async (url) => void calls.push(["external", url]),
+    ...over,
+  } };
+  return { deps, calls };
+}
+
+test("external browser and editor URLs use openExternal with the parsed URL", async () => {
+  const { deps, calls } = externalShell();
+  const urls = ["HTTP://EXAMPLE.COM", "https://example.com/a b", "vscode://file/project", "vscode-insiders://file/project", "cursor://file/project", "zed://file/project", "jetbrains://idea/project"];
+  for (const url of urls) await openExternalUrl(url, deps);
+  assert.deepEqual(calls, urls.map((url) => ["external", new URL(url).toString()]));
+});
+
+test("external file URLs decode the path and use openPath alone", async () => {
+  const { deps, calls } = externalShell();
+  await openExternalUrl("file:///tmp/aya%20project/it%27s.txt", deps);
+  assert.deepEqual(calls, [["path", "/tmp/aya project/it's.txt"]]);
+});
+
+test("unsupported external URLs fail with the original message before using the shell", async () => {
+  const { deps, calls } = externalShell();
+  for (const url of ["javascript:alert(1)", "data:text/plain,hi", "mailto:dev@example.com", "not a url"]) {
+    await assert.rejects(openExternalUrl(url, deps), { message: "Unsupported external URL." });
+  }
+  assert.deepEqual(calls, []);
+});
+
+test("openPath's error string and rejected shell calls reach the caller", async () => {
+  const pathError = externalShell({ openPath: async () => "No application for this file" });
+  await assert.rejects(openExternalUrl("file:///tmp/aya.txt", pathError.deps), { message: "No application for this file" });
+  const failure = new Error("shell rejected");
+  const rejected = externalShell({ openExternal: async () => { throw failure; }, openPath: async () => { throw failure; } });
+  await assert.rejects(openExternalUrl("https://example.com", rejected.deps), (err) => err === failure);
+  await assert.rejects(openExternalUrl("file:///tmp/aya.txt", rejected.deps), (err) => err === failure);
+});
+
+test("opening an external URL settles only after the shell finishes", async () => {
+  let release;
+  const { deps } = externalShell({ openExternal: () => new Promise((resolve) => (release = resolve)) });
+  let done = false;
+  const opened = openExternalUrl("https://example.com", deps).then(() => (done = true));
+  await Promise.resolve();
+  assert.equal(done, false);
+  release();
+  await opened;
+  assert.equal(done, true);
 });

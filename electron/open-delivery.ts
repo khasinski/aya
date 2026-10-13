@@ -1,4 +1,6 @@
 import type { BrowserWindow } from "electron";
+import { statSync } from "node:fs";
+import * as path from "node:path";
 
 type OpenTarget = Pick<BrowserWindow, "isDestroyed" | "once" | "removeListener"> & {
   webContents: Pick<
@@ -86,4 +88,48 @@ export function deliverOpenProject(win: OpenTarget, dir: string): Promise<void> 
     webContents.on("render-process-gone", onGone);
     win.once("closed", onClosed);
   });
+}
+
+/** The first positional argv value that is an existing directory (`aya /path/to/project`); in dev argv
+ *  includes Electron's own args. */
+export function findDirInArgv(argv: readonly string[]): string | null {
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a || a.startsWith("-")) continue;
+    // Skip arguments that obviously aren't user-supplied paths.
+    if (a.endsWith("main.js") || a.includes("node_modules/electron")) continue;
+    if (a === ".") {
+      // Relative-to-cwd. We get a sensible cwd from `second-instance`'s
+      // workingDirectory arg; the initial argv case handles "." via
+      // process.cwd().
+      try {
+        return path.resolve(process.cwd());
+      } catch {
+        continue;
+      }
+    }
+    try {
+      const resolved = path.resolve(a);
+      if (statSync(resolved).isDirectory()) return resolved;
+    } catch {
+      // Not a real directory - keep searching.
+      continue;
+    }
+  }
+  return null;
+}
+
+/** An "open this project" request (another process, or our own argv) for the renderer, which switches to,
+ *  creates, or ignores the project. */
+export function dispatchOpenProject(
+  deps: { window: OpenTarget | null },
+  dir: string | null,
+): Promise<void> {
+  const { window: win } = deps;
+  if (!win || !dir) return Promise.resolve();
+  return deliverOpenProject(win, dir);
+}
+
+export function logOpenFailure(dir: string | null): (err: unknown) => void {
+  return (err) => console.warn(`[aya] could not open ${dir}:`, err);
 }
