@@ -2193,8 +2193,10 @@ async function askStopOtherHosts(count: number, who: string): Promise<boolean> {
 /** SIGTERM, so each host's own shutdown ends its terminals and removes its registry record; answers once they are
  *  gone, so a refreshed report no longer lists them. */
 async function stopHosts(pids: number[]): Promise<number[]> {
+  // Checked again right before the signal: a host may have exited, and its pid passed on, while Aya asked.
+  const stillHosts = new Set(liveHostRecords(PTY_HOST_SCRIPT).map((rec) => rec.pid));
   const stopped: number[] = [];
-  for (const pid of pids) {
+  for (const pid of pids.filter((p) => stillHosts.has(p))) {
     try {
       process.kill(pid, "SIGTERM");
       stopped.push(pid);

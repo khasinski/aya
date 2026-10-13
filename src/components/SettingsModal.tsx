@@ -2209,9 +2209,9 @@ export function SettingsModal({
                   </SettingsRow>
                   {(diagnostics || diagnosticsError) && (
                     <div className="aya-settings-diagnostics">
-                      {diagnosticsError ? (
-                        <div className="aya-settings-errors">{diagnosticsError}</div>
-                      ) : diagnostics ? (
+                      {/* Above the report, not instead of it: after a failed restart the report says what still runs. */}
+                      {diagnosticsError && <div className="aya-settings-errors">{diagnosticsError}</div>}
+                      {diagnostics ? (
                         <>
                           {diagnostics.ptyHost.warnings.length > 0 && (
                             <div className="aya-settings-diagnostics-warnings" role="status">

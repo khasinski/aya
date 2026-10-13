@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as net from "node:net";
+import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -120,6 +121,45 @@ test("a host that gives no pid is waited for until it closes the connection, as 
   const started = Date.now();
   assert.equal(await client.restart(), true);
   assert.ok(Date.now() - started >= 1_400, `restart() returned after ${Date.now() - started} ms, before the host closed`);
+  client.dispose();
+});
+
+test("a host that answers shutdown but never exits is killed, so no second host runs beside it", async (t) => {
+  const socketPath = join(TMP_AYA_HOME, "pty-host.sock");
+  rmSync(socketPath, { force: true });
+  // A separate process on the socket that gives its pid, says yes to shutdown, and stays (SIGTERM ignored too).
+  const source = `
+    const net = require("node:net");
+    process.on("SIGTERM", () => {});
+    net.createServer((s) => {
+      s.setEncoding("utf8");
+      let b = "";
+      s.on("data", (c) => {
+        b += c;
+        let e;
+        while ((e = b.indexOf("\\n")) !== -1) {
+          const r = JSON.parse(b.slice(0, e));
+          b = b.slice(e + 1);
+          const result = r.type === "version" ? { version: "0.0.1", scriptHash: "x", pid: process.pid } : null;
+          s.write(JSON.stringify({ id: r.id, ok: true, result }) + "\\n");
+        }
+      });
+    }).listen(${JSON.stringify(socketPath)}, () => console.log("ready"));`;
+  const stubborn = spawn(process.execPath, ["-e", source], { stdio: ["ignore", "pipe", "ignore"] });
+  t.after(() => {
+    try {
+      process.kill(stubborn.pid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+  });
+  await new Promise((resolve) => stubborn.stdout.once("data", resolve));
+  const client = new PtyHostClient(HOST_SCRIPT);
+  assert.equal((await client.hostStatus()).pid, stubborn.pid);
+  const started = Date.now();
+  assert.equal(await client.restart(), true);
+  assert.equal(isAlive(stubborn.pid), false, "the host that would not exit is gone");
+  assert.ok(Date.now() - started >= 4_900, "it was given the full wait first");
   client.dispose();
 });
 

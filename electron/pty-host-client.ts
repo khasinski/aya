@@ -32,6 +32,8 @@ export const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
 export const PTY_HOST_EXIT_WAIT_MS = 5_000;
 /** How long restart() waits for each answer from the host it replaces: a hung host must not hold up every pane. */
 export const PTY_HOST_RESTART_REQUEST_TIMEOUT_MS = 2_000;
+/** After SIGKILL to a host that outlived PTY_HOST_EXIT_WAIT_MS, how long restart() waits for it to be gone. */
+export const PTY_HOST_KILL_WAIT_MS = 1_000;
 /** pty-host.stderr.log moves to .1 at host start once it is this big, so it never grows without end. */
 export const PTY_HOST_STDERR_MAX_BYTES = 1_000_000;
 
@@ -299,7 +301,15 @@ export class PtyHostClient {
     }
     if (oldPid !== undefined) {
       this.dropSocket();
-      return waitForExit(oldPid, PTY_HOST_EXIT_WAIT_MS);
+      if (await waitForExit(oldPid, PTY_HOST_EXIT_WAIT_MS)) return true;
+      // Still running: the user already agreed to stop these terminals, and a request let through now would start
+      // the next host beside it. The pid is still that host's: a process that never exited cannot have handed it on.
+      try {
+        process.kill(oldPid, "SIGKILL");
+      } catch {
+        // gone in between
+      }
+      return waitForExit(oldPid, PTY_HOST_KILL_WAIT_MS);
     }
     if (!closed) return true;
     const exited = await withTimeout(closed, PTY_HOST_EXIT_WAIT_MS).catch(() => false);
