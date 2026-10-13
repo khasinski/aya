@@ -146,12 +146,8 @@ import { withSharedDirCommand } from "./agent-session";
 import { loadWindowState, trackWindowState } from "./window-state";
 import { WindowProjectSlices } from "./window-slices";
 import {
-  generateWebPassword,
   loadWebConfig,
-  normalizeWebHost,
-  normalizeWebPort,
   saveWebConfig,
-  webCredentials,
   webInterfaceAddresses,
   webServerUrls,
   type WebConfig,
@@ -164,6 +160,7 @@ import { registerUsageIpc } from "./ipc/usage-ipc";
 import { registerSettingsIpc } from "./ipc/settings-ipc";
 import { registerRemoteIpc } from "./ipc/remote-ipc";
 import { registerProjectsIpc } from "./ipc/projects-ipc";
+import { registerAyaWebIpc } from "./ipc/aya-web-ipc";
 import { startWebServer, type WebServerHandle } from "./web-server";
 import { parseSummaryResponse, summaryPrompt } from "./summary-prompt";
 import { restartDialog } from "./native-ui-text";
@@ -2372,50 +2369,17 @@ function registerIpc(): TeamRunner {
   });
 
   // --- Aya Web (experimental) ---
-  ipcMain.handle("web:status", () =>
-    inWebQueue(async () => {
-      if (!webConfig) webConfig = await loadWebConfig();
-      return webStatus();
-    }),
-  );
-  ipcMain.handle("web:configure", (_e, req: unknown) => inWebQueue(async () => {
-    if (typeof req !== "object" || req === null) {
-      throw new Error("web:configure: request must be an object");
-    }
-    if (!webConfig) webConfig = await loadWebConfig();
-    const r = req as Record<string, unknown>;
-    const next: WebConfig = { ...webConfig };
-    if (typeof r.enabled === "boolean") next.enabled = r.enabled;
-    if (r.port !== undefined) next.port = normalizeWebPort(r.port);
-    if (r.host !== undefined) {
-      const host = normalizeWebHost(r.host);
-      if (!host) throw new Error("web:configure: host must be an IP address");
-      next.host = host;
-    }
-    if (typeof r.user === "string" && r.user.trim()) {
-      next.user = r.user.trim();
-    }
-    if (typeof r.password === "string" && r.password) {
-      // Custom password: store only the hash; the plaintext generated copy
-      // (if any) is dropped by webCredentials.
-      delete next.generatedPassword;
-      Object.assign(next, webCredentials(r.password, false));
-    }
-    // Saved first: a failed write leaves Aya on the config it serves now, not on one that is neither saved nor
-    // served.
-    await saveWebConfig(next);
-    webConfig = next;
-    await applyWebServerState();
-    return webStatus();
-  }));
-  ipcMain.handle("web:regenerate-password", () => inWebQueue(async () => {
-    if (!webConfig) webConfig = await loadWebConfig();
-    const next = { ...webConfig, ...webCredentials(generateWebPassword(), true) };
-    await saveWebConfig(next);
-    webConfig = next;
-    // Existing sessions stay valid; new logins need the new password.
-    return webStatus();
-  }));
+  registerAyaWebIpc({
+    ipcMain,
+    inQueue: inWebQueue,
+    config: async () => (webConfig ??= await loadWebConfig()),
+    save: async (next) => {
+      await saveWebConfig(next);
+      webConfig = next;
+    },
+    apply: applyWebServerState,
+    status: webStatus,
+  });
   return teamRunner;
 }
 
