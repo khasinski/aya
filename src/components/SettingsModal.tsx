@@ -2317,8 +2317,8 @@ export function SettingsModal({
                   />
                   {warn && (
                     <span className="aya-settings-warn">
-                      ⚠ Looks like Claude in print mode: it answers once and
-                      exits, so this pane will not stay an interactive session.
+                      ⚠ Looks like Claude in non-interactive (print) mode: this
+                      pane will not be an interactive Claude session.
                     </span>
                   )}
                 </div>

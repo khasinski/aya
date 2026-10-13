@@ -68,8 +68,8 @@ test("Claude in print mode is flagged for what it does to the pane, not for bill
   const warning = settings.locator(".aya-settings-warn");
 
   await commandInput(settings).fill("claude -p");
-  await expect(warning).toContainText("answers once and exits");
-  await expect(warning).toContainText("will not stay an interactive session");
+  await expect(warning).toContainText("non-interactive (print) mode");
+  await expect(warning).toContainText("will not be an interactive Claude session");
   // claude -p draws from subscription limits too (support.claude.com, updated 2026-10-07): no billing claim.
   await expect(warning).not.toContainText(/billing|subscription/i);
 
