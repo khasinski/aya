@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import type { WebContents } from "electron";
-import { PTY_HOST_SOCKET_PATH } from "./paths";
+import { PTY_HOST_SOCKET_PATH, PTY_HOST_STDERR_FILE } from "./paths";
 import { PTY_HOST_NOT_CONNECTED, PTY_HOST_UNKNOWN_REQUEST } from "./constants";
 import { LAUNCH_STARTING, LAUNCH_UNREACHABLE, LAUNCH_UNSUPPORTED, type LaunchAnswer, type PaneLaunch } from "./launch-mode";
 import type { PaneSize } from "./pane-render";
@@ -27,6 +27,28 @@ import type { PtyEvent, SpawnRequest } from "./types";
 
 // Deadline waiting for a started pty host to create its socket and accept on it (ms).
 export const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
+/** pty-host.stderr.log moves to .1 at host start once it is this big, so it never grows without end. */
+export const PTY_HOST_STDERR_MAX_BYTES = 1_000_000;
+
+/** An append-only descriptor for the host's stderr, or "ignore" when the file cannot be opened. Never a link: the
+ *  file sits in the user's Aya home, and a planted link must not point the host's output elsewhere. */
+export function openHostStderr(file: string = PTY_HOST_STDERR_FILE, maxBytes = PTY_HOST_STDERR_MAX_BYTES): number | "ignore" {
+  try {
+    try {
+      const st = fs.lstatSync(file);
+      if (st.isFile() && st.size > maxBytes) fs.renameSync(file, `${file}.1`);
+    } catch {
+      // no file yet
+    }
+    return fs.openSync(
+      file,
+      fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+      0o600,
+    );
+  } catch {
+    return "ignore";
+  }
+}
 // Interval between connect attempts while waiting (ms).
 const PTY_HOST_SOCKET_POLL_INTERVAL_MS = 50;
 const DISPOSED_MESSAGE = "PTY host client is disposed";
@@ -344,15 +366,21 @@ export class PtyHostClient {
     } catch {
       // best effort
     }
-    const child = spawn(process.execPath, [this.hostScript], {
-      detached: true,
-      stdio: "ignore",
-      env: {
-        ...process.env,
-        [RUN_AS_NODE_VAR]: RUN_AS_NODE_VALUE,
-      },
-    });
-    child.unref();
+    const stderr = openHostStderr();
+    try {
+      const child = spawn(process.execPath, [this.hostScript], {
+        detached: true,
+        stdio: ["ignore", "ignore", stderr],
+        env: {
+          ...process.env,
+          [RUN_AS_NODE_VAR]: RUN_AS_NODE_VALUE,
+        },
+      });
+      child.unref();
+    } finally {
+      // The host holds its own copy of the descriptor.
+      if (typeof stderr === "number") fs.closeSync(stderr);
+    }
   }
 
   /** Connects to a host just started, retrying until the deadline while its socket is missing

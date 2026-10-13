@@ -40,6 +40,7 @@ import { PTY_HOST_UNKNOWN_REQUEST } from "./constants";
 import { HOLD_STARTING } from "./pane-holds";
 import type { PtyEvent } from "./types";
 import { ptyLog } from "./pty-log";
+import { keepHostOnUncaught } from "./pty-host-guard";
 
 // Wait before shutting down the idle pty host with no clients or ptys (ms).
 // The env override lets a test see the exit without waiting 30 s.
@@ -97,6 +98,8 @@ function closeSocket(): void {
 }
 
 function sendLine(socket: net.Socket, value: PtyHostResponse | PtyHostEventMessage): void {
+  // A client that is gone gets nothing; writing would only raise EPIPE.
+  if (socket.destroyed || !socket.writable) return;
   socket.write(`${JSON.stringify(value)}\n`);
 }
 
@@ -215,6 +218,7 @@ function scheduleIdleShutdown(): void {
 }
 
 function start(): void {
+  keepHostOnUncaught(ptyLog);
   fs.mkdirSync(path.dirname(PTY_HOST_SOCKET_PATH), { recursive: true });
   try {
     fs.rmSync(PTY_HOST_SOCKET_PATH, { force: true });
@@ -235,6 +239,12 @@ function start(): void {
     ptyLog.append("client-connect", { clients: clients.size });
     let buffer = "";
     socket.setEncoding("utf8");
+    // A client that drops while the host writes to it (EPIPE, ECONNRESET) raises an error on its socket. Without
+    // a listener that error is uncaught and ends the host with every pane of every window; the client is simply
+    // gone, and "close" below forgets it.
+    socket.on("error", (err: NodeJS.ErrnoException) => {
+      ptyLog.append("client-error", { code: err.code ?? err.name });
+    });
     socket.on("close", () => {
       clients.delete(socket);
       ptyLog.append("client-disconnect", { clients: clients.size });

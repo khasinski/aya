@@ -4,8 +4,19 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  closeSync,
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import * as net from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -13,7 +24,7 @@ import { tmpdir } from "node:os";
 const TMP_AYA_HOME = mkdtempSync(join(tmpdir(), "aya-host-survives-"));
 process.env.AYA_HOME = TMP_AYA_HOME;
 
-const { PtyHostClient } = await import("../dist-electron/pty-host-client.js");
+const { PtyHostClient, openHostStderr } = await import("../dist-electron/pty-host-client.js");
 const { waitFor, fakeWebContents, ptyEventsFor } = await import("./helpers/pty-host.mjs");
 
 const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
@@ -29,6 +40,13 @@ const isAlive = (pid) => {
     return false;
   }
 };
+
+/** Where a process's stderr (fd 2) leads: /proc on Linux, lsof on macOS. */
+function stderrTarget(pid) {
+  if (existsSync(`/proc/${pid}/fd/2`)) return readlinkSync(`/proc/${pid}/fd/2`);
+  const out = execFileSync("lsof", ["-a", "-p", String(pid), "-d", "2", "-Fn"], { encoding: "utf8" });
+  return out.split("\n").find((line) => line.startsWith("n"))?.slice(1) ?? "";
+}
 
 /** A second client asks to attach to `req`'s pane and drops its socket as soon as the replay starts arriving. */
 function attachAndDrop(req) {
@@ -89,12 +107,19 @@ test("a client that drops its socket during a replay leaves the host and every t
   await delay(500);
 
   assert.equal(isAlive(hostPid), true, "the host survives clients that drop mid-replay");
+  // Handled where it happens, on the dropped client's socket, not by the last-resort guard.
+  const logged = readFileSync(join(TMP_AYA_HOME, "pty-events.log"), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line).ev);
+  assert.ok(logged.includes("client-error"), "the dropped socket's error is logged as client-error");
+  assert.equal(logged.includes("host-uncaught"), false, "no error reached the uncaught guard");
   // The app's client is still served by the same host, and the pane still runs.
   const status = await client.hostStatus();
   assert.equal(status.pid, hostPid);
   assert.equal(status.ptyCount, 1);
   // The host's stderr is kept: an error that does take it down leaves its stack behind.
-  assert.ok(existsSync(join(TMP_AYA_HOME, "pty-host.stderr.log")), "host stderr goes to pty-host.stderr.log");
+  assert.match(stderrTarget(hostPid), /\/pty-host\.stderr\.log$/, "host stderr goes to pty-host.stderr.log");
   await client.shutdown();
 });
 
@@ -131,5 +156,38 @@ test("an uncaught error in the host is logged with its stack and the host keeps 
     assert.equal(uncaught[1].kind, "unhandledRejection");
   } finally {
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("openHostStderr appends, moves a full file to .1, and never writes through a link", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aya-host-stderr-"));
+  try {
+    const file = join(dir, "pty-host.stderr.log");
+    let fd = openHostStderr(file, 10);
+    assert.equal(typeof fd, "number");
+    writeSync(fd, "first\n");
+    closeSync(fd);
+    fd = openHostStderr(file, 10);
+    writeSync(fd, "second\n");
+    closeSync(fd);
+    assert.equal(readFileSync(file, "utf8"), "first\nsecond\n");
+    assert.equal(lstatSync(file).mode & 0o777, 0o600);
+
+    // Over the cap: the old output moves to .1 and a fresh file starts.
+    fd = openHostStderr(file, 10);
+    writeSync(fd, "third\n");
+    closeSync(fd);
+    assert.equal(readFileSync(`${file}.1`, "utf8"), "first\nsecond\n");
+    assert.equal(readFileSync(file, "utf8"), "third\n");
+
+    // A link planted at the path is not followed: the host's stderr is dropped instead.
+    const target = join(dir, "elsewhere");
+    writeFileSync(target, "");
+    const linked = join(dir, "linked.log");
+    symlinkSync(target, linked);
+    assert.equal(openHostStderr(linked), "ignore");
+    assert.equal(readFileSync(target, "utf8"), "");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

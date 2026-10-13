@@ -55,6 +55,8 @@ export const OPEN_PROJECTS_FILE = path.join(AYA_HOME, "open-projects.json");
 export const CONTROL_SOCKET_PATH = path.join(AYA_HOME, CONTROL_SOCKET_NAME);
 export const REMOTE_SOCKET_PATH = path.join(AYA_HOME, REMOTE_SOCKET_NAME);
 export const PTY_HOST_SOCKET_PATH = path.join(AYA_HOME, PTY_HOST_SOCKET_NAME);
+// The detached pty host's stderr: an error that does end it leaves its stack here instead of in /dev/null.
+export const PTY_HOST_STDERR_FILE = path.join(AYA_HOME, "pty-host.stderr.log");
 export const CLI_ADOPTION_FILE = path.join(AYA_HOME, "cli-adoption.json");
 export const REACHED_AYA_FILE = path.join(AYA_HOME, "reached-aya.json");
 export const PANE_LAUNCH_ROLES_FILE = path.join(AYA_HOME, "pane-launch-roles.json");
