@@ -119,6 +119,11 @@ test("webServerUrls: the pinned address, IPv6 in brackets, or every interface fo
     "http://100.64.0.7:7683",
   ]);
   assert.deepEqual(webServerUrls({ host: "::", port: 7683 }, {}), ["http://127.0.0.1:7683"]);
+  // Another spelling of the wildcard lists the interfaces too, not an address nobody can open.
+  assert.deepEqual(webServerUrls({ host: "0:0:0:0:0:0:0:0", port: 7683 }, interfaces), [
+    "http://192.168.1.20:7683",
+    "http://100.64.0.7:7683",
+  ]);
 });
 
 test("webHostOptions: this computer, all networks, then each interface", () => {

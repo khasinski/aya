@@ -57,8 +57,10 @@ test.describe("a saved 0.0.0.0 config that is off", () => {
     const row = await openAyaWeb(window);
     // An update does not move it: whoever reaches Aya Web from another device keeps doing so.
     await expect(row.getByLabel("Aya Web listen address")).toHaveValue("0.0.0.0");
-    await expect(row).toContainText("Warning: Aya Web will listen on every network");
-    await expect(row).toContainText("travel unencrypted");
+    // A status region, so a screen reader reads it out when it appears after a change.
+    const warning = row.getByRole("status");
+    await expect(warning).toContainText("Warning: Aya Web will listen on every network");
+    await expect(warning).toContainText("travel unencrypted");
     expect(savedConfig().host).toBe("0.0.0.0");
 
     await row.getByRole("button", { name: "This computer only" }).click();
@@ -72,6 +74,19 @@ test.describe("a saved 0.0.0.0 config that is off", () => {
     expect((await fetch(`http://127.0.0.1:${PORT}/api/me`)).status).toBe(401);
     const lan = ownNetworkAddress();
     if (lan) await expect(fetch(`http://${lan}:${PORT}/api/me`)).rejects.toThrow();
+  });
+});
+
+test.describe("a saved IPv6 wildcard in another spelling", () => {
+  test.use({ seedOptions: { ayaHomeFiles: { "web.json": webJson({ host: "::ffff:0:0" }) } } });
+
+  test("gets the same warning and button", async ({ window }) => {
+    const row = await openAyaWeb(window);
+    await expect(row.getByLabel("Aya Web listen address")).toHaveValue("::ffff:0:0");
+    await expect(row.getByRole("status")).toContainText("Warning: Aya Web will listen on every network");
+    await row.getByRole("button", { name: "This computer only" }).click();
+    await expect(row.getByLabel("Aya Web listen address")).toHaveValue("127.0.0.1");
+    await expect(row.getByRole("status")).toHaveCount(0);
   });
 });
 

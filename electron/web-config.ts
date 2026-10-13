@@ -27,9 +27,14 @@ export const LOOPBACK_HOST = "127.0.0.1";
 // moving them to loopback after an update would cut them off. Settings warns while it listens on every network.
 export const DEFAULT_WEB_HOST = LOOPBACK_HOST;
 
-/** True for a listen address that binds every interface (IPv4 or IPv6). */
+/** True for a listen address that binds every interface (IPv4 or IPv6), in any spelling: IPv6 is compared in the
+ *  form the URL parser writes, so 0:0:0:0:0:0:0:0 is ::, and ::ffff:0:0 is 0.0.0.0 mapped into IPv6. Mirrors
+ *  listensOnAllNetworks in src/web-host-options.ts, which drives the Settings warning. */
 export function isWildcardHost(host: string): boolean {
-  return host === IPV4_WILDCARD_HOST || host === IPV6_WILDCARD_HOST;
+  if (host === IPV4_WILDCARD_HOST) return true;
+  if (!net.isIPv6(host)) return false;
+  const canonical = new URL(`http://[${host}]`).hostname;
+  return canonical === `[${IPV6_WILDCARD_HOST}]` || canonical === "[::ffff:0:0]";
 }
 
 /** True for an address only this computer can reach: 127/8, ::1, and 127/8 mapped into IPv6 (::ffff:127.0.0.1,
