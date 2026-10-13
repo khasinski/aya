@@ -28,15 +28,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import * as os from "node:os";
 import * as path from "node:path";
-import {
-  createProject,
-  createRemoteProject,
-  getOrCreateProject,
-  listProjects,
-  listProjectState,
-  saveProjectState,
-  updateProject,
-} from "./config";
+import { getOrCreateProject, listProjects, listProjectState, saveProjectState } from "./config";
 import { bundledAyaCliPath, bundledDistElectronHelperPath } from "./cli-path";
 import { isShellCommand, withCliFirst } from "./pane-command";
 import { defaultInstallAyaCliPath, renderCliShim } from "./cli-shim";
@@ -109,7 +101,6 @@ import {
   IS_DEV,
   IS_E2E_HEADLESS,
   IS_E2E_PTY_SHUTDOWN,
-  PROJECTS_STATE_DELAY_MS,
   SPAWN_PREP_DELAY_MS,
   PTY_HOST_SOCKET_PATH,
   REMOTE_SOCKET_PATH,
@@ -141,7 +132,6 @@ import {
   normalizeLocalSummaryError,
   SUMMARY_TEXT_MAX_CHARS,
 } from "./local-summary-errors";
-import { readRepoProjectConfig } from "./project-local";
 import { repairProcessPath, resolveLoginShellPath } from "./shell-path";
 import { paneReadText } from "./pane-render";
 import { PTY_HOST_EXIT_WAIT_MS, PtyHostClient, waitForExit } from "./pty-host-client";
@@ -151,13 +141,7 @@ import { liveHostRecords, reapStaleHostRecords } from "./pty-host-registry";
 import { gatherHostHealth, probeSocketPid, type HostHealth } from "./pty-host-health";
 import { COMMAND_PROBE_TIMEOUT_MS, HOOK_VIA, PTY_HOST_NOT_CONNECTED, PTY_HOST_UNKNOWN_REQUEST } from "./constants";
 import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
-import {
-  requirePositiveInt,
-  requireString,
-  validateProjectCollectionState,
-  validateProjectConfig,
-  validateSpawnRequest,
-} from "./validation";
+import { requirePositiveInt, requireString, validateSpawnRequest } from "./validation";
 import { withSharedDirCommand } from "./agent-session";
 import { loadWindowState, trackWindowState } from "./window-state";
 import { WindowProjectSlices } from "./window-slices";
@@ -179,6 +163,7 @@ import { registerSystemIpc } from "./ipc/system-ipc";
 import { registerUsageIpc } from "./ipc/usage-ipc";
 import { registerSettingsIpc } from "./ipc/settings-ipc";
 import { registerRemoteIpc } from "./ipc/remote-ipc";
+import { registerProjectsIpc } from "./ipc/projects-ipc";
 import { startWebServer, type WebServerHandle } from "./web-server";
 import { parseSummaryResponse, summaryPrompt } from "./summary-prompt";
 import { restartDialog } from "./native-ui-text";
@@ -2323,49 +2308,13 @@ function registerIpc(): TeamRunner {
     return stopHosts(health.otherHosts.map((host) => host.pid));
   });
 
-  ipcMain.handle("projects:list", async () => listProjects());
-  ipcMain.handle("projects:state", async (e) => {
-    if (PROJECTS_STATE_DELAY_MS) await new Promise((resolve) => setTimeout(resolve, PROJECTS_STATE_DELAY_MS));
-    const state = await listProjectState();
-    const win = senderWindow(e);
-    // Each window sees only its own open-project slice (multi-window). No
-    // window (e.g. remote server path) gets the full on-disk state.
-    return win ? projectStateForWindow(state, win.id) : state;
-  });
-  ipcMain.handle("projects:save-state", async (e, state: unknown) => {
-    const valid = validateProjectCollectionState(state);
-    const win = senderWindow(e);
-    if (!win) return saveProjectState(valid);
-    const disk = await listProjectState().catch(() => null);
-    return saveProjectState(windowSlices.mergeSave(valid, win.id, disk));
-  });
-  ipcMain.handle("projects:create", async (_e, name: unknown, dir: unknown) =>
-    createProject(
-      requireString(name, "projects:create.name"),
-      requireString(dir, "projects:create.dir"),
-    ),
-  );
-  ipcMain.handle("projects:create-remote", async (_e, req: unknown) => {
-    if (typeof req !== "object" || req === null || Array.isArray(req)) {
-      throw new Error("projects:create-remote.req must be an object");
-    }
-    const r = req as Record<string, unknown>;
-    return createRemoteProject({
-      name: requireString(r.name, "projects:create-remote.name"),
-      directory: requireString(r.directory, "projects:create-remote.directory"),
-      hostId: requireString(r.hostId, "projects:create-remote.hostId"),
-      label: requireString(r.label, "projects:create-remote.label"),
-      sshTarget: requireString(r.sshTarget, "projects:create-remote.sshTarget"),
-    });
+  registerProjectsIpc({
+    ipcMain,
+    senderWindow,
+    stateForWindow: projectStateForWindow,
+    mergeSave: (state, windowId, disk) => windowSlices.mergeSave(state, windowId, disk),
   });
   registerRemoteIpc({ ipcMain, ayaHome: AYA_HOME });
-  ipcMain.handle("projects:update", async (_e, project: unknown) =>
-    updateProject(validateProjectConfig(project)),
-  );
-  ipcMain.handle("projects:read-repo-config", async (_e, dir: unknown) =>
-    readRepoProjectConfig(requireString(dir, "projects:read-repo-config.dir")),
-  );
-
   ipcMain.handle("agent:waiting", () => outstandingWaiting());
   // A question from before the restart that the pane's session no longer confirms: the windows mark it.
   onStatusPushed(broadcastStatus);
