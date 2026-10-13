@@ -2317,8 +2317,8 @@ export function SettingsModal({
                   />
                   {warn && (
                     <span className="aya-settings-warn">
-                      ⚠ Looks like a non-interactive flag. Claude requires
-                      interactive mode for subscription billing — double-check.
+                      ⚠ Looks like Claude in print mode: it answers once and
+                      exits, so this pane will not stay an interactive session.
                     </span>
                   )}
                 </div>

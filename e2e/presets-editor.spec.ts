@@ -61,3 +61,21 @@ test("a preset with no command is rejected by validation (not saved)", async ({
   );
   expect(names).not.toContain("Broken");
 });
+
+test("Claude in print mode is flagged for what it does to the pane, not for billing", async ({ window, app }) => {
+  const settings = await openPresetsTab(window, app);
+  await settings.locator(".aya-settings-add", { hasText: "Add custom" }).click();
+  const warning = settings.locator(".aya-settings-warn");
+
+  await commandInput(settings).fill("claude -p");
+  await expect(warning).toContainText("answers once and exits");
+  await expect(warning).toContainText("will not stay an interactive session");
+  // claude -p draws from subscription limits too (support.claude.com, updated 2026-10-07): no billing claim.
+  await expect(warning).not.toContainText(/billing|subscription/i);
+
+  // Interactive Claude, and other tools' -p flags, get no warning.
+  await commandInput(settings).fill("claude --resume");
+  await expect(warning).toHaveCount(0);
+  await commandInput(settings).fill("ssh -p 2222 devbox");
+  await expect(warning).toHaveCount(0);
+});
