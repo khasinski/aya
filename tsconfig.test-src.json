@@ -35,6 +35,7 @@
     "src/main-mirrors.ts",
     "src/ollama-defaults.ts",
     "src/project-helpers.ts",
+    "src/project-persistence.ts",
     "src/poll-visible.ts",
     "src/project-reload.ts",
     "src/project-badges.ts",
