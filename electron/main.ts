@@ -88,6 +88,7 @@ import {
   AGENT_BRIEF_FILES_FILE,
 } from "./paths";
 import { createPtyLog } from "./pty-log";
+import { createGpuDeathHandler, diagnosticsReport } from "./diagnostics";
 import { watchOmarchyTheme } from "./omarchy";
 import { isInternalNavigationUrl, parseExternalUrl } from "./navigation";
 import { listPresets, type AgentKind } from "./presets";
@@ -138,7 +139,6 @@ import {
 import { restartDialog } from "./native-ui-text";
 import type {
   ControlStatusUpdate,
-  DiagnosticsReport,
   SpawnRequest,
   ProjectCollectionState,
   WebServerStatus,
@@ -166,9 +166,6 @@ const COLOR_LIGHT_TEXT = "#f0f6fc";
 const NEW_WINDOW_CASCADE_OFFSET_PX = 28;
 const TEAR_OUT_CURSOR_OFFSET_X_PX = 80;
 const TEAR_OUT_CURSOR_OFFSET_Y_PX = 20;
-// Heal nudges after a GPU death: the typical relaunch window, then a safety net
-// (a no-op once the WebGL context is live again).
-const GPU_HEAL_NUDGE_DELAYS_MS = [1200, 3000];
 
 const PTY_HOST_SCRIPT = path.join(__dirname, PTY_HOST_SCRIPT_NAME);
 const ptyHost = new PtyHostClient(PTY_HOST_SCRIPT);
@@ -261,8 +258,6 @@ const teamPaneHost: PaneHost = {
     return () => roles.forEach(({ ptyId }) => pendingPaneRoles.delete(ptyId));
   },
 };
-// Cap of $PATH entries returned to the renderer diagnostics view.
-const MAX_PATH_ENTRIES_RETURNED = 40;
 // Delay before re-probing a host that answered the version handshake with
 // null - long enough for a slow cold spawn to finish listening.
 const STALE_HOST_REPROBE_DELAY_MS = 1_000;
@@ -364,81 +359,6 @@ const EXPECTED_HOST_VERSION: string = (() => {
   }
   return app.getVersion();
 })();
-
-async function diagnosticsReport(): Promise<DiagnosticsReport> {
-  const [presets, projects, projectState, usageHook, cli, health, adoption] =
-    await Promise.all([
-      listPresets(),
-      listProjects(),
-      listProjectState(),
-      usageHookStatus(),
-      cliStatus(),
-      hostHealth(),
-      cliAdoption.summary(),
-    ]);
-  return {
-    generatedAt: new Date().toISOString(),
-    app: {
-      version: app.getVersion(),
-      mode: IS_DEV ? "development" : "production",
-      platform: process.platform,
-      arch: process.arch,
-      pid: process.pid,
-      cwd: process.cwd(),
-    },
-    paths: {
-      ayaHome: AYA_HOME,
-      controlSocket: CONTROL_SOCKET_PATH,
-      remoteSocket: REMOTE_SOCKET_PATH,
-      ptyHostSocket: PTY_HOST_SOCKET_PATH,
-      controlSocketExists: await pathExists(CONTROL_SOCKET_PATH),
-      remoteSocketExists: await pathExists(REMOTE_SOCKET_PATH),
-      ptyHostSocketExists: await pathExists(PTY_HOST_SOCKET_PATH),
-    },
-    shell: {
-      shell: process.env.SHELL ?? null,
-      pathEntries: pathEntries().slice(0, MAX_PATH_ENTRIES_RETURNED),
-    },
-    cli,
-    cliAdoption: adoption,
-    ptyHost: {
-      expected: health.expected,
-      actual: health.identity,
-      ptyCount: health.ptyCount,
-      stale: health.stale,
-      pid: health.pid,
-      socket: health.socket,
-      otherHosts: health.otherHosts,
-      warnings: health.warnings,
-    },
-    presets: presets.map((preset) => ({
-      id: preset.id,
-      name: preset.name,
-      agent: preset.agent,
-      command: preset.command,
-      ...(preset.configDir ? { configDir: preset.configDir } : {}),
-      ...(typeof preset.autoResume === "boolean"
-        ? { autoResume: preset.autoResume }
-        : {}),
-      ...(typeof preset.unsafeMode === "boolean"
-        ? { unsafeMode: preset.unsafeMode }
-        : {}),
-      ...(preset.agentBrief ? { agentBrief: true } : {}),
-    })),
-    projects: {
-      total: projects.length,
-      open: projectState.open.length,
-      recent: projectState.recent.length,
-      remote: projects.filter((project) => !!project.remote).length,
-    },
-    usage: {
-      claudeAccounts: presets.filter((preset) => preset.agent === "claude").length,
-      codexAccounts: presets.filter((preset) => preset.agent === "codex").length,
-      hookInstalled: usageHook.installed,
-      hookScriptPath: usageHook.scriptPath,
-    },
-  };
-}
 
 function configureAppIdentity(): void {
   // Keep macOS menu/about/notification surfaces aligned. Dev runs inside
@@ -1239,7 +1159,23 @@ function registerIpc(): TeamRunner {
     dock: app.dock,
     cliStatus,
     installCli,
-    diagnosticsReport,
+    diagnosticsReport: () => diagnosticsReport({
+      app,
+      isDev: IS_DEV,
+      ayaHome: AYA_HOME,
+      controlSocketPath: CONTROL_SOCKET_PATH,
+      remoteSocketPath: REMOTE_SOCKET_PATH,
+      ptyHostSocketPath: PTY_HOST_SOCKET_PATH,
+      listPresets,
+      listProjects,
+      listProjectState,
+      usageHookStatus,
+      cliStatus,
+      hostHealth,
+      cliAdoption,
+      pathExists,
+      pathEntries,
+    }),
     updateStatus: updates.getUpdateStatus,
     checkForUpdates: updates.checkForUpdates,
     installUpdate: () => updates.install(),
@@ -1631,8 +1567,7 @@ app.on("before-quit", (event) => {
     clearTimeout(legacySweepTimer);
     legacySweepTimer = null;
   }
-  for (const timer of gpuHealTimers) clearTimeout(timer);
-  gpuHealTimers.clear();
+  gpuDeathHandler.clearHealTimers();
   if (IS_E2E_PTY_SHUTDOWN) {
     void ptyHost.shutdown().catch(() => {
       // Test-only cleanup. Normal app runs intentionally keep PTYs alive.
@@ -1643,34 +1578,10 @@ app.on("before-quit", (event) => {
   ptyHost.dispose();
 });
 
-// GPU-helper deaths (#79). The OS can quietly kill the GPU process under memory
-// pressure (jetsam); every GPU-composited surface of the window then goes white
-// until Chromium relaunches it (~1-2s). No renderer code can shorten that
-// window, so we do two things: (1) log the death with its reason so a future
-// white-flash report is correlated instantly instead of via `ps` archaeology
-// (the `reason` field confirms or refutes the memory-pressure theory), and (2)
-// once the replacement GPU process should be up, nudge renderers to re-run
-// their existing WebGL/PTY repair path - belt-and-suspenders over Chromium's
-// own repaint.
 const diagnosticsLog = createPtyLog(DIAGNOSTICS_LOG_FILE);
-// Live heal timers: a burst of deaths must not accumulate them.
-const gpuHealTimers = new Set<NodeJS.Timeout>();
-app.on("child-process-gone", (_event, details) => {
-  if (details.type !== "GPU") return;
-  // Do not log a clean exit (usually shutdown), but DO heal: a graceful
-  // mid-session GPU restart reports clean-exit and still drops WebGL contexts.
-  if (details.reason !== "clean-exit") {
-    diagnosticsLog.append("gpu-process-gone", {
-      reason: details.reason, // killed | crashed | oom | ...
-      exitCode: details.exitCode,
-    });
-  }
-  for (const delay of GPU_HEAL_NUDGE_DELAYS_MS) {
-    const timer = setTimeout(() => {
-      gpuHealTimers.delete(timer);
-      if (appQuitting) return;
-      eachAyaWindow((win) => win.webContents.send("gpu:relaunched"));
-    }, delay);
-    gpuHealTimers.add(timer);
-  }
+const gpuDeathHandler = createGpuDeathHandler({
+  diagnosticsLog,
+  appQuitting: () => appQuitting,
+  eachAyaWindow,
 });
+app.on("child-process-gone", (_event, details) => gpuDeathHandler.childProcessGone(details));
