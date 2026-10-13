@@ -17,7 +17,6 @@ import {
 import { autoUpdater } from "electron-updater";
 import { installApplicationMenu, setStaleMenuIcon } from "./app-menu";
 import { showAyaAboutPanel } from "./about-panel";
-import { installWindowZoom } from "./zoom";
 import { statSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -28,8 +27,8 @@ import { createCliSetup, findExecutableOnPath, pathEntries } from "./cli-setup";
 import { startConfigWatcher } from "./config-watcher";
 import { noteUserAnswer, onStatusPushed, outstandingWaiting } from "./agent-status";
 import { deliverTeamMessage, paneOutputMarks, settledAfterSubmit, startControlServer, type ControlStatusSink, type TurnProbe } from "./control";
-import { confirmOpen, dispatchOpenProject, findDirInArgv, logOpenFailure, replayOpensOnLoad } from "./open-delivery";
-import { createWindowSource } from "./window-for-open";
+import { confirmOpen, dispatchOpenProject, findDirInArgv, logOpenFailure } from "./open-delivery";
+import { createAyaWindows } from "./windows";
 import { createCliAdoptionStore } from "./cli-adoption";
 import { dropCodexBriefSections, rewriteIfChanged } from "./codex-brief";
 import { syncAntigravityBrief } from "./agent-brief";
@@ -80,7 +79,7 @@ import {
 import { createPtyLog } from "./pty-log";
 import { createGpuDeathHandler, diagnosticsReport } from "./diagnostics";
 import { watchOmarchyTheme } from "./omarchy";
-import { isInternalNavigationUrl, openExternalUrl, parseExternalUrl } from "./navigation";
+import { openExternalUrl } from "./navigation";
 import { listPresets, type AgentKind } from "./presets";
 import { expandUserPath } from "./usage";
 import { DEFAULT_CODEX_HOME } from "./usage-codex";
@@ -98,7 +97,7 @@ import { HOOK_VIA } from "./constants";
 import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
 import { withSharedDirCommand } from "./agent-session";
 import { loadWindowState, trackWindowState } from "./window-state";
-import { WindowProjectSlices } from "./window-slices";
+import { createWindowProjectState } from "./window-slices";
 import { loadWebConfig, saveWebConfig } from "./web-config";
 import { captureIpcHandlers } from "./ipc/web-capture";
 import { registerEnvIpc } from "./ipc/env-ipc";
@@ -124,7 +123,6 @@ import { restartDialog } from "./native-ui-text";
 import type {
   ControlStatusUpdate,
   SpawnRequest,
-  ProjectCollectionState,
 } from "./types";
 
 const DEV_SERVER_URL = "http://localhost:5183";
@@ -138,17 +136,9 @@ const cliAdoption = createCliAdoptionStore(CLI_ADOPTION_FILE);
 // Maximum number of entries returned by path completion
 // Maximum number of keyboard-navigable projects (Cmd/Ctrl+1..9)
 const MAX_KEYBOARD_PROJECTS = 9;
-// Minimum dimensions of the main application window (px)
-const WINDOW_MIN_WIDTH = 800;
-const WINDOW_MIN_HEIGHT = 500;
 // Theme colors shared between About-dialog CSS and BrowserWindow chrome
 const COLOR_DARK_BG = "#0d1117";
 const COLOR_LIGHT_TEXT = "#f0f6fc";
-// Cascade offset for a window opened from another window (File > New Window,
-// tab tear-out), so it doesn't cover its parent exactly.
-const NEW_WINDOW_CASCADE_OFFSET_PX = 28;
-const TEAR_OUT_CURSOR_OFFSET_X_PX = 80;
-const TEAR_OUT_CURSOR_OFFSET_Y_PX = 20;
 
 const PTY_HOST_SCRIPT = path.join(__dirname, PTY_HOST_SCRIPT_NAME);
 const ptyHost = new PtyHostClient(PTY_HOST_SCRIPT);
@@ -187,7 +177,7 @@ const teamDeps: TeamControlDeps = {
   agentOf: paneAgent,
   headCommit,
   treeState: workingTreeState,
-  starting: () => !bootProjectsLoaded,
+  starting: () => !windowProjects.bootProjectsLoaded,
 };
 /** A pane's rendered text, as `aya pane read` gets it; null when it is not running. */
 async function paneScreen(terminalId: string): Promise<string | null> {
@@ -233,59 +223,38 @@ const teamPaneHost: PaneHost = {
   // The window that shows the project adds the tabs; main picked their ids.
   openPanes: (projectSlug, panes) => {
     const windowId = windowSlices.windowOf(projectSlug);
-    return askWindowToOpenPanes(windowId === null ? null : BrowserWindow.fromId(windowId), paneOpens, projectSlug, panes, !bootProjectsLoaded);
+    return askWindowToOpenPanes(windowId === null ? null : BrowserWindow.fromId(windowId), paneOpens, projectSlug, panes, !windowProjects.bootProjectsLoaded);
   },
   newPaneId,
   expectRoles: (roles) => expectPaneRoles(roles),
 };
-// macOS needs a moment after fullscreen transitions before the window hack
-// can be re-applied.
-const MACOS_FULLSCREEN_HACK_DELAY_MS = 250;
 // Delay before the Phase-2 legacy sweep (stray pre-registry hosts + orphaned
 // terminal children of dead hosts). Off the startup path: nothing it targets
 // can interfere with the fresh session, so first paint never pays for it.
 const LEGACY_SWEEP_DELAY_MS = 5_000;
-let macosWindowHack:
-  | {
-      apply(handle: Buffer): void;
-    }
-  | null
-  | undefined;
-
-function applyMacOsWindowHack(win: BrowserWindow): void {
-  if (process.platform !== "darwin" || win.isDestroyed()) return;
-  if (macosWindowHack === undefined) {
-    try {
-      macosWindowHack = require(path.join(__dirname, "macos-window-hack.node")) as {
-        apply(handle: Buffer): void;
-      };
-    } catch (error) {
-      macosWindowHack = null;
-      if (IS_DEV) console.warn("macOS window hack unavailable", error);
-    }
-  }
-  if (!macosWindowHack) return;
-  try {
-    macosWindowHack.apply(win.getNativeWindowHandle());
-  } catch (error) {
-    if (IS_DEV) console.warn("macOS window hack failed", error);
-  }
-}
-
-function isAyaFullScreen(win: BrowserWindow): boolean {
-  return win.isFullScreen();
-}
-
-function setAyaFullScreen(win: BrowserWindow, value: boolean): void {
-  if (win.isDestroyed()) return;
-  win.setFullScreen(value);
-  win.webContents.send("app:fullscreen", isAyaFullScreen(win));
-}
-
-function toggleAyaFullScreen(win: BrowserWindow | null): void {
-  if (!win || win.isDestroyed()) return;
-  setAyaFullScreen(win, !isAyaFullScreen(win));
-}
+const windowProjects = createWindowProjectState({ listProjectState, saveProjectState, quitting: () => appQuitting });
+const windows = createAyaWindows({
+  BrowserWindow,
+  ptyHost,
+  platform: process.platform,
+  mainDirname: __dirname,
+  windowTitle: WINDOW_TITLE,
+  darkBackground: COLOR_DARK_BG,
+  isDev: IS_DEV,
+  isE2eHeadless: IS_E2E_HEADLESS,
+  devServerUrl: DEV_SERVER_URL,
+  rendererIndexPath: RENDERER_INDEX_PATH,
+  maxKeyboardProjects: MAX_KEYBOARD_PROJECTS,
+  loadWindowState,
+  trackWindowState,
+  startConfigWatcher,
+  openExternalUrl: (raw) => openExternalUrl(raw, { shell }),
+  claimBootWindow: windowProjects.claimBootWindow,
+  releaseWindowSlices: windowProjects.releaseWindowSlices,
+  quitting: () => appQuitting,
+});
+const { ayaWindows, focusedAyaWindow, eachAyaWindow, createWindow, openNewWindow, createWindowOnce, windowForOpen, isAyaFullScreen, setAyaFullScreen, toggleAyaFullScreen } = windows;
+const { windowSlices, projectStateForWindow } = windowProjects;
 
 const { cliStatus, installCli, healDeadCliShims } = createCliSetup({
   app,
@@ -458,262 +427,6 @@ const applicationMenuDeps = {
   toggleAyaFullScreen,
   configureAppIdentity,
 };
-
-interface WindowGeometry {
-  x?: number;
-  y?: number;
-  width: number;
-  height: number;
-  isFullScreen: boolean;
-  isMaximized: boolean;
-}
-
-/** An extra, empty window cascaded from the focused one, or under the cursor for a tab tear-out; it owns no
- *  projects until one is opened or moved into it (see projectStateForWindow). */
-async function openNewWindow(at?: {
-  x: number;
-  y: number;
-}): Promise<BrowserWindow> {
-  const anchor = focusedAyaWindow();
-  const size = anchor
-    ? anchor.getBounds()
-    : { ...(await loadWindowState()), x: undefined, y: undefined };
-  const position = at
-    ? // Nudge so the cursor lands on the new window's tab strip, not its corner.
-      { x: Math.max(0, at.x - TEAR_OUT_CURSOR_OFFSET_X_PX), y: Math.max(0, at.y - TEAR_OUT_CURSOR_OFFSET_Y_PX) }
-    : anchor
-      ? {
-          x: anchor.getBounds().x + NEW_WINDOW_CASCADE_OFFSET_PX,
-          y: anchor.getBounds().y + NEW_WINDOW_CASCADE_OFFSET_PX,
-        }
-      : { x: size.x, y: size.y };
-  return createWindow({
-    x: position.x,
-    y: position.y,
-    width: size.width,
-    height: size.height,
-    isFullScreen: false,
-    isMaximized: false,
-  });
-}
-
-function createWindow(initial: WindowGeometry): BrowserWindow {
-  const win = new BrowserWindow({
-    x: initial.x,
-    y: initial.y,
-    width: initial.width,
-    height: initial.height,
-    minWidth: WINDOW_MIN_WIDTH,
-    minHeight: WINDOW_MIN_HEIGHT,
-    title: WINDOW_TITLE,
-    ...(process.platform === "darwin"
-      ? { titleBarStyle: "hidden" as const }
-      : {}),
-    ...(process.platform === "linux"
-      ? { frame: false, roundedCorners: false }
-      : {}),
-    backgroundColor: COLOR_DARK_BG,
-    show: false,
-    webPreferences: {
-      // One file from vite.preload.config.mts: a sandboxed preload cannot require its own modules.
-      preload: path.join(__dirname, "preload.bundle.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      // node-pty runs only in the pty-host, so the window needs no Node: a script injected into it
-      // gets Chromium's sandbox, not the user's rights.
-      sandbox: true,
-      // In headless e2e the window is never shown, so Chromium would throttle
-      // requestAnimationFrame and xterm's render loop would never paint - the
-      // tests that read rendered rows then time out. Keep the hidden test
-      // window fully active. Production keeps the default (throttle when
-      // backgrounded to save power).
-      ...(IS_E2E_HEADLESS ? { backgroundThrottling: false } : {}),
-    },
-  });
-
-  if (process.platform === "darwin") {
-    win.setWindowButtonVisibility(false);
-    applyMacOsWindowHack(win);
-  }
-
-  if (initial.isMaximized) win.maximize();
-  if (initial.isFullScreen) setAyaFullScreen(win, true);
-
-  // Persist geometry changes; the helper handles debouncing + final flush.
-  // Only the boot window drives the saved single-window geometry; secondary
-  // windows are session-only (a restart collapses back to one window).
-  if (ayaWindows.size === 0) trackWindowState(win);
-
-  // Multi-window registry: PTY events broadcast to every live window, and
-  // `mainWindow` follows focus so outside actions have a target.
-  ayaWindows.add(win);
-  mainWindow = win;
-  if (bootWindowId === null) bootWindowId = win.id;
-  const windowId = win.id;
-  // Captured now: the webContents getter throws after 'closed'.
-  const windowWebContents = win.webContents;
-  win.on("focus", () => {
-    mainWindow = win;
-  });
-  ptyHost.attachWebContents(windowWebContents);
-
-  // Watch ~/.aya/ for edits to snippets/presets/themes made outside the app
-  // and reload that slice in the renderer. Stopped when the window closes.
-  const stopConfigWatcher = startConfigWatcher(win);
-
-  win.once("ready-to-show", () => {
-    if (!IS_E2E_HEADLESS) win.show();
-  });
-  win.on("closed", () => {
-    // De-register FIRST: if any cleanup below ever throws, a dead window must
-    // not linger in the registry (it would show up as a phantom "Move to
-    // window…" target).
-    ayaWindows.delete(win);
-    // Keep the module-level ref in sync so second-instance handlers don't
-    // try to focus a destroyed window.
-    if (mainWindow === win) {
-      mainWindow = [...ayaWindows].at(-1) ?? null;
-    }
-    ptyHost.detachWebContents(windowWebContents);
-    stopConfigWatcher();
-    // The closed window's projects fall back to recent; PTYs keep running in
-    // the detached host (same contract as an app restart).
-    void releaseWindowSlices(windowId);
-  });
-
-  // Notify the renderer when fullscreen state changes so the topbar can drop
-  // its left padding (which is there to clear the traffic-light buttons -
-  // those buttons hide in fullscreen).
-  const sendFullScreen = (isFs: boolean) => {
-    if (!win.isDestroyed()) win.webContents.send("app:fullscreen", isFs);
-  };
-  const sendMaximized = (isMaximized: boolean) => {
-    if (!win.isDestroyed()) win.webContents.send("app:maximized", isMaximized);
-  };
-  win.on("enter-full-screen", () => {
-    sendFullScreen(true);
-    applyMacOsWindowHack(win);
-    setTimeout(() => applyMacOsWindowHack(win), MACOS_FULLSCREEN_HACK_DELAY_MS);
-  });
-  win.on("leave-full-screen", () => {
-    sendFullScreen(false);
-    applyMacOsWindowHack(win);
-  });
-  win.on("maximize", () => sendMaximized(true));
-  win.on("unmaximize", () => sendMaximized(false));
-  // Initial broadcast once the renderer is ready (also useful if a future
-  // restart preserves fullscreen state).
-  replayOpensOnLoad(win);
-  win.webContents.once("did-finish-load", () => {
-    sendFullScreen(isAyaFullScreen(win));
-    sendMaximized(win.isMaximized());
-    applyMacOsWindowHack(win);
-  });
-
-  // External links must never navigate Aya's BrowserWindow. xterm's web-links
-  // addon normally calls our IPC handler, but Chromium/Electron can still see
-  // window.open or direct navigation paths depending on timing and modifier
-  // keys. Catch both centrally and hand safe external URLs to the OS.
-  const handleExternalNavigation = (
-    event: { preventDefault(): void },
-    url: string,
-  ) => {
-    if (
-      isInternalNavigationUrl(url, {
-        isDev: IS_DEV,
-        devServerUrl: DEV_SERVER_URL,
-        appIndexPath: RENDERER_INDEX_PATH,
-      })
-    ) {
-      return;
-    }
-    event.preventDefault();
-    if (parseExternalUrl(url)) void openExternalUrl(url, { shell });
-  };
-
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (parseExternalUrl(url)) void openExternalUrl(url, { shell });
-    return { action: "deny" };
-  });
-  win.webContents.on("will-navigate", (event, url) => {
-    handleExternalNavigation(event, url);
-  });
-  (
-    win.webContents as typeof win.webContents & {
-      on(
-        channel: "will-frame-navigate",
-        listener: (
-          event: { preventDefault(): void },
-          details: { url: string },
-        ) => void,
-      ): void;
-    }
-  ).on(
-    "will-frame-navigate",
-    (event: { preventDefault(): void }, details: { url: string }) => {
-      handleExternalNavigation(event, details.url);
-    },
-  );
-
-  // Intercept keyboard shortcuts at the BrowserWindow level so they fire
-  // even while xterm.js has focus (otherwise xterm would forward them to the
-  // PTY). Calling event.preventDefault() prevents both the page and the
-  // default menu from receiving the keystroke.
-  installWindowZoom(win.webContents);
-  win.webContents.on("before-input-event", (event, input) => {
-    if (input.type !== "keyDown") return;
-    const isMac = process.platform === "darwin";
-    const mod = isMac ? input.meta : input.control;
-    if (!mod) return;
-    if (input.alt && !input.shift) {
-      let action: string | null = null;
-      if (input.key === "ArrowLeft") action = "focus-pane-left";
-      else if (input.key === "ArrowRight") action = "focus-pane-right";
-      else if (input.key === "ArrowUp") action = "focus-pane-up";
-      else if (input.key === "ArrowDown") action = "focus-pane-down";
-      else if (input.key === "\\" || input.code === "Backslash") {
-        action = "split-pane-right";
-      } else if (input.key === "-") {
-        action = "split-pane-below";
-      }
-      if (!action) return;
-      event.preventDefault();
-      if (!win.isDestroyed()) win.webContents.send("shortcut", action);
-      return;
-    }
-    // Don't trigger our shortcuts if extra modifiers we don't bind are held -
-    // e.g. Cmd+Shift+T should NOT fire our Cmd+T action.
-    if (input.shift || input.alt) return;
-    const key = input.key.toLowerCase();
-    if (key === "r") {
-      event.preventDefault();
-      return;
-    }
-    let action: string | null = null;
-    if (key === "t") action = "new-shell";
-    else if (key === "w") action = "close-tab";
-    else if (key === ",") action = "open-settings";
-    else if (key === "[") action = "prev-tab";
-    else if (key === "]") action = "next-tab";
-    else if (key === "f") action = "find-in-pane";
-    else if (key === "k") action = "search";
-    else if (key.length === 1 && key >= "1" && key <= String(MAX_KEYBOARD_PROJECTS)) {
-      action = `project-${key}`;
-    }
-    if (!action) return;
-    event.preventDefault();
-    if (!win.isDestroyed()) win.webContents.send("shortcut", action);
-  });
-
-  if (IS_DEV) {
-    win.loadURL(DEV_SERVER_URL);
-    win.webContents.openDevTools({ mode: "detach" });
-  } else {
-    win.loadFile(RENDERER_INDEX_PATH);
-  }
-
-  return win;
-}
 
 const updates = createUpdates({
   app,
@@ -907,34 +620,10 @@ function registerIpc(): TeamRunner {
   return teamRunner;
 }
 
-// Multi-window: every live Aya window, in creation order. `mainWindow` tracks
-// the last-focused live window so second-instance / app:open-file / menu
-// actions have a sensible target when no Aya window has OS focus.
-const ayaWindows = new Set<BrowserWindow>();
-let mainWindow: BrowserWindow | null = null;
-
-/** The window an outside action (menu, CLI open, notification) should hit:
- *  the OS-focused Aya window, else the last-focused live one. */
-function focusedAyaWindow(): BrowserWindow | null {
-  const focused = BrowserWindow.getFocusedWindow();
-  if (focused && ayaWindows.has(focused)) return focused;
-  return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
-}
-
-/** macOS keeps running with every window closed; outside opens and `activate`
- *  share this, so however they interleave only one window is created. */
-const { createOnce: createWindowOnce, forOpen: windowForOpen } = createWindowSource(focusedAyaWindow, async () => {
-  mainWindow = createWindow(await loadWindowState());
-  return mainWindow;
-}, () => appQuitting);
-
-/** Set once startup has created its own first window. */
-let startupWindowCreated = false;
-
 /** second-instance / open-file: focus the open's window and deliver `dir`; with every window closed a new one is
  *  made, except before startup made its first (that would make two). */
 async function openFromOutside(dir: string | null): Promise<void> {
-  const target = startupWindowCreated ? await windowForOpen() : focusedAyaWindow();
+  const target = windows.startupWindowCreated ? await windowForOpen() : focusedAyaWindow();
   if (target) {
     if (target.isMinimized()) target.restore();
     target.focus();
@@ -950,45 +639,6 @@ function statusSinks(): ControlStatusSink[] {
 
 function broadcastStatus(update: ControlStatusUpdate): void {
   for (const sink of statusSinks()) sink.webContents.send("control:status", update);
-}
-
-function eachAyaWindow(fn: (win: BrowserWindow) => void): void {
-  for (const win of ayaWindows) {
-    if (!win.isDestroyed()) fn(win);
-  }
-}
-
-// Per-window project slices (multi-window, session-only) - semantics live in
-// window-slices.ts; main only wires window ids and the disk write.
-const windowSlices = new WindowProjectSlices();
-let bootWindowId: number | null = null;
-/** The boot window has been handed the project list: from here a missing project is really not open. */
-let bootProjectsLoaded = false;
-
-function projectStateForWindow(
-  state: ProjectCollectionState,
-  windowId: number,
-): ProjectCollectionState {
-  const slice = windowSlices.stateForWindow(state, windowId, windowId === bootWindowId);
-  if (windowId === bootWindowId) bootProjectsLoaded = true;
-  return slice;
-}
-
-/** A window died: its projects fall out of `open` into recent; their PTYs keep running in the detached host. */
-async function releaseWindowSlices(windowId: number): Promise<void> {
-  const released = windowSlices.release(windowId);
-  if (released.length === 0 || appQuitting) return;
-  try {
-    const disk = await listProjectState();
-    const openUnion = windowSlices.openUnion();
-    const recent = [
-      ...released.filter((s) => !openUnion.includes(s)),
-      ...disk.recent.filter((s) => !released.includes(s)),
-    ];
-    await saveProjectState({ ...disk, open: openUnion, recent });
-  } catch {
-    // best effort - a failed trim only means the projects reopen on restart
-  }
 }
 
 // Triggered when a second `Aya` launch happens while we're already running
@@ -1100,14 +750,14 @@ app.whenReady().then(async () => {
   await handleStaleHost();
 
   const savedState = await loadWindowState();
-  mainWindow = createWindow(savedState);
-  startupWindowCreated = true;
+  windows.mainWindow = createWindow(savedState);
+  windows.startupWindowCreated = true;
   const teamRunner = registerIpc();
   teamsAtQuit = teamRunner;
-  updates.configureAutoUpdates(mainWindow);
+  updates.configureAutoUpdates(windows.mainWindow);
   // Before checking for a NEW update, surface a PREVIOUS one that silently
   // failed to install and rolled back (#78).
-  void updates.reconcilePendingUpdate(mainWindow);
+  void updates.reconcilePendingUpdate(windows.mainWindow);
   // Live-follow Omarchy theme switches: re-broadcast so the renderer re-skins.
   const stopOmarchyWatch = watchOmarchyTheme(() => {
     eachAyaWindow((win) => win.webContents.send("omarchy:changed"));
@@ -1235,7 +885,7 @@ app.whenReady().then(async () => {
   // Honor an initial directory argument on first launch - the renderer
   // applies the same switch-or-create logic as for second-instance.
   const initialDir = findDirInArgv(process.argv);
-  dispatchOpenProject({ window: mainWindow }, initialDir).catch(logOpenFailure(initialDir));
+  dispatchOpenProject({ window: windows.mainWindow }, initialDir).catch(logOpenFailure(initialDir));
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length > 0) return;

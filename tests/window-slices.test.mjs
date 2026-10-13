@@ -122,3 +122,95 @@ test("drop on empty desktop tears out into a new window", async () => {
   // Boundary points count as inside (releasing at the very edge stays put).
   assert.deepEqual(resolveDropTarget(800, 600, candidates), { kind: "self" });
 });
+
+// The lifecycle wiring moved from main: boot readiness and trimming a closed window on disk.
+function lifecycle(over = {}) {
+  const calls = [];
+  let quitting = false;
+  const deps = {
+    listProjectState: async () => { calls.push(["load"]); return disk({ recent: ["c", "b", "d"] }); },
+    saveProjectState: async (state) => { calls.push(["save", state]); },
+    quitting: () => quitting,
+    ...over,
+  };
+  return { deps, calls, quit: () => { quitting = true; } };
+}
+
+const { createWindowProjectState } = await import("../dist-electron/window-slices.js");
+
+test("boot readiness changes only when the first claimed window reads its state", () => {
+  const s = createWindowProjectState(lifecycle().deps);
+  s.claimBootWindow(10);
+  s.claimBootWindow(20);
+  assert.equal(s.bootProjectsLoaded, false);
+  assert.deepEqual(s.projectStateForWindow(disk(), 20).open, []);
+  assert.equal(s.bootProjectsLoaded, false);
+  const boot = s.projectStateForWindow(disk(), 10);
+  assert.deepEqual(boot.open, ["a", "b"]);
+  assert.equal(boot.secondaryWindow, false);
+  assert.equal(s.bootProjectsLoaded, true);
+});
+
+test("closing a window removes its slice before loading disk, then prepends released projects to recent", async () => {
+  const l = lifecycle();
+  const s = createWindowProjectState(l.deps);
+  s.claimBootWindow(1);
+  s.projectStateForWindow(disk(), 1);
+  s.windowSlices.mergeSave(disk({ open: ["c"] }), 2, disk());
+  l.deps.listProjectState = async () => {
+    assert.deepEqual(s.windowSlices.openUnion(), ["c"]);
+    assert.equal(s.windowSlices.windowOf("a"), null);
+    l.calls.push(["load"]);
+    return disk({ recent: ["c", "b", "d"] });
+  };
+  await s.releaseWindowSlices(1);
+  assert.deepEqual(l.calls, [["load"], ["save", disk({ open: ["c"], recent: ["a", "b", "c", "d"] })]]);
+});
+
+test("released projects still open in another slice are excluded from the new recent prefix", async () => {
+  const l = lifecycle();
+  const s = createWindowProjectState(l.deps);
+  s.claimBootWindow(1);
+  s.projectStateForWindow(disk(), 1);
+  s.windowSlices.mergeSave(disk({ open: ["b", "c"] }), 2, disk());
+  await s.releaseWindowSlices(1);
+  assert.deepEqual(l.calls[1][1], disk({ open: ["b", "c"], recent: ["a", "c", "d"] }));
+});
+
+test("empty releases and releases during quit still clear slices without touching disk", async () => {
+  const l = lifecycle();
+  const s = createWindowProjectState(l.deps);
+  s.claimBootWindow(1);
+  s.projectStateForWindow(disk(), 1);
+  await s.releaseWindowSlices(99);
+  assert.deepEqual(l.calls, []);
+  l.quit();
+  await s.releaseWindowSlices(1);
+  assert.deepEqual(s.windowSlices.openUnion(), []);
+  assert.deepEqual(l.calls, []);
+});
+
+test("failed disk reads and writes are best effort after the in-memory slice is released", async () => {
+  for (const failing of ["listProjectState", "saveProjectState"]) {
+    let failures = 0;
+    const l = lifecycle({ [failing]: async () => { failures++; throw new Error("disk unavailable"); } });
+    const s = createWindowProjectState(l.deps);
+    s.claimBootWindow(1);
+    s.projectStateForWindow(disk(), 1);
+    await s.releaseWindowSlices(1);
+    assert.equal(failures, 1);
+    assert.deepEqual(s.windowSlices.openUnion(), []);
+  }
+});
+
+// Once the original boot window closes, later windows intentionally remain secondary.
+test("closing the boot window leaves the original boot id and readiness in place", async () => {
+  const s = createWindowProjectState(lifecycle().deps);
+  s.claimBootWindow(1);
+  s.projectStateForWindow(disk(), 1);
+  await s.releaseWindowSlices(1);
+  s.claimBootWindow(2);
+  assert.equal(s.projectStateForWindow(disk(), 2).secondaryWindow, true);
+  assert.deepEqual(s.projectStateForWindow(disk(), 2).open, []);
+  assert.equal(s.bootProjectsLoaded, true);
+});

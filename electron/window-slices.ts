@@ -130,3 +130,54 @@ export function resolveDropTarget(
   const other = candidates.find((c) => !c.isSelf && hit(c));
   return other ? { kind: "window", id: other.id } : { kind: "new" };
 }
+
+export interface WindowProjectStateDeps {
+  listProjectState: () => Promise<ProjectCollectionState>;
+  saveProjectState: (state: ProjectCollectionState) => Promise<void>;
+  quitting: () => boolean;
+}
+
+export function createWindowProjectState(deps: WindowProjectStateDeps) {
+  // Per-window project slices (multi-window, session-only) - semantics live in
+  // window-slices.ts; main only wires window ids and the disk write.
+  const windowSlices = new WindowProjectSlices();
+  let bootWindowId: number | null = null;
+  /** The boot window has been handed the project list: from here a missing project is really not open. */
+  let bootProjectsLoaded = false;
+
+  function projectStateForWindow(
+    state: ProjectCollectionState,
+    windowId: number,
+  ): ProjectCollectionState {
+    const slice = windowSlices.stateForWindow(state, windowId, windowId === bootWindowId);
+    if (windowId === bootWindowId) bootProjectsLoaded = true;
+    return slice;
+  }
+
+  /** A window died: its projects fall out of `open` into recent; their PTYs keep running in the detached host. */
+  async function releaseWindowSlices(windowId: number): Promise<void> {
+    const released = windowSlices.release(windowId);
+    if (released.length === 0 || deps.quitting()) return;
+    try {
+      const disk = await deps.listProjectState();
+      const openUnion = windowSlices.openUnion();
+      const recent = [
+        ...released.filter((s) => !openUnion.includes(s)),
+        ...disk.recent.filter((s) => !released.includes(s)),
+      ];
+      await deps.saveProjectState({ ...disk, open: openUnion, recent });
+    } catch {
+      // best effort - a failed trim only means the projects reopen on restart
+    }
+  }
+
+  return {
+    windowSlices,
+    get bootProjectsLoaded() { return bootProjectsLoaded; },
+    claimBootWindow: (windowId: number) => {
+      if (bootWindowId === null) bootWindowId = windowId;
+    },
+    projectStateForWindow,
+    releaseWindowSlices,
+  };
+}

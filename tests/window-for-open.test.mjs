@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { createWindowSource } = await import("../dist-electron/window-for-open.js");
+const { createWindowSource } = await import("../dist-electron/windows.js");
 
 test("N opens with no window, plus an activate, create exactly one window", async () => {
   for (const n of [2, 5]) {
