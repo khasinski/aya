@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { resumeSpawn, sharingPaneIds } from "./agentPreset";
+import { sharingPaneIds } from "./agentPreset";
 import { gitContextCwd, projectBaseCwd, tabFromTerminal } from "./worktree";
 import { findStatusTarget } from "./control-status-target";
 import {
@@ -13,6 +13,27 @@ import {
   applyExternalProjectEdits,
   mergeProjectsFromDisk,
 } from "./project-reload";
+import {
+  compactRecord,
+  dedupeSlugs,
+  defaultTabName,
+  findProject,
+  findProjectSlugForSession,
+  mergeGitInfo,
+  remoteTerminalCommand,
+  samePollPayload,
+  sameProjectBadges,
+  sameSessionRecords,
+  sessionDir,
+  terminalSpawn,
+  uniquePresetId,
+  uniqueProjectName,
+  type GitInfo,
+  type MissingDirEntry,
+  type NewProjectModalState,
+  type PendingRepoImport,
+} from "./project-helpers";
+import { SplitResizeHandle } from "./components/SplitResizeHandle";
 import { AttentionCenter } from "./components/AttentionCenter";
 import { TeamsModal } from "./components/TeamsModal";
 import { TeamAssignPrompt } from "./components/TeamRole";
@@ -37,7 +58,7 @@ import { useAppShortcuts } from "./hooks/useAppShortcuts";
 import { useDoubleShiftSearch } from "./hooks/useDoubleShiftSearch";
 import { usePtyEventRouter } from "./hooks/usePtyEventRouter";
 import { useStable } from "./hooks/useStableIdentity";
-import { sameArrayItems, sameRecordValues } from "./stable-identity";
+import { sameArrayItems } from "./stable-identity";
 import { paletteToChromeVars, paletteToThemeColors } from "./theme-skin";
 import { localSummaryUnavailableMessage } from "./local-summary-errors";
 import { LOCAL_SUMMARY_MAX_LINES, PROJECT_STATE_VERSION } from "./main-mirrors";
@@ -91,8 +112,8 @@ import {
   removeTerminal,
   resizeSplit as resizeSplitNode,
   splitLeaf,
-  treeFromLegacyLayout,
-  type DividerRect,
+  projectSplitTree,
+  resolveActiveLeafId,
   type SplitNode,
 } from "./split-tree";
 import {
@@ -115,13 +136,9 @@ import {
   type MonitoredSession,
   type Preset,
   type PtyEvent,
-  presetSlug,
-  slugifyName,
   type ProjectCollectionState,
   type ProjectConfig,
-  type ProjectGitInfo,
   type RemoteProjectCreateResult,
-  type SpawnCommand,
   type TerminalState,
   type WaitingPanes,
   type Theme,
@@ -200,27 +217,6 @@ interface AutoSummaryStatus {
   lastEvent: string;
 }
 
-
-// Content comparators for useStable: badge/session records are rebuilt with
-// fresh value objects on every terminals-map change, so identity alone can't
-// tell "same badges" from "changed badges".
-function sameProjectBadges(
-  a: Record<string, { count: number; level: ProjectBadgeLevel }>,
-  b: Record<string, { count: number; level: ProjectBadgeLevel }>,
-): boolean {
-  return sameRecordValues(
-    a,
-    b,
-    (x, y) => x.count === y.count && x.level === y.level,
-  );
-}
-
-function sameSessionRecords(
-  a: Record<string, MonitoredSession[]>,
-  b: Record<string, MonitoredSession[]>,
-): boolean {
-  return sameRecordValues(a, b, sameArrayItems);
-}
 
 interface SummaryCache {
   terminal: Record<string, { summary: string; updatedAt: number }>;
@@ -422,275 +418,6 @@ const FALLBACK_THEME_COLORS: ThemeColors = {
   brightCyan: "#56d4dd",
   brightWhite: "#f0f6fc",
 };
-
-function dedupeSlugs(slugs: string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const slug of slugs) {
-    if (seen.has(slug)) continue;
-    seen.add(slug);
-    out.push(slug);
-  }
-  return out;
-}
-
-/** Drop null/undefined values so the persisted selection map only has live ids. */
-function compactRecord(
-  record: Record<string, string | null>,
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(record)) {
-    if (value) out[key] = value;
-  }
-  return out;
-}
-
-interface GitInfo {
-  branch: string | null;
-  dirty: number;
-}
-
-interface NewProjectModalState {
-  defaults?: { directory?: string };
-  lockDirectory?: boolean;
-  title?: string;
-  hint?: string;
-  pathHint?: string;
-}
-
-interface MissingDirEntry {
-  slug: string;
-  name: string;
-  directory: string;
-}
-
-interface PendingRepoImport {
-  project: ProjectConfig;
-  presets: Preset[];
-}
-
-function findProject(
-  projects: ProjectConfig[],
-  slug: string,
-): ProjectConfig | null {
-  return projects.find((p) => p.slug === slug) ?? null;
-}
-
-function basename(p: string): string {
-  const parts = p.replace(/\/+$/, "").split("/");
-  return parts[parts.length - 1] || "project";
-}
-
-/** Keep the previous poll-state reference when the fresh result is
- *  value-identical. The polls (git 3s, sessions 5s, usage 30s) hand back fresh
- *  objects every tick; without this every tick re-renders App AND breaks
- *  React.memo on the chrome components by changing prop identities. Poll
- *  payloads are small, so a JSON compare is cheap. */
-function samePollPayload<T>(prev: T, next: T): boolean {
-  return JSON.stringify(prev) === JSON.stringify(next);
-}
-
-/** setGit updater that no-ops (same reference back) when that directory's git
- *  info is unchanged — the common case for the 3s status-bar poll. Keyed by
- *  directory, not project slug: a worktree tab reads its OWN checkout, so one
- *  project can hold several entries and switching tabs must not show the
- *  previous checkout's branch until the next poll lands. */
-function mergeGitInfo(
-  g: Record<string, ProjectGitInfo>,
-  directory: string,
-  info: ProjectGitInfo,
-): Record<string, ProjectGitInfo> {
-  const cur = g[directory];
-  return cur && cur.branch === info.branch && cur.dirty === info.dirty
-    ? g
-    : { ...g, [directory]: info };
-}
-
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
-}
-
-function remoteTerminalCommand(project: ProjectConfig, preset: Preset): string {
-  if (!project.remote) return preset.command;
-  const remoteShell = '"${SHELL:-/bin/sh}"';
-  const remoteCommand =
-    preset.id === PRESET_ID_SHELL || preset.command.trim() === "$SHELL"
-      ? `cd ${shellQuote(project.remote.directory)} && exec ${remoteShell} -l`
-      : `cd ${shellQuote(project.remote.directory)} && exec ${remoteShell} -l -i -c ${shellQuote(`exec ${preset.command}`)}`;
-  return `ssh -tt ${shellQuote(project.remote.sshTarget)} ${shellQuote(remoteCommand)}`;
-}
-
-/** Where a terminal's agent keeps its sessions: its cwd, or the remote directory. */
-function sessionDir(project: ProjectConfig | null, terminal: TerminalState): string {
-  return project?.remote
-    ? `${project.remote.sshTarget}:${project.remote.directory}`
-    : terminal.cwd;
-}
-
-function terminalSpawn(
-  project: ProjectConfig | null,
-  preset: Preset,
-  terminal: TerminalState,
-  panes: Array<{ id: string; preset: Preset; cwd: string }>,
-  homeDir: string,
-): SpawnCommand {
-  // A tab opened on a machine runs ssh here, never wrapped for a remote project and never resumed.
-  if (terminal.sshTarget) return { command: `ssh -- ${shellQuote(terminal.sshTarget)}` };
-  const key = sessionDir(project, terminal);
-  const spawn = resumeSpawn(
-    preset,
-    { id: terminal.id, cwd: key, restored: terminal.restored, sessionId: terminal.sessionId, sharedDir: terminal.sharedDir },
-    panes,
-  );
-  const wrap = (command: string) => (project ? remoteTerminalCommand(project, { ...preset, command }) : command);
-  // A remote pane runs in the home dir here; its peers share the folder when their key is the same.
-  const peerCwds = project?.remote
-    ? spawn.peerCwds?.includes(key) ? [homeDir] : undefined
-    : spawn.peerCwds;
-  return {
-    command: wrap(spawn.command),
-    ...(spawn.sharedDirCommand && peerCwds
-      ? { sharedDirCommand: wrap(spawn.sharedDirCommand), peerCwds }
-      : {}),
-  };
-}
-
-function uniqueProjectName(projects: ProjectConfig[], directory: string): string {
-  const base = basename(directory);
-  const used = new Set(projects.map((p) => p.slug));
-  const root = base || "project";
-  let name = root;
-  let idx = 2;
-  // Main's "project" fallback, so this predicts the slug createProject assigns.
-  while (used.has(slugifyName(name, "project"))) {
-    name = `${root} ${idx}`;
-    idx += 1;
-  }
-  return name;
-}
-
-function uniquePresetId(existing: Preset[], project: ProjectConfig, preset: Preset): string {
-  const used = new Set(existing.map((p) => p.id));
-  const root = presetSlug(`${project.slug}-${preset.id || preset.name}`);
-  let candidate = root;
-  let idx = 2;
-  while (used.has(candidate)) {
-    candidate = `${root}-${idx}`;
-    idx += 1;
-  }
-  return candidate;
-}
-
-/** A project's pane layout, migrating the pre-tree grid format on the fly.
- *  Migration lives here (not in the main process) so the conversion has exactly
- *  one tested implementation — see src/split-tree.ts treeFromLegacyLayout. The
- *  next save writes `splitTree` and drops `splitLayout`. */
-function projectSplitTree(project: ProjectConfig): SplitNode | undefined {
-  if (project.splitTree) return project.splitTree;
-  if (project.splitLayout) return treeFromLegacyLayout(project.splitLayout);
-  return undefined;
-}
-
-/** Which pane is focused. A remembered id wins while it still exists;
- *  otherwise the pane holding the active terminal, else the first pane — so
- *  focus never dangles after a pane is closed or collapsed. */
-function resolveActiveLeafId(
-  tree: SplitNode,
-  remembered: string | undefined,
-  activeTerminalId: string | null,
-): string {
-  const all = leaves(tree);
-  if (remembered && all.some((l) => l.id === remembered)) return remembered;
-  if (activeTerminalId) {
-    const holding = all.find((l) => l.terminalId === activeTerminalId);
-    if (holding) return holding.id;
-  }
-  return all[0].id;
-}
-
-/** Geometry lives in src/split-tree.ts; App only wires it to state.
- *  A divider is dragged in pixels and converted to a ratio against the area
- *  ITS split governs — measuring against the whole container would make a
- *  divider nested inside a half-width pane move at twice the pointer's speed. */
-function SplitResizeHandle({
-  divider,
-  onResize,
-}: {
-  divider: DividerRect;
-  onResize: (ratio: number) => void;
-}) {
-  const vertical = divider.direction === "row";
-  return (
-    <div
-      className={`aya-split-resize aya-split-resize--${vertical ? "col" : "row"}`}
-      style={{
-        left: `${divider.rect.left}%`,
-        top: `${divider.rect.top}%`,
-        ...(vertical
-          ? { height: `${divider.rect.height}%` }
-          : { width: `${divider.rect.width}%` }),
-      }}
-      onMouseDown={(event) => {
-        event.preventDefault();
-        const host = event.currentTarget.parentElement;
-        if (!host) return;
-        const hostRect = host.getBoundingClientRect();
-        const { bounds } = divider;
-        const spanPx = vertical
-          ? (hostRect.width * bounds.width) / 100
-          : (hostRect.height * bounds.height) / 100;
-        const originPx = vertical
-          ? hostRect.left + (hostRect.width * bounds.left) / 100
-          : hostRect.top + (hostRect.height * bounds.top) / 100;
-        if (spanPx <= 0) return;
-        const move = (moveEvent: MouseEvent) => {
-          const pointer = vertical ? moveEvent.clientX : moveEvent.clientY;
-          onResize((pointer - originPx) / spanPx);
-        };
-        const up = () => {
-          window.removeEventListener("mousemove", move);
-          window.removeEventListener("mouseup", up);
-          document.body.style.cursor = "";
-        };
-        document.body.style.cursor = vertical ? "col-resize" : "row-resize";
-        window.addEventListener("mousemove", move);
-        window.addEventListener("mouseup", up);
-      }}
-    />
-  );
-}
-
-/** Default display name for a freshly-created tab. Uses the preset's name
- *  so renaming a preset in Settings shows up on the next launch. */
-function defaultTabName(preset: Preset): string {
-  return preset.name.trim() || preset.id || "terminal";
-}
-
-function normalizeLocalPath(value: string): string {
-  if (value.length > 1) return value.replace(/\/+$/, "");
-  return value;
-}
-
-function pathContainsProject(pathname: string, projectDirectory: string): boolean {
-  const cwd = normalizeLocalPath(pathname);
-  const directory = normalizeLocalPath(projectDirectory);
-  return cwd === directory || cwd.startsWith(directory + "/");
-}
-
-function findProjectSlugForSession(
-  session: MonitoredSession,
-  projects: ProjectConfig[],
-): string | null {
-  let best: ProjectConfig | null = null;
-  for (const project of projects) {
-    if (project.remote) continue;
-    if (!pathContainsProject(session.cwd, project.directory)) continue;
-    if (!best || project.directory.length > best.directory.length) {
-      best = project;
-    }
-  }
-  return best?.slug ?? null;
-}
 
 export function App() {
   const [allProjects, setAllProjects] = useState<ProjectConfig[]>([]);

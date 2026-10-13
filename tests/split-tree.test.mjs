@@ -20,8 +20,10 @@ import {
   leafCount,
   leaves,
   normalizeTreeForTabs,
+  projectSplitTree,
   removeLeaf,
   removeTerminal,
+  resolveActiveLeafId,
   resizeSplit,
   splitLeaf,
   treeDepth,
@@ -381,4 +383,34 @@ test("migration is idempotent: the same grid always yields the same ids", () => 
     leaves(a).map((l) => l.id),
     leaves(b).map((l) => l.id),
   );
+});
+
+test("projectSplitTree prefers a stored tree and returns it by reference", () => {
+  const tree = pairTree();
+  assert.equal(projectSplitTree({ splitTree: tree, splitLayout: MIGRATION_2x2 }), tree);
+  assert.equal(projectSplitTree({}), undefined);
+});
+
+test("projectSplitTree migrates legacy grids with stable ids and geometry", () => {
+  const project = { splitLayout: MIGRATION_2x2 };
+  const tree = projectSplitTree(project);
+  assert.deepEqual(assignedTerminalIds(tree), ["t1", "t2", "t3", "t4"]);
+  assert.deepEqual(layoutRects(tree).map(({ rect }) => rect), [
+    { left: 0, top: 0, width: 50, height: 50 },
+    { left: 50, top: 0, width: 50, height: 50 },
+    { left: 0, top: 50, width: 50, height: 50 },
+    { left: 50, top: 50, width: 50, height: 50 },
+  ]);
+  assert.deepEqual(projectSplitTree(project), tree);
+  assert.equal(project.splitTree, undefined);
+});
+
+test("resolveActiveLeafId prefers a remembered pane, then the active terminal, then the first pane", () => {
+  const tree = assignTerminal(pairTree(), "b", "t2");
+  assert.equal(resolveActiveLeafId(tree, "b", "t1"), "b");
+  assert.equal(resolveActiveLeafId(tree, "ghost", "t2"), "b");
+  assert.equal(resolveActiveLeafId(tree, undefined, "t2"), "b");
+  assert.equal(resolveActiveLeafId(tree, "ghost", "missing"), "a");
+  assert.equal(resolveActiveLeafId(tree, undefined, null), "a");
+  assert.equal(resolveActiveLeafId(leaf("single", null), "ghost", "t1"), "single");
 });

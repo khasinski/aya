@@ -30,6 +30,7 @@
     "src/machines-view.ts",
     "src/main-mirrors.ts",
     "src/ollama-defaults.ts",
+    "src/project-helpers.ts",
     "src/project-reload.ts",
     "src/preset-ids.ts",
     "src/ptyEventBus.ts",

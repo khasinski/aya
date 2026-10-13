@@ -9,6 +9,8 @@
 // never generates its own ids (callers pass them in), so the whole layout
 // algebra is testable without a renderer.
 
+import type { ProjectConfig } from "./types";
+
 /** `direction` uses flexbox meaning: "row" places the two children side by
  *  side (a vertical divider — "split right"), "column" stacks them (a
  *  horizontal divider — "split below"). */
@@ -430,4 +432,31 @@ export function isSplitNode(value: unknown, depth = 0): value is SplitNode {
     return false;
   }
   return isSplitNode(n.first, depth + 1) && isSplitNode(n.second, depth + 1);
+}
+
+/** A project's pane layout, migrating the pre-tree grid format on the fly.
+ *  Migration lives here (not in the main process) so the conversion has exactly
+ *  one tested implementation — see src/split-tree.ts treeFromLegacyLayout. The
+ *  next save writes `splitTree` and drops `splitLayout`. */
+export function projectSplitTree(project: ProjectConfig): SplitNode | undefined {
+  if (project.splitTree) return project.splitTree;
+  if (project.splitLayout) return treeFromLegacyLayout(project.splitLayout);
+  return undefined;
+}
+
+/** Which pane is focused. A remembered id wins while it still exists;
+ *  otherwise the pane holding the active terminal, else the first pane — so
+ *  focus never dangles after a pane is closed or collapsed. */
+export function resolveActiveLeafId(
+  tree: SplitNode,
+  remembered: string | undefined,
+  activeTerminalId: string | null,
+): string {
+  const all = leaves(tree);
+  if (remembered && all.some((l) => l.id === remembered)) return remembered;
+  if (activeTerminalId) {
+    const holding = all.find((l) => l.terminalId === activeTerminalId);
+    if (holding) return holding.id;
+  }
+  return all[0].id;
 }
