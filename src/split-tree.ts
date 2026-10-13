@@ -460,3 +460,37 @@ export function resolveActiveLeafId(
   }
   return all[0].id;
 }
+
+/** Leaf id for the synthetic one-pane tree used when a project has no stored
+ *  split (or is showing a single terminal). Constant so React keys and focus
+ *  stay stable across renders. */
+const SINGLE_VIEW_LEAF_ID = "single";
+
+/** The tree actually rendered: a single-terminal view collapses to one pane,
+ *  and a project with no stored split still renders through the same path so
+ *  panes and the unsplit view share one code path. */
+export function renderedSplitTree(
+  savedSplitTree: SplitNode | null,
+  singleViewTerminalId: string | null,
+  activeTabId: string | null,
+): SplitNode | null {
+  if (savedSplitTree && singleViewTerminalId) {
+    return leaf(SINGLE_VIEW_LEAF_ID, singleViewTerminalId);
+  }
+  if (savedSplitTree) return savedSplitTree;
+  return activeTabId ? leaf(SINGLE_VIEW_LEAF_ID, activeTabId) : null;
+}
+
+/** Pane number per terminal, for the sidebar chip. Positional, so it tracks
+ *  what the user sees rather than tree structure. */
+export function paneAssignments(
+  paneRects: LeafRect[],
+  hasStoredSplit: boolean,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!hasStoredSplit) return out;
+  paneRects.forEach((pane, index) => {
+    if (pane.terminalId) out[pane.terminalId] = index;
+  });
+  return out;
+}

@@ -20,9 +20,11 @@ import {
   leafCount,
   leaves,
   normalizeTreeForTabs,
+  paneAssignments,
   projectSplitTree,
   removeLeaf,
   removeTerminal,
+  renderedSplitTree,
   resolveActiveLeafId,
   resizeSplit,
   splitLeaf,
@@ -413,4 +415,54 @@ test("resolveActiveLeafId prefers a remembered pane, then the active terminal, t
   assert.equal(resolveActiveLeafId(tree, "ghost", "missing"), "a");
   assert.equal(resolveActiveLeafId(tree, undefined, null), "a");
   assert.equal(resolveActiveLeafId(leaf("single", null), "ghost", "t1"), "single");
+});
+
+// --- rendered layout -------------------------------------------------------
+
+test("renderedSplitTree keeps the saved layout by reference without a single-view override", () => {
+  const tree = assignTerminal(pairTree(), "b", "t2");
+  assert.equal(renderedSplitTree(tree, null, "t2"), tree);
+  assert.equal(renderedSplitTree(tree, null, null), tree);
+});
+
+test("a single-terminal view uses a stable leaf without changing the saved split", () => {
+  const tree = assignTerminal(pairTree(), "b", "t2");
+  const before = structuredClone(tree);
+  const rendered = renderedSplitTree(tree, "t3", "t1");
+  assert.deepEqual(rendered, leaf("single", "t3"));
+  assert.deepEqual(layoutRects(rendered), [
+    { leafId: "single", terminalId: "t3", rect: { left: 0, top: 0, width: 100, height: 100 } },
+  ]);
+  assert.deepEqual(tree, before);
+  assert.equal(renderedSplitTree(tree, null, "t1"), tree);
+});
+
+test("without a saved tree the active terminal supplies the single pane", () => {
+  assert.deepEqual(renderedSplitTree(null, null, "t1"), leaf("single", "t1"));
+  assert.deepEqual(renderedSplitTree(null, "t2", "t1"), leaf("single", "t1"));
+  assert.deepEqual(renderedSplitTree(null, null, "t2"), leaf("single", "t2"));
+});
+
+test("without a saved tree or active terminal there is no rendered pane", () => {
+  assert.equal(renderedSplitTree(null, null, null), null);
+  assert.equal(renderedSplitTree(null, "t2", null), null);
+});
+
+test("pane assignments follow visual order and keep gaps for empty panes", () => {
+  let tree = splitLeaf(pairTree(), "b", "column", "s2", "c");
+  tree = assignTerminal(tree, "c", "t3");
+  assert.deepEqual(paneAssignments(layoutRects(tree), true), { t1: 0, t3: 2 });
+  tree = assignTerminal(tree, "b", "t2");
+  assert.deepEqual(paneAssignments(layoutRects(tree), true), { t1: 0, t2: 1, t3: 2 });
+});
+
+test("pane assignments are absent when the project has no enabled stored split", () => {
+  const panes = layoutRects(assignTerminal(pairTree(), "b", "t2"));
+  assert.deepEqual(paneAssignments(panes, false), {});
+  assert.deepEqual(paneAssignments([], true), {});
+});
+
+test("a single-terminal view of a saved split keeps the first-pane sidebar assignment", () => {
+  const rendered = renderedSplitTree(pairTree(), "t3", "t1");
+  assert.deepEqual(paneAssignments(layoutRects(rendered), true), { t3: 0 });
 });
