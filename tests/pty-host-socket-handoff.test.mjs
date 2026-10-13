@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import { spawn } from "node:child_process";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -113,5 +113,52 @@ test("a host whose socket another host replaced leaves that socket alone when it
   await waitFor(() => !isAlive(first), 10_000);
   assert.equal(isAlive(second), true);
   assert.equal(existsSync(socket), true, "the second host's socket survives the first host's exit");
+  assert.equal(statSync(socket).ino, secondInode);
+});
+
+test("a displaced host that exits on its own, not through shutdown, leaves the successor's socket alone", async (t) => {
+  const home = mkdtempSync(join(tmpdir(), "aya-handoff3-"));
+  const socket = join(home, "pty-host.sock");
+  const flag = join(home, "exit-now");
+  // Preloaded into the first host: it exits straight away, as the idle timer does, once the flag appears. Only the
+  // exit handler runs, with the host still holding the inode it recorded.
+  const preload = join(home, "exit-on-flag.cjs");
+  writeFileSync(
+    preload,
+    `const fs = require("node:fs");
+     setInterval(() => { if (fs.existsSync(${JSON.stringify(flag)})) process.exit(0); }, 50);`,
+  );
+  const hosts = [];
+  const startHost = (args) => {
+    const child = spawn(process.execPath, [...args, HOST_SCRIPT], {
+      detached: true,
+      stdio: "ignore",
+      env: { ...process.env, AYA_HOME: home },
+    });
+    hosts.push(child.pid);
+    return child.pid;
+  };
+  t.after(() => {
+    for (const pid of hosts) {
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  const first = startHost(["--require", preload]);
+  await waitFor(() => existsSync(socket));
+  const firstInode = statSync(socket).ino;
+  const second = startHost([]);
+  await waitFor(() => existsSync(socket) && statSync(socket).ino !== firstInode);
+  const secondInode = statSync(socket).ino;
+
+  writeFileSync(flag, "");
+  await waitFor(() => !isAlive(first), 10_000);
+  assert.equal(isAlive(second), true);
+  assert.equal(existsSync(socket), true, "the successor's socket survives the displaced host's exit");
   assert.equal(statSync(socket).ino, secondInode);
 });
