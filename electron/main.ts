@@ -99,15 +99,6 @@ import { restartStaleHost, updateInstaller } from "./update-quit";
 import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
 import { startRemoteServer } from "./remote-server";
-import { handleMachinesRequest, machinesDiscover, machinesSetup, machinesUiSetup, machinesStatus } from "./machines";
-import { ayaMachinesDeps } from "./machines-dialog";
-import {
-  createRemoteDirectory,
-  createRemoteProjectOnHost,
-  checkRemoteHealth,
-  listRemotePresets,
-  listRemoteDirectory,
-} from "./remote-client";
 import { headCommit, workingTreeState } from "./git";
 import {
   AYA_HOME,
@@ -187,6 +178,7 @@ import { registerWindowIpc } from "./ipc/window-ipc";
 import { registerSystemIpc } from "./ipc/system-ipc";
 import { registerUsageIpc } from "./ipc/usage-ipc";
 import { registerSettingsIpc } from "./ipc/settings-ipc";
+import { registerRemoteIpc } from "./ipc/remote-ipc";
 import { startWebServer, type WebServerHandle } from "./web-server";
 import { parseSummaryResponse, summaryPrompt } from "./summary-prompt";
 import { restartDialog } from "./native-ui-text";
@@ -2366,55 +2358,7 @@ function registerIpc(): TeamRunner {
       sshTarget: requireString(r.sshTarget, "projects:create-remote.sshTarget"),
     });
   });
-  ipcMain.handle(
-    "remote:list-directory",
-    async (_e, sshTarget: unknown, directory: unknown) =>
-      listRemoteDirectory(
-        requireString(sshTarget, "remote:list-directory.sshTarget"),
-        typeof directory === "string" ? directory : undefined,
-      ),
-  );
-  ipcMain.handle(
-    "remote:create-directory",
-    async (_e, sshTarget: unknown, directory: unknown) =>
-      createRemoteDirectory(
-        requireString(sshTarget, "remote:create-directory.sshTarget"),
-        requireString(directory, "remote:create-directory.directory"),
-      ),
-  );
-  ipcMain.handle("remote:list-presets", async (_e, sshTarget: unknown) =>
-    listRemotePresets(requireString(sshTarget, "remote:list-presets.sshTarget")),
-  );
-  ipcMain.handle("remote:health", async (_e, sshTarget: unknown) =>
-    checkRemoteHealth(requireString(sshTarget, "remote:health.sshTarget")),
-  );
-  // The status bar and Settings > Machines: the same functions `aya machines` runs. A click in Aya is the user's
-  // own yes, so these adds, removes and backend changes ask no dialog; an agent's `aya machines add`, `remove` and `configure` do.
-  const machinesDeps = { ...ayaMachinesDeps(AYA_HOME, os.homedir(), () => null, () => listProjects()), confirmAdd: async () => true, confirmRemove: async () => true, confirmConfigure: async () => true };
-  ipcMain.handle("machines:status", () => machinesStatus(machinesDeps));
-  ipcMain.handle("machines:setup", (e) => e.sender ? machinesUiSetup(machinesDeps) : machinesSetup(machinesDeps));
-  ipcMain.handle("machines:discover", (_e, id: unknown) => machinesDiscover(requireString(id, "machines:discover.id"), machinesDeps));
-  ipcMain.handle("machines:configure", async (_e, argv: unknown, token: unknown) => {
-    if (!Array.isArray(argv) || !argv.every((a) => typeof a === "string") || argv[0] !== "configure" || (token !== undefined && typeof token !== "string")) {
-      throw new Error("machines:configure needs configuration arguments and optional token input");
-    }
-    return (await handleMachinesRequest({ argv, ...(typeof token === "string" ? { token } : {}) }, machinesDeps)).output;
-  });
-  ipcMain.handle("machines:command", async (_e, argv: unknown) => {
-    if (!Array.isArray(argv) || !argv.every((a) => typeof a === "string") || !["add", "remove", "claim", "release"].includes(argv[0])) {
-      throw new Error("machines:command takes add, remove, claim or release with text arguments");
-    }
-    return (await handleMachinesRequest({ argv, user: os.userInfo().username }, machinesDeps)).output;
-  });
-  ipcMain.handle(
-    "remote:create-project",
-    async (_e, sshTarget: unknown, directory: unknown, name: unknown) =>
-      createRemoteProjectOnHost(
-        requireString(sshTarget, "remote:create-project.sshTarget"),
-        requireString(directory, "remote:create-project.directory"),
-        typeof name === "string" ? name : undefined,
-      ),
-  );
+  registerRemoteIpc({ ipcMain, ayaHome: AYA_HOME });
   ipcMain.handle("projects:update", async (_e, project: unknown) =>
     updateProject(validateProjectConfig(project)),
   );
