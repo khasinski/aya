@@ -15,7 +15,9 @@ const {
   webServerUrls,
 } = await import("../dist-electron/web-config.js");
 const { hostHeaderAllowed } = await import("../dist-electron/web-server.js");
-const { listensOnAllNetworks, webHostOptions } = await import("../dist-test/web-host-options.js");
+const { allNetworksWarning, listensOnAllNetworks, webHostOptions } = await import(
+  "../dist-test/web-host-options.js"
+);
 
 const creds = webCredentials("pw", false);
 
@@ -35,12 +37,21 @@ test("a config without a usable address gets the loopback default", () => {
   }
 });
 
-test("listensOnAllNetworks: the IPv4 and IPv6 wildcards, nothing else", () => {
-  assert.equal(listensOnAllNetworks("0.0.0.0"), true);
-  assert.equal(listensOnAllNetworks("::"), true);
-  for (const host of ["127.0.0.1", "::1", "100.64.0.7", "", "localhost"]) {
+test("listensOnAllNetworks: the IPv4 and IPv6 wildcards in any spelling, nothing else", () => {
+  for (const host of ["0.0.0.0", "::", "0:0:0:0:0:0:0:0", "::0", "0::", "::ffff:0.0.0.0"]) {
+    assert.equal(listensOnAllNetworks(host), true, host);
+  }
+  for (const host of ["127.0.0.1", "::1", "::ffff:127.0.0.1", "100.64.0.7", "fe80::1", "", "localhost", ":::"]) {
     assert.equal(listensOnAllNetworks(host), false, host);
   }
+});
+
+test("allNetworksWarning: says whether Aya Web listens now or will once on, and that nothing is encrypted", () => {
+  assert.match(allNetworksWarning({ host: "0.0.0.0", enabled: true }), /^Aya Web listens on every network/);
+  assert.match(allNetworksWarning({ host: "0:0:0:0:0:0:0:0", enabled: false }), /^Aya Web will listen on every network/);
+  assert.match(allNetworksWarning({ host: "::", enabled: true }), /password and your terminals travel unencrypted/);
+  assert.equal(allNetworksWarning({ host: "127.0.0.1", enabled: true }), null);
+  assert.equal(allNetworksWarning({ host: "100.64.0.7", enabled: false }), null);
 });
 
 test("normalizeWebHost: Settings may save IP literals only", () => {

@@ -31,7 +31,7 @@ import type { MacOptionKeyMode } from "../terminal-option-key";
 import type { TerminalSoundCue } from "../terminal-sound-prefs";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 import { HOOK_THROTTLE_MINUTES } from "../main-mirrors";
-import { listensOnAllNetworks, WEB_LOOPBACK_HOST, webHostOptions } from "../web-host-options";
+import { allNetworksWarning, WEB_LOOPBACK_HOST, webHostOptions } from "../web-host-options";
 
 const DEFAULT_CLAUDE_CONFIG_DIR = "~/.claude";
 const DEFAULT_CODEX_CONFIG_DIR = "~/.codex";
@@ -1563,11 +1563,10 @@ export function SettingsModal({
                 </select>
               </label>
             )}
-            {ayaWeb && listensOnAllNetworks(ayaWeb.host) && (
-              <div style={{ marginTop: 6 }}>
-                <strong>Warning:</strong> {ayaWeb.enabled ? "Aya Web listens" : "Aya Web will listen"} on
-                every network this computer joins, a cafe or hotel Wi-Fi too, and the password and your
-                terminals travel unencrypted.{" "}
+            {/* role=status: read out when it appears after a change, not on every open of Settings. */}
+            {ayaWeb && allNetworksWarning(ayaWeb) && (
+              <div role="status" style={{ marginTop: 6 }}>
+                <strong>Warning:</strong> {allNetworksWarning(ayaWeb)}{" "}
                 <button
                   className="aya-modal-btn"
                   type="button"
