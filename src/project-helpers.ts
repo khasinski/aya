@@ -87,6 +87,15 @@ export function findProject(
   return projects.find((p) => p.slug === slug) ?? null;
 }
 
+export function activeProjectAfterClose(
+  current: string | null,
+  slug: string,
+  remaining: ProjectConfig[],
+): string | null {
+  if (current !== slug) return current;
+  return remaining[0]?.slug ?? null;
+}
+
 export function basename(p: string): string {
   const parts = p.replace(/\/+$/, "").split("/");
   return parts[parts.length - 1] || "project";

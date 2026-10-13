@@ -14,11 +14,9 @@ import {
   mergeProjectsFromDisk,
 } from "./project-reload";
 import {
-  dedupeSlugs,
   defaultTabName,
   findProject,
   findProjectSlugForSession,
-  mergeGitInfo,
   remoteTerminalCommand,
   samePollPayload,
   sameProjectBadges,
@@ -26,7 +24,6 @@ import {
   sessionDir,
   terminalSpawn,
   uniquePresetId,
-  uniqueProjectName,
   type MissingDirEntry,
   type NewProjectModalState,
   type PendingRepoImport,
@@ -52,6 +49,8 @@ import { useDoubleShiftSearch } from "./hooks/useDoubleShiftSearch";
 import { usePtyEventRouter } from "./hooks/usePtyEventRouter";
 import { useStable } from "./hooks/useStableIdentity";
 import { sameArrayItems } from "./stable-identity";
+import { useProjectActions } from "./hooks/useProjectActions";
+import { useOpenQueue, useOpenQueueDrain } from "./hooks/useOpenQueue";
 import { useAppTheme } from "./hooks/useAppTheme";
 import { useConfigReload } from "./hooks/useConfigReload";
 import { EMPTY_SUMMARIES } from "./local-summaries";
@@ -113,7 +112,6 @@ import {
   type Preset,
   type ProjectCollectionState,
   type ProjectConfig,
-  type RemoteProjectCreateResult,
   type TerminalState,
   type WaitingPanes,
   type Theme,
@@ -290,51 +288,12 @@ export function App() {
   const { usageAccounts, codexUsageAccounts, grokUsage, monitoredSessions } =
     useUsagePolling(samePollPayload);
 
-  // Handle "open this directory" requests from main — fired by `aya <dir>`
-  // CLI invocations and the initial argv. Subscribed once; uses a ref to
-  // always see the latest projects + handlers without resubscribing. The
-  // preload holds opens sent before this subscribes and hands them over here.
-  //
-  // The IPC can arrive on `did-finish-load`, which is BEFORE the bootstrap
-  // useEffect has populated projects state. If we processed it then, the
-  // "find by directory" check sees an empty list and falls through to
-  // auto-create — producing a duplicate next to whatever bootstrap loads.
-  // So requests queue until bootstrap signals ready, then run one at a time.
-  const openProjectRef = useRef<(dir: string) => Promise<void>>(async () => {});
-  const [openQueue, setOpenQueue] = useState<string[]>([]);
-  const openRunningRef = useRef(false);
-  // Opens the page finished but whose project state the writer below has not saved:
-  // main sends them again after a reload until this page says they are on disk.
-  const unsavedOpensRef = useRef<string[]>([]);
-  const [unsavedOpensTick, setUnsavedOpensTick] = useState(0);
-  useEffect(() => {
-    return window.aya.onOpenProject((dir) => {
-      setOpenQueue((queue) => [...queue, dir]);
-    });
-  }, []);
+  const { openProjectRef, unsavedOpensRef, unsavedOpensTick, drain: openQueueDrain } =
+    useOpenQueue();
 
   const { foundHarnessCount, harnessScanDone } = useHarnessScan();
 
-  // Drain the open-project queue once bootstrap commits. Running this in a
-  // useEffect (not inline after setDidBootstrap) guarantees React has flushed
-  // setProjects → projectsRef.current before the handler tries to match by
-  // directory. Without this gate the drain raced the commit and "aya <known
-  // project path>" auto-created a duplicate, hitting the slug-collision error.
-  // One open per commit for the same reason: two concurrent opens each built on
-  // the same stale project list, and the second dropped the first.
-  useEffect(() => {
-    if (!didBootstrap || openRunningRef.current || openQueue.length === 0) return;
-    openRunningRef.current = true;
-    const dir = openQueue[0];
-    void openProjectRef.current(dir).catch((err) => {
-      console.warn(`[aya] could not open ${dir}:`, err);
-    }).finally(() => {
-      unsavedOpensRef.current.push(dir);
-      setUnsavedOpensTick((tick) => tick + 1);
-      openRunningRef.current = false;
-      setOpenQueue((queue) => queue.slice(1));
-    });
-  }, [didBootstrap, openQueue]);
+  useOpenQueueDrain({ didBootstrap, ...openQueueDrain });
 
   const {
     isFullScreen,
@@ -1097,351 +1056,43 @@ export function App() {
     ],
   );
 
-  /** Reorder project tabs. Persists the new slug order to disk so a
-   *  restart preserves the user's choice. */
-  const reorderProjects = useCallback(async (orderedSlugs: string[]) => {
-    const nextOrder = dedupeSlugs([
-      ...orderedSlugs,
-      ...projectStateRef.current.order.filter(
-        (slug) => !orderedSlugs.includes(slug),
-      ),
-    ]);
-    setProjects((prev) => {
-      const bySlug = new Map(prev.map((p) => [p.slug, p]));
-      const out: ProjectConfig[] = [];
-      // Reordered ones first in their new order
-      for (const slug of orderedSlugs) {
-        const p = bySlug.get(slug);
-        if (p) out.push(p);
-      }
-      // Then anything not mentioned (shouldn't happen normally) goes after
-      for (const p of prev) {
-        if (!orderedSlugs.includes(p.slug)) out.push(p);
-      }
-      return out;
-    });
-    updateProjectCollection({
-      ...projectStateRef.current,
-      order: nextOrder,
-    });
-  }, [updateProjectCollection]);
-
-  /** Reorder a project's terminal tabs. Walks the terminals map and
-   *  rebuilds it with the new key order — `project.tabs` is derived from
-   *  this map's filter+map so persistence comes along for free. */
-  const reorderTerminalsInProject = useCallback(
-    (slug: string, orderedIds: string[]) => {
-      setTerminals((prev) => {
-        const next: Record<string, TerminalState> = {};
-        for (const id of orderedIds) {
-          const t = prev[id];
-          if (t && t.projectSlug === slug) next[id] = t;
-        }
-        for (const [id, t] of Object.entries(prev)) {
-          if (!(id in next)) next[id] = t;
-        }
-        persistProject(slug, next);
-        return next;
-      });
-    },
-    [persistProject],
-  );
-
-  /** Rename a project — updates the JSON's `name` field. The slug (file
-   *  identity) stays the same so existing references aren't broken. */
-  const renameProject = useCallback(
-    async (slug: string, newName: string) => {
-      const trimmed = newName.trim();
-      if (!trimmed) return;
-      const project = projectsRef.current.find((p) => p.slug === slug);
-      if (!project || project.name === trimmed) return;
-      const updated = { ...project, name: trimmed };
-      setAllProjects((prev) =>
-        prev.map((p) => (p.slug === slug ? updated : p)),
-      );
-      setProjects((prev) =>
-        prev.map((p) => (p.slug === slug ? updated : p)),
-      );
-      try {
-        await window.aya.updateProject(updated);
-      } catch (err) {
-        console.error("renameProject failed:", err);
-      }
-    },
-    [],
-  );
-
-  /** Close the project tab without deleting its JSON config. Closed projects
-   *  stay available from search / recent projects but do not auto-reopen. */
-  const closeProject = useCallback(async (slug: string) => {
-    const owned = Object.values(terminalsRef.current).filter(
-      (t) => t.projectSlug === slug,
-    );
-    for (const t of owned) {
-      void window.aya.ptyKill(t.id);
-    }
-    setTerminals((prev) => {
-      const next = { ...prev };
-      for (const t of owned) delete next[t.id];
-      return next;
-    });
-      setActiveTabByProject((prev) => {
-        const next = { ...prev };
-        delete next[slug];
-        return next;
-      });
-    setSingleViewByProject((prev) => {
-      const next = { ...prev };
-      delete next[slug];
-      return next;
-    });
-    setWarmProjectSlugs((prev) => prev.filter((s) => s !== slug));
-    const remaining = projectsRef.current.filter((p) => p.slug !== slug);
-    setProjects(remaining);
-    updateProjectCollection({
-      ...projectStateRef.current,
-      open: remaining.map((p) => p.slug),
-      recent: dedupeSlugs([slug, ...projectStateRef.current.recent]),
-    });
-    setActiveProjectId((cur) => {
-      if (cur !== slug) return cur;
-      return remaining[0]?.slug ?? null;
-    });
-    setGit((prev) => {
-      const next = { ...prev };
-      delete next[slug];
-      return next;
-    });
-    setProjectFallbacks((prev) => {
-      const next = { ...prev };
-      delete next[slug];
-      return next;
-    });
-  }, [updateProjectCollection, setGit]);
-
-  /** Hand a project to another window: drop ALL local state for it WITHOUT
-   *  killing its PTYs (they live in the detached host; the adopting window
-   *  re-attaches like after an app restart) and WITHOUT touching recent (the
-   *  project stays open - just elsewhere). Mirrors closeProject minus the
-   *  ptyKill loop and the recent bump. */
-  const releaseProject = useCallback((slug: string) => {
-    const owned = Object.values(terminalsRef.current).filter(
-      (t) => t.projectSlug === slug,
-    );
-    setTerminals((prev) => {
-      const next = { ...prev };
-      for (const t of owned) delete next[t.id];
-      return next;
-    });
-    setActiveTabByProject((prev) => {
-      const next = { ...prev };
-      delete next[slug];
-      return next;
-    });
-    setSingleViewByProject((prev) => {
-      const next = { ...prev };
-      delete next[slug];
-      return next;
-    });
-    setWarmProjectSlugs((prev) => prev.filter((s) => s !== slug));
-    const remaining = projectsRef.current.filter((p) => p.slug !== slug);
-    setProjects(remaining);
-    updateProjectCollection({
-      ...projectStateRef.current,
-      open: remaining.map((p) => p.slug),
-    });
-    setActiveProjectId((cur) => {
-      if (cur !== slug) return cur;
-      return remaining[0]?.slug ?? null;
-    });
-    setGit((prev) => {
-      const next = { ...prev };
-      delete next[slug];
-      return next;
-    });
-    setProjectFallbacks((prev) => {
-      const next = { ...prev };
-      delete next[slug];
-      return next;
-    });
-  }, [updateProjectCollection, setGit]);
-
-  /** Move a project (its tab + running terminals) to another Aya window, or
-   *  tear it out into a new one. Local projects only for now - a remote
-   *  project's directory lives on the remote host, so the adopt-by-directory
-   *  flow can't resolve it there. */
-  const moveProjectToWindow = useCallback(
-    (slug: string, target: number | "new", at?: { x: number; y: number }) => {
-      const project = projectsRef.current.find((p) => p.slug === slug);
-      if (!project || project.remote) return;
-      // Chrome semantics: a window that loses its last tab closes itself.
-      // Without this the emptied window lingers (often hidden behind another)
-      // and keeps showing up as a phantom "Move to window…" target.
-      const emptiesThisWindow =
-        projectsRef.current.filter((p) => p.slug !== slug).length === 0;
-      releaseProject(slug);
-      void window.aya
-        .adoptProjectInWindow(project.directory, target, at)
-        .then(() => {
-          if (emptiesThisWindow) void window.aya.closeWindow();
-        });
-    },
-    [releaseProject],
-  );
-
-  const openKnownProject = useCallback(
-    async (project: ProjectConfig) => {
-      const alreadyOpen = projectsRef.current.find(
-        (p) => p.slug === project.slug,
-      );
-      if (alreadyOpen) {
-        setActiveProjectId(alreadyOpen.slug);
-        return;
-      }
-      const nextProjects = [...projectsRef.current, project];
-      setProjects(nextProjects);
-      setActiveProjectId(project.slug);
-      updateProjectCollection({
-        ...projectStateRef.current,
-        order: dedupeSlugs([...projectStateRef.current.order, project.slug]),
-        open: nextProjects.map((p) => p.slug),
-        recent: dedupeSlugs([project.slug, ...projectStateRef.current.recent]),
-      });
-
-      if (project.remote) {
-        // No git entry for remotes: activeGitDirectory is null for them, so the
-        // status bar has nothing to look up and renders no git strip.
-        hydrateProjectTerminals(project, project.remote.directory);
-        void window.aya
-          .listRemotePresets(project.remote.sshTarget)
-          .then((remotePresets) => {
-            setRemotePresetsByProject((prev) => ({
-              ...prev,
-              [project.slug]: remotePresets,
-            }));
-          })
-          .catch(() => undefined);
-        return;
-      }
-      const exists = await window.aya.dirExists(project.directory);
-      if (exists) {
-        hydrateProjectTerminals(project, project.directory);
-        void window.aya.getGitInfo(project.directory).then((info) => {
-          setGit((g) => mergeGitInfo(g, project.directory, info));
-        });
-      } else {
-        setMissingDirQueue((prev) => [
-          ...prev,
-          {
-            slug: project.slug,
-            name: project.name,
-            directory: project.directory,
-          },
-        ]);
-      }
-    },
-    [hydrateProjectTerminals, updateProjectCollection, setGit],
-  );
-
-  const onCreateProject = useCallback(
-    async (name: string, directory: string) => {
-      try {
-        const project = await window.aya.createProject(name, directory);
-        const fallbackPreset = presetsRef.current[0] ?? BUILTIN_SHELL;
-        const shellTab: WorkingTab = {
-          id: uuid(),
-          presetId: fallbackPreset.id,
-          name: defaultTabName(fallbackPreset),
-        };
-        const withTabs: ProjectConfig = { ...project, tabs: [shellTab] };
-        void window.aya.updateProject(withTabs);
-        setAllProjects((prev) => [...prev, withTabs]);
-        const nextProjects = [...projectsRef.current, withTabs];
-        setProjects(nextProjects);
-        updateProjectCollection({
-          ...projectStateRef.current,
-          order: dedupeSlugs([...projectStateRef.current.order, withTabs.slug]),
-          open: nextProjects.map((p) => p.slug),
-          recent: dedupeSlugs([withTabs.slug, ...projectStateRef.current.recent]),
-        });
-        setTerminals((prev) => ({
-          ...prev,
-          [shellTab.id]: {
-            id: shellTab.id,
-            projectSlug: withTabs.slug,
-            presetId: shellTab.presetId,
-            name: shellTab.name,
-            cwd: withTabs.directory,
-            status: "running",
-            bell: false,
-            exitCode: null,
-          },
-        }));
-        setActiveTabByProject((prev) => ({
-          ...prev,
-          [withTabs.slug]: shellTab.id,
-        }));
-        setActiveProjectId(withTabs.slug);
-        void window.aya.getGitInfo(withTabs.directory).then((info) =>
-          setGit((g) => mergeGitInfo(g, withTabs.directory, info)),
-        );
-        setNewProjectModal(null);
-      } catch (err) {
-        console.error(err);
-        alert(err instanceof Error ? err.message : String(err));
-      }
-    },
-    [updateProjectCollection, setGit],
-  );
-
-  const onCreateRemoteProject = useCallback(
-    async (result: RemoteProjectCreateResult, sshTarget: string) => {
-      try {
-        const remoteProject = result.project;
-        const localProject = await window.aya.createRemoteProject({
-          name: remoteProject.name,
-          directory: remoteProject.directory,
-          hostId: result.host.id,
-          label: result.host.name || result.host.id,
-          sshTarget,
-        });
-        // Replace any existing entry with the same slug rather than append:
-        // createRemoteProject is idempotent now (re-opening an existing remote
-        // project returns it), so a blind push would duplicate it.
-        setAllProjects((prev) => [
-          ...prev.filter((p) => p.slug !== localProject.slug),
-          localProject,
-        ]);
-        const nextProjects = [
-          ...projectsRef.current.filter((p) => p.slug !== localProject.slug),
-          localProject,
-        ];
-        setProjects(nextProjects);
-        updateProjectCollection({
-          ...projectStateRef.current,
-          order: dedupeSlugs([
-            ...projectStateRef.current.order,
-            localProject.slug,
-          ]),
-          open: nextProjects.map((p) => p.slug),
-          recent: dedupeSlugs([
-            localProject.slug,
-            ...projectStateRef.current.recent,
-          ]),
-        });
-        setRemotePresetsByProject((prev) => ({
-          ...prev,
-          [localProject.slug]: result.presets,
-        }));
-        setActiveProjectId(localProject.slug);
-        setNewProjectModal(null);
-      } catch (err) {
-        console.error(err);
-        alert(err instanceof Error ? err.message : String(err));
-      }
-    },
-    [updateProjectCollection],
-  );
+  const {
+    reorderProjects,
+    reorderTerminalsInProject,
+    renameProject,
+    closeProject,
+    moveProjectToWindow,
+    openKnownProject,
+    onCreateRemoteProject,
+    handleCreateMissingDir,
+    handleUseHomeForMissingDir,
+    showNewProjectModal,
+    submitProjectFromModal,
+    openProject,
+  } = useProjectActions({
+    projectsRef,
+    allProjectsRef,
+    projectStateRef,
+    terminalsRef,
+    presetsRef,
+    setProjects,
+    setAllProjects,
+    setTerminals,
+    setActiveProjectId,
+    setActiveTabByProject,
+    setSingleViewByProject,
+    setWarmProjectSlugs,
+    setGit,
+    setProjectFallbacks,
+    setRemotePresetsByProject,
+    setNewProjectModal,
+    missingDirQueue,
+    setMissingDirQueue,
+    homeDir,
+    updateProjectCollection,
+    persistProject,
+    hydrateProjectTerminals,
+  });
 
   const onSavePresets = useCallback(async (next: Preset[]) => {
     await window.aya.savePresets(next);
@@ -1646,35 +1297,6 @@ export function App() {
     // view it collapses to show the cycled-to terminal, as before.
     selectTerminalFromSidebar(tabs[next].id);
   }, [activeTabByProject, selectTerminalFromSidebar]);
-
-  const dequeueMissingDir = useCallback(() => {
-    setMissingDirQueue((q) => q.slice(1));
-  }, []);
-
-  const handleCreateMissingDir = useCallback(async () => {
-    const entry = missingDirQueue[0];
-    if (!entry) return;
-    await window.aya.createDir(entry.directory);
-    const project = projectsRef.current.find((p) => p.slug === entry.slug);
-    if (project) {
-      hydrateProjectTerminals(project, project.directory);
-      void window.aya.getGitInfo(project.directory).then((info) => {
-        setGit((g) => mergeGitInfo(g, project.directory, info));
-      });
-    }
-    dequeueMissingDir();
-  }, [missingDirQueue, hydrateProjectTerminals, dequeueMissingDir, setGit]);
-
-  const handleUseHomeForMissingDir = useCallback(() => {
-    const entry = missingDirQueue[0];
-    if (!entry) return;
-    setProjectFallbacks((prev) => ({ ...prev, [entry.slug]: homeDir }));
-    const project = projectsRef.current.find((p) => p.slug === entry.slug);
-    if (project) {
-      hydrateProjectTerminals(project, homeDir);
-    }
-    dequeueMissingDir();
-  }, [missingDirQueue, homeDir, hydrateProjectTerminals, dequeueMissingDir]);
 
   const activeProject = activeProjectId
     ? findProject(projects, activeProjectId)
@@ -2011,53 +1633,8 @@ export function App() {
   const isEmpty =
     didBootstrap && projects.length === 0 && missingDirQueue.length === 0;
 
-  const showNewProjectModal = useCallback(() => {
-    setNewProjectModal({
-      defaults: { directory: "~/" },
-      lockDirectory: false,
-      title: "Open project",
-      hint: "Type a project directory. Press Tab to complete paths.",
-    });
-  }, []);
-
-  const submitProjectFromModal = useCallback(
-    async (directory: string) => {
-      const exists = await window.aya.dirExists(directory);
-      if (!exists) {
-        throw new Error("Directory does not exist.");
-      }
-      const absDir = await window.aya.expandPath(directory);
-      const existing = allProjectsRef.current.find(
-        (p) => p.directory === absDir,
-      );
-      if (existing) {
-        await openKnownProject(existing);
-        setNewProjectModal(null);
-        return;
-      }
-      await onCreateProject(
-        uniqueProjectName(allProjectsRef.current, absDir),
-        absDir,
-      );
-    },
-    [onCreateProject, openKnownProject],
-  );
-
   // Refresh the open-project handler so it sees the latest projects + state.
-  openProjectRef.current = async (rawDir: string) => {
-    const absDir = await window.aya.expandPath(rawDir);
-    // 1. Exact directory match: just switch (no-op if already active).
-    const existing = allProjectsRef.current.find((p) => p.directory === absDir);
-    if (existing) {
-      await openKnownProject(existing);
-      return;
-    }
-    // 2. Auto-create silently from basename. If the slug would collide with
-    //    another project, append a numeric suffix. The top tab can be renamed
-    //    later, so no modal is needed for the common path.
-    const name = uniqueProjectName(allProjectsRef.current, absDir);
-    await onCreateProject(name, absDir);
-  };
+  openProjectRef.current = openProject;
 
   useAppShortcuts({
     newShell: openShellTab,

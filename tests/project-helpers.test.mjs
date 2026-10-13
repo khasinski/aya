@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+  activeProjectAfterClose,
   basename,
   compactRecord,
   dedupeSlugs,
@@ -47,6 +48,24 @@ test("findProject returns the first matching object or null", () => {
   assert.equal(findProject([first, project("aya")], "aya"), first);
   assert.equal(findProject([first], "absent"), null);
   assert.equal(findProject([], "aya"), null);
+});
+
+test("activeProjectAfterClose keeps the selection when another project closes", () => {
+  const remaining = [project("first"), project("active")];
+  assert.equal(activeProjectAfterClose("active", "closed", remaining), "active");
+  assert.equal(activeProjectAfterClose(null, "closed", remaining), null);
+  assert.equal(activeProjectAfterClose("stale", "closed", []), "stale");
+});
+
+test("activeProjectAfterClose selects the first remaining project in display order", () => {
+  const remaining = [project("third"), project("first")];
+  assert.equal(activeProjectAfterClose("closed", "closed", remaining), "third");
+  assert.deepEqual(remaining.map((p) => p.slug), ["third", "first"]);
+  assert.equal(activeProjectAfterClose("closed", "closed", [project("only")]), "only");
+});
+
+test("activeProjectAfterClose clears the selection when the last project closes", () => {
+  assert.equal(activeProjectAfterClose("closed", "closed", []), null);
 });
 
 test("basename strips trailing slashes and falls back for an empty path", () => {
@@ -176,6 +195,15 @@ test("uniqueProjectName predicts slug collisions and chooses the first free suff
   assert.equal(uniqueProjectName([project("my-project"), project("my-project-3")], "/src/My Project"), "My Project 2");
   assert.equal(uniqueProjectName([project("project")], "/src/###"), "### 2");
   assert.equal(uniqueProjectName([project("project")], "/"), "project 2");
+});
+
+test("uniqueProjectName checks slugs rather than display names without changing projects", () => {
+  const projects = [project("my-project", "/elsewhere", { name: "Renamed" }),
+    project("other", "/other", { name: "My Project 2" })];
+  const before = structuredClone(projects);
+  assert.equal(uniqueProjectName(projects, "/src/My Project///"), "My Project 2");
+  assert.deepEqual(projects, before);
+  assert.equal(uniqueProjectName([project("other", "/other", { name: "My Project" })], "/src/My Project"), "My Project");
 });
 
 test("uniquePresetId scopes and normalizes repo presets, with collision suffixes", () => {
