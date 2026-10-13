@@ -12,12 +12,13 @@ import {
   Notification,
   shell,
   systemPreferences,
-  type MenuItemConstructorOptions,
+  type BrowserWindowConstructorOptions,
 } from "electron";
 import { autoUpdater } from "electron-updater";
+import { installApplicationMenu, setStaleMenuIcon } from "./app-menu";
+import { showAyaAboutPanel } from "./about-panel";
 import { installWindowZoom } from "./zoom";
 import { readFileSync, statSync } from "node:fs";
-import { deflateSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -160,12 +161,6 @@ const WINDOW_MIN_HEIGHT = 500;
 // Theme colors shared between About-dialog CSS and BrowserWindow chrome
 const COLOR_DARK_BG = "#0d1117";
 const COLOR_LIGHT_TEXT = "#f0f6fc";
-// About dialog window dimensions (square, px)
-const ABOUT_DIALOG_SIZE = 360;
-// About dialog icon dimensions (square, px)
-const ABOUT_ICON_SIZE = 128;
-const STALE_MENU_DOT_PX = 16;
-const STALE_MENU_DOT_SCALE_FACTOR = 2;
 // Cascade offset for a window opened from another window (File > New Window,
 // tab tear-out), so it doesn't cover its parent exactly.
 const NEW_WINDOW_CASCADE_OFFSET_PX = 28;
@@ -520,10 +515,6 @@ function devIconPath(): string {
   return path.join(__dirname, "..", "build", "icon.png");
 }
 
-function devAboutIconPath(): string {
-  return devIconPath();
-}
-
 async function openExternalUrl(raw: string): Promise<void> {
   const parsed = parseExternalUrl(raw);
   if (!parsed) throw new Error("Unsupported external URL.");
@@ -584,106 +575,17 @@ function dispatchShortcut(action: string): void {
   target.webContents.send("shortcut", action);
 }
 
-function showAyaAboutPanel(): void {
-  if (!IS_DEV && process.platform === "darwin") {
-    app.showAboutPanel();
-    return;
-  }
-  const parent = focusedAyaWindow() ?? undefined;
-  const about = new BrowserWindow({
-    width: ABOUT_DIALOG_SIZE,
-    height: ABOUT_DIALOG_SIZE,
-    resizable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    parent,
-    modal: !!parent,
-    title: `About ${WINDOW_TITLE}`,
-    backgroundColor: COLOR_DARK_BG,
-    show: false,
-    webPreferences: {
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-  about.setMenu(null);
-  let iconUrl = "";
-  try {
-    const png = readFileSync(devAboutIconPath());
-    iconUrl = `data:image/png;base64,${png.toString("base64")}`;
-  } catch {
-    // Empty src keeps the dialog usable even if the icon asset is missing.
-  }
-  const html = `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <style>
-      * { box-sizing: border-box; }
-      html, body {
-        margin: 0;
-        width: 100%;
-        height: 100%;
-        overflow: hidden;
-        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-        color: ${COLOR_LIGHT_TEXT};
-        background: ${COLOR_DARK_BG};
-      }
-      body {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-      main {
-        width: 100%;
-        padding: 28px 28px 24px;
-        text-align: center;
-      }
-      img {
-        display: block;
-        width: ${ABOUT_ICON_SIZE}px;
-        height: ${ABOUT_ICON_SIZE}px;
-        margin: 0 auto 18px;
-      }
-      h1 {
-        margin: 0;
-        font-size: 22px;
-        font-weight: 650;
-        letter-spacing: 0;
-      }
-      p {
-        margin: 7px 0 0;
-        font-size: 13px;
-        color: #8b949e;
-      }
-      button {
-        margin-top: 24px;
-        min-width: 78px;
-        height: 30px;
-        border: 1px solid #30363d;
-        border-radius: 6px;
-        color: ${COLOR_LIGHT_TEXT};
-        background: #161b22;
-        font: inherit;
-        font-size: 13px;
-      }
-      button:hover { background: #21262d; }
-    </style>
-  </head>
-  <body>
-    <main>
-      <img src="${iconUrl}" alt="">
-      <h1>${WINDOW_TITLE}</h1>
-      <p>Version ${app.getVersion()}</p>
-      <button autofocus onclick="window.close()">OK</button>
-    </main>
-  </body>
-</html>`;
-  about.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-  about.once("ready-to-show", () => about.show());
-}
+const aboutPanelDeps = {
+  app,
+  isDev: IS_DEV,
+  platform: process.platform,
+  windowTitle: WINDOW_TITLE,
+  darkBackground: COLOR_DARK_BG,
+  lightText: COLOR_LIGHT_TEXT,
+  focusedAyaWindow,
+  createWindow: (options: BrowserWindowConstructorOptions) => new BrowserWindow(options),
+  devIconPath,
+};
 
 // Set to true when a stale PTY host is detected on launch (#28). The Restart
 // Aya menu item reads this flag so it can kill the stale host before relaunching.
@@ -778,239 +680,23 @@ function webStatus(): WebServerStatus {
   };
 }
 
-/** Build a minimal RGBA PNG containing a filled circle.
- *  Uses only Node built-ins (zlib deflate + manual PNG framing). */
-function makeCirclePng(size: number, r: number, g: number, b: number): Buffer {
-  const cx = size / 2;
-  const cy = size / 2;
-  const r2 = (size / 2 - 1) ** 2; // squared radius (1px inset so circle doesn't clip)
-  const rows: number[] = [];
-  for (let y = 0; y < size; y++) {
-    rows.push(0); // PNG filter byte: None
-    for (let x = 0; x < size; x++) {
-      const inside = (x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 <= r2;
-      rows.push(r, g, b, inside ? 255 : 0);
-    }
-  }
-  const chunk = (type: string, data: Buffer): Buffer => {
-    const t = Buffer.from(type, "ascii");
-    let c = 0xffffffff;
-    for (const byte of Buffer.concat([t, data])) {
-      c ^= byte;
-      for (let i = 0; i < 8; i++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    }
-    const len = Buffer.alloc(4);
-    len.writeUInt32BE(data.length);
-    const crc = Buffer.alloc(4);
-    crc.writeUInt32BE((c ^ 0xffffffff) >>> 0);
-    return Buffer.concat([len, t, data, crc]);
-  };
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size, 0);
-  ihdr.writeUInt32BE(size, 4);
-  ihdr.writeUInt8(8, 8); // bit depth
-  ihdr.writeUInt8(6, 9); // color type: RGBA
-  return Buffer.concat([
-    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), // PNG signature
-    chunk("IHDR", ihdr),
-    chunk("IDAT", deflateSync(Buffer.from(rows))),
-    chunk("IEND", Buffer.alloc(0)),
-  ]);
-}
-
-function installApplicationMenu(): void {
-  configureAppIdentity();
-  const restartItem: MenuItemConstructorOptions = {
-    id: "restart-aya",
-    label: `Restart ${WINDOW_TITLE}`,
-    click: async () => {
-      // Only a stale host is restarted with Aya; a current one keeps its panes running.
-      if (staleHostDetected && !(await confirmLosingWork(`Restarting ${WINDOW_TITLE}`, "Restart").catch(() => true))) return;
-      try {
-        if (staleHostDetected) await ptyHost.restart();
-      } catch {
-        // best-effort; stale host may already be gone
-      }
-      app.relaunch();
-      app.quit();
-    },
-  };
-  const appMenu: MenuItemConstructorOptions = {
-    label: WINDOW_TITLE,
-    submenu: [
-      {
-        label: `About ${WINDOW_TITLE}`,
-        click: showAyaAboutPanel,
-      },
-      { type: "separator" },
-      {
-        label: "Settings...",
-        accelerator: "CmdOrCtrl+,",
-        click: () => dispatchShortcut("open-settings"),
-      },
-      restartItem,
-      { type: "separator" },
-      { role: "services" },
-      { type: "separator" },
-      { role: "hide" },
-      { role: "hideOthers" },
-      { role: "unhide" },
-      { type: "separator" },
-      { role: "quit" },
-    ],
-  };
-
-  const template: MenuItemConstructorOptions[] = [
-    ...(process.platform === "darwin" ? [appMenu] : []),
-    {
-      label: "File",
-      submenu: [
-        {
-          label: "New Shell",
-          accelerator: "CmdOrCtrl+T",
-          click: () => dispatchShortcut("new-shell"),
-        },
-        {
-          label: "New Window",
-          accelerator: "CmdOrCtrl+Shift+N",
-          click: () => void openNewWindow(),
-        },
-        {
-          label: "Close Terminal",
-          accelerator: "CmdOrCtrl+W",
-          click: () => dispatchShortcut("close-tab"),
-        },
-        ...(process.platform === "darwin"
-          ? []
-          : [
-              { type: "separator" as const },
-              restartItem,
-            ]),
-      ],
-    },
-    {
-      label: "Edit",
-      submenu: [
-        { role: "undo" },
-        { role: "redo" },
-        { type: "separator" },
-        { role: "cut" },
-        { role: "copy" },
-        { role: "paste" },
-        { role: "pasteAndMatchStyle" },
-        { role: "delete" },
-        { role: "selectAll" },
-      ],
-    },
-    {
-      label: "View",
-      submenu: [
-        {
-          label: "Search",
-          accelerator: "CmdOrCtrl+K",
-          click: () => dispatchShortcut("search"),
-        },
-        {
-          label: "Find in Terminal",
-          accelerator: "CmdOrCtrl+F",
-          click: () => dispatchShortcut("find-in-pane"),
-        },
-        { type: "separator" },
-        {
-          label: "Previous Terminal",
-          accelerator: "CmdOrCtrl+[",
-          click: () => dispatchShortcut("prev-tab"),
-        },
-        {
-          label: "Next Terminal",
-          accelerator: "CmdOrCtrl+]",
-          click: () => dispatchShortcut("next-tab"),
-        },
-        { type: "separator" },
-        {
-          label: "Focus Pane Left",
-          accelerator: "CmdOrCtrl+Alt+Left",
-          click: () => dispatchShortcut("focus-pane-left"),
-        },
-        {
-          label: "Focus Pane Right",
-          accelerator: "CmdOrCtrl+Alt+Right",
-          click: () => dispatchShortcut("focus-pane-right"),
-        },
-        {
-          label: "Focus Pane Up",
-          accelerator: "CmdOrCtrl+Alt+Up",
-          click: () => dispatchShortcut("focus-pane-up"),
-        },
-        {
-          label: "Focus Pane Down",
-          accelerator: "CmdOrCtrl+Alt+Down",
-          click: () => dispatchShortcut("focus-pane-down"),
-        },
-        {
-          label: "Split Pane Right",
-          accelerator: "CmdOrCtrl+Alt+\\",
-          click: () => dispatchShortcut("split-pane-right"),
-        },
-        {
-          label: "Split Pane Below",
-          accelerator: "CmdOrCtrl+Alt+-",
-          click: () => dispatchShortcut("split-pane-below"),
-        },
-        { type: "separator" },
-        { role: "toggleDevTools" },
-        { type: "separator" },
-        { role: "resetZoom" },
-        { role: "zoomIn" },
-        { role: "zoomOut" },
-        { type: "separator" },
-        {
-          label: "Toggle Full Screen",
-          accelerator:
-            process.platform === "darwin" ? "Ctrl+Command+F" : "F11",
-          click: () => toggleAyaFullScreen(focusedAyaWindow()),
-        },
-      ],
-    },
-    {
-      label: "Project",
-      submenu: Array.from({ length: MAX_KEYBOARD_PROJECTS }, (_, i) => ({
-        label: `Select Project ${i + 1}`,
-        accelerator: `CmdOrCtrl+${i + 1}`,
-        click: () => dispatchShortcut(`project-${i + 1}`),
-      })),
-    },
-    {
-      label: "Window",
-      submenu: [
-        { role: "minimize" },
-        { role: "zoom" },
-        ...(process.platform === "darwin"
-          ? [
-              { type: "separator" as const },
-              { role: "front" as const },
-              { type: "separator" as const },
-              { role: "window" as const },
-            ]
-          : [{ role: "close" as const }]),
-      ],
-    },
-  ];
-
-  if (process.platform !== "darwin") {
-    template.push({
-      label: "Help",
-      submenu: [
-        {
-          label: `About ${WINDOW_TITLE}`,
-          click: showAyaAboutPanel,
-        },
-      ],
-    });
-  }
-
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-}
+const applicationMenuDeps = {
+  app,
+  Menu,
+  nativeImage,
+  platform: process.platform,
+  windowTitle: WINDOW_TITLE,
+  maxKeyboardProjects: MAX_KEYBOARD_PROJECTS,
+  staleHostDetected: () => staleHostDetected,
+  confirmLosingWork,
+  ptyHost,
+  showAyaAboutPanel: () => showAyaAboutPanel(aboutPanelDeps),
+  dispatchShortcut,
+  openNewWindow,
+  focusedAyaWindow,
+  toggleAyaFullScreen,
+  configureAppIdentity,
+};
 
 interface WindowGeometry {
   x?: number;
@@ -1382,25 +1068,11 @@ async function stopHosts(pids: number[]): Promise<number[]> {
 function showStaleHost(stale: boolean): void {
   staleHostDetected = stale;
   if (stale) {
-    setStaleMenuIcon();
+    setStaleMenuIcon(applicationMenuDeps);
     return;
   }
   const item = Menu.getApplicationMenu()?.getMenuItemById("restart-aya");
   if (item) item.icon = nativeImage.createEmpty();
-}
-
-/** Red dot on the "Restart Aya" menu item - the manual reap affordance (#52).
- *  No-op until the application menu is installed. */
-function setStaleMenuIcon(): void {
-  const item = Menu.getApplicationMenu()?.getMenuItemById("restart-aya");
-  if (item) {
-    // 16x16 px red dot at scaleFactor 2 = 8pt logical - renders as a
-    // small colored circle to the left of the label (standard macOS pattern).
-    item.icon = nativeImage.createFromBuffer(
-      makeCirclePng(STALE_MENU_DOT_PX, 255, 59, 48), // red (macOS systemRed #ff3b30)
-      { scaleFactor: STALE_MENU_DOT_SCALE_FACTOR },
-    );
-  }
 }
 
 /** Settings > Diagnostics > PTY host > Restart (and Aya Web): asks, then replaces the host. Throws when cancelled,
@@ -1867,11 +1539,11 @@ app.whenReady().then(async () => {
     .catch((err: unknown) => {
       webServerError = err instanceof Error ? err.message : String(err);
     });
-  installApplicationMenu();
+  installApplicationMenu(applicationMenuDeps);
 
   // The stale-host reconcile ran before the window (see above); the menu did
   // not exist yet, so apply the red "Restart Aya" affordance now if needed.
-  if (staleHostDetected) setStaleMenuIcon();
+  if (staleHostDetected) setStaleMenuIcon(applicationMenuDeps);
 
   // Phase-2 legacy sweep, deferred off the startup path: clean up what the
   // registry structurally can't reach - pre-registry stray hosts (no record
