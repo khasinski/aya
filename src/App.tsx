@@ -48,11 +48,6 @@ import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
 import { TerminalView } from "./components/TerminalView";
 import { TopBar } from "./components/TopBar";
-import {
-  DEFAULT_MAC_OPTION_KEY_MODE,
-  isMacOptionKeyMode,
-  type MacOptionKeyMode,
-} from "./terminal-option-key";
 import { useAppShortcuts } from "./hooks/useAppShortcuts";
 import { useDoubleShiftSearch } from "./hooks/useDoubleShiftSearch";
 import { usePtyEventRouter } from "./hooks/usePtyEventRouter";
@@ -77,26 +72,12 @@ import { pollVisible } from "./poll-visible";
 import { useGitHubLinkEffect, useGitStatus } from "./hooks/useGitStatus";
 import { PRESET_ID_SHELL } from "./preset-ids";
 import {
-  APP_THEME_STORAGE_KEY,
-  CUSTOM_DONE_SOUND_STORAGE_KEY,
-  CUSTOM_WAITING_SOUND_STORAGE_KEY,
-  HARNESS_SEARCH_STORAGE_KEY,
-  LAYOUT_MODE_STORAGE_KEY,
-  MAC_OPTION_KEY_STORAGE_KEY,
   NO_HARNESS_HINT_DISMISSED_STORAGE_KEY,
-  SOUND_OVERRIDES_STORAGE_KEY,
-  STATUSBAR_GITHUB_LINK_STORAGE_KEY,
-  STATUS_RAIL_COLLAPSED_STORAGE_KEY,
-  TERMINAL_FONT_FAMILY_STORAGE_KEY,
-  TERMINAL_SOUNDS_STORAGE_KEY,
-  USAGE_HARNESS_NAME_STORAGE_KEY,
-  WORKTREES_STORAGE_KEY,
   repoConfigIgnoredKey,
 } from "./storage-keys";
 import { GPU_RELAUNCHED_EVENT } from "./window-events";
 import { uuid } from "./uuid";
 import { normalizeSoundOverrides } from "./terminal-sound-prefs";
-import { SCREEN_WAITING_DETAIL } from "./attention";
 import {
   MAX_SPLIT_LEAVES,
   assignTerminal,
@@ -116,12 +97,8 @@ import {
   resolveActiveLeafId,
   type SplitNode,
 } from "./split-tree";
-import {
-  boolPreference,
-  enumPreference,
-  usePersistentPreference,
-  type PreferenceCodec,
-} from "./hooks/usePersistentPreference";
+import { useAppPreferences, useAppPreferenceActions } from "./hooks/useAppPreferences";
+import { useProjectTimeline, usePtyTimelineEvents } from "./hooks/useProjectTimeline";
 import { waitingPanesOf } from "./team-view";
 import { calculateProjectBadges } from "./project-badges";
 import {
@@ -133,10 +110,7 @@ import {
   WAITING_ON,
   type Snippet,
   getPreset,
-  type LayoutMode,
-  type ProjectEvent,
   type Preset,
-  type PtyEvent,
   type ProjectCollectionState,
   type ProjectConfig,
   type RemoteProjectCreateResult,
@@ -147,8 +121,6 @@ import {
   type WorkingTab,
 } from "./types";
 
-// Cap on retained entries in the project event timeline.
-const MAX_PROJECT_EVENTS = 200;
 // Cap on preset suggestions offered during repo preset import.
 const MAX_SUGGESTED_PRESETS = 8;
 const DEFAULT_SIDEBAR_WIDTH_PX = 240;
@@ -163,69 +135,6 @@ const WARM_PROJECT_TERMINAL_CACHE_SIZE = 4;
 // Debounce for the single project-state disk writer (the #18 race fix).
 const PROJECT_STATE_SAVE_DEBOUNCE_MS = 150;
 
-type AppThemePreference = "system" | "light" | "dark" | "omarchy";
-
-
-
-// localStorage codecs for the simple preferences (see usePersistentPreference).
-const THEME_CODEC = enumPreference<AppThemePreference>(
-  ["system", "light", "dark", "omarchy"],
-  "system",
-);
-const MAC_OPTION_CODEC: PreferenceCodec<MacOptionKeyMode> = {
-  fallback: DEFAULT_MAC_OPTION_KEY_MODE,
-  parse: (raw) => (isMacOptionKeyMode(raw) ? raw : DEFAULT_MAC_OPTION_KEY_MODE),
-  serialize: (v) => v,
-};
-// "classic" (default): project tabs on top, terminal list left.
-// "projects-left": project tabs in a left rail, terminal tabs on top.
-const LAYOUT_CODEC = enumPreference<LayoutMode>(
-  ["classic", "projects-left"],
-  "classic",
-);
-// Harness names show by default; the PR/branch link is opt-in (needs gh).
-const HARNESS_NAME_CODEC = boolPreference(true);
-const GITHUB_LINK_CODEC = boolPreference(false);
-// Experimental: git worktree support (detect + group + launch/create in worktrees).
-const WORKTREES_CODEC = boolPreference(false);
-// Experimental: Cmd+F "History" mode searching Claude/Codex session
-// transcripts on disk for the tab's cwd.
-const HARNESS_SEARCH_CODEC = boolPreference(false);
-// Waiting/done chimes default on; the settings toggle is an opt-out.
-const TERMINAL_SOUNDS_CODEC = boolPreference(true);
-// The status rail starts expanded — it only renders at all when something
-// actually needs attention, so hiding it by default would defeat the point.
-const STATUS_RAIL_COLLAPSED_CODEC = boolPreference(false);
-// Per-preset chime exceptions ({presetId: false}) and custom audio paths.
-// Stored as JSON because they're maps/nullable strings, not flags.
-const SOUND_OVERRIDES_CODEC: PreferenceCodec<Record<string, boolean>> = {
-  fallback: {},
-  parse: (raw) => {
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return {};
-      }
-      const out: Record<string, boolean> = {};
-      for (const [key, value] of Object.entries(parsed)) {
-        if (typeof value === "boolean") out[key] = value;
-      }
-      return out;
-    } catch {
-      return {};
-    }
-  },
-  serialize: (value) => JSON.stringify(value),
-};
-const SOUND_PATH_CODEC: PreferenceCodec<string | null> = {
-  fallback: null,
-  parse: (raw) => (raw.trim() ? raw : null),
-  serialize: (value) => value ?? "",
-};
-
-function readTerminalFontFamily(): string {
-  return localStorage.getItem(TERMINAL_FONT_FAMILY_STORAGE_KEY) ?? "";
-}
 
 
 export function App() {
@@ -248,7 +157,7 @@ export function App() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [warmProjectSlugs, setWarmProjectSlugs] = useState<string[]>([]);
   const [terminals, setTerminals] = useState<Record<string, TerminalState>>({});
-  const [projectEvents, setProjectEvents] = useState<ProjectEvent[]>([]);
+  const { projectEvents, appendProjectEvent } = useProjectTimeline();
   const [activeTabByProject, setActiveTabByProject] = useState<
     Record<string, string | null>
   >({});
@@ -277,48 +186,34 @@ export function App() {
   >({});
   const [homeDir, setHomeDir] = useState<string>("");
   const [showSettings, setShowSettings] = useState(false);
-  const [appThemePreference, setAppThemePreference] = usePersistentPreference(
-    APP_THEME_STORAGE_KEY,
-    THEME_CODEC,
-  );
-  const [macOptionKeyMode, setMacOptionKeyMode] = usePersistentPreference(
-    MAC_OPTION_KEY_STORAGE_KEY,
-    MAC_OPTION_CODEC,
-  );
-  const [terminalFontFamily, setTerminalFontFamily] =
-    useState(readTerminalFontFamily);
-  const [showUsageHarnessName, setShowUsageHarnessName] =
-    usePersistentPreference(USAGE_HARNESS_NAME_STORAGE_KEY, HARNESS_NAME_CODEC);
-  const [showGitHubLink, setShowGitHubLink] = usePersistentPreference(
-    STATUSBAR_GITHUB_LINK_STORAGE_KEY,
-    GITHUB_LINK_CODEC,
-  );
-  const [layoutMode, setLayoutMode] = usePersistentPreference(
-    LAYOUT_MODE_STORAGE_KEY,
-    LAYOUT_CODEC,
-  );
-  const [worktreesEnabled, setWorktreesEnabled] = usePersistentPreference(
-    WORKTREES_STORAGE_KEY,
-    WORKTREES_CODEC,
-  );
-  const [harnessSearchEnabled, setHarnessSearchEnabled] =
-    usePersistentPreference(HARNESS_SEARCH_STORAGE_KEY, HARNESS_SEARCH_CODEC);
-  const [terminalSoundsEnabled, setTerminalSoundsEnabled] =
-    usePersistentPreference(TERMINAL_SOUNDS_STORAGE_KEY, TERMINAL_SOUNDS_CODEC);
-  const [statusRailCollapsed, setStatusRailCollapsed] = usePersistentPreference(
-    STATUS_RAIL_COLLAPSED_STORAGE_KEY,
-    STATUS_RAIL_COLLAPSED_CODEC,
-  );
-  const [terminalSoundOverrides, setTerminalSoundOverrides] =
-    usePersistentPreference(SOUND_OVERRIDES_STORAGE_KEY, SOUND_OVERRIDES_CODEC);
-  const [customWaitingSound, setCustomWaitingSound] = usePersistentPreference(
-    CUSTOM_WAITING_SOUND_STORAGE_KEY,
-    SOUND_PATH_CODEC,
-  );
-  const [customDoneSound, setCustomDoneSound] = usePersistentPreference(
-    CUSTOM_DONE_SOUND_STORAGE_KEY,
-    SOUND_PATH_CODEC,
-  );
+  const {
+    appThemePreference,
+    setAppThemePreference,
+    macOptionKeyMode,
+    setMacOptionKeyMode,
+    terminalFontFamily,
+    setTerminalFontFamily,
+    showUsageHarnessName,
+    setShowUsageHarnessName,
+    showGitHubLink,
+    setShowGitHubLink,
+    layoutMode,
+    setLayoutMode,
+    worktreesEnabled,
+    setWorktreesEnabled,
+    harnessSearchEnabled,
+    setHarnessSearchEnabled,
+    terminalSoundsEnabled,
+    setTerminalSoundsEnabled,
+    statusRailCollapsed,
+    setStatusRailCollapsed,
+    terminalSoundOverrides,
+    setTerminalSoundOverrides,
+    customWaitingSound,
+    setCustomWaitingSound,
+    customDoneSound,
+    setCustomDoneSound,
+  } = useAppPreferences();
   const [railWidth, setRailWidth] = useState(DEFAULT_RAIL_WIDTH_PX);
   const terminalsRef = useRef(terminals);
   const projectsRef = useRef(projects);
@@ -532,73 +427,11 @@ export function App() {
     ].slice(0, WARM_PROJECT_TERMINAL_CACHE_SIZE));
   }, [activeProjectId]);
 
-  const appendProjectEvent = useCallback(
-    (event: Omit<ProjectEvent, "id" | "createdAt"> & { createdAt?: number }) => {
-      setProjectEvents((prev) => [
-        {
-          ...event,
-          id: uuid(),
-          createdAt: event.createdAt ?? Date.now(),
-        },
-        ...prev,
-      ].slice(0, MAX_PROJECT_EVENTS));
-    },
-    [],
-  );
-
-  const handlePtyTimelineEvent = useCallback(
-    (event: PtyEvent) => {
-      const terminal = terminalsRef.current[event.ptyId];
-      if (!terminal) return;
-      if (event.type === "data" && !event.replay) {
-        rememberTerminalOutput(event.ptyId, event.chunk);
-      }
-      if (event.type === "spawn-failed") {
-        appendProjectEvent({
-          projectSlug: terminal.projectSlug,
-          terminalId: terminal.id,
-          level: "error",
-          title: `${terminal.name} failed to launch`,
-          detail: event.detail,
-        });
-        return;
-      }
-      if (event.type === "exit") {
-        appendProjectEvent({
-          projectSlug: terminal.projectSlug,
-          terminalId: terminal.id,
-          level: event.exitCode === 0 ? "done" : "error",
-          title:
-            event.exitCode === 0
-              ? `${terminal.name} exited`
-              : `${terminal.name} exited with error`,
-          detail: `exit ${event.exitCode}`,
-        });
-        return;
-      }
-      if (event.type === "vt-status" && event.waiting) {
-        appendProjectEvent({
-          projectSlug: terminal.projectSlug,
-          terminalId: terminal.id,
-          level: "waiting",
-          title: `${terminal.name} is waiting`,
-          detail: event.dialog ?? SCREEN_WAITING_DETAIL,
-        });
-        return;
-      }
-      if (event.type === "osc-status") {
-        appendProjectEvent({
-          projectSlug: terminal.projectSlug,
-          terminalId: terminal.id,
-          level: event.level === "active" ? "active" : event.level,
-          title: controlStatusEventTitle(terminal.name, event.level),
-          detail: event.text,
-          createdAt: event.updatedAt,
-        });
-      }
-    },
-    [appendProjectEvent, rememberTerminalOutput],
-  );
+  const { handlePtyTimelineEvent } = usePtyTimelineEvents({
+    terminalsRef,
+    rememberTerminalOutput,
+    appendProjectEvent,
+  });
 
   const { lastActivityRef, recentlyActiveIds } = useRecentTerminalActivity();
   useDockBadge(terminals);
@@ -1913,24 +1746,8 @@ export function App() {
     setSnippets(await window.aya.listSnippets());
   }, []);
 
-  // Most preferences now persist through usePersistentPreference's setter
-  // directly; only ones with extra side effects keep a wrapper.
-  const updateTerminalFontFamily = useCallback((next: string) => {
-    setTerminalFontFamily(next);
-    if (next.trim()) {
-      localStorage.setItem(TERMINAL_FONT_FAMILY_STORAGE_KEY, next);
-    } else {
-      localStorage.removeItem(TERMINAL_FONT_FAMILY_STORAGE_KEY);
-    }
-  }, []);
-
-  const updateShowGitHubLink = useCallback(
-    (next: boolean) => {
-      setShowGitHubLink(next);
-      if (!next) setGithubLinks({}); // drop resolved links once the chip is off
-    },
-    [setShowGitHubLink, setGithubLinks],
-  );
+  const { updateTerminalFontFamily, updateShowGitHubLink } =
+    useAppPreferenceActions({ setTerminalFontFamily, setShowGitHubLink, setGithubLinks });
 
   const { skinThemeColors, onSaveThemes, onImportTheme, activeThemeColors } =
     useAppTheme({
