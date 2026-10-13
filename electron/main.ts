@@ -216,9 +216,10 @@ import {
 import { captureIpcHandlers } from "./web-ipc";
 import { registerEnvIpc } from "./ipc/env-ipc";
 import { registerWindowIpc } from "./ipc/window-ipc";
+import { registerSystemIpc } from "./ipc/system-ipc";
 import { startWebServer, type WebServerHandle } from "./web-server";
 import { parseSummaryResponse, summaryPrompt } from "./summary-prompt";
-import { restartDialog, waitingNotification } from "./native-ui-text";
+import { restartDialog } from "./native-ui-text";
 import type {
   AyaIntelligenceConfig,
   CliStatus,
@@ -2599,87 +2600,23 @@ function registerIpc(): TeamRunner {
     home: () => app.getPath("home"),
     openExternalUrl,
   });
-  ipcMain.handle("app:notify-waiting", async (e, req: unknown) => {
-    if (!Notification.isSupported()) return;
-    // The notifying renderer owns the terminal - clicking the notification
-    // must focus THAT window, which may not exist anymore by click time.
-    const win = senderWindow(e);
-    const projectSlug = requireString(
-      (req as Record<string, unknown> | null)?.projectSlug,
-      "app:notify-waiting.projectSlug",
-    );
-    const terminalId = requireString(
-      (req as Record<string, unknown> | null)?.terminalId,
-      "app:notify-waiting.terminalId",
-    );
-    const body = requireString(
-      (req as Record<string, unknown> | null)?.body,
-      "app:notify-waiting.body",
-    );
-    const notification = new Notification(waitingNotification(body));
-    notification.on("click", () => {
-      if (!win || win.isDestroyed()) return;
-      if (win.isMinimized()) win.restore();
-      win.focus();
-      win.webContents.send("notification:select-terminal", {
-        projectSlug,
-        terminalId,
-      });
-    });
-    notification.show();
-  });
-  ipcMain.handle("app:cli-status", async () => cliStatus());
-  ipcMain.handle("app:install-cli", async () => installCli());
-  ipcMain.handle("app:diagnostics", async () => diagnosticsReport());
-  ipcMain.handle("updates:status", async () => getUpdateStatus());
-  ipcMain.handle("updates:check", async () => checkForUpdates());
-  ipcMain.handle("updates:install", () => updates.install());
-  ipcMain.handle("app:open-notification-settings", async () => {
-    if (process.platform === "darwin") {
-      await shell.openExternal(
-        "x-apple.systempreferences:com.apple.Notifications-Settings.extension",
-      );
-    }
-  });
-  ipcMain.handle("app:open-local-network-settings", async () => {
-    if (process.platform === "darwin") {
-      // The Local Network anchor is unreliable on macOS 26. Open the parent pane; the UI names the next step.
-      await shell.openExternal("x-apple.systempreferences:com.apple.preference.security");
-    }
-  });
-  // Microphone access surfaced read-only in Settings: Aya never records, but
-  // CLI tools the user runs (e.g. a /voice plugin) may. macOS owns the actual
-  // grant/revoke; these just report status, trigger the system prompt, and
-  // deep-link to the real toggle. See build/entitlements.mac.plist (audio-input).
-  ipcMain.handle("mic:status", async () => {
-    if (process.platform !== "darwin") return "unsupported";
-    return systemPreferences.getMediaAccessStatus("microphone");
-  });
-  ipcMain.handle("mic:request", async () => {
-    if (process.platform !== "darwin") return true;
-    // No-op (returns immediately) if already granted/denied; only prompts when
-    // status is not-determined.
-    return systemPreferences.askForMediaAccess("microphone");
-  });
-  ipcMain.handle("mic:open-settings", async () => {
-    if (process.platform === "darwin") {
-      await shell.openExternal(
-        "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
-      );
-    }
-  });
-  // Dock badge for unattended notifications (waiting terminals). Empty
-  // string clears. macOS only; no-op on Linux/Windows for now since their
-  // taskbar badge stories differ.
-  ipcMain.handle("app:set-dock-badge", async (_e, text: unknown) => {
-    const badge = requireString(text, "app:set-dock-badge.text");
-    if (process.platform === "darwin" && app.dock) {
-      try {
-        app.dock.setBadge(badge || "");
-      } catch {
-        // best effort
-      }
-    }
+  registerSystemIpc({
+    ipcMain,
+    senderWindow,
+    platform: process.platform,
+    notifications: {
+      isSupported: () => Notification.isSupported(),
+      create: (options) => new Notification(options),
+    },
+    shell,
+    systemPreferences,
+    dock: app.dock,
+    cliStatus,
+    installCli,
+    diagnosticsReport,
+    updateStatus: getUpdateStatus,
+    checkForUpdates,
+    installUpdate: () => updates.install(),
   });
 
   // --- Aya Web (experimental) ---
