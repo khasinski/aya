@@ -59,7 +59,8 @@ import { useDoubleShiftSearch } from "./hooks/useDoubleShiftSearch";
 import { usePtyEventRouter } from "./hooks/usePtyEventRouter";
 import { useStable } from "./hooks/useStableIdentity";
 import { sameArrayItems } from "./stable-identity";
-import { paletteToChromeVars, paletteToThemeColors } from "./theme-skin";
+import { useAppTheme } from "./hooks/useAppTheme";
+import { useConfigReload } from "./hooks/useConfigReload";
 import { localSummaryUnavailableMessage } from "./local-summary-errors";
 import { LOCAL_SUMMARY_MAX_LINES, PROJECT_STATE_VERSION } from "./main-mirrors";
 import type { SettingsTab } from "./settings-tabs";
@@ -126,7 +127,6 @@ import {
   type PreferenceCodec,
 } from "./hooks/usePersistentPreference";
 import { waitingPanesOf } from "./team-view";
-import type { ProjectBadgeLevel } from "./attention";
 import { calculateProjectBadges } from "./project-badges";
 import {
   calculateTerminalLists,
@@ -141,7 +141,6 @@ import {
   type GitHubLink,
   type LayoutMode,
   type ProjectEvent,
-  type MonitoredSession,
   type Preset,
   type PtyEvent,
   type ProjectCollectionState,
@@ -378,31 +377,6 @@ function summaryHash(lines: string[]): string {
   return String(hash >>> 0);
 }
 
-// Hard fallback used only if the themes file is somehow empty before boot
-// resolves — matches AYA_DARK in electron/themes.ts.
-const FALLBACK_THEME_COLORS: ThemeColors = {
-  background: "#0d1117",
-  foreground: "#c9d1d9",
-  cursor: "#c9d1d9",
-  cursorAccent: "#0d1117",
-  selectionBackground: "rgba(88,166,255,0.3)",
-  black: "#484f58",
-  red: "#ff7b72",
-  green: "#56d364",
-  yellow: "#e3b341",
-  blue: "#79c0ff",
-  magenta: "#d2a8ff",
-  cyan: "#39c5cf",
-  white: "#b1bac4",
-  brightBlack: "#6e7681",
-  brightRed: "#ffa198",
-  brightGreen: "#7ee787",
-  brightYellow: "#f0ad4e",
-  brightBlue: "#a5d6ff",
-  brightMagenta: "#ffa657",
-  brightCyan: "#56d4dd",
-  brightWhite: "#f0f6fc",
-};
 
 export function App() {
   const [allProjects, setAllProjects] = useState<ProjectConfig[]>([]);
@@ -421,12 +395,6 @@ export function App() {
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [themes, setThemes] = useState<Theme[]>([]);
   const [activeThemeId, setActiveThemeId] = useState<string>("");
-  // Terminal colors from the active skin (Omarchy), or null when no skin is on.
-  // Takes precedence over the selected terminal theme, below the per-tab
-  // override.
-  const [skinThemeColors, setSkinThemeColors] = useState<ThemeColors | null>(
-    null,
-  );
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [warmProjectSlugs, setWarmProjectSlugs] = useState<string[]>([]);
   const [terminals, setTerminals] = useState<Record<string, TerminalState>>({});
@@ -761,79 +729,46 @@ export function App() {
     });
   }, []);
 
-  // Reload config when one of the user-editable files under ~/.aya/ is edited while
-  // Aya is running. Without this, an edit made by hand to snippets/presets/themes.json
-  // would be overwritten by the next save in the app
-  useEffect(() => {
-    return window.aya.onConfigChange(({ slice }) => {
-      if (slice === "snippets") {
-        void window.aya
-          .listSnippets()
-          .then(setSnippets)
-          .catch((e) =>
-            console.warn(
-              "config hot-reload (snippets) failed; keeping current state",
-              e,
-            ),
-          );
-      } else if (slice === "presets") {
-        void window.aya
-          .listPresets()
-          .then(setPresets)
-          .catch((e) =>
-            console.warn(
-              "config hot-reload (presets) failed; keeping current state",
-              e,
-            ),
-          );
-      } else if (slice === "themes") {
-        void window.aya
-          .listThemes()
-          .then((file) => {
-            setThemes(file.themes);
-            setActiveThemeId(file.activeId);
-          })
-          .catch((e) =>
-            console.warn(
-              "config hot-reload (themes) failed; keeping current state",
-              e,
-            ),
-          );
-      } else if (slice === "projects") {
-        // External edit to projects/*.json (#4). Disk wins for config, but the
-        // merge never kills running terminals: removed tabs keep their live
-        // rows, added tabs appear without spawning, a deleted file of an OPEN
-        // project leaves it in place as unsaved.
-        void window.aya
-          .listProjects()
-          .then((disk) => {
-            const openSlugs = new Set(
-              projectsRef.current.map((p) => p.slug),
-            );
-            const merged = mergeProjectsFromDisk(
-              disk,
-              allProjectsRef.current,
-              openSlugs,
-            );
-            setAllProjects(merged);
-            setProjects((prev) =>
-              prev.map(
-                (p) => merged.find((m) => m.slug === p.slug) ?? p,
-              ),
-            );
-            setTerminals((prev) =>
-              applyExternalProjectEdits(prev, merged, openSlugs),
-            );
-          })
-          .catch((e) =>
-            console.warn(
-              "config hot-reload (projects) failed; keeping current state",
-              e,
-            ),
-          );
-      }
-    });
+  const reloadProjects = useCallback(() => {
+    // External edit to projects/*.json (#4). Disk wins for config, but the
+    // merge never kills running terminals: removed tabs keep their live
+    // rows, added tabs appear without spawning, a deleted file of an OPEN
+    // project leaves it in place as unsaved.
+    void window.aya
+      .listProjects()
+      .then((disk) => {
+        const openSlugs = new Set(
+          projectsRef.current.map((p) => p.slug),
+        );
+        const merged = mergeProjectsFromDisk(
+          disk,
+          allProjectsRef.current,
+          openSlugs,
+        );
+        setAllProjects(merged);
+        setProjects((prev) =>
+          prev.map(
+            (p) => merged.find((m) => m.slug === p.slug) ?? p,
+          ),
+        );
+        setTerminals((prev) =>
+          applyExternalProjectEdits(prev, merged, openSlugs),
+        );
+      })
+      .catch((e) =>
+        console.warn(
+          "config hot-reload (projects) failed; keeping current state",
+          e,
+        ),
+      );
   }, []);
+  useConfigReload({
+    setSnippets,
+    setPresets,
+    setThemes,
+    setActiveThemeId,
+    reloadProjects,
+  });
 
   const terminalsRef = useRef(terminals);
   terminalsRef.current = terminals;
@@ -2699,64 +2634,16 @@ export function App() {
     }
   }, []);
 
-  useEffect(() => {
-    const root = document.documentElement;
-    // "omarchy" is not a light/dark mode; the skin effect below owns data-theme
-    // (it sets it to the Omarchy palette's own mode).
-    if (appThemePreference === "omarchy") return;
-    if (appThemePreference === "system") {
-      root.removeAttribute("data-theme");
-    } else {
-      root.dataset.theme = appThemePreference;
-    }
-  }, [appThemePreference]);
-
-  // Omarchy skin: when selected, drive the app chrome (inline CSS vars over the
-  // base light/dark tokens) AND the terminal (skinThemeColors) from the current
-  // Omarchy palette, and re-apply live when the Omarchy theme is switched.
-  // Leaving the mode removes the inline vars, restoring the built-in theme.
-  useEffect(() => {
-    if (appThemePreference !== "omarchy") {
-      setSkinThemeColors(null);
-      return;
-    }
-    const root = document.documentElement;
-    let cancelled = false;
-    let applied: string[] = [];
-    // The ONE way out of "skinned": inline custom properties outrank every
-    // stylesheet rule, so a branch that skips this leaves stale chrome.
-    const clearSkin = () => {
-      for (const key of applied) root.style.removeProperty(key);
-      applied = [];
-    };
-    const apply = async () => {
-      const theme = await window.aya.getOmarchyTheme();
-      if (cancelled) return;
-      if (!theme) {
-        // Unskin, but KEEP the preference: a null here is often transient
-        // (omarchy-theme-set relinks current/ mid-read), and persisting
-        // "system" would lose the user's explicit choice permanently.
-        clearSkin();
-        root.removeAttribute("data-theme");
-        setSkinThemeColors(null);
-        return;
-      }
-      root.dataset.theme = theme.palette.mode;
-      const vars = paletteToChromeVars(theme.palette);
-      applied = Object.keys(vars);
-      for (const [key, value] of Object.entries(vars)) {
-        root.style.setProperty(key, value);
-      }
-      setSkinThemeColors(paletteToThemeColors(theme.palette));
-    };
-    void apply();
-    const unsubscribe = window.aya.onOmarchyThemeChange(() => void apply());
-    return () => {
-      cancelled = true;
-      unsubscribe();
-      clearSkin();
-    };
-  }, [appThemePreference]);
+  const { skinThemeColors, onSaveThemes, onImportTheme, activeThemeColors } =
+    useAppTheme({
+      appThemePreference,
+      themes,
+      activeThemeId,
+      setThemes,
+      setActiveThemeId,
+      presetsRef,
+      setPresets,
+    });
 
   /** Called by TerminalView when the user presses Shift+Enter in a
    *  cleanly-exited terminal. Clears the exit state so the PTY event router
@@ -2935,43 +2822,6 @@ export function App() {
     // view it collapses to show the cycled-to terminal, as before.
     selectTerminalFromSidebar(tabs[next].id);
   }, [activeTabByProject, selectTerminalFromSidebar]);
-
-  const onSaveThemes = useCallback(
-    async (nextThemes: Theme[], nextActiveId: string) => {
-      const activeId = nextThemes.some((t) => t.id === nextActiveId)
-        ? nextActiveId
-        : (nextThemes[0]?.id ?? "");
-      await window.aya.saveThemes({ themes: nextThemes, activeId });
-      setThemes(nextThemes);
-      setActiveThemeId(activeId);
-
-      // Sweep presets for themeId references that point at themes no longer
-      // in the list — otherwise presets.json keeps dangling pointers and the
-      // Settings UI shows "Default" for them (because resolution falls back)
-      // but the data on disk lies.
-      const liveIds = new Set(nextThemes.map((t) => t.id));
-      const currentPresets = presetsRef.current;
-      let dirty = false;
-      const swept = currentPresets.map((p) => {
-        if (p.themeId && !liveIds.has(p.themeId)) {
-          dirty = true;
-          const { themeId: _drop, ...rest } = p;
-          void _drop;
-          return rest;
-        }
-        return p;
-      });
-      if (dirty) {
-        await window.aya.savePresets(swept);
-        setPresets(swept);
-      }
-    },
-    [],
-  );
-
-  const onImportTheme = useCallback(async (): Promise<Theme | null> => {
-    return window.aya.importTheme();
-  }, []);
 
   const dequeueMissingDir = useCallback(() => {
     setMissingDirQueue((q) => q.slice(1));
@@ -3368,9 +3218,6 @@ export function App() {
   }, [closeFocusHold, activeProjectId]);
   const ignoreSnippetsOpenChange = useCallback(() => undefined, []);
 
-  const activeTheme = themes.find((t) => t.id === activeThemeId) ?? themes[0];
-  const activeThemeColors: ThemeColors =
-    activeTheme?.colors ?? FALLBACK_THEME_COLORS;
   const isEmpty =
     didBootstrap && projects.length === 0 && missingDirQueue.length === 0;
 

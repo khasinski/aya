@@ -7,6 +7,9 @@ import assert from "node:assert/strict";
 import {
   paletteToChromeVars,
   paletteToThemeColors,
+  resolveActiveTheme,
+  resolveActiveThemeId,
+  sweepPresetThemes,
 } from "../dist-test/theme-skin.js";
 
 // `accent` is deliberately DIFFERENT from `blue`: sharing a value makes the
@@ -34,7 +37,7 @@ const DARK = {
   brightRed: "#ff7a93",
 };
 
-/** Every chrome token the skin owns. App.tsx sets and clears exactly these, so
+/** Every chrome token the skin owns. useAppTheme sets and clears exactly these, so
  *  a token dropped here silently keeps its stylesheet value. */
 const CHROME_KEYS = [
   "--bg",
@@ -202,4 +205,139 @@ test("a minimal palette fills every terminal slot from bg/fg/accent", () => {
   for (const value of Object.values(c)) {
     assert.doesNotMatch(value, /color-mix/);
   }
+});
+
+const FIRST_THEME = {
+  id: "first",
+  name: "First",
+  colors: paletteToThemeColors(DARK),
+};
+const SECOND_THEME = {
+  id: "second",
+  name: "Second",
+  colors: { ...FIRST_THEME.colors, background: "#ffffff" },
+};
+
+test("active theme resolution selects the matching theme and keeps its colors object", () => {
+  const { activeTheme, activeThemeColors } = resolveActiveTheme(
+    [FIRST_THEME, SECOND_THEME],
+    "second",
+  );
+  assert.equal(activeTheme, SECOND_THEME);
+  assert.equal(activeThemeColors, SECOND_THEME.colors);
+});
+
+test("missing and empty active ids fall back to the first theme in list order", () => {
+  for (const activeId of ["missing", ""]) {
+    const { activeTheme, activeThemeColors } = resolveActiveTheme(
+      [SECOND_THEME, FIRST_THEME],
+      activeId,
+    );
+    assert.equal(activeTheme, SECOND_THEME);
+    assert.equal(activeThemeColors, SECOND_THEME.colors);
+  }
+});
+
+test("duplicate theme ids resolve to the first matching theme", () => {
+  const duplicate = { ...SECOND_THEME, id: FIRST_THEME.id };
+  const { activeTheme, activeThemeColors } = resolveActiveTheme(
+    [FIRST_THEME, duplicate],
+    FIRST_THEME.id,
+  );
+  assert.equal(activeTheme, FIRST_THEME);
+  assert.equal(activeThemeColors, FIRST_THEME.colors);
+});
+
+test("an empty theme list uses the complete Aya Dark fallback with stable identity", () => {
+  const { activeTheme, activeThemeColors } = resolveActiveTheme([], "missing");
+  assert.equal(activeTheme, undefined);
+  assert.deepEqual(activeThemeColors, {
+    background: "#0d1117",
+    foreground: "#c9d1d9",
+    cursor: "#c9d1d9",
+    cursorAccent: "#0d1117",
+    selectionBackground: "rgba(88,166,255,0.3)",
+    black: "#484f58",
+    red: "#ff7b72",
+    green: "#56d364",
+    yellow: "#e3b341",
+    blue: "#79c0ff",
+    magenta: "#d2a8ff",
+    cyan: "#39c5cf",
+    white: "#b1bac4",
+    brightBlack: "#6e7681",
+    brightRed: "#ffa198",
+    brightGreen: "#7ee787",
+    brightYellow: "#f0ad4e",
+    brightBlue: "#a5d6ff",
+    brightMagenta: "#ffa657",
+    brightCyan: "#56d4dd",
+    brightWhite: "#f0f6fc",
+  });
+  assert.equal(resolveActiveTheme([], "").activeThemeColors, activeThemeColors);
+});
+
+test("saving themes retains a live active id or uses the first id, then the empty id", () => {
+  assert.equal(resolveActiveThemeId([FIRST_THEME, SECOND_THEME], "second"), "second");
+  assert.equal(resolveActiveThemeId([SECOND_THEME, FIRST_THEME], "missing"), "second");
+  assert.equal(resolveActiveThemeId([FIRST_THEME], ""), "first");
+  assert.equal(resolveActiveThemeId([], "second"), "");
+  assert.equal(resolveActiveThemeId([], ""), "");
+});
+
+test("theme sweep drops only dangling references, preserving preset order and other fields", () => {
+  const live = { id: "live", name: "Live", command: "shell", themeId: "first" };
+  const dangling = {
+    id: "dangling",
+    name: "Dangling",
+    command: "claude",
+    themeId: "removed",
+    env: { EXAMPLE: "kept" },
+  };
+  const unthemed = { id: "plain", name: "Plain", command: "codex" };
+  const current = [live, dangling, unthemed];
+  const { swept, dirty } = sweepPresetThemes(current, [FIRST_THEME]);
+  assert.equal(dirty, true);
+  assert.deepEqual(swept, [
+    live,
+    { id: "dangling", name: "Dangling", command: "claude", env: dangling.env },
+    unthemed,
+  ]);
+  assert.equal(Object.hasOwn(swept[1], "themeId"), false);
+  assert.equal(swept[0], live);
+  assert.equal(swept[2], unthemed);
+  assert.equal(swept[1].env, dangling.env);
+  assert.notEqual(swept[1], dangling);
+  assert.equal(dangling.themeId, "removed");
+  assert.deepEqual(current, [live, dangling, unthemed]);
+});
+
+test("a sweep with no dangling references stays clean and retains every preset object", () => {
+  const current = [
+    { id: "live", name: "Live", command: "shell", themeId: "first" },
+    { id: "plain", name: "Plain", command: "codex" },
+    { id: "empty", name: "Empty", command: "claude", themeId: "" },
+  ];
+  const { swept, dirty } = sweepPresetThemes(current, [FIRST_THEME]);
+  assert.equal(dirty, false);
+  assert.deepEqual(swept, current);
+  assert.notEqual(swept, current);
+  for (let i = 0; i < current.length; i += 1) assert.equal(swept[i], current[i]);
+  assert.deepEqual(sweepPresetThemes([], [FIRST_THEME]), { swept: [], dirty: false });
+});
+
+test("removing every theme sweeps every non-empty theme reference", () => {
+  const empty = { id: "empty", name: "Empty", command: "shell", themeId: "" };
+  const { swept, dirty } = sweepPresetThemes([
+    { id: "first", name: "First", command: "claude", themeId: "first" },
+    { id: "second", name: "Second", command: "codex", themeId: "second" },
+    empty,
+  ], []);
+  assert.equal(dirty, true);
+  assert.deepEqual(swept, [
+    { id: "first", name: "First", command: "claude" },
+    { id: "second", name: "Second", command: "codex" },
+    empty,
+  ]);
+  assert.equal(swept[2], empty);
 });

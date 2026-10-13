@@ -11,7 +11,7 @@
 // be concrete (xterm parses them itself), so they come straight from palette
 // hex with plain fallbacks.
 
-import type { OmarchyPalette, ThemeColors } from "./types";
+import type { OmarchyPalette, Preset, Theme, ThemeColors } from "./types";
 
 /** `color-mix(in oklab, base pct%, toward)` — pct% of `base`, the rest `toward`. */
 function mix(base: string, pct: number, toward: string): string {
@@ -73,4 +73,62 @@ export function paletteToThemeColors(p: OmarchyPalette): ThemeColors {
     brightCyan: p.brightCyan ?? p.cyan ?? "#8abeb7",
     brightWhite: p.brightForeground ?? p.lightForeground ?? p.foreground,
   };
+}
+
+// Hard fallback used only if the themes file is somehow empty before boot
+// resolves - matches AYA_DARK in electron/themes.ts.
+const FALLBACK_THEME_COLORS: ThemeColors = {
+  background: "#0d1117",
+  foreground: "#c9d1d9",
+  cursor: "#c9d1d9",
+  cursorAccent: "#0d1117",
+  selectionBackground: "rgba(88,166,255,0.3)",
+  black: "#484f58",
+  red: "#ff7b72",
+  green: "#56d364",
+  yellow: "#e3b341",
+  blue: "#79c0ff",
+  magenta: "#d2a8ff",
+  cyan: "#39c5cf",
+  white: "#b1bac4",
+  brightBlack: "#6e7681",
+  brightRed: "#ffa198",
+  brightGreen: "#7ee787",
+  brightYellow: "#f0ad4e",
+  brightBlue: "#a5d6ff",
+  brightMagenta: "#ffa657",
+  brightCyan: "#56d4dd",
+  brightWhite: "#f0f6fc",
+};
+
+export function resolveActiveTheme(themes: Theme[], activeThemeId: string) {
+  const activeTheme = themes.find((t) => t.id === activeThemeId) ?? themes[0];
+  const activeThemeColors: ThemeColors =
+    activeTheme?.colors ?? FALLBACK_THEME_COLORS;
+  return { activeTheme, activeThemeColors };
+}
+
+export function resolveActiveThemeId(themes: Theme[], activeThemeId: string): string {
+  return themes.some((t) => t.id === activeThemeId)
+    ? activeThemeId
+    : (themes[0]?.id ?? "");
+}
+
+export function sweepPresetThemes(currentPresets: Preset[], nextThemes: Theme[]) {
+  // Sweep presets for themeId references that point at themes no longer
+  // in the list - otherwise presets.json keeps dangling pointers and the
+  // Settings UI shows "Default" for them (because resolution falls back)
+  // but the data on disk lies.
+  const liveIds = new Set(nextThemes.map((t) => t.id));
+  let dirty = false;
+  const swept = currentPresets.map((p) => {
+    if (p.themeId && !liveIds.has(p.themeId)) {
+      dirty = true;
+      const { themeId: _drop, ...rest } = p;
+      void _drop;
+      return rest;
+    }
+    return p;
+  });
+  return { swept, dirty };
 }
