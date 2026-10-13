@@ -28,6 +28,7 @@
     "src/focus-reporting.ts",
     "src/hooks/usePersistentPreference.ts",
     "src/machines-view.ts",
+    "src/local-summaries.ts",
     "src/main-mirrors.ts",
     "src/ollama-defaults.ts",
     "src/project-helpers.ts",
