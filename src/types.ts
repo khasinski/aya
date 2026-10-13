@@ -1053,12 +1053,18 @@ export function presetSlug(name: string): string {
   return slugifyName(name, "preset");
 }
 
+const NON_INTERACTIVE_FLAG = /(?:^|\s)(-p|--print|--headless|--non-interactive|--no-interactive)(?:\s|$|=)/;
+
 /** Match heuristic for commands that look like they've been switched to
- *  non-interactive Claude mode. Shown as a warning in Settings; not blocked. */
+ *  non-interactive Claude mode. Shown as a warning in Settings; not blocked.
+ *  Only a Claude command counts: other CLIs' -p is a port (ssh, docker, next) or a profile (codex). */
 export function looksNonInteractive(command: string): boolean {
-  return /(?:^|\s)(-p|--print|--headless|--non-interactive|--no-interactive)(?:\s|$|=)/.test(
-    command,
-  );
+  // Quoted text is an argument (a prompt may well say "-p 3000"), never a flag.
+  const unquoted = command.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, '""');
+  return unquoted.split(/&&|\|\||[;|&]/).some((segment) => {
+    const words = segment.trim().replace(/^(?:env\s+)?(?:\w+=\S*\s+)*/, "");
+    return /^(?:\S*\/)?claude(?:\s|$)/.test(words) && NON_INTERACTIVE_FLAG.test(words);
+  });
 }
 
 /** One `role=target` of aya team open / the Teams window's Apply: a preset id
