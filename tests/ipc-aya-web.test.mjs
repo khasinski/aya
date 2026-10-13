@@ -70,3 +70,30 @@ test("a regenerated password replaces the old one and is shown again", async () 
   assert.notEqual(live().passwordHash, before);
   assert.ok(live().generatedPassword && verifyWebPassword(live(), live().generatedPassword));
 });
+
+test("two changes at once both stay: each reads the config the other saved, through a serial queue", async () => {
+  // A real one-after-another queue, as main.ts's inWebQueue is, and a save that takes a while.
+  let tail = Promise.resolve();
+  const inQueue = (change) => {
+    const run = tail.then(change);
+    tail = run.catch(() => undefined);
+    return run;
+  };
+  let live = { enabled: false, port: 7683, host: "127.0.0.1", user: "me", ...webCredentials("first", true) };
+  const handlers = new Map();
+  registerAyaWebIpc({
+    ipcMain: { handle: (channel, fn) => handlers.set(channel, fn) },
+    inQueue,
+    config: async () => live,
+    save: async (next) => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      live = next;
+    },
+    apply: async () => {},
+    status: () => live,
+  });
+  const configure = (req) => handlers.get("web:configure")({}, req);
+  await Promise.all([configure({ port: 9000 }), configure({ host: "100.64.0.7" })]);
+  assert.equal(live.port, 9000);
+  assert.equal(live.host, "100.64.0.7");
+});

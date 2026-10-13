@@ -66,3 +66,17 @@ test("the scan sees the handlers: a known channel of each kind is found", () => 
     assert.ok(counts.has(channel), channel);
   }
 });
+
+test("main.ts registers every IPC module, so the handlers the scan sees are also there at run time", () => {
+  const main = readFileSync(join(ROOT, "electron/main.ts"), "utf8");
+  const modules = readdirSync(join(ROOT, "electron/ipc")).filter((name) => name.endsWith(".ts"));
+  assert.ok(modules.length >= 9, "the ipc modules are found");
+  const notCalled = [];
+  for (const name of [...modules.map((m) => join("ipc", m)), "team-ipc.ts"]) {
+    const text = readFileSync(join(ROOT, "electron", name), "utf8");
+    for (const [, register] of text.matchAll(/export function (register\w*Ipc)\(/g)) {
+      if (!new RegExp(`\\b${register}\\(`).test(main)) notCalled.push(`${register} (${name})`);
+    }
+  }
+  assert.deepEqual(notCalled, []);
+});

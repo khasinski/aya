@@ -121,3 +121,26 @@ test("restart confirmation, host restart, stopping other hosts and waiting quest
   assert.deepEqual(await call("agent:waiting"), ["waiting"]);
   assert.deepEqual(log, [["confirm", "e"], ["restart-host"]]);
 });
+
+test("writes to one pane keep their order behind a slow check; another pane does not wait", async () => {
+  let releaseFirst;
+  const { call, log } = setup({
+    noteTyping: async (id, text) => {
+      log.push(["typed", id, text]);
+      // The Enter that may answer a waiting agent: its check takes a while.
+      if (text === "\r") await new Promise((resolve) => (releaseFirst = resolve));
+    },
+  });
+  const enter = call("pty:write", "p", "\r");
+  const next = call("pty:write", "p", "ls");
+  const other = call("pty:write", "q", "x");
+  await other;
+  assert.deepEqual(log.filter(([what]) => what === "write"), [["write", "q", "x"]], "the other pane went ahead");
+  releaseFirst();
+  await Promise.all([enter, next]);
+  assert.deepEqual(
+    log.filter(([what, id]) => what === "write" && id === "p").map(([, , text]) => text),
+    ["\r", "ls"],
+    "the keys typed after the Enter did not overtake it",
+  );
+});
