@@ -42,6 +42,7 @@
     "src/preset-ids.ts",
     "src/ptyEventBus.ts",
     "src/pty-event-reducer.ts",
+    "src/terminal-actions.ts",
     "src/terminal-option-key.ts",
     "src/terminal-keys.ts",
     "src/terminal-rendering.ts",
