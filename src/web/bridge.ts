@@ -71,6 +71,7 @@ export function createWebAya(transport: WebTransport): AyaApi {
     ptySearch: inv("pty:search"),
     harnessSearch: inv("harness:search"),
     restartPtyHost: inv("pty-host:restart"),
+    stopOtherPtyHosts: inv("pty-host:stop-others"),
     confirmPaneRestart: inv("pty:confirm-restart"),
     onPtyEvent: on<PtyEvent>("pty:event"),
 

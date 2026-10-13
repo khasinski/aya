@@ -27,6 +27,11 @@ import type { PtyEvent, SpawnRequest } from "./types";
 
 // Deadline waiting for a started pty host to create its socket and accept on it (ms).
 export const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
+/** How long restart() waits for the old host to exit after "shutdown". The host's own SIGKILL step for panes that
+ *  ignore the hang-up comes at 750 ms; a host still running past this is left, and Diagnostics lists it. */
+export const PTY_HOST_EXIT_WAIT_MS = 5_000;
+/** How long restart() waits for each answer from the host it replaces: a hung host must not hold up every pane. */
+export const PTY_HOST_RESTART_REQUEST_TIMEOUT_MS = 2_000;
 /** pty-host.stderr.log moves to .1 at host start once it is this big, so it never grows without end. */
 export const PTY_HOST_STDERR_MAX_BYTES = 1_000_000;
 
@@ -81,6 +86,39 @@ export interface PtyEventSink {
   send(channel: "pty:event", event: PtyEvent): void;
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out")), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+/** True once `pid` no longer exists, false if it still runs after `ms`. */
+export async function waitForExit(pid: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch (err) {
+      // EPERM: the pid now belongs to another user's process, so ours is gone.
+      if ((err as NodeJS.ErrnoException).code === "ESRCH" || (err as NodeJS.ErrnoException).code === "EPERM") {
+        return true;
+      }
+    }
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, PTY_HOST_SOCKET_POLL_INTERVAL_MS));
+  }
+}
+
 export class PtyHostClient {
   private socket: net.Socket | null = null;
   private connectPromise: Promise<void> | null = null;
@@ -105,6 +143,9 @@ export class PtyHostClient {
   // The app asked this host to go (restart, shutdown): the renderer already
   // knows, so the close that follows is not a loss. Cleared on the next connect.
   private hostAsked = false;
+  // Set while restart() replaces the host: every other request waits for it, so no request starts the next host
+  // (or reaches the old one) before the old host has exited.
+  private replacing: Promise<boolean> | null = null;
 
   constructor(private readonly hostScript: string) {}
 
@@ -168,6 +209,11 @@ export class PtyHostClient {
     this.live.delete(ptyId);
   }
 
+  /** Whether this client holds a connection to a host now (a question that never starts one). */
+  isConnected(): boolean {
+    return !!this.socket && !this.socket.destroyed;
+  }
+
   /** Quit path: every later request rejects instead of starting a host, which
    *  would have no app to serve and never exit. Requests already sent still land. */
   dispose(): void {
@@ -216,17 +262,40 @@ export class PtyHostClient {
     return { version: appVersion, scriptHash };
   }
 
-  /** Tell the current host to shut down and drop the socket, so the next
-   *  request spawns a fresh host. Best-effort: a dead/old host that can't
-   *  shut down cleanly still gets disconnected here. */
-  async restart(): Promise<void> {
+  /** The one way Aya replaces its host (Restart Aya, Diagnostics, a stale host at launch): ask it to shut down,
+   *  drop the socket, and wait until that process has exited before any request may start the next host. The old
+   *  host exits only after its panes are gone; a new host started earlier lost its socket to the old host's exit
+   *  handler on 2026-10-13. Resolves true when the old host exited (or none answered), false when it still runs
+   *  after PTY_HOST_EXIT_WAIT_MS. Best-effort: a dead or old host that cannot shut down cleanly is still dropped. */
+  restart(): Promise<boolean> {
+    if (this.replacing) return this.replacing;
     this.hostAsked = true;
+    const run = this.replaceHost().finally(() => {
+      if (this.replacing === run) this.replacing = null;
+    });
+    this.replacing = run;
+    return run;
+  }
+
+  private async replaceHost(): Promise<boolean> {
+    let oldPid: number | undefined;
     try {
-      await this.request({ id: 0, type: "shutdown" });
+      const status = await withTimeout(
+        this.request({ id: 0, type: "version" }, undefined, true),
+        PTY_HOST_RESTART_REQUEST_TIMEOUT_MS,
+      );
+      const pid = status && typeof status === "object" ? (status as Record<string, unknown>).pid : undefined;
+      if (typeof pid === "number" && Number.isInteger(pid) && pid > 1) oldPid = pid;
+    } catch {
+      // a host that predates the pid answer, or none: nothing to wait for
+    }
+    try {
+      await withTimeout(this.request({ id: 0, type: "shutdown" }, undefined, true), PTY_HOST_RESTART_REQUEST_TIMEOUT_MS);
     } catch {
       // old host may not honor shutdown; we still drop the socket below
     }
     this.dropSocket();
+    return oldPid === undefined ? true : waitForExit(oldPid, PTY_HOST_EXIT_WAIT_MS);
   }
 
   /** Close now, not on the socket's later "close": by then a new connection may hold panes and requests. */
@@ -308,7 +377,11 @@ export class PtyHostClient {
     // resolution reads reusedHost). Runs synchronously in the same microtask
     // as the write so it cannot perturb request ordering.
     finalize?: (request: PtyHostRequest) => PtyHostRequest,
+    // restart()'s own requests to the host it replaces; every other request waits for the replacement.
+    duringReplace = false,
   ): Promise<unknown> {
+    if (this.disposed) throw new Error(DISPOSED_MESSAGE);
+    if (!duringReplace && this.replacing) await this.replacing;
     if (this.disposed) throw new Error(DISPOSED_MESSAGE);
     await this.connect();
     const socket = this.socket;

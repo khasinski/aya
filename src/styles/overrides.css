@@ -2135,6 +2135,13 @@
   background: var(--bg-secondary);
   padding: 10px;
 }
+.aya-settings-diagnostics-warnings {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 10px;
+}
 .aya-settings-diagnostics-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

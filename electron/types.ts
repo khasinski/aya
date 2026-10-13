@@ -406,6 +406,14 @@ export interface DiagnosticsReport {
     actual: { version: string; scriptHash: string } | null;
     ptyCount: number;
     stale: boolean;
+    /** The host this Aya talks to, or null. */
+    pid: number | null;
+    /** Whether pty-host.sock exists, and the host answering on it (null when none answers). */
+    socket: { exists: boolean; pid: number | null };
+    /** Running hosts this Aya does not use and that are not on the socket: their terminals show in no window. */
+    otherHosts: Array<{ pid: number; startTime: string; version: string }>;
+    /** What is wrong, as Diagnostics shows it; empty when nothing is. */
+    warnings: string[];
   };
   presets: Array<{
     id: string;
@@ -578,6 +586,8 @@ export interface AyaApi {
    *  session transcripts for the tab's cwd (history, not terminal output). */
   harnessSearch(req: HarnessSearchRequest): Promise<HarnessSearchHit[]>;
   restartPtyHost(): Promise<void>;
+  /** Stop running hosts this Aya does not use; returns the pids signalled. */
+  stopOtherPtyHosts(): Promise<number[]>;
   /** Asks first when the pane shows background tasks or monitors a restart stops; false: the user kept it. */
   confirmPaneRestart(ptyId: string): Promise<boolean>;
   onPtyEvent(handler: (event: PtyEvent) => void): () => void;

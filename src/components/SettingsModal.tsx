@@ -603,6 +603,23 @@ export function SettingsModal({
     }
   };
 
+  const stopOtherHosts = async (count: number) => {
+    if (
+      !confirm(
+        `Stop ${count} other terminal host${count === 1 ? "" : "s"}? Their terminals show in no window and end now.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await window.aya.stopOtherPtyHosts();
+    } catch (err) {
+      setDiagnosticsError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    await refreshDiagnostics();
+  };
+
   const copyDiagnostics = async () => {
     if (!diagnosticsJson) return;
     await window.aya.writeClipboard(diagnosticsJson);
@@ -2158,7 +2175,9 @@ export function SettingsModal({
                               "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.",
                             )
                           ) {
-                            void onRestartPtyHost();
+                            void Promise.resolve(onRestartPtyHost()).then(() => {
+                              if (diagnostics) void refreshDiagnostics();
+                            });
                           }
                         }}
                       >
@@ -2199,6 +2218,24 @@ export function SettingsModal({
                         <div className="aya-settings-errors">{diagnosticsError}</div>
                       ) : diagnostics ? (
                         <>
+                          {diagnostics.ptyHost.warnings.length > 0 && (
+                            <div className="aya-settings-diagnostics-warnings" role="status">
+                              {diagnostics.ptyHost.warnings.map((warning) => (
+                                <div key={warning}>
+                                  <strong>Warning:</strong> {warning}
+                                </div>
+                              ))}
+                              {diagnostics.ptyHost.otherHosts.length > 0 && (
+                                <button
+                                  className="aya-modal-btn"
+                                  type="button"
+                                  onClick={() => void stopOtherHosts(diagnostics.ptyHost.otherHosts.length)}
+                                >
+                                  Stop other hosts
+                                </button>
+                              )}
+                            </div>
+                          )}
                           <div className="aya-settings-diagnostics-grid">
                             <div>
                               <span>Mode</span>

@@ -81,7 +81,7 @@ export function updateInstaller(deps: UpdateInstallDeps) {
 
 /** On launch with a stale host: restarts it unless a pane shows background work the user did not agree to stop and
  *  keeps now; true when restarted. An old host whose panes cannot be read is restarted, as before the question. */
-export async function restartStaleHost(deps: RelaunchDeps, ask: (text: string) => Promise<boolean>, restart: () => Promise<void>): Promise<boolean> {
+export async function restartStaleHost(deps: RelaunchDeps, ask: (text: string) => Promise<boolean>, restart: () => Promise<unknown>): Promise<boolean> {
   if (!(await confirmRestartOnce(deps, "Restarting the terminals for the new Aya version", ask).catch(() => true))) return false;
   await restart();
   return true;

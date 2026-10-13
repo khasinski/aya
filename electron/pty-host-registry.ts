@@ -195,6 +195,16 @@ function isSameRecordedProcess(
   return true;
 }
 
+/** Recorded hosts that verifiably run now: same pid, start time and host script as recorded. A failed probe or a
+ *  reused pid is not one. Read-only: nothing is removed or signalled. */
+export function liveHostRecords(
+  hostScript: string,
+  dir: string = HOST_REGISTRY_DIR,
+  probe: (pid: number) => ProcInfo = readProcInfo,
+): HostRecord[] {
+  return readHostRecords(dir).filter((rec) => isSameRecordedProcess(rec, probe(rec.pid), hostScript));
+}
+
 /** FAIL-CLOSED gate for kill(-pgid): never our pid or init, and only a detached group leader (pgid ==
  *  pid), so a corrupted record cannot name another group. */
 export function isReapableHost(
