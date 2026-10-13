@@ -136,22 +136,15 @@ import {
   cleanShipItCache,
   shouldCleanShipItCache,
 } from "./update-recovery";
-import {
-  readOmarchyStatus,
-  readOmarchyTheme,
-  watchOmarchyTheme,
-} from "./omarchy";
-import { scanHarnesses } from "./harnesses";
+import { watchOmarchyTheme } from "./omarchy";
 import { isInternalNavigationUrl, parseExternalUrl } from "./navigation";
-import { listPresets, savePresets, type AgentKind } from "./presets";
-import { listSnippets, saveSnippets } from "./snippets";
+import { listPresets, type AgentKind } from "./presets";
 import { expandUserPath } from "./usage";
 import { DEFAULT_CODEX_HOME } from "./usage-codex";
 import { usageHookStatus } from "./usage-hook";
 import { refreshStatusHookScript, migrateStatusHookCommand } from "./status-hook";
 import { refreshStatusCodexHookScript } from "./status-hook-codex";
 import { searchHarnessSessions } from "./harness-search";
-import { listMonitoredSessions } from "./session-monitor";
 import {
   LOCAL_SUMMARY_MAX_LINES,
   normalizeLocalSummaryError,
@@ -170,12 +163,9 @@ import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
 import {
   requirePositiveInt,
   requireString,
-  validateSnippetArray,
-  validatePresetArray,
   validateProjectCollectionState,
   validateProjectConfig,
   validateSpawnRequest,
-  validateThemesFile,
 } from "./validation";
 import { withSharedDirCommand } from "./agent-session";
 import { loadWindowState, trackWindowState } from "./window-state";
@@ -196,6 +186,7 @@ import { registerEnvIpc } from "./ipc/env-ipc";
 import { registerWindowIpc } from "./ipc/window-ipc";
 import { registerSystemIpc } from "./ipc/system-ipc";
 import { registerUsageIpc } from "./ipc/usage-ipc";
+import { registerSettingsIpc } from "./ipc/settings-ipc";
 import { startWebServer, type WebServerHandle } from "./web-server";
 import { parseSummaryResponse, summaryPrompt } from "./summary-prompt";
 import { restartDialog } from "./native-ui-text";
@@ -2431,69 +2422,21 @@ function registerIpc(): TeamRunner {
     readRepoProjectConfig(requireString(dir, "projects:read-repo-config.dir")),
   );
 
-  ipcMain.handle("presets:list", async () => listPresets());
   ipcMain.handle("agent:waiting", () => outstandingWaiting());
   // A question from before the restart that the pane's session no longer confirms: the windows mark it.
   onStatusPushed(broadcastStatus);
-  ipcMain.handle("presets:save", async (_e, presets: unknown) => {
-    await savePresets(validatePresetArray(presets));
-    await syncAntigravityBrief();
-  });
-  ipcMain.handle("presets:scan-harnesses", async () => scanHarnesses());
-
-  ipcMain.handle("snippets:list", async () => listSnippets());
-  ipcMain.handle("snippets:save", async (_e, snippets: unknown) =>
-    saveSnippets(validateSnippetArray(snippets)),
-  );
-  ipcMain.handle("local-summary:summarize", async (_e, req: unknown) =>
-    summarizeLocal(validateLocalSummaryRequest(req)),
-  );
   registerUsageIpc(ipcMain);
-  // Omarchy theme integration (Linux): the renderer skins chrome + terminal from
-  // the current Omarchy palette, and the watcher below pushes live switches.
-  ipcMain.handle("omarchy:status", async () => readOmarchyStatus());
-  ipcMain.handle("omarchy:read", async () => readOmarchyTheme());
-  ipcMain.handle("sessions:list-monitored", async () => listMonitoredSessions());
-  ipcMain.handle("intelligence:ollama-status", async (_e, model: unknown) =>
-    ollamaStatus(typeof model === "string" && model.trim() ? model.trim() : undefined),
-  );
-  ipcMain.handle("intelligence:pull-ollama-model", async (_e, model: unknown) =>
-    pullOllamaModel(validateOllamaModelName(model)),
-  );
-
-  ipcMain.handle("themes:list", async () => {
-    const { loadThemes } = await import("./themes");
-    return loadThemes();
-  });
-  ipcMain.handle("themes:save", async (_e, file: unknown) => {
-    const { saveThemes } = await import("./themes");
-    return saveThemes(validateThemesFile(file));
-  });
-  ipcMain.handle("themes:import", async (e) => {
-    const { parseTheme } = await import("./themes");
-    const win = senderWindow(e);
-    const options = {
-      title: "Import terminal theme",
-      defaultPath: app.getPath("home"),
-      properties: ["openFile" as const],
-      filters: [
-        {
-          name: "Terminal themes (.itermcolors, .json)",
-          extensions: ["itermcolors", "json"],
-        },
-        { name: "iTerm2 colors", extensions: ["itermcolors"] },
-        { name: "Windows Terminal JSON", extensions: ["json"] },
-        { name: "All files", extensions: ["*"] },
-      ],
-    };
-    const result = win
-      ? await dialog.showOpenDialog(win, options)
-      : await dialog.showOpenDialog(options);
-    if (result.canceled || result.filePaths.length === 0) return null;
-    const filePath = result.filePaths[0];
-    const content = await fs.readFile(filePath, "utf-8");
-    const fallbackName = path.basename(filePath, path.extname(filePath));
-    return parseTheme(content, fallbackName);
+  registerSettingsIpc({
+    ipcMain,
+    senderWindow,
+    dialog,
+    home: () => app.getPath("home"),
+    presetsSaved: syncAntigravityBrief,
+    intelligence: {
+      summarize: (req) => summarizeLocal(validateLocalSummaryRequest(req)),
+      ollamaStatus: (model) => ollamaStatus(model),
+      pullOllamaModel: (model) => pullOllamaModel(validateOllamaModelName(model)),
+    },
   });
 
   registerWindowIpc({
