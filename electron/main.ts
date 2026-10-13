@@ -2836,18 +2836,18 @@ function registerIpc(): TeamRunner {
       delete next.generatedPassword;
       Object.assign(next, webCredentials(r.password, false));
     }
-    webConfig = next;
+    // Saved first: a failed write leaves Aya on the config it serves now, not on one that is neither saved nor
+    // served.
     await saveWebConfig(next);
+    webConfig = next;
     await applyWebServerState();
     return webStatus();
   });
   ipcMain.handle("web:regenerate-password", async () => {
     if (!webConfig) webConfig = await loadWebConfig();
-    webConfig = {
-      ...webConfig,
-      ...webCredentials(generateWebPassword(), true),
-    };
-    await saveWebConfig(webConfig);
+    const next = { ...webConfig, ...webCredentials(generateWebPassword(), true) };
+    await saveWebConfig(next);
+    webConfig = next;
     // Existing sessions stay valid; new logins need the new password.
     return webStatus();
   });

@@ -121,10 +121,10 @@ test("hostHeaderAllowed: a loopback server answers loopback names only; other se
   assert.equal(hostHeaderAllowed("100.64.0.7", "evil.example"), true);
 });
 
-function request(port, { method = "GET", path = "/", host, headers = {}, body } = {}) {
+function request(port, { method = "GET", path = "/", host, headers = {}, body, connect = "127.0.0.1" } = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { host: "127.0.0.1", port, method, path, headers: { Host: host, ...headers } },
+      { host: connect, port, method, path, headers: { Host: host, ...headers } },
       (res) => {
         let data = "";
         res.on("data", (chunk) => (data += chunk));
@@ -188,6 +188,18 @@ test("a loopback server refuses a rebinding Host on pages, login and the WebSock
       });
     assert.equal(await outcome(evil), 401);
     assert.equal(await outcome(`127.0.0.1:${port}`), "open");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("a server configured with the name localhost checks Host too: the check goes by the bound address", async () => {
+  // localhost binds 127.0.0.1 or ::1, whichever the resolver gives first; the request below resolves it the same way.
+  const { handle, cleanup } = await startTestServer({ host: "localhost" });
+  const port = handle.port;
+  try {
+    assert.equal((await request(port, { host: `evil.example:${port}`, connect: "localhost" })).status, 421);
+    assert.equal((await request(port, { host: `localhost:${port}`, connect: "localhost" })).status, 200);
   } finally {
     await cleanup();
   }

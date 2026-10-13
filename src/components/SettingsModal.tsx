@@ -1543,6 +1543,26 @@ export function SettingsModal({
                 {ayaWebError ?? ayaWeb?.error}
               </div>
             )}
+            {ayaWeb && (
+              <label
+                style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}
+              >
+                Listen on
+                <select
+                  className="aya-modal-input"
+                  aria-label="Aya Web listen address"
+                  value={ayaWeb.host}
+                  disabled={ayaWebBusy}
+                  onChange={(e) => void applyAyaWeb({ host: e.target.value })}
+                >
+                  {webHostOptions(ayaWeb).map(([host, label]) => (
+                    <option key={host} value={host}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             {ayaWeb?.enabled && (
               <div
                 style={{
@@ -1578,24 +1598,6 @@ export function SettingsModal({
                     "Enabled but not running."
                   )}
                 </div>
-                <label
-                  style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}
-                >
-                  Listen on
-                  <select
-                    className="aya-modal-input"
-                    aria-label="Aya Web listen address"
-                    value={ayaWeb.host}
-                    disabled={ayaWebBusy}
-                    onChange={(e) => void applyAyaWeb({ host: e.target.value })}
-                  >
-                    {webHostOptions(ayaWeb).map(([host, label]) => (
-                      <option key={host} value={host}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
                 <div>
                   Sign in as <code>{ayaWeb.user}</code> with{" "}
                   {ayaWeb.generatedPassword ? (

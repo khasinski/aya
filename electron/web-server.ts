@@ -318,9 +318,12 @@ export async function startWebServer(
   };
 
   const config = options.getConfig();
+  // The address the server is bound to, set once listen() succeeds and before any request arrives. A name in
+  // web.json such as localhost binds loopback too, so the Host check goes by this, not by the configured text.
+  let boundHost = config.host;
 
   const server = http.createServer((req, res) => {
-    if (!hostHeaderAllowed(config.host, req.headers.host)) {
+    if (!hostHeaderAllowed(boundHost, req.headers.host)) {
       sendJson(res, 421, { error: "bad_host" });
       return;
     }
@@ -366,7 +369,7 @@ export async function startWebServer(
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "aya"}`);
     if (
       url.pathname !== "/ws" ||
-      !hostHeaderAllowed(config.host, req.headers.host) ||
+      !hostHeaderAllowed(boundHost, req.headers.host) ||
       !originAllowed(req) ||
       !sessionFor(req)
     ) {
@@ -437,6 +440,7 @@ export async function startWebServer(
   const address = server.address();
   const boundPort =
     address && typeof address === "object" ? address.port : config.port;
+  if (address && typeof address === "object") boundHost = address.address;
 
   return {
     port: boundPort,
