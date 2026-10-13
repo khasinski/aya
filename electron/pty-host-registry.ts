@@ -69,7 +69,8 @@ export function writeHostRecord(rec: HostRecord, dir: string = HOST_REGISTRY_DIR
   const tmp = atomicTempPath(recordPath(dir, rec.pid));
   try {
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(tmp, JSON.stringify(rec), { mode: OWNER_ONLY_FILE_MODE });
+    // "wx", as in atomic-write.ts: a file or symlink planted at the temp path is an error, never written through.
+    fs.writeFileSync(tmp, JSON.stringify(rec), { mode: OWNER_ONLY_FILE_MODE, flag: "wx" });
     fs.renameSync(tmp, recordPath(dir, rec.pid));
   } catch {
     // best effort; a missing record just means this host won't be reaped by pid
@@ -82,7 +83,7 @@ export function writeHostRecord(rec: HostRecord, dir: string = HOST_REGISTRY_DIR
 }
 
 /** Valid records only: an unparsable .json is a crash artifact (writes are atomic) and is unlinked, as are
- *  aged .tmp leftovers. */
+ *  aged .tmp leftovers. A record that cannot be read right now (EACCES, EMFILE) is kept for the next launch. */
 export function readHostRecords(dir: string = HOST_REGISTRY_DIR): HostRecord[] {
   let names: string[];
   try {
@@ -104,19 +105,54 @@ export function readHostRecords(dir: string = HOST_REGISTRY_DIR): HostRecord[] {
       continue;
     }
     if (!name.endsWith(".json")) continue;
+    let text: string | null | undefined;
     try {
-      const rec = JSON.parse(fs.readFileSync(full, "utf8")) as unknown;
-      if (isHostRecord(rec)) out.push(rec);
-      else fs.rmSync(full, { force: true }); // wrong shape - non-actionable forever
+      text = readRecordFile(full);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ELOOP") {
+        try {
+          fs.rmSync(full, { force: true }); // a link is never a record; its target is left alone
+        } catch {
+          // best effort
+        }
+      }
+      continue; // otherwise unreadable now, not proven a leftover: deleting it could strand a live stale host
+    }
+    if (text === undefined) continue; // not a regular file (a FIFO, a directory): never ours to remove
+    let rec: unknown = null;
+    try {
+      if (text !== null) rec = JSON.parse(text);
     } catch {
+      // unparseable - crash artifact
+    }
+    // Records are removed by their pid, so one whose file is not `<pid>.json` would remove another host's record.
+    if (isHostRecord(rec) && name === `${rec.pid}.json`) out.push(rec);
+    else {
       try {
-        fs.rmSync(full, { force: true }); // unparseable - crash artifact
+        fs.rmSync(full, { force: true }); // wrong shape or name - non-actionable forever
       } catch {
         // best effort
       }
     }
   }
   return out;
+}
+
+// A record is a few hundred bytes; anything far larger is not one, and is not read into memory.
+const MAX_RECORD_BYTES = 64 * 1024;
+
+/** One open, then everything on that descriptor, so the file cannot be swapped between check and read: a link
+ *  throws ELOOP, a FIFO or device opens without blocking and comes back undefined, an oversized file null. */
+function readRecordFile(full: string): string | null | undefined {
+  const fd = fs.openSync(full, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) return undefined;
+    if (stat.size > MAX_RECORD_BYTES) return null;
+    return fs.readFileSync(fd, "utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 /** Remove a host's record (on clean exit, or after a confirmed reap / GC). */
