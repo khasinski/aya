@@ -15,6 +15,7 @@ import fs, {
 } from "node:fs";
 import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
+import { setTimeout as sleep } from "node:timers/promises";
 import { dirname, join } from "node:path";
 
 // os.homedir() only consults $HOME on POSIX, so the redirect below is inert on
@@ -128,6 +129,21 @@ function nextChange() {
   return { changed, onChange: () => resolve() };
 }
 
+/** Waits until a real watch hears a change (the poke, repeated until one gets through), then until it has
+ *  been quiet for three debounces, so a late sentinel event is not taken for the change under test. On macOS
+ *  fs.watch rides on FSEvents, which starts asynchronously: on a busy machine a change made right after the
+ *  watch starts is lost (8 of 16 probes, 2026-10-14), and the test then waited out its timeout. */
+async function watchIsLive(poke, setHandler) {
+  let last = 0;
+  setHandler(() => (last = Date.now()));
+  // Pokes further apart than the debounce, or each one would restart it and nothing would fire.
+  while (last === 0) {
+    poke();
+    await sleep(OMARCHY_WATCH_DEBOUNCE_MS * 2);
+  }
+  while (Date.now() - last < OMARCHY_WATCH_DEBOUNCE_MS * 3) await sleep(50);
+}
+
 test("relinking the theme symlink, as omarchy-theme-set does, fires onChange", { skip, timeout: 10_000 }, async (t) => {
   // Two installed themes; current/theme is a symlink to one of them.
   const themes = join(HOME, "themes");
@@ -141,9 +157,12 @@ test("relinking the theme symlink, as omarchy-theme-set does, fires onChange", {
   symlinkSync(join(themes, "night"), THEME_DIR);
   assert.equal((await readOmarchyTheme()).palette.accent, "#7aa2f7");
 
-  const { changed, onChange } = nextChange();
-  const unwatch = watchOmarchyTheme(onChange);
+  let heard = () => {};
+  const unwatch = watchOmarchyTheme(() => heard());
   t.after(unwatch);
+  await watchIsLive(() => writeFileSync(join(STATE_DIR, "sentinel"), String(Date.now())), (h) => (heard = h));
+  const { changed, onChange } = nextChange();
+  heard = onChange;
 
   // Atomic relink: a new symlink renamed over the old one.
   const tmpLink = join(STATE_DIR, "theme.tmp");
