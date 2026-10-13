@@ -8,7 +8,7 @@ const taskPlaceholder = (...args) => view.taskPlaceholder(...args);
 
 const { parseTeamFile } = await import("../dist-electron/team-definition.js");
 const { taskRecipient } = await import("../dist-electron/team-runner.js");
-const { registerTeamIpc } = await import("../dist-electron/team-ipc.js");
+const { registerTeamIpc } = await import("../dist-electron/ipc/team-ipc.js");
 
 const BODY = `# ux-review
 

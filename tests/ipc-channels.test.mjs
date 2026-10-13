@@ -1,6 +1,6 @@
 // Every channel the window invokes (preload) or Aya Web forwards (src/web/bridge.ts) has exactly one handler in
 // electron/, and every handler is invoked by one of them. The IPC handlers live in several modules (electron/ipc/,
-// team-ipc.ts, main.ts): a channel lost or registered twice in a move fails here, not in a window at run time.
+// main.ts): a channel lost or registered twice in a move fails here, not in a window at run time.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -72,7 +72,7 @@ test("main.ts registers every IPC module, so the handlers the scan sees are also
   const modules = readdirSync(join(ROOT, "electron/ipc")).filter((name) => name.endsWith(".ts"));
   assert.ok(modules.length >= 9, "the ipc modules are found");
   const notCalled = [];
-  for (const name of [...modules.map((m) => join("ipc", m)), "team-ipc.ts"]) {
+  for (const name of modules.map((m) => join("ipc", m))) {
     const text = readFileSync(join(ROOT, "electron", name), "utf8");
     for (const [, register] of text.matchAll(/export function (register\w*Ipc)\(/g)) {
       if (!new RegExp(`\\b${register}\\(`).test(main)) notCalled.push(`${register} (${name})`);

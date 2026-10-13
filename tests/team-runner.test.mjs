@@ -8,7 +8,7 @@ import { teamProject } from "./helpers/team.mjs";
 
 const { TeamRunner } = await import("../dist-electron/team-runner.js");
 const { ROUND_CHECK_MS } = await import("../dist-electron/team-times.js");
-const { TEAM_REDELIVERY_MS } = await import("../dist-electron/team-ipc.js");
+const { TEAM_REDELIVERY_MS } = await import("../dist-electron/ipc/team-ipc.js");
 const { TEAM_MINUTE_MS } = await import("../dist-electron/paths.js");
 const CADENCE_MS = 30 * TEAM_MINUTE_MS;
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");

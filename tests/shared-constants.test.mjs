@@ -1,7 +1,7 @@
 // Pins shared, security-relevant and cross-module values to one source of
 // truth. Several existed as independent literal copies before centralization
 // (socket perms in pty-host.ts + control.ts; 2500ms probe timeout in
-// harnesses.ts + pty.ts + main.ts; exit 127 in pty.ts + cli-shim.ts) - these
+// harnesses.ts + pty.ts + main.ts; exit 127 in pty.ts + cli-install.ts) - these
 // tests pin both the value and the single location.
 
 import { test } from "node:test";

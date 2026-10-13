@@ -63,10 +63,10 @@ import { launchBlockOf, launchHoldOf, launchNoteOf } from "./launch-mode";
 import { reachedAyaPanes } from "./reached-aya";
 import { debugPane, watchDebugSwitch } from "./team-debug";
 import { userShell } from "./shell";
-import { registerTeamIpc } from "./team-ipc";
+import { registerTeamIpc } from "./ipc/team-ipc";
 import { askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, presetAgent, teamPaneDeps, type PaneHost } from "./team-panes";
 import { confirmRestart, type RelaunchDeps } from "./relaunch-notes";
-import { restartStaleHost } from "./update-quit";
+import { restartStaleHost } from "./updates";
 import { createUpdates, UPDATE_AUTO_CHECK_DELAY_MS } from "./updates";
 import { notePathRepaired, presetInstalled } from "./command-probe";
 import type { TeamRunner } from "./team-runner";
@@ -115,7 +115,7 @@ import {
   webServerUrls,
   type WebConfig,
 } from "./web-config";
-import { captureIpcHandlers } from "./web-ipc";
+import { captureIpcHandlers } from "./ipc/web-capture";
 import { registerEnvIpc } from "./ipc/env-ipc";
 import { registerWindowIpc } from "./ipc/window-ipc";
 import { registerSystemIpc } from "./ipc/system-ipc";

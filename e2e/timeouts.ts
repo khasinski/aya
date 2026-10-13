@@ -19,7 +19,7 @@ export const AGENT_TEST_TIMEOUT_MS = 120_000;
 export const AGENT_START_TIMEOUT_MS = 60_000;
 
 /** Held team messages are retried this often; the value lives in
- *  electron/team-ipc.ts, and tests/e2e-timeouts-parity.test.mjs pins this copy to it. */
+ *  electron/ipc/team-ipc.ts, and tests/e2e-timeouts-parity.test.mjs pins this copy to it. */
 export const TEAM_REDELIVERY_MS = 15_000;
 
 /** The period team specs run held-message redelivery at (AYA_E2E_TEAM_REDELIVERY_MS); TEAM_REDELIVERY_MS stays the ceiling for a spec that does not set it. */

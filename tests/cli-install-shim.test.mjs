@@ -9,9 +9,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   defaultInstallAyaCliPath,
+  ayaShimTargets,
   parseShimTargets,
   renderCliShim,
-} from "../dist-electron/cli-shim.js";
+} from "../dist-electron/cli-install.js";
 
 const PRIMARY = "/Users/dev/build/Aya.app/Contents/Resources/app.asar.unpacked/bin/aya";
 const FALLBACK = "/Applications/Aya.app/Contents/Resources/app.asar.unpacked/bin/aya";
@@ -90,4 +91,9 @@ test("defaultInstallAyaCliPath points at /Applications on macOS", () => {
 test("defaultInstallAyaCliPath has no well-known location off macOS", () => {
   assert.equal(defaultInstallAyaCliPath("linux"), null);
   assert.equal(defaultInstallAyaCliPath("win32"), null);
+});
+
+test("install recognition accepts generated aya targets but rejects a generated foreign command", () => {
+  assert.deepEqual(ayaShimTargets(renderCliShim(PRIMARY, FALLBACK)), [PRIMARY, FALLBACK]);
+  assert.deepEqual(ayaShimTargets(renderCliShim("/stand-in/other-command", FALLBACK)), []);
 });

@@ -11,12 +11,13 @@ import {
   ayaShimTargets,
   chooseCliInstallDir,
   describeCliStatus,
+  defaultInstallAyaCliPath,
   insideAsarArchive,
   offPathNote,
   planCliInstall,
+  renderCliShim,
 } from "./cli-install";
 import { bundledAyaCliPath } from "./cli-path";
-import { defaultInstallAyaCliPath, renderCliShim } from "./cli-shim";
 import { EXECUTABLE_FILE_MODE } from "./paths";
 import type { CliStatus } from "./types";
 

@@ -16,7 +16,6 @@ import {
   normalizeLocalSummaryError,
   SUMMARY_TEXT_MAX_CHARS,
 } from "./local-summary-errors";
-import { parseSummaryResponse, summaryPrompt } from "./summary-prompt";
 import type { AyaIntelligenceConfig, LocalSummaryRequest, LocalSummaryResult, OllamaStatus } from "./types";
 import { requireString } from "./validation";
 
@@ -287,4 +286,52 @@ export async function pullOllamaModel(deps: AyaIntelligenceDeps, model: string):
     });
   });
   return ollamaStatus(deps, model);
+}
+
+// One word limit for the prompt and the cut, so the two cannot drift apart.
+const SUMMARY_MAX_WORDS = 6;
+const SUMMARY_TITLE_MAX_CHARS = 80;
+
+function cleanSummary(value: string): string {
+  const oneLine = value
+    .replace(/\s+/g, " ")
+    .replace(/^["'`]+|["'`.]+$/g, "")
+    .trim();
+  const words = oneLine.split(/\s+/).filter(Boolean).slice(0, SUMMARY_MAX_WORDS).join(" ");
+  return words.slice(0, SUMMARY_TITLE_MAX_CHARS);
+}
+
+export function summaryPrompt(req: LocalSummaryRequest): string {
+  const subject =
+    req.kind === "project" ? "project activity" : "terminal output";
+  return [
+    `Summarize recent ${subject} for a compact app label.`,
+    "Return strict JSON only, with shape:",
+    `{"useful":true,"summary":"2-${SUMMARY_MAX_WORDS} word label"}`,
+    "If the output is too noisy, generic, idle, or not meaningful, return:",
+    '{"useful":false,"summary":""}',
+    `Do not invent context. No full sentences. No punctuation. Max ${SUMMARY_MAX_WORDS} words.`,
+    "",
+    "Recent output:",
+    req.lines.join("\n"),
+  ].join("\n");
+}
+
+export function parseSummaryResponse(content: string): LocalSummaryResult {
+  const trimmed = content.trim();
+  const jsonText =
+    trimmed.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1]?.trim() ?? trimmed;
+  try {
+    const parsed = JSON.parse(jsonText) as Partial<LocalSummaryResult>;
+    const summary =
+      typeof parsed.summary === "string" ? cleanSummary(parsed.summary) : "";
+    return {
+      available: true,
+      useful: parsed.useful === true && summary.length > 0,
+      summary: parsed.useful === true ? summary : "",
+    };
+  } catch {
+    const summary = cleanSummary(trimmed);
+    return { available: true, useful: summary.length > 0, summary };
+  }
 }

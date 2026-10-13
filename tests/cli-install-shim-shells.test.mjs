@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { renderCliShim } from "../dist-electron/cli-shim.js";
+import { renderCliShim } from "../dist-electron/cli-install.js";
 import { COMMAND_NOT_FOUND_EXIT_CODE } from "../dist-electron/constants.js";
 import { CLI_SHELLS, shellOptions } from "./helpers/cli-shells.mjs";
 

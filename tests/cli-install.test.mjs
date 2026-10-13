@@ -11,7 +11,7 @@ import {
   isVersionManagedDir,
   planCliInstall,
 } from "../dist-electron/cli-install.js";
-import { renderCliShim } from "../dist-electron/cli-shim.js";
+import { renderCliShim } from "../dist-electron/cli-install.js";
 
 const HOME = "/Users/dev";
 const LOCAL_BIN = `${HOME}/.local/bin`;

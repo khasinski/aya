@@ -88,7 +88,7 @@ test("saved token preview stays local and masked, updates on same-URL replacemen
       expect(JSON.stringify(setup)).not.toContain(fullToken);
       const publicSetup = await app.evaluate(async () => {
         const require = process.getBuiltinModule("module").createRequire(`${process.cwd()}/package.json`);
-        return require("./dist-electron/web-ipc.js").invokeCapturedIpcHandler("machines:setup", []);
+        return require("./dist-electron/ipc/web-capture.js").invokeCapturedIpcHandler("machines:setup", []);
       });
       expect(JSON.stringify(publicSetup)).not.toContain("savedTokenPreview");
       expect(JSON.stringify(publicSetup)).not.toContain(fullToken);

@@ -20,7 +20,7 @@ import {
 import { COMMAND_PROBE_TIMEOUT_MS } from "../dist-electron/constants.js";
 import { APPLE_HELPER_STDOUT_MAX_BYTES, RECOMMENDED_OLLAMA_MODEL } from "../dist-electron/intelligence-chat.js";
 import { LOCAL_SUMMARY_MAX_LINES, SUMMARY_TEXT_MAX_CHARS } from "../dist-electron/local-summary-errors.js";
-import { summaryPrompt } from "../dist-electron/summary-prompt.js";
+import { summaryPrompt } from "../dist-electron/aya-intelligence.js";
 import { registerSettingsIpc } from "../dist-electron/ipc/settings-ipc.js";
 
 const empty = { available: true, useful: false, summary: "" };

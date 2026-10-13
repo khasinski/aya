@@ -12,7 +12,7 @@
 //                     server  { t:"hello", ... }                (on connect)
 //
 // Invokes are dispatched to the SAME ipcMain handlers the desktop renderer
-// uses (captured in web-ipc.ts). Channels whose handler is window-scoped are
+// uses (captured in ipc/web-capture.ts). Channels whose handler is window-scoped are
 // overridden below with their windowless semantics — the same null-window
 // path projects:state already documents for the remote server.
 //
@@ -35,7 +35,7 @@ import { isLoopbackHost, verifyWebPassword, type WebConfig } from "./web-config"
 import {
   hasCapturedIpcHandler,
   invokeCapturedIpcHandler,
-} from "./web-ipc";
+} from "./ipc/web-capture";
 
 const SESSION_COOKIE = "aya_web_session";
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;

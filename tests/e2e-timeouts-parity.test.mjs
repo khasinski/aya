@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import ts from "typescript";
 
-import { TEAM_REDELIVERY_MS } from "../dist-electron/team-ipc.js";
+import { TEAM_REDELIVERY_MS } from "../dist-electron/ipc/team-ipc.js";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 

@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { PASSWORD, startTestServer, wsOpen } from "./helpers/web-server.mjs";
 
-const { captureIpcHandlers } = await import("../dist-electron/web-ipc.js");
+const { captureIpcHandlers } = await import("../dist-electron/ipc/web-capture.js");
 const { getGitInfo, getGitDiff } = await import("../dist-electron/git.js");
 
 // Register the git channels the way main.ts does, through the same capture

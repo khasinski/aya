@@ -11,7 +11,7 @@ const savedEnv = Object.fromEntries(["HOME", "AYA_HOME", "PATH", "APPIMAGE"].map
 process.env.HOME = root;
 process.env.AYA_HOME = path.join(root, "config");
 const { createCliSetup, pathEntries, findExecutableOnPath, anyExecutable, isWritableDir, foreignFileAt, ayaCopiesOnPath, writeCliShim } = await import("../dist-electron/cli-setup.js");
-const { renderCliShim, defaultInstallAyaCliPath } = await import("../dist-electron/cli-shim.js");
+const { renderCliShim, defaultInstallAyaCliPath } = await import("../dist-electron/cli-install.js");
 after(() => {
   for (const [key, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[key];

@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-const { registerTeamIpc, TEAM_REDELIVERY_MS } = await import("../dist-electron/team-ipc.js");
+const { registerTeamIpc, TEAM_REDELIVERY_MS } = await import("../dist-electron/ipc/team-ipc.js");
 const { ROLE_DRAFT_CHAT } = await import("../dist-electron/team-draft.js");
 const { TEAM_MESSAGE_MAX_CHARS } = await import("../dist-electron/control-protocol.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");

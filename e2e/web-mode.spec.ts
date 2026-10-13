@@ -41,7 +41,7 @@ type ServerHandle = { port: number; close: () => Promise<void> };
 async function startServedApp(): Promise<{ base: string; stop: () => Promise<void> }> {
   const { startWebServer } = await import("../dist-electron/web-server.js");
   const { webCredentials } = await import("../dist-electron/web-config.js");
-  const { captureIpcHandlers } = await import("../dist-electron/web-ipc.js");
+  const { captureIpcHandlers } = await import("../dist-electron/ipc/web-capture.js");
 
   // No Electron here, so ipcMain is a stub - the same seam tests/web-git-worktree
   // uses. The bridge reads whatever was captured.

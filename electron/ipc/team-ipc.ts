@@ -1,17 +1,17 @@
 // The teams:* IPC handlers, the team round runner and held-message redelivery.
 
 import type { IpcMain } from "electron";
-import type { ChatOptions } from "./intelligence-chat";
-import { listTeams, saveTeam } from "./team-admin";
-import type { TeamControlDeps } from "./team-control";
-import { draftRole, ROLE_DRAFT_CHAT, type Chat } from "./team-draft";
-import { projectBySlug } from "./team-files";
-import { assignRoleLocked, openTeamPanes, presetChoices, releasePaneLocked, teamPaneDeps, type PaneHost } from "./team-panes";
-import { assertTeamTextFits, panePick } from "./control-protocol";
-import { deliverRelaunchNotes, type RelaunchDeps } from "./relaunch-notes";
-import { TeamRunner } from "./team-runner";
-import type { ProjectConfig } from "./types";
-import { requireString, validateTeamDefinition } from "./validation";
+import type { ChatOptions } from "../intelligence-chat";
+import { listTeams, saveTeam } from "../team-admin";
+import type { TeamControlDeps } from "../team-control";
+import { draftRole, ROLE_DRAFT_CHAT, type Chat } from "../team-draft";
+import { projectBySlug } from "../team-files";
+import { assignRoleLocked, openTeamPanes, presetChoices, releasePaneLocked, teamPaneDeps, type PaneHost } from "../team-panes";
+import { assertTeamTextFits, panePick } from "../control-protocol";
+import { deliverRelaunchNotes, type RelaunchDeps } from "../relaunch-notes";
+import { TeamRunner } from "../team-runner";
+import type { ProjectConfig } from "../types";
+import { requireString, validateTeamDefinition } from "../validation";
 
 // How often held team messages are retried; a pane frees up within seconds.
 export const TEAM_REDELIVERY_MS = 15_000;

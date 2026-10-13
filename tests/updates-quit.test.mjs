@@ -7,8 +7,21 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const { ordinaryQuitInstalls, restartStaleHost, updateInstaller } = await import("../dist-electron/update-quit.js");
+const importHome = mkdtempSync(join(tmpdir(), "aya-updates-import-"));
+const savedHome = process.env.HOME;
+const savedAyaHome = process.env.AYA_HOME;
+process.env.HOME = importHome;
+process.env.AYA_HOME = join(importHome, "aya");
+const { ordinaryQuitInstalls, restartStaleHost, updateInstaller } = await import("../dist-electron/updates.js");
 const { renderPaneText } = await import("../dist-electron/pane-render.js");
+
+test.after(() => {
+  rmSync(importHome, { recursive: true, force: true });
+  if (savedHome === undefined) delete process.env.HOME;
+  else process.env.HOME = savedHome;
+  if (savedAyaHome === undefined) delete process.env.AYA_HOME;
+  else process.env.AYA_HOME = savedAyaHome;
+});
 
 const dir = new URL("./fixtures/own-screens/", import.meta.url);
 const meta = JSON.parse(readFileSync(new URL("claude-idle.meta.json", dir), "utf8"));
