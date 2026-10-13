@@ -4,9 +4,9 @@ import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { test, expect } from "./fixtures";
 
-// Aya Web listens on this computer only unless the user picks a network in Settings. A web.json written by an
-// older Aya holds 0.0.0.0 though nobody chose it; while Aya Web is off it moves to 127.0.0.1. Neither test listens
-// on a network address: "All IPv4 networks" is not clicked here, only loopback ones.
+// A new Aya Web setup listens on this computer only until the user picks a network in Settings. A saved web.json keeps
+// its address, 0.0.0.0 included, and Settings warns while it listens on every network. No test here listens on a
+// network address: a 0.0.0.0 config is only ever seen while Aya Web is off.
 
 const SALT = "00112233445566778899aabbccddeeff";
 // A high port nobody else in the suite binds; Aya Web's own default (7683) may be taken by a running Aya.
@@ -39,20 +39,36 @@ async function openAyaWeb(window: import("@playwright/test").Page) {
   });
 }
 
-test.describe("an old default 0.0.0.0 config that is off", () => {
+test.describe("a new setup", () => {
+  test("listens on this computer only, with no warning", async ({ window, seeded }) => {
+    const row = await openAyaWeb(window);
+    await expect(row.getByLabel("Aya Web listen address")).toHaveValue("127.0.0.1");
+    await expect(row).not.toContainText("Warning:");
+    const saved = JSON.parse(readFileSync(join(seeded.ayaHome, "web.json"), "utf-8"));
+    expect(saved).toMatchObject({ enabled: false, host: "127.0.0.1" });
+  });
+});
+
+test.describe("a saved 0.0.0.0 config that is off", () => {
   test.use({ seedOptions: { ayaHomeFiles: { "web.json": webJson({ host: "0.0.0.0" }) } } });
 
-  test("turning Aya Web on serves 127.0.0.1 only", async ({ window, seeded }) => {
+  test("keeps its address with a warning, and one click moves it to this computer", async ({ window, seeded }) => {
+    const savedConfig = () => JSON.parse(readFileSync(join(seeded.ayaHome, "web.json"), "utf-8"));
     const row = await openAyaWeb(window);
-    // The address can be chosen before Aya Web is turned on, as the help text says.
+    // An update does not move it: whoever reaches Aya Web from another device keeps doing so.
+    await expect(row.getByLabel("Aya Web listen address")).toHaveValue("0.0.0.0");
+    await expect(row).toContainText("Warning: Aya Web will listen on every network");
+    await expect(row).toContainText("travel unencrypted");
+    expect(savedConfig().host).toBe("0.0.0.0");
+
+    await row.getByRole("button", { name: "This computer only" }).click();
     await expect(row.getByLabel("Aya Web listen address")).toHaveValue("127.0.0.1");
+    await expect(row).not.toContainText("Warning:");
+    expect(savedConfig()).toMatchObject({ enabled: false, host: "127.0.0.1" });
+
+    // Turned on now, it serves loopback only, not this computer's network address.
     await row.getByRole("button", { name: "On", exact: true }).click();
     await expect(row).toContainText(`Running at http://127.0.0.1:${PORT}`);
-    await expect(row.getByLabel("Aya Web listen address")).toHaveValue("127.0.0.1");
-    const saved = JSON.parse(readFileSync(join(seeded.ayaHome, "web.json"), "utf-8"));
-    expect(saved.host).toBe("127.0.0.1");
-    expect(saved.hostChosen).toBeUndefined();
-    // It answers on loopback, and not on this computer's network address.
     expect((await fetch(`http://127.0.0.1:${PORT}/api/me`)).status).toBe(401);
     const lan = ownNetworkAddress();
     if (lan) await expect(fetch(`http://${lan}:${PORT}/api/me`)).rejects.toThrow();
@@ -86,7 +102,6 @@ test.describe("a listen address picked in Settings", () => {
     await expect(reopened).toContainText(`Running at http://127.0.0.1:${PORT}`);
     const saved = JSON.parse(readFileSync(join(seeded.ayaHome, "web.json"), "utf-8"));
     expect(saved.host).toBe("127.0.0.1");
-    expect(saved.hostChosen).toBe(true);
     expect((await fetch(`http://127.0.0.1:${PORT}/api/me`)).status).toBe(401);
   });
 });
@@ -104,7 +119,7 @@ test.describe("Aya Web while it is off", () => {
     await expect(select).toHaveValue("::1");
     await select.selectOption("127.0.0.1");
     await expect.poll(() => savedConfig().host).toBe("127.0.0.1");
-    expect(savedConfig()).toMatchObject({ enabled: false, hostChosen: true });
+    expect(savedConfig()).toMatchObject({ enabled: false, host: "127.0.0.1" });
     await expect(fetch(`http://127.0.0.1:${PORT}/api/me`)).rejects.toThrow();
 
     // Two windows, or a window and Aya Web, may change the config at once: neither change is lost.

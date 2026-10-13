@@ -31,7 +31,7 @@ import type { MacOptionKeyMode } from "../terminal-option-key";
 import type { TerminalSoundCue } from "../terminal-sound-prefs";
 import { closeFromBackdropClick, markBackdropMouseDown } from "./modal-backdrop";
 import { HOOK_THROTTLE_MINUTES } from "../main-mirrors";
-import { webHostOptions } from "../web-host-options";
+import { listensOnAllNetworks, WEB_LOOPBACK_HOST, webHostOptions } from "../web-host-options";
 
 const DEFAULT_CLAUDE_CONFIG_DIR = "~/.claude";
 const DEFAULT_CODEX_CONFIG_DIR = "~/.codex";
@@ -1533,9 +1533,9 @@ export function SettingsModal({
             )}
           >
             Use Aya from a browser, behind a user and password. Signing in
-            gives full shell access to this machine. It listens on this
-            computer only: from another one, use an SSH tunnel, or choose a
-            network below. There is no TLS, so on a network the password and
+            gives full shell access to this machine. A new setup listens on
+            this computer only: from another one, use an SSH tunnel, or choose
+            a network below. There is no TLS, so on a network the password and
             your terminals travel unencrypted; choose only one you trust
             (Tailscale, WireGuard or your own LAN).
             {(ayaWebError ?? ayaWeb?.error) && (
@@ -1562,6 +1562,21 @@ export function SettingsModal({
                   ))}
                 </select>
               </label>
+            )}
+            {ayaWeb && listensOnAllNetworks(ayaWeb.host) && (
+              <div style={{ marginTop: 6 }}>
+                <strong>Warning:</strong> {ayaWeb.enabled ? "Aya Web listens" : "Aya Web will listen"} on
+                every network this computer joins, a cafe or hotel Wi-Fi too, and the password and your
+                terminals travel unencrypted.{" "}
+                <button
+                  className="aya-modal-btn"
+                  type="button"
+                  disabled={ayaWebBusy}
+                  onClick={() => void applyAyaWeb({ host: WEB_LOOPBACK_HOST })}
+                >
+                  This computer only
+                </button>
+              </div>
             )}
             {ayaWeb?.enabled && (
               <div

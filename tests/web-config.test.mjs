@@ -110,7 +110,6 @@ test("host constants: the default listen host is loopback, not a wildcard", () =
   assert.equal(IPV6_WILDCARD_HOST, "::");
   assert.equal(DEFAULT_WEB_HOST, "127.0.0.1");
   assert.equal(defaultWebConfig().host, "127.0.0.1");
-  assert.equal("hostChosen" in defaultWebConfig(), false);
 });
 
 test("secret sizes and the port ceiling are pinned", () => {

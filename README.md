@@ -90,8 +90,9 @@ run commands.
 - **Multiple windows and worktrees.** Chrome-style project-tab tear-out across
   windows; create, remove, and group git worktrees.
 - **Aya Web (experimental).** Serve the same UI over a local HTTP + WebSocket
-  bridge and reconnect to the same live sessions from a browser. It listens on
-  this computer only until you pick a network in Settings; there is no TLS.
+  bridge and reconnect to the same live sessions from a browser. A new setup
+  listens on this computer only until you pick a network in Settings; there is
+  no TLS, and Settings warns while it listens on every network.
 - **Early remote support.** SSH-backed remote project opening and a local
   `aya remote --stdio` bridge, as groundwork for fuller remote session sync.
 

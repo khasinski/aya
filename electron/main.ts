@@ -2836,7 +2836,6 @@ function registerIpc(): TeamRunner {
       const host = normalizeWebHost(r.host);
       if (!host) throw new Error("web:configure: host must be an IP address");
       next.host = host;
-      next.hostChosen = true;
     }
     if (typeof r.user === "string" && r.user.trim()) {
       next.user = r.user.trim();

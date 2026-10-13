@@ -1,5 +1,4 @@
-// Aya Web listen address: loopback by default, the old 0.0.0.0 default moved off when nobody chose it, what
-// Settings may save, the URLs and addresses Settings shows, and the Host check of a loopback server.
+// Aya Web listen address: loopback for a new setup, a saved address kept across updates, what Settings may save, the URLs and addresses Settings shows, and the Host check of a loopback server.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -16,34 +15,32 @@ const {
   webServerUrls,
 } = await import("../dist-electron/web-config.js");
 const { hostHeaderAllowed } = await import("../dist-electron/web-server.js");
-const { webHostOptions } = await import("../dist-test/web-host-options.js");
+const { listensOnAllNetworks, webHostOptions } = await import("../dist-test/web-host-options.js");
 
 const creds = webCredentials("pw", false);
 
-test("a config saved with the old 0.0.0.0 default moves to loopback while it is off", () => {
-  const parsed = normalizeWebConfig({ ...creds, enabled: false, host: "0.0.0.0" });
-  assert.equal(parsed.host, "127.0.0.1");
-  assert.equal("hostChosen" in parsed, false);
+test("a saved address is kept on or off, 0.0.0.0 included: an update does not cut anyone off", () => {
+  for (const enabled of [true, false]) {
+    for (const host of ["0.0.0.0", "::", "100.64.0.7", "127.0.0.1"]) {
+      assert.equal(normalizeWebConfig({ ...creds, enabled, host }).host, host, `${host} enabled=${enabled}`);
+    }
+  }
+  // The field the first loopback version saved is no longer kept.
+  assert.equal("hostChosen" in normalizeWebConfig({ ...creds, host: "0.0.0.0", hostChosen: true }), false);
 });
 
-test("a config that is on keeps 0.0.0.0, so a working remote setup is not cut off", () => {
-  const parsed = normalizeWebConfig({ ...creds, enabled: true, host: "0.0.0.0" });
-  assert.equal(parsed.host, "0.0.0.0");
+test("a config without a usable address gets the loopback default", () => {
+  for (const host of [undefined, "", "  ", 7, null]) {
+    assert.equal(normalizeWebConfig({ ...creds, host }).host, "127.0.0.1", String(host));
+  }
 });
 
-test("an address the user chose is kept, wildcard included, and the choice is remembered", () => {
-  const parsed = normalizeWebConfig({ ...creds, enabled: false, host: "0.0.0.0", hostChosen: true });
-  assert.equal(parsed.host, "0.0.0.0");
-  assert.equal(parsed.hostChosen, true);
-  // Only a literal true counts as a choice.
-  assert.equal(normalizeWebConfig({ ...creds, host: "0.0.0.0", hostChosen: "yes" }).host, "127.0.0.1");
-});
-
-test("a pinned interface address and the IPv6 wildcard are not migrated", () => {
-  assert.equal(normalizeWebConfig({ ...creds, host: "100.64.0.7" }).host, "100.64.0.7");
-  assert.equal(normalizeWebConfig({ ...creds, host: "::" }).host, "::");
-  assert.equal(normalizeWebConfig({ ...creds, host: "  " }).host, "127.0.0.1");
-  assert.equal(normalizeWebConfig({ ...creds, host: 7 }).host, "127.0.0.1");
+test("listensOnAllNetworks: the IPv4 and IPv6 wildcards, nothing else", () => {
+  assert.equal(listensOnAllNetworks("0.0.0.0"), true);
+  assert.equal(listensOnAllNetworks("::"), true);
+  for (const host of ["127.0.0.1", "::1", "100.64.0.7", "", "localhost"]) {
+    assert.equal(listensOnAllNetworks(host), false, host);
+  }
 });
 
 test("normalizeWebHost: Settings may save IP literals only", () => {
