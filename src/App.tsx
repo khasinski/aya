@@ -70,6 +70,9 @@ import {
 } from "./hooks/useTerminalSignals";
 import { useTerminalSounds } from "./hooks/useTerminalSounds";
 import { useTeams } from "./hooks/useTeams";
+import { useHarnessScan, useUsagePolling } from "./hooks/useUsagePolling";
+import { useWindowChrome } from "./hooks/useWindowChrome";
+import { pollVisible } from "./poll-visible";
 import { OLLAMA_OPENAI_BASE_URL, RECOMMENDED_OLLAMA_MODEL } from "./ollama-defaults";
 import { PRESET_ID_SHELL } from "./preset-ids";
 import {
@@ -143,15 +146,11 @@ import {
   type WaitingPanes,
   type Theme,
   type ThemeColors,
-  type UsageAccount,
-  type GrokUsage,
   type WorkingTab,
   type Worktree,
   type WorktreeStatus,
 } from "./types";
 
-// Cadence for re-reading the account-wide usage snapshot a user hook writes.
-const USAGE_POLL_INTERVAL_MS = 30_000;
 // Cap on retained entries in the project event timeline.
 const MAX_PROJECT_EVENTS = 200;
 // Cap on preset suggestions offered during repo preset import.
@@ -162,24 +161,6 @@ const DEFAULT_RAIL_WIDTH_PX = 220;
 // change identity every render (a fresh `{}` would defeat child memoization).
 const EMPTY_SUMMARIES: Record<string, string> = {};
 
-// Run `refresh` now, then on an interval — but skip ticks while the window is
-// hidden (no point spawning `git`, re-reading session/usage files in the
-// background), and refresh once immediately when it becomes visible again.
-// Returns a cleanup that stops the interval and removes the listener.
-function pollVisible(refresh: () => void, intervalMs: number): () => void {
-  refresh();
-  const id = window.setInterval(() => {
-    if (!document.hidden) refresh();
-  }, intervalMs);
-  const onVisible = () => {
-    if (!document.hidden) refresh();
-  };
-  document.addEventListener("visibilitychange", onVisible);
-  return () => {
-    window.clearInterval(id);
-    document.removeEventListener("visibilitychange", onVisible);
-  };
-}
 const TERMINAL_FONT_SIZE_PX = 13;
 /** Leaf id for the synthetic one-pane tree used when a project has no stored
  *  split (or is showing a single terminal). Constant so React keys and focus
@@ -198,7 +179,6 @@ const LOCAL_SUMMARY_MIN_LINES = 2;
 const LOCAL_SUMMARY_MIN_LINE_CHARS = 3;
 const LOCAL_SUMMARY_BUFFER_LINES = 80;
 const LOCAL_SUMMARY_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-const SESSION_MONITOR_POLL_INTERVAL_MS = 5_000;
 
 type AppThemePreference = "system" | "light" | "dark" | "omarchy";
 
@@ -468,11 +448,6 @@ export function App() {
   const [githubLinks, setGithubLinks] = useState<
     Record<string, GitHubLink | null>
   >({});
-  const [usageAccounts, setUsageAccounts] = useState<UsageAccount[]>([]);
-  const [codexUsageAccounts, setCodexUsageAccounts] = useState<
-    UsageAccount[]
-  >([]);
-  const [grokUsage, setGrokUsage] = useState<GrokUsage | null>(null);
   const [newProjectModal, setNewProjectModal] =
     useState<NewProjectModalState | null>(null);
   const [missingDirQueue, setMissingDirQueue] = useState<MissingDirEntry[]>([]);
@@ -557,7 +532,6 @@ export function App() {
   const [projectSummaries, setProjectSummaries] = useState<Record<string, string>>(
     () => summariesFromCache(initialSummaryCache, "project"),
   );
-  const [monitoredSessions, setMonitoredSessions] = useState<MonitoredSession[]>([]);
   const [summaryNudge, setSummaryNudge] = useState(0);
   const [autoSummaryStatus, setAutoSummaryStatus] = useState<AutoSummaryStatus>({
     terminalCount: 0,
@@ -578,11 +552,7 @@ export function App() {
     useState<PendingRepoImport | null>(null);
   const [findInPaneFor, setFindInPaneFor] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH_PX);
-  const [isFullScreen, setIsFullScreen] = useState(false);
-  const [isMaximized, setIsMaximized] = useState(false);
   const [didBootstrap, setDidBootstrap] = useState(false);
-  const [harnessScanDone, setHarnessScanDone] = useState(false);
-  const [foundHarnessCount, setFoundHarnessCount] = useState(0);
   const [hideNoHarnessHint, setHideNoHarnessHint] = useState(
     () => localStorage.getItem(NO_HARNESS_HINT_DISMISSED_STORAGE_KEY) === "1",
   );
@@ -718,53 +688,8 @@ export function App() {
     });
   }, [activeProjectId, worktrees, pinnedCheckout]);
 
-  // Re-read the account-wide usage snapshot a user hook writes (~/.aya/usage.json).
-  // Aya only reads the file — it never fetches usage or touches any token.
-  useEffect(() => {
-    let cancelled = false;
-    const refresh = () => {
-      void window.aya.getUsage().then((u) => {
-        if (!cancelled) {
-          setUsageAccounts((prev) => (samePollPayload(prev, u) ? prev : u));
-        }
-      });
-      void window.aya.getCodexUsage().then((u) => {
-        if (!cancelled) {
-          setCodexUsageAccounts((prev) =>
-            samePollPayload(prev, u) ? prev : u,
-          );
-        }
-      });
-      void window.aya.getGrokUsage().then((u) => {
-        if (!cancelled) {
-          setGrokUsage((prev) => (samePollPayload(prev, u) ? prev : u));
-        }
-      });
-    };
-    const stop = pollVisible(refresh, USAGE_POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      stop();
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const refresh = () => {
-      void window.aya.listMonitoredSessions().then((sessions) => {
-        if (!cancelled) {
-          setMonitoredSessions((prev) =>
-            samePollPayload(prev, sessions) ? prev : sessions,
-          );
-        }
-      });
-    };
-    const stop = pollVisible(refresh, SESSION_MONITOR_POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      stop();
-    };
-  }, []);
+  const { usageAccounts, codexUsageAccounts, grokUsage, monitoredSessions } =
+    useUsagePolling(samePollPayload);
 
   // Handle "open this directory" requests from main — fired by `aya <dir>`
   // CLI invocations and the initial argv. Subscribed once; uses a ref to
@@ -789,17 +714,7 @@ export function App() {
     });
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    void window.aya.scanHarnesses().then((found) => {
-      if (cancelled) return;
-      setFoundHarnessCount(found.length);
-      setHarnessScanDone(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { foundHarnessCount, harnessScanDone } = useHarnessScan();
 
   // Drain the open-project queue once bootstrap commits. Running this in a
   // useEffect (not inline after setDidBootstrap) guarantees React has flushed
@@ -822,35 +737,14 @@ export function App() {
     });
   }, [didBootstrap, openQueue]);
 
-  // Track fullscreen state so platform chrome can change without hiding
-  // Aya's normal project tabs and controls.
-  useEffect(() => {
-    let active = true;
-    void window.aya.isFullScreen().then((fs) => {
-      if (active) setIsFullScreen(fs);
-    });
-    const unsubscribe = window.aya.onFullScreenChange((fs) => {
-      setIsFullScreen(fs);
-    });
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    void window.aya.isMaximized().then((maximized) => {
-      if (active) setIsMaximized(maximized);
-    });
-    const unsubscribe = window.aya.onMaximizedChange((maximized) => {
-      setIsMaximized(maximized);
-    });
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
+  const {
+    isFullScreen,
+    isMaximized,
+    minimizeWindow,
+    toggleMaximizeWindow,
+    toggleFullScreenWindow,
+    closeWindow,
+  } = useWindowChrome();
 
   // GPU helper relaunch (#79): the main process signals when Chromium's GPU
   // process died and came back. Relay it as a window event so each visible
@@ -3449,19 +3343,6 @@ export function App() {
     },
     [],
   );
-  const minimizeWindow = useCallback(
-    () => void window.aya.minimizeWindow(),
-    [],
-  );
-  const toggleMaximizeWindow = useCallback(
-    () => void window.aya.toggleMaximizeWindow(),
-    [],
-  );
-  const toggleFullScreenWindow = useCallback(
-    () => void window.aya.setFullScreen(!isFullScreen),
-    [isFullScreen],
-  );
-  const closeWindow = useCallback(() => void window.aya.closeWindow(), []);
   const reorderActiveProjectTerminals = useCallback(
     (orderedIds: string[]) => {
       const slug = activeProjectIdRef.current;

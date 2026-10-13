@@ -31,6 +31,7 @@
     "src/main-mirrors.ts",
     "src/ollama-defaults.ts",
     "src/project-helpers.ts",
+    "src/poll-visible.ts",
     "src/project-reload.ts",
     "src/preset-ids.ts",
     "src/ptyEventBus.ts",
