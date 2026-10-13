@@ -148,7 +148,8 @@ export function hostHeaderAllowed(listenHost: string, hostHeader: string | undef
   } catch {
     return false;
   }
-  return hostname === "localhost" || hostname === "[::1]" || isLoopbackHost(hostname);
+  const bare = hostname.startsWith("[") ? hostname.slice(1, -1) : hostname;
+  return bare === "localhost" || isLoopbackHost(bare);
 }
 
 const CONTENT_TYPES: Record<string, string> = {

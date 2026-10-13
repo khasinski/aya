@@ -30,9 +30,15 @@ export function isWildcardHost(host: string): boolean {
   return host === IPV4_WILDCARD_HOST || host === IPV6_WILDCARD_HOST;
 }
 
-/** True for an address only this computer can reach. */
+/** True for an address only this computer can reach: 127/8, ::1, and 127/8 mapped into IPv6 (::ffff:127.0.0.1,
+ *  which Node also binds and reports as such). */
 export function isLoopbackHost(host: string): boolean {
-  return host === "::1" || (net.isIPv4(host) && host.startsWith("127."));
+  if (net.isIPv4(host)) return host.startsWith("127.");
+  if (!net.isIPv6(host)) return false;
+  // The URL parser writes every spelling of one IPv6 address the same way: ::1 for 0:0:0:0:0:0:0:1, ::ffff:7f00:1
+  // for ::ffff:127.0.0.1.
+  const canonical = new URL(`http://[${host}]`).hostname.slice(1, -1);
+  return canonical === "::1" || /^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/.test(canonical);
 }
 
 /** A listen address Settings may save: an IP literal, wildcards included. Null for anything else (a name would be

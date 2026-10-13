@@ -1528,6 +1528,15 @@ let webConfig: WebConfig | null = null;
 let webServer: WebServerHandle | null = null;
 // Last start failure (e.g. port already in use) - surfaced in Settings.
 let webServerError: string | null = null;
+// Every load, change and (re)start of Aya Web runs one after another. Settings exists in each window and in Aya
+// Web itself; two changes at once read the same config, and the later save dropped the other change, or a disable
+// that ran while an enable was still starting found no server to stop and the server came up anyway.
+let webQueue: Promise<unknown> = Promise.resolve();
+function inWebQueue<T>(change: () => Promise<T>): Promise<T> {
+  const run = webQueue.then(change);
+  webQueue = run.catch(() => undefined);
+  return run;
+}
 // Virtual PTY-event sink: fans "pty:event" out to the web clients exactly
 // like a window's webContents. Registered while the server runs.
 const webPtySink = {
@@ -2808,11 +2817,13 @@ function registerIpc(): TeamRunner {
   });
 
   // --- Aya Web (experimental) ---
-  ipcMain.handle("web:status", async () => {
-    if (!webConfig) webConfig = await loadWebConfig();
-    return webStatus();
-  });
-  ipcMain.handle("web:configure", async (_e, req: unknown) => {
+  ipcMain.handle("web:status", () =>
+    inWebQueue(async () => {
+      if (!webConfig) webConfig = await loadWebConfig();
+      return webStatus();
+    }),
+  );
+  ipcMain.handle("web:configure", (_e, req: unknown) => inWebQueue(async () => {
     if (typeof req !== "object" || req === null) {
       throw new Error("web:configure: request must be an object");
     }
@@ -2842,15 +2853,15 @@ function registerIpc(): TeamRunner {
     webConfig = next;
     await applyWebServerState();
     return webStatus();
-  });
-  ipcMain.handle("web:regenerate-password", async () => {
+  }));
+  ipcMain.handle("web:regenerate-password", () => inWebQueue(async () => {
     if (!webConfig) webConfig = await loadWebConfig();
     const next = { ...webConfig, ...webCredentials(generateWebPassword(), true) };
     await saveWebConfig(next);
     webConfig = next;
     // Existing sessions stay valid; new logins need the new password.
     return webStatus();
-  });
+  }));
   return teamRunner;
 }
 
@@ -3125,11 +3136,11 @@ app.whenReady().then(async () => {
   // Aya Web (experimental): start the browser-access server when enabled.
   // Off the critical path - a bad config or busy port must not block boot;
   // the failure lands in webServerError and shows up in Settings.
-  void loadWebConfig()
-    .then(async (config) => {
-      webConfig = config;
-      await applyWebServerState();
-    })
+  void inWebQueue(async () => {
+    // Settings may have loaded or changed the config already; that one stands.
+    if (!webConfig) webConfig = await loadWebConfig();
+    await applyWebServerState();
+  })
     .catch((err: unknown) => {
       webServerError = err instanceof Error ? err.message : String(err);
     });

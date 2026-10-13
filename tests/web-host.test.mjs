@@ -56,9 +56,31 @@ test("normalizeWebHost: Settings may save IP literals only", () => {
   }
 });
 
-test("isLoopbackHost: all of 127/8 and ::1, nothing else", () => {
-  for (const host of ["127.0.0.1", "127.1.2.3", "::1"]) assert.equal(isLoopbackHost(host), true, host);
-  for (const host of ["0.0.0.0", "::", "100.64.0.7", "localhost", "127.example", "1270.0.0.1", ""]) {
+test("isLoopbackHost: all of 127/8 and ::1 in any spelling, 127/8 mapped into IPv6, nothing else", () => {
+  for (const host of [
+    "127.0.0.1",
+    "127.1.2.3",
+    "::1",
+    "0:0:0:0:0:0:0:1",
+    "::ffff:127.0.0.1",
+    "::ffff:127.9.8.7",
+    "::FFFF:7f00:1",
+  ]) {
+    assert.equal(isLoopbackHost(host), true, host);
+  }
+  for (const host of [
+    "0.0.0.0",
+    "::",
+    "::2",
+    "::ffff:10.0.0.1",
+    "::ffff:128.0.0.1",
+    "fe80::1",
+    "100.64.0.7",
+    "localhost",
+    "127.example",
+    "1270.0.0.1",
+    "",
+  ]) {
     assert.equal(isLoopbackHost(host), false, host);
   }
 });
@@ -95,7 +117,7 @@ test("webHostOptions: this computer, all networks, then each interface", () => {
   const addresses = webInterfaceAddresses(interfaces);
   assert.deepEqual(webHostOptions({ host: "127.0.0.1", addresses }), [
     ["127.0.0.1", "This computer only (127.0.0.1)"],
-    ["0.0.0.0", "All networks (0.0.0.0)"],
+    ["0.0.0.0", "All IPv4 networks (0.0.0.0)"],
     ["192.168.1.20", "en0 (192.168.1.20)"],
     ["100.64.0.7", "utun4 (100.64.0.7)"],
   ]);
@@ -110,10 +132,12 @@ test("webHostOptions: an address no option covers is shown first, so the select 
 });
 
 test("hostHeaderAllowed: a loopback server answers loopback names only; other servers any Host", () => {
-  for (const host of ["127.0.0.1:7683", "localhost:7683", "localhost", "[::1]:7683", "127.0.0.2"]) {
+  for (const host of ["127.0.0.1:7683", "localhost:7683", "localhost", "[::1]:7683", "127.0.0.2", "[::ffff:127.0.0.1]:7683"]) {
     assert.equal(hostHeaderAllowed("127.0.0.1", host), true, host);
     assert.equal(hostHeaderAllowed("::1", host), true, host);
+    assert.equal(hostHeaderAllowed("::ffff:127.0.0.1", host), true, host);
   }
+  assert.equal(hostHeaderAllowed("::ffff:127.0.0.1", "evil.example"), false);
   for (const host of ["evil.example:7683", "evil.example", "127.0.0.1.evil.example", "localhost.evil.example", "", undefined, "a b"]) {
     assert.equal(hostHeaderAllowed("127.0.0.1", host), false, String(host));
   }
@@ -200,6 +224,17 @@ test("a server configured with the name localhost checks Host too: the check goe
   try {
     assert.equal((await request(port, { host: `evil.example:${port}`, connect: "localhost" })).status, 421);
     assert.equal((await request(port, { host: `localhost:${port}`, connect: "localhost" })).status, 200);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("a server on a mapped loopback address checks Host", async () => {
+  const { handle, cleanup } = await startTestServer({ host: "::ffff:127.0.0.1" });
+  const port = handle.port;
+  try {
+    assert.equal((await request(port, { host: `evil.example:${port}` })).status, 421);
+    assert.equal((await request(port, { host: `127.0.0.1:${port}` })).status, 200);
   } finally {
     await cleanup();
   }

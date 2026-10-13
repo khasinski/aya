@@ -6,7 +6,7 @@ import { test, expect } from "./fixtures";
 
 // Aya Web listens on this computer only unless the user picks a network in Settings. A web.json written by an
 // older Aya holds 0.0.0.0 though nobody chose it; while Aya Web is off it moves to 127.0.0.1. Neither test listens
-// on a network address: "All networks" is not clicked here, only loopback ones.
+// on a network address: "All IPv4 networks" is not clicked here, only loopback ones.
 
 const SALT = "00112233445566778899aabbccddeeff";
 // A high port nobody else in the suite binds; Aya Web's own default (7683) may be taken by a running Aya.
@@ -88,5 +88,40 @@ test.describe("a listen address picked in Settings", () => {
     expect(saved.host).toBe("127.0.0.1");
     expect(saved.hostChosen).toBe(true);
     expect((await fetch(`http://127.0.0.1:${PORT}/api/me`)).status).toBe(401);
+  });
+});
+
+test.describe("Aya Web while it is off", () => {
+  test.use({ seedOptions: { ayaHomeFiles: { "web.json": webJson({ enabled: false, host: "::1" }) } } });
+
+  test("an address chosen while off is saved, and changes at the same time are applied in turn", async ({
+    window,
+    seeded,
+  }) => {
+    const savedConfig = () => JSON.parse(readFileSync(join(seeded.ayaHome, "web.json"), "utf-8"));
+    const row = await openAyaWeb(window);
+    const select = row.getByLabel("Aya Web listen address");
+    await expect(select).toHaveValue("::1");
+    await select.selectOption("127.0.0.1");
+    await expect.poll(() => savedConfig().host).toBe("127.0.0.1");
+    expect(savedConfig()).toMatchObject({ enabled: false, hostChosen: true });
+    await expect(fetch(`http://127.0.0.1:${PORT}/api/me`)).rejects.toThrow();
+
+    // Two windows, or a window and Aya Web, may change the config at once: neither change is lost.
+    const otherPort = PORT + 1;
+    await window.evaluate(
+      (port) => Promise.all([window.aya.configureWeb({ host: "::1" }), window.aya.configureWeb({ port })]),
+      otherPort,
+    );
+    expect(savedConfig()).toMatchObject({ host: "::1", port: otherPort, enabled: false });
+
+    // A disable sent while an enable is still starting the server leaves it off.
+    const status = await window.evaluate(async () => {
+      await Promise.all([window.aya.configureWeb({ enabled: true }), window.aya.configureWeb({ enabled: false })]);
+      return window.aya.webStatus();
+    });
+    expect(status).toMatchObject({ enabled: false, running: false });
+    expect(savedConfig().enabled).toBe(false);
+    await expect(fetch(`http://[::1]:${otherPort}/api/me`)).rejects.toThrow();
   });
 });
