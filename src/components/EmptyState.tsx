@@ -48,3 +48,14 @@ export function EmptyState({
     </main>
   );
 }
+
+export function LoadingState() {
+  return (
+    <main className="aya-empty aya-empty--loading" aria-busy="true">
+      <div className="aya-empty-mark" aria-hidden="true">
+        <span />
+      </div>
+      <h1>Opening Aya...</h1>
+    </main>
+  );
+}

@@ -34,6 +34,7 @@
     "src/local-summaries.ts",
     "src/main-mirrors.ts",
     "src/ollama-defaults.ts",
+    "src/pane-grid.ts",
     "src/project-helpers.ts",
     "src/project-persistence.ts",
     "src/poll-visible.ts",

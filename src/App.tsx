@@ -19,18 +19,17 @@ import {
   sameProjectBadges,
   sameSessionRecords,
   sessionDir,
-  terminalSpawn,
   uniquePresetId,
   type MissingDirEntry,
   type NewProjectModalState,
   type PendingRepoImport,
 } from "./project-helpers";
-import { SplitResizeHandle } from "./components/SplitResizeHandle";
+import { PaneGrid } from "./components/PaneGrid";
 import { AttentionCenter } from "./components/AttentionCenter";
 import { TeamsModal } from "./components/TeamsModal";
 import { TeamAssignPrompt } from "./components/TeamRole";
 import { StatusRail } from "./components/StatusRail";
-import { EmptyState } from "./components/EmptyState";
+import { EmptyState, LoadingState } from "./components/EmptyState";
 import { MissingDirModal } from "./components/MissingDirModal";
 import { NewProjectModal } from "./components/NewProjectModal";
 import { ProjectPresetImportModal } from "./components/ProjectPresetImportModal";
@@ -39,7 +38,6 @@ import { SettingsModal } from "./components/SettingsModal";
 import { ProjectsLeftLayout } from "./components/ProjectsLeftLayout";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
-import { TerminalView } from "./components/TerminalView";
 import { TopBar } from "./components/TopBar";
 import { useAppShortcuts } from "./hooks/useAppShortcuts";
 import { useDoubleShiftSearch } from "./hooks/useDoubleShiftSearch";
@@ -94,7 +92,6 @@ import {
   type TerminalState,
   type WaitingPanes,
   type Theme,
-  type ThemeColors,
 } from "./types";
 
 // Cap on preset suggestions offered during repo preset import.
@@ -998,14 +995,7 @@ export function App() {
       data-accent="green"
     >
       {(() => {
-        const loadingNode = (
-          <main className="aya-empty aya-empty--loading" aria-busy="true">
-            <div className="aya-empty-mark" aria-hidden="true">
-              <span />
-            </div>
-            <h1>Opening Aya...</h1>
-          </main>
-        );
+        const loadingNode = <LoadingState />;
         const emptyStateNode = (
           <EmptyState
             showNoHarnessHint={
@@ -1020,177 +1010,47 @@ export function App() {
           />
         );
         const panesNode = (
-          <div className={`aya-panes ${isSplit ? "aya-panes--split" : ""}`}>
-            {paneRects.map(({ leafId, terminalId, rect }) => {
-              const terminal = terminalId ? terminals[terminalId] : null;
-              // Panes are positioned from the tree's rectangles rather than
-              // nested to match it: nesting would move each TerminalView in
-              // the React tree on every reshape and remount the terminal.
-              const paneStyle = isSplit
-                ? {
-                    left: `${rect.left}%`,
-                    top: `${rect.top}%`,
-                    width: `${rect.width}%`,
-                    height: `${rect.height}%`,
-                  }
-                : undefined;
-              if (!terminal) {
-                return (
-                  <div
-                    key={`empty-${leafId}`}
-                    style={paneStyle}
-                    className={`aya-pane aya-pane-empty ${
-                      activeLeafId === leafId ? "aya-pane-empty--active" : ""
-                    }`}
-                    onClick={() => {
-                      if (!activeProjectId) return;
-                      setActiveSplitCell(activeProjectId, leafId);
-                    }}
-                  >
-                    <div className="aya-pane-header">
-                      <span className="aya-pane-header-title">Empty pane</span>
-                    </div>
-                    <div className="aya-pane-empty-body">
-                      {assignableProjectTerminals.length === 0 ? (
-                        <div className="aya-pane-empty-hint">No hidden terminals</div>
-                      ) : (
-                        <div className="aya-pane-empty-list">
-                          {assignableProjectTerminals.map((candidate) => {
-                            const preset = getPreset(activePresets, candidate.presetId);
-                            return (
-                              <button
-                                key={candidate.id}
-                                className="aya-pane-empty-terminal"
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  assignTerminalToSplitCell(candidate.id, leafId);
-                                }}
-                              >
-                                <span
-                                  className="aya-sidebar-icon"
-                                  style={preset.color ? { color: preset.color } : undefined}
-                                >
-                                  {preset.icon}
-                                </span>
-                                <span>{candidate.name}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              }
-              const preset = getPreset(activePresets, terminal.presetId);
-              // Per-preset theme override (set in Settings) wins over the
-              // global active theme. Missing override → fall back to the
-              // default the user picked. Missing theme entirely → fallback.
-              const overrideTheme = preset.themeId
-                ? themes.find((th) => th.id === preset.themeId)
-                : null;
-              const colorsForTerminal: ThemeColors =
-                overrideTheme?.colors ?? skinThemeColors ?? activeThemeColors;
-              return (
-                <TerminalView
-                  key={terminal.id}
-                  paneStyle={paneStyle}
-                  terminal={terminal}
-                  preset={preset}
-                  {...terminalSpawn(activeProject, preset, terminal, resumePanes, homeDir)}
-                  snippets={snippets}
-                  snippetsOpen={snippetDrawerTerminalId === terminal.id}
-                  onSnippetsOpenChange={(open) =>
-                    setSnippetDrawerTerminalId(open ? terminal.id : null)
-                  }
-                  isVisible
-                  cwd={activeProject?.remote ? homeDir : terminal.cwd}
-                  lastActivity={lastActivityRef.current[terminal.id]}
-                  fontFamily={effectiveTerminalFontFamily}
-                  fontSize={fontSize}
-                  themeColors={colorsForTerminal}
-                  findOpen={findInPaneFor === terminal.id}
-                  onCloseFind={closeFindPane}
-                  historySearchEnabled={
-                    harnessSearchEnabled && !activeProject?.remote
-                  }
-                  onOpenSettings={openSettings}
-                  onCloseProject={closeProject}
-                  onRequestRestart={() => restartTerminal(terminal.id)}
-                  restartTrigger={restartTriggers[terminal.id] ?? 0}
-                  macOptionKeyMode={macOptionKeyMode}
-                  isActivePane={isSplit && activeLeafId === leafId}
-                  isActive={
-                    (isSplit ? activeLeafId === leafId : true) &&
-                    !anyOverlayOpen &&
-                    closeFocusHold?.terminalId !== terminal.id
-                  }
-                  onActivatePane={() =>
-                    activeProjectId && setActiveSplitCell(activeProjectId, leafId)
-                  }
-                  enableWebgl={!isSplit}
-                />
-              );
-            })}
-            {hiddenTerminals.map((t) => {
-              const project = findProject(projects, t.projectSlug);
-              const projectPresets =
-                project?.remote && remotePresetsByProject[t.projectSlug]
-                  ? remotePresetsByProject[t.projectSlug]
-                  : presets;
-              const preset = getPreset(projectPresets, t.presetId);
-              const overrideTheme = preset.themeId
-                ? themes.find((th) => th.id === preset.themeId)
-                : null;
-              const colorsForTerminal: ThemeColors =
-                overrideTheme?.colors ?? skinThemeColors ?? activeThemeColors;
-              return (
-                <TerminalView
-                  key={t.id}
-                  terminal={t}
-                  preset={preset}
-                  {...terminalSpawn(project, preset, t, resumePanes, homeDir)}
-                  snippets={snippets}
-                  snippetsOpen={false}
-                  onSnippetsOpenChange={ignoreSnippetsOpenChange}
-                  isVisible={false}
-                  cwd={project?.remote ? homeDir : t.cwd}
-                  lastActivity={lastActivityRef.current[t.id]}
-                  fontFamily={effectiveTerminalFontFamily}
-                  fontSize={fontSize}
-                  themeColors={colorsForTerminal}
-                  findOpen={false}
-                  onCloseFind={closeFindPane}
-                  onOpenSettings={openSettings}
-                  onCloseProject={closeProject}
-                  onRequestRestart={() => restartTerminal(t.id)}
-                  restartTrigger={restartTriggers[t.id] ?? 0}
-                  macOptionKeyMode={macOptionKeyMode}
-                  enableWebgl={false}
-                />
-              );
-            })}
-            {activeProjectId &&
-              paneDividers.map((divider) => (
-                <SplitResizeHandle
-                  key={divider.splitId}
-                  divider={divider}
-                  onResize={(ratio) => resizeSplit(activeProjectId, divider.splitId, ratio)}
-                />
-              ))}
-            {projectTerminals.length === 0 && activeProject && (
-              <div className="aya-pane">
-                <div className="aya-pane-header">
-                  <span className="aya-pane-header-title">
-                    {activeProject.remote
-                      ? `Remote project on ${activeProject.remote.label}`
-                      : "No terminals yet — launch one to get started."}
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
+          <PaneGrid
+            isSplit={isSplit}
+            paneRects={paneRects}
+            terminals={terminals}
+            activeLeafId={activeLeafId}
+            activeProjectId={activeProjectId}
+            setActiveSplitCell={setActiveSplitCell}
+            assignableProjectTerminals={assignableProjectTerminals}
+            activePresets={activePresets}
+            assignTerminalToSplitCell={assignTerminalToSplitCell}
+            themes={themes}
+            skinThemeColors={skinThemeColors}
+            activeThemeColors={activeThemeColors}
+            activeProject={activeProject}
+            resumePanes={resumePanes}
+            homeDir={homeDir}
+            snippets={snippets}
+            snippetDrawerTerminalId={snippetDrawerTerminalId}
+            setSnippetDrawerTerminalId={setSnippetDrawerTerminalId}
+            lastActivityRef={lastActivityRef}
+            effectiveTerminalFontFamily={effectiveTerminalFontFamily}
+            fontSize={fontSize}
+            findInPaneFor={findInPaneFor}
+            closeFindPane={closeFindPane}
+            harnessSearchEnabled={harnessSearchEnabled}
+            openSettings={openSettings}
+            closeProject={closeProject}
+            restartTerminal={restartTerminal}
+            restartTriggers={restartTriggers}
+            macOptionKeyMode={macOptionKeyMode}
+            anyOverlayOpen={anyOverlayOpen}
+            closeFocusHold={closeFocusHold}
+            hiddenTerminals={hiddenTerminals}
+            projects={projects}
+            remotePresetsByProject={remotePresetsByProject}
+            presets={presets}
+            ignoreSnippetsOpenChange={ignoreSnippetsOpenChange}
+            paneDividers={paneDividers}
+            resizeSplit={resizeSplit}
+            projectTerminals={projectTerminals}
+          />
         );
         const body =
           !didBootstrap ? loadingNode : isEmpty ? emptyStateNode : null;
