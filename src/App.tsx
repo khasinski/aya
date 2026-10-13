@@ -126,7 +126,12 @@ import {
   type PreferenceCodec,
 } from "./hooks/usePersistentPreference";
 import { waitingPanesOf } from "./team-view";
-import { projectBadgeLevel, type ProjectBadgeLevel } from "./attention";
+import type { ProjectBadgeLevel } from "./attention";
+import { calculateProjectBadges } from "./project-badges";
+import {
+  calculateTerminalLists,
+  calculateVisibleTerminalIds,
+} from "./terminal-visibility";
 import {
   BUILTIN_SHELL,
   WAITING_ON,
@@ -3182,62 +3187,30 @@ export function App() {
   const visibleTerminalIds = useStable(
     useMemo(
       () =>
-        splitTree
-          ? paneRects
-              .map((pane) => pane.terminalId)
-              .filter((id): id is string => !!id && !!terminals[id])
-          : activeTabId
-            ? [activeTabId]
-            : [],
+        calculateVisibleTerminalIds(splitTree, paneRects, activeTabId, terminals),
       [splitTree, paneRects, activeTabId, terminals],
     ),
     sameArrayItems,
   );
-  // spawnDeferred tabs (added by an external config edit, #4) stay out of the
-  // hidden pool: a hidden TerminalView mounts an xterm and spawns the PTY,
-  // and those tabs must not get a process until first activated.
-  //
-  // Keep all terminals for the active/recent projects warm, plus the active
-  // terminal for each other open project. That preserves fast project switches
-  // in the common working set without mounting every terminal in every project
-  // as hidden xterm DOM/WebGL state.
   const { hiddenTerminals: hiddenTerminalsNext, assignableProjectTerminals: assignableProjectTerminalsNext } =
-    useMemo(() => {
-      const visibleSet = new Set(visibleTerminalIds);
-      const mountedSet = new Set(visibleTerminalIds);
-      const warmProjectSlugSet = new Set(warmProjectSlugs);
-      for (const terminal of projectTerminals) {
-        mountedSet.add(terminal.id);
-      }
-      for (const terminal of Object.values(terminals)) {
-        if (warmProjectSlugSet.has(terminal.projectSlug)) {
-          mountedSet.add(terminal.id);
-        }
-      }
-      for (const project of projects) {
-        const terminalId =
-          activeTabByProject[project.slug] ?? project.tabs[0]?.id;
-        if (terminalId) mountedSet.add(terminalId);
-      }
-      return {
-        hiddenTerminals: Object.values(terminals).filter(
-          (terminal) =>
-            mountedSet.has(terminal.id) &&
-            !visibleSet.has(terminal.id) &&
-            !terminal.spawnDeferred,
-        ),
-        assignableProjectTerminals: projectTerminals.filter(
-          (terminal) => !visibleSet.has(terminal.id),
-        ),
-      };
-    }, [
-      visibleTerminalIds,
-      warmProjectSlugs,
-      projectTerminals,
-      terminals,
-      projects,
-      activeTabByProject,
-    ]);
+    useMemo(
+      () => calculateTerminalLists(
+        visibleTerminalIds,
+        warmProjectSlugs,
+        projectTerminals,
+        terminals,
+        projects,
+        activeTabByProject,
+      ),
+      [
+        visibleTerminalIds,
+        warmProjectSlugs,
+        projectTerminals,
+        terminals,
+        projects,
+        activeTabByProject,
+      ],
+    );
   const hiddenTerminals = useStable(hiddenTerminalsNext, sameArrayItems);
   const assignableProjectTerminals = useStable(
     assignableProjectTerminalsNext,
@@ -3265,44 +3238,15 @@ export function App() {
     projectBadges: projectBadgesNext,
     monitoredSessionsByProject: monitoredSessionsByProjectNext,
     attentionCount,
-  } = useMemo(() => {
-      const badges: Record<string, { count: number; level: ProjectBadgeLevel }> =
-        {};
-      const severityRank = { active: 0, done: 1, waiting: 2, error: 3 } as const;
-      const addProjectBadge = (
-        projectSlug: string,
-        level: ProjectBadgeLevel,
-      ) => {
-        const current = badges[projectSlug];
-        badges[projectSlug] = {
-          count: (current?.count ?? 0) + 1,
-          level:
-            !current || severityRank[level] > severityRank[current.level]
-              ? level
-              : current.level,
-        };
-      };
-      for (const t of Object.values(terminals)) {
-        const level = projectBadgeLevel(t);
-        if (!level) continue;
-        addProjectBadge(t.projectSlug, level);
-      }
-      const byProject: Record<string, MonitoredSession[]> = {};
-      for (const session of monitoredSessions) {
-        const projectSlug = findProjectSlugForSession(session, projects);
-        if (!projectSlug) continue;
-        addProjectBadge(projectSlug, session.level);
-        byProject[projectSlug] = [...(byProject[projectSlug] ?? []), session];
-      }
-      return {
-        projectBadges: badges,
-        monitoredSessionsByProject: byProject,
-        attentionCount: Object.values(badges).reduce(
-          (sum, badge) => sum + (badge.level === "active" ? 0 : badge.count),
-          0,
-        ),
-      };
-    }, [terminals, monitoredSessions, projects]);
+  } = useMemo(
+    () => calculateProjectBadges(
+      terminals,
+      monitoredSessions,
+      projects,
+      findProjectSlugForSession,
+    ),
+    [terminals, monitoredSessions, projects],
+  );
   // Badge/session records rebuild with fresh value objects every recompute;
   // compare by content so an output-only flip (same badges) doesn't hand
   // TopBar/Sidebar a new record identity.
