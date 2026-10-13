@@ -87,7 +87,9 @@ export function hostWarnings(health: Omit<HostHealth, "warnings">): string[] {
   if (health.otherHosts.length > 0) {
     const pids = health.otherHosts.map((host) => host.pid).join(", ");
     warnings.push(
-      `${health.otherHosts.length} other terminal host${health.otherHosts.length === 1 ? "" : "s"} still run (pid ${pids}): their terminals show in no window. Stop them with Stop other hosts.`,
+      health.otherHosts.length === 1
+        ? `1 other terminal host still runs (pid ${pids}): its terminals show in no window. Stop it with Stop other hosts.`
+        : `${health.otherHosts.length} other terminal hosts still run (pid ${pids}): their terminals show in no window. Stop them with Stop other hosts.`,
     );
   }
   return warnings;

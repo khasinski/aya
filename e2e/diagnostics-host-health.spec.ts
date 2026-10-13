@@ -73,11 +73,29 @@ test("a running host Aya does not use is listed, and Stop other hosts ends it", 
     const settings = await openDiagnostics(app, window);
     await settings.locator(".aya-modal-btn", { hasText: "Refresh" }).click();
     const warnings = settings.getByRole("status").filter({ hasText: "Warning:" });
-    await expect(warnings).toContainText(`1 other terminal host still run (pid ${otherPid})`);
+    await expect(warnings).toContainText(`1 other terminal host still runs (pid ${otherPid})`);
     const json = JSON.parse((await settings.locator(".aya-settings-diagnostics-json").innerText()).trim());
     expect(json.ptyHost.otherHosts.map((h: { pid: number }) => h.pid)).toEqual([otherPid]);
 
-    window.once("dialog", (dialog) => void dialog.accept());
+    // Aya asks in the main process (Aya Web reaches this too): a no stops nothing, a yes stops the host.
+    const answer = async (response: number) =>
+      app.evaluate(({ dialog }, response) => {
+        const asked: string[] = [];
+        (globalThis as { __asked?: string[] }).__asked = asked;
+        dialog.showMessageBox = (async (...args: unknown[]) => {
+          const options = args.find((a) => a && typeof a === "object" && "message" in (a as object)) as { message: string; detail?: string };
+          asked.push(`${options.message} ${options.detail ?? ""}`);
+          return { response, checkboxChecked: false };
+        }) as typeof dialog.showMessageBox;
+      }, response);
+    const asked = () => app.evaluate(() => (globalThis as { __asked?: string[] }).__asked ?? []);
+    await answer(1);
+    await settings.getByRole("button", { name: "Stop other hosts" }).click();
+    await expect.poll(asked).toHaveLength(1);
+    expect((await asked())[0]).toContain("another terminal host still running from before");
+    expect(isAlive(otherPid)).toBe(true);
+
+    await answer(0);
     await settings.getByRole("button", { name: "Stop other hosts" }).click();
     await expect.poll(() => isAlive(otherPid), { timeout: 15_000 }).toBe(false);
     await expect(settings.locator(".aya-settings-diagnostics-warnings")).toHaveCount(0);

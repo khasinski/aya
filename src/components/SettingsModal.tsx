@@ -87,8 +87,8 @@ interface Props {
   ) => Promise<void> | void;
   onImportTheme: () => Promise<Theme | null>;
   /** Restart the detached PTY host (#28). Kills running terminals, so the
-   *  button confirms first. */
-  onRestartPtyHost: () => Promise<void> | void;
+   *  button confirms first. Resolves the reason when the restart did not finish, else null. */
+  onRestartPtyHost: () => Promise<string | null> | void;
   initialTab?: SettingsTab;
 }
 
@@ -603,14 +603,8 @@ export function SettingsModal({
     }
   };
 
-  const stopOtherHosts = async (count: number) => {
-    if (
-      !confirm(
-        `Stop ${count} other terminal host${count === 1 ? "" : "s"}? Their terminals show in no window and end now.`,
-      )
-    ) {
-      return;
-    }
+  // Aya asks before stopping them (in the main process, which Aya Web reaches too).
+  const stopOtherHosts = async () => {
     try {
       await window.aya.stopOtherPtyHosts();
     } catch (err) {
@@ -2175,8 +2169,9 @@ export function SettingsModal({
                               "Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.",
                             )
                           ) {
-                            void Promise.resolve(onRestartPtyHost()).then(() => {
-                              if (diagnostics) void refreshDiagnostics();
+                            void Promise.resolve(onRestartPtyHost()).then(async (failure) => {
+                              if (diagnostics || failure) await refreshDiagnostics();
+                              if (failure) setDiagnosticsError(failure);
                             });
                           }
                         }}
@@ -2229,7 +2224,7 @@ export function SettingsModal({
                                 <button
                                   className="aya-modal-btn"
                                   type="button"
-                                  onClick={() => void stopOtherHosts(diagnostics.ptyHost.otherHosts.length)}
+                                  onClick={() => void stopOtherHosts()}
                                 >
                                   Stop other hosts
                                 </button>

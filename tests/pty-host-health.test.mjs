@@ -71,6 +71,8 @@ test("running hosts nobody uses are listed and warned about, with the button to 
   );
   assert.equal(health.otherHosts[0].startTime, "start-300");
   assert.match(health.warnings.join("\n"), /2 other terminal hosts still run \(pid 300, 301\): their terminals show in no window\. Stop them with Stop other hosts\./);
+  const one = await gatherHostHealth(deps({ liveRecords: () => [record(100), record(300)] }).d);
+  assert.match(one.warnings.join("\n"), /^1 other terminal host still runs \(pid 300\): its terminals show in no window\. Stop it with Stop other hosts\.$/m);
 });
 
 test("a stale host is warned about with its version, and drives the red dot", async () => {
@@ -99,7 +101,7 @@ test("hostWarnings lists every problem at once", () => {
     otherHosts: [{ pid: 300, startTime: "s", version: "0.12.0" }],
   });
   assert.equal(warnings.length, 3);
-  assert.match(warnings[2], /^1 other terminal host still run/);
+  assert.match(warnings[2], /^1 other terminal host still runs /);
 });
 
 test("probeSocketPid: the pid of the host answering, null when nothing does, and it never starts a host", async (t) => {

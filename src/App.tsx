@@ -2391,14 +2391,15 @@ export function App() {
   // terminals as exited rather than auto-respawning (maintainer decision:
   // leave tabs stopped; the user restarts each with Shift+Enter). Used by both
   // the stale-host banner and the Settings action.
-  const restartPtyHost = useCallback(async () => {
+  const restartPtyHost = useCallback(async (): Promise<string | null> => {
     try {
       await window.aya.restartPtyHost();
-    } catch {
-      // Restart failed (host unreachable or already dead). The IPC handler
-      // only clears the stale flag on success, so the amber icon stays and
-      // the user can retry via "Restart Aya" from the menu.
-      return;
+    } catch (err) {
+      // Restart failed or did not finish (the old host still runs, or the user cancelled). The panes are left as
+      // they are, the red dot on Restart Aya stays, and Settings shows why.
+      const reason = err instanceof Error ? err.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "") : String(err);
+      // Saying no to the confirmation is not a failure to report.
+      return reason === "restart cancelled" ? null : reason;
     }
     setTerminals((prev) => {
       const next: typeof prev = {};
@@ -2410,6 +2411,7 @@ export function App() {
       }
       return next;
     });
+    return null;
   }, []);
 
   const renameTerminal = useCallback(

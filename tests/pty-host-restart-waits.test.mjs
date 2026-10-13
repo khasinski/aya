@@ -4,6 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as net from "node:net";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -80,5 +81,58 @@ test("a request sent during restart() waits, and reaches a host started after th
   assert.notEqual(status.pid, oldPid, "the request did not reach the host being replaced");
   assertStartedAfterOldExit(oldPid, status.pid);
   await client.shutdown();
+});
+
+/** A stand-in host on the socket: answers "version" without a pid (as hosts before the registry did), takes
+ *  "shutdown", and closes its connection `closeAfterMs` later, or never when null. */
+async function fakeHost(t, closeAfterMs) {
+  const socketPath = join(TMP_AYA_HOME, "pty-host.sock");
+  rmSync(socketPath, { force: true });
+  const conns = new Set();
+  const server = net.createServer((socket) => {
+    conns.add(socket);
+    socket.setEncoding("utf8");
+    let buffer = "";
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      let end;
+      while ((end = buffer.indexOf("\n")) !== -1) {
+        const request = JSON.parse(buffer.slice(0, end));
+        buffer = buffer.slice(end + 1);
+        if (closeAfterMs === null) continue; // a hung host: answers nothing
+        const result = request.type === "version" ? { version: "0.0.1", scriptHash: "x" } : null;
+        socket.write(`${JSON.stringify({ id: request.id, ok: true, result })}\n`);
+        if (request.type === "shutdown") setTimeout(() => socket.destroy(), closeAfterMs);
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(socketPath, resolve));
+  t.after(async () => {
+    for (const socket of conns) socket.destroy();
+    await new Promise((resolve) => server.close(resolve));
+  });
+}
+
+test("a host that gives no pid is waited for until it closes the connection, as it does when it exits", async (t) => {
+  await fakeHost(t, 1_500);
+  const client = new PtyHostClient(HOST_SCRIPT);
+  await client.hostStatus();
+  const started = Date.now();
+  assert.equal(await client.restart(), true);
+  assert.ok(Date.now() - started >= 1_400, `restart() returned after ${Date.now() - started} ms, before the host closed`);
+  client.dispose();
+});
+
+test("a host that does not answer at all: restart() gives up within its bounds and says it did not finish", async (t) => {
+  await fakeHost(t, null);
+  const client = new PtyHostClient(HOST_SCRIPT);
+  // Connected first, as Aya is: hostStatus() itself never gets an answer from this host.
+  void client.hostStatus();
+  await waitFor(() => client.isConnected());
+  const started = Date.now();
+  assert.equal(await client.restart(), false);
+  const took = Date.now() - started;
+  assert.ok(took < 2_000 + 2_000 + 5_000 + 1_000, `restart() took ${took} ms`);
+  client.dispose();
   rmSync(TMP_AYA_HOME, { recursive: true, force: true });
 });

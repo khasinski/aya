@@ -289,13 +289,22 @@ export class PtyHostClient {
     } catch {
       // a host that predates the pid answer, or none: nothing to wait for
     }
+    // The host closes this connection only when its process exits: the exit signal for a host that gave no pid.
+    const socket = this.socket;
+    const closed = socket && !socket.destroyed ? new Promise<boolean>((resolve) => socket.once("close", () => resolve(true))) : null;
     try {
       await withTimeout(this.request({ id: 0, type: "shutdown" }, undefined, true), PTY_HOST_RESTART_REQUEST_TIMEOUT_MS);
     } catch {
       // old host may not honor shutdown; we still drop the socket below
     }
+    if (oldPid !== undefined) {
+      this.dropSocket();
+      return waitForExit(oldPid, PTY_HOST_EXIT_WAIT_MS);
+    }
+    if (!closed) return true;
+    const exited = await withTimeout(closed, PTY_HOST_EXIT_WAIT_MS).catch(() => false);
     this.dropSocket();
-    return oldPid === undefined ? true : waitForExit(oldPid, PTY_HOST_EXIT_WAIT_MS);
+    return exited;
   }
 
   /** Close now, not on the socket's later "close": by then a new connection may hold panes and requests. */

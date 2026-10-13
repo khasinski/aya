@@ -2100,6 +2100,12 @@ function createWindow(initial: WindowGeometry): BrowserWindow {
 async function handleStaleHost(): Promise<void> {
   try {
     let health = await hostHealth();
+    // A running host this Aya cannot reach (no socket, or another host on it): its terminals show nowhere, and the
+    // first pane would start another host and resume every agent a second time. Asked, like any stop of work.
+    if (health.otherHosts.length > 0 && (await askStopOtherHosts(health.otherHosts.length, "Aya found"))) {
+      await stopHosts(health.otherHosts.map((host) => host.pid));
+      health = await hostHealth();
+    }
     if (health.identity === null && health.stale) {
       // identity null is ALSO returned for transient client-side failures (e.g.
       // a >5s cold-spawn socket wait). Acting on it immediately would shut down
@@ -2111,7 +2117,12 @@ async function handleStaleHost(): Promise<void> {
     }
     if (!health.stale) return;
     // The update is in, but the panes' background work still runs on the old host: ask, unless Restart to update did.
-    if (!(await restartStaleHost(relaunchDeps, (text) => askRestart("Restart terminals", text), () => ptyHost.restart()))) {
+    let exited = true;
+    if (
+      !(await restartStaleHost(relaunchDeps, (text) => askRestart("Restart terminals", text), async () => {
+        exited = await ptyHost.restart();
+      }))
+    ) {
       showStaleHost(true);
       return;
     }
@@ -2119,10 +2130,11 @@ async function handleStaleHost(): Promise<void> {
     // "shutdown"), so returning is NOT proof the host died. Verify: re-probe the
     // socket; a fresh current-version host (or none yet) means success, the SAME
     // stale identity answering again means the reap failed.
-    // hostHealth() keeps the red dot: on when the reap didn't take, so the user can retry. The menu may not be
-    // installed yet (this runs before createWindow), so the caller applies the icon from the flag after
-    // installApplicationMenu.
+    // hostHealth() keeps the red dot on when the reap didn't take, and an old host still running past the wait keeps
+    // it too, so the user can retry. The menu may not be installed yet (this runs before createWindow), so the
+    // caller applies the icon from the flag after installApplicationMenu.
     await hostHealth();
+    if (!exited) showStaleHost(true);
   } catch {
     // best-effort; a host that can't be queried is handled on next use
   }
@@ -2161,6 +2173,37 @@ async function hostHealth(): Promise<HostHealth> {
   });
   showStaleHost(health.stale);
   return health;
+}
+
+/** Asks before ending the terminals of hosts this Aya does not use. */
+async function askStopOtherHosts(count: number, who: string): Promise<boolean> {
+  const hosts = count === 1 ? "another terminal host" : `${count} other terminal hosts`;
+  const options = {
+    type: "warning" as const,
+    buttons: ["Stop", "Cancel"],
+    defaultId: 1,
+    cancelId: 1,
+    message: count === 1 ? "Stop the other terminal host?" : `Stop ${count} other terminal hosts?`,
+    detail: `${who} ${hosts} still running from before. Their terminals show in no window, and Aya would resume those agents again in its own host. Stopping ends them.`,
+  };
+  const parent = focusedAyaWindow();
+  return (await (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options))).response === 0;
+}
+
+/** SIGTERM, so each host's own shutdown ends its terminals and removes its registry record; answers once they are
+ *  gone, so a refreshed report no longer lists them. */
+async function stopHosts(pids: number[]): Promise<number[]> {
+  const stopped: number[] = [];
+  for (const pid of pids) {
+    try {
+      process.kill(pid, "SIGTERM");
+      stopped.push(pid);
+    } catch {
+      // already gone
+    }
+  }
+  await Promise.all(stopped.map((pid) => waitForExit(pid, PTY_HOST_EXIT_WAIT_MS)));
+  return stopped;
 }
 
 /** The red dot on Restart Aya follows the host's state: on while it is stale, off once it is not. */
@@ -2336,26 +2379,24 @@ function registerIpc(): TeamRunner {
   ipcMain.handle("pty-host:restart", async () => {
     // Thrown, not returned: the window then leaves the panes as they are.
     if (!(await confirmLosingWork("Restarting the PTY host", "Restart"))) throw new Error("restart cancelled");
-    await ptyHost.restart();
+    const exited = await ptyHost.restart();
     // The red dot follows what the host now is: off for a current host, still on if the restart did not take.
     await hostHealth();
+    if (!exited) {
+      showStaleHost(true);
+      // Thrown, so the window does not mark its panes stopped while their processes may still run.
+      throw new Error(
+        `The old terminal host did not exit within ${PTY_HOST_EXIT_WAIT_MS / 1000} s; its terminals may still run. Settings > Diagnostics lists it, with Stop other hosts.`,
+      );
+    }
   });
   // Hosts Aya does not use and that are not on the socket, re-verified now: their terminals show in no window.
+  // Asked here, not in the window: Aya Web reaches this handler too.
   ipcMain.handle("pty-host:stop-others", async () => {
     const health = await hostHealth();
-    const stopped: number[] = [];
-    for (const host of health.otherHosts) {
-      try {
-        // SIGTERM: the host's own shutdown ends its terminals and removes its registry record.
-        process.kill(host.pid, "SIGTERM");
-        stopped.push(host.pid);
-      } catch {
-        // already gone
-      }
-    }
-    // Answer once they are gone, so a refreshed report no longer lists them.
-    await Promise.all(stopped.map((pid) => waitForExit(pid, PTY_HOST_EXIT_WAIT_MS)));
-    return stopped;
+    if (health.otherHosts.length === 0) return [];
+    if (!(await askStopOtherHosts(health.otherHosts.length, "Settings found"))) return [];
+    return stopHosts(health.otherHosts.map((host) => host.pid));
   });
 
   ipcMain.handle("projects:list", async () => listProjects());
@@ -3089,9 +3130,9 @@ app.whenReady().then(async () => {
   // (losing the user's first terminal). Fast path: no socket file, no host to
   // reconcile - don't pay a probe (which would spawn a host early) on a cold
   // start. The red fallback icon is applied after installApplicationMenu.
-  if (await pathExists(PTY_HOST_SOCKET_PATH)) {
-    await handleStaleHost();
-  }
+  // Unconditionally now: with no socket file, hostHealth() starts no host, and a host still running without its
+  // socket (2026-10-13) is exactly the one this must catch before the first pane starts another.
+  await handleStaleHost();
 
   const savedState = await loadWindowState();
   mainWindow = createWindow(savedState);
