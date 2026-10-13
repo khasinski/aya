@@ -133,11 +133,14 @@ function nextChange() {
  *  been quiet for three debounces, so a late sentinel event is not taken for the change under test. On macOS
  *  fs.watch rides on FSEvents, which starts asynchronously: on a busy machine a change made right after the
  *  watch starts is lost (8 of 16 probes, 2026-10-14), and the test then waited out its timeout. */
-async function watchIsLive(poke, setHandler) {
+async function watchIsLive(poke, setHandler, deadlineMs) {
+  const deadline = Date.now() + deadlineMs;
   let last = 0;
   setHandler(() => (last = Date.now()));
-  // Pokes further apart than the debounce, or each one would restart it and nothing would fire.
+  // Pokes further apart than the debounce, or each one would restart it and nothing would fire. The
+  // deadline ends the loop itself: a test timeout fails the test but would leave this loop writing.
   while (last === 0) {
+    if (Date.now() > deadline) throw new Error(`the watch heard no change in ${deadlineMs} ms`);
     poke();
     await sleep(OMARCHY_WATCH_DEBOUNCE_MS * 2);
   }
@@ -160,20 +163,20 @@ test("relinking the theme symlink, as omarchy-theme-set does, fires onChange", {
   let heard = () => {};
   const unwatch = watchOmarchyTheme(() => heard());
   t.after(unwatch);
-  await watchIsLive(() => writeFileSync(join(STATE_DIR, "sentinel"), String(Date.now())), (h) => (heard = h));
+  await watchIsLive(() => writeFileSync(join(STATE_DIR, "sentinel"), String(Date.now())), (h) => (heard = h), 5_000);
   const { changed, onChange } = nextChange();
   heard = onChange;
 
-  // Atomic relink: a new symlink renamed over the old one.
+  // Atomic relink: a new symlink renamed over the old one. The relink alone must fire onChange, so
+  // theme.name, which omarchy-theme-set also writes, is written only after the change was heard.
   const tmpLink = join(STATE_DIR, "theme.tmp");
   symlinkSync(join(themes, "day"), tmpLink);
   renameSync(tmpLink, THEME_DIR);
-  writeFileSync(NAME_FILE, "day\n");
 
   await changed;
-  const theme = await readOmarchyTheme();
-  assert.equal(theme.palette.accent, "#1e66f5", "the switched-to palette is what a re-read sees");
-  assert.equal(theme.name, "day");
+  assert.equal((await readOmarchyTheme()).palette.accent, "#1e66f5", "the switched-to palette is what a re-read sees");
+  writeFileSync(NAME_FILE, "day\n");
+  assert.equal((await readOmarchyTheme()).name, "day");
 });
 
 /** A stand-in for fs.watch whose events the test fires by hand. */
