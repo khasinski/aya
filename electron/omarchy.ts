@@ -107,7 +107,8 @@ export function parseOmarchyColors(
   for (const raw of toml.split(/\r?\n/)) {
     const line = raw.trim();
     // Blank and '#' lines need no guard: neither regex below can match one.
-    const header = /^\[+\s*([^\]]*?)\s*\]+$/.exec(line);
+    // A header may end in a comment: `[ui] # editor chrome` still opens [ui].
+    const header = /^\[+\s*([^\]]*?)\s*\]+\s*(?:#.*)?$/.exec(line);
     if (header) {
       section = header[1];
       continue;
