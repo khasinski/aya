@@ -109,13 +109,7 @@ import { sweepLegacyAyaProcesses } from "./pty-host-sweep";
 import { withSharedDirCommand } from "./agent-session";
 import { loadWindowState, trackWindowState } from "./window-state";
 import { WindowProjectSlices } from "./window-slices";
-import {
-  loadWebConfig,
-  saveWebConfig,
-  webInterfaceAddresses,
-  webServerUrls,
-  type WebConfig,
-} from "./web-config";
+import { loadWebConfig, saveWebConfig } from "./web-config";
 import { captureIpcHandlers } from "./ipc/web-capture";
 import { registerEnvIpc } from "./ipc/env-ipc";
 import { registerWindowIpc } from "./ipc/window-ipc";
@@ -124,9 +118,9 @@ import { registerUsageIpc } from "./ipc/usage-ipc";
 import { registerSettingsIpc } from "./ipc/settings-ipc";
 import { registerRemoteIpc } from "./ipc/remote-ipc";
 import { registerProjectsIpc } from "./ipc/projects-ipc";
-import { registerAyaWebIpc } from "./ipc/aya-web-ipc";
+import { createAyaWeb, registerAyaWebIpc } from "./ipc/aya-web-ipc";
 import { registerPtyIpc } from "./ipc/pty-ipc";
-import { startWebServer, type WebServerHandle } from "./web-server";
+import { startWebServer } from "./web-server";
 import {
   appleHelperPath,
   normalizeAyaIntelligenceConfig,
@@ -141,7 +135,6 @@ import type {
   ControlStatusUpdate,
   SpawnRequest,
   ProjectCollectionState,
-  WebServerStatus,
 } from "./types";
 
 const DEV_SERVER_URL = "http://localhost:5183";
@@ -521,84 +514,16 @@ const TEAM_QUIT_SETTLE_MS = 2_000;
 let teamsAtQuit: TeamRunner | null = null;
 let teamsStopped = false;
 
-// --- Aya Web (experimental): browser access over HTTP + WebSocket ---
-let webConfig: WebConfig | null = null;
-let webServer: WebServerHandle | null = null;
-// Last start failure (e.g. port already in use) - surfaced in Settings.
-let webServerError: string | null = null;
-// Every load, change and (re)start of Aya Web runs one after another. Settings exists in each window and in Aya
-// Web itself; two changes at once read the same config, and the later save dropped the other change, or a disable
-// that ran while an enable was still starting found no server to stop and the server came up anyway.
-let webQueue: Promise<unknown> = Promise.resolve();
-function inWebQueue<T>(change: () => Promise<T>): Promise<T> {
-  const run = webQueue.then(change);
-  webQueue = run.catch(() => undefined);
-  return run;
-}
-// Virtual PTY-event sink: fans "pty:event" out to the web clients exactly
-// like a window's webContents. Registered while the server runs.
-const webPtySink = {
-  isDestroyed: () => false,
-  send: (channel: "pty:event", event: unknown) => {
-    webServer?.broadcast(channel, event);
-  },
-};
-
-/** (Re)apply the current web config: stop the running server, then start a
- *  fresh one when enabled. Start failures are recorded, never thrown. */
-async function applyWebServerState(): Promise<void> {
-  if (webServer) {
-    ptyHost.detachWebContents(webPtySink);
-    const closing = webServer;
-    webServer = null;
-    await closing.close();
-  }
-  webServerError = null;
-  const config = webConfig;
-  if (!config || !config.enabled) return;
-  try {
-    webServer = await startWebServer({
-      appVersion: app.getVersion(),
-      isDev: IS_DEV,
-      distDir: RENDERER_DIST_DIR,
-      getConfig: () => webConfig ?? config,
-    });
-    ptyHost.attachWebContents(webPtySink);
-  } catch (err) {
-    webServerError = err instanceof Error ? err.message : String(err);
-  }
-}
-
-function webStatus(): WebServerStatus {
-  const config = webConfig;
-  if (!config) {
-    return {
-      enabled: false,
-      running: false,
-      port: 0,
-      host: "",
-      user: "",
-      generatedPassword: null,
-      urls: [],
-      addresses: [],
-      clients: 0,
-      error: webServerError,
-    };
-  }
-  const interfaces = os.networkInterfaces();
-  return {
-    enabled: config.enabled,
-    running: webServer !== null,
-    port: config.port,
-    host: config.host,
-    user: config.user,
-    generatedPassword: config.generatedPassword ?? null,
-    urls: webServerUrls(config, interfaces),
-    addresses: webInterfaceAddresses(interfaces),
-    clients: webServer?.clientCount() ?? 0,
-    error: webServerError,
-  };
-}
+const ayaWeb = createAyaWeb({
+  app,
+  ptyHost,
+  isDev: IS_DEV,
+  distDir: RENDERER_DIST_DIR,
+  loadWebConfig,
+  saveWebConfig,
+  startWebServer,
+  networkInterfaces: () => os.networkInterfaces(),
+});
 
 const applicationMenuDeps = {
   app,
@@ -1184,14 +1109,11 @@ function registerIpc(): TeamRunner {
   // --- Aya Web (experimental) ---
   registerAyaWebIpc({
     ipcMain,
-    inQueue: inWebQueue,
-    config: async () => (webConfig ??= await loadWebConfig()),
-    save: async (next) => {
-      await saveWebConfig(next);
-      webConfig = next;
-    },
-    apply: applyWebServerState,
-    status: webStatus,
+    inQueue: ayaWeb.inWebQueue,
+    config: ayaWeb.config,
+    save: ayaWeb.save,
+    apply: ayaWeb.applyWebServerState,
+    status: ayaWeb.webStatus,
   });
   return teamRunner;
 }
@@ -1233,7 +1155,7 @@ async function openFromOutside(dir: string | null): Promise<void> {
 
 /** Every window, and Aya Web's clients through a window-like sink (harness status dots must work in the browser too). */
 function statusSinks(): ControlStatusSink[] {
-  const web = { isDestroyed: () => false, webContents: { send: (channel: "control:status", update: unknown) => void webServer?.broadcast(channel, update) } };
+  const web = { isDestroyed: () => false, webContents: { send: (channel: "control:status", update: unknown) => ayaWeb.broadcast(channel, update) } };
   return [...[...ayaWindows].filter((w) => !w.isDestroyed()), web];
 }
 
@@ -1464,17 +1386,7 @@ app.whenReady().then(async () => {
     // fail on the "already exists" guard.
     createProject: (name, directory) => getOrCreateProject(name, directory),
   });
-  // Aya Web (experimental): start the browser-access server when enabled.
-  // Off the critical path - a bad config or busy port must not block boot;
-  // the failure lands in webServerError and shows up in Settings.
-  void inWebQueue(async () => {
-    // Settings may have loaded or changed the config already; that one stands.
-    if (!webConfig) webConfig = await loadWebConfig();
-    await applyWebServerState();
-  })
-    .catch((err: unknown) => {
-      webServerError = err instanceof Error ? err.message : String(err);
-    });
+  ayaWeb.start();
   installApplicationMenu(applicationMenuDeps);
 
   // The stale-host reconcile ran before the window (see above); the menu did
