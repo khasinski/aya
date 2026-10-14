@@ -14,6 +14,9 @@ input waiters. Late prepared data cannot start a cancelled child.
 The mirror sends snapshots at most once per 250 ms per writing pane. A requested snapshot
 waits for pending xterm writes to apply. It includes rendered rows, cell dim/inverse flags,
 agent/shell metadata and timestamps. Main uses the same hold/busy policy as before.
+Replay restores the current dialog to a newly mounted renderer even if main has already
+seen that edge. The host retains the original spawn request for session watchers across
+preset edits and discards it on kill, exit or shutdown.
 Composer-seen state is opaque, monotonic host metadata, updated only for the snapshot's
 generation so it cannot cross a respawn. A missing or malformed snapshot holds team
 messages (`PANE_HOLD_UNKNOWN`); busy still fails open. Snapshots are transient socket

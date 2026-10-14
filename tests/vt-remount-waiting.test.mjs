@@ -59,3 +59,22 @@ test("a window attaching to a pane: the dot says what the screen shows", async (
   }
   for (const [id] of panes) await later.kill(id);
 });
+
+test("the same main client restores current dialog state to a reloaded renderer", async (t) => {
+  const owner = new PtyHostClient(HOST_SCRIPT), first = fakeWebContents();
+  owner.attachWebContents(first);
+  t.after(() => owner.shutdown().catch(() => {}));
+  const requests = [spawnReq("reload-dialog", DIALOG), spawnReq("reload-offer", OFFER, "claude")];
+  for (const req of requests) await owner.spawn(req);
+  for (const req of requests)
+    await waitFor(() => ptyEventsFor(first, req.ptyId).some((e) => e.type === "vt-status" && e.waiting));
+  owner.detachWebContents(first);
+  const reloaded = fakeWebContents();
+  owner.attachWebContents(reloaded);
+  for (const req of requests) await owner.spawn({ ...req, attachOnly: true });
+  for (const [i, req] of requests.entries()) {
+    await waitFor(() => ptyEventsFor(reloaded, req.ptyId).some((e) => e.type === "data" && e.replay));
+    assert.deepEqual(ptyEventsFor(reloaded, req.ptyId).filter((e) => e.type === "vt-status").map((e) => [e.waiting, e.dialog]),
+      [[true, i === 1 ? HOLD_ACCOUNT_SETTING : undefined]]);
+  }
+});

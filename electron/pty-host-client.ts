@@ -373,12 +373,12 @@ export class PtyHostClient {
   private async markComposer(ptyId: string, snapshot: VtSnapshot): Promise<void> {
     await this.request({ id: 0, type: "composer-seen", ptyId, generation: snapshot.generation });
   }
-  private acceptSnapshot(ptyId: string, snapshot: VtSnapshot): void {
+  private acceptSnapshot(ptyId: string, snapshot: VtSnapshot, replay = false): void {
     const verdict = snapshotStatus(snapshot);
     if (verdict.composerSeen && !snapshot.composerSeen) void this.markComposer(ptyId, snapshot).catch(() => {});
     if (verdict.waiting === null) return;
     const old = this.screenStates.get(ptyId);
-    if (old?.generation === snapshot.generation && old.waiting === verdict.waiting && old.dialog === verdict.dialog) return;
+    if (!replay && old?.generation === snapshot.generation && old.waiting === verdict.waiting && old.dialog === verdict.dialog) return;
     this.screenStates.set(ptyId, { generation: snapshot.generation, waiting: verdict.waiting, dialog: verdict.dialog });
     if (!old && !verdict.waiting) return;
     this.sendToSinks([{ type: "vt-status", ptyId, waiting: verdict.waiting, ...(verdict.dialog ? { dialog: verdict.dialog } : {}) }]);
@@ -604,7 +604,7 @@ export class PtyHostClient {
       if ("type" in message && message.type === "snapshot") {
         flushEvents();
         const snapshot = asVtSnapshot(message.snapshot);
-        if (snapshot) this.acceptSnapshot(message.ptyId, snapshot);
+        if (snapshot) this.acceptSnapshot(message.ptyId, snapshot, message.replay === true);
         continue;
       }
       if ("type" in message && message.type === "event") {

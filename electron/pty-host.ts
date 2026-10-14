@@ -176,7 +176,7 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
       replay: async (req, pid, spawnedAt) => {
         sendLine(socket, { type: "spawned", req, pid, cwd: getPtyLaunch(req.ptyId)?.cwd ?? req.cwd, spawnedAt });
         const snapshot = await vtSnapshot(req.ptyId);
-        if (snapshot) sendLine(socket, { type: "snapshot", ptyId: req.ptyId, snapshot });
+        if (snapshot) sendLine(socket, { type: "snapshot", ptyId: req.ptyId, snapshot, replay: true });
       },
       opened: (req, pid, data) => {
         sendLine(socket, { type: "spawned", req, pid, cwd: data.launch.cwd, spawnedAt: data.spawnedAt });

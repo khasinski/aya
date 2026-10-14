@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { openVtPane, writeVtPane, paneHold, paneBusy, closeVtPane } from "../dist-electron/vt-state.js";
-import { vtSnapshot } from "../dist-electron/vt-mirror.js";
+import { vtSnapshot, markComposerSeen } from "../dist-electron/vt-mirror.js";
 import { snapshotHold, snapshotBusy } from "../dist-electron/vt-state.js";
 const rule = "─".repeat(30);
 for (const [name, screen, pasted] of [
@@ -24,3 +24,21 @@ for (const [name, screen, pasted] of [
     } finally { closeVtPane(name); }
   });
 }
+
+test("a delayed composer ack cannot cross close/reopen of the same pane id", async () => {
+  const id = "generation-race";
+  openVtPane(id, 80, 24, () => {}, "claude");
+  const old = await vtSnapshot(id);
+  closeVtPane(id);
+  openVtPane(id, 80, 24, () => {}, "claude");
+  try {
+    const current = await vtSnapshot(id);
+    assert.notEqual(current.generation, old.generation);
+    markComposerSeen(id, old.generation);
+    const afterOldAck = await vtSnapshot(id);
+    assert.equal(afterOldAck.composerSeen, false);
+    assert.equal(snapshotHold(afterOldAck).hold, "is still starting up");
+    markComposerSeen(id, current.generation);
+    assert.equal((await vtSnapshot(id)).composerSeen, true);
+  } finally { closeVtPane(id); }
+});

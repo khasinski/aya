@@ -55,6 +55,7 @@ function loadNodePty(): typeof PtyModule {
 const ptys = new Map<string, PtyModule.IPty>();
 const launches = new Map<string, PaneLaunch>();
 const spawnTimes = new Map<string, number>();
+const spawnRequests = new Map<string, SpawnRequest>();
 
 const vtStatusEvent = (ptyId: string, waiting: boolean, dialog: string | undefined): PtyEvent =>
   dialog ? { type: "vt-status", ptyId, waiting, dialog } : { type: "vt-status", ptyId, waiting };
@@ -346,7 +347,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
         replay: true,
       });
     }
-    await services.replay?.(req, ptys.get(req.ptyId)!.pid, spawnTimes.get(req.ptyId) ?? Date.now(), sink);
+    await services.replay?.(spawnRequests.get(req.ptyId) ?? req, ptys.get(req.ptyId)!.pid, spawnTimes.get(req.ptyId) ?? Date.now(), sink);
     return;
   }
   const inFlight = spawning.get(req.ptyId);
@@ -472,6 +473,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
     ptys.set(req.ptyId, child);
     launches.set(req.ptyId, launch);
     spawnTimes.set(req.ptyId, prepared.spawnedAt);
+    spawnRequests.set(req.ptyId, { ...req });
     // Replay anything typed during the spawn window, in order, before the pane
     // takes live input. Writes arriving after this point find the PTY through
     // `ptys` on the normal path, so there is no gap between flush and cleanup.
@@ -560,6 +562,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
       ptys.delete(req.ptyId);
       launches.delete(req.ptyId);
       spawnTimes.delete(req.ptyId);
+      spawnRequests.delete(req.ptyId);
       outputBuffers.delete(req.ptyId);
       oscCarryBuffers.delete(req.ptyId);
       closeVtPane(req.ptyId);
@@ -746,6 +749,7 @@ export function killPty(ptyId: string): void {
   ptys.delete(ptyId);
   launches.delete(ptyId);
   spawnTimes.delete(ptyId);
+  spawnRequests.delete(ptyId);
   // The spawn-time onExit skips its "exit" append once the map entry is gone
   // (its identity guard exists so a respawn under the same id is not wrongly
   // torn down) - so log the killed child's actual exit here, or the forensic
@@ -830,6 +834,7 @@ export function shutdownPtyChildren(
   }
   ptys.clear();
   spawnTimes.clear();
+  spawnRequests.clear();
   launches.clear();
   outputBuffers.clear();
   oscCarryBuffers.clear();
