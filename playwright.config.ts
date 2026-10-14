@@ -1,9 +1,18 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { defineConfig } from "@playwright/test";
 import {
   EXPECT_TIMEOUT_MS,
   PER_TEST_TIMEOUT_MS,
   globalTimeout,
 } from "./e2e/timeouts";
+
+// Some specs run Aya's own modules in this process, not only in the app they launch (e2e/web-mode.spec.ts serves
+// dist-electron's web server), and paths.ts reads AYA_HOME when it loads: with none set, those runs read and rewrote
+// the real ~/.aya/projects-state.json. CI's run_e2e sets a throwaway AYA_HOME; every run here gets its own too.
+// Workers inherit it, and each app a spec launches still gets the seeded AYA_HOME of its test (appEnv).
+process.env.AYA_HOME = mkdtempSync(join(tmpdir(), "aya-e2e-runner-"));
 
 // These specs touch the OS clipboard or temporarily rebuild the shared PTY
 // host script. They run one at a time after every isolated app has closed.

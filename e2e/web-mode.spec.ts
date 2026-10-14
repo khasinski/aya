@@ -23,7 +23,8 @@
 // a live Electron main process or real PTY sessions.
 
 import { test, expect, chromium, type Browser } from "@playwright/test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -38,7 +39,21 @@ const PROJECT_NAME = `aya-web-probe-${randomUUID().slice(0, 8)}`;
 
 type ServerHandle = { port: number; close: () => Promise<void> };
 
-async function startServedApp(): Promise<{ base: string; stop: () => Promise<void> }> {
+const STATE: ProjectCollectionState = {
+  version: 1,
+  order: ["web-probe"],
+  open: ["web-probe"],
+  recent: ["web-probe"],
+  activeProject: "web-probe",
+};
+
+async function startServedApp(): Promise<{ base: string; stateFile: string; stop: () => Promise<void> }> {
+  // The web server answers projects:state and projects:save-state from the projects-state.json of the AYA_HOME this
+  // process loaded paths.ts with, not from the stubs below: playwright.config.ts gives the runner a throwaway one.
+  const { PROJECTS_STATE_FILE } = await import("../dist-electron/paths.js");
+  expect(PROJECTS_STATE_FILE.startsWith(`${process.env.AYA_HOME}/`), `state file outside the runner's AYA_HOME: ${PROJECTS_STATE_FILE}`).toBe(true);
+  mkdirSync(dirname(PROJECTS_STATE_FILE), { recursive: true });
+  writeFileSync(PROJECTS_STATE_FILE, JSON.stringify(STATE));
   const { startWebServer } = await import("../dist-electron/web-server.js");
   const { webCredentials } = await import("../dist-electron/web-config.js");
   const { captureIpcHandlers } = await import("../dist-electron/ipc/web-capture.js");
@@ -66,13 +81,6 @@ async function startServedApp(): Promise<{ base: string; stop: () => Promise<voi
     "env:cwd": projectDir,
     "env:home": projectDir,
     "projects:list": [project],
-    "projects:state": {
-      version: 1,
-      order: ["web-probe"],
-      open: ["web-probe"],
-      recent: ["web-probe"],
-      activeProject: "web-probe",
-    } satisfies ProjectCollectionState,
     "presets:list": [{ id: "shell", name: "Shell", icon: "$", color: "", command: "$SHELL" }],
     "themes:list": { themes: [], activeId: null },
     "snippets:list": [],
@@ -81,9 +89,8 @@ async function startServedApp(): Promise<{ base: string; stop: () => Promise<voi
     // bridge already delivered the project. Second thing found by running it.
     "env:dir-exists": true,
     // Boot seeds a shell tab into a tabless project and persists it; without
-    // these the write path rejects after render.
+    // this the write path rejects after render.
     "projects:update": undefined,
-    "projects:save-state": undefined,
   };
   for (const [channel, value] of Object.entries(handlers)) {
     (stubIpcMain as unknown as { handle: (c: string, f: unknown) => void }).handle(
@@ -110,6 +117,7 @@ async function startServedApp(): Promise<{ base: string; stop: () => Promise<voi
 
   return {
     base: `http://127.0.0.1:${handle.port}`,
+    stateFile: PROJECTS_STATE_FILE,
     stop: async () => {
       await handle.close();
       rmSync(projectDir, { recursive: true, force: true });
@@ -118,7 +126,7 @@ async function startServedApp(): Promise<{ base: string; stop: () => Promise<voi
 }
 
 test("a browser logs in, the bridge connects, and bridge-only data reaches the screen", async () => {
-  const { base, stop } = await startServedApp();
+  const { base, stateFile, stop } = await startServedApp();
   let browser: Browser | undefined;
   try {
     browser = await chromium.launch();
@@ -142,6 +150,9 @@ test("a browser logs in, the bridge connects, and bridge-only data reaches the s
     //    it can only be on screen if browser -> websocket -> invoke -> render
     //    completed end to end.
     await expect(page.locator("body")).toContainText(PROJECT_NAME, { timeout: 20_000 });
+
+    // 5. The page saves the state it booted with into the runner's own AYA_HOME (never the real ~/.aya).
+    await expect.poll(() => (JSON.parse(readFileSync(stateFile, "utf8")) as ProjectCollectionState).open).toEqual(["web-probe"]);
   } finally {
     await browser?.close();
     await stop();
