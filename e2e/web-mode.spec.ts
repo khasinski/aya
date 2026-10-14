@@ -39,11 +39,13 @@ const PROJECT_NAME = `aya-web-probe-${randomUUID().slice(0, 8)}`;
 
 type ServerHandle = { port: number; close: () => Promise<void> };
 
+// A project that no longer exists and an empty recent list: the page's save drops the one and fills the other, so the
+// file shows a save happened.
 const STATE: ProjectCollectionState = {
   version: 1,
-  order: ["web-probe"],
-  open: ["web-probe"],
-  recent: ["web-probe"],
+  order: ["web-probe", "gone-project"],
+  open: ["web-probe", "gone-project"],
+  recent: [],
   activeProject: "web-probe",
 };
 
@@ -152,7 +154,12 @@ test("a browser logs in, the bridge connects, and bridge-only data reaches the s
     await expect(page.locator("body")).toContainText(PROJECT_NAME, { timeout: 20_000 });
 
     // 5. The page saves the state it booted with into the runner's own AYA_HOME (never the real ~/.aya).
-    await expect.poll(() => (JSON.parse(readFileSync(stateFile, "utf8")) as ProjectCollectionState).open).toEqual(["web-probe"]);
+    await expect
+      .poll(() => {
+        const saved = JSON.parse(readFileSync(stateFile, "utf8")) as ProjectCollectionState;
+        return { order: saved.order, open: saved.open, recent: saved.recent };
+      })
+      .toEqual({ order: ["web-probe"], open: ["web-probe"], recent: ["web-probe"] });
   } finally {
     await browser?.close();
     await stop();
