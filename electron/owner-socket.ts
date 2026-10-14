@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import type * as net from "node:net";
-import { SOCKET_FILE_PERMISSIONS } from "./paths";
+import { SOCKET_FILE_PERMISSIONS } from "./pty-host-paths";
 
 // Group and others get nothing on a file made while this umask is set.
 const OWNER_ONLY_UMASK = 0o077;

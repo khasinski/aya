@@ -376,7 +376,8 @@ export type SpawnFailureReason =
   | "preset-empty-command"
   | "agent-config-dir-create-failed"
   | "command-not-found"
-  | "node-pty-spawn-error";
+  | "node-pty-spawn-error"
+  | "spawn-prepare-failed";
 
 /** What a pane spawns: `command`, and `sharedDirCommand` when a peer in `peerCwds` is in the same folder. */
 export type SpawnCommand = Pick<SpawnRequest, "command" | "sharedDirCommand" | "peerCwds">;

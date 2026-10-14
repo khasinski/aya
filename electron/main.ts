@@ -710,7 +710,7 @@ app.whenReady().then(async () => {
 
   // Reap stale detached PTY hosts (and their whole process groups) that THIS
   // registry recorded - i.e. hosts from this build onward left behind by future
-  // updates. A same-build host is kept (survive-restart, #28); a version-
+  // updates. A matching PTY-content host is kept (survive-restart, #28); a
   // mismatched one is force-killed by pid (fail-closed, verified via its
   // recorded start time). Pre-registry hosts have no record and are NOT covered
   // here (Phase-2 sweep); the one currently holding the socket is handled by

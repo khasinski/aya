@@ -7,7 +7,7 @@ import {
 
 // These specs touch the OS clipboard or temporarily rebuild the shared PTY
 // host script. They run one at a time after every isolated app has closed.
-const sharedResources = /(?:^|[/\\])(?:diagnostics|machines-copy|terminal-polish|team-relaunch-stale-host)\.spec\.ts$/;
+const sharedResources = /(?:^|[/\\])(?:diagnostics|machines-copy|terminal-polish|team-relaunch-stale-host|host-version-survives)\.spec\.ts$/;
 
 // Electron end-to-end tests. Each test launches the built app (dist-electron +
 // dist) through Playwright's Electron driver against an isolated, seeded

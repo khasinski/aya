@@ -29,7 +29,7 @@ function setup(t, over = {}) {
   const log = [];
   const item = { icon: "initial" };
   const state = {
-    identity: EXPECTED, connected: true, socketExists: true, socketPid: 100,
+    expected: EXPECTED, identity: EXPECTED, connected: true, socketExists: true, socketPid: 100,
     records: [record(100)], parent: null, response: 0, restartAnswer: true,
     confirmAnswer: true, askAnswer: true, menuInstalled: true,
   };
@@ -37,7 +37,7 @@ function setup(t, over = {}) {
     app: { getVersion: () => (log.push(["app-version"]), "electron-version") },
     mainDirname,
     ptyHost: {
-      expectedHostIdentity: (version) => (log.push(["expected", version]), { ...EXPECTED, version }),
+      expectedHostIdentity: (version) => (log.push(["expected", version]), { ...state.expected, version }),
       isConnected: () => state.connected,
       hostStatus: async () => (log.push(["status"]), { identity: state.identity, ptyCount: 3, pid: 100 }),
       restart: async () => {
@@ -270,4 +270,15 @@ test("Settings re-verifies hosts after asking, skips failed signals, and waits f
   releases.get(303)(true);
   assert.deepEqual(await stopping, [302, 303], "the existing result lists signals sent, even if an exit wait times out");
   assert.equal(wired.staleHostDetected(), false);
+});
+
+test("an unreadable expected hash keeps the red dot and never asks, restarts or kills on launch", async (t) => {
+  const { actions, state, log, item } = setup(t);
+  state.expected = { ...EXPECTED, scriptHash: "unknown" };
+  state.identity = OLD;
+  state.records.push(record(200));
+  await actions.handleStaleHost();
+  assert.equal(actions.staleHostDetected(), true);
+  assert.equal(item.icon, "stale");
+  assert.deepEqual(operations(log), []);
 });

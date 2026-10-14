@@ -16,8 +16,8 @@
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { atomicTempPath, TMP_SUFFIX } from "./atomic-write";
-import { AYA_HOME, OWNER_ONLY_FILE_MODE } from "./paths";
+import { atomicTempPath, TMP_SUFFIX } from "./atomic-temp";
+import { AYA_HOME, OWNER_ONLY_FILE_MODE } from "./pty-host-paths";
 import { classifyIdentity } from "./pty-host-staleness";
 
 export interface HostRecord {
