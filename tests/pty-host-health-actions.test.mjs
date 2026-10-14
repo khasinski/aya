@@ -143,7 +143,7 @@ test("launch asks before stopping background work and a refusal keeps the host a
   assert.equal(ops.length, 1);
   assert.equal(ops[0][0], "ask-restart");
   assert.equal(ops[0][1], "Restart terminals");
-  assert.equal(ops[0][2], "Restarting the terminals for the new Aya version stops what these panes are doing (Agent: 1 monitor). An agent cannot carry its background tasks into the new process; Aya tells a team agent resumed afterwards to start again the ones it still needs.");
+  assert.equal(ops[0][2], "Restarting the terminals for Aya's updated terminal host stops what these panes are doing (Agent: 1 monitor). An agent cannot carry its background tasks into the new process; Aya tells a team agent resumed afterwards to start again the ones it still needs.");
   assert.equal(actions.staleHostDetected(), true);
 });
 
