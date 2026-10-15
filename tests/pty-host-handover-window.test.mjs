@@ -65,3 +65,20 @@ test('a wrong nonce on a prepared real host cleans escrow and immediately resume
  await client.write('wrong','after-refusal\n');await until(()=>output.includes('R:after-refusal'));
  assert.equal(await client.getPid('wrong'),pid);await assert.rejects(client.request({id:0,type:'handover-claim',nonce}),/refused/);
 }));
+
+
+test('unchanged-host reuse transfers no owner key and can announce the next update after ACK',()=>host(async(client)=>{
+ let output='';client.attachWebContents({isDestroyed:()=>false,send:(_channel,e)=>{if(e.type==='data')output+=e.chunk;}});
+ await client.spawn({ptyId:'reuse',agent:'custom',command:"stty -echo; echo READY; while IFS= read -r line; do printf 'R:%s\\n' \"$line\"; done",cwd:process.env.HOME,cols:80,rows:24});
+ await until(()=>output.includes('READY'));const pid=await client.getPid('reuse');
+ for(let attempt=0;attempt<2;attempt++){
+  const deadline=Date.now()+10000,nonce=randomBytes(32).toString('hex');
+  await client.request({id:0,type:'handover-prepare',deadline});await client.request({id:0,type:'handover-publish',display:null});await client.request({id:0,type:'handover-announce',nonce,deadline});
+  const result=await client.request({id:0,type:'handover-claim',nonce,reuse:true});
+  assert.equal(Object.hasOwn(result,'credential'),false);assert.ok(result.checkpoint);
+  await client.request({id:0,type:'handover-reuse'});
+  await client.request({id:0,type:'handover-ack-reuse'});
+  await client.write('reuse',`attempt-${attempt}\n`);await until(()=>output.includes(`R:attempt-${attempt}`));
+  assert.equal(await client.getPid('reuse'),pid);
+ }
+}));

@@ -35,7 +35,10 @@ export type PtyHostRequest =
   | { id: number; type: "handover-prepare"; deadline: number }
   | { id: number; type: "handover-publish"; display: CheckpointReceipt | null }
   | { id: number; type: "handover-cancel" }
-  | { id: number; type: "handover-claim"; nonce: string }
+  | { id: number; type: "handover-claim"; nonce: string; reuse?: boolean }
+  | { id: number; type: "handover-detach"; consented: string[] }
+  | { id: number; type: "handover-reuse" }
+  | { id: number; type: "handover-ack-reuse" }
   | { id: number; type: "version" };
 
 export type PtyHostResponse = (

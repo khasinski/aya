@@ -12,7 +12,8 @@ const {shutdownOwnerRuntime,getOwnerRuntime}=require('../dist-electron/pty-owner
 const {ownerProcessStartIdentity}=require('../dist-electron/pty-owner-client.js');
 const store=require('../dist-electron/pty-checkpoint-store.js');
 const {writeCheckpoint}=store;
-const {encodeCheckpointPayload}=require('../dist-electron/pty-checkpoint-payload.js');
+const payload=require('../dist-electron/pty-checkpoint-payload.js');
+const {encodeCheckpointPayload}=payload;
 const roots=[path.join(home,'core'),path.join(home,'display')],handover=new HostHandover(...roots);
 const peer={pid:process.pid,startIdentity:ownerProcessStartIdentity(process.pid)};
 const successor={pid:process.ppid,startIdentity:ownerProcessStartIdentity(process.ppid)};
@@ -105,6 +106,22 @@ test('host escrow lifecycle keeps peers, cancellation, reuse, expiry and raw cap
   await assert.rejects(handover.publish(peer,receipt),/aggregate decoded-byte limit/);
   await handover.abort(peer);assert.deepEqual(fs.readdirSync(roots[0]),[]);assert.deepEqual(fs.readdirSync(roots[1]),[]);
   assert.equal(core.getPtyPid('one'),pid);
+
+  // Instrument lengths at the already checksum-verified reader boundary;
+  // avoid allocating hundreds of MiB just to exercise accounting branches.
+  state=await handover.prepare(peer,Date.now()+120000);
+  const emptyDisplay=await writeCheckpoint(roots[1],[]),readParts=store.readCheckpoint;
+  store.readCheckpoint=async function*(){for(const pane of state.eligible.slice(0,2)){const data=encodeCheckpointPayload(Buffer.from('small'));Object.defineProperty(data,'length',{value:60*1024*1024});yield{id:pane.id,generation:pane.generation,data};}};
+  try{await assert.rejects(handover.publish(peer,emptyDisplay),/aggregate encoded-byte limit/);}finally{store.readCheckpoint=readParts;}
+  await handover.abort(peer);
+  const encode=payload.encodeCheckpointPayload,writeParts=store.writeCheckpoint;let selected=0;
+  payload.encodeCheckpointPayload=raw=>{const data=encode(raw);Object.defineProperty(data,'length',{value:64*1024*1024});return data;};
+  store.writeCheckpoint=async(root,parts)=>{for await(const part of parts){void part;selected++;}return writeParts(root,[]);};
+  try{
+   state=await handover.prepare(peer,Date.now()+120000);
+   assert.equal(selected,2);assert.equal(state.coreEncodedBytes,128*1024*1024);
+   assert.equal(state.ineligible.length,1);assert.match(state.ineligible[0].reason,/encoded checkpoint budget/);
+  }finally{payload.encodeCheckpointPayload=encode;store.writeCheckpoint=writeParts;await handover.abort(peer);}
 
   fs.writeFileSync(path.join(roots[0],'unknown'),'kept',{mode:0o600});
   await assert.rejects(handover.prepare(peer,Date.now()+120000),/earlier terminal checkpoint/);

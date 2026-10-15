@@ -24,6 +24,7 @@ export class HandoverWindow {
   private announcement: {nonce: Buffer; deadline: number; announcer: HandoverPeer} | null = null;
   private recipient: HandoverPeer | null = null;
   private consumed = false;
+  private reusePending = false;
   constructor(private readonly clock: () => number = Date.now) {}
   announce(nonce: string, deadline: number, peer: HandoverPeer): void {
     const now = this.clock();
@@ -31,15 +32,25 @@ export class HandoverWindow {
     if (this.consumed || this.announcement || !nonceOk(nonce) || !peerOk(peer) || !Number.isSafeInteger(deadline) || deadline <= now || deadline - now > HANDOVER_WINDOW_MS) throw new Error("Handover announcement refused");
     this.announcement = {nonce: Buffer.from(nonce, "hex"), deadline, announcer: {...peer}};
   }
-  consume(nonce: string, peer: HandoverPeer): HandoverPeer {
+  consume(nonce: string, peer: HandoverPeer, transferCredential = true): HandoverPeer {
     const announcement = this.announcement;
     this.announcement = null;
     // A wrong request closes this announced window permanently too.
     if (announcement) this.consumed = true;
     if (!announcement || this.clock() >= announcement.deadline || !nonceOk(nonce) || !peerOk(peer) ||
         !timingSafeEqual(announcement.nonce, Buffer.from(nonce, "hex"))) throw new Error("Handover credential transfer refused");
+    this.reusePending = !transferCredential;
     this.recipient = {...peer};
     return {...this.recipient};
+  }
+  assertReuse(peer: HandoverPeer): void {
+    if (!this.reusePending || this.recipient?.pid !== peer.pid || this.recipient.startIdentity !== peer.startIdentity) throw new Error("Handover reuse acknowledgement refused");
+  }
+  acknowledgeReuse(peer: HandoverPeer): void {
+    this.assertReuse(peer);
+    // No owner key was transferred. A later planned update may announce a
+    // fresh nonce only after this display-only attempt has been acknowledged.
+    this.reusePending = false; this.recipient = null; this.consumed = false;
   }
   cancel(peer: HandoverPeer): void {
     if (this.announcement && this.announcement.announcer.pid === peer.pid && this.announcement.announcer.startIdentity === peer.startIdentity) this.announcement = null;

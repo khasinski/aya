@@ -20,6 +20,7 @@ import {
 import { createPtyDataCoalescer } from "./pty-event-coalescer";
 import {
   activePtyCount,
+  restorePtyCorePane,
   getBufferedOutput,
   getPtyLaunch,
   getPtySize,
@@ -36,6 +37,8 @@ import {
 } from "./pty-core";
 import { getOwnerRuntime, currentOwnerRuntime, shutdownOwnerRuntime, setOwnerUnavailableListener, ownerHandoverCredential } from "./pty-owner-runtime";
 import { HandoverWindow, handoverPeer } from "./pty-handover-window";
+import {readHandoverBootstrap,preflightCoreHandover,readCoreHandover} from "./pty-handover-bootstrap";
+import {acknowledgeCheckpoint} from "./pty-checkpoint-store";
 import { HostHandover } from "./pty-host-handover";
 import { ownerProcessStartIdentity } from "./pty-owner-client";
 import { panes, vtSnapshot, markComposerSeen } from "./vt-mirror";
@@ -75,6 +78,11 @@ let hostShutdownStarted = false;
  *  then the registry record goes (a crash leaves it for next launch's GC) and the process exits. */
 function beginShutdown(reason: string): void {
   if (hostShutdownStarted) return; // the in-flight shutdown owns the exit
+  if (hostHandover.committed) {
+    // A quit/signal racing the committed cutover must only end this JS host.
+    // The owner is already reserved for the successor, never shut it down.
+    hostShutdownStarted=true;clearIdleTimer();closeSocket();removeHostRecord(process.pid);process.exit(0);
+  }
   hostShutdownStarted = true;
   // The reason is the single most valuable line in the lifecycle log: it
   // distinguishes "a client told this host to die" (staleness handoff) from
@@ -155,6 +163,11 @@ const sink: PtyEventSink = {
   sendPtyEvent: (event) => broadcastCoalesced.push(event),
 };
 
+function installSnapshotFanout(id:string):void {
+  const pane=panes.get(id);
+  if(pane)pane.onSnapshot=snapshot=>{for(const client of clients)sendLine(client,{type:"snapshot",ptyId:id,snapshot});};
+}
+
 function clearIdleTimer(): void {
   if (idleTimer) clearTimeout(idleTimer);
   idleTimer = null;
@@ -192,7 +205,8 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
     const alreadyTransferred = !!handoverWindow.transferredTo;
     let checkpoint;
     try {
-      handoverWindow.consume(request.nonce, peer);
+      if (request.reuse !== undefined && typeof request.reuse !== "boolean") throw new Error("Invalid handover claim");
+      handoverWindow.consume(request.nonce, peer, !request.reuse);
       checkpoint = hostHandover.active ? hostHandover.adopt(peer) : null;
     } catch (error) {
       // A failed first claim ends the attempt and resumes the old processes.
@@ -203,7 +217,20 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
     if (!currentOwnerRuntime()?.client?.isConnected()) throw new Error("The announced owner is unavailable");
     // A one-shot in-memory response on the private local socket. This value
     // never reaches broadcast, a checkpoint, process arguments or a log.
-    return {credential: ownerHandoverCredential().toString("base64"), ...(checkpoint ? {checkpoint} : {})};
+    return {...(!request.reuse ? {credential: ownerHandoverCredential().toString("base64")} : {}), ...(checkpoint ? {checkpoint} : {})};
+  }
+  if (request.type === "handover-reuse") {
+    const peer=handoverPeer(socket);handoverWindow.assertReuse(peer);return hostHandover.reuse(peer);
+  }
+  if (request.type === "handover-ack-reuse") {
+    const peer = handoverPeer(socket);
+    handoverWindow.assertReuse(peer);
+    await hostHandover.acknowledgeReuse(peer);handoverWindow.acknowledgeReuse(peer);return null;
+  }
+  if (request.type === "handover-detach") {
+    if (!Array.isArray(request.consented) || request.consented.length > 25 || request.consented.some(id => typeof id !== "string" || id.length > 128)) throw new Error("Invalid consented pane identities");
+    await hostHandover.detach(handoverPeer(socket),request.consented);
+    return null;
   }
   if (request.type === "spawn") {
     await spawnPty(request.req, sink, {
@@ -232,10 +259,7 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
       },
       opened: (req, pid, data) => {
         sendLine(socket, { type: "spawned", req, pid, cwd: data.launch.cwd, spawnedAt: data.spawnedAt });
-        const pane = panes.get(req.ptyId);
-        if (pane) pane.onSnapshot = (snapshot) => {
-          for (const client of clients) sendLine(client, { type: "snapshot", ptyId: req.ptyId, snapshot });
-        };
+        installSnapshotFanout(req.ptyId);
         return () => {};
       },
     });
@@ -388,6 +412,14 @@ function start(): void {
             if (!isPtyHostRequest(parsed)) throw new Error("invalid request");
             const result = await handle(parsed, socket, preparations);
             sendLine(socket, { id: parsed.id, ok: true, result });
+            if (parsed.type === "handover-detach") {
+              // The owner and pane processes stay alive. Exit after flushing
+              // the commit response; never enter the destructive shutdown path.
+              hostShutdownStarted = true;clearIdleTimer();closeSocket();
+              removeHostRecord(process.pid);
+              const timer=setTimeout(()=>process.exit(0),1000);timer.unref();
+              socket.end(()=>process.exit(0));
+            }
           } catch (err) {
             sendLine(socket, {
               id: requestId,
@@ -442,6 +474,16 @@ keepHostOnUncaught(ptyLog);
 setOwnerUnavailableListener(owner => {
   for (const id of owner.record.panes.map(p => p.id)) broadcast({ type: "disconnected", ptyId: id });
 });
-void getOwnerRuntime().then(() => {
+void (async()=>{
+  const bootstrap=process.env.AYA_PTY_CHECKPOINT_FD === "4" ? await readHandoverBootstrap(4) : null;
+  delete process.env.AYA_PTY_CHECKPOINT_FD;
+  if(bootstrap)await preflightCoreHandover(bootstrap.core);
+  await getOwnerRuntime();
+  if(bootstrap){
+    for await(const pane of readCoreHandover(bootstrap.core)){
+      await restorePtyCorePane(pane,sink);installSnapshotFanout(pane.id);
+    }
+    await acknowledgeCheckpoint(PTY_HANDOVER_CORE_DIRECTORY,bootstrap.core);
+  }
   start();
-}).catch(error => { ptyLog.append("owner-start-failed", { error: String(error) }); process.exitCode = 1; });
+})().catch(error => { ptyLog.append("owner-start-failed", { error: String(error) }); process.exitCode = 1; });

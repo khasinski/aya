@@ -5,7 +5,7 @@ import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {randomBytes} from 'node:crypto';
 import {cleanupNativeOwner} from './helpers/pty-host.mjs';
-for(const variant of ['osc','vt','utf8','abort','exit-gap','prepare-abort','prepare-success','mount-now','mount-late','mount-trim','exit-late'])test(`real PTY core handover preserves ${variant} and gates every producer`,{timeout:20000},async()=>{
+for(const variant of ['osc','vt','utf8','abort','exit-gap','prepare-abort','prepare-success','mount-now','mount-late','mount-trim','mount-empty','exit-late'])test(`real PTY core handover preserves ${variant} and gates every producer`,{timeout:20000},async()=>{
  fs.mkdirSync('test-results',{recursive:true});const home=fs.mkdtempSync(path.resolve('test-results/core-handover-')),key=randomBytes(32),children=[];
  async function reader(mode){
   const child=spawn(process.execPath,['tests/helpers/pty-core-handover.cjs',mode,variant==='abort'?'vt':variant],{env:{...process.env,ELECTRON_RUN_AS_NODE:'1',AYA_HOME:home,HOME:home,AYA_PTY_OWNER_FD:'3'},stdio:['ignore','ignore','pipe','pipe','ipc']});children.push(child);

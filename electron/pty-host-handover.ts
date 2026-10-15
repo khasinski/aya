@@ -44,6 +44,7 @@ async function emptyPrivateRoot(root: string): Promise<void> {
 export class HostHandover {
   private pending: Pending | null = null;
   constructor(private readonly coreRoot: string, private readonly displayRoot: string) {}
+  get committed(): boolean {return this.pending?.phase === "committing" || this.pending?.phase === "detached";}
   get active(): boolean {return !!this.pending && this.pending.phase !== "blocked";}
   private own(peer: HandoverPeer): Pending {
     const p = this.pending;

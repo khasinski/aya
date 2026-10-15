@@ -49,3 +49,15 @@ test('kernel Unix peer identity is the connected child, with its real start iden
   assert.notEqual(handoverPeer(socket).pid,process.pid);
  }finally{socket?.destroy();if(child){const exited=once(child,'exit');child.kill('SIGKILL');await exited;}await new Promise(resolve=>server.close(resolve));}
 }));
+
+
+test('display-only reuse rearms only after acknowledgement and never rearms a key transfer',()=>{
+ const w=new HandoverWindow(()=>1000);w.announce(nonce,2000,announcer);w.consume(nonce,recipient,false);
+ assert.throws(()=>w.announce('b'.repeat(64),2000,announcer),/refused/);
+ assert.throws(()=>w.acknowledgeReuse(announcer),/refused/);
+ w.acknowledgeReuse(recipient);w.announce('b'.repeat(64),2000,announcer);
+ assert.throws(()=>w.consume(nonce,recipient,false),/refused/);
+ assert.throws(()=>w.acknowledgeReuse(recipient),/refused/);
+ const transferred=new HandoverWindow(()=>1000);transferred.announce(nonce,2000,announcer);transferred.consume(nonce,recipient);
+ assert.throws(()=>transferred.acknowledgeReuse(recipient),/refused/);
+});

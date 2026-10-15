@@ -101,6 +101,12 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
    const mountSink={isDestroyed:()=>false,sendPtyEvent:e=>mountEvents.push(e)};
    const request={...checkpoint.request,attachOnly:true,replayAfter:{generation:checkpoint.vt.metadata.generation,offset:checkpoint.output.end}};
    const services={prepare:()=>{throw Error('restored pane must never respawn');}};
+   if(scenario==='mount-empty'){
+    await core.spawnPty(request,mountSink,services);
+    assert.deepEqual(mountEvents.filter(e=>e.type==='data'),[{type:'data',ptyId:'core',chunk:'',replay:true,reset:false}]);
+    fs.writeFileSync(path.join(home,'release'),'go');await core.writePty('core','quit\n');await waitFor(()=>exits.length===1);
+    await shutdownOwnerRuntime();process.send({pid:expected.pid,ownerPid:expected.ownerPid,exits:1},()=>process.exit(0));return;
+   }
    fs.writeFileSync(path.join(home,'release'),'go');
    if(scenario==='exit-late'){
     await waitFor(()=>!core.getPtyPid('core'));
