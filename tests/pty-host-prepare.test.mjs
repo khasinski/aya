@@ -84,4 +84,16 @@ test("a host restart while main prepares cannot launch a child in the old host",
   g.release();
   assert.equal(await client.getPid("restart"), null);
 });
+test("unknown or inherited request names and nonnumeric preparation ids get clean errors", async (t) => {
+  const client = new PtyHostClient(host);
+  t.after(() => client.shutdown().catch(() => {}));
+  for (const name of ["unknown", "constructor", "__proto__", "toString"]) {
+    await assert.rejects(client.request({ id: 0, type: name }), { message: "unknown request" });
+    await assert.rejects(client.request({ id: 0, type: "prepared", prepareId: name, data: {} }),
+      { message: "invalid preparation id" });
+  }
+  // Expired numeric replies remain harmless, and rejected requests do not break the host connection.
+  await client.request({ id: 0, type: "prepared", prepareId: 999999, data: {} });
+  assert.ok((await client.hostStatus()).pid);
+});
 test.after(() => rmSync(root, { force: true, recursive: true }));

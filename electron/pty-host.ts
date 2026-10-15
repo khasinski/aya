@@ -151,7 +151,11 @@ function clearIdleTimer(): void {
   idleTimer = null;
 }
 
-async function handle(request: PtyHostRequest, socket: net.Socket, preparations: Map<number, (data: PreparedSpawn) => void>): Promise<unknown> {
+interface Preparation {
+  complete(data: PreparedSpawn): void;
+}
+
+async function handle(request: PtyHostRequest, socket: net.Socket, preparations: Map<number, Preparation>): Promise<unknown> {
   clearIdleTimer();
   if (request.type === "spawn") {
     await spawnPty(request.req, sink, {
@@ -167,7 +171,7 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
         const cancelled = () => done({ failure: { reason: "spawn-prepare-failed", message: "Terminal preparation was cancelled." } });
         const disconnected = () => done({ failure: { reason: "spawn-prepare-failed", message: "Aya disconnected while preparing this terminal. Restart the terminal to try again." } });
         const timer = setTimeout(() => done({ failure: { reason: "spawn-prepare-failed", message: "Preparing this terminal timed out. Restart the terminal to try again." } }), PREPARE_TIMEOUT_MS);
-        preparations.set(request.id, done);
+        preparations.set(request.id, { complete: done });
         socket.once("close", disconnected);
         signal.addEventListener("abort", cancelled, { once: true });
         if (socket.destroyed) disconnected();
@@ -222,7 +226,13 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
   }
   if (request.type === "snapshot") return isPtyStarting(request.ptyId) ? "starting" : vtSnapshot(request.ptyId);
   if (request.type === "composer-seen") { markComposerSeen(request.ptyId, request.generation); return null; }
-  if (request.type === "prepared") { preparations.get(request.prepareId)?.(request.data); return null; }
+  if (request.type === "prepared") {
+    if (!Number.isSafeInteger(request.prepareId) || request.prepareId <= 0) throw new Error("invalid preparation id");
+    const pending = preparations.get(request.prepareId);
+    // Only a host-created entry's known own method can complete this flight. A late reply is a no-op.
+    if (pending && Object.hasOwn(pending, "complete")) pending.complete(request.data);
+    return null;
+  }
   if (request.type === "launch") {
     return getPtyLaunch(request.ptyId) ?? (isPtyStarting(request.ptyId) ? LAUNCH_STARTING : null);
   }
@@ -289,7 +299,7 @@ function start(): void {
     // `exit` lines with a signal instead).
     ptyLog.append("client-connect", { clients: clients.size });
     let buffer = "";
-    const preparations = new Map<number, (data: PreparedSpawn) => void>();
+    const preparations = new Map<number, Preparation>();
     socket.setEncoding("utf8");
     // A client that drops while the host writes to it (EPIPE, ECONNRESET) raises an error on its socket. Without
     // a listener that error is uncaught and ends the host with every pane of every window; the client is simply
