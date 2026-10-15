@@ -97,6 +97,16 @@ export function hostRuntimeFiles(dir: string, entry: string): { name: string; fi
       if (!m[1].startsWith(".") && !builtin.has(m[1])) packages.add(m[1]);
     }
   }
+  if (hostModuleFiles(dir, entry).includes("pty-owner-client.js")) {
+    const unpacked = dir.replace(/([/\\])app\.asar([/\\])/, "$1app.asar.unpacked$2");
+    for (const name of ["pty-owner-bridge.node", "aya-pty-owner"]) {
+      // The bridge runs in JS; owner byte changes require the confirmed native
+      // restart in B2. Neither is allowed to disappear from the content check.
+      const file = path.join(unpacked, name);
+      if (!fs.statSync(file).isFile()) throw new Error(`Missing PTY owner runtime: ${name}`);
+      result.set(name, file);
+    }
+  }
   const requireFromHost = createRequire(path.resolve(dir, entry));
   function tree(root: string, rel: string, label: string): void {
     const target = path.join(root, rel);

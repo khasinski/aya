@@ -4,6 +4,7 @@ import { HOLD_NOT_RUNNING, HOLD_STARTING } from "./pane-holds";
 import { getProcessCwd } from "./process-cwd";
 import type { VtSnapshot } from "./vt-mirror";
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
@@ -130,6 +131,10 @@ export async function waitForExit(pid: number, ms: number): Promise<boolean> {
 
 export class PtyHostClient {
   private socket: net.Socket | null = null;
+  private readonly ownerSecret = randomBytes(32);
+  private ownerBacked = false;
+  private lastHostPid: number | undefined;
+  private lostOwned = new Set<string>();
   private connectPromise: Promise<void> | null = null;
   private nextId = 1;
   private pending = new Map<number, PendingRequest>();
@@ -238,8 +243,12 @@ export class PtyHostClient {
 
   async shutdown(): Promise<void> {
     this.hostAsked = true;
+    // Issue the authorized shutdown before the first await. dispose() may run
+    // immediately afterwards; it must not suppress this already-issued request.
     await this.request({ id: 0, type: "shutdown" });
+    const pid = this.lastHostPid;
     this.dropSocket();
+    if (pid && !(await waitForExit(pid, PTY_HOST_EXIT_WAIT_MS))) throw new Error("The terminal host did not finish shutting down");
   }
 
   /** Running host's identity + live PTY count + its pid (hosts from the
@@ -250,6 +259,7 @@ export class PtyHostClient {
     identity: HostIdentity | null;
     ptyCount: number;
     pid?: number;
+    owner?: { pid: number; incompatible: boolean; disconnected: string[] };
   }> {
     try {
       const result = await this.request({ id: 0, type: "version" });
@@ -259,6 +269,7 @@ export class PtyHostClient {
         identity: asHostIdentity(result),
         ptyCount: typeof obj.ptyCount === "number" ? obj.ptyCount : 0,
         pid: typeof obj.pid === "number" ? obj.pid : undefined,
+        ...(obj.owner && typeof obj.owner === "object" ? { owner: obj.owner as { pid: number; incompatible: boolean; disconnected: string[] } } : {}),
       };
     } catch {
       return { identity: null, ptyCount: 0 };
@@ -364,6 +375,10 @@ export class PtyHostClient {
   }
 
   /** A fresh applied mirror, evaluated by main; unknown still fails open. */
+  async paneDisconnected(ptyId: string): Promise<boolean> {
+    try { return (await this.request({ id: 0, type: "snapshot", ptyId })) === "disconnected"; }
+    catch { return this.lostOwned.has(ptyId); }
+  }
   async paneBusy(ptyId: string): Promise<boolean> {
     try {
       const snapshot = asVtSnapshot(await this.request({ id: 0, type: "snapshot", ptyId }));
@@ -374,13 +389,16 @@ export class PtyHostClient {
     await this.request({ id: 0, type: "composer-seen", ptyId, generation: snapshot.generation });
   }
   private acceptSnapshot(ptyId: string, snapshot: VtSnapshot, replay = false): void {
+    if (this.lostOwned.has(ptyId)) return;
     const verdict = snapshotStatus(snapshot);
     if (verdict.composerSeen && !snapshot.composerSeen) void this.markComposer(ptyId, snapshot).catch(() => {});
     if (verdict.waiting === null) return;
     const old = this.screenStates.get(ptyId);
     if (!replay && old?.generation === snapshot.generation && old.waiting === verdict.waiting && old.dialog === verdict.dialog) return;
     this.screenStates.set(ptyId, { generation: snapshot.generation, waiting: verdict.waiting, dialog: verdict.dialog });
-    if (!old && !verdict.waiting) return;
+    // A fresh sink already starts without a waiting bell. A live non-waiting
+    // snapshot can precede its explicit replay; that must not invent an edge.
+    if (!old?.waiting && !verdict.waiting) return;
     this.sendToSinks([{ type: "vt-status", ptyId, waiting: verdict.waiting, ...(verdict.dialog ? { dialog: verdict.dialog } : {}) }]);
   }
 
@@ -487,6 +505,8 @@ export class PtyHostClient {
       socket.once("connect", () => {
         this.socket = socket;
         this.hostAsked = false;
+        this.ownerBacked = false;
+        this.lastHostPid = undefined;
         this.buffer = "";
         socket.on("data", (chunk) => this.onData(String(chunk)));
         socket.on("close", () => {
@@ -511,12 +531,15 @@ export class PtyHostClient {
     try {
       const child = spawn(process.execPath, [this.hostScript], {
         detached: true,
-        stdio: ["ignore", "ignore", stderr],
+        stdio: ["ignore", "ignore", stderr, "pipe"],
         env: {
           ...process.env,
           [RUN_AS_NODE_VAR]: RUN_AS_NODE_VALUE,
+          AYA_PTY_OWNER_FD: "3",
         },
       });
+      const secretPipe = child.stdio[3] as NodeJS.WritableStream;
+      secretPipe.on("error", () => {}); secretPipe.end(this.ownerSecret);
       child.unref();
     } finally {
       // The host holds its own copy of the descriptor.
@@ -595,6 +618,7 @@ export class PtyHostClient {
       }
       if ("type" in message && message.type === "spawned") {
         flushEvents();
+        this.lostOwned.delete(message.req.ptyId);
         this.sessionWatches.get(message.req.ptyId)?.();
         this.sessionWatches.set(message.req.ptyId,
           watchAgentSession(message.req, message.cwd, message.pid, message.spawnedAt, (sessionId) =>
@@ -608,6 +632,7 @@ export class PtyHostClient {
         continue;
       }
       if ("type" in message && message.type === "event") {
+        if (message.event.type === "disconnected") this.lostOwned.add(message.event.ptyId);
         if (PANE_ENDED_EVENTS.has(message.event.type)) {
           this.live.delete(message.event.ptyId);
           this.sessionWatches.get(message.event.ptyId)?.();
@@ -626,6 +651,9 @@ export class PtyHostClient {
   }
 
   private onResponse(message: PtyHostResponse): void {
+    if (message.ownerBacked) this.ownerBacked = true;
+    const reportedPid = message.hostPid ?? (message.ok && message.result && typeof message.result === "object" ? (message.result as { pid?: unknown }).pid : undefined);
+    if (typeof reportedPid === "number" && Number.isSafeInteger(reportedPid) && reportedPid > 1) this.lastHostPid = reportedPid;
     const pending = this.pending.get(message.id);
     if (!pending) return;
     this.pending.delete(message.id);
@@ -656,9 +684,10 @@ export class PtyHostClient {
     this.screenStates.clear();
     // Not gated on dispose: that is the quit, whose closing windows keep a no-session in memory only.
     const lost = this.hostAsked ? [] : [...this.live];
+    if (this.ownerBacked) for (const id of lost) this.lostOwned.add(id);
     this.live.clear();
     // The host took its panes down without a word: stopped and restartable, as for a pane it has no session for.
-    this.sendToSinks(lost.map((ptyId) => ({ type: "no-session", ptyId })));
+    this.sendToSinks(lost.map((ptyId) => ({ type: this.ownerBacked ? "disconnected" : "no-session", ptyId })));
     for (const [, pending] of this.pending) {
       pending.reject(new Error("PTY host disconnected"));
     }

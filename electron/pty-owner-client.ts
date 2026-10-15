@@ -1,4 +1,4 @@
-// B1: explicit opt-in API for tests/package smoke. No Aya startup/spawn path calls it.
+// Typed transport for the stable native PTY owner.
 import path from "node:path";
 
 export const OWNER_PROTOCOL = 1;
@@ -80,6 +80,10 @@ export class PtyOwnerClient {
   private serial = 0;
   private queue: Promise<unknown> = Promise.resolve();
   private closed = false;
+  private pending = new Map<number, { type: number; resolve(reply: { data: Buffer; fd: number }): void; reject(error: Error): void; timer: NodeJS.Timeout }>();
+  private exitListeners = new Set<(pane: OwnerPane) => void>();
+  private closeListeners = new Set<() => void>();
+  private exitWaiters = new Set<{ resolve(pane: OwnerPane): void; reject(error: Error): void; timer: NodeJS.Timeout }>();
   private masters = new Set<number>();
   private exits: OwnerPane[] = [];
   private seenExits = new Set<string>();
@@ -89,6 +93,7 @@ export class PtyOwnerClient {
     // Loaded only on explicit connect; importing this file cannot launch or contact an owner.
     const native = require(bridgePath) as Bridge;
     const client = new PtyOwnerClient(native, native.connect(socketPath));
+    void client.pump();
     try {
       const reply = await client.request(ownerMessages.hello, token);
       const decoder = new Decoder(reply.data); client.buildId = decoder.string(); client.ownerPid = decoder.u32(); client.instanceId = decoder.string(); decoder.done();
@@ -105,10 +110,7 @@ export class PtyOwnerClient {
   private async receive(timeoutMs = 5000): Promise<{ type: number; id: number; data: Buffer; fd: number }> {
     let received: { data: Buffer; fd: number };
     try { received = await this.native.receive(this.fd, timeoutMs); }
-    catch (error) {
-      if ((error as { code?: string }).code !== "ETIMEDOUT") this.close();
-      throw error;
-    }
+    catch (error) { throw error; }
     const b = received.data;
     if (b.length < HEADER || b.readUInt32BE(0) !== MAGIC || b.readUInt16BE(4) !== OWNER_PROTOCOL || b.readUInt32BE(12) !== b.length - HEADER) {
       if (received.fd >= 0) this.native.close(received.fd);
@@ -121,37 +123,62 @@ export class PtyOwnerClient {
     if (reply.fd >= 0) { this.native.close(reply.fd); throw new Error("Exit event carried a descriptor"); }
     const decoder = new Decoder(reply.data), pane = decoder.pane(); decoder.done();
     const key = `${pane.id}:${pane.generation}:${pane.event}`;
-    if (!this.seenExits.has(key)) { this.seenExits.add(key); this.exits.push(pane); }
+    if (!this.seenExits.has(key)) {
+      this.seenExits.add(key);
+      const waiter = this.exitWaiters.values().next().value;
+      if (waiter) { this.exitWaiters.delete(waiter); clearTimeout(waiter.timer); waiter.resolve(pane); }
+      else this.exits.push(pane);
+      for (const listener of this.exitListeners) listener(pane);
+    }
     return true;
   }
+  private async pump(): Promise<void> {
+    while (!this.closed) {
+      try {
+        const reply = await this.receive(250);
+        if (this.closed) { if (reply.fd >= 0) this.native.close(reply.fd); return; }
+        if (this.acceptExit(reply)) continue;
+        const pending = this.pending.get(reply.id);
+        if (!pending || (reply.type !== OK && reply.type !== ERROR)) {
+          if (reply.fd >= 0) this.native.close(reply.fd);
+          throw new Error("Unexpected owner reply");
+        }
+        if (reply.type === ERROR) {
+          if (reply.fd >= 0) this.native.close(reply.fd);
+          const d = new Decoder(reply.data), message = d.string(); d.done();
+          this.pending.delete(reply.id); clearTimeout(pending.timer);
+          pending.reject(Object.assign(new Error(message), { code: "OWNER_REJECTED" })); continue;
+        }
+        if (reply.fd >= 0) {
+          if (pending.type !== ownerMessages.spawn && pending.type !== ownerMessages.attach) {
+            this.native.close(reply.fd); throw new Error("Unexpected owner descriptor");
+          }
+          this.masters.add(reply.fd);
+        }
+        this.pending.delete(reply.id); clearTimeout(pending.timer); pending.resolve(reply);
+      } catch (error) {
+        // An idle read timeout consumed no frame. Partial frames are fatal:
+        // the native bridge reports those as protocol errors below.
+        if ((error as { code?: string }).code === "ETIMEDOUT" && !this.closed) continue;
+        this.close();
+      }
+    }
+  }
   private request(type: number, payload: Buffer = Buffer.alloc(0)): Promise<{ data: Buffer; fd: number }> {
-    return this.exclusive(async () => {
+    return this.exclusive(() => {
       if (payload.length > OWNER_MAX_FRAME || this.serial === 0xffffffff) throw new Error("Owner request limit exceeded");
       const id = ++this.serial, frame = Buffer.alloc(HEADER + payload.length);
       frame.writeUInt32BE(MAGIC); frame.writeUInt16BE(OWNER_PROTOCOL, 4); frame.writeUInt16BE(type, 6);
       frame.writeUInt32BE(id, 8); frame.writeUInt32BE(payload.length, 12); payload.copy(frame, HEADER);
-      try { this.native.send(this.fd, frame); } catch (error) { this.close(); throw error; }
-      for (;;) {
-        const reply = await this.receive();
-        if (this.acceptExit(reply)) continue;
-        if (reply.id !== id || (reply.type !== OK && reply.type !== ERROR)) {
-          if (reply.fd >= 0) this.native.close(reply.fd);
-          this.close(); throw new Error("Unexpected owner reply");
-        }
-        if (reply.type === ERROR) {
-          if (reply.fd >= 0) this.native.close(reply.fd);
-          const d = new Decoder(reply.data), message = d.string(); d.done(); throw new Error(message);
-        }
-        if (reply.fd >= 0) {
-          if (type !== ownerMessages.spawn && type !== ownerMessages.attach) {
-            this.native.close(reply.fd); this.close(); throw new Error("Unexpected owner descriptor");
-          }
-          this.masters.add(reply.fd);
-        }
-        return reply;
-      }
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => this.close(), 5000);
+        this.pending.set(id, { type, resolve, reject, timer });
+        try { this.native.send(this.fd, frame); } catch { this.close(); }
+      });
     });
   }
+  onExit(listener: (pane: OwnerPane) => void): () => void { this.exitListeners.add(listener); return () => this.exitListeners.delete(listener); }
+  onClose(listener: () => void): () => void { this.closeListeners.add(listener); return () => this.closeListeners.delete(listener); }
   private panePayload(pane: Pick<OwnerPane, "id" | "generation">): Encoder { return new Encoder().string(pane.id).u32(pane.generation); }
   async spawn(spawn: OwnerSpawn): Promise<OwnerPane & { fd: number }> {
     const p = new Encoder().string(spawn.id).u32(spawn.cols).u32(spawn.rows).string(spawn.cwd).string(spawn.command)
@@ -174,7 +201,10 @@ export class PtyOwnerClient {
   }
   async resize(pane: OwnerPane, cols: number, rows: number): Promise<void> { await this.request(ownerMessages.resize, this.panePayload(pane).u32(cols).u32(rows).bytes()); }
   async kill(pane: OwnerPane, signal: number): Promise<void> { await this.request(ownerMessages.kill, this.panePayload(pane).u32(signal).bytes()); }
-  async ackExit(pane: OwnerPane): Promise<void> { await this.request(ownerMessages.ackExit, this.panePayload(pane).u32(pane.event).bytes()); }
+  async ackExit(pane: OwnerPane): Promise<void> {
+    await this.request(ownerMessages.ackExit, this.panePayload(pane).u32(pane.event).bytes());
+    this.seenExits.delete(`${pane.id}:${pane.generation}:${pane.event}`);
+  }
   async shutdown(): Promise<void> {
     for (const fd of [...this.masters]) this.release(fd);
     await this.request(ownerMessages.shutdown); this.close();
@@ -186,20 +216,28 @@ export class PtyOwnerClient {
   }
   takeExits(): OwnerPane[] { return this.exits.splice(0); }
   nextExit(timeoutMs = 5000): Promise<OwnerPane> {
-    return this.exclusive(async () => {
-      while (!this.exits.length) {
-        const reply = await this.receive(timeoutMs);
-        if (!this.acceptExit(reply)) { if (reply.fd >= 0) this.native.close(reply.fd); this.close(); throw new Error("Expected exit event"); }
-      }
-      return this.exits.shift()!;
+    const pane = this.exits.shift();
+    if (pane) return Promise.resolve(pane);
+    if (this.closed) return Promise.reject(new Error("Owner connection closed"));
+    return new Promise((resolve, reject) => {
+      const waiter = { resolve, reject, timer: setTimeout(() => {
+        this.exitWaiters.delete(waiter); reject(Object.assign(new Error("Owner exit timed out"), { code: "ETIMEDOUT" }));
+      }, timeoutMs) };
+      this.exitWaiters.add(waiter);
     });
   }
+  isConnected(): boolean { return !this.closed; }
   readReady(fd: number): number { if (!this.masters.has(fd)) throw new Error("Unknown master"); return this.native.readReady(fd); }
   release(fd: number): void { if (this.masters.delete(fd)) this.native.close(fd); }
   /** Transfer FD ownership to a stream/adapter, which must close it exactly once. */
   takeMaster(fd: number): number { if (!this.masters.delete(fd)) throw new Error("Unknown master"); return fd; }
   close(): void {
     if (this.closed) return; this.closed = true;
+    for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error("Owner connection closed")); }
+    this.pending.clear();
+    for (const waiter of this.exitWaiters) { clearTimeout(waiter.timer); waiter.reject(new Error("Owner connection closed")); }
+    this.exitWaiters.clear();
+    for (const listener of this.closeListeners) listener();
     for (const fd of this.masters) this.native.close(fd);
     this.masters.clear(); this.native.close(this.fd, true);
   }

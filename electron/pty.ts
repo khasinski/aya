@@ -20,5 +20,5 @@ export function spawnPty(req: SpawnRequest, sink: PtyEventSink): Promise<void> {
 }
 export async function getPtyCwd(id: string): Promise<string | null> {
   const pid = getPtyPid(id);
-  return pid === null ? null : getProcessCwd(pid);
+  return typeof pid === "number" ? getProcessCwd(pid) : null;
 }

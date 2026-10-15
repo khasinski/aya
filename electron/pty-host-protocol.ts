@@ -32,9 +32,9 @@ export type PtyHostRequest =
   | { id: number; type: "prepared"; prepareId: number; data: PreparedSpawn }
   | { id: number; type: "version" };
 
-export type PtyHostResponse =
+export type PtyHostResponse = (
   | { id: number; ok: true; result?: unknown }
-  | { id: number; ok: false; error: string };
+  | { id: number; ok: false; error: string }) & { ownerBacked?: true; hostPid?: number };
 
 export type PtyHostEventMessage = { type: "event"; event: PtyEvent };
 

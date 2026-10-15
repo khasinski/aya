@@ -26,7 +26,7 @@ const TMP_AYA_HOME = mkdtempSync(join(tmpdir(), "aya-host-survives-"));
 process.env.AYA_HOME = TMP_AYA_HOME;
 
 const { PtyHostClient, openHostStderr } = await import("../dist-electron/pty-host-client.js");
-const { waitFor, fakeWebContents, ptyEventsFor } = await import("./helpers/pty-host.mjs");
+const { waitFor, fakeWebContents, ptyEventsFor, cleanupNativeOwner } = await import("./helpers/pty-host.mjs");
 
 const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
 const SOCKET = join(TMP_AYA_HOME, "pty-host.sock");
@@ -72,7 +72,7 @@ test("a client that drops its socket during a replay leaves the host and every t
   const client = new PtyHostClient(HOST_SCRIPT);
   client.attachWebContents(wc);
   let hostPid;
-  t.after(() => {
+  t.after(async () => {
     if (hostPid && isAlive(hostPid)) {
       try {
         process.kill(-hostPid, "SIGKILL");
@@ -80,6 +80,7 @@ test("a client that drops its socket during a replay leaves the host and every t
         // already gone
       }
     }
+    await cleanupNativeOwner(TMP_AYA_HOME);
     rmSync(TMP_AYA_HOME, { recursive: true, force: true });
   });
 
@@ -219,12 +220,13 @@ test("the real host installs the guard: an error thrown inside it is logged and 
     stdio: "ignore",
     env: { ...process.env, AYA_HOME: home },
   });
-  t.after(() => {
+  t.after(async () => {
     try {
       process.kill(-host.pid, "SIGKILL");
     } catch {
       // already gone
     }
+    await cleanupNativeOwner(home);
     rmSync(home, { recursive: true, force: true });
   });
   const logFile = join(home, "pty-events.log");

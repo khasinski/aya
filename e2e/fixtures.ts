@@ -99,7 +99,7 @@ export async function cleanUpSeeded(s: SeededEnv): Promise<void> {
  *  leaked host keeps its children and loads every later test. */
 export async function reapPtyHosts(ayaHome: string): Promise<void> {
   const pids = hostPidsForHome(ayaHome);
-  if (pids.length === 0) return;
+  if (pids.length === 0) { await reapNativeOwner(ayaHome); return; }
   await shutdownPtyHost(ayaHome, pids);
   // A SIGKILLed process lingers in the table until the kernel reaps it.
   const deadline = Date.now() + PTY_HOST_REAP_TIMEOUT_MS;
@@ -111,6 +111,22 @@ export async function reapPtyHosts(ayaHome: string): Promise<void> {
   if (leaked.length > 0) {
     throw new Error(`pty host(s) ${leaked.join(", ")} of ${ayaHome} outlived the test`);
   }
+  await reapNativeOwner(ayaHome);
+}
+
+/** A crashed JS host leaves its native inventory deliberately alive. Fixture
+ * cleanup is authorized to stop only that disposable home's verified owner. */
+async function reapNativeOwner(ayaHome: string): Promise<void> {
+  const file = join(ayaHome, "pty-owner/record.json");
+  if (!existsSync(file)) return;
+  const record = JSON.parse(readFileSync(file, "utf8"));
+  if (record.executable !== join(APP_ROOT, "dist-electron/aya-pty-owner")) throw new Error("Unexpected fixture owner executable");
+  const { ownerRecordIsLive } = require("../dist-electron/pty-owner-registry.js") as { ownerRecordIsLive(r: unknown): boolean };
+  if (!ownerRecordIsLive(record)) return;
+  process.kill(record.pid, "SIGTERM");
+  const deadline = Date.now() + 5000;
+  while (ownerRecordIsLive(record) && Date.now() < deadline) await delay(25);
+  if (ownerRecordIsLive(record)) throw new Error(`Native owner ${record.pid} outlived its test`);
 }
 
 /** Asks the host to shut down; `pids` are then waited for and SIGKILLed if still alive. */

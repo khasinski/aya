@@ -32,6 +32,7 @@ function setup(t, over = {}) {
     expected: EXPECTED, identity: EXPECTED, connected: true, socketExists: true, socketPid: 100,
     records: [record(100)], parent: null, response: 0, restartAnswer: true,
     confirmAnswer: true, askAnswer: true, menuInstalled: true,
+    owner: { pid: 99, incompatible: false, disconnected: [] },
   };
   const d = {
     app: { getVersion: () => (log.push(["app-version"]), "electron-version") },
@@ -39,7 +40,7 @@ function setup(t, over = {}) {
     ptyHost: {
       expectedHostIdentity: (version) => (log.push(["expected", version]), { ...state.expected, version }),
       isConnected: () => state.connected,
-      hostStatus: async () => (log.push(["status"]), { identity: state.identity, ptyCount: 3, pid: 100 }),
+      hostStatus: async () => (log.push(["status"]), { identity: state.identity, ptyCount: 3, pid: 100, ...(state.owner ? { owner: state.owner } : {}) }),
       restart: async () => {
         log.push(["restart"]);
         state.identity = EXPECTED;
@@ -204,11 +205,12 @@ test("Settings restart cancellation leaves the host alone; acceptance restarts b
   const { actions, state, log } = setup(t);
   state.confirmAnswer = false;
   await assert.rejects(actions.restartHostFromWindow(), { message: "restart cancelled" });
-  assert.deepEqual(log, [["confirm", "Restarting the PTY host", "Restart"]]);
+  assert.deepEqual(operations(log), [["confirm", "Restarting the PTY host", "Restart"]]);
   log.length = 0;
   state.confirmAnswer = true;
   await actions.restartHostFromWindow();
-  assert.deepEqual(log.slice(0, 3), [["confirm", "Restarting the PTY host", "Restart"], ["restart"], ["expected", EXPECTED.version]]);
+  assert.deepEqual(operations(log), [["confirm", "Restarting the PTY host", "Restart"], ["restart"]]);
+  assert.ok(log.slice(log.findIndex(([op]) => op === "restart") + 1).some(([op]) => op === "status"));
   assert.equal(actions.staleHostDetected(), false);
 });
 
@@ -281,4 +283,27 @@ test("an unreadable expected hash keeps the red dot and never asks, restarts or 
   assert.equal(actions.staleHostDetected(), true);
   assert.equal(item.icon, "stale");
   assert.deepEqual(operations(log), []);
+});
+
+for (const migration of ["legacy", "incompatible owner"]) for (const accepted of [false, true]) {
+  test(`${migration} asks before stopping processes even without a readable busy screen: ${accepted ? "confirm" : "Cancel"}`, async (t) => {
+    const { actions, state, log } = setup(t);
+    state.identity = migration === "legacy" ? OLD : EXPECTED;
+    state.owner = migration === "legacy" ? undefined : { pid: 99, incompatible: true, disconnected: ["pane"] };
+    state.askAnswer = accepted;
+    await actions.handleStaleHost();
+    const asks = operations(log).filter(([op]) => op === "ask-restart");
+    assert.equal(asks.length, 1);
+    assert.match(asks[0][2], migration === "legacy" ? /cannot be moved from the older host/ : /stops every terminal it owns/);
+    assert.equal(operations(log).filter(([op]) => op === "restart").length, accepted ? 1 : 0);
+    if (!accepted) assert.equal(actions.staleHostDetected(), true);
+  });
+}
+
+test("Settings disconnected-owner recovery asks once and Cancel never sends shutdown", async (t) => {
+  const { actions, state, log } = setup(t);
+  state.owner = { pid: 99, incompatible: false, disconnected: ["pane"] }; state.askAnswer = false;
+  await assert.rejects(actions.restartHostFromWindow(), /restart cancelled/);
+  assert.equal(operations(log).filter(([op]) => op === "ask-restart").length, 1);
+  assert.equal(operations(log).filter(([op]) => ["confirm", "restart", "kill"].includes(op)).length, 0);
 });

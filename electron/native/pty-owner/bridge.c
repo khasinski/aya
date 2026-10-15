@@ -127,6 +127,10 @@ static void receive_work(napi_env env, void *input) {
 #endif
   do { count = recvmsg(r->fd, &message, receive_flags); } while (count < 0 && errno == EINTR);
   if (count != 1) { if (!count) errno = EPIPE; goto failed; }
+  // Waiting for the first byte is an idle deadline. Once a frame starts,
+  // give its bounded body a fresh budget; an event arriving at the idle
+  // boundary must not be mistaken for a truncated, corrupt frame.
+  deadline = time_ms() + 5000;
   int invalid = (message.msg_flags & MSG_CTRUNC) != 0;
   for (struct cmsghdr *c = CMSG_FIRSTHDR(&message); c; c = CMSG_NXTHDR(&message, c)) {
     if (c->cmsg_level != SOL_SOCKET || c->cmsg_type != SCM_RIGHTS || c->cmsg_len < CMSG_LEN(0)) { invalid = 1; continue; }

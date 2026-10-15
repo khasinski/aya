@@ -1,27 +1,73 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { Page } from "@playwright/test";
 import { expect, hostPidsForHome, test } from "./fixtures";
-import { firstTerminalShown, waitForShellReady } from "./helpers/terminal";
+import { waitForShellReady } from "./helpers/terminal";
 
-// A pty host dying under a running app takes the shell with it: the tab must then be stopped and
-// restartable (Shift+Enter), not a live-looking pane whose process is gone.
+type Inventory = { pid: number; panes: Array<{ id: string; pid: number; generation: number }> };
+const inventory = (home: string): Inventory => JSON.parse(readFileSync(join(home, "pty-owner/record.json"), "utf8"));
+const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const panes = (record: Inventory) => record.panes.map(({ id, pid, generation }) => ({ id, pid, generation })).sort((a, b) => a.id.localeCompare(b.id));
 
-test("a pty host killed under the running app leaves a tab Shift+Enter restarts", async ({ window, seeded }) => {
-  await firstTerminalShown(window);
+async function loseHost(window: Page, home: string) {
   await waitForShellReady(window);
-  const pane = window.locator('[data-testid="terminal-pane"]:visible').first();
-  const terminalId = (await pane.getAttribute("data-terminal-id"))!;
-  const hosts = hostPidsForHome(seeded.ayaHome);
-  expect(hosts.length).toBeGreaterThan(0);
+  await expect.poll(() => inventory(home).panes.length).toBe(2);
+  const before = inventory(home), hosts = hostPidsForHome(home);
+  expect(hosts).toHaveLength(1);
+  for (const pid of hosts) process.kill(pid, "SIGKILL");
+  await expect.poll(() => hosts.some(alive)).toBe(false);
+  const row = window.locator('.aya-sidebar-row[data-terminal-name="shell 1"]');
+  await expect(row.locator(".aya-sidebar-statusdot")).toHaveClass(/--error/);
+  await expect(window.getByTestId("xterm-host").first()).toContainText("terminal host disconnected");
+  return { before, row };
+}
 
-  // Only this test's own host: found by its AYA_HOME, and a detached group leader.
-  for (const pid of hosts) process.kill(-pid, "SIGKILL");
-  await expect.poll(() => hostPidsForHome(seeded.ayaHome)).toEqual([]);
-
-  // The host is gone, so a new empty one would answer with nothing until the shell runs again.
+test("a killed JS host leaves its shells alive and disconnected; Shift+Enter never silently respawns them", async ({ app, window, seeded }) => {
+  const { before, row } = await loseHost(window, seeded.ayaHome);
+  await app.evaluate(({ ipcMain }) => {
+    const g = globalThis as unknown as { unexpectedSpawns: unknown[] }; g.unexpectedSpawns = [];
+    ipcMain.removeHandler("pty:spawn");
+    ipcMain.handle("pty:spawn", (_event, req) => { g.unexpectedSpawns.push(req); });
+  });
   await window.getByTestId("xterm-host").first().click();
   await window.keyboard.press("Shift+Enter");
-  await expect
-    .poll(() => window.evaluate((id) => window.aya.ptyBuffer(id).then((b) => b.length), terminalId), {
-      message: "Shift+Enter did not start the shell again after its host was killed",
-    })
-    .toBeGreaterThan(0);
+  await window.waitForTimeout(500);
+  await expect(row.locator(".aya-sidebar-statusdot")).toHaveClass(/--error/);
+  expect(await app.evaluate(() => (globalThis as unknown as { unexpectedSpawns: unknown[] }).unexpectedSpawns)).toEqual([]);
+  expect(alive(before.pid)).toBe(true);
+  for (const pane of before.panes) expect(alive(pane.pid)).toBe(true);
+  const after = inventory(seeded.ayaHome);
+  expect(after.pid).toBe(before.pid); expect(panes(after)).toEqual(panes(before));
+});
+
+test("a refused kill explains why restart stopped and keeps the disconnected pane without another spawn", async ({ app, window, seeded }) => {
+  const { before, row } = await loseHost(window, seeded.ayaHome);
+  await app.evaluate(({ ipcMain }) => {
+    const g = globalThis as unknown as { unexpectedSpawns: unknown[]; restartQuestions: number };
+    g.unexpectedSpawns = []; g.restartQuestions = 0;
+    ipcMain.removeHandler("pty:confirm-restart");
+    ipcMain.handle("pty:confirm-restart", () => { g.restartQuestions++; return true; });
+    ipcMain.removeHandler("pty:kill");
+    ipcMain.handle("pty:kill", () => { throw new Error("The native owner cannot authenticate this Aya"); });
+    ipcMain.removeHandler("pty:spawn");
+    ipcMain.handle("pty:spawn", (_event, req) => { g.unexpectedSpawns.push(req); });
+  });
+  const told = new Promise<string>(resolve => window.once("dialog", dialog => { resolve(dialog.message()); void dialog.accept(); }));
+  await row.click({ button: "right" });
+  await window.locator(".aya-context-menu-item", { hasText: "Restart terminal" }).click();
+  const message = await told;
+  expect(message).toContain("Aya did not restart shell 1: it could not confirm that the old terminal stopped");
+  expect(message).toContain("The native owner cannot authenticate this Aya");
+  await window.waitForTimeout(500);
+  await expect(row).toBeVisible();
+  await expect(row.locator(".aya-sidebar-statusdot")).toHaveClass(/--error/);
+  await expect(window.getByTestId("xterm-host").first()).toContainText("terminal host disconnected");
+  expect(await app.evaluate(() => {
+    const g = globalThis as unknown as { unexpectedSpawns: unknown[]; restartQuestions: number };
+    return { questions: g.restartQuestions, spawns: g.unexpectedSpawns };
+  })).toEqual({ questions: 1, spawns: [] });
+  expect(alive(before.pid)).toBe(true);
+  for (const pane of before.panes) expect(alive(pane.pid)).toBe(true);
+  const after = inventory(seeded.ayaHome);
+  expect(after.pid).toBe(before.pid); expect(panes(after)).toEqual(panes(before));
 });

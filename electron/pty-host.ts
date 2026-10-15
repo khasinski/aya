@@ -33,6 +33,7 @@ import {
   writePty,
   type PtyEventSink,
 } from "./pty-core";
+import { getOwnerRuntime, currentOwnerRuntime, shutdownOwnerRuntime, setOwnerUnavailableListener } from "./pty-owner-runtime";
 import { panes, vtSnapshot, markComposerSeen } from "./vt-mirror";
 import type { PreparedSpawn } from "./pty-core";
 const LAUNCH_STARTING = "starting";
@@ -75,8 +76,8 @@ function beginShutdown(reason: string): void {
   ptyLog.append("host-shutdown", { reason, children: activePtyCount() });
   closeSocket();
   shutdownPtyChildren(() => {
-    removeHostRecord(process.pid);
-    process.exit(0);
+    void shutdownOwnerRuntime().then(() => { removeHostRecord(process.pid); process.exit(0); })
+      .catch(error => { ptyLog.append("owner-shutdown-failed", { error: String(error) }); });
   });
 }
 
@@ -125,7 +126,7 @@ function socketPathIsOurs(): boolean {
 function sendLine(socket: net.Socket, value: PtyHostMessage): void {
   // A client that is gone gets nothing; writing would only raise EPIPE.
   if (socket.destroyed || !socket.writable) return;
-  socket.write(`${JSON.stringify(value)}\n`);
+  socket.write(`${JSON.stringify("id" in value ? { ...value, ownerBacked: true, hostPid: process.pid } : value)}\n`);
 }
 
 function broadcast(event: PtyEvent): void {
@@ -205,7 +206,7 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
     return null;
   }
   if (request.type === "kill") {
-    killPty(request.ptyId);
+    await killPty(request.ptyId);
     return null;
   }
   if (request.type === "shutdown") {
@@ -224,6 +225,7 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
   if (request.type === "pid") {
     return getPtyPid(request.ptyId);
   }
+  if (request.type === "snapshot" && (currentOwnerRuntime()?.incompatible || currentOwnerRuntime()?.disconnected.has(request.ptyId))) return "disconnected";
   if (request.type === "snapshot") return isPtyStarting(request.ptyId) ? "starting" : vtSnapshot(request.ptyId);
   if (request.type === "composer-seen") { markComposerSeen(request.ptyId, request.generation); return null; }
   if (request.type === "prepared") {
@@ -239,7 +241,10 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
   if (request.type === "version") {
     // pid lets a client correlate the socket-connected host with a registry
     // record (e.g. to spot a same-version host stranded off-socket).
-    return { ...HOST_IDENTITY, ptyCount: activePtyCount(), pid: process.pid };
+    const owner = currentOwnerRuntime();
+    return { ...HOST_IDENTITY, ptyCount: activePtyCount(), pid: process.pid,
+      owner: owner ? { pid: owner.record.pid, hash: owner.record.binaryHash, incompatible: owner.incompatible,
+        disconnected: [...owner.disconnected.keys()], inventory: owner.record.panes } : null };
   }
   throw new Error(PTY_HOST_UNKNOWN_REQUEST);
 }
@@ -268,18 +273,20 @@ function computeHostIdentity(): HostIdentity {
 const HOST_IDENTITY: HostIdentity = computeHostIdentity();
 
 function scheduleIdleShutdown(): void {
+  // An unknown/retained owner is not an empty host. Idle cleanup cannot
+  // authorize the destructive fallback when a spawn acknowledgement was lost.
+  if (currentOwnerRuntime()?.incompatible || currentOwnerRuntime()?.disconnected.size) return;
   if (clients.size > 0 || activePtyCount() > 0 || idleTimer) return;
   idleTimer = setTimeout(() => {
     idleTimer = null;
-    if (clients.size === 0 && activePtyCount() === 0) {
+    if (clients.size === 0 && activePtyCount() === 0 && !currentOwnerRuntime()?.incompatible && !currentOwnerRuntime()?.disconnected.size) {
       ptyLog.append("host-idle-exit");
-      process.exit(0);
+      beginShutdown("idle");
     }
   }, IDLE_SHUTDOWN_TIMEOUT_MS);
 }
 
 function start(): void {
-  keepHostOnUncaught(ptyLog);
   fs.mkdirSync(path.dirname(PTY_HOST_SOCKET_PATH), { recursive: true });
   try {
     fs.rmSync(PTY_HOST_SOCKET_PATH, { force: true });
@@ -380,4 +387,10 @@ function start(): void {
   process.once("exit", closeSocket);
 }
 
-start();
+keepHostOnUncaught(ptyLog);
+setOwnerUnavailableListener(owner => {
+  for (const id of owner.record.panes.map(p => p.id)) broadcast({ type: "disconnected", ptyId: id });
+});
+void getOwnerRuntime().then(() => {
+  start();
+}).catch(error => { ptyLog.append("owner-start-failed", { error: String(error) }); process.exitCode = 1; });

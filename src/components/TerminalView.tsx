@@ -206,6 +206,7 @@ function terminalRenderStateEqual(a: TerminalState, b: TerminalState): boolean {
       a.name === b.name &&
       a.exitCode === b.exitCode &&
       a.stopped === b.stopped &&
+      a.disconnected === b.disconnected &&
       a.spawnDeferred === b.spawnDeferred &&
       a.spawnFailure?.reason === b.spawnFailure?.reason &&
       a.spawnFailure?.detail === b.spawnFailure?.detail &&
@@ -811,6 +812,8 @@ function TerminalViewComponent({
         term.write(
           `\r\n\x1b[2m[process exited with code ${event.exitCode}${restartHint}]\x1b[0m\r\n`,
         );
+      } else if (event.type === "disconnected") {
+        term.write("\r\n\x1b[1;33m[terminal host disconnected - the process may still be running. Restart explicitly to stop it and try again.]\x1b[0m\r\n");
       } else if (event.type === "no-session") {
         // Attach-only re-mount with no live PTY: the process ended while we were
         // away. Show a restartable hint instead of a fresh, contextless session.

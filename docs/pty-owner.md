@@ -1,6 +1,6 @@
 # Native PTY owner - B1
 
-I added the native owner, Node-API bridge, explicit client API and staged-package checks for #217 route B. **Aya startup and terminal spawning do not call this API.** B1 changes build/package contents, not the running terminal path. B2 will integrate spawning; planned JS-host replacement and automatic recovery remain later work.
+I added the native owner, Node-API bridge, explicit client API and staged-package checks for #217 route B. B1 introduced these components without using them in the product. [B2 now integrates startup and spawning](pty-owner-b2.md); planned JS-host replacement and automatic recovery remain later work. The B1 evidence below describes its original, isolated component checks.
 
 The owner is a standalone executable with no Electron/Node, VT, rules, session, usage or git imports. It owns the masters and is the parent of each pane child from forkpty onward. The JS client receives CLOEXEC master duplicates over a private Unix socket. It alone reads/writes output/input; the owner has no output ring and never polls a master for input. Kernel queues preserve unread bytes and eventually backpressure the child. Already-consumed JS state is outside this protocol.
 

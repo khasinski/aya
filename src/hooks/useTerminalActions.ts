@@ -377,6 +377,7 @@ export function useTerminalActions({
           bell: false,
           spawnFailure: undefined,
           stopped: undefined,
+          disconnected: undefined,
           restored: t.restored || hadSession,
         },
       };
@@ -442,8 +443,10 @@ export function useTerminalActions({
       // and replays the old buffer instead of starting fresh.
       try {
         await window.aya.ptyKill(id);
-      } catch {
-        /* ignore - best effort */
+      } catch (err: unknown) {
+        const why = err instanceof Error ? err.message : String(err);
+        window.alert(`Aya did not restart ${t.name}: it could not confirm that the old terminal stopped, so the pane was kept. Check the terminal host in Settings > Diagnostics before trying again.\n\n${why}`);
+        return;
       }
     }
     // Forget the confirmed-session marker AFTER the kill: a still-alive process
@@ -464,6 +467,7 @@ export function useTerminalActions({
           bell: false,
           spawnFailure: undefined,
           stopped: undefined,
+          disconnected: undefined,
           restored: cur.restored || hadSession,
         },
       };

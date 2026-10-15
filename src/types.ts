@@ -430,6 +430,7 @@ export type PtyEvent =
   // Host had no live session for an attach-only spawn: the process died while
   // the host stayed up. The tab becomes stopped/restartable, not respawned.
   | { type: "no-session"; ptyId: string }
+  | { type: "disconnected"; ptyId: string }
   // Explicit status parsed from an OSC 9001 `aya.status` sequence the TUI (or
   // a wrapper script) emitted inline in its own output - see integrations.md.
   // Same vocabulary as ControlStatusUpdate's "status" request, delivered
@@ -1001,6 +1002,7 @@ export interface TerminalState {
    *  stopped + restartable (Shift+Enter) without faking a clean exit code, so
    *  it never shows as a "done"/successful finish. Cleared on restart. */
   stopped?: boolean;
+  disconnected?: boolean;
   /** Restored from a persisted project tab, not newly created by the user.
    *  Agent presets may append --resume only in this case. */
   restored?: boolean;
