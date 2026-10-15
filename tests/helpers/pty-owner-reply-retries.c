@@ -27,7 +27,7 @@ static ssize_t retry_sendmsg(int fd, const struct msghdr *message, int flags) {
 int main(void) {
   int sockets[2]; assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
   write_fault = poll_fault = 1;
-  assert(write_all(sockets[0], "reply", 5) == 0);
+  assert(write_all(sockets[0], "reply", 5, now_ms() + 1000) == 0);
   char bytes[5]; assert(read(sockets[1], bytes, 5) == 5);
   clients[0] = (Client){ .fd = sockets[0], .authenticated = 1 }; active = 0;
   Writer payload = {0}; put_string(&payload, "after interruption");

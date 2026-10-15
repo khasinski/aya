@@ -38,7 +38,7 @@ jobs:
       - name: Build without downloading native headers
         run: npm run build
       - name: Native owner contracts
-        run: node --test tests/pty-owner.test.mjs
+        run: node --test tests/pty-owner.test.mjs tests/pty-owner-package-receipt.test.mjs
       - name: Two-build identity, 1/25 panes, idle usage and FD cleanup
         run: node scripts/measure-pty-owner.mjs
       - name: Staged package smoke (ad-hoc signing only, no notarization)

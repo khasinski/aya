@@ -218,3 +218,35 @@ test("owner refuses a regular token file even when passed as an inherited descri
     assert.match(stderr, /token must arrive through an inherited pipe/);
   } finally { fs.closeSync(fd); fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("protocol shutdown terminates and reaps a proven live leader and its HUP-ignoring group", async (t) => {
+  const owner = await startOwner(); t.after(() => owner.close()); const c = await owner.connect();
+  const pane = await c.spawn({ ...shellSpec(owner.home), argv: ["sh", "-c", "trap '' HUP TERM; sleep 30 & descendant=$!; printf 'LIVE:%s\\n' \"$descendant\"; wait \"$descendant\""] });
+  const output = await readUntil(c, pane.fd, "\n"), descendant = Number(/LIVE:(\d+)/.exec(output)?.[1]);
+  assert.ok(descendant > 0); assert.doesNotThrow(() => process.kill(pane.pid, 0));
+  assert.doesNotThrow(() => process.kill(descendant, 0)); assert.equal((await c.list())[0].exited, false);
+  await c.shutdown(); assert.equal((await owner.closed).code, 0);
+  assert.throws(() => process.kill(pane.pid, 0), /ESRCH/); await waitGone(descendant);
+});
+test("kernel PTY queue backpressures an unread continuous writer then drains every byte and resumes the child", async (t) => {
+  const fixture = compileOwnerFixture("pty-owner-backpressure"); t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
+  const owner = await startOwner(); t.after(() => owner.close()); const c = await owner.connect();
+  const pane = await c.spawn({ ...shellSpec(owner.home), command: fixture.executable, argv: [fixture.executable] });
+  const blocked = path.join(owner.home, "backpressured"), done = path.join(owner.home, "output-complete");
+  const deadline = Date.now() + 6000;
+  while (!fs.existsSync(blocked) || fs.statSync(blocked).size === 0) { assert.ok(Date.now() < deadline, "writer must encounter EAGAIN without a reader"); await sleep(2); }
+  const queued = Number(fs.readFileSync(blocked, "utf8")); assert.ok(queued > 0 && queued < 2 * 1024 * 1024);
+  assert.ok(c.readReady(pane.fd)); await sleep(100); assert.equal(fs.existsSync(done), false, "writer must remain backpressured until we drain");
+  const received = [], buffer = Buffer.alloc(65536); let total = 0;
+  while (total < 2 * 1024 * 1024) {
+    assert.ok(Date.now() < deadline + 6000, "continuous output must resume after draining");
+    if (c.readReady(pane.fd)) {
+      const size = fs.readSync(pane.fd, buffer); assert.ok(size > 0, `Unexpected EOF after ${total} bytes`); received.push(Buffer.from(buffer.subarray(0, size))); total += size;
+    } else await sleep(1);
+  }
+  const expected = Buffer.alloc(total); for (let i = 0; i < expected.length; i++) expected[i] = i % 251;
+  assert.equal(total, 2 * 1024 * 1024); assert.deepEqual(Buffer.concat(received), expected);
+  while (!fs.existsSync(done) || fs.statSync(done).size === 0) { assert.ok(Date.now() < deadline + 6000); await sleep(1); }
+  assert.equal(Number(fs.readFileSync(done, "utf8")), total);
+  fs.writeSync(pane.fd, "drained\n"); assert.equal((await c.nextExit()).exitCode, 23);
+});

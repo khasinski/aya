@@ -102,8 +102,8 @@ static int wait_writable(int fd, int64_t deadline) {
     return -1;
   }
 }
-static int write_all(int fd, const void *data, size_t size) {
-  const unsigned char *p = data; int64_t deadline = now_ms() + 1000;
+static int write_all(int fd, const void *data, size_t size, int64_t deadline) {
+  const unsigned char *p = data;
   while (size) {
     if (now_ms() >= deadline) { errno = ETIMEDOUT; return -1; }
     ssize_t count = write(fd, p, size);
@@ -132,6 +132,7 @@ static int send_frame(int index, uint16_t type, uint32_t id, Writer *payload, in
   word = htonl(id); memcpy(header + 8, &word, 4);
   word = htonl((uint32_t)payload->size); memcpy(header + 12, &word, 4);
   int fd = clients[index].fd;
+  const int64_t deadline = now_ms() + 1000;
   if (master >= 0) {
     union { struct cmsghdr align; char data[CMSG_SPACE(sizeof(int))]; } ancillary;
     memset(&ancillary, 0, sizeof(ancillary));
@@ -141,7 +142,6 @@ static int send_frame(int index, uint16_t type, uint32_t id, Writer *payload, in
     struct cmsghdr *c = CMSG_FIRSTHDR(&message);
     c->cmsg_level = SOL_SOCKET; c->cmsg_type = SCM_RIGHTS; c->cmsg_len = CMSG_LEN(sizeof(int));
     memcpy(CMSG_DATA(c), &master, sizeof(master));
-    int64_t deadline = now_ms() + 1000;
     for (;;) {
       if (now_ms() >= deadline) { errno = ETIMEDOUT; goto failed; }
       ssize_t sent = sendmsg(fd, &message, 0);
@@ -153,8 +153,8 @@ static int send_frame(int index, uint16_t type, uint32_t id, Writer *payload, in
       }
       goto failed;
     }
-  } else if (write_all(fd, header, 1)) goto failed;
-  if (write_all(fd, header + 1, OWNER_HEADER - 1) || write_all(fd, payload->data, payload->size)) goto failed;
+  } else if (write_all(fd, header, 1, deadline)) goto failed;
+  if (write_all(fd, header + 1, OWNER_HEADER - 1, deadline) || write_all(fd, payload->data, payload->size, deadline)) goto failed;
   return 0;
 failed:
   drop_client(index); return -1;
