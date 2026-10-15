@@ -39,6 +39,14 @@ test('oldest history is cut to fit while the retained viewport stays on the same
   assert.deepEqual(visible(b),visible(a));assert.equal(a.buffer.normal.baseY-a.buffer.normal.viewportY,b.buffer.normal.baseY-b.buffer.normal.viewportY);
   assert.equal(b.buffer.normal.length,a.buffer.normal.length-cp.cutLines);
   a.scrollToTop();const clamped=await captureRendererVt(a,128*1024,1000);assert.equal(clamped.viewportClamped,true);
+  const c=terminal();
+  try {
+   restoreRendererVt(c,parseRendererCheckpoint(Buffer.from(JSON.stringify(clamped)),128*1024));
+   assert.equal(c.buffer.normal.viewportY,0,'clamped viewport starts at the oldest retained line');
+   const expected=Array.from({length:a.rows},(_,n)=>a.buffer.normal.getLine(clamped.cutLines+n)?.translateToString());
+   assert.deepEqual(visible(c),expected);
+   assert.ok(visible(c)[0].includes(`row-${String(clamped.cutLines).padStart(4,'0')}`));
+  } finally {c.dispose();}
  }finally{a.dispose();b.dispose();}
 });
 test('partial or stuck renderer capture refuses display only, within its deadline',async()=>{

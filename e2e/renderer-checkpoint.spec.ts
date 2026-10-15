@@ -35,7 +35,17 @@ test("opened renderer checkpoint preserves transformed history, viewport and pal
             await new Promise(r=>requestAnimationFrame(r));
           }
           const dom=id=>Array.from(document.querySelectorAll('#'+id+' .xterm-rows > div')).map(row=>row.textContent);
-          return {before,original,restored,domA:dom('a'),domB:dom('b'),cut:cp.cutLines,clamped:cp.viewportClamped};
+          const domA=dom('a'),domB=dom('b');
+          // Bring the coloured line into view and wait for its actual paint.
+          // Reading themeService alone would miss a stale DOM/CSS repaint.
+          a.scrollToBottom();b.scrollToBottom();
+          const color=id=>{const span=Array.from(document.querySelectorAll('#'+id+' .xterm-rows span')).find(s=>s.textContent.includes('PALETTE'));return span?getComputedStyle(span).color:null;};
+          const paintDeadline=performance.now()+3000;
+          while(color('a')!=='rgb(18, 52, 86)'||color('b')!=='rgb(18, 52, 86)'){
+            if(performance.now()>paintDeadline)throw Error('Restored palette did not repaint: '+color('a')+' / '+color('b'));
+            await new Promise(r=>requestAnimationFrame(r));
+          }
+          return {before,original,restored,domA,domB,colorA:color('a'),colorB:color('b'),cut:cp.cutLines,clamped:cp.viewportClamped};
         }finally{a.dispose();b.dispose();}
       })()`);
     } finally { view.destroy(); }
@@ -45,4 +55,6 @@ test("opened renderer checkpoint preserves transformed history, viewport and pal
   expect(result.restored).toEqual(result.original);
   expect(result.restored.palette.toLowerCase()).toBe("#123456");
   expect(result.domB).toEqual(result.domA);
+  expect(result.colorA).toBe("rgb(18, 52, 86)");
+  expect(result.colorB).toBe("rgb(18, 52, 86)");
 });
