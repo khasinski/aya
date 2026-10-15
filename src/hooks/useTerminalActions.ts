@@ -430,7 +430,8 @@ export function useTerminalActions({
     // could end work nobody agreed to stop.
     if (maybeAlive) {
       const agreed = await window.aya.confirmPaneRestart(id).catch((err: unknown) => {
-        console.warn("[aya] could not ask before restarting the pane; it keeps running", err);
+        const why = err instanceof Error ? err.message : String(err);
+        window.alert(`Aya did not restart ${t.name}: it could not ask first whether that would stop work there, so the pane keeps running.\n\n${why}`);
         return false;
       });
       if (!agreed) return;
