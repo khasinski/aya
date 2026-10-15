@@ -1,5 +1,9 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
+const browserVtEngine = createHash("sha256").update(readFileSync(createRequire(import.meta.url).resolve("@xterm/xterm"))).digest("hex");
 
 // The Electron window loads only its own files: a script injected through text it
 // shows (an agent's output, a team message) can neither run nor send data out.
@@ -32,6 +36,7 @@ function rendererCsp(): Plugin {
 
 export default defineConfig({
   plugins: [react(), rendererCsp()],
+  define: { __AYA_XTERM_ENGINE__: JSON.stringify(browserVtEngine) },
   base: "./",
   server: {
     // Non-default port so Aya doesn't fight other Vite projects on 5173.

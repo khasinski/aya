@@ -112,3 +112,29 @@ Explicit abort cleanup can discard its own checked expired escrow after the old 
 The lead approved actual-renderer capture for full display/history, rather than a second display mirror in the host. The host mirror retains zero scrollback, while the renderer retains10,000 lines and applies its own ESC3J/link/erase transformations, so host replay cannot prove full renderer history. Missing/unmounted/deadline-expired renderer state will keep its process/PID without a stop question and be explicitly logged as "history from replay". Capture will cap per-pane/aggregate bytes by cutting oldest scrollback, record cuts, preserve retained scroll position and measure25 dense full-history panes before this path is called complete. This is the approved next integration, not a claim already implemented here.
 
 The nonblocking abort-test note is addressed with an exact1MiB file length/digest and a following one-byte sentinel. The child consumes the next byte after the original paste and must report `NEXT:!`; unread duplicate input no longer escapes the assertion. A compiled mutation that enqueues an extra1MiB on abort fails this test, and the compiled adapter was restored. All six adapter tests pass with the stronger fixture.
+
+## Actual-renderer codec and retained-history budget
+
+I added a browser binding pinned to the installed `@xterm/xterm` implementation, SHA-256 `14903579ff54664cd72f8e8699e6961a6272c21863ec1c3b118cdc8af5d4a972`. Vite embeds the actual installed hash, so an unsupported implementation refuses display import/export. Main validates the closed encoded DTO before any private fields reach a fresh view. The common-core DTO has the reviewed headless format identity; the outer envelope separately identifies the browser producer/consumer. UI theme, font and known callbacks stay with the new view; terminal state, both buffers, OSC palette overrides and retained viewport come from the DTO.
+
+The planned caller first freezes host output and flushes its fanout, then asks each mounted renderer to drain its transformed xterm writes and capture. This codec takes a ground-state snapshot only; a stuck, missing or incomplete-parser renderer falls back to "history from replay", while its process still moves without a stop question. The separate host VT checkpoint retains partial parser/decoder state. There is no second display mirror and no continuous renderer history copying. At this intermediate commit, capture/restore is tested but not yet connected to TerminalView or a cutover.
+
+Per-pane encoded renderer state is capped at 64 MiB, with 96 MiB reserved for all renderer parts together within the 128 MiB handover budget. The caller must assign each of 25 panes at most floor(96 MiB / 25) bytes. Capture estimates and selects newest retained lines before constructing their DTO, cuts oldest scrollback first without changing the live terminal, records `cutLines` and `viewportClamped`, then checks exact encoded size. A retained viewport stays on the same content; if it was in discarded history it clamps to the oldest retained line and records that fact. Capture's default deadline is 250 ms per pane, including the write drain and final encoding; main still needs its independent collection deadline. Viewport-too-large and expired captures degrade display to replay, never stop the process.
+
+On macOS arm64, Electron 43.5.0 / Node 24.19.0, the offline 25-pane retained-state measurement gives:
+
+| 25 panes, 240x80, full 10,000-line scrollback | Measurement |
+| --- | --- |
+| Complete uncapped JSON | 985,670,725 bytes |
+| Fair per-pane budget | 4,026,531 bytes |
+| Complete capped JSON | 97,580,400 bytes (3,903,216 per pane) |
+| Oldest lines cut per pane | 9,083 |
+| Retained history / visible rows per pane | 917 / 80 |
+| Scrolled viewport | 50 lines above bottom, identical content, no clamp |
+| Sequential capped capture total | 1,023.118 ms |
+| Sequential restore total | 3,852.187 ms |
+| Sampled RSS maximum | 541,376,512 bytes |
+
+The fixture populates real browser xterm BufferLines directly after parsing one independently coloured dense row, varies first glyphs by pane/line, and measures one pane at a time. It measures retained-state capture/validation/restore, not ANSI parsing, DOM rendering, simultaneous 25-pane memory, two-host handover memory or pause. The RSS sample includes full and capped DTOs and restoration; it is not an isolated codec allocation or peak guarantee. Node 26.10.0 produced identical bytes/cuts, capture 1,004.666 ms and restore 4,538.445 ms. Reproduce offline after building Electron/test source with `node --expose-gc scripts/spikes/measure-renderer-checkpoint.cjs`, or run that script with Electron's binary and `ELECTRON_RUN_AS_NODE=1`. Results go to ignored `test-results/renderer-checkpoint-measurement.json`.
+
+The five browser-codec tests cover the actual renderer transformations (including stripped ESC3J), true colour/palette/hyperlinks, both buffers and future controls, viewport-preserving truncation, a clamped old viewport, incomplete/stuck parser refusal and main's schema rejection. Actual opened-window capture/restoration and producer coordination remain integration work.

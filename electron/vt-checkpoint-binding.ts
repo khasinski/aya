@@ -2,7 +2,7 @@
 // closed DTO validator accepts it. Internal xterm types are intentionally
 // confined to this module; payloads never select a constructor or a method.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { parseVtSnapshot } from "./vt-checkpoint-schema";
+import { parseVtSnapshot, validateVtSnapshot } from "./vt-checkpoint-schema";
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { Terminal } from '@xterm/headless';
@@ -211,6 +211,7 @@ export function restore(bytes: Buffer) {
 }
 export { ENGINE };
 export function validateCapturedSnapshot(bytes: Buffer): void { parseVtSnapshot(bytes, ENGINE, DEFAULT_OPTIONS); }
+export function validateRendererCommonState(value: unknown): void { validateVtSnapshot(value, SUPPORTED_ENGINE, DEFAULT_OPTIONS, "renderer"); }
 export function createOwnedTerminal(options: ConstructorParameters<typeof Terminal>[0]): Terminal {
     const term = new Terminal(options);
     trackPalette(term);

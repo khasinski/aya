@@ -128,7 +128,7 @@ export function parseVtSnapshot(input: Buffer, engine: string, defaultOptions: D
   return dto as Dict;
 }
 
-export function validateVtSnapshot(value: unknown, engine: string, defaultOptions: Dict): void {
+export function validateVtSnapshot(value: unknown, engine: string, defaultOptions: Dict, purpose: "host" | "renderer" = "host"): void {
   validateCheckpointJson(value);
   const dto = object(value, "snapshot");
   integer(2, 1000)(dto.cols, "cols"); integer(1, 1000)(dto.rows, "rows");
@@ -143,6 +143,7 @@ export function validateVtSnapshot(value: unknown, engine: string, defaultOption
   };
   optionChecks.cols = integer(2, 1000); optionChecks.rows = integer(1, 1000);
   optionChecks.scrollback = integer(0, 10_000);
+  if (purpose === "renderer") { optionChecks.cursorBlink = bool; optionChecks.scrollOnEraseInDisplay = bool; }
   shape(optionChecks)(options, "options");
   const scrollback = options.scrollback as number;
   let totalCells = 0;

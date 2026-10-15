@@ -47,6 +47,7 @@
     "src/terminal-option-key.ts",
     "src/terminal-keys.ts",
     "src/terminal-rendering.ts",
+    "src/terminal-vt-checkpoint.ts",
     "src/terminal-sound-prefs.ts",
     "src/terminal-visibility.ts",
     "src/theme-skin.ts",
