@@ -10,7 +10,8 @@ test('compressed checkpoint framing round-trips bytes and exposes bounded raw al
 });
 test('compression bombs, forged lengths, trailing corruption and unknown frames refuse',()=>{
  const raw=Buffer.alloc(1024*1024,65),encoded=encodeCheckpointPayload(raw);
- const tooSmall=Buffer.from(encoded);tooSmall.writeUInt32BE(1024,8);assert.throws(()=>decodeCheckpointPayload(tooSmall));
+ const tooSmall=Buffer.from(encoded);tooSmall.writeUInt32BE(1024,8);
+ assert.throws(()=>decodeCheckpointPayload(tooSmall),{code:'ERR_BUFFER_TOO_LARGE'},'inflation must stop at its allocation limit, before a later length-mismatch check');
  const tooLarge=Buffer.from(encoded);tooLarge.writeUInt32BE(64*1024*1024+1,8);assert.throws(()=>decodeCheckpointPayload(tooLarge),/decoded-byte limit/);
  const wrongLength=Buffer.from(encoded);wrongLength.writeUInt32BE(raw.length+1,8);assert.throws(()=>decodeCheckpointPayload(wrongLength),/length mismatch/);
  const corrupt=Buffer.from(encoded);corrupt[corrupt.length-1]^=0xff;assert.throws(()=>decodeCheckpointPayload(corrupt));
