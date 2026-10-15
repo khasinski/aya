@@ -20,6 +20,7 @@ export function ownerArtifactPaths(directory = __dirname): { executable: string;
   return { executable: path.join(unpacked, "aya-pty-owner"), bridge: path.join(unpacked, "pty-owner-bridge.node") };
 }
 interface RecoveryBridge {
+  resizeMaster(fd: number, cols: number, rows: number): void;
   recoverySupported(): boolean;
   nonblockingMaster(fd: number): void;
   writeReady(fd: number): boolean;
@@ -31,6 +32,7 @@ export interface RecoveryMember { pid: number; startIdentity: string | null }
 const recoveryBridge = (): RecoveryBridge => require(ownerArtifactPaths().bridge) as RecoveryBridge;
 export function setOwnerMasterNonblocking(fd: number): void { recoveryBridge().nonblockingMaster(fd); }
 export function ownerMasterWriteReady(fd: number): boolean { return recoveryBridge().writeReady(fd); }
+export function resizeOwnerMaster(fd: number, cols: number, rows: number): void { recoveryBridge().resizeMaster(fd, cols, rows); }
 export function ownerRecoverySupported(): boolean { return recoveryBridge().recoverySupported(); }
 export function ownerProcessStartIdentity(pid: number): string | null { return recoveryBridge().recoveryIdentity(pid); }
 export function ownerProcessGroupExists(pid: number): boolean {

@@ -380,6 +380,15 @@ function TerminalViewComponent({
   const [contextMenu, setContextMenu] = useState<TerminalContextMenuState | null>(
     null,
   );
+  const sendInput = useCallback((data: string) => {
+    const showFailure = (detail: string) => xtermRef.current?.write(`\r\n[${detail}]\r\n`);
+    void window.aya.ptyWrite(terminal.id, data).then(delivered => {
+      if (delivered === false) showFailure("Input was not delivered. Check the pane before retrying. Aya did not resend it.");
+    }).catch(error => {
+      const reason = (error instanceof Error ? error.message : String(error)).replace(/[\x00-\x1f\x7f]/g, " ");
+      showFailure(`Input may have been only partly delivered. Check the pane before retrying. Aya did not resend it. ${reason}`);
+    });
+  }, [terminal.id]);
 
   // Write a saved snippet's text into this terminal's PTY. autoRun appends a
   // carriage return so it executes immediately; otherwise we only type the
@@ -408,7 +417,7 @@ function TerminalViewComponent({
         onSnippetsOpenChange(false);
         return;
       }
-      void window.aya.ptyWrite(terminal.id, snippetPtyPayload(snippet));
+      sendInput(snippetPtyPayload(snippet));
       // Collapse the drawer so the result (and the typed text) is visible -
       // an open drawer covers the bottom of the terminal - and return focus
       // so the user can keep typing / press Enter on a held snippet.
@@ -419,7 +428,7 @@ function TerminalViewComponent({
         /* ignore - terminal may be mid-dispose */
       }
     },
-    [terminal.id, terminal.exitCode, terminal.stopped, terminal.disconnected, onSnippetsOpenChange],
+    [terminal.id, terminal.exitCode, terminal.stopped, terminal.disconnected, onSnippetsOpenChange, sendInput],
   );
   // Current foreground-process title, fed by OSC 0/2 from the inner shell.
   // macOS zsh's default config emits this in preexec/precmd, so we get the
@@ -875,8 +884,7 @@ function TerminalViewComponent({
           // wrong for both (it submits Shift+Enter; macOptionIsMeta turns
           // Option+Enter into a zsh multiline edit).
           ev.preventDefault();
-          void window.aya.ptyWrite(
-            terminal.id,
+          sendInput(
             action === "soft-newline" ? META_ENTER : "\r",
           );
           return false;
@@ -893,7 +901,7 @@ function TerminalViewComponent({
       );
       if (leftOptionSeq && ev.altKey && !ev.metaKey && !ev.ctrlKey) {
         ev.preventDefault();
-        void window.aya.ptyWrite(terminal.id, leftOptionSeq);
+        sendInput(leftOptionSeq);
         return false;
       }
 
@@ -920,7 +928,7 @@ function TerminalViewComponent({
         else if (ev.key === "Delete") seq = "\x1bd";
         if (seq) {
           ev.preventDefault();
-          void window.aya.ptyWrite(terminal.id, seq);
+          sendInput(seq);
           return false;
         }
       }
@@ -945,7 +953,7 @@ function TerminalViewComponent({
           // a–z → control byte 0x01–0x1A
           ev.preventDefault();
           const ctrlByte = String.fromCharCode(code - CTRL_BYTE_OFFSET);
-          void window.aya.ptyWrite(terminal.id, ctrlByte);
+          sendInput(ctrlByte);
           return false;
         }
       }
@@ -962,7 +970,7 @@ function TerminalViewComponent({
           `[aya terminal input] ${terminal.id} ${preset.id}: ${printableControlData(data)}`,
         );
       }
-      void window.aya.ptyWrite(terminal.id, data);
+      sendInput(data);
     });
 
     const onResizeDisposable = term.onResize(({ cols, rows }) => {

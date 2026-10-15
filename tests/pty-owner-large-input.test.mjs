@@ -6,10 +6,10 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { cleanupNativeOwner } from './helpers/pty-host.mjs';
 fs.mkdirSync('test-results',{recursive:true});
-test('a 1 MiB paste behind foreground sleep yields to another pane and arrives in order once input resumes',async()=>{
+test('a real core 1 MiB paste yields to resize and another pane, then arrives exactly once without trailing bytes',async()=>{
  const home=fs.mkdtempSync(path.resolve('test-results/large-input-'));
  try {
   const {stdout}=await promisify(execFile)(process.execPath,['tests/helpers/pty-owner-large-input.cjs'],{env:{...process.env,AYA_HOME:home,HOME:home},timeout:15000});
-  assert.match(stdout,/large input ordered; second pane responsive/);
+  assert.match(stdout,/core input ordered with exact count\/no trailing bytes; resize and second pane responsive/);
  } finally { await cleanupNativeOwner(home); fs.rmSync(home,{recursive:true,force:true}); }
 });

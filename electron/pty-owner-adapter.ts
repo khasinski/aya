@@ -5,7 +5,7 @@ import tty from "node:tty";
 import { StringDecoder } from "node:string_decoder";
 import type { IPty, IDisposable } from "node-pty";
 import type { OwnerPane, OwnerSpawn } from "./pty-owner-client";
-import { setOwnerMasterNonblocking, ownerMasterWriteReady } from "./pty-owner-client";
+import { setOwnerMasterNonblocking, ownerMasterWriteReady, resizeOwnerMaster } from "./pty-owner-client";
 import { getOwnerRuntime, type OwnerRuntime } from "./pty-owner-runtime";
 const retiring = new Map<string, Promise<void>>();
 export class OwnerPty implements IPty {
@@ -118,8 +118,11 @@ export class OwnerPty implements IPty {
   }
   write(data: string | Buffer): void { void this.writeAsync(data).catch(() => {}); }
   resize(cols: number, rows: number): void {
+    if (this.exited || this.readEnded) return;
+    resizeOwnerMaster(this.pane.fd, cols, rows);
     this.cols = cols; this.rows = rows;
-    void this.enqueue(async () => { if (!this.exited) await this.owner.client!.resize(this.pane, cols, rows); }).catch(() => {});
+    // Geometry must reach TIOCSWINSZ even while input is backpressured.
+    if (!this.exited) void this.owner.client!.resize(this.pane, cols, rows).catch(() => {});
   }
   kill(signal = "SIGHUP"): void {
     const key = `${this.owner.record.instanceId}:${this.pane.id}`;

@@ -734,7 +734,7 @@ export interface AyaApi {
   platform: NodeJS.Platform;
 
   ptySpawn(req: SpawnRequest): Promise<void>;
-  ptyWrite(ptyId: string, data: string): Promise<void>;
+  ptyWrite(ptyId: string, data: string): Promise<boolean>;
   ptyResize(ptyId: string, cols: number, rows: number): Promise<void>;
   ptyKill(ptyId: string): Promise<void>;
   ptyBuffer(ptyId: string): Promise<string>;

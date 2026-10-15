@@ -13,6 +13,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/ioctl.h>
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
@@ -239,6 +240,17 @@ static napi_value write_ready(napi_env env, napi_callback_info info) {
   if (result < 0 && errno != EINTR) return error(env, "master writability");
   napi_get_boolean(env, result > 0, &out); return out;
 }
+static napi_value resize_master(napi_env env, napi_callback_info info) {
+  size_t count = 3; napi_value args[3], out; int fd, cols, rows;
+  napi_get_cb_info(env, info, &count, args, NULL, NULL);
+  if (count != 3 || napi_get_value_int32(env, args[1], &cols) != napi_ok || napi_get_value_int32(env, args[2], &rows) != napi_ok || cols < 2 || cols > 1000 || rows < 1 || rows > 1000) {
+    napi_throw_type_error(env, NULL, "Invalid master geometry"); return NULL;
+  }
+  if (argument_fd(env, args[0], &fd)) return NULL;
+  struct winsize geometry = { .ws_col = (unsigned short)cols, .ws_row = (unsigned short)rows };
+  if (ioctl(fd, TIOCSWINSZ, &geometry)) return error(env, "resize master");
+  napi_get_undefined(env, &out); return out;
+}
 static napi_value recovery_group_exists(napi_env env, napi_callback_info info) {
   size_t count = 1; napi_value args[1]; int pid;
   napi_get_cb_info(env, info, &count, args, NULL, NULL);
@@ -290,7 +302,7 @@ static napi_value init(napi_env env, napi_value exports) {
   const struct { const char *name; napi_callback function; } methods[] = {
     {"connect", connect_socket}, {"send", send_frame}, {"receive", receive_frame}, {"close", close_descriptor}, {"readReady", read_ready},
     {"recoveryGroupExists", recovery_group_exists}, {"recoveryIdentity", recovery_identity}, {"recoverProcess", recover_process},
-    {"nonblockingMaster", nonblocking_master}, {"writeReady", write_ready}, {"recoverySupported", recovery_supported}
+    {"nonblockingMaster", nonblocking_master}, {"writeReady", write_ready}, {"resizeMaster", resize_master}, {"recoverySupported", recovery_supported}
   };
   for (size_t i = 0; i < sizeof(methods) / sizeof(methods[0]); i++) {
     napi_value function; napi_create_function(env, methods[i].name, NAPI_AUTO_LENGTH, methods[i].function, NULL, &function);
