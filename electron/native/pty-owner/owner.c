@@ -64,7 +64,10 @@ static int cloexec(int fd) { return fcntl(fd, F_SETFD, FD_CLOEXEC); }
 static void fail(const char *text) { perror(text); exit(1); }
 static void wake_owner(int number) {
   int saved = errno; char c = number == SIGCHLD ? 'C' : 'T';
-  (void)write(wake_pipe[1], &c, 1); errno = saved;
+  ssize_t written;
+  do { written = write(wake_pipe[1], &c, 1); } while (written < 0 && errno == EINTR);
+  // EAGAIN means a previous wake is already queued in this nonblocking pipe.
+  errno = saved;
 }
 static uint32_t get32(Reader *r) {
   uint32_t value = 0;
@@ -248,7 +251,11 @@ static void spawn_pane(int client, uint32_t request, Reader *r) {
     close(errors[0]);
     signal(SIGCHLD, SIG_DFL); signal(SIGTERM, SIG_DFL); signal(SIGINT, SIG_DFL); signal(SIGPIPE, SIG_DFL);
     if (!chdir(cwd)) execve(command, args, env);
-    int saved = errno; (void)write(errors[1], &saved, sizeof(saved)); _exit(127);
+    int saved = errno; ssize_t written;
+    // A pipe write this small is atomic; retry an interruption before reporting
+    // exec failure. A closed pipe needs no recovery because the parent left.
+    do { written = write(errors[1], &saved, sizeof(saved)); } while (written < 0 && errno == EINTR);
+    _exit(127);
   }
   close(errors[1]);
   if (pid < 0) { close(errors[0]); error_reply(client, request, "forkpty failed"); goto done; }

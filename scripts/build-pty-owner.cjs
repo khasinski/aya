@@ -14,6 +14,7 @@ function run(args) {
 }
 const source = "electron/native/pty-owner";
 const flags = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", `-ffile-prefix-map=${root}=.`,
+  ...(process.platform === "linux" ? ["-U_FORTIFY_SOURCE", "-D_FORTIFY_SOURCE=2"] : []),
   ...(process.platform === "darwin" ? ["-mmacosx-version-min=12.0"] : [])];
 const compilerVersion = run(["--version"]);
 const buildId = crypto.createHash("sha256").update(JSON.stringify({ platform: process.platform, arch: process.arch, flags: flags.map((f) => f.replace(root, ".")), compilerVersion }))

@@ -68,6 +68,23 @@ docker run --rm --init --pull=never --network none --platform linux/amd64 \
 
 Use a dedicated Playwright output subdirectory (for example `--output=test-results/e2e-owner-b1`) so its cleanup does not delete other evidence/staged packages. Native fixture homes are private/disposable and all sockets are Unix-domain. No product owner is started by these checks.
 
+## Linux fortification follow-up
+
+The first real Linux CI build exposed ignored `write()` results that the earlier Debian/GCC emulation did not reject. I made the signal-wake and child exec-error pipe writes consume their results and retry EINTR, while preserving the signal handler's errno. A full wake pipe already contains a pending notification; a closed exec-error pipe means the parent has left. The new regression interrupts each pipe write and proves wake readiness and a rejected failed exec, rather than a false successful spawn.
+
+Linux builds now explicitly use `-O2 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2` with `-Werror`. I reproduced both original compiler errors under Ubuntu 24.04.5 / distro GCC 13.3.0 in an offline x64 container, then built the corrected owner/bridge and passed 21/21 native/receipt contracts there. macOS C/TypeScript build and 20 contracts passed, with one Linux-only skip. The Ubuntu x64 execution is emulated on arm64, with the same fortified compiler configuration; remote CI is a separate result. Dependency preparation and the offline probe are reproducible with:
+
+```sh
+mkdir -p test-results/empty-build-context
+docker build --platform linux/amd64 -f scripts/pty-owner-ubuntu.Dockerfile \
+  -t aya-owner-ubuntu test-results/empty-build-context
+docker run --rm --init --pull=never --network none --platform linux/amd64 \
+  -v "$PWD:/work:ro" aya-owner-ubuntu sh -c \
+  'mkdir /tmp/probe && cd /tmp/probe && cp -R /work/electron /work/scripts /work/tests /work/dist-electron . && node scripts/build-pty-owner.cjs && node --test tests/pty-owner.test.mjs tests/pty-owner-package-receipt.test.mjs'
+```
+
+Build `dist-electron` locally before copying its platform-independent JS into that probe. The following B1 measurement/signing evidence predates this pipe-write/compiler fix; its historical hashes are not the identity of the corrected executable.
+
 ## B1 evidence
 
 Measured on 2026-10-15. macOS 26.6 arm64 / Apple clang 21 / Node 26.10 ran locally. Linux x64 / GCC 12.2 / Node 24.22 ran under Docker x64 emulation on the same arm64 Mac, with networking disabled. Each row is three roughly two-second idle windows with quiet live shells; CPU is the owner's getrusage delta only, RSS is one ps sample per window, excluding children, kernel buffers and JS clients. These are not throughput measurements or production bounds.

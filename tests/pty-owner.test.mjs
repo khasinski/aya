@@ -176,6 +176,14 @@ test("an exit-wait timeout leaves the connection usable for a later real exit", 
   assert.equal((await c.list())[0].pid, pane.pid);
   assert.equal((await c.nextExit()).exitCode, 23);
 });
+test("signal wake and child exec-error pipes retry EINTR and preserve the real spawn error", async (t) => {
+  const fixture = compileOwnerFixture("pty-owner-pipe-interruptions");
+  t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
+  const owner = await startOwner(fixture.executable); t.after(() => owner.close());
+  const c = await owner.connect();
+  await assert.rejects(c.spawn({ ...shellSpec(owner.home), command: "/aya-no-such-owner-command" }), /No such file/);
+  assert.deepEqual(await c.list(), [], "an interrupted error write must never look like successful exec");
+});
 test("an exec acknowledgement that never arrives times out and reaps its child", async (t) => {
   const fixture = compileOwnerFixture("pty-owner-exec-stall");
   t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
