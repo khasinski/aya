@@ -85,4 +85,6 @@ export class HandoverDisplays {
     if(receipt)await acknowledgeCheckpoint(PTY_HANDOVER_DISPLAY_DIRECTORY,receipt);
   }
   clear():void {this.restored.clear();}
+  forget(id:string):void {this.restored.delete(id);}
+  has(id:string):boolean {return this.restored.has(id);}
 }

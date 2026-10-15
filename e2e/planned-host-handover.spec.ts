@@ -200,3 +200,34 @@ test('two replacements retain an unmounted ended pane until its real view applie
  expect(inventory(seeded.ayaHome).pid).toBe(owner);expect(inventory(seeded.ayaHome).panes.some(p=>p.id==='ended-deferred')).toBe(false);
  expect(await third.app.evaluate(()=> (globalThis as unknown as {handoverQuestions:unknown[]}).handoverQuestions)).toEqual([]);
 });
+
+test('explicit restart before display lookup completes retires the old continuation and accepts new output and input',async({seeded})=>{
+ const first=await launch(seeded);await waitForShellReady(first.window);
+ await first.window.evaluate(()=>window.aya.ptyWrite('tab-left',"printf 'BEFORE_EARLY_RESTART\\n'\r"));
+ await expect(visiblePane(first.window,'shell 1').locator('.xterm-rows')).toContainText('BEFORE_EARLY_RESTART');
+ expect((await prepare(first.app)).ok).toBe(true);await quit(first.app);
+ appendFileSync(hostScript,'\n// early explicit restart handover test\n');
+ const second=await launch(seeded,0,true);
+ await expect.poll(()=>second.app.evaluate(()=>(globalThis as unknown as {handoverDisplayWaiting:boolean}).handoverDisplayWaiting)).toBe(true);
+ const oldPid=inventory(seeded.ayaHome).panes.find((p:{id:string})=>p.id==='tab-left').pid;
+ await second.app.evaluate(({ipcMain})=>{
+  const handlers=ipcMain as unknown as {_invokeHandlers:Map<string,(...args:unknown[])=>unknown>};
+  const spawn=handlers._invokeHandlers.get('pty:spawn')!;(globalThis as unknown as {restartSpawns:number}).restartSpawns=0;
+  ipcMain.removeHandler('pty:spawn');ipcMain.handle('pty:spawn',(event,req)=>{if(req.ptyId==='tab-left')(globalThis as unknown as {restartSpawns:number}).restartSpawns++;return spawn(event,req);});
+ });
+ await second.window.locator('.aya-sidebar-row[data-terminal-id="tab-left"]').click({button:'right'});
+ await second.window.getByRole('button',{name:'Restart terminal',exact:true}).click();
+ await expect.poll(()=>{const pane=inventory(seeded.ayaHome).panes.find((p:{id:string})=>p.id==='tab-left');return !!pane&&pane.pid!==oldPid;}).toBe(true);
+ const freshPid=inventory(seeded.ayaHome).panes.find((p:{id:string})=>p.id==='tab-left').pid;
+ await second.window.evaluate(()=>window.aya.ptyWrite('tab-left',"printf 'AFTER_EXPLICIT_RESTART\\n'\r"));
+ const pane=visiblePane(second.window,'shell 1');
+ await expect(pane.locator('.xterm-rows')).toContainText('AFTER_EXPLICIT_RESTART',{timeout:5000});
+ await pane.click();await second.window.keyboard.type("printf 'UI_AFTER_%s\\n' RESTART");await second.window.keyboard.press('Enter');
+ await expect.poll(()=>second.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('UI_AFTER_RESTART');
+ writeFileSync(join(seeded.root,'release-display'),'go');
+ expect(await second.window.evaluate(()=>window.aya.handoverDisplay('tab-left'))).toBe(null);
+ await second.window.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+ await expect(pane.locator('.xterm-rows')).toContainText('AFTER_EXPLICIT_RESTART');
+ expect(await second.app.evaluate(()=>(globalThis as unknown as {restartSpawns:number}).restartSpawns)).toBe(1);
+ expect(inventory(seeded.ayaHome).panes.find((p:{id:string})=>p.id==='tab-left').pid).toBe(freshPid);
+});

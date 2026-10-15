@@ -448,12 +448,13 @@ export function useTerminalActions({
       // Await the kill so the main-side ptys map is empty by the time the
       // new spawn IPC arrives - otherwise spawnPty treats it as a re-mount
       // and replays the old buffer instead of starting fresh.
+      const releaseAttachClose = cancelPendingTerminalAttach(id);
       try {
         await window.aya.ptyKill(id);
       } catch (err: unknown) {
         window.alert(terminalKillRefusal("restart", t.name, err));
         return;
-      }
+      } finally { releaseAttachClose(); }
     }
     // Forget the confirmed-session marker AFTER the kill: a still-alive process
     // can emit output between the request and the kill landing, which would

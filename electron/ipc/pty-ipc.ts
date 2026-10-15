@@ -21,6 +21,9 @@ export interface PtyIpcDeps {
   sendSpawn: (req: SpawnRequest) => Promise<boolean>;
   /** Removes the brief files written for a pane. */
   forgetBrief: (ptyId: string) => Promise<void>;
+  /** Explicit replacement invalidates only this pane's unapplied display. */
+  forgetDisplay?: (ptyId: string) => void;
+  hasDisplay?: (ptyId: string) => boolean;
   /** The user's typing reached a pane: an Enter that answers a waiting agent drops its status in every window. */
   noteTyping: (ptyId: string, text: string) => Promise<void>;
   /** Asks before restarting a pane whose work the restart would stop. */
@@ -37,6 +40,7 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
   const { ipcMain, host, gate } = deps;
   ipcMain.handle("pty:spawn", (_e, req: unknown) => {
     const validated = validateSpawnRequest(req);
+    if (!validated.attachOnly && !validated.attachIfReused && !validated.replayAfter) deps.forgetDisplay?.(validated.ptyId);
     return gate.spawn(validated.ptyId, () => deps.prepareSpawn(validated), deps.sendSpawn).then(async (sent) => {
       // Closed while preparing: the brief files it wrote after the close are no one's.
       if (sent === undefined && !gate.spawning(validated.ptyId)) await deps.forgetBrief(validated.ptyId).catch(() => {});
@@ -69,9 +73,12 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
   ipcMain.handle("pty:kill", async (_e, ptyId: unknown) => {
     const id = requireString(ptyId, "pty:kill.ptyId");
     await closePane(gate, id, {
-      hasPane: async (paneId) => (await host.getSize(paneId)) !== null,
+      // An ended restored pane still owns replay/outcome state and its idle
+      // owner hold, even though it no longer has a live PTY size.
+      hasPane: async (paneId) => (await host.getSize(paneId)) !== null || !!deps.hasDisplay?.(paneId),
       kill: (paneId) => host.kill(paneId),
     });
+    deps.forgetDisplay?.(id);
     await deps.forgetBrief(id).catch(() => {});
   });
   ipcMain.handle("pty:buffer", async (_e, ptyId: unknown) => {

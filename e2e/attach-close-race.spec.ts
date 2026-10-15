@@ -11,9 +11,9 @@ for(const action of ['pane','project','hidden-pane'] as const)test(`closing a ${
  const leftPid=record().panes.find((p:{id:string})=>p.id==='tab-left').pid;
  await app.evaluate(({ipcMain},action)=>{
   const handlers=ipcMain as unknown as {_invokeHandlers:Map<string,(...args:unknown[])=>unknown>};
-  const display=handlers._invokeHandlers.get('pty-checkpoint:display')!,kill=handlers._invokeHandlers.get('pty:kill')!,spawn=handlers._invokeHandlers.get('pty:spawn')!;
-  const state=globalThis as unknown as {pendingId:string;killSeen:boolean;spawned:string[];releaseDisplay:()=>void;releaseKill:()=>void};
-  state.pendingId='';state.killSeen=false;state.spawned=[];
+  const display=handlers._invokeHandlers.get('pty-checkpoint:display')!,kill=handlers._invokeHandlers.get('pty:kill')!,spawn=handlers._invokeHandlers.get('pty:spawn')!,write=handlers._invokeHandlers.get('pty:write')!;
+  const state=globalThis as unknown as {pendingId:string;killSeen:boolean;spawned:string[];writes:string[];releaseDisplay:()=>void;releaseKill:()=>void};
+  state.pendingId='';state.killSeen=false;state.spawned=[];state.writes=[];
   const displayGate=new Promise<void>(resolve=>{state.releaseDisplay=resolve;});
   ipcMain.removeHandler('pty-checkpoint:display');
   ipcMain.handle('pty-checkpoint:display',async(event,id)=>{
@@ -22,6 +22,7 @@ for(const action of ['pane','project','hidden-pane'] as const)test(`closing a ${
    return action==='hidden-pane'?{json:null,generation:'held-test-generation',offset:0,notice:'History from replay'}:display(event,id);
   });
   ipcMain.removeHandler('pty:spawn');ipcMain.handle('pty:spawn',(event,request)=>{state.spawned.push(request.ptyId);return spawn(event,request);});
+  ipcMain.removeHandler('pty:write');ipcMain.handle('pty:write',(event,id,data)=>{state.writes.push(id);return write(event,id,data);});
   ipcMain.removeHandler('pty:kill');ipcMain.handle('pty:kill',async(event,id)=>{
    if(id===state.pendingId){state.killSeen=true;if(action!=='project')await new Promise<void>(resolve=>{state.releaseKill=resolve;});}
    if(action==='project'&&id==='tab-left')throw Error('test refusal keeps the existing live pane');
@@ -47,7 +48,13 @@ for(const action of ['pane','project','hidden-pane'] as const)test(`closing a ${
  if(action!=='hidden-pane')await app.evaluate(()=>(globalThis as unknown as {releaseDisplay:()=>void}).releaseDisplay());
  // This notice is emitted only after the old lookup resumes and observes its
  // cancellation. Thus zero calls is checked after that continuation, not a sleep.
- await expect(pane.getByTestId('terminal-history-notice')).toContainText('Terminal attachment cancelled by a close request.');
+ await expect(pane.getByTestId('terminal-history-notice')).toContainText('Terminal attachment cancelled by a stop request.');
+ if(action!=='hidden-pane'){await pane.click();await window.keyboard.type('not delivered');await window.keyboard.press('Enter');}
+ await pane.locator('.xterm-helper-textarea').evaluate(textarea=>{
+  const transfer=new DataTransfer();transfer.setData('text/plain','CANCELLED_PASTE');
+  textarea.dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));
+ });
+ expect(await app.evaluate(id=>(globalThis as unknown as {writes:string[]}).writes.filter(p=>p===id),id)).toEqual([]);
  expect(await app.evaluate(id=>(globalThis as unknown as {spawned:string[]}).spawned.filter(p=>p===id),id)).toEqual([]);
  if(action!=='project'){
   await app.evaluate(()=>(globalThis as unknown as {releaseKill:()=>void}).releaseKill());

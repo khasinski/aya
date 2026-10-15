@@ -541,6 +541,8 @@ function registerIpc(): TeamRunner {
     prepareSpawn,
     sendSpawn,
     forgetBrief: (ptyId) => removePaneBrief(AYA_HOME, ptyId),
+    forgetDisplay: (ptyId) => handoverDisplays.forget(ptyId),
+    hasDisplay: (ptyId) => handoverDisplays.has(ptyId),
     noteTyping: async (ptyId, text) => {
       // The user's Enter answers a pane that asked for them (aya status waiting): the windows drop the status.
       const answered = await noteUserAnswer(ptyId, text, () => ptyHost.holdReason(ptyId));

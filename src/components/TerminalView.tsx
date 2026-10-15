@@ -348,6 +348,7 @@ function TerminalViewComponent({
   const deferredHandoverAttachRef=useRef<(()=>void)|null>(null);
   useEffect(()=>{if(isVisible)deferredHandoverAttachRef.current?.();},[isVisible]);
   const handoverInputPausedRef = useRef(false);
+  const retireHandoverForRestartRef=useRef<(()=>void)|null>(null);
   const [historyNotice,setHistoryNotice]=useState<string|null>(null);
   const disconnectedRef = useRef(!!terminal.disconnected);
   disconnectedRef.current = !!terminal.disconnected;
@@ -806,16 +807,24 @@ function TerminalViewComponent({
     fitTerminal();
     let releaseDeferred:(()=>void)|null=null;
     let disposed=false,awaitingReplay=typeof window.aya.handoverDisplay==='function';
-    let attachCancelled=false;
+    let attachCancelled=false,attachRetiredByRestart=false;
     const unregisterPendingAttach=registerPendingTerminalAttach(terminal.id,()=>{attachCancelled=true;releaseDeferred?.();});
     const attachmentWasCancelled=()=>{
       if(!attachCancelled)return false;
+      if(attachRetiredByRestart)return true;
       term.options.disableStdin=true;
-      setHistoryNotice("Terminal attachment cancelled by a close request.");
+      setHistoryNotice("Terminal attachment cancelled by a stop request.");
       markRestoring(false);
       return true;
     };
     let displayGeneration:string|null=null,replayToken:string|null=null,appliedToken=false;
+    const retireHandoverForRestart=()=>{
+      attachRetiredByRestart=true;attachCancelled=true;releaseDeferred?.();unregisterPendingAttach();
+      awaitingReplay=false;displayGeneration=null;replayToken=null;appliedToken=false;
+      handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;
+      setHistoryNotice(null);
+    };
+    retireHandoverForRestartRef.current=retireHandoverForRestart;
     const unregisterCheckpoint=registerCheckpointTerminal(terminal.id,term,()=>!awaitingReplay&&!handoverInputPausedRef.current);
     handoverInputPausedRef.current=awaitingReplay;
     if(awaitingReplay)term.options.disableStdin=true;
@@ -1091,6 +1100,7 @@ function TerminalViewComponent({
 
     return () => {
       disposed=true;releaseDeferred?.();unregisterCheckpoint();unregisterPendingAttach();
+      if(retireHandoverForRestartRef.current===retireHandoverForRestart)retireHandoverForRestartRef.current=null;
       container.removeEventListener("click", onTerminalLinkClick, true);
       unsubscribe();
       onDataDisposable.dispose();
@@ -1308,6 +1318,7 @@ function TerminalViewComponent({
     lastRestartTriggerRef.current = restartTrigger;
     const term = xtermRef.current;
     if (!term) return;
+    retireHandoverForRestartRef.current?.();
     didPostLoadResizeRef.current = false;
     markRestoring(true);
     term.writeln("\x1b[2m[restarting…]\x1b[0m");

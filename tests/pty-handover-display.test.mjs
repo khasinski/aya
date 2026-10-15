@@ -32,6 +32,12 @@ test('missing renderer state becomes a visible replay notice with a zero replay 
  const channel=ipc(),logs=[],displays=new HandoverDisplays(async()=>null,(...args)=>logs.push(args));displays.register(channel);
  await displays.inspect(base());const restored=channel.handlers.get('pty-checkpoint:display')({},'p');assert.equal(restored.json,null);assert.equal(restored.offset,0);assert.match(restored.notice,/History from replay/);assert.equal(logs[0][0],'handover-history-from-replay');
 });
+test('explicit replacement discards one pane display while preserving every other pane',async()=>{
+ const channel=ipc(),displays=new HandoverDisplays(async()=>null,()=>{});displays.register(channel);
+ const state=base();state.eligible.push({id:'kept',generation:'g2',outputEnd:90});await displays.inspect(state);
+ const get=channel.handlers.get('pty-checkpoint:display');assert.ok(get({},'p'));assert.ok(get({},'kept'));
+ displays.forget('p');assert.equal(get({},'p'),null);assert.equal(get({},'kept').generation,'g2');
+});
 test('aggregate raw headers refuse before any display decompression',async()=>{
  const read=store.readCheckpoint,decode=payload.decodeCheckpointPayload;let inflations=0;
  store.readCheckpoint=async function*(){for(let i=0;i<3;i++){const data=payload.encodeCheckpointPayload(Buffer.from('small'));data.writeUInt32BE(64*1024*1024,8);yield{id:'p'+i,generation:'g',data};}};
