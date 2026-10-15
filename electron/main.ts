@@ -84,7 +84,7 @@ import { openExternalUrl } from "./navigation";
 import { listPresets, type AgentKind } from "./presets";
 import { expandUserPath } from "./usage";
 import { DEFAULT_CODEX_HOME } from "./usage-codex";
-import { usageHookStatus } from "./usage-hook";
+import { refreshUsageHookScript, usageHookStatus } from "./usage-hook";
 import { refreshStatusHookScript, migrateStatusHookCommand } from "./status-hook";
 import { refreshStatusCodexHookScript } from "./status-hook-codex";
 import { repairProcessPath, resolveLoginShellPath } from "./shell-path";
@@ -695,6 +695,9 @@ app.whenReady().then(async () => {
   void refreshStatusHookScript().catch(() => {});
   void migrateStatusHookCommand().catch(() => {});
   void refreshStatusCodexHookScript().catch(() => {});
+  // An installed usage hook from an older build copies the shared account file, which a parallel hook can replace
+  // mid-copy; refresh it in place too (never install).
+  void refreshUsageHookScript().catch(() => {});
 
   // In dev, replace Electron's default dock icon with ours so the running
   // instance is visually distinguishable. In packaged builds the bundle's
