@@ -396,6 +396,7 @@ export function getBufferedOutputSince(ptyId: string, offset: number): {chunk: s
 function replayOutput(req: SpawnRequest, sink: PtyEventSink): void {
   if (sink.isDestroyed()) return;
   let chunk = getBufferedOutput(req.ptyId);
+  ptyLog.append("spawn-replay", {ptyId:req.ptyId,bytes:Buffer.byteLength(chunk)});
   let reset: boolean | undefined;
   if (req.replayAfter) {
     const restored = restoredPanes.get(req.ptyId);
