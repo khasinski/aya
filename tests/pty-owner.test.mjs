@@ -128,7 +128,9 @@ test("owner escalates an ignored graceful kill without leaving the child alive",
 test("explicit owner shutdown completes even if a JS client retains an unread master duplicate", async (t) => {
   const owner = await startOwner(); t.after(() => owner.close()); const c = await owner.connect();
   const pane = await c.spawn({ ...shellSpec(owner.home), argv: ["sh", "-c", "printf 'unread-before-exit\\n'; exit 23"] });
-  await sleep(20); assert.ok(c.readReady(pane.fd));
+  // The shell's printf reaches the master when the child gets scheduled: wait for it (a fixed 20 ms flaked on CI).
+  for (const deadline = Date.now() + 5000; !c.readReady(pane.fd) && Date.now() < deadline;) await sleep(10);
+  assert.ok(c.readReady(pane.fd), "the child's output never reached the master");
   owner.owner.kill("SIGTERM");
   const timer = setTimeout(() => owner.owner.kill("SIGKILL"), 1800);
   const result = await owner.closed; clearTimeout(timer);
