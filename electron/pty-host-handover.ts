@@ -5,6 +5,7 @@ import { endedHandoverPanes, type HandoverCommitResult, freezePtyCore, abortPtyC
 import { writeCheckpoint, readCheckpoint, discardCheckpoint, type CheckpointReceipt, type CheckpointPart } from "./pty-checkpoint-store";
 import { encodeCheckpointPayload, checkpointPayloadSize } from "./pty-checkpoint-payload";
 import { MAX_CHECKPOINT_BYTES } from "./vt-checkpoint-schema";
+import {checkpointGeneration} from "./pty-core-checkpoint";
 import type { HandoverPeer } from "./pty-handover-window";
 
 export interface HostHandoverState extends CoreHandoverPreflight {
@@ -88,7 +89,7 @@ export class HostHandover {
             excludeFrozenPtyPane(pane.id,reason);p.ineligible.push({id:pane.id,reason});continue;
           }
           p.coreRawBytes += raw.length;p.coreEncodedBytes += data.length;selected.add(pane.id);
-          yield {id:pane.id,generation:(pane.vt.metadata as {generation:string}).generation,data};
+          yield {id:pane.id,generation:checkpointGeneration(pane),data};
         }
       }
       p.core = await writeCheckpoint(this.coreRoot, records());

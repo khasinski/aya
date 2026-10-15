@@ -12,8 +12,8 @@ import type * as PtyModule from "node-pty";
 import { OwnerPty } from "./pty-owner-adapter";
 import {MAX_CHECKPOINT_BYTES,MAX_VT_SNAPSHOT_BYTES} from "./vt-checkpoint-schema";
 import type { VtCheckpoint } from "./vt-checkpoint";
-import { validatePaneCoreCheckpoint, type PaneCoreCheckpoint } from "./pty-core-checkpoint";
-import { currentOwnerRuntime } from "./pty-owner-runtime";
+import { validatePaneCoreCheckpoint, validateCoreHandoverPart, checkpointGeneration, type CoreHandoverPart, type EndedCoreCheckpoint, type PaneCoreCheckpoint } from "./pty-core-checkpoint";
+import { currentOwnerRuntime, getOwnerRuntime } from "./pty-owner-runtime";
 import type { PtyEvent, SpawnFailureReason, SpawnRequest } from "./types";
 import {
   extractAyaOsc,
@@ -84,7 +84,14 @@ interface OutputBuffer {
 const outputBuffers = new Map<string, OutputBuffer>();
 // Restored processes read immediately. Keep their replay and real exit outcome
 // until the first renderer attaches, even if the child exits during that gap.
-const restoredPanes = new Map<string, {generation: string; attached: boolean; replayToken?: string; exitCode?: number}>();
+const frozenEndedPanes=new Map<string,EndedCoreCheckpoint>();
+const restoredPanes = new Map<string, {generation: string; attached: boolean; replayToken?: string; exitCode?: number; releaseOwner?:()=>void}>();
+
+function removeRestoredPane(id:string):void {restoredPanes.get(id)?.releaseOwner?.();restoredPanes.delete(id);}
+function clearRestoredPanes():void {for(const id of restoredPanes.keys())removeRestoredPane(id);}
+function holdEndedPane(id:string,generation:string,exitCode:number):void {
+ removeRestoredPane(id);restoredPanes.set(id,{generation,exitCode,attached:false,releaseOwner:currentOwnerRuntime()?.holdRestoration()});
+}
 
 // Per-PTY held-back partial OSC 9001 sequence, when a chunk boundary lands
 // mid-sequence (see osc-extractor.ts). Cleared alongside outputBuffers on
@@ -186,6 +193,19 @@ export async function freezePtyCore(timeoutMs = 1000, maxBytes = MAX_CHECKPOINT_
     await bounded(Promise.all([...spawning.values()].map(flight => flight.done).concat([...killing])), timeoutMs);
     if (!handoverGated || epoch !== handoverEpoch) throw new Error("Terminal handover was cancelled");
     if (pendingWrites.size || pendingKills.size) throw new Error("Pending terminal operations have not settled");
+    let endedBytes=0;
+    for(const [id,pane] of restoredPanes){
+      if(pane.exitCode===undefined||ptys.has(id))continue;
+      const output=outputBuffers.get(id)??{chunks:[],total:0,version:0,end:0};
+      const dto:EndedCoreCheckpoint={format:1,kind:"ended",id,generation:pane.generation,exitCode:pane.exitCode,output:structuredClone({chunks:output.chunks,total:output.total,version:output.version,end:output.end})};
+      await validateCoreHandoverPart(dto);
+      if(!handoverGated||epoch!==handoverEpoch)throw Error("Terminal handover was cancelled");
+      endedBytes+=Buffer.byteLength(JSON.stringify(dto));
+      if(endedBytes>maxBytes)throw Error("Retained terminal exits exceed the aggregate core checkpoint budget");
+      frozenEndedPanes.set(id,dto);
+    }
+    if(frozenEndedPanes.size+ptys.size>25)throw Error("Too many terminal checkpoint records");
+    if(!handoverGated||epoch!==handoverEpoch)throw Error("Terminal handover was cancelled");
     const candidates=await Promise.all([...ptys].map(async([id,child])=>{
       try{return {id,child,adapter:await child.freezeForHandover(timeoutMs)};}
       catch(error){
@@ -196,7 +216,7 @@ export async function freezePtyCore(timeoutMs = 1000, maxBytes = MAX_CHECKPOINT_
     }));
     // Read barriers settle in parallel, but materialize/validate snapshots one
     // at a time. Retained producer DTOs share the same128MiB raw aggregate cap.
-    let retained=0;
+    let retained=endedBytes;
     for(const candidate of candidates){
       if(!candidate)continue;
       const {id,child,adapter}=candidate;
@@ -224,7 +244,7 @@ export async function freezePtyCore(timeoutMs = 1000, maxBytes = MAX_CHECKPOINT_
     const owner = currentOwnerRuntime();
     for (const id of owner?.disconnected.keys() ?? []) if (!ptys.has(id)) ineligiblePanes.set(id, "The pane's owner connection is unavailable");
     return {
-      eligible: [...frozenPanes].map(([id, pane]) => ({id, generation: (pane.vt.metadata as {generation: string}).generation, outputEnd: pane.output.end})),
+      eligible: frozenPtyCoreParts().map(pane=>({id:pane.id,generation:checkpointGeneration(pane),outputEnd:pane.output.end})),
       ineligible: [...ineligiblePanes].map(([id, reason]) => ({id, reason})),
     };
   } catch (error) { if (epoch === handoverEpoch) abortPtyCoreHandover(); throw error; }
@@ -233,11 +253,11 @@ export async function freezePtyCore(timeoutMs = 1000, maxBytes = MAX_CHECKPOINT_
 export function abortPtyCoreHandover(): void {
   handoverEpoch++;
   for (const child of ptys.values()) child.resumeAfterHandoverAbort();
-  frozenPanes.clear(); ineligiblePanes.clear(); handoverGated = false;
+  frozenPanes.clear(); frozenEndedPanes.clear(); ineligiblePanes.clear(); handoverGated = false;
 }
-export function frozenPtyCoreParts(): PaneCoreCheckpoint[] {
+export function frozenPtyCoreParts(): CoreHandoverPart[] {
   if (!handoverGated) throw new Error("PTY checkpoint has no output barrier");
-  return [...frozenPanes.values()];
+  return [...frozenEndedPanes.values(),...frozenPanes.values()];
 }
 /** A bounded aggregate can make an individually valid pane ineligible. Keep
  * its process/read path alive and require its own explicit fallback consent. */
@@ -263,7 +283,7 @@ export async function stopIneligiblePtyPanes(consented: string[]): Promise<Hando
       try{await killPtyInternal(id);}finally{listener.dispose();}
       // A naturally completed command must never gain automatic respawn rights.
       if(await child.confirmedStopAction())stopped.push(id);
-      else if(outcome)restoredPanes.set(id,{generation:"ended-ineligible",attached:false,exitCode:outcome.exitCode});
+      else if(outcome)holdEndedPane(id,"ended-ineligible",outcome.exitCode);
       else throw new Error("The fallback terminal exit outcome is unknown");
     }else if(currentOwnerRuntime()?.disconnected.has(id)){
       await killPtyInternal(id);stopped.push(id);
@@ -296,13 +316,17 @@ export async function detachPtyCoreForHandover(commit: () => void = () => {}): P
   shuttingDown = true;
   ptys.clear(); launches.clear(); spawnTimes.clear(); spawnRequests.clear();
   outputBuffers.clear();
-  restoredPanes.clear(); oscCarryBuffers.clear(); closeAllVtPanes();
+  clearRestoredPanes(); oscCarryBuffers.clear(); closeAllVtPanes();
 }
 /** All checkpoints are preflighted in the successor before the old host exits.
  * This host still validates before any attach; reading starts only after the
  * VT and opaque core state are installed, using the normal data/exit path. */
 export async function restorePtyCorePane(value: unknown, sink: PtyEventSink): Promise<void> {
-  const pane = await validatePaneCoreCheckpoint(value);
+  const pane = await validateCoreHandoverPart(value);
+  if(restoredPanes.has(pane.id)||ptys.has(pane.id)||spawning.size||shuttingDown)throw Error("PTY restore target is not empty");
+  if("kind" in pane){
+    await getOwnerRuntime();outputBuffers.set(pane.id,structuredClone(pane.output));holdEndedPane(pane.id,pane.generation,pane.exitCode);return;
+  }
   if (ptys.has(pane.id) || spawning.size || shuttingDown) throw new Error("PTY restore target is not empty");
   await restoreVtPane(pane.id, pane.vt, (waiting, dialog) => {
     if (!sink.isDestroyed()) sink.sendPtyEvent(vtStatusEvent(pane.id, waiting, dialog));
@@ -345,7 +369,7 @@ export function __testAppendToOutputBuffer(ptyId: string, chunk: string): void {
 
 export function __testClearOutputBuffers(): void {
   outputBuffers.clear();
-  restoredPanes.clear();
+  clearRestoredPanes();
 }
 
 /** Input held for an in-flight spawn: [chunks, bytes]. Empty once any spawn settles, so a test looks while
@@ -519,7 +543,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
     if (!sink.isDestroyed()) {
       replayOutput(req,sink);
       sink.sendPtyEvent({type:"exit",ptyId:req.ptyId,exitCode:restored.exitCode});
-      if (restored.attached) {restoredPanes.delete(req.ptyId); outputBuffers.delete(req.ptyId);}
+      if (restored.attached) {removeRestoredPane(req.ptyId); outputBuffers.delete(req.ptyId);}
     }
     return;
   }
@@ -752,8 +776,8 @@ function installChildObservers(req: SpawnRequest, child: OwnerPty, sink: PtyEven
       if (handoverGated && ineligiblePanes.has(req.ptyId) && !restoredPanes.has(req.ptyId)) restoredPanes.set(req.ptyId,{generation:"ended-ineligible",attached:false});
       const origin = restoredPanes.get(req.ptyId);
       const pendingAttach = origin && !origin.attached ? origin : undefined;
-      if (!pendingAttach) restoredPanes.delete(req.ptyId);
-      if (pendingAttach) pendingAttach.exitCode = exitCode;
+      if (!pendingAttach) removeRestoredPane(req.ptyId);
+      if (pendingAttach) {pendingAttach.exitCode = exitCode;pendingAttach.releaseOwner??=currentOwnerRuntime()?.holdRestoration();}
       else outputBuffers.delete(req.ptyId);
       oscCarryBuffers.delete(req.ptyId);
       closeVtPane(req.ptyId);
@@ -947,7 +971,7 @@ export async function killPty(ptyId: string): Promise<void> {
   try { await operation; } finally { killing.delete(operation); }
 }
 async function killPtyInternal(ptyId: string): Promise<void> {
-  restoredPanes.delete(ptyId);
+  removeRestoredPane(ptyId);
   outputBuffers.delete(ptyId);
   oscCarryBuffers.delete(ptyId);
   closeVtPane(ptyId);
@@ -1069,7 +1093,7 @@ export function shutdownPtyChildren(
   spawnRequests.clear();
   launches.clear();
   outputBuffers.clear();
-  restoredPanes.clear();
+  clearRestoredPanes();
   oscCarryBuffers.clear();
   closeAllVtPanes();
   pendingKills.clear();
@@ -1094,6 +1118,6 @@ export function acknowledgePtyRestoration(id:string,generation:string,token?:str
  const p=restoredPanes.get(id);
  if(!p||p.generation!==generation||p.replayToken!==token)return false;
  p.attached=true;
- if(p.exitCode!==undefined){restoredPanes.delete(id);outputBuffers.delete(id);}
+ if(p.exitCode!==undefined){removeRestoredPane(id);outputBuffers.delete(id);}
  return true;
 }

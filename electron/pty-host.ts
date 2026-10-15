@@ -492,13 +492,15 @@ void (async()=>{
   const bootstrap=process.env.AYA_PTY_CHECKPOINT_FD === "4" ? await readHandoverBootstrap(4) : null;
   delete process.env.AYA_PTY_CHECKPOINT_FD;
   if(bootstrap)await preflightCoreHandover(bootstrap.core);
-  await getOwnerRuntime();
+  const bootstrapOwner=await getOwnerRuntime();
+  const releaseBootstrap=bootstrap?bootstrapOwner.holdRestoration():()=>{};
   if(bootstrap){
     for await(const pane of readCoreHandover(bootstrap.core)){
       await restorePtyCorePane(pane,sink);installSnapshotFanout(pane.id);
     }
     await acknowledgeCheckpoint(PTY_HANDOVER_CORE_DIRECTORY,bootstrap.core);
   }
+  releaseBootstrap();
   start();
 })().catch(error => {
   ptyLog.append("owner-start-failed", { error: String(error) });

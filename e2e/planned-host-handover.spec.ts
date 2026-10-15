@@ -172,3 +172,31 @@ test('the real Restart to update IPC announces handover and preserves a foregrou
  expect(identities(seeded.ayaHome)).toEqual(before);expect(await foreground(second.app)).toBe(command);
  expect(await second.app.evaluate(()=> (globalThis as unknown as {handoverQuestions:unknown[]}).handoverQuestions)).toEqual([]);
 });
+
+
+test('two replacements retain an unmounted ended pane until its real view applies replay',async({seeded})=>{
+ test.setTimeout(45000);const first=await launch(seeded);await waitForShellReady(first.window);
+ const projectFile=join(seeded.ayaHome,'projects/e2e-proj.json'),project=JSON.parse(readFileSync(projectFile,'utf8'));
+ project.tabs.push({id:'ended-deferred',presetId:'shell',name:'Ended deferred'});writeFileSync(projectFile,JSON.stringify(project));
+ await expect(first.window.locator('.aya-sidebar-row[data-terminal-name="Ended deferred"]')).toBeVisible();
+ const release=join(seeded.root,'release-ended-deferred');
+ const command=`exec /bin/sh -c 'stty -echo; echo ENDED_BEFORE; while [ ! -f "${release}" ]; do sleep .01; done; echo LAST_SUFFIX; exit 23'`;
+ await first.window.evaluate(({command,cwd})=>window.aya.ptySpawn({ptyId:'ended-deferred',command,cwd,cols:80,rows:24}),{command,cwd:seeded.projectDir});
+ await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('ended-deferred'))).toContain('ENDED_BEFORE');
+ const owner=inventory(seeded.ayaHome).pid;
+ expect((await prepare(first.app)).ok).toBe(true);await quit(first.app);appendFileSync(hostScript,'\n// first ended-pane replacement\n');
+ const second=await launch(seeded);await expect(second.window.getByTestId('xterm-host').first()).toBeVisible();writeFileSync(release,'go');
+ await expect.poll(()=>second.window.evaluate(()=>window.aya.ptyBuffer('ended-deferred'))).toContain('LAST_SUFFIX');
+ await expect.poll(()=>inventory(seeded.ayaHome).panes.some(p=>p.id==='ended-deferred')).toBe(false);
+ expect((await prepare(second.app)).ok).toBe(true);await quit(second.app);appendFileSync(hostScript,'\n// second ended-pane replacement\n');
+ const third=await launch(seeded);await expect(third.window.getByTestId('xterm-host').first()).toBeVisible();
+ await third.window.locator('.aya-sidebar-row[data-terminal-name="Ended deferred"]').click();
+ const pane=third.window.locator('.aya-pane[data-terminal-id="ended-deferred"]');
+ await expect(pane.getByTestId('terminal-history-notice')).toContainText('History from replay');
+ await expect(pane.locator('.xterm-rows')).toContainText('ENDED_BEFORE');
+ await expect(pane.locator('.xterm-rows')).toContainText('LAST_SUFFIX');
+ await expect(pane.locator('.xterm-rows')).toContainText('process exited with code 23');
+ const displayed=await pane.locator('.xterm-rows').textContent();expect(displayed?.split('LAST_SUFFIX').length).toBe(2);
+ expect(inventory(seeded.ayaHome).pid).toBe(owner);expect(inventory(seeded.ayaHome).panes.some(p=>p.id==='ended-deferred')).toBe(false);
+ expect(await third.app.evaluate(()=> (globalThis as unknown as {handoverQuestions:unknown[]}).handoverQuestions)).toEqual([]);
+});

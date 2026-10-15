@@ -74,3 +74,22 @@ export async function validatePaneCoreCheckpoint(value: unknown): Promise<PaneCo
 export async function parsePaneCoreCheckpoint(bytes: Buffer): Promise<PaneCoreCheckpoint> {
   return validatePaneCoreCheckpoint(parseCheckpointJson(bytes));
 }
+
+/** A retained, unacknowledged exit has no live master to attach. */
+export interface EndedCoreCheckpoint {
+ format:1;kind:"ended";id:string;generation:string;exitCode:number;
+ output:PaneCoreCheckpoint["output"];
+}
+export type CoreHandoverPart=PaneCoreCheckpoint|EndedCoreCheckpoint;
+export function checkpointGeneration(pane:CoreHandoverPart):string {
+ return "kind" in pane?pane.generation:(pane.vt.metadata as {generation:string}).generation;
+}
+export async function validateCoreHandoverPart(value:unknown):Promise<CoreHandoverPart>{
+ if(!value||typeof value!=="object"||!("kind" in value))return validatePaneCoreCheckpoint(value);
+ validateCheckpointJson(value);
+ const d=object(value,["format","kind","id","generation","exitCode","output"]);
+ if(d.format!==1||d.kind!=="ended"||!str(d.id,128)||!d.id.length||!str(d.generation,128)||!d.generation.length||!int(d.exitCode,0,255))fail();
+ const o=object(d.output,["chunks","total","version","end"]);
+ if(!Array.isArray(o.chunks)||o.chunks.length>1_000_000||!o.chunks.every(s=>typeof s==="string")||!int(o.total,0,1_000_000)||!int(o.version)||!int(o.end,o.total as number)||o.chunks.reduce((n:number,s:string)=>n+s.length,0)!==o.total)fail();
+ return value as EndedCoreCheckpoint;
+}

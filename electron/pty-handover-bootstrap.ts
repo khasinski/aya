@@ -6,7 +6,7 @@ import {PTY_HANDOVER_CORE_DIRECTORY} from "./pty-host-paths";
 import {readCheckpoint, type CheckpointReceipt} from "./pty-checkpoint-store";
 import {checkpointPayloadSize,decodeCheckpointPayload} from "./pty-checkpoint-payload";
 import {parseCheckpointJson,MAX_CHECKPOINT_BYTES} from "./vt-checkpoint-schema";
-import {validatePaneCoreCheckpoint,type PaneCoreCheckpoint} from "./pty-core-checkpoint";
+import {validateCoreHandoverPart,checkpointGeneration,type CoreHandoverPart} from "./pty-core-checkpoint";
 
 export interface HandoverBootstrap {format:1;core:CheckpointReceipt}
 export function parseHandoverBootstrap(data:Buffer):HandoverBootstrap {
@@ -38,19 +38,19 @@ export async function preflightCoreHandover(receipt:CheckpointReceipt,expected?:
   for await(const pane of readCoreHandover(receipt)){
     if(remaining){
       const match=remaining.get(pane.id);
-      if(!match||match.generation!==(pane.vt.metadata as {generation:string}).generation||match.outputEnd!==pane.output.end)throw new Error("Terminal checkpoint boundary identity mismatch");
+      if(!match||match.generation!==checkpointGeneration(pane)||match.outputEnd!==pane.output.end)throw new Error("Terminal checkpoint boundary identity mismatch");
       remaining.delete(pane.id);
     }
   }
   if(remaining?.size)throw new Error("Terminal checkpoint pane set differs");
   return sizes;
 }
-export async function* readCoreHandover(receipt:CheckpointReceipt):AsyncGenerator<PaneCoreCheckpoint> {
+export async function* readCoreHandover(receipt:CheckpointReceipt):AsyncGenerator<CoreHandoverPart> {
   // Headers for every part are checked before decoding even the first pane.
   await checkRawAggregate(receipt);
   for await(const part of readCheckpoint(PTY_HANDOVER_CORE_DIRECTORY,receipt)){
-    const pane=await validatePaneCoreCheckpoint(parseCheckpointJson(decodeCheckpointPayload(part.data)));
-    if(pane.id!==part.id||(pane.vt.metadata as {generation:string}).generation!==part.generation)throw new Error("Terminal checkpoint part identity mismatch");
+    const pane=await validateCoreHandoverPart(parseCheckpointJson(decodeCheckpointPayload(part.data)));
+    if(pane.id!==part.id||checkpointGeneration(pane)!==part.generation)throw new Error("Terminal checkpoint part identity mismatch");
     yield pane;
   }
 }

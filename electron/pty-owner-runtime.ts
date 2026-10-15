@@ -44,6 +44,7 @@ export class OwnerRuntime {
   private ownerExit: Promise<number | null> | null = null;
   get isStopping(): boolean { return !!this.shutdownTask; }
   pendingSpawns = 0;
+  private retainedRestorations=0;
   private idleTimer: NodeJS.Timeout | null = null;
   onUnavailable: (() => void) | null = null;
   private persist(): void {
@@ -73,9 +74,15 @@ export class OwnerRuntime {
     this.persist();
   }
   endSpawn(): void { this.pendingSpawns--; this.scheduleIdle(); }
+  /** Keep the stable owner available while JS holds an unapplied exit. This
+   * is not a spawn flight and must not prevent a planned lease transfer. */
+  holdRestoration():()=>void {
+    this.retainedRestorations++;if(this.idleTimer)clearTimeout(this.idleTimer);this.idleTimer=null;
+    let held=true;return()=>{if(!held)return;held=false;this.retainedRestorations--;this.scheduleIdle();};
+  }
   private scheduleIdle(): void {
-    if (this.inventory.size || this.pendingSpawns || this.incompatible || this.ending || this.idleTimer) return;
-    this.idleTimer = setTimeout(() => { this.idleTimer = null; if (!this.inventory.size && !this.pendingSpawns) void this.shutdown().catch(() => {}); }, 200);
+    if (this.inventory.size || this.pendingSpawns || this.retainedRestorations || this.incompatible || this.ending || this.idleTimer) return;
+    this.idleTimer = setTimeout(() => { this.idleTimer = null; if (!this.inventory.size && !this.pendingSpawns && !this.retainedRestorations) void this.shutdown().catch(() => {}); }, 200);
   }
   static async open(): Promise<OwnerRuntime> {
     prepareOwnerDirectory();
