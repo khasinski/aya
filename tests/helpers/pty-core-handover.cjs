@@ -3,6 +3,9 @@ const core=require('../../dist-electron/pty-core.js');
 const {getOwnerRuntime,shutdownOwnerRuntime}=require('../../dist-electron/pty-owner-runtime.js');
 const {checkpointVtPane}=require('../../dist-electron/vt-mirror.js');
 const {validatePaneCoreCheckpoint}=require('../../dist-electron/pty-core-checkpoint.js');
+const {VtCheckpointTerminal}=require('../../dist-electron/vt-checkpoint.js');
+const {capture}=require('../../dist-electron/vt-checkpoint-binding.js');
+const {OwnerPty}=require('../../dist-electron/pty-owner-adapter.js');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function waitFor(predicate){const end=Date.now()+6000;while(!predicate()){if(Date.now()>end)throw Error('core handover readiness timeout');await sleep(2);}}
 const home=process.env.AYA_HOME,mode=process.argv[2],variant=process.argv[3];let output='',exits=[],events=[];
@@ -69,11 +72,30 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
   process.send({pid,ownerPid:owner.record.pid},()=>process.exit(0));
  }else{
   const checkpoint=JSON.parse(fs.readFileSync(path.join(home,'core.json'),'utf8')),expected=JSON.parse(fs.readFileSync(path.join(home,'expected.json'),'utf8'));
+  let attaches=0;const attach=OwnerPty.attach;
+  OwnerPty.attach=async function(...args){attaches++;return attach.apply(this,args);};
+  try{
+   for(const mutate of [c=>{c.output.total++;},c=>{c.output.end=-1;},c=>{c.adapter.pane.pid=1;},c=>{c.adapter.pane.generation=0;},c=>{c.adapter.readBytes=-1;},c=>{c.adapter.decoderCarry='////';},c=>{c.adapter.credential='forbidden';},c=>{c.request.ptyId='other';},c=>{c.vt.metadata.generation='';},c=>{c.launch.mode={};},c=>{c.extra=true;}]){
+    const bad=structuredClone(checkpoint);mutate(bad);await assert.rejects(core.restorePtyCorePane(bad,sink),/Invalid/);assert.equal(attaches,0,'malformed restore must not request a master');
+   }
+  }finally{OwnerPty.attach=attach;}
   await core.restorePtyCorePane(checkpoint,sink);
   assert.equal(core.getPtyPid('core'),expected.pid);assert.equal((await getOwnerRuntime()).record.pid,expected.ownerPid);
   assert.equal(core.getBufferedOutput('core'),expected.before);assert.deepEqual(core.searchPtyOutputs('history'),expected.search);
   assert.deepEqual(core.getPtyLaunch('core'),checkpoint.launch);
-  if(variant!=='exit-gap')assert.deepEqual(await checkpointVtPane('core'),expected.vt);
+  if(variant!=='exit-gap'){
+   const actual=await checkpointVtPane('core');assert.deepEqual(actual.metadata,expected.vt.metadata);
+   const a=await VtCheckpointTerminal.import(expected.vt),b=await VtCheckpointTerminal.import(actual);
+   try{
+    const replies=[[],[]];a.terminal.onData(s=>replies[0].push(s));b.terminal.onData(s=>replies[1].push(s));
+    // Ground compaction can move resize/output from the tail into the base.
+    // Compare applied terminal state and subsequent parsing, not that layout.
+    for(const text of ['1mCHECK','\x1b[?1049hFUTURE\x1b[?1049l','\x1b[6n']){
+     await new Promise(r=>a.write(text,r));await new Promise(r=>b.write(text,r));
+    }
+    assert.deepEqual(JSON.parse(capture(a.terminal)),JSON.parse(capture(b.terminal)));assert.deepEqual(replies[0],replies[1]);
+   }finally{a.dispose();b.dispose();}
+  }
   if(variant!=='exit-gap'){
    fs.writeFileSync(path.join(home,'release'),'go');await waitFor(()=>output.includes('TAIL'));
    await core.writePty('core','after\nquit\n');
