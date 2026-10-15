@@ -51,7 +51,9 @@ const wait=async predicate=>{const end=Date.now()+6000;while(!await predicate())
   if(variant!=='exit-gap'){
    if(variant.startsWith('redraw-')){await wait(async()=>!(await vtSnapshot('pane')).recoveryUnknown);assert.equal(snapshotHold(await vtSnapshot('pane')).hold,null);assert.ok(fs.existsSync(path.join(home,'redraw-fired')));}
    else {const snapshot=await vtSnapshot('pane');assert.equal(snapshot.recoveryUnknown,true);assert.equal(snapshotHold(snapshot).hold,variant==='shell'?HOLD_SHELL:HOLD_RECOVERY_UNKNOWN);assert.equal(snapshotBusy(snapshot),false);}
-   assert.equal(core.getPtyPid('pane'),bootstrap.panes[0].pid);core.resizePty('pane',101,39);
+   assert.equal(core.getPtyPid('pane'),bootstrap.panes[0].pid);
+   assert.deepEqual(await owner.client.list().then(panes=>[panes[0].cols,panes[0].rows]),[bootstrap.panes[0].request.cols,bootstrap.panes[0].request.rows]);
+   core.resizePty('pane',101,39);
    assert.deepEqual(await owner.client.list().then(panes=>[panes[0].cols,panes[0].rows]),[101,39]);
    await core.writePty('pane','AFTER_RECOVERY\n');await wait(()=>output.includes(`R:${bootstrap.panes[0].pid}:AFTER_RECOVERY`));
    await core.writePty('pane','quit\n');

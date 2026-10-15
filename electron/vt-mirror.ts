@@ -106,7 +106,6 @@ export function closeAllVtPanes(): void {
 export function writeVtPane(ptyId: string, chunk: string): void {
   const pane = panes.get(ptyId);
   if (!pane) return;
-  if(chunk)recoveryScreens.get(pane)?.noteOutput();
   checkpointTerminals.get(pane)!.write(chunk);
   pane.lastOutputAt = Date.now();
   if (pane.timer) return;

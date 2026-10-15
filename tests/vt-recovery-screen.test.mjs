@@ -21,7 +21,7 @@ for(const reset of ['\x1bc','\x1b[2J'])test(`parser-dispatched full reset ${JSON
 });
 test('resize and alternate-buffer activation invalidate prior row coverage',async()=>{
  for(const action of [t=>t.resize(119,4),t=>write(t,'\x1b[?1049h')]){
-  const f=fixture();try{await write(f.term,'\x1b[1;1Hfirst\x1b[2;1Hsecond');await action(f.term);await write(f.term,'\x1b[3;1Hthird\x1b[4;1Hfourth');await sleep(25);assert.deepEqual(f.states,[]);await write(f.term,'\x1b[1;1Hfirst\x1b[2;1Hsecond');await sleep(25);assert.deepEqual(f.states,[{known:true,timeout:false}]);}finally{f.close();}
+  const f=fixture();try{await write(f.term,'\x1b[1;1H\x1b[2Kfirst\x1b[2;1H\x1b[2Ksecond');await action(f.term);await write(f.term,'\x1b[3;1H\x1b[2Kthird\x1b[4;1H\x1b[2Kfourth');await sleep(25);assert.deepEqual(f.states,[]);await write(f.term,'\x1b[1;1H\x1b[2Kfirst\x1b[2;1H\x1b[2Ksecond');await sleep(25);assert.deepEqual(f.states,[{known:true,timeout:false}]);}finally{f.close();}
  }
 });
 test('scrolling a fragment cannot cover rows that were only shifted',async()=>{
@@ -31,4 +31,18 @@ test('scrolling a fragment cannot cover rows that were only shifted',async()=>{
 
 test('empty applied-snapshot drains cannot postpone settling a completed redraw',async()=>{
  const f=fixture();try{await write(f.term,'\x1b[2Jcomplete');for(let i=0;i<15;i++){await write(f.term,'');await sleep(2);}assert.deepEqual(f.states,[{known:true,timeout:false}]);}finally{f.close();}
+});
+
+
+for(const fragment of ['\x1b[1;1Hx\x1b[2;1Hx\x1b[3;1Hx\x1b[4;1Hx','\x1b[1;2H\x1b[K\x1b[2;2H\x1b[K\x1b[3;2H\x1b[K\x1b[4;2H\x1b[K','\x1b[4;2H\x1b[1J','\x1b[1;2H\x1b[J'])test('partial print/EL/ED cannot reconstruct unknown cells '+JSON.stringify(fragment),async()=>{
+ const f=fixture();try{await write(f.term,fragment);await sleep(25);assert.deepEqual(f.states,[]);}finally{f.close();}
+});
+test('received output cancels quiet until its blocked parser work is fully applied',async()=>{
+ const f=fixture();let release;const pending=new Promise(resolve=>{release=resolve;});
+ const handler=f.term.parser.registerCsiHandler({final:'z'},async()=>{await pending;return true;});
+ try{await write(f.term,'\x1b[2Jbaseline');const applying=write(f.term,'\x1b[znew prompt');await sleep(30);assert.deepEqual(f.states,[]);release();await applying;await sleep(25);assert.deepEqual(f.states,[{known:true,timeout:false}]);}
+ finally{release();handler.dispose();f.close();}
+});
+test('ECH can complete cell coverage without counting untouched cells',async()=>{
+ const f=fixture();try{await write(f.term,Array.from({length:4},(_,i)=>`\x1b[${i+1};1Hx\x1b[119X`).join(''));await sleep(25);assert.deepEqual(f.states,[{known:true,timeout:false}]);}finally{f.close();}
 });
