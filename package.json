@@ -24,7 +24,7 @@
     "typecheck:renderer": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
     "build:renderer": "vite build",
-    "build:electron": "tsc -p electron && vite build -c vite.preload.config.mts --logLevel warn && node scripts/build-macos-window-hack.cjs",
+    "build:electron": "tsc -p electron && vite build -c vite.preload.config.mts --logLevel warn && node scripts/build-macos-window-hack.cjs && npm run build:pty-owner",
     "build:test-src": "tsc -p tsconfig.test-src.json",
     "build": "npm run build:renderer && npm run build:electron",
     "test": "npm run typecheck:renderer && npm run build:electron && npm run build:test-src && node --import ./tests/helpers/preload-guard.mjs --test \"tests/**/*.test.mjs\"",
@@ -34,7 +34,9 @@
     "test:e2e:headed": "npm run build && playwright test --headed",
     "emulator:shot": "node scripts/emulator-shot.cjs",
     "package": "npm run build && electron-builder --publish never",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "build:pty-owner": "node scripts/build-pty-owner.cjs",
+    "test:owner-package": "node scripts/package-owner-smoke.cjs"
   },
   "dependencies": {
     "@xterm/addon-web-links": "^0.12.0",
@@ -71,7 +73,9 @@
     "react-dom": "^19.2.6",
     "typescript": "^5.6.3",
     "vite": "^8.0.14",
-    "wait-on": "^9.0.10"
+    "wait-on": "^9.0.10",
+    "@electron/osx-sign": "1.3.3",
+    "@electron/get": "5.1.0"
   },
   "overrides": {
     "shell-quote": "^1.11.0"
@@ -127,7 +131,8 @@
       "dist-electron/atomic-write.js",
       "dist-electron/config-echo.js",
       "dist-electron/*.node",
-      "dist-electron/aya-local-summary"
+      "dist-electron/aya-local-summary",
+      "dist-electron/aya-pty-owner"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
@@ -143,7 +148,11 @@
       "notarize": true,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Aya lets command-line tools you run in the terminal (such as a voice or dictation plugin) record from the microphone. Aya itself never records — the microphone is used only by the command you launch, and you can revoke this in System Settings > Privacy & Security > Microphone."
-      }
+      },
+      "sign": "scripts/sign-macos.cjs",
+      "binaries": [
+        "Contents/Resources/app.asar.unpacked/dist-electron/aya-pty-owner"
+      ]
     },
     "linux": {
       "syncDesktopName": true,

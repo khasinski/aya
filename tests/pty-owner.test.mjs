@@ -1,0 +1,130 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { spawn, execFileSync } from "node:child_process";
+import { once } from "node:events";
+import { startOwner, shellSpec, readUntil, PtyOwnerClient, artifacts, require, sleep, frame } from "./helpers/pty-owner.mjs";
+
+test("owner spawns, resizes and reaps while the JS client owns only a duplicate", async (t) => {
+  const owner = await startOwner(); t.after(() => owner.close());
+  const c = await owner.connect(), pane = await c.spawn(shellSpec(owner.home));
+  assert.equal(pane.pid > 0, true); assert.match(c.buildId, /^[0-9a-f]{64}$/); assert.match(c.instanceId, /^[0-9a-f]{32}$/);
+  await readUntil(c, pane.fd, `START:${pane.pid}`);
+  await assert.rejects(c.spawn(shellSpec(owner.home)), /Pane already exists/);
+  fs.writeSync(pane.fd, "hello\n"); await readUntil(c, pane.fd, `R:${pane.pid}:hello`);
+  await c.resize(pane, 101, 39); fs.writeSync(pane.fd, "size\n");
+  await readUntil(c, pane.fd, `SIZE:${pane.pid}:39 101`);
+  await assert.rejects(c.resize({ ...pane, generation: pane.generation + 1 }, 80, 24), /Unknown pane generation/);
+  fs.writeSync(pane.fd, "quit\n"); await readUntil(c, pane.fd, `EXIT:${pane.pid}`);
+  const exit = await c.nextExit(); assert.equal(exit.exitCode, 23); assert.equal(exit.signal, 0);
+  await c.ackExit(exit); await c.ackExit(exit);
+  assert.equal((await c.list())[0].acknowledged, true); assert.deepEqual(c.takeExits(), []);
+  c.release(pane.fd);
+  const next = await c.spawn({ ...shellSpec(owner.home), command: "/bin/sleep", argv: ["sleep", "30"] });
+  assert.notEqual(next.generation, pane.generation);
+  await assert.rejects(c.ackExit(exit), /Unknown pane generation/);
+  await c.kill(next, 15); assert.equal((await c.nextExit()).signal, 15);
+  await c.shutdown(); assert.equal((await owner.closed).code, 0);
+});
+
+test("wrong authentication and invalid headers cannot take over the owner", async (t) => {
+  const owner = await startOwner(); t.after(() => owner.close());
+  await assert.rejects(PtyOwnerClient.connect(owner.socket, Buffer.alloc(32), artifacts.bridge), /Authentication failed/);
+  const native = require(artifacts.bridge);
+  for (const alter of [b => b.writeUInt32BE(0, 0), b => b.writeUInt16BE(2, 4), b => b.writeUInt32BE(256 * 1024 + 1, 12)]) {
+    const fd = native.connect(owner.socket), b = frame(1); alter(b); native.send(fd, b);
+    const reply = await native.receive(fd, 2000); assert.equal(reply.data.readUInt16BE(6), 0x8001); native.close(fd, true);
+  }
+  const c = await owner.connect(); assert.deepEqual(await c.list(), []);
+});
+
+test("owner refuses duplicate owners and overlapping or live detached reader processes", async (t) => {
+  const owner = await startOwner(); t.after(() => owner.close());
+  const duplicate = spawn(artifacts.executable, owner.args, { env: owner.env, stdio: "ignore" });
+  assert.notEqual((await once(duplicate, "exit"))[0], 0);
+  const c = await owner.connect();
+  await assert.rejects(owner.connect(), /Previous client still owns the lease/);
+  c.close(); await sleep(10);
+  await assert.rejects(owner.connect(), /Previous client still owns the lease/);
+});
+
+test("failed spawn and unknown operations leave the owner usable without new panes", async (t) => {
+  const owner = await startOwner(); t.after(() => owner.close()); const c = await owner.connect();
+  await assert.rejects(c.spawn({ ...shellSpec(owner.home), command: "/missing/aya-test-command" }), /No such file/);
+  await assert.rejects(c.spawn({ ...shellSpec(owner.home), cwd: "/missing/aya-test-directory" }), /No such file/);
+  await assert.rejects(c.spawn({ ...shellSpec(owner.home), cols: 0 }), /Invalid spawn data/);
+  assert.deepEqual(await c.list(), []);
+});
+
+async function child(mode, owner) {
+  const proc = spawn(process.execPath, [path.resolve("tests/helpers/pty-owner-client-child.cjs"), mode, owner.home, artifacts.bridge], {
+    env: owner.env, stdio: ["ignore", "ignore", "pipe", "ipc"],
+  });
+  let stderr = ""; proc.stderr.on("data", data => { stderr += data; });
+  const timer = setTimeout(() => proc.kill("SIGKILL"), 6000);
+  try {
+    const done = once(proc, "exit");
+    const [message] = await Promise.race([once(proc, "message"), done.then(() => { throw new Error(`Client exited without a result: ${stderr}`); })]);
+    assert.equal((await done)[0], 0, stderr); return message;
+  } finally { clearTimeout(timer); }
+}
+test("a child exiting with no JS client retains its real status through reconnect and acknowledgement", async (t) => {
+  const owner = await startOwner(); t.after(() => owner.close());
+  const first = await child("gap-exit", owner);
+  await sleep(300);
+  const next = await child("ack-gap", owner);
+  assert.equal(next.events[0].pid, first.pane.pid); assert.equal(next.events[0].generation, first.pane.generation);
+  assert.equal(next.events[0].exitCode, 23); assert.equal(next.events[0].signal, 0);
+  const last = await child("post-ack", owner); assert.deepEqual(last.events, []);
+});
+
+test("SIGKILL of the JS reader preserves a preexisting unread reply and the original child", async (t) => {
+  const owner = await startOwner(); t.after(() => owner.close());
+  const proc = spawn(process.execPath, [path.resolve("tests/helpers/pty-owner-client-child.cjs"), "crash-queued", owner.home, artifacts.bridge], {
+    env: owner.env, stdio: ["ignore", "ignore", "pipe", "ipc"],
+  });
+  const done = once(proc, "exit");
+  t.after(() => { if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL"); });
+  const [before] = await Promise.race([once(proc, "message"), done.then(() => { throw new Error("Crash client exited early"); })]);
+  assert.equal(before.readReady, 1); proc.kill("SIGKILL"); assert.equal((await done)[1], "SIGKILL");
+  const c = await owner.connect(), panes = await c.list();
+  assert.equal(panes.length, 1); assert.equal(panes[0].pid, before.pane.pid);
+  const pane = await c.attach(panes[0]); assert.equal(c.readReady(pane.fd), 1);
+  assert.equal(Number(execFileSync("ps", ["-o", "ppid=", "-p", String(pane.pid)], { encoding: "utf8" }).trim()), owner.owner.pid);
+  await readUntil(c, pane.fd, `R:${pane.pid}:pending-before-crash`);
+  fs.writeSync(pane.fd, "after\n"); await readUntil(c, pane.fd, `R:${pane.pid}:after`);
+  await c.resize(pane, 99, 35); fs.writeSync(pane.fd, "size\n"); await readUntil(c, pane.fd, `SIZE:${pane.pid}:35 99`);
+  fs.writeSync(pane.fd, "quit\n"); await readUntil(c, pane.fd, `EXIT:${pane.pid}`);
+  const exit = await c.nextExit(); assert.equal(exit.exitCode, 23); await c.ackExit(exit);
+});
+
+test("fragmented frames and an unknown operation get bounded clean responses", async (t) => {
+  const owner = await startOwner(); t.after(() => owner.close());
+  const native = require(artifacts.bridge), fd = native.connect(owner.socket), hello = frame(1, owner.token);
+  t.after(() => native.close(fd, true));
+  native.send(fd, hello.subarray(0, 7)); await sleep(5); native.send(fd, hello.subarray(7));
+  assert.equal((await native.receive(fd, 2000)).data.readUInt16BE(6), 0x8000);
+  native.send(fd, frame(65535, Buffer.alloc(0), 2));
+  const response = await native.receive(fd, 2000);
+  assert.equal(response.data.readUInt16BE(6), 0x8001); assert.match(response.data.toString(), /Unknown operation/);
+});
+
+test("owner escalates an ignored graceful kill without leaving the child alive", async (t) => {
+  const owner = await startOwner(); t.after(() => owner.close()); const c = await owner.connect();
+  const pane = await c.spawn({ ...shellSpec(owner.home), argv: ["sh", "-c", "trap '' HUP TERM; printf 'READY\\n'; while :; do sleep 10; done"] });
+  await readUntil(c, pane.fd, "READY");
+  await c.kill(pane, 1); const exit = await c.nextExit(); assert.equal(exit.signal, 9); await c.ackExit(exit);
+  assert.throws(() => process.kill(pane.pid, 0), /ESRCH/);
+});
+
+test("explicit owner shutdown completes even if a JS client retains an unread master duplicate", async (t) => {
+  const owner = await startOwner(); t.after(() => owner.close()); const c = await owner.connect();
+  const pane = await c.spawn({ ...shellSpec(owner.home), argv: ["sh", "-c", "printf 'unread-before-exit\\n'; exit 23"] });
+  await sleep(20); assert.ok(c.readReady(pane.fd));
+  owner.owner.kill("SIGTERM");
+  const timer = setTimeout(() => owner.owner.kill("SIGKILL"), 1800);
+  const result = await owner.closed; clearTimeout(timer);
+  assert.equal(result.code, 0, "shutdown must not hang in a macOS PTY drain");
+  c.close(); assert.throws(() => process.kill(pane.pid, 0), /ESRCH/);
+});

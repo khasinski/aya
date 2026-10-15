@@ -1,0 +1,53 @@
+name: PTY owner
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  owner:
+    name: Native owner (${{ matrix.platform }} ${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: darwin
+            arch: arm64
+          - os: ubuntu-24.04
+            platform: linux
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    env:
+      AYA_OWNER_ELECTRON_DIST: ${{ github.workspace }}/test-results/owner-electron
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies (preparation)
+        run: npm ci
+      - name: Verify native target
+        run: node -e 'if (process.platform !== "${{ matrix.platform }}" || process.arch !== "${{ matrix.arch }}") throw new Error("Wrong native runner architecture")'
+      - name: Prepare the Electron distribution (network allowed only in preparation)
+        run: node scripts/prepare-owner-electron.cjs
+      - name: Build without downloading native headers
+        run: npm run build
+      - name: Native owner contracts
+        run: node --test tests/pty-owner.test.mjs
+      - name: Two-build identity, 1/25 panes, idle usage and FD cleanup
+        run: node scripts/measure-pty-owner.mjs
+      - name: Staged package smoke (ad-hoc signing only, no notarization)
+        run: npm run test:owner-package
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: owner-evidence-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            test-results/owner-measurements-*.json
+            test-results/owner-package-*/owner-entitlements.plist
+            test-results/owner-package-*/owner-package-identity.json
