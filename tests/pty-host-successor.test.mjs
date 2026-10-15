@@ -77,6 +77,7 @@ for(const interrupted of [false,true,'ack-failure','attach-failure'])test(`a sep
   assert.equal(replay.length,1);assert.equal(replay[0].reset,false);
   assert.equal(replay[0].chunk.split('BETWEEN').length-1,1);assert.ok(!replay[0].chunk.includes('READY'));
   assert.equal(next.reusedHost,true);
+  assert.equal(await next.acknowledgeHandoverDisplay('pane',state.eligible[0].generation),true);
   await next.write('pane','after\n');await wait(()=>events.some(e=>e.type==='data'&&e.chunk.includes('R:after')));
   await next.write('pane','quit\n');await wait(()=>events.some(e=>e.type==='exit'&&e.exitCode===23));
   assert.deepEqual(fs.readdirSync(path.join(process.env.AYA_HOME,'pty-handover-core')),[]);

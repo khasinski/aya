@@ -38,6 +38,7 @@ test('host escrow lifecycle keeps peers, cancellation, reuse, expiry and raw cap
   await handover.abort(peer);assert.deepEqual(fs.readdirSync(roots[0]),[]);
   await core.writePty('one','after-cancel\n');await wait(()=>(outputs.get('one')||'').includes('R:after-cancel'));
   assert.equal(core.getPtyPid('one'),pid);
+  await handover.abort(); // Join expiry cleanup, including pending-slot release.
 
   state=await handover.prepare(peer,Date.now()+120000);await handover.publish(peer,null);
   handover.adopt(successor);assert.throws(()=>handover.adopt(peer),/recipient refused/);
@@ -53,6 +54,7 @@ test('host escrow lifecycle keeps peers, cancellation, reuse, expiry and raw cap
   await wait(()=>(outputs.get('one')||'').includes('R:after-expiry'));
   await wait(()=>fs.readdirSync(roots[0]).length===0);
   assert.equal(core.getPtyPid('one'),pid);
+  await handover.abort(); // Join expiry cleanup, including pending-slot release.
 
   state=await handover.prepare(peer,Date.now()+120000);
   const first=await writeCheckpoint(roots[1],[{id:'one',generation:state.eligible[0].generation,data:encodeCheckpointPayload(Buffer.from('first'))}]);

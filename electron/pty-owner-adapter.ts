@@ -36,6 +36,8 @@ export class OwnerPty implements IPty {
   private readBytes = 0;
   private savedRead: ((size: number) => void) | null = null;
   private exited: OwnerPane | null = null;
+  private acceptedStop = false;
+  private stopOutcome:Promise<void> = Promise.resolve();
   private readEnded = false;
   private finalized = false;
   private drainTimer: NodeJS.Timeout | undefined;
@@ -172,9 +174,18 @@ export class OwnerPty implements IPty {
     void this.closed.then(() => { if (retiring.get(key) === this.closed) retiring.delete(key); });
     // Cancellation must interrupt blocked input instead of queueing behind it.
     // The owner serializes kill against the known pane generation and reaps it.
-    if (!this.exited) void this.owner.client!.kill(this.pane, os.constants.signals[signal as keyof typeof os.constants.signals]).catch(() => {});
+    if (!this.exited) {
+      const action=this.owner.client!.kill(this.pane,os.constants.signals[signal as keyof typeof os.constants.signals]).then(()=>{this.acceptedStop=true;},error=>{
+        if((error as {code?:string}).code!=="OWNER_REJECTED")throw error;
+      });
+      this.stopOutcome=Promise.all([this.stopOutcome,action]).then(()=>{});
+      void this.stopOutcome.catch(()=>{});
+    }
     this.reader.resume();
   }
+  /** The owner observed the reserved child live and accepted our stop. A
+   * normal exit code from a HUP handler does not undo that accepted action. */
+  async confirmedStopAction():Promise<boolean>{await this.stopOutcome;return this.acceptedStop;}
   clear(): void {}
   pause(): void { this.reader.pause(); }
   resume(): void { if (!this.handoverPaused) this.reader.resume(); }

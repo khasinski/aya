@@ -9,7 +9,7 @@ const root=fs.mkdtempSync(path.resolve('test-results/planned-natural-exit-'));is
 const {PtyHostClient}=await import('../dist-electron/pty-host-client.js');
 const {cleanupNativeOwner}=await import('./helpers/pty-host.mjs');
 const wait=async f=>{const end=Date.now()+8000;while(!await f()){if(Date.now()>end)throw Error('natural exit handover timeout');await new Promise(r=>setTimeout(r,2));}};
-for(const scenario of ['reuse-published','replace-published','reuse-before-publish','replace-before-publish','reuse-committed'])test(`natural fallback exit cannot respawn across ${scenario}`,{timeout:20000},async()=>{
+for(const scenario of ['reuse-published','replace-published','reuse-before-publish','replace-before-publish','reuse-committed','replace-trapped-stop'])test(scenario==='replace-trapped-stop'?'accepted HUP stop retains replacement rights after a graceful exit0':`natural fallback exit cannot respawn across ${scenario}`,{timeout:20000},async()=>{
  fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true});
  const wrapper=path.resolve(`dist-electron/pty-host-ineligible-${process.pid}.js`);
  fs.writeFileSync(wrapper,`const {OwnerPty}=require('./pty-owner-adapter');const freeze=OwnerPty.prototype.freezeForHandover;OwnerPty.prototype.freezeForHandover=function(...args){if(this.pane.id==='bad')throw Error('ineligible fixture');return freeze.apply(this,args);};require('./pty-host');`);
@@ -20,6 +20,7 @@ for(const scenario of ['reuse-published','replace-published','reuse-before-publi
  try{
   let output='';old.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>{if(e.type==='data')output+=e.chunk;}});
   const req={ptyId:'bad',agent:'custom',command:'stty -echo; echo BAD_READY; while [ ! -f "$HOME/natural-release" ]; do sleep 0.01; done; printf LAST_SUFFIX; exit 23',cwd:process.env.HOME,cols:80,rows:24};
+  if(scenario==='replace-trapped-stop')req.command="trap 'exit 0' HUP; echo BAD_READY; while :; do sleep 0.01; done";
   await old.spawn(req);await wait(()=>output.includes('BAD_READY'));const childPid=await old.getPid('bad');
   await old.spawn({...req,ptyId:'good',command:'stty -echo; echo GOOD_READY; while IFS= read -r line; do echo "$line"; done'});await wait(()=>output.includes('GOOD_READY'));
   const goodPid=await old.getPid('good'),ownerPid=(await old.hostStatus()).owner.pid;
@@ -27,12 +28,18 @@ for(const scenario of ['reuse-published','replace-published','reuse-before-publi
   assert.deepEqual(state.ineligible.map(p=>p.id),['bad']);
   if(scenario.endsWith('before-publish')){fs.writeFileSync(release,'go');await wait(async()=>await old.getPid('bad')===null);}
   const ticket=await old.announcePlannedHandover(state,null,['bad'],randomBytes(32).toString('hex'));
-  if(!scenario.endsWith('committed')){fs.writeFileSync(release,'go');await wait(async()=>await old.getPid('bad')===null);}
+  if(!scenario.endsWith('committed')&&scenario!=='replace-trapped-stop'){fs.writeFileSync(release,'go');await wait(async()=>await old.getPid('bad')===null);}
   old.hostAsked=true;
   const before=await old.hostStatus();
   await next.adoptPlannedHandover(ticket,scenario.startsWith('reuse')?before.identity:next.expectedHostIdentity('changed-version'),async()=>{});
   assert.equal((await next.hostStatus()).pid===before.pid,scenario.startsWith('reuse'));
   if(scenario.endsWith('committed')){fs.writeFileSync(release,'go');await wait(async()=>await next.getPid('bad')===null);}
+  if(scenario==='replace-trapped-stop'){
+   assert.equal(next.consentedBootSpawns.has('bad'),true,'a live-observed accepted stop can exit gracefully');
+   await next.spawn({...req,attachIfReused:true});const replacementPid=await next.getPid('bad');
+   assert.ok(replacementPid>0&&replacementPid!==childPid);assert.equal(await next.getPid('good'),goodPid);
+   assert.equal((await next.hostStatus()).owner.pid,ownerPid);await next.shutdown();return;
+  }
   assert.equal(next.consentedBootSpawns.has('bad'),false,'a natural exit never grants permission before its first view');
   const events=[];next.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});
   await next.spawn({...req,attachIfReused:true});

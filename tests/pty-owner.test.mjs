@@ -264,3 +264,8 @@ test("kernel PTY queue backpressures an unread continuous writer then drains eve
   assert.equal(Number(fs.readFileSync(done, "utf8")), total);
   fs.writeSync(pane.fd, "drained\n"); assert.equal((await c.nextExit()).exitCode, 23);
 });
+
+test("KILL refuses a kernel-ended unreaped child and unknown observation instead of granting replacement rights",()=>{
+ const fixture=compileOwnerFixture("pty-owner-stop-boundary");
+ try{execFileSync(fixture.executable);}finally{fs.rmSync(fixture.dir,{recursive:true,force:true});}
+});

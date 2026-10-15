@@ -262,7 +262,7 @@ export async function stopIneligiblePtyPanes(consented: string[]): Promise<Hando
       const listener=child.onExit(e=>{outcome=e;});
       try{await killPtyInternal(id);}finally{listener.dispose();}
       // A naturally completed command must never gain automatic respawn rights.
-      if(outcome?.signal)stopped.push(id);
+      if(await child.confirmedStopAction())stopped.push(id);
       else if(outcome)restoredPanes.set(id,{generation:"ended-ineligible",attached:false,exitCode:outcome.exitCode});
       else throw new Error("The fallback terminal exit outcome is unknown");
     }else if(currentOwnerRuntime()?.disconnected.has(id)){
