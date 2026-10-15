@@ -428,7 +428,7 @@ function TerminalViewComponent({
         /* ignore - terminal may be mid-dispose */
       }
     },
-    [terminal.id, terminal.exitCode, terminal.stopped, terminal.disconnected, onSnippetsOpenChange, sendInput],
+    [terminal.exitCode, terminal.stopped, terminal.disconnected, onSnippetsOpenChange, sendInput],
   );
   // Current foreground-process title, fed by OSC 0/2 from the inner shell.
   // macOS zsh's default config emits this in preexec/precmd, so we get the
