@@ -158,6 +158,7 @@ const killing = new Set<Promise<void>>();
 function requireMutableCore(): void {
   if (handoverGated) throw new Error("Terminal handover is in progress. This operation was not applied.");
 }
+export function ptyCoreHandoverInProgress(): boolean { return handoverGated; }
 const frozenPanes = new Map<string, PaneCoreCheckpoint>();
 const ineligiblePanes = new Map<string, string>();
 
@@ -218,6 +219,13 @@ export function abortPtyCoreHandover(): void {
 export function frozenPtyCoreParts(): PaneCoreCheckpoint[] {
   if (!handoverGated) throw new Error("PTY checkpoint has no output barrier");
   return [...frozenPanes.values()];
+}
+/** A bounded aggregate can make an individually valid pane ineligible. Keep
+ * its process/read path alive and require its own explicit fallback consent. */
+export function excludeFrozenPtyPane(id: string, reason: string): void {
+  if (!handoverGated || !frozenPanes.has(id)) throw new Error("Unknown frozen pane");
+  ptys.get(id)?.resumeAfterHandoverAbort();
+  frozenPanes.delete(id); ineligiblePanes.set(id, reason);
 }
 /** Only the coordinator calls this after #219 consent for these exact panes.
  * Eligible panes remain paused and keep their owner masters throughout. */

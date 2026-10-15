@@ -3,6 +3,7 @@ import type { VtSnapshot } from "./vt-mirror";
 import type { PaneSize } from "./pane-render";
 import type { BufferSearchHit } from "./pty";
 import type { PtyEvent, SpawnRequest } from "./types";
+import type { CheckpointReceipt } from "./pty-checkpoint-store";
 
 export type PtyHostRequest =
   | { id: number; type: "spawn"; req: SpawnRequest }
@@ -31,6 +32,8 @@ export type PtyHostRequest =
   | { id: number; type: "composer-seen"; ptyId: string; generation: string }
   | { id: number; type: "prepared"; prepareId: number; data: PreparedSpawn }
   | { id: number; type: "handover-announce"; nonce: string; deadline: number }
+  | { id: number; type: "handover-prepare"; deadline: number }
+  | { id: number; type: "handover-publish"; display: CheckpointReceipt | null }
   | { id: number; type: "handover-cancel" }
   | { id: number; type: "handover-claim"; nonce: string }
   | { id: number; type: "version" };

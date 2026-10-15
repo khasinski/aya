@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import { listenOwnerOnly } from "./owner-socket";
-import { PTY_HOST_SOCKET_PATH } from "./pty-host-paths";
+import { PTY_HOST_SOCKET_PATH, PTY_HANDOVER_CORE_DIRECTORY, PTY_HANDOVER_DISPLAY_DIRECTORY } from "./pty-host-paths";
 import { hostBuildHash, hostRuntimeIdentity, UNKNOWN_SCRIPT_HASH, type HostIdentity } from "./pty-host-staleness";
 import {
   writeHostRecord,
@@ -32,9 +32,11 @@ import {
   spawnPty,
   writePty,
   type PtyEventSink,
+  ptyCoreHandoverInProgress,
 } from "./pty-core";
 import { getOwnerRuntime, currentOwnerRuntime, shutdownOwnerRuntime, setOwnerUnavailableListener, ownerHandoverCredential } from "./pty-owner-runtime";
 import { HandoverWindow, handoverPeer } from "./pty-handover-window";
+import { HostHandover } from "./pty-host-handover";
 import { ownerProcessStartIdentity } from "./pty-owner-client";
 import { panes, vtSnapshot, markComposerSeen } from "./vt-mirror";
 import type { PreparedSpawn } from "./pty-core";
@@ -55,6 +57,7 @@ const LOG_HASH_PREFIX_CHARS = 8;
 
 const clients = new Set<net.Socket>();
 const handoverWindow = new HandoverWindow();
+const hostHandover = new HostHandover(PTY_HANDOVER_CORE_DIRECTORY, PTY_HANDOVER_DISPLAY_DIRECTORY);
 let idleTimer: NodeJS.Timeout | null = null;
 let server: net.Server | null = null;
 // The socket file this host bound, by device and inode. When this host exits after a restart, the path may already
@@ -78,9 +81,11 @@ function beginShutdown(reason: string): void {
   // an OS signal when every console dies at once.
   ptyLog.append("host-shutdown", { reason, children: activePtyCount() });
   closeSocket();
-  shutdownPtyChildren(() => {
-    void shutdownOwnerRuntime().then(() => { removeHostRecord(process.pid); process.exit(0); })
-      .catch(error => { ptyLog.append("owner-shutdown-failed", { error: String(error) }); });
+  void hostHandover.abort().catch(error => {ptyLog.append("checkpoint-abort-failed", {error:String(error)});}).then(() => {
+    shutdownPtyChildren(() => {
+      void shutdownOwnerRuntime().then(() => { removeHostRecord(process.pid); process.exit(0); })
+        .catch(error => { ptyLog.append("owner-shutdown-failed", { error: String(error) }); });
+    });
   });
 }
 
@@ -161,19 +166,44 @@ interface Preparation {
 
 async function handle(request: PtyHostRequest, socket: net.Socket, preparations: Map<number, Preparation>): Promise<unknown> {
   clearIdleTimer();
+  if (request.type === "handover-prepare") {
+    const owner = currentOwnerRuntime();
+    if (!owner?.client?.isConnected() || owner.incompatible || owner.disconnected.size || owner.record.uncertain?.length) throw new Error("This host's processes cannot move seamlessly");
+    const result = await hostHandover.prepare(handoverPeer(socket),request.deadline);
+    // The response is an output fence for main and its renderer capture IPC.
+    broadcastCoalesced.flush();
+    return result;
+  }
+  if (request.type === "handover-publish") return hostHandover.publish(handoverPeer(socket),request.display);
   if (request.type === "handover-announce") {
     const owner = currentOwnerRuntime(), identity = ownerProcessStartIdentity(process.pid);
     if (!identity || !owner?.client?.isConnected() || owner.incompatible || owner.disconnected.size || owner.record.uncertain?.length) throw new Error("This host cannot announce a seamless handover");
-    handoverWindow.announce(request.nonce, request.deadline, handoverPeer(socket));
+    const peer = handoverPeer(socket);
+    if (hostHandover.active) hostHandover.assertAnnouncement(peer,request.deadline);
+    handoverWindow.announce(request.nonce, request.deadline, peer);
     return {hostPid: process.pid, hostStartIdentity: identity};
   }
-  if (request.type === "handover-cancel") { handoverWindow.cancel(handoverPeer(socket)); return null; }
+  if (request.type === "handover-cancel") {
+    const peer = handoverPeer(socket);
+    await hostHandover.abort(peer); handoverWindow.cancel(peer); return null;
+  }
   if (request.type === "handover-claim") {
-    handoverWindow.consume(request.nonce, handoverPeer(socket));
+    const peer = handoverPeer(socket);
+    const alreadyTransferred = !!handoverWindow.transferredTo;
+    let checkpoint;
+    try {
+      handoverWindow.consume(request.nonce, peer);
+      checkpoint = hostHandover.active ? hostHandover.adopt(peer) : null;
+    } catch (error) {
+      // A failed first claim ends the attempt and resumes the old processes.
+      // A later rejected claimant cannot cancel the chosen recipient's work.
+      if (!alreadyTransferred) await hostHandover.abort().catch(() => {});
+      throw error;
+    }
     if (!currentOwnerRuntime()?.client?.isConnected()) throw new Error("The announced owner is unavailable");
     // A one-shot in-memory response on the private local socket. This value
     // never reaches broadcast, a checkpoint, process arguments or a log.
-    return {credential: ownerHandoverCredential().toString("base64")};
+    return {credential: ownerHandoverCredential().toString("base64"), ...(checkpoint ? {checkpoint} : {})};
   }
   if (request.type === "spawn") {
     await spawnPty(request.req, sink, {
@@ -244,7 +274,10 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
   }
   if (request.type === "snapshot" && (currentOwnerRuntime()?.incompatible || currentOwnerRuntime()?.disconnected.has(request.ptyId))) return "disconnected";
   if (request.type === "snapshot") return isPtyStarting(request.ptyId) ? "starting" : vtSnapshot(request.ptyId);
-  if (request.type === "composer-seen") { markComposerSeen(request.ptyId, request.generation); return null; }
+  if (request.type === "composer-seen") {
+    if (ptyCoreHandoverInProgress()) throw new Error("Terminal metadata is paused for handover");
+    markComposerSeen(request.ptyId, request.generation); return null;
+  }
   if (request.type === "prepared") {
     if (!Number.isSafeInteger(request.prepareId) || request.prepareId <= 0) throw new Error("invalid preparation id");
     const pending = preparations.get(request.prepareId);
@@ -290,13 +323,14 @@ function computeHostIdentity(): HostIdentity {
 const HOST_IDENTITY: HostIdentity = computeHostIdentity();
 
 function scheduleIdleShutdown(): void {
+  if (hostHandover.active) return;
   // An unknown/retained owner is not an empty host. Idle cleanup cannot
   // authorize the destructive fallback when a spawn acknowledgement was lost.
   if (currentOwnerRuntime()?.incompatible || currentOwnerRuntime()?.disconnected.size) return;
   if (clients.size > 0 || activePtyCount() > 0 || idleTimer) return;
   idleTimer = setTimeout(() => {
     idleTimer = null;
-    if (clients.size === 0 && activePtyCount() === 0 && !currentOwnerRuntime()?.incompatible && !currentOwnerRuntime()?.disconnected.size) {
+    if (!hostHandover.active && clients.size === 0 && activePtyCount() === 0 && !currentOwnerRuntime()?.incompatible && !currentOwnerRuntime()?.disconnected.size) {
       ptyLog.append("host-idle-exit");
       beginShutdown("idle");
     }
