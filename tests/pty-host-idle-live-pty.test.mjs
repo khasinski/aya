@@ -38,7 +38,11 @@ async function withHost(body) {
       while ((i = buf.indexOf("\n")) >= 0) {
         const msg = JSON.parse(buf.slice(0, i));
         buf = buf.slice(i + 1);
-        pending.get(msg.id)?.(msg);
+        if (msg.type === "prepare") {
+          const data = { argv: ["/bin/sh", "-c", msg.req.command], env: { PATH: "/usr/bin:/bin", TERM: "xterm-256color", AYA_HOME: home },
+            command: msg.req.command, launch: { command: msg.req.command, cwd: msg.cwd }, ownSessionId: null, spawnedAt: Date.now() };
+          socket.write(JSON.stringify({ id: nextId++, type: "prepared", prepareId: msg.prepareId, data }) + "\n");
+        } else pending.get(msg.id)?.(msg);
       }
     });
     const client = {

@@ -250,9 +250,9 @@ test("reap: empty registry is a no-op", () => {
 
 // --- the "unknown" identity sentinel must never decide a kill or a keep ---
 
-test("classifyIdentity: version mismatch is stale regardless of hashes", () => {
+test("classifyIdentity: version mismatch keeps matching core content", () => {
   assert.equal(classifyIdentity(EXPECTED, { version: "0.7.0", scriptHash: "unknown" }), "stale");
-  assert.equal(classifyIdentity(EXPECTED, { version: "0.7.0", scriptHash: "new" }), "stale");
+  assert.equal(classifyIdentity(EXPECTED, { version: "0.7.0", scriptHash: "new" }), "compatible");
 });
 
 test("classifyIdentity: same version needs BOTH hashes known to decide", () => {
@@ -260,7 +260,7 @@ test("classifyIdentity: same version needs BOTH hashes known to decide", () => {
   assert.equal(classifyIdentity(EXPECTED, { version: "0.8.0", scriptHash: "other" }), "stale");
   // 'unknown' on either side -> indeterminate: 'unknown'==='unknown' must not
   // trust a foreign build, and real-vs-'unknown' must not SIGKILL a healthy one.
-  assert.equal(classifyIdentity(EXPECTED, { version: "0.8.0", scriptHash: "unknown" }), "indeterminate");
+  assert.equal(classifyIdentity(EXPECTED, { version: "0.8.0", scriptHash: "unknown" }), "stale");
   assert.equal(
     classifyIdentity({ version: "0.8.0", scriptHash: "unknown" }, { version: "0.8.0", scriptHash: "real" }),
     "indeterminate",

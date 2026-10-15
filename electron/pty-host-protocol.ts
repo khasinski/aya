@@ -1,3 +1,5 @@
+import type { PreparedSpawn } from "./pty-core";
+import type { VtSnapshot } from "./vt-mirror";
 import type { PaneSize } from "./pane-render";
 import type { BufferSearchHit } from "./pty";
 import type { PtyEvent, SpawnRequest } from "./types";
@@ -25,6 +27,9 @@ export type PtyHostRequest =
   // Live cols x rows + alt screen, for `aya pane read`'s render. Added after 0.11.0; an
   // older host answers "unknown request", which the client turns into null.
   | { id: number; type: "size"; ptyId: string }
+  | { id: number; type: "snapshot"; ptyId: string }
+  | { id: number; type: "composer-seen"; ptyId: string; generation: string }
+  | { id: number; type: "prepared"; prepareId: number; data: PreparedSpawn }
   | { id: number; type: "version" };
 
 export type PtyHostResponse =
@@ -33,7 +38,10 @@ export type PtyHostResponse =
 
 export type PtyHostEventMessage = { type: "event"; event: PtyEvent };
 
-export type PtyHostMessage = PtyHostResponse | PtyHostEventMessage;
+export type PtyHostPrepareMessage = { type: "prepare"; prepareId: number; req: SpawnRequest; cwd: string };
+export type PtyHostSnapshotMessage = { type: "snapshot"; ptyId: string; snapshot: VtSnapshot; replay?: true };
+export type PtyHostSpawnedMessage = { type: "spawned"; req: SpawnRequest; pid: number; cwd: string; spawnedAt: number };
+export type PtyHostMessage = PtyHostResponse | PtyHostEventMessage | PtyHostPrepareMessage | PtyHostSnapshotMessage | PtyHostSpawnedMessage | { type: "cancel-prepare"; prepareId: number };
 
 export function isPtyHostRequest(value: unknown): value is PtyHostRequest {
   if (!value || typeof value !== "object") return false;
@@ -51,4 +59,20 @@ export function asPaneSize(value: unknown): PaneSize | null {
 
 export function asSearchResult(value: unknown): BufferSearchHit[] {
   return Array.isArray(value) ? (value as BufferSearchHit[]) : [];
+}
+
+/** A malformed mirror is unknown, never permission to type into a dialog. */
+export function asVtSnapshot(value: unknown): VtSnapshot | null {
+  if (!value || typeof value !== "object") return null;
+  const s = value as VtSnapshot;
+  if (typeof s.generation !== "string" || typeof s.shell !== "boolean" ||
+      typeof s.composerSeen !== "boolean" || typeof s.openedAt !== "number" ||
+      !(s.lastOutputAt === null || typeof s.lastOutputAt === "number") ||
+      !Number.isInteger(s.cols) || s.cols < 1 ||
+      !Array.isArray(s.rows) || !s.rows.every((r) => typeof r === "string") ||
+      !Array.isArray(s.cells) || s.cells.length !== s.rows.length ||
+      !s.cells.every((row) => Array.isArray(row) && row.every((c) =>
+        Array.isArray(c) && c.length === 4 && Number.isInteger(c[0]) && c[0] >= 0 && c[0] < s.cols &&
+        typeof c[1] === "string" && typeof c[2] === "number" && typeof c[3] === "number"))) return null;
+  return s;
 }

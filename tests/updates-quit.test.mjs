@@ -117,9 +117,9 @@ const LAUNCHES = [
 
 // [case, extra deps, notes left by a confirmed restart, the question (null: none), restarted?]
 const LAUNCH_WORK = [
-  ["an agent mid-turn: asked, the user keeps the old host", busyIn("pane-t"), null, "Restarting the terminals for the new Aya version stops what these panes are doing (tester: mid-turn). An agent mid-turn stops before its turn ends.", false],
+  ["an agent mid-turn: asked, the user keeps the old host", busyIn("pane-t"), null, "Restarting the terminals for Aya's updated terminal host stops what these panes are doing (tester: mid-turn). An agent mid-turn stops before its turn ends.", false],
   ["a turn the user already confirmed for this process (Restart to update): no second question", busyIn("pane-t"), { "pane-t": { pid: 100, work: "mid-turn", at: Date.now(), quiet: true } }, null, true],
-  ["a confirmed turn, and another pane now mid-turn: asked about that one only", busyIn("pane-t", "pane-x"), { "pane-t": { pid: 100, work: "mid-turn", at: Date.now(), quiet: true } }, "Restarting the terminals for the new Aya version stops what these panes are doing (loose: mid-turn). An agent mid-turn stops before its turn ends.", false],
+  ["a confirmed turn, and another pane now mid-turn: asked about that one only", busyIn("pane-t", "pane-x"), { "pane-t": { pid: 100, work: "mid-turn", at: Date.now(), quiet: true } }, "Restarting the terminals for Aya's updated terminal host stops what these panes are doing (loose: mid-turn). An agent mid-turn stops before its turn ends.", false],
 ];
 
 describe("the next launch finds the old host", () => {
@@ -134,7 +134,7 @@ describe("the next launch finds the old host", () => {
         assert.equal(questions.length > 0, asked);
         assert.equal(did, restarted);
         assert.equal(restarts, restarted ? 1 : 0);
-        if (asked) assert.match(questions[0], /^Restarting the terminals for the new Aya version stops what these panes are doing \(tester: 1 monitor\)/);
+        if (asked) assert.match(questions[0], /^Restarting the terminals for Aya's updated terminal host stops what these panes are doing \(tester: 1 monitor\)/);
       } finally {
         rmSync(deps.root, { recursive: true, force: true });
       }
