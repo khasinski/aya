@@ -281,7 +281,8 @@ export type SpawnFailureReason =
   | "preset-empty-command"
   | "agent-config-dir-create-failed"
   | "command-not-found"
-  | "node-pty-spawn-error";
+  | "node-pty-spawn-error"
+  | "spawn-prepare-failed";
 
 export type PtyEvent =
   | { type: "data"; ptyId: string; chunk: string; replay?: boolean }

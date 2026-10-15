@@ -10,7 +10,7 @@ import { PTY_HOST_EXIT_WAIT_MS, type PtyHostClient } from "./pty-host-client";
 import type { RelaunchDeps } from "./relaunch-notes";
 import { restartStaleHost } from "./updates";
 import type { HostRecord } from "./pty-host-registry";
-import { isHostStale, type HostIdentity } from "./pty-host-staleness";
+import { isHostStale, UNKNOWN_SCRIPT_HASH, type HostIdentity } from "./pty-host-staleness";
 
 /** How long the socket probe waits for the host on pty-host.sock to answer. */
 export const SOCKET_PROBE_TIMEOUT_MS = 1_000;
@@ -28,6 +28,8 @@ export interface HostHealth {
   expected: HostIdentity;
   ptyCount: number;
   stale: boolean;
+  /** Expected core bytes could not be read: warn, but never restart automatically. */
+  indeterminate?: boolean;
   socket: {
     exists: boolean;
     /** The host answering on pty-host.sock, or null when none answers. */
@@ -67,6 +69,7 @@ export async function gatherHostHealth(deps: HostHealthDeps): Promise<HostHealth
     expected: deps.expected,
     ptyCount: status.ptyCount,
     stale: asked && isHostStale(deps.expected, status.identity),
+    indeterminate: asked && (!deps.expected.scriptHash || deps.expected.scriptHash === UNKNOWN_SCRIPT_HASH),
     socket: { exists: socketExists, pid: socketPid },
     otherHosts,
   };
@@ -76,9 +79,12 @@ export async function gatherHostHealth(deps: HostHealthDeps): Promise<HostHealth
 /** What is wrong, in the words Diagnostics shows; empty when nothing is. */
 export function hostWarnings(health: Omit<HostHealth, "warnings">): string[] {
   const warnings: string[] = [];
+  if (health.indeterminate) {
+    warnings.push("The terminal host build cannot be compared: Aya could not read its current PTY runtime files. The running terminals were kept.");
+  }
   if (health.stale) {
     warnings.push(
-      `The terminal host runs an older Aya build (${health.identity?.version ?? "unknown version"}): restart it to use this one.`,
+      `The terminal host runs different PTY code or runtime (${health.identity?.version ?? "unknown version"}): restart it to use this one.`,
     );
   }
   if (health.pid !== null && !health.socket.exists) {
@@ -184,6 +190,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
   async function handleStaleHost(): Promise<void> {
     try {
       let health = await hostHealth();
+      if (health.indeterminate) return;
       // A running host this Aya cannot reach (no socket, or another host on it): its terminals show nowhere, and the
       // first pane would start another host and resume every agent a second time. Asked, like any stop of work.
       if (health.otherHosts.length > 0 && (await askStopOtherHosts(health.otherHosts.length, "Aya found"))) {
@@ -234,7 +241,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
       probeSocket: () => deps.probeSocket(),
       liveRecords: () => deps.liveRecords(),
     });
-    showStaleHost(health.stale);
+    showStaleHost(health.stale || health.indeterminate === true);
     return health;
   }
 

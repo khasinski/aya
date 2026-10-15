@@ -1,119 +1,17 @@
-// A VT parser in the pty host gives the screen the user sees now, with no window open; a pattern over raw
-// chunks cannot (an old prompt the CLI has since repainted over still matches).
-
-import { Terminal } from "@xterm/headless";
-import { MIN_PTY_COLS, MIN_PTY_ROWS } from "./constants";
+// Agent screen policy lives in main. The host owns only vt-mirror and sends applied snapshots.
+import type { Terminal } from "@xterm/headless";
 import { asksToRunAya, evaluateScreen, screenIsBusy, screenOffersAccountSetting, screenShowsUsageLimit } from "./agent-screen-rules";
 import { HOLD_ACCOUNT_SETTING, HOLD_APPROVAL, HOLD_APPROVE_AYA, HOLD_BUSY, HOLD_CHOICE, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, HOLD_USAGE_LIMIT } from "./pane-holds";
 import type { AgentKind } from "./presets";
-
-// Only the visible screen matters for "what is on screen right now", and
-// scrollback would grow a buffer per pane in the host process for no gain.
-const VT_SCROLLBACK_LINES = 0;
-// The screen is scanned at most this often per pane. Writes are applied
-// immediately; only the (comparatively expensive) scan is rate-limited, so a
-// firehose of output costs one scan per interval rather than one per chunk.
-const SCAN_INTERVAL_MS = 250;
-/** A pane with no composer rule (kilo, pi, a custom preset) is starting until it has drawn and its screen stood still
- *  this long, once; at most SCREEN_SETTLE_MAX_MS after the spawn, so a clock, or a pane that never draws, takes messages. */
-export const SCREEN_SETTLE_MS = 1_000;
-export const SCREEN_SETTLE_MAX_MS = 8_000;
-
-export interface VtPane {
-  terminal: Terminal;
-  /** Whose screen rules apply; undefined (a shell, an unknown CLI) takes the generic ones. */
-  agent: AgentKind | undefined;
-  /** A plain shell: typed text would run as a command. */
-  shell: boolean;
-  lastWaiting: boolean;
-  /** The dialog's name while one Aya names is up (an account-wide offer), else undefined. */
-  lastDialog: string | undefined;
-  /** The agent has finished starting: its composer was on screen once, or (no composer rule) its screen settled. */
-  composerSeen: boolean;
-  /** When the mirror opened and when the pane last wrote (null: nothing yet): a pane with no composer rule is up once quiet. */
-  openedAt: number;
-  lastOutputAt: number | null;
-  /** Pending trailing scan, so a pane that goes quiet right after painting a
-   *  prompt still gets scanned once more. */
-  timer: ReturnType<typeof setTimeout> | null;
-  onChange: (waiting: boolean, dialog?: string) => void;
+import { openVtPane as openMirror, panes, SCREEN_SETTLE_MS, SCREEN_SETTLE_MAX_MS, type VtPane, type VtSnapshot } from "./vt-mirror";
+export { closeAllVtPanes, closeVtPane, resizeVtPane, vtPaneAltScreen, vtPaneWaiting, vtPaneDialog, writeVtPane,
+  SCREEN_SETTLE_MS, SCREEN_SETTLE_MAX_MS, type VtPane } from "./vt-mirror";
+export function openVtPane(...args: Parameters<typeof openMirror>): void {
+  openMirror(...args);
+  const pane = panes.get(args[0])!;
+  pane.onSnapshot = () => scan(pane);
 }
-
-const panes = new Map<string, VtPane>();
-
-export function openVtPane(
-  ptyId: string,
-  cols: number,
-  rows: number,
-  onChange: (waiting: boolean, dialog?: string) => void,
-  agent?: AgentKind,
-  shell = false,
-): void {
-  panes.set(ptyId, {
-    terminal: new Terminal({
-      cols: Math.max(cols, MIN_PTY_COLS),
-      rows: Math.max(rows, MIN_PTY_ROWS),
-      scrollback: VT_SCROLLBACK_LINES,
-      allowProposedApi: true,
-    }),
-    agent,
-    shell,
-    lastWaiting: false,
-    lastDialog: undefined,
-    composerSeen: false,
-    openedAt: Date.now(),
-    lastOutputAt: null,
-    timer: null,
-    onChange,
-  });
-}
-
-export function resizeVtPane(ptyId: string, cols: number, rows: number): void {
-  const pane = panes.get(ptyId);
-  if (!pane) return;
-  try {
-    pane.terminal.resize(Math.max(cols, MIN_PTY_COLS), Math.max(rows, MIN_PTY_ROWS));
-  } catch {
-    // A resize can race the pane closing; the next write just lands on the
-    // old geometry, which only affects wrapping in the detector's input.
-  }
-}
-
-export function closeVtPane(ptyId: string): void {
-  const pane = panes.get(ptyId);
-  if (!pane) return;
-  panes.delete(ptyId);
-  if (pane.timer) clearTimeout(pane.timer);
-  try {
-    pane.terminal.dispose();
-  } catch {
-    // Disposal is best-effort - the pane is already unreachable either way.
-  }
-}
-
-export function closeAllVtPanes(): void {
-  for (const ptyId of [...panes.keys()]) closeVtPane(ptyId);
-}
-
-/** Deferred scan: xterm parses writes asynchronously, so an inline read would see the screen before this chunk.
- *  A burst gets one scan, and a pane that then goes silent still gets that last one. */
-export function writeVtPane(ptyId: string, chunk: string): void {
-  const pane = panes.get(ptyId);
-  if (!pane) return;
-  pane.terminal.write(chunk);
-  pane.lastOutputAt = Date.now();
-  if (pane.timer) return;
-  pane.timer = setTimeout(() => {
-    pane.timer = null;
-    scanPane(ptyId);
-  }, SCAN_INTERVAL_MS);
-  // Never hold the host process open just to run a screen scan.
-  pane.timer.unref?.();
-}
-
-function scanPane(ptyId: string): void {
-  const pane = panes.get(ptyId);
-  if (!pane) return;
+function scan(pane: VtPane): void {
   const rows = screenRows(pane.terminal);
   // A numbered choice is a question for the user as much as an approval dialog (paneHold holds messages for it too).
   const screen = evaluateScreen(rows, pane.agent);
@@ -132,21 +30,6 @@ function scanPane(ptyId: string): void {
   pane.lastWaiting = waiting;
   pane.lastDialog = dialog;
   pane.onChange(waiting, dialog);
-}
-
-/** Whether the pane's screen last showed a dialog: its edges are one-shot, so a window attaching later asks. */
-export function vtPaneWaiting(ptyId: string): boolean {
-  return panes.get(ptyId)?.lastWaiting ?? false;
-}
-
-export function vtPaneDialog(ptyId: string): string | undefined {
-  return panes.get(ptyId)?.lastDialog;
-}
-
-/** Whether the pane's mirror is on the alt screen; undefined for no mirror. */
-export function vtPaneAltScreen(ptyId: string): boolean | undefined {
-  const pane = panes.get(ptyId);
-  return pane && pane.terminal.buffer.active.type === "alternate";
 }
 
 /** Blank rows are kept: each rule region filters them. */
@@ -294,6 +177,9 @@ export async function paneHold(ptyId: string, pasted?: string): Promise<string |
   // Every live PTY has a mirror; none means it exited or never started.
   if (!pane) return HOLD_NOT_RUNNING;
   await applied(pane);
+  return holdPane(pane, pasted);
+}
+function holdPane(pane: VtPane, pasted?: string): string | null {
   if (pane.shell) return HOLD_SHELL;
   const screen = screenRows(pane.terminal);
   const rows = pasted ? withoutPasted(screen, pasted) : screen;
@@ -342,5 +228,32 @@ export function __testVtPane(ptyId: string): VtPane | undefined {
 /** Force a scan without waiting for the debounce. Tests only - production
  *  always goes through writeVtPane's timer. */
 export function __testScanVtPane(ptyId: string): void {
-  scanPane(ptyId);
+  const pane = panes.get(ptyId);
+  if (pane) scan(pane);
+}
+
+/** Evaluate the same cell view the in-process mirror exposes, without parsing output a second time. */
+function paneFromSnapshot(snapshot: VtSnapshot, onChange: VtPane["onChange"] = () => {}): VtPane {
+  const lines = snapshot.rows.map((text, y) => {
+    const cells = new Map(snapshot.cells[y].map(([x, chars, dim, inverse]) =>
+      [x, { getChars: () => chars, isDim: () => dim, isInverse: () => inverse }]));
+    return { length: snapshot.cols, translateToString: () => text, getCell: (x: number) => cells.get(x) };
+  });
+  return { terminal: { buffer: { active: { length: lines.length, getLine: (y: number) => lines[y] } } } as unknown as Terminal,
+    agent: snapshot.agent, shell: snapshot.shell, composerSeen: snapshot.composerSeen,
+    openedAt: snapshot.openedAt, lastOutputAt: snapshot.lastOutputAt,
+    lastWaiting: false, lastDialog: undefined, timer: null, onChange };
+}
+export function snapshotHold(snapshot: VtSnapshot, pasted?: string): { hold: string | null; composerSeen: boolean } {
+  const pane = paneFromSnapshot(snapshot);
+  return { hold: holdPane(pane, pasted), composerSeen: pane.composerSeen };
+}
+export function snapshotBusy(snapshot: VtSnapshot): boolean { return screenIsBusy(snapshot.rows, snapshot.agent); }
+export function snapshotStatus(snapshot: VtSnapshot): { waiting: boolean | null; dialog?: string; composerSeen: boolean } {
+  let waiting: boolean | null = null, dialog: string | undefined;
+  const pane = paneFromSnapshot(snapshot, (w, d) => { waiting = w; dialog = d; });
+  scan(pane);
+  // scan emits only edges; an evaluated active screen with no dialog is an explicit false too.
+  if (waiting === null && evaluateScreen(snapshot.rows, snapshot.agent) !== null) waiting = false;
+  return { waiting, dialog, composerSeen: pane.composerSeen };
 }

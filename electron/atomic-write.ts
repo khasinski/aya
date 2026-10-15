@@ -5,18 +5,12 @@
 // Used for every config Aya rewrites in place, including other tools' files via
 // the hook installers. All are small (<10kb), so the extra disk I/O is cheap.
 
-import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { recordWrite } from "./config-echo";
 
-// Every write-then-rename temp file ends in this; sweeps and watchers test it.
-export const TMP_SUFFIX = ".tmp";
-
-/** `<filePath>.<pid>.<8 hex>.tmp`, the temp name shared with the host registry. */
-export function atomicTempPath(filePath: string): string {
-  return `${filePath}.${process.pid}.${randomBytes(4).toString("hex")}${TMP_SUFFIX}`;
-}
+import { atomicTempPath } from "./atomic-temp";
+export { atomicTempPath, TMP_SUFFIX } from "./atomic-temp";
 
 export async function writeFileAtomic(
   filePath: string,

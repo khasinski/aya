@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { hostBuildHash, hostModuleFiles } from "../dist-electron/pty-host-staleness.js";
@@ -66,10 +66,13 @@ test("a require that resolves outside the host's dir is ignored", () => {
   }
 });
 
-test("the real host requires vt-state and the screen rules", async () => {
+test("the host's exact value-import graph contains only the PTY core", () => {
   const files = hostModuleFiles(new URL("../dist-electron", import.meta.url).pathname, "pty-host.js");
-  for (const f of ["pty-host.js", "pty.js", "vt-state.js", "agent-screen-rules.js", "pane-command.js"]) assert.ok(files.includes(f), f);
-  assert.ok(!files.includes("main.js"));
+  assert.deepEqual(files, [
+    "atomic-temp.js", "osc-extractor.js", "owner-socket.js", "pty-core-constants.js", "pty-core.js",
+    "pty-event-coalescer.js", "pty-host-guard.js", "pty-host-paths.js", "pty-host-protocol.js",
+    "pty-host-registry.js", "pty-host-staleness.js", "pty-host.js", "pty-log.js", "vt-mirror.js",
+  ]);
 });
 
 test("modules that require each other are listed once, and the walk ends", () => {
@@ -88,4 +91,65 @@ test("the hash covers each file's name, not only its bytes", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("runtime identity changes for Node or Electron, independent of app version", () => {
+  const dir = build({ "host.js": "" });
+  try {
+    const runtime = { node: "24.0.0", electron: "43.0.0" };
+    const hash = hostBuildHash(dir, "host.js", runtime);
+    assert.notEqual(hostBuildHash(dir, "host.js", { ...runtime, node: "26.0.0" }), hash);
+    assert.notEqual(hostBuildHash(dir, "host.js", { ...runtime, electron: "44.0.0" }), hash);
+    writeFileSync(join(dir, "package.json"), '{"version":"99.0.0"}');
+    assert.equal(hostBuildHash(dir, "host.js", runtime), hash);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("the hash covers dependency JS, native binaries and helpers, but excludes docs and unrelated app files", () => {
+  const dir = build({
+    "host.js": 'require("node-pty"); require("@xterm/headless");',
+    "node_modules/node-pty/package.json": '{"main":"lib/index.js"}',
+    "node_modules/node-pty/lib/index.js": "runtime",
+    "node_modules/node-pty/build/Release/pty.node": "native",
+    "node_modules/node-pty/build/Release/spawn-helper": "helper",
+    "node_modules/@xterm/headless/package.json": '{"main":"lib-headless/xterm-headless.js"}',
+    "node_modules/@xterm/headless/lib-headless/xterm-headless.js": "mirror",
+    "node_modules/node-pty/README.md": "docs",
+  });
+  try {
+    const before = hostBuildHash(dir, "host.js");
+    writeFileSync(join(dir, "node_modules/node-pty/README.md"), "changed docs");
+    writeFileSync(join(dir, "package.json"), '{"version":"42.0.0"}');
+    assert.equal(hostBuildHash(dir, "host.js"), before);
+    for (const file of ["node-pty/lib/index.js", "node-pty/build/Release/pty.node",
+      "node-pty/build/Release/spawn-helper", "@xterm/headless/lib-headless/xterm-headless.js"]) {
+      const before = hostBuildHash(dir, "host.js");
+      writeFileSync(join(dir, "node_modules", file), "changed runtime");
+      assert.notEqual(hostBuildHash(dir, "host.js"), before, file);
+    }
+    rmSync(join(dir, "node_modules/node-pty/build/Release/pty.node"));
+    assert.throws(() => hostBuildHash(dir, "host.js"), /native runtime is missing/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("real host graph ignores changes to rules, main, renderer and app version", () => {
+  const built = new URL("../dist-electron", import.meta.url).pathname;
+  const modules = Object.fromEntries(hostModuleFiles(built, "pty-host.js").map((name) => [name, readFileSync(join(built, name), "utf8")]));
+  const dir = build({
+    ...modules,
+    "node_modules/node-pty/package.json": '{"main":"lib/index.js"}',
+    "node_modules/node-pty/lib/index.js": "runtime",
+    "node_modules/node-pty/build/Release/pty.node": "native",
+    "node_modules/@xterm/headless/package.json": '{"main":"lib-headless/xterm-headless.js"}',
+    "node_modules/@xterm/headless/lib-headless/xterm-headless.js": "mirror",
+  });
+  try {
+    const before = hostBuildHash(dir, "pty-host.js");
+    for (const name of ["agent-screen-rules.js", "vt-state.js", "pty-prepare.js", "main.js", "renderer.js", "package.json"]) {
+      writeFileSync(join(dir, name), "changed outside PTY core");
+      assert.equal(hostBuildHash(dir, "pty-host.js"), before, name);
+    }
+    writeFileSync(join(dir, "vt-mirror.js"), modules["vt-mirror.js"] + "\n// PTY mirror changed");
+    assert.notEqual(hostBuildHash(dir, "pty-host.js"), before);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

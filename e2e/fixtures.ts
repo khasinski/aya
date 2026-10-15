@@ -225,11 +225,12 @@ export const test = base.extend<{
     // A host started FIRST makes the app treat it as REUSED, so boot-restored
     // tabs must attach-only instead of respawning.
     if (seedOptions.preStartPtyHost) {
+      // Match main's startHost: the Node/Electron runtime is part of the host content identity.
       spawn(
-        process.execPath,
+        require("electron") as string,
         [PTY_HOST_SCRIPT],
         {
-          env: appEnv(seeded, process.env, false),
+          env: { ...appEnv(seeded, process.env, false), ELECTRON_RUN_AS_NODE: "1" },
           stdio: "ignore",
         },
       );

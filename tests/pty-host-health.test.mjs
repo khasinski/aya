@@ -78,7 +78,7 @@ test("running hosts nobody uses are listed and warned about, with the button to 
 test("a stale host is warned about with its version, and drives the red dot", async () => {
   const health = await gatherHostHealth(deps({ status: async () => ({ identity: OLD, ptyCount: 1, pid: 100 }) }).d);
   assert.equal(health.stale, true);
-  assert.match(health.warnings[0], /older Aya build \(0\.12\.0\)/);
+  assert.match(health.warnings[0], /different PTY code or runtime \(0\.12\.0\)/);
 });
 
 test("no connection and no socket: the host is not asked, so none is started, and nothing is stale", async () => {
@@ -152,4 +152,17 @@ test("liveHostRecords keeps only records whose pid is that host now", (t) => {
     liveHostRecords("/app/dist-electron/pty-host.js", registry, probe).map((r) => r.pid),
     [500],
   );
+});
+
+test("an unreadable expected hash keeps the host with an indeterminate warning", async () => {
+  const health = await gatherHostHealth(deps({ expected: { ...EXPECTED, scriptHash: "unknown" } }).d);
+  assert.equal(health.stale, false);
+  assert.equal(health.indeterminate, true);
+  assert.match(health.warnings[0], /could not read.*running terminals were kept/);
+});
+test("a version-only change is compatible when the PTY content matches", async () => {
+  const health = await gatherHostHealth(deps({ status: async () =>
+    ({ identity: { ...EXPECTED, version: "0.1.0" }, ptyCount: 3, pid: 100 }) }).d);
+  assert.equal(health.stale, false);
+  assert.deepEqual(health.warnings, []);
 });
