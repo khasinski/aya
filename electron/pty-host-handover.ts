@@ -1,7 +1,7 @@
 // Old-host side of a planned replacement. Browser state remains opaque here;
 // only core/process state and bounded private escrow belong to the PTY host.
 import { mkdir, lstat, readdir } from "node:fs/promises";
-import { freezePtyCore, abortPtyCoreHandover, reusePtyCoreAfterHandover, pruneEndedIneligiblePtyPanes, frozenPtyCoreParts, excludeFrozenPtyPane, stopIneligiblePtyPanes, detachPtyCoreForHandover, type CoreHandoverPreflight } from "./pty-core";
+import { endedHandoverPanes, type HandoverCommitResult, freezePtyCore, abortPtyCoreHandover, reusePtyCoreAfterHandover, pruneEndedIneligiblePtyPanes, frozenPtyCoreParts, excludeFrozenPtyPane, stopIneligiblePtyPanes, detachPtyCoreForHandover, type CoreHandoverPreflight } from "./pty-core";
 import { writeCheckpoint, readCheckpoint, discardCheckpoint, type CheckpointReceipt, type CheckpointPart } from "./pty-checkpoint-store";
 import { encodeCheckpointPayload, checkpointPayloadSize } from "./pty-checkpoint-payload";
 import { MAX_CHECKPOINT_BYTES } from "./vt-checkpoint-schema";
@@ -35,6 +35,7 @@ interface Pending {
   eligible: HostHandoverState["eligible"];
   ineligible: HostHandoverState["ineligible"];
   consented: string[];
+  fallbackIds:string[];
 }
 const same = (a: HandoverPeer | undefined, b: HandoverPeer): boolean => !!a && a.pid === b.pid && a.startIdentity === b.startIdentity;
 async function emptyPrivateRoot(root: string): Promise<void> {
@@ -60,7 +61,7 @@ export class HostHandover {
   }
   async prepare(peer: HandoverPeer, deadline: number): Promise<HostHandoverState> {
     if (this.pending || !Number.isSafeInteger(deadline) || deadline <= Date.now() || deadline - Date.now() > 120000) throw new Error("Terminal handover preparation refused");
-    const p: Pending = {peer:{...peer},deadline,phase:"preparing",aborted:false,display:null,coreRawBytes:0,displayRawBytes:0,coreEncodedBytes:0,displayEncodedBytes:0,eligible:[],ineligible:[],consented:[]};
+    const p: Pending = {peer:{...peer},deadline,phase:"preparing",aborted:false,display:null,coreRawBytes:0,displayRawBytes:0,coreEncodedBytes:0,displayEncodedBytes:0,eligible:[],ineligible:[],consented:[],fallbackIds:[]};
     this.pending = p;
     p.timer = setTimeout(() => {void this.abort().catch(() => {});}, Math.max(1,deadline-Date.now()));
     p.work = this.prepareRecord(p);
@@ -93,6 +94,7 @@ export class HostHandover {
       p.core = await writeCheckpoint(this.coreRoot, records());
       p.eligible = result.eligible.filter(pane => selected.has(pane.id));
       if (p.aborted || Date.now() >= p.deadline) throw new Error("Terminal handover was cancelled or expired");
+      p.fallbackIds=p.ineligible.map(pane=>pane.id);
       p.phase = "frozen";
       return this.summary(p);
     } catch (error) {
@@ -138,11 +140,12 @@ export class HostHandover {
     const p = this.own(peer);
     if (p.phase !== "published" || p.deadline !== deadline) throw new Error("Terminal checkpoint was not published for this announcement");
   }
-  async detach(peer: HandoverPeer, consented: string[]): Promise<void> {
+  async detach(peer: HandoverPeer, consented: string[]): Promise<HandoverCommitResult> {
     const p = this.own(peer);
     if (!same(p.recipient,peer) || p.phase !== "published") throw new Error("Terminal handover detach refused");
     if (consented.length !== p.consented.length || new Set(consented).size !== consented.length || consented.some(id=>!p.consented.includes(id))) throw new Error("Terminal handover consent differs from the published selection");
-    await stopIneligiblePtyPanes(consented);
+    pruneEndedIneligiblePtyPanes();
+    const result=await stopIneligiblePtyPanes(consented);
     if (p.aborted || Date.now() >= p.deadline) throw new Error("Terminal handover expired before detach");
     await detachPtyCoreForHandover(() => {
       // LIST was still cancellable. Lease close is synchronous after this
@@ -152,13 +155,14 @@ export class HostHandover {
       clearTimeout(p.timer); p.phase = "committing";
     });
     clearTimeout(p.timer); p.phase = "detached";
+    return {stopped:result.stopped,ended:result.ended.filter(pane=>p.fallbackIds.includes(pane.id))};
     // Files remain for the successor's validation/restore acknowledgement.
   }
-  reuse(peer: HandoverPeer): HostHandoverState {
+  reuse(peer: HandoverPeer): HandoverCommitResult {
     const p = this.own(peer);
     if (!same(p.recipient,peer) || p.phase !== "published") throw new Error("Terminal host reuse refused");
     reusePtyCoreAfterHandover(); p.phase = "reused";
-    return this.summary(p);
+    return {stopped:[],ended:endedHandoverPanes().filter(pane=>p.fallbackIds.includes(pane.id))};
   }
   async acknowledgeReuse(peer: HandoverPeer): Promise<void> {
     const p = this.own(peer);

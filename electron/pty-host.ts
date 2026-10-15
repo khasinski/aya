@@ -19,6 +19,7 @@ import {
 } from "./pty-host-protocol";
 import { createPtyDataCoalescer } from "./pty-event-coalescer";
 import {
+  acknowledgePtyRestoration,
   activePtyCount,
   hasUnattachedRestoredPanes,
   restoredPtyLaunches,
@@ -181,6 +182,10 @@ interface Preparation {
 
 async function handle(request: PtyHostRequest, socket: net.Socket, preparations: Map<number, Preparation>): Promise<unknown> {
   clearIdleTimer();
+  if(request.type === "handover-display-applied"){
+    if(typeof request.ptyId!=="string"||request.ptyId.length>128||typeof request.generation!=="string"||request.generation.length>128||(request.token!==undefined&&(typeof request.token!=="string"||request.token.length>128)))throw Error("Invalid applied display acknowledgement");
+    return acknowledgePtyRestoration(request.ptyId,request.generation,request.token);
+  }
   if (request.type === "handover-prepare") {
     const owner = currentOwnerRuntime();
     if (!owner?.client?.isConnected() || owner.incompatible || owner.disconnected.size || owner.record.uncertain?.length) throw new Error("This host's processes cannot move seamlessly");
@@ -233,8 +238,7 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
   }
   if (request.type === "handover-detach") {
     if (!Array.isArray(request.consented) || request.consented.length > 25 || request.consented.some(id => typeof id !== "string" || id.length > 128)) throw new Error("Invalid consented pane identities");
-    await hostHandover.detach(handoverPeer(socket),request.consented);
-    return null;
+    return hostHandover.detach(handoverPeer(socket),request.consented);
   }
   if (request.type === "spawn") {
     await spawnPty(request.req, sink, {

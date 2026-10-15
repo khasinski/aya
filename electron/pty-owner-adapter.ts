@@ -29,6 +29,7 @@ export class OwnerPty implements IPty {
   private writeOutcomes = new Set<Promise<void>>();
   private mutationsGated = false;
   private handoverPaused = false;
+  private handoverEpoch = 0;
   private handoverDetached = false;
   private deferredEnd = false;
   private consumerReady = false;
@@ -183,12 +184,13 @@ export class OwnerPty implements IPty {
   async freezeForHandover(timeoutMs = 1000): Promise<OwnerPtyCheckpoint> {
     if (this.mutationsGated || this.handoverDetached || this.exited || this.readEnded) throw new Error("This pane cannot freeze for handover now");
     this.mutationsGated = true;
+    const epoch=++this.handoverEpoch;
     let timer: NodeJS.Timeout | undefined;
     try {
       await Promise.race([Promise.all([...this.writeOutcomes]), new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error("Terminal input did not drain before handover; its process was kept.")), timeoutMs);
       })]);
-      if (this.exited || this.readEnded || !this.owner.client?.isConnected()) throw new Error("The pane changed during handover input drain");
+      if (epoch!==this.handoverEpoch || !this.mutationsGated || this.exited || this.readEnded || !this.owner.client?.isConnected()) throw new Error("The pane changed during handover input drain");
       const stream = this.reader as tty.ReadStream & {_handle?: {reading: boolean; readStop(): number}; _read(size: number): void};
       if (!stream._handle || typeof stream._handle.readStop !== "function") throw new Error("This runtime cannot freeze PTY reads");
       this.handoverPaused = true;
@@ -207,11 +209,12 @@ export class OwnerPty implements IPty {
       const carry = decoder.lastNeed ? decoder.lastChar.subarray(0, decoder.lastTotal - decoder.lastNeed) : Buffer.alloc(0);
       const {fd: _fd, ...pane} = this.pane;
       return {pane: {...pane, cols: this.cols, rows: this.rows}, process: this.process, readBytes: this.readBytes, decoderCarry: carry.toString("base64")};
-    } catch (error) { this.resumeAfterHandoverAbort(); throw error; }
+    } catch (error) { if(epoch===this.handoverEpoch)this.resumeAfterHandoverAbort(); throw error; }
     finally { clearTimeout(timer); }
   }
   resumeAfterHandoverAbort(): void {
     if (this.handoverDetached) return;
+    this.handoverEpoch++;
     this.mutationsGated = false;
     if (!this.handoverPaused) return;
     this.handoverPaused = false;

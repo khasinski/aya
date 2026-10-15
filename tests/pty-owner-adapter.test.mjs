@@ -112,3 +112,18 @@ test("a lost spawn acknowledgement retains an uncertain live pane and blocks ret
   await assert.rejects(OwnerPty.spawn(spec("uncertain")), /disconnected or incompatible/);
   await owner.shutdown(); assert.throws(() => process.kill(child.pid, 0), /ESRCH/);
 });
+
+
+test("explicit abort during a pending input drain cannot pause the reader later",async()=>{
+ const p=await OwnerPty.spawn(spec('cancelled-input-freeze'));let output='';p.onData(s=>{output+=s;});
+ try{
+  await waitFor(()=>output.includes(`START:${p.pid}`));
+  let settle;const outstanding=new Promise(resolve=>{settle=resolve;});p.writeOutcomes.add(outstanding);
+  const freezing=p.freezeForHandover(3000),refused=assert.rejects(freezing,/changed during handover input drain/);
+  p.resumeAfterHandoverAbort();p.writeOutcomes.delete(outstanding);
+  await p.freezeForHandover(3000);assert.equal(p.handoverPaused,true);
+  settle();await refused;assert.equal(p.handoverPaused,true,'an obsolete freeze must not resume the newer barrier');
+  p.resumeAfterHandoverAbort();assert.equal(p.handoverPaused,false);await p.writeAsync('after-explicit-abort\n');
+  await waitFor(()=>output.includes(`R:${p.pid}:after-explicit-abort`));
+ }finally{p.kill('SIGKILL');await p.closed;}
+});

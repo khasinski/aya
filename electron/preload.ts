@@ -36,7 +36,7 @@ const api: AyaApi = {
     return ()=>ipcRenderer.removeListener("pty-checkpoint:capture",listener);
   },
   handoverDisplay: id=>ipcRenderer.invoke("pty-checkpoint:display",id),
-  acknowledgeHandoverDisplay: (id,generation)=>ipcRenderer.invoke("pty-checkpoint:display-ack",id,generation),
+  acknowledgeHandoverDisplay: (id,generation,token)=>ipcRenderer.invoke("pty-checkpoint:display-ack",id,generation,token),
   ptySpawn: (req) => ipcRenderer.invoke("pty:spawn", req),
   ptyWrite: (ptyId, data) => ipcRenderer.invoke("pty:write", ptyId, data),
   ptyResize: (ptyId, cols, rows) =>

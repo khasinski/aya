@@ -24,7 +24,7 @@ test('actual renderer DTO passes sender-bound capture and remains available unti
   for await(const part of store.readCheckpoint(displayRoot,receipt))state.displayEncodedBytes+=part.data.length;
   await displays.inspect(state);const get=channel.handlers.get('pty-checkpoint:display'),ack=channel.handlers.get('pty-checkpoint:display-ack');
   const restored=get({},'p');assert.equal(restored.json,json);assert.equal(restored.offset,77);assert.equal(restored.notice,null);
-  ack({},'p','old generation');assert.ok(get({},'p'));ack({},'p','g');assert.equal(get({},'p'),null);
+  await ack({},'p','old generation');assert.ok(get({},'p'));await ack({},'p','g');assert.equal(get({},'p'),null);
   await displays.acknowledgeEscrow(receipt);assert.deepEqual(fs.readdirSync(displayRoot),[]);
  }finally{term.dispose();}
 });
@@ -38,4 +38,24 @@ test('aggregate raw headers refuse before any display decompression',async()=>{
  payload.decodeCheckpointPayload=(...args)=>{inflations++;return decode(...args);};
  const state={...base(),eligible:[0,1,2].map(i=>({id:'p'+i,generation:'g',outputEnd:0})),display:{}};
  try{await assert.rejects(new HandoverDisplays(async()=>null,()=>{}).inspect(state),/aggregate-byte limit/);assert.equal(inflations,0);}finally{store.readCheckpoint=read;payload.decodeCheckpointPayload=decode;}
+});
+
+test('a live renderer that never replies has a bounded replay fallback',async()=>{
+ const channel=ipc(),logs=[];
+ const win={id:77,isDestroyed:()=>false,send:()=>{}};
+ const displays=new HandoverDisplays(async()=>win,(...args)=>logs.push(args));displays.register(channel);
+ const state=base(),start=Date.now();const receipt=await displays.capture(state);
+ assert.ok(Date.now()-start<2000);state.display=receipt;state.displayRawBytes=0;state.displayEncodedBytes=0;
+ await displays.inspect(state);const result=channel.handlers.get('pty-checkpoint:display')({},'p');
+ assert.equal(result.json,null);assert.match(result.notice,/History from replay/);
+ await displays.acknowledgeEscrow(receipt);
+});
+
+test('display ACK retains state until the host accepts the matching applied replay token',async()=>{
+ const channel=ipc(),seen=[];let accepted=false;
+ const displays=new HandoverDisplays(async()=>null,()=>{},async(...args)=>{seen.push(args);return accepted;});displays.register(channel);
+ await displays.inspect(base());const get=channel.handlers.get('pty-checkpoint:display'),ack=channel.handlers.get('pty-checkpoint:display-ack');
+ await ack({},'p','g','discarded-view');assert.ok(get({},'p'));
+ accepted=true;await ack({},'p','g','replacement-view');assert.equal(get({},'p'),null);
+ assert.deepEqual(seen,[['p','g','discarded-view'],['p','g','replacement-view']]);
 });

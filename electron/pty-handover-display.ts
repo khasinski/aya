@@ -14,7 +14,7 @@ interface Display {data:Buffer|null;generation:string;offset:number;notice:strin
 export class HandoverDisplays {
   private pending=new Map<string,Pending>();
   private restored=new Map<string,Display>();
-  constructor(private readonly windowForPane:(id:string)=>Promise<WebContents|null>,private readonly log:(event:string,fields:Record<string,unknown>)=>void){}
+  constructor(private readonly windowForPane:(id:string)=>Promise<WebContents|null>,private readonly log:(event:string,fields:Record<string,unknown>)=>void,private readonly applied?:(id:string,generation:string,token?:string)=>Promise<boolean>){}
   register(ipc:Pick<IpcMain,"handle"|"on">):void {
     ipc.on("pty-checkpoint:captured",(event,id:unknown,json:unknown)=>{
       if(typeof id!=='string')return;const p=this.pending.get(id);if(p?.sender===event.sender.id)p.answer(json);
@@ -23,9 +23,9 @@ export class HandoverDisplays {
       if(typeof id!=='string')throw new Error("Invalid terminal display identity");const p=this.restored.get(id);if(!p)return null;
       return {json:p.data?decodeCheckpointPayload(p.data).toString('utf8'):null,generation:p.generation,offset:p.offset,notice:p.notice};
     });
-    ipc.handle("pty-checkpoint:display-ack",(_event,id:unknown,generation:unknown)=>{
-      if(typeof id!=='string'||typeof generation!=='string')throw new Error("Invalid display acknowledgement");
-      if(this.restored.get(id)?.generation===generation)this.restored.delete(id);
+    ipc.handle("pty-checkpoint:display-ack",async(_event,id:unknown,generation:unknown,token?:unknown)=>{
+      if(typeof id!=='string'||typeof generation!=='string'||(token!==undefined&&typeof token!=='string'))throw new Error("Invalid display acknowledgement");
+      if(this.restored.get(id)?.generation===generation&&(!this.applied||await this.applied(id,generation,token as string|undefined)))this.restored.delete(id);
     });
   }
   private async ask(id:string,budget:number,deadline:number):Promise<string|null> {

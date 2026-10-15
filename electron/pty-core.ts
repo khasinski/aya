@@ -9,7 +9,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type * as PtyModule from "node-pty";
-import { OwnerPty, type OwnerPtyCheckpoint } from "./pty-owner-adapter";
+import { OwnerPty } from "./pty-owner-adapter";
+import {MAX_CHECKPOINT_BYTES,MAX_VT_SNAPSHOT_BYTES} from "./vt-checkpoint-schema";
 import type { VtCheckpoint } from "./vt-checkpoint";
 import { validatePaneCoreCheckpoint, type PaneCoreCheckpoint } from "./pty-core-checkpoint";
 import { currentOwnerRuntime } from "./pty-owner-runtime";
@@ -83,7 +84,7 @@ interface OutputBuffer {
 const outputBuffers = new Map<string, OutputBuffer>();
 // Restored processes read immediately. Keep their replay and real exit outcome
 // until the first renderer attaches, even if the child exits during that gap.
-const restoredPanes = new Map<string, {generation: string; attached: boolean; exitCode?: number}>();
+const restoredPanes = new Map<string, {generation: string; attached: boolean; replayToken?: string; exitCode?: number}>();
 
 // Per-PTY held-back partial OSC 9001 sequence, when a chunk boundary lands
 // mid-sequence (see osc-extractor.ts). Cleared alongside outputBuffers on
@@ -176,7 +177,8 @@ async function bounded<T>(work: Promise<T>, ms: number): Promise<T> {
 }
 /** Gate producers before awaiting anything. Existing preparations/kills finish
  * first; each adapter then proves writes and stops reads before VT export. */
-export async function freezePtyCore(timeoutMs = 1000): Promise<CoreHandoverPreflight> {
+export async function freezePtyCore(timeoutMs = 1000, maxBytes = MAX_CHECKPOINT_BYTES): Promise<CoreHandoverPreflight> {
+  if(!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>MAX_CHECKPOINT_BYTES)throw new Error("Invalid core checkpoint budget");
   if (handoverGated || handoverFreezing || shuttingDown) throw new Error("A terminal handover is already in progress");
   handoverGated = true; handoverFreezing = true;
   const epoch = ++handoverEpoch;
@@ -184,9 +186,22 @@ export async function freezePtyCore(timeoutMs = 1000): Promise<CoreHandoverPrefl
     await bounded(Promise.all([...spawning.values()].map(flight => flight.done).concat([...killing])), timeoutMs);
     if (!handoverGated || epoch !== handoverEpoch) throw new Error("Terminal handover was cancelled");
     if (pendingWrites.size || pendingKills.size) throw new Error("Pending terminal operations have not settled");
-    await Promise.all([...ptys].map(async ([id, child]) => {
+    const candidates=await Promise.all([...ptys].map(async([id,child])=>{
+      try{return {id,child,adapter:await child.freezeForHandover(timeoutMs)};}
+      catch(error){
+        child.resumeAfterHandoverAbort();
+        if(handoverGated&&epoch===handoverEpoch&&ptys.get(id)===child)ineligiblePanes.set(id,error instanceof Error?error.message:"The pane cannot move at this moment");
+        return null;
+      }
+    }));
+    // Read barriers settle in parallel, but materialize/validate snapshots one
+    // at a time. Retained producer DTOs share the same128MiB raw aggregate cap.
+    let retained=0;
+    for(const candidate of candidates){
+      if(!candidate)continue;
+      const {id,child,adapter}=candidate;
       try {
-        const adapter: OwnerPtyCheckpoint = await child.freezeForHandover(timeoutMs);
+        if(!handoverGated||epoch!==handoverEpoch)throw new Error("Terminal handover was cancelled");
         const vt: VtCheckpoint = await checkpointVtPane(id);
         if (ptys.get(id) !== child || !spawnRequests.has(id) || !launches.has(id)) throw new Error("The pane changed during handover");
         const output = outputBuffers.get(id) ?? {chunks: [], total: 0, version: 0, end: 0};
@@ -195,15 +210,16 @@ export async function freezePtyCore(timeoutMs = 1000): Promise<CoreHandoverPrefl
           output: {chunks: [...output.chunks], total: output.total, version: output.version, end: output.end},
           oscCarry: oscCarryBuffers.get(id) ?? "", vt,
         };
-        // Normalize absent optional fields as they will appear on disk.
-        const checked = await validatePaneCoreCheckpoint(JSON.parse(JSON.stringify(dto)));
+        const json=JSON.stringify(dto),bytes=Buffer.byteLength(json);
+        if(bytes>MAX_VT_SNAPSHOT_BYTES||bytes>maxBytes-retained)throw new Error("The pane exceeds the aggregate core checkpoint budget");
+        const checked = await validatePaneCoreCheckpoint(JSON.parse(json));
         if (!handoverGated || epoch !== handoverEpoch) throw new Error("Terminal handover was cancelled");
-        frozenPanes.set(id, checked);
+        retained+=bytes;frozenPanes.set(id, checked);
       } catch (error) {
         child.resumeAfterHandoverAbort();
         if (handoverGated && epoch === handoverEpoch && ptys.get(id) === child) ineligiblePanes.set(id, error instanceof Error ? error.message : "The pane cannot move at this moment");
       }
-    }));
+    }
     if (!handoverGated || epoch !== handoverEpoch) throw new Error("Terminal handover was cancelled");
     const owner = currentOwnerRuntime();
     for (const id of owner?.disconnected.keys() ?? []) if (!ptys.has(id)) ineligiblePanes.set(id, "The pane's owner connection is unavailable");
@@ -232,9 +248,29 @@ export function excludeFrozenPtyPane(id: string, reason: string): void {
 }
 /** Only the coordinator calls this after #219 consent for these exact panes.
  * Eligible panes remain paused and keep their owner masters throughout. */
-export async function stopIneligiblePtyPanes(consented: string[]): Promise<void> {
-  if (!handoverGated || consented.length !== ineligiblePanes.size || new Set(consented).size !== consented.length || consented.some(id => !ineligiblePanes.has(id))) throw new Error("Missing consent for terminal fallback");
-  for (const id of consented) { await killPtyInternal(id); ineligiblePanes.delete(id); }
+export interface HandoverCommitResult {stopped:string[];ended:Array<{id:string;exitCode:number}>}
+export function endedHandoverPanes():HandoverCommitResult["ended"] {
+  return [...restoredPanes].flatMap(([id,p])=>p.exitCode===undefined?[]:[{id,exitCode:p.exitCode}]);
+}
+export async function stopIneligiblePtyPanes(consented: string[]): Promise<HandoverCommitResult> {
+  if (!handoverGated || new Set(consented).size !== consented.length || [...ineligiblePanes.keys()].some(id=>!consented.includes(id))) throw new Error("Missing consent for terminal fallback");
+  const stopped:string[]=[];
+  for (const id of consented) {
+    const child=ptys.get(id);
+    if(child){
+      let outcome:{exitCode:number;signal?:number}|undefined;
+      const listener=child.onExit(e=>{outcome=e;});
+      try{await killPtyInternal(id);}finally{listener.dispose();}
+      // A naturally completed command must never gain automatic respawn rights.
+      if(outcome?.signal)stopped.push(id);
+      else if(outcome)restoredPanes.set(id,{generation:"ended-ineligible",attached:false,exitCode:outcome.exitCode});
+      else throw new Error("The fallback terminal exit outcome is unknown");
+    }else if(currentOwnerRuntime()?.disconnected.has(id)){
+      await killPtyInternal(id);stopped.push(id);
+    }
+    ineligiblePanes.delete(id);
+  }
+  return {stopped,ended:endedHandoverPanes()};
 }
 /** An unchanged host still serves newly mounted renderers from B, and must
  * retain a child's exit if it ends before the first post-update attach. */
@@ -244,6 +280,7 @@ export function pruneEndedIneligiblePtyPanes():Set<string> {
 }
 export function reusePtyCoreAfterHandover():void {
   for(const [id,pane] of frozenPanes)restoredPanes.set(id,{generation:(pane.vt.metadata as {generation:string}).generation,attached:false});
+  for(const id of ineligiblePanes.keys())if(ptys.has(id)&&!restoredPanes.has(id))restoredPanes.set(id,{generation:"reused-ineligible",attached:false});
   abortPtyCoreHandover();
 }
 export async function detachPtyCoreForHandover(commit: () => void = () => {}): Promise<void> {
@@ -338,6 +375,7 @@ function replayOutput(req: SpawnRequest, sink: PtyEventSink): void {
   let reset: boolean | undefined;
   if (req.replayAfter) {
     const restored = restoredPanes.get(req.ptyId);
+    if (restored) restored.replayToken=req.replayAfter.token;
     const replay = restored?.generation === req.replayAfter.generation
       ? getBufferedOutputSince(req.ptyId,req.replayAfter.offset) : {chunk,reset:true};
     chunk = replay.chunk; reset = replay.reset;
@@ -481,7 +519,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
     if (!sink.isDestroyed()) {
       replayOutput(req,sink);
       sink.sendPtyEvent({type:"exit",ptyId:req.ptyId,exitCode:restored.exitCode});
-      restoredPanes.delete(req.ptyId); outputBuffers.delete(req.ptyId);
+      if (restored.attached) {restoredPanes.delete(req.ptyId); outputBuffers.delete(req.ptyId);}
     }
     return;
   }
@@ -510,7 +548,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
     // xterm.js can repaint the existing scrollback. The PTY's own onData
     // continues to deliver new bytes to the renderer.
     replayOutput(req,sink);
-    if (!sink.isDestroyed() && restored) restored.attached = true;
+    if (!sink.isDestroyed() && restored && !req.replayAfter) restored.attached = true;
     await services.replay?.(spawnRequests.get(req.ptyId) ?? req, ptys.get(req.ptyId)!.pid, spawnTimes.get(req.ptyId) ?? Date.now(), sink);
     return;
   }
@@ -711,6 +749,7 @@ function installChildObservers(req: SpawnRequest, child: OwnerPty, sink: PtyEven
       launches.delete(req.ptyId);
       spawnTimes.delete(req.ptyId);
       spawnRequests.delete(req.ptyId);
+      if (handoverGated && ineligiblePanes.has(req.ptyId) && !restoredPanes.has(req.ptyId)) restoredPanes.set(req.ptyId,{generation:"ended-ineligible",attached:false});
       const origin = restoredPanes.get(req.ptyId);
       const pendingAttach = origin && !origin.attached ? origin : undefined;
       if (!pendingAttach) restoredPanes.delete(req.ptyId);
@@ -724,7 +763,7 @@ function installChildObservers(req: SpawnRequest, child: OwnerPty, sink: PtyEven
       // a host-initiated kill. Absence of any exit line at all, meanwhile,
       // means the renderer reloaded and cold-respawned rather than dying.
       ptyLog.append("exit", { ptyId: req.ptyId, exitCode, signal });
-      if (pendingAttach || sink.isDestroyed()) return;
+      if ((pendingAttach && !pendingAttach.replayToken) || sink.isDestroyed()) return;
       sink.sendPtyEvent({ type: "exit", ptyId: req.ptyId, exitCode });
     });
     child.onData((chunk) => {
@@ -1048,4 +1087,13 @@ export function hasUnattachedRestoredPanes():boolean {return [...restoredPanes.v
 
 export function activePtyCount(): number {
   return ptys.size + [...(currentOwnerRuntime()?.disconnected.values() ?? [])].filter(pane => !pane.exited && !ptys.has(pane.id)).length;
+}
+
+/** Only an applied renderer replay releases the pending restoration. */
+export function acknowledgePtyRestoration(id:string,generation:string,token?:string):boolean {
+ const p=restoredPanes.get(id);
+ if(!p||p.generation!==generation||p.replayToken!==token)return false;
+ p.attached=true;
+ if(p.exitCode!==undefined){restoredPanes.delete(id);outputBuffers.delete(id);}
+ return true;
 }

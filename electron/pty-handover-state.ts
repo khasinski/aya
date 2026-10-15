@@ -21,3 +21,14 @@ export function handoverState(value:unknown,deadline:number):HostHandoverState {
   if(v.consented.length!==new Set(v.consented).size||v.consented.some(id=>!v.ineligible.some(p=>p.id===id)))fail();
   return v;
 }
+
+export function handoverCommitResult(value:unknown,consented:string[]):{stopped:string[];ended:Array<{id:string;exitCode:number}>}{
+ const fail=():never=>{throw Error("Invalid terminal handover commit result");};
+ if(!value||typeof value!=="object"||Array.isArray(value)||Object.keys(value).sort().join(',')!=="ended,stopped")fail();
+ const v=value as {stopped:string[];ended:Array<{id:string;exitCode:number}>};
+ if(!Array.isArray(v.stopped)||!Array.isArray(v.ended)||v.stopped.length+v.ended.length>25)fail();
+ const seen=new Set<string>();
+ for(const id of v.stopped){if(typeof id!=="string"||!consented.includes(id)||seen.has(id))fail();seen.add(id);}
+ for(const p of v.ended){if(!p||Object.keys(p).sort().join(',')!=="exitCode,id"||typeof p.id!=="string"||!p.id.length||Buffer.byteLength(p.id)>128||seen.has(p.id)||!Number.isInteger(p.exitCode)||p.exitCode<0||p.exitCode>255)fail();seen.add(p.id);}
+ return v;
+}

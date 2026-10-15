@@ -32,6 +32,7 @@ export type PtyHostRequest =
   | { id: number; type: "composer-seen"; ptyId: string; generation: string }
   | { id: number; type: "prepared"; prepareId: number; data: PreparedSpawn }
   | { id: number; type: "handover-announce"; nonce: string; deadline: number }
+  | {id:number;type:"handover-display-applied";ptyId:string;generation:string;token?:string}
   | { id: number; type: "handover-prepare"; deadline: number }
   | { id: number; type: "handover-publish"; display: CheckpointReceipt | null; consented?: string[] }
   | { id: number; type: "handover-cancel" }

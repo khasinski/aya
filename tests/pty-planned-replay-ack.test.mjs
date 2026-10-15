@@ -1,0 +1,40 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import {randomBytes} from 'node:crypto';
+import {isolateHome} from './helpers/isolate-home.mjs';
+fs.mkdirSync('test-results',{recursive:true});const root=fs.mkdtempSync(path.resolve('test-results/planned-replay-ack-'));isolateHome(root);
+const {PtyHostClient}=await import('../dist-electron/pty-host-client.js');
+const {cleanupNativeOwner}=await import('./helpers/pty-host.mjs');
+const wait=async f=>{const end=Date.now()+8000;while(!await f()){if(Date.now()>end)throw Error('applied replay timeout');await new Promise(r=>setTimeout(r,2));}};
+for(const variant of ['reuse','replacement'])test(`discarded first renderer retains suffix and exit until applied ACK after ${variant}`,{timeout:20000},async()=>{
+ fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true});
+ const hostScript=path.resolve('dist-electron/pty-host.js'),successor=path.resolve(`dist-electron/pty-host-replay-successor-${process.pid}.js`);
+ if(variant==='replacement')fs.copyFileSync(hostScript,successor);
+ const old=new PtyHostClient(hostScript),next=new PtyHostClient(variant==='replacement'?successor:hostScript);
+ try{
+  let output='';old.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>{if(e.type==='data')output+=e.chunk;}});
+  const req={ptyId:'pane',agent:'custom',command:'stty -echo; echo READY; while [ ! -f "$HOME/replay-release" ]; do sleep 0.01; done; printf LAST_SUFFIX; exit 23',cwd:process.env.HOME,cols:80,rows:24};
+  await old.spawn(req);await wait(()=>output.includes('READY'));
+  const ownerPid=(await old.hostStatus()).owner.pid;
+  const state=await old.preparePlannedHandover(Date.now()+20000),origin=state.eligible[0];
+  const ticket=await old.announcePlannedHandover(state,null,[],randomBytes(32).toString('hex'));old.hostAsked=true;
+  await next.adoptPlannedHandover(ticket,next.expectedHostIdentity('version'),async()=>{});
+  const mount=token=>({...req,attachIfReused:true,replayAfter:{generation:origin.generation,offset:origin.outputEnd,token}});
+  const dropped={isDestroyed:()=>false,send:()=>{}};next.attachWebContents(dropped);
+  await next.spawn(mount('discarded-first-view'));next.detachWebContents(dropped);
+  fs.writeFileSync(path.join(process.env.HOME,'replay-release'),'go');await wait(async()=>await next.getPid('pane')===null);
+  const events=[];next.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});
+  await next.spawn(mount('replacement-view'));
+  const suffix=events.filter(e=>e.type==='data'&&e.replay);
+  assert.equal(suffix.length,1);assert.equal(suffix[0].replayToken,'replacement-view');assert.equal(suffix[0].reset,false);
+  assert.equal(suffix[0].chunk,'LAST_SUFFIX');assert.deepEqual(events.filter(e=>e.type==='exit').map(e=>e.exitCode),[23]);
+  assert.equal(await next.acknowledgeHandoverDisplay('pane',origin.generation,'discarded-first-view'),false);
+  assert.equal(await next.acknowledgeHandoverDisplay('pane',origin.generation,'replacement-view'),true);
+  events.length=0;await next.spawn(mount('already-applied-view'));
+  assert.ok(events.some(e=>e.type==='no-session'));assert.ok(!events.some(e=>e.type==='exit'||e.type==='data'));
+  assert.equal((await next.hostStatus()).owner.pid,ownerPid);
+  await next.shutdown();
+ }finally{old.dispose();next.dispose();old.dropSocket();next.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);fs.rmSync(successor,{force:true});fs.rmSync(root,{recursive:true,force:true});}
+});

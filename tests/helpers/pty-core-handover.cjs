@@ -8,7 +8,7 @@ const {capture}=require('../../dist-electron/vt-checkpoint-binding.js');
 const {OwnerPty}=require('../../dist-electron/pty-owner-adapter.js');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function waitFor(predicate){const end=Date.now()+6000;while(!predicate()){if(Date.now()>end)throw Error('core handover readiness timeout');await sleep(2);}}
-const home=process.env.AYA_HOME,mode=process.argv[2],scenario=process.argv[3],variant=scenario.startsWith('mount-')?'vt':scenario==='exit-late'?'exit-gap':scenario;let output='',exits=[],events=[];
+const home=process.env.AYA_HOME,mode=process.argv[2],scenario=process.argv[3],variant=scenario.startsWith('mount-')?'vt':['exit-late','dropped-view'].includes(scenario)?'exit-gap':scenario;let output='',exits=[],events=[];
 const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='data')output+=e.chunk;if(e.type==='exit')exits.push(e);}};
 (async()=>{
  if(variant.startsWith('prepare-')){
@@ -32,7 +32,7 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
  if(mode==='old'||mode==='abort'){
   const prefix={osc:"\\033]9001;aya.status=active:bu",vt:"\\033[3",utf8:"\\360\\237",'exit-gap':""}[variant];
   const suffix={osc:"sy\\007TAIL",vt:"1mTAIL\\033[0m",utf8:"\\230\\200TAIL",'exit-gap':""}[variant];
-  const after=variant==='exit-gap'?'exit 23':`printf '${suffix}\\n'; while IFS= read -r line; do case "$line" in quit) exit 23 ;; *) printf 'R:%s:%s\\n' "$$" "$line" ;; esac; done`;
+  const after=variant==='exit-gap'?(scenario==='dropped-view'?"printf 'LAST_SUFFIX'; exit 23":'exit 23'):`printf '${suffix}\\n'; while IFS= read -r line; do case "$line" in quit) exit 23 ;; *) printf 'R:%s:%s\\n' "$$" "$line" ;; esac; done`;
   const script=`stty -echo; printf 'READY:%s\\n' "$$"; IFS= read -r line; printf '\\033[38;2;12;34;56mHISTORY\\033[0m\\n\\033[?1049hALTERNATE\\033[?1049l${prefix}'; touch "$HOME/produced"; while [ ! -f "$HOME/release" ]; do sleep 0.01; done; ${after}`;
   const request={ptyId:'core',command:script,cwd:home,cols:80,rows:24,agent:'custom'};
   const services={prepare:async()=>({argv:['/bin/sh','-c',script],env:{HOME:home,PATH:'/usr/bin:/bin',TERM:'xterm-256color'},command:script,launch:{command:script,cwd:home,added:['fixture']},ownSessionId:null,spawnedAt:12345})};
@@ -96,14 +96,31 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
     assert.deepEqual(JSON.parse(capture(a.terminal)),JSON.parse(capture(b.terminal)));assert.deepEqual(replies[0],replies[1]);
    }finally{a.dispose();b.dispose();}
   }
-  if(scenario.startsWith('mount-') || scenario==='exit-late'){
+  if(scenario.startsWith('mount-') || ['exit-late','dropped-view'].includes(scenario)){
    const mountEvents=[];
    const mountSink={isDestroyed:()=>false,sendPtyEvent:e=>mountEvents.push(e)};
    const request={...checkpoint.request,attachOnly:true,replayAfter:{generation:checkpoint.vt.metadata.generation,offset:checkpoint.output.end}};
    const services={prepare:()=>{throw Error('restored pane must never respawn');}};
+   const generation=checkpoint.vt.metadata.generation;
+   if(scenario==='dropped-view'){
+    const discarded={isDestroyed:()=>false,sendPtyEvent:()=>{}};
+    await core.spawnPty({...request,replayAfter:{...request.replayAfter,token:'discarded-first-view'}},discarded,services);
+    fs.writeFileSync(path.join(home,'release'),'go');await waitFor(()=>!core.getPtyPid('core'));
+    const replacement={...request,replayAfter:{...request.replayAfter,token:'replacement-view'}};
+    await core.spawnPty(replacement,mountSink,services);
+    assert.equal(mountEvents.filter(e=>e.type==='data'&&e.replay).length,1);
+    assert.equal(mountEvents.filter(e=>e.type==='data').map(e=>e.chunk).join('').split('LAST_SUFFIX').length-1,1);
+    assert.deepEqual(mountEvents.filter(e=>e.type==='exit').map(e=>e.exitCode),[23]);
+    assert.equal(core.acknowledgePtyRestoration('core',generation,'discarded-first-view'),false);
+    assert.equal(core.acknowledgePtyRestoration('core',generation,'replacement-view'),true);
+    await core.spawnPty(replacement,mountSink,services);
+    assert.equal(mountEvents.filter(e=>e.type==='exit').length,1);
+    await shutdownOwnerRuntime();process.send({pid:expected.pid,ownerPid:expected.ownerPid,exits:1},()=>process.exit(0));return;
+   }
    if(scenario==='mount-empty'){
     await core.spawnPty(request,mountSink,services);
     assert.deepEqual(mountEvents.filter(e=>e.type==='data'),[{type:'data',ptyId:'core',chunk:'',replay:true,reset:false}]);
+    assert.equal(core.acknowledgePtyRestoration('core',generation),true);
     fs.writeFileSync(path.join(home,'release'),'go');await core.writePty('core','quit\n');await waitFor(()=>exits.length===1);
     await shutdownOwnerRuntime();process.send({pid:expected.pid,ownerPid:expected.ownerPid,exits:1},()=>process.exit(0));return;
    }
@@ -114,8 +131,9 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
     await core.spawnPty(request,mountSink,services);
     assert.deepEqual(mountEvents.filter(e=>e.type==='exit').map(e=>e.exitCode),[23]);
     assert.ok(mountEvents.some(e=>e.type==='data'&&e.replay));
+    assert.equal(core.acknowledgePtyRestoration('core',generation),true);
     await core.spawnPty(request,mountSink,services);
-    assert.equal(mountEvents.filter(e=>e.type==='exit').length,1,'exit delivered once');
+    assert.equal(mountEvents.filter(e=>e.type==='exit').length,1,'exit delivered once after applied ACK');
    }else{
     // The original broadcast sink has no renderer. The successor must keep
     // consuming output immediately, independently of when a view mounts.
@@ -140,11 +158,13 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
      assert.ok(replay[0].chunk.indexOf('TAIL')<replay[0].chunk.indexOf('before-mount'));
     }
     assert.equal(core.getPtyPid('core'),expected.pid);
+    assert.equal(core.acknowledgePtyRestoration('core',generation),true);
     await core.writePty('core','quit\n');await waitFor(()=>exits.length===1);assert.equal(exits[0].exitCode,23);
    }
    await shutdownOwnerRuntime();process.send({pid:expected.pid,ownerPid:expected.ownerPid,exits:1},()=>process.exit(0));return;
   }
   await core.spawnPty({...checkpoint.request,attachOnly:true,replayAfter:{generation:checkpoint.vt.metadata.generation,offset:checkpoint.output.end}},sink,{prepare:()=>{throw Error('must never respawn');}});
+  core.acknowledgePtyRestoration('core',checkpoint.vt.metadata.generation);
   if(variant!=='exit-gap'){
    fs.writeFileSync(path.join(home,'release'),'go');await waitFor(()=>output.includes('TAIL'));
    await core.writePty('core','after\nquit\n');

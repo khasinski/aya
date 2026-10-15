@@ -833,9 +833,10 @@ function TerminalViewComponent({
         if (event.replay) {
           replayingOutputRef.current += 1;
           term.write(displayChunk, () => {
+            if(disposed)return;
             replayingOutputRef.current = Math.max(0, replayingOutputRef.current - 1);
             handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;
-            if(displayGeneration){void window.aya.acknowledgeHandoverDisplay(terminal.id,displayGeneration).catch(()=>{});displayGeneration=null;}
+            if(displayGeneration){void window.aya.acknowledgeHandoverDisplay(terminal.id,displayGeneration,event.replayToken).catch(()=>{});displayGeneration=null;}
           });
         } else {
           term.write(displayChunk);

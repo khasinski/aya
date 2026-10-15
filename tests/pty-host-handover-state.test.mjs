@@ -124,6 +124,16 @@ test('host escrow lifecycle keeps peers, cancellation, reuse, expiry and raw cap
    assert.equal(state.ineligible.length,1);assert.match(state.ineligible[0].reason,/encoded checkpoint budget/);
   }finally{payload.encodeCheckpointPayload=encode;store.writeCheckpoint=writeParts;await handover.abort(peer);}
 
+  const validation=require('../dist-electron/pty-core-checkpoint.js'),validate=validation.validatePaneCoreCheckpoint;
+  await core.freezePtyCore();const retained=core.frozenPtyCoreParts().map(p=>Buffer.byteLength(JSON.stringify(p)));core.abortPtyCoreHandover();
+  let allocations=0;validation.validatePaneCoreCheckpoint=async(...args)=>{allocations++;return validate(...args);};
+  try{
+   const limited=await core.freezePtyCore(1000,retained[0]+retained[1]);
+   assert.deepEqual(limited.eligible.map(p=>p.id),['one','two']);assert.deepEqual(limited.ineligible.map(p=>p.id),['three']);
+   assert.equal(allocations,2,'over-budget producer must refuse before trial VT allocation');
+   assert.equal(core.frozenPtyCoreParts().length,2);
+  }finally{validation.validatePaneCoreCheckpoint=validate;core.abortPtyCoreHandover();}
+
   const endingPid=await spawn('ending'),freeze=OwnerPty.prototype.freezeForHandover;
   OwnerPty.prototype.freezeForHandover=function(...args){if(this.pane.id==='ending')throw Error('ineligible ending pane');return freeze.apply(this,args);};
   try{state=await handover.prepare(peer,Date.now()+120000);}finally{OwnerPty.prototype.freezeForHandover=freeze;}

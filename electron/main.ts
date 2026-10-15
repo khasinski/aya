@@ -269,7 +269,7 @@ const handoverDisplays=new HandoverDisplays(async id=>{
   const project=(await listProjects()).find(p=>p.tabs.some(tab=>tab.id===id));
   const windowId=project?windowSlices.windowOf(project.slug):null;
   return windowId===null?null:BrowserWindow.fromId(windowId)?.webContents??null;
-},(event,fields)=>diagnosticsLog.append(event,fields));
+},(event,fields)=>diagnosticsLog.append(event,fields),(id,generation,token)=>ptyHost.acknowledgeHandoverDisplay(id,generation,token));
 const plannedUpdate=new PlannedUpdate({
   host:ptyHost,displays:handoverDisplays,
   livePaneIds:async()=>{const panes=await relaunchDeps.panes();const live=await Promise.all(panes.map(async p=>await relaunchDeps.pid(p.id).catch(()=>undefined)!==null?p.id:null));return live.filter((id):id is string=>id!==null);},

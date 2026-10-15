@@ -34,7 +34,7 @@ import type {HostHandoverState} from "./pty-host-handover";
 import type {CheckpointReceipt} from "./pty-checkpoint-store";
 import type {HandoverTicket} from "./pty-handover-ticket";
 import {preflightCoreHandover,type HandoverBootstrap} from "./pty-handover-bootstrap";
-import {handoverState} from "./pty-handover-state";
+import {handoverState,handoverCommitResult} from "./pty-handover-state";
 import {ownerArtifactPaths,ownerProcessStartIdentity} from "./pty-owner-client";
 import {ownerBinaryHash} from "./pty-owner-registry";
 import {classifyIdentity} from "./pty-host-staleness";
@@ -188,7 +188,17 @@ export class PtyHostClient {
     this.sinks.delete(webContents);
   }
 
+  private endedBootPanes=new Map<string,number>();
+  async acknowledgeHandoverDisplay(ptyId:string,generation:string,token?:string):Promise<boolean>{
+    return await this.request({id:0,type:"handover-display-applied",ptyId,generation,token})===true;
+  }
+
   async spawn(req: SpawnRequest): Promise<void> {
+    if(!req.attachIfReused&&!req.attachOnly)this.endedBootPanes.delete(req.ptyId);
+    if(this.endedBootPanes.has(req.ptyId)&&req.attachIfReused){
+      const exitCode=this.endedBootPanes.get(req.ptyId)!;
+      this.sendToSinks([{type:"exit",ptyId:req.ptyId,exitCode}]);return;
+    }
     this.metadataRequired = true;
     // Resolve attachIfReused in request()'s post-connect hook - only this
     // client knows whether the host was reused or freshly spawned, and that
@@ -221,6 +231,7 @@ export class PtyHostClient {
 
   /** Whether spawning `req` now would start a process, not replay or attach to one. */
   async willStart(req: SpawnRequest): Promise<boolean> {
+    if(this.endedBootPanes.has(req.ptyId))return false;
     if (req.attachOnly || (await this.getSize(req.ptyId)) !== null) return false;
     return !resolveSpawnAttach(false, this.consentedBootSpawns.has(req.ptyId) ? false : req.attachIfReused, this.reusedHost);
   }
@@ -238,6 +249,7 @@ export class PtyHostClient {
   }
 
   async kill(ptyId: string): Promise<void> {
+    this.endedBootPanes.delete(ptyId);
     await this.request({ id: 0, type: "kill", ptyId });
     this.live.delete(ptyId);
     this.sessionWatches.get(ptyId)?.();
@@ -351,8 +363,9 @@ export class PtyHostClient {
       if(sizes.rawBytes!==state.coreRawBytes||sizes.encodedBytes!==state.coreEncodedBytes)throw new Error("Terminal core receipt accounting differs");
       await inspect(state); // Browser validation/caching also precedes commit.
       if(ticket.deadline-Date.now()<5000)throw new Error("The terminal handover window is too short to commit safely");
+      let committed:unknown;
       if(reuse){
-        await call({id:0,type:"handover-reuse"});
+        committed=await call({id:0,type:"handover-reuse"});
         await call({id:0,type:"handover-ack-reuse"});this.reusedHost=true;
       }else{
         if(typeof claim.credential!=='string'||!/^[A-Za-z0-9+/]{43}=$/.test(claim.credential))throw new Error("Invalid terminal handover credential");
@@ -361,7 +374,7 @@ export class PtyHostClient {
         try{
           this.hostAsked=true;
           let commitError:unknown;
-          try{await call({id:0,type:"handover-detach",consented:state.consented});}catch(error){commitError=error;}
+          try{committed=await call({id:0,type:"handover-detach",consented:state.consented});}catch(error){commitError=error;}
           // No successor while the recorded old process instance still lives.
           if(!await waitForExit(ticket.hostPid,8000)){if(commitError)throw commitError;throw new Error("The old terminal host has not exited; no successor was started");}
           detached=true;this.dropSocket();key.copy(this.ownerSecret);
@@ -378,7 +391,14 @@ export class PtyHostClient {
           this.reusedHost=true;
         }finally{key.fill(0);}
       }
-      for(const id of state.consented)this.consentedBootSpawns.add(id);
+      // Only the commit result proves a process was stopped. A published
+      // consent list is not evidence that an intervening natural exit needs
+      // a replacement. Lost commit responses conservatively grant no spawn.
+      if(committed!==undefined){
+        const result=handoverCommitResult(committed,state.consented);
+        for(const id of result.stopped)this.consentedBootSpawns.add(id);
+        if(!reuse)for(const pane of result.ended)this.endedBootPanes.set(pane.id,pane.exitCode);
+      }
       return state;
     }catch(error){
       if(!detached)await this.cancelPlannedHandover().catch(()=>{});

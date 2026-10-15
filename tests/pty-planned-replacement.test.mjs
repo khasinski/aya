@@ -56,6 +56,7 @@ for(const scenario of ['reuse','replace','inspect-refusal','unknown-hash','owner
   if(scenario==='replace'){assert.equal(next.sessionWatches.has('pane'),true);assert.equal(next.live.has('pane'),true);assert.equal(next.ownerBacked,true);}
   const events=[];next.attachWebContents({isDestroyed:()=>false,send:(_channel,e)=>events.push(e)});
   await next.spawn({...req,attachIfReused:true,replayAfter:{generation:state.eligible[0].generation,offset:state.eligible[0].outputEnd}});
+  await next.acknowledgeHandoverDisplay('pane',state.eligible[0].generation);
   const fence=events.find(e=>e.type==='data'&&e.replay);assert.ok(fence);assert.equal(fence.reset,false);assert.equal(fence.chunk,'');
   await next.spawn({...req,ptyId:'ended-before-update',attachIfReused:true});
   assert.ok(events.some(e=>e.type==='no-session'&&e.ptyId==='ended-before-update'));

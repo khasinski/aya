@@ -579,7 +579,7 @@ export interface AyaApi {
   ptySpawn(req: SpawnRequest): Promise<void>;
   onHandoverCapture(handler:(request:HandoverCaptureRequest)=>Promise<string|null>):()=>void;
   handoverDisplay(ptyId:string):Promise<HandoverDisplay|null>;
-  acknowledgeHandoverDisplay(ptyId:string,generation:string):Promise<void>;
+  acknowledgeHandoverDisplay(ptyId:string,generation:string,token?:string):Promise<void>;
   ptyWrite(ptyId: string, data: string): Promise<boolean>;
   ptyResize(ptyId: string, cols: number, rows: number): Promise<void>;
   ptyKill(ptyId: string): Promise<void>;
