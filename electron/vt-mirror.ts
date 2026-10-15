@@ -171,7 +171,7 @@ interface VtPaneCheckpointMetadata {
   lastOutputAt: number | null;
 }
 const CHECKPOINT_AGENTS = new Set(["claude", "codex", "opencode", "kilo", "pi", "cursor", "copilot", "grok", "droid", "devin", "kimi", "hermes", "qodercli", "antigravity", "custom"]);
-function checkpointMetadata(value: unknown): VtPaneCheckpointMetadata {
+export function checkpointMetadata(value: unknown): VtPaneCheckpointMetadata {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid VT pane metadata");
   const v = value as Record<string, unknown>;
   const keys = new Set(["generation", "agent", "shell", "lastWaiting", "lastDialog", "composerSeen", "openedAt", "lastOutputAt"]);

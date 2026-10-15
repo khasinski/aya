@@ -9,7 +9,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type * as PtyModule from "node-pty";
-import { OwnerPty } from "./pty-owner-adapter";
+import { OwnerPty, type OwnerPtyCheckpoint } from "./pty-owner-adapter";
+import type { VtCheckpoint } from "./vt-checkpoint";
+import { validatePaneCoreCheckpoint, type PaneCoreCheckpoint } from "./pty-core-checkpoint";
 import { currentOwnerRuntime } from "./pty-owner-runtime";
 import type { PtyEvent, SpawnFailureReason, SpawnRequest } from "./types";
 import {
@@ -18,6 +20,8 @@ import {
   parseAyaOscStatus,
 } from "./osc-extractor";
 import {
+  checkpointVtPane,
+  restoreVtPane,
   closeAllVtPanes,
   closeVtPane,
   openVtPane,
@@ -69,6 +73,8 @@ interface OutputBuffer {
    *  is not a safe key: cap eviction can shrink and regrow it to the same
    *  value with different content.) */
   version: number;
+  /** Clean UTF-16 output boundary, independent of chunk/coalescing edges. */
+  end: number;
   /** Cleaned + lowercased render of `chunks`, reused across search keystrokes
    *  so an unchanged buffer costs indexOf scans instead of a full join + 4
    *  regex passes + toLowerCase over ~1MB per live PTY per keystroke. */
@@ -145,6 +151,108 @@ export const PENDING_WRITE_MAX_BYTES = 64 * 1024;
 // preflight) so no child is created after the snapshot. One-way: the host is
 // exiting, so it never resets.
 let shuttingDown = false;
+let handoverGated = false;
+let handoverFreezing = false;
+let handoverEpoch = 0;
+const killing = new Set<Promise<void>>();
+function requireMutableCore(): void {
+  if (handoverGated) throw new Error("Terminal handover is in progress. This operation was not applied.");
+}
+const frozenPanes = new Map<string, PaneCoreCheckpoint>();
+const ineligiblePanes = new Map<string, string>();
+
+export interface CoreHandoverPreflight {
+  eligible: Array<{id: string; generation: string; outputEnd: number}>;
+  ineligible: Array<{id: string; reason: string}>;
+}
+async function bounded<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try { return await Promise.race([work, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Terminal handover drain timed out; its processes were kept.")), ms); })]); }
+  finally { clearTimeout(timer); }
+}
+/** Gate producers before awaiting anything. Existing preparations/kills finish
+ * first; each adapter then proves writes and stops reads before VT export. */
+export async function freezePtyCore(timeoutMs = 1000): Promise<CoreHandoverPreflight> {
+  if (handoverGated || handoverFreezing || shuttingDown) throw new Error("A terminal handover is already in progress");
+  handoverGated = true; handoverFreezing = true;
+  const epoch = ++handoverEpoch;
+  try {
+    await bounded(Promise.all([...spawning.values()].map(flight => flight.done).concat([...killing])), timeoutMs);
+    if (!handoverGated || epoch !== handoverEpoch) throw new Error("Terminal handover was cancelled");
+    if (pendingWrites.size || pendingKills.size) throw new Error("Pending terminal operations have not settled");
+    await Promise.all([...ptys].map(async ([id, child]) => {
+      try {
+        const adapter: OwnerPtyCheckpoint = await child.freezeForHandover(timeoutMs);
+        const vt: VtCheckpoint = await checkpointVtPane(id);
+        if (ptys.get(id) !== child || !spawnRequests.has(id) || !launches.has(id)) throw new Error("The pane changed during handover");
+        const output = outputBuffers.get(id) ?? {chunks: [], total: 0, version: 0, end: 0};
+        const dto: PaneCoreCheckpoint = {
+          format: 1, id, adapter, request: spawnRequests.get(id)!, launch: launches.get(id)!, spawnedAt: spawnTimes.get(id)!,
+          output: {chunks: [...output.chunks], total: output.total, version: output.version, end: output.end},
+          oscCarry: oscCarryBuffers.get(id) ?? "", vt,
+        };
+        // Normalize absent optional fields as they will appear on disk.
+        const checked = await validatePaneCoreCheckpoint(JSON.parse(JSON.stringify(dto)));
+        if (!handoverGated || epoch !== handoverEpoch) throw new Error("Terminal handover was cancelled");
+        frozenPanes.set(id, checked);
+      } catch (error) {
+        child.resumeAfterHandoverAbort();
+        if (handoverGated && epoch === handoverEpoch) ineligiblePanes.set(id, error instanceof Error ? error.message : "The pane cannot move at this moment");
+      }
+    }));
+    if (!handoverGated || epoch !== handoverEpoch) throw new Error("Terminal handover was cancelled");
+    const owner = currentOwnerRuntime();
+    for (const id of owner?.disconnected.keys() ?? []) if (!ptys.has(id)) ineligiblePanes.set(id, "The pane's owner connection is unavailable");
+    return {
+      eligible: [...frozenPanes].map(([id, pane]) => ({id, generation: (pane.vt.metadata as {generation: string}).generation, outputEnd: pane.output.end})),
+      ineligible: [...ineligiblePanes].map(([id, reason]) => ({id, reason})),
+    };
+  } catch (error) { if (epoch === handoverEpoch) abortPtyCoreHandover(); throw error; }
+  finally { handoverFreezing = false; }
+}
+export function abortPtyCoreHandover(): void {
+  handoverEpoch++;
+  for (const child of ptys.values()) child.resumeAfterHandoverAbort();
+  frozenPanes.clear(); ineligiblePanes.clear(); handoverGated = false;
+}
+export function frozenPtyCoreParts(): PaneCoreCheckpoint[] {
+  if (!handoverGated) throw new Error("PTY checkpoint has no output barrier");
+  return [...frozenPanes.values()];
+}
+/** Only the coordinator calls this after #219 consent for these exact panes.
+ * Eligible panes remain paused and keep their owner masters throughout. */
+export async function stopIneligiblePtyPanes(consented: string[]): Promise<void> {
+  if (!handoverGated || consented.length !== ineligiblePanes.size || new Set(consented).size !== consented.length || consented.some(id => !ineligiblePanes.has(id))) throw new Error("Missing consent for terminal fallback");
+  for (const id of consented) { await killPtyInternal(id); ineligiblePanes.delete(id); }
+}
+export async function detachPtyCoreForHandover(): Promise<void> {
+  if (!handoverGated || ineligiblePanes.size || ptys.size !== frozenPanes.size || [...ptys.keys()].some(id => !frozenPanes.has(id))) throw new Error("PTY handover is not ready");
+  // This operation must never fall through to the destructive shutdown path.
+  // The host exits after the control lease is detached and all local FDs close.
+  await currentOwnerRuntime()!.detachForHandover();
+  for (const child of ptys.values()) child.detachForHandover();
+  shuttingDown = true;
+  ptys.clear(); launches.clear(); spawnTimes.clear(); spawnRequests.clear();
+  outputBuffers.clear(); oscCarryBuffers.clear(); closeAllVtPanes();
+}
+/** All checkpoints are preflighted in the successor before the old host exits.
+ * This host still validates before any attach; reading starts only after the
+ * VT and opaque core state are installed, using the normal data/exit path. */
+export async function restorePtyCorePane(value: unknown, sink: PtyEventSink): Promise<void> {
+  const pane = await validatePaneCoreCheckpoint(value);
+  if (ptys.has(pane.id) || spawning.size || shuttingDown) throw new Error("PTY restore target is not empty");
+  await restoreVtPane(pane.id, pane.vt, (waiting, dialog) => {
+    if (!sink.isDestroyed()) sink.sendPtyEvent(vtStatusEvent(pane.id, waiting, dialog));
+  });
+  let child: OwnerPty;
+  try { child = await OwnerPty.attach(pane.adapter); }
+  catch (error) { closeVtPane(pane.id); throw error; }
+  ptys.set(pane.id, child); launches.set(pane.id, pane.launch);
+  spawnTimes.set(pane.id, pane.spawnedAt); spawnRequests.set(pane.id, pane.request);
+  outputBuffers.set(pane.id, structuredClone(pane.output));
+  if (pane.oscCarry) oscCarryBuffers.set(pane.id, pane.oscCarry);
+  installChildObservers(pane.request, child, sink, () => {});
+}
 
 export interface PtyEventSink {
   isDestroyed(): boolean;
@@ -154,12 +262,13 @@ export interface PtyEventSink {
 function appendToOutputBuffer(ptyId: string, chunk: string): void {
   let buffer = outputBuffers.get(ptyId);
   if (!buffer) {
-    buffer = { chunks: [], total: 0, version: 0 };
+    buffer = { chunks: [], total: 0, version: 0, end: 0 };
     outputBuffers.set(ptyId, buffer);
   }
   buffer.chunks.push(chunk);
   buffer.total += chunk.length;
   buffer.version += 1;
+  buffer.end += chunk.length;
   while (buffer.total > OUTPUT_BUFFER_MAX && buffer.chunks.length > 1) {
     const removed = buffer.chunks.shift();
     if (removed) buffer.total -= removed.length;
@@ -308,6 +417,7 @@ const PANE_TERM = "xterm-256color";
 export const SPAWN_LOG_COMMAND_MAX_CHARS = 4096;
 
 export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: SpawnServices): Promise<void> {
+  requireMutableCore();
   if (shuttingDown) {
     // The host is tearing down; a new PTY here would miss the shutdown snapshot
     // and be orphaned on exit. Drop the spawn.
@@ -518,6 +628,51 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
       command: command.slice(0, SPAWN_LOG_COMMAND_MAX_CHARS),
     });
 
+
+    // Known before the CLI writes anything, so a restart before its first message resumes it.
+    if (ownSessionId) sink.sendPtyEvent({ type: "osc-session", ptyId: req.ptyId, sessionId: ownSessionId });
+    const stopSessionWatch = services.opened?.(req, child.pid, prepared, sink) ?? (() => {});
+
+    installChildObservers(req, child, sink, stopSessionWatch);
+    await Promise.all(flushed);
+  } finally {
+    // A restart may have taken the id over while this (cancelled) spawn was in
+    // preflight: the entry and any input queued since belong to it then.
+    if (spawning.get(req.ptyId) === flight) {
+      spawning.delete(req.ptyId);
+      // Covers every early return above (preflight failure, spawn error,
+      // shutdown): the spawn window is over, so nothing may keep holding input
+      // for it. On the success path the flush already emptied this.
+      endSpawnWindow(req.ptyId);
+    }
+    settleFlight();
+  }
+}
+
+
+// Both spawn and validated restore install exactly the same byte/exit path.
+function installChildObservers(req: SpawnRequest, child: OwnerPty, sink: PtyEventSink, stopSessionWatch: () => void): void {
+    child.onExit(({ exitCode, signal }) => {
+      stopSessionWatch();
+      if (ptys.get(req.ptyId) !== child) {
+        return;
+      }
+      ptys.delete(req.ptyId);
+      launches.delete(req.ptyId);
+      spawnTimes.delete(req.ptyId);
+      spawnRequests.delete(req.ptyId);
+      outputBuffers.delete(req.ptyId);
+      oscCarryBuffers.delete(req.ptyId);
+      closeVtPane(req.ptyId);
+      // Record the signal on this NON-host-initiated death (#83): when every
+      // console dies at once with the host alive, `signal: 9` (SIGKILL) points
+      // at an OS jetsam/memory-pressure kill, distinct from a graceful exit or
+      // a host-initiated kill. Absence of any exit line at all, meanwhile,
+      // means the renderer reloaded and cold-respawned rather than dying.
+      ptyLog.append("exit", { ptyId: req.ptyId, exitCode, signal });
+      if (sink.isDestroyed()) return;
+      sink.sendPtyEvent({ type: "exit", ptyId: req.ptyId, exitCode });
+    });
     child.onData((chunk) => {
       // Strip Aya's OSC 9001 vocabulary (integrations.md) before anything
       // downstream sees this chunk: the agent's visible output, the replay
@@ -555,44 +710,6 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
       }
     });
 
-    // Known before the CLI writes anything, so a restart before its first message resumes it.
-    if (ownSessionId) sink.sendPtyEvent({ type: "osc-session", ptyId: req.ptyId, sessionId: ownSessionId });
-    const stopSessionWatch = services.opened?.(req, child.pid, prepared, sink) ?? (() => {});
-
-    child.onExit(({ exitCode, signal }) => {
-      stopSessionWatch();
-      if (ptys.get(req.ptyId) !== child) {
-        return;
-      }
-      ptys.delete(req.ptyId);
-      launches.delete(req.ptyId);
-      spawnTimes.delete(req.ptyId);
-      spawnRequests.delete(req.ptyId);
-      outputBuffers.delete(req.ptyId);
-      oscCarryBuffers.delete(req.ptyId);
-      closeVtPane(req.ptyId);
-      // Record the signal on this NON-host-initiated death (#83): when every
-      // console dies at once with the host alive, `signal: 9` (SIGKILL) points
-      // at an OS jetsam/memory-pressure kill, distinct from a graceful exit or
-      // a host-initiated kill. Absence of any exit line at all, meanwhile,
-      // means the renderer reloaded and cold-respawned rather than dying.
-      ptyLog.append("exit", { ptyId: req.ptyId, exitCode, signal });
-      if (sink.isDestroyed()) return;
-      sink.sendPtyEvent({ type: "exit", ptyId: req.ptyId, exitCode });
-    });
-    await Promise.all(flushed);
-  } finally {
-    // A restart may have taken the id over while this (cancelled) spawn was in
-    // preflight: the entry and any input queued since belong to it then.
-    if (spawning.get(req.ptyId) === flight) {
-      spawning.delete(req.ptyId);
-      // Covers every early return above (preflight failure, spawn error,
-      // shutdown): the spawn window is over, so nothing may keep holding input
-      // for it. On the success path the flush already emptied this.
-      endSpawnWindow(req.ptyId);
-    }
-    settleFlight();
-  }
 }
 
 /** Drop input held for a spawn window that is over; a live PTY means the flush
@@ -660,6 +777,7 @@ export function getPtyPid(ptyId: string): number | null | undefined {
 /** Write to a PTY; false means it went NOWHERE (dead id, queue at cap, failed
  *  spawn). Async but holds NO `await`, so `p.write` keeps its place in order. */
 export async function writePty(ptyId: string, data: string): Promise<boolean> {
+  requireMutableCore();
   const p = ptys.get(ptyId);
   if (!p) {
     // No PTY yet, but one is on its way: hold the input rather than discard it.
@@ -698,6 +816,7 @@ function bufferPendingWrite(ptyId: string, data: string): boolean {
 }
 
 export function resizePty(ptyId: string, cols: number, rows: number): void {
+  requireMutableCore();
   const p = ptys.get(ptyId);
   if (!p) return;
   resizeVtPane(ptyId, cols, rows);
@@ -729,6 +848,12 @@ export function terminatePtyChild(
 }
 
 export async function killPty(ptyId: string): Promise<void> {
+  requireMutableCore();
+  const operation = killPtyInternal(ptyId);
+  killing.add(operation);
+  try { await operation; } finally { killing.delete(operation); }
+}
+async function killPtyInternal(ptyId: string): Promise<void> {
   outputBuffers.delete(ptyId);
   oscCarryBuffers.delete(ptyId);
   closeVtPane(ptyId);

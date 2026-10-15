@@ -206,7 +206,7 @@ export class OwnerPty implements IPty {
       if (!Number.isInteger(decoder.lastNeed) || decoder.lastNeed < 0 || decoder.lastNeed > 3 || !Number.isInteger(decoder.lastTotal) || decoder.lastTotal < decoder.lastNeed || decoder.lastTotal > 4 || !Buffer.isBuffer(decoder.lastChar)) throw new Error("This runtime cannot checkpoint its PTY decoder");
       const carry = decoder.lastNeed ? decoder.lastChar.subarray(0, decoder.lastTotal - decoder.lastNeed) : Buffer.alloc(0);
       const {fd: _fd, ...pane} = this.pane;
-      return {pane, process: this.process, readBytes: this.readBytes, decoderCarry: carry.toString("base64")};
+      return {pane: {...pane, cols: this.cols, rows: this.rows}, process: this.process, readBytes: this.readBytes, decoderCarry: carry.toString("base64")};
     } catch (error) { this.resumeAfterHandoverAbort(); throw error; }
     finally { clearTimeout(timer); }
   }
