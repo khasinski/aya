@@ -8,6 +8,7 @@ import {
   type MouseEvent,
 } from "react";
 import { Terminal as XTerm, type ITheme } from "@xterm/xterm";
+import { createRendererVt } from "../terminal-vt-checkpoint";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -720,7 +721,7 @@ function TerminalViewComponent({
   // Create the xterm instance + spawn the PTY once.
   useEffect(() => {
     if (!containerRef.current || xtermRef.current) return;
-    const term = new XTerm({
+    const term = createRendererVt({
       disableStdin: disconnectedRef.current,
       theme: toXtermTheme(themeColors),
       fontSize,

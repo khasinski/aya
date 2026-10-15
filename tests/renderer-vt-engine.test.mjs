@@ -28,6 +28,6 @@ test('a changed bundled-artifact digest disables checkpoint capture and restore'
  const term=exports.createRendererVt({cols:80,rows:24,allowProposedApi:true});
  try {
   await assert.rejects(exports.captureRendererVt(term),/tracked from construction/);
-  assert.throws(()=>exports.restoreRendererVt(term,{format:1,browserEngine:codec.SUPPORTED_BROWSER_ENGINE}),/engine/);
+  assert.throws(()=>exports.restoreRendererVt(term,{format:2,browserEngine:codec.SUPPORTED_BROWSER_ENGINE}),/engine/);
  }finally{term.dispose();}
 });

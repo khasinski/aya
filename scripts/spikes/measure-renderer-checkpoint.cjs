@@ -1,6 +1,7 @@
 // Offline retained-state measurement. Populate BufferLines directly after one
 // real parsed true-colour row: this measures capture/restore, not parser or DOM.
 const fs=require('node:fs');
+const {gzipSync}=require('node:zlib');
 const {Terminal}=require('@xterm/xterm');
 const {createRendererVt,captureRendererVt,restoreRendererVt}=require('../../dist-test/terminal-vt-checkpoint.js');
 const {parseRendererCheckpoint,MAX_RENDERER_TOTAL_BYTES}=require('../../dist-electron/renderer-vt-checkpoint.js');
@@ -23,7 +24,7 @@ const create=()=>createRendererVt({cols:240,rows:80,scrollback:10000,allowPropos
   const restored=create();start=now();restoreRendererVt(restored,valid);const restoreMs=now()-start;
   if(t.buffer.active.getLine(t.buffer.active.viewportY).translateToString()!==restored.buffer.active.getLine(restored.buffer.active.viewportY).translateToString())throw Error('Viewport differs');
   peakRss=Math.max(peakRss,process.memoryUsage().rss);
-  samples.push({pane:i,fullBytes,fullCaptureMs,bytes:bytes.length,cutLines:capped.cutLines,viewportClamped:capped.viewportClamped,captureMs,validateMs,restoreMs});
+  samples.push({pane:i,fullBytes,fullGzipBytes:gzipSync(Buffer.from(JSON.stringify(full))).length,fullCaptureMs,bytes:bytes.length,gzipBytes:gzipSync(bytes).length,cutLines:capped.cutLines,viewportClamped:capped.viewportClamped,captureMs,validateMs,restoreMs});
   restored.dispose();t.dispose();global.gc?.();
  }
  const result={platform:process.platform,arch:process.arch,node:process.versions.node,electron:process.versions.electron??null,panes:25,cols:240,rows:80,scrollback:10000,workload:'Direct dense retained BufferLine population; one pane at a time; no DOM/PTY/host; not simultaneous 25-pane peak memory',perPaneBudget:budget,totalBudget:MAX_RENDERER_TOTAL_BYTES,fullBytes:samples.reduce((n,s)=>n+s.fullBytes,0),cappedBytes:samples.reduce((n,s)=>n+s.bytes,0),captureTotalMs:samples.reduce((n,s)=>n+s.captureMs,0),restoreTotalMs:samples.reduce((n,s)=>n+s.restoreMs,0),baseline,peakSampledRss:peakRss,samples};

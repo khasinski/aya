@@ -177,6 +177,10 @@ export function validateVtSnapshot(value: unknown, engine: string, defaultOption
     const state = d.state as Dict;
     if ((state.ydisp as number) > (state.ybase as number) || (state.scrollTop as number) > (state.scrollBottom as number)) fail(`${p}.coordinates`);
   };
+  const lastMouseEvent: Check = purpose === "renderer" ? (v, p) => {
+    if (v !== null) shape({col: integer(1, 1000), row: integer(1, 1000), x: finite, y: finite,
+      button: integer(0, 4), action: literal(0, 1, 2, 3, 32), ctrl: bool, alt: bool, shift: bool})(v, p);
+  } : literal(null);
   shape({
     format: literal(1), engine: literal(engine), options: shape(optionChecks), metadata: () => {},
     cols: literal(cols), rows: literal(rows), normal: buffer(true), alternate: buffer(false), active: literal("normal", "alternate"), userScrolling: bool,
@@ -185,7 +189,7 @@ export function validateVtSnapshot(value: unknown, engine: string, defaultOption
       sendFocus: bool, synchronizedOutput: bool, wraparound: bool, cursorBlink: optional(bool), cursorStyle: optional(literal("block", "bar", "underline")),
     }) }),
     mouse: shape({ _activeProtocol: literal("NONE", "X10", "VT200", "DRAG", "ANY"), _activeEncoding: literal("DEFAULT", "SGR", "SGR_PIXELS"),
-      _lastEvent: literal(null), _wheelPartialScroll: finite }),
+      _lastEvent: lastMouseEvent, _wheelPartialScroll: finite }),
     charset: shape({ charset: optional(charset), glevel: integer(0, 3), _charsets: array(4, (v, p) => { if (v !== null) charset(v, p); }) }),
     input: shape({ _windowTitle: text(1024 * 1024), _iconName: text(1024 * 1024),
       _windowTitleStack: array(10, text(1024 * 1024)), _iconNameStack: array(10, text(1024 * 1024)),

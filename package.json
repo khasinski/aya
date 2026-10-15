@@ -110,6 +110,7 @@
       "bin/**",
       "dist/**",
       "dist-electron/**",
+      "shared/renderer-cell-runs.cjs",
       "package.json"
     ],
     "asarUnpack": [

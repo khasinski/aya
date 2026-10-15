@@ -1,6 +1,7 @@
 // Browser-only counterpart of the pinned common VT DTO. Capture runs after
 // the renderer transforms, only at a drained ground boundary. No Node APIs.
 import { Terminal as XTerm } from "@xterm/xterm";
+import { encodeCellRuns, decodeCellRuns } from "../shared/renderer-cell-runs.cjs";
 declare const __AYA_XTERM_ENGINE__: string;
 export const SUPPORTED_BROWSER_ENGINE = "14903579ff54664cd72f8e8699e6961a6272c21863ec1c3b118cdc8af5d4a972";
 const ACTUAL_BROWSER_ENGINE = typeof __AYA_XTERM_ENGINE__ === "undefined" ? SUPPORTED_BROWSER_ENGINE : __AYA_XTERM_ENGINE__;
@@ -72,10 +73,18 @@ probe.dispose();
 function ground(term: any) { const h = term._core._inputHandler; return h._parser.currentState === 0 && !h._parseStack.paused; }
 function attrs(value: any) { return { fg: value.fg, bg: value.bg, extended: pick(value.extended, ['_ext', '_urlId']) }; }
 function restoreAttrs(target: any, value: any) { target.fg = value.fg; target.bg = value.bg; Object.assign(target.extended, value.extended); }
-function bufferState(buffer: any, start = 0) {
+function rendererLine(line: any, cache?: Map<any, any>): any {
+    if (cache?.has(line)) return cache.get(line);
+    const common = {length: line.length, isWrapped: line.isWrapped, combined: copy(line._combined), extended: Object.fromEntries(Object.entries(line._extendedAttrs).filter(([, v]) => v).map(([k, v]) => [k, pick(v, ['_ext', '_urlId'])]))};
+    const runs = encodeCellRuns(line._data, line.length);
+    const packed = runs && JSON.stringify(runs).length < line.length * 16 ? {...common, runs} : {...common, data: raw(line._data.subarray(0, line.length * 3))};
+    cache?.set(line, packed);
+    return packed;
+}
+function bufferState(buffer: any, start = 0, cache?: Map<any, any>) {
     return { state: pick(buffer, B), saved: attrs(buffer.savedCurAttrData), lines: Array.from({ length: buffer.lines.length - start }, (_, n) => {
             const line = buffer.lines.get(n + start);
-            return { length: line.length, isWrapped: line.isWrapped, data: raw(line._data.subarray(0, line.length * 3)), combined: copy(line._combined), extended: Object.fromEntries(Object.entries(line._extendedAttrs).filter(([, v]) => v).map(([k, v]) => [k, pick(v, ['_ext', '_urlId'])])) };
+            return rendererLine(line, cache);
         }) };
 }
 function assertOwnership(term: any, drained = true) {
@@ -104,7 +113,7 @@ function assertOwnership(term: any, drained = true) {
     if ([...buffers.normal.markers, ...buffers.alt.markers].some(marker => !seen.has(marker)))
         throw Error('External markers are not eligible');
 }
-function capture(term: any, metadata: any = {}, start = 0) {
+function capture(term: any, metadata: any = {}, start = 0, cache?: Map<any, any>) {
     assertOwnership(term);
     if (!ground(term))
         throw Error('VT parser is not in ground state');
@@ -129,7 +138,7 @@ function capture(term: any, metadata: any = {}, start = 0) {
     if ([...buffers.normal.markers, ...buffers.alt.markers].some(marker => !seen.has(marker)))
         throw Error('External markers are not eligible');
     const dto = { format: 1, engine: ENGINE, options: canonicalOptions(term), metadata: copy(metadata),
-        cols: term.cols, rows: term.rows, normal: bufferState(buffers.normal, start), alternate: bufferState(buffers.alt), active: buffers.active === buffers.alt ? 'alternate' : 'normal',
+        cols: term.cols, rows: term.rows, normal: bufferState(buffers.normal, start, cache), alternate: bufferState(buffers.alt, 0, cache), active: buffers.active === buffers.alt ? 'alternate' : 'normal',
         userScrolling: bs.isUserScrolling, core: pick(c.coreService, C), mouse: pick(c.coreMouseService, M), charset: pick(c._charsetService, ['charset', 'glevel', '_charsets']),
         input: pick(h, H), current: attrs(h._curAttrData), erase: attrs(h._eraseAttrDataInternal),
         parser: { initialState: p.initialState, currentState: p.currentState, precedingJoinState: p.precedingJoinState, collect: p._collect,
@@ -148,12 +157,16 @@ function restoreBuffer(buffer: any, snapshot: any, extendedPrototype: any) {
     const Line = buffer.getBlankLine(buffer.savedCurAttrData).constructor;
     buffer.lines.length = 0;
     for (const saved of snapshot.lines) {
-        if (saved.length > 1000 || decode(saved.data).length !== saved.length * 12)
+        if (saved.length > 1000)
             throw Error('Invalid VT line');
         const line = new Line(saved.length);
-        const bytes = decode(saved.data);
-        for (let n = 0; n < saved.length * 3; n++)
-            line._data[n] = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(n * 4, true);
+        if (saved.runs) line._data.set(decodeCellRuns(saved.runs, saved.length));
+        else {
+            const bytes = decode(saved.data);
+            if(bytes.length !== saved.length * 12) throw Error('Invalid VT line');
+            const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+            for (let n = 0; n < saved.length * 3; n++) line._data[n] = view.getUint32(n * 4, true);
+        }
         line.isWrapped = saved.isWrapped;
         line._combined = copy(saved.combined);
         line._extendedAttrs = {};
@@ -225,7 +238,7 @@ function restore(term: any, dto: any) {
     return { term, metadata: dto.metadata };
 }
 export interface RendererVtCheckpoint {
-    format: 1;
+    format: 2;
     browserEngine: string;
     state: unknown;
     cutLines: number;
@@ -245,9 +258,8 @@ export function createRendererVt(options: ConstructorParameters<typeof XTerm>[0]
     if (ACTUAL_BROWSER_ENGINE === SUPPORTED_BROWSER_ENGINE) trackPalette(term);
     return term;
 }
-function lineEstimate(line: any): number {
-    return line.length * 16 + new TextEncoder().encode(JSON.stringify(line._combined)).length +
-        new TextEncoder().encode(JSON.stringify(line._extendedAttrs)).length + 128;
+function lineEstimate(line: any, cache: Map<any, any>): number {
+    return new TextEncoder().encode(JSON.stringify(rendererLine(line, cache))).length + 1;
 }
 /** No continuous history copies: the old host first freezes its output and
  * flushes its fanout. Capture drains the already-rendered/transformed writes.
@@ -265,25 +277,30 @@ export async function captureRendererVt(term: XTerm, maxBytes = MAX_RENDERER_PAN
         term.write('', () => { clearTimeout(timer); resolve(); });
     });
     const c = (term as any)._core, normal = c._bufferService.buffers.normal, alt = c._bufferService.buffers.alt;
-    let remaining = maxBytes - 65536;
-    for (let n = 0; n < alt.lines.length; n++)
-        remaining -= lineEstimate(alt.lines.get(n));
+    const lineCache = new Map<any, any>();
+    let remaining = maxBytes - Math.min(65536, Math.floor(maxBytes / 4));
+    let cellsRemaining = 3_000_000;
+    for (let n = 0; n < alt.lines.length; n++) {
+        remaining -= lineEstimate(alt.lines.get(n), lineCache);
+        cellsRemaining -= alt.lines.get(n).length;
+    }
     let start = normal.lines.length;
     // Retain the newest lines; never mutate the live terminal to enforce a cap.
     for (let n = normal.lines.length - 1; n >= 0; n--) {
         if (performance.now() > deadline)
             throw Error('Renderer checkpoint deadline expired');
-        const cost = lineEstimate(normal.lines.get(n));
-        if (remaining < cost && n < normal.ybase)
+        const cost = lineEstimate(normal.lines.get(n), lineCache);
+        if ((remaining < cost || cellsRemaining < normal.lines.get(n).length) && n < normal.ybase)
             break;
         remaining -= cost;
+        cellsRemaining -= normal.lines.get(n).length;
         start = n;
     }
-    if (remaining < 0)
+    if (remaining < 0 || cellsRemaining < 0)
         throw Error('Renderer viewport exceeds its checkpoint budget');
     for (;;) {
-        const state = capture(term, {}, start);
-        const result: RendererVtCheckpoint = { format: 1, browserEngine: SUPPORTED_BROWSER_ENGINE, state, cutLines: start, viewportClamped: normal.ydisp < start };
+        const state = capture(term, {}, start, lineCache);
+        const result: RendererVtCheckpoint = { format: 2, browserEngine: SUPPORTED_BROWSER_ENGINE, state, cutLines: start, viewportClamped: normal.ydisp < start };
         const bytes = new TextEncoder().encode(JSON.stringify(result)).length;
         if (performance.now() > deadline)
             throw Error('Renderer checkpoint deadline expired');
@@ -297,7 +314,7 @@ export async function captureRendererVt(term: XTerm, maxBytes = MAX_RENDERER_PAN
 /** Main validated the closed DTO and caps before it reaches this fresh view.
  * Keep this view's known UI callbacks/theme/font; install only common VT state. */
 export function restoreRendererVt(term: XTerm, checkpoint: RendererVtCheckpoint): void {
-    if (checkpoint.format !== 1 || checkpoint.browserEngine !== SUPPORTED_BROWSER_ENGINE || ACTUAL_BROWSER_ENGINE !== SUPPORTED_BROWSER_ENGINE)
+    if (checkpoint.format !== 2 || checkpoint.browserEngine !== SUPPORTED_BROWSER_ENGINE || ACTUAL_BROWSER_ENGINE !== SUPPORTED_BROWSER_ENGINE)
         throw Error('Unsupported renderer checkpoint engine');
     prepareRendererVt(term);
     assertOwnership(term);

@@ -8,6 +8,7 @@ const {Terminal}=require('@xterm/xterm');
 const {createRendererVt,prepareRendererVt,captureRendererVt,restoreRendererVt,SUPPORTED_BROWSER_ENGINE}=require('../dist-test/terminal-vt-checkpoint.js');
 const {parseRendererCheckpoint}=require('../dist-electron/renderer-vt-checkpoint.js');
 const {stripScrollbackErase,normalizeTerminalLinkUnderline}=require('../dist-test/terminal-rendering.js');
+const {extractAyaOsc}=require('../dist-electron/osc-extractor.js');
 const write=(term,s)=>new Promise(resolve=>term.write(s,resolve));
 const terminal=()=>createRendererVt({cols:80,rows:24,scrollback:10000,cursorBlink:true,scrollOnEraseInDisplay:true,allowProposedApi:true,linkHandler:{activate(){}}});
 const visible=term=>Array.from({length:term.rows},(_,y)=>term.buffer.active.getLine(term.buffer.active.viewportY+y)?.translateToString());
@@ -31,9 +32,11 @@ test('restored mouse tracking notifies browser listener consumers',async()=>{
  const a=terminal(),b=terminal(),events=[];
  try {
   await write(a,'\x1b[?1003h\x1b[?1006h');
+  a._core.coreMouseService.triggerMouseEvent({col:2,row:3,x:20,y:30,button:3,action:32,ctrl:false,alt:false,shift:false});
   b._core.coreMouseService.onProtocolChange(e=>events.push(e));
   restoreRendererVt(b,parseRendererCheckpoint(Buffer.from(JSON.stringify(await captureRendererVt(a)))));
   assert.equal(b.modes.mouseTrackingMode,'any');assert.ok(events.length>0);assert.ok(events.at(-1)>0);
+  assert.deepEqual(b._core.coreMouseService._lastEvent,a._core.coreMouseService._lastEvent);
  }finally{a.dispose();b.dispose();}
 });
 test('actual transformed renderer history, viewport, both buffers, colours and future behavior round-trip',async()=>{
@@ -54,7 +57,7 @@ test('actual transformed renderer history, viewport, both buffers, colours and f
 test('oldest history is cut to fit while the retained viewport stays on the same content',async()=>{
  const a=terminal(),b=terminal();
  try{
-  await write(a,Array.from({length:500},(_,n)=>`row-${String(n).padStart(4,'0')} `+'x'.repeat(60)+'\r\n').join(''));
+  await write(a,Array.from({length:1000},(_,n)=>`row-${String(n).padStart(4,'0')} `+'x'.repeat(60)+'\r\n').join(''));
   a.scrollToLine(a.buffer.normal.baseY-2);
   const cp=await captureRendererVt(a,128*1024,1000);assert.ok(cp.cutLines>0);assert.equal(cp.viewportClamped,false);assert.ok(Buffer.byteLength(JSON.stringify(cp))<=128*1024);
   restoreRendererVt(b,parseRendererCheckpoint(Buffer.from(JSON.stringify(cp)),128*1024));
@@ -88,3 +91,47 @@ test('renderer envelope and private VT schema are checked before restoration',as
   }
  }finally{a.dispose();}
 });
+test('compact rows cannot amplify retained cells before the allocation preflight',async(t)=>{
+ const a=terminal();
+ try {
+  const cp=await captureRendererVt(a);
+  cp.state.normal.lines=Array.from({length:3001},()=>({length:1000,isWrapped:false,runs:{text:'',flags:[],attrs:[[1000,0,0]]},combined:{},extended:{}}));
+  cp.state.alternate.lines=[];
+  const shared=require('../shared/renderer-cell-runs.cjs');let decoded=0;
+  t.mock.method(shared,'decodeCellRuns',()=>{decoded++;throw Error('Decoded before allocation preflight');});
+  assert.throws(()=>parseRendererCheckpoint(Buffer.from(JSON.stringify(cp))),/retained-cell allocation limit/);
+  assert.equal(decoded,0);
+ }finally{a.dispose();}
+});
+function cellDigest(term){
+ const hash=createHash('sha256');
+ for(const b of [term._core._bufferService.buffers.normal,term._core._bufferService.buffers.alt]){
+  hash.update(String(b.lines.length));
+  for(let n=0;n<b.lines.length;n++){
+   const line=b.lines.get(n);hash.update(Buffer.from(line._data.buffer,line._data.byteOffset,line.length*12));
+   hash.update(JSON.stringify([line.isWrapped,line._combined,line._extendedAttrs]));
+  }
+ }
+ return hash.digest('hex');
+}
+for(const file of fs.readdirSync('tests/fixtures/own-screens').filter(n=>n.endsWith('.raw'))){
+ test(`renderer row encoding preserves exact recorded ${file} cell planes and continuations`,async()=>{
+  const meta=JSON.parse(fs.readFileSync('tests/fixtures/own-screens/'+file.replace('.raw','.meta.json')));
+  const options={cols:meta.cols,rows:meta.rows,scrollback:10000,cursorBlink:true,scrollOnEraseInDisplay:true,allowProposedApi:true};
+  const a=createRendererVt(options),b=createRendererVt(options);
+  try{
+   const cleaned=extractAyaOsc(fs.readFileSync('tests/fixtures/own-screens/'+file).toString('utf8'),'').cleaned;
+   await write(a,normalizeTerminalLinkUnderline(stripScrollbackErase(cleaned)));
+   // A truncated recording may stop in CSI; take its next supported ground
+   // boundary, as the display capture contract requires.
+   await write(a,'\x18');
+   const cp=await captureRendererVt(a,4*1024*1024,1000);assert.equal(cp.cutLines,0);
+   restoreRendererVt(b,parseRendererCheckpoint(Buffer.from(JSON.stringify(cp)),4*1024*1024));
+   assert.equal(cellDigest(b),cellDigest(a),'exact content/attribute/combined/extended cell planes');
+   const replies=[[],[]];a.onData(s=>replies[0].push(s));b.onData(s=>replies[1].push(s));
+   for(const text of ['\x1b[38;2;12;34;56m界é','\x1b[?1049hFUTURE\x1b[?1049l','\x1b[6n']){await write(a,text);await write(b,text);}
+   assert.equal(cellDigest(b),cellDigest(a));assert.deepEqual(replies[0],replies[1]);
+   assert.deepEqual((await captureRendererVt(b,4*1024*1024,1000)).state,(await captureRendererVt(a,4*1024*1024,1000)).state);
+  }finally{a.dispose();b.dispose();}
+ });
+}
