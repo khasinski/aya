@@ -230,6 +230,28 @@ for (const [agent, takesNote] of Object.entries(CHANNEL_TAKES_NOTE)) {
     }));
 }
 
+for (const agent of ["claude", "codex"]) {
+  test(`restart offered: ${agent} carrying another role's note`, () =>
+    withRig(presetOf(agent), ROLE, async ({ deps, start }) => {
+      await start();
+      const project = { slug: "g", tabs: [{ id: "t1", presetId: "p", name: "t" }] };
+      const report = await roleNoteReport(project, "ux-review", { implementer: "t1" }, deps);
+      assert.match(report.roleNotes.implementer, /^started with the role note of tester: /);
+      assert.deepEqual(report.restartable, agent === "claude" ? ["implementer"] : []);
+    }));
+}
+
+test("restart offered: not when the preset, edited since, can no longer carry a note", () =>
+  withRig(presetOf("claude"), ROLE, async ({ deps, start }) => {
+    await start();
+    const [preset] = await deps.listPresets();
+    preset.command = "claude && echo done";
+    const project = { slug: "g", tabs: [{ id: "t1", presetId: "p", name: "t" }] };
+    const report = await roleNoteReport(project, "ux-review", { implementer: "t1" }, deps);
+    assert.match(report.roleNotes.implementer, /^started with the role note of tester: /);
+    assert.deepEqual(report.restartable, []);
+  }));
+
 test("restart offered: not for a pane that already carries its role note", () =>
   withRig(presetOf("claude"), ROLE, async ({ deps, start }) => {
     await start();

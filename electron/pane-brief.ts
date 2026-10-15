@@ -262,7 +262,8 @@ async function roleNoteState(tab: WorkingTab, current: RoleRef, deps: PaneBriefD
   const launch = await deps.records.get(tab.id);
   const codex = presetAgent(preset) === "codex";
   const restart = codex ? "start a new session" : "restart it";
-  const fix = (text: string) => ({ text, restartFixes: !codex });
+  // A restart respawns with the preset as it is now: it helps only where that preset can carry the note.
+  const fix = async (text: string) => ({ text, restartFixes: !codex && (await capabilityGap(tab, preset, deps)) === null });
   const cannot = (text: string | null) => (text === null ? null : { text, restartFixes: false });
   const unknown = `started before Aya recorded what it was told: ${restart} to give it the role note`;
   if (!launch) return cannot(await capabilityGap(tab, preset, deps)) ?? ((await deps.running(tab.id)) ? fix(unknown) : null);
