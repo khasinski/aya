@@ -55,7 +55,7 @@ import { debugPane, watchDebugSwitch } from "./team-debug";
 import { userShell } from "./shell";
 import { registerTeamIpc } from "./ipc/team-ipc";
 import { askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, presetAgent, teamPaneDeps, type PaneHost } from "./team-panes";
-import { confirmPaneRestart, confirmRestart, type RelaunchDeps } from "./relaunch-notes";
+import { confirmPaneRestart, confirmRestart, confirmStoppingProcesses, type RelaunchDeps } from "./relaunch-notes";
 import { foregroundCommand } from "./foreground-command";
 import { createUpdates, UPDATE_AUTO_CHECK_DELAY_MS } from "./updates";
 import { notePathRepaired, presetInstalled } from "./command-probe";
@@ -140,6 +140,9 @@ const MAX_KEYBOARD_PROJECTS = 9;
 // Theme colors shared between About-dialog CSS and BrowserWindow chrome
 const COLOR_DARK_BG = "#0d1117";
 const COLOR_LIGHT_TEXT = "#f0f6fc";
+
+import {PlannedUpdate} from "./pty-planned-update";
+import {HandoverDisplays} from "./pty-handover-display";
 
 const PTY_HOST_SCRIPT = path.join(__dirname, PTY_HOST_SCRIPT_NAME);
 const ptyHost = new PtyHostClient(PTY_HOST_SCRIPT);
@@ -262,6 +265,19 @@ const windows = createAyaWindows({
 });
 const { ayaWindows, focusedAyaWindow, eachAyaWindow, createWindow, openNewWindow, createWindowOnce, windowForOpen, isAyaFullScreen, setAyaFullScreen, toggleAyaFullScreen } = windows;
 const { windowSlices, projectStateForWindow } = windowProjects;
+const handoverDisplays=new HandoverDisplays(async id=>{
+  const project=(await listProjects()).find(p=>p.tabs.some(tab=>tab.id===id));
+  const windowId=project?windowSlices.windowOf(project.slug):null;
+  return windowId===null?null:BrowserWindow.fromId(windowId)?.webContents??null;
+},(event,fields)=>diagnosticsLog.append(event,fields),(id,generation,token)=>ptyHost.acknowledgeHandoverDisplay(id,generation,token));
+const plannedUpdate=new PlannedUpdate({
+  host:ptyHost,displays:handoverDisplays,
+  livePaneIds:async()=>{const panes=await relaunchDeps.panes();const live=await Promise.all(panes.map(async p=>await relaunchDeps.pid(p.id).catch(()=>undefined)!==null?p.id:null));return live.filter((id):id is string=>id!==null);},
+  expected:()=>ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION),
+  confirmStop:(ids,action)=>confirmStoppingProcesses(relaunchDeps,action,text=>askRestart("Restart terminals",text),ids),
+  log:(event,fields)=>diagnosticsLog.append(event,fields),
+});
+
 
 const { cliStatus, installCli, healDeadCliShims } = createCliSetup({
   app,
@@ -283,7 +299,7 @@ const { paneBriefDeps, expectRoles: expectPaneRoles } = createPaneBriefDeps({
 });
 
 const { EXPECTED_HOST_VERSION, handleStaleHost, hostHealth, restartHostFromWindow, stopOtherHostsFromWindow,
-  staleHostDetected } = createPtyHostHealth({
+  staleHostDetected, keepStaleHost } = createPtyHostHealth({
   app,
   mainDirname: __dirname,
   ptyHost,
@@ -451,9 +467,12 @@ const updates = createUpdates({
   },
   relaunchDeps,
   askRestart,
+  preparePlannedUpdate:()=>plannedUpdate.prepare(),
+  abortPlannedUpdate:()=>plannedUpdate.abort(),
 });
 
 function registerIpc(): TeamRunner {
+  handoverDisplays.register(ipcMain);
   // Aya Web reuses these handlers over WebSocket - record every registration
   // (must run before the first ipcMain.handle below).
   captureIpcHandlers(ipcMain);
@@ -522,6 +541,8 @@ function registerIpc(): TeamRunner {
     prepareSpawn,
     sendSpawn,
     forgetBrief: (ptyId) => removePaneBrief(AYA_HOME, ptyId),
+    forgetDisplay: (ptyId) => handoverDisplays.forget(ptyId),
+    hasDisplay: (ptyId) => handoverDisplays.has(ptyId),
     noteTyping: async (ptyId, text) => {
       // The user's Enter answers a pane that asked for them (aya status waiting): the windows drop the status.
       const answered = await noteUserAnswer(ptyId, text, () => ptyHost.holdReason(ptyId));
@@ -722,8 +743,9 @@ app.whenReady().then(async () => {
   // createWindow so a recorded stale host is dead before anything can connect
   // to it; the common-path cost is one `ps -p` fork for the kept host (the
   // system-wide snapshot only runs when a kill actually happens).
+  const keepPlannedHost=await plannedUpdate.resume() === "kept";
   let keptCompatibleHosts: number[] = [];
-  try {
+  if(!keepPlannedHost)try {
     // The host on the socket runs the panes the user sees: handleStaleHost below asks before it stops their work.
     const socketHost = (await pathExists(PTY_HOST_SOCKET_PATH)) ? (await ptyHost.hostStatus()).pid : undefined;
     const summary = reapStaleHostRecords(
@@ -757,7 +779,7 @@ app.whenReady().then(async () => {
   // start. The red fallback icon is applied after installApplicationMenu.
   // Unconditionally now: with no socket file, hostHealth() starts no host, and a host still running without its
   // socket (2026-10-13) is exactly the one this must catch before the first pane starts another.
-  await handleStaleHost();
+  if(keepPlannedHost)keepStaleHost();else await handleStaleHost();
 
   const savedState = await loadWindowState();
   windows.mainWindow = createWindow(savedState);

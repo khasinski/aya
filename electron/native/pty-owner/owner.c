@@ -345,6 +345,13 @@ static void handle_frame(int client, uint16_t type, uint32_t request, unsigned c
     if (ioctl(pane->fd, TIOCSWINSZ, &geometry)) { error_reply(client, request, "Resize failed"); return; }
     pane->cols = (int)a; pane->rows = (int)b;
   } else if (type == OWNER_KILL && !pane->exited && (a == SIGHUP || a == SIGTERM || a == SIGKILL || a == SIGINT)) {
+    // Observe this still-reserved child immediately before accepting a stop.
+    // Client dispatch can precede SIGCHLD reaping. An already-ended child
+    // keeps its natural outcome and must not authorize a replacement spawn.
+    siginfo_t info = {0}; int observed;
+    do { observed = waitid(P_PID, (id_t)pane->pid, &info, WEXITED | WNOHANG | WNOWAIT); } while (observed < 0 && errno == EINTR);
+    if (observed < 0) { error_reply(client, request, "Cannot verify child before stop"); return; }
+    if (info.si_pid) { reap_children(); error_reply(client, request, "Child already ended before stop"); return; }
     terminate_group(pane->pid, (int)a);
     if (a == SIGHUP || a == SIGTERM) pane->kill_deadline = now_ms() + 750;
   } else if (type == OWNER_ACK_EXIT && pane->exited && a == pane->event) {

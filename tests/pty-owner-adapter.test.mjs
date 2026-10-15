@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 fs.mkdirSync("test-results", { recursive: true });
 const home = fs.mkdtempSync(path.resolve("test-results/adapter-"));
@@ -70,6 +71,34 @@ test("25 owner adapters release both native masters and JS reader descriptors af
   }
 });
 
+test("handover aborts a bounded blocked-input drain without stopping another pane or retrying the paste", {timeout: 15000}, async () => {
+  const p = await OwnerPty.spawn(spec("drain-barrier", "stty raw -echo; printf 'READY'; while [ ! -f \"$HOME/input-release\" ]; do sleep 0.01; done; dd bs=1 count=1048576 of=\"$HOME/input-bytes\" 2>/dev/null; printf 'DRAINED'; next=$(dd bs=1 count=1 2>/dev/null); printf 'NEXT:%s' \"$next\"; exit 23"));
+  const second = await OwnerPty.spawn(spec("drain-peer"));
+  let output = "", peerOutput = "";
+  p.onData(s => { output += s; }); second.onData(s => { peerOutput += s; });
+  const exit = new Promise(resolve => p.onExit(resolve));
+  let pending;
+  try {
+    await waitFor(() => output.includes("READY") && peerOutput.includes(`START:${second.pid}`));
+    pending = p.writeAsync("x".repeat(1024 * 1024)); void pending.catch(() => {});
+    await assert.rejects(p.freezeForHandover(20), /input did not drain/);
+    await second.writeAsync("still\n"); await waitFor(() => peerOutput.includes(`R:${second.pid}:still`));
+    assert.equal(output.includes("DRAINED"), false, "the unreleased child still cannot consume the pending input");
+    fs.writeFileSync(path.join(home, "input-release"), "go");
+    await pending; await p.writeAsync("!");
+    assert.equal((await exit).exitCode, 23); await p.closed;
+    const actual = fs.readFileSync(path.join(home, "input-bytes"));
+    assert.equal(actual.length, 1024 * 1024);
+    const digest = bytes => createHash("sha256").update(bytes).digest("hex");
+    assert.equal(digest(actual), digest(Buffer.alloc(1024 * 1024, 120)));
+    assert.ok(output.endsWith("NEXT:!"), "the very next byte after the original paste must be the sentinel, not retried input");
+    assert.equal(output.split("DRAINED").length - 1, 1);
+  } finally {
+    p.resumeAfterHandoverAbort(); p.kill("SIGKILL"); second.kill("SIGKILL");
+    await Promise.all([p.closed, second.closed]);
+  }
+});
+
 test("a lost spawn acknowledgement retains an uncertain live pane and blocks retry until explicit shutdown", async (t) => {
   const owner = await getOwnerRuntime(), spawn = owner.client.spawn.bind(owner.client);
   let child;
@@ -82,4 +111,19 @@ test("a lost spawn acknowledgement retains an uncertain live pane and blocks ret
   await sleep(300); assert.doesNotThrow(() => process.kill(child.pid, 0));
   await assert.rejects(OwnerPty.spawn(spec("uncertain")), /disconnected or incompatible/);
   await owner.shutdown(); assert.throws(() => process.kill(child.pid, 0), /ESRCH/);
+});
+
+
+test("explicit abort during a pending input drain cannot pause the reader later",async()=>{
+ const p=await OwnerPty.spawn(spec('cancelled-input-freeze'));let output='';p.onData(s=>{output+=s;});
+ try{
+  await waitFor(()=>output.includes(`START:${p.pid}`));
+  let settle;const outstanding=new Promise(resolve=>{settle=resolve;});p.writeOutcomes.add(outstanding);
+  const freezing=p.freezeForHandover(3000),refused=assert.rejects(freezing,/changed during handover input drain/);
+  p.resumeAfterHandoverAbort();p.writeOutcomes.delete(outstanding);
+  await p.freezeForHandover(3000);assert.equal(p.handoverPaused,true);
+  settle();await refused;assert.equal(p.handoverPaused,true,'an obsolete freeze must not resume the newer barrier');
+  p.resumeAfterHandoverAbort();assert.equal(p.handoverPaused,false);await p.writeAsync('after-explicit-abort\n');
+  await waitFor(()=>output.includes(`R:${p.pid}:after-explicit-abort`));
+ }finally{p.kill('SIGKILL');await p.closed;}
 });

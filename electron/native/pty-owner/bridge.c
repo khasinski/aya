@@ -19,6 +19,9 @@
 #include <unistd.h>
 #include "process-identity.h"
 #include "recovery.h"
+#ifdef __APPLE__
+#include <sys/ucred.h>
+#endif
 
 static napi_value error(napi_env env, const char *operation) {
   char text[160]; snprintf(text, sizeof(text), "%s: %s", operation, strerror(errno));
@@ -298,11 +301,36 @@ static napi_value recovery_supported(napi_env env, napi_callback_info info) {
 #endif
   napi_value out; napi_get_boolean(env, supported, &out); return out;
 }
+// Credentials come from the connected Unix socket, never a caller-supplied
+// PID. This identifies a process instance, not a trusted Aya executable.
+static napi_value peer_identity(napi_env env, napi_callback_info info) {
+  size_t count = 1; napi_value args[1], out, value; int fd; pid_t pid; uid_t uid;
+  napi_get_cb_info(env, info, &count, args, NULL, NULL);
+  if (count != 1) { napi_throw_type_error(env, NULL, "Expected Unix socket descriptor"); return NULL; }
+  if (argument_fd(env, args[0], &fd)) return NULL;
+#ifdef __APPLE__
+  socklen_t size = sizeof(pid); gid_t gid;
+  if (getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &size) || size != sizeof(pid) || getpeereid(fd, &uid, &gid)) return error(env, "Unix peer credentials");
+#else
+  struct ucred credentials; socklen_t size = sizeof(credentials);
+  if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &credentials, &size) || size != sizeof(credentials)) return error(env, "Unix peer credentials");
+  pid = credentials.pid; uid = credentials.uid;
+#endif
+  ProcessIdentity identity;
+  if (uid != geteuid() || pid <= 1 || process_identity(pid, &identity) != 1) {
+    napi_throw_error(env, NULL, "Cannot establish same-account Unix peer identity"); return NULL;
+  }
+  char text[64]; snprintf(text, sizeof(text), "%llu:%llu", (unsigned long long)identity.start, (unsigned long long)identity.fraction);
+  napi_create_object(env, &out); napi_create_int32(env, pid, &value); napi_set_named_property(env, out, "pid", value);
+  napi_create_string_utf8(env, text, NAPI_AUTO_LENGTH, &value); napi_set_named_property(env, out, "startIdentity", value);
+  return out;
+}
 static napi_value init(napi_env env, napi_value exports) {
   const struct { const char *name; napi_callback function; } methods[] = {
     {"connect", connect_socket}, {"send", send_frame}, {"receive", receive_frame}, {"close", close_descriptor}, {"readReady", read_ready},
     {"recoveryGroupExists", recovery_group_exists}, {"recoveryIdentity", recovery_identity}, {"recoverProcess", recover_process},
-    {"nonblockingMaster", nonblocking_master}, {"writeReady", write_ready}, {"resizeMaster", resize_master}, {"recoverySupported", recovery_supported}
+    {"nonblockingMaster", nonblocking_master}, {"writeReady", write_ready}, {"resizeMaster", resize_master}, {"recoverySupported", recovery_supported},
+    {"peerIdentity", peer_identity}
   };
   for (size_t i = 0; i < sizeof(methods) / sizeof(methods[0]); i++) {
     napi_value function; napi_create_function(env, methods[i].name, NAPI_AUTO_LENGTH, methods[i].function, NULL, &function);

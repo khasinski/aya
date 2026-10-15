@@ -8,6 +8,9 @@ import {
   type MouseEvent,
 } from "react";
 import { Terminal as XTerm, type ITheme } from "@xterm/xterm";
+import { createRendererVt,restoreRendererVt,type RendererVtCheckpoint } from "../terminal-vt-checkpoint";
+import {registerCheckpointTerminal} from "../terminal-checkpoint-registry";
+import {registerPendingTerminalAttach} from "../pending-terminal-attach";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -341,6 +344,12 @@ function TerminalViewComponent({
       : undefined;
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
+  const visibleRef=useRef(isVisible);visibleRef.current=isVisible;
+  const deferredHandoverAttachRef=useRef<(()=>void)|null>(null);
+  useEffect(()=>{if(isVisible)deferredHandoverAttachRef.current?.();},[isVisible]);
+  const handoverInputPausedRef = useRef(false);
+  const retireHandoverForRestartRef=useRef<(()=>void)|null>(null);
+  const [historyNotice,setHistoryNotice]=useState<string|null>(null);
   const disconnectedRef = useRef(!!terminal.disconnected);
   disconnectedRef.current = !!terminal.disconnected;
   useEffect(() => {
@@ -381,6 +390,7 @@ function TerminalViewComponent({
     null,
   );
   const sendInput = useCallback((data: string) => {
+    if(handoverInputPausedRef.current)return;
     const showFailure = (detail: string) => xtermRef.current?.write(`\r\n[${detail}]\r\n`);
     void window.aya.ptyWrite(terminal.id, data).then(delivered => {
       if (delivered === false) showFailure("Input was not delivered. Check the pane before retrying. Aya did not resend it.");
@@ -494,19 +504,19 @@ function TerminalViewComponent({
    */
   const forcePtyReassert = useCallback(() => {
     const t = xtermRef.current;
-    if (!t || t.cols <= 0 || t.rows <= 0) return;
+    if (!t || t.cols <= 0 || t.rows <= 0 || handoverInputPausedRef.current) return;
     const c = t.cols;
     const r = t.rows;
     if (richInputRef.current) {
-      void window.aya.ptyResize(terminal.id, c, r + 1);
+      void window.aya.ptyResize(terminal.id, c, r + 1).catch(()=>{});
       setTimeout(() => {
         const tt = xtermRef.current;
         if (tt && tt.cols === c && tt.rows === r) {
-          void window.aya.ptyResize(terminal.id, c, r);
+          void window.aya.ptyResize(terminal.id, c, r).catch(()=>{});
         }
       }, 0);
     } else {
-      void window.aya.ptyResize(terminal.id, c, r);
+      void window.aya.ptyResize(terminal.id, c, r).catch(()=>{});
     }
   }, [terminal.id]);
 
@@ -720,7 +730,7 @@ function TerminalViewComponent({
   // Create the xterm instance + spawn the PTY once.
   useEffect(() => {
     if (!containerRef.current || xtermRef.current) return;
-    const term = new XTerm({
+    const term = createRendererVt({
       disableStdin: disconnectedRef.current,
       theme: toXtermTheme(themeColors),
       fontSize,
@@ -795,6 +805,29 @@ function TerminalViewComponent({
     searchRef.current = search;
 
     fitTerminal();
+    let releaseDeferred:(()=>void)|null=null;
+    let disposed=false,awaitingReplay=typeof window.aya.handoverDisplay==='function';
+    let attachCancelled=false,attachRetiredByRestart=false;
+    const unregisterPendingAttach=registerPendingTerminalAttach(terminal.id,()=>{attachCancelled=true;releaseDeferred?.();});
+    const attachmentWasCancelled=()=>{
+      if(!attachCancelled)return false;
+      if(attachRetiredByRestart)return true;
+      term.options.disableStdin=true;
+      setHistoryNotice("Terminal attachment cancelled by a stop request.");
+      markRestoring(false);
+      return true;
+    };
+    let displayGeneration:string|null=null,replayToken:string|null=null,appliedToken=false;
+    const retireHandoverForRestart=()=>{
+      attachRetiredByRestart=true;attachCancelled=true;releaseDeferred?.();unregisterPendingAttach();
+      awaitingReplay=false;displayGeneration=null;replayToken=null;appliedToken=false;
+      handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;
+      setHistoryNotice(null);
+    };
+    retireHandoverForRestartRef.current=retireHandoverForRestart;
+    const unregisterCheckpoint=registerCheckpointTerminal(terminal.id,term,()=>!awaitingReplay&&!handoverInputPausedRef.current);
+    handoverInputPausedRef.current=awaitingReplay;
+    if(awaitingReplay)term.options.disableStdin=true;
 
     // Per-id subscription via the shared bus: one chunk wakes THIS pane only,
     // not every mounted TerminalView (visible + warm pool) as a raw
@@ -802,6 +835,12 @@ function TerminalViewComponent({
     const unsubscribe = ptyEventBus.onFor(terminal.id, (event) => {
       if (isRestoringRef.current) markRestoring(false);
       if (event.type === "data") {
+        // Startup output is retained by the host. Discard broadcasts until the
+        // replay fence, then append exactly the suffix after captured B once.
+        if(event.replayToken){if(event.replayToken!==replayToken||appliedToken)return;appliedToken=true;}
+        if(awaitingReplay&&!event.replay)return;
+        if(event.reset){term.reset();setHistoryNotice("History from replay after the update; earlier captured history was no longer retained.");}
+        if(event.replay&&awaitingReplay)awaitingReplay=false;
         // Track whether a full-screen / rich TUI (claude, codex, vim…) is
         // running via focus-reporting mode (DECSET 1004). It gates Shift+Enter:
         // soft newline inside the TUI, plain Enter (submit) at the shell prompt.
@@ -813,7 +852,10 @@ function TerminalViewComponent({
         if (event.replay) {
           replayingOutputRef.current += 1;
           term.write(displayChunk, () => {
+            if(disposed)return;
             replayingOutputRef.current = Math.max(0, replayingOutputRef.current - 1);
+            handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;
+            if(displayGeneration){void window.aya.acknowledgeHandoverDisplay(terminal.id,displayGeneration,event.replayToken).catch(()=>{});displayGeneration=null;}
           });
         } else {
           term.write(displayChunk);
@@ -828,6 +870,7 @@ function TerminalViewComponent({
         }
         if (onPtyData) onPtyData(event.chunk);
       } else if (event.type === "exit") {
+        awaitingReplay=false;handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;
         const restartHint =
           event.exitCode === 0
             ? " — press Shift+Enter to restart"
@@ -839,6 +882,7 @@ function TerminalViewComponent({
         disconnectedRef.current = true; term.options.disableStdin = true;
         term.write("\r\n\x1b[1;33m[terminal host disconnected - the process may still be running. Input is disabled while disconnected. Restart explicitly to stop it and try again.]\x1b[0m\r\n");
       } else if (event.type === "no-session") {
+        awaitingReplay=false;handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;
         // Attach-only re-mount with no live PTY: the process ended while we were
         // away. Show a restartable hint instead of a fresh, contextless session.
         term.write(
@@ -974,7 +1018,7 @@ function TerminalViewComponent({
     });
 
     const onResizeDisposable = term.onResize(({ cols, rows }) => {
-      void window.aya.ptyResize(terminal.id, cols, rows);
+      if(!handoverInputPausedRef.current)void window.aya.ptyResize(terminal.id, cols, rows).catch(()=>{});
     });
 
     // Track the current foreground process via OSC 0/2 title sequences.
@@ -984,8 +1028,31 @@ function TerminalViewComponent({
       setProcessTitle(title);
     });
 
-    if (!spawnedRef.current) {
-      spawnedRef.current = true;
+    {
+      void (async()=>{
+      const display=typeof window.aya.handoverDisplay==='function' ? await window.aya.handoverDisplay(terminal.id).catch(()=>null) : null;
+      if(disposed)return;
+      if(attachmentWasCancelled())return;
+      // A hidden boot-warm view must not consume the first attach/exit or ACK
+      // and then discard its display before the user ever visits the pane.
+      // Native reads continue immediately in the successor throughout this wait.
+      if(display&&!visibleRef.current){
+        await new Promise<void>(resolve=>{
+          const ready=()=>{if(deferredHandoverAttachRef.current===ready)deferredHandoverAttachRef.current=null;resolve();};
+          releaseDeferred=ready;deferredHandoverAttachRef.current=ready;
+        });
+        if(disposed)return;
+        if(attachmentWasCancelled())return;
+      }
+      if(display){
+        displayGeneration=display.generation;setHistoryNotice(display.notice);
+        if(display.json){
+          try{restoreRendererVt(term,JSON.parse(display.json) as RendererVtCheckpoint);richInputRef.current=term.modes.sendFocusMode;}
+          catch{display.json=null;display.offset=0;setHistoryNotice("History from replay after the update; the display could not be restored.");}
+        }
+      }else{awaitingReplay=false;handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;}
+      const previouslyRequested=spawnedRef.current;spawnedRef.current = true;
+      if(display)replayToken=crypto.randomUUID();
       // First mount this session -> normal spawn (boot auto-start). A re-mount
       // of an id that already produced a confirmed session - or that the host
       // already declared no-session for (the tab is deliberately stopped) ->
@@ -993,7 +1060,7 @@ function TerminalViewComponent({
       // than a silent fresh process. Keyed on confirmed output (not the
       // request), so an in-flight first spawn that re-mounts is not mistaken
       // for a dead session.
-      const attachOnly = wasSpawned(terminal.id) || hadNoSession(terminal.id);
+      const attachOnly = previouslyRequested || wasSpawned(terminal.id) || hadNoSession(terminal.id);
       // Boot-restored tab, FIRST mount decision only: if the app reconnected
       // to a host that predates this session, attach instead of spawning -
       // the session either still lives there (replay) or the tab becomes
@@ -1004,7 +1071,11 @@ function TerminalViewComponent({
       const attachIfReused = terminal.restored && !wasMountDecided(terminal.id);
       markMountDecided(terminal.id);
       const { cols, rows } = term;
-      void window.aya.ptySpawn({
+      // No await between releasing this hook and sending the request: a later
+      // close reaches main after its spawn flight has been registered.
+      unregisterPendingAttach();
+      await window.aya.ptySpawn({
+        ...(display ? {replayAfter:{generation:display.generation,offset:display.offset,token:replayToken!}} : {}),
         ptyId: terminal.id,
         projectSlug: terminal.projectSlug,
         presetId: terminal.presetId,
@@ -1020,9 +1091,16 @@ function TerminalViewComponent({
         attachIfReused,
         ...(terminal.teamLaunch ? { teamLaunch: true } : {}),
       });
+      })().catch(error=>{
+        if(disposed)return;
+        awaitingReplay=false;handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;
+        term.write(`\r\n[Terminal attachment failed: ${String(error).replace(/[\x00-\x1f\x7f]/g,' ')}]\r\n`);markRestoring(false);
+      });
     }
 
     return () => {
+      disposed=true;releaseDeferred?.();unregisterCheckpoint();unregisterPendingAttach();
+      if(retireHandoverForRestartRef.current===retireHandoverForRestart)retireHandoverForRestartRef.current=null;
       container.removeEventListener("click", onTerminalLinkClick, true);
       unsubscribe();
       onDataDisposable.dispose();
@@ -1240,6 +1318,7 @@ function TerminalViewComponent({
     lastRestartTriggerRef.current = restartTrigger;
     const term = xtermRef.current;
     if (!term) return;
+    retireHandoverForRestartRef.current?.();
     didPostLoadResizeRef.current = false;
     markRestoring(true);
     term.writeln("\x1b[2m[restarting…]\x1b[0m");
@@ -1447,6 +1526,7 @@ function TerminalViewComponent({
         onWheelCapture={() => setIsScrollbarHidden(false)}
         onContextMenu={openTerminalContextMenu}
       >
+        {historyNotice&&<div data-testid="terminal-history-notice" role="status" style={{position:"absolute",top:0,left:0,right:0,zIndex:3,padding:"2px 8px",fontSize:11,background:"var(--aya-term-bg)",pointerEvents:"none"}}>{historyNotice}</div>}
         <div data-testid="xterm-frame" className="aya-xterm-frame" ref={containerRef} />
         {isRestoring && (
           <div className="aya-terminal-restoring" aria-live="polite">

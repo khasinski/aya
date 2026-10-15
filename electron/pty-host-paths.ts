@@ -24,6 +24,9 @@ export const AYA_HOME =
 export const CONTROL_SOCKET_PATH = path.join(AYA_HOME, CONTROL_SOCKET_NAME);
 export const REMOTE_SOCKET_PATH = path.join(AYA_HOME, REMOTE_SOCKET_NAME);
 export const PTY_HOST_SOCKET_PATH = path.join(AYA_HOME, PTY_HOST_SOCKET_NAME);
+export const PTY_HANDOVER_CORE_DIRECTORY = path.join(AYA_HOME, "pty-handover-core");
+export const PTY_HANDOVER_DISPLAY_DIRECTORY = path.join(AYA_HOME, "pty-handover-display");
+export const PTY_HANDOVER_TICKET_PATH = path.join(AYA_HOME, "pty-handover.json");
 // rw------- (owner-only). Sockets accept unauthenticated local commands /
 // remote bridge traffic, and host-registry records name kill targets - none
 // of it may be readable/writable by other users. One definition for both.

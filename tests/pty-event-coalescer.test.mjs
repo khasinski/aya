@@ -123,3 +123,28 @@ test("coalesceAdjacentData passes through short batches", () => {
   assert.equal(coalesceAdjacentData(one), one);
   assert.deepEqual(coalesceAdjacentData([]), []);
 });
+
+
+test('checkpoint replay reset and empty fences preserve live order',()=>{
+ const events=[],c=createPtyDataCoalescer(e=>events.push(e),()=>{});
+ c.push({type:'data',ptyId:'p',chunk:'before'});
+ c.push({type:'data',ptyId:'p',chunk:'',replay:true,reset:false});
+ c.push({type:'data',ptyId:'p',chunk:'after'});
+ c.push({type:'data',ptyId:'p',chunk:'fallback',replay:true,reset:true});c.flush();
+ assert.deepEqual(events.map(e=>[e.chunk,e.reset]),[['before',undefined],['',false],['after',undefined],['fallback',true]]);
+ assert.equal(coalesceAdjacentData(events).length,4);
+});
+
+
+test('overlapping attaches retain each replay token and its empty fence', () => {
+ const sent=[],scheduler=manualScheduler();
+ const c=createPtyDataCoalescer(event=>sent.push(event),scheduler.schedule);
+ const first={type:'data',ptyId:'p',chunk:'first replay',replay:true,replayToken:'first-view'};
+ const second={type:'data',ptyId:'p',chunk:'',replay:true,replayToken:'second-view'};
+ c.push(first);c.push(second);scheduler.run();
+ assert.deepEqual(sent,[first,second]);
+ assert.deepEqual(coalesceAdjacentData(sent),[first,second]);
+ const waitingForSecond=sent.filter(event=>event.replayToken==='second-view');
+ assert.equal(waitingForSecond.length,1);
+ assert.equal(waitingForSecond[0].chunk,'');
+});

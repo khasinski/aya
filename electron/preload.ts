@@ -28,6 +28,15 @@ const isDev = process.env.AYA_DEV === "1";
 const api: AyaApi = {
   isDev,
   platform: process.platform,
+  onHandoverCapture: (handler) => {
+    const listener=(_event:unknown,request:import("./types").HandoverCaptureRequest)=>{
+      void handler(request).then(json=>ipcRenderer.send("pty-checkpoint:captured",request.requestId,json),()=>ipcRenderer.send("pty-checkpoint:captured",request.requestId,null));
+    };
+    ipcRenderer.on("pty-checkpoint:capture",listener);
+    return ()=>ipcRenderer.removeListener("pty-checkpoint:capture",listener);
+  },
+  handoverDisplay: id=>ipcRenderer.invoke("pty-checkpoint:display",id),
+  acknowledgeHandoverDisplay: (id,generation,token)=>ipcRenderer.invoke("pty-checkpoint:display-ack",id,generation,token),
   ptySpawn: (req) => ipcRenderer.invoke("pty:spawn", req),
   ptyWrite: (ptyId, data) => ipcRenderer.invoke("pty:write", ptyId, data),
   ptyResize: (ptyId, cols, rows) =>

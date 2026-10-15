@@ -16,6 +16,9 @@ function inheritedSecret(): Buffer {
   finally { fs.closeSync(3); }
 }
 const secret = inheritedSecret();
+/** Only the host's consumed, announced handover window may call this. Never
+ * include it in checkpoint state, registries, argv, environment or logs. */
+export function ownerHandoverCredential(): Buffer { return Buffer.from(secret); }
 let runtime: Promise<OwnerRuntime> | null = null;
 let ready: OwnerRuntime | null = null;
 let unavailableListener: ((owner: OwnerRuntime) => void) | null = null;
@@ -41,6 +44,7 @@ export class OwnerRuntime {
   private ownerExit: Promise<number | null> | null = null;
   get isStopping(): boolean { return !!this.shutdownTask; }
   pendingSpawns = 0;
+  private retainedRestorations=0;
   private idleTimer: NodeJS.Timeout | null = null;
   onUnavailable: (() => void) | null = null;
   private persist(): void {
@@ -70,9 +74,15 @@ export class OwnerRuntime {
     this.persist();
   }
   endSpawn(): void { this.pendingSpawns--; this.scheduleIdle(); }
+  /** Keep the stable owner available while JS holds an unapplied exit. This
+   * is not a spawn flight and must not prevent a planned lease transfer. */
+  holdRestoration():()=>void {
+    this.retainedRestorations++;if(this.idleTimer)clearTimeout(this.idleTimer);this.idleTimer=null;
+    let held=true;return()=>{if(!held)return;held=false;this.retainedRestorations--;this.scheduleIdle();};
+  }
   private scheduleIdle(): void {
-    if (this.inventory.size || this.pendingSpawns || this.incompatible || this.ending || this.idleTimer) return;
-    this.idleTimer = setTimeout(() => { this.idleTimer = null; if (!this.inventory.size && !this.pendingSpawns) void this.shutdown().catch(() => {}); }, 200);
+    if (this.inventory.size || this.pendingSpawns || this.retainedRestorations || this.incompatible || this.ending || this.idleTimer) return;
+    this.idleTimer = setTimeout(() => { this.idleTimer = null; if (!this.inventory.size && !this.pendingSpawns && !this.retainedRestorations) void this.shutdown().catch(() => {}); }, 200);
   }
   static async open(): Promise<OwnerRuntime> {
     prepareOwnerDirectory();
@@ -183,6 +193,17 @@ export class OwnerRuntime {
     try { await this.client.kill(pane, 1); }
     catch (error) { if (!delivered) { clearTimeout(timer); this.exits.delete(key); throw error; } }
     await this.retired(await exited);
+  }
+  async detachForHandover(beforeClose: () => void = () => {}): Promise<void> {
+    if (!this.client?.isConnected() || this.pendingSpawns || this.incompatible) throw new Error("PTY owner handover barrier is incomplete");
+    await this.client.list(); // all preceding owner operations have answered
+    // All fallible disk work precedes the commit callback. A failed write or
+    // rename still permits abort to resume the connected original reader.
+    this.persist();
+    beforeClose(); // Last cancellable boundary; no await before lease close.
+    this.ending = true;
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.client.close();
   }
   shutdown(): Promise<void> { return this.shutdownTask ??= this.stop(); }
   private async recoverRetainedGroups(orderlyExit: boolean): Promise<void> {

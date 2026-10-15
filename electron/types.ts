@@ -128,6 +128,8 @@ export interface SpawnRequest {
   // NOT spawn a fresh process; emit a `no-session` event instead. Set by the
   // renderer when re-mounting a tab that already ran this session.
   attachOnly?: boolean;
+  /** Restore a captured display, then replay only output after this boundary. */
+  replayAfter?: { generation: string; offset: number; token?: string };
   // Attach-only IF the connected PTY host predates this app session (it was
   // found running, not spawned by us). Set by the renderer for the first mount
   // of a boot-restored tab; PtyHostClient.spawn resolves it into `attachOnly`
@@ -285,7 +287,7 @@ export type SpawnFailureReason =
   | "spawn-prepare-failed";
 
 export type PtyEvent =
-  | { type: "data"; ptyId: string; chunk: string; replay?: boolean }
+  | { type: "data"; ptyId: string; chunk: string; replay?: boolean; reset?: boolean; replayToken?: string }
   | { type: "exit"; ptyId: string; exitCode: number }
   | {
       type: "spawn-failed";
@@ -563,6 +565,9 @@ export interface WebConfigureRequest {
 }
 
 // What the preload exposes to window.aya:
+export interface HandoverCaptureRequest {requestId:string;ptyId:string;maxBytes:number}
+export interface HandoverDisplay {json:string|null;generation:string;offset:number;notice:string|null}
+
 export interface AyaApi {
   /** True when running under `npm run dev` (AYA_DEV=1). False in the packaged
    *  Aya.app. Use to show a "dev" indicator and keep the user's dogfooded
@@ -572,6 +577,9 @@ export interface AyaApi {
 
   // PTY lifecycle
   ptySpawn(req: SpawnRequest): Promise<void>;
+  onHandoverCapture(handler:(request:HandoverCaptureRequest)=>Promise<string|null>):()=>void;
+  handoverDisplay(ptyId:string):Promise<HandoverDisplay|null>;
+  acknowledgeHandoverDisplay(ptyId:string,generation:string,token?:string):Promise<void>;
   ptyWrite(ptyId: string, data: string): Promise<boolean>;
   ptyResize(ptyId: string, cols: number, rows: number): Promise<void>;
   ptyKill(ptyId: string): Promise<void>;

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import { listenOwnerOnly } from "./owner-socket";
-import { PTY_HOST_SOCKET_PATH } from "./pty-host-paths";
+import { PTY_HOST_SOCKET_PATH, PTY_HANDOVER_CORE_DIRECTORY, PTY_HANDOVER_DISPLAY_DIRECTORY } from "./pty-host-paths";
 import { hostBuildHash, hostRuntimeIdentity, UNKNOWN_SCRIPT_HASH, type HostIdentity } from "./pty-host-staleness";
 import {
   writeHostRecord,
@@ -19,7 +19,11 @@ import {
 } from "./pty-host-protocol";
 import { createPtyDataCoalescer } from "./pty-event-coalescer";
 import {
+  acknowledgePtyRestoration,
   activePtyCount,
+  hasUnattachedRestoredPanes,
+  restoredPtyLaunches,
+  restorePtyCorePane,
   getBufferedOutput,
   getPtyLaunch,
   getPtySize,
@@ -32,8 +36,14 @@ import {
   spawnPty,
   writePty,
   type PtyEventSink,
+  ptyCoreHandoverInProgress,
 } from "./pty-core";
-import { getOwnerRuntime, currentOwnerRuntime, shutdownOwnerRuntime, setOwnerUnavailableListener } from "./pty-owner-runtime";
+import { getOwnerRuntime, currentOwnerRuntime, shutdownOwnerRuntime, setOwnerUnavailableListener, ownerHandoverCredential } from "./pty-owner-runtime";
+import { HandoverWindow, handoverPeer } from "./pty-handover-window";
+import {readHandoverBootstrap,preflightCoreHandover,readCoreHandover} from "./pty-handover-bootstrap";
+import {acknowledgeCheckpoint} from "./pty-checkpoint-store";
+import { HostHandover } from "./pty-host-handover";
+import { ownerProcessStartIdentity } from "./pty-owner-client";
 import { panes, vtSnapshot, markComposerSeen } from "./vt-mirror";
 import type { PreparedSpawn } from "./pty-core";
 const LAUNCH_STARTING = "starting";
@@ -52,6 +62,8 @@ const HOST_NONCE_BYTES = 8;
 const LOG_HASH_PREFIX_CHARS = 8;
 
 const clients = new Set<net.Socket>();
+const handoverWindow = new HandoverWindow();
+const hostHandover = new HostHandover(PTY_HANDOVER_CORE_DIRECTORY, PTY_HANDOVER_DISPLAY_DIRECTORY);
 let idleTimer: NodeJS.Timeout | null = null;
 let server: net.Server | null = null;
 // The socket file this host bound, by device and inode. When this host exits after a restart, the path may already
@@ -69,15 +81,22 @@ let hostShutdownStarted = false;
  *  then the registry record goes (a crash leaves it for next launch's GC) and the process exits. */
 function beginShutdown(reason: string): void {
   if (hostShutdownStarted) return; // the in-flight shutdown owns the exit
+  if (hostHandover.committed) {
+    // A quit/signal racing the committed cutover must only end this JS host.
+    // The owner is already reserved for the successor, never shut it down.
+    hostShutdownStarted=true;clearIdleTimer();closeSocket();removeHostRecord(process.pid);process.exit(0);
+  }
   hostShutdownStarted = true;
   // The reason is the single most valuable line in the lifecycle log: it
   // distinguishes "a client told this host to die" (staleness handoff) from
   // an OS signal when every console dies at once.
   ptyLog.append("host-shutdown", { reason, children: activePtyCount() });
   closeSocket();
-  shutdownPtyChildren(() => {
-    void shutdownOwnerRuntime().then(() => { removeHostRecord(process.pid); process.exit(0); })
-      .catch(error => { ptyLog.append("owner-shutdown-failed", { error: String(error) }); });
+  void hostHandover.abort().catch(error => {ptyLog.append("checkpoint-abort-failed", {error:String(error)});}).then(() => {
+    shutdownPtyChildren(() => {
+      void shutdownOwnerRuntime().then(() => { removeHostRecord(process.pid); process.exit(0); })
+        .catch(error => { ptyLog.append("owner-shutdown-failed", { error: String(error) }); });
+    });
   });
 }
 
@@ -147,6 +166,11 @@ const sink: PtyEventSink = {
   sendPtyEvent: (event) => broadcastCoalesced.push(event),
 };
 
+function installSnapshotFanout(id:string):void {
+  const pane=panes.get(id);
+  if(pane)pane.onSnapshot=snapshot=>{for(const client of clients)sendLine(client,{type:"snapshot",ptyId:id,snapshot});};
+}
+
 function clearIdleTimer(): void {
   if (idleTimer) clearTimeout(idleTimer);
   idleTimer = null;
@@ -158,6 +182,64 @@ interface Preparation {
 
 async function handle(request: PtyHostRequest, socket: net.Socket, preparations: Map<number, Preparation>): Promise<unknown> {
   clearIdleTimer();
+  if(request.type === "handover-display-applied"){
+    if(typeof request.ptyId!=="string"||request.ptyId.length>128||typeof request.generation!=="string"||request.generation.length>128||(request.token!==undefined&&(typeof request.token!=="string"||request.token.length>128)))throw Error("Invalid applied display acknowledgement");
+    return acknowledgePtyRestoration(request.ptyId,request.generation,request.token);
+  }
+  if (request.type === "handover-prepare") {
+    const owner = currentOwnerRuntime();
+    if (!owner?.client?.isConnected() || owner.incompatible || owner.disconnected.size || owner.record.uncertain?.length) throw new Error("This host's processes cannot move seamlessly");
+    const result = await hostHandover.prepare(handoverPeer(socket),request.deadline);
+    // The response is an output fence for main and its renderer capture IPC.
+    broadcastCoalesced.flush();
+    return result;
+  }
+  if (request.type === "handover-publish") return hostHandover.publish(handoverPeer(socket),request.display,request.consented);
+  if (request.type === "handover-announce") {
+    const owner = currentOwnerRuntime(), identity = ownerProcessStartIdentity(process.pid);
+    if (!identity || !owner?.client?.isConnected() || owner.incompatible || owner.disconnected.size || owner.record.uncertain?.length) throw new Error("This host cannot announce a seamless handover");
+    const peer = handoverPeer(socket);
+    if (hostHandover.active) hostHandover.assertAnnouncement(peer,request.deadline);
+    handoverWindow.announce(request.nonce, request.deadline, peer);
+    return {hostPid: process.pid, hostStartIdentity: identity};
+  }
+  if (request.type === "handover-cancel") {
+    const peer = handoverPeer(socket);
+    await hostHandover.abort(peer);
+    try{handoverWindow.acknowledgeReuse(peer);}catch{handoverWindow.cancel(peer);}
+    return null;
+  }
+  if (request.type === "handover-claim") {
+    const peer = handoverPeer(socket);
+    const alreadyTransferred = !!handoverWindow.transferredTo;
+    let checkpoint;
+    try {
+      if (request.reuse !== undefined && typeof request.reuse !== "boolean") throw new Error("Invalid handover claim");
+      handoverWindow.consume(request.nonce, peer, !request.reuse);
+      checkpoint = hostHandover.active ? hostHandover.adopt(peer) : null;
+    } catch (error) {
+      // A failed first claim ends the attempt and resumes the old processes.
+      // A later rejected claimant cannot cancel the chosen recipient's work.
+      if (!alreadyTransferred) await hostHandover.abort().catch(() => {});
+      throw error;
+    }
+    if (!currentOwnerRuntime()?.client?.isConnected()) throw new Error("The announced owner is unavailable");
+    // A one-shot in-memory response on the private local socket. This value
+    // never reaches broadcast, a checkpoint, process arguments or a log.
+    return {...(!request.reuse ? {credential: ownerHandoverCredential().toString("base64")} : {}), ...(checkpoint ? {checkpoint} : {})};
+  }
+  if (request.type === "handover-reuse") {
+    const peer=handoverPeer(socket);handoverWindow.assertReuse(peer);return hostHandover.reuse(peer);
+  }
+  if (request.type === "handover-ack-reuse") {
+    const peer = handoverPeer(socket);
+    handoverWindow.assertReuse(peer);
+    await hostHandover.acknowledgeReuse(peer);handoverWindow.acknowledgeReuse(peer);return null;
+  }
+  if (request.type === "handover-detach") {
+    if (!Array.isArray(request.consented) || request.consented.length > 25 || request.consented.some(id => typeof id !== "string" || id.length > 128)) throw new Error("Invalid consented pane identities");
+    return hostHandover.detach(handoverPeer(socket),request.consented);
+  }
   if (request.type === "spawn") {
     await spawnPty(request.req, sink, {
       prepare: (req, cwd, signal) => new Promise<PreparedSpawn>((resolve) => {
@@ -185,10 +267,7 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
       },
       opened: (req, pid, data) => {
         sendLine(socket, { type: "spawned", req, pid, cwd: data.launch.cwd, spawnedAt: data.spawnedAt });
-        const pane = panes.get(req.ptyId);
-        if (pane) pane.onSnapshot = (snapshot) => {
-          for (const client of clients) sendLine(client, { type: "snapshot", ptyId: req.ptyId, snapshot });
-        };
+        installSnapshotFanout(req.ptyId);
         return () => {};
       },
     });
@@ -227,7 +306,10 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
   }
   if (request.type === "snapshot" && (currentOwnerRuntime()?.incompatible || currentOwnerRuntime()?.disconnected.has(request.ptyId))) return "disconnected";
   if (request.type === "snapshot") return isPtyStarting(request.ptyId) ? "starting" : vtSnapshot(request.ptyId);
-  if (request.type === "composer-seen") { markComposerSeen(request.ptyId, request.generation); return null; }
+  if (request.type === "composer-seen") {
+    if (ptyCoreHandoverInProgress()) throw new Error("Terminal metadata is paused for handover");
+    markComposerSeen(request.ptyId, request.generation); return null;
+  }
   if (request.type === "prepared") {
     if (!Number.isSafeInteger(request.prepareId) || request.prepareId <= 0) throw new Error("invalid preparation id");
     const pending = preparations.get(request.prepareId);
@@ -273,13 +355,14 @@ function computeHostIdentity(): HostIdentity {
 const HOST_IDENTITY: HostIdentity = computeHostIdentity();
 
 function scheduleIdleShutdown(): void {
+  if (hostHandover.active || hasUnattachedRestoredPanes()) return;
   // An unknown/retained owner is not an empty host. Idle cleanup cannot
   // authorize the destructive fallback when a spawn acknowledgement was lost.
   if (currentOwnerRuntime()?.incompatible || currentOwnerRuntime()?.disconnected.size) return;
   if (clients.size > 0 || activePtyCount() > 0 || idleTimer) return;
   idleTimer = setTimeout(() => {
     idleTimer = null;
-    if (clients.size === 0 && activePtyCount() === 0 && !currentOwnerRuntime()?.incompatible && !currentOwnerRuntime()?.disconnected.size) {
+    if (!hostHandover.active && !hasUnattachedRestoredPanes() && clients.size === 0 && activePtyCount() === 0 && !currentOwnerRuntime()?.incompatible && !currentOwnerRuntime()?.disconnected.size) {
       ptyLog.append("host-idle-exit");
       beginShutdown("idle");
     }
@@ -337,6 +420,14 @@ function start(): void {
             if (!isPtyHostRequest(parsed)) throw new Error("invalid request");
             const result = await handle(parsed, socket, preparations);
             sendLine(socket, { id: parsed.id, ok: true, result });
+            if (parsed.type === "handover-detach") {
+              // The owner and pane processes stay alive. Exit after flushing
+              // the commit response; never enter the destructive shutdown path.
+              hostShutdownStarted = true;clearIdleTimer();closeSocket();
+              removeHostRecord(process.pid);
+              const timer=setTimeout(()=>process.exit(0),1000);timer.unref();
+              socket.end(()=>process.exit(0));
+            }
           } catch (err) {
             sendLine(socket, {
               id: requestId,
@@ -347,6 +438,12 @@ function start(): void {
         })();
       }
     });
+    // Main owns session watches even for a view that will mount much later.
+    // These are bounded per-pane launch records, never aggregate VT payloads.
+    for(const pane of restoredPtyLaunches()){
+      sendLine(socket,{type:"spawned",...pane,restored:true,ownerBacked:true,hostPid:process.pid});
+      void vtSnapshot(pane.req.ptyId).then(snapshot=>{if(snapshot)sendLine(socket,{type:"snapshot",ptyId:pane.req.ptyId,snapshot});});
+    }
   });
 
   listenOwnerOnly(server, PTY_HOST_SOCKET_PATH, () => {
@@ -391,6 +488,23 @@ keepHostOnUncaught(ptyLog);
 setOwnerUnavailableListener(owner => {
   for (const id of owner.record.panes.map(p => p.id)) broadcast({ type: "disconnected", ptyId: id });
 });
-void getOwnerRuntime().then(() => {
+void (async()=>{
+  const bootstrap=process.env.AYA_PTY_CHECKPOINT_FD === "4" ? await readHandoverBootstrap(4) : null;
+  delete process.env.AYA_PTY_CHECKPOINT_FD;
+  if(bootstrap)await preflightCoreHandover(bootstrap.core);
+  const bootstrapOwner=await getOwnerRuntime();
+  const releaseBootstrap=bootstrap?bootstrapOwner.holdRestoration():()=>{};
+  if(bootstrap){
+    for await(const pane of readCoreHandover(bootstrap.core)){
+      await restorePtyCorePane(pane,sink);installSnapshotFanout(pane.id);
+    }
+    await acknowledgeCheckpoint(PTY_HANDOVER_CORE_DIRECTORY,bootstrap.core);
+  }
+  releaseBootstrap();
   start();
-}).catch(error => { ptyLog.append("owner-start-failed", { error: String(error) }); process.exitCode = 1; });
+})().catch(error => {
+  ptyLog.append("owner-start-failed", { error: String(error) });
+  // A partial restore/failed ACK can already own live reader/control handles.
+  // Exit JS promptly to release that lease; never shut down the stable owner.
+  process.exit(1);
+});

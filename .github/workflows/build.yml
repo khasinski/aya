@@ -154,7 +154,8 @@ jobs:
           npx playwright install chromium
 
       - name: Build app
-        run: npm run build
+        # e2e/renderer-checkpoint.spec.ts loads the renderer codec from dist-test.
+        run: npm run build && npm run build:test-src
 
       - name: Run Playwright E2E
         # Project dependencies pull the whole isolated suite into every shard

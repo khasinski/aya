@@ -3,7 +3,7 @@ import { snapshotBusy, snapshotHold, snapshotStatus } from "./vt-state";
 import { HOLD_NOT_RUNNING, HOLD_STARTING } from "./pane-holds";
 import { getProcessCwd } from "./process-cwd";
 import type { VtSnapshot } from "./vt-mirror";
-import { spawn } from "node:child_process";
+import { spawn,type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
@@ -30,6 +30,14 @@ import {
   UNKNOWN_SCRIPT_HASH,
   type HostIdentity,
 } from "./pty-host-staleness";
+import type {HostHandoverState} from "./pty-host-handover";
+import type {CheckpointReceipt} from "./pty-checkpoint-store";
+import type {HandoverTicket} from "./pty-handover-ticket";
+import {preflightCoreHandover,type HandoverBootstrap} from "./pty-handover-bootstrap";
+import {handoverState,handoverCommitResult} from "./pty-handover-state";
+import {ownerArtifactPaths,ownerProcessStartIdentity} from "./pty-owner-client";
+import {ownerBinaryHash} from "./pty-owner-registry";
+import {classifyIdentity} from "./pty-host-staleness";
 import { coalesceAdjacentData } from "./pty-event-coalescer";
 import type { BufferSearchHit } from "./pty";
 import type { PtyEvent, SpawnRequest } from "./types";
@@ -149,6 +157,9 @@ export class PtyHostClient {
   // every (re)connect; false until the first connect completes (spawn()
   // awaits connect first, so it always reads a settled value).
   private reusedHost = false;
+  private plannedReusedBoot = false;
+  private pendingPlannedHost:ChildProcess|null=null;
+  private readonly consentedBootSpawns = new Set<string>();
   // All live Aya windows' webContents (plus any virtual sink). PTY events are
   // broadcast to every sink; each renderer's event bus routes by ptyId, so a
   // window that doesn't host the terminal does a single cheap no-op per event.
@@ -177,7 +188,17 @@ export class PtyHostClient {
     this.sinks.delete(webContents);
   }
 
+  private endedBootPanes=new Map<string,number>();
+  async acknowledgeHandoverDisplay(ptyId:string,generation:string,token?:string):Promise<boolean>{
+    return await this.request({id:0,type:"handover-display-applied",ptyId,generation,token})===true;
+  }
+
   async spawn(req: SpawnRequest): Promise<void> {
+    if(!req.attachIfReused&&!req.attachOnly)this.endedBootPanes.delete(req.ptyId);
+    if(this.endedBootPanes.has(req.ptyId)&&req.attachIfReused){
+      const exitCode=this.endedBootPanes.get(req.ptyId)!;
+      this.sendToSinks([{type:"exit",ptyId:req.ptyId,exitCode}]);return;
+    }
     this.metadataRequired = true;
     // Resolve attachIfReused in request()'s post-connect hook - only this
     // client knows whether the host was reused or freshly spawned, and that
@@ -196,7 +217,8 @@ export class PtyHostClient {
     this.live.add(req.ptyId);
     try {
       await this.request({ id: 0, type: "spawn", req: rest }, (request) => {
-        if (!resolveSpawnAttach(rest.attachOnly, attachIfReused, this.reusedHost)) {
+        const consented=this.consentedBootSpawns.delete(req.ptyId);
+        if (!resolveSpawnAttach(rest.attachOnly, consented ? false : attachIfReused, this.reusedHost)) {
           return request;
         }
         return { ...request, req: { ...rest, attachOnly: true } };
@@ -209,8 +231,9 @@ export class PtyHostClient {
 
   /** Whether spawning `req` now would start a process, not replay or attach to one. */
   async willStart(req: SpawnRequest): Promise<boolean> {
+    if(this.endedBootPanes.has(req.ptyId))return false;
     if (req.attachOnly || (await this.getSize(req.ptyId)) !== null) return false;
-    return !resolveSpawnAttach(false, req.attachIfReused, this.reusedHost);
+    return !resolveSpawnAttach(false, this.consentedBootSpawns.has(req.ptyId) ? false : req.attachIfReused, this.reusedHost);
   }
 
   /** Resolves false only when the host positively reports the data went
@@ -226,6 +249,7 @@ export class PtyHostClient {
   }
 
   async kill(ptyId: string): Promise<void> {
+    this.endedBootPanes.delete(ptyId);
     await this.request({ id: 0, type: "kill", ptyId });
     this.live.delete(ptyId);
     this.sessionWatches.get(ptyId)?.();
@@ -291,6 +315,95 @@ export class PtyHostClient {
       // Unreadable expected content is indeterminate; it never permits stopping the host.
     }
     return { version: appVersion, scriptHash, runtime: hostRuntimeIdentity() };
+  }
+
+  authorizePlannedFallback(ids:readonly string[]):void {
+    this.plannedReusedBoot=true;
+    for(const id of ids)this.consentedBootSpawns.add(id);
+  }
+  async preparePlannedHandover(deadline:number):Promise<HostHandoverState> {
+    return handoverState(await withTimeout(this.request({id:0,type:"handover-prepare",deadline}),5000),deadline);
+  }
+  async announcePlannedHandover(state:HostHandoverState,display:CheckpointReceipt|null,consented:string[],nonce:string):Promise<HandoverTicket> {
+    await withTimeout(this.request({id:0,type:"handover-publish",display,consented}),10000);
+    const result=await withTimeout(this.request({id:0,type:"handover-announce",nonce,deadline:state.deadline}),2000) as Pick<HandoverTicket,"hostPid"|"hostStartIdentity">;
+    return {...result,nonce,deadline:state.deadline};
+  }
+  async cancelPlannedHandover():Promise<void> {
+    if(!this.isConnected())await this.openSocket();
+    await withTimeout(this.request({id:0,type:"handover-cancel"},undefined,true),3000);
+  }
+  /** New main alone owns this operation. Other requests wait until either the
+   * old host is usable again or its successor has restored every eligible pane. */
+  adoptPlannedHandover(ticket:HandoverTicket,expected:HostIdentity,inspect:(state:HostHandoverState)=>Promise<void>):Promise<HostHandoverState> {
+    if(this.replacing)return Promise.reject(new Error("A terminal replacement is already in progress"));
+    const run=this.completePlannedHandover(ticket,expected,inspect).finally(()=>{if(this.replacing===barrier)this.replacing=null;});
+    const barrier=run.then(()=>true,()=>false);this.replacing=barrier;
+    return run;
+  }
+  private async completePlannedHandover(ticket:HandoverTicket,expected:HostIdentity,inspect:(state:HostHandoverState)=>Promise<void>):Promise<HostHandoverState> {
+    let detached=false;
+    const call=(request:PtyHostRequest)=>withTimeout(this.request(request,undefined,true),10000);
+    try{
+      if(Date.now()>=ticket.deadline||ownerProcessStartIdentity(ticket.hostPid)!==ticket.hostStartIdentity)throw new Error("The announced terminal host is unavailable");
+      this.plannedReusedBoot=true;
+      // Never let a missing announced socket start a fresh host implicitly.
+      if(!this.isConnected())await this.openSocket();
+      const status=await call({id:0,type:"version"}) as HostIdentity&{pid:number;owner?:PtyOwnerStatus};
+      if(status.pid!==ticket.hostPid)throw new Error("The announced terminal host identity changed");
+      const comparison=classifyIdentity(expected,status),reuse=comparison!=='stale';
+      // Claim the announced recipient before a refusal, so a new main can
+      // cancel/resume the old host using its recorded kernel identity too.
+      const claim=await call({id:0,type:"handover-claim",nonce:ticket.nonce,reuse}) as {credential?:string;checkpoint:unknown};
+      if(comparison==='indeterminate')throw new Error("The updated terminal host identity could not be read; its processes were kept");
+      if(!status.owner||status.owner.incompatible||status.owner.disconnected.length||status.owner.hash!==ownerBinaryHash(ownerArtifactPaths().executable))throw new Error("The native PTY owner cannot move these processes seamlessly");
+      const state=handoverState(claim.checkpoint,ticket.deadline);
+      if(state.consented.length!==state.ineligible.length)throw new Error("The terminal handover lacks process-stop consent");
+      const sizes=await preflightCoreHandover(state.core,state.eligible);
+      if(sizes.rawBytes!==state.coreRawBytes||sizes.encodedBytes!==state.coreEncodedBytes)throw new Error("Terminal core receipt accounting differs");
+      await inspect(state); // Browser validation/caching also precedes commit.
+      if(ticket.deadline-Date.now()<5000)throw new Error("The terminal handover window is too short to commit safely");
+      let committed:unknown;
+      if(reuse){
+        committed=await call({id:0,type:"handover-reuse"});
+        await call({id:0,type:"handover-ack-reuse"});this.reusedHost=true;
+      }else{
+        if(typeof claim.credential!=='string'||!/^[A-Za-z0-9+/]{43}=$/.test(claim.credential))throw new Error("Invalid terminal handover credential");
+        const key=Buffer.from(claim.credential,'base64');
+        if(key.length!==32||key.toString('base64')!==claim.credential)throw new Error("Invalid terminal handover credential");
+        try{
+          this.hostAsked=true;
+          let commitError:unknown;
+          try{committed=await call({id:0,type:"handover-detach",consented:state.consented});}catch(error){commitError=error;}
+          // No successor while the recorded old process instance still lives.
+          if(!await waitForExit(ticket.hostPid,8000)){if(commitError)throw commitError;throw new Error("The old terminal host has not exited; no successor was started");}
+          detached=true;this.dropSocket();key.copy(this.ownerSecret);
+          const child=this.startHost({format:1,core:state.core});
+          try{await this.openStartedHostSocket();}catch(error){
+            // A socketless partial successor must not keep a lease or compete
+            // with a later host. This is our unreaped JS child, never the owner.
+            if(child.exitCode===null&&child.signalCode===null){
+              const exited=new Promise<void>(resolve=>child.once("exit",()=>resolve()));
+              child.kill("SIGKILL");await withTimeout(exited,3000);
+            }
+            throw error;
+          }
+          this.reusedHost=true;
+        }finally{key.fill(0);}
+      }
+      // Only the commit result proves a process was stopped. A published
+      // consent list is not evidence that an intervening natural exit needs
+      // a replacement. Lost commit responses conservatively grant no spawn.
+      if(committed!==undefined){
+        const result=handoverCommitResult(committed,state.consented);
+        for(const id of result.stopped)this.consentedBootSpawns.add(id);
+        if(!reuse)for(const pane of result.ended)this.endedBootPanes.set(pane.id,pane.exitCode);
+      }
+      return state;
+    }catch(error){
+      if(!detached)await this.cancelPlannedHandover().catch(()=>{});
+      throw error;
+    }
   }
 
   /** The one way Aya replaces its host (Restart Aya, Diagnostics, a stale host at launch): ask it to shut down,
@@ -515,7 +628,7 @@ export class PtyHostClient {
       if (this.disposed) throw new Error(DISPOSED_MESSAGE);
       this.startHost();
       await this.openStartedHostSocket();
-      this.reusedHost = false;
+      this.reusedHost = this.plannedReusedBoot;
     }
   }
 
@@ -543,7 +656,8 @@ export class PtyHostClient {
     });
   }
 
-  private startHost(): void {
+  private startHost(bootstrap?:HandoverBootstrap): ChildProcess {
+    if(this.pendingPlannedHost&&this.pendingPlannedHost.exitCode===null&&this.pendingPlannedHost.signalCode===null)throw new Error("The previous terminal successor has not exited; another host was not started");
     try {
       fs.rmSync(PTY_HOST_SOCKET_PATH, { force: true });
     } catch {
@@ -553,16 +667,20 @@ export class PtyHostClient {
     try {
       const child = spawn(process.execPath, [this.hostScript], {
         detached: true,
-        stdio: ["ignore", "ignore", stderr, "pipe"],
+        stdio: bootstrap ? ["ignore", "ignore", stderr, "pipe", "pipe"] : ["ignore", "ignore", stderr, "pipe"],
         env: {
           ...process.env,
           [RUN_AS_NODE_VAR]: RUN_AS_NODE_VALUE,
           AYA_PTY_OWNER_FD: "3",
+          ...(bootstrap ? {AYA_PTY_CHECKPOINT_FD:"4"} : {}),
         },
       });
+      if(bootstrap){this.pendingPlannedHost=child;child.once("exit",()=>{if(this.pendingPlannedHost===child)this.pendingPlannedHost=null;});}
       const secretPipe = child.stdio[3] as NodeJS.WritableStream;
       secretPipe.on("error", () => {}); secretPipe.end(this.ownerSecret);
+      if(bootstrap){const pipe=child.stdio[4] as NodeJS.WritableStream;pipe.on("error",()=>{});pipe.end(JSON.stringify(bootstrap));}
       child.unref();
+      return child;
     } finally {
       // The host holds its own copy of the descriptor.
       if (typeof stderr === "number") fs.closeSync(stderr);
@@ -640,6 +758,9 @@ export class PtyHostClient {
       }
       if ("type" in message && message.type === "spawned") {
         flushEvents();
+        if(message.ownerBacked)this.ownerBacked=true;
+        if(message.hostPid)this.lastHostPid=message.hostPid;
+        if(message.restored)this.live.add(message.req.ptyId);
         this.lostOwned.delete(message.req.ptyId);
         this.sessionWatches.get(message.req.ptyId)?.();
         this.sessionWatches.set(message.req.ptyId,
