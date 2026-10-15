@@ -108,7 +108,7 @@ typedef struct {
 static void receive_work(napi_env env, void *input) {
   (void)env; Receive *r = input; int64_t deadline = time_ms() + r->timeout;
   r->data = malloc(OWNER_HEADER); if (!r->data) { r->problem = ENOMEM; return; }
-  if (wait_fd(r->fd, POLLIN, deadline)) goto failed;
+  if (wait_fd(r->fd, POLLIN, deadline)) { r->problem = errno; return; }
   union { struct cmsghdr align; char data[CMSG_SPACE(16 * sizeof(int))]; } ancillary;
   struct iovec io = { .iov_base = r->data, .iov_len = 1 };
   struct msghdr message = { .msg_iov = &io, .msg_iovlen = 1,
@@ -148,7 +148,7 @@ static void receive_work(napi_env env, void *input) {
   if (read_all(r->fd, r->data + OWNER_HEADER, size, deadline)) goto failed;
   return;
 failed:
-  r->problem = errno;
+  r->problem = errno == ETIMEDOUT ? EPROTO : errno;
   if (r->master >= 0) { close(r->master); r->master = -1; }
 }
 static void receive_done(napi_env env, napi_status status, void *input) {
@@ -157,7 +157,9 @@ static void receive_done(napi_env env, napi_status status, void *input) {
     if (r->master >= 0) close(r->master);
     napi_value message, exception;
     napi_create_string_utf8(env, strerror(r->problem ? r->problem : ECANCELED), NAPI_AUTO_LENGTH, &message);
-    napi_create_error(env, NULL, message, &exception); napi_reject_deferred(env, r->deferred, exception);
+    napi_value code;
+    napi_create_string_utf8(env, r->problem == ETIMEDOUT ? "ETIMEDOUT" : "EOWNER", NAPI_AUTO_LENGTH, &code);
+    napi_create_error(env, code, message, &exception); napi_reject_deferred(env, r->deferred, exception);
   } else {
     napi_value out, data; napi_create_object(env, &out);
     napi_create_buffer_copy(env, r->size, r->data, NULL, &data);

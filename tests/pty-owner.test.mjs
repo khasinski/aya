@@ -24,6 +24,8 @@ test("owner spawns, resizes and reaps while the JS client owns only a duplicate"
   const next = await c.spawn({ ...shellSpec(owner.home), command: "/bin/sleep", argv: ["sleep", "30"] });
   assert.notEqual(next.generation, pane.generation);
   await assert.rejects(c.ackExit(exit), /Unknown pane generation/);
+  await assert.rejects(c.kill(exit, 9), /Unknown pane generation/);
+  assert.doesNotThrow(() => process.kill(next.pid, 0));
   await c.kill(next, 15); assert.equal((await c.nextExit()).signal, 15);
   await c.shutdown(); assert.equal((await owner.closed).code, 0);
 });
@@ -41,7 +43,8 @@ test("wrong authentication and invalid headers cannot take over the owner", asyn
 
 test("owner refuses duplicate owners and overlapping or live detached reader processes", async (t) => {
   const owner = await startOwner(); t.after(() => owner.close());
-  const duplicate = spawn(artifacts.executable, owner.args, { env: owner.env, stdio: "ignore" });
+  const duplicate = spawn(artifacts.executable, owner.args, { env: owner.env, stdio: ["ignore", "ignore", "ignore", "pipe"] });
+  duplicate.stdio[3].on("error", () => {}); duplicate.stdio[3].end(owner.token);
   assert.notEqual((await once(duplicate, "exit"))[0], 0);
   const c = await owner.connect();
   await assert.rejects(owner.connect(), /Previous client still owns the lease/);
@@ -59,8 +62,9 @@ test("failed spawn and unknown operations leave the owner usable without new pan
 
 async function child(mode, owner) {
   const proc = spawn(process.execPath, [path.resolve("tests/helpers/pty-owner-client-child.cjs"), mode, owner.home, artifacts.bridge], {
-    env: owner.env, stdio: ["ignore", "ignore", "pipe", "ipc"],
+    env: owner.env, stdio: ["ignore", "ignore", "pipe", "pipe", "ipc"],
   });
+  proc.stdio[3].end(owner.token);
   let stderr = ""; proc.stderr.on("data", data => { stderr += data; });
   const timer = setTimeout(() => proc.kill("SIGKILL"), 6000);
   try {
@@ -82,8 +86,9 @@ test("a child exiting with no JS client retains its real status through reconnec
 test("SIGKILL of the JS reader preserves a preexisting unread reply and the original child", async (t) => {
   const owner = await startOwner(); t.after(() => owner.close());
   const proc = spawn(process.execPath, [path.resolve("tests/helpers/pty-owner-client-child.cjs"), "crash-queued", owner.home, artifacts.bridge], {
-    env: owner.env, stdio: ["ignore", "ignore", "pipe", "ipc"],
+    env: owner.env, stdio: ["ignore", "ignore", "pipe", "pipe", "ipc"],
   });
+  proc.stdio[3].end(owner.token);
   const done = once(proc, "exit");
   t.after(() => { if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL"); });
   const [before] = await Promise.race([once(proc, "message"), done.then(() => { throw new Error("Crash client exited early"); })]);
@@ -112,9 +117,11 @@ test("fragmented frames and an unknown operation get bounded clean responses", a
 
 test("owner escalates an ignored graceful kill without leaving the child alive", async (t) => {
   const owner = await startOwner(); t.after(() => owner.close()); const c = await owner.connect();
-  const pane = await c.spawn({ ...shellSpec(owner.home), argv: ["sh", "-c", "trap '' HUP TERM; printf 'READY\\n'; while :; do sleep 10; done"] });
-  await readUntil(c, pane.fd, "READY");
+  const pane = await c.spawn({ ...shellSpec(owner.home), argv: ["sh", "-c", "trap '' HUP TERM; sleep 30 & descendant=$!; printf 'READY:%s\\n' \"$descendant\"; wait \"$descendant\""] });
+  const ready = await readUntil(c, pane.fd, "\n");
+  const descendant = Number(/READY:(\d+)/.exec(ready)?.[1]); assert.ok(descendant > 0);
   await c.kill(pane, 1); const exit = await c.nextExit(); assert.equal(exit.signal, 9); await c.ackExit(exit);
+  await waitGone(descendant);
   assert.throws(() => process.kill(pane.pid, 0), /ESRCH/);
 });
 
@@ -151,4 +158,63 @@ test("Linux received masters have CLOEXEC before the worker reaches its fcntl fa
   const pane = await c.spawn(shellSpec(owner.home));
   await readUntil(c, pane.fd, `START:${pane.pid}`);
   await c.kill(pane, 9); assert.equal((await c.nextExit()).signal, 9);
+});
+
+function compileOwnerFixture(name) {
+  const dir = fs.mkdtempSync(path.resolve("test-results/owner-native-")), executable = path.join(dir, name);
+  execFileSync(process.env.CC || "cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", `tests/helpers/${name}.c`, "-o", executable, ...(process.platform === "linux" ? ["-lutil"] : [])]);
+  return { dir, executable };
+}
+test("reply writes retry interrupted POLLOUT and interrupted/backpressured descriptor sends without losing the lease", () => {
+  const fixture = compileOwnerFixture("pty-owner-reply-retries");
+  try { execFileSync(fixture.executable); } finally { fs.rmSync(fixture.dir, { recursive: true, force: true }); }
+});
+test("an exit-wait timeout leaves the connection usable for a later real exit", async (t) => {
+  const owner = await startOwner(); t.after(() => owner.close()); const c = await owner.connect();
+  const pane = await c.spawn({ ...shellSpec(owner.home), argv: ["sh", "-c", "sleep 0.2; exit 23"] });
+  await assert.rejects(c.nextExit(25), { code: "ETIMEDOUT" });
+  assert.equal((await c.list())[0].pid, pane.pid);
+  assert.equal((await c.nextExit()).exitCode, 23);
+});
+test("an exec acknowledgement that never arrives times out and reaps its child", async (t) => {
+  const fixture = compileOwnerFixture("pty-owner-exec-stall");
+  t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
+  const owner = await startOwner(fixture.executable); t.after(() => owner.close()); const c = await owner.connect();
+  await assert.rejects(c.spawn(shellSpec(owner.home)), /Spawn exec timed out/);
+  const pid = Number(fs.readFileSync(path.join(owner.home, "stalled-child"), "utf8"));
+  assert.ok(pid > 0); assert.throws(() => process.kill(pid, 0), /ESRCH/);
+  assert.deepEqual(await c.list(), []);
+});
+async function waitGone(pid) {
+  for (let i = 0; i < 300; i++) {
+    try { process.kill(pid, 0); }
+    catch (error) { if (error.code === "ESRCH") return; throw error; }
+    await sleep(10);
+  }
+  assert.fail(`Descendant ${pid} still exists after group cleanup and init reaping`);
+}
+test("natural leader exit kills its HUP-ignoring group descendant before reaping and shutdown", async (t) => {
+  const owner = await startOwner(); t.after(() => owner.close()); const c = await owner.connect();
+  const pane = await c.spawn({ ...shellSpec(owner.home), argv: ["sh", "-c", "stty -echo; trap '' HUP; sleep 30 & descendant=$!; printf 'DESC:%s\\n' \"$descendant\"; read line; exit 23"] });
+  const output = await readUntil(c, pane.fd, "\n"); const match = /DESC:(\d+)/.exec(output); assert.ok(match);
+  const descendant = Number(match[1]); fs.writeSync(pane.fd, "exit\n");
+  assert.equal((await c.nextExit()).exitCode, 23);
+  await c.shutdown(); assert.equal((await owner.closed).code, 0); await waitGone(descendant);
+});
+test("owner startup accepts a private inherited token channel and leaves no token file", async (t) => {
+  const owner = await startOwner(); t.after(() => owner.close());
+  assert.deepEqual(fs.readdirSync(owner.home).filter(name => /token/.test(name)), []);
+  const c = await owner.connect(); assert.deepEqual(await c.list(), []);
+});
+
+test("owner refuses a regular token file even when passed as an inherited descriptor", async () => {
+  const dir = fs.mkdtempSync(path.resolve("test-results/owner-secret-"));
+  const file = path.join(dir, "negative-token"); fs.writeFileSync(file, Buffer.alloc(32), { mode: 0o600 });
+  const fd = fs.openSync(file, "r");
+  try {
+    const owner = spawn(artifacts.executable, ["--socket", path.relative(process.cwd(), path.join(dir, "o")), "--token-fd", "3"], { stdio: ["ignore", "ignore", "pipe", fd] });
+    let stderr = ""; owner.stderr.on("data", b => { stderr += b; });
+    assert.notEqual((await once(owner, "close"))[0], 0);
+    assert.match(stderr, /token must arrive through an inherited pipe/);
+  } finally { fs.closeSync(fd); fs.rmSync(dir, { recursive: true, force: true }); }
 });

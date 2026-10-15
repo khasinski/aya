@@ -6,9 +6,9 @@ const [resources, home] = process.argv.slice(2);
 const { PtyOwnerClient, ownerArtifactPaths } = require(path.join(resources, "app.asar/dist-electron/pty-owner-client.js"));
 (async () => {
   const artifacts = ownerArtifactPaths(path.join(resources, "app.asar/dist-electron"));
-  const token = randomBytes(32), tokenFile = path.join(home, "token"), socket = path.relative(process.cwd(), path.join(home, "o"));
-  fs.writeFileSync(tokenFile, token, { mode: 0o600 });
-  const owner = spawn(artifacts.executable, ["--socket", socket, "--token-file", tokenFile], { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+  const token = randomBytes(32), socket = path.relative(process.cwd(), path.join(home, "o"));
+  const owner = spawn(artifacts.executable, ["--socket", socket, "--token-fd", "3"], { env: process.env, stdio: ["ignore", "pipe", "pipe", "pipe"] });
+  owner.stdio[3].on("error", () => {}); owner.stdio[3].end(token);
   const closed = new Promise(resolve => owner.once("close", (code, signal) => resolve({ code, signal })));
   let client;
   async function readMarker(fd, needle) {

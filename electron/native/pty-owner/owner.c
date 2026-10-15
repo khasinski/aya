@@ -90,16 +90,27 @@ static void put_string(Writer *w, const char *value) {
   if (w->size + length > sizeof(w->data)) { w->bad = 1; return; }
   memcpy(w->data + w->size, value, length); w->size += length;
 }
+static int wait_writable(int fd, int64_t deadline) {
+  for (;;) {
+    int remaining = (int)(deadline - now_ms());
+    if (remaining <= 0) { errno = ETIMEDOUT; return -1; }
+    struct pollfd wait = { .fd = fd, .events = POLLOUT };
+    int ready = poll(&wait, 1, remaining);
+    if (ready > 0) return 0;
+    if (ready < 0 && errno == EINTR) continue;
+    if (!ready) errno = ETIMEDOUT;
+    return -1;
+  }
+}
 static int write_all(int fd, const void *data, size_t size) {
   const unsigned char *p = data; int64_t deadline = now_ms() + 1000;
   while (size) {
+    if (now_ms() >= deadline) { errno = ETIMEDOUT; return -1; }
     ssize_t count = write(fd, p, size);
     if (count > 0) { p += count; size -= (size_t)count; continue; }
     if (count < 0 && errno == EINTR) continue;
     if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-      struct pollfd wait = { .fd = fd, .events = POLLOUT };
-      int remaining = (int)(deadline - now_ms());
-      if (remaining <= 0 || poll(&wait, 1, remaining) <= 0) return -1;
+      if (wait_writable(fd, deadline)) return -1;
       continue;
     }
     return -1;
@@ -130,7 +141,18 @@ static int send_frame(int index, uint16_t type, uint32_t id, Writer *payload, in
     struct cmsghdr *c = CMSG_FIRSTHDR(&message);
     c->cmsg_level = SOL_SOCKET; c->cmsg_type = SCM_RIGHTS; c->cmsg_len = CMSG_LEN(sizeof(int));
     memcpy(CMSG_DATA(c), &master, sizeof(master));
-    if (sendmsg(fd, &message, 0) != 1) goto failed;
+    int64_t deadline = now_ms() + 1000;
+    for (;;) {
+      if (now_ms() >= deadline) { errno = ETIMEDOUT; goto failed; }
+      ssize_t sent = sendmsg(fd, &message, 0);
+      if (sent == 1) break;
+      if (sent < 0 && errno == EINTR) continue;
+      if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        if (wait_writable(fd, deadline)) goto failed;
+        continue;
+      }
+      goto failed;
+    }
   } else if (write_all(fd, header, 1)) goto failed;
   if (write_all(fd, header + 1, OWNER_HEADER - 1) || write_all(fd, payload->data, payload->size)) goto failed;
   return 0;
@@ -157,6 +179,12 @@ static void reap_children(void) {
     // Keep the leader's PID reserved until group escalation completes. Reaping
     // it first could let the OS reuse its PID/PGID before our delayed signal.
     if (p->kill_deadline && now_ms() < p->kill_deadline) continue;
+    // Observe without reaping so the leader still reserves its PID/PGID
+    // while we stop every remaining descendant. Reaped records never signal
+    // a numeric group that may since have been reused.
+    siginfo_t info = {0};
+    if (waitid(P_PID, (id_t)p->pid, &info, WEXITED | WNOHANG | WNOWAIT) || !info.si_pid) continue;
+    (void)kill(-p->pid, SIGKILL);
     int status; pid_t result = waitpid(p->pid, &status, WNOHANG);
     if (result == p->pid) {
       p->exited = 1; p->status = status; p->event = p->generation;
@@ -354,23 +382,36 @@ static void read_client(int index) {
     c->deadline = c->used ? now_ms() + 5000 : 0;
   }
 }
-static void validate_private_path(const char *socket_path, const char *token_path) {
+static void validate_private_path(const char *socket_path, const char *token_descriptor) {
   char directory[PATH_MAX];
   if (strlen(socket_path) >= sizeof(directory)) fail("socket path length");
   strcpy(directory, socket_path); char *last = strrchr(directory, '/');
   if (!last || last == directory) { errno = EINVAL; fail("socket parent"); } *last = 0;
   struct stat s;
   if (lstat(directory, &s) || !S_ISDIR(s.st_mode) || s.st_uid != getuid() || (s.st_mode & 0077)) { errno = EACCES; fail("socket directory must be private"); }
-  int fd = open(token_path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-  if (fd < 0 || fstat(fd, &s) || !S_ISREG(s.st_mode) || s.st_uid != getuid() || (s.st_mode & 0077) || s.st_size != OWNER_AUTH_BYTES) {
-    errno = EACCES; fail("token file must be private and 32 bytes");
+  char *end; errno = 0;
+  long parsed = strtol(token_descriptor, &end, 10);
+  if (errno || !*token_descriptor || *end || parsed < 3 || parsed > INT_MAX) { errno = EINVAL; fail("token descriptor"); }
+  int fd = (int)parsed;
+  if (fstat(fd, &s) || (!S_ISFIFO(s.st_mode) && !S_ISSOCK(s.st_mode))) { errno = EACCES; fail("token must arrive through an inherited pipe"); }
+  size_t used = 0; int64_t deadline = now_ms() + 5000;
+  while (used < sizeof(token)) {
+    struct pollfd entry = { .fd = fd, .events = POLLIN };
+    int remaining = (int)(deadline - now_ms());
+    if (remaining <= 0) { errno = ETIMEDOUT; fail("token pipe timed out"); }
+    int ready = poll(&entry, 1, remaining);
+    if (ready < 0 && errno == EINTR) continue;
+    if (ready <= 0) { if (!ready) errno = ETIMEDOUT; fail("token pipe readiness"); }
+    ssize_t count = read(fd, token + used, sizeof(token) - used);
+    if (count < 0 && errno == EINTR) continue;
+    if (count <= 0) { errno = EINVAL; fail("token pipe must contain 32 bytes"); }
+    used += (size_t)count;
   }
-  ssize_t count = read(fd, token, sizeof(token)); close(fd);
-  if (count != sizeof(token)) fail("token read");
+  close(fd);
 }
 int main(int argc, char **argv) {
   if (argc == 2 && !strcmp(argv[1], "--version")) { printf("{\"protocol\":%d,\"buildId\":\"%s\"}\n", OWNER_VERSION, OWNER_BUILD_ID); return 0; }
-  if (argc != 5 || strcmp(argv[1], "--socket") || strcmp(argv[3], "--token-file")) { fprintf(stderr, "usage: aya-pty-owner --socket PATH --token-file PATH\n"); return 2; }
+  if (argc != 5 || strcmp(argv[1], "--socket") || strcmp(argv[3], "--token-fd")) { fprintf(stderr, "usage: aya-pty-owner --socket PATH --token-fd FD\n"); return 2; }
   umask(0077); validate_private_path(argv[2], argv[4]);
   unsigned char random[16]; int random_fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
   if (random_fd < 0 || read(random_fd, random, sizeof(random)) != sizeof(random)) fail("owner instance entropy");

@@ -105,7 +105,10 @@ export class PtyOwnerClient {
   private async receive(timeoutMs = 5000): Promise<{ type: number; id: number; data: Buffer; fd: number }> {
     let received: { data: Buffer; fd: number };
     try { received = await this.native.receive(this.fd, timeoutMs); }
-    catch (error) { this.close(); throw error; }
+    catch (error) {
+      if ((error as { code?: string }).code !== "ETIMEDOUT") this.close();
+      throw error;
+    }
     const b = received.data;
     if (b.length < HEADER || b.readUInt32BE(0) !== MAGIC || b.readUInt16BE(4) !== OWNER_PROTOCOL || b.readUInt32BE(12) !== b.length - HEADER) {
       if (received.fd >= 0) this.native.close(received.fd);

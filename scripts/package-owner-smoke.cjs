@@ -7,6 +7,12 @@ function run(file, args, options = {}) {
   if (result.status !== 0) throw new Error(`${file} failed: ${result.stderr || result.stdout || result.error}`);
   return result.stdout;
 }
+exports.verifyBuildReceipt = function verifyBuildReceipt(directory, receipt) {
+  for (const [name, field] of [["aya-pty-owner", "ownerHash"], ["pty-owner-bridge.node", "bridgeHash"]]) {
+    const actual = require("node:crypto").createHash("sha256").update(fs.readFileSync(path.join(directory, name))).digest("hex");
+    if (actual !== receipt[field]) throw new Error(`Packaged ${name} does not match the build receipt`);
+  }
+};
 exports.runStaged = function runStaged(outputDirectory, platform = process.platform) {
   const directory = path.resolve(outputDirectory), app = path.join(directory, "mac-arm64/Aya.app");
   const resources = platform === "darwin" ? path.join(app, "Contents/Resources") : path.join(directory, "linux-unpacked/resources");
@@ -38,6 +44,9 @@ if (require.main === module) (async () => {
   const app = path.join(output, "mac-arm64", "Aya.app");
   const resources = target === "darwin" ? path.join(app, "Contents/Resources") : path.join(output, "linux-unpacked/resources");
   const executable = target === "darwin" ? path.join(app, "Contents/MacOS/Aya") : path.join(output, "linux-unpacked/aya");
+  // Compare the staged bytes before signing changes their content. Merely
+  // recording a fresh hash would bless accidentally bundled stale binaries.
+  exports.verifyBuildReceipt(path.join(resources, "app.asar.unpacked/dist-electron"), receipt);
   if (target === "darwin") {
     await require("./sign-macos.cjs").signStagedAdHoc(app);
     run("codesign", ["--verify", "--deep", "--strict", app]);

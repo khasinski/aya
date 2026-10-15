@@ -3,7 +3,7 @@ const path = require("node:path");
 const { PtyOwnerClient } = require("../../dist-electron/pty-owner-client.js");
 const [mode, home, bridge] = process.argv.slice(2);
 (async () => {
-  const client = await PtyOwnerClient.connect(path.relative(process.cwd(), path.join(home, "o")), fs.readFileSync(path.join(home, "token")), bridge);
+  const client = await PtyOwnerClient.connect(path.relative(process.cwd(), path.join(home, "o")), fs.readFileSync(3), bridge);
   if (mode === "gap-exit") {
     const pane = await client.spawn({ id: "gap", cols: 80, rows: 24, cwd: home, command: "/bin/sh",
       argv: ["sh", "-c", "sleep 0.15; exit 23"], env: { PATH: "/usr/bin:/bin", HOME: home } });

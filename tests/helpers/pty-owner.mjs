@@ -8,20 +8,20 @@ export const require = createRequire(import.meta.url);
 export const { PtyOwnerClient, ownerArtifactPaths } = require("../../dist-electron/pty-owner-client.js");
 export const artifacts = ownerArtifactPaths(process.env.AYA_OWNER_ARTIFACT_DIR || path.resolve("dist-electron"));
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-export async function startOwner() {
+export async function startOwner(executable = artifacts.executable) {
   fs.mkdirSync("test-results", { recursive: true });
   const home = fs.mkdtempSync(path.resolve("test-results/owner-")); fs.chmodSync(home, 0o700);
   // Relative socket paths keep deep review worktrees below sockaddr_un's limit.
-  const socket = path.relative(process.cwd(), path.join(home, "o")), tokenFile = path.join(home, "token"), token = randomBytes(32);
-  fs.writeFileSync(tokenFile, token, { mode: 0o600 });
+  const socket = path.relative(process.cwd(), path.join(home, "o")), token = randomBytes(32);
   const env = { PATH: "/usr/bin:/bin", HOME: home, AYA_HOME: home, LANG: "C", TERM: "xterm-256color" };
-  const args = ["--socket", socket, "--token-file", tokenFile];
-  const owner = spawn(artifacts.executable, args, { env, cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+  const args = ["--socket", socket, "--token-fd", "3"];
+  const owner = spawn(executable, args, { env, cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe", "pipe"] });
+  owner.stdio[3].on("error", () => {}); owner.stdio[3].end(token);
   let stderr = ""; owner.stderr.on("data", (data) => { stderr += data; });
   const closed = new Promise((resolve) => owner.once("close", (code, signal) => resolve({ code, signal, stderr })));
   await Promise.race([once(owner.stdout, "data"), closed.then((result) => { throw new Error(`Owner failed to start: ${JSON.stringify(result)}`); })]);
   const clients = [];
-  return { home, socket, token, tokenFile, owner, args, env, closed, clients,
+  return { home, socket, token, owner, args, env, closed, clients,
     async connect() { const c = await PtyOwnerClient.connect(socket, token, artifacts.bridge); clients.push(c); return c; },
     async close() {
       for (const c of clients) c.close();
