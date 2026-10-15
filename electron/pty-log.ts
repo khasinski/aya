@@ -19,7 +19,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { AYA_HOME } from "./paths";
+import { AYA_HOME } from "./pty-host-paths";
 
 export const PTY_LOG_FILENAME = "pty-events.log";
 export const PTY_LOG_FILE = path.join(AYA_HOME, PTY_LOG_FILENAME);

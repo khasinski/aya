@@ -33,14 +33,14 @@ const SENTINEL_TABLE = [
   // [name, expected, actual, stale]
   ["both hashes known and equal", "abc123", "abc123", false],
   ["both hashes known and different", "abc123", "abc124", true],
-  ["the host's hash is unknown", "abc123", UNKNOWN, false],
+  ["the host's hash is unknown", "abc123", UNKNOWN, true],
   ["this app's hash is unknown", UNKNOWN, "abc123", false],
   ["both unknown", UNKNOWN, UNKNOWN, false],
 ];
 for (const [name, expectedHash, actualHash, stale] of SENTINEL_TABLE) {
   for (const sameVersion of [true, false]) {
-    // A different version is stale whatever the hashes say.
-    const want = sameVersion ? stale : true;
+    // App version does not affect compatibility: only core content and runtime do.
+    const want = stale;
     test(`${name}, ${sameVersion ? "same" : "different"} version: ${want ? "stale" : "kept"}`, () => {
       const expected = { version: "0.4.0", scriptHash: expectedHash };
       const actual = { version: sameVersion ? "0.4.0" : "0.3.0", scriptHash: actualHash };
@@ -48,3 +48,7 @@ for (const [name, expectedHash, actualHash, stale] of SENTINEL_TABLE) {
     });
   }
 }
+
+test("unreadable expected content stays indeterminate even with no actual handshake", () => {
+  assert.equal(isHostStale({ ...FRESH, scriptHash: UNKNOWN_SCRIPT_HASH }, null), false);
+});

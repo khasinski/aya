@@ -1,3 +1,8 @@
+import { prepareSpawn, watchAgentSession } from "./pty-prepare";
+import { snapshotBusy, snapshotHold, snapshotStatus } from "./vt-state";
+import { HOLD_NOT_RUNNING, HOLD_STARTING } from "./pane-holds";
+import { getProcessCwd } from "./process-cwd";
+import type { VtSnapshot } from "./vt-mirror";
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
@@ -9,6 +14,7 @@ import { LAUNCH_STARTING, LAUNCH_UNREACHABLE, LAUNCH_UNSUPPORTED, type LaunchAns
 import type { PaneSize } from "./pane-render";
 import {
   asPaneSize,
+  asVtSnapshot,
   asSearchResult,
   type PtyHostMessage,
   type PtyHostRequest,
@@ -16,6 +22,7 @@ import {
 } from "./pty-host-protocol";
 import {
   hostBuildHash,
+  hostRuntimeIdentity,
   RUN_AS_NODE_VALUE,
   RUN_AS_NODE_VAR,
   UNKNOWN_SCRIPT_HASH,
@@ -139,6 +146,9 @@ export class PtyHostClient {
   // window that doesn't host the terminal does a single cheap no-op per event.
   private readonly sinks = new Set<PtyEventSink>();
   private disposed = false;
+  private readonly preparations = new Map<number, AbortController>();
+  private readonly sessionWatches = new Map<string, () => void>();
+  private readonly screenStates = new Map<string, { generation: string; waiting: boolean; dialog?: string }>();
   // Panes this client spawned and has not seen end: the ones a lost host takes
   // down without a word.
   private readonly live = new Set<string>();
@@ -149,7 +159,7 @@ export class PtyHostClient {
   // (or reaches the old one) before the old host has exited.
   private replacing: Promise<boolean> | null = null;
 
-  constructor(private readonly hostScript: string) {}
+  constructor(private readonly hostScript: string, private readonly prepare: typeof prepareSpawn = prepareSpawn) {}
 
   attachWebContents(webContents: WebContents | PtyEventSink): void {
     this.sinks.add(webContents);
@@ -209,6 +219,9 @@ export class PtyHostClient {
   async kill(ptyId: string): Promise<void> {
     await this.request({ id: 0, type: "kill", ptyId });
     this.live.delete(ptyId);
+    this.sessionWatches.get(ptyId)?.();
+    this.sessionWatches.delete(ptyId);
+    this.screenStates.delete(ptyId);
   }
 
   /** Whether this client holds a connection to a host now (a question that never starts one). */
@@ -220,6 +233,7 @@ export class PtyHostClient {
    *  would have no app to serve and never exit. Requests already sent still land. */
   dispose(): void {
     this.disposed = true;
+    this.stopSessionWatches();
   }
 
   async shutdown(): Promise<void> {
@@ -259,9 +273,9 @@ export class PtyHostClient {
     try {
       scriptHash = hostBuildHash(path.dirname(this.hostScript), path.basename(this.hostScript));
     } catch {
-      // leave UNKNOWN_SCRIPT_HASH; a mismatch on version still flags staleness
+      // Unreadable expected content is indeterminate; it never permits stopping the host.
     }
-    return { version: appVersion, scriptHash };
+    return { version: appVersion, scriptHash, runtime: hostRuntimeIdentity() };
   }
 
   /** The one way Aya replaces its host (Restart Aya, Diagnostics, a stale host at launch): ask it to shut down,
@@ -336,14 +350,38 @@ export class PtyHostClient {
 
   /** Why a message must not be typed into the pane now, or null. Fails closed:
    *  a host that does not answer (or predates the request) cannot vouch that Enter will not answer a prompt. */
-  holdReason(ptyId: string, pasted?: string): Promise<string | null> {
-    const request: PtyHostRequest = pasted ? { id: 0, type: "hold", ptyId, pasted } : { id: 0, type: "hold", ptyId };
-    return this.ask(request, (r) => (typeof r === "string" ? r : null), () => PANE_HOLD_UNKNOWN);
+  async holdReason(ptyId: string, pasted?: string): Promise<string | null> {
+    try {
+      const result = await this.request({ id: 0, type: "snapshot", ptyId });
+      if (result === "starting") return HOLD_STARTING;
+      if (result === null) return HOLD_NOT_RUNNING;
+      const snapshot = asVtSnapshot(result);
+      if (!snapshot) return PANE_HOLD_UNKNOWN;
+      const verdict = snapshotHold(snapshot, pasted);
+      if (verdict.composerSeen && !snapshot.composerSeen) await this.markComposer(ptyId, snapshot);
+      return verdict.hold;
+    } catch { return PANE_HOLD_UNKNOWN; }
   }
 
-  /** Whether the pane's agent is mid-turn. Fails open: it only skips Aya's rounds. */
-  paneBusy(ptyId: string): Promise<boolean> {
-    return this.ask({ id: 0, type: "busy", ptyId }, (r) => r === true, () => false);
+  /** A fresh applied mirror, evaluated by main; unknown still fails open. */
+  async paneBusy(ptyId: string): Promise<boolean> {
+    try {
+      const snapshot = asVtSnapshot(await this.request({ id: 0, type: "snapshot", ptyId }));
+      return snapshot ? snapshotBusy(snapshot) : false;
+    } catch { return false; }
+  }
+  private async markComposer(ptyId: string, snapshot: VtSnapshot): Promise<void> {
+    await this.request({ id: 0, type: "composer-seen", ptyId, generation: snapshot.generation });
+  }
+  private acceptSnapshot(ptyId: string, snapshot: VtSnapshot, replay = false): void {
+    const verdict = snapshotStatus(snapshot);
+    if (verdict.composerSeen && !snapshot.composerSeen) void this.markComposer(ptyId, snapshot).catch(() => {});
+    if (verdict.waiting === null) return;
+    const old = this.screenStates.get(ptyId);
+    if (!replay && old?.generation === snapshot.generation && old.waiting === verdict.waiting && old.dialog === verdict.dialog) return;
+    this.screenStates.set(ptyId, { generation: snapshot.generation, waiting: verdict.waiting, dialog: verdict.dialog });
+    if (!old && !verdict.waiting) return;
+    this.sendToSinks([{ type: "vt-status", ptyId, waiting: verdict.waiting, ...(verdict.dialog ? { dialog: verdict.dialog } : {}) }]);
   }
 
   /** How a live pane was launched; null when it is gone or not at the host yet. */
@@ -367,8 +405,9 @@ export class PtyHostClient {
 
   /** Live cwd of a PTY's child, or null when it can't be determined (an older host answers "unknown request"; the
    *  status bar then keeps the spawn cwd). */
-  getCwd(ptyId: string): Promise<string | null> {
-    return this.ask({ id: 0, type: "cwd", ptyId }, (r) => (typeof r === "string" && r.length > 0 ? r : null), () => null);
+  async getCwd(ptyId: string): Promise<string | null> {
+    const pid = await this.getPid(ptyId);
+    return typeof pid === "number" ? getProcessCwd(pid) : null;
   }
 
   /** The pid of the process a pane runs, null when it has none, undefined when the host cannot say. */
@@ -534,8 +573,47 @@ export class PtyHostClient {
         // uncaughtException that would crash the Electron main process.
         continue;
       }
+      if ("type" in message && message.type === "cancel-prepare") {
+        this.preparations.get(message.prepareId)?.abort();
+        this.preparations.delete(message.prepareId);
+        continue;
+      }
+      if ("type" in message && message.type === "prepare") {
+        flushEvents();
+        const socket = this.socket;
+        const controller = new AbortController();
+        this.preparations.set(message.prepareId, controller);
+        void this.prepare(message.req, message.cwd, controller.signal).catch((err: unknown) => ({
+          failure: { reason: "spawn-prepare-failed" as const, message: `Could not prepare this terminal: ${String(err)}` },
+        })).then((data) => {
+          this.preparations.delete(message.prepareId);
+          if (controller.signal.aborted || !socket || socket.destroyed || socket !== this.socket || this.disposed) return;
+          // No pending entry: this is a reply to the host's prepare message, not an app request.
+          socket.write(JSON.stringify({ id: this.nextId++, type: "prepared", prepareId: message.prepareId, data }) + "\n");
+        });
+        continue;
+      }
+      if ("type" in message && message.type === "spawned") {
+        flushEvents();
+        this.sessionWatches.get(message.req.ptyId)?.();
+        this.sessionWatches.set(message.req.ptyId,
+          watchAgentSession(message.req, message.cwd, message.pid, message.spawnedAt, (sessionId) =>
+            this.sendToSinks([{ type: "osc-session", ptyId: message.req.ptyId, sessionId }])));
+        continue;
+      }
+      if ("type" in message && message.type === "snapshot") {
+        flushEvents();
+        const snapshot = asVtSnapshot(message.snapshot);
+        if (snapshot) this.acceptSnapshot(message.ptyId, snapshot, message.replay === true);
+        continue;
+      }
       if ("type" in message && message.type === "event") {
-        if (PANE_ENDED_EVENTS.has(message.event.type)) this.live.delete(message.event.ptyId);
+        if (PANE_ENDED_EVENTS.has(message.event.type)) {
+          this.live.delete(message.event.ptyId);
+          this.sessionWatches.get(message.event.ptyId)?.();
+          this.sessionWatches.delete(message.event.ptyId);
+          this.screenStates.delete(message.event.ptyId);
+        }
         events.push(message.event);
         continue;
       }
@@ -565,8 +643,17 @@ export class PtyHostClient {
     }
   }
 
+  private stopSessionWatches(): void {
+    for (const controller of this.preparations.values()) controller.abort();
+    this.preparations.clear();
+    for (const stop of this.sessionWatches.values()) stop();
+    this.sessionWatches.clear();
+  }
+
   private onClose(): void {
     this.socket = null;
+    this.stopSessionWatches();
+    this.screenStates.clear();
     // Not gated on dispose: that is the quit, whose closing windows keep a no-session in memory only.
     const lost = this.hostAsked ? [] : [...this.live];
     this.live.clear();
@@ -597,5 +684,7 @@ function asHostIdentity(value: unknown): HostIdentity | null {
   if (typeof v.version !== "string" || typeof v.scriptHash !== "string") {
     return null;
   }
-  return { version: v.version, scriptHash: v.scriptHash };
+  const runtime = v.runtime as HostIdentity["runtime"];
+  return { version: v.version, scriptHash: v.scriptHash,
+    ...(typeof runtime?.node === "string" && typeof runtime.electron === "string" ? { runtime } : {}) };
 }

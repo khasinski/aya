@@ -60,7 +60,7 @@ test("concurrent apps keep separate Aya homes, HOME and Electron user data", asy
   expect(buffers[1]).not.toContain("ISOLATION-0");
 });
 
-test("specs sharing the clipboard or built host run serially after the isolated specs", () => {
+test("specs sharing the clipboard or built app files run serially after the isolated specs", () => {
   expect(config.fullyParallel).toBe(false);
   const isolated = config.projects!.find((project) => project.name === "isolated")!;
   const shared = config.projects!.find((project) => project.name === "shared-resources")!;
@@ -70,7 +70,7 @@ test("specs sharing the clipboard or built host run serially after the isolated 
   expect(isolated.testIgnore).toBeInstanceOf(RegExp);
   expect(shared.testMatch).toBeInstanceOf(RegExp);
   const files = readdirSync(__dirname).filter((file) => file.endsWith(".spec.ts"));
-  const usesSharedResource = (file: string) => /clipboard\.(?:readText|writeText)|appendFileSync\(hostScript,/.test(readFileSync(join(__dirname, file), "utf8"));
+  const usesSharedResource = (file: string) => /clipboard\.(?:readText|writeText)|appendFileSync\(hostScript,|writeFileSync\(packageFile,/.test(readFileSync(join(__dirname, file), "utf8"));
   const assignedToShared = files.filter((file) => (shared.testMatch as RegExp).test(join(__dirname, file)));
   expect(assignedToShared.sort()).toEqual(files.filter(usesSharedResource).sort());
   for (const file of files) {
