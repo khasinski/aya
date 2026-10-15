@@ -21,6 +21,7 @@ import {
   parseAyaOscStatus,
 } from "./osc-extractor";
 import {
+  beginVtRecovery,
   panes as vtPanes,
   snapshotOf,
   checkpointVtPane,
@@ -354,13 +355,14 @@ export async function recoverPtyCorePane(pane:RecoveryPane,sink:PtyEventSink):Pr
   const owner=await getOwnerRuntime(),actual=owner.disconnected.get(pane.id);
   if(owner.incompatible||!owner.client||!actual||actual.generation!==pane.generation||actual.pid!==pane.pid||actual.startIdentity!==pane.startIdentity)throw Error("Recovery pane identity changed");
   openVtPane(pane.id,actual.cols,actual.rows,()=>{},pane.request.agent,pane.request.agent==='custom'||pane.request.agent===undefined);
-  const mirror=vtPanes.get(pane.id)!;mirror.recoveryUnknown=true;
+  const mirror=vtPanes.get(pane.id)!;beginVtRecovery(pane.id,()=>ptyLog.append("recovery-screen-unknown",{ptyId:pane.id}));
   let child:OwnerPty;
   try{child=await OwnerPty.attach({pane:actual,process:pane.launch.command,readBytes:0,decoderCarry:""});}
   catch(error){closeVtPane(pane.id);throw error;}
   ptys.set(pane.id,child);launches.set(pane.id,pane.launch);spawnRequests.set(pane.id,pane.request);spawnTimes.set(pane.id,pane.spawnedAt);
   outputBuffers.set(pane.id,{chunks:[],total:0,version:0,end:0});
   restoredPanes.set(pane.id,{generation:snapshotOf(mirror).generation,attached:false});
+  if(!actual.exited){child.resize(Math.max(2,actual.cols-1),actual.rows);child.resize(actual.cols,actual.rows);}
   installChildObservers(pane.request,child,sink,()=>{});
   ptyLog.append("crash-pane-attached",{ptyId:pane.id,childPid:child.pid,generation:pane.generation,history:"consumed history lost"});
 }

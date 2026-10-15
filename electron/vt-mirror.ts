@@ -4,6 +4,7 @@ import { VtCheckpointTerminal } from "./vt-checkpoint";
 import type { VtCheckpoint } from "./vt-checkpoint";
 import { MIN_PTY_COLS, MIN_PTY_ROWS } from "./pty-core-constants";
 import type { AgentKind } from "./presets";
+import { RecoveryScreen } from "./vt-recovery-screen";
 import { randomUUID } from "node:crypto";
 // Only the visible screen matters for "what is on screen right now", and
 // scrollback would grow a buffer per pane in the host process for no gain.
@@ -42,6 +43,7 @@ export interface VtPane {
 
 export const panes = new Map<string, VtPane>();
 const checkpointTerminals = new WeakMap<VtPane, VtCheckpointTerminal>();
+const recoveryScreens = new WeakMap<VtPane, RecoveryScreen>();
 
 export function openVtPane(
   ptyId: string,
@@ -86,6 +88,7 @@ export function closeVtPane(ptyId: string): void {
   const pane = panes.get(ptyId);
   if (!pane) return;
   panes.delete(ptyId);
+  recoveryScreens.get(pane)?.dispose();
   if (pane.timer) clearTimeout(pane.timer);
   try {
     checkpointTerminals.get(pane)!.dispose();
@@ -103,6 +106,7 @@ export function closeAllVtPanes(): void {
 export function writeVtPane(ptyId: string, chunk: string): void {
   const pane = panes.get(ptyId);
   if (!pane) return;
+  if(chunk)recoveryScreens.get(pane)?.noteOutput();
   checkpointTerminals.get(pane)!.write(chunk);
   pane.lastOutputAt = Date.now();
   if (pane.timer) return;
@@ -159,7 +163,7 @@ export async function vtSnapshot(id: string): Promise<VtSnapshot | null> {
 /** Opaque evaluator state is monotonic, and cannot spill into a respawned pane. */
 export function markComposerSeen(id: string, generation: string): void {
   const pane = panes.get(id);
-  if (pane && snapshotGeneration(pane) === generation) pane.composerSeen = true;
+  if (pane && !pane.recoveryUnknown && snapshotGeneration(pane) === generation) pane.composerSeen = true;
 }
 function snapshotGeneration(pane: VtPane): string { return generations.get(pane) ?? snapshotOf(pane).generation; }
 
@@ -223,3 +227,15 @@ export function vtPaneAltScreen(id: string): boolean | undefined {
 }
 export function vtPaneWaiting(id: string): boolean { return panes.get(id)?.lastWaiting ?? false; }
 export function vtPaneDialog(id: string): string | undefined { return panes.get(id)?.lastDialog; }
+
+/** Main must nudge SIGWINCH after attach. Coverage follows applied parser work,
+ * and stays conservative across scroll, geometry and alternate-buffer changes. */
+export function beginVtRecovery(id:string,timeout:()=>void=()=>{}):void {
+ const pane=panes.get(id);if(!pane)throw Error("Recovery mirror is missing");
+ pane.recoveryUnknown=true;pane.composerSeen=false;
+ recoveryScreens.set(pane,new RecoveryScreen(pane.terminal,(known,timedOut)=>{
+  if(panes.get(id)!==pane)return;
+  if(known){pane.recoveryUnknown=false;pane.onSnapshot?.(snapshotOf(pane));}
+  else if(timedOut)timeout();
+ }));
+}

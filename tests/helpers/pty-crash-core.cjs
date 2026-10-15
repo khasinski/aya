@@ -10,8 +10,11 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
 const wait=async predicate=>{const end=Date.now()+6000;while(!await predicate()){if(Date.now()>end)throw Error('crash core readiness timeout');await new Promise(r=>setTimeout(r,2));}};
 (async()=>{
  if(mode==='old'){
-  const script=`stty -echo; echo OLD_CONSUMED; while [ ! -f "$HOME/release" ]; do sleep .01; done; ${variant==='exit-gap'?'':"printf 'UNREAD_BEFORE_ATTACH\\n'; "}touch "$HOME/produced"; ${variant==='exit-gap'?'exit 23':`while IFS= read -r line; do case "$line" in quit) exit 23 ;; *) printf 'R:%s:%s\\n' "$$" "$line" ;; esac; done`}`;
-  const request={ptyId:'pane',command:script,cwd:home,cols:80,rows:24,agent:variant==='shell'?'custom':'claude'};
+  const redraw=variant.startsWith('redraw-');
+  if(redraw)fs.copyFileSync(path.join(__dirname,'../fixtures/own-screens',variant==='redraw-codex'?'codex-skip.raw':'claude-idle.raw'),path.join(home,'redraw.raw'));
+  const trap=redraw?`trap 'cat "$HOME/redraw.raw"; touch "$HOME/redraw-fired"' WINCH; `:'';
+  const script=`stty -echo; ${trap}echo OLD_CONSUMED; while [ ! -f "$HOME/release" ]; do sleep .01; done; ${variant==='exit-gap'?'':"printf 'UNREAD_BEFORE_ATTACH\\n'; "}touch "$HOME/produced"; ${variant==='exit-gap'?'exit 23':`while :; do if IFS= read -r line; then case "$line" in quit) exit 23 ;; *) printf 'R:%s:%s\\n' "$$" "$line" ;; esac; fi; done`}`;
+  const request={ptyId:'pane',command:script,cwd:home,cols:redraw?120:80,rows:redraw?40:24,agent:variant==='shell'?'custom':variant==='redraw-codex'?'codex':'claude'};
   const launch={command:script,cwd:home};
   await core.spawnPty(request,sink,{prepare:async()=>({argv:['/bin/sh','-c',script],env:{HOME:home,PATH:'/usr/bin:/bin'},command:script,launch,ownSessionId:null,spawnedAt:123})});
   await wait(()=>output.includes('OLD_CONSUMED'));await core.freezePtyCore();
@@ -19,18 +22,18 @@ const wait=async predicate=>{const end=Date.now()+6000;while(!await predicate())
   process.send({format:1,kind:'crash',owner:{pid:owner.record.pid,startTime:owner.record.startTime,instanceId:owner.record.instanceId,binaryHash:owner.record.binaryHash},panes:[{id:pane.id,generation:pane.generation,pid:pane.pid,startIdentity:pane.startIdentity,request,launch,spawnedAt:123}]});
  }else{
   const bootstrap=parseRecoveryBootstrap(fs.readFileSync(path.join(home,'bootstrap.json')));
-  const refused=['wrong-owner','missing-owner','wrong-secret','owner-dies-between-probes'].includes(variant);
+  const refused=['wrong-owner','missing-owner','wrong-secret','owner-dies-between-probes','owner-dies-retained'].includes(variant);
   const record=path.join(home,'pty-owner/record.json'),before=fs.readFileSync(record);
   if(variant==='wrong-owner')bootstrap.owner.instanceId='0'.repeat(32);
   if(variant==='missing-owner')fs.unlinkSync(record);
   let probes=0,spawns=0;
-  if(variant==='owner-dies-between-probes'){
-   require('../../dist-electron/pty-owner-registry.js').ownerRecordIsLive=()=>++probes<3;
+  if(variant==='owner-dies-between-probes'||variant==='owner-dies-retained'){
+   require('../../dist-electron/pty-owner-registry.js').ownerRecordIsLive=()=>++probes<(variant==='owner-dies-retained'?2:3);
    require('node:child_process').spawn=()=>{spawns++;throw Error('UNEXPECTED_NEW_OWNER_SPAWN');};
   }
   runtime.requireRecoveryOwner(bootstrap.owner);
   if(refused){
-   try{await assert.rejects(runtime.getOwnerRuntime(),/recorded PTY owner/);assert.equal(runtime.currentOwnerRuntime(),null);if(variant==='owner-dies-between-probes'){assert.equal(probes,3);assert.equal(spawns,0);}assert.equal(fs.existsSync(record),variant!=='missing-owner');if(variant!=='missing-owner')assert.deepEqual(fs.readFileSync(record),before);}
+   try{await assert.rejects(runtime.getOwnerRuntime(),/recorded PTY owner/);assert.equal(runtime.currentOwnerRuntime(),null);if(variant==='owner-dies-between-probes'||variant==='owner-dies-retained'){assert.equal(probes,variant==='owner-dies-retained'?2:3);assert.equal(spawns,0);}assert.equal(fs.existsSync(record),variant!=='missing-owner');if(variant!=='missing-owner')assert.deepEqual(fs.readFileSync(record),before);}
    finally{if(variant==='missing-owner')fs.writeFileSync(record,before,{mode:0o600});}
    process.send({refused:true},()=>process.exit(0));return;
   }
@@ -46,8 +49,8 @@ const wait=async predicate=>{const end=Date.now()+6000;while(!await predicate())
   if(variant!=='exit-gap'){await wait(()=>output.includes('UNREAD_BEFORE_ATTACH'));assert.equal(output.split('UNREAD_BEFORE_ATTACH').length-1,1);}
   assert.ok(!output.includes('OLD_CONSUMED'));
   if(variant!=='exit-gap'){
-   const snapshot=await vtSnapshot('pane');assert.equal(snapshot.recoveryUnknown,true);
-   assert.equal(snapshotHold(snapshot).hold,variant==='shell'?HOLD_SHELL:HOLD_RECOVERY_UNKNOWN);assert.equal(snapshotBusy(snapshot),false);
+   if(variant.startsWith('redraw-')){await wait(async()=>!(await vtSnapshot('pane')).recoveryUnknown);assert.equal(snapshotHold(await vtSnapshot('pane')).hold,null);assert.ok(fs.existsSync(path.join(home,'redraw-fired')));}
+   else {const snapshot=await vtSnapshot('pane');assert.equal(snapshot.recoveryUnknown,true);assert.equal(snapshotHold(snapshot).hold,variant==='shell'?HOLD_SHELL:HOLD_RECOVERY_UNKNOWN);assert.equal(snapshotBusy(snapshot),false);}
    assert.equal(core.getPtyPid('pane'),bootstrap.panes[0].pid);core.resizePty('pane',101,39);
    assert.deepEqual(await owner.client.list().then(panes=>[panes[0].cols,panes[0].rows]),[101,39]);
    await core.writePty('pane','AFTER_RECOVERY\n');await wait(()=>output.includes(`R:${bootstrap.panes[0].pid}:AFTER_RECOVERY`));
