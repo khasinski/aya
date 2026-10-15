@@ -92,13 +92,13 @@ export async function writeCheckpoint(root: string, parts: AsyncIterable<Checkpo
   }
 }
 
-async function manifestFor(root: string, receipt: CheckpointReceipt, now: number): Promise<Manifest> {
+async function manifestFor(root: string, receipt: CheckpointReceipt, now: number, allowExpired = false): Promise<Manifest> {
   receiptOk(receipt);
   await privateDirectory(root); await privateDirectory(join(root, receipt.nonce));
   const data = await readPrivate(join(root, receipt.nonce, "manifest.json"), MANIFEST_LIMIT, receipt.bytes, receipt.sha256);
   const value = parseCheckpointJson(data, MANIFEST_LIMIT) as Manifest; validateCheckpointJson(value, MANIFEST_LIMIT);
   if (!value || !keys(value, ["format", "nonce", "createdAt", "parts"]) || value.format !== 1 || value.nonce !== receipt.nonce ||
-      !Number.isSafeInteger(value.createdAt) || value.createdAt > now || now - value.createdAt > TTL || !Array.isArray(value.parts) || value.parts.length > MAX_CHECKPOINT_PANES) refused("manifest identity or expiry");
+      !Number.isSafeInteger(value.createdAt) || value.createdAt > now || (!allowExpired && now - value.createdAt > TTL) || !Array.isArray(value.parts) || value.parts.length > MAX_CHECKPOINT_PANES) refused("manifest identity or expiry");
   const ids = new Set<string>(); let total = 0;
   for (const part of value.parts) {
     if (!part || !keys(part, ["id", "generation", "bytes", "sha256"]) || !identity(part.id) || !identity(part.generation) || ids.has(part.id) ||
@@ -121,6 +121,20 @@ export async function* readCheckpoint(root: string, receipt: CheckpointReceipt, 
 /** Only the successor's explicit restore acknowledgement releases the files. */
 export async function acknowledgeCheckpoint(root: string, receipt: CheckpointReceipt, now = Date.now()): Promise<void> {
   const manifest = await manifestFor(root, receipt, now);
+  for (let n = 0; n < manifest.parts.length; n++) await unlink(join(root, receipt.nonce, `${n}.json`));
+  await unlink(join(root, receipt.nonce, "manifest.json"));
+  await rmdir(join(root, receipt.nonce));
+}
+
+/** An explicitly aborted handover can clean its own expired receipt, after
+ * the old host resumes. Unknown or tampered parts are retained, not guessed
+ * away by a recursive janitor. The caller must block a new attempt if this
+ * fails; it must never discard a checkpoint still needed by a successor. */
+export async function discardCheckpoint(root: string, receipt: CheckpointReceipt, now = Date.now()): Promise<void> {
+  const manifest = await manifestFor(root, receipt, now, true);
+  for (const [n, part] of manifest.parts.entries()) {
+    await readPrivate(join(root, receipt.nonce, `${n}.json`), MAX_VT_SNAPSHOT_BYTES, part.bytes, part.sha256);
+  }
   for (let n = 0; n < manifest.parts.length; n++) await unlink(join(root, receipt.nonce, `${n}.json`));
   await unlink(join(root, receipt.nonce, "manifest.json"));
   await rmdir(join(root, receipt.nonce));

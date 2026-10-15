@@ -33,7 +33,9 @@ import {
   writePty,
   type PtyEventSink,
 } from "./pty-core";
-import { getOwnerRuntime, currentOwnerRuntime, shutdownOwnerRuntime, setOwnerUnavailableListener } from "./pty-owner-runtime";
+import { getOwnerRuntime, currentOwnerRuntime, shutdownOwnerRuntime, setOwnerUnavailableListener, ownerHandoverCredential } from "./pty-owner-runtime";
+import { HandoverWindow, handoverPeer } from "./pty-handover-window";
+import { ownerProcessStartIdentity } from "./pty-owner-client";
 import { panes, vtSnapshot, markComposerSeen } from "./vt-mirror";
 import type { PreparedSpawn } from "./pty-core";
 const LAUNCH_STARTING = "starting";
@@ -52,6 +54,7 @@ const HOST_NONCE_BYTES = 8;
 const LOG_HASH_PREFIX_CHARS = 8;
 
 const clients = new Set<net.Socket>();
+const handoverWindow = new HandoverWindow();
 let idleTimer: NodeJS.Timeout | null = null;
 let server: net.Server | null = null;
 // The socket file this host bound, by device and inode. When this host exits after a restart, the path may already
@@ -158,6 +161,20 @@ interface Preparation {
 
 async function handle(request: PtyHostRequest, socket: net.Socket, preparations: Map<number, Preparation>): Promise<unknown> {
   clearIdleTimer();
+  if (request.type === "handover-announce") {
+    const owner = currentOwnerRuntime(), identity = ownerProcessStartIdentity(process.pid);
+    if (!identity || !owner?.client?.isConnected() || owner.incompatible || owner.disconnected.size || owner.record.uncertain?.length) throw new Error("This host cannot announce a seamless handover");
+    handoverWindow.announce(request.nonce, request.deadline, handoverPeer(socket));
+    return {hostPid: process.pid, hostStartIdentity: identity};
+  }
+  if (request.type === "handover-cancel") { handoverWindow.cancel(handoverPeer(socket)); return null; }
+  if (request.type === "handover-claim") {
+    handoverWindow.consume(request.nonce, handoverPeer(socket));
+    if (!currentOwnerRuntime()?.client?.isConnected()) throw new Error("The announced owner is unavailable");
+    // A one-shot in-memory response on the private local socket. This value
+    // never reaches broadcast, a checkpoint, process arguments or a log.
+    return {credential: ownerHandoverCredential().toString("base64")};
+  }
   if (request.type === "spawn") {
     await spawnPty(request.req, sink, {
       prepare: (req, cwd, signal) => new Promise<PreparedSpawn>((resolve) => {

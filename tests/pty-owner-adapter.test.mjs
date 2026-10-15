@@ -70,6 +70,28 @@ test("25 owner adapters release both native masters and JS reader descriptors af
   }
 });
 
+test("handover aborts a bounded blocked-input drain without stopping another pane or retrying the paste", {timeout: 15000}, async () => {
+  const p = await OwnerPty.spawn(spec("drain-barrier", "stty raw -echo; printf 'READY'; while [ ! -f \"$HOME/input-release\" ]; do sleep 0.01; done; dd bs=1 count=1048576 of=/dev/null 2>/dev/null; printf 'DRAINED'; exit 23"));
+  const second = await OwnerPty.spawn(spec("drain-peer"));
+  let output = "", peerOutput = "";
+  p.onData(s => { output += s; }); second.onData(s => { peerOutput += s; });
+  const exit = new Promise(resolve => p.onExit(resolve));
+  let pending;
+  try {
+    await waitFor(() => output.includes("READY") && peerOutput.includes(`START:${second.pid}`));
+    pending = p.writeAsync("x".repeat(1024 * 1024)); void pending.catch(() => {});
+    await assert.rejects(p.freezeForHandover(20), /input did not drain/);
+    await second.writeAsync("still\n"); await waitFor(() => peerOutput.includes(`R:${second.pid}:still`));
+    assert.equal(output.includes("DRAINED"), false, "the unreleased child still cannot consume the pending input");
+    fs.writeFileSync(path.join(home, "input-release"), "go");
+    await pending; assert.equal((await exit).exitCode, 23); await p.closed;
+    assert.equal(output.split("DRAINED").length - 1, 1);
+  } finally {
+    p.resumeAfterHandoverAbort(); p.kill("SIGKILL"); second.kill("SIGKILL");
+    await Promise.all([p.closed, second.closed]);
+  }
+});
+
 test("a lost spawn acknowledgement retains an uncertain live pane and blocks retry until explicit shutdown", async (t) => {
   const owner = await getOwnerRuntime(), spawn = owner.client.spawn.bind(owner.client);
   let child;

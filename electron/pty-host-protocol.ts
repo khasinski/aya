@@ -30,6 +30,9 @@ export type PtyHostRequest =
   | { id: number; type: "snapshot"; ptyId: string }
   | { id: number; type: "composer-seen"; ptyId: string; generation: string }
   | { id: number; type: "prepared"; prepareId: number; data: PreparedSpawn }
+  | { id: number; type: "handover-announce"; nonce: string; deadline: number }
+  | { id: number; type: "handover-cancel" }
+  | { id: number; type: "handover-claim"; nonce: string }
   | { id: number; type: "version" };
 
 export type PtyHostResponse = (

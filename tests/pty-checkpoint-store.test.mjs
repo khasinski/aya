@@ -7,7 +7,7 @@ import {execFileSync} from 'node:child_process';
 import path from 'node:path';
 import {mock} from 'node:test';
 const require=createRequire(import.meta.url);
-const {writeCheckpoint,readCheckpoint,acknowledgeCheckpoint}=require('../dist-electron/pty-checkpoint-store.js');
+const {writeCheckpoint,readCheckpoint,acknowledgeCheckpoint,discardCheckpoint}=require('../dist-electron/pty-checkpoint-store.js');
 const hash=data=>createHash('sha256').update(data).digest('hex');
 async function fixture(fn){
  await fs.mkdir('test-results',{recursive:true});const parent=await fs.mkdtemp(path.resolve('test-results/checkpoint-'));
@@ -107,4 +107,12 @@ test('writer admits exactly 128 MiB and rejects a third 64 MiB part before writi
   await assert.rejects(writeCheckpoint(root,parts),/aggregate bytes/);
   assert.equal(logicalWritten,128*1024*1024);assert.equal(partsOpened,2);
  }finally{spy.mock.restore();}
+}));
+test('explicit abort cleans an expired checked receipt but preserves unknown or tampered state',()=>fixture(async(root)=>{
+ const receipt=await writeCheckpoint(root,[part()],1000),dir=path.join(root,receipt.nonce);
+ await assert.rejects(acknowledgeCheckpoint(root,receipt,121001),/expiry/);
+ await discardCheckpoint(root,receipt,121001);await assert.rejects(fs.stat(dir),{code:'ENOENT'});
+ const bad=await writeCheckpoint(root,[part()],1000),badDir=path.join(root,bad.nonce);
+ await fs.writeFile(path.join(badDir,'0.json'),'tampered');
+ await assert.rejects(discardCheckpoint(root,bad,121001));assert.ok(await fs.stat(path.join(badDir,'manifest.json')));
 }));

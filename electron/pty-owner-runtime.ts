@@ -16,6 +16,9 @@ function inheritedSecret(): Buffer {
   finally { fs.closeSync(3); }
 }
 const secret = inheritedSecret();
+/** Only the host's consumed, announced handover window may call this. Never
+ * include it in checkpoint state, registries, argv, environment or logs. */
+export function ownerHandoverCredential(): Buffer { return Buffer.from(secret); }
 let runtime: Promise<OwnerRuntime> | null = null;
 let ready: OwnerRuntime | null = null;
 let unavailableListener: ((owner: OwnerRuntime) => void) | null = null;
@@ -183,6 +186,15 @@ export class OwnerRuntime {
     try { await this.client.kill(pane, 1); }
     catch (error) { if (!delivered) { clearTimeout(timer); this.exits.delete(key); throw error; } }
     await this.retired(await exited);
+  }
+  async detachForHandover(): Promise<void> {
+    if (!this.client?.isConnected() || this.pendingSpawns || this.incompatible) throw new Error("PTY owner handover barrier is incomplete");
+    await this.client.list(); // all preceding owner operations have answered
+    this.ending = true;
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    // Keep the owner's inventory and this reader's process identity on disk.
+    // The owner will not grant the next lease until this process really exits.
+    this.persist(); this.client.close();
   }
   shutdown(): Promise<void> { return this.shutdownTask ??= this.stop(); }
   private async recoverRetainedGroups(orderlyExit: boolean): Promise<void> {
