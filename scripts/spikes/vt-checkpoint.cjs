@@ -8,7 +8,14 @@ const MAX_SNAPSHOT = 64 * 1024 * 1024, MAX_TAIL = 256 * 1024;
 const palettes = new WeakMap();
 const ownedUnicodeProviders = new WeakMap();
 const ownedHandlers = new WeakMap();
+const registrations = new WeakMap();
 function trackPalette(term, saved={}) {
+ const registrationState={epoch:0};registrations.set(term,registrationState);
+ for(const [api,methods] of [[term.parser,['registerCsiHandler','registerEscHandler','registerOscHandler','registerDcsHandler']],[term.unicode,['register']]])for(const method of methods){
+  const original=api[method].bind(api);
+  api[method]=(...args)=>{registrationState.epoch++;const result=original(...args);if(result?.dispose){const dispose=result.dispose.bind(result);result.dispose=()=>{registrationState.epoch++;dispose();};}return result;};
+ }
+
  ownedUnicodeProviders.set(term,new Map(Object.entries(term._core.unicodeService._providers)));
  const p=term._core._inputHandler._parser;
  ownedHandlers.set(term,new Set([p._csiHandlers,p._escHandlers,p._oscParser._handlers,p._dcsParser._handlers].flatMap(handlers=>Object.values(handlers).flat())));
@@ -126,15 +133,26 @@ function restore(bytes) {
 }
 const write=(term,data)=>new Promise(resolve=>term.write(data,resolve));
 class CompactVt {
- constructor(options,metadata={}) {this.term=new Terminal({...options,allowProposedApi:true});trackPalette(this.term);this.metadata=metadata;this.base=capture(this.term,metadata);this.tail=[];this.tailBytes=0;this.overflow=false;this.totalInputBytes=0;this.maxTailBytes=0;}
+ constructor(options,metadata={}) {this.term=new Terminal({...options,allowProposedApi:true});trackPalette(this.term);this.metadata=metadata;this.base=capture(this.term,metadata);this.tail=[];this.tailBytes=0;this.overflow=false;this.totalInputBytes=0;this.maxTailBytes=0;this.tailTainted=false;}
  async write(data){
-  await write(this.term,data);const encoded=typeof data==='string'?{text:data}:{bytes:Buffer.from(data).toString('base64')};
+  const epoch=registrations.get(this.term).epoch;let ownedBefore=true;try{assertOwnership(this.term);}catch{ownedBefore=false;}
+  await write(this.term,data);
+  let ownedAfter=true;try{assertOwnership(this.term);}catch{ownedAfter=false;}
+  this.tailTainted ||= !ownedBefore||!ownedAfter||epoch!==registrations.get(this.term).epoch;
+  const encoded=typeof data==='string'?{text:data}:{bytes:Buffer.from(data).toString('base64')};
   this.totalInputBytes+=typeof data==='string'?Buffer.byteLength(data):data.length;
-  if(ground(this.term)) {this.base=capture(this.term,this.metadata);this.tail=[];this.tailBytes=0;this.overflow=false;}
+  if(ground(this.term)&&ownedAfter) {this.base=capture(this.term,this.metadata);this.tail=[];this.tailBytes=0;this.overflow=false;this.tailTainted=false;}
   else {this.tailBytes+=Buffer.byteLength(JSON.stringify(encoded));this.maxTailBytes=Math.max(this.maxTailBytes,this.tailBytes);if(this.tailBytes>MAX_TAIL){this.overflow=true;this.tail=[];}else if(!this.overflow)this.tail.push(encoded);}
  }
- resize(cols,rows){this.term.resize(cols,rows);if(ground(this.term)){this.base=capture(this.term,this.metadata);this.tail=[];this.tailBytes=0;this.overflow=false;}else{const operation={resize:[cols,rows]};this.tailBytes+=Buffer.byteLength(JSON.stringify(operation));this.maxTailBytes=Math.max(this.maxTailBytes,this.tailBytes);if(this.tailBytes>MAX_TAIL){this.overflow=true;this.tail=[];}else if(!this.overflow)this.tail.push(operation);}}
- checkpoint(){assertOwnership(this.term);if(this.overflow)throw Error('VT tail temporarily ineligible');if(ground(this.term))this.base=capture(this.term,this.metadata);return {base:JSON.parse(this.base.toString()),tail:copy(this.tail),metadata:copy(this.metadata)};}
+ resize(cols,rows){
+  const epoch=registrations.get(this.term).epoch;let ownedBefore=true;try{assertOwnership(this.term);}catch{ownedBefore=false;}
+  this.term.resize(cols,rows);
+  let ownedAfter=true;try{assertOwnership(this.term);}catch{ownedAfter=false;}
+  this.tailTainted ||= !ownedBefore||!ownedAfter||epoch!==registrations.get(this.term).epoch;
+  if(ground(this.term)&&ownedAfter){this.base=capture(this.term,this.metadata);this.tail=[];this.tailBytes=0;this.overflow=false;this.tailTainted=false;}
+  else{const operation={resize:[cols,rows]};this.tailBytes+=Buffer.byteLength(JSON.stringify(operation));this.maxTailBytes=Math.max(this.maxTailBytes,this.tailBytes);if(this.tailBytes>MAX_TAIL){this.overflow=true;this.tail=[];}else if(!this.overflow)this.tail.push(operation);}
+ }
+ checkpoint(){assertOwnership(this.term);if(ground(this.term)){this.base=capture(this.term,this.metadata);this.tail=[];this.tailBytes=0;this.overflow=false;this.tailTainted=false;}if(this.overflow)throw Error('VT tail temporarily ineligible');if(this.tailTainted)throw Error('VT tail ran under unsupported ownership');return {base:JSON.parse(this.base.toString()),tail:copy(this.tail),metadata:copy(this.metadata)};}
  static async import(checkpoint){const {term,metadata}=restore(Buffer.from(JSON.stringify(checkpoint.base)));for(const item of checkpoint.tail){if(item.resize)term.resize(...item.resize);else await write(term,item.text??Buffer.from(item.bytes,'base64'));}return {term,metadata:checkpoint.metadata??metadata};}
 }
 module.exports={CompactVt,capture,restore,write,ground,bufferState,ENGINE,MAX_TAIL};

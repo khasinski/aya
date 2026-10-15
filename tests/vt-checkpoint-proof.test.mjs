@@ -126,3 +126,13 @@ for(const kind of ['marker','parser'])test(`unsupported ${kind} ownership is che
   await a.write('0mX');await write(b.term,'0mX');assert.deepEqual(JSON.parse(capture(b.term)),JSON.parse(capture(a.term)));
  }finally{a.term.dispose();b?.term.dispose();}
 });
+test('a tail consumed by a custom handler remains ineligible after disposal until a supported ground snapshot',async()=>{
+ const a=new CompactVt({cols:80,rows:24,scrollback:0});let b;
+ try{
+  await a.write('\x1b[');const registration=a.term.parser.registerCsiHandler({final:'m'},()=>true);
+  await a.write('31mX\x1b[');registration.dispose();assert.throws(()=>a.checkpoint(),/tail ran under unsupported/);
+  await a.write('0m');b=await CompactVt.import(a.checkpoint());assert.equal(a.tailTainted,false);
+  assert.equal(a.term.buffer.active.getLine(0).getCell(0).getFgColor(),-1);assert.equal(b.term.buffer.active.getLine(0).getCell(0).getFgColor(),-1);
+  assert.deepEqual(JSON.parse(capture(b.term)),JSON.parse(capture(a.term)));
+ }finally{a.term.dispose();b?.term.dispose();}
+});
