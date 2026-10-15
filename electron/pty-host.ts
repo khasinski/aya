@@ -486,4 +486,9 @@ void (async()=>{
     await acknowledgeCheckpoint(PTY_HANDOVER_CORE_DIRECTORY,bootstrap.core);
   }
   start();
-})().catch(error => { ptyLog.append("owner-start-failed", { error: String(error) }); process.exitCode = 1; });
+})().catch(error => {
+  ptyLog.append("owner-start-failed", { error: String(error) });
+  // A partial restore/failed ACK can already own live reader/control handles.
+  // Exit JS promptly to release that lease; never shut down the stable owner.
+  process.exit(1);
+});
