@@ -10,6 +10,7 @@ import {
 import { Terminal as XTerm, type ITheme } from "@xterm/xterm";
 import { createRendererVt,restoreRendererVt,type RendererVtCheckpoint } from "../terminal-vt-checkpoint";
 import {registerCheckpointTerminal} from "../terminal-checkpoint-registry";
+import {registerPendingTerminalAttach} from "../pending-terminal-attach";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -805,6 +806,15 @@ function TerminalViewComponent({
     fitTerminal();
     let releaseDeferred:(()=>void)|null=null;
     let disposed=false,awaitingReplay=typeof window.aya.handoverDisplay==='function';
+    let attachCancelled=false;
+    const unregisterPendingAttach=registerPendingTerminalAttach(terminal.id,()=>{attachCancelled=true;releaseDeferred?.();});
+    const attachmentWasCancelled=()=>{
+      if(!attachCancelled)return false;
+      term.options.disableStdin=true;
+      setHistoryNotice("Terminal attachment cancelled by a close request.");
+      markRestoring(false);
+      return true;
+    };
     let displayGeneration:string|null=null,replayToken:string|null=null,appliedToken=false;
     const unregisterCheckpoint=registerCheckpointTerminal(terminal.id,term,()=>!awaitingReplay&&!handoverInputPausedRef.current);
     handoverInputPausedRef.current=awaitingReplay;
@@ -1013,6 +1023,7 @@ function TerminalViewComponent({
       void (async()=>{
       const display=typeof window.aya.handoverDisplay==='function' ? await window.aya.handoverDisplay(terminal.id).catch(()=>null) : null;
       if(disposed)return;
+      if(attachmentWasCancelled())return;
       // A hidden boot-warm view must not consume the first attach/exit or ACK
       // and then discard its display before the user ever visits the pane.
       // Native reads continue immediately in the successor throughout this wait.
@@ -1022,6 +1033,7 @@ function TerminalViewComponent({
           releaseDeferred=ready;deferredHandoverAttachRef.current=ready;
         });
         if(disposed)return;
+        if(attachmentWasCancelled())return;
       }
       if(display){
         displayGeneration=display.generation;setHistoryNotice(display.notice);
@@ -1050,6 +1062,9 @@ function TerminalViewComponent({
       const attachIfReused = terminal.restored && !wasMountDecided(terminal.id);
       markMountDecided(terminal.id);
       const { cols, rows } = term;
+      // No await between releasing this hook and sending the request: a later
+      // close reaches main after its spawn flight has been registered.
+      unregisterPendingAttach();
       await window.aya.ptySpawn({
         ...(display ? {replayAfter:{generation:display.generation,offset:display.offset,token:replayToken!}} : {}),
         ptyId: terminal.id,
@@ -1075,7 +1090,7 @@ function TerminalViewComponent({
     }
 
     return () => {
-      disposed=true;releaseDeferred?.();unregisterCheckpoint();
+      disposed=true;releaseDeferred?.();unregisterCheckpoint();unregisterPendingAttach();
       container.removeEventListener("click", onTerminalLinkClick, true);
       unsubscribe();
       onDataDisposable.dispose();

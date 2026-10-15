@@ -4,6 +4,7 @@ import {
   type RefObject,
   type SetStateAction,
 } from "react";
+import { cancelPendingTerminalAttach } from "../pending-terminal-attach";
 import {
   activeProjectAfterClose,
   dedupeSlugs,
@@ -155,7 +156,9 @@ export function useProjectActions({
     const owned = Object.values(terminalsRef.current).filter(
       (t) => t.projectSlug === slug,
     );
-    const kills = await Promise.allSettled(owned.map(t => window.aya.ptyKill(t.id)));
+    const releaseAttachCloses = owned.map(t => cancelPendingTerminalAttach(t.id));
+    const kills = await Promise.allSettled(owned.map(async t => window.aya.ptyKill(t.id)))
+      .finally(() => releaseAttachCloses.forEach(release => release()));
     const refused = kills.flatMap((result, i) => result.status === "rejected" ? [`${owned[i].name}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`] : []);
     if (refused.length) {
       const stopped = new Set(owned.filter((_t, i) => kills[i].status === "fulfilled").map(t => t.id));

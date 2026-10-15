@@ -55,6 +55,7 @@
     "src/split-tree.ts",
     "src/storage-keys.ts",
     "src/spawnSession.ts",
+    "src/pending-terminal-attach.ts",
     "src/stable-identity.ts",
     "src/types.ts",
     "src/uuid.ts",

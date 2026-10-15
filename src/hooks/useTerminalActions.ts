@@ -3,6 +3,7 @@ import { terminalKillRefusal } from "../terminal-kill-refusal";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { clearedTerminalStatus } from "../pty-event-reducer";
 import { forgetSpawn, wasSpawned } from "../spawnSession";
+import { cancelPendingTerminalAttach } from "../pending-terminal-attach";
 import { defaultTabName, findProject, remoteTerminalCommand } from "../project-helpers";
 import { projectBaseCwd, tabFromTerminal } from "../worktree";
 import {
@@ -217,9 +218,10 @@ export function useTerminalActions({
       const t = terminalsRef.current[id];
       if (!t || closingTerminals.current.has(id)) return;
       closingTerminals.current.add(id);
+      const releaseAttachClose = cancelPendingTerminalAttach(id);
       try { await window.aya.ptyKill(id); }
       catch (error) { window.alert(terminalKillRefusal("close", t.name, error)); return; }
-      finally { closingTerminals.current.delete(id); }
+      finally { closingTerminals.current.delete(id); releaseAttachClose(); }
     // A closed tab plays no team role; a restart keeps it (same tab).
     void window.aya.teamReleasePane(t.projectSlug, id).catch(() => {});
     // Drop the confirmed-session marker so the id doesn't linger (and can't be
