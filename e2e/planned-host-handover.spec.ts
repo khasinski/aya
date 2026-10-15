@@ -91,7 +91,7 @@ for(const yes of [false,true])test(`one ineligible process is asked alone before
  const before=identities(seeded.ayaHome),captured=await prepare(first.app);expect(captured.ok).toBe(yes);
  const questions=await first.app.evaluate(()=> (globalThis as unknown as {handoverQuestions:Array<{detail:string}>}).handoverQuestions);
  expect(questions).toHaveLength(1);expect(questions[0].detail).toContain('shell 2');expect(questions[0].detail).not.toContain('shell 1');
- if(!yes){expect(identities(seeded.ayaHome)).toEqual(before);expect(existsSync(join(seeded.ayaHome,'pty-handover.json'))).toBe(false);await first.window.evaluate(()=>window.aya.ptyWrite('tab-left',"printf 'AFTER_CANCEL\\n'\r"));await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('\r\nAFTER_CANCEL\r\n');return;}
+ if(!yes){expect(identities(seeded.ayaHome)).toEqual(before);expect(existsSync(join(seeded.ayaHome,'pty-handover.json'))).toBe(false);await first.window.evaluate(()=>window.aya.ptyWrite('tab-left',"printf 'AFTER_CANCEL\\n'\r"));await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('AFTER_CANCEL\r\n');return;}
  await quit(first.app);writeFileSync(hostScript,built);const second=await launch(seeded);await waitForShellReady(second.window);
  await expect.poll(()=>identities(seeded.ayaHome).length).toBe(2);const after=identities(seeded.ayaHome);
  expect(after.find(p=>p.id==='tab-left')?.pid).toBe(before.find(p=>p.id==='tab-left')?.pid);expect(after.find(p=>p.id==='tab-right')?.pid).not.toBe(before.find(p=>p.id==='tab-right')?.pid);
@@ -131,7 +131,7 @@ test('an unexpected refusal after relaunch asks there; Cancel keeps the old host
  expect(questions).toHaveLength(1);expect(questions[0].detail).toContain('planned handover could not complete');
  expect(hostPidsForHome(seeded.ayaHome)).toEqual(hosts);expect(identities(seeded.ayaHome)).toEqual(before);
  expect(await second.app.evaluate(({Menu})=>!Menu.getApplicationMenu()?.getMenuItemById('restart-aya')?.icon?.isEmpty())).toBe(true);
- await second.window.evaluate(()=>window.aya.ptyWrite('tab-left',"printf 'AFTER_REFUSAL\\n'\r"));await expect.poll(()=>second.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('\r\nAFTER_REFUSAL\r\n');
+ await second.window.evaluate(()=>window.aya.ptyWrite('tab-left',"printf 'AFTER_REFUSAL\\n'\r"));await expect.poll(()=>second.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('AFTER_REFUSAL\r\n');
 });
 
 
@@ -159,7 +159,7 @@ test('trimmed replay resets the captured display once and explains history loss 
 test('the real Restart to update IPC announces handover and preserves a foreground command without asking to stop it',async({seeded})=>{
  test.setTimeout(45000);const first=await launch(seeded,1,false,true);await waitForShellReady(first.window);
  await first.window.evaluate(()=>window.aya.ptyWrite('tab-left',"printf 'ACTUAL_UPDATE_ROUTE\\n'; sleep 1000\r"));
- await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('\r\nACTUAL_UPDATE_ROUTE\r\n');
+ await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('ACTUAL_UPDATE_ROUTE\r\n');
  const before=identities(seeded.ayaHome),shell=before.find(p=>p.id==='tab-left')!.pid;
  const foreground=async(app:ElectronApplication)=>app.evaluate((_electron,pid)=>Number(process.getBuiltinModule('node:child_process').execFileSync('ps',['-o','tpgid=','-p',String(pid)],{encoding:'utf8'}).trim()),shell);
  await expect.poll(()=>foreground(first.app)).not.toBe(shell);const command=await foreground(first.app);
@@ -311,5 +311,5 @@ for(const yes of [false,true])test(`real Restart to update asks about the inelig
  expect(result.questions[0].detail).toContain('Restarting to update');expect(result.questions[0].detail).toContain('shell 2');expect(result.questions[0].detail).not.toContain('shell 1');
  expect(result.order).toEqual(yes?['question','installer']:['question']);expect(result.installed).toBe(yes);
  expect(existsSync(join(seeded.ayaHome,'pty-handover.json'))).toBe(yes);expect(identities(seeded.ayaHome)).toEqual(before);
- if(!yes){await first.window.evaluate(()=>window.aya.ptyWrite('tab-right',"printf 'UPDATE_CANCEL_ALIVE\\n'\r"));await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('tab-right'))).toContain('\r\nUPDATE_CANCEL_ALIVE\r\n');}
+ if(!yes){await first.window.evaluate(()=>window.aya.ptyWrite('tab-right',"printf 'UPDATE_CANCEL_ALIVE\\n'\r"));await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('tab-right'))).toContain('UPDATE_CANCEL_ALIVE\r\n');}
 });
