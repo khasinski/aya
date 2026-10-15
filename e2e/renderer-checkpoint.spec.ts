@@ -15,11 +15,11 @@ test("opened renderer checkpoint preserves transformed history, viewport and pal
         const codec=require(${JSON.stringify(root + '/dist-test/terminal-vt-checkpoint.js')});
         const transforms=require(${JSON.stringify(root + '/dist-test/terminal-rendering.js')});
         const validator=require(${JSON.stringify(root + '/dist-electron/renderer-vt-checkpoint.js')});
-        const create=id=>{const t=new Terminal({cols:80,rows:24,scrollback:10000,allowProposedApi:true,cursorBlink:true,scrollOnEraseInDisplay:true});codec.prepareRendererVt(t);t.open(document.getElementById(id));return t;};
+        const create=id=>{const t=codec.createRendererVt({cols:80,rows:24,scrollback:10000,allowProposedApi:true,cursorBlink:true,scrollOnEraseInDisplay:true});t.open(document.getElementById(id));return t;};
         const a=create('a'),b=create('b'),write=(t,s)=>new Promise(r=>t.write(s,r));
         try{
           const text=Array.from({length:400},(_,n)=>'ROW '+n+' '+String.fromCharCode(65+n%26).repeat(30)+'\\r\\n').join('');
-          await write(a,transforms.normalizeTerminalLinkUnderline(transforms.stripScrollbackErase(text+'\\x1b[3J\\x1b]4;1;#123456\\x07\\x1b[31mPALETTE\\x1b[0m')));
+          await write(a,transforms.normalizeTerminalLinkUnderline(transforms.stripScrollbackErase(text+'\\x1b[3J\\x1b]4;1;#123456\\x07\\x1b[31mPALETTE\\x1b[0m\\x1b[?1003h\\x1b[?1006h')));
           a.scrollToLine(a.buffer.normal.baseY-20);
           const before={length:a.buffer.normal.length,base:a.buffer.normal.baseY,view:a.buffer.normal.viewportY};
           const cp=await codec.captureRendererVt(a,8*1024*1024,1000);
@@ -45,7 +45,11 @@ test("opened renderer checkpoint preserves transformed history, viewport and pal
             if(performance.now()>paintDeadline)throw Error('Restored palette did not repaint: '+color('a')+' / '+color('b'));
             await new Promise(r=>requestAnimationFrame(r));
           }
-          return {before,original,restored,domA,domB,colorA:color('a'),colorB:color('b'),cut:cp.cutLines,clamped:cp.viewportClamped};
+          const mouse=[];b.onData(data=>mouse.push(data));
+          const screen=document.querySelector('#b .xterm-screen'),rect=screen.getBoundingClientRect();
+          screen.dispatchEvent(new MouseEvent('mousemove',{bubbles:true,clientX:rect.left+10,clientY:rect.top+10}));
+          if(!b.element.classList.contains('enable-mouse-events')||!mouse.some(s=>s.startsWith('\\x1b[<35;')))throw Error('Restored DOM mouse tracking is not active: '+JSON.stringify(mouse));
+          return {before,original,restored,domA,domB,colorA:color('a'),colorB:color('b'),mouse,cut:cp.cutLines,clamped:cp.viewportClamped};
         }finally{a.dispose();b.dispose();}
       })()`);
     } finally { view.destroy(); }
@@ -57,4 +61,5 @@ test("opened renderer checkpoint preserves transformed history, viewport and pal
   expect(result.domB).toEqual(result.domA);
   expect(result.colorA).toBe("rgb(18, 52, 86)");
   expect(result.colorB).toBe("rgb(18, 52, 86)");
+  expect(result.mouse).toContainEqual(expect.stringMatching(/^\x1b\[<35;/));
 });

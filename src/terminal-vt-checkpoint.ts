@@ -236,7 +236,14 @@ export function prepareRendererVt(term: XTerm): void {
     if (ACTUAL_BROWSER_ENGINE !== SUPPORTED_BROWSER_ENGINE)
         throw Error('Unsupported renderer VT engine');
     if (!palettes.has(term))
-        trackPalette(term);
+        throw Error('Renderer VT was not tracked from owned construction');
+}
+/** Establish handler/provider ownership before the caller can mutate a terminal.
+ * Unknown engines still render normally, but cannot export this checkpoint. */
+export function createRendererVt(options: ConstructorParameters<typeof XTerm>[0]): XTerm {
+    const term = new XTerm(options);
+    if (ACTUAL_BROWSER_ENGINE === SUPPORTED_BROWSER_ENGINE) trackPalette(term);
+    return term;
 }
 function lineEstimate(line: any): number {
     return line.length * 16 + new TextEncoder().encode(JSON.stringify(line._combined)).length +
@@ -300,6 +307,10 @@ export function restoreRendererVt(term: XTerm, checkpoint: RendererVtCheckpoint)
     term.options.scrollOnEraseInDisplay = dto.options.scrollOnEraseInDisplay;
     restore(term, dto);
     const core = (term as any)._core, buffers = core._bufferService.buffers;
+    // Browser listeners/selection are installed by this event, not by assigning
+    // the private fields in the common DTO. Preserve the last-event dedup state.
+    core.coreMouseService.activeEncoding = dto.mouse._activeEncoding;
+    core.coreMouseService.activeProtocol = dto.mouse._activeProtocol;
     buffers._onBufferActivate.fire({ activeBuffer: buffers.active, inactiveBuffer: buffers.active === buffers.alt ? buffers.normal : buffers.alt });
     const theme = core._themeService;
     if (theme)

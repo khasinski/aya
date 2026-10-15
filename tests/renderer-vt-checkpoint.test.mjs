@@ -5,14 +5,36 @@ import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
 const {Terminal}=require('@xterm/xterm');
-const {prepareRendererVt,captureRendererVt,restoreRendererVt,SUPPORTED_BROWSER_ENGINE}=require('../dist-test/terminal-vt-checkpoint.js');
+const {createRendererVt,prepareRendererVt,captureRendererVt,restoreRendererVt,SUPPORTED_BROWSER_ENGINE}=require('../dist-test/terminal-vt-checkpoint.js');
 const {parseRendererCheckpoint}=require('../dist-electron/renderer-vt-checkpoint.js');
 const {stripScrollbackErase,normalizeTerminalLinkUnderline}=require('../dist-test/terminal-rendering.js');
 const write=(term,s)=>new Promise(resolve=>term.write(s,resolve));
-const terminal=()=>{const term=new Terminal({cols:80,rows:24,scrollback:10000,cursorBlink:true,scrollOnEraseInDisplay:true,allowProposedApi:true,linkHandler:{activate(){}}});prepareRendererVt(term);return term;};
+const terminal=()=>createRendererVt({cols:80,rows:24,scrollback:10000,cursorBlink:true,scrollOnEraseInDisplay:true,allowProposedApi:true,linkHandler:{activate(){}}});
 const visible=term=>Array.from({length:term.rows},(_,y)=>term.buffer.active.getLine(term.buffer.active.viewportY+y)?.translateToString());
 test('browser private binding is pinned to the installed xterm implementation',()=>{
  assert.equal(createHash('sha256').update(fs.readFileSync(require.resolve('@xterm/xterm'))).digest('hex'),SUPPORTED_BROWSER_ENGINE);
+});
+test('pre-existing terminals cannot establish a trusted provider baseline after public mutation',async()=>{
+ const a=new Terminal({allowProposedApi:true});
+ try {
+  a.unicode.register({version:'6',wcwidth:()=>2,charProperties:()=>4});a.unicode.activeVersion='6';
+  assert.throws(()=>prepareRendererVt(a),/owned construction/);
+  await assert.rejects(captureRendererVt(a),/tracked from construction/);
+ }finally{a.dispose();}
+ const owned=terminal();
+ try {
+  owned.unicode.register({version:'6',wcwidth:()=>2,charProperties:()=>4});owned.unicode.activeVersion='6';
+  await assert.rejects(captureRendererVt(owned),/replacement/);
+ }finally{owned.dispose();}
+});
+test('restored mouse tracking notifies browser listener consumers',async()=>{
+ const a=terminal(),b=terminal(),events=[];
+ try {
+  await write(a,'\x1b[?1003h\x1b[?1006h');
+  b._core.coreMouseService.onProtocolChange(e=>events.push(e));
+  restoreRendererVt(b,parseRendererCheckpoint(Buffer.from(JSON.stringify(await captureRendererVt(a)))));
+  assert.equal(b.modes.mouseTrackingMode,'any');assert.ok(events.length>0);assert.ok(events.at(-1)>0);
+ }finally{a.dispose();b.dispose();}
 });
 test('actual transformed renderer history, viewport, both buffers, colours and future behavior round-trip',async()=>{
  const a=terminal(),b=terminal();

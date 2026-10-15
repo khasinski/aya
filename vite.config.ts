@@ -3,7 +3,10 @@ import react from "@vitejs/plugin-react";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-const browserVtEngine = createHash("sha256").update(readFileSync(createRequire(import.meta.url).resolve("@xterm/xterm"))).digest("hex");
+// Pin the actual bundled artifact. The package's separate `module` entry has
+// different bytes; do not hash CJS while silently importing that ESM branch.
+const browserVtArtifact = createRequire(import.meta.url).resolve("@xterm/xterm");
+const browserVtEngine = createHash("sha256").update(readFileSync(browserVtArtifact)).digest("hex");
 
 // The Electron window loads only its own files: a script injected through text it
 // shows (an agent's output, a team message) can neither run nor send data out.
@@ -37,6 +40,7 @@ function rendererCsp(): Plugin {
 export default defineConfig({
   plugins: [react(), rendererCsp()],
   define: { __AYA_XTERM_ENGINE__: JSON.stringify(browserVtEngine) },
+  resolve: { alias: [{ find: /^@xterm\/xterm$/, replacement: browserVtArtifact }] },
   base: "./",
   server: {
     // Non-default port so Aya doesn't fight other Vite projects on 5173.

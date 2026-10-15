@@ -2,11 +2,11 @@
 // real parsed true-colour row: this measures capture/restore, not parser or DOM.
 const fs=require('node:fs');
 const {Terminal}=require('@xterm/xterm');
-const {prepareRendererVt,captureRendererVt,restoreRendererVt}=require('../../dist-test/terminal-vt-checkpoint.js');
+const {createRendererVt,captureRendererVt,restoreRendererVt}=require('../../dist-test/terminal-vt-checkpoint.js');
 const {parseRendererCheckpoint,MAX_RENDERER_TOTAL_BYTES}=require('../../dist-electron/renderer-vt-checkpoint.js');
 const now=()=>performance.now();
 const write=(t,s)=>new Promise(resolve=>t.write(s,resolve));
-const create=()=>{const t=new Terminal({cols:240,rows:80,scrollback:10000,allowProposedApi:true,cursorBlink:true,scrollOnEraseInDisplay:true});prepareRendererVt(t);return t;};
+const create=()=>createRendererVt({cols:240,rows:80,scrollback:10000,allowProposedApi:true,cursorBlink:true,scrollOnEraseInDisplay:true});
 (async()=>{
  const samples=[],baseline=process.memoryUsage(),budget=Math.floor(MAX_RENDERER_TOTAL_BYTES/25);let peakRss=baseline.rss;
  for(let i=0;i<25;i++){
