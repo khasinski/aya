@@ -184,6 +184,21 @@ export async function confirmRestart(deps: RelaunchDeps, action: string, ask: (t
   return true;
 }
 
+/** The question before restarting one pane, `name`. When what it runs cannot be checked, the user still decides: asked
+ *  plainly, with the reason, rather than restarted without a word or silently not restarted. */
+export async function confirmPaneRestart(
+  confirm: () => Promise<boolean>,
+  ask: (text: string) => Promise<boolean>,
+  name: string,
+): Promise<boolean> {
+  try {
+    return await confirm();
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    return ask(`Aya could not check what ${name} is doing (${why}). Restarting it stops anything it runs: a turn, a command or background tasks.`);
+  }
+}
+
 /** As confirmRestart, but a pane whose work the user already agreed to stop for its current process (a note left by
  *  Restart to update, its pane not relaunched yet) is not asked about again. */
 export async function confirmRestartOnce(deps: RelaunchDeps, action: string, ask: (text: string) => Promise<boolean>): Promise<boolean> {

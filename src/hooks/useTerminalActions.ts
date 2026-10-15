@@ -425,8 +425,9 @@ export function useTerminalActions({
     // yet (exit event still in flight) can still hit that window; the gate
     // covers every state the user can actually observe when clicking.
     const maybeAlive = t.exitCode === null && !t.stopped;
-    // Asked first when the restart would stop work in the pane: a turn, a command, background tasks (#219). A
-    // question that cannot be asked stops the restart: going ahead could end work nobody agreed to stop.
+    // Asked first when the restart would stop work in the pane: a turn, a command, background tasks (#219). Main asks
+    // plainly when it cannot check; a question that cannot reach main at all stops the restart, since going ahead
+    // could end work nobody agreed to stop.
     if (maybeAlive) {
       const agreed = await window.aya.confirmPaneRestart(id).catch((err: unknown) => {
         console.warn("[aya] could not ask before restarting the pane; it keeps running", err);

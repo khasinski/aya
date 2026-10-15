@@ -55,7 +55,7 @@ import { debugPane, watchDebugSwitch } from "./team-debug";
 import { userShell } from "./shell";
 import { registerTeamIpc } from "./ipc/team-ipc";
 import { askWindowToOpenPanes, newPaneId, RendererRequests, paneAliveOf, presetAgent, teamPaneDeps, type PaneHost } from "./team-panes";
-import { confirmRestart, type RelaunchDeps } from "./relaunch-notes";
+import { confirmPaneRestart, confirmRestart, type RelaunchDeps } from "./relaunch-notes";
 import { foregroundCommand } from "./foreground-command";
 import { createUpdates, UPDATE_AUTO_CHECK_DELAY_MS } from "./updates";
 import { notePathRepaired, presetInstalled } from "./command-probe";
@@ -527,8 +527,8 @@ function registerIpc(): TeamRunner {
       if (answered) broadcastStatus(answered);
     },
     confirmRestartPane: async (ptyId) => {
-      const name = (await relaunchDeps.panes([ptyId]))[0]?.name ?? "this pane";
-      return confirmLosingWork(`Restarting ${name}`, "Restart", [ptyId]);
+      const name = (await relaunchDeps.panes([ptyId]).catch(() => []))[0]?.name ?? "this pane";
+      return confirmPaneRestart(() => confirmLosingWork(`Restarting ${name}`, "Restart", [ptyId]), (text) => askRestart("Restart", text), name);
     },
     restartHost: restartHostFromWindow,
     stopOtherHosts: stopOtherHostsFromWindow,

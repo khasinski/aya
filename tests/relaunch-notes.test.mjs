@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { teamProject } from "./helpers/team.mjs";
 
 const { renderPaneText } = await import("../dist-electron/pane-render.js");
-const { backgroundWorkShown, confirmRestart, deliverRelaunchNotes, RELAUNCH_NOTE, RELAUNCH_NOTE_TTL_MS } = await import("../dist-electron/relaunch-notes.js");
+const { backgroundWorkShown, confirmPaneRestart, confirmRestart, deliverRelaunchNotes, RELAUNCH_NOTE, RELAUNCH_NOTE_TTL_MS } = await import("../dist-electron/relaunch-notes.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");
 
 /** A recorded screen as main reads it for the check (paneReadText). */
@@ -301,4 +301,23 @@ describe("asking before a restart cuts off a turn or a command", () => {
       t.cleanup();
     }
   });
+});
+
+describe("restarting one pane when its work cannot be checked", () => {
+  test("the check answers: its answer stands, nothing else is asked", async () => {
+    const asked = [];
+    for (const answer of [true, false]) {
+      assert.equal(await confirmPaneRestart(async () => answer, async (q) => (asked.push(q), true), "shell 1"), answer);
+    }
+    assert.deepEqual(asked, []);
+  });
+
+  for (const answer of [true, false]) {
+    test(`the check fails: the user is asked plainly, with the reason, and ${answer ? "Restart" : "Cancel"} decides`, async () => {
+      const asked = [];
+      const ok = await confirmPaneRestart(async () => Promise.reject(new Error("host gone")), async (q) => (asked.push(q), answer), "shell 1");
+      assert.equal(ok, answer);
+      assert.deepEqual(asked, ["Aya could not check what shell 1 is doing (host gone). Restarting it stops anything it runs: a turn, a command or background tasks."]);
+    });
+  }
 });
