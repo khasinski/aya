@@ -51,19 +51,25 @@ export class PtyCrashRecovery {
       const delay = this.policy.delays[this.used++];
       if (!await pause(delay, signal)) return false;
       const attempt = new AbortController();
-      const abort = () => attempt.abort(); signal.addEventListener("abort", abort, {once: true});
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let stopped = false;
+      let stop!: () => void;
+      // Register cancellation before invoking user code. A callback may cancel
+      // synchronously, or settle its work synchronously when abort is notified.
+      const interruption = new Promise<RecoveryAttemptResult>(resolve => {
+        stop = () => { stopped = true; resolve("blocked"); attempt.abort(); };
+        timer = setTimeout(stop, this.policy.attemptTimeoutMs);
+      });
+      signal.addEventListener("abort", stop, {once: true});
       let result: RecoveryAttemptResult;
       try {
-        result = await Promise.race([
-          this.deps.attempt(attempt.signal),
-          new Promise<RecoveryAttemptResult>(resolve => {
-            timer = setTimeout(() => { attempt.abort(); resolve("blocked"); }, this.policy.attemptTimeoutMs);
-            attempt.signal.addEventListener("abort", () => resolve("blocked"), {once: true});
-          }),
-        ]);
+        if(signal.aborted)stop();
+        result = stopped ? "blocked" : await Promise.race([interruption, this.deps.attempt(attempt.signal)]);
+        // The timeout decision cannot be undone by an abort listener resolving
+        // the attempt as retry/recovered before its rejection is observed.
+        if(stopped)result="blocked";
       } catch { result = "blocked"; }
-      finally { clearTimeout(timer); signal.removeEventListener("abort", abort); }
+      finally { clearTimeout(timer); signal.removeEventListener("abort", stop); }
       if (signal.aborted || this.disposed) return false;
       if (result === "recovered") { this.stableSince = this.now(); this.deps.state("recovered"); return true; }
       if (result === "blocked") break;
