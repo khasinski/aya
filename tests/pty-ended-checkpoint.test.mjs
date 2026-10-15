@@ -56,3 +56,10 @@ test('ended records share the25-record and aggregate raw budgets before yielding
  store.readCheckpoint=async function*(){for(let i=0;i<3;i++){const data=encodeCheckpointPayload(Buffer.from(JSON.stringify({...ended(),id:String(i)})));data.writeUInt32BE(64*1024*1024,8);yield{id:String(i),generation:'retained-generation',data};}};
  try{await assert.rejects(async()=>{for await(const part of bootstrap.readCoreHandover({})){void part;yields++;}},/aggregate decoded-byte limit/);assert.equal(yields,0);}finally{store.readCheckpoint=read;}
 });
+
+
+test('ended native exit receipts are closed and generation scoped before restore',async()=>{
+ const valid={...ended(),ownerExit:{generation:1,event:2}};
+ assert.deepEqual(await (await import('../dist-electron/pty-core-checkpoint.js')).validateCoreHandoverPart(valid),valid);
+ for(const ownerExit of [null,{}, {generation:0,event:2},{generation:1,event:0},{generation:1,event:2,credential:'secret'}])await assert.rejects((await import('../dist-electron/pty-core-checkpoint.js')).validateCoreHandoverPart({...ended(),ownerExit}));
+});

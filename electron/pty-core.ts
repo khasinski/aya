@@ -33,6 +33,7 @@ import {
   vtPaneAltScreen,
   writeVtPane,
 } from "./vt-mirror";
+import type { OwnerPane } from "./pty-owner-client";
 import type { RecoveryPane } from "./pty-recovery-bootstrap";
 import { validateRecoveryLaunch } from "./pty-core-checkpoint";
 import type { PaneLaunch } from "./launch-mode";
@@ -59,6 +60,7 @@ const ptys = new Map<string, OwnerPty>();
 const launches = new Map<string, PaneLaunch>();
 const spawnTimes = new Map<string, number>();
 const spawnRequests = new Map<string, SpawnRequest>();
+const pendingOwnerExits = new Map<string,OwnerPane>();
 
 const vtStatusEvent = (ptyId: string, waiting: boolean, dialog: string | undefined): PtyEvent =>
   dialog ? { type: "vt-status", ptyId, waiting, dialog } : { type: "vt-status", ptyId, waiting };
@@ -202,7 +204,8 @@ export async function freezePtyCore(timeoutMs = 1000, maxBytes = MAX_CHECKPOINT_
     for(const [id,pane] of restoredPanes){
       if(pane.exitCode===undefined||ptys.has(id))continue;
       const output=outputBuffers.get(id)??{chunks:[],total:0,version:0,end:0};
-      const dto:EndedCoreCheckpoint={format:1,kind:"ended",id,generation:pane.generation,exitCode:pane.exitCode,output:structuredClone({chunks:output.chunks,total:output.total,version:output.version,end:output.end})};
+      const nativeExit=pendingOwnerExits.get(id);
+      const dto:EndedCoreCheckpoint={format:1,kind:"ended",id,generation:pane.generation,exitCode:pane.exitCode,...(nativeExit?{ownerExit:{generation:nativeExit.generation,event:nativeExit.event}}:{}),output:structuredClone({chunks:output.chunks,total:output.total,version:output.version,end:output.end})};
       await validateCoreHandoverPart(dto);
       if(!handoverGated||epoch!==handoverEpoch)throw Error("Terminal handover was cancelled");
       endedBytes+=Buffer.byteLength(JSON.stringify(dto));
@@ -273,9 +276,9 @@ export function excludeFrozenPtyPane(id: string, reason: string): void {
 }
 /** Only the coordinator calls this after #219 consent for these exact panes.
  * Eligible panes remain paused and keep their owner masters throughout. */
-export interface HandoverCommitResult {stopped:string[];ended:Array<{id:string;exitCode:number}>}
+export interface HandoverCommitResult {stopped:string[];ended:Array<{id:string;exitCode:number;ownerExit?:{generation:number;event:number}}>}
 export function endedHandoverPanes():HandoverCommitResult["ended"] {
-  return [...restoredPanes].flatMap(([id,p])=>p.exitCode===undefined?[]:[{id,exitCode:p.exitCode}]);
+  return [...restoredPanes].flatMap(([id,p])=>{const native=pendingOwnerExits.get(id);return p.exitCode===undefined?[]:[{id,exitCode:p.exitCode,...(native?{ownerExit:{generation:native.generation,event:native.event}}:{})}];});
 }
 export async function stopIneligiblePtyPanes(consented: string[]): Promise<HandoverCommitResult> {
   if (!handoverGated || new Set(consented).size !== consented.length || [...ineligiblePanes.keys()].some(id=>!consented.includes(id))) throw new Error("Missing consent for terminal fallback");
@@ -319,7 +322,7 @@ export async function detachPtyCoreForHandover(commit: () => void = () => {}): P
   });
   for (const child of ptys.values()) child.detachForHandover();
   shuttingDown = true;
-  ptys.clear(); launches.clear(); spawnTimes.clear(); spawnRequests.clear();
+  ptys.clear(); launches.clear(); spawnTimes.clear(); spawnRequests.clear();pendingOwnerExits.clear();
   outputBuffers.clear();
   clearRestoredPanes(); oscCarryBuffers.clear(); closeAllVtPanes();
 }
@@ -330,7 +333,15 @@ export async function restorePtyCorePane(value: unknown, sink: PtyEventSink): Pr
   const pane = await validateCoreHandoverPart(value);
   if(restoredPanes.has(pane.id)||ptys.has(pane.id)||spawning.size||shuttingDown)throw Error("PTY restore target is not empty");
   if("kind" in pane){
-    await getOwnerRuntime();outputBuffers.set(pane.id,structuredClone(pane.output));holdEndedPane(pane.id,pane.generation,pane.exitCode);return;
+    const owner=await getOwnerRuntime();
+    if(pane.ownerExit){
+      const native=owner.disconnected.get(pane.id);
+      if(native){
+        if(!native.exited||native.generation!==pane.ownerExit.generation||native.event!==pane.ownerExit.event)throw Error("Ended native outcome identity changed");
+        pendingOwnerExits.set(pane.id,native);owner.disconnected.delete(pane.id);
+      }
+    }
+    outputBuffers.set(pane.id,structuredClone(pane.output));holdEndedPane(pane.id,pane.generation,pane.exitCode);return;
   }
   if (ptys.has(pane.id) || spawning.size || shuttingDown) throw new Error("PTY restore target is not empty");
   await restoreVtPane(pane.id, pane.vt, (waiting, dialog) => {
@@ -365,6 +376,17 @@ export async function recoverPtyCorePane(pane:RecoveryPane,sink:PtyEventSink):Pr
   if(!actual.exited){child.resize(Math.max(2,actual.cols-1),actual.rows);child.resize(actual.cols,actual.rows);}
   installChildObservers(pane.request,child,sink,()=>{});
   ptyLog.append("crash-pane-attached",{ptyId:pane.id,childPid:child.pid,generation:pane.generation,history:"consumed history lost"});
+}
+
+/** Acknowledgement is generation/event scoped, and safe to repeat if the
+ * reply was lost after the native ACK. A stale receipt never retires a new ID. */
+export async function acknowledgePtyExit(id:string,generation:number,event:number):Promise<boolean> {
+ const owner=currentOwnerRuntime();if(!owner?.client)return false;
+ const pane=pendingOwnerExits.get(id)??owner.disconnected.get(id);
+ if(!pane||!pane.exited||pane.generation!==generation||pane.event!==event)return false;
+ await owner.retired(pane);
+ if(pendingOwnerExits.get(id)===pane)pendingOwnerExits.delete(id);
+ return true;
 }
 
 export interface PtyEventSink {
@@ -564,6 +586,13 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
     ptyLog.append("spawn-dropped-shutting-down", { ptyId: req.ptyId });
     return;
   }
+  const nativeEnded=pendingOwnerExits.get(req.ptyId);
+  if(nativeEnded){
+    if(!req.attachOnly&&!req.attachIfReused&&!req.replayAfter)await acknowledgePtyExit(req.ptyId,nativeEnded.generation,nativeEnded.event);
+    else if(!sink.isDestroyed()){
+      replayOutput(req,sink);sink.sendPtyEvent({type:"exit",ptyId:req.ptyId,exitCode:nativeEnded.exitCode??0,ownerExit:{generation:nativeEnded.generation,event:nativeEnded.event}});return;
+    }else return;
+  }
   const restored = restoredPanes.get(req.ptyId);
   if (restored?.exitCode !== undefined) {
     if (!req.attachOnly && !req.attachIfReused && !req.replayAfter) {
@@ -578,7 +607,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
     }
     if (!sink.isDestroyed()) {
       replayOutput(req,sink);
-      sink.sendPtyEvent({type:"exit",ptyId:req.ptyId,exitCode:restored.exitCode});
+      sink.sendPtyEvent({type:"exit",ptyId:req.ptyId,exitCode:restored.exitCode,...(pendingOwnerExits.has(req.ptyId)?{ownerExit:{generation:pendingOwnerExits.get(req.ptyId)!.generation,event:pendingOwnerExits.get(req.ptyId)!.event}}:{})});
       if (restored.attached) {removeRestoredPane(req.ptyId); outputBuffers.delete(req.ptyId);}
     }
     return;
@@ -805,6 +834,9 @@ function installChildObservers(req: SpawnRequest, child: OwnerPty, sink: PtyEven
       if (ptys.get(req.ptyId) !== child) {
         return;
       }
+      const nativeExit=child.exitReceipt?.()??null;
+      const deferredExit=currentOwnerRuntime()?.deferredExitAcknowledgements&&nativeExit;
+      if(deferredExit)pendingOwnerExits.set(req.ptyId,nativeExit);
       ptys.delete(req.ptyId);
       launches.delete(req.ptyId);
       spawnTimes.delete(req.ptyId);
@@ -824,7 +856,7 @@ function installChildObservers(req: SpawnRequest, child: OwnerPty, sink: PtyEven
       // means the renderer reloaded and cold-respawned rather than dying.
       ptyLog.append("exit", { ptyId: req.ptyId, exitCode, signal });
       if ((pendingAttach && !pendingAttach.replayToken) || sink.isDestroyed()) return;
-      sink.sendPtyEvent({ type: "exit", ptyId: req.ptyId, exitCode });
+      sink.sendPtyEvent({ type: "exit", ptyId: req.ptyId, exitCode,...(deferredExit?{ownerExit:{generation:deferredExit.generation,event:deferredExit.event}}:{}) });
     });
     child.onData((chunk) => {
       // Strip Aya's OSC 9001 vocabulary (integrations.md) before anything
@@ -1007,6 +1039,8 @@ export async function killPty(ptyId: string): Promise<void> {
   try { await operation; } finally { killing.delete(operation); }
 }
 async function killPtyInternal(ptyId: string): Promise<void> {
+  const pendingExit=pendingOwnerExits.get(ptyId);
+  if(pendingExit){await acknowledgePtyExit(ptyId,pendingExit.generation,pendingExit.event);removeRestoredPane(ptyId);outputBuffers.delete(ptyId);oscCarryBuffers.delete(ptyId);closeVtPane(ptyId);return;}
   const endedRestoration = restoredPanes.get(ptyId)?.exitCode !== undefined;
   removeRestoredPane(ptyId);
   outputBuffers.delete(ptyId);
@@ -1054,6 +1088,7 @@ async function killPtyInternal(ptyId: string): Promise<void> {
   let timer: NodeJS.Timeout | undefined;
   try { await Promise.race([p.closed, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("The terminal could not confirm its exit. Its native owner inventory was kept; check it before restarting.")), 5000); })]); }
   finally { clearTimeout(timer); }
+  if(currentOwnerRuntime()?.deferredExitAcknowledgements)await p.acknowledgeExit();
 }
 
 /** Graceful signal to each child, `onDone` exactly once when the last exits, SIGKILL for survivors at the

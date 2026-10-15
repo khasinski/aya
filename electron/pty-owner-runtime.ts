@@ -21,6 +21,8 @@ const secret = inheritedSecret();
 export function ownerHandoverCredential(): Buffer { return Buffer.from(secret); }
 export interface RecoveryOwnerIdentity { pid:number; startTime:string; instanceId:string; binaryHash:string }
 let recoveryOwner: RecoveryOwnerIdentity | null = null;
+let exitAcknowledgements=false;
+export function requireOwnerExitAcknowledgements():void {exitAcknowledgements=true;}
 /** Must be set before open: recovery must never create a replacement owner. */
 export function requireRecoveryOwner(identity: RecoveryOwnerIdentity): void {
   if(runtime)throw new Error("PTY owner runtime already opened before recovery preflight");
@@ -39,6 +41,7 @@ export async function shutdownOwnerRuntime(): Promise<void> {
   if (runtime) await (await runtime).shutdown();
 }
 export class OwnerRuntime {
+  readonly deferredExitAcknowledgements=exitAcknowledgements;
   client: PtyOwnerClient | null = null;
   record!: OwnerRecord;
   incompatible = false;

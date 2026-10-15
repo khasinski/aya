@@ -40,6 +40,7 @@ export type PtyHostRequest =
   | { id: number; type: "handover-detach"; consented: string[] }
   | { id: number; type: "handover-reuse" }
   | { id: number; type: "handover-ack-reuse" }
+  | { id:number;type:"exit-observed";ptyId:string;generation:number;event:number }
   | { id: number; type: "version" };
 
 export type PtyHostResponse = (

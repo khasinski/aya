@@ -31,6 +31,7 @@ const wait=async predicate=>{const end=Date.now()+6000;while(!await predicate())
    require('../../dist-electron/pty-owner-registry.js').ownerRecordIsLive=()=>++probes<(variant==='owner-dies-retained'?2:3);
    require('node:child_process').spawn=()=>{spawns++;throw Error('UNEXPECTED_NEW_OWNER_SPAWN');};
   }
+  if(variant==='exit-ack')runtime.requireOwnerExitAcknowledgements();
   runtime.requireRecoveryOwner(bootstrap.owner);
   if(refused){
    try{await assert.rejects(runtime.getOwnerRuntime(),/recorded PTY owner/);assert.equal(runtime.currentOwnerRuntime(),null);if(variant==='owner-dies-between-probes'||variant==='owner-dies-retained'){assert.equal(probes,variant==='owner-dies-retained'?2:3);assert.equal(spawns,0);}assert.equal(fs.existsSync(record),variant!=='missing-owner');if(variant!=='missing-owner')assert.deepEqual(fs.readFileSync(record),before);}
@@ -62,6 +63,17 @@ const wait=async predicate=>{const end=Date.now()+6000;while(!await predicate())
   // The ended record stays pending until a real view asks for its replay.
   assert.equal(exit,undefined);await core.spawnPty({...bootstrap.panes[0].request,attachOnly:true},sink,{prepare:async()=>{throw Error('recovery must never prepare/spawn');}});
   assert.equal(exit,23);assert.equal(owner.record.pid,bootstrap.owner.pid);
+  if(variant==='exit-ack'){
+   const receipt=events.find(e=>e.type==='exit').ownerExit;assert.ok(receipt);
+   assert.equal(await core.acknowledgePtyExit('pane',receipt.generation+1,receipt.event),false);
+   const ack=owner.client.ackExit.bind(owner.client);let lost=true;
+   owner.client.ackExit=async pane=>{await ack(pane);if(lost){lost=false;throw Error('test ACK reply lost');}};
+   await assert.rejects(core.acknowledgePtyExit('pane',receipt.generation,receipt.event),/ACK reply lost/);
+   assert.equal((await owner.client.list()).find(p=>p.id==='pane').acknowledged,true);
+   assert.equal(await core.acknowledgePtyExit('pane',receipt.generation,receipt.event),true);
+   assert.equal(await core.acknowledgePtyExit('pane',receipt.generation,receipt.event),false);
+   assert.equal(owner.record.panes.length,0);
+  }
   await runtime.shutdownOwnerRuntime();process.send({recovered:true,exit},()=>process.exit(0));
  }
 })().catch(error=>{console.error(error);process.exit(1);});

@@ -94,6 +94,8 @@ export const PANE_HOLD_UNKNOWN =
 const PANE_ENDED_EVENTS: ReadonlySet<string> = new Set(["exit", "no-session"]);
 
 interface PendingRequest {
+  type?:PtyHostRequest["type"];
+  ptyId?:string;
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
 }
@@ -189,14 +191,36 @@ export class PtyHostClient {
   }
 
   private endedBootPanes=new Map<string,number>();
+  private observedExits=new Map<string,{generation:number;event:number;acknowledged?:boolean}>();
+  private exitAcks=new Map<string,Promise<void>>();
+  private exitReplayFlights=new Map<string,number>();
+  private exitAckRetries=new Map<string,number>();
+  private exitAckTimers=new Map<string,ReturnType<typeof setTimeout>>();
+  private observeExit(id:string,receipt:{generation:number;event:number;acknowledged?:boolean}):void {
+    if(this.observedExits.get(id)!==receipt||receipt.acknowledged||(this.exitAckRetries.get(id)??0)>=3||this.disposed||this.exitAcks.has(id)||!this.socket||this.socket.destroyed)return;
+    const socket=this.socket,tries=(this.exitAckRetries.get(id)??0)+1;this.exitAckRetries.set(id,tries);
+    let retry=false;
+    const work=this.sendRequest(socket,{id:0,type:"exit-observed",ptyId:id,generation:receipt.generation,event:receipt.event}).then(()=>{
+      if(this.observedExits.get(id)===receipt)receipt.acknowledged=true;
+    },()=>{retry=true;}).finally(()=>{
+      if(this.exitAcks.get(id)===work)this.exitAcks.delete(id);
+      const current=this.observedExits.get(id);
+      if(current&&current!==receipt)this.observeExit(id,current);
+      if(retry&&tries<3&&!this.disposed&&this.socket===socket&&!socket.destroyed&&this.observedExits.get(id)===receipt){
+        const timer=setTimeout(()=>{this.exitAckTimers.delete(id);this.observeExit(id,receipt);},100);timer.unref?.();this.exitAckTimers.set(id,timer);
+      }
+    });
+    this.exitAcks.set(id,work);
+  }
   async acknowledgeHandoverDisplay(ptyId:string,generation:string,token?:string):Promise<boolean>{
     return await this.request({id:0,type:"handover-display-applied",ptyId,generation,token})===true;
   }
 
   async spawn(req: SpawnRequest): Promise<void> {
-    if(!req.attachIfReused&&!req.attachOnly)this.endedBootPanes.delete(req.ptyId);
-    if(this.endedBootPanes.has(req.ptyId)&&req.attachIfReused){
+    if(!req.attachIfReused&&!req.attachOnly){this.endedBootPanes.delete(req.ptyId);this.observedExits.delete(req.ptyId);}
+    if(this.endedBootPanes.has(req.ptyId)&&(req.attachIfReused||req.attachOnly)&&!req.replayAfter){
       const exitCode=this.endedBootPanes.get(req.ptyId)!;
+      const receipt=this.observedExits.get(req.ptyId);if(receipt){this.observeExit(req.ptyId,receipt);await this.exitAcks.get(req.ptyId);}
       this.sendToSinks([{type:"exit",ptyId:req.ptyId,exitCode}]);return;
     }
     this.metadataRequired = true;
@@ -215,6 +239,8 @@ export class PtyHostClient {
     const { attachIfReused, ...rest } = req;
     // Before the request: a no-session or exit event for it arrives ahead of the reply.
     this.live.add(req.ptyId);
+    const replayExit=!!(req.attachOnly||req.attachIfReused||req.replayAfter);
+    if(replayExit)this.exitReplayFlights.set(req.ptyId,(this.exitReplayFlights.get(req.ptyId)??0)+1);
     try {
       await this.request({ id: 0, type: "spawn", req: rest }, (request) => {
         const consented=this.consentedBootSpawns.delete(req.ptyId);
@@ -223,10 +249,13 @@ export class PtyHostClient {
         }
         return { ...request, req: { ...rest, attachOnly: true } };
       });
+      // Replay may deliver an ended native record before its spawn reply. Do
+      // not report attachment complete while its observed exit ACK is in flight.
+      await this.exitAcks.get(req.ptyId);
     } catch (err) {
       this.live.delete(req.ptyId);
       throw err;
-    }
+    }finally{if(replayExit){const left=(this.exitReplayFlights.get(req.ptyId)??1)-1;if(left)this.exitReplayFlights.set(req.ptyId,left);else this.exitReplayFlights.delete(req.ptyId);}}
   }
 
   /** Whether spawning `req` now would start a process, not replay or attach to one. */
@@ -250,6 +279,7 @@ export class PtyHostClient {
 
   async kill(ptyId: string): Promise<void> {
     this.endedBootPanes.delete(ptyId);
+    this.observedExits.delete(ptyId);
     await this.request({ id: 0, type: "kill", ptyId });
     this.live.delete(ptyId);
     this.sessionWatches.get(ptyId)?.();
@@ -266,6 +296,7 @@ export class PtyHostClient {
    *  would have no app to serve and never exit. Requests already sent still land. */
   dispose(): void {
     this.disposed = true;
+    for(const timer of this.exitAckTimers.values())clearTimeout(timer);this.exitAckTimers.clear();
     this.stopSessionWatches();
   }
 
@@ -397,7 +428,10 @@ export class PtyHostClient {
       if(committed!==undefined){
         const result=handoverCommitResult(committed,state.consented);
         for(const id of result.stopped)this.consentedBootSpawns.add(id);
-        if(!reuse)for(const pane of result.ended)this.endedBootPanes.set(pane.id,pane.exitCode);
+        if(!reuse)for(const pane of result.ended){
+          this.endedBootPanes.set(pane.id,pane.exitCode);
+          if(pane.ownerExit){this.observedExits.set(pane.id,pane.ownerExit);this.observeExit(pane.id,pane.ownerExit);}
+        }
       }
       return state;
     }catch(error){
@@ -586,7 +620,7 @@ export class PtyHostClient {
     const id = this.nextId++;
     const withId = { ...request, id } as PtyHostRequest;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      this.pending.set(id, { resolve, reject,type:request.type,...("ptyId" in request?{ptyId:request.ptyId}:{}) });
       socket.write(`${JSON.stringify(withId)}\n`, (err) => {
         if (!err) return;
         this.pending.delete(id);
@@ -611,6 +645,7 @@ export class PtyHostClient {
       }), PTY_HOST_SOCKET_WAIT_TIMEOUT_MS);
       if (this.socket !== socket || socket.destroyed) throw new Error(PTY_HOST_NOT_CONNECTED);
       this.metadataSocket = socket;
+      for(const [id,receipt] of this.observedExits)this.observeExit(id,receipt);
     }).catch(error => { this.dropSocket(); throw error; }).finally(() => {
       this.connectPromise = null;
     });
@@ -775,6 +810,16 @@ export class PtyHostClient {
         continue;
       }
       if ("type" in message && message.type === "event") {
+        if(message.event.type==="exit"&&message.event.ownerExit){
+          const {generation,event}=message.event.ownerExit,id=message.event.ptyId;
+          if(!Number.isInteger(generation)||generation<1||generation>0xffffffff||!Number.isInteger(event)||event<1||event>0xffffffff)continue;
+          const previous=this.observedExits.get(id);
+          const receipt=previous?.generation===generation&&previous.event===event?previous:{generation,event};
+          if(receipt!==previous)this.exitAckRetries.delete(id);
+          this.observedExits.set(id,receipt);this.endedBootPanes.set(id,message.event.exitCode);
+          this.observeExit(id,receipt);
+          if(previous?.generation===generation&&previous.event===event&&!this.exitReplayFlights.has(id))continue;
+        }
         if (message.event.type === "disconnected") this.lostOwned.add(message.event.ptyId);
         if (PANE_ENDED_EVENTS.has(message.event.type)) {
           this.live.delete(message.event.ptyId);
@@ -823,6 +868,7 @@ export class PtyHostClient {
 
   private onClose(): void {
     this.socket = null;
+    for(const timer of this.exitAckTimers.values())clearTimeout(timer);this.exitAckTimers.clear();
     this.stopSessionWatches();
     this.screenStates.clear();
     // Not gated on dispose: that is the quit, whose closing windows keep a no-session in memory only.
@@ -832,7 +878,7 @@ export class PtyHostClient {
     // The host took its panes down without a word: stopped and restartable, as for a pane it has no session for.
     this.sendToSinks(lost.map((ptyId) => ({ type: this.ownerBacked ? "disconnected" : "no-session", ptyId })));
     for (const [, pending] of this.pending) {
-      pending.reject(new Error("PTY host disconnected"));
+      pending.reject(new Error(pending.type==="write"?"Terminal input acknowledgement was lost when the terminal host stopped. Some bytes may have reached the process. Aya did not resend it.":"PTY host disconnected"));
     }
     this.pending.clear();
   }

@@ -16,7 +16,7 @@ function start(mode,variant){
  const result=new Promise((resolve,reject)=>{child.once('message',resolve);child.once('exit',code=>{if(code)reject(Error(`fixture exit${code}: ${errors}`));});});
  return {child,result};
 }
-for(const variant of ['agent','shell','redraw-claude','redraw-codex','exit-gap','mismatch','wrong-owner','missing-owner','wrong-secret','owner-dies-between-probes','owner-dies-retained'])test(`crash-only core attaches the same owner and child: ${variant}`,{timeout:20000},async()=>{
+for(const variant of ['agent','shell','exit-ack','redraw-claude','redraw-codex','exit-gap','mismatch','wrong-owner','missing-owner','wrong-secret','owner-dies-between-probes','owner-dies-retained'])test(`crash-only core attaches the same owner and child: ${variant}`,{timeout:20000},async()=>{
  fs.mkdirSync(process.env.AYA_HOME,{recursive:true});let old,next;
  try{
   old=start('old',variant);const bootstrap=await old.result;fs.writeFileSync(path.join(process.env.AYA_HOME,'bootstrap.json'),JSON.stringify(bootstrap));
@@ -24,7 +24,7 @@ for(const variant of ['agent','shell','redraw-claude','redraw-codex','exit-gap',
   fs.writeFileSync(path.join(process.env.AYA_HOME,'release'),'go');await wait(()=>fs.existsSync(path.join(process.env.AYA_HOME,'produced')));
   if(variant==='exit-gap')await wait(()=>{try{process.kill(bootstrap.panes[0].pid,0);return false;}catch{return true;}});
   next=start('next',variant);const result=await next.result;assert.equal(result[variant==='mismatch'?'mismatch':['wrong-owner','missing-owner','wrong-secret','owner-dies-between-probes','owner-dies-retained'].includes(variant)?'refused':'recovered'],true);
-  if(['agent','shell','redraw-claude','redraw-codex','exit-gap'].includes(variant))assert.equal(result.exit,23);
+  if(['agent','shell','exit-ack','redraw-claude','redraw-codex','exit-gap'].includes(variant))assert.equal(result.exit,23);
  }finally{old?.child.kill('SIGKILL');next?.child.kill('SIGKILL');await cleanupNativeOwner(process.env.AYA_HOME);fs.rmSync(process.env.AYA_HOME,{recursive:true,force:true});}
 });
 test('recovery bootstrap is closed, bounded and rejects duplicate generations/IDs before attach',()=>{

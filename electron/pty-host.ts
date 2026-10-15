@@ -19,6 +19,7 @@ import {
 } from "./pty-host-protocol";
 import { createPtyDataCoalescer } from "./pty-event-coalescer";
 import {
+  acknowledgePtyExit,
   acknowledgePtyRestoration,
   activePtyCount,
   hasUnattachedRestoredPanes,
@@ -38,7 +39,7 @@ import {
   type PtyEventSink,
   ptyCoreHandoverInProgress,
 } from "./pty-core";
-import { getOwnerRuntime, currentOwnerRuntime, shutdownOwnerRuntime, setOwnerUnavailableListener, ownerHandoverCredential } from "./pty-owner-runtime";
+import { getOwnerRuntime, currentOwnerRuntime, shutdownOwnerRuntime, requireOwnerExitAcknowledgements, setOwnerUnavailableListener, ownerHandoverCredential } from "./pty-owner-runtime";
 import { HandoverWindow, handoverPeer } from "./pty-handover-window";
 import {readHandoverBootstrap,preflightCoreHandover,readCoreHandover} from "./pty-handover-bootstrap";
 import {acknowledgeCheckpoint} from "./pty-checkpoint-store";
@@ -182,6 +183,10 @@ interface Preparation {
 
 async function handle(request: PtyHostRequest, socket: net.Socket, preparations: Map<number, Preparation>): Promise<unknown> {
   clearIdleTimer();
+  if(request.type==="exit-observed"){
+    if(typeof request.ptyId!=="string"||request.ptyId.length>128||!Number.isInteger(request.generation)||request.generation<1||request.generation>0xffffffff||!Number.isInteger(request.event)||request.event<1||request.event>0xffffffff)throw Error("Invalid terminal exit acknowledgement");
+    return acknowledgePtyExit(request.ptyId,request.generation,request.event);
+  }
   if(request.type === "handover-display-applied"){
     if(typeof request.ptyId!=="string"||request.ptyId.length>128||typeof request.generation!=="string"||request.generation.length>128||(request.token!==undefined&&(typeof request.token!=="string"||request.token.length>128)))throw Error("Invalid applied display acknowledgement");
     return acknowledgePtyRestoration(request.ptyId,request.generation,request.token);
@@ -484,6 +489,7 @@ function start(): void {
   process.once("exit", closeSocket);
 }
 
+requireOwnerExitAcknowledgements();
 keepHostOnUncaught(ptyLog);
 setOwnerUnavailableListener(owner => {
   for (const id of owner.record.panes.map(p => p.id)) broadcast({ type: "disconnected", ptyId: id });

@@ -288,7 +288,7 @@ export type SpawnFailureReason =
 
 export type PtyEvent =
   | { type: "data"; ptyId: string; chunk: string; replay?: boolean; reset?: boolean; replayToken?: string }
-  | { type: "exit"; ptyId: string; exitCode: number }
+  | { type: "exit"; ptyId: string; exitCode: number; ownerExit?: {generation:number;event:number} }
   | {
       type: "spawn-failed";
       ptyId: string;
