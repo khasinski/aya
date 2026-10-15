@@ -113,3 +113,16 @@ test('a public Unicode registration replacing built-in version 6 refuses export'
   assert.throws(()=>a.checkpoint(),/Unicode provider replacement/);
  }finally{a.term.dispose();}
 });
+test('same-version Unicode replacement during an incomplete CSI is refused before exporting its old base',async()=>{
+ const a=new CompactVt({cols:80,rows:24,scrollback:0});
+ try{await a.write('\x1b[');a.term.unicode.register({version:'6',wcwidth:()=>2,charProperties:()=>4});a.term.unicode.activeVersion='6';assert.throws(()=>a.checkpoint(),/Unicode provider replacement/);}finally{a.term.dispose();}
+});
+for(const kind of ['marker','parser'])test(`unsupported ${kind} ownership is checked during a retained partial sequence and can recover`,async()=>{
+ const a=new CompactVt({cols:80,rows:24,scrollback:0});let b;
+ try{
+  await a.write('\x1b[');const registration=kind==='marker'?a.term.registerMarker(0):a.term.parser.registerCsiHandler({final:'m'},()=>false);
+  assert.throws(()=>a.checkpoint(),kind==='marker'?/External markers/:/Custom parser/);
+  registration.dispose();b=await CompactVt.import(a.checkpoint());
+  await a.write('0mX');await write(b.term,'0mX');assert.deepEqual(JSON.parse(capture(b.term)),JSON.parse(capture(a.term)));
+ }finally{a.term.dispose();b?.term.dispose();}
+});

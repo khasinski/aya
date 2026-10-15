@@ -7,8 +7,11 @@ const SUPPORTED_ENGINE = '17a90b650cf6b77cce2b98c4063884d43545e4ce177a54b76ccfc9
 const MAX_SNAPSHOT = 64 * 1024 * 1024, MAX_TAIL = 256 * 1024;
 const palettes = new WeakMap();
 const ownedUnicodeProviders = new WeakMap();
+const ownedHandlers = new WeakMap();
 function trackPalette(term, saved={}) {
  ownedUnicodeProviders.set(term,new Map(Object.entries(term._core.unicodeService._providers)));
+ const p=term._core._inputHandler._parser;
+ ownedHandlers.set(term,new Set([p._csiHandlers,p._escHandlers,p._oscParser._handlers,p._dcsParser._handlers].flatMap(handlers=>Object.values(handlers).flat())));
  const palette = new Map(Object.entries(saved));palettes.set(term,palette);
  term._core._inputHandler.onColor(events=>{for(const event of events){if(event.type===1)palette.set(String(event.index),copy(event.color));else if(event.type===2){if(event.index===undefined)palette.clear();else palette.delete(String(event.index));}}});
 }
@@ -34,11 +37,24 @@ function bufferState(buffer) {
   return {length:line.length,isWrapped:line.isWrapped,data:raw(line._data.subarray(0,line.length*3)),combined:copy(line._combined),extended:Object.fromEntries(Object.entries(line._extendedAttrs).filter(([,v])=>v).map(([k,v])=>[k,pick(v,['_ext','_urlId'])]))};
  }) };
 }
-function capture(term,metadata={}) {
+function assertOwnership(term) {
  if(ENGINE!==SUPPORTED_ENGINE)throw Error('Unsupported VT engine implementation');
  if(handlerShape(term)!==HANDLERS)throw Error('Custom parser/Unicode handlers are not eligible');
  const known=ownedUnicodeProviders.get(term);
  if(!known||Object.entries(term._core.unicodeService._providers).some(([key,provider])=>known.get(key)!==provider))throw Error('Custom Unicode provider replacement is not eligible');
+ const c=term._core,buffers=c._bufferService.buffers;
+ if(c._writeBuffer._pendingData||c._inputHandler._parseStack.paused)throw Error('VT writes have not drained');
+ const p=c._inputHandler._parser,handlers=ownedHandlers.get(term);
+ if([p._oscParser._active,p._dcsParser._active,p._parseStack.handlers].flat().some(handler=>!handlers?.has(handler)))throw Error('Unsupported active parser handler');
+ if(c.optionsService.rawOptions.logger || c.optionsService.rawOptions.linkHandler)throw Error('Custom handlers are not eligible');
+ const seen=new Set();
+ for(const entry of c._oscLinkService._dataByLinkId.values())for(const marker of entry.lines){
+  if(marker.isDisposed||(!buffers.normal.markers.includes(marker)&&!buffers.alt.markers.includes(marker)))throw Error('Unowned OSC link marker');seen.add(marker);
+ }
+ if([...buffers.normal.markers,...buffers.alt.markers].some(marker=>!seen.has(marker)))throw Error('External markers are not eligible');
+}
+function capture(term,metadata={}) {
+ assertOwnership(term);
  if(!ground(term))throw Error('VT parser is not in ground state');
  const c=term._core,h=c._inputHandler,p=h._parser,bs=c._bufferService,buffers=bs.buffers;
  if(c._writeBuffer._pendingData)throw Error('VT writes have not drained');
@@ -118,7 +134,7 @@ class CompactVt {
   else {this.tailBytes+=Buffer.byteLength(JSON.stringify(encoded));this.maxTailBytes=Math.max(this.maxTailBytes,this.tailBytes);if(this.tailBytes>MAX_TAIL){this.overflow=true;this.tail=[];}else if(!this.overflow)this.tail.push(encoded);}
  }
  resize(cols,rows){this.term.resize(cols,rows);if(ground(this.term)){this.base=capture(this.term,this.metadata);this.tail=[];this.tailBytes=0;this.overflow=false;}else{const operation={resize:[cols,rows]};this.tailBytes+=Buffer.byteLength(JSON.stringify(operation));this.maxTailBytes=Math.max(this.maxTailBytes,this.tailBytes);if(this.tailBytes>MAX_TAIL){this.overflow=true;this.tail=[];}else if(!this.overflow)this.tail.push(operation);}}
- checkpoint(){if(this.overflow)throw Error('VT tail temporarily ineligible');if(ground(this.term))this.base=capture(this.term,this.metadata);return {base:JSON.parse(this.base.toString()),tail:copy(this.tail),metadata:copy(this.metadata)};}
+ checkpoint(){assertOwnership(this.term);if(this.overflow)throw Error('VT tail temporarily ineligible');if(ground(this.term))this.base=capture(this.term,this.metadata);return {base:JSON.parse(this.base.toString()),tail:copy(this.tail),metadata:copy(this.metadata)};}
  static async import(checkpoint){const {term,metadata}=restore(Buffer.from(JSON.stringify(checkpoint.base)));for(const item of checkpoint.tail){if(item.resize)term.resize(...item.resize);else await write(term,item.text??Buffer.from(item.bytes,'base64'));}return {term,metadata:checkpoint.metadata??metadata};}
 }
 module.exports={CompactVt,capture,restore,write,ground,bufferState,ENGINE,MAX_TAIL};
