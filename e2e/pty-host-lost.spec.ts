@@ -112,12 +112,23 @@ test.describe("a pane mounted after its host disconnected", () => {
     await expect(window.locator('.aya-pane[data-terminal-id="deferred"]')).toHaveCount(0);
     // Suppress all attach/replay responses: the warning must come from stored
     // disconnected state on the first mount, rather than a new PTY event.
-    await app.evaluate(({ ipcMain }) => { ipcMain.removeHandler("pty:spawn"); ipcMain.handle("pty:spawn", () => {}); });
+    await app.evaluate(({ ipcMain }) => {
+      (globalThis as unknown as { deferredWrites: unknown[] }).deferredWrites = [];
+      ipcMain.removeHandler("pty:spawn"); ipcMain.handle("pty:spawn", () => {});
+      ipcMain.removeHandler("pty:write");
+      ipcMain.handle("pty:write", (_event, ...args) => { (globalThis as unknown as { deferredWrites: unknown[] }).deferredWrites.push(args); return false; });
+    });
     await row.click();
     const terminal = window.locator('.aya-pane[data-terminal-id="deferred"]').getByTestId("xterm-host");
     await expect(terminal).toContainText("terminal host disconnected");
     await expect(terminal).toContainText("Input is disabled while disconnected");
     await expect(row.locator(".aya-sidebar-statusdot")).toHaveClass(/--error/);
+    await terminal.click(); await window.keyboard.type("not delivered"); await window.keyboard.press("Enter");
+    await terminal.locator(".xterm-helper-textarea").evaluate(textarea => {
+      const transfer = new DataTransfer(); transfer.setData("text/plain", "late pasted input\n");
+      textarea.dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }));
+    });
+    expect(await app.evaluate(() => (globalThis as unknown as { deferredWrites: unknown[] }).deferredWrites)).toEqual([]);
     expect(alive(before.pid)).toBe(true); for (const pane of before.panes) expect(alive(pane.pid)).toBe(true);
   });
 });
