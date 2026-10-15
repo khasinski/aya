@@ -5,6 +5,8 @@ export const MAX_VT_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 export const MAX_VT_TAIL_BYTES = 256 * 1024;
 export const MAX_CHECKPOINT_BYTES = 128 * 1024 * 1024;
 export const MAX_CHECKPOINT_PANES = 25;
+const MAX_JSON_NODES = 2_000_000;
+const MAX_JSON_DEPTH = 24;
 
 type Dict = Record<string, unknown>;
 type Check = (value: unknown, path: string) => void;
@@ -67,7 +69,7 @@ export function validateCheckpointJson(value: unknown, maxBytes = MAX_VT_SNAPSHO
   let nodes = 0, characters = 0;
   const seen = new Set<object>();
   const visit = (v: unknown, depth: number): void => {
-    if (++nodes > 2_000_000 || depth > 24) fail("JSON complexity");
+    if (++nodes > MAX_JSON_NODES || depth > MAX_JSON_DEPTH) fail("JSON complexity");
     if (v === null || typeof v === "boolean") return;
     if (typeof v === "number") { finite(v, "JSON number"); return; }
     if (typeof v === "string") { characters += Buffer.byteLength(v); if (characters > maxBytes) fail("JSON strings"); return; }
@@ -85,9 +87,43 @@ export function validateCheckpointJson(value: unknown, maxBytes = MAX_VT_SNAPSHO
   if (Buffer.byteLength(JSON.stringify(value)) > maxBytes) fail("JSON size");
 }
 
+/** Scan raw bytes with constant auxiliary space before JSON.parse can allocate
+ * arrays/objects. This is a structural budget check, not a replacement JSON
+ * parser: the built-in parser still checks grammar after this accepts. Keys
+ * count against the token budget too. UTF-8 decoding happens only afterwards. */
+export function preflightCheckpointJson(input: Buffer, maxBytes = MAX_VT_SNAPSHOT_BYTES): void {
+  if (input.length > maxBytes) fail("snapshot size");
+  let depth = 0, nodes = 0;
+  for (let n = 0; n < input.length; n++) {
+    const c = input[n];
+    if (c === 32 || c === 9 || c === 10 || c === 13 || c === 44 || c === 58) continue;
+    if (c === 93 || c === 125) { if (--depth < 0) fail("JSON structure"); continue; }
+    if (++nodes > MAX_JSON_NODES) fail("JSON complexity before parse");
+    if (c === 91 || c === 123) { if (++depth > MAX_JSON_DEPTH) fail("JSON depth before parse"); continue; }
+    if (c === 34) {
+      let closed = false;
+      while (++n < input.length) {
+        if (input[n] === 92) { n++; continue; }
+        if (input[n] === 34) { closed = true; break; }
+      }
+      if (!closed) fail("JSON string");
+      continue;
+    }
+    if (c === 45 || (c >= 48 && c <= 57) || c === 116 || c === 102 || c === 110) {
+      while (n + 1 < input.length && ![32,9,10,13,44,58,93,125,91,123,34].includes(input[n + 1])) n++;
+      continue;
+    }
+    fail("JSON token");
+  }
+  if (depth !== 0) fail("JSON structure");
+}
+export function parseCheckpointJson(input: Buffer, maxBytes = MAX_VT_SNAPSHOT_BYTES): unknown {
+  preflightCheckpointJson(input, maxBytes);
+  const text = new TextDecoder("utf-8", {fatal: true}).decode(input);
+  return JSON.parse(text);
+}
 export function parseVtSnapshot(input: Buffer, engine: string, defaultOptions: Dict): Dict {
-  if (input.length > MAX_VT_SNAPSHOT_BYTES) fail("snapshot size");
-  const dto: unknown = JSON.parse(input.toString("utf8"));
+  const dto = parseCheckpointJson(input);
   validateVtSnapshot(dto, engine, defaultOptions);
   return dto as Dict;
 }

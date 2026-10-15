@@ -6,7 +6,7 @@ import { mkdir, open, lstat, rmdir, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
-import { MAX_CHECKPOINT_BYTES, MAX_CHECKPOINT_PANES, MAX_VT_SNAPSHOT_BYTES, validateCheckpointJson } from "./vt-checkpoint-schema";
+import { MAX_CHECKPOINT_BYTES, MAX_CHECKPOINT_PANES, MAX_VT_SNAPSHOT_BYTES, validateCheckpointJson, parseCheckpointJson } from "./vt-checkpoint-schema";
 
 const MANIFEST_LIMIT = 64 * 1024;
 const CHUNK = 64 * 1024;
@@ -30,7 +30,7 @@ async function privateDirectory(path: string, create = false): Promise<void> {
   if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.() || (stat.mode & 0o777) !== 0o700) refused("directory permissions");
 }
 async function privateFile(path: string, maxBytes: number): Promise<{handle: FileHandle; size: number}> {
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const stat = await handle.stat();
     if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o777) !== 0o600 || stat.nlink !== 1 || stat.size < 1 || stat.size > maxBytes) refused("file type, permissions or length");
@@ -96,7 +96,7 @@ async function manifestFor(root: string, receipt: CheckpointReceipt, now: number
   receiptOk(receipt);
   await privateDirectory(root); await privateDirectory(join(root, receipt.nonce));
   const data = await readPrivate(join(root, receipt.nonce, "manifest.json"), MANIFEST_LIMIT, receipt.bytes, receipt.sha256);
-  const value = JSON.parse(data.toString("utf8")); validateCheckpointJson(value, MANIFEST_LIMIT);
+  const value = parseCheckpointJson(data, MANIFEST_LIMIT) as Manifest; validateCheckpointJson(value, MANIFEST_LIMIT);
   if (!value || !keys(value, ["format", "nonce", "createdAt", "parts"]) || value.format !== 1 || value.nonce !== receipt.nonce ||
       !Number.isSafeInteger(value.createdAt) || value.createdAt > now || now - value.createdAt > TTL || !Array.isArray(value.parts) || value.parts.length > MAX_CHECKPOINT_PANES) refused("manifest identity or expiry");
   const ids = new Set<string>(); let total = 0;

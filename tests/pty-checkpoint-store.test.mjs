@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
+import {execFileSync} from 'node:child_process';
 import path from 'node:path';
+import {mock} from 'node:test';
 const require=createRequire(import.meta.url);
 const {writeCheckpoint,readCheckpoint,acknowledgeCheckpoint}=require('../dist-electron/pty-checkpoint-store.js');
 const hash=data=>createHash('sha256').update(data).digest('hex');
@@ -67,4 +69,42 @@ test('unsafe existing root is refused instead of silently changing permissions',
  await assert.rejects(writeCheckpoint(root,[part()]),/directory permissions/);
  await fs.rmdir(root);await fs.mkdir(path.join(parent,'actual'),{mode:0o700});await fs.symlink('actual',root);
  await assert.rejects(writeCheckpoint(root,[part()]),/directory permissions/);
+}));
+for(const name of ['0.json','manifest.json'])test(`FIFO ${name} is refused promptly without consuming escrow`,()=>fixture(async(root)=>{
+ const receipt=await writeCheckpoint(root,[part()]),dir=path.join(root,receipt.nonce),file=path.join(dir,name);
+ await fs.unlink(file);execFileSync('/usr/bin/mkfifo',[file]);
+ // Run in a disposable process: a regressed blocking open must not strand a
+ // libuv worker and keep the entire test runner alive after a JS timeout.
+ const script=`const {readCheckpoint}=require('./dist-electron/pty-checkpoint-store.js');(async()=>{try{for await(const p of readCheckpoint(process.argv[1],JSON.parse(process.argv[2]))){}process.exitCode=2;}catch(e){if(!/file type/.test(e.message)){console.error(e.message);process.exitCode=3;}}})();`;
+ execFileSync(process.execPath,['-e',script,root,JSON.stringify(receipt)],{timeout:2000,env:{...process.env,ELECTRON_RUN_AS_NODE:'1'}});
+ assert.ok(await fs.lstat(file));assert.ok(await fs.lstat(path.join(dir,'manifest.json')));
+}));
+test('aggregate manifest limit refuses before opening or yielding any pane',()=>fixture(async(root)=>{
+ const receipt=await writeCheckpoint(root,[part()],1000),dir=path.join(root,receipt.nonce),file=path.join(dir,'manifest.json');
+ const manifest=JSON.parse(await fs.readFile(file,'utf8'));
+ manifest.parts=Array.from({length:3},(_,n)=>({...manifest.parts[0],id:String(n),bytes:64*1024*1024}));
+ const data=Buffer.from(JSON.stringify(manifest));await fs.writeFile(file,data);await fs.unlink(path.join(dir,'0.json'));
+ // Without the aggregate guard this fails with ENOENT at the first part,
+ // which must not satisfy this exact aggregate-refusal assertion.
+ let yielded=0;
+ await assert.rejects(async()=>{for await(const p of readCheckpoint(root,{...receipt,bytes:data.length,sha256:hash(data)},1001)){void p;yielded++;}},/aggregate bytes/);
+ assert.equal(yielded,0);
+}));
+test('writer admits exactly 128 MiB and rejects a third 64 MiB part before writing it',()=>fixture(async(root)=>{
+ const promises=require('node:fs/promises'),original=promises.open;let logicalWritten=0,partsOpened=0;
+ // A tiny Buffer with an advertised logical length and a fake part-file sink
+ // exercise the production aggregate accounting without 192 MiB of disk I/O.
+ // Hashing still reads the actual one-byte backing store; no reader uses it.
+ const logical=Buffer.alloc(1);Object.defineProperty(logical,'length',{value:64*1024*1024});
+ const spy=mock.method(promises,'open',async(file,...args)=>{
+  if(/\/\d+\.json$/.test(file)){partsOpened++;return {write:async(_data,_offset,length)=>{logicalWritten+=length;return {bytesWritten:length};},sync:async()=>{},close:async()=>{}};}
+  return original(file,...args);
+ });
+ try{
+  const parts=Array.from({length:3},(_,n)=>({id:String(n),generation:'g',data:logical}));
+  await writeCheckpoint(root,parts.slice(0,2));assert.equal(logicalWritten,128*1024*1024);assert.equal(partsOpened,2);
+  logicalWritten=0;partsOpened=0;
+  await assert.rejects(writeCheckpoint(root,parts),/aggregate bytes/);
+  assert.equal(logicalWritten,128*1024*1024);assert.equal(partsOpened,2);
+ }finally{spy.mock.restore();}
 }));

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import {createRequire} from 'node:module';
 import proof from '../scripts/spikes/vt-checkpoint.cjs';
 const require=createRequire(import.meta.url);
-const {validateVtSnapshot,parseVtSnapshot,validateVtTail,validateCheckpointJson,MAX_VT_SNAPSHOT_BYTES,MAX_VT_TAIL_BYTES}=require('../dist-electron/vt-checkpoint-schema.js');
+const {validateVtSnapshot,parseVtSnapshot,validateVtTail,validateCheckpointJson,parseCheckpointJson,MAX_VT_SNAPSHOT_BYTES,MAX_VT_TAIL_BYTES}=require('../dist-electron/vt-checkpoint-schema.js');
 const blank=new proof.CompactVt({cols:80,rows:24,scrollback:0});
 const base=blank.checkpoint().base,defaults=structuredClone(base.options),engine=base.engine;blank.term.dispose();
 const valid=d=>validateVtSnapshot(d,engine,defaults);
@@ -55,4 +55,35 @@ test('generic envelope rejects deep trees, aliases, cycles and unsafe values',()
 test('tail refuses oversized, mixed, malformed and unbounded operations',()=>{
  validateVtTail([{text:'\x1b['},{resize:[80,24]},{bytes:'MG1Y'}]);
  for(const bad of [[{text:'a',resize:[80,24]}],[{text:'a'.repeat(MAX_VT_TAIL_BYTES)}],[{bytes:'===='}],[{resize:[0,24]}],[{resize:[80,24,1]}],[{unknown:1}]])assert.throws(()=>validateVtTail(bad),/Invalid VT checkpoint/);
+});
+test('raw complexity and depth are refused before JSON.parse materializes a payload',()=>{
+ const original=JSON.parse;let calls=0;
+ const complex=Buffer.from('{"metadata":['+'0,'.repeat(2_100_000)+'0]}');
+ const deep=Buffer.from('['.repeat(25)+'0'+']'.repeat(25));
+ try{
+  JSON.parse=(...args)=>{calls++;return original(...args);};
+  assert.throws(()=>parseCheckpointJson(complex),/complexity before parse/);
+  assert.throws(()=>parseCheckpointJson(deep),/depth before parse/);
+  assert.equal(calls,0);
+ }finally{JSON.parse=original;}
+ for(const value of [{text:'escaped \\" { [ \\ and 界',n:[null,false,true,-1,1.2e3]},[],{}])assert.deepEqual(parseCheckpointJson(Buffer.from(JSON.stringify(value))),value);
+ assert.throws(()=>parseCheckpointJson(Buffer.from([123,34,97,34,58,34,255,34,125])),/encoded data|encoding/i);
+});
+test('a valid-size DTO over three million retained cells refuses before constructing a terminal',()=>{
+ const d=structuredClone(base);d.cols=1000;d.rows=1000;Object.assign(d.options,{cols:1000,rows:1000,scrollback:1001});
+ const data=Buffer.alloc(12000);for(let n=0;n<1000;n++)data.writeUInt32LE(0x400000,n*12);
+ const line=()=>({length:1000,isWrapped:false,data:data.toString('base64'),combined:{},extended:{}});
+ for(const [name,count] of [['normal',2001],['alternate',1000]]){
+  const b=d[name];Object.assign(b.state,{_cols:1000,_rows:1000,_hasScrollback:name==='normal',scrollTop:0,scrollBottom:999,tabs:{0:true},ybase:name==='normal'?1001:0,ydisp:name==='normal'?1001:0});
+  b.lines=Array.from({length:count},line);
+ }
+ const bytes=Buffer.from(JSON.stringify(d));assert.ok(bytes.length<MAX_VT_SNAPSHOT_BYTES);
+ const headless=require('@xterm/headless'),original=headless.Terminal;let constructions=0;
+ // The binding's baseline probe was created before this spy. The payload must
+ // be refused before a fresh terminal (and its line storage) is allocated.
+ const binding=require('../dist-electron/vt-checkpoint-binding.js');
+ try{
+  headless.Terminal=class {constructor(){constructions++;throw Error('terminal allocation started');}};
+  assert.throws(()=>binding.restore(bytes),/retained cell allocation/);assert.equal(constructions,0);
+ }finally{headless.Terminal=original;}
 });
