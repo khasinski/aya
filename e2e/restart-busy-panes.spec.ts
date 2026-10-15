@@ -107,3 +107,19 @@ test("a host restart asks about an agent mid-turn and a shell running a command"
   await expect.poll(sleeping, { timeout: 15_000 }).toEqual([]);
   await expect.poll(agents, { timeout: 15_000 }).not.toContain(agent);
 });
+
+test("a restart whose question cannot be asked does not go ahead", async ({ app, window }) => {
+  await waitForShellReady(window);
+  const shell = visiblePane(window, "shell 1").getByTestId("xterm-host");
+  await shell.click();
+  await window.keyboard.insertText(COMMAND);
+  await window.keyboard.press("Enter");
+  await expect.poll(sleeping, { timeout: 10_000 }).toHaveLength(1);
+  const [sleep] = sleeping();
+  // The question fails in main (no handler): before, the restart went ahead without asking and ended the command.
+  await app.evaluate(({ ipcMain }) => ipcMain.removeHandler("pty:confirm-restart"));
+  await window.locator('.aya-sidebar-row[data-terminal-name="shell 1"]').click({ button: "right" });
+  await window.locator(".aya-context-menu-item", { hasText: "Restart terminal" }).click();
+  await window.waitForTimeout(2_000);
+  expect(sleeping()).toEqual([sleep]);
+});

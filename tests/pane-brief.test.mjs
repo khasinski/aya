@@ -248,7 +248,8 @@ test("restart offered: not when the preset, edited since, can no longer carry a 
     preset.command = "claude && echo done";
     const project = { slug: "g", tabs: [{ id: "t1", presetId: "p", name: "t" }] };
     const report = await roleNoteReport(project, "ux-review", { implementer: "t1" }, deps);
-    assert.match(report.roleNotes.implementer, /^started with the role note of tester: /);
+    // It says why, rather than "restart it to give it this one", which a restart would not do.
+    assert.match(report.roleNotes.implementer, /^cannot tell this CLI its role: /);
     assert.deepEqual(report.restartable, []);
   }));
 
