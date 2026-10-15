@@ -20,6 +20,8 @@ import {
 import { createPtyDataCoalescer } from "./pty-event-coalescer";
 import {
   activePtyCount,
+  hasUnattachedRestoredPanes,
+  restoredPtyLaunches,
   restorePtyCorePane,
   getBufferedOutput,
   getPtyLaunch,
@@ -187,7 +189,7 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
     broadcastCoalesced.flush();
     return result;
   }
-  if (request.type === "handover-publish") return hostHandover.publish(handoverPeer(socket),request.display);
+  if (request.type === "handover-publish") return hostHandover.publish(handoverPeer(socket),request.display,request.consented);
   if (request.type === "handover-announce") {
     const owner = currentOwnerRuntime(), identity = ownerProcessStartIdentity(process.pid);
     if (!identity || !owner?.client?.isConnected() || owner.incompatible || owner.disconnected.size || owner.record.uncertain?.length) throw new Error("This host cannot announce a seamless handover");
@@ -198,7 +200,9 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
   }
   if (request.type === "handover-cancel") {
     const peer = handoverPeer(socket);
-    await hostHandover.abort(peer); handoverWindow.cancel(peer); return null;
+    await hostHandover.abort(peer);
+    try{handoverWindow.acknowledgeReuse(peer);}catch{handoverWindow.cancel(peer);}
+    return null;
   }
   if (request.type === "handover-claim") {
     const peer = handoverPeer(socket);
@@ -347,14 +351,14 @@ function computeHostIdentity(): HostIdentity {
 const HOST_IDENTITY: HostIdentity = computeHostIdentity();
 
 function scheduleIdleShutdown(): void {
-  if (hostHandover.active) return;
+  if (hostHandover.active || hasUnattachedRestoredPanes()) return;
   // An unknown/retained owner is not an empty host. Idle cleanup cannot
   // authorize the destructive fallback when a spawn acknowledgement was lost.
   if (currentOwnerRuntime()?.incompatible || currentOwnerRuntime()?.disconnected.size) return;
   if (clients.size > 0 || activePtyCount() > 0 || idleTimer) return;
   idleTimer = setTimeout(() => {
     idleTimer = null;
-    if (!hostHandover.active && clients.size === 0 && activePtyCount() === 0 && !currentOwnerRuntime()?.incompatible && !currentOwnerRuntime()?.disconnected.size) {
+    if (!hostHandover.active && !hasUnattachedRestoredPanes() && clients.size === 0 && activePtyCount() === 0 && !currentOwnerRuntime()?.incompatible && !currentOwnerRuntime()?.disconnected.size) {
       ptyLog.append("host-idle-exit");
       beginShutdown("idle");
     }
@@ -430,6 +434,12 @@ function start(): void {
         })();
       }
     });
+    // Main owns session watches even for a view that will mount much later.
+    // These are bounded per-pane launch records, never aggregate VT payloads.
+    for(const pane of restoredPtyLaunches()){
+      sendLine(socket,{type:"spawned",...pane,restored:true,ownerBacked:true,hostPid:process.pid});
+      void vtSnapshot(pane.req.ptyId).then(snapshot=>{if(snapshot)sendLine(socket,{type:"snapshot",ptyId:pane.req.ptyId,snapshot});});
+    }
   });
 
   listenOwnerOnly(server, PTY_HOST_SOCKET_PATH, () => {

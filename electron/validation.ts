@@ -107,7 +107,14 @@ export function validateSpawnRequest(value: unknown): SpawnRequest {
       ? { attachIfReused: true }
       : {}),
     ...(optionalFlag(value.teamLaunch, "pty:spawn.teamLaunch") ? { teamLaunch: true } : {}),
+    ...(value.replayAfter !== undefined ? {replayAfter:validateReplayBoundary(value.replayAfter)} : {}),
   };
+}
+
+function validateReplayBoundary(value:unknown):{generation:string;offset:number;token?:string} {
+  if(!isRecord(value)||Object.keys(value).some(k=>!["generation","offset","token"].includes(k))||typeof value.generation!=="string"||!value.generation.length||value.generation.length>128||!Number.isSafeInteger(value.offset)||(value.offset as number)<0)fail("pty:spawn.replayAfter","generation and nonnegative offset");
+  if(value.token!==undefined&&(typeof value.token!=="string"||!value.token.length||value.token.length>128))fail("pty:spawn.replayAfter.token","bounded token");
+  return {generation:value.generation as string,offset:value.offset as number,...(value.token!==undefined?{token:value.token as string}:{})};
 }
 
 /** Optional boolean field: absent -> undefined, boolean -> itself, anything

@@ -406,7 +406,7 @@ export interface SpawnRequest {
    *  `no-session` event instead of silently spawning a brand-new process. */
   attachOnly?: boolean;
   /** Restore a captured display, then replay only output after this boundary. */
-  replayAfter?: { generation: string; offset: number };
+  replayAfter?: { generation: string; offset: number; token?: string };
   /** Attach-only IF the PTY host predates this app session (the main-process
    *  client found it running instead of spawning it - only the client can
    *  tell, so it resolves this into attachOnly). Set on the first mount of a
@@ -421,7 +421,7 @@ export interface SpawnRequest {
 }
 
 export type PtyEvent =
-  | { type: "data"; ptyId: string; chunk: string; replay?: boolean; reset?: boolean }
+  | { type: "data"; ptyId: string; chunk: string; replay?: boolean; reset?: boolean; replayToken?: string }
   | { type: "exit"; ptyId: string; exitCode: number }
   | {
       type: "spawn-failed";
@@ -730,12 +730,18 @@ export interface WebConfigureRequest {
   password?: string;
 }
 
+export interface HandoverCaptureRequest {requestId:string;ptyId:string;maxBytes:number}
+export interface HandoverDisplay {json:string|null;generation:string;offset:number;notice:string|null}
+
 export interface AyaApi {
   /** True under `npm run dev` (AYA_DEV=1). */
   isDev: boolean;
   platform: NodeJS.Platform;
 
   ptySpawn(req: SpawnRequest): Promise<void>;
+  onHandoverCapture(handler:(request:HandoverCaptureRequest)=>Promise<string|null>):()=>void;
+  handoverDisplay(ptyId:string):Promise<HandoverDisplay|null>;
+  acknowledgeHandoverDisplay(ptyId:string,generation:string):Promise<void>;
   ptyWrite(ptyId: string, data: string): Promise<boolean>;
   ptyResize(ptyId: string, cols: number, rows: number): Promise<void>;
   ptyKill(ptyId: string): Promise<void>;

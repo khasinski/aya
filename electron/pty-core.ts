@@ -201,7 +201,7 @@ export async function freezePtyCore(timeoutMs = 1000): Promise<CoreHandoverPrefl
         frozenPanes.set(id, checked);
       } catch (error) {
         child.resumeAfterHandoverAbort();
-        if (handoverGated && epoch === handoverEpoch) ineligiblePanes.set(id, error instanceof Error ? error.message : "The pane cannot move at this moment");
+        if (handoverGated && epoch === handoverEpoch && ptys.get(id) === child) ineligiblePanes.set(id, error instanceof Error ? error.message : "The pane cannot move at this moment");
       }
     }));
     if (!handoverGated || epoch !== handoverEpoch) throw new Error("Terminal handover was cancelled");
@@ -235,6 +235,16 @@ export function excludeFrozenPtyPane(id: string, reason: string): void {
 export async function stopIneligiblePtyPanes(consented: string[]): Promise<void> {
   if (!handoverGated || consented.length !== ineligiblePanes.size || new Set(consented).size !== consented.length || consented.some(id => !ineligiblePanes.has(id))) throw new Error("Missing consent for terminal fallback");
   for (const id of consented) { await killPtyInternal(id); ineligiblePanes.delete(id); }
+}
+/** An unchanged host still serves newly mounted renderers from B, and must
+ * retain a child's exit if it ends before the first post-update attach. */
+export function pruneEndedIneligiblePtyPanes():Set<string> {
+  for(const id of ineligiblePanes.keys())if(!ptys.has(id)&&!currentOwnerRuntime()?.disconnected.has(id))ineligiblePanes.delete(id);
+  return new Set(ineligiblePanes.keys());
+}
+export function reusePtyCoreAfterHandover():void {
+  for(const [id,pane] of frozenPanes)restoredPanes.set(id,{generation:(pane.vt.metadata as {generation:string}).generation,attached:false});
+  abortPtyCoreHandover();
 }
 export async function detachPtyCoreForHandover(commit: () => void = () => {}): Promise<void> {
   if (!handoverGated || ineligiblePanes.size || ptys.size !== frozenPanes.size || [...ptys.keys()].some(id => !frozenPanes.has(id))) throw new Error("PTY handover is not ready");
@@ -334,7 +344,7 @@ function replayOutput(req: SpawnRequest, sink: PtyEventSink): void {
     if (reset) ptyLog.append("handover-history-from-replay", {ptyId:req.ptyId,reason:"checkpoint boundary unavailable"});
   }
   // An empty replay is still the fence after restoring a captured display.
-  if (chunk || req.replayAfter) sink.sendPtyEvent({type:"data",ptyId:req.ptyId,chunk,replay:true,...(reset !== undefined ? {reset} : {})});
+  if (chunk || req.replayAfter) sink.sendPtyEvent({type:"data",ptyId:req.ptyId,chunk,replay:true,...(req.replayAfter?.token?{replayToken:req.replayAfter.token}:{}),...(reset !== undefined ? {reset} : {})});
 }
 
 /** Strip ANSI escape sequences and control chars so search snippets are
@@ -1026,6 +1036,15 @@ export function shutdownPtyChildren(
   pendingKills.clear();
   shutdownChildren(children, onDone, schedule);
 }
+
+export function restoredPtyLaunches():Array<{req:SpawnRequest;pid:number;cwd:string;spawnedAt:number}> {
+  return [...restoredPanes.keys()].flatMap(id=>{
+    const child=ptys.get(id),req=spawnRequests.get(id);
+    return child&&req?[{req,pid:child.pid,cwd:launches.get(id)?.cwd??req.cwd,spawnedAt:spawnTimes.get(id)??Date.now()}]:[];
+  });
+}
+
+export function hasUnattachedRestoredPanes():boolean {return [...restoredPanes.values()].some(p=>!p.attached);}
 
 export function activePtyCount(): number {
   return ptys.size + [...(currentOwnerRuntime()?.disconnected.values() ?? [])].filter(pane => !pane.exited && !ptys.has(pane.id)).length;

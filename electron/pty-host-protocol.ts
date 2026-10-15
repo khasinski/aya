@@ -33,7 +33,7 @@ export type PtyHostRequest =
   | { id: number; type: "prepared"; prepareId: number; data: PreparedSpawn }
   | { id: number; type: "handover-announce"; nonce: string; deadline: number }
   | { id: number; type: "handover-prepare"; deadline: number }
-  | { id: number; type: "handover-publish"; display: CheckpointReceipt | null }
+  | { id: number; type: "handover-publish"; display: CheckpointReceipt | null; consented?: string[] }
   | { id: number; type: "handover-cancel" }
   | { id: number; type: "handover-claim"; nonce: string; reuse?: boolean }
   | { id: number; type: "handover-detach"; consented: string[] }
@@ -48,6 +48,7 @@ export type PtyHostResponse = (
 export interface PtyOwnerStatus {
   pid: number;
   incompatible: boolean;
+  hash?: string;
   disconnected: string[];
   inventory?: Array<{ id: string; pid: number; startIdentity?: string | null }>;
   uncertain?: string[];
@@ -58,7 +59,7 @@ export type PtyHostEventMessage = { type: "event"; event: PtyEvent };
 
 export type PtyHostPrepareMessage = { type: "prepare"; prepareId: number; req: SpawnRequest; cwd: string };
 export type PtyHostSnapshotMessage = { type: "snapshot"; ptyId: string; snapshot: VtSnapshot; replay?: true };
-export type PtyHostSpawnedMessage = { type: "spawned"; req: SpawnRequest; pid: number; cwd: string; spawnedAt: number };
+export type PtyHostSpawnedMessage = { type: "spawned"; req: SpawnRequest; pid: number; cwd: string; spawnedAt: number; restored?:true;ownerBacked?:true;hostPid?:number };
 export type PtyHostMessage = PtyHostResponse | PtyHostEventMessage | PtyHostPrepareMessage | PtyHostSnapshotMessage | PtyHostSpawnedMessage | { type: "cancel-prepare"; prepareId: number };
 
 export function isPtyHostRequest(value: unknown): value is PtyHostRequest {

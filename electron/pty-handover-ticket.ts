@@ -45,3 +45,20 @@ export function readHandoverTicket(file: string, now = Date.now()): HandoverTick
     return ticket;
   } finally { fs.closeSync(fd); }
 }
+
+/** Cancel only our own nonce without consuming a different announcement. */
+export function cancelHandoverTicket(file:string,nonce:string):void {
+  let fd:number;
+  try{fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return;throw error;}
+  try{
+    const stat=fs.fstatSync(fd);
+    if(!stat.isFile()||stat.uid!==process.getuid?.()||(stat.mode&0o777)!==0o600||stat.nlink!==1||stat.size<1||stat.size>MAX_TICKET_BYTES)throw new Error("Unsafe planned handover ticket");
+    const data=Buffer.alloc(stat.size);let offset=0;
+    while(offset<data.length){const n=fs.readSync(fd,data,offset,data.length-offset,offset);if(!n)throw new Error("Truncated planned handover ticket");offset+=n;}
+    const value=parseCheckpointJson(data,MAX_TICKET_BYTES) as {nonce?:unknown};
+    if(!value||value.nonce!==nonce)return;
+    const current=fs.lstatSync(file),after=fs.fstatSync(fd);
+    if(current.ino!==stat.ino||current.dev!==stat.dev||after.size!==stat.size)throw new Error("Planned handover ticket changed");
+    fs.unlinkSync(file);
+  }finally{fs.closeSync(fd);}
+}

@@ -164,6 +164,9 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
   const noopSubscription = () => () => {};
 
   const api: AyaApi = {
+    onHandoverCapture:()=>()=>{},
+    handoverDisplay:async()=>null,
+    acknowledgeHandoverDisplay:async()=>{},
     isDev: false,
     platform,
 

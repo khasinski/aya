@@ -44,6 +44,8 @@ export interface UpdatesDeps {
   };
   relaunchDeps: RelaunchDeps;
   askRestart: (yes: string, text: string) => Promise<boolean>;
+  preparePlannedUpdate?:()=>Promise<boolean>;
+  abortPlannedUpdate?:()=>Promise<void>;
 }
 
 export function createUpdates(deps: UpdatesDeps) {
@@ -236,6 +238,7 @@ export function createUpdates(deps: UpdatesDeps) {
       // marker is deliberately kept: `error` also fires for unrelated checks, and
       // deleting it there would cost the whole #78 detector.
       updateLatch.installing = false;
+      void deps.abortPlannedUpdate?.().catch(()=>{});
       setUpdateStatus({
         phase: "error",
         message: error instanceof Error ? error.message : String(error),
@@ -270,6 +273,8 @@ export function createUpdates(deps: UpdatesDeps) {
   const updates = updateInstaller({
     status: getUpdateStatus,
     relaunch: relaunchDeps,
+    preparePlannedUpdate:deps.preparePlannedUpdate,
+    abortPlannedUpdate:deps.abortPlannedUpdate,
     ask: (text) => askRestart("Restart to update", text),
     latch: updateLatch,
     mark: markPendingUpdate,
@@ -307,6 +312,8 @@ export async function ordinaryQuitInstalls(deps: RelaunchDeps, downloaded: boole
 }
 
 export interface UpdateInstallDeps {
+  preparePlannedUpdate?:()=>Promise<boolean>;
+  abortPlannedUpdate?:()=>Promise<void>;
   status: () => { phase: string; downloadedVersion?: string | null };
   relaunch: RelaunchDeps;
   /** The native question before Restart to update stops work in panes. */
@@ -332,7 +339,8 @@ export function updateInstaller(deps: UpdateInstallDeps) {
     if (status.phase !== "downloaded") throw new Error("No downloaded update is ready to install.");
     // One ShipIt at a time (#78): overlapping installs are a suspected cause of the silent rollback.
     if (deps.latch.installing) return;
-    if (!(await confirmRestart(deps.relaunch, "Restarting to update", deps.ask))) return;
+    if (!(await (deps.preparePlannedUpdate?deps.preparePlannedUpdate():confirmRestart(deps.relaunch, "Restarting to update", deps.ask)))) return;
+    if(deps.status().phase!=="downloaded"){await deps.abortPlannedUpdate?.();return;}
     if (deps.latch.installing) return;
     deps.latch.installing = true;
     try {
@@ -342,6 +350,7 @@ export function updateInstaller(deps: UpdateInstallDeps) {
     } catch (err) {
       // A synchronous handoff failure is observable; the async ShipIt one is caught on the next launch.
       deps.latch.installing = false;
+      await deps.abortPlannedUpdate?.().catch(()=>{});
       await deps.clearMark();
       deps.failed(`Couldn't start the update: ${err instanceof Error ? err.message : String(err)}`);
     }

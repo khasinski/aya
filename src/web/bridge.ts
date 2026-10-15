@@ -59,6 +59,9 @@ export function createWebAya(transport: WebTransport): AyaApi {
   const noopSubscription = () => () => {};
 
   const api: AyaApi = {
+    onHandoverCapture:()=>()=>{},
+    handoverDisplay:async()=>null,
+    acknowledgeHandoverDisplay:async()=>{},
     isDev: transport.hello.isDev,
     platform: transport.hello.platform as NodeJS.Platform,
 

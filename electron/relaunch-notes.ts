@@ -186,6 +186,21 @@ export async function confirmRestart(deps: RelaunchDeps, action: string, ask: (t
   return true;
 }
 
+/** Planned migration must also ask about an idle process that cannot move.
+ * Existing detailed work text and quiet PID notes stay the #219 contract. */
+export async function confirmStoppingProcesses(deps:RelaunchDeps,action:string,ask:(text:string)=>Promise<boolean>,ids?:readonly string[]):Promise<boolean> {
+  const panes=await deps.panes(ids),known=await restartWorkOf(deps,ids).catch(()=>[]);
+  const work:PaneWork[]=[];
+  const selected=ids??panes.map(p=>p.id);
+  for(const id of selected){
+    if(await deps.pid(id).catch(()=>undefined)===null)continue;
+    work.push(known.find(p=>p.id===id)??{id,name:panes.find(p=>p.id===id)?.name??id,work:"a running process"});
+  }
+  if(!work.length)return true;
+  if(!await ask(restartWarning(action,work)))return false;
+  await noteRelaunch(deps,work);return true;
+}
+
 /** The question before restarting one pane, `name`. When what it runs cannot be checked, the user still decides: asked
  *  plainly, with the reason, rather than restarted without a word or silently not restarted. */
 export async function confirmPaneRestart(

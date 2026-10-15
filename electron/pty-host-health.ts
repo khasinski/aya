@@ -349,5 +349,5 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
   }
 
   return { EXPECTED_HOST_VERSION, handleStaleHost, hostHealth, restartHostFromWindow, stopOtherHostsFromWindow,
-    staleHostDetected: () => staleHostDetected };
+    staleHostDetected: () => staleHostDetected, keepStaleHost:()=>showStaleHost(true) };
 }

@@ -9,6 +9,7 @@ const require=createRequire(import.meta.url);
 const core=require('../dist-electron/pty-core.js');
 const {HostHandover}=require('../dist-electron/pty-host-handover.js');
 const {shutdownOwnerRuntime,getOwnerRuntime}=require('../dist-electron/pty-owner-runtime.js');
+const {OwnerPty}=require('../dist-electron/pty-owner-adapter.js');
 const {ownerProcessStartIdentity}=require('../dist-electron/pty-owner-client.js');
 const store=require('../dist-electron/pty-checkpoint-store.js');
 const {writeCheckpoint}=store;
@@ -122,6 +123,15 @@ test('host escrow lifecycle keeps peers, cancellation, reuse, expiry and raw cap
    assert.equal(selected,2);assert.equal(state.coreEncodedBytes,128*1024*1024);
    assert.equal(state.ineligible.length,1);assert.match(state.ineligible[0].reason,/encoded checkpoint budget/);
   }finally{payload.encodeCheckpointPayload=encode;store.writeCheckpoint=writeParts;await handover.abort(peer);}
+
+  const endingPid=await spawn('ending'),freeze=OwnerPty.prototype.freezeForHandover;
+  OwnerPty.prototype.freezeForHandover=function(...args){if(this.pane.id==='ending')throw Error('ineligible ending pane');return freeze.apply(this,args);};
+  try{state=await handover.prepare(peer,Date.now()+120000);}finally{OwnerPty.prototype.freezeForHandover=freeze;}
+  assert.deepEqual(state.ineligible.map(p=>p.id),['ending']);
+  process.kill(endingPid,'SIGTERM');await wait(()=>core.getPtyPid('ending')===null);
+  const endedPublication=await handover.publish(peer,null,['ending']);
+  assert.deepEqual(endedPublication.ineligible,[]);assert.deepEqual(endedPublication.consented,[],'an ended pane never gains boot-spawn permission');
+  await handover.abort(peer);
 
   fs.writeFileSync(path.join(roots[0],'unknown'),'kept',{mode:0o600});
   await assert.rejects(handover.prepare(peer,Date.now()+120000),/earlier terminal checkpoint/);

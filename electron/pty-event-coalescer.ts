@@ -111,7 +111,8 @@ export function coalesceAdjacentData(events: PtyEvent[]): PtyEvent[] {
       tail &&
       tail.ptyId === event.ptyId &&
       !tail.replay === !event.replay &&
-      tail.reset === event.reset
+      tail.reset === event.reset &&
+      tail.replayToken === event.replayToken
     ) {
       tail.chunk += event.chunk;
       continue;

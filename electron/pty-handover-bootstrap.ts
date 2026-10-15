@@ -25,16 +25,25 @@ export function readHandoverBootstrap(fd:number):Promise<HandoverBootstrap> {
     input.once("end",()=>{clearTimeout(timer);try{resolve(parseHandoverBootstrap(Buffer.concat(chunks)));}catch(error){reject(error);}});
   });
 }
-async function checkRawAggregate(receipt:CheckpointReceipt):Promise<void> {
-  let raw=0;
+async function checkRawAggregate(receipt:CheckpointReceipt):Promise<{rawBytes:number;encodedBytes:number}> {
+  let raw=0,encoded=0;
   for await(const part of readCheckpoint(PTY_HANDOVER_CORE_DIRECTORY,receipt)){
-    raw+=checkpointPayloadSize(part.data);
+    raw+=checkpointPayloadSize(part.data);encoded+=part.data.length;
     if(raw>MAX_CHECKPOINT_BYTES)throw new Error("Terminal core aggregate decoded-byte limit");
   }
+  return {rawBytes:raw,encodedBytes:encoded};
 }
-export async function preflightCoreHandover(receipt:CheckpointReceipt):Promise<void> {
-  await checkRawAggregate(receipt);
-  for await(const part of readCoreHandover(receipt))void part;
+export async function preflightCoreHandover(receipt:CheckpointReceipt,expected?:Array<{id:string;generation:string;outputEnd:number}>):Promise<{rawBytes:number;encodedBytes:number}> {
+  const sizes=await checkRawAggregate(receipt),remaining=expected?new Map(expected.map(p=>[p.id,p])):null;
+  for await(const pane of readCoreHandover(receipt)){
+    if(remaining){
+      const match=remaining.get(pane.id);
+      if(!match||match.generation!==(pane.vt.metadata as {generation:string}).generation||match.outputEnd!==pane.output.end)throw new Error("Terminal checkpoint boundary identity mismatch");
+      remaining.delete(pane.id);
+    }
+  }
+  if(remaining?.size)throw new Error("Terminal checkpoint pane set differs");
+  return sizes;
 }
 export async function* readCoreHandover(receipt:CheckpointReceipt):AsyncGenerator<PaneCoreCheckpoint> {
   // Headers for every part are checked before decoding even the first pane.

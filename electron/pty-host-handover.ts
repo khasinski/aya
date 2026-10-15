@@ -1,7 +1,7 @@
 // Old-host side of a planned replacement. Browser state remains opaque here;
 // only core/process state and bounded private escrow belong to the PTY host.
 import { mkdir, lstat, readdir } from "node:fs/promises";
-import { freezePtyCore, abortPtyCoreHandover, frozenPtyCoreParts, excludeFrozenPtyPane, stopIneligiblePtyPanes, detachPtyCoreForHandover, type CoreHandoverPreflight } from "./pty-core";
+import { freezePtyCore, abortPtyCoreHandover, reusePtyCoreAfterHandover, pruneEndedIneligiblePtyPanes, frozenPtyCoreParts, excludeFrozenPtyPane, stopIneligiblePtyPanes, detachPtyCoreForHandover, type CoreHandoverPreflight } from "./pty-core";
 import { writeCheckpoint, readCheckpoint, discardCheckpoint, type CheckpointReceipt, type CheckpointPart } from "./pty-checkpoint-store";
 import { encodeCheckpointPayload, checkpointPayloadSize } from "./pty-checkpoint-payload";
 import { MAX_CHECKPOINT_BYTES } from "./vt-checkpoint-schema";
@@ -15,6 +15,7 @@ export interface HostHandoverState extends CoreHandoverPreflight {
   coreEncodedBytes: number;
   displayEncodedBytes: number;
   deadline: number;
+  consented: string[];
 }
 interface Pending {
   peer: HandoverPeer;
@@ -33,6 +34,7 @@ interface Pending {
   displayEncodedBytes: number;
   eligible: HostHandoverState["eligible"];
   ineligible: HostHandoverState["ineligible"];
+  consented: string[];
 }
 const same = (a: HandoverPeer | undefined, b: HandoverPeer): boolean => !!a && a.pid === b.pid && a.startIdentity === b.startIdentity;
 async function emptyPrivateRoot(root: string): Promise<void> {
@@ -54,11 +56,11 @@ export class HostHandover {
   }
   private summary(p: Pending): HostHandoverState {
     if (!p.core) throw new Error("Terminal checkpoint is not ready");
-    return {core:p.core,display:p.display,coreRawBytes:p.coreRawBytes,displayRawBytes:p.displayRawBytes,coreEncodedBytes:p.coreEncodedBytes,displayEncodedBytes:p.displayEncodedBytes,deadline:p.deadline,eligible:p.eligible,ineligible:p.ineligible};
+    return {core:p.core,display:p.display,coreRawBytes:p.coreRawBytes,displayRawBytes:p.displayRawBytes,coreEncodedBytes:p.coreEncodedBytes,displayEncodedBytes:p.displayEncodedBytes,deadline:p.deadline,eligible:p.eligible,ineligible:p.ineligible,consented:[...p.consented]};
   }
   async prepare(peer: HandoverPeer, deadline: number): Promise<HostHandoverState> {
     if (this.pending || !Number.isSafeInteger(deadline) || deadline <= Date.now() || deadline - Date.now() > 120000) throw new Error("Terminal handover preparation refused");
-    const p: Pending = {peer:{...peer},deadline,phase:"preparing",aborted:false,display:null,coreRawBytes:0,displayRawBytes:0,coreEncodedBytes:0,displayEncodedBytes:0,eligible:[],ineligible:[]};
+    const p: Pending = {peer:{...peer},deadline,phase:"preparing",aborted:false,display:null,coreRawBytes:0,displayRawBytes:0,coreEncodedBytes:0,displayEncodedBytes:0,eligible:[],ineligible:[],consented:[]};
     this.pending = p;
     p.timer = setTimeout(() => {void this.abort().catch(() => {});}, Math.max(1,deadline-Date.now()));
     p.work = this.prepareRecord(p);
@@ -99,9 +101,16 @@ export class HostHandover {
       throw error;
     }
   }
-  async publish(peer: HandoverPeer, display: CheckpointReceipt | null): Promise<HostHandoverState> {
+  async publish(peer: HandoverPeer, display: CheckpointReceipt | null, consented: string[] = []): Promise<HostHandoverState> {
     const p = this.own(peer);
     if (p.phase !== "frozen") throw new Error("Terminal handover publication refused");
+    if (!Array.isArray(consented) || new Set(consented).size !== consented.length || consented.some(id=>!p.ineligible.some(pane=>pane.id===id))) throw new Error("Terminal handover consent selection refused");
+    // A refused pane can finish naturally while its reader remains active.
+    // It then needs neither a stop question nor permission to boot-spawn again.
+    const remaining=pruneEndedIneligiblePtyPanes();
+    p.ineligible=p.ineligible.filter(pane=>remaining.has(pane.id));
+    p.consented=consented.filter(id=>remaining.has(id));
+    if (p.consented.length !== p.ineligible.length) throw new Error("Terminal handover requires consent for the ineligible panes");
     // Claim the only publication slot before any receipt I/O. A rejected
     // duplicate never transfers receipt ownership from its caller.
     p.phase = "publishing";
@@ -132,6 +141,7 @@ export class HostHandover {
   async detach(peer: HandoverPeer, consented: string[]): Promise<void> {
     const p = this.own(peer);
     if (!same(p.recipient,peer) || p.phase !== "published") throw new Error("Terminal handover detach refused");
+    if (consented.length !== p.consented.length || new Set(consented).size !== consented.length || consented.some(id=>!p.consented.includes(id))) throw new Error("Terminal handover consent differs from the published selection");
     await stopIneligiblePtyPanes(consented);
     if (p.aborted || Date.now() >= p.deadline) throw new Error("Terminal handover expired before detach");
     await detachPtyCoreForHandover(() => {
@@ -147,7 +157,7 @@ export class HostHandover {
   reuse(peer: HandoverPeer): HostHandoverState {
     const p = this.own(peer);
     if (!same(p.recipient,peer) || p.phase !== "published") throw new Error("Terminal host reuse refused");
-    abortPtyCoreHandover(); p.phase = "reused";
+    reusePtyCoreAfterHandover(); p.phase = "reused";
     return this.summary(p);
   }
   async acknowledgeReuse(peer: HandoverPeer): Promise<void> {
