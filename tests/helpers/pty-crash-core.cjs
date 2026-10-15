@@ -19,13 +19,18 @@ const wait=async predicate=>{const end=Date.now()+6000;while(!await predicate())
   process.send({format:1,kind:'crash',owner:{pid:owner.record.pid,startTime:owner.record.startTime,instanceId:owner.record.instanceId,binaryHash:owner.record.binaryHash},panes:[{id:pane.id,generation:pane.generation,pid:pane.pid,startIdentity:pane.startIdentity,request,launch,spawnedAt:123}]});
  }else{
   const bootstrap=parseRecoveryBootstrap(fs.readFileSync(path.join(home,'bootstrap.json')));
-  const refused=['wrong-owner','missing-owner','wrong-secret'].includes(variant);
+  const refused=['wrong-owner','missing-owner','wrong-secret','owner-dies-between-probes'].includes(variant);
   const record=path.join(home,'pty-owner/record.json'),before=fs.readFileSync(record);
   if(variant==='wrong-owner')bootstrap.owner.instanceId='0'.repeat(32);
   if(variant==='missing-owner')fs.unlinkSync(record);
+  let probes=0,spawns=0;
+  if(variant==='owner-dies-between-probes'){
+   require('../../dist-electron/pty-owner-registry.js').ownerRecordIsLive=()=>++probes<3;
+   require('node:child_process').spawn=()=>{spawns++;throw Error('UNEXPECTED_NEW_OWNER_SPAWN');};
+  }
   runtime.requireRecoveryOwner(bootstrap.owner);
   if(refused){
-   try{await assert.rejects(runtime.getOwnerRuntime(),/recorded PTY owner/);assert.equal(runtime.currentOwnerRuntime(),null);assert.equal(fs.existsSync(record),variant!=='missing-owner');if(variant!=='missing-owner')assert.deepEqual(fs.readFileSync(record),before);}
+   try{await assert.rejects(runtime.getOwnerRuntime(),/recorded PTY owner/);assert.equal(runtime.currentOwnerRuntime(),null);if(variant==='owner-dies-between-probes'){assert.equal(probes,3);assert.equal(spawns,0);}assert.equal(fs.existsSync(record),variant!=='missing-owner');if(variant!=='missing-owner')assert.deepEqual(fs.readFileSync(record),before);}
    finally{if(variant==='missing-owner')fs.writeFileSync(record,before,{mode:0o600});}
    process.send({refused:true},()=>process.exit(0));return;
   }

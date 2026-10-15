@@ -100,6 +100,7 @@ export class OwnerRuntime {
       throw new Error("The recorded PTY owner is dead, changed or incompatible; crash recovery kept its inventory");
     }
     if (previous && !ownerRecordIsLive(previous) && (previous.panes.some(p => !p.acknowledged) || previous.uncertain?.length)) {
+      if(recoveryOwner)throw new Error("The recorded PTY owner disappeared during recovery; its inventory was kept");
       if (ownerReaderIsLive(previous) && previous.jsPid !== process.pid) throw new Error("Another JS host still owns these terminals");
       result.record = previous; result.incompatible = true;
       for (const pane of previous.panes) if (!pane.acknowledged) result.inventory.set(pane.id, pane);
@@ -136,6 +137,7 @@ export class OwnerRuntime {
         return result;
       }
     } else {
+      if(recoveryOwner)throw new Error("The recorded PTY owner disappeared during recovery; no new owner was started");
       const child = spawn(artifacts.executable, ["--socket", OWNER_SOCKET, "--token-fd", "3"], {
         detached: true, stdio: ["ignore", "pipe", "pipe", "pipe"], env: { PATH: process.env.PATH, HOME: process.env.HOME },
       });
