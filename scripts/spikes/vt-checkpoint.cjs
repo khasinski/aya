@@ -142,7 +142,7 @@ class CompactVt {
   const encoded=typeof data==='string'?{text:data}:{bytes:Buffer.from(data).toString('base64')};
   this.totalInputBytes+=typeof data==='string'?Buffer.byteLength(data):data.length;
   if(ground(this.term)&&ownedAfter) {this.base=capture(this.term,this.metadata);this.tail=[];this.tailBytes=0;this.overflow=false;this.tailTainted=false;}
-  else {this.tailBytes+=Buffer.byteLength(JSON.stringify(encoded));this.maxTailBytes=Math.max(this.maxTailBytes,this.tailBytes);if(this.tailBytes>MAX_TAIL){this.overflow=true;this.tail=[];}else if(!this.overflow)this.tail.push(encoded);}
+  else {this.tailBytes+=Buffer.byteLength(JSON.stringify(encoded))+(this.tail.length?1:2);this.maxTailBytes=Math.max(this.maxTailBytes,this.tailBytes);if(this.tailBytes>MAX_TAIL){this.overflow=true;this.tail=[];}else if(!this.overflow)this.tail.push(encoded);}
  }
  resize(cols,rows){
   const epoch=registrations.get(this.term).epoch;let ownedBefore=true;try{assertOwnership(this.term);}catch{ownedBefore=false;}
@@ -150,7 +150,7 @@ class CompactVt {
   let ownedAfter=true;try{assertOwnership(this.term);}catch{ownedAfter=false;}
   this.tailTainted ||= !ownedBefore||!ownedAfter||epoch!==registrations.get(this.term).epoch;
   if(ground(this.term)&&ownedAfter){this.base=capture(this.term,this.metadata);this.tail=[];this.tailBytes=0;this.overflow=false;this.tailTainted=false;}
-  else{const operation={resize:[cols,rows]};this.tailBytes+=Buffer.byteLength(JSON.stringify(operation));this.maxTailBytes=Math.max(this.maxTailBytes,this.tailBytes);if(this.tailBytes>MAX_TAIL){this.overflow=true;this.tail=[];}else if(!this.overflow)this.tail.push(operation);}
+  else{const operation={resize:[cols,rows]};this.tailBytes+=Buffer.byteLength(JSON.stringify(operation))+(this.tail.length?1:2);this.maxTailBytes=Math.max(this.maxTailBytes,this.tailBytes);if(this.tailBytes>MAX_TAIL){this.overflow=true;this.tail=[];}else if(!this.overflow)this.tail.push(operation);}
  }
  checkpoint(){assertOwnership(this.term);if(ground(this.term)){this.base=capture(this.term,this.metadata);this.tail=[];this.tailBytes=0;this.overflow=false;this.tailTainted=false;}if(this.overflow)throw Error('VT tail temporarily ineligible');if(this.tailTainted)throw Error('VT tail ran under unsupported ownership');return {base:JSON.parse(this.base.toString()),tail:copy(this.tail),metadata:copy(this.metadata)};}
  static async import(checkpoint){const {term,metadata}=restore(Buffer.from(JSON.stringify(checkpoint.base)));for(const item of checkpoint.tail){if(item.resize)term.resize(...item.resize);else await write(term,item.text??Buffer.from(item.bytes,'base64'));}return {term,metadata:checkpoint.metadata??metadata};}

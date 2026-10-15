@@ -1,5 +1,7 @@
 // PTY-owned VT mirror. Agent rules are evaluated by the connected main process.
-import { Terminal } from "@xterm/headless";
+import type { Terminal } from "@xterm/headless";
+import { VtCheckpointTerminal } from "./vt-checkpoint";
+import type { VtCheckpoint } from "./vt-checkpoint";
 import { MIN_PTY_COLS, MIN_PTY_ROWS } from "./pty-core-constants";
 import type { AgentKind } from "./presets";
 import { randomUUID } from "node:crypto";
@@ -37,6 +39,7 @@ export interface VtPane {
 }
 
 export const panes = new Map<string, VtPane>();
+const checkpointTerminals = new WeakMap<VtPane, VtCheckpointTerminal>();
 
 export function openVtPane(
   ptyId: string,
@@ -46,13 +49,12 @@ export function openVtPane(
   agent?: AgentKind,
   shell = false,
 ): void {
-  panes.set(ptyId, {
-    terminal: new Terminal({
-      cols: Math.max(cols, MIN_PTY_COLS),
-      rows: Math.max(rows, MIN_PTY_ROWS),
-      scrollback: VT_SCROLLBACK_LINES,
-      allowProposedApi: true,
-    }),
+  const checkpointTerminal = new VtCheckpointTerminal({
+    cols: Math.max(cols, MIN_PTY_COLS), rows: Math.max(rows, MIN_PTY_ROWS),
+    scrollback: VT_SCROLLBACK_LINES, allowProposedApi: true,
+  });
+  const pane: VtPane = {
+    terminal: checkpointTerminal.terminal,
     agent,
     shell,
     lastWaiting: false,
@@ -62,14 +64,16 @@ export function openVtPane(
     lastOutputAt: null,
     timer: null,
     onChange,
-  });
+  };
+  checkpointTerminals.set(pane, checkpointTerminal);
+  panes.set(ptyId, pane);
 }
 
 export function resizeVtPane(ptyId: string, cols: number, rows: number): void {
   const pane = panes.get(ptyId);
   if (!pane) return;
   try {
-    pane.terminal.resize(Math.max(cols, MIN_PTY_COLS), Math.max(rows, MIN_PTY_ROWS));
+    checkpointTerminals.get(pane)!.resize(Math.max(cols, MIN_PTY_COLS), Math.max(rows, MIN_PTY_ROWS));
   } catch {
     // A resize can race the pane closing; the next write just lands on the
     // old geometry, which only affects wrapping in the detector's input.
@@ -82,7 +86,7 @@ export function closeVtPane(ptyId: string): void {
   panes.delete(ptyId);
   if (pane.timer) clearTimeout(pane.timer);
   try {
-    pane.terminal.dispose();
+    checkpointTerminals.get(pane)!.dispose();
   } catch {
     // Disposal is best-effort - the pane is already unreachable either way.
   }
@@ -97,7 +101,7 @@ export function closeAllVtPanes(): void {
 export function writeVtPane(ptyId: string, chunk: string): void {
   const pane = panes.get(ptyId);
   if (!pane) return;
-  pane.terminal.write(chunk);
+  checkpointTerminals.get(pane)!.write(chunk);
   pane.lastOutputAt = Date.now();
   if (pane.timer) return;
   pane.timer = setTimeout(() => {
@@ -155,6 +159,60 @@ export function markComposerSeen(id: string, generation: string): void {
   if (pane && snapshotGeneration(pane) === generation) pane.composerSeen = true;
 }
 function snapshotGeneration(pane: VtPane): string { return generations.get(pane) ?? snapshotOf(pane).generation; }
+
+interface VtPaneCheckpointMetadata {
+  generation: string;
+  agent?: AgentKind;
+  shell: boolean;
+  lastWaiting: boolean;
+  lastDialog?: string;
+  composerSeen: boolean;
+  openedAt: number;
+  lastOutputAt: number | null;
+}
+const CHECKPOINT_AGENTS = new Set(["claude", "codex", "opencode", "kilo", "pi", "cursor", "copilot", "grok", "droid", "devin", "kimi", "hermes", "qodercli", "antigravity", "custom"]);
+function checkpointMetadata(value: unknown): VtPaneCheckpointMetadata {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid VT pane metadata");
+  const v = value as Record<string, unknown>;
+  const keys = new Set(["generation", "agent", "shell", "lastWaiting", "lastDialog", "composerSeen", "openedAt", "lastOutputAt"]);
+  const time = (n: unknown): boolean => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+  if (Object.keys(v).some(key => !keys.has(key)) || typeof v.generation !== "string" || !v.generation.length || v.generation.length > 128 ||
+      (v.agent !== undefined && (typeof v.agent !== "string" || !CHECKPOINT_AGENTS.has(v.agent))) ||
+      typeof v.shell !== "boolean" || typeof v.lastWaiting !== "boolean" || typeof v.composerSeen !== "boolean" ||
+      (v.lastDialog !== undefined && (typeof v.lastDialog !== "string" || v.lastDialog.length > 128)) ||
+      !time(v.openedAt) || (v.lastOutputAt !== null && !time(v.lastOutputAt))) throw new Error("Invalid VT pane metadata");
+  return value as VtPaneCheckpointMetadata;
+}
+
+/** The caller first gates PTY producers; this function only drains the mirror. */
+export async function checkpointVtPane(id: string): Promise<VtCheckpoint> {
+  const pane = panes.get(id);
+  if (!pane) throw new Error("VT pane missing during checkpoint");
+  await checkpointTerminals.get(pane)!.drain();
+  const metadata: VtPaneCheckpointMetadata = {
+    generation: snapshotGeneration(pane), shell: pane.shell, lastWaiting: pane.lastWaiting,
+    composerSeen: pane.composerSeen, openedAt: pane.openedAt, lastOutputAt: pane.lastOutputAt,
+    ...(pane.agent === undefined ? {} : {agent: pane.agent}),
+    ...(pane.lastDialog === undefined ? {} : {lastDialog: pane.lastDialog}),
+  };
+  const checkpoint = await checkpointTerminals.get(pane)!.checkpoint(metadata);
+  if (panes.get(id) !== pane) throw new Error("VT pane changed during checkpoint");
+  return checkpoint;
+}
+
+export async function restoreVtPane(id: string, checkpoint: VtCheckpoint, onChange: VtPane["onChange"]): Promise<void> {
+  if (panes.has(id)) throw new Error("VT pane already exists during restore");
+  const metadata = checkpointMetadata(checkpoint.metadata);
+  const tracker = await VtCheckpointTerminal.import(checkpoint);
+  if (panes.has(id)) { tracker.dispose(); throw new Error("VT pane appeared during restore"); }
+  const pane: VtPane = {
+    ...metadata, agent: metadata.agent, lastDialog: metadata.lastDialog,
+    terminal: tracker.terminal, timer: null, onChange,
+  };
+  checkpointTerminals.set(pane, tracker);
+  generations.set(pane, metadata.generation);
+  panes.set(id, pane);
+}
 export function vtPaneAltScreen(id: string): boolean | undefined {
   const pane = panes.get(id);
   return pane && pane.terminal.buffer.active.type === "alternate";
