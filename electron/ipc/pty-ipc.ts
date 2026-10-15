@@ -40,8 +40,12 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
   const { ipcMain, host, gate } = deps;
   ipcMain.handle("pty:spawn", (_e, req: unknown) => {
     const validated = validateSpawnRequest(req);
-    if (!validated.attachOnly && !validated.attachIfReused && !validated.replayAfter) deps.forgetDisplay?.(validated.ptyId);
-    return gate.spawn(validated.ptyId, () => deps.prepareSpawn(validated), deps.sendSpawn).then(async (sent) => {
+    return gate.spawn(validated.ptyId, () => deps.prepareSpawn(validated), prepared => {
+      // Keep cleanup authority while preparation can still be cancelled. The
+      // gate invokes send only for a surviving explicit request.
+      if (!validated.attachOnly && !validated.attachIfReused && !validated.replayAfter) deps.forgetDisplay?.(validated.ptyId);
+      return deps.sendSpawn(prepared);
+    }).then(async (sent) => {
       // Closed while preparing: the brief files it wrote after the close are no one's.
       if (sent === undefined && !gate.spawning(validated.ptyId)) await deps.forgetBrief(validated.ptyId).catch(() => {});
     });

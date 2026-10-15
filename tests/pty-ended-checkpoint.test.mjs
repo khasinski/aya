@@ -43,6 +43,12 @@ test('duplicate live and ended ids in escrow reject before any part is yielded',
  manifest.parts[1].id='live';const bytes=Buffer.from(JSON.stringify(manifest));fs.writeFileSync(file,bytes);receipt.bytes=bytes.length;receipt.sha256=createHash('sha256').update(bytes).digest('hex');
  let yields=0;await assert.rejects(async()=>{for await(const part of bootstrap.readCoreHandover(receipt)){void part;yields++;}},/manifest part/);assert.equal(yields,0);
 });
+test('explicitly discarding an ended restoration does not arm a kill marker against its next restart',async()=>{
+ const dto={...ended(),id:'ended-killed'},sink={isDestroyed:()=>false,sendPtyEvent:()=>{}};
+ await core.restorePtyCorePane(dto,sink);await core.killPty(dto.id);
+ const req={ptyId:dto.id,command:'probe',cwd:home,cols:80,rows:24};
+ await assert.rejects(core.spawnPty(req,sink,{prepare:async()=>{throw Error('fresh restart reached preparation');}}),/fresh restart reached preparation/);
+});
 test('ended records share the25-record and aggregate raw budgets before yielding or allocating VT',async()=>{
  const atLimit=await store.writeCheckpoint(path.join(home,'at-limit'),Array.from({length:25},(_,i)=>({id:String(i),generation:'g',data:encodeCheckpointPayload(Buffer.from(JSON.stringify({...ended(),id:String(i)})))})));let count=0;for await(const part of store.readCheckpoint(path.join(home,'at-limit'),atLimit)){void part;count++;}assert.equal(count,25);await store.acknowledgeCheckpoint(path.join(home,'at-limit'),atLimit);
  await assert.rejects(store.writeCheckpoint(path.join(home,'too-many'),Array.from({length:26},(_,i)=>({id:String(i),generation:'g',data:encodeCheckpointPayload(Buffer.from(JSON.stringify({...ended(),id:String(i)})))}))),/pane part/);

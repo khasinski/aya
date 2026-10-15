@@ -231,3 +231,30 @@ test('explicit restart before display lookup completes retires the old continuat
  expect(await second.app.evaluate(()=>(globalThis as unknown as {restartSpawns:number}).restartSpawns)).toBe(1);
  expect(inventory(seeded.ayaHome).panes.find((p:{id:string})=>p.id==='tab-left').pid).toBe(freshPid);
 });
+
+test('explicit restart of an ended pane with an unapplied acknowledgement starts a fresh live session',async({seeded})=>{
+ const first=await launch(seeded);await waitForShellReady(first.window);
+ const release=join(seeded.root,'release-before-ended-restart');
+ const command=`exec /bin/sh -c 'echo BEFORE_ENDED_RESTART; while [ ! -f "${release}" ]; do sleep .01; done; echo ENDED_RESTART_SUFFIX; exit 23'\r`;
+ await first.window.evaluate(command=>window.aya.ptyWrite('tab-left',command),command);
+ await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('BEFORE_ENDED_RESTART');
+ expect((await prepare(first.app)).ok).toBe(true);await quit(first.app);
+ appendFileSync(hostScript,'\n// ended explicit restart handover test\n');
+ const second=await launch(seeded,0,true);
+ await expect.poll(()=>second.app.evaluate(()=>(globalThis as unknown as {handoverDisplayWaiting:boolean}).handoverDisplayWaiting)).toBe(true);
+ await second.app.evaluate(({ipcMain})=>{ipcMain.removeHandler('pty-checkpoint:display-ack');ipcMain.handle('pty-checkpoint:display-ack',()=>false);});
+ const before=inventory(seeded.ayaHome),oldPid=before.panes.find((p:{id:string})=>p.id==='tab-left').pid;
+ writeFileSync(join(seeded.root,'release-display'),'go');
+ const pane=visiblePane(second.window,'shell 1');await expect(pane.locator('.xterm-rows')).toContainText('BEFORE_ENDED_RESTART');
+ writeFileSync(release,'go');await expect(pane.locator('.xterm-rows')).toContainText('process exited with code 23');
+ expect(await second.window.evaluate(()=>window.aya.handoverDisplay('tab-left'))).not.toBe(null);
+ await second.window.locator('.aya-sidebar-row[data-terminal-id="tab-left"]').click({button:'right'});
+ await second.window.getByRole('button',{name:'Restart terminal',exact:true}).click();
+ await expect.poll(()=>{const p=inventory(seeded.ayaHome).panes.find((p:{id:string})=>p.id==='tab-left');return !!p&&p.pid!==oldPid;}).toBe(true);
+ await pane.click();await second.window.keyboard.type("printf 'FRESH_ENDED_%s\\n' RESTART");await second.window.keyboard.press('Enter');
+ await expect.poll(()=>second.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('FRESH_ENDED_RESTART');
+ await expect(pane.locator('.xterm-rows')).toContainText('FRESH_ENDED_RESTART');
+ expect(await second.window.evaluate(()=>window.aya.handoverDisplay('tab-left'))).toBe(null);
+ expect(inventory(seeded.ayaHome).pid).toBe(before.pid);
+ expect(inventory(seeded.ayaHome).panes.find((p:{id:string})=>p.id==='tab-right').pid).toBe(before.panes.find((p:{id:string})=>p.id==='tab-right').pid);
+});

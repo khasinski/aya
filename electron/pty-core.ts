@@ -541,6 +541,16 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
   }
   const restored = restoredPanes.get(req.ptyId);
   if (restored?.exitCode !== undefined) {
+    if (!req.attachOnly && !req.attachIfReused && !req.replayAfter) {
+      // Explicit restart owns this ended record. Keep the otherwise idle owner
+      // throughout preparation, but retire the old display/outcome before any
+      // replacement view can mistake it for the newly requested session.
+      const releaseOwner = currentOwnerRuntime()?.holdRestoration();
+      removeRestoredPane(req.ptyId);outputBuffers.delete(req.ptyId);
+      oscCarryBuffers.delete(req.ptyId);closeVtPane(req.ptyId);
+      try { await spawnPty(req,sink,services); } finally { releaseOwner?.(); }
+      return;
+    }
     if (!sink.isDestroyed()) {
       replayOutput(req,sink);
       sink.sendPtyEvent({type:"exit",ptyId:req.ptyId,exitCode:restored.exitCode});
@@ -972,6 +982,7 @@ export async function killPty(ptyId: string): Promise<void> {
   try { await operation; } finally { killing.delete(operation); }
 }
 async function killPtyInternal(ptyId: string): Promise<void> {
+  const endedRestoration = restoredPanes.get(ptyId)?.exitCode !== undefined;
   removeRestoredPane(ptyId);
   outputBuffers.delete(ptyId);
   oscCarryBuffers.delete(ptyId);
@@ -993,6 +1004,9 @@ async function killPtyInternal(ptyId: string): Promise<void> {
       endSpawnWindow(ptyId);
       return;
     }
+    // A known ended restoration has no late native spawn to cancel. Do not
+    // let a marker swallow a subsequent explicit restart of this same id.
+    if (endedRestoration) return;
     pendingKills.add(ptyId);
     setTimeout(() => pendingKills.delete(ptyId), PENDING_KILL_TTL_MS);
     return;
