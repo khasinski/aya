@@ -244,7 +244,7 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
     const owner = currentOwnerRuntime();
     return { ...HOST_IDENTITY, ptyCount: activePtyCount(), pid: process.pid,
       owner: owner ? { pid: owner.record.pid, hash: owner.record.binaryHash, incompatible: owner.incompatible,
-        disconnected: [...owner.disconnected.keys()], inventory: owner.record.panes } : null };
+        disconnected: [...owner.disconnected.keys()], inventory: owner.record.panes, uncertain: owner.record.uncertain ?? [], recoveryFailures: owner.record.recoveryFailures ?? [] } : null };
   }
   throw new Error(PTY_HOST_UNKNOWN_REQUEST);
 }

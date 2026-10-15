@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { test, expect, ciElectronFlags, closeAndWait, hostPidsForHome, delay } from "./fixtures";
 import { appEnv, type SeededEnv } from "./helpers/seed";
 import { waitForShellReady } from "./helpers/terminal";
+import { fireShortcut } from "./helpers/shortcut";
 const root = join(__dirname, "..");
 const apps: ElectronApplication[] = [];
 test.afterEach(async () => { for (const app of apps.splice(0)) await closeAndWait(app); });
@@ -26,7 +27,16 @@ for (const answer of [1, 0]) test(`legacy migration ${answer ? "Cancel preserves
     const { window } = await launch(seeded, answer);
     await expect(window.getByTestId("xterm-host").first()).toBeVisible();
     expect(questions(seeded.ayaHome)).toHaveLength(1); expect(questions(seeded.ayaHome)[0].detail).toContain("cannot be moved from the older host");
-    if (answer) { expect(alive(before.child)).toBe(true); expect(existsSync(join(seeded.ayaHome, "pty-owner/record.json"))).toBe(false); }
+    if (answer) {
+      expect(alive(before.child)).toBe(true); expect(existsSync(join(seeded.ayaHome, "pty-owner/record.json"))).toBe(false);
+      await fireShortcut(apps.at(-1)!, "open-settings"); const settings = window.locator(".aya-modal--settings");
+      await settings.getByTestId("settings-tab").filter({ hasText: "Diagnostics" }).click();
+      window.once("dialog", dialog => void dialog.accept());
+      await settings.locator(".aya-settings-general-row", { hasText: "PTY host" }).getByRole("button", { name: "Restart" }).click();
+      await expect.poll(() => questions(seeded.ayaHome).length).toBe(2);
+      expect(questions(seeded.ayaHome)[1].detail).toContain("cannot be moved from the older host");
+      expect(alive(before.child)).toBe(true);
+    }
     else { await expect.poll(() => alive(before.child)).toBe(false); await waitForShellReady(window); expect(existsSync(join(seeded.ayaHome, "pty-owner/record.json"))).toBe(true); }
   } finally { if (legacy.exitCode === null && legacy.signalCode === null) legacy.kill("SIGTERM"); await closed; }
 });
@@ -51,4 +61,39 @@ for (const answer of [1, 0]) test(`incompatible owner ${answer ? "Cancel retains
     for (const pane of original.panes) await expect.poll(() => alive(pane.pid)).toBe(false);
     await waitForShellReady(second.window); expect(JSON.parse(readFileSync(file, "utf8")).pid).not.toBe(original.pid);
   }
+});
+
+for (const action of ["restart", "close pane", "close project"]) test(`a real incompatible owner's refused ${action} keeps the pane and inventory visible`, async ({ seeded }) => {
+  const first = await launch(seeded, 1); await waitForShellReady(first.window);
+  const file = join(seeded.ayaHome, "pty-owner/record.json");
+  await expect.poll(() => JSON.parse(readFileSync(file, "utf8")).panes.length).toBe(2);
+  const original = JSON.parse(readFileSync(file, "utf8"));
+  apps.splice(apps.indexOf(first.app), 1); await closeAndWait(first.app);
+  const hosts = hostPidsForHome(seeded.ayaHome); expect(hosts).toHaveLength(1); process.kill(hosts[0], "SIGKILL");
+  await expect.poll(() => alive(hosts[0])).toBe(false);
+  original.binaryHash = "0".repeat(64); writeFileSync(file, JSON.stringify(original), { mode: 0o600 });
+  const second = await launch(seeded, 1);
+  await expect(second.window.getByTestId("xterm-host").first()).toContainText("disconnected");
+  await second.app.evaluate(() => {
+    process.env.AYA_OWNER_TEST_ANSWER = "0";
+    (globalThis as unknown as { watchOwnerSpawnRequests(): void }).watchOwnerSpawnRequests();
+  });
+  const row = second.window.locator('.aya-sidebar-row[data-terminal-name="shell 1"]');
+  const told = new Promise<string>(resolve => second.window.once("dialog", dialog => { resolve(dialog.message()); void dialog.accept(); }));
+  if (action === "close project") await second.window.getByTitle("Close project", { exact: true }).click();
+  else {
+    await row.click({ button: "right" });
+    await second.window.locator(".aya-context-menu-item", { hasText: action === "restart" ? "Restart terminal" : "Close terminal" }).click();
+  }
+  const message = await told;
+  expect(message).toContain(`Aya did not ${action === "restart" ? "restart shell 1" : action === "close pane" ? "close shell 1" : "close e2e"}`);
+  expect(message).toContain("The native owner cannot authenticate this Aya");
+  await expect(row).toBeVisible();
+  await expect(row.locator(".aya-sidebar-statusdot")).toHaveClass(/--error/);
+  await expect(second.window.getByTestId("xterm-host").first()).toContainText("disconnected");
+  expect(await second.app.evaluate(() => (globalThis as unknown as { ownerSpawnRequests: unknown[] }).ownerSpawnRequests)).toEqual([]);
+  expect(questions(seeded.ayaHome)).toHaveLength(action === "restart" ? 2 : 1);
+  expect(alive(original.pid)).toBe(true);
+  for (const pane of original.panes) expect(alive(pane.pid)).toBe(true);
+  expect(JSON.parse(readFileSync(file, "utf8")).panes.map((p: { pid: number }) => p.pid)).toEqual(original.panes.map((p: { pid: number }) => p.pid));
 });

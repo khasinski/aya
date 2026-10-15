@@ -71,3 +71,24 @@ test("a refused kill explains why restart stopped and keeps the disconnected pan
   const after = inventory(seeded.ayaHome);
   expect(after.pid).toBe(before.pid); expect(panes(after)).toEqual(panes(before));
 });
+
+test("typing and paste into a disconnected pane are disabled instead of silently sending input", async ({ app, window, seeded }) => {
+  const { before } = await loseHost(window, seeded.ayaHome);
+  await app.evaluate(({ ipcMain }) => {
+    const g = globalThis as unknown as { disconnectedWrites: unknown[] }; g.disconnectedWrites = [];
+    ipcMain.removeHandler("pty:write");
+    ipcMain.handle("pty:write", (_event, ...args) => { g.disconnectedWrites.push(args); return false; });
+  });
+  const terminal = window.getByTestId("xterm-host").first(); await terminal.click();
+  await window.keyboard.type("must not be sent"); await window.keyboard.press("Enter"); await window.keyboard.press("Control+c");
+  await terminal.locator(".xterm-helper-textarea").evaluate(textarea => {
+    const transfer = new DataTransfer(); transfer.setData("text/plain", "pasted text\n");
+    textarea.dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }));
+  });
+  await terminal.click({ button: "right" });
+  await expect(window.getByTestId("terminal-context-paste")).toBeDisabled();
+  await window.keyboard.press("Escape");
+  await expect(terminal).toContainText("Input is disabled while disconnected");
+  expect(await app.evaluate(() => (globalThis as unknown as { disconnectedWrites: unknown[] }).disconnectedWrites)).toEqual([]);
+  expect(alive(before.pid)).toBe(true); for (const pane of before.panes) expect(alive(pane.pid)).toBe(true);
+});

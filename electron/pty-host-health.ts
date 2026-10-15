@@ -11,6 +11,7 @@ import { PTY_HOST_EXIT_WAIT_MS, type PtyHostClient } from "./pty-host-client";
 import { currentProcessesConfirmed, type RelaunchDeps } from "./relaunch-notes";
 import { restartStaleHost } from "./updates";
 import type { HostRecord } from "./pty-host-registry";
+import type { PtyOwnerStatus } from "./pty-host-protocol";
 import { isHostStale, UNKNOWN_SCRIPT_HASH, type HostIdentity } from "./pty-host-staleness";
 
 /** How long the socket probe waits for the host on pty-host.sock to answer. */
@@ -28,7 +29,7 @@ export interface HostHealth {
   identity: HostIdentity | null;
   expected: HostIdentity;
   ptyCount: number;
-  owner?: { pid: number; incompatible: boolean; disconnected: string[] };
+  owner?: PtyOwnerStatus;
   stale: boolean;
   /** Expected core bytes could not be read: warn, but never restart automatically. */
   indeterminate?: boolean;
@@ -89,7 +90,8 @@ export function hostWarnings(health: Omit<HostHealth, "warnings">): string[] {
   if (health.owner?.disconnected.length) warnings.push(`${health.owner.disconnected.length} terminals are disconnected from their JS host. Their native owner inventory was kept; restart explicitly to stop them.`);
   if (health.stale) {
     warnings.push(
-      `The terminal host runs different PTY code or runtime (${health.identity?.version ?? "unknown version"}): restart it to use this one.`,
+      health.owner?.incompatible ? "The native PTY owner is unavailable or incompatible. Explicit recovery asks before stopping any retained processes."
+        : `The terminal host runs different PTY code or runtime (${health.identity?.version ?? "unknown version"}): restart it to use this one.`,
     );
   }
   if (health.pid !== null && !health.socket.exists) {
@@ -307,13 +309,28 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
    *  or when the old host did not exit, so the window leaves its panes as they are. */
   async function restartHostFromWindow(): Promise<void> {
     const before = await hostHealth();
-    const recovery = before.owner?.incompatible || !!before.owner?.disconnected.length;
-    const confirmed = recovery ? await askRestart("Restart", "Restarting the terminal host stops the processes retained by the native PTY owner. Their disconnected screens cannot show all current work.")
+    const legacy = !before.owner && before.ptyCount > 0;
+    const recovery = legacy || before.owner?.incompatible || !!before.owner?.disconnected.length;
+    const names = new Map((await relaunchDeps.panes().catch(() => [])).map(p => [p.id, p.name]));
+    const retained = [
+      ...(before.owner?.inventory ?? []).map(p => `${names.get(p.id) ?? p.id} (PID ${p.pid})`),
+      ...(before.owner?.uncertain ?? []).map(id => `${names.get(id) ?? id}: unconfirmed spawn, process identity unknown`),
+    ];
+    const confirmed = recovery ? await askRestart("Restart", legacy
+      ? "Moving these terminals to Aya's native PTY owner stops their current processes. They cannot be moved from the older host."
+      : "Restarting the terminal host stops the processes retained by the native PTY owner. Their disconnected screens cannot show all current work." +
+        (retained.length ? `\n\nProcesses that may still run:\n${retained.join("\n")}` : ""))
       : await confirmLosingWork("Restarting the PTY host", "Restart");
     if (!confirmed) throw new Error("restart cancelled");
     const exited = await ptyHost.restart();
     // The red dot follows what the host now is: off for a current host, still on if the restart did not take.
-    await hostHealth();
+    const after = await hostHealth();
+    if (recovery && (after.stale || after.owner?.disconnected.length)) {
+      showStaleHost(true);
+      const left = [...(after.owner?.inventory ?? []).map(p => `${names.get(p.id) ?? p.id} (PID ${p.pid})`), ...(after.owner?.uncertain ?? [])];
+      throw new Error(`Some terminal processes could not be confirmed stopped. Their disconnected inventory was kept${left.length ? `: ${left.join(", ")}` : "."}` +
+        (after.owner?.recoveryFailures?.length ? `\n\n${after.owner.recoveryFailures.join("\n")}` : ""));
+    }
     if (!exited) {
       showStaleHost(true);
       throw new Error(

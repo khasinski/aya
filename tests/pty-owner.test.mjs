@@ -34,7 +34,7 @@ test("wrong authentication and invalid headers cannot take over the owner", asyn
   const owner = await startOwner(); t.after(() => owner.close());
   await assert.rejects(PtyOwnerClient.connect(owner.socket, Buffer.alloc(32), artifacts.bridge), /Authentication failed/);
   const native = require(artifacts.bridge);
-  for (const alter of [b => b.writeUInt32BE(0, 0), b => b.writeUInt16BE(2, 4), b => b.writeUInt32BE(256 * 1024 + 1, 12)]) {
+  for (const alter of [b => b.writeUInt32BE(0, 0), b => b.writeUInt16BE(3, 4), b => b.writeUInt32BE(256 * 1024 + 1, 12)]) {
     const fd = native.connect(owner.socket), b = frame(1); alter(b); native.send(fd, b);
     const reply = await native.receive(fd, 2000); assert.equal(reply.data.readUInt16BE(6), 0x8001); native.close(fd, true);
   }

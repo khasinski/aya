@@ -2,7 +2,7 @@
 #define AYA_OWNER_PROTOCOL_H
 #include <stdint.h>
 #define OWNER_MAGIC 0x41594150u
-#define OWNER_VERSION 1
+#define OWNER_VERSION 2
 #define OWNER_HEADER 16
 #define OWNER_MAX_FRAME (256u * 1024u)
 #define OWNER_MAX_PANES 25

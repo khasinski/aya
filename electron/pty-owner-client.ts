@@ -1,7 +1,7 @@
 // Typed transport for the stable native PTY owner.
 import path from "node:path";
 
-export const OWNER_PROTOCOL = 1;
+export const OWNER_PROTOCOL = 2;
 export const OWNER_MAX_FRAME = 256 * 1024;
 const MAGIC = 0x41594150;
 const HEADER = 16;
@@ -18,6 +18,16 @@ export function ownerArtifactPaths(directory = __dirname): { executable: string;
   const unpacked = directory.replace(/([/\\])app\.asar([/\\])/, "$1app.asar.unpacked$2");
   return { executable: path.join(unpacked, "aya-pty-owner"), bridge: path.join(unpacked, "pty-owner-bridge.node") };
 }
+interface RecoveryBridge {
+  recoveryGroupExists(pid: number): boolean;
+  recoverGroup(pid: number, startIdentity: string): "absent" | "mismatch" | "unknown-group" | "signalled";
+}
+export function ownerProcessGroupExists(pid: number): boolean {
+  return (require(ownerArtifactPaths().bridge) as RecoveryBridge).recoveryGroupExists(pid);
+}
+export function recoverOwnerProcessGroup(pid: number, startIdentity: string): ReturnType<RecoveryBridge["recoverGroup"]> {
+  return (require(ownerArtifactPaths().bridge) as RecoveryBridge).recoverGroup(pid, startIdentity);
+}
 export interface OwnerPane {
   id: string;
   generation: number;
@@ -29,6 +39,7 @@ export interface OwnerPane {
   signal: number;
   event: number;
   acknowledged: boolean;
+  startIdentity: string | null;
 }
 export interface OwnerSpawn {
   id: string;
@@ -72,7 +83,9 @@ class Decoder {
   pane(): OwnerPane {
     const id = this.string(), generation = this.u32(), pid = this.u32(), cols = this.u32(), rows = this.u32();
     const exited = this.u32(), exitCode = this.u32(), signal = this.u32(), event = this.u32(), acknowledged = this.u32();
-    return { id, generation, pid, cols, rows, exited: !!exited, exitCode: exitCode === 0xffffffff ? null : exitCode, signal, event, acknowledged: !!acknowledged };
+    const startIdentity = this.string() || null;
+    if (startIdentity !== null && !/^\d+:\d+$/.test(startIdentity)) throw new Error("Invalid owner process identity");
+    return { id, generation, pid, cols, rows, exited: !!exited, exitCode: exitCode === 0xffffffff ? null : exitCode, signal, event, acknowledged: !!acknowledged, startIdentity };
   }
   done(): void { if (this.offset !== this.data.length) throw new Error("Trailing owner response data"); }
 }

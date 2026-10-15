@@ -5,7 +5,9 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,6 +16,7 @@
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
+#include "process-identity.h"
 
 static napi_value error(napi_env env, const char *operation) {
   char text[160]; snprintf(text, sizeof(text), "%s: %s", operation, strerror(errno));
@@ -25,6 +28,13 @@ static int argument_fd(napi_env env, napi_value value, int *fd) {
     napi_throw_type_error(env, NULL, "Expected an owned descriptor >= 3"); return -1;
   }
   return 0;
+}
+static int recovery_pid(napi_env env, napi_value value, int *pid) {
+  double input;
+  if (napi_get_value_double(env, value, &input) != napi_ok || !(input >= 2 && input <= INT_MAX) || (double)(int)input != input) {
+    napi_throw_type_error(env, NULL, "Invalid recovery PID"); return -1;
+  }
+  *pid = (int)input; return 0;
 }
 static int64_t time_ms(void) {
   struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (int64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
@@ -209,9 +219,44 @@ static napi_value read_ready(napi_env env, napi_callback_info info) {
   if (poll(&entry, 1, 0) < 0) return error(env, "poll");
   return number(env, entry.revents);
 }
+static napi_value recovery_group_exists(napi_env env, napi_callback_info info) {
+  size_t count = 1; napi_value args[1]; int pid;
+  napi_get_cb_info(env, info, &count, args, NULL, NULL);
+  if (count != 1) { napi_throw_type_error(env, NULL, "Expected recovery PID"); return NULL; }
+  if (recovery_pid(env, args[0], &pid)) return NULL;
+  int result = kill(-pid, 0);
+  if (result && errno != ESRCH && errno != EPERM) return error(env, "probe recovery group");
+  napi_value out; napi_get_boolean(env, !result || errno == EPERM, &out); return out;
+}
+static napi_value recover_group(napi_env env, napi_callback_info info) {
+  size_t count = 2, size; napi_value args[2]; int pid; char saved[64];
+  napi_get_cb_info(env, info, &count, args, NULL, NULL);
+  if (count != 2) { napi_throw_type_error(env, NULL, "Expected recovery PID and identity"); return NULL; }
+  if (recovery_pid(env, args[0], &pid)) return NULL;
+  if (napi_get_value_string_utf8(env, args[1], NULL, 0, &size) != napi_ok || !size || size >= sizeof(saved)) {
+    napi_throw_type_error(env, NULL, "Invalid recovery identity"); return NULL;
+  }
+  napi_get_value_string_utf8(env, args[1], saved, sizeof(saved), &size);
+  ProcessIdentity current; int status = process_identity(pid, &current);
+  const char *result = "absent";
+  if (status < 0) { napi_throw_error(env, NULL, "Cannot verify the recorded process identity; nothing was signalled"); return NULL; }
+  if (status) {
+    char measured[64]; snprintf(measured, sizeof(measured), "%llu:%llu", (unsigned long long)current.start, (unsigned long long)current.fraction);
+    if (strlen(saved) != size || strcmp(saved, measured)) result = "mismatch";
+    else if (getpgid(pid) != pid) result = "unknown-group";
+    else {
+      // A confirmed recovery signals only the group of its still-matching
+      // recorded session leader. There is no asynchronous gap after this check.
+      if (kill(-pid, SIGKILL) && errno != ESRCH) return error(env, "stop recovery group");
+      result = "signalled";
+    }
+  }
+  napi_value out; napi_create_string_utf8(env, result, NAPI_AUTO_LENGTH, &out); return out;
+}
 static napi_value init(napi_env env, napi_value exports) {
   const struct { const char *name; napi_callback function; } methods[] = {
-    {"connect", connect_socket}, {"send", send_frame}, {"receive", receive_frame}, {"close", close_descriptor}, {"readReady", read_ready}
+    {"connect", connect_socket}, {"send", send_frame}, {"receive", receive_frame}, {"close", close_descriptor}, {"readReady", read_ready},
+    {"recoveryGroupExists", recovery_group_exists}, {"recoverGroup", recover_group}
   };
   for (size_t i = 0; i < sizeof(methods) / sizeof(methods[0]); i++) {
     napi_value function; napi_create_function(env, methods[i].name, NAPI_AUTO_LENGTH, methods[i].function, NULL, &function);

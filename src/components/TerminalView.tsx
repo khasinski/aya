@@ -341,6 +341,11 @@ function TerminalViewComponent({
       : undefined;
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
+  const disconnectedRef = useRef(!!terminal.disconnected);
+  disconnectedRef.current = !!terminal.disconnected;
+  useEffect(() => {
+    if (xtermRef.current) xtermRef.current.options.disableStdin = !!terminal.disconnected;
+  }, [terminal.disconnected]);
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const webglRef = useRef<WebglAddon | null>(null);
@@ -382,6 +387,11 @@ function TerminalViewComponent({
   // return focus to the terminal so the user can keep working.
   const sendSnippet = useCallback(
     (snippet: Snippet) => {
+      if (terminal.disconnected) {
+        xtermRef.current?.write("\r\n[Input was not sent: the terminal host is disconnected.]\r\n");
+        onSnippetsOpenChange(false);
+        return;
+      }
       // A dead PTY (exited / spawn-failed / killed by a host restart) silently
       // swallows ptyWrite, so the snippet would vanish with no feedback. Tell
       // the user in the terminal itself and skip the no-op write. exitCode is
@@ -409,7 +419,7 @@ function TerminalViewComponent({
         /* ignore - terminal may be mid-dispose */
       }
     },
-    [terminal.id, terminal.exitCode, terminal.stopped, onSnippetsOpenChange],
+    [terminal.id, terminal.exitCode, terminal.stopped, terminal.disconnected, onSnippetsOpenChange],
   );
   // Current foreground-process title, fed by OSC 0/2 from the inner shell.
   // macOS zsh's default config emits this in preexec/precmd, so we get the
@@ -702,6 +712,7 @@ function TerminalViewComponent({
   useEffect(() => {
     if (!containerRef.current || xtermRef.current) return;
     const term = new XTerm({
+      disableStdin: disconnectedRef.current,
       theme: toXtermTheme(themeColors),
       fontSize,
       fontFamily: fontFamily ?? DEFAULT_TERMINAL_FONT_FAMILY,
@@ -813,7 +824,8 @@ function TerminalViewComponent({
           `\r\n\x1b[2m[process exited with code ${event.exitCode}${restartHint}]\x1b[0m\r\n`,
         );
       } else if (event.type === "disconnected") {
-        term.write("\r\n\x1b[1;33m[terminal host disconnected - the process may still be running. Restart explicitly to stop it and try again.]\x1b[0m\r\n");
+        disconnectedRef.current = true; term.options.disableStdin = true;
+        term.write("\r\n\x1b[1;33m[terminal host disconnected - the process may still be running. Input is disabled while disconnected. Restart explicitly to stop it and try again.]\x1b[0m\r\n");
       } else if (event.type === "no-session") {
         // Attach-only re-mount with no live PTY: the process ended while we were
         // away. Show a restartable hint instead of a fresh, contextless session.
@@ -824,6 +836,7 @@ function TerminalViewComponent({
     });
 
     term.attachCustomKeyEventHandler((ev) => {
+      if (disconnectedRef.current) return true; // xterm keeps copy/navigation; disableStdin blocks typing/paste
       if (ev.key === "Alt") {
         optionSideRef.current =
           ev.type === "keydown" ? optionSideFromCode(ev.code) : "unknown";
@@ -938,6 +951,7 @@ function TerminalViewComponent({
     });
 
     const onDataDisposable = term.onData((data) => {
+      if (disconnectedRef.current) return;
       if (replayingOutputRef.current > 0) return;
       if (data.length > 0) setIsScrollbarHidden(true);
       if (localStorage.getItem(DEBUG_TERMINAL_INPUT_STORAGE_KEY) === "1") {
@@ -1318,6 +1332,7 @@ function TerminalViewComponent({
   };
 
   const pasteClipboard = async () => {
+    if (terminal.disconnected) return;
     const text = await window.aya.readClipboard();
     if (text) xtermRef.current?.paste(text);
     setContextMenu(null);
@@ -1471,6 +1486,7 @@ function TerminalViewComponent({
             data-testid="terminal-context-paste"
             className="aya-terminal-context-item"
             type="button"
+            disabled={terminal.disconnected}
             onClick={pasteClipboard}
           >
             <span style={{ fontFamily: "Material Symbols Outlined" }}>

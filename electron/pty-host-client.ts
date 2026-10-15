@@ -20,6 +20,7 @@ import {
   type PtyHostMessage,
   type PtyHostRequest,
   type PtyHostResponse,
+  type PtyOwnerStatus,
 } from "./pty-host-protocol";
 import {
   hostBuildHash,
@@ -133,6 +134,8 @@ export class PtyHostClient {
   private socket: net.Socket | null = null;
   private readonly ownerSecret = randomBytes(32);
   private ownerBacked = false;
+  private metadataRequired = false;
+  private metadataSocket: net.Socket | null = null;
   private lastHostPid: number | undefined;
   private lostOwned = new Set<string>();
   private connectPromise: Promise<void> | null = null;
@@ -175,6 +178,7 @@ export class PtyHostClient {
   }
 
   async spawn(req: SpawnRequest): Promise<void> {
+    this.metadataRequired = true;
     // Resolve attachIfReused in request()'s post-connect hook - only this
     // client knows whether the host was reused or freshly spawned, and that
     // is settled once connect() resolves. The host itself only understands
@@ -259,7 +263,7 @@ export class PtyHostClient {
     identity: HostIdentity | null;
     ptyCount: number;
     pid?: number;
-    owner?: { pid: number; incompatible: boolean; disconnected: string[] };
+    owner?: PtyOwnerStatus;
   }> {
     try {
       const result = await this.request({ id: 0, type: "version" });
@@ -269,7 +273,7 @@ export class PtyHostClient {
         identity: asHostIdentity(result),
         ptyCount: typeof obj.ptyCount === "number" ? obj.ptyCount : 0,
         pid: typeof obj.pid === "number" ? obj.pid : undefined,
-        ...(obj.owner && typeof obj.owner === "object" ? { owner: obj.owner as { pid: number; incompatible: boolean; disconnected: string[] } } : {}),
+        ...(obj.owner && typeof obj.owner === "object" ? { owner: obj.owner as PtyOwnerStatus } : {}),
       };
     } catch {
       return { identity: null, ptyCount: 0 };
@@ -462,8 +466,12 @@ export class PtyHostClient {
     await this.connect();
     const socket = this.socket;
     if (!socket || socket.destroyed) throw new Error(PTY_HOST_NOT_CONNECTED);
+    return this.sendRequest(socket, finalize ? finalize(request) : request);
+  }
+
+  private sendRequest(socket: net.Socket, request: PtyHostRequest): Promise<unknown> {
     const id = this.nextId++;
-    const withId = { ...(finalize ? finalize(request) : request), id } as PtyHostRequest;
+    const withId = { ...request, id } as PtyHostRequest;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       socket.write(`${JSON.stringify(withId)}\n`, (err) => {
@@ -475,9 +483,22 @@ export class PtyHostClient {
   }
 
   private async connect(): Promise<void> {
-    if (this.socket && !this.socket.destroyed) return;
     if (this.connectPromise) return this.connectPromise;
-    this.connectPromise = this.connectWithHostStart().finally(() => {
+    const connected = this.socket && !this.socket.destroyed;
+    if (connected && (!this.metadataRequired || this.metadataSocket === this.socket)) return;
+    this.connectPromise = (connected ? Promise.resolve() : this.connectWithHostStart()).then(async () => {
+      if (!this.metadataRequired) return;
+      const socket = this.socket;
+      if (!socket || socket.destroyed) throw new Error(PTY_HOST_NOT_CONNECTED);
+      // Discover ownership before releasing queued spawn/write requests: a
+      // child can outlive a host that dies before its first spawn response.
+      await withTimeout(this.sendRequest(socket, { id: 0, type: "version" }).catch(error => {
+        if ((error as { code?: string }).code !== "PTY_HOST_REMOTE_ERROR") throw error;
+        // A legacy host can explicitly reject version; it has no native owner.
+      }), PTY_HOST_SOCKET_WAIT_TIMEOUT_MS);
+      if (this.socket !== socket || socket.destroyed) throw new Error(PTY_HOST_NOT_CONNECTED);
+      this.metadataSocket = socket;
+    }).catch(error => { this.dropSocket(); throw error; }).finally(() => {
       this.connectPromise = null;
     });
     return this.connectPromise;
@@ -506,6 +527,7 @@ export class PtyHostClient {
         this.socket = socket;
         this.hostAsked = false;
         this.ownerBacked = false;
+        this.metadataSocket = null;
         this.lastHostPid = undefined;
         this.buffer = "";
         socket.on("data", (chunk) => this.onData(String(chunk)));
@@ -651,14 +673,14 @@ export class PtyHostClient {
   }
 
   private onResponse(message: PtyHostResponse): void {
-    if (message.ownerBacked) this.ownerBacked = true;
+    if (message.ownerBacked) { this.ownerBacked = true; this.metadataSocket = this.socket; }
     const reportedPid = message.hostPid ?? (message.ok && message.result && typeof message.result === "object" ? (message.result as { pid?: unknown }).pid : undefined);
     if (typeof reportedPid === "number" && Number.isSafeInteger(reportedPid) && reportedPid > 1) this.lastHostPid = reportedPid;
     const pending = this.pending.get(message.id);
     if (!pending) return;
     this.pending.delete(message.id);
     if (message.ok) pending.resolve(message.result);
-    else pending.reject(new Error(message.error));
+    else pending.reject(Object.assign(new Error(message.error), { code: "PTY_HOST_REMOTE_ERROR" }));
   }
 
   private sendToSinks(events: PtyEvent[]): void {

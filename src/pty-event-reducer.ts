@@ -88,6 +88,7 @@ export function applyReportedStatus(
   terminal: TerminalState,
   { level, text, updatedAt, restart, on }: NonNullable<TerminalState["externalStatus"]>,
 ): TerminalState {
+  if (terminal.disconnected) return terminal;
   const dialog = terminal.status === "waiting" && terminal.externalStatus?.level !== "waiting" && level !== "waiting";
   return {
     ...terminal,
@@ -175,7 +176,7 @@ export function applyPtyEvent(
 
   if (event.type === "osc-status") {
     const t = prev[event.ptyId];
-    if (!t) return prev;
+    if (!t || t.disconnected) return prev;
     const text = event.text.trim();
     if (!text) return prev;
     return { ...prev, [event.ptyId]: applyReportedStatus(t, { level: event.level, text, updatedAt: event.updatedAt }) };
@@ -186,7 +187,7 @@ export function applyPtyEvent(
   if (!t) return prev;
   // Exited terminals should not flicker back to "running" from late chunks
   // (e.g. final newline after exit).
-  if (t.exitCode !== null) return prev;
+  if (t.exitCode !== null || t.disconnected) return prev;
 
   // Output says the terminal runs; it never says what the agent reported or what the screen shows (vt-status).
   if (t.externalStatus || t.status === "waiting" || t.status === "running") return prev;

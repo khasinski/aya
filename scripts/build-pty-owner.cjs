@@ -28,5 +28,5 @@ run([...flags, `-DOWNER_BUILD_ID="${buildId}"`, `${source}/owner.c`, "-o", path.
 run([...flags, "-I", headers, ...(process.platform === "darwin" ? ["-bundle", "-undefined", "dynamic_lookup"] : ["-shared", "-fPIC"]),
   `${source}/bridge.c`, "-o", path.join(out, "pty-owner-bridge.node")]);
 const hash = (name) => crypto.createHash("sha256").update(fs.readFileSync(path.join(out, name))).digest("hex");
-fs.writeFileSync(path.join(out, "pty-owner-build.json"), JSON.stringify({ protocol: 1, buildId, platform: process.platform, arch: process.arch,
+fs.writeFileSync(path.join(out, "pty-owner-build.json"), JSON.stringify({ protocol: 2, buildId, platform: process.platform, arch: process.arch,
   compilerVersion: compilerVersion.trim(), ownerHash: hash("aya-pty-owner"), bridgeHash: hash("pty-owner-bridge.node") }, null, 2) + "\n");

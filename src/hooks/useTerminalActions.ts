@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { terminalKillRefusal } from "../terminal-kill-refusal";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { clearedTerminalStatus } from "../pty-event-reducer";
 import { forgetSpawn, wasSpawned } from "../spawnSession";
@@ -210,10 +211,15 @@ export function useTerminalActions({
     [appendProjectEvent, effectiveCwd, projectsRef, presetsRef, terminalsRef, setTerminals, setAllProjects, setProjects],
   );
 
+  const closingTerminals = useRef(new Set<string>());
   const closeTerminal = useCallback(
-    (id: string) => {
+    async (id: string) => {
       const t = terminalsRef.current[id];
-      if (!t) return;
+      if (!t || closingTerminals.current.has(id)) return;
+      closingTerminals.current.add(id);
+      try { await window.aya.ptyKill(id); }
+      catch (error) { window.alert(terminalKillRefusal("close", t.name, error)); return; }
+      finally { closingTerminals.current.delete(id); }
     // A closed tab plays no team role; a restart keeps it (same tab).
     void window.aya.teamReleasePane(t.projectSlug, id).catch(() => {});
     // Drop the confirmed-session marker so the id doesn't linger (and can't be
@@ -228,7 +234,6 @@ export function useTerminalActions({
       delete next[id];
       return next;
     });
-    void window.aya.ptyKill(id);
     appendProjectEvent({
       projectSlug: t.projectSlug,
       terminalId: t.id,
@@ -313,7 +318,7 @@ export function useTerminalActions({
         // `stopped` (not a fake exitCode 0) marks the PTY as killed-by-restart:
         // shows idle + restartable via Shift+Enter, without masquerading as a
         // clean "done" finish in the project badges or event log.
-        next[id] = { ...t, status: "idle", stopped: true, bell: false };
+        next[id] = { ...t, status: "idle", stopped: true, disconnected: undefined, bell: false };
       }
       return next;
     });
@@ -444,8 +449,7 @@ export function useTerminalActions({
       try {
         await window.aya.ptyKill(id);
       } catch (err: unknown) {
-        const why = err instanceof Error ? err.message : String(err);
-        window.alert(`Aya did not restart ${t.name}: it could not confirm that the old terminal stopped, so the pane was kept. Check the terminal host in Settings > Diagnostics before trying again.\n\n${why}`);
+        window.alert(terminalKillRefusal("restart", t.name, err));
         return;
       }
     }

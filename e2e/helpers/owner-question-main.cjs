@@ -2,6 +2,12 @@
 const { dialog } = require("electron");
 const fs = require("node:fs"), path = require("node:path");
 const original = dialog.showMessageBox.bind(dialog);
+globalThis.watchOwnerSpawnRequests = () => {
+  const { PtyHostClient } = require("../../dist-electron/pty-host-client.js");
+  const original = PtyHostClient.prototype.spawn;
+  globalThis.ownerSpawnRequests = [];
+  PtyHostClient.prototype.spawn = function (req) { globalThis.ownerSpawnRequests.push(req); return original.call(this, req); };
+};
 dialog.showMessageBox = async (...args) => {
   const options = args.at(-1);
   if (options.message !== "Work in progress will stop") return original(...args);

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { ownerArtifactPaths, PtyOwnerClient, type OwnerPane } from "./pty-owner-client";
+import { ownerArtifactPaths, PtyOwnerClient, ownerProcessGroupExists, recoverOwnerProcessGroup, type OwnerPane } from "./pty-owner-client";
 import { readProcInfo } from "./pty-host-registry";
 import { OWNER_SOCKET, prepareOwnerDirectory, ownerBinaryHash, readOwnerRecord, ownerRecordIsLive,
   ownerReaderIsLive, writeOwnerRecord, removeOwnerRecord, type OwnerRecord } from "./pty-owner-registry";
@@ -38,6 +38,7 @@ export class OwnerRuntime {
   private pendingExits = new Map<string, OwnerPane>();
   private ending = false;
   private shutdownTask: Promise<void> | null = null;
+  private ownerExit: Promise<number | null> | null = null;
   get isStopping(): boolean { return !!this.shutdownTask; }
   pendingSpawns = 0;
   private idleTimer: NodeJS.Timeout | null = null;
@@ -62,13 +63,28 @@ export class OwnerRuntime {
     prepareOwnerDirectory();
     const result = new OwnerRuntime(), artifacts = ownerArtifactPaths();
     const hash = ownerBinaryHash(artifacts.executable), previous = readOwnerRecord();
+    if (previous && !ownerRecordIsLive(previous) && (previous.panes.some(p => !p.acknowledged) || previous.uncertain?.length)) {
+      if (ownerReaderIsLive(previous) && previous.jsPid !== process.pid) throw new Error("Another JS host still owns these terminals");
+      result.record = previous; result.incompatible = true;
+      for (const pane of previous.panes) if (!pane.acknowledged) result.inventory.set(pane.id, pane);
+      result.disconnected = new Map(result.inventory);
+      const own = readProcInfo(process.pid);
+      if (!own.startTime) throw new Error("Cannot establish disconnected JS host identity");
+      previous.jsPid = process.pid; previous.jsStartTime = own.startTime; result.persist();
+      return result;
+    }
     if (previous && ownerRecordIsLive(previous)) {
       if (ownerReaderIsLive(previous) && previous.jsPid !== process.pid) throw new Error("Another JS host still owns these terminals");
       result.record = previous;
       for (const pane of previous.panes) if (!pane.acknowledged) result.inventory.set(pane.id, pane);
-      if (previous.binaryHash !== hash || previous.uncertain?.length) result.incompatible = true;
+      if (previous.binaryHash !== hash) result.incompatible = true;
       else {
-        try { result.client = await PtyOwnerClient.connect(OWNER_SOCKET, secret); }
+        try {
+          result.client = await PtyOwnerClient.connect(OWNER_SOCKET, secret);
+          if (result.client.ownerPid !== previous.pid || result.client.instanceId !== previous.instanceId) {
+            result.client.close(); result.client = null;
+          }
+        }
         catch (error) {
           if (error instanceof Error && /owns the lease/.test(error.message)) throw error;
           // A previous app's secret is gone: explicit recovery must ask first.
@@ -87,6 +103,7 @@ export class OwnerRuntime {
         detached: true, stdio: ["ignore", "pipe", "pipe", "pipe"], env: { PATH: process.env.PATH, HOME: process.env.HOME },
       });
       const pipe = child.stdio[3] as NodeJS.WritableStream;
+      result.ownerExit = new Promise(resolve => child.once("exit", code => resolve(code)));
       pipe.on("error", () => {}); pipe.end(secret);
       let errorText = ""; child.stderr!.on("data", b => { errorText += String(b); });
       let timer: NodeJS.Timeout | undefined;
@@ -103,6 +120,10 @@ export class OwnerRuntime {
     }
     const client = result.client!;
     const panes = await client.list();
+    // The authenticated living owner's complete inventory resolves uncertain
+    // SPAWN outcomes before any replacement is allowed; masters stay detached.
+    result.record.uncertain = [];
+    result.record.recoveryFailures = [];
     for (const pane of panes) if (!pane.acknowledged) { result.inventory.set(pane.id, pane); result.disconnected.set(pane.id, pane); }
     const own = readProcInfo(process.pid);
     if (!own.startTime) { client.close(); throw new Error("Cannot establish JS reader identity"); }
@@ -121,8 +142,8 @@ export class OwnerRuntime {
     if (listener) listener(pane); else this.pendingExits.set(key, pane);
   }
   track(pane: OwnerPane, listener: (pane: OwnerPane) => void): void {
-    const { id, generation, pid, cols, rows, exited, exitCode, signal, event, acknowledged } = pane;
-    this.inventory.set(id, { id, generation, pid, cols, rows, exited, exitCode, signal, event, acknowledged }); this.persist();
+    const { id, generation, pid, cols, rows, exited, exitCode, signal, event, acknowledged, startIdentity } = pane;
+    this.inventory.set(id, { id, generation, pid, cols, rows, exited, exitCode, signal, event, acknowledged, startIdentity }); this.persist();
     const key = `${pane.id}:${pane.generation}`; this.exits.set(key, listener);
     const pendingExit = this.pendingExits.get(key);
     if (pendingExit) { this.pendingExits.delete(key); queueMicrotask(() => listener(pendingExit)); }
@@ -148,6 +169,27 @@ export class OwnerRuntime {
     await this.retired(await exited);
   }
   shutdown(): Promise<void> { return this.shutdownTask ??= this.stop(); }
+  private async recoverRetainedGroups(orderlyExit: boolean): Promise<void> {
+    const refused: string[] = [];
+    for (const pane of [...this.inventory.values()]) {
+      try {
+        if (ownerProcessGroupExists(pane.pid)) {
+          if (!pane.startIdentity) throw new Error("its kernel start identity was not recorded");
+          const outcome = recoverOwnerProcessGroup(pane.pid, pane.startIdentity);
+          if (outcome !== "signalled" && outcome !== "absent") throw new Error(`its process identity or group no longer matches (${outcome})`);
+          const deadline = Date.now() + 5000;
+          while (ownerProcessGroupExists(pane.pid) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+          if (ownerProcessGroupExists(pane.pid)) throw new Error("its process group did not stop");
+        }
+        this.inventory.delete(pane.id); this.disconnected.delete(pane.id);
+      } catch (error) { refused.push(`${pane.id} (PID ${pane.pid}): ${error instanceof Error ? error.message : String(error)}`); }
+    }
+    if (orderlyExit) this.record.uncertain = [];
+    for (const id of this.record.uncertain ?? []) refused.push(`${id}: its spawn was not acknowledged and no process identity can be verified`);
+    this.record.recoveryFailures = refused;
+    this.persist();
+    if (refused.length) throw new Error(`Not stopped; their inventory was kept:\n${refused.join("\n")}`);
+  }
   private async stop(): Promise<void> {
     this.ending = true;
     if (this.idleTimer) clearTimeout(this.idleTimer);
@@ -160,6 +202,7 @@ export class OwnerRuntime {
       if (Date.now() > deadline) throw new Error("PTY owner did not stop; its inventory was kept");
       await new Promise(resolve => setTimeout(resolve, 10));
     }
+    await this.recoverRetainedGroups(this.ownerExit !== null && await this.ownerExit === 0);
     removeOwnerRecord(this.record); this.inventory.clear(); this.disconnected.clear(); runtime = null; ready = null;
   }
 }

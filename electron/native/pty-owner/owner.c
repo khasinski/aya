@@ -46,6 +46,7 @@ typedef struct {
   uint32_t generation, event;
   pid_t pid;
   int fd, cols, rows, exited, acknowledged, status;
+  ProcessIdentity identity;
   int64_t kill_deadline;
 } Pane;
 static Client clients[OWNER_MAX_CLIENTS];
@@ -171,6 +172,9 @@ static void pane_record(Writer *w, Pane *p) {
   put32(w, p->exited && WIFEXITED(p->status) ? (uint32_t)WEXITSTATUS(p->status) : UINT32_MAX);
   put32(w, p->exited && WIFSIGNALED(p->status) ? (uint32_t)WTERMSIG(p->status) : 0);
   put32(w, p->event); put32(w, (uint32_t)p->acknowledged);
+  char identity[64] = "";
+  if (p->identity.start) snprintf(identity, sizeof(identity), "%llu:%llu", (unsigned long long)p->identity.start, (unsigned long long)p->identity.fraction);
+  put_string(w, identity);
 }
 static void exit_event(int client, Pane *p) {
   Writer w = {0}; pane_record(&w, p); (void)send_frame(client, OWNER_EXIT, 0, &w, -1);
@@ -272,6 +276,8 @@ static void spawn_pane(int client, uint32_t request, Reader *r) {
   if (slot->id[0]) close(slot->fd);
   memset(slot, 0, sizeof(*slot)); strcpy(slot->id, id);
   slot->pid = pid; slot->fd = master; slot->cols = (int)cols; slot->rows = (int)rows; slot->generation = ++serial;
+  // The child remains our unreaped PID while its process instance is recorded.
+  (void)process_identity(pid, &slot->identity);
   Writer w = {0}; pane_record(&w, slot); (void)send_frame(client, OWNER_OK, request, &w, master);
 done:
   free(id); free(cwd); free(command); free_vector(args); free_vector(env);

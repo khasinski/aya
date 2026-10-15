@@ -31,7 +31,7 @@ function setup(t, over = {}) {
   const state = {
     expected: EXPECTED, identity: EXPECTED, connected: true, socketExists: true, socketPid: 100,
     records: [record(100)], parent: null, response: 0, restartAnswer: true,
-    confirmAnswer: true, askAnswer: true, menuInstalled: true,
+    confirmAnswer: true, askAnswer: true, menuInstalled: true, keepRecoveryInventory: false,
     owner: { pid: 99, incompatible: false, disconnected: [] },
   };
   const d = {
@@ -44,6 +44,7 @@ function setup(t, over = {}) {
       restart: async () => {
         log.push(["restart"]);
         state.identity = EXPECTED;
+        if (!state.keepRecoveryInventory && state.owner) state.owner = { ...state.owner, incompatible: false, disconnected: [] };
         return state.restartAnswer;
       },
     },
@@ -77,6 +78,27 @@ function setup(t, over = {}) {
 }
 
 const operations = (log) => log.filter(([op]) => ["dialog", "kill", "wait", "restart", "ask-restart", "confirm"].includes(op));
+
+test("explicit Restart on an idle legacy host asks about migration and Cancel preserves its processes", async (t) => {
+  const { state, log, actions } = setup(t);
+  state.owner = undefined; state.askAnswer = false; state.confirmAnswer = true;
+  await assert.rejects(actions.restartHostFromWindow(), /restart cancelled/);
+  assert.equal(log.filter(([op]) => op === "restart").length, 0);
+  assert.equal(log.filter(([op]) => op === "ask-restart").length, 1);
+  assert.match(log.find(([op]) => op === "ask-restart")[2], /cannot be moved from the older host/);
+  state.askAnswer = true;
+  await actions.restartHostFromWindow();
+  assert.equal(log.filter(([op]) => op === "restart").length, 1);
+});
+
+test("explicit recovery lists retained PIDs and reports inventory that could not be stopped", async (t) => {
+  const { state, log, actions } = setup(t);
+  state.keepRecoveryInventory = true;
+  state.owner = { pid: 99, incompatible: true, disconnected: ["orphan"], inventory: [{ id: "orphan", pid: 789 }] };
+  await assert.rejects(actions.restartHostFromWindow(), /inventory was kept: orphan \(PID 789\)/);
+  assert.match(log.find(([op]) => op === "ask-restart")[2], /orphan \(PID 789\)/);
+  assert.equal(state.owner.inventory[0].pid, 789);
+});
 
 test("expected version is read once from the host's package, with Electron's version only as a fallback", (t) => {
   const { d, dir, log, actions } = setup(t);

@@ -8,7 +8,7 @@
 typedef struct { pid_t pid; uint64_t start, fraction; } ProcessIdentity;
 // 1 = measured process instance, 0 = absent, -1 = unknown. Unknown never
 // releases a lease. A PID alone is insufficient after the reader disconnects.
-static int process_identity(pid_t pid, ProcessIdentity *out) {
+static inline int process_identity(pid_t pid, ProcessIdentity *out) {
 #ifdef __APPLE__
   struct proc_bsdinfo info;
   errno = 0;
@@ -43,7 +43,7 @@ static int process_identity(pid_t pid, ProcessIdentity *out) {
 #endif
   return 1;
 }
-static int process_lease_blocks(const ProcessIdentity *lease,
+static inline int process_lease_blocks(const ProcessIdentity *lease,
                                int (*probe)(pid_t, ProcessIdentity *)) {
   if (!lease->pid) return 0;
   ProcessIdentity current;
