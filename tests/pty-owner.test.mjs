@@ -128,3 +128,27 @@ test("explicit owner shutdown completes even if a JS client retains an unread ma
   assert.equal(result.code, 0, "shutdown must not hang in a macOS PTY drain");
   c.close(); assert.throws(() => process.kill(pane.pid, 0), /ESRCH/);
 });
+
+test("lease identifies a process instance, releases a reused PID and fails closed on unreadable identity", () => {
+  const dir = fs.mkdtempSync(path.resolve("test-results/owner-identity-"));
+  try {
+    const executable = path.join(dir, "identity");
+    execFileSync(process.env.CC || "cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", "tests/helpers/pty-owner-identity.c", "-o", executable, ...(process.platform === "linux" ? ["-lutil"] : [])]);
+    execFileSync(executable);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("Linux received masters have CLOEXEC before the worker reaches its fcntl fault window", { skip: process.platform !== "linux" }, async (t) => {
+  const dir = fs.mkdtempSync(path.resolve("test-results/owner-atomic-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const headers = [process.env.AYA_NODE_HEADERS, path.resolve(path.dirname(process.execPath), "../include/node"), "/usr/include/node", "/usr/local/include/node"].find(p => p && fs.existsSync(path.join(p, "node_api.h")));
+  assert.ok(headers, "Prepared local Node headers are required; no download");
+  const bridge = path.join(dir, "checked.node");
+  execFileSync(process.env.CC || "cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC", "-I", headers,
+    "tests/helpers/pty-owner-atomic-receive.c", "-o", bridge]);
+  const owner = await startOwner(); t.after(() => owner.close());
+  const c = await PtyOwnerClient.connect(owner.socket, owner.token, bridge); t.after(() => c.close());
+  const pane = await c.spawn(shellSpec(owner.home));
+  await readUntil(c, pane.fd, `START:${pane.pid}`);
+  await c.kill(pane, 9); assert.equal((await c.nextExit()).signal, 9);
+});

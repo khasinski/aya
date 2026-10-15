@@ -26,6 +26,7 @@
 #else
 #include <pty.h>
 #endif
+#include "process-identity.h"
 #ifndef OWNER_BUILD_ID
 #define OWNER_BUILD_ID "unbuilt"
 #endif
@@ -35,6 +36,7 @@ typedef struct { unsigned char data[OWNER_MAX_FRAME]; size_t size; int bad; } Wr
 typedef struct {
   int fd, authenticated;
   pid_t pid;
+  ProcessIdentity identity;
   unsigned char *data;
   size_t used, capacity;
   int64_t deadline;
@@ -50,7 +52,7 @@ static Client clients[OWNER_MAX_CLIENTS];
 static Pane panes[OWNER_MAX_PANES];
 static unsigned char token[OWNER_AUTH_BYTES];
 static int wake_pipe[2], running = 1, active = -1;
-static pid_t lease_pid;
+static ProcessIdentity lease;
 static uint32_t serial;
 static char instance_id[33];
 
@@ -108,7 +110,7 @@ static void drop_client(int index) {
   if (clients[index].fd >= 0) close(clients[index].fd);
   free(clients[index].data);
   clients[index] = (Client){ .fd = -1 };
-  if (active == index) active = -1; // lease_pid remains until the process is gone
+  if (active == index) active = -1; // process-instance lease remains until the reader is gone
 }
 static int send_frame(int index, uint16_t type, uint32_t id, Writer *payload, int master) {
   if (payload->bad || clients[index].fd < 0) return -1;
@@ -247,10 +249,18 @@ static void handle_frame(int client, uint16_t type, uint32_t request, unsigned c
     if (type == OWNER_HELLO && size == sizeof(token)) for (size_t i = 0; i < sizeof(token); i++) difference |= data[i] ^ token[i];
     else difference = 1;
     if (difference) { error_reply(client, request, "Authentication failed"); drop_client(client); return; }
-    if (active >= 0 || (lease_pid && (kill(lease_pid, 0) == 0 || errno != ESRCH))) {
+    if (active >= 0 || process_lease_blocks(&lease, process_identity)) {
       error_reply(client, request, "Previous client still owns the lease"); drop_client(client); return;
     }
-    active = client; lease_pid = clients[client].pid; clients[client].authenticated = 1;
+    // The instance captured at accept must still match when authentication
+    // completes. A disappeared/recycled peer cannot acquire a new lease.
+    ProcessIdentity *identity = &clients[client].identity;
+    ProcessIdentity current;
+    if (process_identity(identity->pid, &current) != 1 ||
+        current.start != identity->start || current.fraction != identity->fraction) {
+      error_reply(client, request, "Cannot verify client process identity"); drop_client(client); return;
+    }
+    active = client; lease = *identity; clients[client].authenticated = 1;
     Writer w = {0}; put_string(&w, OWNER_BUILD_ID); put32(&w, (uint32_t)getpid());
     put_string(&w, instance_id);
     (void)send_frame(client, OWNER_OK, request, &w, -1);
@@ -413,11 +423,11 @@ int main(int argc, char **argv) {
       if (clients[i].fd >= 0 && clients[i].deadline && clients[i].deadline <= now_ms()) drop_client(i);
     }
     if (descriptors[0].revents & POLLIN) {
-      int fd = accept(server, NULL, NULL); int slot = -1; pid_t pid;
+      int fd = accept(server, NULL, NULL); int slot = -1; pid_t pid; ProcessIdentity identity;
       for (int i = 0; i < OWNER_MAX_CLIENTS; i++) if (clients[i].fd < 0) { slot = i; break; }
       if (fd >= 0) {
-        if (slot < 0 || cloexec(fd) || peer_pid(fd, &pid) || fcntl(fd, F_SETFL, O_NONBLOCK)) close(fd);
-        else clients[slot] = (Client){ .fd = fd, .pid = pid, .deadline = now_ms() + 5000 };
+        if (slot < 0 || cloexec(fd) || peer_pid(fd, &pid) || process_identity(pid, &identity) != 1 || fcntl(fd, F_SETFL, O_NONBLOCK)) close(fd);
+        else clients[slot] = (Client){ .fd = fd, .pid = pid, .identity = identity, .deadline = now_ms() + 5000 };
       }
     }
     if (running) reap_children();

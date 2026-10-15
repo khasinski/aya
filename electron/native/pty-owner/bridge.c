@@ -114,7 +114,18 @@ static void receive_work(napi_env env, void *input) {
   struct msghdr message = { .msg_iov = &io, .msg_iovlen = 1,
     .msg_control = ancillary.data, .msg_controllen = sizeof(ancillary.data) };
   ssize_t count;
-  do { count = recvmsg(r->fd, &message, 0); } while (count < 0 && errno == EINTR);
+#ifdef __linux__
+  // This runs on a worker while JS can spawn children. Never install an
+  // inheritable master, even briefly; no non-atomic fallback on old kernels.
+  const int receive_flags = MSG_CMSG_CLOEXEC;
+#elif defined(__APPLE__)
+  // macOS has no MSG_CMSG_CLOEXEC. Its supported Node/Electron posix_spawn
+  // path uses POSIX_SPAWN_CLOEXEC_DEFAULT; set the explicit flag below too.
+  const int receive_flags = 0;
+#else
+#error Unsupported PTY owner bridge platform
+#endif
+  do { count = recvmsg(r->fd, &message, receive_flags); } while (count < 0 && errno == EINTR);
   if (count != 1) { if (!count) errno = EPIPE; goto failed; }
   int invalid = (message.msg_flags & MSG_CTRUNC) != 0;
   for (struct cmsghdr *c = CMSG_FIRSTHDR(&message); c; c = CMSG_NXTHDR(&message, c)) {
