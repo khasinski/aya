@@ -10,20 +10,20 @@ const apps:ElectronApplication[]=[];
 test.afterEach(async()=>{writeFileSync(hostScript,built);writeFileSync(rulesScript,rulesBuilt);writeFileSync(packageFile,packageBuilt);for(const app of apps.splice(0))await closeAndWait(app);});
 async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=false,plainHost=false){
  const wrapper=join(seeded.root,'handover-main.js');
- const updater=realUpdate?`Object.defineProperty(electron.app,'isPackaged',{get:()=>true});process.env.APPIMAGE='test-only-appimage';const updater=require(${JSON.stringify(join(root,'node_modules/electron-updater'))}).autoUpdater;updater.checkForUpdates=async()=>null;updater.quitAndInstall=()=>{globalThis.installerHandedOff=true;};globalThis.testUpdater=updater;`:'';
+ const updater=realUpdate?`Object.defineProperty(electron.app,'isPackaged',{get:()=>true});process.env.APPIMAGE='test-only-appimage';const updater=require(${JSON.stringify(join(root,'node_modules/electron-updater'))}).autoUpdater;updater.checkForUpdates=async()=>null;updater.quitAndInstall=()=>{globalThis.handoverOrder.push('installer');globalThis.installerHandedOff=true;};globalThis.testUpdater=updater;`:'';
 
  const runtime=plainHost?`const cp=require('node:child_process'),spawn=cp.spawn;cp.spawn=(file,args,options)=>spawn(file===process.execPath&&args?.[0]===${JSON.stringify(hostScript)}?${JSON.stringify(process.execPath)}:file,args,options);const {PtyHostClient}=require(${JSON.stringify(join(root,'dist-electron/pty-host-client.js'))}),{hostBuildHash}=require(${JSON.stringify(join(root,'dist-electron/pty-host-staleness.js'))}),path=require('path');PtyHostClient.prototype.expectedHostIdentity=function(version){const runtime=${JSON.stringify({node:process.versions.node,electron:null})};return{version,runtime,scriptHash:hostBuildHash(path.dirname(this.hostScript),path.basename(this.hostScript),runtime)};};`:'';
  const delayed=blockDisplay?`const fs=require('fs'),original=electron.ipcMain.handle.bind(electron.ipcMain);globalThis.handoverDisplayWaiting=false;globalThis.inputCalls=0;electron.ipcMain.handle=(channel,handler)=>original(channel,async(event,...args)=>{if(channel==='pty:write')globalThis.inputCalls++;if(channel==='pty-checkpoint:display'&&args[0]==='tab-left'){globalThis.handoverDisplayWaiting=true;const deadline=Date.now()+15000;while(!fs.existsSync(${JSON.stringify(join(seeded.root,'release-display'))})){if(Date.now()>deadline)throw Error('test display gate expired');await new Promise(r=>setTimeout(r,2));}}return handler(event,...args);});`:'';
 
- writeFileSync(wrapper,`const electron=require('electron');globalThis.handoverQuestions=[];electron.dialog.showMessageBox=async(...args)=>{const options=args.at(-1);globalThis.handoverQuestions.push(options);return{response:${choice},checkboxChecked:false};};${runtime}${delayed}${updater}require(${JSON.stringify(join(root,'dist-electron/main.js'))});`);
+ writeFileSync(wrapper,`const electron=require('electron');globalThis.handoverQuestions=[];globalThis.handoverOrder=[];globalThis.handoverSpawns=[];globalThis.handoverWrites=[];const trackHandle=electron.ipcMain.handle.bind(electron.ipcMain);electron.ipcMain.handle=(channel,handler)=>trackHandle(channel,(event,...args)=>{if(channel==='pty:spawn')globalThis.handoverSpawns.push(args[0]);if(channel==='pty:write')globalThis.handoverWrites.push(args[0]);return handler(event,...args);});electron.dialog.showMessageBox=async(...args)=>{const options=args.at(-1);globalThis.handoverQuestions.push(options);globalThis.handoverOrder.push('question');return{response:${choice},checkboxChecked:false};};${runtime}${delayed}${updater}require(${JSON.stringify(join(root,'dist-electron/main.js'))});`);
  const app=await _electron.launch({args:[wrapper,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],cwd:root,env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0'}})});apps.push(app);
  return {app,window:await app.firstWindow()};
 }
 async function quit(app:ElectronApplication){apps.splice(apps.indexOf(app),1);await closeAndWait(app);}
 const inventory=(home:string)=>JSON.parse(readFileSync(join(home,'pty-owner/record.json'),'utf8')) as {pid:number;panes:Array<{id:string;pid:number}>};
 const identities=(home:string)=>inventory(home).panes.map(({id,pid})=>({id,pid})).sort((a,b)=>a.id.localeCompare(b.id));
-async function prepare(app:ElectronApplication){
- return app.evaluate(async({ipcMain,BrowserWindow,dialog},{root})=>{
+async function prepare(app:ElectronApplication,budget?:number){
+ return app.evaluate(async({ipcMain,BrowserWindow,dialog},{root,budget})=>{
   const require=process.getBuiltinModule('node:module').createRequire(root+'/package.json');
   const {PtyHostClient}=require(root+'/dist-electron/pty-host-client.js');
   const {HandoverDisplays}=require(root+'/dist-electron/pty-handover-display.js');
@@ -36,6 +36,7 @@ async function prepare(app:ElectronApplication){
   const client=new PtyHostClient(root+'/dist-electron/pty-host.js');
   const displays=new HandoverDisplays(async()=>BrowserWindow.getAllWindows().find(w=>!w.isDestroyed())?.webContents??null,()=>{});
   ipcMain.removeHandler('pty-checkpoint:display');ipcMain.removeHandler('pty-checkpoint:display-ack');displays.register(ipcMain);
+  if(budget){const ask=displays.ask.bind(displays);displays.ask=(id:string,_budget:number,deadline:number)=>ask(id,budget,deadline);}
   const original=displays.capture.bind(displays),views:Record<string,unknown>={};
   displays.capture=async(state:unknown)=>{
    const receipt=await original(state);
@@ -52,7 +53,7 @@ async function prepare(app:ElectronApplication){
   const ok=await planned.prepare();
   (globalThis as unknown as {testPlanned:unknown}).testPlanned={planned,client,displays};
   return {ok,views};
- },{root});
+ },{root,budget});
 }
 async function captureCurrent(app:ElectronApplication){
  // Prepare uses the real renderer capture IPC and freezes output again, so
@@ -257,4 +258,58 @@ test('explicit restart of an ended pane with an unapplied acknowledgement starts
  expect(await second.window.evaluate(()=>window.aya.handoverDisplay('tab-left'))).toBe(null);
  expect(inventory(seeded.ayaHome).pid).toBe(before.pid);
  expect(inventory(seeded.ayaHome).panes.find((p:{id:string})=>p.id==='tab-right').pid).toBe(before.panes.find((p:{id:string})=>p.id==='tab-right').pid);
+});
+
+
+test('successor restore refusal after detach asks in the new main; Cancel leaves live panes disconnected without respawning',async({seeded})=>{
+ test.setTimeout(45000);const first=await launch(seeded);await waitForShellReady(first.window);
+ const before=identities(seeded.ayaHome),owner=inventory(seeded.ayaHome).pid,hosts=hostPidsForHome(seeded.ayaHome);
+ expect((await prepare(first.app)).ok).toBe(true);await quit(first.app);
+ appendFileSync(hostScript,`\nif(process.env.AYA_PTY_CHECKPOINT_FD==='4')require('./pty-core').restorePtyCorePane=async()=>{throw Error('test successor restore refusal after detach');};\n`);
+ const second=await launch(seeded,1);await expect(second.window.getByTestId('xterm-host').first()).toBeVisible();
+ const questions=await second.app.evaluate(()=>(globalThis as unknown as {handoverQuestions:Array<{detail:string}>}).handoverQuestions);
+ expect(questions).toHaveLength(1);expect(questions[0].detail).toContain('planned handover could not complete');
+ // A later inventory-only host may serve disconnected metadata. Neither it
+ // nor a renderer attach may create a replacement child after Cancel.
+ expect(hostPidsForHome(seeded.ayaHome).some(pid=>hosts.includes(pid))).toBe(false);
+ const failed=readFileSync(join(seeded.ayaHome,'pty-events.log'),'utf8').trim().split('\n').map(line=>JSON.parse(line)).find(event=>event.ev==='owner-start-failed'&&event.error?.includes('test successor restore refusal after detach'));
+ expect(failed).toBeTruthy();
+ expect(await second.app.evaluate((_electron,pid)=>{try{process.kill(pid,0);return false;}catch{return true;}},failed.pid)).toBe(true);
+ expect(await second.app.evaluate((_electron,pids)=>pids.every(pid=>{try{process.kill(pid,0);return false;}catch{return true;}}),hosts)).toBe(true);
+ expect(inventory(seeded.ayaHome).pid).toBe(owner);expect(identities(seeded.ayaHome)).toEqual(before);
+ expect(await second.app.evaluate((_electron,pids)=>pids.every(pid=>{try{process.kill(pid,0);return true;}catch{return false;}}),[owner,...before.map(p=>p.pid)])).toBe(true);
+ const terminal=visiblePane(second.window,'shell 1').getByTestId('xterm-host');
+ await expect(terminal).toContainText('Input is disabled while disconnected');
+ await terminal.click();await second.window.keyboard.type('not delivered');await second.window.keyboard.press('Enter');
+ await terminal.locator('.xterm-helper-textarea').evaluate(textarea=>{const data=new DataTransfer();data.setData('text/plain','not pasted\n');textarea.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));});
+ expect(await second.app.evaluate(()=>(globalThis as unknown as {handoverWrites:unknown[]}).handoverWrites)).toEqual([]);
+ expect(await second.app.evaluate(()=>(globalThis as unknown as {handoverSpawns:Array<{attachOnly?:boolean;attachIfReused?:boolean}>}).handoverSpawns.filter(req=>!req.attachOnly&&!req.attachIfReused))).toEqual([]);
+ expect(identities(seeded.ayaHome)).toEqual(before);
+ expect(readFileSync(join(seeded.ayaHome,'pty-events.log'),'utf8')).toContain('test successor restore refusal after detach');
+});
+
+test('a capped renderer capture restores with a visible oldest-history-cut notice',async({seeded})=>{
+ test.setTimeout(45000);const first=await launch(seeded);await waitForShellReady(first.window);await history(first.window);
+ const before=identities(seeded.ayaHome),captured=await prepare(first.app,65536);expect(captured.ok).toBe(true);
+ const cut=(captured.views['tab-left'] as {cut:number}).cut;expect(cut).toBeGreaterThan(0);
+ await quit(first.app);appendFileSync(hostScript,'\n// capped renderer capture restoration\n');const second=await launch(seeded);
+ await expect(visiblePane(second.window,'shell 1').getByTestId('terminal-history-notice')).toHaveText(`${cut} oldest history lines were cut during the update.`);
+ expect(identities(seeded.ayaHome)).toEqual(before);
+ expect(await second.app.evaluate(()=>(globalThis as unknown as {handoverQuestions:unknown[]}).handoverQuestions)).toEqual([]);
+ expect(readFileSync(join(seeded.ayaHome,'diagnostics.log'),'utf8')).toContain('handover-history-cut');
+});
+
+for(const yes of [false,true])test(`real Restart to update asks about the ineligible pane before installer handoff, yes=${yes}`,async({seeded})=>{
+ test.setTimeout(45000);
+ appendFileSync(hostScript,`\nconst UpdateTestAdapter=require('./pty-owner-adapter').OwnerPty,updateFreeze=UpdateTestAdapter.prototype.freezeForHandover;UpdateTestAdapter.prototype.freezeForHandover=function(...args){if(this.pane.id==='tab-right')throw Error('test update route ineligible process');return updateFreeze.apply(this,args);};\n`);
+ const first=await launch(seeded,yes?0:1,false,true);await waitForShellReady(first.window);await expect.poll(()=>inventory(seeded.ayaHome).panes.length).toBe(2);
+ const before=identities(seeded.ayaHome);
+ await first.app.evaluate(({app})=>{(globalThis as unknown as {testUpdater:{emit:(event:string,data:unknown)=>void}}).testUpdater.emit('update-downloaded',{version:app.getVersion()});});
+ await first.window.evaluate(()=>window.aya.installUpdate());
+ const result=await first.app.evaluate(()=>{const g=globalThis as unknown as {handoverQuestions:Array<{message:string;detail:string}>;handoverOrder:string[];installerHandedOff?:boolean};return{questions:g.handoverQuestions,order:g.handoverOrder,installed:!!g.installerHandedOff};});
+ expect(result.questions).toHaveLength(1);expect(result.questions[0].message).toBe('Work in progress will stop');
+ expect(result.questions[0].detail).toContain('Restarting to update');expect(result.questions[0].detail).toContain('shell 2');expect(result.questions[0].detail).not.toContain('shell 1');
+ expect(result.order).toEqual(yes?['question','installer']:['question']);expect(result.installed).toBe(yes);
+ expect(existsSync(join(seeded.ayaHome,'pty-handover.json'))).toBe(yes);expect(identities(seeded.ayaHome)).toEqual(before);
+ if(!yes){await first.window.evaluate(()=>window.aya.ptyWrite('tab-right',"printf 'UPDATE_CANCEL_ALIVE\\n'\r"));await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('tab-right'))).toContain('\r\nUPDATE_CANCEL_ALIVE\r\n');}
 });

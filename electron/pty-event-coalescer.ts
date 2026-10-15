@@ -43,7 +43,7 @@ export interface PtyDataCoalescer {
 }
 
 /** Per-tick coalescer for the pty-host: data chunks accumulate per
- *  (ptyId, replay) stream and flush on the next `schedule` callback (the host
+ *  (ptyId, replay, replayToken) stream and flush on the next `schedule` callback (the host
  *  passes setImmediate — same event-loop turn, so no added latency a human
  *  could perceive), on a non-data event, or when a stream exceeds the size
  *  cap. `schedule` is injectable for tests. */
@@ -77,7 +77,7 @@ export function createPtyDataCoalescer(
       // A replay fence may arrive after live output collected during successor
       // startup. Preserve that order and never merge across display resets.
       if (event.reset !== undefined) {flush();send({...event});return;}
-      const key = `${event.replay ? "r" : "l"}:${String(event.reset)}:${event.ptyId}`;
+      const key = JSON.stringify([event.ptyId, !!event.replay, event.reset, event.replayToken]);
       const queued = pending.get(key);
       if (queued) {
         queued.chunk += event.chunk;
