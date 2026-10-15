@@ -1,4 +1,10 @@
-# B3 VT checkpoint proof
+# B3 planned host handover
+
+I implemented planned JS-host replacement through the existing native PTY owner. An unchanged host identity reuses the host; a changed compatible identity checkpoints the old host and rendered panes, confirms the old JS process has exited, then restores the successor without changing child PIDs. Missing renderer state uses replay history, and retained-history cuts are shown in the pane. Only processes that cannot move enter the existing confirmation-and-restart path. This is planned update support, not B4 crash recovery.
+
+The sections below record the representation proof and each implementation stage; their intermediate pending-work notes describe that stage. The final measurement and repeated-replacement sections contain the latest local validation. Native owner bytes change narrowly for the accepted-stop boundary, so a pre-B3 owner migrates once through the existing question.
+
+## Initial representation proof
 
 I chose a compact, engine-pinned structural snapshot at parser ground state, with a bounded tail of later VT input and resize operations. I did not add a host cutover, owner attach, checkpoint escrow or product call site. This is the first representation proof requested before building B3's cutover.
 
@@ -215,39 +221,39 @@ The first full unit run after applied ACK integration found two successor fixtur
 
 ## Twenty-five-pane planned handover measurement
 
-I ran `ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/Electron.app/Contents/MacOS/Electron scripts/measure-pty-handover.cjs` offline on macOS arm64 with Electron 43.5 / Node 24.19, after the approved owner stop-boundary fix. The final reported trial used 25 real owner-backed PTYs, each with a 240x80 coloured screen and numbered output every 20 ms. For display transport it captured one synthetic dense 10,000-line browser fixture 25 times through the real sender-bound capture/escrow path; it did not open 25 DOM terminals. Instrumented old/new host entries wrote kernel resource-usage high-water marks on exit. RSS sampling used asynchronous `ps`, with at most one outstanding sample, so the sampler could not block the main event loop. Input/output latency was measured with that sampler stopped. This is one reported local trial, not a production bound.
+I ran `ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/Electron.app/Contents/MacOS/Electron scripts/measure-pty-handover.cjs` offline on macOS arm64 with Electron 43.5 / Node 24.19, on 2026-10-16 at product commit `aa93d50f`, after the approved owner stop-boundary fix and ended-pane retention. The final reported trial used 25 real owner-backed PTYs, each with a 240x80 coloured screen and numbered output every 20 ms. For display transport it captured one synthetic dense 10,000-line browser fixture 25 times through the real sender-bound capture/escrow path; it did not open 25 DOM terminals. Instrumented old/new host entries wrote kernel resource-usage high-water marks on exit. RSS sampling used asynchronous `ps`, with at most one outstanding sample, so the sampler could not block the main event loop. Input/output latency was measured with that sampler stopped. This is one reported local trial, not a production bound.
 
 | Phase or payload | Result |
 | --- | --- |
-| Core freeze |316.59ms|
-| All 25 renderer capture/validate/compress/escrow writes |1885.72ms|
-| New-main validation, old-host detach/exit, successor start/restore |976.85ms|
-| Freeze through successor readiness and all25 PID checks |3260.63ms|
-| Core raw / compressed part bytes |8,536,031 /137,464|
+| Core freeze |333.55ms|
+| All 25 renderer capture/validate/compress/escrow writes |1886.86ms|
+| New-main validation, old-host detach/exit, successor start/restore |950.93ms|
+| Freeze through successor readiness and all25 PID checks |3191.51ms|
+| Core raw / compressed part bytes |8,535,786 /137,639|
 | Display raw / compressed part bytes |99,047,075 /693,300|
 | Dense fixture history cut |9,068 oldest lines per pane, recorded visibly by the normal display path|
-| Input-to-echo round trip before, p50 / p95 across25 probes |2.60 /4.35ms|
-| Input-to-echo round trip after, p50 / p95 across25 probes |2.02 /3.41ms|
+| Input-to-echo round trip before, p50 / p95 across25 probes |2.55 /5.09ms|
+| Input-to-echo round trip after, p50 / p95 across25 probes |2.10 /3.00ms|
 
 All 25 child PIDs and the owner PID stayed unchanged. Concatenating old output through B with each successor replay/live suffix produced consecutive numbered ticks without gaps or duplicates. The start hook also checked that the old host no longer existed before creating the successor; 28 asynchronous samples found no simultaneous old/new host. The readiness interval excludes browser DTO application, paint and simultaneous DOM memory. The earlier ordinary 10,000-line workload retained all 250,000 history lines under 96 MiB; the cuts here are the intentionally dense per-cell-attribute worst case.
 
 | Process memory | High-water RSS |
 | --- | --- |
-| Old JS host, kernel |232,592KiB (227.14MiB)|
-| Successor JS host, kernel |249,584KiB (243.73MiB)|
-| Measurement main including the one dense browser fixture, kernel |372,704KiB (363.97MiB)|
-| Native owner, sampled |2,277,376B (2.17MiB)|
-| Main + currently live host + owner, sampled combined peak |566,607,872B (540.36MiB)|
+| Old JS host, kernel |236,080KiB (230.55MiB)|
+| Successor JS host, kernel |243,728KiB (238.02MiB)|
+| Measurement main including the one dense browser fixture, kernel |374,656KiB (365.88MiB)|
+| Native owner, sampled |2,260,992B (2.16MiB)|
+| Main + currently live host + owner, sampled combined peak |565,428,224B (539.23MiB)|
 
 Individual kernel peaks occurred at different times and must not be added. The sampled combined figure excludes pane children and kernel PTY queues; it is not 25-renderer app memory. The script cleans up only its disposable owner/hosts/home.
 
 I also added real process tests in both directions between Node 26 and Electron 43.5 / Node 24.19. Old main runs the actual planned-update preparation and read-once ticket path, exits, then the other runtime's main resumes it with a changed runtime identity. The same owner and child survive, the incomplete CSI continues into HISTORYTAIL in the restored mirror, input works, exit 23 is delivered, and no process-stop question is allowed. Both directions pass.
 
-The expanded planned-relaunch Electron suite passes10/10 with shutdown disabled and one worker: it now checks core and real host-runtime changes replace JS, while version-only and rules-only changes reuse it, with identical pane PIDs, actual rendered history and viewport. The runtime variant starts the old host under plain Node26 while its renderer remains Electron, then resumes under Electron43.5/Node24.19; it does not claim two different Electron GUI releases were installed.
+The expanded planned-relaunch Electron suite passes 13/13 with shutdown disabled and one worker: it now checks core and real host-runtime changes replace JS, while version-only and rules-only changes reuse it, with identical pane PIDs, actual rendered history and viewport. The runtime variant starts the old host under plain Node26 while its renderer remains Electron, then resumes under Electron43.5/Node24.19; it does not claim two different Electron GUI releases were installed.
 
-Refreshed packaging checks pass for macOS arm64 and emulated Linux x64 under staged Electron43.5, including native parentage/resize/input/exit23, the compressed display codec and byte-for-byte parity for33 host/coordinator modules plus the shared row codec. macOS verifies ad-hoc nested signing with deep/strict checks; notarization was not run. Raw macOS owner build ID is `118a56699f60f2004e88344c4431abaa255a9a3c4bdd096a23c98d6b13f1b593`, owner SHA256 `2d93372d8249dd1c3a7593d0869f863fdb53971c36076c71dad9939a5a3e4109`. Its staged signed owner SHA256 is `05b90c772894d815349a3d5ff21cf62415d28138af4e23489fd790c06f3c22fb`.
+Refreshed packaging checks pass for macOS arm64 and emulated Linux x64 under staged Electron43.5, including native parentage/resize/input/exit23, the compressed display codec and byte-for-byte parity for 33 host/coordinator modules, all 105 built renderer files and the shared row codec. macOS verifies ad-hoc nested signing with deep/strict checks; notarization was not run. Raw macOS owner build ID is `118a56699f60f2004e88344c4431abaa255a9a3c4bdd096a23c98d6b13f1b593`, owner SHA256 `2d93372d8249dd1c3a7593d0869f863fdb53971c36076c71dad9939a5a3e4109`. Its staged signed owner SHA256 is `05b90c772894d815349a3d5ff21cf62415d28138af4e23489fd790c06f3c22fb`.
 
-Offline Ubuntu24.04/GCC13.3 with fortification passed38/38 native/receipt/adapter/natural-exit/applied-ACK tests under x64 emulation. The staged Linux package probe used a separately compiled Debian bookworm/GCC12 owner (`b64382a64c5a62feb1d6e12ed7d7adb48fa423b3ffe80ce127f31e5b8cc008c9`, SHA256 `ecb5792bba60c3f7b2082ff1c01ee215a018756a4f02ce3c7321ffbce818a7f6`) in the cached Debian runtime image. The Ubuntu-compiled binary required GLIBC_2.38 and could not load in that older image; that attempt is not counted as package execution evidence. These are component/staged-app probes, not installer testing or real native Linux CI. Refreshed real Linux x64/macOS arm64 CI remains an external gate after authorized push.
+Offline Ubuntu24.04/GCC13.3 with fortification passed 67/67 native/receipt/adapter/natural-exit/applied-ACK/ended-record/IPC/display/attachment tests under x64 emulation. The staged Linux package probe used a separately compiled Debian bookworm/GCC12 owner (`b64382a64c5a62feb1d6e12ed7d7adb48fa423b3ffe80ce127f31e5b8cc008c9`, SHA256 `ecb5792bba60c3f7b2082ff1c01ee215a018756a4f02ce3c7321ffbce818a7f6`) in the cached Debian runtime image. The Ubuntu-compiled binary required GLIBC_2.38 and could not load in that older image; that attempt is not counted as package execution evidence. These are component/staged-app probes, not installer testing or real native Linux CI. Refreshed real Linux x64/macOS arm64 CI remains an external gate after authorized push.
 
 ## Repeated replacement before an ended view acknowledges
 
@@ -255,4 +261,19 @@ I fixed F16 by including a closed ended-pane record in the same streamed core es
 
 A pending unapplied exit also holds an idle lease reference in JS, so the native owner cannot disappear at its200ms empty-inventory idle timer before another planned replacement. That reference is separate from spawn preparation and does not block planned detach. Applied ACK, explicit kill, shutdown and committed detach release it. Successor bootstrap temporarily holds the owner while installing all restored records. No native protocol or additional owner executable change is involved.
 
-Real-owner tests perform two changed-host replacements before any applied ACK, then require exact LAST_SUFFIX/exit23, stale-token refusal, accepted current ACK and no respawn. The third host has native attach instrumented to fail, proving an ended record uses no master. The Electron app test similarly keeps an ended tab unmounted through two replacements, then visits it and checks ordered replay with the history notice and no new process/question. The planned suite passes 11/11, with the explicit code23 exit-banner case also rerun successfully; schema/core/controller/bootstrap/successor/replay/VT-limit cases pass 70/70 in Electron and 72/72 in Node including both cross-runtime directions. Removing ended export, removing the idle hold, or relaxing the closed ended schema each makes its exact regression fail. Final full suites and refreshed final packaging/measurement remain pending.
+Real-owner tests perform two changed-host replacements before any applied ACK, then require exact LAST_SUFFIX/exit23, stale-token refusal, accepted current ACK and no respawn. The third host has native attach instrumented to fail, proving an ended record uses no master. The Electron app test similarly keeps an ended tab unmounted through two replacements, then visits it and checks ordered replay with the history notice and no new process/question. The planned suite passes 11/11, with the explicit code23 exit-banner case also rerun successfully; schema/core/controller/bootstrap/successor/replay/VT-limit cases pass 70/70 in Electron and 72/72 in Node including both cross-runtime directions. Removing ended export, removing the idle hold, or relaxing the closed ended schema each makes its exact regression fail. The unit suite at `7697412b` passed 7025 tests with 0 failures, 147 skips and 1 known registry TODO; lint passed. Later close/restart fixes and final validation are recorded below.
+
+The first whole-suite run exposed an omitted existing `spawn-replay` diagnostic event: the unchanged role-note reload test waits for that marker after renderer replay. I restored its original pane ID and full-buffer byte-count fields in7697412b; the existing regression then passed in2.3s. This was a logging regression, not observed output loss. The baseline was stopped at248 passes/1 failure/6 skips with184 not run, and is not counted as a successful full suite. The full unit rerun again passed7025/0 and lint passed; final packaging and measurement above use the corrected product bytes.
+
+
+## Pending attachment and explicit restart
+
+The second whole-suite baseline at `7697412b` passed 414 cases with 1 failure and 6 skips; 19 shared-resource cases were blocked by that failure. The unchanged team-spawn-prep close test exposed a real pre-spawn race: kill reached the host before main had a spawn flight, and preparation completed after the host's five-second marker expired. I fixed it in `d300d63d` with per-view attachment cancellation and a counted per-pane close latch. Pane/project close cancels before awaiting kill, replacement views remain cancelled while that close is outstanding, and the initial continuation checks cancellation after display lookup and after hidden-view waiting. It releases its hook immediately before sending spawn, without an intervening await; main's existing gate owns cancellation from there. Identity-safe cleanup cannot delete a newer view's hook. A refused close keeps the visible record/input block and does not retry attachment.
+
+Three real IPC cases hold display lookup/kill, exercise pane close, partial refused project close and an already-hidden view, and require zero late target spawn calls after the cancelled continuation resumes. Typing/paste also produce zero target write calls. The old close-before-preparation test passes unchanged. Removing the post-hidden cancellation check makes the exact hidden-view regression fail; source and build were restored.
+
+I fixed reviewer F17 in `8600ac2d`: explicit restart retires the initial continuation, releases its hidden wait and clears its replay/input gate before the requested fresh spawn. A stale display reply cannot later repaint or pause that session. Main invalidates only that pane's display after successful kill; refusal preserves it. Actual planned-relaunch GUI testing requires fresh output and real keyboard input before releasing the old lookup, then checks exactly one requested spawn and the same new PID after its late reply. It passes with the close cases; the preceding full unit run passed 7032/0 with 147 skips and the known registry TODO.
+
+I fixed F18 in `aa93d50f`: attach-only requests continue to replay a held ended outcome without spawning, while an explicit fresh request retires the old ended record and enters the normal spawn flight. A temporary idle-owner reference covers preparation; a real-host test delays it beyond 200 ms and keeps the same owner. Fresh preparation retains main's display/cleanup authority until the spawn gate actually sends, so closing during either attach or fresh preparation still releases the host record. Discarding a known ended record does not arm a kill marker against its next explicit restart. Real-owner/IPC/ended-schema contracts pass 21/21 in both Node and Electron, and the actual GUI restarts an unACKed ended pane into a new live session with working keyboard input. The final full suites and final-byte package/measurement refresh follow these fixes.
+
+At final product `aa93d50f`, `npm test` passes 7035 tests with 0 failures, 147 skips and the same known registry TODO; lint passes. All 18 planned-handover/close-race/preparation e2e pass with shutdown disabled and one worker. Package byte parity and the 25-pane measurement above were refreshed after F18. The whole existing 445-case Electron suite is running on that unchanged product build; native-platform CI remains an external gate after authorized push.
