@@ -1,5 +1,6 @@
 // Typed transport for the stable native PTY owner.
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 export const OWNER_PROTOCOL = 2;
 export const OWNER_MAX_FRAME = 256 * 1024;
@@ -19,14 +20,50 @@ export function ownerArtifactPaths(directory = __dirname): { executable: string;
   return { executable: path.join(unpacked, "aya-pty-owner"), bridge: path.join(unpacked, "pty-owner-bridge.node") };
 }
 interface RecoveryBridge {
+  recoverySupported(): boolean;
+  nonblockingMaster(fd: number): void;
+  writeReady(fd: number): boolean;
   recoveryGroupExists(pid: number): boolean;
-  recoverGroup(pid: number, startIdentity: string): "absent" | "mismatch" | "unknown-group" | "signalled";
+  recoveryIdentity(pid: number): string | null;
+  recoverProcess(pid: number, startIdentity: string, group: number): "absent" | "mismatch" | "unknown" | "signalled";
 }
+export interface RecoveryMember { pid: number; startIdentity: string | null }
+const recoveryBridge = (): RecoveryBridge => require(ownerArtifactPaths().bridge) as RecoveryBridge;
+export function setOwnerMasterNonblocking(fd: number): void { recoveryBridge().nonblockingMaster(fd); }
+export function ownerMasterWriteReady(fd: number): boolean { return recoveryBridge().writeReady(fd); }
+export function ownerRecoverySupported(): boolean { return recoveryBridge().recoverySupported(); }
+export function ownerProcessStartIdentity(pid: number): string | null { return recoveryBridge().recoveryIdentity(pid); }
 export function ownerProcessGroupExists(pid: number): boolean {
-  return (require(ownerArtifactPaths().bridge) as RecoveryBridge).recoveryGroupExists(pid);
+  return recoveryBridge().recoveryGroupExists(pid);
 }
-export function recoverOwnerProcessGroup(pid: number, startIdentity: string): ReturnType<RecoveryBridge["recoverGroup"]> {
-  return (require(ownerArtifactPaths().bridge) as RecoveryBridge).recoverGroup(pid, startIdentity);
+export function ownerGroupMemberPids(group: number): number[] {
+  const listing = execFileSync("/bin/ps", ["-axo", "pid=,pgid="], { encoding: "utf8", timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
+  return listing.split("\n").flatMap(line => {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+    return match && Number(match[2]) === group && Number(match[1]) > 1 ? [Number(match[1])] : [];
+  });
+}
+export function snapshotOwnerRecoveryMembers(pid: number, startIdentity: string): RecoveryMember[] {
+  const bridge = recoveryBridge();
+  if (bridge.recoveryIdentity(pid) !== startIdentity) throw new Error("The recorded group leader's process identity no longer matches");
+  const pids = ownerGroupMemberPids(pid);
+  if (!pids.includes(pid) || pids.length > 32) throw new Error("Cannot establish a bounded recovery inventory through the recorded group leader");
+  const members = pids.map(member => {
+    let identity: string | null = null;
+    try { identity = bridge.recoveryIdentity(member); } catch { /* an unverifiable member stays in the inventory */ }
+    return { pid: member, startIdentity: identity };
+  });
+  if (bridge.recoveryIdentity(pid) !== startIdentity) throw new Error("The recorded group leader exited during recovery inventory");
+  return members;
+}
+export function recoverOwnerProcess(member: RecoveryMember, group: number): ReturnType<RecoveryBridge["recoverProcess"]> {
+  return member.startIdentity ? recoveryBridge().recoverProcess(member.pid, member.startIdentity, group) : "unknown";
+}
+// Disposable test cleanup also uses individual, instance-checked signals.
+export function recoverOwnerProcessGroup(pid: number, startIdentity: string): "absent" | "signalled" | "mismatch" {
+  if (!ownerProcessGroupExists(pid)) return "absent";
+  const members = snapshotOwnerRecoveryMembers(pid, startIdentity);
+  return members.every(member => ["absent", "signalled"].includes(recoverOwnerProcess(member, pid))) ? "signalled" : "mismatch";
 }
 export interface OwnerPane {
   id: string;
@@ -40,6 +77,8 @@ export interface OwnerPane {
   event: number;
   acknowledged: boolean;
   startIdentity: string | null;
+  /** Private recovery ledger only; not part of the owner's wire record. */
+  recoveryMembers?: RecoveryMember[];
 }
 export interface OwnerSpawn {
   id: string;

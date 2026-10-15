@@ -5,6 +5,7 @@ import tty from "node:tty";
 import { StringDecoder } from "node:string_decoder";
 import type { IPty, IDisposable } from "node-pty";
 import type { OwnerPane, OwnerSpawn } from "./pty-owner-client";
+import { setOwnerMasterNonblocking, ownerMasterWriteReady } from "./pty-owner-client";
 import { getOwnerRuntime, type OwnerRuntime } from "./pty-owner-runtime";
 const retiring = new Map<string, Promise<void>>();
 export class OwnerPty implements IPty {
@@ -27,6 +28,7 @@ export class OwnerPty implements IPty {
   private constructor(private owner: OwnerRuntime, private pane: OwnerPane & { fd: number }, command: string) {
     this.pid = pane.pid; this.cols = pane.cols; this.rows = pane.rows; this.process = command;
     this.reader = new tty.ReadStream(owner.client!.takeMaster(pane.fd));
+    setOwnerMasterNonblocking(pane.fd);
     this.reader.pause();
     this.reader.on("data", (data: Buffer) => this.emitData(this.decoder.write(data)));
     this.reader.pause(); // onData starts reads only after core installs its sink
@@ -49,10 +51,16 @@ export class OwnerPty implements IPty {
     await retiring.get(`${owner.record.instanceId}:${spec.id}`);
     if (owner.incompatible || !owner.client) throw new Error("The PTY owner is disconnected or incompatible. Restart its terminals after confirming the work that will stop.");
     if (owner.disconnected.has(spec.id)) throw new Error("This terminal still runs in the native owner but its JS host is disconnected. Restart it explicitly; it was not respawned.");
-    owner.beginSpawn();
-    try { const pane = await owner.client.spawn(spec); return new OwnerPty(owner, pane, spec.command); }
+    const intent = owner.beginSpawn(spec.id)!;
+    try {
+      const pane = await owner.client.spawn(spec);
+      const adapter = new OwnerPty(owner, pane, spec.command);
+      owner.resolveSpawn(spec.id, intent);
+      return adapter;
+    }
     catch (error) {
       if ((error as { code?: string }).code !== "OWNER_REJECTED") owner.uncertainSpawn(spec.id);
+      else owner.resolveSpawn(spec.id, intent);
       throw error;
     }
     finally { owner.endSpawn(); }
@@ -98,7 +106,12 @@ export class OwnerPty implements IPty {
         try { offset += fs.writeSync(this.pane.fd, bytes, offset, bytes.length - offset); }
         catch (error) {
           if (!["EAGAIN", "EWOULDBLOCK", "EINTR"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
-          await new Promise(resolve => setTimeout(resolve, 1));
+          // The master is nonblocking; waiting for writability yields to all
+          // other panes rather than blocking the JS host on a large paste.
+          do {
+            await new Promise(resolve => setTimeout(resolve, 5));
+            if (this.exited || this.readEnded || !this.owner.client?.isConnected()) break;
+          } while (!ownerMasterWriteReady(this.pane.fd));
         }
       }
     });

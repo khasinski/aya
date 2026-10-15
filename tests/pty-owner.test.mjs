@@ -165,6 +165,10 @@ function compileOwnerFixture(name) {
   execFileSync(process.env.CC || "cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", `tests/helpers/${name}.c`, "-o", executable, ...(process.platform === "linux" ? ["-lutil"] : [])]);
   return { dir, executable };
 }
+test("orphan recovery signals one verified process instance and refuses exit or PID reuse between checks", () => {
+  const fixture = compileOwnerFixture("pty-owner-recovery-races");
+  try { execFileSync(fixture.executable); } finally { fs.rmSync(fixture.dir, { recursive: true, force: true }); }
+});
 test("reply writes retry interrupted POLLOUT and interrupted/backpressured descriptor sends without losing the lease", () => {
   const fixture = compileOwnerFixture("pty-owner-reply-retries");
   try { execFileSync(fixture.executable); } finally { fs.rmSync(fixture.dir, { recursive: true, force: true }); }

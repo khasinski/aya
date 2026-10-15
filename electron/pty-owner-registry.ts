@@ -11,6 +11,7 @@ const RECORD = path.join(OWNER_DIRECTORY, "record.json");
 export interface OwnerRecord {
   pid: number; startTime: string; executable: string; binaryHash: string;
   instanceId: string; jsPid: number; jsStartTime: string; panes: OwnerPane[]; uncertain?: string[]; recoveryFailures?: string[];
+  spawnIntents?: Array<{ id: string; generation: string }>;
 }
 export function ownerBinaryHash(file: string): string { return createHash("sha256").update(fs.readFileSync(file)).digest("hex"); }
 export function prepareOwnerDirectory(): void {
@@ -28,10 +29,12 @@ export function readOwnerRecord(): OwnerRecord | null {
         !/^[a-f0-9]{32}$/.test(r.instanceId) || !Number.isSafeInteger(r.jsPid) || r.jsPid < 2 ||
         typeof r.jsStartTime !== "string" || !r.jsStartTime || !/^(?:[a-f0-9]{64}|unknown)$/.test(r.binaryHash) ||
         (r.uncertain !== undefined && (!Array.isArray(r.uncertain) || r.uncertain.length > 25 || !r.uncertain.every(id => typeof id === "string" && Buffer.byteLength(id) <= 128))) ||
+        (r.spawnIntents !== undefined && (!Array.isArray(r.spawnIntents) || r.spawnIntents.length > 25 || !r.spawnIntents.every(intent => typeof intent.id === "string" && Buffer.byteLength(intent.id) <= 128 && /^[a-f0-9]{32}$/.test(intent.generation)))) ||
         (r.recoveryFailures !== undefined && (!Array.isArray(r.recoveryFailures) || r.recoveryFailures.length > 50 || !r.recoveryFailures.every(reason => typeof reason === "string" && Buffer.byteLength(reason) <= 512))) ||
         !Array.isArray(r.panes) || r.panes.length > 25 ||
         !r.panes.every(p => typeof p.id === "string" && Buffer.byteLength(p.id) <= 128 &&
           (p.startIdentity === undefined || p.startIdentity === null || (typeof p.startIdentity === "string" && /^\d+:\d+$/.test(p.startIdentity))) &&
+          (p.recoveryMembers === undefined || (Array.isArray(p.recoveryMembers) && p.recoveryMembers.length <= 32 && p.recoveryMembers.every(m => Number.isSafeInteger(m.pid) && m.pid > 1 && m.pid <= 0x7fffffff && (m.startIdentity === null || (typeof m.startIdentity === "string" && /^\d+:\d+$/.test(m.startIdentity)))))) &&
           Number.isSafeInteger(p.pid) && p.pid > 1 && p.pid <= 0x7fffffff && Number.isInteger(p.generation) && p.generation > 0 && p.generation <= 0xffffffff &&
           Number.isInteger(p.cols) && p.cols >= 2 && p.cols <= 1000 && Number.isInteger(p.rows) && p.rows >= 1 && p.rows <= 1000 &&
           typeof p.exited === "boolean" && typeof p.acknowledged === "boolean" &&

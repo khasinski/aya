@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { isolateHome } from "./helpers/isolate-home.mjs";
+fs.mkdirSync(path.resolve("test-results"), { recursive: true });
 const root = fs.mkdtempSync(path.resolve("test-results/first-spawn-"));
 isolateHome(root); process.env.SHELL = "/bin/sh";
 fs.mkdirSync(process.env.HOME, { recursive: true }); fs.mkdirSync(process.env.AYA_HOME, { recursive: true });

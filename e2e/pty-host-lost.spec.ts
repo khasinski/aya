@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { expect, hostPidsForHome, test } from "./fixtures";
@@ -91,4 +91,33 @@ test("typing and paste into a disconnected pane are disabled instead of silently
   await expect(terminal).toContainText("Input is disabled while disconnected");
   expect(await app.evaluate(() => (globalThis as unknown as { disconnectedWrites: unknown[] }).disconnectedWrites)).toEqual([]);
   expect(alive(before.pid)).toBe(true); for (const pane of before.panes) expect(alive(pane.pid)).toBe(true);
+});
+
+test.describe("a pane mounted after its host disconnected", () => {
+  test.use({ seedOptions: { split: false } });
+  test("shows the disconnected explanation from stored state and keeps input disabled", async ({ app, window, seeded }) => {
+    await waitForShellReady(window);
+    const projectFile = join(seeded.ayaHome, "projects/e2e-proj.json");
+    const project = JSON.parse(readFileSync(projectFile, "utf8"));
+    project.tabs.push({ id: "deferred", presetId: "shell", name: "Deferred" });
+    writeFileSync(projectFile, JSON.stringify(project));
+    const row = window.locator('.aya-sidebar-row[data-terminal-name="Deferred"]');
+    await expect(row).toBeVisible();
+    await expect(window.locator('.aya-pane[data-terminal-id="deferred"]')).toHaveCount(0);
+    await window.evaluate(cwd => window.aya.ptySpawn({ ptyId: "deferred", command: "/bin/sleep 60", cwd, cols: 80, rows: 24 }), seeded.projectDir);
+    await expect.poll(() => inventory(seeded.ayaHome).panes.length).toBe(3);
+    const before = inventory(seeded.ayaHome), hosts = hostPidsForHome(seeded.ayaHome);
+    expect(hosts).toHaveLength(1); process.kill(hosts[0], "SIGKILL");
+    await expect(row.locator(".aya-sidebar-statusdot")).toHaveClass(/--error/);
+    await expect(window.locator('.aya-pane[data-terminal-id="deferred"]')).toHaveCount(0);
+    // Suppress all attach/replay responses: the warning must come from stored
+    // disconnected state on the first mount, rather than a new PTY event.
+    await app.evaluate(({ ipcMain }) => { ipcMain.removeHandler("pty:spawn"); ipcMain.handle("pty:spawn", () => {}); });
+    await row.click();
+    const terminal = window.locator('.aya-pane[data-terminal-id="deferred"]').getByTestId("xterm-host");
+    await expect(terminal).toContainText("terminal host disconnected");
+    await expect(terminal).toContainText("Input is disabled while disconnected");
+    await expect(row.locator(".aya-sidebar-statusdot")).toHaveClass(/--error/);
+    expect(alive(before.pid)).toBe(true); for (const pane of before.panes) expect(alive(pane.pid)).toBe(true);
+  });
 });

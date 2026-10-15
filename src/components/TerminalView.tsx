@@ -754,6 +754,9 @@ function TerminalViewComponent({
     term.loadAddon(search);
     term.loadAddon(webLinks);
     term.open(containerRef.current);
+    if (disconnectedRef.current) {
+      term.write("\r\n\x1b[1;33m[terminal host disconnected - the process may still be running. Input is disabled while disconnected. Restart explicitly to stop it and try again.]\x1b[0m\r\n");
+    }
 
     const onTerminalLinkClick = (event: globalThis.MouseEvent) => {
       const url = anchorExternalUrl(event.target);

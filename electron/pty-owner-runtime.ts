@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { ownerArtifactPaths, PtyOwnerClient, ownerProcessGroupExists, recoverOwnerProcessGroup, type OwnerPane } from "./pty-owner-client";
+import { ownerArtifactPaths, PtyOwnerClient, ownerProcessGroupExists, ownerGroupMemberPids, snapshotOwnerRecoveryMembers, recoverOwnerProcess, ownerRecoverySupported, type OwnerPane } from "./pty-owner-client";
 import { readProcInfo } from "./pty-host-registry";
 import { OWNER_SOCKET, prepareOwnerDirectory, ownerBinaryHash, readOwnerRecord, ownerRecordIsLive,
   ownerReaderIsLive, writeOwnerRecord, removeOwnerRecord, type OwnerRecord } from "./pty-owner-registry";
@@ -53,7 +53,22 @@ export class OwnerRuntime {
     this.record.uncertain = [...new Set([...(this.record.uncertain ?? []), id])].slice(0, 25);
     this.persist();
   }
-  beginSpawn(): void { this.pendingSpawns++; if (this.idleTimer) clearTimeout(this.idleTimer); this.idleTimer = null; }
+  beginSpawn(id?: string): string | undefined {
+    const generation = id ? randomBytes(16).toString("hex") : undefined;
+    if (id) {
+      if ((this.record.spawnIntents?.length ?? 0) >= 25) throw new Error("Too many pending PTY spawn intents");
+      this.record.spawnIntents = [...(this.record.spawnIntents ?? []), { id, generation: generation! }];
+      this.record.uncertain = [...new Set([...(this.record.uncertain ?? []), id])];
+      this.persist(); // durable intent before SPAWN can fork, even if no reply arrives
+    }
+    this.pendingSpawns++; if (this.idleTimer) clearTimeout(this.idleTimer); this.idleTimer = null;
+    return generation;
+  }
+  resolveSpawn(id: string, generation: string): void {
+    this.record.spawnIntents = this.record.spawnIntents?.filter(intent => intent.id !== id || intent.generation !== generation);
+    if (!this.record.spawnIntents?.some(intent => intent.id === id)) this.record.uncertain = this.record.uncertain?.filter(value => value !== id);
+    this.persist();
+  }
   endSpawn(): void { this.pendingSpawns--; this.scheduleIdle(); }
   private scheduleIdle(): void {
     if (this.inventory.size || this.pendingSpawns || this.incompatible || this.ending || this.idleTimer) return;
@@ -123,6 +138,7 @@ export class OwnerRuntime {
     // The authenticated living owner's complete inventory resolves uncertain
     // SPAWN outcomes before any replacement is allowed; masters stay detached.
     result.record.uncertain = [];
+    result.record.spawnIntents = [];
     result.record.recoveryFailures = [];
     for (const pane of panes) if (!pane.acknowledged) { result.inventory.set(pane.id, pane); result.disconnected.set(pane.id, pane); }
     const own = readProcInfo(process.pid);
@@ -174,17 +190,29 @@ export class OwnerRuntime {
     for (const pane of [...this.inventory.values()]) {
       try {
         if (ownerProcessGroupExists(pane.pid)) {
+          if (!ownerRecoverySupported()) throw new Error("this kernel/process environment does not support process-instance-safe recovery; its listed processes were not stopped");
           if (!pane.startIdentity) throw new Error("its kernel start identity was not recorded");
-          const outcome = recoverOwnerProcessGroup(pane.pid, pane.startIdentity);
-          if (outcome !== "signalled" && outcome !== "absent") throw new Error(`its process identity or group no longer matches (${outcome})`);
+          if (!pane.recoveryMembers) {
+            pane.recoveryMembers = snapshotOwnerRecoveryMembers(pane.pid, pane.startIdentity);
+            // Persist the exact members before the first signal: a partially
+            // completed recovery must not invent new targets on retry.
+            this.persist();
+          }
+          const failures: string[] = [];
+          for (const member of pane.recoveryMembers) {
+            const outcome = recoverOwnerProcess(member, pane.pid);
+            if (outcome !== "signalled" && outcome !== "absent") failures.push(`PID ${member.pid}: ${outcome}`);
+          }
           const deadline = Date.now() + 5000;
           while (ownerProcessGroupExists(pane.pid) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
-          if (ownerProcessGroupExists(pane.pid)) throw new Error("its process group did not stop");
+          const left = ownerGroupMemberPids(pane.pid);
+          if (left.length) failures.push(`group members still present or unverified: ${left.join(", ")}`);
+          if (failures.length) throw new Error(failures.join("; "));
         }
         this.inventory.delete(pane.id); this.disconnected.delete(pane.id);
-      } catch (error) { refused.push(`${pane.id} (PID ${pane.pid}): ${error instanceof Error ? error.message : String(error)}`); }
+      } catch (error) { refused.push(`${pane.id} (PID ${pane.pid}): ${error instanceof Error ? error.message : String(error)}`.slice(0, 500)); }
     }
-    if (orderlyExit) this.record.uncertain = [];
+    if (orderlyExit) { this.record.uncertain = []; this.record.spawnIntents = []; }
     for (const id of this.record.uncertain ?? []) refused.push(`${id}: its spawn was not acknowledged and no process identity can be verified`);
     this.record.recoveryFailures = refused;
     this.persist();
