@@ -21,6 +21,8 @@ import {
   parseAyaOscStatus,
 } from "./osc-extractor";
 import {
+  panes as vtPanes,
+  snapshotOf,
   checkpointVtPane,
   restoreVtPane,
   closeAllVtPanes,
@@ -30,6 +32,8 @@ import {
   vtPaneAltScreen,
   writeVtPane,
 } from "./vt-mirror";
+import type { RecoveryPane } from "./pty-recovery-bootstrap";
+import { validateRecoveryLaunch } from "./pty-core-checkpoint";
 import type { PaneLaunch } from "./launch-mode";
 import type { PaneSize } from "./pane-render";
 import { COMMAND_NOT_FOUND_EXIT_CODE, MIN_PTY_COLS, MIN_PTY_ROWS } from "./pty-core-constants";
@@ -340,6 +344,25 @@ export async function restorePtyCorePane(value: unknown, sink: PtyEventSink): Pr
   if (pane.oscCarry) oscCarryBuffers.set(pane.id, pane.oscCarry);
   restoredPanes.set(pane.id, {generation: (pane.vt.metadata as {generation:string}).generation, attached:false});
   installChildObservers(pane.request, child, sink, () => {});
+}
+
+/** Crash-only attach: no spawn, parser/history checkpoint or implicit owner
+ * replacement. The caller preflights the complete bootstrap before this loop. */
+export async function recoverPtyCorePane(pane:RecoveryPane,sink:PtyEventSink):Promise<void> {
+  validateRecoveryLaunch(pane.id,pane.request,pane.launch,pane.spawnedAt);
+  if(ptys.has(pane.id)||restoredPanes.has(pane.id)||spawning.size||shuttingDown)throw Error("Recovery target is not empty");
+  const owner=await getOwnerRuntime(),actual=owner.disconnected.get(pane.id);
+  if(owner.incompatible||!owner.client||!actual||actual.generation!==pane.generation||actual.pid!==pane.pid||actual.startIdentity!==pane.startIdentity)throw Error("Recovery pane identity changed");
+  openVtPane(pane.id,actual.cols,actual.rows,()=>{},pane.request.agent,pane.request.agent==='custom'||pane.request.agent===undefined);
+  const mirror=vtPanes.get(pane.id)!;mirror.recoveryUnknown=true;
+  let child:OwnerPty;
+  try{child=await OwnerPty.attach({pane:actual,process:pane.launch.command,readBytes:0,decoderCarry:""});}
+  catch(error){closeVtPane(pane.id);throw error;}
+  ptys.set(pane.id,child);launches.set(pane.id,pane.launch);spawnRequests.set(pane.id,pane.request);spawnTimes.set(pane.id,pane.spawnedAt);
+  outputBuffers.set(pane.id,{chunks:[],total:0,version:0,end:0});
+  restoredPanes.set(pane.id,{generation:snapshotOf(mirror).generation,attached:false});
+  installChildObservers(pane.request,child,sink,()=>{});
+  ptyLog.append("crash-pane-attached",{ptyId:pane.id,childPid:child.pid,generation:pane.generation,history:"consumed history lost"});
 }
 
 export interface PtyEventSink {

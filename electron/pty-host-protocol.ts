@@ -86,6 +86,7 @@ export function asVtSnapshot(value: unknown): VtSnapshot | null {
   if (!value || typeof value !== "object") return null;
   const s = value as VtSnapshot;
   if (typeof s.generation !== "string" || typeof s.shell !== "boolean" ||
+      (s.recoveryUnknown !== undefined && typeof s.recoveryUnknown !== "boolean") ||
       typeof s.composerSeen !== "boolean" || typeof s.openedAt !== "number" ||
       !(s.lastOutputAt === null || typeof s.lastOutputAt === "number") ||
       !Number.isInteger(s.cols) || s.cols < 1 ||

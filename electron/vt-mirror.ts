@@ -28,6 +28,8 @@ export interface VtPane {
   lastDialog: string | undefined;
   /** The agent has finished starting: its composer was on screen once, or (no composer rule) its screen settled. */
   composerSeen: boolean;
+  /** Consumed screen was lost in a JS crash; only a proved fresh redraw clears it. */
+  recoveryUnknown?: boolean;
   /** When the mirror opened and when the pane last wrote (null: nothing yet): a pane with no composer rule is up once quiet. */
   openedAt: number;
   lastOutputAt: number | null;
@@ -117,6 +119,7 @@ export function writeVtPane(ptyId: string, chunk: string): void {
 /** Only the cell flags read by the composer detector travel across the socket. */
 export interface VtSnapshot {
   generation: string;
+  recoveryUnknown?: boolean;
   agent?: AgentKind;
   shell: boolean;
   composerSeen: boolean;
@@ -144,7 +147,7 @@ export function snapshotOf(pane: VtPane): VtSnapshot {
     }
     cells.push(row);
   }
-  return { generation, agent: pane.agent, shell: pane.shell, composerSeen: pane.composerSeen,
+  return { generation, ...(pane.recoveryUnknown?{recoveryUnknown:true}:{}), agent: pane.agent, shell: pane.shell, composerSeen: pane.composerSeen,
     openedAt: pane.openedAt, lastOutputAt: pane.lastOutputAt, rows, cells, cols: pane.terminal.cols };
 }
 export async function vtSnapshot(id: string): Promise<VtSnapshot | null> {
@@ -188,6 +191,7 @@ export function checkpointMetadata(value: unknown): VtPaneCheckpointMetadata {
 export async function checkpointVtPane(id: string): Promise<VtCheckpoint> {
   const pane = panes.get(id);
   if (!pane) throw new Error("VT pane missing during checkpoint");
+  if(pane.recoveryUnknown)throw new Error("Screen unknown after the terminal host restarted");
   await checkpointTerminals.get(pane)!.drain();
   const metadata: VtPaneCheckpointMetadata = {
     generation: snapshotGeneration(pane), shell: pane.shell, lastWaiting: pane.lastWaiting,

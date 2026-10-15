@@ -47,20 +47,10 @@ export async function validatePaneCoreCheckpoint(value: unknown): Promise<PaneCo
   if (p.recoveryMembers !== undefined && (!Array.isArray(p.recoveryMembers) || p.recoveryMembers.length > 32 || !p.recoveryMembers.every(member => {
     const m = object(member, ["pid", "startIdentity"]); return int(m.pid, 2, 0x7fffffff) && (m.startIdentity === null || (str(m.startIdentity, 63) && /^\d+:\d+$/.test(m.startIdentity)));
   }))) fail();
-  const r = object(d.request, ["ptyId", "command", "cwd", "cols", "rows"], ["projectSlug", "presetId", "agent", "agentConfigDir", "sharedDirCommand", "peerCwds", "attachOnly", "attachIfReused", "teamLaunch"]);
-  if (r.ptyId !== d.id || !str(r.command) || !str(r.cwd) || !int(r.cols, 2, 1000) || !int(r.rows, 1, 1000)) fail();
-  for (const key of ["projectSlug", "presetId", "agentConfigDir", "sharedDirCommand"]) if (r[key] !== undefined && !str(r[key])) fail();
-  for (const key of ["attachOnly", "attachIfReused", "teamLaunch"]) if (r[key] !== undefined && typeof r[key] !== "boolean") fail();
-  if (r.peerCwds !== undefined && !strings(r.peerCwds)) fail();
+  validateRecoveryLaunch(d.id as string,d.request,d.launch,d.spawnedAt);
+  const r = d.request as Dict;
   const v = object(d.vt, ["base", "tail", "metadata"]), metadata = checkpointMetadata(v.metadata);
   if (r.agent !== undefined && r.agent !== metadata.agent) fail();
-  const l = object(d.launch, ["command", "cwd"], ["added", "mode"]);
-  if (!str(l.command) || !str(l.cwd) || (l.added !== undefined && !strings(l.added))) fail();
-  if (l.mode !== undefined) {
-    const m = object(l.mode, ["cli", "mode", "reach", "why", "fix", "autoFix"], ["todo", "note"]);
-    if (!str(m.cli) || !str(m.mode) || !["reaches", "blocked", "unknown"].includes(m.reach as string) || !(m.why === null || str(m.why)) || !strings(m.fix) || typeof m.autoFix !== "boolean" ||
-        (m.todo !== undefined && !str(m.todo)) || (m.note !== undefined && !str(m.note))) fail();
-  }
   const o = object(d.output, ["chunks", "total", "version", "end"]);
   if (!Array.isArray(o.chunks) || o.chunks.length > 1_000_000 || !o.chunks.every(s => typeof s === "string") || !int(o.total, 0, 1_000_000) || !int(o.version) || !int(o.end, o.total as number) ||
       o.chunks.reduce((n: number, s: string) => n + s.length, 0) !== o.total) fail();
@@ -92,4 +82,22 @@ export async function validateCoreHandoverPart(value:unknown):Promise<CoreHandov
  const o=object(d.output,["chunks","total","version","end"]);
  if(!Array.isArray(o.chunks)||o.chunks.length>1_000_000||!o.chunks.every(s=>typeof s==="string")||!int(o.total,0,1_000_000)||!int(o.version)||!int(o.end,o.total as number)||o.chunks.reduce((n:number,s:string)=>n+s.length,0)!==o.total)fail();
  return value as EndedCoreCheckpoint;
+}
+
+/** Shared closed launch metadata: never contains the prepared environment. */
+export function validateRecoveryLaunch(id:string,request:unknown,launch:unknown,spawnedAt:unknown):void {
+  if(!str(id,128)||!id.length||!int(spawnedAt))fail();
+  const r = object(request, ["ptyId", "command", "cwd", "cols", "rows"], ["projectSlug", "presetId", "agent", "agentConfigDir", "sharedDirCommand", "peerCwds", "attachOnly", "attachIfReused", "teamLaunch"]);
+  if (r.ptyId !== id || !str(r.command) || !str(r.cwd) || !int(r.cols, 2, 1000) || !int(r.rows, 1, 1000)) fail();
+  for (const key of ["projectSlug", "presetId", "agentConfigDir", "sharedDirCommand"]) if (r[key] !== undefined && !str(r[key])) fail();
+  for (const key of ["attachOnly", "attachIfReused", "teamLaunch"]) if (r[key] !== undefined && typeof r[key] !== "boolean") fail();
+  if (r.peerCwds !== undefined && !strings(r.peerCwds)) fail();
+  const l = object(launch, ["command", "cwd"], ["added", "mode"]);
+  if (!str(l.command) || !str(l.cwd) || (l.added !== undefined && !strings(l.added))) fail();
+  if (l.mode !== undefined) {
+    const m = object(l.mode, ["cli", "mode", "reach", "why", "fix", "autoFix"], ["todo", "note"]);
+    if (!str(m.cli) || !str(m.mode) || !["reaches", "blocked", "unknown"].includes(m.reach as string) || !(m.why === null || str(m.why)) || !strings(m.fix) || typeof m.autoFix !== "boolean" ||
+        (m.todo !== undefined && !str(m.todo)) || (m.note !== undefined && !str(m.note))) fail();
+  }
+  if(r.agent!==undefined)checkpointMetadata({generation:"recovery",agent:r.agent,shell:false,lastWaiting:false,composerSeen:false,openedAt:0,lastOutputAt:null});
 }

@@ -19,6 +19,13 @@ const secret = inheritedSecret();
 /** Only the host's consumed, announced handover window may call this. Never
  * include it in checkpoint state, registries, argv, environment or logs. */
 export function ownerHandoverCredential(): Buffer { return Buffer.from(secret); }
+export interface RecoveryOwnerIdentity { pid:number; startTime:string; instanceId:string; binaryHash:string }
+let recoveryOwner: RecoveryOwnerIdentity | null = null;
+/** Must be set before open: recovery must never create a replacement owner. */
+export function requireRecoveryOwner(identity: RecoveryOwnerIdentity): void {
+  if(runtime)throw new Error("PTY owner runtime already opened before recovery preflight");
+  recoveryOwner=identity;
+}
 let runtime: Promise<OwnerRuntime> | null = null;
 let ready: OwnerRuntime | null = null;
 let unavailableListener: ((owner: OwnerRuntime) => void) | null = null;
@@ -88,6 +95,10 @@ export class OwnerRuntime {
     prepareOwnerDirectory();
     const result = new OwnerRuntime(), artifacts = ownerArtifactPaths();
     const hash = ownerBinaryHash(artifacts.executable), previous = readOwnerRecord();
+    if(recoveryOwner && (!previous || previous.pid!==recoveryOwner.pid || previous.startTime!==recoveryOwner.startTime ||
+      previous.instanceId!==recoveryOwner.instanceId || previous.binaryHash!==recoveryOwner.binaryHash || hash!==recoveryOwner.binaryHash || !ownerRecordIsLive(previous))) {
+      throw new Error("The recorded PTY owner is dead, changed or incompatible; crash recovery kept its inventory");
+    }
     if (previous && !ownerRecordIsLive(previous) && (previous.panes.some(p => !p.acknowledged) || previous.uncertain?.length)) {
       if (ownerReaderIsLive(previous) && previous.jsPid !== process.pid) throw new Error("Another JS host still owns these terminals");
       result.record = previous; result.incompatible = true;
@@ -116,6 +127,7 @@ export class OwnerRuntime {
         }
       }
       if (!result.client) {
+        if(recoveryOwner)throw new Error("The recorded PTY owner could not authenticate recovery");
         result.incompatible = true;
         result.disconnected = new Map(result.inventory);
         const own = readProcInfo(process.pid);

@@ -1,7 +1,7 @@
 // Agent screen policy lives in main. The host owns only vt-mirror and sends applied snapshots.
 import type { Terminal } from "@xterm/headless";
 import { asksToRunAya, evaluateScreen, screenIsBusy, screenOffersAccountSetting, screenShowsUsageLimit } from "./agent-screen-rules";
-import { HOLD_ACCOUNT_SETTING, HOLD_APPROVAL, HOLD_APPROVE_AYA, HOLD_BUSY, HOLD_CHOICE, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, HOLD_USAGE_LIMIT } from "./pane-holds";
+import { HOLD_RECOVERY_UNKNOWN, HOLD_ACCOUNT_SETTING, HOLD_APPROVAL, HOLD_APPROVE_AYA, HOLD_BUSY, HOLD_CHOICE, HOLD_DRAFT, HOLD_NOT_RUNNING, HOLD_SHELL, HOLD_STARTING, HOLD_USAGE_LIMIT } from "./pane-holds";
 import type { AgentKind } from "./presets";
 import { openVtPane as openMirror, panes, SCREEN_SETTLE_MS, SCREEN_SETTLE_MAX_MS, type VtPane, type VtSnapshot } from "./vt-mirror";
 export { closeAllVtPanes, closeVtPane, resizeVtPane, vtPaneAltScreen, vtPaneWaiting, vtPaneDialog, writeVtPane,
@@ -245,11 +245,13 @@ function paneFromSnapshot(snapshot: VtSnapshot, onChange: VtPane["onChange"] = (
     lastWaiting: false, lastDialog: undefined, timer: null, onChange };
 }
 export function snapshotHold(snapshot: VtSnapshot, pasted?: string): { hold: string | null; composerSeen: boolean } {
+  if(snapshot.recoveryUnknown)return {hold:snapshot.shell?HOLD_SHELL:HOLD_RECOVERY_UNKNOWN,composerSeen:false};
   const pane = paneFromSnapshot(snapshot);
   return { hold: holdPane(pane, pasted), composerSeen: pane.composerSeen };
 }
-export function snapshotBusy(snapshot: VtSnapshot): boolean { return screenIsBusy(snapshot.rows, snapshot.agent); }
+export function snapshotBusy(snapshot: VtSnapshot): boolean { if(snapshot.recoveryUnknown)return false;return screenIsBusy(snapshot.rows, snapshot.agent); }
 export function snapshotStatus(snapshot: VtSnapshot): { waiting: boolean | null; dialog?: string; composerSeen: boolean } {
+  if(snapshot.recoveryUnknown)return {waiting:null,composerSeen:false};
   let waiting: boolean | null = null, dialog: string | undefined;
   const pane = paneFromSnapshot(snapshot, (w, d) => { waiting = w; dialog = d; });
   scan(pane);
