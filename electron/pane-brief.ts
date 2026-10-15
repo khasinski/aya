@@ -248,33 +248,47 @@ async function capabilityGap(tab: WorkingTab, preset: Preset, deps: PaneBriefDep
   return "problem" in plan ? roleNoteStatus(plan.problem) : null;
 }
 
-/** What the window says about a role's pane: why its CLI cannot be told the
- *  role, or that it started with another role (or none), else null. */
-export async function roleNoteGap(tab: WorkingTab, current: RoleRef, deps: PaneBriefDeps): Promise<string | null> {
+/** What the window says about a role's pane, and whether restarting the pane (it resumes) gives it the note. */
+interface RoleNoteGap {
+  text: string;
+  /** False for a CLI that cannot be told the role, and for Codex, whose resumed session keeps its first note. */
+  restartFixes: boolean;
+}
+
+async function roleNoteState(tab: WorkingTab, current: RoleRef, deps: PaneBriefDeps): Promise<RoleNoteGap | null> {
   const preset = (await deps.listPresets()).find((p) => p.id === tab.presetId);
   // A shell pane already shows "runs a shell" as its hold.
   if (!preset || isShellCommand(preset.command)) return null;
   const launch = await deps.records.get(tab.id);
   const codex = presetAgent(preset) === "codex";
   const restart = codex ? "start a new session" : "restart it";
+  const fix = (text: string) => ({ text, restartFixes: !codex });
+  const cannot = (text: string | null) => (text === null ? null : { text, restartFixes: false });
   const unknown = `started before Aya recorded what it was told: ${restart} to give it the role note`;
-  if (!launch) return (await capabilityGap(tab, preset, deps)) ?? ((await deps.running(tab.id)) ? unknown : null);
-  if (launch.unknown) return (await capabilityGap(tab, preset, deps)) ?? unknown;
+  if (!launch) return cannot(await capabilityGap(tab, preset, deps)) ?? ((await deps.running(tab.id)) ? fix(unknown) : null);
+  if (launch.unknown) return cannot(await capabilityGap(tab, preset, deps)) ?? fix(unknown);
   if (launch.carried && sameRole(launch.role, current)) {
     const now = digest(carriedText(briefOn(preset, presetAgent(preset), current), current));
-    return launch.told && launch.told !== now ? `started with an older brief: ${restart} to give it the current one` : null;
+    return launch.told && launch.told !== now ? fix(`started with an older brief: ${restart} to give it the current one`) : null;
   }
   if (launch.carried && launch.role) {
     const why = codex ? " (a resumed Codex session keeps its first note)" : "";
-    return `started with the role note of ${launch.role.role}: ${restart} to give it this one${why}`;
+    return fix(`started with the role note of ${launch.role.role}: ${restart} to give it this one${why}`);
   }
-  const why = await capabilityGap(tab, preset, deps);
   const began = launch.role ? "started without its role note" : "started before it had this role";
-  return why ?? `${began}: ${restart} to give it the role note`;
+  return cannot(await capabilityGap(tab, preset, deps)) ?? fix(`${began}: ${restart} to give it the role note`);
+}
+
+/** What the window says about a role's pane: why its CLI cannot be told the
+ *  role, or that it started with another role (or none), else null. */
+export async function roleNoteGap(tab: WorkingTab, current: RoleRef, deps: PaneBriefDeps): Promise<string | null> {
+  return (await roleNoteState(tab, current, deps))?.text ?? null;
 }
 
 interface RoleNoteReport {
   roleNotes: Record<string, string | null>;
+  /** Roles whose note a restart of their pane gives: the Teams window offers Restart there. */
+  restartable: string[];
   /** Panes that started with a role of this team that they no longer play. */
   staleNotes: string[];
 }
@@ -287,9 +301,13 @@ export async function roleNoteReport(
 ): Promise<RoleNoteReport> {
   const assigned = new Set(Object.values(assignments));
   const roleNotes: Record<string, string | null> = {};
+  const restartable: string[] = [];
   for (const [role, pane] of Object.entries(assignments)) {
     const tab = project.tabs.find((t) => t.id === pane);
-    if (tab) roleNotes[role] = await roleNoteGap(tab, { team, role }, deps);
+    if (!tab) continue;
+    const gap = await roleNoteState(tab, { team, role }, deps);
+    roleNotes[role] = gap?.text ?? null;
+    if (gap?.restartFixes) restartable.push(role);
   }
   const staleNotes: string[] = [];
   for (const tab of project.tabs) {
@@ -298,7 +316,7 @@ export async function roleNoteReport(
       staleNotes.push(`${tab.name} still carries the role note of ${launch.role.role}: restart it to drop it`);
     }
   }
-  return { roleNotes, staleNotes };
+  return { roleNotes, restartable, staleNotes };
 }
 
 /** The brief (preset opted in, or a claude/codex team pane) and a team pane's role note, for a fresh pane.

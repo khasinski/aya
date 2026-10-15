@@ -31,7 +31,7 @@ export interface TeamControlDeps {
   /** The pane's agent is mid-turn; only Aya's rounds wait for it. */
   busy?: (terminalId: string) => Promise<boolean>;
   /** What each role's pane was told at launch, and which panes carry a note they no longer earn. */
-  roleNoteReport?: (project: ProjectConfig, team: string, assignments: Record<string, string>) => Promise<{ roleNotes: Record<string, string | null>; staleNotes: string[] }>;
+  roleNoteReport?: (project: ProjectConfig, team: string, assignments: Record<string, string>) => Promise<{ roleNotes: Record<string, string | null>; restartable: string[]; staleNotes: string[] }>;
   /** What Aya widened for the pane and what else its launch means (launchNoteOf), null when nothing. */
   launchNote?: (terminalId: string) => Promise<string | null>;
   /** The pane's rendered text and its agent: a reply that claims a send nobody got (unsent-claims.ts). */

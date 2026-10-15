@@ -217,6 +217,27 @@ for (const [agent, takesNote] of Object.entries(CHANNEL_TAKES_NOTE)) {
   }
 }
 
+// The Teams window offers Restart only where a restart (it resumes the pane) gives the role its note.
+for (const [agent, takesNote] of Object.entries(CHANNEL_TAKES_NOTE)) {
+  test(`restart offered: ${agent} started before it had a role`, () =>
+    withRig(presetOf(agent), null, async ({ deps, start }) => {
+      await start();
+      const project = { slug: "g", tabs: [{ id: "t1", presetId: "p", name: "t" }] };
+      const report = await roleNoteReport(project, "ux-review", { tester: "t1" }, deps);
+      assert.ok(report.roleNotes.tester, "the window flags the pane");
+      // A CLI with no channel cannot be told by a restart; a resumed Codex session keeps its first note.
+      assert.deepEqual(report.restartable, takesNote && agent !== "codex" ? ["tester"] : []);
+    }));
+}
+
+test("restart offered: not for a pane that already carries its role note", () =>
+  withRig(presetOf("claude"), ROLE, async ({ deps, start }) => {
+    await start();
+    const project = { slug: "g", tabs: [{ id: "t1", presetId: "p", name: "t" }] };
+    const report = await roleNoteReport(project, "ux-review", { tester: "t1" }, deps);
+    assert.deepEqual([report.roleNotes.tester, report.restartable], [null, []]);
+  }));
+
 test("ordering: a role taken away leaves the pane listed as still carrying its note", () =>
   withRig(presetOf("claude"), ROLE, async ({ deps, start }) => {
     deps.paneRole = async (spawn) => (spawn.ptyId === "p1" ? ROLE : null);

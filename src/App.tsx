@@ -1275,6 +1275,7 @@ export function App() {
           project={activeProject}
           waiting={waitingPanes}
           intelligence={ayaIntelligence}
+          onRestartPane={forceRestartTerminal}
           onClose={() => {
             setShowTeams(false);
             onTeamsWindowClosed(activeProject.slug);

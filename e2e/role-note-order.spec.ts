@@ -101,6 +101,18 @@ test.describe("role given or changed while panes run", () => {
     aya(["team", "open", "ux-review", "--replace", "tester=pane:tab-left"]);
     await expect(card.getByLabel("tester role note")).toContainText("started before it had this role");
   });
+
+  test("the Teams window's Restart gives a running pane its role note, and the warning goes", async ({ window, seeded }) => {
+    await firstTerminalShown(window);
+    await expect.poll(() => dumpOf(seeded.projectDir, "tab-right") !== null, { timeout: AGENT_START_TIMEOUT_MS }).toBe(true);
+    expect(told(dumpOf(seeded.projectDir, "tab-right")!)).not.toMatch(NOTE);
+    cli(seeded.ayaHome)(["team", "open", "ux-review", "tester=pane:tab-right"]);
+    const card = (await openTeams(window)).getByTestId("team-ux-review");
+    await expect(card.getByLabel("tester role note")).toContainText("started before it had this role");
+    await card.getByRole("button", { name: "Restart tester's pane with its role note" }).click();
+    await expect.poll(() => told(dumpOf(seeded.projectDir, "tab-right") ?? { args: [], opencodeConfig: null, opencodeConfigContent: null }), { timeout: AGENT_START_TIMEOUT_MS }).toMatch(NOTE);
+    await expect(card.getByLabel("tester role note")).toHaveCount(0, { timeout: AGENT_START_TIMEOUT_MS });
+  });
 });
 
 for (const agent of AGENTS) {
@@ -114,6 +126,8 @@ for (const agent of AGENTS) {
       cli(seeded.ayaHome)(["team", "open", "ux-review", "tester=pane:tab-right"]);
       const card = (await openTeams(window)).getByTestId("team-ux-review");
       await expect(card.getByLabel("tester role note")).toContainText("started before Aya recorded what it was told");
+      // A resumed Codex session keeps its first note: no Restart there, the text says to start a new session.
+      await expect(card.getByRole("button", { name: "Restart tester's pane with its role note" })).toHaveCount(agent === "codex" ? 0 : 1);
     });
   });
 }

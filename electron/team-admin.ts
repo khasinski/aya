@@ -77,7 +77,7 @@ export async function listTeams(
         assignments,
         paneHolds: await perLivePane(assignments, project, holdReason),
         paneNotes: await perLivePane(assignments, project, launchNote),
-        ...(roleNoteReport ? await roleNoteReport(project, name, assignments) : { roleNotes: {}, staleNotes: [] }),
+        ...(roleNoteReport ? await roleNoteReport(project, name, assignments) : { roleNotes: {}, restartable: [], staleNotes: [] }),
         olderRoles: Object.fromEntries(Object.entries(await store.olderRoles()).filter(([role]) => role in assignments)),
         unread: Object.fromEntries(await Promise.all((definition?.roles ?? []).map(async (r) => [r.id, (await store.owed(r.id)).length] as const))),
         unsent: unsentClaims(await readClaims(store), fullLog, await store.refusals(), [...(roleIds ?? [])]),
