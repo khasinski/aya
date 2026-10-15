@@ -5,15 +5,17 @@ import {test,expect,hostPidsForHome,closeAndWait,ciElectronFlags} from "./fixtur
 import {appEnv,type SeededEnv} from "./helpers/seed";
 import {waitForShellReady,visiblePane} from "./helpers/terminal";
 const root=join(__dirname,'..'),hostScript=join(root,'dist-electron/pty-host.js'),built=readFileSync(hostScript);
+const rulesScript=join(root,'dist-electron/agent-screen-rules.js'),rulesBuilt=readFileSync(rulesScript),packageFile=join(root,'package.json'),packageBuilt=readFileSync(packageFile);
 const apps:ElectronApplication[]=[];
-test.afterEach(async()=>{writeFileSync(hostScript,built);for(const app of apps.splice(0))await closeAndWait(app);});
-async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=false){
+test.afterEach(async()=>{writeFileSync(hostScript,built);writeFileSync(rulesScript,rulesBuilt);writeFileSync(packageFile,packageBuilt);for(const app of apps.splice(0))await closeAndWait(app);});
+async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=false,plainHost=false){
  const wrapper=join(seeded.root,'handover-main.js');
  const updater=realUpdate?`Object.defineProperty(electron.app,'isPackaged',{get:()=>true});process.env.APPIMAGE='test-only-appimage';const updater=require(${JSON.stringify(join(root,'node_modules/electron-updater'))}).autoUpdater;updater.checkForUpdates=async()=>null;updater.quitAndInstall=()=>{globalThis.installerHandedOff=true;};globalThis.testUpdater=updater;`:'';
 
+ const runtime=plainHost?`const cp=require('node:child_process'),spawn=cp.spawn;cp.spawn=(file,args,options)=>spawn(file===process.execPath&&args?.[0]===${JSON.stringify(hostScript)}?${JSON.stringify(process.execPath)}:file,args,options);const {PtyHostClient}=require(${JSON.stringify(join(root,'dist-electron/pty-host-client.js'))}),{hostBuildHash}=require(${JSON.stringify(join(root,'dist-electron/pty-host-staleness.js'))}),path=require('path');PtyHostClient.prototype.expectedHostIdentity=function(version){const runtime=${JSON.stringify({node:process.versions.node,electron:null})};return{version,runtime,scriptHash:hostBuildHash(path.dirname(this.hostScript),path.basename(this.hostScript),runtime)};};`:'';
  const delayed=blockDisplay?`const fs=require('fs'),original=electron.ipcMain.handle.bind(electron.ipcMain);globalThis.handoverDisplayWaiting=false;globalThis.inputCalls=0;electron.ipcMain.handle=(channel,handler)=>original(channel,async(event,...args)=>{if(channel==='pty:write')globalThis.inputCalls++;if(channel==='pty-checkpoint:display'&&args[0]==='tab-left'){globalThis.handoverDisplayWaiting=true;const deadline=Date.now()+15000;while(!fs.existsSync(${JSON.stringify(join(seeded.root,'release-display'))})){if(Date.now()>deadline)throw Error('test display gate expired');await new Promise(r=>setTimeout(r,2));}}return handler(event,...args);});`:'';
 
- writeFileSync(wrapper,`const electron=require('electron');globalThis.handoverQuestions=[];electron.dialog.showMessageBox=async(...args)=>{const options=args.at(-1);globalThis.handoverQuestions.push(options);return{response:${choice},checkboxChecked:false};};${delayed}${updater}require(${JSON.stringify(join(root,'dist-electron/main.js'))});`);
+ writeFileSync(wrapper,`const electron=require('electron');globalThis.handoverQuestions=[];electron.dialog.showMessageBox=async(...args)=>{const options=args.at(-1);globalThis.handoverQuestions.push(options);return{response:${choice},checkboxChecked:false};};${runtime}${delayed}${updater}require(${JSON.stringify(join(root,'dist-electron/main.js'))});`);
  const app=await _electron.launch({args:[wrapper,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],cwd:root,env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0'}})});apps.push(app);
  return {app,window:await app.firstWindow()};
 }
@@ -64,16 +66,19 @@ async function history(window:Page){
  await expect.poll(()=>window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('\r\nCHECKPOINT_DONE\r\n');
  const pane=visiblePane(window,'shell 1').getByTestId('xterm-host');await pane.hover();await window.mouse.wheel(0,-600);
 }
-test('a planned core change keeps PIDs, actual renderer history and the scrolled viewport without a stops-work question',async({seeded})=>{
- test.setTimeout(45000);const first=await launch(seeded);await waitForShellReady(first.window);await history(first.window);
+for(const change of ['core','rules','version','runtime'])test(`a planned ${change} change keeps PIDs, actual renderer history and the scrolled viewport without a stops-work question`,async({seeded})=>{
+ test.setTimeout(45000);const first=await launch(seeded,1,false,false,change==='runtime');await waitForShellReady(first.window);await history(first.window);
  const before=identities(seeded.ayaHome),owner=inventory(seeded.ayaHome).pid,hosts=hostPidsForHome(seeded.ayaHome);
  const captured=await prepare(first.app);expect(captured.ok).toBe(true);expect(Object.keys(captured.views)).toContain('tab-left');
  const left=captured.views['tab-left'] as {history:number;viewport:number};expect(left.history).toBeGreaterThan(300);expect(left.viewport).toBeLessThan(left.history);
  expect(await first.app.evaluate(()=> (globalThis as unknown as {handoverQuestions:unknown[]}).handoverQuestions)).toEqual([]);
- await quit(first.app);appendFileSync(hostScript,'\n// planned core replacement test\n');
+ await quit(first.app);
+ if(change==='core')appendFileSync(hostScript,'\n// planned core replacement test\n');
+ else if(change==='rules')appendFileSync(rulesScript,'\n// rules-only update keeps the host\n');
+ else if(change==='version'){const pkg=JSON.parse(packageBuilt.toString());pkg.version='99.0.0';writeFileSync(packageFile,JSON.stringify(pkg,null,2)+'\n');}
  const second=await launch(seeded);await expect(second.window.getByTestId('xterm-host').first()).toBeVisible();
  await expect.poll(()=>identities(seeded.ayaHome)).toEqual(before);expect(inventory(seeded.ayaHome).pid).toBe(owner);
- expect(hostPidsForHome(seeded.ayaHome)).toHaveLength(1);expect(hostPidsForHome(seeded.ayaHome)[0]).not.toBe(hosts[0]);
+ expect(hostPidsForHome(seeded.ayaHome)).toHaveLength(1);if(change==='core'||change==='runtime')expect(hostPidsForHome(seeded.ayaHome)[0]).not.toBe(hosts[0]);else expect(hostPidsForHome(seeded.ayaHome)[0]).toBe(hosts[0]);
  await expect(second.window.getByTestId('terminal-history-notice')).toHaveCount(0);
  expect(await second.app.evaluate(()=> (globalThis as unknown as {handoverQuestions:unknown[]}).handoverQuestions)).toEqual([]);
  const restored=await captureCurrent(second.app);expect(restored.views['tab-left']).toEqual(captured.views['tab-left']);

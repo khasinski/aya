@@ -16,6 +16,7 @@ for(const variant of ['reuse','replacement'])test(`discarded first renderer reta
  try{
   let output='';old.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>{if(e.type==='data')output+=e.chunk;}});
   const req={ptyId:'pane',agent:'custom',command:'stty -echo; echo READY; while [ ! -f "$HOME/replay-release" ]; do sleep 0.01; done; printf LAST_SUFFIX; exit 23',cwd:process.env.HOME,cols:80,rows:24};
+  req.command="exec /bin/sh -c '"+req.command.replace(/'/g,"'\"'\"'")+"'";
   await old.spawn(req);await wait(()=>output.includes('READY'));
   const ownerPid=(await old.hostStatus()).owner.pid;
   const state=await old.preparePlannedHandover(Date.now()+20000),origin=state.eligible[0];
