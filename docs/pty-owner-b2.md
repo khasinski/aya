@@ -32,7 +32,7 @@ The owner has no output ring: unread bytes remain in the kernel queue, and a chi
 
 The adapter/core contracts exercise ordered input and independent resize, UTF-8/output-before-exit, actual exit status/signal, duplicate spawn/readers, uncertain spawn acknowledgement retention and generation-safe retirement. The 1 MiB regression goes through real pty-core spawn/write/resize, asserts native parentage, keeps the paste blocked while resize and another pane answer, and verifies the full count/hash with an end marker and no trailing bytes. A renderer e2e pastes through xterm and real IPC/core, kills the native owner while the write is pending, and requires the partial-delivery warning, one write attempt and no unhandled page error. Existing preparation tests retain cancellation, timeout, disconnect and queued-write coverage. The pinned JS import graph and native include-boundary test prevent rules/sessions/VT from entering the native core. Migration e2e uses real child processes and verifies both Cancel and confirmed recovery for legacy and incompatible owners.
 
-At review-fix commit `b1f0690f`, full `npm test` passed with 6,801 pass, 0 fail, 147 skipped and the existing registry TODO. Recovery contracts include a real HUP-ignoring child after owner SIGKILL, Cancel, blocked duplicate spawn, a deliberately mismatched kernel start identity, and confirmed cleanup followed by a new generation. A real host death between native spawn and its first JS response must emit disconnected rather than stopped. Fourteen focused Electron e2e passed with `AYA_E2E_PTY_SHUTDOWN=0 --workers=1`: real incompatible-owner restart/close-pane/close-project refusals, disabled disconnected input/paste, explicit legacy migration consent, confirmed dead-owner recovery, restart-background-work and restart-busy-panes. The 25-adapter resource regression verifies both native master and JS reader FD counts return to their baselines after kill; acknowledged native generation records may remain without open masters. The final whole e2e result is still pending.
+At review-fix commit `e901ac09`, full `npm test` passed with 6,801 pass, 0 fail, 147 skipped and the existing registry TODO. Recovery contracts include a real HUP-ignoring child after owner SIGKILL, Cancel, blocked duplicate spawn, a deliberately mismatched kernel start identity, and confirmed cleanup followed by a new generation. A real host death between native spawn and its first JS response must emit disconnected rather than stopped. Fourteen focused Electron e2e passed at `7e7b9d1e` with `AYA_E2E_PTY_SHUTDOWN=0 --workers=1`: real incompatible-owner restart/close-pane/close-project refusals, disabled disconnected input/paste, explicit legacy migration consent, confirmed dead-owner recovery, restart-background-work and restart-busy-panes. Six final focused Electron e2e passed at `e901ac09`, including real interrupted renderer paste, confirmed dead-owner recovery and late-mounted disconnected input refusal. The 25-adapter resource regression verifies both native master and JS reader FD counts return to their baselines after kill; acknowledged native generation records may remain without open masters. The final whole e2e result is still pending.
 
 The comparison runner uses the same Electron runtime and the same offline workload against built #224 and B2 checkouts:
 
@@ -42,20 +42,20 @@ node scripts/measure-pty-backends.cjs /path/to/built-224-checkout
 
 Each backend runs 25 idle panes and 25 active panes separately in disposable homes. An active child writes 4 KiB plus a monotonic timestamp every 20 ms; the sample includes rolling-buffer warmup. Input latency is 100 command/reply round trips, including the child and PTY, rather than a write-call duration. Output latency runs from the child's monotonic timestamp to the main client's data callback. Three RSS samples cover the JS host, the native owner when present, and a headless main-side client. Child RSS, renderer memory and kernel PTY buffers are excluded. Raw observations remain in ignored `test-results/pty-backend-comparison.json`; local samples are not production bounds.
 
-Measured at review-fix commit `b1f0690f` on 2026-10-15, macOS 26.6 arm64, Electron 43.5 / Node 24.19. The #224 baseline is `7517f8b5`; B2 uses main `f8eab3d0` with the adapter. These are separate sequential trials after the e2e processes exited, using the same executable/workload; small differences do not establish a performance improvement.
+Measured at review-fix commit `e901ac09` on 2026-10-15, macOS 26.6 arm64, Electron 43.5 / Node 24.19. The #224 baseline is `7517f8b5`; B2 uses main `f8eab3d0` with the adapter. These are separate sequential trials after the e2e processes exited, using the same executable/workload; small differences do not establish a performance improvement.
 
 | Backend / 25 panes | JS host RSS (KiB), three samples | Native owner RSS (KiB) | Headless main client RSS (KiB) | All panes ready (ms) |
 | --- | --- | --- | --- | --- |
-| #224 idle | 84,624 | 0 | 74,576 | 486.4 |
-| B2 idle | 85,056 | 2,224 | 74,560 | 513.5 |
-| #224 active | 172,896-174,000 | 0 | 92,032-92,368 | 724.9 |
-| B2 active | 176,608-179,184 | 2,240 | 91,216-92,064 | 501.6 |
+| #224 idle | 83,952 | 0 | 74,400-74,416 | 439.8 |
+| B2 idle | 84,432 | 2,192 | 74,768-74,784 | 479.3 |
+| #224 active | 172,880-172,944 | 0 | 92,336-92,880 | 552.4 |
+| B2 active | 173,200-173,728 | 2,240 | 85,456-91,808 | 511.9 |
 
 | Backend / 25 panes | Input RTT p50 / p95 (ms), 100 replies | Output p50 / p95 (ms) | Timestamped output samples |
 | --- | --- | --- | --- |
-| #224 idle | 0.344 / 0.926 | No periodic output | 0 |
-| B2 idle | 0.200 / 1.629 | No periodic output | 0 |
-| #224 active | 0.192 / 0.669 | 0.243 / 2.386 | 8,933 |
-| B2 active | 0.185 / 0.586 | 0.320 / 3.127 | 8,636 |
+| #224 idle | 0.333 / 1.444 | No periodic output | 0 |
+| B2 idle | 0.246 / 1.686 | No periodic output | 0 |
+| #224 active | 0.211 / 0.615 | 0.344 / 3.360 | 8,476 |
+| B2 active | 0.339 / 0.982 | 0.348 / 2.682 | 8,437 |
 
 The offline Ubuntu 24.04/GCC fortified x64 probe passed 35/35 owner, receipt, adapter, native-boundary, idle-frame, malformed-error, uncertain-idle, dead-owner recovery first-spawn-loss, large-input and durable spawn-intent contracts. This includes explicit fail-closed recovery under emulation, not successful real pidfd signalling. Linux x64 runs here use emulation on this arm64 Mac. A separate Debian x64 offline build supplied the staged Linux artifacts; its packaged Electron ran the actual JS host and adapter, with the native parent verified and the real exit 23 delivered. The staged macOS arm64 package passed the same adapter path, plus B1's shell 23 / JS child 24 smoke, nested ad-hoc hardened-runtime signing and `codesign --verify --deep --strict`. All 18 built host JS modules in each staged asar matched the checkout's compiled bytes. These package checks use Electron-as-Node and pty-host.js; installer execution, Aya's packaged GUI, Developer ID signing and notarization remain untested.
