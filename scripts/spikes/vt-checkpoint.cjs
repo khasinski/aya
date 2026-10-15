@@ -6,7 +6,9 @@ const ENGINE = createHash('sha256').update(fs.readFileSync(require.resolve('@xte
 const SUPPORTED_ENGINE = '17a90b650cf6b77cce2b98c4063884d43545e4ce177a54b76ccfc906f1aacaed';
 const MAX_SNAPSHOT = 64 * 1024 * 1024, MAX_TAIL = 256 * 1024;
 const palettes = new WeakMap();
+const ownedUnicodeProviders = new WeakMap();
 function trackPalette(term, saved={}) {
+ ownedUnicodeProviders.set(term,new Map(Object.entries(term._core.unicodeService._providers)));
  const palette = new Map(Object.entries(saved));palettes.set(term,palette);
  term._core._inputHandler.onColor(events=>{for(const event of events){if(event.type===1)palette.set(String(event.index),copy(event.color));else if(event.type===2){if(event.index===undefined)palette.clear();else palette.delete(String(event.index));}}});
 }
@@ -35,6 +37,8 @@ function bufferState(buffer) {
 function capture(term,metadata={}) {
  if(ENGINE!==SUPPORTED_ENGINE)throw Error('Unsupported VT engine implementation');
  if(handlerShape(term)!==HANDLERS)throw Error('Custom parser/Unicode handlers are not eligible');
+ const known=ownedUnicodeProviders.get(term);
+ if(!known||Object.entries(term._core.unicodeService._providers).some(([key,provider])=>known.get(key)!==provider))throw Error('Custom Unicode provider replacement is not eligible');
  if(!ground(term))throw Error('VT parser is not in ground state');
  const c=term._core,h=c._inputHandler,p=h._parser,bs=c._bufferService,buffers=bs.buffers;
  if(c._writeBuffer._pendingData)throw Error('VT writes have not drained');
@@ -79,6 +83,9 @@ function restore(bytes) {
  if(!Number.isInteger(dto.cols)||dto.cols<2||dto.cols>1000||!Number.isInteger(dto.rows)||dto.rows<1||dto.rows>1000)throw Error('Invalid VT geometry');
  if(dto.normal.lines.length>dto.rows+dto.options.scrollback||dto.alternate.lines.length>dto.rows)throw Error('Invalid retained VT size');
  const term=new Terminal({...dto.options,cols:dto.cols,rows:dto.rows}),c=term._core,h=c._inputHandler,bs=c._bufferService, buffers=bs.buffers;
+ // xterm's resize changes buffer geometry but retains constructor option
+ // values. Preserve that distinction instead of silently changing rawOptions.
+ c.optionsService.rawOptions.cols=dto.options.cols;c.optionsService.rawOptions.rows=dto.options.rows;
  trackPalette(term,dto.palette);
  const extProto=Object.getPrototypeOf(h._curAttrData.extended);
  restoreBuffer(buffers.normal,dto.normal,extProto);restoreBuffer(buffers.alt,dto.alternate,extProto);
@@ -110,7 +117,7 @@ class CompactVt {
   if(ground(this.term)) {this.base=capture(this.term,this.metadata);this.tail=[];this.tailBytes=0;this.overflow=false;}
   else {this.tailBytes+=Buffer.byteLength(JSON.stringify(encoded));this.maxTailBytes=Math.max(this.maxTailBytes,this.tailBytes);if(this.tailBytes>MAX_TAIL){this.overflow=true;this.tail=[];}else if(!this.overflow)this.tail.push(encoded);}
  }
- resize(cols,rows){this.term.resize(cols,rows);if(ground(this.term)){this.base=capture(this.term,this.metadata);this.tail=[];this.tailBytes=0;this.overflow=false;}else{this.tail.push({resize:[cols,rows]});this.tailBytes+=64;if(this.tailBytes>MAX_TAIL)this.overflow=true;}}
+ resize(cols,rows){this.term.resize(cols,rows);if(ground(this.term)){this.base=capture(this.term,this.metadata);this.tail=[];this.tailBytes=0;this.overflow=false;}else{const operation={resize:[cols,rows]};this.tailBytes+=Buffer.byteLength(JSON.stringify(operation));this.maxTailBytes=Math.max(this.maxTailBytes,this.tailBytes);if(this.tailBytes>MAX_TAIL){this.overflow=true;this.tail=[];}else if(!this.overflow)this.tail.push(operation);}}
  checkpoint(){if(this.overflow)throw Error('VT tail temporarily ineligible');if(ground(this.term))this.base=capture(this.term,this.metadata);return {base:JSON.parse(this.base.toString()),tail:copy(this.tail),metadata:copy(this.metadata)};}
  static async import(checkpoint){const {term,metadata}=restore(Buffer.from(JSON.stringify(checkpoint.base)));for(const item of checkpoint.tail){if(item.resize)term.resize(...item.resize);else await write(term,item.text??Buffer.from(item.bytes,'base64'));}return {term,metadata:checkpoint.metadata??metadata};}
 }

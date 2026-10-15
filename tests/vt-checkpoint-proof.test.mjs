@@ -95,3 +95,21 @@ test('public cells and input modes independently verify true colour, wide/combin
   await write(b.term,'q');assert.ok(b.term.buffer.active.getLine(b.term.buffer.active.cursorY).translateToString().includes('─'));
  }finally{a.term.dispose();b?.term.dispose();}
 });
+test('a resize storm after tail overflow retains no operations and ground compaction restores eligibility',async()=>{
+ const a=new CompactVt({cols:80,rows:24,scrollback:0});
+ try{
+  await a.write('\x1b]2;'+'x'.repeat(MAX_TAIL+1));
+  for(let n=0;n<20000;n++)a.resize(80+n%2,24);
+  assert.equal(a.overflow,true);assert.equal(a.tail.length,0);assert.ok(Buffer.byteLength(JSON.stringify(a.tail))<=MAX_TAIL);
+  assert.throws(()=>a.checkpoint(),/temporarily ineligible/);
+  await a.write('\x07');assert.equal(a.overflow,false);assert.equal(a.tailBytes,0);
+  const b=await CompactVt.import(a.checkpoint());assert.deepEqual(JSON.parse(capture(b.term)),JSON.parse(capture(a.term)));assert.equal(b.term.cols,81);b.term.dispose();
+ }finally{a.term.dispose();}
+});
+test('a public Unicode registration replacing built-in version 6 refuses export',async()=>{
+ const a=new CompactVt({cols:80,rows:24,scrollback:0});
+ try{
+  a.term.unicode.register({version:'6',wcwidth:()=>2,charProperties:()=>4});a.term.unicode.activeVersion='6';
+  assert.throws(()=>a.checkpoint(),/Unicode provider replacement/);
+ }finally{a.term.dispose();}
+});
