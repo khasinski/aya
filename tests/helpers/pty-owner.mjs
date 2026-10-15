@@ -47,7 +47,7 @@ export async function readUntil(client, fd, needle, timeout = 5000) {
   return text;
 }
 export function frame(type, payload = Buffer.alloc(0), id = 1) {
-  const b = Buffer.alloc(16 + payload.length); b.writeUInt32BE(0x41594150); b.writeUInt16BE(1, 4); b.writeUInt16BE(type, 6);
+  const b = Buffer.alloc(16 + payload.length); b.writeUInt32BE(0x41594150); b.writeUInt16BE(2, 4); b.writeUInt16BE(type, 6);
   b.writeUInt32BE(id, 8); b.writeUInt32BE(payload.length, 12); payload.copy(b, 16); return b;
 }
 export function string(value) { const b = Buffer.from(value), length = Buffer.alloc(4); length.writeUInt32BE(b.length); return Buffer.concat([length, b]); }

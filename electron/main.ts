@@ -193,6 +193,7 @@ async function paneAgent(terminalId: string): Promise<AgentKind | undefined> {
 }
 // Restarts that stop a turn, a shell's command or background tasks warn first, and the resumed team agents are told.
 const relaunchDeps: RelaunchDeps = {
+  disconnected: id => ptyHost.paneDisconnected(id),
   file: path.join(AYA_HOME, "relaunch-notes.json"),
   panes: async (ids) => (await listProjects()).flatMap((p) => p.tabs).filter((t) => !ids || ids.includes(t.id)).map(({ id, name }) => ({ id, name })),
   agentOf: paneAgent,

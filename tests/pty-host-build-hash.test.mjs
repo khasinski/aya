@@ -71,7 +71,8 @@ test("the host's exact value-import graph contains only the PTY core", () => {
   assert.deepEqual(files, [
     "atomic-temp.js", "osc-extractor.js", "owner-socket.js", "pty-core-constants.js", "pty-core.js",
     "pty-event-coalescer.js", "pty-host-guard.js", "pty-host-paths.js", "pty-host-protocol.js",
-    "pty-host-registry.js", "pty-host-staleness.js", "pty-host.js", "pty-log.js", "vt-mirror.js",
+    "pty-host-registry.js", "pty-host-staleness.js", "pty-host.js", "pty-log.js",
+    "pty-owner-adapter.js", "pty-owner-client.js", "pty-owner-registry.js", "pty-owner-runtime.js", "vt-mirror.js",
   ]);
 });
 
@@ -137,6 +138,7 @@ test("real host graph ignores changes to rules, main, renderer and app version",
   const modules = Object.fromEntries(hostModuleFiles(built, "pty-host.js").map((name) => [name, readFileSync(join(built, name), "utf8")]));
   const dir = build({
     ...modules,
+    "aya-pty-owner": "native owner", "pty-owner-bridge.node": "native bridge",
     "node_modules/node-pty/package.json": '{"main":"lib/index.js"}',
     "node_modules/node-pty/lib/index.js": "runtime",
     "node_modules/node-pty/build/Release/pty.node": "native",

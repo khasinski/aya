@@ -32,9 +32,18 @@ export type PtyHostRequest =
   | { id: number; type: "prepared"; prepareId: number; data: PreparedSpawn }
   | { id: number; type: "version" };
 
-export type PtyHostResponse =
+export type PtyHostResponse = (
   | { id: number; ok: true; result?: unknown }
-  | { id: number; ok: false; error: string };
+  | { id: number; ok: false; error: string }) & { ownerBacked?: true; hostPid?: number };
+
+export interface PtyOwnerStatus {
+  pid: number;
+  incompatible: boolean;
+  disconnected: string[];
+  inventory?: Array<{ id: string; pid: number; startIdentity?: string | null }>;
+  uncertain?: string[];
+  recoveryFailures?: string[];
+}
 
 export type PtyHostEventMessage = { type: "event"; event: PtyEvent };
 

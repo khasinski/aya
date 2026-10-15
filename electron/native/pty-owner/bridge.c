@@ -5,15 +5,20 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/ioctl.h>
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
+#include "process-identity.h"
+#include "recovery.h"
 
 static napi_value error(napi_env env, const char *operation) {
   char text[160]; snprintf(text, sizeof(text), "%s: %s", operation, strerror(errno));
@@ -25,6 +30,13 @@ static int argument_fd(napi_env env, napi_value value, int *fd) {
     napi_throw_type_error(env, NULL, "Expected an owned descriptor >= 3"); return -1;
   }
   return 0;
+}
+static int recovery_pid(napi_env env, napi_value value, int *pid) {
+  double input;
+  if (napi_get_value_double(env, value, &input) != napi_ok || !(input >= 2 && input <= INT_MAX) || (double)(int)input != input) {
+    napi_throw_type_error(env, NULL, "Invalid recovery PID"); return -1;
+  }
+  *pid = (int)input; return 0;
 }
 static int64_t time_ms(void) {
   struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (int64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
@@ -127,6 +139,10 @@ static void receive_work(napi_env env, void *input) {
 #endif
   do { count = recvmsg(r->fd, &message, receive_flags); } while (count < 0 && errno == EINTR);
   if (count != 1) { if (!count) errno = EPIPE; goto failed; }
+  // Waiting for the first byte is an idle deadline. Once a frame starts,
+  // give its bounded body a fresh budget; an event arriving at the idle
+  // boundary must not be mistaken for a truncated, corrupt frame.
+  deadline = time_ms() + 5000;
   int invalid = (message.msg_flags & MSG_CTRUNC) != 0;
   for (struct cmsghdr *c = CMSG_FIRSTHDR(&message); c; c = CMSG_NXTHDR(&message, c)) {
     if (c->cmsg_level != SOL_SOCKET || c->cmsg_type != SCM_RIGHTS || c->cmsg_len < CMSG_LEN(0)) { invalid = 1; continue; }
@@ -205,9 +221,88 @@ static napi_value read_ready(napi_env env, napi_callback_info info) {
   if (poll(&entry, 1, 0) < 0) return error(env, "poll");
   return number(env, entry.revents);
 }
+static napi_value nonblocking_master(napi_env env, napi_callback_info info) {
+  size_t count = 1; napi_value args[1], out; int fd;
+  napi_get_cb_info(env, info, &count, args, NULL, NULL);
+  if (count != 1) { napi_throw_type_error(env, NULL, "Expected master fd"); return NULL; }
+  if (argument_fd(env, args[0], &fd)) return NULL;
+  int flags = fcntl(fd, F_GETFL);
+  if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK)) return error(env, "nonblocking master");
+  napi_get_undefined(env, &out); return out;
+}
+static napi_value write_ready(napi_env env, napi_callback_info info) {
+  size_t count = 1; napi_value args[1], out; int fd;
+  napi_get_cb_info(env, info, &count, args, NULL, NULL);
+  if (count != 1) { napi_throw_type_error(env, NULL, "Expected master fd"); return NULL; }
+  if (argument_fd(env, args[0], &fd)) return NULL;
+  struct pollfd entry = { .fd = fd, .events = POLLOUT };
+  int result = poll(&entry, 1, 0);
+  if (result < 0 && errno != EINTR) return error(env, "master writability");
+  napi_get_boolean(env, result > 0, &out); return out;
+}
+static napi_value resize_master(napi_env env, napi_callback_info info) {
+  size_t count = 3; napi_value args[3], out; int fd, cols, rows;
+  napi_get_cb_info(env, info, &count, args, NULL, NULL);
+  if (count != 3 || napi_get_value_int32(env, args[1], &cols) != napi_ok || napi_get_value_int32(env, args[2], &rows) != napi_ok || cols < 2 || cols > 1000 || rows < 1 || rows > 1000) {
+    napi_throw_type_error(env, NULL, "Invalid master geometry"); return NULL;
+  }
+  if (argument_fd(env, args[0], &fd)) return NULL;
+  struct winsize geometry = { .ws_col = (unsigned short)cols, .ws_row = (unsigned short)rows };
+  if (ioctl(fd, TIOCSWINSZ, &geometry)) return error(env, "resize master");
+  napi_get_undefined(env, &out); return out;
+}
+static napi_value recovery_group_exists(napi_env env, napi_callback_info info) {
+  size_t count = 1; napi_value args[1]; int pid;
+  napi_get_cb_info(env, info, &count, args, NULL, NULL);
+  if (count != 1) { napi_throw_type_error(env, NULL, "Expected recovery PID"); return NULL; }
+  if (recovery_pid(env, args[0], &pid)) return NULL;
+  int result = kill(-pid, 0);
+  if (result && errno != ESRCH && errno != EPERM) return error(env, "probe recovery group");
+  napi_value out; napi_get_boolean(env, !result || errno == EPERM, &out); return out;
+}
+static napi_value recovery_identity(napi_env env, napi_callback_info info) {
+  size_t count = 1; napi_value args[1], out; int pid;
+  napi_get_cb_info(env, info, &count, args, NULL, NULL);
+  if (count != 1) { napi_throw_type_error(env, NULL, "Expected process PID"); return NULL; }
+  if (recovery_pid(env, args[0], &pid)) return NULL;
+  ProcessIdentity identity; int status = process_identity(pid, &identity);
+  if (status < 0) { napi_throw_error(env, NULL, "Cannot verify process identity"); return NULL; }
+  if (!status) { napi_get_null(env, &out); return out; }
+  char text[64]; snprintf(text, sizeof(text), "%llu:%llu", (unsigned long long)identity.start, (unsigned long long)identity.fraction);
+  napi_create_string_utf8(env, text, NAPI_AUTO_LENGTH, &out); return out;
+}
+static napi_value recover_process(napi_env env, napi_callback_info info) {
+  size_t count = 3, size; napi_value args[3]; int pid, group; char saved[64];
+  napi_get_cb_info(env, info, &count, args, NULL, NULL);
+  if (count != 3) { napi_throw_type_error(env, NULL, "Expected recovery PID, identity and group"); return NULL; }
+  if (recovery_pid(env, args[0], &pid) || recovery_pid(env, args[2], &group)) return NULL;
+  if (napi_get_value_string_utf8(env, args[1], NULL, 0, &size) != napi_ok || !size || size >= sizeof(saved)) {
+    napi_throw_type_error(env, NULL, "Invalid recovery identity"); return NULL;
+  }
+  napi_get_value_string_utf8(env, args[1], saved, sizeof(saved), &size);
+  unsigned long long start, fraction; int consumed = 0;
+  if (strlen(saved) != size || sscanf(saved, "%llu:%llu%n", &start, &fraction, &consumed) != 2 || consumed != (int)size) {
+    napi_throw_type_error(env, NULL, "Invalid recovery identity"); return NULL;
+  }
+  ProcessIdentity identity = { pid, start, fraction };
+  int status = recovery_signal_process(&identity, group);
+  const char *result = status == 1 ? "signalled" : status == 0 ? "absent" : status == -2 ? "mismatch" : "unknown";
+  napi_value out; napi_create_string_utf8(env, result, NAPI_AUTO_LENGTH, &out); return out;
+}
+static napi_value recovery_supported(napi_env env, napi_callback_info info) {
+  (void)info; bool supported = true;
+#ifndef __APPLE__
+  int fd = (int)syscall(SYS_pidfd_open, getpid(), 0);
+  supported = fd >= 0;
+  if (fd >= 0) { supported = !syscall(SYS_pidfd_send_signal, fd, 0, NULL, 0); close(fd); }
+#endif
+  napi_value out; napi_get_boolean(env, supported, &out); return out;
+}
 static napi_value init(napi_env env, napi_value exports) {
   const struct { const char *name; napi_callback function; } methods[] = {
-    {"connect", connect_socket}, {"send", send_frame}, {"receive", receive_frame}, {"close", close_descriptor}, {"readReady", read_ready}
+    {"connect", connect_socket}, {"send", send_frame}, {"receive", receive_frame}, {"close", close_descriptor}, {"readReady", read_ready},
+    {"recoveryGroupExists", recovery_group_exists}, {"recoveryIdentity", recovery_identity}, {"recoverProcess", recover_process},
+    {"nonblockingMaster", nonblocking_master}, {"writeReady", write_ready}, {"resizeMaster", resize_master}, {"recoverySupported", recovery_supported}
   };
   for (size_t i = 0; i < sizeof(methods) / sizeof(methods[0]); i++) {
     napi_value function; napi_create_function(env, methods[i].name, NAPI_AUTO_LENGTH, methods[i].function, NULL, &function);

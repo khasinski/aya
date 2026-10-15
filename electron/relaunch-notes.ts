@@ -64,6 +64,7 @@ export interface PaneWork {
 }
 
 export interface RelaunchDeps {
+  disconnected?: (id: string) => Promise<boolean>;
   /** Where the notes wait for the relaunch; it outlives Aya's own restart. */
   file: string;
   /** The panes a restart of `ids` (all when absent) stops, with their names. */
@@ -128,6 +129,7 @@ async function paneWork(deps: RelaunchDeps, id: string, name: string, screen: st
 export async function restartWorkOf(deps: RelaunchDeps, ids?: readonly string[]): Promise<PaneWork[]> {
   const out: PaneWork[] = [];
   for (const { id, name } of await deps.panes(ids)) {
+    if (await deps.disconnected?.(id)) { out.push({ id, name, work: "disconnected, with a process that may still be running" }); continue; }
     const screen = await deps.screen(id).catch(() => null);
     const work = screen === null ? null : await paneWork(deps, id, name, screen);
     if (work) out.push(work);
@@ -197,6 +199,21 @@ export async function confirmPaneRestart(
     const why = err instanceof Error ? err.message : String(err);
     return ask(`Aya could not check what ${name} is doing (${why}). Restarting it stops anything it runs: a turn, a command or background tasks.`);
   }
+}
+
+/** Same-process consent survives Restart to update; forced legacy/native
+ * migration must not ask twice when every process was already acknowledged. */
+export async function currentProcessesConfirmed(deps: RelaunchDeps, count: number): Promise<boolean> {
+  if (count <= 0) return false;
+  const notes = await readNotes(deps.file);
+  let confirmed = 0;
+  for (const pane of await deps.panes()) {
+    const pid = await deps.pid(pane.id);
+    if (pid === null) continue;
+    if (pid === undefined || notes[pane.id]?.pid !== pid) return false;
+    confirmed++;
+  }
+  return confirmed >= count;
 }
 
 /** As confirmRestart, but a pane whose work the user already agreed to stop for its current process (a note left by

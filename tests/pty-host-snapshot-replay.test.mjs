@@ -8,6 +8,16 @@ const sink = () => {
   const events = [];
   return { events, isDestroyed: () => false, send: (_channel, event) => events.push(event) };
 };
+test("a live quiet snapshot before replay does not invent a non-waiting edge for a new sink", async () => {
+  const id = "quiet-replay";
+  openVtPane(id, 80, 24, () => {});
+  writeVtPane(id, "all done");
+  const snapshot = await vtSnapshot(id); closeVtPane(id);
+  const client = new PtyHostClient("/nonexistent/pty-host.js"), renderer = sink();
+  client.attachWebContents(renderer);
+  for (const replay of [false, true]) client.onData(JSON.stringify({ type: "snapshot", ptyId: id, snapshot, replay }) + "\n");
+  assert.deepEqual(renderer.events, []);
+});
 for (const [name, text, dialog] of [
   ["approval", "Do you want to proceed?\r\n❯ 1. Yes\r\n  2. No", undefined],
   ["account setting", " Allow this read outside the working directories?\r\n ❯ 1. Yes, and keep allowing any reads outside the working directories\r\n   2. No, and block reads outside the working directories from now on\r\n   3. No, and ask again next time", HOLD_ACCOUNT_SETTING],

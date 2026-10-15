@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { cleanupNativeOwner } from "./helpers/pty-host.mjs";
 import { connectWhenListening } from "./helpers/unix-socket.mjs";
 
 const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
@@ -39,6 +40,8 @@ describe("idle startup with isolated hosts", { concurrency: 4 }, () => {
       assert.equal(await exited(host, EXIT_DEADLINE_MS), true, "the host is still running");
     } finally {
       host.kill("SIGKILL");
+      await exited(host, EXIT_DEADLINE_MS);
+      await cleanupNativeOwner(home);
       rmSync(home, { recursive: true, force: true });
     }
   });
@@ -50,6 +53,8 @@ describe("idle startup with isolated hosts", { concurrency: 4 }, () => {
       assert.equal(await exited(host, EXIT_DEADLINE_MS), false, "the default idle wait is 30 s, not immediate");
     } finally {
       host.kill("SIGKILL");
+      await exited(host, EXIT_DEADLINE_MS);
+      await cleanupNativeOwner(home);
       rmSync(home, { recursive: true, force: true });
     }
   });
@@ -66,6 +71,8 @@ describe("idle startup with isolated hosts", { concurrency: 4 }, () => {
       assert.equal(await exited(host, EXIT_DEADLINE_MS), true, "the host never exited after its last client left");
     } finally {
       host.kill("SIGKILL");
+      await exited(host, EXIT_DEADLINE_MS);
+      await cleanupNativeOwner(home);
       rmSync(home, { recursive: true, force: true });
     }
   });
@@ -87,6 +94,8 @@ describe("idle startup with isolated hosts", { concurrency: 4 }, () => {
       assert.equal(await exited(host, EXIT_DEADLINE_MS), true, "the host never exited after the client left");
     } finally {
       host.kill("SIGKILL");
+      await exited(host, EXIT_DEADLINE_MS);
+      await cleanupNativeOwner(home);
       rmSync(home, { recursive: true, force: true });
     }
   });

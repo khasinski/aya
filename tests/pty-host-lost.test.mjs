@@ -1,4 +1,4 @@
-// The pty host dying under a running app takes every agent with it: the tabs must say so. A host the app itself
+// A crashed JS host leaves native-owned processes disconnected; it never silently respawns them. A host the app itself
 // told to go is handled by the renderer and stays silent. HOME and AYA_HOME are fake.
 
 import { test } from "node:test";
@@ -17,7 +17,7 @@ const cwd = join(root, "project");
 mkdirSync(cwd);
 
 const { PtyHostClient } = await import("../dist-electron/pty-host-client.js");
-const { waitFor } = await import("./helpers/pty-host.mjs");
+const { waitFor, cleanupNativeOwner } = await import("./helpers/pty-host.mjs");
 
 const HOST_SCRIPT = join(process.cwd(), "dist-electron", "pty-host.js");
 const typeOf = (events, ptyId) => events.filter((e) => e.ptyId === ptyId).map((e) => e.type);
@@ -47,12 +47,13 @@ async function disposeSession(s) {
   // the socket this fixture already owns; never reconnect/start one in cleanup.
   if (s.client.socket && !s.client.socket.destroyed) await s.client.shutdown().catch(() => {});
   s.client.dispose();
+  await cleanupNativeOwner(process.env.AYA_HOME);
 }
 
 const LOST = [
   // A killed host says nothing; a host told to stop may report exits itself first.
-  ["SIGKILL from outside", (s) => process.kill(-s.pid, "SIGKILL"), ["no-session"]],
-  ["SIGTERM from outside", (s) => process.kill(s.pid, "SIGTERM"), ["no-session", "exit"]],
+  ["SIGKILL from outside", (s) => process.kill(-s.pid, "SIGKILL"), ["disconnected"]],
+  ["SIGTERM from outside", (s) => process.kill(s.pid, "SIGTERM"), ["disconnected", "exit"]],
 ];
 for (const [how, end, told] of LOST) {
   test(`${how}: the panes still running are told, the ones already gone are not`, async (t) => {
@@ -92,7 +93,7 @@ test("after restart(), a pane on the new host is reported lost when that host di
   const { pid } = await s.client.hostStatus();
   assert.notEqual(pid, s.pid, "restart() started a new host");
   process.kill(-pid, "SIGKILL");
-  await waitFor(() => typeOf(s.events, "e").includes("no-session"));
+  await waitFor(() => typeOf(s.events, "e").includes("disconnected"));
 });
 
 test("a spawn right after restart() survives the old socket's late close", async (t) => {
@@ -107,15 +108,16 @@ test("a spawn right after restart() survives the old socket's late close", async
   const { pid } = await s.client.hostStatus();
   assert.ok(pid > 1 && pid !== s.pid, "the client still talks to the new host");
   process.kill(-pid, "SIGKILL");
-  await waitFor(() => typeOf(s.events, "e").includes("no-session"));
+  await waitFor(() => typeOf(s.events, "e").includes("disconnected"));
 });
 
 test("a spawn refused after dispose() is not a pane the host could lose", async (t) => {
   const s = await session();
+  t.after(() => disposeSession(s));
   s.client.dispose();
   await assert.rejects(s.client.spawn({ ptyId: "x", command: "sleep 120", cwd, cols: 80, rows: 24 }));
   process.kill(-s.pid, "SIGKILL");
-  await waitFor(() => typeOf(s.events, "a").includes("no-session"));
+  await waitFor(() => typeOf(s.events, "a").includes("disconnected"));
   await s.closed;
   assert.deepEqual(typeOf(s.events, "x"), []);
 });

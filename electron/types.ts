@@ -296,6 +296,7 @@ export type PtyEvent =
   // Host had no live session for an attach-only spawn (process died while the
   // host stayed up). The tab becomes stopped/restartable, not respawned.
   | { type: "no-session"; ptyId: string }
+  | { type: "disconnected"; ptyId: string }
   // Explicit status parsed from an OSC 9001 `aya.status` sequence the TUI (or
   // a wrapper script) emitted inline in its own output — see integrations.md.
   // Carries the same vocabulary as ControlStatusUpdate's "status" request,
@@ -571,7 +572,7 @@ export interface AyaApi {
 
   // PTY lifecycle
   ptySpawn(req: SpawnRequest): Promise<void>;
-  ptyWrite(ptyId: string, data: string): Promise<void>;
+  ptyWrite(ptyId: string, data: string): Promise<boolean>;
   ptyResize(ptyId: string, cols: number, rows: number): Promise<void>;
   ptyKill(ptyId: string): Promise<void>;
   ptyBuffer(ptyId: string): Promise<string>;

@@ -21,7 +21,8 @@ exports.runStaged = function runStaged(outputDirectory, platform = process.platf
   try {
     const env = { PATH: process.env.PATH, HOME: home, AYA_HOME: home, ELECTRON_RUN_AS_NODE: "1", LANG: "C" };
     const result = run(executable, [path.join(root, "scripts/owner-package-client.cjs"), resources, home], { env, timeout: 15000 });
-    console.log(result); return result;
+    const runtime = run(executable, [path.join(root, "scripts/owner-package-runtime-client.cjs"), resources, home], { env, timeout: 20000 });
+    console.log(result); console.log(runtime); return result + runtime;
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 };
 if (require.main === module) (async () => {

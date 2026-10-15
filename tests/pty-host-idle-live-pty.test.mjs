@@ -4,6 +4,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { cleanupNativeOwner } from "./helpers/pty-host.mjs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -102,6 +103,7 @@ async function withHost(body) {
     for (const pid of [...owned].reverse()) {
       try { process.kill(pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; }
     }
+    await cleanupNativeOwner(home);
     rmSync(home, { recursive: true, force: true });
   }
 }

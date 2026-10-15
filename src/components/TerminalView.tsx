@@ -206,6 +206,7 @@ function terminalRenderStateEqual(a: TerminalState, b: TerminalState): boolean {
       a.name === b.name &&
       a.exitCode === b.exitCode &&
       a.stopped === b.stopped &&
+      a.disconnected === b.disconnected &&
       a.spawnDeferred === b.spawnDeferred &&
       a.spawnFailure?.reason === b.spawnFailure?.reason &&
       a.spawnFailure?.detail === b.spawnFailure?.detail &&
@@ -340,6 +341,11 @@ function TerminalViewComponent({
       : undefined;
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
+  const disconnectedRef = useRef(!!terminal.disconnected);
+  disconnectedRef.current = !!terminal.disconnected;
+  useEffect(() => {
+    if (xtermRef.current) xtermRef.current.options.disableStdin = !!terminal.disconnected;
+  }, [terminal.disconnected]);
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const webglRef = useRef<WebglAddon | null>(null);
@@ -374,6 +380,15 @@ function TerminalViewComponent({
   const [contextMenu, setContextMenu] = useState<TerminalContextMenuState | null>(
     null,
   );
+  const sendInput = useCallback((data: string) => {
+    const showFailure = (detail: string) => xtermRef.current?.write(`\r\n[${detail}]\r\n`);
+    void window.aya.ptyWrite(terminal.id, data).then(delivered => {
+      if (delivered === false) showFailure("Input was not delivered. Check the pane before retrying. Aya did not resend it.");
+    }).catch(error => {
+      const reason = (error instanceof Error ? error.message : String(error)).replace(/[\x00-\x1f\x7f]/g, " ");
+      showFailure(`Input may have been only partly delivered. Check the pane before retrying. Aya did not resend it. ${reason}`);
+    });
+  }, [terminal.id]);
 
   // Write a saved snippet's text into this terminal's PTY. autoRun appends a
   // carriage return so it executes immediately; otherwise we only type the
@@ -381,6 +396,11 @@ function TerminalViewComponent({
   // return focus to the terminal so the user can keep working.
   const sendSnippet = useCallback(
     (snippet: Snippet) => {
+      if (terminal.disconnected) {
+        xtermRef.current?.write("\r\n[Input was not sent: the terminal host is disconnected.]\r\n");
+        onSnippetsOpenChange(false);
+        return;
+      }
       // A dead PTY (exited / spawn-failed / killed by a host restart) silently
       // swallows ptyWrite, so the snippet would vanish with no feedback. Tell
       // the user in the terminal itself and skip the no-op write. exitCode is
@@ -397,7 +417,7 @@ function TerminalViewComponent({
         onSnippetsOpenChange(false);
         return;
       }
-      void window.aya.ptyWrite(terminal.id, snippetPtyPayload(snippet));
+      sendInput(snippetPtyPayload(snippet));
       // Collapse the drawer so the result (and the typed text) is visible -
       // an open drawer covers the bottom of the terminal - and return focus
       // so the user can keep typing / press Enter on a held snippet.
@@ -408,7 +428,7 @@ function TerminalViewComponent({
         /* ignore - terminal may be mid-dispose */
       }
     },
-    [terminal.id, terminal.exitCode, terminal.stopped, onSnippetsOpenChange],
+    [terminal.exitCode, terminal.stopped, terminal.disconnected, onSnippetsOpenChange, sendInput],
   );
   // Current foreground-process title, fed by OSC 0/2 from the inner shell.
   // macOS zsh's default config emits this in preexec/precmd, so we get the
@@ -701,6 +721,7 @@ function TerminalViewComponent({
   useEffect(() => {
     if (!containerRef.current || xtermRef.current) return;
     const term = new XTerm({
+      disableStdin: disconnectedRef.current,
       theme: toXtermTheme(themeColors),
       fontSize,
       fontFamily: fontFamily ?? DEFAULT_TERMINAL_FONT_FAMILY,
@@ -742,6 +763,9 @@ function TerminalViewComponent({
     term.loadAddon(search);
     term.loadAddon(webLinks);
     term.open(containerRef.current);
+    if (disconnectedRef.current) {
+      term.write("\r\n\x1b[1;33m[terminal host disconnected - the process may still be running. Input is disabled while disconnected. Restart explicitly to stop it and try again.]\x1b[0m\r\n");
+    }
 
     const onTerminalLinkClick = (event: globalThis.MouseEvent) => {
       const url = anchorExternalUrl(event.target);
@@ -811,6 +835,9 @@ function TerminalViewComponent({
         term.write(
           `\r\n\x1b[2m[process exited with code ${event.exitCode}${restartHint}]\x1b[0m\r\n`,
         );
+      } else if (event.type === "disconnected") {
+        disconnectedRef.current = true; term.options.disableStdin = true;
+        term.write("\r\n\x1b[1;33m[terminal host disconnected - the process may still be running. Input is disabled while disconnected. Restart explicitly to stop it and try again.]\x1b[0m\r\n");
       } else if (event.type === "no-session") {
         // Attach-only re-mount with no live PTY: the process ended while we were
         // away. Show a restartable hint instead of a fresh, contextless session.
@@ -821,6 +848,7 @@ function TerminalViewComponent({
     });
 
     term.attachCustomKeyEventHandler((ev) => {
+      if (disconnectedRef.current) return true; // xterm keeps copy/navigation; disableStdin blocks typing/paste
       if (ev.key === "Alt") {
         optionSideRef.current =
           ev.type === "keydown" ? optionSideFromCode(ev.code) : "unknown";
@@ -856,8 +884,7 @@ function TerminalViewComponent({
           // wrong for both (it submits Shift+Enter; macOptionIsMeta turns
           // Option+Enter into a zsh multiline edit).
           ev.preventDefault();
-          void window.aya.ptyWrite(
-            terminal.id,
+          sendInput(
             action === "soft-newline" ? META_ENTER : "\r",
           );
           return false;
@@ -874,7 +901,7 @@ function TerminalViewComponent({
       );
       if (leftOptionSeq && ev.altKey && !ev.metaKey && !ev.ctrlKey) {
         ev.preventDefault();
-        void window.aya.ptyWrite(terminal.id, leftOptionSeq);
+        sendInput(leftOptionSeq);
         return false;
       }
 
@@ -901,7 +928,7 @@ function TerminalViewComponent({
         else if (ev.key === "Delete") seq = "\x1bd";
         if (seq) {
           ev.preventDefault();
-          void window.aya.ptyWrite(terminal.id, seq);
+          sendInput(seq);
           return false;
         }
       }
@@ -926,7 +953,7 @@ function TerminalViewComponent({
           // a–z → control byte 0x01–0x1A
           ev.preventDefault();
           const ctrlByte = String.fromCharCode(code - CTRL_BYTE_OFFSET);
-          void window.aya.ptyWrite(terminal.id, ctrlByte);
+          sendInput(ctrlByte);
           return false;
         }
       }
@@ -935,6 +962,7 @@ function TerminalViewComponent({
     });
 
     const onDataDisposable = term.onData((data) => {
+      if (disconnectedRef.current) return;
       if (replayingOutputRef.current > 0) return;
       if (data.length > 0) setIsScrollbarHidden(true);
       if (localStorage.getItem(DEBUG_TERMINAL_INPUT_STORAGE_KEY) === "1") {
@@ -942,7 +970,7 @@ function TerminalViewComponent({
           `[aya terminal input] ${terminal.id} ${preset.id}: ${printableControlData(data)}`,
         );
       }
-      void window.aya.ptyWrite(terminal.id, data);
+      sendInput(data);
     });
 
     const onResizeDisposable = term.onResize(({ cols, rows }) => {
@@ -1315,6 +1343,7 @@ function TerminalViewComponent({
   };
 
   const pasteClipboard = async () => {
+    if (terminal.disconnected) return;
     const text = await window.aya.readClipboard();
     if (text) xtermRef.current?.paste(text);
     setContextMenu(null);
@@ -1468,6 +1497,7 @@ function TerminalViewComponent({
             data-testid="terminal-context-paste"
             className="aya-terminal-context-item"
             type="button"
+            disabled={terminal.disconnected}
             onClick={pasteClipboard}
           >
             <span style={{ fontFamily: "Material Symbols Outlined" }}>

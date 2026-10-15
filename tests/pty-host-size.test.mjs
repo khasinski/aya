@@ -7,13 +7,17 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { isolateHome } from "./helpers/isolate-home.mjs";
 
-const TMP_AYA_HOME = mkdtempSync(join(tmpdir(), "aya-size-"));
-process.env.AYA_HOME = TMP_AYA_HOME;
+const ROOT = mkdtempSync(join(tmpdir(), "aya-size-"));
+isolateHome(ROOT);
+const TMP_AYA_HOME = process.env.AYA_HOME;
+mkdirSync(process.env.HOME, { recursive: true }); mkdirSync(TMP_AYA_HOME, { recursive: true });
+test.after(() => rmSync(ROOT, { recursive: true, force: true }));
 
 const { PTY_HOST_UNKNOWN_REQUEST } = await import("../dist-electron/constants.js");
 const { PtyHostClient } = await import("../dist-electron/pty-host-client.js");

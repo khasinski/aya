@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   applyPtyEvent,
+  applyReportedStatus,
   clearedTerminalStatus,
   controlLevelToTerminalStatus,
   controlStatusEventTitle,
@@ -670,4 +671,17 @@ test("an agent-reported status is preserved even while the bell is raised", () =
     text: "Running tests",
     updatedAt: 1,
   });
+});
+
+test("an unavailable owner-backed pane stays visibly disconnected and never becomes stopped or ready from stale VT", () => {
+  const previous = { t1: termState("t1", { bell: true, externalStatus: { level: "done", updatedAt: 1 } }) };
+  const next = applyPtyEvent(previous, { type: "disconnected", ptyId: "t1" });
+  assert.equal(next.t1.disconnected, true); assert.equal(next.t1.stopped, false); assert.equal(next.t1.exitCode, null);
+  assert.equal(next.t1.status, "error"); assert.equal(next.t1.bell, false);
+  assert.equal(applyPtyEvent(next, { type: "vt-status", ptyId: "t1", waiting: false }), next);
+  assert.equal(applyPtyEvent(next, { type: "data", ptyId: "t1", data: "late output" }), next);
+  assert.equal(applyPtyEvent(next, { type: "osc-status", ptyId: "t1", level: "active", text: "late hook", updatedAt: 2 }), next);
+  assert.equal(applyReportedStatus(next.t1, { level: "waiting", text: "late control report", updatedAt: 2 }), next.t1);
+  assert.equal(clearedTerminalStatus(next.t1).status, "error");
+  assert.equal(applyPtyEvent(next, { type: "exit", ptyId: "t1", exitCode: 23 }).t1.disconnected, undefined);
 });

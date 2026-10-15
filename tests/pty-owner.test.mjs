@@ -34,7 +34,7 @@ test("wrong authentication and invalid headers cannot take over the owner", asyn
   const owner = await startOwner(); t.after(() => owner.close());
   await assert.rejects(PtyOwnerClient.connect(owner.socket, Buffer.alloc(32), artifacts.bridge), /Authentication failed/);
   const native = require(artifacts.bridge);
-  for (const alter of [b => b.writeUInt32BE(0, 0), b => b.writeUInt16BE(2, 4), b => b.writeUInt32BE(256 * 1024 + 1, 12)]) {
+  for (const alter of [b => b.writeUInt32BE(0, 0), b => b.writeUInt16BE(3, 4), b => b.writeUInt32BE(256 * 1024 + 1, 12)]) {
     const fd = native.connect(owner.socket), b = frame(1); alter(b); native.send(fd, b);
     const reply = await native.receive(fd, 2000); assert.equal(reply.data.readUInt16BE(6), 0x8001); native.close(fd, true);
   }
@@ -128,7 +128,9 @@ test("owner escalates an ignored graceful kill without leaving the child alive",
 test("explicit owner shutdown completes even if a JS client retains an unread master duplicate", async (t) => {
   const owner = await startOwner(); t.after(() => owner.close()); const c = await owner.connect();
   const pane = await c.spawn({ ...shellSpec(owner.home), argv: ["sh", "-c", "printf 'unread-before-exit\\n'; exit 23"] });
-  await sleep(20); assert.ok(c.readReady(pane.fd));
+  // The shell's printf reaches the master when the child gets scheduled: wait for it (a fixed 20 ms flaked on CI).
+  for (const deadline = Date.now() + 5000; !c.readReady(pane.fd) && Date.now() < deadline;) await sleep(10);
+  assert.ok(c.readReady(pane.fd), "the child's output never reached the master");
   owner.owner.kill("SIGTERM");
   const timer = setTimeout(() => owner.owner.kill("SIGKILL"), 1800);
   const result = await owner.closed; clearTimeout(timer);
@@ -165,6 +167,10 @@ function compileOwnerFixture(name) {
   execFileSync(process.env.CC || "cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", `tests/helpers/${name}.c`, "-o", executable, ...(process.platform === "linux" ? ["-lutil"] : [])]);
   return { dir, executable };
 }
+test("orphan recovery signals one verified process instance and refuses exit or PID reuse between checks", () => {
+  const fixture = compileOwnerFixture("pty-owner-recovery-races");
+  try { execFileSync(fixture.executable); } finally { fs.rmSync(fixture.dir, { recursive: true, force: true }); }
+});
 test("reply writes retry interrupted POLLOUT and interrupted/backpressured descriptor sends without losing the lease", () => {
   const fixture = compileOwnerFixture("pty-owner-reply-retries");
   try { execFileSync(fixture.executable); } finally { fs.rmSync(fixture.dir, { recursive: true, force: true }); }

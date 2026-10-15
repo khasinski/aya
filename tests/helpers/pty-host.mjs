@@ -41,3 +41,26 @@ export function ptyEventsFor(wc, ptyId) {
     .map((e) => e.payload)
     .filter((p) => p.ptyId === ptyId);
 }
+
+/** Stop only a disposable fixture's verified native owner after a JS crash. */
+export async function cleanupNativeOwner(home) {
+  const fs = await import("node:fs"), path = await import("node:path");
+  const file = path.join(home, "pty-owner/record.json");
+  if (!fs.existsSync(file)) return;
+  const record = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (record.executable !== path.resolve("dist-electron/aya-pty-owner")) throw new Error("Unexpected fixture owner executable");
+  const { ownerRecordIsLive, ownerReaderIsLive } = await import("../../dist-electron/pty-owner-registry.js");
+  if (ownerRecordIsLive(record)) process.kill(record.pid, "SIGTERM");
+  const deadline = Date.now() + 5000;
+  while (ownerRecordIsLive(record)) {
+    if (Date.now() > deadline) throw new Error(`Fixture owner ${record.pid} did not stop`);
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  const { ownerProcessGroupExists } = await import("../../dist-electron/pty-owner-client.js");
+  if (!ownerReaderIsLive(record) && !record.uncertain?.length && record.panes.every(p => !ownerProcessGroupExists(p.pid))) {
+    // This disposable fixture explicitly stopped the owner and verified all
+    // retained groups gone. Product startup must never make this inference
+    // from owner death alone; the next isolated test starts with a clean home.
+    fs.rmSync(file, { force: true });
+  }
+}

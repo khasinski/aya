@@ -9,6 +9,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type * as PtyModule from "node-pty";
+import { OwnerPty } from "./pty-owner-adapter";
+import { currentOwnerRuntime } from "./pty-owner-runtime";
 import type { PtyEvent, SpawnFailureReason, SpawnRequest } from "./types";
 import {
   extractAyaOsc,
@@ -43,16 +45,7 @@ const SEARCH_SNIPPET_CONTEXT_AFTER = 50; // chars after the match
 // Stop counting occurrences past this many (snippet "more" cap).
 const SEARCH_MAX_COUNT_DISPLAY = 99;
 
-let nodePty: typeof PtyModule | null = null;
-
-function loadNodePty(): typeof PtyModule {
-  if (!nodePty) {
-    nodePty = require("node-pty") as typeof PtyModule;
-  }
-  return nodePty;
-}
-
-const ptys = new Map<string, PtyModule.IPty>();
+const ptys = new Map<string, OwnerPty>();
 const launches = new Map<string, PaneLaunch>();
 const spawnTimes = new Map<string, number>();
 const spawnRequests = new Map<string, SpawnRequest>();
@@ -321,6 +314,17 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
     ptyLog.append("spawn-dropped-shutting-down", { ptyId: req.ptyId });
     return;
   }
+  const owner = currentOwnerRuntime();
+  const unavailable = owner?.disconnected.get(req.ptyId);
+  if (unavailable || owner?.incompatible) {
+    if (!sink.isDestroyed()) {
+      if (unavailable?.exited) {
+        sink.sendPtyEvent({ type: "exit", ptyId: req.ptyId, exitCode: unavailable.exitCode ?? 0 });
+        await owner!.retired(unavailable);
+      } else sink.sendPtyEvent({ type: "disconnected", ptyId: req.ptyId });
+    }
+    return;
+  }
   if (pendingKills.has(req.ptyId)) {
     // killPty arrived before this spawn (the renderer closed the tab between
     // mounting and the IPC round-trip). Drop the spawn so we don't orphan a
@@ -433,16 +437,15 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
     const { command, env, launch, ownSessionId } = prepared;
     const [file, ...args] = prepared.argv;
 
-    let child: PtyModule.IPty;
+    let child: OwnerPty;
     try {
-      child = loadNodePty().spawn(file, args, {
-        name: PANE_TERM,
-        cols: Math.max(req.cols, MIN_PTY_COLS),
-        rows: Math.max(req.rows, MIN_PTY_ROWS),
-        cwd,
-        env,
-      });
+      child = await OwnerPty.spawn({ id: req.ptyId, command: file, argv: [file, ...args],
+        cols: Math.max(req.cols, MIN_PTY_COLS), rows: Math.max(req.rows, MIN_PTY_ROWS), cwd, env: { ...env, TERM: PANE_TERM, PWD: cwd } });
     } catch (err) {
+      if (currentOwnerRuntime()?.incompatible) {
+        if (!sink.isDestroyed()) sink.sendPtyEvent({ type: "disconnected", ptyId: req.ptyId });
+        return;
+      }
       reportSpawnFailure(
         sink,
         req.ptyId,
@@ -452,7 +455,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
       return;
     }
 
-    if (shuttingDown) {
+    if (cancelled() || shuttingDown) {
       // Shutdown began during our async preflight, after the snapshot was taken.
       // Registering now would orphan this child, and a scheduled escalation might
       // not fire before the host exits - so force-kill it synchronously (the
@@ -467,6 +470,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
         // already gone
       }
       ptyLog.append("spawn-killed-on-shutdown", { ptyId: req.ptyId });
+      await child.closed;
       return;
     }
 
@@ -478,6 +482,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
     // takes live input. Writes arriving after this point find the PTY through
     // `ptys` on the normal path, so there is no gap between flush and cleanup.
     const queued = pendingWrites.get(req.ptyId);
+    const flushed: Promise<void>[] = [];
     if (queued?.length) {
       pendingWrites.delete(req.ptyId);
       ptyLog.append("pending-write-flush", {
@@ -485,7 +490,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
         chunks: queued.length,
       });
       // PTY input is the user's own shell input; no code-injection boundary.
-      for (const chunk of queued) child.write(chunk); // lgtm[js/code-injection]
+      for (const chunk of queued) flushed.push(child.writeAsync(chunk)); // lgtm[js/code-injection]
     }
     // Mirror of the pane's screen, used to tell what it SHOWS (see vt-state.ts).
     // Fires on both edges, so a prompt appearing AND being answered both
@@ -575,6 +580,7 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
       if (sink.isDestroyed()) return;
       sink.sendPtyEvent({ type: "exit", ptyId: req.ptyId, exitCode });
     });
+    await Promise.all(flushed);
   } finally {
     // A restart may have taken the id over while this (cancelled) spawn was in
     // preflight: the entry and any input queued since belong to it then.
@@ -644,8 +650,11 @@ export function getPtySize(ptyId: string): PaneSize | null {
   return p ? { cols: p.cols, rows: p.rows, alt: vtPaneAltScreen(ptyId) } : null;
 }
 
-export function getPtyPid(ptyId: string): number | null {
-  return ptys.get(ptyId)?.pid ?? null;
+export function getPtyPid(ptyId: string): number | null | undefined {
+  const connected = ptys.get(ptyId)?.pid;
+  if (connected) return connected;
+  const pane = currentOwnerRuntime()?.disconnected.get(ptyId);
+  return pane && !pane.exited ? pane.pid : currentOwnerRuntime()?.incompatible ? undefined : null;
 }
 
 /** Write to a PTY; false means it went NOWHERE (dead id, queue at cap, failed
@@ -669,7 +678,7 @@ export async function writePty(ptyId: string, data: string): Promise<boolean> {
   // Writing to the user's own PTY is the whole point of a terminal: the
   // "user-provided value" is their own keystrokes going to their own shell, so
   // there is no trust boundary to cross. Not exploitable code injection.
-  p.write(data); // lgtm[js/code-injection]
+  await p.writeAsync(data); // lgtm[js/code-injection]
   return true;
 }
 
@@ -719,13 +728,14 @@ export function terminatePtyChild(
   }, KILL_ESCALATE_MS);
 }
 
-export function killPty(ptyId: string): void {
+export async function killPty(ptyId: string): Promise<void> {
   outputBuffers.delete(ptyId);
   oscCarryBuffers.delete(ptyId);
   closeVtPane(ptyId);
   const p = ptys.get(ptyId);
   ptyLog.append("kill", { ptyId, live: !!p });
   if (!p) {
+    if (currentOwnerRuntime()?.disconnected.has(ptyId)) { await currentOwnerRuntime()!.killDisconnected(ptyId); return; }
     // No PTY for this id yet. A spawn under way is cancelled on its own entry
     // (no marker: ids are reused, and a reopened tab must start). One whose
     // IPC has not arrived yet bails on the marker, which a TTL evicts if
@@ -758,6 +768,9 @@ export function killPty(ptyId: string): void {
     ptyLog.append("exit", { ptyId, exitCode, killed: true });
   });
   terminatePtyChild(p);
+  let timer: NodeJS.Timeout | undefined;
+  try { await Promise.race([p.closed, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("The terminal could not confirm its exit. Its native owner inventory was kept; check it before restarting.")), 5000); })]); }
+  finally { clearTimeout(timer); }
 }
 
 /** Graceful signal to each child, `onDone` exactly once when the last exits, SIGKILL for survivors at the
@@ -844,5 +857,5 @@ export function shutdownPtyChildren(
 }
 
 export function activePtyCount(): number {
-  return ptys.size;
+  return ptys.size + [...(currentOwnerRuntime()?.disconnected.values() ?? [])].filter(pane => !pane.exited && !ptys.has(pane.id)).length;
 }

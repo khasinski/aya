@@ -68,11 +68,11 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
   );
   ipcMain.handle("pty:kill", async (_e, ptyId: unknown) => {
     const id = requireString(ptyId, "pty:kill.ptyId");
-    await deps.forgetBrief(id).catch(() => {});
-    return closePane(gate, id, {
+    await closePane(gate, id, {
       hasPane: async (paneId) => (await host.getSize(paneId)) !== null,
       kill: (paneId) => host.kill(paneId),
     });
+    await deps.forgetBrief(id).catch(() => {});
   });
   ipcMain.handle("pty:buffer", async (_e, ptyId: unknown) => {
     try {

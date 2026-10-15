@@ -88,7 +88,15 @@ test("closing a running pane forgets its brief and kills it", async () => {
   const { call, log } = setup();
   await call("pty:spawn", spawnReq("c"));
   await call("pty:kill", "c");
-  assert.deepEqual(log.slice(-2), [["forget", "c"], ["kill", "c"]]);
+  assert.deepEqual(log.slice(-2), [["kill", "c"], ["forget", "c"]]);
+});
+test("a refused kill keeps its live pane and brief record", async () => {
+  const { call, log, host, panes } = setup();
+  await call("pty:spawn", spawnReq("kept"));
+  host.kill = async () => { throw new Error("owner identity could not be confirmed"); };
+  await assert.rejects(call("pty:kill", "kept"), /identity could not be confirmed/);
+  assert.equal(panes.has("kept"), true);
+  assert.equal(log.some(([op]) => op === "forget"), false);
 });
 
 test("buffer, cwd, search and resize go to the host; an unreachable host's buffer reads as empty", async () => {

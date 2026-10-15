@@ -3,13 +3,15 @@
 // host held duplicate agents no window showed; Diagnostics printed the raw facts without saying either was wrong.
 
 import type { App, BrowserWindow, dialog, Menu, nativeImage } from "electron";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
+import { OWNER_DIRECTORY } from "./pty-owner-registry";
 import * as net from "node:net";
 import * as path from "node:path";
 import { PTY_HOST_EXIT_WAIT_MS, type PtyHostClient } from "./pty-host-client";
-import type { RelaunchDeps } from "./relaunch-notes";
+import { currentProcessesConfirmed, type RelaunchDeps } from "./relaunch-notes";
 import { restartStaleHost } from "./updates";
 import type { HostRecord } from "./pty-host-registry";
+import type { PtyOwnerStatus } from "./pty-host-protocol";
 import { isHostStale, UNKNOWN_SCRIPT_HASH, type HostIdentity } from "./pty-host-staleness";
 
 /** How long the socket probe waits for the host on pty-host.sock to answer. */
@@ -27,6 +29,7 @@ export interface HostHealth {
   identity: HostIdentity | null;
   expected: HostIdentity;
   ptyCount: number;
+  owner?: PtyOwnerStatus;
   stale: boolean;
   /** Expected core bytes could not be read: warn, but never restart automatically. */
   indeterminate?: boolean;
@@ -44,17 +47,18 @@ export interface HostHealthDeps {
   expected: HostIdentity;
   /** Whether this Aya is connected to a host now. */
   connected(): boolean;
-  status(): Promise<{ identity: HostIdentity | null; ptyCount: number; pid?: number }>;
+  status(): Promise<{ identity: HostIdentity | null; ptyCount: number; pid?: number; owner?: HostHealth["owner"] }>;
   socketExists(): Promise<boolean>;
   /** The pid of the host answering on pty-host.sock, without starting one; null when none answers. */
   probeSocket(): Promise<number | null>;
   liveRecords(): HostRecord[];
+  ownerExists?(): boolean;
 }
 
 export async function gatherHostHealth(deps: HostHealthDeps): Promise<HostHealth> {
   const socketExists = await deps.socketExists();
   // Asking a client that is not connected while no socket exists would start a host: there is none to describe.
-  const asked = deps.connected() || socketExists;
+  const asked = deps.connected() || socketExists || !!deps.ownerExists?.();
   const status = asked ? await deps.status() : { identity: null, ptyCount: 0, pid: undefined };
   const pid = typeof status.pid === "number" ? status.pid : null;
   const socketPid = socketExists ? await deps.probeSocket() : null;
@@ -68,7 +72,8 @@ export async function gatherHostHealth(deps: HostHealthDeps): Promise<HostHealth
     identity: status.identity,
     expected: deps.expected,
     ptyCount: status.ptyCount,
-    stale: asked && isHostStale(deps.expected, status.identity),
+    stale: asked && (isHostStale(deps.expected, status.identity) || !!status.owner?.incompatible),
+    ...(status.owner ? { owner: status.owner } : {}),
     indeterminate: asked && (!deps.expected.scriptHash || deps.expected.scriptHash === UNKNOWN_SCRIPT_HASH),
     socket: { exists: socketExists, pid: socketPid },
     otherHosts,
@@ -82,9 +87,11 @@ export function hostWarnings(health: Omit<HostHealth, "warnings">): string[] {
   if (health.indeterminate) {
     warnings.push("The terminal host build cannot be compared: Aya could not read its current PTY runtime files. The running terminals were kept.");
   }
+  if (health.owner?.disconnected.length) warnings.push(`${health.owner.disconnected.length} terminals are disconnected from their JS host. Their native owner inventory was kept; restart explicitly to stop them.`);
   if (health.stale) {
     warnings.push(
-      `The terminal host runs different PTY code or runtime (${health.identity?.version ?? "unknown version"}): restart it to use this one.`,
+      health.owner?.incompatible ? "The native PTY owner is unavailable or incompatible. Explicit recovery asks before stopping any retained processes."
+        : `The terminal host runs different PTY code or runtime (${health.identity?.version ?? "unknown version"}): restart it to use this one.`,
     );
   }
   if (health.pid !== null && !health.socket.exists) {
@@ -209,14 +216,22 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
       if (!health.stale) return;
       // The update is in, but the panes' work still runs on the old host: ask, unless Restart to update did.
       let exited = true;
+      let asked = false, cancelled = false;
       if (
-        !(await restartStaleHost(relaunchDeps, (text) => askRestart("Restart terminals", text), async () => {
+        !(await restartStaleHost(relaunchDeps, (text) => { asked = true; return askRestart("Restart terminals", text); }, async () => {
+          const migration = !health.owner && health.ptyCount > 0;
+          if (!asked && (migration || health.owner?.incompatible) && !(await currentProcessesConfirmed(relaunchDeps, health.ptyCount).catch(() => false))) {
+            const detail = migration ? "Moving these terminals to Aya's native PTY owner stops their current processes. They cannot be moved from the older host."
+              : "Replacing the unavailable or incompatible native PTY owner stops every terminal it owns.";
+            if (!(await askRestart("Restart terminals", detail))) { cancelled = true; return; }
+          }
           exited = await ptyHost.restart();
         }))
       ) {
         showStaleHost(true);
         return;
       }
+      if (cancelled) { showStaleHost(true); return; }
       // restart() swallows request errors by design (an old host may not honor
       // "shutdown"), so returning is NOT proof the host died. Verify: re-probe the
       // socket; a fresh current-version host (or none yet) means success, the SAME
@@ -235,6 +250,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
   async function hostHealth(): Promise<HostHealth> {
     const health = await gatherHostHealth({
       expected: ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION),
+      ownerExists: () => existsSync(path.join(OWNER_DIRECTORY, "record.json")),
       connected: () => ptyHost.isConnected(),
       status: () => ptyHost.hostStatus(),
       socketExists: () => deps.socketExists(),
@@ -292,10 +308,29 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
   /** Settings > Diagnostics > PTY host > Restart (and Aya Web): asks, then replaces the host. Throws when cancelled,
    *  or when the old host did not exit, so the window leaves its panes as they are. */
   async function restartHostFromWindow(): Promise<void> {
-    if (!(await confirmLosingWork("Restarting the PTY host", "Restart"))) throw new Error("restart cancelled");
+    const before = await hostHealth();
+    const legacy = !before.owner && before.ptyCount > 0;
+    const recovery = legacy || before.owner?.incompatible || !!before.owner?.disconnected.length;
+    const names = new Map((await relaunchDeps.panes().catch(() => [])).map(p => [p.id, p.name]));
+    const retained = [
+      ...(before.owner?.inventory ?? []).map(p => `${names.get(p.id) ?? p.id} (PID ${p.pid})`),
+      ...(before.owner?.uncertain ?? []).map(id => `${names.get(id) ?? id}: unconfirmed spawn, process identity unknown`),
+    ];
+    const confirmed = recovery ? await askRestart("Restart", legacy
+      ? "Moving these terminals to Aya's native PTY owner stops their current processes. They cannot be moved from the older host."
+      : "Restarting the terminal host stops the processes retained by the native PTY owner. Their disconnected screens cannot show all current work." +
+        (retained.length ? `\n\nProcesses that may still run:\n${retained.join("\n")}` : ""))
+      : await confirmLosingWork("Restarting the PTY host", "Restart");
+    if (!confirmed) throw new Error("restart cancelled");
     const exited = await ptyHost.restart();
     // The red dot follows what the host now is: off for a current host, still on if the restart did not take.
-    await hostHealth();
+    const after = await hostHealth();
+    if (recovery && (after.stale || after.owner?.disconnected.length)) {
+      showStaleHost(true);
+      const left = [...(after.owner?.inventory ?? []).map(p => `${names.get(p.id) ?? p.id} (PID ${p.pid})`), ...(after.owner?.uncertain ?? [])];
+      throw new Error(`Some terminal processes could not be confirmed stopped. Their disconnected inventory was kept${left.length ? `: ${left.join(", ")}` : "."}` +
+        (after.owner?.recoveryFailures?.length ? `\n\n${after.owner.recoveryFailures.join("\n")}` : ""));
+    }
     if (!exited) {
       showStaleHost(true);
       throw new Error(

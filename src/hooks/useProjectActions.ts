@@ -24,6 +24,7 @@ import {
   type WorkingTab,
 } from "../types";
 import { uuid } from "../uuid";
+import { terminalKillRefusal } from "../terminal-kill-refusal";
 
 interface ProjectActionsOptions {
   projectsRef: RefObject<ProjectConfig[]>;
@@ -154,8 +155,14 @@ export function useProjectActions({
     const owned = Object.values(terminalsRef.current).filter(
       (t) => t.projectSlug === slug,
     );
-    for (const t of owned) {
-      void window.aya.ptyKill(t.id);
+    const kills = await Promise.allSettled(owned.map(t => window.aya.ptyKill(t.id)));
+    const refused = kills.flatMap((result, i) => result.status === "rejected" ? [`${owned[i].name}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`] : []);
+    if (refused.length) {
+      const stopped = new Set(owned.filter((_t, i) => kills[i].status === "fulfilled").map(t => t.id));
+      setTerminals(prev => Object.fromEntries(Object.entries(prev).map(([id, t]) => [id, stopped.has(id)
+        ? { ...t, stopped: true, disconnected: undefined, exitCode: null, status: "idle", bell: false } : t])));
+      window.alert(terminalKillRefusal("close", projectsRef.current.find(p => p.slug === slug)?.name ?? slug, refused.join("\n"), "project"));
+      return;
     }
     setTerminals((prev) => {
       const next = { ...prev };
