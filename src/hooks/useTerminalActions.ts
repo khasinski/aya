@@ -425,8 +425,17 @@ export function useTerminalActions({
     // yet (exit event still in flight) can still hit that window; the gate
     // covers every state the user can actually observe when clicking.
     const maybeAlive = t.exitCode === null && !t.stopped;
-    // A live pane's background tasks and monitors stop with it: asked first when its screen shows some.
-    if (maybeAlive && !(await window.aya.confirmPaneRestart(id).catch(() => true))) return;
+    // Asked first when the restart would stop work in the pane: a turn, a command, background tasks (#219). Main asks
+    // plainly when it cannot check; a question that cannot reach main at all stops the restart, since going ahead
+    // could end work nobody agreed to stop.
+    if (maybeAlive) {
+      const agreed = await window.aya.confirmPaneRestart(id).catch((err: unknown) => {
+        const why = err instanceof Error ? err.message : String(err);
+        window.alert(`Aya did not restart ${t.name}: it could not ask first whether that would stop work there, so the pane keeps running.\n\n${why}`);
+        return false;
+      });
+      if (!agreed) return;
+    }
     if (maybeAlive) {
       // Await the kill so the main-side ptys map is empty by the time the
       // new spawn IPC arrives - otherwise spawnPty treats it as a re-mount

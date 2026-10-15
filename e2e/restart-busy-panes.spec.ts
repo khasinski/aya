@@ -107,3 +107,22 @@ test("a host restart asks about an agent mid-turn and a shell running a command"
   await expect.poll(sleeping, { timeout: 15_000 }).toEqual([]);
   await expect.poll(agents, { timeout: 15_000 }).not.toContain(agent);
 });
+
+test("a restart whose question cannot be asked does not go ahead", async ({ app, window }) => {
+  await waitForShellReady(window);
+  const shell = visiblePane(window, "shell 1").getByTestId("xterm-host");
+  await shell.click();
+  await window.keyboard.insertText(COMMAND);
+  await window.keyboard.press("Enter");
+  await expect.poll(sleeping, { timeout: 10_000 }).toHaveLength(1);
+  const [sleep] = sleeping();
+  // The question fails in main (no handler): before, the restart went ahead without asking and ended the command.
+  await app.evaluate(({ ipcMain }) => ipcMain.removeHandler("pty:confirm-restart"));
+  const told = new Promise<string>((resolve) => window.once("dialog", (d) => (resolve(d.message()), void d.accept())));
+  await window.locator('.aya-sidebar-row[data-terminal-name="shell 1"]').click({ button: "right" });
+  await window.locator(".aya-context-menu-item", { hasText: "Restart terminal" }).click();
+  // The user is told why nothing happened.
+  expect(await told).toMatch(/^Aya did not restart shell 1: it could not ask first whether that would stop work there, so the pane keeps running\./);
+  await window.waitForTimeout(2_000);
+  expect(sleeping()).toEqual([sleep]);
+});

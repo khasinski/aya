@@ -248,7 +248,21 @@ test("restart offered: not when the preset, edited since, can no longer carry a 
     preset.command = "claude && echo done";
     const project = { slug: "g", tabs: [{ id: "t1", presetId: "p", name: "t" }] };
     const report = await roleNoteReport(project, "ux-review", { implementer: "t1" }, deps);
-    assert.match(report.roleNotes.implementer, /^started with the role note of tester: /);
+    // It says why, rather than "restart it to give it this one", which a restart would not do.
+    assert.match(report.roleNotes.implementer, /^cannot tell this CLI its role: /);
+    assert.deepEqual(report.restartable, []);
+  }));
+
+test("restart offered: not for an older brief when the preset, edited since, can no longer carry a note", () =>
+  withRig(presetOf("claude"), ROLE, async ({ deps, start }) => {
+    await start();
+    await deps.records.set("t1", { ...(await deps.records.get("t1")), told: "000000000000" });
+    const project = { slug: "g", tabs: [{ id: "t1", presetId: "p", name: "t" }] };
+    assert.match((await roleNoteReport(project, "ux-review", { tester: "t1" }, deps)).roleNotes.tester, /^started with an older brief: restart it/);
+    const [preset] = await deps.listPresets();
+    preset.command = "claude && echo done";
+    const report = await roleNoteReport(project, "ux-review", { tester: "t1" }, deps);
+    assert.match(report.roleNotes.tester, /^cannot tell this CLI its role: /);
     assert.deepEqual(report.restartable, []);
   }));
 
