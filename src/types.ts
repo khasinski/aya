@@ -1231,6 +1231,8 @@ export interface TeamSummary {
   paneHolds: Record<string, string | null>;
   /** Per role with a pane: why its CLI holds no note for this role, null when it does. */
   roleNotes: Record<string, string | null>;
+  /** Roles whose note a restart of their pane (it resumes) gives; not a CLI that cannot take one, nor Codex. */
+  restartable: string[];
   /** Panes that started with a role note of this team that they no longer play. */
   staleNotes: string[];
   /** Per role with a pane: when a Save changed what its aya team whoami prints, while it has not run whoami since. */
