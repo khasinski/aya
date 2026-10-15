@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 fs.mkdirSync("test-results", { recursive: true });
 const home = fs.mkdtempSync(path.resolve("test-results/adapter-"));
@@ -71,7 +72,7 @@ test("25 owner adapters release both native masters and JS reader descriptors af
 });
 
 test("handover aborts a bounded blocked-input drain without stopping another pane or retrying the paste", {timeout: 15000}, async () => {
-  const p = await OwnerPty.spawn(spec("drain-barrier", "stty raw -echo; printf 'READY'; while [ ! -f \"$HOME/input-release\" ]; do sleep 0.01; done; dd bs=1 count=1048576 of=/dev/null 2>/dev/null; printf 'DRAINED'; exit 23"));
+  const p = await OwnerPty.spawn(spec("drain-barrier", "stty raw -echo; printf 'READY'; while [ ! -f \"$HOME/input-release\" ]; do sleep 0.01; done; dd bs=1 count=1048576 of=\"$HOME/input-bytes\" 2>/dev/null; printf 'DRAINED'; next=$(dd bs=1 count=1 2>/dev/null); printf 'NEXT:%s' \"$next\"; exit 23"));
   const second = await OwnerPty.spawn(spec("drain-peer"));
   let output = "", peerOutput = "";
   p.onData(s => { output += s; }); second.onData(s => { peerOutput += s; });
@@ -84,7 +85,13 @@ test("handover aborts a bounded blocked-input drain without stopping another pan
     await second.writeAsync("still\n"); await waitFor(() => peerOutput.includes(`R:${second.pid}:still`));
     assert.equal(output.includes("DRAINED"), false, "the unreleased child still cannot consume the pending input");
     fs.writeFileSync(path.join(home, "input-release"), "go");
-    await pending; assert.equal((await exit).exitCode, 23); await p.closed;
+    await pending; await p.writeAsync("!");
+    assert.equal((await exit).exitCode, 23); await p.closed;
+    const actual = fs.readFileSync(path.join(home, "input-bytes"));
+    assert.equal(actual.length, 1024 * 1024);
+    const digest = bytes => createHash("sha256").update(bytes).digest("hex");
+    assert.equal(digest(actual), digest(Buffer.alloc(1024 * 1024, 120)));
+    assert.ok(output.endsWith("NEXT:!"), "the very next byte after the original paste must be the sentinel, not retried input");
     assert.equal(output.split("DRAINED").length - 1, 1);
   } finally {
     p.resumeAfterHandoverAbort(); p.kill("SIGKILL"); second.kill("SIGKILL");
