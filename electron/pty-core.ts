@@ -81,6 +81,9 @@ interface OutputBuffer {
   searchCache?: { version: number; cleaned: string; lower: string };
 }
 const outputBuffers = new Map<string, OutputBuffer>();
+// Restored processes read immediately. Keep their replay and real exit outcome
+// until the first renderer attaches, even if the child exits during that gap.
+const restoredPanes = new Map<string, {generation: string; attached: boolean; exitCode?: number}>();
 
 // Per-PTY held-back partial OSC 9001 sequence, when a chunk boundary lands
 // mid-sequence (see osc-extractor.ts). Cleared alongside outputBuffers on
@@ -233,15 +236,20 @@ export async function stopIneligiblePtyPanes(consented: string[]): Promise<void>
   if (!handoverGated || consented.length !== ineligiblePanes.size || new Set(consented).size !== consented.length || consented.some(id => !ineligiblePanes.has(id))) throw new Error("Missing consent for terminal fallback");
   for (const id of consented) { await killPtyInternal(id); ineligiblePanes.delete(id); }
 }
-export async function detachPtyCoreForHandover(): Promise<void> {
+export async function detachPtyCoreForHandover(commit: () => void = () => {}): Promise<void> {
   if (!handoverGated || ineligiblePanes.size || ptys.size !== frozenPanes.size || [...ptys.keys()].some(id => !frozenPanes.has(id))) throw new Error("PTY handover is not ready");
   // This operation must never fall through to the destructive shutdown path.
   // The host exits after the control lease is detached and all local FDs close.
-  await currentOwnerRuntime()!.detachForHandover();
+  const epoch = handoverEpoch;
+  await currentOwnerRuntime()!.detachForHandover(() => {
+    if (!handoverGated || epoch !== handoverEpoch || ptys.size !== frozenPanes.size) throw new Error("PTY handover was cancelled before lease close");
+    commit();
+  });
   for (const child of ptys.values()) child.detachForHandover();
   shuttingDown = true;
   ptys.clear(); launches.clear(); spawnTimes.clear(); spawnRequests.clear();
-  outputBuffers.clear(); oscCarryBuffers.clear(); closeAllVtPanes();
+  outputBuffers.clear();
+  restoredPanes.clear(); oscCarryBuffers.clear(); closeAllVtPanes();
 }
 /** All checkpoints are preflighted in the successor before the old host exits.
  * This host still validates before any attach; reading starts only after the
@@ -259,6 +267,7 @@ export async function restorePtyCorePane(value: unknown, sink: PtyEventSink): Pr
   spawnTimes.set(pane.id, pane.spawnedAt); spawnRequests.set(pane.id, pane.request);
   outputBuffers.set(pane.id, structuredClone(pane.output));
   if (pane.oscCarry) oscCarryBuffers.set(pane.id, pane.oscCarry);
+  restoredPanes.set(pane.id, {generation: (pane.vt.metadata as {generation:string}).generation, attached:false});
   installChildObservers(pane.request, child, sink, () => {});
 }
 
@@ -289,6 +298,7 @@ export function __testAppendToOutputBuffer(ptyId: string, chunk: string): void {
 
 export function __testClearOutputBuffers(): void {
   outputBuffers.clear();
+  restoredPanes.clear();
 }
 
 /** Input held for an in-flight spawn: [chunks, bytes]. Empty once any spawn settles, so a test looks while
@@ -301,6 +311,30 @@ export function __testPendingWrites(ptyId: string): [number, number] {
 export function getBufferedOutput(ptyId: string): string {
   const buffer = outputBuffers.get(ptyId);
   return buffer ? buffer.chunks.join("") : "";
+}
+
+/** A renderer checkpoint is valid only while every byte since B is retained.
+ * Counters use cleaned UTF-16 units, just like renderer writes and replay. */
+export function getBufferedOutputSince(ptyId: string, offset: number): {chunk: string; reset: boolean} {
+  const buffer = outputBuffers.get(ptyId);
+  if (!buffer || !Number.isSafeInteger(offset) || offset < buffer.end-buffer.total || offset > buffer.end) {
+    return {chunk:getBufferedOutput(ptyId),reset:true};
+  }
+  return {chunk:buffer.chunks.join("").slice(offset-(buffer.end-buffer.total)),reset:false};
+}
+function replayOutput(req: SpawnRequest, sink: PtyEventSink): void {
+  if (sink.isDestroyed()) return;
+  let chunk = getBufferedOutput(req.ptyId);
+  let reset: boolean | undefined;
+  if (req.replayAfter) {
+    const restored = restoredPanes.get(req.ptyId);
+    const replay = restored?.generation === req.replayAfter.generation
+      ? getBufferedOutputSince(req.ptyId,req.replayAfter.offset) : {chunk,reset:true};
+    chunk = replay.chunk; reset = replay.reset;
+    if (reset) ptyLog.append("handover-history-from-replay", {ptyId:req.ptyId,reason:"checkpoint boundary unavailable"});
+  }
+  // An empty replay is still the fence after restoring a captured display.
+  if (chunk || req.replayAfter) sink.sendPtyEvent({type:"data",ptyId:req.ptyId,chunk,replay:true,...(reset !== undefined ? {reset} : {})});
 }
 
 /** Strip ANSI escape sequences and control chars so search snippets are
@@ -432,6 +466,15 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
     ptyLog.append("spawn-dropped-shutting-down", { ptyId: req.ptyId });
     return;
   }
+  const restored = restoredPanes.get(req.ptyId);
+  if (restored?.exitCode !== undefined) {
+    if (!sink.isDestroyed()) {
+      replayOutput(req,sink);
+      sink.sendPtyEvent({type:"exit",ptyId:req.ptyId,exitCode:restored.exitCode});
+      restoredPanes.delete(req.ptyId); outputBuffers.delete(req.ptyId);
+    }
+    return;
+  }
   const owner = currentOwnerRuntime();
   const unavailable = owner?.disconnected.get(req.ptyId);
   if (unavailable || owner?.incompatible) {
@@ -456,19 +499,8 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
     // Don't spawn again; replay the buffered output so the freshly-created
     // xterm.js can repaint the existing scrollback. The PTY's own onData
     // continues to deliver new bytes to the renderer.
-    const buffered = getBufferedOutput(req.ptyId);
-    ptyLog.append("spawn-replay", {
-      ptyId: req.ptyId,
-      bytes: Buffer.byteLength(buffered),
-    });
-    if (buffered && !sink.isDestroyed()) {
-      sink.sendPtyEvent({
-        type: "data",
-        ptyId: req.ptyId,
-        chunk: buffered,
-        replay: true,
-      });
-    }
+    replayOutput(req,sink);
+    if (!sink.isDestroyed() && restored) restored.attached = true;
     await services.replay?.(spawnRequests.get(req.ptyId) ?? req, ptys.get(req.ptyId)!.pid, spawnTimes.get(req.ptyId) ?? Date.now(), sink);
     return;
   }
@@ -669,7 +701,11 @@ function installChildObservers(req: SpawnRequest, child: OwnerPty, sink: PtyEven
       launches.delete(req.ptyId);
       spawnTimes.delete(req.ptyId);
       spawnRequests.delete(req.ptyId);
-      outputBuffers.delete(req.ptyId);
+      const origin = restoredPanes.get(req.ptyId);
+      const pendingAttach = origin && !origin.attached ? origin : undefined;
+      if (!pendingAttach) restoredPanes.delete(req.ptyId);
+      if (pendingAttach) pendingAttach.exitCode = exitCode;
+      else outputBuffers.delete(req.ptyId);
       oscCarryBuffers.delete(req.ptyId);
       closeVtPane(req.ptyId);
       // Record the signal on this NON-host-initiated death (#83): when every
@@ -678,7 +714,7 @@ function installChildObservers(req: SpawnRequest, child: OwnerPty, sink: PtyEven
       // a host-initiated kill. Absence of any exit line at all, meanwhile,
       // means the renderer reloaded and cold-respawned rather than dying.
       ptyLog.append("exit", { ptyId: req.ptyId, exitCode, signal });
-      if (sink.isDestroyed()) return;
+      if (pendingAttach || sink.isDestroyed()) return;
       sink.sendPtyEvent({ type: "exit", ptyId: req.ptyId, exitCode });
     });
     child.onData((chunk) => {
@@ -862,6 +898,7 @@ export async function killPty(ptyId: string): Promise<void> {
   try { await operation; } finally { killing.delete(operation); }
 }
 async function killPtyInternal(ptyId: string): Promise<void> {
+  restoredPanes.delete(ptyId);
   outputBuffers.delete(ptyId);
   oscCarryBuffers.delete(ptyId);
   closeVtPane(ptyId);
@@ -983,6 +1020,7 @@ export function shutdownPtyChildren(
   spawnRequests.clear();
   launches.clear();
   outputBuffers.clear();
+  restoredPanes.clear();
   oscCarryBuffers.clear();
   closeAllVtPanes();
   pendingKills.clear();

@@ -405,6 +405,8 @@ export interface SpawnRequest {
    *  this session: if its PTY died, surface a stopped/restartable state via a
    *  `no-session` event instead of silently spawning a brand-new process. */
   attachOnly?: boolean;
+  /** Restore a captured display, then replay only output after this boundary. */
+  replayAfter?: { generation: string; offset: number };
   /** Attach-only IF the PTY host predates this app session (the main-process
    *  client found it running instead of spawning it - only the client can
    *  tell, so it resolves this into attachOnly). Set on the first mount of a
@@ -419,7 +421,7 @@ export interface SpawnRequest {
 }
 
 export type PtyEvent =
-  | { type: "data"; ptyId: string; chunk: string; replay?: boolean }
+  | { type: "data"; ptyId: string; chunk: string; replay?: boolean; reset?: boolean }
   | { type: "exit"; ptyId: string; exitCode: number }
   | {
       type: "spawn-failed";

@@ -20,7 +20,7 @@ interface Pending {
   peer: HandoverPeer;
   recipient?: HandoverPeer;
   deadline: number;
-  phase: "preparing" | "frozen" | "published" | "reused" | "detached" | "blocked";
+  phase: "preparing" | "frozen" | "publishing" | "published" | "reused" | "committing" | "detached" | "blocked";
   work?: Promise<HostHandoverState>;
   cleanupWork?: Promise<void>;
   aborted: boolean;
@@ -101,6 +101,9 @@ export class HostHandover {
   async publish(peer: HandoverPeer, display: CheckpointReceipt | null): Promise<HostHandoverState> {
     const p = this.own(peer);
     if (p.phase !== "frozen") throw new Error("Terminal handover publication refused");
+    // Claim the only publication slot before any receipt I/O. A rejected
+    // duplicate never transfers receipt ownership from its caller.
+    p.phase = "publishing";
     // Store ownership before validation so abort retains unsafe data and blocks
     // further attempts rather than accumulating unknown checkpoint directories.
     p.display = display;
@@ -130,7 +133,13 @@ export class HostHandover {
     if (!same(p.recipient,peer) || p.phase !== "published") throw new Error("Terminal handover detach refused");
     await stopIneligiblePtyPanes(consented);
     if (p.aborted || Date.now() >= p.deadline) throw new Error("Terminal handover expired before detach");
-    await detachPtyCoreForHandover();
+    await detachPtyCoreForHandover(() => {
+      // LIST was still cancellable. Lease close is synchronous after this
+      // callback, so expiry/abort must now leave readers and escrow alone.
+      this.own(peer);
+      if (p.phase !== "published") throw new Error("Terminal handover commit refused");
+      clearTimeout(p.timer); p.phase = "committing";
+    });
     clearTimeout(p.timer); p.phase = "detached";
     // Files remain for the successor's validation/restore acknowledgement.
   }
@@ -149,7 +158,7 @@ export class HostHandover {
     const p = this.pending;
     if (!p) return;
     if (peer && !same(p.recipient ?? p.peer,peer)) throw new Error("Terminal handover abort peer refused");
-    if (p.phase === "detached") throw new Error("Terminal handover already detached");
+    if (p.phase === "detached" || p.phase === "committing") throw new Error("Terminal handover already committed");
     p.aborted = true; abortPtyCoreHandover();
     await p.work?.catch(() => {});
     if (this.pending === p) await this.cleanup(p);

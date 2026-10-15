@@ -8,9 +8,10 @@ const home=fs.mkdtempSync(path.resolve('test-results/host-handover-state-'));pro
 const require=createRequire(import.meta.url);
 const core=require('../dist-electron/pty-core.js');
 const {HostHandover}=require('../dist-electron/pty-host-handover.js');
-const {shutdownOwnerRuntime}=require('../dist-electron/pty-owner-runtime.js');
+const {shutdownOwnerRuntime,getOwnerRuntime}=require('../dist-electron/pty-owner-runtime.js');
 const {ownerProcessStartIdentity}=require('../dist-electron/pty-owner-client.js');
-const {writeCheckpoint}=require('../dist-electron/pty-checkpoint-store.js');
+const store=require('../dist-electron/pty-checkpoint-store.js');
+const {writeCheckpoint}=store;
 const {encodeCheckpointPayload}=require('../dist-electron/pty-checkpoint-payload.js');
 const roots=[path.join(home,'core'),path.join(home,'display')],handover=new HostHandover(...roots);
 const peer={pid:process.pid,startIdentity:ownerProcessStartIdentity(process.pid)};
@@ -50,6 +51,41 @@ test('host escrow lifecycle keeps peers, cancellation, reuse, expiry and raw cap
   await wait(()=>(outputs.get('one')||'').includes('R:after-expiry'));
   await wait(()=>fs.readdirSync(roots[0]).length===0);
   assert.equal(core.getPtyPid('one'),pid);
+
+  state=await handover.prepare(peer,Date.now()+120000);
+  const first=await writeCheckpoint(roots[1],[{id:'one',generation:state.eligible[0].generation,data:encodeCheckpointPayload(Buffer.from('first'))}]);
+  const second=await writeCheckpoint(roots[1],[{id:'one',generation:state.eligible[0].generation,data:encodeCheckpointPayload(Buffer.alloc(1000,120))}]);
+  const read=store.readCheckpoint;let publicationEntered=false,releasePublication,reads=0;
+  store.readCheckpoint=async function*(...args){reads++;publicationEntered=true;await new Promise(r=>{releasePublication=r;});yield*read(...args);};
+  try{
+   const publishing=handover.publish(peer,first);await wait(()=>publicationEntered);
+   await assert.rejects(handover.publish(peer,second),/publication refused/);
+   assert.throws(()=>handover.adopt(successor),/recipient refused/);
+   assert.equal(reads,1,'duplicate must not begin reading another receipt');
+   releasePublication();const published=await publishing;
+   assert.deepEqual(published.display,first);assert.equal(published.displayRawBytes,5);
+   handover.adopt(successor);await handover.abort(successor);
+   assert.ok(fs.existsSync(path.join(roots[1],second.nonce)),'rejected receipt remains owned by caller');
+  }finally{store.readCheckpoint=read;await store.discardCheckpoint(roots[1],second);}
+  assert.deepEqual(fs.readdirSync(roots[1]),[]);
+
+  for(const cancellation of ['abort','expiry']){
+   state=await handover.prepare(peer,Date.now()+(cancellation==='expiry'?500:120000));await handover.publish(peer,null);handover.adopt(successor);
+   const owner=await getOwnerRuntime(),list=owner.client.list.bind(owner.client);
+   let entered=false,release;
+   owner.client.list=async()=>{entered=true;await new Promise(r=>{release=r;});return list();};
+   const detaching=handover.detach(successor,[]);const rejected=assert.rejects(detaching,/cancelled|no longer ready/);
+   await wait(()=>entered);
+   if(cancellation==='expiry'){
+    await wait(()=>!core.ptyCoreHandoverInProgress() && fs.readdirSync(roots[0]).length===0);
+   }else await handover.abort(successor);
+   release();await rejected;owner.client.list=list;
+   assert.equal(owner.client.isConnected(),true,'cancel must preserve control lease');
+   assert.deepEqual(fs.readdirSync(roots[0]),[]);
+   await core.writePty('one',`after-${cancellation}-during-list\n`);
+   await wait(()=>(outputs.get('one')||'').includes(`R:after-${cancellation}-during-list`));
+   assert.equal(core.getPtyPid('one'),pid);
+  }
 
   await spawn('two');await spawn('three');
   state=await handover.prepare(peer,Date.now()+120000);

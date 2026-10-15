@@ -187,9 +187,10 @@ export class OwnerRuntime {
     catch (error) { if (!delivered) { clearTimeout(timer); this.exits.delete(key); throw error; } }
     await this.retired(await exited);
   }
-  async detachForHandover(): Promise<void> {
+  async detachForHandover(beforeClose: () => void = () => {}): Promise<void> {
     if (!this.client?.isConnected() || this.pendingSpawns || this.incompatible) throw new Error("PTY owner handover barrier is incomplete");
     await this.client.list(); // all preceding owner operations have answered
+    beforeClose(); // Last cancellable boundary; no await between here and close.
     this.ending = true;
     if (this.idleTimer) clearTimeout(this.idleTimer);
     // Keep the owner's inventory and this reader's process identity on disk.

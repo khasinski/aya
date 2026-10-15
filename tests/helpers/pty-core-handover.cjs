@@ -8,7 +8,7 @@ const {capture}=require('../../dist-electron/vt-checkpoint-binding.js');
 const {OwnerPty}=require('../../dist-electron/pty-owner-adapter.js');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function waitFor(predicate){const end=Date.now()+6000;while(!predicate()){if(Date.now()>end)throw Error('core handover readiness timeout');await sleep(2);}}
-const home=process.env.AYA_HOME,mode=process.argv[2],variant=process.argv[3];let output='',exits=[],events=[];
+const home=process.env.AYA_HOME,mode=process.argv[2],scenario=process.argv[3],variant=scenario.startsWith('mount-')?'vt':scenario==='exit-late'?'exit-gap':scenario;let output='',exits=[],events=[];
 const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='data')output+=e.chunk;if(e.type==='exit')exits.push(e);}};
 (async()=>{
  if(variant.startsWith('prepare-')){
@@ -96,6 +96,49 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
     assert.deepEqual(JSON.parse(capture(a.terminal)),JSON.parse(capture(b.terminal)));assert.deepEqual(replies[0],replies[1]);
    }finally{a.dispose();b.dispose();}
   }
+  if(scenario.startsWith('mount-') || scenario==='exit-late'){
+   const mountEvents=[];
+   const mountSink={isDestroyed:()=>false,sendPtyEvent:e=>mountEvents.push(e)};
+   const request={...checkpoint.request,attachOnly:true,replayAfter:{generation:checkpoint.vt.metadata.generation,offset:checkpoint.output.end}};
+   const services={prepare:()=>{throw Error('restored pane must never respawn');}};
+   fs.writeFileSync(path.join(home,'release'),'go');
+   if(scenario==='exit-late'){
+    await waitFor(()=>!core.getPtyPid('core'));
+    assert.equal(exits.length,0,'unattached real exit must stay retained');
+    await core.spawnPty(request,mountSink,services);
+    assert.deepEqual(mountEvents.filter(e=>e.type==='exit').map(e=>e.exitCode),[23]);
+    assert.ok(mountEvents.some(e=>e.type==='data'&&e.replay));
+    await core.spawnPty(request,mountSink,services);
+    assert.equal(mountEvents.filter(e=>e.type==='exit').length,1,'exit delivered once');
+   }else{
+    // The original broadcast sink has no renderer. The successor must keep
+    // consuming output immediately, independently of when a view mounts.
+    await waitFor(()=>output.includes('TAIL'));
+    await core.writePty('core','before-mount\n');await waitFor(()=>output.includes(`R:${expected.pid}:before-mount`));
+    if(scenario==='mount-late'){
+     // Advance application time without sleeping: mount correctness has no
+     // timeout or timer dependency, even five minutes after replacement.
+     const now=Date.now;Date.now=()=>now()+300000;
+     try {await core.spawnPty(request,mountSink,services);} finally {Date.now=now;}
+    }else{
+     if(scenario==='mount-trim')for(let i=0;i<20;i++)core.__testAppendToOutputBuffer('core',`TRIM${i}:`+'x'.repeat(65536));
+     await core.spawnPty(request,mountSink,services);
+    }
+    const replay=mountEvents.filter(e=>e.type==='data'&&e.replay);
+    assert.equal(replay.length,1);assert.equal(replay[0].reset,scenario==='mount-trim');
+    if(scenario==='mount-trim')assert.equal(replay[0].chunk,core.getBufferedOutput('core'));
+    else{
+     assert.ok(!replay[0].chunk.includes('HISTORY'),'captured display must not be replayed twice');
+     assert.equal(replay[0].chunk.split('TAIL').length-1,1);
+     assert.equal(replay[0].chunk.split(`R:${expected.pid}:before-mount`).length-1,1);
+     assert.ok(replay[0].chunk.indexOf('TAIL')<replay[0].chunk.indexOf('before-mount'));
+    }
+    assert.equal(core.getPtyPid('core'),expected.pid);
+    await core.writePty('core','quit\n');await waitFor(()=>exits.length===1);assert.equal(exits[0].exitCode,23);
+   }
+   await shutdownOwnerRuntime();process.send({pid:expected.pid,ownerPid:expected.ownerPid,exits:1},()=>process.exit(0));return;
+  }
+  await core.spawnPty({...checkpoint.request,attachOnly:true,replayAfter:{generation:checkpoint.vt.metadata.generation,offset:checkpoint.output.end}},sink,{prepare:()=>{throw Error('must never respawn');}});
   if(variant!=='exit-gap'){
    fs.writeFileSync(path.join(home,'release'),'go');await waitFor(()=>output.includes('TAIL'));
    await core.writePty('core','after\nquit\n');

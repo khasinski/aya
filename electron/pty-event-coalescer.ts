@@ -74,7 +74,10 @@ export function createPtyDataCoalescer(
         send(event);
         return;
       }
-      const key = `${event.replay ? "r" : "l"}:${event.ptyId}`;
+      // A replay fence may arrive after live output collected during successor
+      // startup. Preserve that order and never merge across display resets.
+      if (event.reset !== undefined) {flush();send({...event});return;}
+      const key = `${event.replay ? "r" : "l"}:${String(event.reset)}:${event.ptyId}`;
       const queued = pending.get(key);
       if (queued) {
         queued.chunk += event.chunk;
@@ -107,7 +110,8 @@ export function coalesceAdjacentData(events: PtyEvent[]): PtyEvent[] {
       event.type === "data" &&
       tail &&
       tail.ptyId === event.ptyId &&
-      !tail.replay === !event.replay
+      !tail.replay === !event.replay &&
+      tail.reset === event.reset
     ) {
       tail.chunk += event.chunk;
       continue;

@@ -128,6 +128,8 @@ export interface SpawnRequest {
   // NOT spawn a fresh process; emit a `no-session` event instead. Set by the
   // renderer when re-mounting a tab that already ran this session.
   attachOnly?: boolean;
+  /** Restore a captured display, then replay only output after this boundary. */
+  replayAfter?: { generation: string; offset: number };
   // Attach-only IF the connected PTY host predates this app session (it was
   // found running, not spawned by us). Set by the renderer for the first mount
   // of a boot-restored tab; PtyHostClient.spawn resolves it into `attachOnly`
@@ -285,7 +287,7 @@ export type SpawnFailureReason =
   | "spawn-prepare-failed";
 
 export type PtyEvent =
-  | { type: "data"; ptyId: string; chunk: string; replay?: boolean }
+  | { type: "data"; ptyId: string; chunk: string; replay?: boolean; reset?: boolean }
   | { type: "exit"; ptyId: string; exitCode: number }
   | {
       type: "spawn-failed";

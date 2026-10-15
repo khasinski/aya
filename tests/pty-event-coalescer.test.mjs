@@ -123,3 +123,14 @@ test("coalesceAdjacentData passes through short batches", () => {
   assert.equal(coalesceAdjacentData(one), one);
   assert.deepEqual(coalesceAdjacentData([]), []);
 });
+
+
+test('checkpoint replay reset and empty fences preserve live order',()=>{
+ const events=[],c=createPtyDataCoalescer(e=>events.push(e),()=>{});
+ c.push({type:'data',ptyId:'p',chunk:'before'});
+ c.push({type:'data',ptyId:'p',chunk:'',replay:true,reset:false});
+ c.push({type:'data',ptyId:'p',chunk:'after'});
+ c.push({type:'data',ptyId:'p',chunk:'fallback',replay:true,reset:true});c.flush();
+ assert.deepEqual(events.map(e=>[e.chunk,e.reset]),[['before',undefined],['',false],['after',undefined],['fallback',true]]);
+ assert.equal(coalesceAdjacentData(events).length,4);
+});
