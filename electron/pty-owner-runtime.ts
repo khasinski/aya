@@ -190,12 +190,13 @@ export class OwnerRuntime {
   async detachForHandover(beforeClose: () => void = () => {}): Promise<void> {
     if (!this.client?.isConnected() || this.pendingSpawns || this.incompatible) throw new Error("PTY owner handover barrier is incomplete");
     await this.client.list(); // all preceding owner operations have answered
-    beforeClose(); // Last cancellable boundary; no await between here and close.
+    // All fallible disk work precedes the commit callback. A failed write or
+    // rename still permits abort to resume the connected original reader.
+    this.persist();
+    beforeClose(); // Last cancellable boundary; no await before lease close.
     this.ending = true;
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    // Keep the owner's inventory and this reader's process identity on disk.
-    // The owner will not grant the next lease until this process really exits.
-    this.persist(); this.client.close();
+    this.client.close();
   }
   shutdown(): Promise<void> { return this.shutdownTask ??= this.stop(); }
   private async recoverRetainedGroups(orderlyExit: boolean): Promise<void> {

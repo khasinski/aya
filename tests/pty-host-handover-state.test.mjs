@@ -69,6 +69,17 @@ test('host escrow lifecycle keeps peers, cancellation, reuse, expiry and raw cap
   }finally{store.readCheckpoint=read;await store.discardCheckpoint(roots[1],second);}
   assert.deepEqual(fs.readdirSync(roots[1]),[]);
 
+  for(const fault of ['writeFileSync','renameSync']){
+   state=await handover.prepare(peer,Date.now()+120000);await handover.publish(peer,null);handover.adopt(successor);
+   const owner=await getOwnerRuntime(),operation=fs[fault];let injected=false;
+   fs[fault]=function(...args){if(String(args[0]).includes('record.json')){injected=true;throw Object.assign(Error('injected owner record ENOSPC'),{code:'ENOSPC'});}return operation.apply(this,args);};
+   try{await assert.rejects(handover.detach(successor,[]),/ENOSPC/);}finally{fs[fault]=operation;}
+   assert.equal(injected,true);assert.equal(owner.client.isConnected(),true);
+   assert.ok(fs.existsSync(path.join(roots[0],state.core.nonce)));
+   await handover.abort(successor);assert.deepEqual(fs.readdirSync(roots[0]),[]);
+   await core.writePty('one',`after-${fault}\n`);await wait(()=>(outputs.get('one')||'').includes(`R:after-${fault}`));
+  }
+
   for(const cancellation of ['abort','expiry']){
    state=await handover.prepare(peer,Date.now()+(cancellation==='expiry'?500:120000));await handover.publish(peer,null);handover.adopt(successor);
    const owner=await getOwnerRuntime(),list=owner.client.list.bind(owner.client);
