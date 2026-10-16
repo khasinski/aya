@@ -70,7 +70,7 @@ test("the host's exact value-import graph contains only the PTY core", () => {
   const files = hostModuleFiles(new URL("../dist-electron", import.meta.url).pathname, "pty-host.js");
   assert.deepEqual(files, [
     "atomic-temp.js", "osc-extractor.js", "owner-socket.js", "pty-checkpoint-payload.js", "pty-checkpoint-store.js", "pty-core-checkpoint.js", "pty-core-constants.js", "pty-core.js",
-    "pty-event-coalescer.js", "pty-handover-bootstrap.js", "pty-handover-window.js", "pty-host-auth-bootstrap.js", "pty-host-auth-transport.js", "pty-host-auth.js", "pty-host-guard.js", "pty-host-handover.js", "pty-host-paths.js", "pty-host-protocol.js",
+    "pty-event-coalescer.js", "pty-handover-bootstrap.js", "pty-handover-window.js", "pty-host-auth-bootstrap.js", "pty-host-auth-redemption.js", "pty-host-auth-transfer.js", "pty-host-auth-transport.js", "pty-host-auth.js", "pty-host-guard.js", "pty-host-handover.js", "pty-host-paths.js", "pty-host-protocol.js",
     "pty-host-registry.js", "pty-host-staleness.js", "pty-host.js", "pty-log.js",
     "pty-owner-adapter.js", "pty-owner-client.js", "pty-owner-registry.js", "pty-owner-runtime.js", "pty-owner-survivors.js", "pty-recovery-bootstrap.js",
     "vt-checkpoint-binding.js", "vt-checkpoint-schema.js", "vt-checkpoint.js", "vt-mirror.js", "vt-recovery-screen.js",

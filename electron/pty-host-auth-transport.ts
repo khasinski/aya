@@ -2,9 +2,12 @@ import type {Socket} from "node:net";
 import {randomBytes} from "node:crypto";
 import {HostAuthClient, HostAuthServer, HostAuthError, HostPrincipalBusyError, HOST_AUTH_FRAME_BYTES, HOST_AUTH_TIMEOUT_MS, type HostAuthPeer} from "./pty-host-auth";
 import {handoverPeer} from "./pty-handover-window";
+import {HostAuthTransfer} from "./pty-host-auth-transfer";
+import {HostRedemptionServer} from "./pty-host-auth-redemption";
 
 export const HOST_AUTH_PENDING_CONNECTIONS = 32;
 export interface AuthenticatedHostSocket {peer: HostAuthPeer; buffered: string}
+export type AcceptedHostSocket=AuthenticatedHostSocket|{transferred:true};
 type PeerReader = (socket: Socket) => HostAuthPeer;
 interface Session {
   authenticated: boolean;
@@ -20,10 +23,10 @@ function refuse(socket: Socket): void {
 /** Success leaves the stream paused. The caller installs its normal parser,
  * applies buffered bytes, then resumes; there is no unobserved data interval. */
 function handshake(socket: Socket, session: Session, peer: HostAuthPeer, server: boolean,
-  authorize?: (peer: HostAuthPeer) => void): Promise<AuthenticatedHostSocket> {
+  authorize?: (peer: HostAuthPeer) => void,initialBuffer="",deadline=performance.now()+HOST_AUTH_TIMEOUT_MS): Promise<AuthenticatedHostSocket> {
   return new Promise((resolve, reject) => {
     let buffer = "", settled = false;
-    const timer = setTimeout(() => failed(), HOST_AUTH_TIMEOUT_MS);
+    const timer = setTimeout(() => failed(), Math.max(0,deadline-performance.now()));
     const cleanup = () => {
       clearTimeout(timer);socket.off("data", data);socket.off("error", failed);socket.off("close", failed);
     };
@@ -43,6 +46,7 @@ function handshake(socket: Socket, session: Session, peer: HostAuthPeer, server:
       if (settled) return;
       buffer += String(chunk);
       try {
+        if(performance.now()>=deadline)throw new HostAuthError();
         for (;;) {
           const end = buffer.indexOf("\n");
           if (end < 0) {if (Buffer.byteLength(buffer) > HOST_AUTH_FRAME_BYTES) failed();return;}
@@ -61,8 +65,28 @@ function handshake(socket: Socket, session: Session, peer: HostAuthPeer, server:
       } catch(error) {failed(error);}
     };
     socket.setEncoding("utf8");socket.on("data", data);socket.on("error", failed);socket.on("close", failed);
-    if (socket.destroyed || !socket.writable) failed(); else socket.resume();
+    if (socket.destroyed || !socket.writable) failed(); else {if(initialBuffer)data(initialBuffer);if(!settled)socket.resume();}
   });
+}
+
+/** Classify one bounded opening frame, then keep the original accept deadline
+ * for either protocol. No application bytes are dispatched by this reader. */
+function openingFrame(socket:Socket,deadline:number):Promise<{line:string;buffered:string}>{
+ return new Promise((resolve,reject)=>{
+  let buffer="",settled=false;
+  const cleanup=()=>{clearTimeout(timer);socket.off("data",data);socket.off("error",fail);socket.off("close",fail);};
+  const fail=()=>{if(settled)return;settled=true;cleanup();socket.pause();reject(new HostAuthError());};
+  const timer=setTimeout(fail,Math.max(0,deadline-performance.now()));
+  const data=(chunk:string|Buffer)=>{
+   if(settled)return;buffer+=String(chunk);
+   const end=buffer.indexOf("\n");
+   if(performance.now()>=deadline||(end<0?Buffer.byteLength(buffer)>HOST_AUTH_FRAME_BYTES:Buffer.byteLength(buffer.slice(0,end))>HOST_AUTH_FRAME_BYTES)){fail();return;}
+   if(end<0)return;
+   settled=true;cleanup();socket.pause();resolve({line:buffer.slice(0,end),buffered:buffer.slice(end+1)});
+  };
+  socket.setEncoding("utf8");socket.on("data",data);socket.on("error",fail);socket.on("close",fail);
+  if(socket.destroyed||!socket.writable)fail();else socket.resume();
+ });
 }
 
 /** The host provides a conservative kernel observation. Only proven `gone`
@@ -82,9 +106,11 @@ export class HostSocketAuthenticator {
   private readonly instance = randomBytes(32).toString("hex");
   private readonly key: Buffer;
   constructor(key: Buffer, private readonly ownPeer: HostAuthPeer,
-    private readonly authorize: (peer: HostAuthPeer) => void, private readonly readPeer: PeerReader = handoverPeer) {this.key=Buffer.from(key);}
+    private readonly authorize: (peer: HostAuthPeer) => void, private readonly readPeer: PeerReader = handoverPeer,
+    private readonly transfer?:HostAuthTransfer) {this.key=Buffer.from(key);}
   get pendingConnections(): number {return this.pending.size;}
-  async accept(socket: Socket): Promise<AuthenticatedHostSocket> {
+  async accept(socket: Socket): Promise<AcceptedHostSocket> {
+    const deadline=performance.now()+HOST_AUTH_TIMEOUT_MS;
     // Also retain failed sockets until their bounded refusal/close completes.
     if (this.pending.size >= HOST_AUTH_PENDING_CONNECTIONS) {socket.destroy();throw new HostAuthError();}
     this.pending.add(socket);socket.once("close", () => this.pending.delete(socket));
@@ -92,7 +118,16 @@ export class HostSocketAuthenticator {
     socket.on("error", () => {});
     try {
       const peer = this.readPeer(socket);
-      const result = await handshake(socket, new HostAuthServer(this.key, this.ownPeer, peer, this.instance), peer, true, this.authorize);
+      const first=await openingFrame(socket,deadline),request=JSON.parse(first.line) as {type?:unknown}|null;
+      if(this.transfer&&request?.type==="pty-transfer-redeem"){
+        if(first.buffered||performance.now()>=deadline)throw new HostAuthError();
+        const response=new HostRedemptionServer(this.transfer,this.ownPeer,peer,()=>performance.now(),this.instance).receive(first.line);
+        if(performance.now()>=deadline)throw new HostAuthError();
+        socket.end(response+"\n",()=>socket.destroy());
+        const closing=setTimeout(()=>socket.destroy(),1000);closing.unref();socket.once("close",()=>clearTimeout(closing));
+        return {transferred:true}; // stays in the pending budget until close
+      }
+      const result = await handshake(socket, new HostAuthServer(this.key, this.ownPeer, peer, this.instance), peer, true, this.authorize,first.line+"\n"+first.buffered,deadline);
       this.pending.delete(socket);return result;
     } catch(error) {refuse(socket);if(error instanceof HostPrincipalBusyError)throw error;throw new HostAuthError();}
   }

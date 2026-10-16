@@ -485,7 +485,9 @@ function start(): void {
   }
 
   server = net.createServer((socket) => {
-    void socketAuthenticator.accept(socket).then(({buffered})=>{
+    void socketAuthenticator.accept(socket).then(result=>{
+      if("transferred" in result)return;
+      const {buffered}=result;
       if(hostShutdownStarted||socket.destroyed){socket.destroy();return;}
       attachAuthenticatedClient(socket,buffered);socket.resume();
     }).catch(()=>{ptyLog.append("host-auth-refused",{});});
