@@ -51,3 +51,29 @@ test('legacy query budget caps saved IDs at25 and refuses a record changed durin
  const record=path.join(file,`${peer.pid}.json`),original=JSON.parse(fs.readFileSync(record,'utf8'));
  const probe=probeLegacyInventory(peer,['saved']);fs.writeFileSync(record,JSON.stringify({...original,authProtocol:1}),{mode:0o600});assert.equal(await probe,null);
 }));
+for(const phase of ['preflight','final'])test(`a blocked ${phase} ps cannot outlive the absolute migration deadline or send late requests`,{timeout:3000},()=>fixture('',async peer=>{
+ const cp=require('node:child_process'),original=cp.execFile;let calls=0,kills=0;
+ try{
+  cp.execFile=(command,args,options,callback)=>{
+   assert.equal(command,'ps');assert.ok(options.timeout>0&&options.timeout<=1000);assert.equal(options.killSignal,'SIGKILL');assert.equal(options.maxBuffer,1024);
+   if(++calls===(phase==='preflight'?1:2))return {kill:signal=>{assert.equal(signal,'SIGKILL');kills++;},stdout:{destroy(){}},stderr:{destroy(){}}};
+   return original(command,args,options,callback);
+  };
+  const start=performance.now();assert.equal(await probeLegacyInventory(peer,['saved']),null);
+  assert.ok(performance.now()-start<1500);assert.equal(kills,1);assert.equal(readRequests().length,phase==='preflight'?0:2);
+ }finally{cp.execFile=original;}
+}));
+for(const phase of ['preflight','final'])test(`a ${phase} identity result arriving after the absolute deadline is never accepted`,()=>fixture('',async peer=>{
+ const cp=require('node:child_process'),original=cp.execFile,clock=Date.now,base=clock();let now=base,calls=0;
+ try{
+  Date.now=()=>now;
+  cp.execFile=(command,args,options,callback)=>{
+   const call=++calls;
+   return original(command,args,options,(error,stdout,stderr)=>{
+    if(call===(phase==='preflight'?1:2))now=base+1001;
+    callback(error,stdout,stderr);
+   });
+  };
+  assert.equal(await probeLegacyInventory(peer,['saved']),null);assert.equal(readRequests().length,phase==='preflight'?0:2);
+ }finally{Date.now=clock;cp.execFile=original;}
+}));
