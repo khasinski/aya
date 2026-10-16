@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {explainPaneSnapshot,formatPaneState} from '../dist-electron/pane-state.js';
 import {PtyHostClient} from '../dist-electron/pty-host-client.js';
+import {ptyLog} from '../dist-electron/pty-log.js';
 const snapshot=(rows,agent='claude',extra={})=>({generation:'g',agent,shell:false,composerSeen:true,openedAt:0,lastOutputAt:0,cols:120,rows,cells:rows.map(r=>[...r].map((c,x)=>[x,c,0,0])),...extra});
 
 test('state explains busy, generic approval, suppression, usage/account and policy-only holds',()=>{
@@ -28,6 +29,30 @@ test('missing, disconnected and malformed state is never silently idle',async()=
  client.socket={destroyed:false,destroy(){this.destroyed=true;}};
  try{for(const [value,state] of [[null,'stopped'],['starting','starting'],['disconnected','unknown'],[{},'unknown']]){client.sendRequest=async()=>value;assert.equal((await client.paneState('p')).state,state);}
  client.sendRequest=async()=>{throw Error('host unavailable');};assert.equal((await client.paneState('p')).state,'unknown');}finally{client.dispose();}
+});
+
+test('an invalid host snapshot is reported as invalid and logged once with the failed check',async()=>{
+ const client=new PtyHostClient('/unused');client.socket={destroyed:false,destroy(){this.destroyed=true;}};
+ const malformed=snapshot(['approval']);malformed.cells[0][0][0]=malformed.cols;
+ client.sendRequest=async()=>malformed;
+ const logs=[],append=ptyLog.append;ptyLog.append=(event,fields)=>logs.push({event,fields});
+ try{
+  const hold=await client.holdReason('invalid-snapshot-pane');
+  assert.match(hold,/invalid screen snapshot/);assert.doesNotMatch(hold,/did not answer/);
+  const state=await client.paneState('invalid-snapshot-pane');
+  assert.equal(state.state,'unknown');assert.match(state.hold,/invalid screen snapshot/);assert.doesNotMatch(state.hold,/did not answer/);
+  assert.deepEqual(logs,[{event:'invalid-pane-snapshot',fields:{ptyId:'invalid-snapshot-pane',check:`cells[0][0].column is outside 0..${malformed.cols-1}`}}]);
+ }finally{ptyLog.append=append;client.dispose();}
+});
+
+test('an answered-but-rejected snapshot check is not described as no host reply',async()=>{
+ const client=new PtyHostClient('/unused');client.socket={destroyed:false,destroy(){this.destroyed=true;}};
+ client.sendRequest=async()=>{throw Object.assign(new Error('unsupported snapshot request'),{code:'PTY_HOST_REMOTE_ERROR'});};
+ try{
+  assert.match(await client.holdReason('rejected-snapshot-pane'),/host rejected the screen check/);
+  const state=await client.paneState('rejected-snapshot-pane');
+  assert.equal(state.state,'unknown');assert.match(state.hold,/host rejected the screen check/);
+ }finally{client.dispose();}
 });
 
 test('explain prints the actual match and metadata, basic state omits excerpts',()=>{
