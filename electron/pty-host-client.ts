@@ -197,6 +197,11 @@ export class PtyHostClient {
   private disposed = false;
   private ownsOwnerKey=false;
   private ownerContinuityUnavailable=false;
+  private blockUnavailableOwner():Error {
+    this.crashBlocked=true;
+    this.recoveryReason="Aya could not verify recovery data from the surviving terminal host. Its native owner may still keep the processes running; Aya left the panes disconnected and did not respawn them. Use Settings > Diagnostics > PTY host > Restart to review stopping them.";
+    return Object.assign(new Error("The terminal host is disconnected or recovering. This request was not sent."),{code:"PTY_HOST_OWNER_UNAVAILABLE"});
+  }
   private uncertainInput=new Set<string>();
   private recoveryScreens=new Map<string,Extract<PtyEvent,{type:"recovery-screen"}>>();
   private recoveryOwner:RecoveryOwnerIdentity|null=null;
@@ -303,6 +308,7 @@ export class PtyHostClient {
 
   async spawn(req: SpawnRequest): Promise<void> {
     if(this.crashBlocked){
+      if(this.ownerContinuityUnavailable)this.authRefusedPanes.set(req.ptyId,this.recoveryReason??"The terminal host recovery data is unavailable; input remains disabled.");
       this.sendToSinks([{type:"disconnected",ptyId:req.ptyId,reason:this.recoveryReason??"The terminal host is recovering. The process was kept; input is disabled.",recoveryBlocked:this.ownsOwnerKey&&!!this.crashSupervisor,retryable:this.recoveryRetryable}]);
       throw Error("The terminal host is disconnected or recovering. This request was not sent.");
     }
@@ -348,8 +354,8 @@ export class PtyHostClient {
     } catch (err) {
       this.live.delete(req.ptyId);
       const code=(err as {code?:string})?.code;
-      if(["PTY_HOST_AUTH_REQUIRED","PTY_HOST_AUTH_UNAVAILABLE","PTY_HOST_START_BLOCKED"].includes(code??"")){
-        const reason=code==="PTY_HOST_START_BLOCKED"?"The terminal host inventory could not be verified. Its processes may still be running; input remains disabled. Use Settings > Diagnostics > PTY host > Restart to review them.":HOST_AUTH_REFUSAL_REASON;
+      if(["PTY_HOST_AUTH_REQUIRED","PTY_HOST_AUTH_UNAVAILABLE","PTY_HOST_START_BLOCKED","PTY_HOST_OWNER_UNAVAILABLE"].includes(code??"")){
+        const reason=code==="PTY_HOST_OWNER_UNAVAILABLE"?this.recoveryReason??"The terminal host recovery data is unavailable; input remains disabled.":code==="PTY_HOST_START_BLOCKED"?"The terminal host inventory could not be verified. Its processes may still be running; input remains disabled. Use Settings > Diagnostics > PTY host > Restart to review them.":HOST_AUTH_REFUSAL_REASON;
         this.authRefusedPanes.set(req.ptyId,reason);this.sendToSinks([{type:"disconnected",ptyId:req.ptyId,reason}]);
         throw Object.assign(new Error("The terminal host is disconnected or recovering. This request was not sent."),{code});
       }
@@ -441,7 +447,7 @@ export class PtyHostClient {
       // inventory. Read only the bounded private record for this main's known
       // owner; no process/socket probes or new host are needed to name its PIDs.
       let owner:PtyOwnerStatus|undefined;
-      if(this.crashBlocked&&this.ownsOwnerKey&&(this.recoveryOwner||this.crashContext?.owner)){
+      if(this.crashBlocked&&(this.ownsOwnerKey||this.ownerContinuityUnavailable)&&(this.recoveryOwner||this.crashContext?.owner)){
         try{
           const record=readOwnerRecord(),expected=this.recoveryOwner??this.crashContext!.owner;
           if(record&&record.pid===expected.pid&&record.startTime===expected.startTime&&record.instanceId===expected.instanceId&&record.binaryHash===expected.binaryHash){
@@ -568,6 +574,7 @@ export class PtyHostClient {
    *  after PTY_HOST_EXIT_WAIT_MS. Best-effort: a dead or old host that cannot shut down cleanly is still dropped. */
   restart(consent?:HostRestartConsent): Promise<boolean> {
     if (this.replacing) return this.replacing;
+    if(this.ownerContinuityUnavailable&&!consent)return Promise.reject(this.blockUnavailableOwner());
     const asked=this.hostAsked,blocked=this.crashBlocked,supervisor=this.crashSupervisor,closeEpoch=this.closeEpoch,wasRecovering=!!this.crashTask;
     if(!consent)this.hostAsked=true;
     let resumeRecovery=false;
@@ -579,7 +586,7 @@ export class PtyHostClient {
         this.crashBlocked=false;
         const result=await this.replaceHost(consent);
         if(result){
-          completed=true;supervisor?.dispose();
+          completed=true;this.ownerContinuityUnavailable=false;this.authRefusedPanes.clear();this.recoveryReason=undefined;supervisor?.dispose();
           if(supervisor&&!this.disposed){this.crashSupervisor=null;this.enableCrashRecovery(this.recoveryHooks);}
         }
         return result;
@@ -631,7 +638,7 @@ export class PtyHostClient {
       catch(error){
         if(!["PTY_HOST_AUTH_REQUIRED","PTY_HOST_AUTH_UNAVAILABLE","PTY_HOST_START_BLOCKED"].includes((error as {code?:string})?.code??""))throw error;
         const exited=await restartRefusedHost(consent,refusedRestartDeps(()=>this.disposed,(event,fields)=>this.recoveryHooks.log?.(event,fields)));
-        if(exited){this.hostAsked=true;this.dropSocket();this.authRefusalPeer=undefined;this.hostAuthKey=null;this.authRefusedPanes.clear();}
+        if(exited){this.hostAsked=true;this.dropSocket();this.authRefusalPeer=undefined;this.hostAuthKey=null;}
         return exited;
       }
     }
@@ -904,6 +911,7 @@ export class PtyHostClient {
         await new Promise<void>(resolve=>{const done=()=>{clearTimeout(timer);prior.removeListener("exit",done);resolve();};const timer=setTimeout(done,1000);prior.once("exit",done);});
       }
       if (this.disposed) throw new Error(DISPOSED_MESSAGE);
+      if(this.ownerContinuityUnavailable)throw this.blockUnavailableOwner();
       assertHostCreationSafe();
       this.hostAuthKey??=createHostAuthKey(AYA_HOME);
       this.startHost();
@@ -948,6 +956,7 @@ export class PtyHostClient {
   }
 
   private startHost(bootstrap?:HandoverBootstrap|RecoveryBootstrap): ChildProcess {
+    if(this.ownerContinuityUnavailable)throw this.blockUnavailableOwner();
     assertHostCreationSafe();
     if(!this.hostAuthKey)throw new HostAuthError();
     if(this.pendingPlannedHost&&this.pendingPlannedHost.exitCode===null&&this.pendingPlannedHost.signalCode===null)throw new Error("The previous terminal successor has not exited; another host was not started");
@@ -1162,10 +1171,10 @@ export class PtyHostClient {
     this.screenStates.clear();
     // Not gated on dispose: that is the quit, whose closing windows keep a no-session in memory only.
     const lost = this.hostAsked ? [] : [...this.live];
-    if (this.ownerBacked) for (const id of lost) this.lostOwned.add(id);
+    if (this.ownerBacked||this.ownerContinuityUnavailable) for (const id of lost) this.lostOwned.add(id);
     this.live.clear();
     // The host took its panes down without a word: stopped and restartable, as for a pane it has no session for.
-    this.sendToSinks(lost.map((ptyId):PtyEvent => this.ownerBacked
+    this.sendToSinks(lost.map((ptyId):PtyEvent => this.ownerBacked||this.ownerContinuityUnavailable
       ? {type:"disconnected",ptyId,...(this.ownsOwnerKey&&this.crashSupervisor?{recoveryBlocked:true,retryable:this.recoveryRetryable,...(this.recoveryRetryable?{reason:this.recoveryReason}:{})}:{})}
       : {type:"no-session",ptyId}));
     for (const [, pending] of this.pending) {
@@ -1174,10 +1183,15 @@ export class PtyHostClient {
     }
     this.pending.clear();
     if(this.crashTask){this.crashAgain=true;return;}
+    if(!this.disposed&&!this.hostAsked&&this.ownerContinuityUnavailable){
+      this.blockUnavailableOwner();
+      for(const ptyId of lost){this.authRefusedPanes.set(ptyId,this.recoveryReason!);this.sendToSinks([{type:"disconnected",ptyId,reason:this.recoveryReason}]);}
+      this.recoveryHooks.log?.("pty-crash-recovery-unavailable",{reason:"authenticated recovery manifest unavailable"});return;
+    }
     if(!this.disposed&&!this.hostAsked&&this.ownerBacked&&lost.length&&this.crashSupervisor){
       this.crashBlocked=true;
       if(!this.ownsOwnerKey){
-        const reason=this.ownerContinuityUnavailable?"Aya could not verify recovery data from the surviving terminal host. Its native owner may still keep the processes running; Aya left the panes disconnected and did not respawn them. Use Settings > Diagnostics > PTY host > Restart to review stopping them.":"Aya restarted since this terminal host started, so it cannot restart the host for these panes. The native owner may still keep their processes running. Aya left the panes disconnected and did not respawn them; use Settings > Diagnostics > PTY host > Restart to review stopping them.";
+        const reason="Aya restarted since this terminal host started, so it cannot restart the host for these panes. The native owner may still keep their processes running. Aya left the panes disconnected and did not respawn them; use Settings > Diagnostics > PTY host > Restart to review stopping them.";
         this.recoveryReason=reason;
         this.recoveryHooks.log?.("pty-crash-recovery-unavailable",{reason:"owner key unknown"});
         this.sendToSinks(lost.map(ptyId=>({type:"disconnected",ptyId,reason})));return;

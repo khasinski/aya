@@ -48,3 +48,16 @@ test('cancel and unverified/refused targets preserve planned flag and the same s
   }finally{native.ownerProcessStartIdentity=probe;client.dispose();}
  }
 });
+
+test('an unavailable-continuity latch survives refusal and clears only after confirmed host retirement',async()=>{
+ for(const cancelled of [true,false]){
+  const a=target(pidA,'A',owner(800,'a')),b=cancelled?target(pidB,'B',owner(801,'b')):a,{client,requests}=fixture(b),probe=native.ownerProcessStartIdentity;
+  native.ownerProcessStartIdentity=()=>b.startTime;client.ownerContinuityUnavailable=true;client.crashBlocked=true;client.authRefusedPanes.set('p','kept');
+  try{
+   await assert.rejects(client.restart(),{code:'PTY_HOST_OWNER_UNAVAILABLE'});assert.deepEqual(requests,[]);
+   const operation=client.restart({target:a,confirmChanged:async()=>false});
+   if(cancelled){await assert.rejects(operation,/restart cancelled/);assert.equal(client.ownerContinuityUnavailable,true);assert.equal(client.crashBlocked,true);assert.equal(client.authRefusedPanes.get('p'),'kept');assert.deepEqual(requests,['version']);}
+   else{assert.equal(await operation,true);assert.equal(client.ownerContinuityUnavailable,false);assert.equal(client.authRefusedPanes.size,0);assert.deepEqual(requests,['version','shutdown']);}
+  }finally{native.ownerProcessStartIdentity=probe;client.dispose();}
+ }
+});

@@ -305,3 +305,46 @@ test('Cancel keeps the same two-spent budget and a later real crash recovers onc
   const last=await client.hostStatus();process.kill(last.pid,'SIGKILL');await wait(()=>logs.some(e=>e.state==='exhausted'));assert.doesNotThrow(()=>process.kill(pid,0));assert.equal(logs.filter(e=>e.state==='recovered').length,3);
  }finally{await cleanup(client);}
 });
+
+test('discovery-only unavailable or invalid continuity latches host loss before any view mounts',{timeout:20000},async()=>{
+ for(const invalid of [false,true]){
+  const first=await setup(),second=new PtyHostClient(script),events=[];second.enableCrashRecovery();second.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});
+  const send=second.sendRequest.bind(second);let starts=0;
+  second.sendRequest=async(socket,req)=>{
+   if(req.type!=='owner-continuity')return send(socket,req);
+   if(!invalid)throw Object.assign(Error('unsupported continuity'),{code:'PTY_HOST_REMOTE_ERROR'});
+   const reply=await send(socket,req);reply.bootstrap.panes=[];return reply;
+  };
+  try{
+   const before=await second.hostStatus();assert.equal(before.pid,first.status.pid);assert.equal(second.ownsOwnerKey,false);assert.equal(second.ownerContinuityUnavailable,true);assert.equal(second.live.size,0);
+   first.client.dispose();first.client.dropSocket();process.kill(before.pid,'SIGKILL');await wait(()=>second.socket===null);assert.equal(second.crashBlocked,true,'host loss latches without mounted panes');
+   second.startHost=()=>{starts++;throw Error('must not create a successor without owner continuity');};
+   const retained=JSON.parse(fs.readFileSync(path.join(process.env.AYA_HOME,'pty-owner/record.json'),'utf8'));
+   await assert.rejects(second.spawn({...request(),attachIfReused:true}),/The terminal host is disconnected or recovering/);
+   assert.equal(starts,0);assert.equal(second.crashBlocked,true);assert.equal(second.crashTask,null);
+   const notice=events.filter(e=>e.type==='disconnected').at(-1);assert.match(notice.reason,/could not verify recovery data/);assert.ok(!events.some(e=>e.type==='exit'||e.type==='no-session'||e.type==='recovered'));
+   const late=[];second.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>late.push(e)});assert.equal(late.length,1);assert.deepEqual([late[0].type,late[0].ptyId,late[0].reason],[notice.type,notice.ptyId,notice.reason]);assert.equal(!!late[0].retryable,false);
+   assert.doesNotThrow(()=>process.kill(first.pid,0));assert.doesNotThrow(()=>process.kill(before.owner.pid,0));
+   const status=await second.hostStatus();assert.deepEqual(status.owner.inventory.map(p=>p.pid),[first.pid]);assert.match(status.recoveryReason,/could not verify recovery data/);assert.equal(starts,0);
+   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(process.env.AYA_HOME,'pty-owner/record.json'),'utf8')).panes,retained.panes);
+   await assert.rejects(second.restart(),/The terminal host is disconnected or recovering/);assert.equal(starts,0);
+  }finally{await cleanup(first.client,second);}
+ }
+});
+
+test('continuity-unavailable latch blocks cold start and late spawn even without a socket-close event or live panes',async()=>{
+ for(const entry of ['connect','start','spawn']){
+  const client=new PtyHostClient(script);client.ownerContinuityUnavailable=true;
+  client.openSocket=async()=>{throw Object.assign(Error('absent socket'),{code:'ENOENT'});};let starts=0;const start=client.startHost.bind(client);client.startHost=(...args)=>{starts++;return start(...args);};const events=[];
+  client.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});
+  try{
+   if(entry==='connect')await assert.rejects(client.connectWithHostStart(),{code:'PTY_HOST_OWNER_UNAVAILABLE'});
+   if(entry==='start')assert.throws(()=>start(),{code:'PTY_HOST_OWNER_UNAVAILABLE'});
+   if(entry==='spawn'){
+    await assert.rejects(client.spawn(request()),{code:'PTY_HOST_OWNER_UNAVAILABLE'});assert.equal(events.length,1);assert.equal(events[0].type,'disconnected');assert.match(events[0].reason,/could not verify recovery data/);
+    const late=[];client.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>late.push(e)});assert.deepEqual(late,events);
+   }
+   assert.equal(starts,0);assert.equal(client.crashBlocked,true);
+  }finally{client.dispose();}
+ }
+});
