@@ -10,6 +10,11 @@ import * as net from "node:net";
 import { join } from "node:path";
 import { appEnv, seedEnv, type SeededEnv, type SeedOptions } from "./helpers/seed";
 
+const {spawnAuthenticatedHost,authenticateFixtureSocket}=require("../tests/helpers/pty-host-launch.cjs") as {
+  spawnAuthenticatedHost:typeof spawn;
+  authenticateFixtureSocket:(socket:net.Socket,home:string)=>Promise<unknown>;
+};
+
 const APP_ROOT = join(__dirname, "..");
 export const PTY_HOST_SCRIPT = join(APP_ROOT, "dist-electron", "pty-host.js");
 const REMOVE_RETRY_COUNT = 5;
@@ -135,9 +140,10 @@ export async function shutdownPtyHost(ayaHome: string, pids: number[] = []): Pro
   await Promise.race([
     new Promise<void>((resolve) => {
       const socket = net.createConnection(socketPath);
-      socket.once("connect", () => {
+      socket.once("connect", () => {void (async()=>{
+        await authenticateFixtureSocket(socket,ayaHome);socket.resume();
         socket.end(`${JSON.stringify({ id: 1, type: "shutdown" })}\n`);
-      });
+      })().catch(()=>socket.destroy());});
       socket.once("close", resolve);
       socket.once("error", resolve);
     }),
@@ -242,12 +248,12 @@ export const test = base.extend<{
     // tabs must attach-only instead of respawning.
     if (seedOptions.preStartPtyHost) {
       // Match main's startHost: the Node/Electron runtime is part of the host content identity.
-      spawn(
+      spawnAuthenticatedHost(
         require("electron") as string,
         [PTY_HOST_SCRIPT],
         {
           env: { ...appEnv(seeded, process.env, false), ELECTRON_RUN_AS_NODE: "1" },
-          stdio: "ignore",
+          stdio: "ignore",detached:true,
         },
       );
       const socketPath = join(seeded.ayaHome, "pty-host.sock");

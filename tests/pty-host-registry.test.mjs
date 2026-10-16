@@ -1,3 +1,4 @@
+import {spawnAuthenticatedHost} from "./helpers/pty-host-launch.cjs";
 // The reaper SIGKILLs process trees, so isReapableHost is the safety gate: it
 // must be fail-closed - true ONLY when we are certain a live pid is the exact
 // host a record describes. These tests pin every rejection path (a regression
@@ -5,7 +6,6 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, statSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -382,7 +382,7 @@ test("a real spawned host writes its record, and SIGTERM shuts it down cleanly (
   // and is REQUIRED for the record: a non-leader host refuses to publish (its
   // ownPgid() !== pid verification; confirmed by this very test failing without
   // detached).
-  const host = spawn(process.execPath, ["dist-electron/pty-host.js"], {
+  const host = spawnAuthenticatedHost(process.execPath, ["dist-electron/pty-host.js"], {
     env: { ...process.env, AYA_HOME: home },
     stdio: "ignore",
     detached: true,

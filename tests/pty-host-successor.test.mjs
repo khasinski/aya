@@ -1,8 +1,8 @@
+import {spawnAuthenticatedHost} from "./helpers/pty-host-launch.cjs";
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import {spawn} from 'node:child_process';
 import {randomBytes} from 'node:crypto';
 import {once} from 'node:events';
 import {isolateHome} from './helpers/isolate-home.mjs';
@@ -48,7 +48,7 @@ for(const interrupted of [false,true,'ack-failure','attach-failure'])test(`a sep
     : `const OwnerPty=require(${JSON.stringify(adapter)}).OwnerPty,attach=OwnerPty.attach;let count=0;OwnerPty.attach=async function(...args){if(++count===2)throw Error('injected later attach EIO');return attach.apply(this,args);};`;
    fs.writeFileSync(successorScript,injection+`require(${JSON.stringify(hostScript)});`);
   }
-  child=spawn(process.execPath,[successorScript],{detached:true,env:{...process.env,ELECTRON_RUN_AS_NODE:'1',AYA_PTY_OWNER_FD:'3',AYA_PTY_CHECKPOINT_FD:'4'},stdio:['ignore','ignore','pipe','pipe','pipe']});
+  child=spawnAuthenticatedHost(process.execPath,[successorScript],{detached:true,env:{...process.env,ELECTRON_RUN_AS_NODE:'1',AYA_PTY_OWNER_FD:'3',AYA_PTY_CHECKPOINT_FD:'4'},stdio:['ignore','ignore','pipe','pipe','pipe']});
   let stderr='';child.stderr.on('data',b=>{stderr+=b;});
   for(const fd of [3,4])child.stdio[fd].on('error',()=>{});
   child.stdio[3].end(Buffer.from(claim.credential,'base64'));

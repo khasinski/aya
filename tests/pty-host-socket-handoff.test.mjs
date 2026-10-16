@@ -1,3 +1,4 @@
+import {spawnAuthenticatedHost} from "./helpers/pty-host-launch.cjs";
 // A host replaced by a restart must not take its successor's socket with it. On 2026-10-13 a stale host shut down
 // by Aya kept running its exit handler after the new host had bound pty-host.sock, removed that path, and left
 // the new host serving its panes with no socket: the next Aya start found none, started a third host and resumed
@@ -5,7 +6,6 @@
 
 import { test } from "node:test";
 import { createServer } from "node:net";
-import { spawn } from "node:child_process";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -83,7 +83,7 @@ test("a host whose socket another host replaced leaves that socket alone when it
   const socket = join(home, "pty-host.sock");
   const hosts = [];
   const startHost = () => {
-    const child = spawn(process.execPath, [HOST_SCRIPT], {
+    const child = spawnAuthenticatedHost(process.execPath, [HOST_SCRIPT], {
       detached: true,
       stdio: "ignore",
       env: { ...process.env, AYA_HOME: home },
@@ -138,7 +138,7 @@ test("a displaced host that exits on its own, not through shutdown, leaves the s
   );
   const hosts = [];
   const startHost = (args) => {
-    const child = spawn(process.execPath, [...args, HOST_SCRIPT], {
+    const child = spawnAuthenticatedHost(process.execPath, [...args, HOST_SCRIPT], {
       detached: true,
       stdio: "ignore",
       env: { ...process.env, AYA_HOME: home },
