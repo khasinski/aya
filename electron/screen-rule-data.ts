@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { readSync, openSync, fstatSync, closeSync, constants } from "node:fs";
 import * as path from "node:path";
 import { TextDecoder } from "node:util";
-import { validateScreenPattern } from "./screen-rule-pattern";
 export const MAX_RULE_FILE_BYTES = 64 * 1024;
 export const RULE_AGENTS = ["generic", "claude", "codex", "opencode", "grok", "antigravity"] as const;
 export type RuleAgent = typeof RULE_AGENTS[number];
@@ -63,11 +62,14 @@ export function parseScreenRules(input: Buffer): ScreenRuleSet {
       ids.add(r.id);
       if (!["prompt", "suppressor", "dialog", "busy", "usage-limit", "account-setting"].includes(r.kind as string) || !["tail", "lastLine", "screen"].includes(r.region as string)) fail("kind/region");
       if (typeof r.pattern !== "string" || typeof r.flags !== "string") fail("pattern/flags");
-      validateScreenPattern(r.pattern as string, r.flags as string);
+      if ((r.pattern as string).length === 0 || (r.pattern as string).length > 2048) fail("pattern length");
+      const flags = r.flags as string;
+      if (!/^[imu]*$/.test(flags) || new Set(flags).size !== flags.length) fail("flags");
       return { id: r.id as string, kind: r.kind as RuleKind, region: r.region as ScreenRegion, pattern: r.pattern as string, flags: r.flags as string, source: `builtin/${agent}` };
     });
   }
-  // No RegExp construction until the entire set passes the closed schema and static check.
+  // No RegExp construction until the entire set passes the closed schema. These bundled patterns are trusted like the TS they replace.
+  // No static-complexity lint is a production safety boundary; PR2 must use a killable worker.
   const compiled = {} as Record<RuleAgent, readonly DataScreenRule[]>;
   for (const agent of RULE_AGENTS) {
     const rules = [...(agent === "generic" ? [] : authored.generic), ...authored[agent]];

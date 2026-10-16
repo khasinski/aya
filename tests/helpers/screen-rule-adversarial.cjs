@@ -1,11 +1,11 @@
 // A separate process bounds synchronous RegExp execution even under a mutation.
 const {performance}=require('node:perf_hooks');
 const {loadBundledScreenRules}=require('../../dist-electron/screen-rule-data');
-const {validateScreenPattern}=require('../../dist-electron/screen-rule-pattern');
+const {lintScreenPattern}=require('./screen-rule-lint.cjs');
 const set=loadBundledScreenRules();
 const rules=['claude','codex'].map(agent=>set.sets[agent].find(r=>r.id===(agent==='claude'?'composer-drawn':'codex-composer-drawn')));
 for(const source of [String.raw`(?:\n[^\n]*){0,3}X$`,String.raw`^(?![^\n]*\?\s*$)[^\n]*X$`]){
- validateScreenPattern(source,'m');rules.push({id:'synthetic-'+rules.length,pattern:new RegExp(source,'m')});
+ lintScreenPattern(source,'m');rules.push({id:'synthetic-'+rules.length,pattern:new RegExp(source,'m')});
 }
 const results=[];
 for(const count of [12,1000]){

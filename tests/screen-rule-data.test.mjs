@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { parseScreenRules, loadScreenRulesFile, loadBundledScreenRules, MAX_RULE_FILE_BYTES, RULE_AGENTS } from '../dist-electron/screen-rule-data.js';
-import { validateScreenPattern } from '../dist-electron/screen-rule-pattern.js';
+import { lintScreenPattern } from './helpers/screen-rule-lint.cjs';
 const source = readFileSync(new URL('../electron/screen-rules/builtin.json', import.meta.url));
 const baseline = JSON.parse(readFileSync(new URL('./fixtures/agent-screen-rules-baseline.json', import.meta.url)));
 const bundle = () => JSON.parse(source);
@@ -12,6 +12,7 @@ const rule = (pattern, flags = '') => ({id:'test',kind:'prompt',region:'tail',pa
 
 test('all built-in expressions pass the checker unchanged and match frozen main tables exactly', () => {
   const set = parseScreenRules(source);
+  for (const rules of Object.values(set.sets)) for (const r of rules) lintScreenPattern(r.pattern.source, r.pattern.flags);
   for (const agent of RULE_AGENTS) {
     const expected = agent === 'generic' ? baseline.generic : [...baseline.agents[agent], ...(baseline.busy[agent] ?? []), ...(baseline.usage[agent] ? [baseline.usage[agent]] : []), ...(baseline.account[agent] ? [baseline.account[agent]] : [])];
     assert.deepEqual(set.sets[agent].map(r=>({id:r.id,kind:r.kind,region:r.region,pattern:r.pattern.source,flags:r.pattern.flags})), expected, agent);
@@ -50,9 +51,9 @@ for (const [name,change] of [
 ]) test(`closed bundle rejects ${name}`,()=>{const b=bundle();change(b);assert.throws(()=>parse(b));});
 
 for(const pattern of ['(?=a*a*X)','(?=(a+)(a+)X)','(?=(a+)+$)','(?=(a|aa)+$)','(a+)+$','(a+){1,100}','(a*)*','(a|aa)+$','(a|\\w)+$','(a?)+$','(a{1,100}){1,100}','(a)\\1','(?<=a)b'])
-  test(`static checker rejects ${pattern}`,()=>assert.throws(()=>validateScreenPattern(pattern,'')));
+  test(`static checker rejects ${pattern}`,()=>assert.throws(()=>lintScreenPattern(pattern,'')));
 for(const pattern of ['(?:a|b)+','\\(a\\+\\)\\+','[()+*]+','(?:\\n[^\\n]*){0,3}$','a{1,12}','(?:a+)?'])
-  test(`static checker permits ${pattern}`,()=>assert.doesNotThrow(()=>validateScreenPattern(pattern,'')));
+  test(`static checker permits ${pattern}`,()=>assert.doesNotThrow(()=>lintScreenPattern(pattern,'')));
 
 test('invalid later rule prevents every RegExp construction',()=>{
   const b=bundle();b.sets.antigravity.rules.at(-1).region='bad';
@@ -78,7 +79,7 @@ for (const [pattern, flags] of [
   ['^(a|aa){1,100}b$', ''], ['^(?:(?:(a|aa){1,3}){1,3}){1,3}b$', ''],
   ['^(?:ſ+s){1,100}X$', 'iu'], ['^(?:[ſ]+s){1,100}X$', 'iu'], ['^(?:[^A]+a){1,100}X$', ''],
   ['^(?:\\w+ſ){1,100}X$', 'iu'], ['^(s|ſ)+$', 'iu'], ['(a|A)+$', 'i'], ['(?=\\w*A*X)', ''],
-]) test(`reviewed ambiguous/case-folded pattern refused: ${pattern}/${flags}`,()=>assert.throws(()=>validateScreenPattern(pattern,flags)));
+]) test(`reviewed ambiguous/case-folded pattern refused: ${pattern}/${flags}`,()=>assert.throws(()=>lintScreenPattern(pattern,flags)));
 
 
 function authoredCount(n) {
