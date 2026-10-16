@@ -54,6 +54,8 @@ test('missing, unsafe or wrong capability cannot reach the generic create-host f
   try{
    await assert.rejects(other.spawn({ptyId:'must-not-spawn',command:'cat',cwd:home,cols:80,rows:24}),error=>['PTY_HOST_AUTH_UNAVAILABLE','PTY_HOST_AUTH_REQUIRED'].includes(error.code));
    assert.equal(starts,0);assert.equal(fs.lstatSync(socketPath).ino,before.ino);assert.equal(await main.getPid('auth-pane'),pid);assert.equal((await main.hostStatus()).pid,hostPid);
+   const refused=await other.hostStatus();assert.equal(refused.pid,hostPid,corruption);assert.equal(refused.authentication?.inventoryKnown,true,corruption);assert.equal(refused.authentication?.targetVerified,true,corruption);
+   assert.deepEqual(refused.owner?.inventory.map(p=>[p.id,p.pid]),[['auth-pane',pid]],corruption);assert.equal(refused.ptyCount,1);assert.equal(starts,0);
    if(corruption==='missing')assert.equal(fs.existsSync(keyFile),false);
    if(corruption==='mode')assert.equal(fs.statSync(keyFile).mode&0o777,0o644);
    if(corruption==='wrong')assert.deepEqual(fs.readFileSync(keyFile),Buffer.alloc(32,1));

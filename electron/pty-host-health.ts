@@ -10,6 +10,8 @@ import * as path from "node:path";
 import { PTY_HOST_EXIT_WAIT_MS, type PtyHostClient, type HostRestartTarget } from "./pty-host-client";
 import { currentProcessesConfirmed, type RelaunchDeps } from "./relaunch-notes";
 import { restartStaleHost } from "./updates";
+import {handoverPeer} from "./pty-handover-window";
+import type {HostAuthenticationProblem} from "./pty-host-auth-status";
 import type { HostRecord } from "./pty-host-registry";
 import type { PtyOwnerStatus } from "./pty-host-protocol";
 import { isHostStale, UNKNOWN_SCRIPT_HASH, type HostIdentity } from "./pty-host-staleness";
@@ -32,6 +34,7 @@ export interface HostHealth {
   ptyCount: number;
   owner?: PtyOwnerStatus;
   recoveryReason?:string;
+  authentication?:HostAuthenticationProblem;
   stale: boolean;
   /** Expected core bytes could not be read: warn, but never restart automatically. */
   indeterminate?: boolean;
@@ -49,7 +52,7 @@ export interface HostHealthDeps {
   expected: HostIdentity;
   /** Whether this Aya is connected to a host now. */
   connected(): boolean;
-  status(): Promise<{ identity: HostIdentity | null; ptyCount: number; pid?: number; startTime?:string|null; owner?: HostHealth["owner"];recoveryReason?:string }>;
+  status(): Promise<{ identity: HostIdentity | null; ptyCount: number; pid?: number; startTime?:string|null; owner?: HostHealth["owner"];recoveryReason?:string;authentication?:HostAuthenticationProblem }>;
   socketExists(): Promise<boolean>;
   /** The pid of the host answering on pty-host.sock, without starting one; null when none answers. */
   probeSocket(): Promise<number | null>;
@@ -78,6 +81,7 @@ export async function gatherHostHealth(deps: HostHealthDeps): Promise<HostHealth
     stale: asked && (isHostStale(deps.expected, status.identity) || !!status.owner?.incompatible),
     ...(status.owner ? { owner: status.owner } : {}),
     ...(status.recoveryReason ? { recoveryReason:status.recoveryReason } : {}),
+    ...(status.authentication ? {authentication:status.authentication}:{}),
     indeterminate: asked && (!deps.expected.scriptHash || deps.expected.scriptHash === UNKNOWN_SCRIPT_HASH),
     socket: { exists: socketExists, pid: socketPid },
     otherHosts,
@@ -89,11 +93,12 @@ export async function gatherHostHealth(deps: HostHealthDeps): Promise<HostHealth
 export function hostWarnings(health: Omit<HostHealth, "warnings">): string[] {
   const warnings: string[] = [];
   if(health.recoveryReason)warnings.push(health.recoveryReason);
+  if(health.authentication){warnings.push(health.authentication.reason);if(!health.authentication.inventoryKnown)warnings.push("The retained terminal inventory could not be verified; its running processes are unknown.");}
   if (health.indeterminate) {
     warnings.push("The terminal host build cannot be compared: Aya could not read its current PTY runtime files. The running terminals were kept.");
   }
   if (health.owner?.disconnected.length) warnings.push(`${health.owner.disconnected.length} terminals are disconnected from their JS host. Their native owner inventory was kept; restart explicitly to stop them.`);
-  if (health.stale) {
+  if (health.stale&&!health.authentication) {
     warnings.push(
       health.owner?.incompatible ? "The native PTY owner is unavailable or incompatible. Explicit recovery asks before stopping any retained processes."
         : `The terminal host runs different PTY code or runtime (${health.identity?.version ?? "unknown version"}): restart it to use this one.`,
@@ -119,36 +124,20 @@ export function hostWarnings(health: Omit<HostHealth, "warnings">): string[] {
   return warnings;
 }
 
-/** The pid of the host answering on `socketPath`, or null when nothing answers in time. Never starts a host. */
+/** Kernel peer identity only: sends no RPC, status request, proof or credential. */
 export function probeSocketPid(socketPath: string, timeoutMs: number = SOCKET_PROBE_TIMEOUT_MS): Promise<number | null> {
   return new Promise((resolve) => {
-    let buffer = "";
     let settled = false;
     const done = (pid: number | null) => {
       if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      socket.destroy();
-      resolve(pid);
+      settled = true;clearTimeout(timer);socket.destroy();resolve(pid);
     };
     const timer = setTimeout(() => done(null), timeoutMs);
     const socket = net.createConnection(socketPath, () => {
-      socket.write(`${JSON.stringify({ id: 1, type: "version" })}\n`);
-    });
-    socket.setEncoding("utf8");
-    socket.on("data", (chunk: string) => {
-      buffer += chunk;
-      const end = buffer.indexOf("\n");
-      if (end === -1) return;
-      try {
-        const reply = JSON.parse(buffer.slice(0, end)) as { result?: { pid?: unknown } };
-        const pid = reply.result?.pid;
-        done(typeof pid === "number" && Number.isInteger(pid) && pid > 1 ? pid : null);
-      } catch {
-        done(null);
-      }
+      try{done(handoverPeer(socket).pid);}catch{done(null);}
     });
     socket.on("error", () => done(null));
+    socket.on("close", () => done(null));
   });
 }
 

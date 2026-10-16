@@ -49,7 +49,9 @@ import type { BufferSearchHit } from "./pty";
 import type { PtyEvent, SpawnRequest } from "./types";
 import {authenticateHostSocket} from "./pty-host-auth-transport";
 import {readHostAuthKey,createHostAuthKey} from "./pty-host-auth-key";
-import {HostAuthError} from "./pty-host-auth";
+import {HostAuthError,type HostAuthPeer} from "./pty-host-auth";
+import {handoverPeer} from "./pty-handover-window";
+import {refusedHostStatus,type HostAuthenticationProblem} from "./pty-host-auth-status";
 import {assertHostCreationSafe} from "./pty-host-start-guard";
 
 // Deadline waiting for a started pty host to create its socket and accept on it (ms).
@@ -165,6 +167,7 @@ export class PtyHostClient {
   private observationOnly = false;
   private readonly ownerSecret = randomBytes(32);
   private hostAuthKey:Buffer|null=null;
+  private authRefusalPeer:HostAuthPeer|null|undefined;
   private ownerBacked = false;
   private metadataRequired = false;
   private metadataSocket: net.Socket | null = null;
@@ -404,6 +407,7 @@ export class PtyHostClient {
     pid?: number;
     owner?: PtyOwnerStatus;
     recoveryReason?:string;
+    authentication?:HostAuthenticationProblem;
     startTime?:string|null;
   }> {
     try {
@@ -417,7 +421,8 @@ export class PtyHostClient {
         startTime:typeof obj.pid === "number"&&obj.pid===this.lastHostPid?this.lastHostStart:null,
         ...(obj.owner && typeof obj.owner === "object" ? { owner: obj.owner as PtyOwnerStatus } : {}),
       };
-    } catch {
+    } catch(error) {
+      if(this.authRefusalPeer!==undefined||(error as {code?:string})?.code==="PTY_HOST_START_BLOCKED")return refusedHostStatus(this.authRefusalPeer??null);
       // A blocked transport must not erase B2's explicit dead-owner recovery
       // inventory. Read only the bounded private record for this main's known
       // owner; no process/socket probes or new host are needed to name its PIDs.
@@ -869,13 +874,16 @@ export class PtyHostClient {
       const socket = net.createConnection(PTY_HOST_SOCKET_PATH);
       socket.setEncoding("utf8");
       if (this.observationOnly) this.socket = socket; // dispose also closes a pending connect
+      let peer:HostAuthPeer|null=null;
       socket.once("connect", () => {void (async()=>{
         if (this.observationOnly && this.disposed) throw new Error(DISPOSED_MESSAGE);
+        peer=handoverPeer(socket);
         this.hostAuthKey??=readHostAuthKey(AYA_HOME);
         const startIdentity=ownerProcessStartIdentity(process.pid);
         if(!startIdentity)throw new HostAuthError();
         const authenticated=await authenticateHostSocket(socket,this.hostAuthKey,{pid:process.pid,startIdentity});
         if(this.disposed){socket.destroy();throw new Error(DISPOSED_MESSAGE);}
+        this.authRefusalPeer=undefined;
         this.socket = socket;
         this.hostAsked = false;
         this.ownerBacked = false;
@@ -891,7 +899,7 @@ export class PtyHostClient {
         });
         if(authenticated.buffered)this.onData(authenticated.buffered);
         socket.resume();resolve();
-      })().catch(error=>{socket.destroy();reject(error);});});
+      })().catch(error=>{this.authRefusalPeer=peer;socket.destroy();reject(error);});});
       socket.once("error", reject);
     });
   }
