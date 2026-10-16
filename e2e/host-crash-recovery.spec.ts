@@ -60,6 +60,11 @@ test.describe('a recovered pane mounted later',()=>{
   // Only that refusal is repeated (nothing reached the pane); any other error fails at once.
   await expect.poll(()=>window.evaluate(()=>window.aya.ptyWrite('deferred-crash','WAITING_FOR_LATE_VIEW\n').then(r=>r,(e:unknown)=>{if(/This request was not sent/.test(String(e)))return 'not sent';throw e;}))).toBe(true);
   await expect.poll(()=>window.evaluate(()=>window.aya.ptyBuffer('deferred-crash'))).toContain('REPLY:WAITING_FOR_LATE_VIEW');
+  // Exactly once: a later sentinel's reply follows the only one, so a write delivered and then repeated fails here.
+  await window.evaluate(()=>window.aya.ptyWrite('deferred-crash','ORDER_SENTINEL\n'));
+  await expect.poll(()=>window.evaluate(()=>window.aya.ptyBuffer('deferred-crash'))).toContain('REPLY:ORDER_SENTINEL');
+  const parts=(await window.evaluate(()=>window.aya.ptyBuffer('deferred-crash'))).split('REPLY:WAITING_FOR_LATE_VIEW');
+  expect(parts).toHaveLength(2);expect(parts[1]).toContain('REPLY:ORDER_SENTINEL');
   await row.click();const pane=window.locator('.aya-pane[data-terminal-id="deferred-crash"]');
   await expect(pane.getByTestId('terminal-history-notice')).toContainText('Previously consumed');await expect(pane.getByTestId('xterm-host')).toContainText('REPLY:WAITING_FOR_LATE_VIEW');
   await pane.getByTestId('xterm-host').click();await window.keyboard.type('LATE_INPUT');await window.keyboard.press('Enter');await expect(pane.getByTestId('xterm-host')).toContainText('REPLY:LATE_INPUT');
