@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import net from 'node:net';
 import {isolateHome} from './helpers/isolate-home.mjs';
 fs.mkdirSync('test-results',{recursive:true});
 const root=fs.mkdtempSync(path.resolve('test-results/revision-host-'));isolateHome(root);
@@ -41,6 +42,15 @@ test('real host refuses stale snapshot ACK/input and accepts current input exact
    assert.equal(attempts,1);assert.equal(fs.existsSync(inputs),false);assert.equal(await c.getPid('p'),pid);assert.equal(events.filter(e=>e.type==='vt-status').length,0);
   }finally{input.dispose();await runtime.dispose();}
   const current=await c.request({id:0,type:'snapshot',ptyId:'p'});assert.equal(current.generation,before.generation);assert.notEqual(current.revision,before.revision);
+  for(const type of ['snapshot-check','composer-seen-checked','write-fenced']){
+   const response=await new Promise((resolve,reject)=>{
+    const socket=net.createConnection(path.join(process.env.AYA_HOME,'pty-host.sock'));let reply='';const timer=setTimeout(()=>{socket.destroy();reject(Error('unauthenticated fenced RPC was not promptly refused'));},3000);
+    socket.setEncoding('utf8');socket.on('data',chunk=>reply+=chunk);socket.on('error',error=>{if(error.code!=='ECONNRESET'){clearTimeout(timer);reject(error);}});socket.once('close',()=>{clearTimeout(timer);resolve(reply);});
+    socket.once('connect',()=>socket.write(JSON.stringify({id:900,type,ptyId:'p',fence:fence(current),...(type==='write-fenced'?{data:'UNAUTHENTICATED_BAD\n'}:{})})+'\n'));
+   });
+   if(response)assert.deepEqual(JSON.parse(response),{id:-1,ok:false,code:'PTY_HOST_AUTH_REQUIRED',error:'Terminal host authentication required'},'only the fixed authentication refusal may precede proof');assert.equal(await c.checkSnapshot('p',fence(current)),true,'unauthenticated composer ACK cannot mutate the revision');assert.equal(fs.existsSync(inputs),false);
+  }
+
   assert.equal(await c.writeAtSnapshot('p','GOOD\n',fence(current)),true);
   await wait(()=>fs.existsSync(inputs)&&fs.readFileSync(inputs,'utf8')==='GOOD\n');
   await wait(async()=>(await c.getBuffer('p')).includes('REPLY:GOOD'));
