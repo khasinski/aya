@@ -56,11 +56,12 @@ for(const viaSignal of [false,true])test(`committed B3 ${viaSignal?'signal':'det
   fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true,mode:0o700});
   await old.spawn({ptyId:'moving',agent:'custom',command:'cat',cwd:process.env.HOME,cols:80,rows:24});
   before=await old.hostStatus();const pid=await old.getPid('moving'),identity=ownerProcessStartIdentity(before.pid),ownerIdentity=ownerProcessStartIdentity(before.owner.pid),paneIdentity=ownerProcessStartIdentity(pid);
+  assert.ok(identity);assert.ok(ownerIdentity);assert.ok(paneIdentity);
   const state=await old.preparePlannedHandover(Date.now()+20000),ticket=await old.announcePlannedHandover(state,null,[],'a'.repeat(64));
   await old.request({id:0,type:'handover-claim',nonce:ticket.nonce,reuse:false});
-  const detaching=old.request({id:0,type:'handover-detach',consented:[]}).catch(error=>{if(!viaSignal)throw error;});
+  let detachResponded=false;const detaching=old.request({id:0,type:'handover-detach',consented:[]}).then(()=>{detachResponded=true;}).catch(error=>{if(!viaSignal)throw error;});
   await wait(()=>fs.existsSync(marker));
-  if(viaSignal)assert.deepEqual(JSON.parse(fs.readFileSync(path.join(process.env.AYA_HOME,'committed-signal'),'utf8')),{committed:true,shutdownStarted:false});
+  if(viaSignal){assert.equal(detachResponded,false,'signal exit precedes detach response');assert.deepEqual(JSON.parse(fs.readFileSync(path.join(process.env.AYA_HOME,'committed-signal'),'utf8')),{committed:true,shutdownStarted:false});}
   assert.equal(ownerProcessStartIdentity(before.pid),identity);assert.equal(ownerProcessStartIdentity(before.owner.pid),ownerIdentity);assert.equal(ownerProcessStartIdentity(pid),paneIdentity);
   cold.hostAuthKey=Buffer.alloc(32,7);const childProcess=require('node:child_process'),spawn=childProcess.spawn;let forks=0;
   try{childProcess.spawn=()=>{forks++;throw Error('fork attempted before committed old host exited');};assert.throws(()=>cold.startHost(),{code:'PTY_HOST_START_BLOCKED'});assert.equal(forks,0);}

@@ -157,7 +157,7 @@ function readRecordFile(full: string): string | null | undefined {
   }
 }
 
-/** Remove a host's record (on clean exit, or after a confirmed reap / GC). */
+/** Remove a host's record only after another process confirms its death/reuse. */
 export function removeHostRecord(pid: number, dir: string = HOST_REGISTRY_DIR): void {
   try {
     fs.rmSync(recordPath(dir, pid), { force: true });

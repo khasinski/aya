@@ -143,9 +143,8 @@ function closeSocket(): void {
   // NOTE: the registry record is deliberately NOT removed here. closeSocket runs
   // on SIGTERM/SIGINT/exit, i.e. potentially while child PTYs are still alive; if
   // we dropped the record now and the host then died, surviving children would be
-  // unreapable orphans (no record to find them by). The record is removed only
-  // after a clean shutdown confirms the children are dead (see the shutdown
-  // handler); otherwise the next launch GCs it once the pid is verified gone.
+  // unreapable orphans (no record to find them by). Even clean shutdown leaves
+  // the record until another process verifies this instance is gone and GCs it.
 }
 
 /** True while pty-host.sock is the file this host bound (same device and inode). */

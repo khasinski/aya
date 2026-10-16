@@ -12,7 +12,8 @@ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),wait=async f=>{cons
  if(refusal)fs.appendFileSync(script,`
 const originalHandle=handle;handle=async function(req,socket,preparations){if(req.type!=='owner-continuity')return originalHandle(req,socket,preparations);const runtime=require('./pty-owner-runtime').currentOwnerRuntime(),oldUncertain=runtime.record.uncertain,oldIncompatible=runtime.incompatible;try{switch(process.env.AYA_TEST_CONTINUITY_CAUSE){case 'pending':preparations.set(-1,{});break;case 'uncertain':runtime.record.uncertain=['uncertain-fixture'];break;case 'incompatible':runtime.incompatible=true;break;default:throw Error('unknown continuity fixture');}return await originalHandle(req,socket,preparations);}finally{preparations.delete(-1);runtime.record.uncertain=oldUncertain;runtime.incompatible=oldIncompatible;}};
 `);
- const c=new PtyHostClient(script);
+ const c=new PtyHostClient(script),connectWithHostStart=c.connectWithHostStart.bind(c);
+ c.connectWithHostStart=async(...args)=>{try{return await connectWithHostStart(...args);}catch(error){if(error.code==='PTY_HOST_START_BLOCKED')require('./pty-host-failure-diagnostics.cjs').creationFailure(process.env.AYA_HOME,error.proof,error);throw error;}};
  const recovered=[];if(process.argv[2]==='publish-empty-recovered')c.enableCrashRecovery({log:(event,fields)=>recovered.push({event,...fields})});fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true,mode:0o700});let keep=false;
  try{
   await c.spawn({ptyId:'kept',agent:'custom',command:process.argv[2]==='publish-planned-ended'?'stty -echo; printf READY_CONTROLS; read line; printf LAST_SUFFIX; exit 23':'stty -echo; printf READY_CONTROLS; cat',cwd:process.env.HOME,cols:80,rows:24});await wait(async()=>(await c.getBuffer('kept')).includes('READY_CONTROLS'));

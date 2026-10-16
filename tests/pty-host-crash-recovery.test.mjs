@@ -13,8 +13,13 @@ const script=path.resolve('dist-electron/pty-host.js');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function wait(f,message='crash recovery timeout'){const end=Date.now()+12000;while(!await f()){if(Date.now()>end)throw Error(typeof message==='function'?message():message);await sleep(5);}}
 function request(){return {ptyId:'shell',agent:'custom',command:`exec /bin/sh -c 'stty -echo; echo READY; while [ ! -f "$HOME/release" ]; do sleep .01; done; echo UNREAD_DURING_GAP; touch "$HOME/produced"; while IFS= read -r line; do case "$line" in quit) exit 23 ;; *) printf "R:%s:%s\\n" "$$" "$line" ;; esac; done'`,cwd:process.env.HOME,cols:80,rows:24};}
-async function setup(command){fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true});const events=[],logs=[],client=new PtyHostClient(script);client.enableCrashRecovery({log:(event,fields)=>logs.push({event,...fields})});client.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});await client.spawn({...request(),...(command?{command}:{})});await wait(async()=>(await client.getBuffer('shell')).includes('READY'));const status=await client.hostStatus(),pid=await client.getPid('shell');return{client,events,logs,status,pid};}
-async function cleanup(...clients){for(const c of clients){c?.dispose();c?.dropSocket();}await cleanupNativeOwner(process.env.AYA_HOME);fs.rmSync(process.env.AYA_HOME,{recursive:true,force:true});fs.rmSync(process.env.HOME,{recursive:true,force:true});}
+async function setup(command){fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true});const events=[],logs=[],client=new PtyHostClient(script);client.enableCrashRecovery({log:(event,fields)=>logs.push({event,...fields})});client.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});await client.spawn({...request(),...(command?{command}:{})});await wait(async()=>(await client.getBuffer('shell')).includes('READY'));const status=await client.hostStatus(),pid=await client.getPid('shell');client.fixtureKnownProcesses=[{kind:'initial-host',pid:status.pid,startIdentity:client.lastHostStart},{kind:'initial-owner',pid:status.owner?.pid,startIdentity:status.owner?.startIdentity,startTime:status.owner?.startTime,instanceId:status.owner?.instanceId}];return{client,events,logs,status,pid};}
+async function cleanup(...clients){
+ const known=clients.filter(Boolean).flatMap(c=>[...(c.fixtureKnownProcesses??[]),{kind:'host',pid:c.lastHostPid,startIdentity:c.lastHostStart},{kind:'spawned-host',pid:c.pendingPlannedHost?.pid},{kind:'owner',pid:c.recoveryOwner?.pid,startTime:c.recoveryOwner?.startTime,instanceId:c.recoveryOwner?.instanceId}]);
+ for(const c of clients){c?.dispose();c?.dropSocket();}await cleanupNativeOwner(process.env.AYA_HOME);
+ try{fs.rmSync(process.env.AYA_HOME,{recursive:true,force:true});fs.rmSync(process.env.HOME,{recursive:true,force:true});}
+ catch(error){if(error.code==='ENOTEMPTY')require('./helpers/pty-host-failure-diagnostics.cjs').cleanupFailure(process.env.AYA_HOME,known,error);throw error;}
+}
 test('main restarts a SIGKILLed JS host and attaches the same owner/child with unread output and new I/O',{timeout:20000},async()=>{
  const {client,events,logs,status,pid}=await setup();
  let release;const gate=new Promise(resolve=>{release=resolve;}),attempt=client.recoverCrashedHost.bind(client);
@@ -115,7 +120,7 @@ test('owner identity follows a new spawn after the empty owner idles out, withou
   await client.write('shell','quit\n');await wait(()=>client.observedExits.get('shell')?.acknowledged===true);await wait(()=>registry.readOwnerRecord()===null);
   await client.spawn({...request(),ptyId:'next'});const current=registry.readOwnerRecord();assert.notEqual(current.pid,status.owner.pid);assert.equal(client.recoveryOwner.instanceId,current.instanceId);
   process.kill(status.pid,'SIGKILL');await wait(()=>logs.some(e=>e.state==='recovered'));assert.equal(await client.getPid('next'),current.panes[0].pid);assert.equal((await client.hostStatus()).owner.pid,current.pid);await client.shutdown();
- }finally{await cleanup(client);}
+ }catch(error){console.error('OWNER_IDLE_PRIMARY_FAILURE',error);throw error;}finally{await cleanup(client);}
 });
 
 test('quit during the prior-child exit wait starts no successor',{timeout:15000},async()=>{
