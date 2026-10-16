@@ -25,7 +25,7 @@ function object(value: unknown, keys: readonly string[]): Record<string, unknown
 }
 // Bound raw input before parsing; detect duplicate decoded keys (including
 // escaped spellings). JSON.parse remains the authority on JSON grammar.
-function parseRaw(input: Buffer): unknown {
+export function parseScreenRuleJson(input: Buffer): unknown {
   if (input.length > MAX_RULE_FILE_BYTES) fail("file size");
   const text = new TextDecoder("utf-8", { fatal: true }).decode(input);
   const stack: (Set<string> | null)[] = [];
@@ -47,7 +47,7 @@ function parseRaw(input: Buffer): unknown {
   return JSON.parse(text) as unknown;
 }
 export function parseScreenRules(input: Buffer): ScreenRuleSet {
-  const root = object(parseRaw(input), ["schemaVersion", "ruleSetVersion", "sets"]);
+  const root = object(parseScreenRuleJson(input), ["schemaVersion", "ruleSetVersion", "sets"]);
   if (root.schemaVersion !== 1 || typeof root.ruleSetVersion !== "string" || !/^[A-Za-z0-9._-]{1,80}$/.test(root.ruleSetVersion)) fail("version");
   const sets = object(root.sets, RULE_AGENTS);
   let count = 0;
