@@ -2,7 +2,7 @@
 
 ## Current implementation
 
-The generic persistent key creator/reader is removed. Main creates fresh authority only in memory for a permitted cold start; existing hosts require held memory authority or an actually announced one-use transfer. Old key files are ignored and left untouched. Ordinary quit/startup and production B3 share the reviewed reservation/redemption state machine, while B3 retains its separate native-reader commit boundary. Unannounced main loss cannot adopt; private retained inventory and exact-target consent remain the recovery route. The following design/stage notes are historical contracts and scoped evidence, not claims that the final memory boundary already passed every aggregate gate. Final validation will be recorded separately after the last migration stage.
+The generic persistent key creator/reader is removed. Main creates fresh authority only in memory for a permitted cold start; existing hosts require held memory authority or an actually announced one-use transfer. Old key files are ignored and left untouched. Ordinary quit/startup and production B3 share the reviewed reservation/redemption state machine, while B3 retains its separate native-reader commit boundary. Unannounced main loss cannot adopt; private retained inventory and exact-target consent remain the recovery route. The following design/stage notes are historical contracts and scoped evidence. Final local validation is recorded below for0e4d3951 (product64a8a522); merge is still held for Justyna's ordinary-ticket lifetime decision. No TTL change is included.
 
 
 I propose this rework from `pty-host-socket-auth` at `d7cda55c`, on branch `pty-host-auth-memory`. Justyna chose the in-memory secret on 2026-10-16. This note precedes product changes. Local user rules remain a separate PR; there is no remote-rule channel in the current plan.
@@ -260,3 +260,42 @@ F21 focused verification:36/36 Node and36/36 Electron contracts; the actual SIGK
 After completing the whole GUI coverage on64a8a522, I additionally ran all50 native-workflow files under Electron rather than only the prior selected Electron contracts. That expanded run was not green:370pass,0fail,1cancelled by its20s timeout and1Linux-onlyskip (372total). The older spawn-intent helper launches process.execPath inside the pane with an explicit env; without ELECTRON_RUN_AS_NODE it launches Electron as an application instead of running the READY script. The identical test/helper on main ead520c8 reproduced the same20s timeout. Both trials required bounded manual cleanup of only their recorded disposable owner/helper using checked individual-process identities; no unrelated process was signalled.
 
 The helper now explicitly passes ELECTRON_RUN_AS_NODE=1 for that child. Its exact durable-intent, no-replacement, surviving-child and registry assertions are unchanged. The corrected isolated test passes1/1 in Node and1/1 in Electron. This is a fixture-only compatibility correction, not a product change or a reclassification of the non-green run as passing. Final immutable-head full npm/native/Electron results follow separately. GUI does not import this helper, so unchanged64 product whole-GUI coverage remains scoped to64; ordinary-ticket lifetime is still pending Justyna's decision.
+
+## Final local validation - 0e4d3951
+
+These results bind to exact0e4d3951, whose only change from product64a8a522 is the reviewed spawn-intent fixture env correction and documentation. No source/build changes were made during the whole GUI invocations. The native owner still has SHA256 `2d93372d8249dd1c3a7593d0869f863fdb53971c36076c71dad9939a5a3e4109`; no owner protocol or binary change is included. The ordinary announced window remains120s and B3 remains120s. Merge is held for Justyna's ordinary-quit lifetime decision, not represented as approved here.
+
+- Full npm test:7472pass,0fail,147skip,1knownTODO (7620total),69.83s. The existing registry PID-reuse TODO remains separate from failures.
+- Lint passed. Complete50-file Native owner contracts command:371pass,0fail,1Linux-onlyskip in Node26.10 (48.87s), and371pass,0fail,1Linux-onlyskip in Electron43.5/Node24.19 (48.87s). No cancellation in either final run. The literal workflow command without the YAML `run: ` prefix or newline has SHA256 `28b65ba28200cec3717ec01dd7c5a34914eb185412f03633f0c17095f61b3622`. Local Mac uses EXPECT_PIDFD=0; actual Linux/pidfd CI remains external evidence, not emulation or a local claim.
+- Whole GUI on64a8a522 used shutdown0/workers1, default1800s global ceiling and no retries. The first invocation reached410pass/6skip, then the ceiling prevented completion of72cases (71unstarted and1interrupted). It returned nonzero with runner and teardown deadline errors; no assertion failed. Its HTML report was preserved. The second invocation selected those exact72 test IDs, including all10 previously unrun timeouts.spec cases, with no dependencies or source/build changes:72/72pass in279.81s (4.7min). The report-ID union is488unique cases:482pass/0assertionfail/6intentional skip/0flaky,0remaining. This is complete coverage across two invocations, not a single green whole invocation or a raised ceiling. The earlier stopped b5 run and expanded Electron timeout above remain non-green history.
+- Staged macOS arm64 package smoke passed with the current local artifacts: native build-receipt verification before ad-hoc signing, deep/strict signature checks, hardened-runtime/entitlements/deployment-floor checks, real packaged adapter input/resize/parentage/exit23 and packaged runtime. `exitCode:23` and `jsChildExitCode:24` are expected process exit values, not a23/24 test count or skipped contract. Bundled rules-from-ASAR digest is `c1db9f2a6f872dda510e723feaf130fd3625d5a31018e16a416f1b82fc1960c6`; display codec raw6140B/gzip1497B passed. This is disposable local ad-hoc packaging, not Developer ID signing, notarization or a native Linux package.
+
+### Current 25-pane trial
+
+I reran the corrected helper under Electron43.5/Node24.19 on macOS arm64. A distinct issuer process starts25 real native-owner PTYs, announces ordinary quit and exits. The benchmark recipient verifies issuer absence before consuming the real ticket and authenticating; no capability is loaned between client objects in one process. Pane dimensions are120x40; each synthetic active child emits approximately512B/100ms. Announcement is measured separately from recipient consume/redemption/authentication/validated owner continuity.
+
+| One-trial measurement | Result |
+| --- | ---: |
+| Issuer announcement/publication | 6.20ms |
+| Recipient ticket consume/redemption/auth/25-pane continuity | 5.16ms /5660us main CPU |
+| Deliberate JS SIGKILL to recovered plus25 received replay fences | 312.81ms |
+| All25 sequential post-recovery input/reply round trips | 137.84ms |
+| Input/reply p50/p95 before recovery | 5.94/6.22ms |
+| Input/reply p50/p95 after recovery | 5.61/5.98ms |
+| Sampled main/old JS/successor JS/owner RSS peaks | 92.69/102.31/107.94/2.17MiB |
+| Sampled simultaneous combined RSS peak | 202.80MiB |
+
+CPU uses one logical CPU as100%, with approximately2.2s resource-counter intervals:
+
+| Phase | Benchmark main | JS host | Owner |
+| --- | ---: | ---: | ---: |
+| Idle before | 0.91% | 0.46% | 0.017% |
+| Active before | 4.01% | 12.73% | 0.015% |
+| Active after | 2.62% | 6.87% | 0.017% |
+| Idle after | 1.29% | 1.59% | 0.015% |
+
+The saved result contains25+25 raw latency values,95 raw asynchronous RSS records, identities, timestamps and CPU counter intervals. Nearest-rank quantiles use ceil(n*p),1-based. The old host's kernel start identity is checked again immediately before the deliberate SIGKILL; before successor fork the helper separately requires old-JS ESRCH and absent kernel identity. All25 child PIDs and the owner PID stayed unchanged; no old/new overlap was sampled. The successor enters sampling as soon as startHost returns, including startup/replay. Sampling alone is not the no-dual-host proof.
+
+This is one synthetic noDOM trial, received fences rather than renderer application/paint. It does not claim preservation of screen/history consumed before the crash. Round-trip observation polls at5ms; instrumentation samples CPU every200ms and RSS every100ms, includes that overhead and can miss brief peaks. Combined RSS covers benchmark main, JS hosts and owner, excluding the25 child programs and the already exited issuer; individual peaks are not additive. After the helper exited, a separate check against saved issuer/old/new/owner/25child PIDs required ESRCH for each and reported `remainingPids []`. This is separate post-run evidence, not an all-gone assertion implemented inside the helper. Disposable home/entry were removed. Raw artifacts remain local under ignored test-results with an external log copy for this run; they contain no capability or owner key.
+
+Independent reviewer source/rounding checks and local reported test counts are distinct evidence. No push, merge or production action was performed by the dev. Earlier CI results do not automatically validate this unpushed final head; current CI and Justyna's lifetime decision remain lead-controlled gates.
