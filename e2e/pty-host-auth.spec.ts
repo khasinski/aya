@@ -28,6 +28,13 @@ test('ordinary relaunch proves continuity and a later JS crash recovers the orig
 for(const fault of ['missing','wrong'])test(`a ${fault} capability gives a friendly real attachment refusal; Cancel keeps the host and processes`,async({app,window,seeded})=>{
  await waitForShellReady(window);const before=record(seeded.ayaHome),hosts=hostPidsForHome(seeded.ayaHome),keyFile=join(seeded.ayaHome,'pty-host-auth/key'),key=readFileSync(keyFile);
  const errors:string[]=[];window.on('pageerror',e=>errors.push(String(e)));
+ const inputFile=join(seeded.projectDir,'auth-refused-input');
+ await window.evaluate(file=>window.aya.ptyWrite('tab-left',`stty -echo; printf 'AUTH_CAPTURE_READY\\n'; while IFS= read -r line; do printf '%s\\n' "$line" >> '${file}'; done\r`),inputFile);
+ await expect.poll(()=>window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('AUTH_CAPTURE_READY\r\n');
+ await app.evaluate(({ipcMain})=>{
+  const original=(ipcMain as any)._invokeHandlers.get('pty:write');(globalThis as any).authWriteCalls=0;
+  ipcMain.removeHandler('pty:write');ipcMain.handle('pty:write',(event,...args)=>{(globalThis as any).authWriteCalls++;return original(event,...args);});
+ });
  await app.evaluate((_api,root)=>{
   const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js'),request=PtyHostClient.prototype.request;
   PtyHostClient.prototype.request=function(...args:unknown[]){(globalThis as any).authClient=this;return request.apply(this,args);};
@@ -39,6 +46,11 @@ for(const fault of ['missing','wrong'])test(`a ${fault} capability gives a frien
   await window.addInitScript(()=>{(window as any).authUnhandled=[];window.addEventListener('unhandledrejection',e=>(window as any).authUnhandled.push(String(e.reason)));});
   await window.reload();
   await expect(window.getByTestId('terminal-history-notice').first()).toContainText('authenticate');
+  await expect(window.getByTestId('terminal-history-notice').first()).toContainText('input remains disabled');
+  const refusedTerminal=window.getByTestId('xterm-host').first();await refusedTerminal.click();await window.keyboard.type('not-delivered');await window.keyboard.press('Enter');
+  await refusedTerminal.locator('.xterm-helper-textarea').evaluate(textarea=>{const data=new DataTransfer();data.setData('text/plain','paste-not-delivered\n');textarea.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));});
+  expect(await app.evaluate(()=>(globalThis as any).authWriteCalls)).toBe(0);
+  expect(require('node:fs').existsSync(inputFile)).toBe(false);
   await expect(window.getByTestId('xterm-host').first()).not.toContainText('Error invoking remote method');
   await expect(window.getByTestId('xterm-host').first()).not.toContainText('Terminal attachment failed');
   await app.evaluate(({dialog})=>{const original=dialog.showMessageBox.bind(dialog);(globalThis as any).authQuestions=[];dialog.showMessageBox=(async(...args:Parameters<typeof dialog.showMessageBox>)=>{const options=args.at(-1) as {message:string;detail:string};if(options.message!=='Work in progress will stop')return original(...args);(globalThis as any).authQuestions.push(options.detail);return {response:1,checkboxChecked:false};}) as typeof dialog.showMessageBox;});

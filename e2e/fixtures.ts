@@ -10,7 +10,7 @@ import * as net from "node:net";
 import { join } from "node:path";
 import { appEnv, seedEnv, type SeededEnv, type SeedOptions } from "./helpers/seed";
 
-const {spawnAuthenticatedHost,authenticateFixtureSocket}=require("../tests/helpers/pty-host-launch.cjs") as {
+export const {spawnAuthenticatedHost,authenticateFixtureSocket}=require("../tests/helpers/pty-host-launch.cjs") as {
   spawnAuthenticatedHost:typeof spawn;
   authenticateFixtureSocket:(socket:net.Socket,home:string)=>Promise<unknown>;
 };

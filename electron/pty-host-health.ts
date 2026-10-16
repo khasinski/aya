@@ -203,6 +203,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
         health = await hostHealth();
       }
       if(health.authentication){
+        if(!verifiedAuthTarget(health)){await explainUnverifiedAuth(health);showStaleHost(true);return;}
         if(!await askRestart("Restart terminals",await authRestartDetail(health))){showStaleHost(true);return;}
         const exited=await ptyHost.restart({target:{pid:health.pid,startTime:health.startTime??null,owner:health.owner},confirmChanged:askChangedRestartTarget,confirmSurvivors:askSurvivorRecovery});
         await hostHealth();if(!exited)showStaleHost(true);return;
@@ -318,6 +319,14 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
       (retained.length?`\n\nProcesses that may still run:\n${retained.join("\n")}`:"")+
       (legacy?`\n\nReported by the old host:\n${[...reported,...(legacy.unknownCount?[`${legacy.unknownCount} more unknown`]:[])].join("\n")||"No running panes reported."}`:!target.authentication?.inventoryKnown?"\n\nThe retained process inventory is unknown. It must not be treated as empty.":"");
   }
+  function verifiedAuthTarget(target:{pid?:number|null;startTime?:string|null;authentication?:HostAuthenticationProblem}):boolean{
+    return !!target.pid&&!!target.startTime&&target.authentication?.targetVerified===true;
+  }
+  async function explainUnverifiedAuth(target:Pick<HostRestartTarget,"pid"|"owner"|"authentication">):Promise<void>{
+    const options={type:"warning" as const,title:"Terminal host unavailable",message:"Aya cannot safely restart this terminal host",
+      detail:"The terminal host identity could not be verified. Nothing was stopped; its processes and inventory were kept.\n\n"+await authRestartDetail(target),buttons:["OK"],defaultId:0,cancelId:0,noLink:true};
+    const window=focusedAyaWindow();if(window)await dialog.showMessageBox(window,options);else await dialog.showMessageBox(options);
+  }
   async function unavailableOwnerDetail(target:Pick<HostRestartTarget,"owner"|"recoveryReason">):Promise<string>{
     const names=new Map((await relaunchDeps.panes().catch(()=>[])).map(p=>[p.id,p.name]));
     const retained=[...(target.owner?.inventory??[]).map(p=>`${names.get(p.id)??p.id} (PID ${p.pid})`),...(target.owner?.uncertain??[]).map(id=>`${names.get(id)??id}: process identity unknown`)];
@@ -333,7 +342,10 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
   }
   async function askChangedRestartTarget(target:HostRestartTarget):Promise<boolean>{
     if(target.ownerUnavailable)return askRestart("Stop terminal owner",await unavailableOwnerDetail(target));
-    if(target.authentication)return askRestart("Restart","The terminal host changed after the previous question.\n\n"+await authRestartDetail(target));
+    if(target.authentication){
+      if(!verifiedAuthTarget(target)){await explainUnverifiedAuth(target);return false;}
+      return askRestart("Restart","The terminal host changed after the previous question.\n\n"+await authRestartDetail(target));
+    }
     const names=new Map((await relaunchDeps.panes().catch(()=>[])).map(p=>[p.id,p.name]));
     const retained=[...(target.owner?.inventory??[]).map(p=>`${names.get(p.id)??p.id} (PID ${p.pid})`),...(target.owner?.uncertain??[]).map(id=>`${names.get(id)??id}: process identity unknown`)];
     return askRestart("Restart","The terminal host changed after the previous question. Restarting this host stops its current work."+
@@ -345,6 +357,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
    *  or when the old host did not exit, so the window leaves its panes as they are. */
   async function restartHostFromWindow(): Promise<void> {
     const before = await hostHealth();
+    if(before.authentication&&!verifiedAuthTarget(before)){await explainUnverifiedAuth(before);showStaleHost(true);return;}
     const legacy = !before.owner && before.ptyCount > 0;
     const recovery = !!before.ownerUnavailable || !!before.authentication || legacy || before.owner?.incompatible || !!before.owner?.disconnected.length;
     const names = new Map((await relaunchDeps.panes().catch(() => [])).map(p => [p.id, p.name]));

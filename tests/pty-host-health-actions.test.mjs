@@ -353,3 +353,15 @@ test('auth refusal always asks with retained PIDs or unknown inventory before ex
   assert.equal(log.filter(([op])=>op==='restart'||op==='confirm'||op==='kill').length,0);
  }
 });
+
+test('an unverified auth target gets one OK information dialog, never a Restart offer or a signal',async t=>{
+ for(const entry of ['launch','explicit'])for(const missing of ['pid','start','proof']){
+  const {d,state,log}=setup(t);state.owner=undefined;
+  d.ptyHost.hostStatus=async()=>({identity:null,ptyCount:0,pid:missing==='pid'?undefined:100,startTime:missing==='start'?null:'1:2',authentication:{required:true,targetVerified:missing!=='proof',inventoryKnown:false,reason:'identity unavailable'}});
+  const actions=createPtyHostHealth(d);await (entry==='launch'?actions.handleStaleHost():actions.restartHostFromWindow());
+  const dialogs=log.filter(([op])=>op==='dialog');assert.equal(dialogs.length,1,`${entry}/${missing}`);
+  const options=dialogs[0].at(-1);assert.deepEqual(options.buttons,['OK']);assert.match(options.detail,/identity could not be verified/);
+  assert.equal(log.filter(([op])=>['ask-restart','restart','kill','wait'].includes(op)).length,0);
+  assert.equal(actions.staleHostDetected(),true);
+ }
+});

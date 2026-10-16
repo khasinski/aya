@@ -1,8 +1,7 @@
-import { spawn } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { test, expect, PTY_HOST_SCRIPT, delay } from "./fixtures";
+import { test, expect, PTY_HOST_SCRIPT, delay, spawnAuthenticatedHost } from "./fixtures";
 import { fireShortcut } from "./helpers/shortcut";
 import type { ElectronApplication, Page } from "@playwright/test";
 
@@ -58,7 +57,7 @@ test("a host with no pty-host.sock is warned about, and Restart puts things righ
 test("a running host Aya does not use is listed, and Stop other hosts ends it", async ({ window, app, seeded }) => {
   // A real host of this build under another home, entered in this Aya's registry: as the orphaned host was.
   const otherHome = mkdtempSync(join(tmpdir(), "aya-e2e-other-"));
-  const other = spawn(process.execPath, [PTY_HOST_SCRIPT], {
+  const other = spawnAuthenticatedHost(process.execPath, [PTY_HOST_SCRIPT], {
     detached: true,
     stdio: "ignore",
     env: { ...process.env, AYA_HOME: otherHome, ELECTRON_RUN_AS_NODE: "1" },
