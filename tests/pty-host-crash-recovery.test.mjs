@@ -11,7 +11,7 @@ const registry=require('../dist-electron/pty-owner-registry.js');
 const {cleanupNativeOwner}=await import('./helpers/pty-host.mjs');
 const script=path.resolve('dist-electron/pty-host.js');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-async function wait(f,message='crash recovery timeout'){const end=Date.now()+12000;while(!await f()){if(Date.now()>end)throw Error(message);await sleep(5);}}
+async function wait(f,message='crash recovery timeout'){const end=Date.now()+12000;while(!await f()){if(Date.now()>end)throw Error(typeof message==='function'?message():message);await sleep(5);}}
 function request(){return {ptyId:'shell',agent:'custom',command:`exec /bin/sh -c 'stty -echo; echo READY; while [ ! -f "$HOME/release" ]; do sleep .01; done; echo UNREAD_DURING_GAP; touch "$HOME/produced"; while IFS= read -r line; do case "$line" in quit) exit 23 ;; *) printf "R:%s:%s\\n" "$$" "$line" ;; esac; done'`,cwd:process.env.HOME,cols:80,rows:24};}
 async function setup(command){fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true});const events=[],logs=[],client=new PtyHostClient(script);client.enableCrashRecovery({log:(event,fields)=>logs.push({event,...fields})});client.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});await client.spawn({...request(),...(command?{command}:{})});await wait(async()=>(await client.getBuffer('shell')).includes('READY'));const status=await client.hostStatus(),pid=await client.getPid('shell');return{client,events,logs,status,pid};}
 async function cleanup(...clients){for(const c of clients){c?.dispose();c?.dropSocket();}await cleanupNativeOwner(process.env.AYA_HOME);fs.rmSync(process.env.AYA_HOME,{recursive:true,force:true});fs.rmSync(process.env.HOME,{recursive:true,force:true});}
@@ -40,7 +40,7 @@ test('repeated real JS crashes exhaust one budget while preserving native invent
  try{
   for(let attempt=0;attempt<3;attempt++){
    const before=await client.hostStatus();process.kill(before.pid,'SIGKILL');
-   await wait(()=>logs.filter(e=>e.state==='recovered').length===attempt+1,JSON.stringify(logs));
+   await wait(()=>logs.filter(e=>e.state==='recovered').length===attempt+1,()=>JSON.stringify({logs,live:[...client.live],lost:[...client.lostOwned],blocked:client.crashBlocked,context:client.crashContext,supervisor:client.crashSupervisor,stderr:fs.existsSync(path.join(process.env.AYA_HOME,'pty-host.stderr.log'))?fs.readFileSync(path.join(process.env.AYA_HOME,'pty-host.stderr.log'),'utf8'):''}));
    assert.equal((await client.hostStatus()).owner.pid,status.owner.pid);assert.equal(await client.getPid('shell'),pid);
   }
   process.kill((await client.hostStatus()).pid,'SIGKILL');await wait(()=>logs.some(e=>e.state==='exhausted'));
@@ -114,5 +114,54 @@ test('owner identity follows a new spawn after the empty owner idles out, withou
   await client.write('shell','quit\n');await wait(()=>client.observedExits.get('shell')?.acknowledged===true);await wait(()=>registry.readOwnerRecord()===null);
   await client.spawn({...request(),ptyId:'next'});const current=registry.readOwnerRecord();assert.notEqual(current.pid,status.owner.pid);assert.equal(client.recoveryOwner.instanceId,current.instanceId);
   process.kill(status.pid,'SIGKILL');await wait(()=>logs.some(e=>e.state==='recovered'));assert.equal(await client.getPid('next'),current.panes[0].pid);assert.equal((await client.hostStatus()).owner.pid,current.pid);await client.shutdown();
+ }finally{await cleanup(client);}
+});
+
+test('quit during the prior-child exit wait starts no successor',{timeout:15000},async()=>{
+ const {client,status}=await setup();let starts=0,waited=false;
+ const attempt=client.recoverCrashedHost.bind(client),start=client.startHost.bind(client);
+ client.startHost=(...args)=>{starts++;return start(...args);};
+ client.recoverCrashedHost=async signal=>{
+  const prior={exitCode:null,signalCode:null,once:(_name,callback)=>{waited=true;client.dispose();prior.exitCode=0;callback();}};
+  client.pendingPlannedHost=prior;return attempt(signal);
+ };
+ try{process.kill(status.pid,'SIGKILL');await wait(()=>waited);await wait(()=>client.crashTask===null);assert.equal(starts,0);assert.equal(registry.readOwnerRecord().pid,status.owner.pid);}
+ finally{await cleanup(client);}
+});
+
+test('recovery refreshes the PID/start pair and socket loss of the live successor cannot replace it',{timeout:20000},async()=>{
+ const {client,status,logs,pid}=await setup();const {ownerProcessStartIdentity}=require('../dist-electron/pty-owner-client.js');
+ try{
+  process.kill(status.pid,'SIGKILL');await wait(()=>logs.some(e=>e.state==='recovered'));
+  const successor=await client.hostStatus();assert.equal(client.lastHostPid,successor.pid);assert.equal(client.lastHostStart,ownerProcessStartIdentity(successor.pid));
+  let starts=0;const start=client.startHost.bind(client);client.startHost=(...args)=>{starts++;return start(...args);};
+  client.socket.destroy();await wait(()=>logs.some(e=>e.state==='exhausted'));
+  assert.equal(starts,0);assert.doesNotThrow(()=>process.kill(successor.pid,0));assert.doesNotThrow(()=>process.kill(pid,0));assert.equal(registry.readOwnerRecord().jsPid,successor.pid);
+ }finally{await cleanup(client);}
+});
+
+for(const variant of ['partial','empty','duplicate'])test(`two-pane ${variant} recovery manifest never becomes a successful recovery`,{timeout:20000},async()=>{
+ const {client,status,logs}=await setup();const peer={...request(),ptyId:'peer'};
+ const wrapper=path.resolve(`dist-electron/pty-host-manifest-${variant}-${process.pid}.js`);
+ const replacement=variant==='partial'?'panes.slice(0,1)':variant==='empty'?'[]':'[panes[0],panes[0]]';
+ fs.writeFileSync(wrapper,`const core=require('./pty-core'),states=core.ptyRecoveryStates;core.ptyRecoveryStates=()=>{const panes=states();return ${replacement};};require('./pty-host');\n`);
+ try{
+  await client.spawn(peer);const before=registry.readOwnerRecord().panes.map(p=>p.pid);client.hostScript=wrapper;
+  process.kill(status.pid,'SIGKILL');await wait(()=>logs.some(e=>e.state==='exhausted'));
+  assert.ok(!logs.some(e=>e.state==='recovered'));assert.equal(client.crashBlocked,true);assert.ok(logs.some(e=>/manifest/.test(e.reason??'')));
+  for(const pid of before)assert.doesNotThrow(()=>process.kill(pid,0));assert.deepEqual([...client.lostOwned].sort(),['peer','shell']);
+ }finally{await cleanup(client);fs.rmSync(wrapper,{force:true});}
+});
+
+test('a native exit already observed by main is explicitly reconciled and may be omitted from recovery',{timeout:20000},async()=>{
+ const {client,status,logs,events}=await setup();const observe=client.observeExit.bind(client);
+ try{
+  await client.spawn({...request(),ptyId:'peer'});
+  client.observeExit=(id,...args)=>{if(id!=='shell')return observe(id,...args);};
+  fs.writeFileSync(path.join(process.env.HOME,'release'),'go');await wait(async()=>(await client.getBuffer('shell')).includes('UNREAD_DURING_GAP'));
+  await client.write('shell','quit\n');await wait(()=>events.some(e=>e.type==='exit'&&e.ptyId==='shell'&&e.exitCode===23));
+  assert.ok(registry.readOwnerRecord().panes.some(p=>p.id==='shell'&&p.exited));process.kill(status.pid,'SIGKILL');
+  await wait(()=>logs.some(e=>e.state==='recovered'));assert.deepEqual(events.filter(e=>e.type==='recovered').map(e=>e.ptyId),['peer']);
+  assert.ok(!registry.readOwnerRecord().panes.some(p=>p.id==='shell'));assert.equal(await client.getPid('peer')>1,true);await client.shutdown();
  }finally{await cleanup(client);}
 });

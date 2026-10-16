@@ -835,7 +835,7 @@ export class PtyHostClient {
         flushEvents();
         if(message.ownerBacked)this.ownerBacked=true;
         if(message.ownerIdentity)this.cacheRecoveryOwner(message.ownerIdentity);
-        if(message.hostPid)this.lastHostPid=message.hostPid;
+        if(message.hostPid)this.cacheHostProcess(message.hostPid);
         if(message.restored)this.live.add(message.req.ptyId);
         const prior=this.recoveryLaunches.get(message.req.ptyId);
         this.recoveryLaunches.set(message.req.ptyId,{request:message.req,launch:message.launch??prior?.launch??{command:message.req.command,cwd:message.cwd},spawnedAt:message.spawnedAt,pid:message.pid});
@@ -881,6 +881,10 @@ export class PtyHostClient {
     flushEvents();
   }
 
+  private cacheHostProcess(pid:number):void {
+    if(this.lastHostPid!==pid||!this.lastHostStart){try{this.lastHostStart=ownerProcessStartIdentity(pid);}catch{this.lastHostStart=null;}}
+    this.lastHostPid=pid;
+  }
   private cacheRecoveryOwner(owner:RecoveryOwnerIdentity&{incompatible:boolean}):void {
     this.recoveryOwner=!owner.incompatible?{pid:owner.pid,startTime:owner.startTime,instanceId:owner.instanceId,binaryHash:owner.binaryHash}:null;
   }
@@ -889,8 +893,7 @@ export class PtyHostClient {
     if (message.ownerBacked) { this.ownerBacked = true; this.metadataSocket = this.socket; }
     const reportedPid = message.hostPid ?? (message.ok && message.result && typeof message.result === "object" ? (message.result as { pid?: unknown }).pid : undefined);
     if (typeof reportedPid === "number" && Number.isSafeInteger(reportedPid) && reportedPid > 1) {
-      if(this.lastHostPid!==reportedPid){try{this.lastHostStart=ownerProcessStartIdentity(reportedPid);}catch{this.lastHostStart=null;}}
-      this.lastHostPid = reportedPid;
+      this.cacheHostProcess(reportedPid);
     }
     if(message.ok&&message.result&&typeof message.result==="object"&&"owner" in message.result){
       const owner=(message.result as {owner?:PtyOwnerStatus}).owner;
@@ -985,6 +988,7 @@ export class PtyHostClient {
       if(this.pendingPlannedHost&&this.pendingPlannedHost.exitCode===null&&this.pendingPlannedHost.signalCode===null){
         await new Promise<void>(resolve=>{const timer=setTimeout(resolve,1000);this.pendingPlannedHost!.once("exit",()=>{clearTimeout(timer);resolve();});});
       }
+      if(this.disposed||signal.aborted)return "blocked";
       child=this.startHost(bootstrap);if(signal.aborted)stop();
       await this.openStartedHostSocket(signal,child);
       if(signal.aborted||this.disposed)throw Error("Crash recovery cancelled");
@@ -996,6 +1000,8 @@ export class PtyHostClient {
         if(!p||!panes.some(x=>x.id===p.id)||ids.has(p.id)||typeof p.generation!=="string"||!p.generation.length||p.generation.length>128||Object.keys(p).some(key=>!["id","generation","exitCode"].includes(key))||(p.exitCode!==undefined&&(!Number.isInteger(p.exitCode)||p.exitCode<0||p.exitCode>255)))throw Error("Crash recovery pane manifest refused");
         ids.add(p.id);
       }
+      const expectedIds=panes.filter(p=>!record.panes.some(native=>native.id===p.id&&native.exited&&observed.some(o=>o.id===p.id&&o.generation===native.generation&&o.event===native.event))).map(p=>p.id);
+      if(expectedIds.length!==ids.size||expectedIds.some(id=>!ids.has(id)))throw Error("Crash recovery pane manifest is incomplete");
       this.metadataSocket=socket;this.reusedHost=true;this.plannedReusedBoot=true;
       const ready=version.recovery.map(p=>{
         this.lostOwned.delete(p.id);if(p.exitCode===undefined)this.live.add(p.id);
