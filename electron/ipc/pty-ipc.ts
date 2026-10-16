@@ -30,6 +30,7 @@ export interface PtyIpcDeps {
   confirmRestartPane: (ptyId: string) => Promise<boolean>;
   /** Replaces the host after asking; throws when cancelled or when the old host did not exit. */
   restartHost: () => Promise<void>;
+  retryRecovery?:()=>Promise<boolean>;
   /** Stops running hosts Aya does not use, after asking; the pids signalled. */
   stopOtherHosts: () => Promise<number[]>;
   /** Questions agents are waiting on. */
@@ -127,6 +128,7 @@ export function registerPtyIpc(deps: PtyIpcDeps): void {
     });
   });
   ipcMain.handle("pty-host:restart", async () => deps.restartHost());
+  ipcMain.handle("pty-host:retry-recovery",async()=>deps.retryRecovery?.()??false);
   // Asked in main, not in the window: Aya Web reaches this handler too.
   ipcMain.handle("pty-host:stop-others", async () => deps.stopOtherHosts());
   ipcMain.handle("agent:waiting", () => deps.waiting());

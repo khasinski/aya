@@ -697,3 +697,11 @@ test('recovery clears stale lifecycle overlays and screen trust is generation sc
  state=applyPtyEvent(state,{type:'disconnected',ptyId:'p',reason:'owner key unknown'});assert.equal(state.p.disconnectedReason,'owner key unknown');
  assert.equal(applyPtyEvent(state,{type:'recovery-screen',ptyId:'p',generation:'new',known:true}),state);
 });
+
+test('new renderer hydrates current recovery metadata and refuses stale generation hydration',()=>{
+ let state={p:termState('p')};
+ state=applyPtyEvent(state,{type:'recovery-state',ptyId:'p',generation:'current',notice:'history lost',screenUnknown:true});assert.equal(state.p.recoveryScreenUnknown,true);assert.equal(state.p.recoveryGeneration,'current');
+ assert.equal(applyPtyEvent(state,{type:'recovery-state',ptyId:'p',generation:'old',notice:'stale',screenUnknown:false}),state);
+ state=applyPtyEvent(state,{type:'recovery-screen',ptyId:'p',generation:'current',known:true});assert.equal(state.p.recoveryScreenUnknown,false);
+ state=applyPtyEvent(state,{type:'disconnected',ptyId:'p',reason:'budget',recoveryBlocked:true,retryable:true});assert.equal(state.p.recoveryRetryable,true);assert.equal(state.p.recoveryBlocked,true);
+});

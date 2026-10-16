@@ -1,8 +1,13 @@
+import {_electron} from '@playwright/test';
+import {appEnv} from './helpers/seed';
+import {askControl} from './helpers/control';
+import {teamSeed,BARE_TEAM,teamLog} from './helpers/team';
 import {agentBin} from './helpers/agent-bin';
 import {readFileSync,writeFileSync,existsSync} from 'node:fs';
 import {join} from 'node:path';
-import {test,expect,hostPidsForHome,closeAndWait} from './fixtures';
+import {test,expect,hostPidsForHome,closeAndWait,ciElectronFlags} from './fixtures';
 import {waitForShellReady,visiblePane} from './helpers/terminal';
+test.use({seedOptions:{launchEnv:{AYA_E2E_PTY_SHUTDOWN:'0'}}});
 type Record={pid:number;panes:Array<{id:string;pid:number;generation:number;cols:number;rows:number}>};
 const record=(home:string):Record=>JSON.parse(readFileSync(join(home,'pty-owner/record.json'),'utf8'));
 const identities=(home:string)=>record(home).panes.map(p=>({id:p.id,pid:p.pid,generation:p.generation})).sort((a,b)=>a.id.localeCompare(b.id));
@@ -27,17 +32,23 @@ test('a real JS-host crash keeps shell PIDs, clears stale display and restores i
  expect(readFileSync(join(seeded.ayaHome,'pty-events.log'),'utf8').split('\n').filter(line=>{try{return JSON.parse(line).ev==='spawn';}catch{return false;}})).toHaveLength(2);
 });
 
-test('three short-lived recoveries exhaust the shared budget and keep every process disconnected',async({window,seeded})=>{
+test('three short-lived recoveries exhaust the shared budget and Try again makes one safe attempt',async({app,window,seeded})=>{
  await waitForShellReady(window);const before=identities(seeded.ayaHome),owner=record(seeded.ayaHome).pid;
  for(let i=0;i<3;i++){const old=await crash(seeded.ayaHome);await recovered(seeded.ayaHome,old);await expect(visiblePane(window,'shell 1').getByTestId('terminal-history-notice')).toContainText('Previously consumed');await expect.poll(()=>window.evaluate(()=>window.aya.ptyWrite('tab-left',''))).toBe(true);}
  await crash(seeded.ayaHome);
  await expect(visiblePane(window,'shell 1').getByTestId('terminal-history-notice')).toContainText('recovery budget');
  expect(hostPidsForHome(seeded.ayaHome)).toEqual([]);expect(identities(seeded.ayaHome)).toEqual(before);expect(record(seeded.ayaHome).pid).toBe(owner);
  for(const p of before)expect(alive(p.pid)).toBe(true);
+ await window.reload();const pane=visiblePane(window,'shell 1');await expect(pane.getByTestId('terminal-history-notice')).toContainText('recovery budget');
+ const row=window.locator('.aya-sidebar-row[data-terminal-name="shell 1"]');await row.click({button:'right'});const restart=window.locator('.aya-context-menu-item',{hasText:'Restart terminal'});await expect(restart).toBeDisabled();await expect(restart).toHaveAttribute('title',/recovery budget/);await window.keyboard.press('Escape');
+ await app.evaluate((_api,root)=>{const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js'),attempt=PtyHostClient.prototype.recoverCrashedHost;const g=globalThis as unknown as {manualAttempts:number};g.manualAttempts=0;PtyHostClient.prototype.recoverCrashedHost=function(...args:unknown[]){g.manualAttempts++;return attempt.apply(this,args);};},join(__dirname,'..'));
+ await pane.getByTestId('terminal-recovery-retry').click();await expect(pane.getByTestId('terminal-history-notice')).toContainText('Previously consumed');
+ expect(await app.evaluate(()=>(globalThis as unknown as {manualAttempts:number}).manualAttempts)).toBe(1);
+ await expect(pane.getByTestId('terminal-recovery-retry')).toHaveCount(0);expect(identities(seeded.ayaHome)).toEqual(before);expect(record(seeded.ayaHome).pid).toBe(owner);
 });
 
 test.describe('a recovered pane mounted later',()=>{
- test.use({seedOptions:{split:false}});
+ test.use({seedOptions:{split:false,launchEnv:{AYA_E2E_PTY_SHUTDOWN:'0'}}});
  test('gets replay and the history-loss explanation without creating another process',async({window,seeded})=>{
   await waitForShellReady(window);
   const file=join(seeded.ayaHome,'projects/e2e-proj.json'),project=JSON.parse(readFileSync(file,'utf8'));
@@ -59,7 +70,8 @@ for(const [mode,cli] of [['recorded','claude'],['recorded','codex'],['busy','cla
  test.describe(name,()=>{
   const executable=agentBin(cli,join(__dirname,'helpers/crash-agent.cjs'));
   const preset={id:cli,name:cli,agent:cli,icon:'a',color:'',command:`'${executable}' ${mode} ${cli}`};
-  test.use({seedOptions:{rightTab:{presetId:cli,name},presetList:[{id:'shell',name:'Shell',icon:'$',color:'',command:'$SHELL'},preset]}});
+  const options={launchEnv:{AYA_E2E_PTY_SHUTDOWN:'0'},rightTab:{presetId:cli,name},presetList:[{id:'shell',name:'Shell',icon:'$',color:'',command:'$SHELL'},preset]};
+  test.use(mode==='fragment'?teamSeed(BARE_TEAM,{presetList:options.presetList,seed:options}):{seedOptions:options});
   test('keeps the agent process and proves redraw before trusting its screen',async({app,window,seeded})=>{
    test.setTimeout(30000);await waitForShellReady(window);await expect.poll(()=>record(seeded.ayaHome).panes.length).toBe(2);
    await expect.poll(()=>window.evaluate(()=>window.aya.ptyBuffer('tab-right'))).not.toBe('');
@@ -71,8 +83,16 @@ for(const [mode,cli] of [['recorded','claude'],['recorded','codex'],['busy','cla
    if(mode==='fragment'){
     await expect(pane.getByTestId('terminal-history-notice')).toContainText('Screen unknown after the terminal host restarted',{timeout:15000});
     expect((await state()).hold).toContain('screen unknown after the terminal host restarted');expect((await state()).busy).toBe(false);
+    const sent=await askControl(seeded.ayaHome,{type:'team-send',role:'implementer',text:'RECOVERY_DELIVERY'});
+    expect(JSON.stringify(sent)).toContain('screen unknown after the terminal host restarted');
+    expect(teamLog(seeded.projectDir)('tab-right')).not.toContain('RECOVERY_DELIVERY');
+    await window.reload();
+    await expect(visiblePane(window,name).getByTestId('terminal-history-notice')).toContainText('Screen unknown after the terminal host restarted');
+    expect((await state()).hold).toContain('screen unknown after the terminal host restarted');
     await window.evaluate(()=>window.aya.ptyWrite('tab-right','REDRAW'));await expect.poll(async()=>(await state()).hold).toBe(null);
     await expect(pane.getByTestId('terminal-history-notice')).not.toContainText('Screen unknown');
+    await expect.poll(()=>teamLog(seeded.projectDir)('tab-right'),{timeout:10000}).toContain('RECOVERY_DELIVERY');
+    expect(teamLog(seeded.projectDir)('tab-right').split('RECOVERY_DELIVERY').length-1).toBe(1);
    }else if(mode==='busy'){await expect.poll(async()=>(await state()).busy).toBe(true);}
    else if(mode==='held'){await expect.poll(async()=>(await state()).hold).toMatch(/approval|choice|dialog/);await expect(pane.getByTestId('terminal-history-notice')).not.toContainText('Screen unknown');}
    else {await expect.poll(async()=>(await state()).hold,{timeout:15000}).toBe(null);}
@@ -123,7 +143,8 @@ for(const gap of [false,true])test(`real exit23 ${gap?'during the no-JS gap':'af
  expect(readFileSync(join(seeded.ayaHome,'pty-events.log'),'utf8').split('\n').filter(line=>{try{return JSON.parse(line).ev==='spawn';}catch{return false;}})).toHaveLength(2);
 });
 
-test('app quit during a real pending recovery cancels it without starting another JS reader',async({app,window,seeded})=>{
+const quitTest=test.extend({app:async({seeded},use)=>{const root=join(__dirname,'..');const app=await _electron.launch({cwd:root,args:[join(root,'dist-electron/main.js'),`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0'}})}),pid=app.process().pid!;await use(app);if(alive(pid))await closeAndWait(app);}});
+quitTest('app quit during a real pending recovery cancels it without starting another JS reader',async({app,window,seeded})=>{
  await waitForShellReady(window);const before=identities(seeded.ayaHome),owner=record(seeded.ayaHome).pid,attemptFile=join(seeded.root,'unexpected-successors');
  await app.evaluate((_electron,{root,file})=>{
   const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js'),fs=require('node:fs');
@@ -144,4 +165,39 @@ test('an incompatible owner at crash time stays disconnected and is never replac
   await crash(seeded.ayaHome);await expect(visiblePane(window,'shell 1').getByTestId('terminal-history-notice')).toContainText('recovery budget');
   expect(hostPidsForHome(seeded.ayaHome)).toEqual([]);expect(record(seeded.ayaHome).pid).toBe(before.pid);expect(alive(before.pid)).toBe(true);for(const p of before.panes)expect(alive(p.pid)).toBe(true);
  }finally{writeFileSync(file,saved);}
+});
+
+test('keyboard and paste stay blocked until the recovered replay fence is actually applied',async({app,window,seeded})=>{
+ await waitForShellReady(window);const file=join(seeded.projectDir,'gated-input'),ready=join(seeded.projectDir,'gated-ready');
+ await window.evaluate(({file,ready})=>window.aya.ptyWrite('tab-left',`stty -echo; touch '${ready}'; while IFS= read -r line; do printf '%s\\n' "$line" >> '${file}'; done\r`),{file,ready});
+ await expect.poll(()=>existsSync(ready)).toBe(true);
+ await app.evaluate((_api,root)=>{
+  const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js');
+  const g=globalThis as unknown as {gateWrites:number;gateReady:()=>boolean;releaseReplay:()=>void};g.gateWrites=0;
+  const send=PtyHostClient.prototype.sendToSinks,write=PtyHostClient.prototype.write,held:Array<{client:unknown;event:unknown}>=[];
+  PtyHostClient.prototype.sendToSinks=function(events:Array<{type:string;ptyId:string;replayToken?:string}>){const pass=[];for(const event of events){if(event.type==='data'&&event.ptyId==='tab-left'&&event.replayToken)held.push({client:this,event});else pass.push(event);}if(pass.length)send.call(this,pass);};
+  PtyHostClient.prototype.write=function(id:string,...args:unknown[]){if(id==='tab-left')g.gateWrites++;return write.call(this,id,...args);};
+  g.gateReady=()=>held.length>0&&!(held[0].client as {crashBlocked:boolean}).crashBlocked;
+  g.releaseReplay=()=>{for(const item of held.splice(0))send.call(item.client,[item.event]);};
+ },join(__dirname,'..'));
+ const old=await crash(seeded.ayaHome);await recovered(seeded.ayaHome,old);await expect.poll(()=>app.evaluate(()=>(globalThis as unknown as {gateReady:()=>boolean}).gateReady())).toBe(true);
+ const terminal=visiblePane(window,'shell 1').getByTestId('xterm-host');await terminal.click();await window.keyboard.type('BEFORE_GATE');await window.keyboard.press('Enter');
+ const paste=(text:string)=>terminal.locator('.xterm-helper-textarea').evaluate((textarea,text)=>{const transfer=new DataTransfer();transfer.setData('text/plain',text);textarea.dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));},text);
+ await paste('BEFORE_PASTE\n');
+ expect(await app.evaluate(()=>(globalThis as unknown as {gateWrites:number}).gateWrites)).toBe(0);expect(existsSync(file)).toBe(false);
+ await app.evaluate(()=>(globalThis as unknown as {releaseReplay:()=>void}).releaseReplay());
+ await expect(terminal.locator('.xterm-helper-textarea')).not.toHaveAttribute('readonly','');
+ // The native ACK removes the main display record only after the xterm write callback.
+ await expect.poll(()=>window.evaluate(()=>window.aya.handoverDisplay('tab-left'))).toBe(null);
+ await paste('AFTER_GATE\n');await expect.poll(()=>existsSync(file)?readFileSync(file,'utf8'):'').toBe('AFTER_GATE\n');
+ expect(await app.evaluate(()=>(globalThis as unknown as {gateWrites:number}).gateWrites)).toBe(1);
+});
+
+test('failed Try again returns its reason with one counted attempt and leaves every process intact',async({app,window,seeded})=>{
+ await waitForShellReady(window);const before=identities(seeded.ayaHome),owner=record(seeded.ayaHome).pid;
+ await app.evaluate((_api,root)=>{const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js');const g=globalThis as unknown as {manualFailureCalls:number};g.manualFailureCalls=0;PtyHostClient.prototype.recoverCrashedHost=async function(){g.manualFailureCalls++;this.recoveryFailure='Controlled test recovery refusal: inventory could not be reconciled';return 'blocked';};},join(__dirname,'..'));
+ await crash(seeded.ayaHome);const pane=visiblePane(window,'shell 1');await expect(pane.getByTestId('terminal-recovery-retry')).toBeVisible();
+ const baseline=await app.evaluate(()=>(globalThis as unknown as {manualFailureCalls:number}).manualFailureCalls);
+ await pane.getByTestId('terminal-recovery-retry').click();await expect.poll(()=>app.evaluate(()=>(globalThis as unknown as {manualFailureCalls:number}).manualFailureCalls)).toBe(baseline+1);await expect(pane.getByTestId('terminal-history-notice')).toContainText('Controlled test recovery refusal');await expect(pane.getByTestId('terminal-recovery-retry')).toBeVisible();
+ expect(await app.evaluate(()=>(globalThis as unknown as {manualFailureCalls:number}).manualFailureCalls)).toBe(baseline+1);expect(hostPidsForHome(seeded.ayaHome)).toEqual([]);expect(identities(seeded.ayaHome)).toEqual(before);expect(record(seeded.ayaHome).pid).toBe(owner);for(const p of before)expect(alive(p.pid)).toBe(true);
 });

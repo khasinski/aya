@@ -188,3 +188,15 @@ test('an early pane applied ACK succeeds while later recovery replay fences are 
   process.kill(status.pid,'SIGKILL');await wait(()=>replies.length===1);assert.equal(await replies[0],true);assert.equal(client.crashBlocked,true,'later pane still gated');release();await wait(()=>logs.some(e=>e.state==='recovered'));await client.shutdown();
  }finally{release?.();await cleanup(client);}
 });
+
+for(const outcome of ['success','failure','quit'])test(`manual Try again makes one supervised attempt: ${outcome}`,{timeout:15000},async()=>{
+ const {client,status,logs,pid}=await setup();const real=client.recoverCrashedHost.bind(client);let calls=0;
+ client.recoverCrashedHost=async signal=>{calls++;if(calls===1||outcome==='failure'){client.recoveryFailure='Controlled manual refusal';return 'blocked';}return real(signal);};
+ try{
+  process.kill(status.pid,'SIGKILL');await wait(()=>logs.some(e=>e.state==='exhausted'));assert.equal(client.recoveryRetryable,true);
+  const retry=client.retryCrashRecovery();if(outcome==='quit')client.dispose();const result=await retry;
+  assert.equal(result,outcome==='success');assert.equal(calls,outcome==='quit'?1:2);
+  if(outcome==='success'){assert.equal(await client.getPid('shell'),pid);assert.equal((await client.hostStatus()).owner.pid,status.owner.pid);assert.equal(client.recoveryRetryable,false);await client.shutdown();}
+  else{assert.doesNotThrow(()=>process.kill(pid,0));assert.equal(registry.readOwnerRecord().pid,status.owner.pid);if(outcome==='failure'){assert.equal(client.recoveryRetryable,true);assert.match(client.recoveryReason,/Controlled manual refusal/);}}
+ }finally{await cleanup(client);}
+});

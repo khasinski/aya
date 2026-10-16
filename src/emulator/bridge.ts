@@ -186,6 +186,7 @@ export function createEmulatorAya(scenario: EmScenario): AyaApi {
     ptySearch: async () => [] as never,
     harnessSearch: async () => [] as never,
     restartPtyHost: noopAsync,
+    retryPtyHostRecovery: async()=>false,
     stopOtherPtyHosts: async () => [],
     confirmPaneRestart: async () => true,
     onPtyEvent: (handler) => {

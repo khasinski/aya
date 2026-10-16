@@ -320,7 +320,7 @@ export function useTerminalActions({
         // `stopped` (not a fake exitCode 0) marks the PTY as killed-by-restart:
         // shows idle + restartable via Shift+Enter, without masquerading as a
         // clean "done" finish in the project badges or event log.
-        next[id] = { ...t, status: "idle", stopped: true, disconnected: undefined, disconnectedReason:undefined, recoveryGeneration:undefined, recoveryNotice:undefined, recoveryScreenUnknown:undefined, bell: false };
+        next[id] = { ...t, status: "idle", stopped: true, disconnected: undefined, disconnectedReason:undefined, recoveryGeneration:undefined, recoveryNotice:undefined, recoveryScreenUnknown:undefined, recoveryBlocked:undefined,recoveryRetryable:undefined, bell: false };
       }
       return next;
     });
@@ -384,7 +384,7 @@ export function useTerminalActions({
           bell: false,
           spawnFailure: undefined,
           stopped: undefined,
-          disconnected: undefined, disconnectedReason:undefined, recoveryGeneration:undefined, recoveryNotice:undefined, recoveryScreenUnknown:undefined,
+          disconnected: undefined, disconnectedReason:undefined, recoveryGeneration:undefined, recoveryNotice:undefined, recoveryScreenUnknown:undefined, recoveryBlocked:undefined,recoveryRetryable:undefined,
           restored: t.restored || hadSession,
         },
       };
@@ -419,7 +419,7 @@ export function useTerminalActions({
    *  fresh one. */
   const forceRestartTerminal = useCallback(async (id: string) => {
     const t = terminalsRef.current[id];
-    if (!t) return;
+    if (!t || t.recoveryBlocked) return;
     // Read the had-a-session marker BEFORE the kill and forgetSpawn below wipe
     // it - the respawned agent tab must resume its conversation (see
     // restartTerminal for the rationale, including the spawnFailure veto).
@@ -474,7 +474,7 @@ export function useTerminalActions({
           bell: false,
           spawnFailure: undefined,
           stopped: undefined,
-          disconnected: undefined, disconnectedReason:undefined, recoveryGeneration:undefined, recoveryNotice:undefined, recoveryScreenUnknown:undefined,
+          disconnected: undefined, disconnectedReason:undefined, recoveryGeneration:undefined, recoveryNotice:undefined, recoveryScreenUnknown:undefined, recoveryBlocked:undefined,recoveryRetryable:undefined,
           restored: cur.restored || hadSession,
         },
       };

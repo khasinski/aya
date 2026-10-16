@@ -557,6 +557,7 @@ function registerIpc(): TeamRunner {
       return confirmPaneRestart(() => confirmLosingWork(`Restarting ${name}`, "Restart", [ptyId]), (text) => askRestart("Restart", text), name);
     },
     restartHost: restartHostFromWindow,
+    retryRecovery:()=>ptyHost.retryCrashRecovery(),
     stopOtherHosts: stopOtherHostsFromWindow,
     waiting: outstandingWaiting,
   });

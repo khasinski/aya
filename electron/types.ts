@@ -298,9 +298,10 @@ export type PtyEvent =
   // Host had no live session for an attach-only spawn (process died while the
   // host stayed up). The tab becomes stopped/restartable, not respawned.
   | { type: "no-session"; ptyId: string }
-  | { type: "disconnected"; ptyId: string; reason?:string }
+  | { type: "disconnected"; ptyId: string; reason?:string;recoveryBlocked?:boolean;retryable?:boolean }
   | {type:"recovered";ptyId:string;generation:string;replayToken:string;notice:string}
   | {type:"recovery-screen";ptyId:string;generation:string;known:boolean}
+  | {type:"recovery-state";ptyId:string;generation:string;notice:string;screenUnknown:boolean}
   // Explicit status parsed from an OSC 9001 `aya.status` sequence the TUI (or
   // a wrapper script) emitted inline in its own output — see integrations.md.
   // Carries the same vocabulary as ControlStatusUpdate's "status" request,
@@ -598,6 +599,7 @@ export interface AyaApi {
    *  session transcripts for the tab's cwd (history, not terminal output). */
   harnessSearch(req: HarnessSearchRequest): Promise<HarnessSearchHit[]>;
   restartPtyHost(): Promise<void>;
+  retryPtyHostRecovery():Promise<boolean>;
   /** Stop running hosts this Aya does not use; returns the pids signalled. */
   stopOtherPtyHosts(): Promise<number[]>;
   /** Asks first when the pane shows background tasks or monitors a restart stops; false: the user kept it. */

@@ -426,6 +426,8 @@ function SidebarImpl({
           </button>
           <button
             className="aya-context-menu-item"
+            disabled={!!terminals.find(t=>t.id===menu.terminalId)?.recoveryBlocked}
+            title={terminals.find(t=>t.id===menu.terminalId)?.recoveryBlocked ? terminals.find(t=>t.id===menu.terminalId)?.disconnectedReason ?? "Terminal host recovery is in progress" : undefined}
             onClick={() => {
               onRestart(menu.terminalId);
               setMenu(null);

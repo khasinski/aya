@@ -214,6 +214,8 @@ function terminalRenderStateEqual(a: TerminalState, b: TerminalState): boolean {
       a.recoveryGeneration === b.recoveryGeneration &&
       a.recoveryNotice === b.recoveryNotice &&
       a.recoveryScreenUnknown === b.recoveryScreenUnknown &&
+      a.recoveryBlocked === b.recoveryBlocked &&
+      a.recoveryRetryable === b.recoveryRetryable &&
       a.spawnDeferred === b.spawnDeferred &&
       a.spawnFailure?.reason === b.spawnFailure?.reason &&
       a.spawnFailure?.detail === b.spawnFailure?.detail &&
@@ -355,6 +357,8 @@ function TerminalViewComponent({
   const retireHandoverForRestartRef=useRef<(()=>void)|null>(null);
   const [historyNotice,setHistoryNotice]=useState<string|null>(null);
   const recoveryNoticeRef=useRef(terminal.recoveryNotice);recoveryNoticeRef.current=terminal.recoveryNotice;
+  const recoveryGenerationRef=useRef(terminal.recoveryGeneration);
+  useEffect(()=>{recoveryGenerationRef.current=terminal.recoveryGeneration;},[terminal.recoveryGeneration]);
   const disconnectedRef = useRef(!!terminal.disconnected);
   disconnectedRef.current = !!terminal.disconnected;
   useEffect(() => {
@@ -780,7 +784,7 @@ function TerminalViewComponent({
     term.open(containerRef.current);
     if (disconnectedRef.current) {
       if(terminal.disconnectedReason)setHistoryNotice(terminal.disconnectedReason);
-      term.write("\r\n\x1b[1;33m[terminal host disconnected - the process may still be running. Input is disabled while disconnected. Restart explicitly to stop it and try again.]\x1b[0m\r\n");
+      term.write("\r\n\x1b[1;33m[terminal host disconnected - the process may still be running. Input is disabled while disconnected. Use Settings > Diagnostics > PTY host > Restart to review stopping it.]\x1b[0m\r\n");
     }
 
     const onTerminalLinkClick = (event: globalThis.MouseEvent) => {
@@ -845,9 +849,13 @@ function TerminalViewComponent({
         // Also queue RIS behind already-buffered parser writes: an old async
         // write cannot repaint consumed output after this synchronous reset.
         term.reset();term.write("\x1bc");richInputRef.current=false;disconnectedRef.current=false;
-        recoveryNoticeRef.current=event.notice;setHistoryNotice(event.notice);
+        recoveryNoticeRef.current=event.notice;recoveryGenerationRef.current=event.generation;setHistoryNotice(event.notice);
         displayGeneration=event.generation;replayToken=event.replayToken;appliedToken=false;awaitingReplay=true;
         handoverInputPausedRef.current=true;term.options.disableStdin=true;
+      } else if(event.type === "recovery-state") {
+        if(disconnectedRef.current||(recoveryGenerationRef.current&&recoveryGenerationRef.current!==event.generation))return;
+        recoveryGenerationRef.current=event.generation;
+        recoveryNoticeRef.current=event.notice;setHistoryNotice(event.notice);
       } else if (event.type === "data") {
         // Startup output is retained by the host. Discard broadcasts until the
         // replay fence, then append exactly the suffix after captured B once.
@@ -897,7 +905,7 @@ function TerminalViewComponent({
       } else if (event.type === "disconnected") {
         disconnectedRef.current = true; term.options.disableStdin = true;
         if(event.reason)setHistoryNotice(event.reason);
-        term.write("\r\n\x1b[1;33m[terminal host disconnected - the process may still be running. Input is disabled while disconnected. Restart explicitly to stop it and try again.]\x1b[0m\r\n");
+        term.write("\r\n\x1b[1;33m[terminal host disconnected - the process may still be running. Input is disabled while disconnected. Use Settings > Diagnostics > PTY host > Restart to review stopping it.]\x1b[0m\r\n");
       } else if (event.type === "no-session") {
         awaitingReplay=false;handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;
         // Attach-only re-mount with no live PTY: the process ended while we were
@@ -1543,7 +1551,7 @@ function TerminalViewComponent({
         onWheelCapture={() => setIsScrollbarHidden(false)}
         onContextMenu={openTerminalContextMenu}
       >
-        {(historyNotice||terminal.recoveryNotice||terminal.recoveryScreenUnknown)&&<div data-testid="terminal-history-notice" role="status" style={{position:"absolute",top:0,left:0,right:0,zIndex:3,padding:"2px 8px",fontSize:11,background:"var(--aya-term-bg)",pointerEvents:"none"}}>{historyNotice ?? terminal.recoveryNotice}{terminal.recoveryScreenUnknown ? " Screen unknown after the terminal host restarted; team messages remain held until a full redraw." : ""}</div>}
+        {(historyNotice||terminal.recoveryNotice||terminal.recoveryScreenUnknown)&&<div data-testid="terminal-history-notice" role="status" style={{position:"absolute",top:0,left:0,right:0,zIndex:3,padding:"2px 8px",fontSize:11,background:"var(--aya-term-bg)",pointerEvents:"none"}}>{historyNotice ?? terminal.recoveryNotice}{terminal.recoveryScreenUnknown ? " Screen unknown after the terminal host restarted; team messages remain held until a full redraw." : ""}{terminal.recoveryRetryable&&<button type="button" data-testid="terminal-recovery-retry" style={{pointerEvents:"auto",marginLeft:8}} onClick={()=>{void window.aya.retryPtyHostRecovery().catch(error=>setHistoryNotice(`Could not try terminal host recovery: ${String(error)}`));}}>Try again</button>}</div>}
         <div data-testid="xterm-frame" className="aya-xterm-frame" ref={containerRef} />
         {isRestoring && (
           <div className="aya-terminal-restoring" aria-live="polite">
