@@ -59,8 +59,8 @@ test('existing B3 cancel alone revokes planned credential release and resumes th
  finally{c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
 });
 
-test('announced empty-owner relaunch completes without starting or probing a replacement owner',{timeout:20000},async()=>{
- const old=await fixture('publish-empty');assert.equal(old.ownerPid,null);
+for(const mode of ['publish-empty','publish-empty-recovered'])test(`announced ${mode} validates empty continuity and permits later fresh pane I/O`,{timeout:20000},async()=>{
+ const old=await fixture(mode);assert.equal(old.ownerPid,null);
  const ticket=await readAuthTransferTicket(old.file),socket=net.createConnection(path.join(process.env.AYA_HOME,'pty-host.sock'));await once(socket,'connect');
  const key=await redeemHostCapability(socket,ticket,{pid:process.pid,startIdentity:ownerProcessStartIdentity(process.pid)}),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));c.hostAuthKey=key;
  try{
@@ -71,6 +71,15 @@ test('announced empty-owner relaunch completes without starting or probing a rep
   const continuity=validateTransferredOwnerContinuity(result,{pid:ticket.hostPid,startIdentity:ticket.hostStartIdentity},status);assert.equal(continuity.bootstrap,null);continuity.credential.fill(0);
   assert.equal(await c.request({id:0,type:'auth-transfer-complete',attempt:ticket.attempt,receipt:continuity.receipt}),true);
   const next=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'c'.repeat(64),deadline:Date.now()+120000});await c.request({id:0,type:'auth-transfer-cancel',attempt:next.attempt});
-  assert.equal((await c.request({id:0,type:'version'})).owner,null);assert.equal(fs.existsSync(path.join(process.env.AYA_HOME,'pty-owner/record.json')),false);await c.shutdown();
+  assert.equal((await c.request({id:0,type:'version'})).owner,null);assert.equal(fs.existsSync(path.join(process.env.AYA_HOME,'pty-owner/record.json')),false);
+  const events=[];c.attachWebContents({isDestroyed:()=>false,send:(_channel,event)=>events.push(event)});
+  const freshOutput=()=>events.filter(e=>e.ptyId==='fresh-after-empty'&&e.type==='data').map(e=>e.chunk).join('');
+  await c.spawn({ptyId:'fresh-after-empty',agent:'custom',command:'stty -echo; printf READY_FRESH; read line; printf "FRESH:%s\\n" "$line"; exit 23',cwd:process.env.HOME,cols:80,rows:24});
+  const until=Date.now()+5000;while(!freshOutput().includes('READY_FRESH')){if(Date.now()>until)throw Error('fresh empty-owner spawn failed');await new Promise(resolve=>setTimeout(resolve,5));}
+  assert.ok(await c.getPid('fresh-after-empty'));await c.write('fresh-after-empty','AFTER_EMPTY\n');
+  while(!freshOutput().includes('FRESH:AFTER_EMPTY')){if(Date.now()>until)throw Error('fresh empty-owner input failed');await new Promise(resolve=>setTimeout(resolve,5));}
+  while(!c.endedBootPanes.has('fresh-after-empty')){if(Date.now()>until)throw Error('fresh empty-owner exit missing');await new Promise(resolve=>setTimeout(resolve,5));}
+  assert.equal(c.endedBootPanes.get('fresh-after-empty'),23);await c.shutdown();
  }finally{c.dispose();c.dropSocket();key.fill(0);await cleanupNativeOwner(process.env.AYA_HOME);}
 });
+

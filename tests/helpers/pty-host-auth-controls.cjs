@@ -4,13 +4,18 @@ const {writeAuthTransferTicket,authTransferTicketPath}=require('../../dist-elect
 const {isPtyHostRequest}=require('../../dist-electron/pty-host-protocol.js');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),wait=async f=>{const end=Date.now()+8000;while(!await f()){if(Date.now()>end)throw Error('control fixture readiness timeout');await sleep(5);}};
 (async()=>{
- const c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true,mode:0o700});let keep=false;
+ const c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));
+ const recovered=[];if(process.argv[2]==='publish-empty-recovered')c.enableCrashRecovery({log:(event,fields)=>recovered.push({event,...fields})});fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true,mode:0o700});let keep=false;
  try{
   await c.spawn({ptyId:'kept',agent:'custom',command:'stty -echo; printf READY_CONTROLS; cat',cwd:process.env.HOME,cols:80,rows:24});await wait(async()=>(await c.getBuffer('kept')).includes('READY_CONTROLS'));
   const mode=process.argv[2];
-  if(mode==='publish-empty'){await c.kill('kept');await wait(async()=>!(await c.hostStatus()).owner);}
+  if(mode==='publish-empty-recovered'){
+   const before=await c.hostStatus();process.kill(before.pid,'SIGKILL');await wait(()=>recovered.some(e=>e.event==='pty-crash-recovery'&&e.state==='recovered'));
+   assert.equal((await c.hostStatus()).owner.pid,before.owner.pid);
+  }
+  if(mode==='publish-empty'||mode==='publish-empty-recovered'){await c.kill('kept');await wait(async()=>!(await c.hostStatus()).owner);}
   const pid=await c.getPid('kept'),status=await c.hostStatus();
-  if(mode==='publish'||mode==='publish-empty'){
+  if(mode==='publish'||mode==='publish-empty'||mode==='publish-empty-recovered'){
    const deadline=Date.now()+120000,nonce='a'.repeat(64),budget=performance.now()+2000;
    const reserved=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce,deadline});
    const t={format:2,...reserved,nonce},file=authTransferTicketPath(process.env.AYA_HOME,t.attempt);

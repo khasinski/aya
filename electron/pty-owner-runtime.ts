@@ -248,6 +248,11 @@ export class OwnerRuntime {
       await new Promise(resolve => setTimeout(resolve, 10));
     }
     await this.recoverRetainedGroups(this.ownerExit !== null && await this.ownerExit === 0);
-    removeOwnerRecord(this.record); this.inventory.clear(); this.disconnected.clear(); runtime = null; ready = null;
+    removeOwnerRecord(this.record);
+    // The original recovery instance was orderly retired and its survivors
+    // settled. Future fresh panes may now create an owner with the same secret.
+    // Unexpected death/unknown or failed cleanup never reaches this boundary.
+    if(recoveryOwner?.pid===this.record.pid&&recoveryOwner.startTime===this.record.startTime&&recoveryOwner.instanceId===this.record.instanceId&&recoveryOwner.binaryHash===this.record.binaryHash)recoveryOwner=null;
+    this.inventory.clear(); this.disconnected.clear(); runtime = null; ready = null;
   }
 }
