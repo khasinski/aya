@@ -19,6 +19,7 @@
   },
   "include": [
     "**/*.ts",
-    "screen-rules/*.json"
+    "screen-rules/*.json",
+    "pty-pane-limit.json"
   ]
 }

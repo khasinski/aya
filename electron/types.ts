@@ -283,6 +283,7 @@ export type SpawnFailureReason =
   | "preset-empty-command"
   | "agent-config-dir-create-failed"
   | "command-not-found"
+  | "pane-limit-reached"
   | "node-pty-spawn-error"
   | "spawn-prepare-failed";
 

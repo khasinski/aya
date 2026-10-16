@@ -8,6 +8,7 @@ import path from 'node:path';
 import {mock} from 'node:test';
 const require=createRequire(import.meta.url);
 const {writeCheckpoint,readCheckpoint,acknowledgeCheckpoint,discardCheckpoint}=require('../dist-electron/pty-checkpoint-store.js');
+const {MAX_CHECKPOINT_PANES}=require('../dist-electron/vt-checkpoint-schema.js');
 const hash=data=>createHash('sha256').update(data).digest('hex');
 async function fixture(fn){
  await fs.mkdir('test-results',{recursive:true});const parent=await fs.mkdtemp(path.resolve('test-results/checkpoint-'));
@@ -15,17 +16,22 @@ async function fixture(fn){
 }
 const part=(id='p')=>({id,generation:'generation',data:Buffer.from(JSON.stringify({screen:'retained screen',tail:'\x1b['}))});
 const collect=async(root,receipt,now)=>{const result=[];for await(const p of readCheckpoint(root,receipt,now))result.push(p);return result;};
-test('escrow streams 25 separate panes through private files and unlinks only after ACK',()=>fixture(async(root)=>{
+test(`escrow streams ${MAX_CHECKPOINT_PANES} separate panes through private files and unlinks only after ACK`,()=>fixture(async(root)=>{
  let produced=0;
- async function* source(){for(let n=0;n<25;n++){produced++;yield part(`pane-${n}`);}}
- const receipt=await writeCheckpoint(root,source());assert.equal(produced,25);
- const directory=path.join(root,receipt.nonce),names=await fs.readdir(directory);assert.equal(names.length,26);
+ async function* source(){for(let n=0;n<MAX_CHECKPOINT_PANES;n++){produced++;yield part(`pane-${n}`);}}
+ const receipt=await writeCheckpoint(root,source());assert.equal(produced,MAX_CHECKPOINT_PANES);
+ const directory=path.join(root,receipt.nonce),names=await fs.readdir(directory);assert.equal(names.length,MAX_CHECKPOINT_PANES+1);
  assert.equal((await fs.stat(root)).mode&0o777,0o700);assert.equal((await fs.stat(directory)).mode&0o777,0o700);
  for(const name of names)assert.equal((await fs.stat(path.join(directory,name))).mode&0o777,0o600);
- const restored=await collect(root,receipt);assert.deepEqual(restored,Array.from({length:25},(_,n)=>part(`pane-${n}`)));
- assert.equal((await fs.readdir(directory)).length,26);
+ const restored=await collect(root,receipt);assert.deepEqual(restored,Array.from({length:MAX_CHECKPOINT_PANES},(_,n)=>part(`pane-${n}`)));
+ assert.equal((await fs.readdir(directory)).length,MAX_CHECKPOINT_PANES+1);
  await acknowledgeCheckpoint(root,receipt);await assert.rejects(fs.stat(directory),{code:'ENOENT'});
  await assert.rejects(collect(root,receipt),{code:'ENOENT'});
+}));
+test(`escrow refuses pane ${MAX_CHECKPOINT_PANES+1} and cleans its partial transaction`,()=>fixture(async(root)=>{
+ async function* source(){for(let n=0;n<=MAX_CHECKPOINT_PANES;n++)yield part(`pane-${n}`);}
+ await assert.rejects(writeCheckpoint(root,source()),/pane part/);
+ assert.deepEqual(await fs.readdir(root),[]);
 }));
 for(const [name,corrupt] of [
  ['truncated pane',async(dir)=>fs.truncate(path.join(dir,'0.json'),1)],
@@ -47,7 +53,7 @@ test('expired escrow refuses; nonce traversal and bad receipts never address a f
  assert.equal((await collect(root,receipt,1001)).length,1);
 }));
 test('writer removes partial escrow on duplicate ID, oversized pane, excess panes and producer error',()=>fixture(async(root)=>{
- for(const source of [[part(),part()],Array.from({length:26},(_,n)=>part(String(n))),[{...part(),data:Buffer.alloc(0)}]]){
+ for(const source of [[part(),part()],Array.from({length:MAX_CHECKPOINT_PANES+1},(_,n)=>part(String(n))),[{...part(),data:Buffer.alloc(0)}]]){
   await assert.rejects(writeCheckpoint(root,source));assert.deepEqual(await fs.readdir(root),[]);
  }
  async function* broken(){yield part();throw Error('producer failed');}

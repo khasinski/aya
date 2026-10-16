@@ -5,7 +5,9 @@
 #define OWNER_VERSION 2
 #define OWNER_HEADER 16
 #define OWNER_MAX_FRAME (256u * 1024u)
-#define OWNER_MAX_PANES 25
+#ifndef OWNER_MAX_PANES
+#error OWNER_MAX_PANES must come from electron/pty-pane-limit.json via the owner build
+#endif
 #define OWNER_MAX_CLIENTS 8
 #define OWNER_MAX_ID 128
 #define OWNER_AUTH_BYTES 32

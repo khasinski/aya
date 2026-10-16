@@ -6,6 +6,7 @@ import {writeCheckpoint,readCheckpoint,acknowledgeCheckpoint,type CheckpointRece
 import {encodeCheckpointPayload,decodeCheckpointPayload,checkpointPayloadSize} from "./pty-checkpoint-payload";
 import {parseRendererCheckpoint,MAX_RENDERER_PANE_BYTES,MAX_RENDERER_TOTAL_BYTES} from "./renderer-vt-checkpoint";
 import {MAX_CHECKPOINT_BYTES} from "./vt-checkpoint-schema";
+import {MAX_PTY_PANES} from "./pty-pane-limits";
 import {PTY_HANDOVER_DISPLAY_DIRECTORY} from "./pty-host-paths";
 import type {HostHandoverState} from "./pty-host-handover";
 import type {HandoverDisplay} from "./types";
@@ -85,7 +86,7 @@ export class HandoverDisplays {
     if(receipt)await acknowledgeCheckpoint(PTY_HANDOVER_DISPLAY_DIRECTORY,receipt);
   }
   installRecovery(panes:Array<{id:string;generation:string;notice:string}>):void {
-    if(panes.length>25||new Set(panes.map(p=>p.id)).size!==panes.length)throw Error("Recovery display inventory refused");
+    if(panes.length>MAX_PTY_PANES||new Set(panes.map(p=>p.id)).size!==panes.length)throw Error("Recovery display inventory refused");
     for(const p of panes)this.restored.set(p.id,{data:null,generation:p.generation,offset:0,notice:p.notice});
   }
   clear():void {this.restored.clear();}

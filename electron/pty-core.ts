@@ -11,6 +11,7 @@ import * as path from "node:path";
 import type * as PtyModule from "node-pty";
 import { OwnerPty } from "./pty-owner-adapter";
 import {MAX_CHECKPOINT_BYTES,MAX_VT_SNAPSHOT_BYTES} from "./vt-checkpoint-schema";
+import {MAX_PTY_PANES} from "./pty-pane-limits";
 import type { VtCheckpoint } from "./vt-checkpoint";
 import { validatePaneCoreCheckpoint, validateCoreHandoverPart, checkpointGeneration, type CoreHandoverPart, type EndedCoreCheckpoint, type PaneCoreCheckpoint } from "./pty-core-checkpoint";
 import { currentOwnerRuntime, getOwnerRuntime } from "./pty-owner-runtime";
@@ -230,7 +231,7 @@ export async function freezePtyCore(timeoutMs = 1000, maxBytes = MAX_CHECKPOINT_
       if(endedBytes>maxBytes)throw Error("Retained terminal exits exceed the aggregate core checkpoint budget");
       frozenEndedPanes.set(id,dto);
     }
-    if(frozenEndedPanes.size+ptys.size>25)throw Error("Too many terminal checkpoint records");
+    if(frozenEndedPanes.size+ptys.size>MAX_PTY_PANES)throw Error("Too many terminal checkpoint records");
     if(!handoverGated||epoch!==handoverEpoch)throw Error("Terminal handover was cancelled");
     const candidates=await Promise.all([...ptys].map(async([id,child])=>{
       try{return {id,child,adapter:await child.freezeForHandover(timeoutMs)};}
@@ -409,7 +410,7 @@ export async function acknowledgePtyExit(id:string,generation:number,event:numbe
  if(!pane||!pane.exited||pane.generation!==generation||pane.event!==event)return "stale";
  await owner.retired(pane);
  retiredOwnerExits.delete(id);retiredOwnerExits.set(id,{generation,event,ownerInstance:owner.record.instanceId});
- while(retiredOwnerExits.size>25)retiredOwnerExits.delete(retiredOwnerExits.keys().next().value!);
+ while(retiredOwnerExits.size>MAX_PTY_PANES)retiredOwnerExits.delete(retiredOwnerExits.keys().next().value!);
  if(pendingOwnerExits.get(id)===pane)pendingOwnerExits.delete(id);
  return "retired";
 }
@@ -602,7 +603,7 @@ function reportSpawnFailure(
   const banner = `\r\n\x1b[1;31maya: \x1b[0m\x1b[31m${message}\x1b[0m\r\n\r\n`;
   sink.sendPtyEvent({ type: "spawn-failed", ptyId, reason, detail: message });
   sink.sendPtyEvent({ type: "data", ptyId, chunk: banner });
-  sink.sendPtyEvent({ type: "exit", ptyId, exitCode: COMMAND_NOT_FOUND_EXIT_CODE });
+  if (reason !== "pane-limit-reached") sink.sendPtyEvent({ type: "exit", ptyId, exitCode: COMMAND_NOT_FOUND_EXIT_CODE });
 }
 
 const PANE_TERM = "xterm-256color";
@@ -761,6 +762,11 @@ export async function spawnPty(req: SpawnRequest, sink: PtyEventSink, services: 
     } catch (err) {
       if (currentOwnerRuntime()?.incompatible) {
         if (!sink.isDestroyed()) sink.sendPtyEvent({ type: "disconnected", ptyId: req.ptyId });
+        return;
+      }
+      if ((err as {code?:string})?.code === "OWNER_REJECTED" && (err as Error).message === "Pane limit reached") {
+        reportSpawnFailure(sink, req.ptyId, "pane-limit-reached",
+          `Aya can run at most ${MAX_PTY_PANES} terminals at once. Close a terminal you no longer need, then restart this tab.`);
         return;
       }
       reportSpawnFailure(
@@ -1215,7 +1221,7 @@ export function shutdownPtyChildren(
  * A pending spawn/exit or unsupported opaque record refuses credential export;
  * it never guesses a launch or alters a running pane. */
 export function ptyOwnerContinuityPanes(inventory:OwnerPane[]):RecoveryPane[] {
-  if(shuttingDown||handoverGated||spawning.size||inventory.length>25||inventory.length!==ptys.size||new Set(inventory.map(p=>p.id)).size!==inventory.length)throw Error("Terminal recovery manifest is not stable");
+  if(shuttingDown||handoverGated||spawning.size||inventory.length>MAX_PTY_PANES||inventory.length!==ptys.size||new Set(inventory.map(p=>p.id)).size!==inventory.length)throw Error("Terminal recovery manifest is not stable");
   return inventory.map(p=>{
     const child=ptys.get(p.id),request=spawnRequests.get(p.id),launch=launches.get(p.id),spawnedAt=spawnTimes.get(p.id),identity=child?.recoveryIdentity();
     if(p.exited||p.acknowledged||!p.startIdentity||!child||!request||!launch||spawnedAt===undefined||!identity||identity.generation!==p.generation||identity.pid!==p.pid||identity.startIdentity!==p.startIdentity)throw Error("Terminal recovery manifest is incomplete");

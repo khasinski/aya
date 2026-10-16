@@ -142,7 +142,8 @@ test("lease identifies a process instance, releases a reused PID and fails close
   const dir = fs.mkdtempSync(path.resolve("test-results/owner-identity-"));
   try {
     const executable = path.join(dir, "identity");
-    execFileSync(process.env.CC || "cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", "tests/helpers/pty-owner-identity.c", "-o", executable, ...(process.platform === "linux" ? ["-lutil"] : [])]);
+    const paneLimit = JSON.parse(fs.readFileSync("electron/pty-pane-limit.json", "utf8")).maxPanes;
+    execFileSync(process.env.CC || "cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", `-DOWNER_MAX_PANES=${paneLimit}`, "tests/helpers/pty-owner-identity.c", "-o", executable, ...(process.platform === "linux" ? ["-lutil"] : [])]);
     execFileSync(executable);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
@@ -164,7 +165,8 @@ test("Linux received masters have CLOEXEC before the worker reaches its fcntl fa
 
 function compileOwnerFixture(name) {
   const dir = fs.mkdtempSync(path.resolve("test-results/owner-native-")), executable = path.join(dir, name);
-  execFileSync(process.env.CC || "cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", `tests/helpers/${name}.c`, "-o", executable, ...(process.platform === "linux" ? ["-lutil"] : [])]);
+  const paneLimit = JSON.parse(fs.readFileSync("electron/pty-pane-limit.json", "utf8")).maxPanes;
+  execFileSync(process.env.CC || "cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", `-DOWNER_MAX_PANES=${paneLimit}`, `tests/helpers/${name}.c`, "-o", executable, ...(process.platform === "linux" ? ["-lutil"] : [])]);
   return { dir, executable };
 }
 test("orphan recovery signals one verified process instance and refuses exit or PID reuse between checks", () => {

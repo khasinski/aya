@@ -7,6 +7,7 @@ import {settleOwnerSurvivors} from "./pty-owner-survivors";
 import { readProcInfo } from "./pty-host-registry";
 import { OWNER_SOCKET, prepareOwnerDirectory, ownerBinaryHash, readOwnerRecord, ownerRecordIsLive,
   ownerReaderIsLive, writeOwnerRecord, removeOwnerRecord, type OwnerRecord } from "./pty-owner-registry";
+import { MAX_PTY_PANES } from "./pty-pane-limits";
 
 // Main may retain the secret for a replacement JS host. Standalone host/test
 // launches generate it here. It is never written to a registry or environment.
@@ -69,13 +70,13 @@ export class OwnerRuntime {
   }
   uncertainSpawn(id: string): void {
     this.incompatible = true;
-    this.record.uncertain = [...new Set([...(this.record.uncertain ?? []), id])].slice(0, 25);
+    this.record.uncertain = [...new Set([...(this.record.uncertain ?? []), id])].slice(0, MAX_PTY_PANES);
     this.persist();
   }
   beginSpawn(id?: string): string | undefined {
     const generation = id ? randomBytes(16).toString("hex") : undefined;
     if (id) {
-      if ((this.record.spawnIntents?.length ?? 0) >= 25) throw new Error("Too many pending PTY spawn intents");
+      if ((this.record.spawnIntents?.length ?? 0) >= MAX_PTY_PANES) throw new Error("Too many pending PTY spawn intents");
       this.record.spawnIntents = [...(this.record.spawnIntents ?? []), { id, generation: generation! }];
       this.record.uncertain = [...new Set([...(this.record.uncertain ?? []), id])];
       this.persist(); // durable intent before SPAWN can fork, even if no reply arrives
