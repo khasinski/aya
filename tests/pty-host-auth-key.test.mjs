@@ -65,3 +65,17 @@ test('failed creation removes only its own incomplete inode, without replacing a
  }finally{fs.writeFileSync=write;}
  assert.equal(fs.existsSync(file(dir)),false);assert.equal(createHostAuthKey(dir).length,32);
 }));
+test('a racing creator refuses a pending writer without repairing its incomplete file',()=>home(dir=>{
+ const write=fs.writeFileSync;let raced=false,refused=false;
+ try{
+  fs.writeFileSync=(...args)=>{
+   if(typeof args[0]==='number'&&!raced){
+    raced=true;assert.equal(fs.statSync(file(dir)).size,0);const inode=fs.statSync(file(dir)).ino;
+    assert.throws(()=>createHostAuthKey(dir),{code:'PTY_HOST_AUTH_UNAVAILABLE'});refused=true;
+    assert.equal(fs.statSync(file(dir)).ino,inode);assert.equal(fs.statSync(file(dir)).size,0);
+   }
+   return write(...args);
+  };
+  const winner=createHostAuthKey(dir);assert.ok(refused);assert.deepEqual(readHostAuthKey(dir),winner);assert.deepEqual(createHostAuthKey(dir),winner);
+ }finally{fs.writeFileSync=write;}
+}));

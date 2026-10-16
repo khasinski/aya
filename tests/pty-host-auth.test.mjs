@@ -41,6 +41,12 @@ test('client proofs cannot be replayed on another connection or host instance',(
   assert.equal(next.server.authenticated,false);
  }
 });
+test('changing only the challenged host instance invalidates the original server proof',()=>{
+ const {server,customer}=pair(),challenge=JSON.parse(server.receive(customer.hello));
+ challenge.instance='b'.repeat(64);
+ assert.throws(()=>customer.receive(JSON.stringify(challenge)),{code:'PTY_HOST_AUTH_REQUIRED'});
+ assert.equal(customer.authenticated,false);
+});
 test('server proof cannot reflect as a client proof; final server ready proof is required',()=>{
  const {server,customer}=pair(),challenge=JSON.parse(server.receive(customer.hello));
  const response=customer.receive(JSON.stringify(challenge));
@@ -56,6 +62,15 @@ test('whole-handshake deadline includes both phases, and expiry cannot be retrie
  assert.throws(()=>server.receive(response),/authentication required/);
  assert.throws(()=>customer.receive(JSON.stringify({type:'pty-auth-ready',proof:'a'.repeat(64)})),/authentication required/);
  now=0;assert.throws(()=>server.receive(response),/authentication required/);
+});
+test('a cryptographically valid ready arriving at the client deadline is refused and latched',()=>{
+ let clientNow=0;
+ const server=new HostAuthServer(key,host,client,instance,()=>0),customer=new HostAuthClient(key,host,client,()=>clientNow);
+ const response=customer.receive(server.receive(customer.hello)),ready=server.receive(response);
+ assert.equal(server.authenticated,true);clientNow=5000;
+ assert.throws(()=>customer.receive(ready),{code:'PTY_HOST_AUTH_REQUIRED'});
+ assert.equal(customer.authenticated,false);clientNow=0;
+ assert.throws(()=>customer.receive(ready),{code:'PTY_HOST_AUTH_REQUIRED'});
 });
 test('RPC, malformed, oversized, extra fields and unsupported auth versions fail closed without exposing secrets',()=>{
  assert.equal(HOST_AUTH_FRAME_BYTES,1024);
