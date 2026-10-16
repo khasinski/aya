@@ -287,7 +287,7 @@ export type SpawnFailureReason =
   | "spawn-prepare-failed";
 
 export type PtyEvent =
-  | { type: "data"; ptyId: string; chunk: string; replay?: boolean; reset?: boolean; replayToken?: string }
+  | { type: "data"; ptyId: string; chunk: string; replay?: boolean; reset?: boolean; replayToken?: string; replayModeUnknown?: true }
   | { type: "exit"; ptyId: string; exitCode: number; ownerExit?: {generation:number;event:number} }
   | {
       type: "spawn-failed";

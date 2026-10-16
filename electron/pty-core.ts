@@ -91,12 +91,15 @@ interface OutputBuffer {
   searchCache?: { version: number; cleaned: string; lower: string };
   /** Mode state at the first retained byte, including a split CSI carry. */
   replayModes: ReplayModeTracker;
+  /** False only for legacy ended checkpoints with no VT state to reconstruct it. */
+  replayModesKnown: boolean;
 }
 const outputBuffers = new Map<string, OutputBuffer>();
 function restoreOutputBuffer(value: PaneCoreCheckpoint["output"], legacyCurrentModes?: ReplayModeState): OutputBuffer {
   return { chunks: [...value.chunks], total: value.total, version: value.version, end: value.end,
     replayModes: value.replayModes ? validateReplayModeTracker(value.replayModes) :
-      legacyCurrentModes ? legacyReplayModeTracker(legacyCurrentModes, value.chunks.join("")) : initialReplayModeTracker() };
+      legacyCurrentModes ? legacyReplayModeTracker(legacyCurrentModes, value.chunks.join("")) : initialReplayModeTracker(),
+    replayModesKnown: value.replayModes !== undefined || legacyCurrentModes !== undefined };
 }
 // Restored processes read immediately. Keep their replay and real exit outcome
 // until the first renderer attaches, even if the child exits during that gap.
@@ -212,9 +215,10 @@ export async function freezePtyCore(timeoutMs = 1000, maxBytes = MAX_CHECKPOINT_
     let endedBytes=0;
     for(const [id,pane] of restoredPanes){
       if(pane.exitCode===undefined||ptys.has(id))continue;
-      const output=outputBuffers.get(id)??{chunks:[],total:0,version:0,end:0,replayModes:initialReplayModeTracker()};
+      const output=outputBuffers.get(id)??{chunks:[],total:0,version:0,end:0,replayModes:initialReplayModeTracker(),replayModesKnown:true};
       const nativeExit=pendingOwnerExits.get(id);
-      const dto:EndedCoreCheckpoint={format:1,kind:"ended",id,generation:pane.generation,exitCode:pane.exitCode,...(nativeExit?{ownerExit:{generation:nativeExit.generation,event:nativeExit.event}}:{}),output:structuredClone({chunks:output.chunks,total:output.total,version:output.version,end:output.end,replayModes:output.replayModes})};
+      const outputDto={chunks:output.chunks,total:output.total,version:output.version,end:output.end,...(output.replayModesKnown?{replayModes:structuredClone(output.replayModes)}:{})};
+      const dto:EndedCoreCheckpoint={format:1,kind:"ended",id,generation:pane.generation,exitCode:pane.exitCode,...(nativeExit?{ownerExit:{generation:nativeExit.generation,event:nativeExit.event}}:{}),output:outputDto};
       await validateCoreHandoverPart(dto);
       if(!handoverGated||epoch!==handoverEpoch)throw Error("Terminal handover was cancelled");
       endedBytes+=Buffer.byteLength(JSON.stringify(dto));
@@ -241,7 +245,7 @@ export async function freezePtyCore(timeoutMs = 1000, maxBytes = MAX_CHECKPOINT_
         if(!handoverGated||epoch!==handoverEpoch)throw new Error("Terminal handover was cancelled");
         const vt: VtCheckpoint = await checkpointVtPane(id);
         if (ptys.get(id) !== child || !spawnRequests.has(id) || !launches.has(id)) throw new Error("The pane changed during handover");
-        const output = outputBuffers.get(id) ?? {chunks: [], total: 0, version: 0, end: 0, replayModes: initialReplayModeTracker()};
+        const output = outputBuffers.get(id) ?? {chunks: [], total: 0, version: 0, end: 0, replayModes: initialReplayModeTracker(), replayModesKnown:true};
         const dto: PaneCoreCheckpoint = {
           format: 1, id, adapter, request: spawnRequests.get(id)!, launch: launches.get(id)!, spawnedAt: spawnTimes.get(id)!,
           output: {chunks: [...output.chunks], total: output.total, version: output.version, end: output.end, replayModes: structuredClone(output.replayModes)},
@@ -382,7 +386,7 @@ export async function recoverPtyCorePane(pane:RecoveryPane,sink:PtyEventSink):Pr
   try{child=await OwnerPty.attach({pane:actual,process:pane.launch.command,readBytes:0,decoderCarry:""});}
   catch(error){closeVtPane(pane.id);throw error;}
   ptys.set(pane.id,child);launches.set(pane.id,pane.launch);spawnRequests.set(pane.id,pane.request);spawnTimes.set(pane.id,pane.spawnedAt);
-  outputBuffers.set(pane.id,{chunks:[],total:0,version:0,end:0,replayModes:initialReplayModeTracker()});
+  outputBuffers.set(pane.id,{chunks:[],total:0,version:0,end:0,replayModes:initialReplayModeTracker(),replayModesKnown:true});
   restoredPanes.set(pane.id,{generation:snapshotOf(mirror).generation,attached:false});
   if(!actual.exited){child.resize(Math.max(2,actual.cols-1),actual.rows);child.resize(actual.cols,actual.rows);}
   installChildObservers(pane.request,child,sink,()=>{});
@@ -413,7 +417,7 @@ export interface PtyEventSink {
 function appendToOutputBuffer(ptyId: string, chunk: string): void {
   let buffer = outputBuffers.get(ptyId);
   if (!buffer) {
-    buffer = { chunks: [], total: 0, version: 0, end: 0, replayModes: initialReplayModeTracker() };
+    buffer = { chunks: [], total: 0, version: 0, end: 0, replayModes: initialReplayModeTracker(), replayModesKnown:true };
     outputBuffers.set(ptyId, buffer);
   }
   buffer.chunks.push(chunk);
@@ -449,7 +453,7 @@ export function getBufferedOutput(ptyId: string): string {
 /** Full replay begins with the mode state at the first retained byte. */
 export function getBufferedReplayOutput(ptyId: string): string {
   const buffer = outputBuffers.get(ptyId);
-  return buffer ? replayModePrefix(buffer.replayModes) + buffer.chunks.join("") : "";
+  return buffer ? (buffer.replayModesKnown ? replayModePrefix(buffer.replayModes) : "") + buffer.chunks.join("") : "";
 }
 
 /** A renderer checkpoint is valid only while every byte since B is retained.
@@ -475,7 +479,7 @@ function replayOutput(req: SpawnRequest, sink: PtyEventSink): void {
     if (reset) ptyLog.append("handover-history-from-replay", {ptyId:req.ptyId,reason:"checkpoint boundary unavailable"});
   }
   // An empty replay is still the fence after restoring a captured display.
-  if (chunk || req.replayAfter) sink.sendPtyEvent({type:"data",ptyId:req.ptyId,chunk,replay:true,...(req.replayAfter?.token?{replayToken:req.replayAfter.token}:{}),...(reset !== undefined ? {reset} : {})});
+  if (chunk || req.replayAfter) sink.sendPtyEvent({type:"data",ptyId:req.ptyId,chunk,replay:true,...(outputBuffers.get(req.ptyId)?.replayModesKnown===false?{replayModeUnknown:true}:{}),...(req.replayAfter?.token?{replayToken:req.replayAfter.token}:{}),...(reset !== undefined ? {reset} : {})});
 }
 
 /** Strip ANSI escape sequences and control chars so search snippets are

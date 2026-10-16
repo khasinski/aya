@@ -27,15 +27,26 @@ test('ended replay restores without a master and retires only after its applied 
  let attaches=0;t.mock.method(OwnerPty,'attach',async()=>{attaches++;throw Error('unexpected native attach');});
  const events=[],sink={isDestroyed:()=>false,sendPtyEvent:e=>events.push(e)},dto=ended();
  await core.restorePtyCorePane(dto,sink);assert.equal(core.getPtyPid(dto.id),null);assert.equal(core.getBufferedOutput(dto.id),'HISTORYLAST_SUFFIX');
+ assert.equal(core.getBufferedReplayOutput(dto.id),'HISTORYLAST_SUFFIX','a legacy ended record must not invent an all-off mode prefix');
  const req={ptyId:dto.id,command:'never spawn',cwd:home,cols:80,rows:24,attachOnly:true,replayAfter:{generation:dto.generation,offset:7,token:'current'}};
  await core.spawnPty(req,sink,{prepare:()=>{throw Error('must never spawn');}});
- assert.equal(events.find(e=>e.type==='data').chunk,'LAST_SUFFIX');assert.deepEqual(events.filter(e=>e.type==='exit').map(e=>e.exitCode),[23]);
+ const replay=events.find(e=>e.type==='data');assert.equal(replay.chunk,'LAST_SUFFIX');assert.equal(replay.replayModeUnknown,true,'legacy ended output has no VT snapshot from which its mode boundary can be recovered');assert.deepEqual(events.filter(e=>e.type==='exit').map(e=>e.exitCode),[23]);
  assert.equal(core.acknowledgePtyRestoration(dto.id,dto.generation,'stale'),false);
  // A valid live record with this same id still must not attach over the exit.
  openVtPane(dto.id,80,24,()=>{},'custom',true);const vt=await checkpointVtPane(dto.id);closeVtPane(dto.id);
  const live={format:1,id:dto.id,adapter:{pane:{id:dto.id,generation:1,pid:process.pid,cols:80,rows:24,exited:false,exitCode:null,signal:0,event:0,acknowledged:false,startIdentity:ownerProcessStartIdentity(process.pid)},process:'fixture',readBytes:0,decoderCarry:''},request:{ptyId:dto.id,command:'fixture',cwd:home,cols:80,rows:24,agent:'custom'},launch:{command:'fixture',cwd:home},spawnedAt:0,output:{chunks:[],total:0,version:0,end:0},oscCarry:'',vt};
  await assert.rejects(core.restorePtyCorePane(live,sink),/restore target is not empty/);assert.equal(attaches,0);
  assert.equal(core.acknowledgePtyRestoration(dto.id,dto.generation,'current'),true);
+});
+test('legacy ended mode uncertainty remains explicit if the pane is checkpointed again',async()=>{
+ const dto={...ended(),id:'ended-unknown-again'},sink={isDestroyed:()=>false,sendPtyEvent:()=>{}};
+ await core.restorePtyCorePane(dto,sink);
+ try{
+  await core.freezePtyCore();
+  const exported=core.frozenPtyCoreParts().find(part=>part.id===dto.id);
+  assert.ok(exported&&'kind'in exported);
+  assert.equal(Object.hasOwn(exported.output,'replayModes'),false,'an unknown legacy baseline must not become a known all-off baseline on a later update');
+ }finally{core.abortPtyCoreHandover();await core.killPty(dto.id);}
 });
 test('duplicate live and ended ids in escrow reject before any part is yielded',async()=>{
  const receipt=await store.writeCheckpoint(PTY_HANDOVER_CORE_DIRECTORY,[{id:'live',generation:'g',data:encodeCheckpointPayload(Buffer.from(JSON.stringify({format:1,id:'live'})))},{id:'ended',generation:'retained-generation',data:encodeCheckpointPayload(Buffer.from(JSON.stringify(ended())))}]);
