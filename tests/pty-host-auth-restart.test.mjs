@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
+import childProcess from 'node:child_process';
 const require=createRequire(import.meta.url);
 const {restartRefusedHost}=require('../dist-electron/pty-host-auth-restart.js');
 const target=(pid,startTime,instance='a')=>({pid,startTime,identity:null,ptyCount:1,owner:{pid:pid+10,startTime:'owner',instanceId:instance.repeat(32),hash:'b'.repeat(64),inventory:[{id:'pane',pid:pid+20}],incompatible:false,disconnected:['pane']},authentication:{required:true,targetVerified:true,inventoryKnown:true,reason:'auth refused'}});
@@ -22,6 +23,21 @@ test('fresh B consent is re-read before a single individual signal and logs the 
  assert.equal(await restartRefusedHost({target:a,confirmChanged:async()=>{questions++;return true;}},f.deps),true);
  assert.equal(questions,1);assert.equal(f.inspections,3);assert.deepEqual(f.signals,[[200,'2:2',700]]);assert.deepEqual(f.waits,[[200,'2:2']]);
  assert.deepEqual(f.logs,[['pty-host-auth-confirmed-sigterm',{pid:200,startIdentity:'2:2',ownerInstance:'c'.repeat(32),outcome:'signalled'}]]);
+});
+test('verified legacy target with unknown inventory accepts fresh consent, rechecks and signals once without replacement',async()=>{
+ const previous=target(100,'1:1'),current=target(200,'2:2');delete current.owner;
+ current.ptyCount=0;current.authentication.inventoryKnown=false;
+ const f=fixture([current,current,current]),spawn=childProcess.spawn;let questions=0,starts=0;
+ childProcess.spawn=()=>{starts++;throw Error('no replacement may be started');};
+ try{
+  assert.equal(await restartRefusedHost({target:previous,confirmChanged:async fresh=>{
+   questions++;assert.equal(fresh.pid,200);assert.equal(fresh.startTime,'2:2');assert.equal(fresh.owner,undefined);
+   assert.equal(fresh.authentication.targetVerified,true);assert.equal(fresh.authentication.inventoryKnown,false);return true;
+  }},f.deps),true);
+  assert.equal(questions,1);assert.equal(f.inspections,3);assert.equal(starts,0);
+  assert.deepEqual(f.signals,[[200,'2:2',700]]);assert.deepEqual(f.waits,[[200,'2:2']]);
+  assert.deepEqual(f.logs,[['pty-host-auth-confirmed-sigterm',{pid:200,startIdentity:'2:2',ownerInstance:null,outcome:'signalled'}]]);
+ }finally{childProcess.spawn=spawn;}
 });
 test('socket replacement after the group probe still asks again before signaling',async()=>{
  const a=target(100,'1:1'),b=target(200,'2:2','c'),f=fixture([a,b]);let questions=0;
