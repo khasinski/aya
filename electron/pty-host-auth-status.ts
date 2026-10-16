@@ -8,10 +8,11 @@ import type {HostAuthPeer} from "./pty-host-auth";
 import type {PtyOwnerStatus} from "./pty-host-protocol";
 import type {LegacyInventory} from "./pty-host-legacy-status";
 
-export interface HostAuthenticationProblem {required:true;inventoryKnown:boolean;targetVerified:boolean;reason:string;legacy?:LegacyInventory}
+export interface HostAuthenticationProblem {required:true;inventoryKnown:boolean;targetVerified:boolean;reason:string;unannounced?:true;legacy?:LegacyInventory}
 export interface RefusedHostStatus {
   identity:null;ptyCount:number;pid?:number;startTime:string|null;owner?:PtyOwnerStatus;authentication:HostAuthenticationProblem;
 }
+export const HOST_UNANNOUNCED_REASON="Aya was not closed normally, so these terminals cannot be reattached. Their processes may still be running; input remains disabled. Use Settings > Diagnostics > PTY host > Restart to review stopping them.";
 export const HOST_AUTH_REFUSAL_REASON="Aya could not authenticate to the terminal host. Its processes were kept; input remains disabled. Use Settings > Diagnostics > PTY host > Restart to review them.";
 export function refusedHostStatus(peer:HostAuthPeer|null):RefusedHostStatus{
   const status:RefusedHostStatus={identity:null,ptyCount:0,startTime:peer?.startIdentity??null,...(peer?{pid:peer.pid}:{}),

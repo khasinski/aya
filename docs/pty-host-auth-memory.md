@@ -30,7 +30,7 @@ Reservation, activation, cancel and redemption have host-serialized state transi
 
 ## Unannounced loss, compatibility and safe refusal
 
-An unannounced main crash or force quit leaves no ticket and gives the next main no authority to adopt. The existing host and pane processes remain running. Main uses #231's retained-inventory/identity-bound #219 question, one verified single-PID SIGTERM and bounded gone proof, with B2 survivor consent as needed; Cancel preserves them. There is no generic create-host catch on authentication failure and no unauthenticated inventory request to a new host. A missing, unsafe, expired, consumed, wrong-host or unreadable ticket never authorizes a stop or automatic replacement.
+An unannounced main crash or force quit leaves no ticket and gives the next main no authority to adopt. The existing host and pane processes remain running. Main opens its window normally with disconnected panes, the unannounced-loss reason and the Settings > Diagnostics > PTY host > Restart action; no startup modal is shown for absent memory authority. Only that explicit action reaches #231's retained-inventory/identity-bound #219 question, one verified single-PID SIGTERM and bounded gone proof, with B2 survivor consent as needed; Cancel preserves them. There is no generic create-host catch on authentication failure and no unauthenticated inventory request to a new host. A missing, unsafe, expired, consumed, wrong-host or unreadable ticket never authorizes a stop or automatic replacement.
 
 A crash after a legitimate quit announcement can leave that already-announced short window open until its deadline; the host cannot know whether the announcing main's final exit was graceful. The distinction is whether an authorized quit announced the transfer, not an unprovable exit cause.
 
@@ -238,3 +238,14 @@ Pre-commit validation: changed-contract Electron160/160; full npm7470pass/0fail/
 
 
 Final fixture audit: PID and policy probes in the state, crash-recovery and version-only-update GUI suites now capture the actual main-owned client through an ordinary renderer buffer request. No capability leaves main and no fresh client silently inherits one. The host policy remains the actual authenticated result, not a fabricated screen. Lead A5 is pinned by a real forced-unavailable-continuity pane: its visible recovery-off notice coexists with working keyboard input on the serving socket, unchanged PIDs and exactly two original spawns. These suites passed31/31 with shutdown0/workers1. This follow-up changes only test fixtures/assertions and this note; product92b630ca remains unchanged.
+
+
+### CI follow-up - unannounced loss must not block the window
+
+CI on b5e3f038 found the unchanged restart-active-terminal regression waiting30s for its second window after main was killed. The same spec failed locally at line118 with the same firstWindow timeout. The final b5 whole run was stopped after133passes,1interrupted/353not-run (8.9min); it is not a completed or green whole gate.
+
+Missing in-memory authority on a surviving socket is now reported as an unannounced-loss state, separate from a wrong proof and from a positively identified pre-auth legacy migration. Startup returns before all destructive or informational stop dialogs in that state and opens the window. The pane explains that Aya was not closed normally, reattachment is unavailable, processes may still run and input is disabled, and names the explicit Diagnostics action. That action retains the existing fresh identity-bound consent and safe refusal. Successful authentication clears this state. Real wrong-proof failures keep their own consent path, and no adoption/start/signal exception was added.
+
+The planned-update wrapper source is now constant. Paths, choices, runtime identity and display/update flags enter only as environment data, retaining the actual main request tracking, installer ordering, input gate and all existing assertions. This removes the code-interpolation pattern reported by CodeQL62-65 without dismissing it.
+
+Pre-commit follow-up validation:36/36 focused health/auth contracts in Node and36/36 in Electron;8/8 auth/restart-active-terminal GUI (49.8s), including the unchanged line118 regression and the new actual main SIGKILL case. That case requires a window with no startup question, visible unannounced-loss notice, zero keyboard/paste RPC writes, same host/owner/child PIDs and two original spawns; explicit Diagnostics Cancel then yes are the first two consent questions and only yes retires the original processes. The broader planned-wrapper, immutable full npm/native and whole gates remain pending on the committed correction.

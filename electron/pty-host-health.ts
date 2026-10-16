@@ -198,6 +198,9 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
   async function handleStaleHost(): Promise<void> {
     try {
       let health = await hostHealth();
+      // Missing authority after unannounced main loss is a disconnected UI
+      // state. Only an explicit Diagnostics action may ask to stop this target.
+      if(health.authentication?.unannounced){showStaleHost(true);return;}
       if(health.continuityUnavailable){showStaleHost(true);return;}
       if(health.principalBusy){showStaleHost(true);return;}
       if (health.indeterminate) return;

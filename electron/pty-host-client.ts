@@ -52,7 +52,7 @@ import {authenticateHostSocket} from "./pty-host-auth-transport";
 import {newHostAuthCapability} from "./pty-host-auth-transfer";
 import {HostAuthError,HostPrincipalBusyError,HOST_PRINCIPAL_BUSY_REASON,type HostAuthPeer} from "./pty-host-auth";
 import {handoverPeer} from "./pty-handover-window";
-import {refusedHostStatus,HOST_AUTH_REFUSAL_REASON,type HostAuthenticationProblem} from "./pty-host-auth-status";
+import {refusedHostStatus,HOST_AUTH_REFUSAL_REASON,HOST_UNANNOUNCED_REASON,type HostAuthenticationProblem} from "./pty-host-auth-status";
 import {validateOwnerContinuity,validateTransferredOwnerContinuity} from "./pty-host-owner-continuity";
 import {probeLegacyInventory} from "./pty-host-legacy-status";
 import {retireUnavailableOwner,ownerRetirementDeps} from "./pty-host-owner-retirement";
@@ -179,6 +179,7 @@ export class PtyHostClient {
   private ordinaryAnnouncement:OrdinaryAuthAnnouncement|null=null;
   private receivedAuthTransfer:{ticket:AuthTransferTicket;receipt?:string;retirementOwner?:RecoveryOwnerIdentity}|null=null;
   private authRefusalPeer:HostAuthPeer|null|undefined;
+  private unannouncedRefusal=false;
   private principalBusyPeer:HostAuthPeer|null|undefined;
   private readonly principalBusyPanes=new Set<string>();
   private readonly principalAttaches=new Map<string,Set<AbortController>>();
@@ -390,7 +391,7 @@ export class PtyHostClient {
       this.live.delete(req.ptyId);
       const code=(err as {code?:string})?.code;
       if(["PTY_HOST_PRINCIPAL_BUSY","PTY_HOST_AUTH_REQUIRED","PTY_HOST_AUTH_UNAVAILABLE","PTY_HOST_START_BLOCKED","PTY_HOST_OWNER_UNAVAILABLE"].includes(code??"")){
-        const reason=code==="PTY_HOST_PRINCIPAL_BUSY"?HOST_PRINCIPAL_BUSY_REASON:code==="PTY_HOST_OWNER_UNAVAILABLE"?this.recoveryReason??"The terminal host recovery data is unavailable; input remains disabled.":code==="PTY_HOST_START_BLOCKED"?"The terminal host inventory could not be verified. Its processes may still be running; input remains disabled. Use Settings > Diagnostics > PTY host > Restart to review them.":HOST_AUTH_REFUSAL_REASON;
+        const reason=code==="PTY_HOST_PRINCIPAL_BUSY"?HOST_PRINCIPAL_BUSY_REASON:code==="PTY_HOST_OWNER_UNAVAILABLE"?this.recoveryReason??"The terminal host recovery data is unavailable; input remains disabled.":code==="PTY_HOST_START_BLOCKED"?"The terminal host inventory could not be verified. Its processes may still be running; input remains disabled. Use Settings > Diagnostics > PTY host > Restart to review them.":this.unannouncedRefusal?HOST_UNANNOUNCED_REASON:HOST_AUTH_REFUSAL_REASON;
         this.authRefusedPanes.set(req.ptyId,reason);this.sendToSinks([code==="PTY_HOST_PRINCIPAL_BUSY"?{type:"host-connection",ptyId:req.ptyId,connected:false,reason}:{type:"disconnected",ptyId:req.ptyId,reason}]);
         throw Object.assign(new Error("The terminal host is disconnected or recovering. This request was not sent."),{code});
       }
@@ -497,8 +498,9 @@ export class PtyHostClient {
         const peer=this.authRefusalPeer??null,status=refusedHostStatus(peer);
         if(peer&&status.authentication.targetVerified&&!status.owner){
           const legacy=await probeLegacyInventory(peer,this.legacyPaneIds);
-          if(legacy){status.authentication.legacy=legacy;status.ptyCount=legacy.total;}
+          if(legacy){status.authentication.legacy=legacy;status.ptyCount=legacy.total;this.unannouncedRefusal=false;}
         }
+        if(this.unannouncedRefusal)status.authentication={...status.authentication,unannounced:true,reason:HOST_UNANNOUNCED_REASON};
         return status;
       }
       // A blocked transport must not erase B2's explicit dead-owner recovery
@@ -1214,6 +1216,7 @@ export class PtyHostClient {
       let peer:HostAuthPeer|null=null;
       socket.once("connect", () => {void (async()=>{
         if (this.observationOnly && this.disposed) throw new Error(DISPOSED_MESSAGE);
+        this.unannouncedRefusal=!this.hostAuthKey&&!this.receivedAuthTransfer;
         peer=handoverPeer(socket);
         const announced=this.receivedAuthTransfer?.ticket;
         if(announced&&(peer.pid!==announced.hostPid||peer.startIdentity!==announced.hostStartIdentity))throw new HostAuthError();
@@ -1223,7 +1226,7 @@ export class PtyHostClient {
         const authenticated=await authenticateHostSocket(socket,this.hostAuthKey,{pid:process.pid,startIdentity});
         if(this.disposed&&!this.issuedShutdown){socket.destroy();throw new Error(DISPOSED_MESSAGE);}
         retrySignal?.removeEventListener("abort",cancel);
-        this.authRefusalPeer=undefined;
+        this.authRefusalPeer=undefined;this.unannouncedRefusal=false;
         this.socket = socket;
         this.hostAsked = false;
         this.ownerBacked = false;

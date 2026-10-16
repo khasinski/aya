@@ -10,13 +10,35 @@ const apps:ElectronApplication[]=[];
 test.afterEach(async()=>{writeFileSync(hostScript,built);writeFileSync(rulesScript,rulesBuilt);writeFileSync(packageFile,packageBuilt);for(const app of apps.splice(0))await closeAndWait(app);});
 async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=false,plainHost=false){
  const wrapper=join(seeded.root,'handover-main.js');
- const updater=realUpdate?`Object.defineProperty(electron.app,'isPackaged',{get:()=>true});process.env.APPIMAGE='test-only-appimage';const updater=require(${JSON.stringify(join(root,'node_modules/electron-updater'))}).autoUpdater;updater.checkForUpdates=async()=>null;updater.quitAndInstall=()=>{globalThis.handoverOrder.push('installer');globalThis.installerHandedOff=true;};globalThis.testUpdater=updater;`:'';
-
- const runtime=plainHost?`const cp=require('node:child_process'),spawn=cp.spawn;cp.spawn=(file,args,options)=>spawn(file===process.execPath&&args?.[0]===${JSON.stringify(hostScript)}?${JSON.stringify(process.execPath)}:file,args,options);const {PtyHostClient}=require(${JSON.stringify(join(root,'dist-electron/pty-host-client.js'))}),{hostBuildHash}=require(${JSON.stringify(join(root,'dist-electron/pty-host-staleness.js'))}),path=require('path');PtyHostClient.prototype.expectedHostIdentity=function(version){const runtime=${JSON.stringify({node:process.versions.node,electron:null})};return{version,runtime,scriptHash:hostBuildHash(path.dirname(this.hostScript),path.basename(this.hostScript),runtime)};};`:'';
- const delayed=blockDisplay?`const fs=require('fs'),original=electron.ipcMain.handle.bind(electron.ipcMain);globalThis.handoverDisplayWaiting=false;globalThis.inputCalls=0;electron.ipcMain.handle=(channel,handler)=>original(channel,async(event,...args)=>{if(channel==='pty:write')globalThis.inputCalls++;if(channel==='pty-checkpoint:display'&&args[0]==='tab-left'){globalThis.handoverDisplayWaiting=true;const deadline=Date.now()+15000;while(!fs.existsSync(${JSON.stringify(join(seeded.root,'release-display'))})){if(Date.now()>deadline)throw Error('test display gate expired');await new Promise(r=>setTimeout(r,2));}}return handler(event,...args);});`:'';
-
- writeFileSync(wrapper,`const electron=require('electron');globalThis.handoverQuestions=[];globalThis.handoverOrder=[];globalThis.handoverSpawns=[];globalThis.handoverWrites=[];const MainClient=require(require('node:path').join(process.env.AYA_TEST_APP_ROOT,'dist-electron/pty-host-client.js')).PtyHostClient,mainRequest=MainClient.prototype.request;MainClient.prototype.request=function(...args){globalThis.handoverMainClient??=this;return mainRequest.apply(this,args);};const trackHandle=electron.ipcMain.handle.bind(electron.ipcMain);electron.ipcMain.handle=(channel,handler)=>trackHandle(channel,(event,...args)=>{if(channel==='pty:spawn')globalThis.handoverSpawns.push(args[0]);if(channel==='pty:write')globalThis.handoverWrites.push(args[0]);return handler(event,...args);});electron.dialog.showMessageBox=async(...args)=>{const options=args.at(-1);globalThis.handoverQuestions.push(options);globalThis.handoverOrder.push('question');return{response:${choice},checkboxChecked:false};};${runtime}${delayed}${updater}require(${JSON.stringify(join(root,'dist-electron/main.js'))});`);
- const app=await _electron.launch({args:[wrapper,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],cwd:root,env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root}})});apps.push(app);
+ // Wrapper code is constant; disposable paths/options are data, never JS source.
+ writeFileSync(wrapper,`const electron=require('electron'),path=require('node:path'),root=process.env.AYA_TEST_APP_ROOT;
+ globalThis.handoverQuestions=[];globalThis.handoverOrder=[];globalThis.handoverSpawns=[];globalThis.handoverWrites=[];
+ const MainClient=require(path.join(root,'dist-electron/pty-host-client.js')).PtyHostClient,mainRequest=MainClient.prototype.request;
+ MainClient.prototype.request=function(...args){globalThis.handoverMainClient??=this;return mainRequest.apply(this,args);};
+ const trackHandle=electron.ipcMain.handle.bind(electron.ipcMain);
+ electron.ipcMain.handle=(channel,handler)=>trackHandle(channel,(event,...args)=>{if(channel==='pty:spawn')globalThis.handoverSpawns.push(args[0]);if(channel==='pty:write')globalThis.handoverWrites.push(args[0]);return handler(event,...args);});
+ electron.dialog.showMessageBox=async(...args)=>{const options=args.at(-1);globalThis.handoverQuestions.push(options);globalThis.handoverOrder.push('question');return{response:Number(process.env.AYA_TEST_HANDOVER_CHOICE),checkboxChecked:false};};
+ if(process.env.AYA_TEST_PLAIN_HOST==='1'){
+  const cp=require('node:child_process'),spawn=cp.spawn,hostScript=path.join(root,'dist-electron/pty-host.js');
+  cp.spawn=(file,args,options)=>spawn(file===process.execPath&&args?.[0]===hostScript?process.env.AYA_TEST_PLAIN_NODE:file,args,options);
+  const {hostBuildHash}=require(path.join(root,'dist-electron/pty-host-staleness.js'));
+  MainClient.prototype.expectedHostIdentity=function(version){const runtime=JSON.parse(process.env.AYA_TEST_PLAIN_RUNTIME);return{version,runtime,scriptHash:hostBuildHash(path.dirname(this.hostScript),path.basename(this.hostScript),runtime)};};
+ }
+ if(process.env.AYA_TEST_BLOCK_DISPLAY==='1'){
+  const fs=require('node:fs'),original=electron.ipcMain.handle.bind(electron.ipcMain);globalThis.handoverDisplayWaiting=false;globalThis.inputCalls=0;
+  electron.ipcMain.handle=(channel,handler)=>original(channel,async(event,...args)=>{if(channel==='pty:write')globalThis.inputCalls++;if(channel==='pty-checkpoint:display'&&args[0]==='tab-left'){globalThis.handoverDisplayWaiting=true;const deadline=Date.now()+15000;while(!fs.existsSync(process.env.AYA_TEST_DISPLAY_RELEASE)){if(Date.now()>deadline)throw Error('test display gate expired');await new Promise(r=>setTimeout(r,2));}}return handler(event,...args);});
+ }
+ if(process.env.AYA_TEST_REAL_UPDATE==='1'){
+  Object.defineProperty(electron.app,'isPackaged',{get:()=>true});process.env.APPIMAGE='test-only-appimage';
+  const updater=require(path.join(root,'node_modules/electron-updater')).autoUpdater;updater.checkForUpdates=async()=>null;
+  updater.quitAndInstall=()=>{globalThis.handoverOrder.push('installer');globalThis.installerHandedOff=true;};globalThis.testUpdater=updater;
+ }
+ require(path.join(root,'dist-electron/main.js'));
+ `);
+ const app=await _electron.launch({args:[wrapper,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],cwd:root,env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root,
+  AYA_TEST_HANDOVER_CHOICE:String(choice),AYA_TEST_PLAIN_HOST:plainHost?'1':'0',AYA_TEST_PLAIN_NODE:process.execPath,AYA_TEST_PLAIN_RUNTIME:JSON.stringify({node:process.versions.node,electron:null}),
+  AYA_TEST_BLOCK_DISPLAY:blockDisplay?'1':'0',AYA_TEST_DISPLAY_RELEASE:join(seeded.root,'release-display'),AYA_TEST_REAL_UPDATE:realUpdate?'1':'0',
+ }})});apps.push(app);
  return {app,window:await app.firstWindow()};
 }
 async function quit(app:ElectronApplication){apps.splice(apps.indexOf(app),1);await closeAndWait(app);}

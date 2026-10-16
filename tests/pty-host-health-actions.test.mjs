@@ -380,3 +380,13 @@ for(const owner of [undefined,{pid:99,incompatible:true,disconnected:[]}])test('
  f.state.records=[record(100),record(101)];await f.actions.handleStaleHost();
  assert.equal(f.log.some(item=>['restart','ask-restart','dialog','kill','confirm'].includes(item[0])),false);
 });
+
+for(const targetVerified of [true,false])test(`unannounced loss opens without a startup modal; explicit review retains consent, verified=${targetVerified}`,async t=>{
+ const f=setup(t);f.state.records.push(record(200));
+ f.d.ptyHost.hostStatus=async()=>({pid:100,startTime:'1:2',identity:null,ptyCount:1,authentication:{required:true,unannounced:true,targetVerified,inventoryKnown:true,reason:'Aya was not closed normally'},owner:{pid:99,incompatible:false,disconnected:['retained'],inventory:[{id:'retained',pid:789}]}});
+ const actions=createPtyHostHealth(f.d);await actions.handleStaleHost();
+ assert.deepEqual(operations(f.log),[]);assert.equal(actions.staleHostDetected(),true);
+ f.state.askAnswer=false;await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);
+ assert.equal(f.log.filter(([op])=>op=== (targetVerified?'ask-restart':'dialog')).length,1);
+ assert.equal(f.log.filter(([op])=>['restart','kill','wait'].includes(op)).length,0);
+});
