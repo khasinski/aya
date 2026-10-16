@@ -395,6 +395,18 @@ function TerminalViewComponent({
     isRestoringRef.current = value;
     setIsRestoring(value);
   }, []);
+  const handleAttachmentFailure = useCallback((term: XTerm, error: unknown) => {
+    if(xtermRef.current!==term)return;
+    handoverInputPausedRef.current=false;
+    if(disconnectedRef.current||String(error).includes("The terminal host is disconnected or recovering. This request was not sent.")){
+      disconnectedRef.current=true;term.options.disableStdin=true;
+      setHistoryNotice(notice=>notice??"The terminal host is disconnected. The process may still be running; input remains disabled.");
+    }else{
+      term.options.disableStdin=false;
+      term.write(`\r\n[Terminal attachment failed: ${String(error).replace(/[\x00-\x1f\x7f]/g,' ')}]\r\n`);
+    }
+    markRestoring(false);
+  },[markRestoring]);
   const [contextMenu, setContextMenu] = useState<TerminalContextMenuState | null>(
     null,
   );
@@ -1117,9 +1129,8 @@ function TerminalViewComponent({
         ...(terminal.teamLaunch ? { teamLaunch: true } : {}),
       });
       })().catch(error=>{
-        if(disposed)return;
-        awaitingReplay=false;handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;
-        term.write(`\r\n[Terminal attachment failed: ${String(error).replace(/[\x00-\x1f\x7f]/g,' ')}]\r\n`);markRestoring(false);
+        if(disposed||attachCancelled)return;
+        awaitingReplay=false;handleAttachmentFailure(term,error);
       });
     }
 
@@ -1347,6 +1358,7 @@ function TerminalViewComponent({
     didPostLoadResizeRef.current = false;
     markRestoring(true);
     term.writeln("\x1b[2m[restarting…]\x1b[0m");
+    const restartGeneration=recoveryGenerationRef.current;
     void window.aya.ptySpawn({
       ptyId: terminal.id,
       projectSlug: terminal.projectSlug,
@@ -1359,7 +1371,7 @@ function TerminalViewComponent({
       cols: Math.max(term.cols, TERMINAL_FALLBACK_COLS),
       rows: Math.max(term.rows, TERMINAL_FALLBACK_ROWS),
       ...(terminal.teamLaunch ? { teamLaunch: true } : {}),
-    });
+    }).catch(error=>{if(recoveryGenerationRef.current===restartGeneration)handleAttachmentFailure(term,error);});
   }, [
     restartTrigger,
     terminal.id,
@@ -1369,6 +1381,7 @@ function TerminalViewComponent({
     preset.configDir,
     terminal.teamLaunch,
     markRestoring,
+    handleAttachmentFailure,
   ]);
 
   useEffect(() => {

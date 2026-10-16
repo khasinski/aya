@@ -44,6 +44,29 @@ test("a dead owner's survivor stays blocked on Cancel and explicit confirmed rec
     expect(refused).toContain("The terminal host is disconnected or recovering");
     expect(JSON.parse(readFileSync(file, "utf8")).panes[0].pid).toBe(pane.pid);
     expect(alive(pane.pid)).toBe(true);
+    // Exercise the actual TerminalView continuation after Cancel, not just
+    // a direct API refusal. One remount attempts one attach and stays friendly.
+    await window.keyboard.press("Escape"); await expect(settings).not.toBeVisible();
+    const pageErrors: string[] = [];window.on("pageerror",error=>pageErrors.push(String(error)));
+    await app.evaluate((_electron,root)=>{
+      const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js');
+      const spawn=PtyHostClient.prototype.spawn,g=globalThis as unknown as {blockedAttachCalls:number};g.blockedAttachCalls=0;
+      PtyHostClient.prototype.spawn=async function(...args:Parameters<typeof spawn>){g.blockedAttachCalls++;return spawn.apply(this,args);};
+    },join(__dirname,'..'));
+    await window.addInitScript(()=>{const w=window as unknown as {attachRejections:string[]};w.attachRejections=[];window.addEventListener("unhandledrejection",e=>w.attachRejections.push(String(e.reason)));});
+    await window.reload();
+    await expect(terminal).toContainText("terminal host disconnected");
+    await expect(window.getByTestId("terminal-history-notice")).toContainText("processes may still be running");
+    await expect.poll(()=>app.evaluate(()=>(globalThis as unknown as {blockedAttachCalls:number}).blockedAttachCalls)).toBe(1);
+    await expect(terminal).not.toContainText("Terminal attachment failed");
+    await expect(terminal).not.toContainText("Error invoking remote method");
+    await expect(terminal).not.toContainText("pty:spawn");
+    // Give an accidental render-triggered retry time to occur after settlement.
+    await window.waitForTimeout(500);
+    expect(await app.evaluate(()=>(globalThis as unknown as {blockedAttachCalls:number}).blockedAttachCalls)).toBe(1);
+    expect(pageErrors).toEqual([]);expect(await window.evaluate(()=>(window as unknown as {attachRejections:string[]}).attachRejections)).toEqual([]);expect(alive(pane.pid)).toBe(true);
+    expect(JSON.parse(readFileSync(file,"utf8")).panes[0].pid).toBe(pane.pid);
+    await fireShortcut(app,"open-settings");await settings.getByTestId("settings-tab").filter({hasText:"Diagnostics"}).click();
     await app.evaluate(() => { (globalThis as unknown as { recoveryAnswer: number }).recoveryAnswer = 0; });
     window.once("dialog", dialog => void dialog.accept()); await restart.click();
     await expect.poll(() => alive(pane.pid), { timeout: 15000 }).toBe(false);

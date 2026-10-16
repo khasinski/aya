@@ -202,3 +202,25 @@ test('failed Try again returns its reason with one counted attempt and leaves ev
  await pane.getByTestId('terminal-recovery-retry').click();await expect.poll(()=>app.evaluate(()=>(globalThis as unknown as {manualFailureCalls:number}).manualFailureCalls)).toBe(baseline+1);await expect(pane.getByTestId('terminal-history-notice')).toContainText('Controlled test recovery refusal');await expect(pane.getByTestId('terminal-recovery-retry')).toBeVisible();
  expect(await app.evaluate(()=>(globalThis as unknown as {manualFailureCalls:number}).manualFailureCalls)).toBe(baseline+1);expect(hostPidsForHome(seeded.ayaHome)).toEqual([]);expect(identities(seeded.ayaHome)).toEqual(before);expect(record(seeded.ayaHome).pid).toBe(owner);for(const p of before)expect(alive(p.pid)).toBe(true);
 });
+
+test('restarting an ended pane after another pane loses its owner is a friendly single refusal',async({app,window,seeded})=>{
+ await waitForShellReady(window);const errors:string[]=[];window.on('pageerror',error=>errors.push(String(error)));
+ await window.evaluate(()=>{const w=window as unknown as {attachRejections:string[]};w.attachRejections=[];window.addEventListener('unhandledrejection',e=>w.attachRejections.push(String(e.reason)));});
+ await window.evaluate(()=>window.aya.ptyWrite('tab-left','exit 0\r'));
+ const ended=visiblePane(window,'shell 1').getByTestId('xterm-host');await expect(ended).toContainText('process exited with code 0');
+ const quote=(s:string)=>`'${s.replace(/'/g,"'\\''")}'`;
+ await window.evaluate(command=>window.aya.ptyWrite('tab-right',command+'\r'),`exec ${quote(process.execPath)} ${quote(join(__dirname,'helpers/pty-owner-survivor.cjs'))}`);
+ await expect(visiblePane(window,'shell 2').getByTestId('xterm-host')).toContainText('SURVIVOR_READY');
+ const before=record(seeded.ayaHome),survivor=before.panes.find(p=>p.id==='tab-right')!;
+ await app.evaluate((_electron,root)=>{const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js'),spawn=PtyHostClient.prototype.spawn,g=globalThis as unknown as {endedRestartCalls:number};g.endedRestartCalls=0;PtyHostClient.prototype.spawn=async function(...args:Parameters<typeof spawn>){if(args[0].ptyId==='tab-left')g.endedRestartCalls++;return spawn.apply(this,args);};},join(__dirname,'..'));
+ process.kill(before.pid,'SIGKILL');await expect.poll(()=>alive(before.pid)).toBe(false);await crash(seeded.ayaHome);
+ await expect(visiblePane(window,'shell 2').getByTestId('terminal-history-notice')).toContainText('recovery budget');
+ await ended.click();await window.keyboard.press('Shift+Enter');
+ await expect(visiblePane(window,'shell 1').getByTestId('terminal-history-notice')).toContainText('processes may still be running');
+ await expect.poll(()=>app.evaluate(()=>(globalThis as unknown as {endedRestartCalls:number}).endedRestartCalls)).toBe(1);
+ await expect(ended).not.toContainText('Terminal attachment failed');await expect(ended).not.toContainText('Error invoking remote method');
+ await window.waitForTimeout(500);expect(await app.evaluate(()=>(globalThis as unknown as {endedRestartCalls:number}).endedRestartCalls)).toBe(1);
+ expect(errors).toEqual([]);expect(await window.evaluate(()=>(window as unknown as {attachRejections:string[]}).attachRejections)).toEqual([]);
+ expect(alive(survivor.pid)).toBe(true);expect(record(seeded.ayaHome).pid).toBe(before.pid);expect(record(seeded.ayaHome).panes.find(p=>p.id==='tab-right')?.pid).toBe(survivor.pid);
+ expect(readFileSync(join(seeded.ayaHome,'pty-events.log'),'utf8').split('\n').filter(line=>{try{return JSON.parse(line).ev==='spawn';}catch{return false;}})).toHaveLength(2);
+});
