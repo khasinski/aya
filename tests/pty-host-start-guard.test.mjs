@@ -125,3 +125,24 @@ test('a live shutdown candidate that becomes unknown is never treated as gone du
  const {waitForHostShutdown}=require('../dist-electron/pty-host-start-guard.js');let now=0;
  await assert.rejects(waitForHostShutdown('unused',undefined,{now:()=>now,proof:()=>({state:now<750?'alive':'unknown',hosts:[]}),socketMissing:()=>true,wait:async ms=>{now+=ms;}}),error=>error.code==='PTY_HOST_START_BLOCKED'&&error.proof.state==='unknown');assert.equal(now,3000);
 });
+
+test('actual client.dispose interrupts the default shutdown grace before any host creation',async()=>{
+ reset();fs.rmSync(path.join(home,'pty-host-auth'),{recursive:true,force:true});record();const client=new PtyHostClient('unused');let starts=0,ready;
+ const began=new Promise(resolve=>{ready=resolve;}),exec=childProcess.execFileSync;
+ client.openSocket=async()=>{throw Object.assign(Error('missing'),{code:'ENOENT'});};client.startHost=()=>{starts++;};
+ let timeout;
+ try{
+  childProcess.execFileSync=(...args)=>{const result=exec(...args);ready();return result;};
+  const starting=client.connectWithHostStart(),rejected=assert.rejects(starting,/disposed/);await began;client.dispose();
+  await Promise.race([rejected,new Promise((_resolve,reject)=>{timeout=setTimeout(()=>reject(Error('dispose did not interrupt the three-second grace')),500);})]);
+  assert.equal(starts,0);assert.equal(fs.existsSync(path.join(home,'pty-host-auth')),false);
+ }finally{clearTimeout(timeout);client.dispose();client.startupCancelled.abort();childProcess.execFileSync=exec;}
+});
+test('default grace passes the decreasing remaining deadline to its actual ps caller',async()=>{
+ reset();record();const {waitForHostShutdown}=require('../dist-electron/pty-host-start-guard.js'),cancelled=new AbortController(),exec=childProcess.execFileSync,timeouts=[];let now=0;
+ try{
+  childProcess.execFileSync=(...args)=>{timeouts.push(args[2].timeout);return exec(...args);};
+  await assert.rejects(waitForHostShutdown(path.join(home,'pty-host.sock'),cancelled.signal,{now:()=>now,wait:async()=>{now+=150;if(timeouts.length>=2)cancelled.abort();}}),/cancelled/);
+  assert.deepEqual(timeouts,[3000,2850]);
+ }finally{cancelled.abort();childProcess.execFileSync=exec;}
+});
