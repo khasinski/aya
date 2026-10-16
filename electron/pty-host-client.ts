@@ -50,7 +50,7 @@ import type { PtyEvent, SpawnRequest } from "./types";
 import {authenticateHostSocket} from "./pty-host-auth-transport";
 import {readHostAuthKey,createHostAuthKey} from "./pty-host-auth-key";
 import {HostAuthError} from "./pty-host-auth";
-import {liveHostRecords} from "./pty-host-registry";
+import {assertHostCreationSafe} from "./pty-host-start-guard";
 
 // Deadline waiting for a started pty host to create its socket and accept on it (ms).
 export const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
@@ -856,7 +856,7 @@ export class PtyHostClient {
         await new Promise<void>(resolve=>{const done=()=>{clearTimeout(timer);prior.removeListener("exit",done);resolve();};const timer=setTimeout(done,1000);prior.once("exit",done);});
       }
       if (this.disposed) throw new Error(DISPOSED_MESSAGE);
-      if(liveHostRecords(this.hostScript).length)throw new HostAuthError();
+      assertHostCreationSafe();
       this.hostAuthKey??=createHostAuthKey(AYA_HOME);
       this.startHost();
       await this.openStartedHostSocket();
@@ -897,6 +897,7 @@ export class PtyHostClient {
   }
 
   private startHost(bootstrap?:HandoverBootstrap|RecoveryBootstrap): ChildProcess {
+    assertHostCreationSafe();
     if(!this.hostAuthKey)throw new HostAuthError();
     if(this.pendingPlannedHost&&this.pendingPlannedHost.exitCode===null&&this.pendingPlannedHost.signalCode===null)throw new Error("The previous terminal successor has not exited; another host was not started");
     try {
