@@ -37,7 +37,7 @@ async function bounded<T>(budget:Budget,operation:(check:()=>void)=>Promise<T>):
   cancel=()=>{expired=true;reject(new AuthTransferTicketError());};
   timer=setTimeout(cancel,Math.max(0,budget.deadline-now()));budget.signal?.addEventListener("abort",cancel,{once:true});
  });
- try{check();return await Promise.race([operation(check),timeout]);}
+ try{check();const result=await Promise.race([operation(check),timeout]);check();return result;}
  finally{if(timer)clearTimeout(timer);budget.signal?.removeEventListener("abort",cancel);}
 }
 async function unlinkOwned(io:TicketIO,file:string,owned:Stats):Promise<void>{

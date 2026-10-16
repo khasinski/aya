@@ -44,7 +44,7 @@ test('a stalled fsync never blocks main or activates publication after deadline'
  const beat=setInterval(()=>heartbeats++,2);
  const io={...fs,open:async(...args)=>{const h=await fs.open(...args);return{stat:()=>h.stat(),writeFile:data=>h.writeFile(data),close:()=>h.close(),sync:async()=>{syncing=true;await hold.promise;return h.sync();}};},rename:async(...args)=>{renames++;return fs.rename(...args);}};
  try{
-  await assert.rejects(writeAuthTransferTicket(f.file(t),t,budget({deadline:performance.now()+200,io})));assert.equal(syncing,true);assert.ok(heartbeats>1);assert.equal(renames,0);
+  const start=performance.now();await assert.rejects(writeAuthTransferTicket(f.file(t),t,budget({deadline:performance.now()+200,io})));assert.ok(performance.now()-start<700);assert.equal(syncing,true);assert.ok(heartbeats>1);assert.equal(renames,0);
   hold.release();await wait(async()=>(await fs.readdir(f.root)).length===0);assert.equal(renames,0);
  }finally{clearInterval(beat);hold.release();await f.close();}
 });
@@ -52,7 +52,7 @@ test('late rename cleanup cannot touch a later attempt ticket',async()=>{
  const f=await fixture(),t=ticket(),next=ticket({attempt:'c'.repeat(64),nonce:'d'.repeat(64)}),hold=gate();let renaming=false;
  const io={...fs,rename:async(...args)=>{renaming=true;await hold.promise;return fs.rename(...args);}};
  try{
-  await assert.rejects(writeAuthTransferTicket(f.file(t),t,budget({deadline:performance.now()+200,io})));assert.equal(renaming,true);
+  const start=performance.now();await assert.rejects(writeAuthTransferTicket(f.file(t),t,budget({deadline:performance.now()+200,io})));assert.ok(performance.now()-start<700);assert.equal(renaming,true);
   await writeAuthTransferTicket(f.file(next),next,budget());hold.release();await wait(async()=>!(await fs.readdir(f.root)).some(name=>name.includes(t.attempt)));
   assert.deepEqual(await readAuthTransferTicket(f.file(next)),next);
  }finally{hold.release();await f.close();}
@@ -66,7 +66,7 @@ test('quit cancellation fences the pending write and does not await blocked I/O'
  const f=await fixture(),t=ticket(),hold=gate(),controller=new AbortController();let writing=false;
  const io={...fs,open:async(...args)=>{const h=await fs.open(...args);return{stat:()=>h.stat(),writeFile:async data=>{writing=true;await hold.promise;return h.writeFile(data);},sync:()=>h.sync(),close:()=>h.close()};}};
  try{
-  const writingTicket=writeAuthTransferTicket(f.file(t),t,budget({io,signal:controller.signal}));await wait(()=>writing);controller.abort();await assert.rejects(writingTicket);
+  const writingTicket=writeAuthTransferTicket(f.file(t),t,budget({io,signal:controller.signal}));await wait(()=>writing);const start=performance.now();controller.abort();await assert.rejects(writingTicket);assert.ok(performance.now()-start<500);
   hold.release();await wait(async()=>(await fs.readdir(f.root)).length===0);
  }finally{hold.release();await f.close();}
 });
@@ -75,7 +75,7 @@ test('read expiry before named-identity check completes cannot consume a ticket 
  try{
   await writeAuthTransferTicket(f.file(t),t,budget());
   const io={...fs,open:async(...args)=>{const h=await fs.open(...args);return{stat:()=>h.stat(),read:(...args)=>h.read(...args),close:async()=>{await h.close();closed=true;}};},lstat:async(...args)=>{inspecting=true;await hold.promise;return fs.lstat(...args);}};
-  await assert.rejects(readAuthTransferTicket(f.file(t),budget({deadline:performance.now()+200,io})));assert.equal(inspecting,true);hold.release();await wait(()=>closed);assert.equal(syncFs.existsSync(f.file(t)),true);
+  const start=performance.now();await assert.rejects(readAuthTransferTicket(f.file(t),budget({deadline:performance.now()+200,io})));assert.ok(performance.now()-start<700);assert.equal(inspecting,true);hold.release();await wait(()=>closed);assert.equal(syncFs.existsSync(f.file(t)),true);
   assert.deepEqual(await readAuthTransferTicket(f.file(t)),t);
  }finally{hold.release();await f.close();}
 });
@@ -104,4 +104,14 @@ test('growing files are bounded to1025 bytes and a changed named inode is not co
   const changed={...fs,lstat:async(...args)=>{const stat=await fs.lstat(...args);return{...stat,ino:stat.ino+1,isFile:()=>true};}};
   await assert.rejects(readAuthTransferTicket(file,budget({io:changed})));assert.equal(syncFs.existsSync(file),true);
  }finally{await f.close();}
+});
+test('final close cannot return a ticket at deadline or after quit cancellation',async()=>{
+ for(const abort of [false,true]){
+  const f=await fixture(),t=ticket(),file=f.file(t),controller=new AbortController();let now=0;
+  try{
+   await writeAuthTransferTicket(file,t,budget());
+   const io={...fs,open:async(...args)=>{const h=await fs.open(...args);return{stat:()=>h.stat(),read:(...args)=>h.read(...args),close:async()=>{await h.close();if(abort)controller.abort();else now=100;}};}};
+   await assert.rejects(readAuthTransferTicket(file,{deadline:100,now:()=>now,signal:controller.signal,io}));assert.equal(syncFs.existsSync(file),false,'unlink already committed; no retry is promised');
+  }finally{await f.close();}
+ }
 });
