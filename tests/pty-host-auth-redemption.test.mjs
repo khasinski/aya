@@ -123,3 +123,15 @@ test('fragmented maximum-size request is read once before a credential response'
   assert.deepEqual(p.client.receive(response.trimEnd()),key);assert.equal(p.transfer.phase,'claimed');
  }finally{for(const s of sockets)s.destroy();await new Promise(resolve=>server.close(resolve));p.transfer.dispose();fs.rmSync(root,{recursive:true,force:true});}
 });
+test('a later-chunk RPC after a valid redemption gets no second response or parser',{timeout:8000},async()=>{
+ fs.mkdirSync('test-results',{recursive:true});const root=fs.mkdtempSync(path.resolve('test-results/auth-redemption-split-')),socket=path.join(root,'host.sock'),p=pair(),sockets=new Set();let accepted,release,endCalls=0;
+ const server=net.createServer(s=>{accepted=s;sockets.add(s);s.on('close',()=>sockets.delete(s));const end=s.end.bind(s);s.end=(...args)=>{endCalls++;release=()=>end(...args);return s;};void acceptHostRedemption(s,p.transfer,host,()=>recipient).catch(()=>{});});
+ try{
+  await listening(server,socket);const s=await connect(socket);let response='';s.on('data',b=>response+=b);const closed=new Promise(resolve=>s.once('close',resolve));s.write(p.client.hello+'\n');
+  const deadline=performance.now()+2000;while(!release){assert.ok(performance.now()<deadline);await new Promise(resolve=>setImmediate(resolve));}
+  assert.equal(p.transfer.phase,'claimed');assert.equal(accepted.listenerCount('data'),0,'neither credential nor application parser remains after one valid frame');
+  await new Promise((resolve,reject)=>s.write(JSON.stringify({id:2,type:'shutdown'})+'\n',error=>error?reject(error):resolve()));
+  accepted.resume();await new Promise(resolve=>setImmediate(resolve));release();await closed;
+  assert.equal(endCalls,1);assert.equal(response.trimEnd().split('\n').length,1);assert.deepEqual(p.client.receive(response.trimEnd()),key);
+ }finally{for(const s of sockets)s.destroy();await new Promise(resolve=>server.close(resolve));p.transfer.dispose();fs.rmSync(root,{recursive:true,force:true});}
+});
