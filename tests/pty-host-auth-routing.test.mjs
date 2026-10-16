@@ -56,3 +56,28 @@ test('the first-frame wait and normal proof share a single five-second deadline'
  await new Promise(resolve=>setTimeout(resolve,2500));socket.write(client.hello.slice(20)+'\n');await wait(()=>challenge.includes('pty-auth-challenge'));await closed;
  const elapsed=performance.now()-start;assert.ok(elapsed>=4500&&elapsed<6500,`single accept budget: ${elapsed}ms`);assert.equal(f.events.length,0);assert.deepEqual(f.received,[]);
 }));
+test('valid proof and authorization cannot outlive the original accept deadline',{timeout:4000},async()=>{
+ const {EventEmitter}=await import('node:events'),{HostAuthServer}=await import('../dist-electron/pty-host-auth.js');
+ const descriptor=Object.getOwnPropertyDescriptor(globalThis,'performance'),original=HostAuthServer.prototype.receive;
+ try{
+  for(const boundary of ['proof','authorize','handoff']){
+   let now=0,authorizations=0;const frames=[];
+   Object.defineProperty(globalThis,'performance',{configurable:true,value:{now:()=>now}});
+   const client=new HostAuthClient(key,host,recipient,()=>now);
+   class Socket extends EventEmitter{
+    destroyed=false;writable=true;writableEnded=false;
+    setEncoding(){return this;}pause(){return this;}resume(){return this;}
+    destroy(){if(!this.destroyed){this.destroyed=true;this.emit('close');}return this;}
+    end(line,callback){this.writableEnded=true;if(line)frames.push(String(line));callback?.();return this;}
+    write(line){frames.push(String(line));if(JSON.parse(line).type==='pty-auth-challenge'){const proof=client.receive(String(line).trim());now=4900;queueMicrotask(()=>this.emit('data',proof+'\n'));}return true;}
+   }
+   HostAuthServer.prototype.receive=function(line){const response=original.call(this,line);if(boundary==='proof'&&this.authenticated)now=5000;return response;};
+   const auth=new HostSocketAuthenticator(key,host,()=>{authorizations++;if(boundary==='authorize')now=6000;if(boundary==='handoff')queueMicrotask(()=>now=6000);},()=>recipient),socket=new Socket();
+   const outcome=auth.accept(socket).then(()=>true,error=>{assert.equal(error.code,'PTY_HOST_AUTH_REQUIRED');return false;});
+   socket.emit('data',client.hello+'\n');assert.equal(await outcome,false,`${boundary} must refuse late success`);
+   assert.equal(authorizations,boundary==='proof'?0:1);
+   if(boundary!=='handoff')assert.equal(frames.some(line=>line.includes('pty-auth-ready')),false,'no ready proof is sent after the budget');
+   assert.equal(socket.destroyed,true);assert.equal(auth.pendingConnections,0);
+  }
+ }finally{HostAuthServer.prototype.receive=original;Object.defineProperty(globalThis,'performance',descriptor);}
+});

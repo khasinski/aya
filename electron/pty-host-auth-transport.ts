@@ -33,7 +33,7 @@ function handshake(socket: Socket, session: Session, peer: HostAuthPeer, server:
     const failed = (error?:unknown) => {
       if (settled) return;
       settled = true;cleanup();
-      const busy=error instanceof HostPrincipalBusyError;
+      const busy=error instanceof HostPrincipalBusyError&&performance.now()<deadline;
       // Busy is revealed only after the client proof, and its response has a
       // separate MAC bound to this exact transcript. Invalid proof stays opaque.
       if(server&&busy&&session.authenticated&&session.principalBusy){
@@ -53,11 +53,15 @@ function handshake(socket: Socket, session: Session, peer: HostAuthPeer, server:
           const line = buffer.slice(0, end);buffer = buffer.slice(end + 1);
           if (Buffer.byteLength(line) > HOST_AUTH_FRAME_BYTES) throw new HostAuthError();
           const response = session.receive(line);
+          if(performance.now()>=deadline)throw new HostAuthError();
           if (session.authenticated) {
             // A valid proof does not displace another live/unknown principal.
             authorize?.(peer);
-            socket.pause();settled = true;cleanup();
+            if(performance.now()>=deadline)throw new HostAuthError();
+            socket.pause();
             if (response !== null) socket.write(response + "\n");
+            if(performance.now()>=deadline)throw new HostAuthError();
+            if(settled)return;settled = true;cleanup();
             resolve({peer: {...peer}, buffered: buffer});return;
           }
           if (response !== null) socket.write(response + "\n");
@@ -128,6 +132,7 @@ export class HostSocketAuthenticator {
         return {transferred:true}; // stays in the pending budget until close
       }
       const result = await handshake(socket, new HostAuthServer(this.key, this.ownPeer, peer, this.instance), peer, true, this.authorize,first.line+"\n"+first.buffered,deadline);
+      if(performance.now()>=deadline)throw new HostAuthError();
       this.pending.delete(socket);return result;
     } catch(error) {refuse(socket);if(error instanceof HostPrincipalBusyError)throw error;throw new HostAuthError();}
   }
