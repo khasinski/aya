@@ -4,6 +4,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const { readPtyPaneLimit } = require("./read-pty-pane-limit.cjs");
+const { ptyOwnerBuildId } = require("./pty-owner-build-id.cjs");
 const root = path.resolve(__dirname, "..");
 const out = path.resolve(process.env.AYA_OWNER_BUILD_DIR || path.join(root, "dist-electron"));
 if (!["darwin", "linux"].includes(process.platform)) throw new Error("PTY owner supports macOS and Linux");
@@ -22,8 +23,16 @@ const flags = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", `-ffile-prefix-
   ...(process.platform === "linux" ? ["-U_FORTIFY_SOURCE", "-D_FORTIFY_SOURCE=2"] : []),
   ...(process.platform === "darwin" ? ["-mmacosx-version-min=12.0"] : [])];
 const compilerVersion = run(["--version"]);
-const buildId = crypto.createHash("sha256").update(JSON.stringify({ platform: process.platform, arch: process.arch, flags: flags.map((f) => f.replace(root, ".")), compilerVersion }))
-  .update(paneLimitSource).update(fs.readFileSync(path.join(root, source, "owner.c"))).update(fs.readFileSync(path.join(root, source, "protocol.h"))).update(fs.readFileSync(path.join(root, source, "process-identity.h"))).digest("hex");
+const buildId = ptyOwnerBuildId({
+  platform: process.platform,
+  arch: process.arch,
+  flags: flags.map((flag) => flag.replace(root, ".")),
+  compilerVersion,
+  paneLimitSource,
+  ownerSource: fs.readFileSync(path.join(root, source, "owner.c")),
+  protocolSource: fs.readFileSync(path.join(root, source, "protocol.h")),
+  identitySource: fs.readFileSync(path.join(root, source, "process-identity.h")),
+});
 const candidates = [process.env.AYA_NODE_HEADERS, path.resolve(path.dirname(process.execPath), "../include/node"),
   "/usr/local/include/node", "/usr/include/node", "/opt/homebrew/include/node"];
 const headers = candidates.find((dir) => dir && fs.existsSync(path.join(dir, "node_api.h")));
