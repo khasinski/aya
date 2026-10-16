@@ -1,5 +1,6 @@
 // Main-only validation. The native owner credential is returned only in memory
 // after authenticated socket proof and a complete, generation-bound manifest.
+import {createHash} from "node:crypto";
 import {parseRecoveryBootstrap,MAX_RECOVERY_BOOTSTRAP_BYTES,type RecoveryBootstrap} from "./pty-recovery-bootstrap";
 import type {HostAuthPeer} from "./pty-host-auth";
 export interface OwnerContinuity {credential:Buffer;bootstrap:RecoveryBootstrap}
@@ -22,4 +23,19 @@ export function validateOwnerContinuity(value:unknown,peer:HostAuthPeer,version:
     if(!saved||saved.pid!==pane.pid||saved.generation!==pane.generation||saved.startIdentity!==pane.startIdentity)throw Error("Terminal owner continuity pane generation changed");
   }
   return {credential:Buffer.from(value.secret,"hex"),bootstrap};
+}
+
+/** An announced recipient validates the exact receipt before completing the
+ * credential transaction. Empty continuity never creates or probes an owner. */
+export function validateTransferredOwnerContinuity(value:unknown,peer:HostAuthPeer,version:unknown):{credential:Buffer;bootstrap:RecoveryBootstrap|null;receipt:string}{
+ const encoded=JSON.stringify(value);
+ if(!encoded||Buffer.byteLength(encoded)>MAX_RECOVERY_BOOTSTRAP_BYTES||!closed(value,["format","host","secret","bootstrap","transferReceipt"])||typeof value.transferReceipt!=="string"||!/^[a-f0-9]{64}$/.test(value.transferReceipt))throw Error("Invalid transferred owner continuity response");
+ const {transferReceipt,...body}=value;
+ const raw=JSON.stringify(body.bootstrap);
+ if(!raw||Buffer.byteLength(raw)>MAX_RECOVERY_BOOTSTRAP_BYTES||createHash("sha256").update(raw).digest("hex")!==transferReceipt)throw Error("Terminal owner continuity receipt changed");
+ if(body.format===1)return {...validateOwnerContinuity(body,peer,version),receipt:transferReceipt};
+ const status=version as {owner?:unknown;ptyCount?:unknown}|null;
+ if(body.format!==2||!closed(body.host,["pid","startIdentity"])||body.host.pid!==peer.pid||body.host.startIdentity!==peer.startIdentity||typeof body.secret!=="string"||!/^[a-f0-9]{64}$/.test(body.secret)||
+    !closed(body.bootstrap,["format","kind","owner","panes"])||body.bootstrap.format!==2||body.bootstrap.kind!=="empty"||body.bootstrap.owner!==null||!Array.isArray(body.bootstrap.panes)||body.bootstrap.panes.length!==0||status?.owner!==null||status.ptyCount!==0)throw Error("Terminal owner continuity is not empty");
+ return {credential:Buffer.from(body.secret,"hex"),bootstrap:null,receipt:transferReceipt};
 }

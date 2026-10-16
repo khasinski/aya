@@ -12,7 +12,7 @@ const {PtyHostClient}=await import('../dist-electron/pty-host-client.js');
 const {readAuthTransferTicket}=await import('../dist-electron/pty-host-auth-ticket.js');
 const {redeemHostCapability}=await import('../dist-electron/pty-host-auth-redemption.js');
 const {ownerProcessStartIdentity}=await import('../dist-electron/pty-owner-client.js');
-const {validateOwnerContinuity}=await import('../dist-electron/pty-host-owner-continuity.js');
+const {validateOwnerContinuity,validateTransferredOwnerContinuity}=await import('../dist-electron/pty-host-owner-continuity.js');
 const {cleanupNativeOwner}=await import('./helpers/pty-host.mjs');
 async function fixture(mode){
  const child=spawn(process.execPath,['tests/helpers/pty-host-auth-controls.cjs',mode],{env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},stdio:['ignore','ignore','pipe','ipc']});let stderr='',message;child.stderr.on('data',b=>stderr+=b);child.on('message',m=>message=m);
@@ -57,4 +57,20 @@ test('existing B3 cancel alone revokes planned credential release and resumes th
  const c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));
  try{assert.equal(await c.getPid('kept'),old.pid);assert.equal((await c.hostStatus()).owner.pid,old.ownerPid);assert.match(await c.getBuffer('kept'),/AFTER_PLANNED_ABORT/);await c.write('kept','AFTER_CANCEL_REDEMPTION\n');await c.shutdown();}
  finally{c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
+});
+
+test('announced empty-owner relaunch completes without starting or probing a replacement owner',{timeout:20000},async()=>{
+ const old=await fixture('publish-empty');assert.equal(old.ownerPid,null);
+ const ticket=await readAuthTransferTicket(old.file),socket=net.createConnection(path.join(process.env.AYA_HOME,'pty-host.sock'));await once(socket,'connect');
+ const key=await redeemHostCapability(socket,ticket,{pid:process.pid,startIdentity:ownerProcessStartIdentity(process.pid)}),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));c.hostAuthKey=key;
+ try{
+  const status=await c.request({id:0,type:'version'});assert.equal(status.pid,old.hostPid);assert.equal(status.owner,null);assert.equal(status.ptyCount,0);
+  const retained=path.join(process.env.AYA_HOME,'pty-owner/record.json');fs.writeFileSync(retained,'unreadable retained inventory',{mode:0o600});
+  await assert.rejects(c.request({id:0,type:'owner-continuity',transferAttempt:ticket.attempt}));fs.unlinkSync(retained);
+  const result=await c.request({id:0,type:'owner-continuity',transferAttempt:ticket.attempt});
+  const continuity=validateTransferredOwnerContinuity(result,{pid:ticket.hostPid,startIdentity:ticket.hostStartIdentity},status);assert.equal(continuity.bootstrap,null);continuity.credential.fill(0);
+  assert.equal(await c.request({id:0,type:'auth-transfer-complete',attempt:ticket.attempt,receipt:continuity.receipt}),true);
+  const next=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'c'.repeat(64),deadline:Date.now()+120000});await c.request({id:0,type:'auth-transfer-cancel',attempt:next.attempt});
+  assert.equal((await c.request({id:0,type:'version'})).owner,null);assert.equal(fs.existsSync(path.join(process.env.AYA_HOME,'pty-owner/record.json')),false);await c.shutdown();
+ }finally{c.dispose();c.dropSocket();key.fill(0);await cleanupNativeOwner(process.env.AYA_HOME);}
 });

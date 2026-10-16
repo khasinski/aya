@@ -7,13 +7,15 @@ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),wait=async f=>{cons
  const c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true,mode:0o700});let keep=false;
  try{
   await c.spawn({ptyId:'kept',agent:'custom',command:'stty -echo; printf READY_CONTROLS; cat',cwd:process.env.HOME,cols:80,rows:24});await wait(async()=>(await c.getBuffer('kept')).includes('READY_CONTROLS'));
-  const pid=await c.getPid('kept'),status=await c.hostStatus(),mode=process.argv[2];
-  if(mode==='publish'){
+  const mode=process.argv[2];
+  if(mode==='publish-empty'){await c.kill('kept');await wait(async()=>!(await c.hostStatus()).owner);}
+  const pid=await c.getPid('kept'),status=await c.hostStatus();
+  if(mode==='publish'||mode==='publish-empty'){
    const deadline=Date.now()+120000,nonce='a'.repeat(64),budget=performance.now()+2000;
    const reserved=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce,deadline});
    const t={format:2,...reserved,nonce},file=authTransferTicketPath(process.env.AYA_HOME,t.attempt);
    await writeAuthTransferTicket(file,t,{deadline:budget});assert.equal(await c.request({id:0,type:'auth-transfer-activate',attempt:t.attempt}),true);
-   keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner.pid});
+   keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner?.pid??null});
   }else if(mode==='ordinary-wins'){
    const reserved=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'b'.repeat(64),deadline:Date.now()+120000});
    await assert.rejects(c.request({id:0,type:'handover-prepare',deadline:Date.now()+120000}));assert.equal(await c.request({id:0,type:'auth-transfer-cancel',attempt:reserved.attempt}),'cancelled');
@@ -33,7 +35,7 @@ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),wait=async f=>{cons
    }else assert.equal(await c.request({id:0,type:'auth-transfer-cancel',attempt:reserved.attempt}),'cancelled');
    await c.cancelPlannedHandover();
    await c.write('kept','AFTER_PLANNED_ABORT\n');await wait(async()=>(await c.getBuffer('kept')).includes('AFTER_PLANNED_ABORT'));assert.equal(await c.getPid('kept'),pid);
-   if(mode==='planned-cancel'){keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner.pid});}else process.send({ok:true});
+   if(mode==='planned-cancel'){keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner?.pid??null});}else process.send({ok:true});
   }else throw Error('unknown fixture mode');
   for(const type of ['auth-transfer-reserve','auth-transfer-activate','auth-transfer-cancel','auth-transfer-complete'])assert.equal(isPtyHostRequest({id:1,type,attempt:'a'.repeat(64),extra:true}),false);
  }finally{if(!keep)await c.shutdown().catch(()=>{});c.dispose();c.dropSocket();}

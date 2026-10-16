@@ -42,7 +42,7 @@ import {
   type PtyEventSink,
   ptyCoreHandoverInProgress,
 } from "./pty-core";
-import { getOwnerRuntime, currentOwnerRuntime, shutdownOwnerRuntime, requireRecoveryOwner, requireOwnerExitAcknowledgements, setOwnerUnavailableListener, ownerHandoverCredential } from "./pty-owner-runtime";
+import { getOwnerRuntime, currentOwnerRuntime, shutdownOwnerRuntime, requireRecoveryOwner, requireOwnerExitAcknowledgements, setOwnerUnavailableListener, ownerHandoverCredential, ownerRuntimeIsAbsent } from "./pty-owner-runtime";
 import { HandoverWindow, handoverPeer } from "./pty-handover-window";
 import {readRecoveryBootstrap,MAX_RECOVERY_BOOTSTRAP_BYTES} from "./pty-recovery-bootstrap";
 import {readHandoverBootstrap,preflightCoreHandover,readCoreHandover} from "./pty-handover-bootstrap";
@@ -367,6 +367,19 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
   }
   if(request.type==="owner-continuity"){
     const owner=currentOwnerRuntime();
+    if(request.transferAttempt&&!owner){
+      if(preparations.size||ptyCoreHandoverInProgress()||hasUnattachedRestoredPanes()||!ownerRuntimeIsAbsent())throw Error("Terminal owner continuity is not empty");
+      ptyOwnerContinuityPanes([]); // includes pending spawn/shutdown barriers
+      const startIdentity=ownerProcessStartIdentity(process.pid);
+      if(!startIdentity)throw Error("Terminal host identity is unavailable");
+      const credential=ownerHandoverCredential();
+      try{
+        const bootstrap={format:2,kind:"empty",owner:null,panes:[]};
+        const transferReceipt=crypto.createHash("sha256").update(JSON.stringify(bootstrap)).digest("hex");
+        authTransfer.noteContinuity(handoverPeer(socket),request.transferAttempt,transferReceipt);
+        return {format:2,host:{pid:process.pid,startIdentity},secret:credential.toString("hex"),bootstrap,transferReceipt};
+      }finally{credential.fill(0);}
+    }
     if(!owner||owner.incompatible||!owner.client?.isConnected()||ptyCoreHandoverInProgress()||preparations.size||owner.record.uncertain?.length||owner.record.spawnIntents?.length)throw Error("Terminal owner recovery continuity is unavailable");
     const client=owner.client,inventory=await client.list();
     if(client!==owner.client||!client.isConnected()||owner.incompatible||ptyCoreHandoverInProgress()||preparations.size||owner.record.uncertain?.length||owner.record.spawnIntents?.length)throw Error("Terminal owner changed during recovery continuity");

@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
-const {validateOwnerContinuity}=require('../dist-electron/pty-host-owner-continuity.js');
+const {validateOwnerContinuity,validateTransferredOwnerContinuity}=require('../dist-electron/pty-host-owner-continuity.js');
 const peer={pid:100,startIdentity:'1:2'};
 function fixture(){
  const owner={pid:200,startTime:'owner-start',instanceId:'a'.repeat(32),binaryHash:'b'.repeat(64)};
@@ -36,4 +37,21 @@ test('continuity accepts exactly one MiB and refuses a valid manifest one byte a
  const slot=response.bootstrap.panes[0].request.peerCwds.findIndex(s=>s.length<65536);assert.notEqual(slot,-1);
  response.bootstrap.panes[0].request.peerCwds[slot]+='x';assert.equal(Buffer.byteLength(JSON.stringify(response)),1024*1024+1);
  assert.throws(()=>validateOwnerContinuity(response,peer,version),/^Error: Invalid terminal owner continuity response$/);
+});
+
+function tag(response){return {...response,transferReceipt:createHash('sha256').update(JSON.stringify(response.bootstrap)).digest('hex')};}
+test('announced continuity verifies exact receipt and complete live manifest before releasing a copied credential',()=>{
+ const {response,version}=fixture(),tagged=tag(response),accepted=validateTransferredOwnerContinuity(tagged,peer,version);
+ assert.deepEqual(accepted.bootstrap,response.bootstrap);accepted.credential.fill(0);assert.equal(tagged.secret,'c'.repeat(64));
+ for(const mutate of [r=>{r.transferReceipt='0'.repeat(64);},r=>{r.extra=true;},r=>{r.host.pid++;},r=>{r.bootstrap.panes.pop();}]){
+  const value=structuredClone(tagged);mutate(value);assert.throws(()=>validateTransferredOwnerContinuity(value,peer,version));
+ }
+});
+test('empty continuity is closed and requires authenticated exact-host zero panes and no owner',()=>{
+ const response={format:2,host:{...peer},secret:'c'.repeat(64),bootstrap:{format:2,kind:'empty',owner:null,panes:[]}},version={owner:null,ptyCount:0};
+ const value=tag(response),accepted=validateTransferredOwnerContinuity(value,peer,version);assert.equal(accepted.bootstrap,null);accepted.credential.fill(0);
+ for(const mutate of [r=>{r.format=1;},r=>{r.host.startIdentity='1:3';},r=>{r.secret='bad';},r=>{r.bootstrap.extra=true;},r=>{r.bootstrap.kind='crash';},r=>{r.bootstrap.owner={pid:42};},r=>{r.bootstrap.panes=[{id:'unseen'}];}]){
+  const changed=structuredClone(response);mutate(changed);assert.throws(()=>validateTransferredOwnerContinuity(tag(changed),peer,version));
+ }
+ for(const changed of [{owner:null},{owner:null,ptyCount:1},{ptyCount:0},{owner:{},ptyCount:0}])assert.throws(()=>validateTransferredOwnerContinuity(value,peer,changed));
 });

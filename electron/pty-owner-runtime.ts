@@ -35,6 +35,9 @@ let ready: OwnerRuntime | null = null;
 let unavailableListener: ((owner: OwnerRuntime) => void) | null = null;
 export function setOwnerUnavailableListener(listener: (owner: OwnerRuntime) => void): void { unavailableListener = listener; }
 export function currentOwnerRuntime(): OwnerRuntime | null { return ready; }
+/** An authenticated continuity request may describe an empty future owner
+ * only when no runtime is opening/stopping and no retained owner exists. */
+export function ownerRuntimeIsAbsent():boolean{return runtime===null&&ready===null&&readOwnerRecord()===null;}
 export function getOwnerRuntime(): Promise<OwnerRuntime> {
   if (ready?.isStopping) return ready.shutdown().then(() => getOwnerRuntime());
   return runtime ??= OwnerRuntime.open().then(value => { ready = value; return value; }).catch(error => { runtime = null; throw error; });
