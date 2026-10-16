@@ -42,7 +42,12 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
   await waitFor(()=>output.includes(`READY:${pid}`));core.resizePty('core',101,39);
   await core.writePty('core','start\n');await waitFor(()=>fs.existsSync(path.join(home,'produced'))&&output.includes('HISTORY'));
   if(variant==='legacy-modes'){
-   await waitFor(()=>output.includes('\x1b[?1h'));
+   // The PTY read reaches the sink before xterm's asynchronous write callback
+   // has necessarily applied the mode sequences to the mirror.
+   await waitFor(()=>{
+    const modes=vtPaneReplayModeState('core');
+    return modes.alternate&&modes.mouse==='any'&&modes.sgrMouse&&modes.focus&&modes.bracketedPaste&&modes.applicationCursor;
+   });
    assert.deepEqual(vtPaneReplayModeState('core'),{alternate:true,mouse:'any',sgrMouse:true,focus:true,bracketedPaste:true,applicationCursor:true});
    core.__testAppendToOutputBuffer('core','x'.repeat(core.OUTPUT_BUFFER_MAX-1));
   }
@@ -60,6 +65,7 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
   assert.equal(checkpoint.adapter.pane.cols,101);assert.equal(checkpoint.adapter.pane.rows,39);
   if(variant==='legacy-modes'){
    assert.ok(output.includes('\x1b[?1003h'));
+   assert.deepEqual(checkpoint.output.replayModes.state,vtPaneReplayModeState('core'),'freeze records modes after the mirror applied the PTY output');
    delete checkpoint.output.replayModes;
    assert.ok(checkpoint.output.chunks.join('').length<=core.OUTPUT_BUFFER_MAX);
    assert.ok(!checkpoint.output.chunks.join('').includes('\x1b[?1003h'));
