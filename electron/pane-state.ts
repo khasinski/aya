@@ -1,3 +1,4 @@
+import { printable } from "./printable";
 // Read-only state explanation: one fresh applied host snapshot, evaluated in main.
 import type { VtSnapshot } from "./vt-mirror";
 import { snapshotBusy, snapshotHold, snapshotStatus } from "./vt-state";
@@ -6,6 +7,7 @@ import { builtinScreenRules, HOLD_RULES_UNAVAILABLE } from "./screen-rule-provid
 import { HOLD_ACCOUNT_SETTING, HOLD_APPROVAL, HOLD_APPROVE_AYA, HOLD_CHOICE, HOLD_DRAFT, HOLD_RECOVERY_UNKNOWN, HOLD_SHELL, HOLD_STARTING, HOLD_USAGE_LIMIT } from "./pane-holds";
 export interface PaneStateResult {
   state: "unknown" | "stopped" | "starting" | "waiting" | "busy" | "held" | "idle" | "shell";
+  reason?: string; screenEvidence?: boolean;
   hold: string | null; busy: boolean; waiting: boolean | null; generation: string | null;
   rules: { available: boolean; version?: string; digest?: string; reason?: string };
   evidence: { for: "waiting" | "hold" | "busy"; match?: ScreenRuleMatch; policy?: string; source?: string }[];
@@ -19,8 +21,10 @@ export function unavailablePaneState(reason: string, state: "unknown" | "stopped
 }
 export function explainPaneSnapshot(snapshot: VtSnapshot): PaneStateResult {
   const hold = snapshotHold(snapshot).hold, busy = snapshotBusy(snapshot), status = snapshotStatus(snapshot), rules = ruleMetadata();
-  const unknown = snapshot.recoveryUnknown || !rules.available;
-  const state = snapshot.shell ? "shell" : unknown ? "unknown" : status.waiting ? "waiting" : busy ? "busy" : hold ? "held" : "idle";
+  const noScreen = status.waiting === null || !snapshot.rows.some(row => row.trim());
+  const unknown = snapshot.recoveryUnknown || !rules.available || noScreen;
+  const reason = snapshot.recoveryUnknown ? HOLD_RECOVERY_UNKNOWN : !rules.available ? rules.reason : noScreen ? "no screen evidence yet" : undefined;
+  const state = unknown ? "unknown" : snapshot.shell ? "shell" : status.waiting ? "waiting" : busy ? "busy" : hold ? "held" : "idle";
   const evidence: PaneStateResult["evidence"] = [];
   if (!unknown && !snapshot.shell) {
     const decision = evaluateScreenEvidence(snapshot.rows, snapshot.agent);
@@ -38,16 +42,17 @@ export function explainPaneSnapshot(snapshot: VtSnapshot): PaneStateResult {
     const policies = new Map([[HOLD_SHELL,"shell"],[HOLD_STARTING,"starting"],[HOLD_DRAFT,"draft"],[HOLD_CHOICE,"numbered-choice"],[HOLD_APPROVE_AYA,"approve-aya"],[HOLD_RECOVERY_UNKNOWN,"recovery-screen-unknown"],[HOLD_RULES_UNAVAILABLE,"rules-unavailable"]]);
     evidence.push({for:"hold",policy:policies.get(hold) ?? "pane-hold"});
   }
-  return { state, hold, busy, waiting: status.waiting, generation: snapshot.generation, rules, evidence };
+  return { state, ...(reason ? { reason } : {}), screenEvidence: !unknown, hold, busy, waiting: status.waiting, generation: snapshot.generation, rules, evidence };
 }
 export function formatPaneState(name: string, result: PaneStateResult, explain: boolean): string {
-  const lines = [`${name}: ${result.state}; busy: ${result.busy ? "yes" : "no"}; hold: ${result.hold ?? "none"}`];
+  const lines = [`${printable(JSON.stringify(name))}: ${result.state}; busy: ${result.busy ? "yes" : "no"}; waiting: ${result.waiting === null ? "unknown" : result.waiting ? "yes" : "no"}; hold: ${result.hold ?? "none"}`];
+  if (result.reason) lines.push(`reason: ${result.reason}`);
   if (!result.rules.available) lines.push(`rules unavailable: ${result.rules.reason}`);
   if (explain) {
     if (result.rules.available) lines.push(`rules: ${result.rules.version} (${result.rules.digest})`);
-    if (result.evidence.length === 0) lines.push("No rule matched.");
+    if (result.evidence.length === 0 && result.screenEvidence) lines.push("No rule matched.");
     for (const e of result.evidence) {
-      if (e.match) lines.push(`${e.for} rule: ${e.match.id} (${e.match.kind})`,`source: ${e.match.source}; rules: ${e.match.version} (${e.match.digest})`,`region: ${e.match.region}`,`excerpt: ${e.match.excerpt}`);
+      if (e.match) lines.push(`${e.for} rule: ${e.match.id} (${e.match.kind}${e.for === "waiting" ? result.waiting ? "; waiting" : "; clear" : ""})`,`source: ${e.match.source}; rules: ${e.match.version} (${e.match.digest})`,`region: ${e.match.region}`,`excerpt: ${e.match.excerpt}`);
       else lines.push(`${e.for}: policy:${e.policy}; source: ${e.source ?? "vt-state"}; no data rule matched for this decision`);
     }
   }

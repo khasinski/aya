@@ -19,19 +19,20 @@ test('state explains busy, generic approval, suppression, usage/account and poli
 
 test('paneState reads one fresh applied snapshot and never sends composer metadata or mutates it',async()=>{
  const client=new PtyHostClient('/unused'),calls=[],s=snapshot(['❯ '],'claude',{composerSeen:false});
- client.request=async request=>{calls.push(request);return s;};
+ client.socket={destroyed:false,destroy(){this.destroyed=true;}};client.sendRequest=async (_socket,request)=>{calls.push(request);return s;};
  try{const before=structuredClone(s);await client.paneState('p');assert.deepEqual(s,before);assert.deepEqual(calls,[{id:0,type:'snapshot',ptyId:'p'}]);}finally{client.dispose();}
 });
 
 test('missing, disconnected and malformed state is never silently idle',async()=>{
  const client=new PtyHostClient('/unused');
- try{for(const [value,state] of [[null,'stopped'],['starting','starting'],['disconnected','unknown'],[{},'unknown']]){client.request=async()=>value;assert.equal((await client.paneState('p')).state,state);}
- client.request=async()=>{throw Error('host unavailable');};assert.equal((await client.paneState('p')).state,'unknown');}finally{client.dispose();}
+ client.socket={destroyed:false,destroy(){this.destroyed=true;}};
+ try{for(const [value,state] of [[null,'stopped'],['starting','starting'],['disconnected','unknown'],[{},'unknown']]){client.sendRequest=async()=>value;assert.equal((await client.paneState('p')).state,state);}
+ client.sendRequest=async()=>{throw Error('host unavailable');};assert.equal((await client.paneState('p')).state,'unknown');}finally{client.dispose();}
 });
 
 test('explain prints the actual match and metadata, basic state omits excerpts',()=>{
  const r=explainPaneSnapshot(snapshot(['Do you want to proceed?']));
- assert.match(formatPaneState('worker',r,true),/waiting rule: do-you-want \(prompt\)\nsource: builtin\/generic; rules: 1 \([a-f0-9]{64}\)\nregion: tail\nexcerpt: Do you want to/);
+ assert.match(formatPaneState('worker',r,true),/waiting rule: do-you-want \(prompt; waiting\)\nsource: builtin\/generic; rules: 1 \([a-f0-9]{64}\)\nregion: tail\nexcerpt: Do you want to/);
  assert.doesNotMatch(formatPaneState('worker',r,false),/excerpt|source/);
 });
 
@@ -46,4 +47,22 @@ test('state protocol rejects a non-boolean explain option',async()=>{
  assert.throws(()=>parseControlRequest({type:'pane-state',target:'p',explain:'yes'}),/must be boolean/);
  assert.throws(()=>parseControlRequest({type:'pane-state'}),/requires target/);
  assert.equal(parseControlRequest({type:'pane-state',target:'p'}).explain,false);
+});
+
+
+test('empty seen-composer snapshot is unknown without changing its hold/busy/status',()=>{
+ const r=explainPaneSnapshot(snapshot([],'claude',{composerSeen:true}));
+ assert.equal(r.state,'unknown');assert.equal(r.reason,'no screen evidence yet');assert.equal(r.hold,null);assert.equal(r.busy,false);assert.equal(r.waiting,null);
+ const text=formatPaneState('agent',r,true);assert.match(text,/no screen evidence yet/);assert.doesNotMatch(text,/No rule matched/);
+ assert.match(formatPaneState('agent',explainPaneSnapshot(snapshot(['ordinary output'])),true),/No rule matched/);
+});
+test('suppressor explanation states its clear result',()=>{
+ const text=formatPaneState('agent',explainPaneSnapshot(snapshot(['Do you want to proceed?','? for shortcuts'])),true);
+ assert.match(text,/waiting: no/);assert.match(text,/composer-hint \(suppressor; clear\)/);
+});
+
+
+test('blank retained rows are not invented idle evidence either',()=>{
+ const r=explainPaneSnapshot(snapshot(['','  '],'claude',{composerSeen:true}));
+ assert.equal(r.state,'unknown');assert.equal(r.reason,'no screen evidence yet');assert.equal(r.hold,null);assert.equal(r.busy,false);assert.equal(r.waiting,false);
 });
