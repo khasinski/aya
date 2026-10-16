@@ -1,8 +1,10 @@
 import {readFileSync,writeFileSync,unlinkSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
 import {join} from 'node:path';
 import {test as base,expect,launchApp,closeAndWait,hostPidsForHome} from './fixtures';
 import {waitForShellReady} from './helpers/terminal';
 import {fireShortcut} from './helpers/shortcut';
+import {envWithoutAya} from './helpers/env';
 const alive=(pid:number)=>{try{process.kill(pid,0);return true;}catch{return false;}};
 const record=(home:string)=>JSON.parse(readFileSync(join(home,'pty-owner/record.json'),'utf8')) as {pid:number;instanceId:string;panes:Array<{id:string;pid:number;generation:number}>};
 const test=base.extend({app:async({seeded},use)=>{const app=await launchApp({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0'}}),pid=app.process().pid!;await use(app);if(alive(pid))await closeAndWait(app);}});
@@ -49,6 +51,9 @@ for(const fault of ['missing','wrong','unknown identity'])test(`a ${fault} capab
   await window.reload();
   await expect(window.getByTestId('terminal-history-notice').first()).toContainText('authenticate');
   await expect(window.getByTestId('terminal-history-notice').first()).toContainText('input remains disabled');
+  const state=execFileSync(join(__dirname,'..','bin','aya'),['pane','state','shell 1','--explain'],{env:{...envWithoutAya(),AYA_HOME:seeded.ayaHome},encoding:'utf8',timeout:10000});
+  expect(state).toContain('"shell 1": unknown; busy: no; waiting: unknown');
+  expect(state).not.toContain('excerpt:');
   const refusedTerminal=window.getByTestId('xterm-host').first();await refusedTerminal.click();await window.keyboard.type('not-delivered');await window.keyboard.press('Enter');
   await refusedTerminal.locator('.xterm-helper-textarea').evaluate(textarea=>{const data=new DataTransfer();data.setData('text/plain','paste-not-delivered\n');textarea.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));});
   expect(await app.evaluate(()=>(globalThis as any).authWriteCalls)).toBe(0);
