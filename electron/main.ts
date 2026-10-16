@@ -1,3 +1,4 @@
+import { builtinScreenRules } from "./screen-rule-provider";
 // Electron main process. Creates the window, wires IPC handlers to the PTY
 // host and the project config layer.
 
@@ -968,6 +969,8 @@ app.on("before-quit", (event) => {
 });
 
 const diagnosticsLog = createPtyLog(DIAGNOSTICS_LOG_FILE);
+builtinScreenRules.setLogger((event, fields) => diagnosticsLog.append(event, fields));
+builtinScreenRules.get();
 const gpuDeathHandler = createGpuDeathHandler({
   diagnosticsLog,
   appQuitting: () => appQuitting,
