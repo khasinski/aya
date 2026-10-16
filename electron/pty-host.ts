@@ -56,6 +56,8 @@ import { PTY_HOST_UNKNOWN_REQUEST } from "./pty-core-constants";
 import type { PtyEvent } from "./types";
 import { ptyLog } from "./pty-log";
 import { keepHostOnUncaught } from "./pty-host-guard";
+import {HostSocketAuthenticator,HostAuthPrincipal} from "./pty-host-auth-transport";
+import {readInheritedHostAuthKey} from "./pty-host-auth-bootstrap";
 
 // Wait before shutting down the idle pty host with no clients or ptys (ms).
 // The env override lets a test see the exit without waiting 30 s.
@@ -67,6 +69,7 @@ const LOG_HASH_PREFIX_CHARS = 8;
 
 const clients = new Set<net.Socket>();
 let crashBoot=false;
+let socketAuthenticator:HostSocketAuthenticator;
 const handoverWindow = new HandoverWindow();
 const hostHandover = new HostHandover(PTY_HANDOVER_CORE_DIRECTORY, PTY_HANDOVER_DISPLAY_DIRECTORY);
 let idleTimer: NodeJS.Timeout | null = null;
@@ -386,15 +389,8 @@ function scheduleIdleShutdown(): void {
   }, IDLE_SHUTDOWN_TIMEOUT_MS);
 }
 
-function start(): void {
-  fs.mkdirSync(path.dirname(PTY_HOST_SOCKET_PATH), { recursive: true });
-  try {
-    fs.rmSync(PTY_HOST_SOCKET_PATH, { force: true });
-  } catch {
-    // best effort
-  }
 
-  server = net.createServer((socket) => {
+function attachAuthenticatedClient(socket:net.Socket,initialBuffer:string):void {
     clients.add(socket);
     // The disconnect re-arms a full wait; a timer armed before this client came must not cut it short.
     clearIdleTimer();
@@ -419,7 +415,7 @@ function start(): void {
       ptyLog.append("client-disconnect", { clients: clients.size });
       scheduleIdleShutdown();
     });
-    socket.on("data", (chunk) => {
+    const onData = (chunk:string|Buffer) => {
       buffer += chunk;
       while (buffer.includes("\n")) {
         const idx = buffer.indexOf("\n");
@@ -454,13 +450,30 @@ function start(): void {
           }
         })();
       }
-    });
+    };
+    socket.on("data",onData);
     // Main owns session watches even for a view that will mount much later.
     // These are bounded per-pane launch records, never aggregate VT payloads.
     for(const pane of restoredPtyLaunches()){
       sendLine(socket,{type:"spawned",...pane,launch:getPtyLaunch(pane.req.ptyId)??undefined,restored:true,ownerBacked:true,hostPid:process.pid});
       void vtSnapshot(pane.req.ptyId).then(snapshot=>{if(snapshot)sendLine(socket,{type:"snapshot",ptyId:pane.req.ptyId,snapshot});});
     }
+    if(initialBuffer)onData(initialBuffer);
+}
+
+function start(): void {
+  fs.mkdirSync(path.dirname(PTY_HOST_SOCKET_PATH), { recursive: true });
+  try {
+    fs.rmSync(PTY_HOST_SOCKET_PATH, { force: true });
+  } catch {
+    // best effort
+  }
+
+  server = net.createServer((socket) => {
+    void socketAuthenticator.accept(socket).then(({buffered})=>{
+      if(hostShutdownStarted||socket.destroyed){socket.destroy();return;}
+      attachAuthenticatedClient(socket,buffered);socket.resume();
+    }).catch(()=>{ptyLog.append("host-auth-refused",{});});
   });
 
   listenOwnerOnly(server, PTY_HOST_SOCKET_PATH, () => {
@@ -507,6 +520,19 @@ setOwnerUnavailableListener(owner => {
   for (const id of owner.record.panes.map(p => p.id)) broadcast({ type: "disconnected", ptyId: id });
 });
 void (async()=>{
+  const capability=await readInheritedHostAuthKey();
+  const ownStart=ownerProcessStartIdentity(process.pid);
+  if(!ownStart)throw new Error("Terminal host process identity is unavailable");
+  const principal=new HostAuthPrincipal(peer=>{
+    try{
+      const start=ownerProcessStartIdentity(peer.pid);
+      if(start)return start===peer.startIdentity?"same":"gone";
+      try{process.kill(peer.pid,0);}catch(error){if((error as NodeJS.ErrnoException).code==="ESRCH")return "gone";}
+    }catch{/* Failed identity probes cannot release a live main. */}
+    return "unknown";
+  });
+  socketAuthenticator=new HostSocketAuthenticator(capability,{pid:process.pid,startIdentity:ownStart},peer=>principal.authorize(peer));
+  capability.fill(0);
   const recovery=process.env.AYA_PTY_RECOVERY_FD === "4" ? await readRecoveryBootstrap(4) : null;
   delete process.env.AYA_PTY_RECOVERY_FD;
   if(recovery)requireRecoveryOwner(recovery.owner);

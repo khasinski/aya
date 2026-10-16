@@ -74,8 +74,9 @@ export class HostAuthPrincipal {
 export class HostSocketAuthenticator {
   private readonly pending = new Set<Socket>();
   private readonly instance = randomBytes(32).toString("hex");
-  constructor(private readonly key: Buffer, private readonly ownPeer: HostAuthPeer,
-    private readonly authorize: (peer: HostAuthPeer) => void, private readonly readPeer: PeerReader = handoverPeer) {}
+  private readonly key: Buffer;
+  constructor(key: Buffer, private readonly ownPeer: HostAuthPeer,
+    private readonly authorize: (peer: HostAuthPeer) => void, private readonly readPeer: PeerReader = handoverPeer) {this.key=Buffer.from(key);}
   get pendingConnections(): number {return this.pending.size;}
   async accept(socket: Socket): Promise<AuthenticatedHostSocket> {
     // Also retain failed sockets until their bounded refusal/close completes.

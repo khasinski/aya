@@ -1,0 +1,64 @@
+import {test,before,after} from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import net from 'node:net';
+import {once} from 'node:events';
+
+fs.mkdirSync('test-results',{recursive:true});
+const home=fs.mkdtempSync(path.resolve('test-results/auth-real-host-'));
+process.env.AYA_HOME=home;process.env.HOME=home;process.env.SHELL='/bin/sh';
+const {PtyHostClient}=await import('../dist-electron/pty-host-client.js');
+const {readHostAuthKey}=await import('../dist-electron/pty-host-auth-key.js');
+const {waitFor,fakeWebContents,ptyEventsFor}=await import('./helpers/pty-host.mjs');
+const socketPath=path.join(home,'pty-host.sock'),keyFile=path.join(home,'pty-host-auth/key');
+const main=new PtyHostClient(path.resolve('dist-electron/pty-host.js')),sink=fakeWebContents();main.attachWebContents(sink);
+let originalKey,pid,hostPid;
+const output=()=>ptyEventsFor(sink,'auth-pane').filter(e=>e.type==='data').map(e=>e.chunk).join('');
+before(async()=>{
+ await main.spawn({ptyId:'auth-pane',command:'stty -echo; printf READY_AUTH; cat',cwd:home,cols:80,rows:24});
+ await waitFor(()=>output().includes('READY_AUTH'));originalKey=readHostAuthKey(home);pid=await main.getPid('auth-pane');hostPid=(await main.hostStatus()).pid;
+});
+after(async()=>{try{fs.writeFileSync(keyFile,originalKey,{mode:0o600});fs.chmodSync(keyFile,0o600);await main.restart();}finally{main.dispose();fs.rmSync(home,{recursive:true,force:true});}});
+async function raw(){const socket=net.createConnection(socketPath);socket.setEncoding('utf8');socket.on('error',()=>{});await once(socket,'connect');return socket;}
+test('every normal RPC is refused before authentication, without changing the real pane or owner', {timeout:20000},async()=>{
+ const union=fs.readFileSync('electron/pty-host-protocol.ts','utf8').split('export type PtyHostRequest =')[1].split('export type PtyHostResponse')[0];
+ const types=[...new Set([...union.matchAll(/type:\s*["']([^"']+)["']/g)].map(match=>match[1]).concat(['constructor','__proto__','vt-snapshot','exit-applied']))];
+ assert.ok(types.includes('version')&&types.includes('handover-claim')&&types.includes('kill'));
+ for(const type of types){
+  const socket=await raw();let data='';socket.on('data',chunk=>data+=chunk);const closed=once(socket,'close');
+  socket.write(JSON.stringify({id:17,type,ptyId:'auth-pane',data:'FORBIDDEN\n',query:'READY',cols:10,rows:10,nonce:'c'.repeat(64),deadline:Date.now()+100000,req:{ptyId:'forbidden',command:'printf FORBIDDEN',cwd:home,cols:80,rows:24}})+'\n');
+  await closed;const messages=data.trim().split('\n').map(line=>JSON.parse(line));
+  assert.deepEqual(messages,[{id:-1,ok:false,code:'PTY_HOST_AUTH_REQUIRED',error:'Terminal host authentication required'}],type);
+  assert.equal(await main.getPid('auth-pane'),pid,type);assert.equal((await main.hostStatus()).pid,hostPid,type);
+ }
+ const status=await main.hostStatus();assert.equal(status.ptyCount,1);assert.equal(status.owner.inventory.length,1);assert.ok(!output().includes('FORBIDDEN'));
+ assert.deepEqual(await main.getSize('auth-pane'),{cols:80,rows:24,alt:false});
+});
+test('an accepted but unproven socket receives no broadcast output or pane metadata', {timeout:15000},async()=>{
+ const socket=await raw();let data='';socket.on('data',chunk=>data+=chunk);
+ const closed=once(socket,'close');socket.write(JSON.stringify({type:'pty-auth-hello',version:1,nonce:'d'.repeat(64)})+'\n');
+ await waitFor(()=>data.includes('pty-auth-challenge'));data='';
+ await main.write('auth-pane','PRIVATE_AUTH_OUTPUT\n');await waitFor(()=>output().includes('PRIVATE_AUTH_OUTPUT'));
+ socket.write('{"id":19,"type":"version"}\n');await closed;
+ assert.deepEqual(data.trim().split('\n').map(line=>JSON.parse(line)),[{id:-1,ok:false,code:'PTY_HOST_AUTH_REQUIRED',error:'Terminal host authentication required'}]);
+});
+test('missing, unsafe or wrong capability cannot reach the generic create-host fallback', {timeout:15000},async()=>{
+ for(const corruption of ['missing','mode','wrong']){
+  fs.writeFileSync(keyFile,originalKey);fs.chmodSync(keyFile,0o600);
+  if(corruption==='missing')fs.unlinkSync(keyFile);
+  if(corruption==='mode')fs.chmodSync(keyFile,0o644);
+  if(corruption==='wrong')fs.writeFileSync(keyFile,Buffer.alloc(32,1));
+  const before=fs.lstatSync(socketPath),other=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));let starts=0;
+  other.startHost=()=>{starts++;throw new Error('unexpected host creation');};
+  try{
+   await assert.rejects(other.spawn({ptyId:'must-not-spawn',command:'cat',cwd:home,cols:80,rows:24}),error=>['PTY_HOST_AUTH_UNAVAILABLE','PTY_HOST_AUTH_REQUIRED'].includes(error.code));
+   assert.equal(starts,0);assert.equal(fs.lstatSync(socketPath).ino,before.ino);assert.equal(await main.getPid('auth-pane'),pid);assert.equal((await main.hostStatus()).pid,hostPid);
+   if(corruption==='missing')assert.equal(fs.existsSync(keyFile),false);
+   if(corruption==='mode')assert.equal(fs.statSync(keyFile).mode&0o777,0o644);
+   if(corruption==='wrong')assert.deepEqual(fs.readFileSync(keyFile),Buffer.alloc(32,1));
+  }finally{other.dispose();}
+ }
+ fs.writeFileSync(keyFile,originalKey);fs.chmodSync(keyFile,0o600);
+ await main.write('auth-pane','STILL_USABLE\n');await waitFor(()=>output().includes('STILL_USABLE'));
+});

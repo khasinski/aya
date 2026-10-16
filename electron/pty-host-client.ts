@@ -10,7 +10,7 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
 import type { WebContents } from "electron";
-import { PTY_HOST_SOCKET_PATH, PTY_HOST_STDERR_FILE } from "./paths";
+import { PTY_HOST_SOCKET_PATH, PTY_HOST_STDERR_FILE, AYA_HOME } from "./paths";
 import { PTY_HOST_NOT_CONNECTED, PTY_HOST_UNKNOWN_REQUEST } from "./constants";
 import { LAUNCH_STARTING, LAUNCH_UNREACHABLE, LAUNCH_UNSUPPORTED, type LaunchAnswer, type PaneLaunch } from "./launch-mode";
 import type { PaneSize } from "./pane-render";
@@ -47,6 +47,10 @@ import {classifyIdentity} from "./pty-host-staleness";
 import { coalesceAdjacentData } from "./pty-event-coalescer";
 import type { BufferSearchHit } from "./pty";
 import type { PtyEvent, SpawnRequest } from "./types";
+import {authenticateHostSocket} from "./pty-host-auth-transport";
+import {readHostAuthKey,createHostAuthKey} from "./pty-host-auth-key";
+import {HostAuthError} from "./pty-host-auth";
+import {liveHostRecords} from "./pty-host-registry";
 
 // Deadline waiting for a started pty host to create its socket and accept on it (ms).
 export const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
@@ -160,6 +164,7 @@ export class PtyHostClient {
   private socket: net.Socket | null = null;
   private observationOnly = false;
   private readonly ownerSecret = randomBytes(32);
+  private hostAuthKey:Buffer|null=null;
   private ownerBacked = false;
   private metadataRequired = false;
   private metadataSocket: net.Socket | null = null;
@@ -843,13 +848,16 @@ export class PtyHostClient {
       // may hold PTY sessions from a previous app session.
       this.reusedHost = true;
       return;
-    } catch {
+    } catch(error) {
       if (this.disposed) throw new Error(DISPOSED_MESSAGE);
+      if(!["ENOENT","ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code??""))throw error;
       const prior=this.pendingPlannedHost;
       if(prior&&prior.exitCode===null&&prior.signalCode===null){
         await new Promise<void>(resolve=>{const done=()=>{clearTimeout(timer);prior.removeListener("exit",done);resolve();};const timer=setTimeout(done,1000);prior.once("exit",done);});
       }
       if (this.disposed) throw new Error(DISPOSED_MESSAGE);
+      if(liveHostRecords(this.hostScript).length)throw new HostAuthError();
+      this.hostAuthKey??=createHostAuthKey(AYA_HOME);
       this.startHost();
       await this.openStartedHostSocket();
       this.reusedHost = this.plannedReusedBoot;
@@ -861,8 +869,13 @@ export class PtyHostClient {
       const socket = net.createConnection(PTY_HOST_SOCKET_PATH);
       socket.setEncoding("utf8");
       if (this.observationOnly) this.socket = socket; // dispose also closes a pending connect
-      socket.once("connect", () => {
-        if (this.observationOnly && this.disposed) { socket.destroy(); reject(new Error(DISPOSED_MESSAGE)); return; }
+      socket.once("connect", () => {void (async()=>{
+        if (this.observationOnly && this.disposed) throw new Error(DISPOSED_MESSAGE);
+        this.hostAuthKey??=readHostAuthKey(AYA_HOME);
+        const startIdentity=ownerProcessStartIdentity(process.pid);
+        if(!startIdentity)throw new HostAuthError();
+        const authenticated=await authenticateHostSocket(socket,this.hostAuthKey,{pid:process.pid,startIdentity});
+        if(this.disposed){socket.destroy();throw new Error(DISPOSED_MESSAGE);}
         this.socket = socket;
         this.hostAsked = false;
         this.ownerBacked = false;
@@ -876,13 +889,15 @@ export class PtyHostClient {
         socket.on("error", () => {
           // close handles pending rejection
         });
-        resolve();
-      });
+        if(authenticated.buffered)this.onData(authenticated.buffered);
+        socket.resume();resolve();
+      })().catch(error=>{socket.destroy();reject(error);});});
       socket.once("error", reject);
     });
   }
 
   private startHost(bootstrap?:HandoverBootstrap|RecoveryBootstrap): ChildProcess {
+    if(!this.hostAuthKey)throw new HostAuthError();
     if(this.pendingPlannedHost&&this.pendingPlannedHost.exitCode===null&&this.pendingPlannedHost.signalCode===null)throw new Error("The previous terminal successor has not exited; another host was not started");
     try {
       fs.rmSync(PTY_HOST_SOCKET_PATH, { force: true });
@@ -893,17 +908,20 @@ export class PtyHostClient {
     try {
       const child = spawn(process.execPath, [this.hostScript], {
         detached: true,
-        stdio: bootstrap ? ["ignore", "ignore", stderr, "pipe", "pipe"] : ["ignore", "ignore", stderr, "pipe"],
+        stdio: ["ignore", "ignore", stderr, "pipe", bootstrap?"pipe":"ignore", "pipe"],
         env: {
           ...process.env,
           [RUN_AS_NODE_VAR]: RUN_AS_NODE_VALUE,
           AYA_PTY_OWNER_FD: "3",
+          AYA_PTY_AUTH_FD: "5",
           ...(bootstrap ? ("kind" in bootstrap?{AYA_PTY_RECOVERY_FD:"4"}:{AYA_PTY_CHECKPOINT_FD:"4"}) : {}),
         },
       });
       this.ownsOwnerKey=true;this.pendingPlannedHost=child;child.once("exit",()=>{if(this.pendingPlannedHost===child)this.pendingPlannedHost=null;});
       const secretPipe = child.stdio[3] as NodeJS.WritableStream;
       secretPipe.on("error", () => {}); secretPipe.end(this.ownerSecret);
+      const authPipe=child.stdio.at(5) as NodeJS.WritableStream;
+      authPipe.on("error",()=>{});authPipe.end(this.hostAuthKey);
       if(bootstrap){const pipe=child.stdio[4] as NodeJS.WritableStream;pipe.on("error",()=>{});pipe.end(JSON.stringify(bootstrap));}
       child.unref();
       return child;
