@@ -705,3 +705,9 @@ test('new renderer hydrates current recovery metadata and refuses stale generati
  state=applyPtyEvent(state,{type:'recovery-screen',ptyId:'p',generation:'current',known:true});assert.equal(state.p.recoveryScreenUnknown,false);
  state=applyPtyEvent(state,{type:'disconnected',ptyId:'p',reason:'budget',recoveryBlocked:true,retryable:true});assert.equal(state.p.recoveryRetryable,true);assert.equal(state.p.recoveryBlocked,true);
 });
+
+test('unavailable recovery metadata shows a warning without stopping serving input or clearing hold state',()=>{
+ const before={pane:termState('pane',{recoveryNotice:undefined,disconnected:undefined,status:'waiting',screenDialog:true})};
+ const after=applyPtyEvent(before,{type:'recovery-unavailable',ptyId:'pane',reason:'Automatic terminal host recovery is off'});
+ assert.equal(after.pane.recoveryNotice,'Automatic terminal host recovery is off');assert.equal(after.pane.disconnected,undefined);assert.equal(after.pane.status,'waiting');assert.equal(after.pane.screenDialog,true);
+});

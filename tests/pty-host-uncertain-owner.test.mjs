@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import {spawnAuthenticatedHost} from "./helpers/pty-host-launch.cjs";
 import { once } from "node:events";
 import { connectWhenListening } from "./helpers/unix-socket.mjs";
 import { cleanupNativeOwner } from "./helpers/pty-host.mjs";
@@ -10,7 +10,7 @@ import { cleanupNativeOwner } from "./helpers/pty-host.mjs";
 test("an idle JS host never shuts down an owner with an unconfirmed spawn and empty known inventory", { timeout: 15000 }, async () => {
   fs.mkdirSync("test-results", { recursive: true });
   const home = fs.mkdtempSync(path.resolve("test-results/uncertain-idle-"));
-  const host = spawn(process.execPath, ["tests/helpers/pty-host-uncertain-owner.cjs"], {
+  const host = spawnAuthenticatedHost(process.execPath, ["tests/helpers/pty-host-uncertain-owner.cjs"], {
     env: { ...process.env, AYA_HOME: home, AYA_PTY_HOST_IDLE_MS: "150" }, stdio: "ignore",
   });
   const closed = once(host, "exit");

@@ -17,6 +17,7 @@ writeFileSync(slowShell, "#!/bin/sh\nsleep 4\nexit 1\n");
 chmodSync(slowShell, 0o755);
 process.env.SHELL = slowShell;
 mkdirSync(process.env.HOME);
+mkdirSync(process.env.AYA_HOME,{recursive:true});
 const cwd = join(root, "project");
 mkdirSync(cwd);
 

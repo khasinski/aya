@@ -1,3 +1,4 @@
+import {authenticatedFixtureServer,authorizeFixtureClient} from "./helpers/pty-host-launch.cjs";
 // `aya pane read` renders a pane at the size it actually has, which only the
 // pty host knows. A host from an older build cannot answer; the client must
 // then say "unknown" so the read falls back to the raw buffer.
@@ -39,7 +40,7 @@ async function waitFor(predicate, ms = 4000, step = 25) {
 /** Ask getSize of a fake host that answers every request with `answer`. */
 async function sizeFromFakeHost(answer) {
   const requests = [];
-  const server = net.createServer((socket) => {
+  const server = authenticatedFixtureServer((socket) => {
     let buf = "";
     socket.on("data", (d) => {
       buf += d;
@@ -53,12 +54,12 @@ async function sizeFromFakeHost(answer) {
     });
   });
   await new Promise((r) => server.listen(PTY_HOST_SOCKET_PATH, r));
-  const client = new PtyHostClient(HOST_SCRIPT);
+  const client = authorizeFixtureClient(new PtyHostClient(HOST_SCRIPT));
   try {
     const size = await client.getSize("any");
     return { size, requests: [...requests] };
   } finally {
-    client.restart().catch(() => {});
+    client.dispose();client.hostAsked=true;client.dropSocket();
     await new Promise((r) => server.close(r));
   }
 }
@@ -66,7 +67,7 @@ async function sizeFromFakeHost(answer) {
 test("a host that predates the size request reads as an unknown size", async () => {
   const { size, requests } = await sizeFromFakeHost({ ok: false, error: PTY_HOST_UNKNOWN_REQUEST });
   assert.equal(size, null);
-  assert.deepEqual(requests, ["size"]);
+  assert.deepEqual(requests, ["version","size"]);
 });
 
 test("a size answer without numeric cols and rows reads as unknown", async () => {

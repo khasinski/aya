@@ -48,7 +48,7 @@ test("a window attaching to a pane: the dot says what the screen shows", async (
   const said = (wc, id) => ptyEventsFor(wc, id).filter((e) => e.type === "vt-status").map((e) => [e.waiting, e.dialog]);
   assert.deepEqual(said(first, "offer"), [[true, HOLD_ACCOUNT_SETTING]], "the live edge names the offer");
 
-  const later = new PtyHostClient(HOST_SCRIPT);
+  const later = new PtyHostClient(HOST_SCRIPT);later.hostAuthKey=Buffer.from(owner.hostAuthKey); // Same-principal view observer.
   const second = fakeWebContents();
   later.attachWebContents(second);
   for (const [id, command, agent] of panes) await later.spawn(spawnReq(id, command, agent));

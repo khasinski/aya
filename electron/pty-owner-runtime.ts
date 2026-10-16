@@ -2,7 +2,8 @@ import fs from "node:fs";
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { ownerArtifactPaths, PtyOwnerClient, ownerProcessGroupExists, ownerGroupMemberPids, snapshotOwnerRecoveryMembers, recoverOwnerProcess, ownerRecoverySupported, type OwnerPane } from "./pty-owner-client";
+import { ownerArtifactPaths, PtyOwnerClient, ownerProcessStartIdentity, type OwnerPane } from "./pty-owner-client";
+import {settleOwnerSurvivors} from "./pty-owner-survivors";
 import { readProcInfo } from "./pty-host-registry";
 import { OWNER_SOCKET, prepareOwnerDirectory, ownerBinaryHash, readOwnerRecord, ownerRecordIsLive,
   ownerReaderIsLive, writeOwnerRecord, removeOwnerRecord, type OwnerRecord } from "./pty-owner-registry";
@@ -16,7 +17,8 @@ function inheritedSecret(): Buffer {
   finally { fs.closeSync(3); }
 }
 const secret = inheritedSecret();
-/** Only the host's consumed, announced handover window may call this. Never
+/** Only a consumed handover window or an authenticated main continuity request
+ * may call this. Never
  * include it in checkpoint state, registries, argv, environment or logs. */
 export function ownerHandoverCredential(): Buffer { return Buffer.from(secret); }
 export interface RecoveryOwnerIdentity { pid:number; startTime:string; instanceId:string; binaryHash:string }
@@ -33,6 +35,9 @@ let ready: OwnerRuntime | null = null;
 let unavailableListener: ((owner: OwnerRuntime) => void) | null = null;
 export function setOwnerUnavailableListener(listener: (owner: OwnerRuntime) => void): void { unavailableListener = listener; }
 export function currentOwnerRuntime(): OwnerRuntime | null { return ready; }
+/** An authenticated continuity request may describe an empty future owner
+ * only when no runtime is opening/stopping and no retained owner exists. */
+export function ownerRuntimeIsAbsent():boolean{return runtime===null&&ready===null&&readOwnerRecord()===null;}
 export function getOwnerRuntime(): Promise<OwnerRuntime> {
   if (ready?.isStopping) return ready.shutdown().then(() => getOwnerRuntime());
   return runtime ??= OwnerRuntime.open().then(value => { ready = value; return value; }).catch(error => { runtime = null; throw error; });
@@ -161,6 +166,10 @@ export class OwnerRuntime {
       finally { clearTimeout(timer); child.stdout!.destroy(); child.stderr!.destroy(); child.unref(); }
     }
     const client = result.client!;
+    if(client.ownerPid!==result.record.pid||client.instanceId!==result.record.instanceId){client.close();throw Error("The authenticated PTY owner instance changed; its inventory was kept");}
+    let kernelStart:string|null=null;try{kernelStart=ownerProcessStartIdentity(result.record.pid);}catch{/* Missing kernel identity remains explicitly unknown. */}
+    if(result.record.startIdentity&&kernelStart&&result.record.startIdentity!==kernelStart){client.close();throw Error("The PTY owner kernel identity changed; its inventory was kept");}
+    if(!result.record.startIdentity&&kernelStart)result.record.startIdentity=kernelStart;
     const panes = await client.list();
     // The authenticated living owner's complete inventory resolves uncertain
     // SPAWN outcomes before any replacement is allowed; masters stay detached.
@@ -224,37 +233,7 @@ export class OwnerRuntime {
   }
   shutdown(): Promise<void> { return this.shutdownTask ??= this.stop(); }
   private async recoverRetainedGroups(orderlyExit: boolean): Promise<void> {
-    const refused: string[] = [];
-    for (const pane of [...this.inventory.values()]) {
-      try {
-        if (ownerProcessGroupExists(pane.pid)) {
-          if (!ownerRecoverySupported()) throw new Error("this kernel/process environment does not support process-instance-safe recovery; its listed processes were not stopped");
-          if (!pane.startIdentity) throw new Error("its kernel start identity was not recorded");
-          if (!pane.recoveryMembers) {
-            pane.recoveryMembers = snapshotOwnerRecoveryMembers(pane.pid, pane.startIdentity);
-            // Persist the exact members before the first signal: a partially
-            // completed recovery must not invent new targets on retry.
-            this.persist();
-          }
-          const failures: string[] = [];
-          for (const member of pane.recoveryMembers) {
-            const outcome = recoverOwnerProcess(member, pane.pid);
-            if (outcome !== "signalled" && outcome !== "absent") failures.push(`PID ${member.pid}: ${outcome}`);
-          }
-          const deadline = Date.now() + 5000;
-          while (ownerProcessGroupExists(pane.pid) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
-          const left = ownerGroupMemberPids(pane.pid);
-          if (left.length) failures.push(`group members still present or unverified: ${left.join(", ")}`);
-          if (failures.length) throw new Error(failures.join("; "));
-        }
-        this.inventory.delete(pane.id); this.disconnected.delete(pane.id);
-      } catch (error) { refused.push(`${pane.id} (PID ${pane.pid}): ${error instanceof Error ? error.message : String(error)}`.slice(0, 500)); }
-    }
-    if (orderlyExit) { this.record.uncertain = []; this.record.spawnIntents = []; }
-    for (const id of this.record.uncertain ?? []) refused.push(`${id}: its spawn was not acknowledged and no process identity can be verified`);
-    this.record.recoveryFailures = refused;
-    this.persist();
-    if (refused.length) throw new Error(`Not stopped; their inventory was kept:\n${refused.join("\n")}`);
+    await settleOwnerSurvivors({record:this.record,inventory:this.inventory,disconnected:this.disconnected,persist:()=>this.persist()},orderlyExit);
   }
   private async stop(): Promise<void> {
     this.ending = true;
@@ -269,6 +248,11 @@ export class OwnerRuntime {
       await new Promise(resolve => setTimeout(resolve, 10));
     }
     await this.recoverRetainedGroups(this.ownerExit !== null && await this.ownerExit === 0);
-    removeOwnerRecord(this.record); this.inventory.clear(); this.disconnected.clear(); runtime = null; ready = null;
+    removeOwnerRecord(this.record);
+    // The original recovery instance was orderly retired and its survivors
+    // settled. Future fresh panes may now create an owner with the same secret.
+    // Unexpected death/unknown or failed cleanup never reaches this boundary.
+    if(recoveryOwner?.pid===this.record.pid&&recoveryOwner.startTime===this.record.startTime&&recoveryOwner.instanceId===this.record.instanceId&&recoveryOwner.binaryHash===this.record.binaryHash)recoveryOwner=null;
+    this.inventory.clear(); this.disconnected.clear(); runtime = null; ready = null;
   }
 }

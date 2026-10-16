@@ -104,6 +104,7 @@ function guardKill(t, allowed) {
   const real = process.kill;
   const calls = [];
   process.kill = function (pid, signal) {
+    if(signal===0)return real.call(process,pid,signal); // Kernel presence probe, no signal sent.
     calls.push([pid, signal]);
     if (!allowed.has(pid)) throw Object.assign(new Error(`test refused to signal ${pid}`), { code: "EPERM" });
     return real.call(process, pid, signal);
@@ -481,10 +482,10 @@ test("readProcInfo: a ps that cannot run is a probe failure, never a dead pid", 
   fakePs(t, () => {
     throw spawnError();
   });
-  assert.deepEqual(readProcInfo(4242), { alive: false, probeFailed: true, startTime: null, command: null });
+  assert.deepEqual(readProcInfo(process.pid), { alive: true, probeFailed: true, startTime: null, command: null });
 });
 
-test("readProcInfo: fake ps output - empty is dead, a padded day survives, ps runs under C + UTC", (t) => {
+test("readProcInfo: empty ps needs kernel ESRCH, a padded day survives, ps runs under C + UTC", (t) => {
   const calls = [];
   let out = "";
   fakePs(t, (cmd, args, opts) => {
@@ -492,7 +493,10 @@ test("readProcInfo: fake ps output - empty is dead, a padded day survives, ps ru
     return out;
   });
   out = "\n";
-  assert.deepEqual(readProcInfo(4242), { alive: false, probeFailed: false, startTime: null, command: null });
+  const kill=process.kill;
+  try{process.kill=(pid,signal)=>{assert.equal(pid,4242);assert.equal(signal,0);throw Object.assign(Error('fixture absent'),{code:'ESRCH'});};
+    assert.deepEqual(readProcInfo(4242), { alive: false, probeFailed: false, startTime: null, command: null });
+  }finally{process.kill=kill;}
   out = "Wed Jul  2 10:00:00 2026   /Apps/Aya /x/pty-host.js --a  b\n";
   assert.deepEqual(readProcInfo(4242), {
     alive: true,
@@ -604,4 +608,17 @@ test("reap (default deps): a same-build host is kept, a record with a foreign st
     assert.equal(h.state.exit, null, "still running");
     assert.equal(readProcInfo(h.pid).alive, true);
   }
+});
+
+for (const mode of ['empty','exit1','exit2','spawn-error']) test(`failed/empty ps (${mode}) cannot declare the still-live reader gone`, t => {
+ fakePs(t,()=>{if(mode==='empty')return '';throw Object.assign(Error('injected ps failure'),mode==='spawn-error'?{code:'EAGAIN'}:{status:mode==='exit1'?1:2});});
+ assert.deepEqual(readProcInfo(process.pid),{alive:true,probeFailed:true,startTime:null,command:null});
+});
+test('failed ps requires independent ESRCH; denied or undecidable kernel presence stays unknown',t=>{
+ fakePs(t,()=>{throw Object.assign(Error('injected ps failure'),{status:1});});
+ const kill=process.kill,calls=[];
+ try {for(const code of ['ESRCH','EPERM','EAGAIN']){
+  process.kill=(pid,signal)=>{calls.push([pid,signal]);throw Object.assign(Error('injected kernel result'),{code});};
+  assert.deepEqual(readProcInfo(4242),{alive:code==='EPERM',probeFailed:code!=='ESRCH',startTime:null,command:null});
+ }assert.deepEqual(calls,[[4242,0],[4242,0],[4242,0]]);}finally{process.kill=kill;}
 });

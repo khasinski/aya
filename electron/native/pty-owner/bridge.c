@@ -274,7 +274,7 @@ static napi_value recovery_identity(napi_env env, napi_callback_info info) {
   char text[64]; snprintf(text, sizeof(text), "%llu:%llu", (unsigned long long)identity.start, (unsigned long long)identity.fraction);
   napi_create_string_utf8(env, text, NAPI_AUTO_LENGTH, &out); return out;
 }
-static napi_value recover_process(napi_env env, napi_callback_info info) {
+static napi_value signal_verified_process(napi_env env, napi_callback_info info, int signal_number) {
   size_t count = 3, size; napi_value args[3]; int pid, group; char saved[64];
   napi_get_cb_info(env, info, &count, args, NULL, NULL);
   if (count != 3) { napi_throw_type_error(env, NULL, "Expected recovery PID, identity and group"); return NULL; }
@@ -288,10 +288,12 @@ static napi_value recover_process(napi_env env, napi_callback_info info) {
     napi_throw_type_error(env, NULL, "Invalid recovery identity"); return NULL;
   }
   ProcessIdentity identity = { pid, start, fraction };
-  int status = recovery_signal_process(&identity, group);
+  int status = signal_number == SIGKILL ? recovery_signal_process(&identity, group) : recovery_signal_process_with_signal(&identity, group, signal_number);
   const char *result = status == 1 ? "signalled" : status == 0 ? "absent" : status == -2 ? "mismatch" : "unknown";
   napi_value out; napi_create_string_utf8(env, result, NAPI_AUTO_LENGTH, &out); return out;
 }
+static napi_value recover_process(napi_env env, napi_callback_info info) { return signal_verified_process(env, info, SIGKILL); }
+static napi_value terminate_process(napi_env env, napi_callback_info info) { return signal_verified_process(env, info, SIGTERM); }
 static napi_value recovery_supported(napi_env env, napi_callback_info info) {
   (void)info; bool supported = true;
 #ifndef __APPLE__
@@ -328,7 +330,7 @@ static napi_value peer_identity(napi_env env, napi_callback_info info) {
 static napi_value init(napi_env env, napi_value exports) {
   const struct { const char *name; napi_callback function; } methods[] = {
     {"connect", connect_socket}, {"send", send_frame}, {"receive", receive_frame}, {"close", close_descriptor}, {"readReady", read_ready},
-    {"recoveryGroupExists", recovery_group_exists}, {"recoveryIdentity", recovery_identity}, {"recoverProcess", recover_process},
+    {"recoveryGroupExists", recovery_group_exists}, {"recoveryIdentity", recovery_identity}, {"recoverProcess", recover_process}, {"terminateProcess", terminate_process},
     {"nonblockingMaster", nonblocking_master}, {"writeReady", write_ready}, {"resizeMaster", resize_master}, {"recoverySupported", recovery_supported},
     {"peerIdentity", peer_identity}
   };

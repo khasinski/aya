@@ -340,3 +340,53 @@ test('status A then socket B asks again with fresh inventory and Cancel sends no
  try{await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);assert.equal(questions.length,2);assert.match(questions[0],/A \(PID 900\)/);assert.match(questions[1],/host changed/);assert.match(questions[1],/B \(PID 901\)/);assert.deepEqual(requests,['version']);}
  finally{native.ownerProcessStartIdentity=probe;client.dispose();}
 });
+
+test('auth refusal always asks with retained PIDs or unknown inventory before explicit and launch restart',async t=>{
+ for(const inventoryKnown of [true,false]){
+  const {d,state,log}=setup(t);state.askAnswer=false;
+  d.relaunchDeps.panes=async()=>[{id:'retained',name:'Agent work'}];
+  d.ptyHost.hostStatus=async()=>({pid:100,startTime:'1:2',identity:null,ptyCount:inventoryKnown?1:0,authentication:{required:true,targetVerified:true,inventoryKnown,reason:'auth refused'},...(inventoryKnown?{owner:{pid:99,incompatible:false,disconnected:['retained'],inventory:[{id:'retained',pid:789}]}}:{})});
+  const actions=createPtyHostHealth(d);
+  await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);await actions.handleStaleHost();
+  const questions=log.filter(([op])=>op==='ask-restart');assert.equal(questions.length,2);
+  for(const [, ,text] of questions){assert.match(text,/could not authenticate/);assert.match(text,inventoryKnown?/Agent work \(PID 789\)/:/process inventory is unknown/);}
+  assert.equal(log.filter(([op])=>op==='restart'||op==='confirm'||op==='kill').length,0);
+ }
+});
+
+test('an unverified auth target gets one OK information dialog, never a Restart offer or a signal',async t=>{
+ for(const entry of ['launch','explicit'])for(const missing of ['pid','start','proof']){
+  const {d,state,log}=setup(t);state.owner=undefined;
+  d.ptyHost.hostStatus=async()=>({identity:null,ptyCount:0,pid:missing==='pid'?undefined:100,startTime:missing==='start'?null:'1:2',authentication:{required:true,targetVerified:missing!=='proof',inventoryKnown:false,reason:'identity unavailable'}});
+  const actions=createPtyHostHealth(d);if(entry==='launch')await actions.handleStaleHost();else await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);
+  const dialogs=log.filter(([op])=>op==='dialog');assert.equal(dialogs.length,1,`${entry}/${missing}`);
+  const options=dialogs[0].at(-1);assert.deepEqual(options.buttons,['OK']);assert.match(options.detail,/identity could not be verified/);
+  assert.equal(log.filter(([op])=>['ask-restart','restart','kill','wait'].includes(op)).length,0);
+  assert.equal(actions.staleHostDetected(),true);
+ }
+});
+
+test('principal busy opens no stop or restart question, including unrelated host inventory',async t=>{
+ const {d,state,log}=setup(t);state.records.push(record(200));
+ d.ptyHost.hostStatus=async()=>({identity:null,ptyCount:0,pid:100,principalBusy:true,recoveryReason:'The previous Aya process is still closing.'});
+ const actions=createPtyHostHealth(d);await actions.handleStaleHost();
+ await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);
+ assert.equal(log.filter(([op])=>['dialog','ask-restart','confirm','restart','kill','wait'].includes(op)).length,0);
+});
+
+for(const owner of [undefined,{pid:99,incompatible:true,disconnected:[]}])test('authenticated unavailable continuity opens without any startup stop question, including incompatible owner',async t=>{
+ const f=setup(t);f.d.ptyHost.hostStatus=async()=>({identity:EXPECTED,ptyCount:3,pid:100,owner,continuityUnavailable:true,recoveryReason:'Automatic terminal host recovery is off'});
+ // Even an additional recorded host cannot cause a stop question in this path.
+ f.state.records=[record(100),record(101)];await f.actions.handleStaleHost();
+ assert.equal(f.log.some(item=>['restart','ask-restart','dialog','kill','confirm'].includes(item[0])),false);
+});
+
+for(const targetVerified of [true,false])test(`unannounced loss opens without a startup modal; explicit review retains consent, verified=${targetVerified}`,async t=>{
+ const f=setup(t);f.state.records.push(record(200));
+ f.d.ptyHost.hostStatus=async()=>({pid:100,startTime:'1:2',identity:null,ptyCount:1,authentication:{required:true,unannounced:true,targetVerified,inventoryKnown:true,reason:'These terminals cannot be reattached by this Aya'},owner:{pid:99,incompatible:false,disconnected:['retained'],inventory:[{id:'retained',pid:789}]}});
+ const actions=createPtyHostHealth(f.d);await actions.handleStaleHost();
+ assert.deepEqual(operations(f.log),[]);assert.equal(actions.staleHostDetected(),true);
+ f.state.askAnswer=false;await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);
+ assert.equal(f.log.filter(([op])=>op=== (targetVerified?'ask-restart':'dialog')).length,1);
+ assert.equal(f.log.filter(([op])=>['restart','kill','wait'].includes(op)).length,0);
+});

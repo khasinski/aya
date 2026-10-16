@@ -12,8 +12,9 @@ function fixture(actual){
  client.sendRequest=async(s,req)=>{assert.equal(s,socket);requests.push(req.type);return null;};
  client.startHost=()=>{throw Error('must not start a host in this fixture');};return{client,requests,socket};
 }
-for(const changed of ['pid','start','owner'])test(`restart consent refuses changed ${changed} until a fresh question`,async()=>{
- const a=target(pidA,'A',owner(800,'a')),b=changed==='pid'?target(pidB,'B',owner(801,'b')):changed==='start'?target(pidA,'B',a.owner):target(pidA,'A',owner(801,'b'));
+for(const changed of ['pid','start','owner','owner-kernel'])test(`restart consent refuses changed ${changed} until a fresh question`,async()=>{
+ const a=target(pidA,'A',owner(800,'a'));if(changed==='owner-kernel')a.owner.startIdentity='8:1';
+ const b=changed==='owner-kernel'?{...a,owner:{...a.owner,startIdentity:'8:2'}}:changed==='pid'?target(pidB,'B',owner(801,'b')):changed==='start'?target(pidA,'B',a.owner):target(pidA,'A',owner(801,'b'));
  const {client,requests}=fixture(b),probe=native.ownerProcessStartIdentity,questions=[];native.ownerProcessStartIdentity=()=>b.startTime;
  try{await assert.rejects(client.restart({target:a,confirmChanged:async fresh=>{questions.push(fresh);return false;}}),/restart cancelled/);assert.equal(questions.length,1);assert.equal(questions[0].owner.pid,b.owner.pid);assert.deepEqual(requests,['version']);}
  finally{native.ownerProcessStartIdentity=probe;client.dispose();}
@@ -45,6 +46,19 @@ test('cancel and unverified/refused targets preserve planned flag and the same s
   try{
    await assert.rejects(client.restart({target:a,confirmChanged:async()=>false}));assert.equal(client.hostAsked,false);assert.equal(client.crashBlocked,false);assert.equal(client.crashSupervisor,supervisor);assert.equal(supervisor.used,2);assert.equal(supervisor.disposed,false);assert.equal(supervisor.suspended,false);
    client.onClose();assert.ok(events.some(e=>e.type==='disconnected'),'later unexpected death is still reported');
+  }finally{native.ownerProcessStartIdentity=probe;client.dispose();}
+ }
+});
+
+test('an unavailable-continuity latch survives refusal and clears only after confirmed host retirement',async()=>{
+ for(const cancelled of [true,false]){
+  const a=target(pidA,'A',owner(800,'a')),b=cancelled?target(pidB,'B',owner(801,'b')):a,{client,requests}=fixture(b),probe=native.ownerProcessStartIdentity;
+  native.ownerProcessStartIdentity=()=>b.startTime;client.ownerContinuityUnavailable=true;client.crashBlocked=true;client.authRefusedPanes.set('p','kept');
+  try{
+   await assert.rejects(client.restart(),{code:'PTY_HOST_OWNER_UNAVAILABLE'});assert.deepEqual(requests,[]);
+   const operation=client.restart({target:a,confirmChanged:async()=>false});
+   if(cancelled){await assert.rejects(operation,/restart cancelled/);assert.equal(client.ownerContinuityUnavailable,true);assert.equal(client.crashBlocked,true);assert.equal(client.authRefusedPanes.get('p'),'kept');assert.deepEqual(requests,['version']);}
+   else{assert.equal(await operation,true);assert.equal(client.ownerContinuityUnavailable,false);assert.equal(client.authRefusedPanes.size,0);assert.deepEqual(requests,['version','shutdown']);}
   }finally{native.ownerProcessStartIdentity=probe;client.dispose();}
  }
 });

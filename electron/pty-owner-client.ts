@@ -27,6 +27,7 @@ interface RecoveryBridge {
   recoveryGroupExists(pid: number): boolean;
   recoveryIdentity(pid: number): string | null;
   recoverProcess(pid: number, startIdentity: string, group: number): "absent" | "mismatch" | "unknown" | "signalled";
+  terminateProcess(pid: number, startIdentity: string, group: number): "absent" | "mismatch" | "unknown" | "signalled";
 }
 export interface RecoveryMember { pid: number; startIdentity: string | null }
 const recoveryBridge = (): RecoveryBridge => require(ownerArtifactPaths().bridge) as RecoveryBridge;
@@ -60,6 +61,10 @@ export function snapshotOwnerRecoveryMembers(pid: number, startIdentity: string)
 }
 export function recoverOwnerProcess(member: RecoveryMember, group: number): ReturnType<RecoveryBridge["recoverProcess"]> {
   return member.startIdentity ? recoveryBridge().recoverProcess(member.pid, member.startIdentity, group) : "unknown";
+}
+/** Only after consent bound to this process instance. Never signals a group. */
+export function terminateVerifiedProcess(member: RecoveryMember, group: number): ReturnType<RecoveryBridge["terminateProcess"]> {
+  return member.startIdentity ? recoveryBridge().terminateProcess(member.pid, member.startIdentity, group) : "unknown";
 }
 // Disposable test cleanup also uses individual, instance-checked signals.
 export function recoverOwnerProcessGroup(pid: number, startIdentity: string): "absent" | "signalled" | "mismatch" {

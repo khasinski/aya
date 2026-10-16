@@ -1,3 +1,4 @@
+import {captureMainPtyClient} from "./helpers/main-pty-client";
 import {_electron} from '@playwright/test';
 import {appEnv} from './helpers/seed';
 import {askControl} from './helpers/control';
@@ -34,7 +35,9 @@ test('a real JS-host crash keeps shell PIDs, clears stale display and restores i
 
 test('three short-lived recoveries exhaust the shared budget and Try again makes one safe attempt',async({app,window,seeded})=>{
  await waitForShellReady(window);const before=identities(seeded.ayaHome),owner=record(seeded.ayaHome).pid;
- for(let i=0;i<3;i++){const old=await crash(seeded.ayaHome);await recovered(seeded.ayaHome,old);await expect(visiblePane(window,'shell 1').getByTestId('terminal-history-notice')).toContainText('Previously consumed');await expect.poll(()=>window.evaluate(()=>window.aya.ptyWrite('tab-left',''))).toBe(true);}
+ // Host PID discovery can precede main's recovery fence. Only an explicitly
+ // not-sent empty readiness probe is retried; no user input is repeated.
+ for(let i=0;i<3;i++){const old=await crash(seeded.ayaHome);await recovered(seeded.ayaHome,old);await expect(visiblePane(window,'shell 1').getByTestId('terminal-history-notice')).toContainText('Previously consumed');await expect.poll(()=>window.evaluate(()=>window.aya.ptyWrite('tab-left','').catch((error:unknown)=>{if(/This request was not sent/.test(String(error)))return false;throw error;}))).toBe(true);}
  await crash(seeded.ayaHome);
  await expect(visiblePane(window,'shell 1').getByTestId('terminal-history-notice')).toContainText('recovery budget');
  expect(hostPidsForHome(seeded.ayaHome)).toEqual([]);expect(identities(seeded.ayaHome)).toEqual(before);expect(record(seeded.ayaHome).pid).toBe(owner);
@@ -86,7 +89,8 @@ for(const [mode,cli] of [['recorded','claude'],['recorded','codex'],['busy','cla
    if(mode==='recorded')await window.evaluate(()=>window.aya.ptyResize('tab-right',120,40));
    const before=identities(seeded.ayaHome),old=await crash(seeded.ayaHome);await recovered(seeded.ayaHome,old);
    const pane=visiblePane(window,name);await expect(pane.getByTestId('terminal-history-notice')).toContainText('Previously consumed');
-   const state=()=>app.evaluate(async (_electron,root)=>{const require=process.getBuiltinModule('module').createRequire(root+'/package.json');const {PtyHostClient}=require(root+'/dist-electron/pty-host-client.js');const client=new PtyHostClient(root+'/dist-electron/pty-host.js');try{return{hold:await client.holdReason('tab-right'),busy:await client.paneBusy('tab-right')};}finally{client.dispose();client.dropSocket();}},join(__dirname,'..'));
+   await captureMainPtyClient(app);
+   const state=()=>app.evaluate(async()=>{const client=(globalThis as any).e2eMainPtyClient;return{hold:await client.holdReason('tab-right'),busy:await client.paneBusy('tab-right')};});
    if(mode==='fragment'){
     await expect(pane.getByTestId('terminal-history-notice')).toContainText('Screen unknown after the terminal host restarted',{timeout:15000});
     expect((await state()).hold).toContain('screen unknown after the terminal host restarted');expect((await state()).busy).toBe(false);

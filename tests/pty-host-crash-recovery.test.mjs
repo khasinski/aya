@@ -13,8 +13,13 @@ const script=path.resolve('dist-electron/pty-host.js');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function wait(f,message='crash recovery timeout'){const end=Date.now()+12000;while(!await f()){if(Date.now()>end)throw Error(typeof message==='function'?message():message);await sleep(5);}}
 function request(){return {ptyId:'shell',agent:'custom',command:`exec /bin/sh -c 'stty -echo; echo READY; while [ ! -f "$HOME/release" ]; do sleep .01; done; echo UNREAD_DURING_GAP; touch "$HOME/produced"; while IFS= read -r line; do case "$line" in quit) exit 23 ;; *) printf "R:%s:%s\\n" "$$" "$line" ;; esac; done'`,cwd:process.env.HOME,cols:80,rows:24};}
-async function setup(command){fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true});const events=[],logs=[],client=new PtyHostClient(script);client.enableCrashRecovery({log:(event,fields)=>logs.push({event,...fields})});client.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});await client.spawn({...request(),...(command?{command}:{})});await wait(async()=>(await client.getBuffer('shell')).includes('READY'));const status=await client.hostStatus(),pid=await client.getPid('shell');return{client,events,logs,status,pid};}
-async function cleanup(...clients){for(const c of clients){c?.dispose();c?.dropSocket();}await cleanupNativeOwner(process.env.AYA_HOME);fs.rmSync(process.env.AYA_HOME,{recursive:true,force:true});fs.rmSync(process.env.HOME,{recursive:true,force:true});}
+async function setup(command){fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true});const events=[],logs=[],client=new PtyHostClient(script);client.enableCrashRecovery({log:(event,fields)=>logs.push({event,...fields})});client.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});await client.spawn({...request(),...(command?{command}:{})});await wait(async()=>(await client.getBuffer('shell')).includes('READY'));const status=await client.hostStatus(),pid=await client.getPid('shell');client.fixtureKnownProcesses=[{kind:'initial-host',pid:status.pid,startIdentity:client.lastHostStart},{kind:'initial-owner',pid:status.owner?.pid,startIdentity:status.owner?.startIdentity,startTime:status.owner?.startTime,instanceId:status.owner?.instanceId}];return{client,events,logs,status,pid};}
+async function cleanup(...clients){
+ const known=clients.filter(Boolean).flatMap(c=>[...(c.fixtureKnownProcesses??[]),{kind:'host',pid:c.lastHostPid,startIdentity:c.lastHostStart},{kind:'spawned-host',pid:c.pendingPlannedHost?.pid},{kind:'owner',pid:c.recoveryOwner?.pid,startTime:c.recoveryOwner?.startTime,instanceId:c.recoveryOwner?.instanceId}]);
+ for(const c of clients){c?.dispose();c?.dropSocket();}await cleanupNativeOwner(process.env.AYA_HOME);
+ try{fs.rmSync(process.env.AYA_HOME,{recursive:true,force:true});fs.rmSync(process.env.HOME,{recursive:true,force:true});}
+ catch(error){if(error.code==='ENOTEMPTY')require('./helpers/pty-host-failure-diagnostics.cjs').cleanupFailure(process.env.AYA_HOME,known,error);throw error;}
+}
 test('main restarts a SIGKILLed JS host and attaches the same owner/child with unread output and new I/O',{timeout:20000},async()=>{
  const {client,events,logs,status,pid}=await setup();
  let release;const gate=new Promise(resolve=>{release=resolve;}),attempt=client.recoverCrashedHost.bind(client);
@@ -47,16 +52,17 @@ test('repeated real JS crashes exhaust one budget while preserving native invent
   assert.match(events.filter(e=>e.type==='disconnected').at(-1).reason,/recovery budget/);assert.doesNotThrow(()=>process.kill(pid,0));assert.doesNotThrow(()=>process.kill(status.owner.pid,0));assert.equal(registry.readOwnerRecord().panes[0].pid,pid);
  }finally{await cleanup(client);}
 });
-test('unknown-key reused host death does not probe owner, request a key or start a new JS/native owner',{timeout:15000},async()=>{
- const first=await setup(),second=new PtyHostClient(script),events=[];second.enableCrashRecovery();second.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});
- const read=registry.readOwnerRecord;let probes=0,starts=0;
+test('unavailable authenticated continuity leaves reused host death disconnected without post-death key requests or new owners',{timeout:15000},async()=>{
+ const first=await setup(),second=new PtyHostClient(script),events=[];second.hostAuthKey=Buffer.from(first.client.hostAuthKey);second.enableCrashRecovery();second.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});
+ const read=registry.readOwnerRecord,send=second.sendRequest.bind(second);let probes=0,starts=0,keyRequests=0;
+ second.sendRequest=(socket,req)=>{if(req.type==='owner-continuity'){keyRequests++;return Promise.reject(Object.assign(Error('unsupported continuity'),{code:'PTY_HOST_REMOTE_ERROR'}));}return send(socket,req);};
  try{
-  await second.spawn({...request(),attachIfReused:true});assert.equal(await second.getPid('shell'),first.pid);
+  await second.spawn({...request(),attachIfReused:true});assert.equal(await second.getPid('shell'),first.pid);assert.equal(second.ownsOwnerKey,false);assert.equal(keyRequests,1);
   first.client.dispose();first.client.dropSocket();
   registry.readOwnerRecord=()=>{probes++;return read();};second.startHost=()=>{starts++;throw Error('unknown-key recovery must not start');};
   process.kill(first.status.pid,'SIGKILL');await wait(()=>events.some(e=>e.type==='disconnected'&&e.reason));
-  assert.match(events.filter(e=>e.type==='disconnected').at(-1).reason,/Aya restarted since this terminal host started/);
-  assert.equal(probes,0);assert.equal(starts,0);assert.equal(second.crashTask,null);assert.doesNotThrow(()=>process.kill(first.pid,0));assert.doesNotThrow(()=>process.kill(first.status.owner.pid,0));assert.equal(await second.getPid('shell'),undefined);
+  assert.match(events.filter(e=>e.type==='disconnected').at(-1).reason,/could not verify recovery data/);assert.equal(keyRequests,1);
+  assert.ok(probes>0,"a bounded private record read supplies truthful owner-stop guidance");assert.equal(starts,0);assert.equal(second.crashTask,null);assert.doesNotThrow(()=>process.kill(first.pid,0));assert.doesNotThrow(()=>process.kill(first.status.owner.pid,0));assert.equal(await second.getPid('shell'),undefined);
  }finally{registry.readOwnerRecord=read;await cleanup(first.client,second);}
 });
 test('app quit during backoff prevents any replacement and leaves the owner/child alive',{timeout:15000},async()=>{
@@ -114,7 +120,7 @@ test('owner identity follows a new spawn after the empty owner idles out, withou
   await client.write('shell','quit\n');await wait(()=>client.observedExits.get('shell')?.acknowledged===true);await wait(()=>registry.readOwnerRecord()===null);
   await client.spawn({...request(),ptyId:'next'});const current=registry.readOwnerRecord();assert.notEqual(current.pid,status.owner.pid);assert.equal(client.recoveryOwner.instanceId,current.instanceId);
   process.kill(status.pid,'SIGKILL');await wait(()=>logs.some(e=>e.state==='recovered'));assert.equal(await client.getPid('next'),current.panes[0].pid);assert.equal((await client.hostStatus()).owner.pid,current.pid);await client.shutdown();
- }finally{await cleanup(client);}
+ }catch(error){console.error('OWNER_IDLE_PRIMARY_FAILURE',error);throw error;}finally{await cleanup(client);}
 });
 
 test('quit during the prior-child exit wait starts no successor',{timeout:15000},async()=>{
@@ -215,7 +221,9 @@ test('manual success restores the normal three-attempt policy only after120s sta
 test('timeout after a partial replay preserves the retry notice after the successor socket closes',{timeout:15000},async()=>{
  const {client,status,logs,events}=await setup();const timer=globalThis.setTimeout;let expire;
  try{
-  globalThis.setTimeout=(callback,ms,...args)=>{if(ms===5678)expire=callback;return timer(callback,ms,...args);};
+  // Capture the supervisor deadline; only the restored callback fires it.
+  // The cancellable inert handle preserves cleanup without racing slow startup.
+  globalThis.setTimeout=(callback,ms,...args)=>{if(ms===5678){expire=callback;return timer(()=>{},14000);}return timer(callback,ms,...args);};
   client.crashSupervisor.dispose();client.crashSupervisor=null;
   client.enableCrashRecovery({log:(event,fields)=>logs.push({event,...fields}),restored:()=>{assert.equal(typeof expire,'function');setImmediate(()=>expire());}},{delays:[1],attemptTimeoutMs:5678,stableMs:120000});
   const send=client.sendRequest.bind(client);
@@ -303,4 +311,47 @@ test('Cancel keeps the same two-spent budget and a later real crash recovers onc
   process.kill(current.pid,'SIGKILL');await wait(()=>logs.filter(e=>e.state==='recovered').length===3);assert.equal(await client.getPid('shell'),pid);assert.equal((await client.hostStatus()).owner.pid,status.owner.pid);assert.equal(supervisor.used,3);
   const last=await client.hostStatus();process.kill(last.pid,'SIGKILL');await wait(()=>logs.some(e=>e.state==='exhausted'));assert.doesNotThrow(()=>process.kill(pid,0));assert.equal(logs.filter(e=>e.state==='recovered').length,3);
  }finally{await cleanup(client);}
+});
+
+test('discovery-only unavailable or invalid continuity latches host loss before any view mounts',{timeout:20000},async()=>{
+ for(const invalid of [false,true]){
+  const first=await setup(),second=new PtyHostClient(script),events=[];second.hostAuthKey=Buffer.from(first.client.hostAuthKey);second.enableCrashRecovery();second.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});
+  const send=second.sendRequest.bind(second);let starts=0;
+  second.sendRequest=async(socket,req)=>{
+   if(req.type!=='owner-continuity')return send(socket,req);
+   if(!invalid)throw Object.assign(Error('unsupported continuity'),{code:'PTY_HOST_REMOTE_ERROR'});
+   const reply=await send(socket,req);reply.bootstrap.panes=[];return reply;
+  };
+  try{
+   const before=await second.hostStatus();assert.equal(before.pid,first.status.pid);assert.equal(second.ownsOwnerKey,false);assert.equal(second.ownerContinuityUnavailable,true);assert.equal(second.live.size,0);
+   first.client.dispose();first.client.dropSocket();process.kill(before.pid,'SIGKILL');await wait(()=>second.socket===null);assert.equal(second.crashBlocked,true,'host loss latches without mounted panes');
+   second.startHost=()=>{starts++;throw Error('must not create a successor without owner continuity');};
+   const retained=JSON.parse(fs.readFileSync(path.join(process.env.AYA_HOME,'pty-owner/record.json'),'utf8'));
+   await assert.rejects(second.spawn({...request(),attachIfReused:true}),/The terminal host is disconnected or recovering/);
+   assert.equal(starts,0);assert.equal(second.crashBlocked,true);assert.equal(second.crashTask,null);
+   const notice=events.filter(e=>e.type==='disconnected').at(-1);assert.match(notice.reason,/could not verify recovery data/);assert.ok(!events.some(e=>e.type==='exit'||e.type==='no-session'||e.type==='recovered'));
+   const late=[];second.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>late.push(e)});assert.equal(late.length,1);assert.deepEqual([late[0].type,late[0].ptyId,late[0].reason],[notice.type,notice.ptyId,notice.reason]);assert.equal(!!late[0].retryable,false);
+   assert.doesNotThrow(()=>process.kill(first.pid,0));assert.doesNotThrow(()=>process.kill(before.owner.pid,0));
+   const status=await second.hostStatus();assert.deepEqual(status.owner.inventory.map(p=>p.pid),[first.pid]);assert.match(status.recoveryReason,/could not verify recovery data/);assert.equal(starts,0);
+   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(process.env.AYA_HOME,'pty-owner/record.json'),'utf8')).panes,retained.panes);
+   await assert.rejects(second.restart(),/The terminal host is disconnected or recovering/);assert.equal(starts,0);
+  }finally{await cleanup(first.client,second);}
+ }
+});
+
+test('continuity-unavailable latch blocks cold start and late spawn even without a socket-close event or live panes',async()=>{
+ for(const entry of ['connect','start','spawn']){
+  const client=new PtyHostClient(script);client.ownerContinuityUnavailable=true;
+  client.openSocket=async()=>{throw Object.assign(Error('absent socket'),{code:'ENOENT'});};let starts=0;const start=client.startHost.bind(client);client.startHost=(...args)=>{starts++;return start(...args);};const events=[];
+  client.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});
+  try{
+   if(entry==='connect')await assert.rejects(client.connectWithHostStart(),{code:'PTY_HOST_OWNER_UNAVAILABLE'});
+   if(entry==='start')assert.throws(()=>start(),{code:'PTY_HOST_OWNER_UNAVAILABLE'});
+   if(entry==='spawn'){
+    await assert.rejects(client.spawn(request()),{code:'PTY_HOST_OWNER_UNAVAILABLE'});assert.equal(events.length,1);assert.equal(events[0].type,'disconnected');assert.match(events[0].reason,/could not verify recovery data/);
+    const late=[];client.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>late.push(e)});assert.deepEqual(late,events);
+   }
+   assert.equal(starts,0);assert.equal(client.crashBlocked,true);
+  }finally{client.dispose();}
+ }
 });

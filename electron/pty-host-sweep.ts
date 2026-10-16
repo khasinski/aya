@@ -293,20 +293,20 @@ export function readSnapshot(): ProcRow[] {
   }
 }
 
-/** Direct leader-liveness probe. true = ps ran and CONFIRMED the pid gone
- *  (non-zero exit with a numeric status), false = pid alive, null = the probe
- *  itself failed (spawn error) - state unknown, callers must skip. */
+/** Direct leader presence: true requires kernel ESRCH after failed/empty ps;
+ * false means present (including EPERM), null means undecidable. */
 export function readLeaderGone(pid: number): boolean | null {
+  const absent=():boolean|null=>{
+    try{process.kill(pid,0);return false;}
+    catch(error){const code=(error as NodeJS.ErrnoException).code;return code==="ESRCH"?true:code==="EPERM"?false:null;}
+  };
   try {
     const out = execFileSync("ps", ["-p", String(pid), "-o", "pid="], {
       encoding: "utf8",
       env: PS_ENV,
     }).trim();
-    return out ? false : true;
-  } catch (err) {
-    const status = (err as { status?: unknown }).status;
-    return typeof status === "number" ? true : null;
-  }
+    return out ? false : absent();
+  } catch {return absent();}
 }
 
 /** Per-pid probe: current pgid + command INCLUDING the environment (`ps eww`).

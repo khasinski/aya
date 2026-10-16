@@ -47,7 +47,7 @@ async function emptyPrivateRoot(root: string): Promise<void> {
 }
 export class HostHandover {
   private pending: Pending | null = null;
-  constructor(private readonly coreRoot: string, private readonly displayRoot: string) {}
+  constructor(private readonly coreRoot: string, private readonly displayRoot: string, private readonly onAbort:()=>void=()=>{}) {}
   get committed(): boolean {return this.pending?.phase === "committing" || this.pending?.phase === "detached";}
   get active(): boolean {return !!this.pending && this.pending.phase !== "blocked";}
   private own(peer: HandoverPeer): Pending {
@@ -99,7 +99,7 @@ export class HostHandover {
       p.phase = "frozen";
       return this.summary(p);
     } catch (error) {
-      p.aborted = true; abortPtyCoreHandover();
+      this.onAbort();p.aborted = true; abortPtyCoreHandover();
       await this.cleanup(p);
       throw error;
     }
@@ -175,7 +175,7 @@ export class HostHandover {
     if (!p) return;
     if (peer && !same(p.recipient ?? p.peer,peer)) throw new Error("Terminal handover abort peer refused");
     if (p.phase === "detached" || p.phase === "committing") throw new Error("Terminal handover already committed");
-    p.aborted = true; abortPtyCoreHandover();
+    this.onAbort();p.aborted = true; abortPtyCoreHandover();
     await p.work?.catch(() => {});
     if (this.pending === p) await this.cleanup(p);
   }

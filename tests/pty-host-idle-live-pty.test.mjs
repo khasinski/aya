@@ -1,9 +1,10 @@
+import {spawnAuthenticatedHost,authenticateFixtureSocket} from "./helpers/pty-host-launch.cjs";
 // The idle shutdown must never take a host that still holds a pty or a client
 // (its children die with it). Real host, real socket, a real `sleep` pty.
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { cleanupNativeOwner } from "./helpers/pty-host.mjs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,7 +22,7 @@ let sleepSeed = 71000 + (process.pid % 1000) * 10;
 async function withHost(body) {
   const home = mkdtempSync(join(tmpdir(), "aya-idle-live-"));
   const sock = join(home, "pty-host.sock");
-  const host = spawn(process.execPath, [HOST_SCRIPT], {
+  const host = spawnAuthenticatedHost(process.execPath, [HOST_SCRIPT], {
     env: { ...process.env, AYA_HOME: home, AYA_PTY_HOST_IDLE_MS: String(IDLE_MS) },
     stdio: "ignore",
   });
@@ -30,8 +31,9 @@ async function withHost(body) {
   const connect = async () => {
     const socket = await connectWhenListening(sock);
     socket.on("error", () => {});
+    const authenticated=await authenticateFixtureSocket(socket,home);
     const pending = new Map();
-    let buf = "";
+    let buf = authenticated.buffered;
     socket.setEncoding("utf8");
     socket.on("data", (chunk) => {
       buf += chunk;
@@ -46,6 +48,7 @@ async function withHost(body) {
         } else pending.get(msg.id)?.(msg);
       }
     });
+    socket.resume();
     const client = {
       send: (req) =>
         new Promise((resolve, reject) => {

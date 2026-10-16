@@ -278,7 +278,9 @@ test("readSnapshot asks ps for the whole table in the C locale with the large bu
   assert.deepEqual(failed, []);
 });
 
-test("readLeaderGone: ps that cannot run is unknown (null), not gone; empty output or a non-zero exit is gone", () => {
+test("readLeaderGone: failed/empty ps needs independent ESRCH and never treats a live leader as gone", () => {
+  const kill=process.kill;let kernelError="EAGAIN";process.kill=(_pid,signal)=>{assert.equal(signal,0);if(kernelError)throw Object.assign(Error("injected presence"),{code:kernelError});return true;};
+  try {
   const spawnError = Object.assign(new Error("spawnSync ps ENOENT"), { code: "ENOENT" });
   assert.equal(
     withFakePs(() => {
@@ -286,6 +288,7 @@ test("readLeaderGone: ps that cannot run is unknown (null), not gone; empty outp
     }, () => readLeaderGone(4321)),
     null,
   );
+  kernelError="ESRCH";
   assert.equal(
     withFakePs(() => {
       throw Object.assign(new Error("Command failed: ps"), { status: 1 });
@@ -302,6 +305,11 @@ test("readLeaderGone: ps that cannot run is unknown (null), not gone; empty outp
     false,
   );
   assert.deepEqual(args, ["-p", "4321", "-o", "pid="]);
+  for(kernelError of [null,"EPERM","EAGAIN"]){
+   assert.equal(withFakePs(()=>"",()=>readLeaderGone(4321)),kernelError==="EAGAIN"?null:false);
+   assert.equal(withFakePs(()=>{throw Object.assign(Error("ps failed"),{status:1});},()=>readLeaderGone(4321)),kernelError==="EAGAIN"?null:false);
+  }
+  }finally{process.kill=kill;}
 });
 
 test("readEnvProbe: output without a leading pgid, or a failing ps, is null; a multi-line environment is kept whole", () => {
@@ -357,7 +365,9 @@ test("default deps: uid from process.getuid, AYA_HOME scope, our own group from 
   };
   const realKill = process.kill;
   const signals = [];
+  const kernelProbes=[];
   process.kill = (pid, sig) => {
+    if(sig===0){kernelProbes.push(pid);assert.equal(pid,7777);throw Object.assign(Error("fixture leader gone"),{code:"ESRCH"});}
     signals.push([pid, sig]);
     return true;
   };
@@ -367,6 +377,7 @@ test("default deps: uid from process.getuid, AYA_HOME scope, our own group from 
   } finally {
     process.kill = realKill;
   }
+  assert.deepEqual(kernelProbes,[7777]);
   assert.deepEqual(signals, [
     [-9900, "SIGKILL"],
     [9920, "SIGKILL"],
@@ -403,7 +414,9 @@ test("default deps: a self probe that fails does not stop the sweep", () => {
   const uid = process.getuid();
   const realKill = process.kill;
   const signals = [];
+  const kernelProbes=[];
   process.kill = (pid, sig) => {
+    if(sig===0){kernelProbes.push(pid);assert.equal(pid,7777);throw Object.assign(Error("fixture leader gone"),{code:"ESRCH"});}
     signals.push([pid, sig]);
     return true;
   };
@@ -420,6 +433,7 @@ test("default deps: a self probe that fails does not stop the sweep", () => {
   } finally {
     process.kill = realKill;
   }
+  assert.deepEqual(kernelProbes,[7777]);
   assert.deepEqual(signals, [[9920, "SIGKILL"]]);
   assert.deepEqual(summary.sweptOrphans, [9920]);
 });

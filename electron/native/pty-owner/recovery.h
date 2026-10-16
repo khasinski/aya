@@ -17,7 +17,8 @@
 #endif
 // 1 signalled, 0 absent, -1 unknown, -2 mismatch. Only individual processes
 // are signalled here. Linux reserves the target instance with a pidfd.
-static int recovery_signal_process(const ProcessIdentity *saved, pid_t group) {
+static int recovery_signal_process_with_signal(const ProcessIdentity *saved, pid_t group, int signal_number) {
+  if (signal_number != SIGKILL && signal_number != SIGTERM) return -1;
   ProcessIdentity current;
 #ifndef __APPLE__
   int fd = (int)RECOVERY_SYSCALL(SYS_pidfd_open, saved->pid, 0);
@@ -34,9 +35,9 @@ static int recovery_signal_process(const ProcessIdentity *saved, pid_t group) {
 #ifdef __APPLE__
       // macOS has no pidfd equivalent. There remains a kernel scheduling/PID
       // reuse window after this check; never signal a numeric process group.
-      result = RECOVERY_SIGNAL(saved->pid, SIGKILL) ? (errno == ESRCH ? 0 : -1) : 1;
+      result = RECOVERY_SIGNAL(saved->pid, signal_number) ? (errno == ESRCH ? 0 : -1) : 1;
 #else
-      result = RECOVERY_SYSCALL(SYS_pidfd_send_signal, fd, SIGKILL, NULL, 0) ? (errno == ESRCH ? 0 : -1) : 1;
+      result = RECOVERY_SYSCALL(SYS_pidfd_send_signal, fd, signal_number, NULL, 0) ? (errno == ESRCH ? 0 : -1) : 1;
 #endif
     }
   }
@@ -44,5 +45,8 @@ static int recovery_signal_process(const ProcessIdentity *saved, pid_t group) {
   close(fd);
 #endif
   return result;
+}
+static int recovery_signal_process(const ProcessIdentity *saved, pid_t group) {
+  return recovery_signal_process_with_signal(saved, group, SIGKILL);
 }
 #endif
