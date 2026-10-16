@@ -5,15 +5,15 @@ import {envWithoutAya} from "./helpers/env";
 import {waitForShellReady} from "./helpers/terminal";
 const ROOT=join(__dirname,".."),CLI=join(ROOT,"bin","aya"),AGENT=join(__dirname,"helpers","rule-screen-agent.cjs");
 const quote=(s:string)=>`'${s.replace(/'/g,"'\\''")}'`;
-const preset=(mode:string)=>({id:"screen-agent",name:"Screen agent",icon:"a",color:"",agent:"claude",command:`env AYA_SCREEN_CASE=${mode} ${quote(process.execPath)} ${quote(AGENT)} ${mode}`});
+const preset=(mode:string,agent="claude")=>({id:"screen-agent",name:"Screen agent",icon:"a",color:"",agent,command:`env AYA_SCREEN_CASE=${mode} ${quote(process.execPath)} ${quote(AGENT)} ${mode}`});
 function state(home:string,target="agent"){return execFileSync(CLI,["pane","state",target,"--explain"],{env:{...envWithoutAya(),AYA_HOME:home},encoding:"utf8",timeout:10000});}
-for(const [mode,want,rule] of [["idle","idle","composer-hint"],["busy","busy","claude-busy"],["approval","waiting","do-you-want"],["account","waiting","claude-account-setting"]]){
+for(const [mode,want,rule,agent="claude"] of [["idle","idle","composer-hint"],["busy","busy","claude-busy"],["approval","waiting","do-you-want"],["account","waiting","claude-account-setting"],["codexBusy","busy","codex-busy","codex"]]){
  test.describe(`pane state ${mode}`,()=>{
-  test.use({seedOptions:{rightTab:{presetId:"screen-agent",name:"agent"},presetList:[{id:"shell",name:"Shell",icon:"$",color:"",command:"$SHELL"},preset(mode)]}});
+  test.use({seedOptions:{rightTab:{presetId:"screen-agent",name:"agent"},presetList:[{id:"shell",name:"Shell",icon:"$",color:"",command:"$SHELL"},preset(mode,agent)]}});
   test("real CLI explains the applied PTY screen selected by preset, with no input",async({window,seeded})=>{
    const errors:string[]=[];window.on("pageerror",e=>errors.push(e.message));
    await expect.poll(()=>state(seeded.ayaHome),{timeout:15000}).toContain(`"agent": ${want}`);
-   const output=state(seeded.ayaHome);expect(output).toContain(rule);expect(output).toMatch(/source: builtin\/(?:generic|claude)/);expect(output).toMatch(/rules: 1 \([a-f0-9]{64}\)/);expect(output).toContain("region:");expect(output).toContain("excerpt:");expect(output).not.toMatch(/[\x1b\x00-\x08\x0b-\x1f\x7f-\x9f\u202e\u202d]/);expect(errors).toEqual([]);
+   const output=state(seeded.ayaHome);expect(output).toContain(rule);expect(output).toMatch(/source: builtin\/(?:generic|claude|codex)/);expect(output).toMatch(/rules: 1 \([a-f0-9]{64}\)/);expect(output).toContain("region:");expect(output).toContain("excerpt:");expect(output).not.toMatch(/[\x1b\x00-\x08\x0b-\x1f\x7f-\x9f\u202e\u202d]/);expect(errors).toEqual([]);
   });
  });
 }
@@ -21,7 +21,8 @@ test.describe("state after a real JS-host crash",()=>{
  test.use({seedOptions:{rightTab:{presetId:"screen-agent",name:"agent"},presetList:[{id:"shell",name:"Shell",icon:"$",color:"",command:"$SHELL"},preset("idle")]}});
  test("a screen not redrawn after recovery is unknown, never idle",async({app,seeded,window})=>{
   await expect.poll(()=>state(seeded.ayaHome)).toContain('"agent": idle');
-  const hostPid=await app.evaluate(async(_api,root)=>{const require=process.getBuiltinModule("module").createRequire(root+"/package.json"),{PtyHostClient}=require(root+"/dist-electron/pty-host-client.js"),c=new PtyHostClient(root+"/dist-electron/pty-host.js");try{return(await c.hostStatus()).pid;}finally{c.dispose();c.dropSocket();}},ROOT);
+  const hostPid=await app.evaluate(async(_api,root)=>{const require=process.getBuiltinModule("module").createRequire(root+"/package.json"),buildDir=root+"/dist-electron";
+  const {PtyHostClient}=require(buildDir+"/pty-host-client.js"),c=new PtyHostClient(buildDir+"/pty-host.js");try{return(await c.hostStatus()).pid;}finally{c.dispose();c.dropSocket();}},ROOT);
   process.kill(hostPid,"SIGKILL");
   await expect.poll(()=>state(seeded.ayaHome),{timeout:15000}).toContain("screen unknown after the terminal host restarted");
   const output=state(seeded.ayaHome);expect(output).toContain('"agent": unknown');expect(output).toContain("policy:recovery-screen-unknown");expect(output).not.toContain("excerpt:");
@@ -51,7 +52,8 @@ test.describe("disconnected state",()=>{
   await expect.poll(()=>state(seeded.ayaHome)).toContain('"agent": idle');
   const {readFileSync}=await import("node:fs");
   const record=JSON.parse(readFileSync(join(seeded.ayaHome,"pty-owner","record.json"),"utf8"));
-  const hostPid=await app.evaluate(async(_api,root)=>{const require=process.getBuiltinModule("module").createRequire(root+"/package.json"),{PtyHostClient}=require(root+"/dist-electron/pty-host-client.js"),c=new PtyHostClient(root+"/dist-electron/pty-host.js");try{const pid=(await c.hostStatus()).pid;PtyHostClient.prototype.recoverCrashedHost=async()=>"blocked";return pid;}finally{c.dispose();c.dropSocket();}},ROOT);
+  const hostPid=await app.evaluate(async(_api,root)=>{const require=process.getBuiltinModule("module").createRequire(root+"/package.json"),buildDir=root+"/dist-electron";
+  const {PtyHostClient}=require(buildDir+"/pty-host-client.js"),c=new PtyHostClient(buildDir+"/pty-host.js");try{const pid=(await c.hostStatus()).pid;PtyHostClient.prototype.recoverCrashedHost=async()=>"blocked";return pid;}finally{c.dispose();c.dropSocket();}},ROOT);
   process.kill(hostPid,"SIGKILL");
   await expect.poll(()=>state(seeded.ayaHome),{timeout:10000}).toContain("disconnected or recovering");
   expect(state(seeded.ayaHome)).toContain('"agent": unknown');

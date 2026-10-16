@@ -23,8 +23,8 @@ export function explainPaneSnapshot(snapshot: VtSnapshot): PaneStateResult {
   const hold = snapshotHold(snapshot).hold, busy = snapshotBusy(snapshot), status = snapshotStatus(snapshot), rules = ruleMetadata();
   const noScreen = status.waiting === null || !snapshot.rows.some(row => row.trim());
   const unknown = snapshot.recoveryUnknown || !rules.available || noScreen;
-  const reason = snapshot.recoveryUnknown ? HOLD_RECOVERY_UNKNOWN : !rules.available ? rules.reason : noScreen ? "no screen evidence yet" : undefined;
-  const state = unknown ? "unknown" : snapshot.shell ? "shell" : status.waiting ? "waiting" : busy ? "busy" : hold ? "held" : "idle";
+  const reason = snapshot.shell ? undefined : snapshot.recoveryUnknown ? HOLD_RECOVERY_UNKNOWN : !rules.available ? rules.reason : noScreen ? "no screen evidence yet" : undefined;
+  const state = snapshot.shell ? "shell" : unknown ? "unknown" : status.waiting ? "waiting" : busy ? "busy" : hold ? "held" : "idle";
   const evidence: PaneStateResult["evidence"] = [];
   if (!unknown && !snapshot.shell) {
     const decision = evaluateScreenEvidence(snapshot.rows, snapshot.agent);

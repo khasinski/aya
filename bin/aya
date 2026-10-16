@@ -36,7 +36,8 @@ Usage:
   aya status clear                   Clear agent status
   aya pane list [--project slug]     List the panes/agents in this project
   aya pane state target [--explain] [--project slug]
-                                     Show fresh state and the matching screen rules; unknown is exit 0
+                                     Show the pane's fresh state; --explain adds the matching rules
+                                     Unknown is a state answer (exit 0), never a host start
   aya pane read target [--project slug]
                                      Print another pane's recent output;
                                      target is a pane name or an id from

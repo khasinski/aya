@@ -29,8 +29,9 @@ The rule loader/data remain outside the host's transitive value-import graph. #2
 Example text (illustrative existing rule):
 
 ```
-claude-work: busy; hold: none
-busy: claude-busy
+"claude-work": busy; busy: yes; waiting: no; hold: none
+rules: 1 (<sha256>)
+busy rule: claude-busy (busy)
 source: builtin/claude; rules: 1 (<sha256>)
 region: lastLine
 excerpt: esc to interrupt
@@ -87,3 +88,9 @@ An empty/no-opinion snapshot now says `unknown` and `no screen evidence yet`, wh
 
 
 The fixed CLI-stage subset passes 48/48 in Node and 48/48 in Electron; the actual GUI rerun passes 7/7 in 13.0 s. The unopened-tab regression now adds a genuinely deferred tab to the live configuration and waits for its sidebar record, then verifies stopped with no owner inventory entry. Two preceding non-green setup attempts exposed an invalid assumption: the default non-split right tab can mount automatically, and the first state query could race host startup. Neither result was an evaluator mismatch; they are retained as test-fixture history, not counted as green evidence. Empty retained blank rows also report no screen evidence, without altering existing hold/busy/status. Quoted names and explicit clear/waiting verdicts are the final output format.
+
+
+Lead review R1 keeps shell metadata authoritative even before any screen output: blank/unseen shell snapshots report shell with the existing shell hold, while blank agent screens stay unknown. R2 corrects help to distinguish basic state from `--explain` and refreshes the example above. The first full npm run had 7197 passes, one failure, 147 skips and one known TODO: the failure was the e2e seed guard treating the inline dist-electron/pty-host path in an actual-main `app.evaluate` query as a fresh launcher. The query now resolves the identical build directory on a separate source line; the guard and all real-launcher checks remain unchanged. Full npm will be rerun on the final bytes.
+
+
+R1/R2 follow-up passes 61/61 Node contracts (including the unchanged seed/env guard), 49/49 Electron contracts and 8/8 actual GUI cases in 15.0 s. The added non-Claude case runs the same env-wrapped node stand-in with an explicit Codex preset and checks the Codex busy rule/source, so process naming cannot select Claude accidentally. The blank-shell test covers both no rows and retained blank rows with shell hold unchanged. No full-gate result is claimed from the preceding non-green npm run.

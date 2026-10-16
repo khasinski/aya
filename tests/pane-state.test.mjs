@@ -66,3 +66,11 @@ test('blank retained rows are not invented idle evidence either',()=>{
  const r=explainPaneSnapshot(snapshot(['','  '],'claude',{composerSeen:true}));
  assert.equal(r.state,'unknown');assert.equal(r.reason,'no screen evidence yet');assert.equal(r.hold,null);assert.equal(r.busy,false);assert.equal(r.waiting,false);
 });
+
+
+test('known shell metadata wins over absent screen evidence',()=>{
+ for(const rows of [[],['','  ']]){
+  const r=explainPaneSnapshot(snapshot(rows,'custom',{shell:true,composerSeen:false}));
+  assert.equal(r.state,'shell');assert.equal(r.hold,'runs a shell');assert.equal(r.reason,undefined);
+ }
+});
