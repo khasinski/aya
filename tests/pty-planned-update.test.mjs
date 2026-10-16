@@ -121,7 +121,9 @@ test('connected issuer controls send only on the captured socket, never through 
  c.socket={destroyed:false};c.isConnected=()=>true;c.openSocket=async()=>{opens++;throw Error('unexpected reconnect');};c.request=async()=>{generic++;throw Error('generic acquisition forbidden');};
  c.sendRequest=async(socket,request)=>{assert.equal(socket,c.socket);sent.push(request.type);throw failure;};
  try{for(const operation of [()=>c.preparePlannedHandover(Date.now()+120000,'a'.repeat(64)),()=>c.announcePlannedHandover({deadline:Date.now()+120000},null,[],'b'.repeat(64),'a'.repeat(64)),()=>c.cancelPlannedHandover('a'.repeat(64))])await assert.rejects(operation(),error=>error===failure);
-  assert.deepEqual(sent,['handover-prepare','handover-publish','handover-cancel']);assert.equal(generic,0);assert.equal(opens,0);
+  c.sendRequest=async(socket,request)=>{assert.equal(socket,c.socket);sent.push(request.type);if(request.type==='handover-publish')return null;throw failure;};
+  await assert.rejects(c.announcePlannedHandover({deadline:Date.now()+120000},null,[],'b'.repeat(64),'a'.repeat(64)),error=>error===failure);
+  assert.deepEqual(sent,['handover-prepare','handover-publish','handover-cancel','handover-publish','handover-announce']);assert.equal(generic,0);assert.equal(opens,0);
  }finally{c.socket=null;c.dispose();}
 });
 test('late real ticket rename is fenced and cleans only its attempt while a newer ticket survives',async()=>{
