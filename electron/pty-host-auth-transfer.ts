@@ -33,8 +33,8 @@ export class HostAuthTransfer {
   private seal(attempt:Attempt):void{attempt.phase="sealed";attempt.nonce.fill(0);}
   private expire():void{
     const a=this.attempt;if(!a)return;
-    const now=this.clock.monotonic();
-    if((a.phase==="reserved"&&(now>=a.expires||now>=a.activateBy))||(a.phase==="active"&&now>=a.expires))this.seal(a);
+    const now=this.clock.monotonic(),wallExpired=this.clock.wall()>=a.deadline;
+    if((a.phase==="reserved"&&(wallExpired||now>=a.expires||now>=a.activateBy))||(a.phase==="active"&&(wallExpired||now>=a.expires)))this.seal(a);
   }
   get phase():Phase|"empty"{this.expire();return this.attempt?.phase??"empty";}
   /** Called only behind ordinary authentication, before any B3 freeze or I/O. */

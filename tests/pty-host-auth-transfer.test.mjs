@@ -22,7 +22,7 @@ test('monotonic activation and authorization deadlines cannot be extended by wal
  assert.equal(AUTH_TRANSFER_WINDOW_MS,120000);assert.equal(AUTH_QUIT_PUBLICATION_MS,2000);
  const f=fixture(),a=f.reserve();f.setWall(1);f.setMono(2100);assert.throws(()=>f.transfer.activate(issuer,a.attempt));assert.equal(f.transfer.phase,'sealed');
  const g=fixture(),b=g.reserve();g.transfer.activate(issuer,b.attempt);g.setWall(1);g.setMono(120100);assert.throws(()=>g.transfer.redeem(b.attempt,nonce,recipient));assert.equal(g.transfer.phase,'sealed');
- const h=fixture(),c=h.reserve();h.transfer.activate(issuer,c.attempt);h.setWall(999999999);h.setMono(120099);assert.deepEqual(h.transfer.redeem(c.attempt,nonce,recipient),key,'wall jumps cannot redefine host monotonic lifetime');
+ const h=fixture(),c=h.reserve();h.transfer.activate(issuer,c.attempt);h.setWall(999999999);h.setMono(120099);assert.throws(()=>h.transfer.redeem(c.attempt,nonce,recipient),'forward wall expiry also refuses');assert.equal(h.transfer.phase,'sealed');
  for(const f of [g,h])f.transfer.dispose();f.transfer.dispose();
 });
 test('exclusive reservation precedes B3 freeze: loser cannot activate or cancel winner',()=>{
@@ -42,7 +42,7 @@ test('redemption commitment wins over issuer cleanup and never rearms from EOF/r
  assert.equal(transfer.cancel(issuer,a.attempt),'committed');assert.equal(transfer.phase,'claimed');assert.throws(()=>reserve());assert.throws(()=>transfer.reserve(recipient,'ordinary-quit','c'.repeat(64),1120000));transfer.dispose();
 });
 test('only exact recipient completion after owner-continuity receipt allows a fresh window',()=>{
- const {transfer,reserve}=fixture(),a=reserve();transfer.activate(issuer,a.attempt);transfer.redeem(a.attempt,nonce,recipient);
+ const {transfer,reserve}=fixture(),a=reserve();transfer.activate(issuer,a.attempt);transfer.redeem(a.attempt,nonce,recipient).fill(0);
  assert.throws(()=>transfer.complete(recipient,a.attempt,receipt));assert.throws(()=>transfer.noteContinuity(other,a.attempt,receipt));
  transfer.noteContinuity(recipient,a.attempt,receipt);assert.throws(()=>transfer.complete({...recipient,startIdentity:'200:9'},a.attempt,receipt));assert.throws(()=>transfer.complete(recipient,a.attempt,'d'.repeat(64)));
  transfer.complete(recipient,a.attempt,receipt);transfer.complete(recipient,a.attempt,receipt);assert.equal(transfer.phase,'owned');assert.throws(()=>reserve());
