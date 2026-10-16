@@ -45,3 +45,34 @@ test('a host at its final exit boundary remains recorded until kernel death, inc
   await cleanupNativeOwner(process.env.AYA_HOME);fs.rmSync(script,{force:true});fs.rmSync(root,{recursive:true,force:true});
  }
 });
+
+for(const viaSignal of [false,true])test(`committed B3 ${viaSignal?'signal':'detach response'} keeps the live old host recorded and owner/pane intact at exit`,{timeout:15000},async()=>{
+ const held=path.resolve(`dist-electron/pty-host-held-commit-${process.pid}.js`);
+ const prefix=`const boundaryFs=require('node:fs'),boundaryPath=require('node:path'),boundaryExit=process.exit,boundaryWait=new Int32Array(new SharedArrayBuffer(4));process.exit=code=>{boundaryFs.writeFileSync(boundaryPath.join(process.env.AYA_HOME,'exit-boundary'),'ready');const boundaryDeadline=Date.now()+10000;while(!boundaryFs.existsSync(boundaryPath.join(process.env.AYA_HOME,'release-exit'))&&Date.now()<boundaryDeadline)Atomics.wait(boundaryWait,0,0,5);boundaryExit(code);};\n`;
+ const suffix=viaSignal?`\nconst boundaryDetach=hostHandover.detach.bind(hostHandover);hostHandover.detach=async(...args)=>{const result=await boundaryDetach(...args);boundaryFs.writeFileSync(boundaryPath.join(process.env.AYA_HOME,'committed-signal'),JSON.stringify({committed:hostHandover.committed,shutdownStarted:hostShutdownStarted}));process.emit('SIGTERM');return result;};\n`:'';
+ fs.writeFileSync(held,prefix+fs.readFileSync(path.resolve('dist-electron/pty-host.js'),'utf8')+suffix);
+ const old=new PtyHostClient(held),cold=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));let before;
+ try{
+  fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true,mode:0o700});
+  await old.spawn({ptyId:'moving',agent:'custom',command:'cat',cwd:process.env.HOME,cols:80,rows:24});
+  before=await old.hostStatus();const pid=await old.getPid('moving'),identity=ownerProcessStartIdentity(before.pid),ownerIdentity=ownerProcessStartIdentity(before.owner.pid),paneIdentity=ownerProcessStartIdentity(pid);
+  const state=await old.preparePlannedHandover(Date.now()+20000),ticket=await old.announcePlannedHandover(state,null,[],'a'.repeat(64));
+  await old.request({id:0,type:'handover-claim',nonce:ticket.nonce,reuse:false});
+  const detaching=old.request({id:0,type:'handover-detach',consented:[]}).catch(error=>{if(!viaSignal)throw error;});
+  await wait(()=>fs.existsSync(marker));
+  if(viaSignal)assert.deepEqual(JSON.parse(fs.readFileSync(path.join(process.env.AYA_HOME,'committed-signal'),'utf8')),{committed:true,shutdownStarted:false});
+  assert.equal(ownerProcessStartIdentity(before.pid),identity);assert.equal(ownerProcessStartIdentity(before.owner.pid),ownerIdentity);assert.equal(ownerProcessStartIdentity(pid),paneIdentity);
+  cold.hostAuthKey=Buffer.alloc(32,7);const childProcess=require('node:child_process'),spawn=childProcess.spawn;let forks=0;
+  try{childProcess.spawn=()=>{forks++;throw Error('fork attempted before committed old host exited');};assert.throws(()=>cold.startHost(),{code:'PTY_HOST_START_BLOCKED'});assert.equal(forks,0);}
+  finally{childProcess.spawn=spawn;}
+  assert.equal(fs.existsSync(path.join(process.env.AYA_HOME,'pty-hosts',`${before.pid}.json`)),true,'committed host retains its own absence-proof record');
+  assert.equal(hostCreationProof().state,'alive');
+  fs.writeFileSync(release,'go');await detaching;await wait(()=>ownerProcessStartIdentity(before.pid)===null);
+  await wait(()=>hostCreationProof().state==='gone');assert.equal(ownerProcessStartIdentity(before.owner.pid),ownerIdentity);assert.equal(ownerProcessStartIdentity(pid),paneIdentity,JSON.stringify({record:fs.readFileSync(path.join(process.env.AYA_HOME,'pty-owner/record.json'),'utf8'),events:fs.readFileSync(path.join(process.env.AYA_HOME,'pty-events.log'),'utf8')}));
+ }finally{
+  if(fs.existsSync(process.env.AYA_HOME))fs.writeFileSync(release,'go');
+  if(before)await wait(()=>ownerProcessStartIdentity(before.pid)===null);
+  old.dispose();old.dropSocket();cold.dispose();cold.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);
+  fs.rmSync(held,{force:true});fs.rmSync(root,{recursive:true,force:true});
+ }
+});
