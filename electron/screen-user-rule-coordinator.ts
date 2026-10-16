@@ -44,7 +44,7 @@ export class UserRuleCoordinator {
     const agent=RULE_AGENTS.includes(screen.agent as RuleAgent)?screen.agent as RuleAgent:"generic";
     const context={agent,regions,recoveryUnknown:screen.recoveryUnknown};
     if(available&&!configuration.manifest){
-      return {current:true,userConfigured:false,fence:null,composerSeen:hold.composerSeen||status.composerSeen,decision:composeUserRuleDecision(builtin,context,null,{available:true,epoch,digest:null,matches:[]})};
+      return {current:true,userConfigured:false,fence:null,composerSeen:!screen.composerSeen&&(hold.composerSeen||status.composerSeen),decision:composeUserRuleDecision(builtin,context,null,{available:true,epoch,digest:null,matches:[]})};
     }
     const fence={generation:screen.generation,revision:screen.revision!};
     if(!validVtSnapshotFence(fence))return this.stale();
@@ -69,7 +69,7 @@ export class UserRuleCoordinator {
       if(!checked||!stillCurrent())return this.stale();
       if(!manifest)return {...this.stale(),current:true,decision:{...this.stale().decision,hold:builtin.hold??HOLD_USER_RULES_UNKNOWN,busy:builtin.busy,waiting:builtin.waiting===true?true:null}};
       const decision=composeUserRuleDecision(builtin,context,manifest,result);
-      return {decision,current:true,userConfigured:true,fence:decision.user.available?fence:null,composerSeen:decision.user.available&&!decision.waiting&&!decision.userHold&&(hold.composerSeen||status.composerSeen)};
+      return {decision,current:true,userConfigured:true,fence:decision.user.available?fence:null,composerSeen:!screen.composerSeen&&decision.user.available&&!decision.waiting&&!decision.userHold&&(hold.composerSeen||status.composerSeen)};
     }catch{return this.stale();}
     finally{if(this.pending.get(key)===token)this.pending.delete(key);}
   }

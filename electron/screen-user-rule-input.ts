@@ -21,7 +21,11 @@ export class GuardedRuleInput {
   private refused(reason:string,code="PTY_HOST_RULES_UNAVAILABLE"):Error{return Object.assign(new Error(`${reason}. This input was not sent.`),{code});}
   async decision(id:string,caller:string,pasted?:string):Promise<CoordinatedRuleDecision|null>{
     if(this.disposed)return null;
-    try{const screen=await this.host.snapshot(id);if(!screen||this.disposed)return null;return await this.coordinator.evaluate(id,screen,caller,pasted);}catch{return null;}
+    try{const screen=await this.host.snapshot(id);if(!screen||this.disposed)return null;return await this.evaluateApplied(id,screen,caller,pasted);}catch{return null;}
+  }
+  /** Evaluate a caller-owned applied snapshot; acquisition and any later ACK remain separate. */
+  async evaluateApplied(id:string,screen:VtSnapshot,caller:string,pasted?:string):Promise<CoordinatedRuleDecision|null>{
+    if(this.disposed)return null;return this.coordinator.evaluate(id,screen,caller,pasted);
   }
   /** Direct pane-send blocks user-only dialogs/unknown user safety independently
    * of a builtin display hold. A generic approval can still be answered by an
