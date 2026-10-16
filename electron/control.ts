@@ -1,3 +1,4 @@
+import type { AutomaticWriteContext } from "./screen-user-rule-input";
 import { formatPaneState, type PaneStateResult } from "./pane-state";
 import type { BrowserWindow } from "electron";
 import { notePaneInput, paneInputRevision, withPaneInputLock } from "./pane-input-queue";
@@ -100,6 +101,10 @@ export interface ControlServerOptions {
   writePane?: (terminalId: string, data: string) => Promise<boolean | void>;
   /** Why the pane must not be typed into now (vt-state paneHold); pane-send refuses only a dialog for the user alone. */
   paneHold?: (terminalId: string) => Promise<string | null>;
+  /** Optional user-layer protection, independent of the displayed builtin hold. */
+  paneInputProtection?: (terminalId: string, pasted?: string) => Promise<string | null>;
+  /** Automatic input with a current policy decision and host first-byte fence. */
+  writePaneChecked?: (terminalId: string, data: string, context: AutomaticWriteContext) => Promise<boolean | void>;
   paneState?: (terminalId: string) => Promise<PaneStateResult>;
   /** All live windows (and window-like sinks); status updates are broadcast
    *  because the terminal they describe may be in an unfocused window. */
@@ -174,19 +179,23 @@ async function handlePaneRequest(
   }
   // Any key, Enter or not, answers a select dialog; an unreadable screen is no reason to refuse.
   // Read under the pane lock: a delivery queued ahead of this one, or this one's own text, can draw the offer.
-  const userOnly = async () => {
+  const userOnly = async (pasted?: string) => {
+    if(options.paneInputProtection)return options.paneInputProtection(terminalId,pasted);
     const hold = await options.paneHold?.(terminalId).catch(() => null);
     return isUserOnlyHold(hold) ? hold! : null;
   };
   const guard = async () => {
     const hold = await userOnly();
-    if (hold) throw new Error(`pane "${name}": ${hold}. Only the user answers it, in that pane; nothing was typed`);
+    if (hold) throw new Error(`pane "${name}": ${hold}. ${isUserOnlyHold(hold)?"Only the user answers it, in that pane":"Automated input is blocked"}; nothing was typed`);
   };
+  let phase: AutomaticWriteContext["phase"] = "paste";
   const beforeEnter = async () => {
-    const hold = await userOnly();
-    if (hold) throw new PaneHeldError(`pane "${name}": ${hold}; it appeared after the text was typed; Enter not sent, the text may sit in the offer or the composer`, true);
+    phase="enter";
+    const hold = await userOnly(request.text);
+    if (hold) throw new PaneHeldError(`pane "${name}": ${hold}; ${isUserOnlyHold(hold)?"it appeared after the text was typed":"automated input protection changed after the text was typed"}; Enter not sent, the text may sit in the offer or the composer`, true);
   };
-  await deliverToPane(options.writePane, terminalId, name, request.text, request.submit === true, guard, beforeEnter);
+  const writer=options.writePaneChecked?((id:string,data:string)=>options.writePaneChecked!(id,data,{phase,...(phase==="enter"?{pasted:request.text}:{})})):options.writePane;
+  await deliverToPane(writer, terminalId, name, request.text, request.submit === true, guard, beforeEnter);
   return { terminalId, projectSlug, name };
 }
 
@@ -232,8 +241,10 @@ export function deliverTeamMessage(
   probe?: TurnProbe,
   entered?: () => Promise<void>,
   pasting?: () => Promise<void>,
+  writeChecked?: (terminalId: string, data: string, context: AutomaticWriteContext) => Promise<boolean | void>,
 ): Promise<string | null> {
   const pasted = oneLine(text);
+  let phase: AutomaticWriteContext["phase"] = "paste";
   const guard = async () => {
     const hold = await holdReason?.(terminalId);
     if (hold) throw new PaneHeldError(hold);
@@ -242,6 +253,7 @@ export function deliverTeamMessage(
     if (cancelled?.()) throw new PaneHeldError("the team was paused or changed before it was typed; nothing typed", false);
   };
   const beforeEnter = async () => {
+    phase="enter";
     if (cancelled?.()) throw new PaneHeldError("the team was paused or changed while it was typed; text left in the composer, Enter not sent", true);
     const hold = await holdReason?.(terminalId, pasted);
     if (hold && hold !== HOLD_DRAFT) {
@@ -260,7 +272,8 @@ export function deliverTeamMessage(
     await entered?.();
     if (probe) unseen = await turnUnseen(probe, terminalId, pasted, before!);
   };
-  return deliverToPane(writePane, terminalId, terminalId, `${PASTE_START}${pasted}${PASTE_END}`, true, guard, snapshot, afterEnter).then(() => {
+  const writer=writeChecked?((id:string,data:string)=>writeChecked(id,data,{phase,...(phase==="enter"?{pasted}:{})})):writePane;
+  return deliverToPane(writer, terminalId, terminalId, `${PASTE_START}${pasted}${PASTE_END}`, true, guard, snapshot, afterEnter).then(() => {
     // Text the agent did not take still sits there: the next read must see it as a draft at once.
     if (!unseen) lastSubmitted.set(terminalId, { text: pasted, at: Date.now() });
     return unseen;

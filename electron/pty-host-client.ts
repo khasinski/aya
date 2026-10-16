@@ -947,6 +947,11 @@ export class PtyHostClient {
     }
   }
 
+  /** User-rule policy observes only an existing connection, without metadata ACKs or startup. */
+  async appliedSnapshotForRules(ptyId: string): Promise<VtSnapshot | null> {
+    return asVtSnapshot(await this.readExistingSnapshot(ptyId));
+  }
+
   private async readExistingSnapshot(ptyId: string): Promise<unknown> {
     return this.readExistingRequest({ id: 0, type: "snapshot", ptyId });
   }
