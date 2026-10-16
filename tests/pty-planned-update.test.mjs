@@ -110,8 +110,27 @@ test('abort while fallback consent is pending cannot authorize a late installer 
  question.resolve(true);await aborting;assert.equal(await preparing,false);
  assert.equal(f.planned.hasPreparedHandover,false);assert.equal(f.calls.some(c=>c[0]==='restart'||c[0]==='activate'||c[0]==='freeze'),false);
 });
-for(const code of ['ENOENT','ECONNREFUSED'])test(`planned reservation is existing-host-only for ${code}`,async()=>{
+for(const code of ['ENOENT','ECONNREFUSED'])test(`planned issuer controls are existing-host-only for ${code}`,async()=>{
  const {PtyHostClient}=require('../dist-electron/pty-host-client.js'),c=new PtyHostClient('unused');let starts=0;
  c.openSocket=async()=>{throw Object.assign(Error('existing socket unavailable'),{code});};c.startHost=()=>{starts++;throw Error('not allowed');};
- try{await assert.rejects(c.reservePlannedHandover(Date.now()+120000),error=>error.code===code);assert.equal(starts,0);}finally{c.dispose();}
+ try{for(const operation of [()=>c.reservePlannedHandover(Date.now()+120000),()=>c.preparePlannedHandover(Date.now()+120000,'a'.repeat(64)),()=>c.announcePlannedHandover({deadline:Date.now()+120000},null,[],'b'.repeat(64),'a'.repeat(64)),()=>c.cancelPlannedHandover('a'.repeat(64))])await assert.rejects(operation(),error=>error.code===code);assert.equal(starts,0);}finally{c.dispose();}
+});
+
+test('connected issuer controls send only on the captured socket, never through generic acquisition',async()=>{
+ const {PtyHostClient}=require('../dist-electron/pty-host-client.js'),c=new PtyHostClient('unused'),failure=Error('lost existing socket');let generic=0,opens=0;const sent=[];
+ c.socket={destroyed:false};c.isConnected=()=>true;c.openSocket=async()=>{opens++;throw Error('unexpected reconnect');};c.request=async()=>{generic++;throw Error('generic acquisition forbidden');};
+ c.sendRequest=async(socket,request)=>{assert.equal(socket,c.socket);sent.push(request.type);throw failure;};
+ try{for(const operation of [()=>c.preparePlannedHandover(Date.now()+120000,'a'.repeat(64)),()=>c.announcePlannedHandover({deadline:Date.now()+120000},null,[],'b'.repeat(64),'a'.repeat(64)),()=>c.cancelPlannedHandover('a'.repeat(64))])await assert.rejects(operation(),error=>error===failure);
+  assert.deepEqual(sent,['handover-prepare','handover-publish','handover-cancel']);assert.equal(generic,0);assert.equal(opens,0);
+ }finally{c.socket=null;c.dispose();}
+});
+test('late real ticket rename is fenced and cleans only its attempt while a newer ticket survives',async()=>{
+ clean();const f=fixture(),gate=deferred(),io=fs.promises;let entered=false,renamed=false;
+ f.deps.publication.budgetMs=200;f.deps.confirmStop=async()=>false;
+ f.deps.publication.publish=(file,ticket,budget)=>writeAuthTransferTicket(file,ticket,{...budget,io:{open:io.open,lstat:io.lstat,unlink:io.unlink,rename:async(...args)=>{entered=true;await gate.promise;await io.rename(...args);renamed=true;}}});
+ assert.equal(await f.planned.prepare(),false);assert.equal(entered,true);
+ const winner={format:2,purpose:'planned-update',attempt:'1'.repeat(64),nonce:'2'.repeat(64),deadline:Date.now()+10000,hostPid:456,hostStartIdentity:'3:4'},winnerFile=authTransferTicketPath(root,winner.attempt);
+ await writeAuthTransferTicket(winnerFile,winner,{deadline:performance.now()+2000});
+ gate.resolve();await until(()=>renamed);await until(()=>!fs.readdirSync(root).some(name=>name.startsWith('pty-handover.'+'e'.repeat(64))));
+ assert.deepEqual(JSON.parse(fs.readFileSync(winnerFile,'utf8')),winner);assert.equal(f.calls.some(c=>c[0]==='activate'),false);clean();
 });

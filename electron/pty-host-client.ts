@@ -632,16 +632,22 @@ export class PtyHostClient {
     if(result!=="cancelled"&&result!=="committed")throw new HostAuthError();return result;
   }
   async preparePlannedHandover(deadline:number,transferAttempt?:string):Promise<HostHandoverState> {
-    return handoverState(await withTimeout(this.request({id:0,type:"handover-prepare",deadline,...(transferAttempt?{transferAttempt}:{})}),5000),deadline);
+    return handoverState(await this.existingPlannedRequest({id:0,type:"handover-prepare",deadline,...(transferAttempt?{transferAttempt}:{})},5000),deadline);
   }
   async announcePlannedHandover(state:HostHandoverState,display:CheckpointReceipt|null,consented:string[],nonce:string,transferAttempt?:string):Promise<HandoverTicket> {
-    await withTimeout(this.request({id:0,type:"handover-publish",display,consented,...(transferAttempt?{transferAttempt}:{})}),10000);
-    const result=await withTimeout(this.request({id:0,type:"handover-announce",nonce,deadline:state.deadline,...(transferAttempt?{transferAttempt}:{})}),2000) as Pick<HandoverTicket,"hostPid"|"hostStartIdentity">;
+    await this.existingPlannedRequest({id:0,type:"handover-publish",display,consented,...(transferAttempt?{transferAttempt}:{})},10000);
+    const result=await this.existingPlannedRequest({id:0,type:"handover-announce",nonce,deadline:state.deadline,...(transferAttempt?{transferAttempt}:{})},2000) as Pick<HandoverTicket,"hostPid"|"hostStartIdentity">;
     return {...result,nonce,deadline:state.deadline};
   }
   async cancelPlannedHandover(transferAttempt?:string):Promise<void> {
+    await this.existingPlannedRequest({id:0,type:"handover-cancel",...(transferAttempt?{transferAttempt}:{})},3000);
+  }
+  private async existingPlannedRequest(request:PtyHostRequest,timeout:number):Promise<unknown>{
     if(!this.isConnected())await this.openSocket();
-    await withTimeout(this.request({id:0,type:"handover-cancel",...(transferAttempt?{transferAttempt}:{})},undefined,true),3000);
+    const socket=this.socket;if(!socket||socket.destroyed||this.disposed)throw new HostAuthError();
+    // Issuer cleanup/preparation must never borrow ordinary cold-start or
+    // crash recovery authority when the old socket disappears.
+    return withTimeout(this.sendRequest(socket,request),timeout);
   }
   /** New main alone owns this operation. Other requests wait until either the
    * old host is usable again or its successor has restored every eligible pane. */
