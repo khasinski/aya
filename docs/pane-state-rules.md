@@ -1,4 +1,10 @@
-# Pane state rules as data - PR 1 design
+# Pane state rules as data - PR 1
+
+## Current state
+
+I implemented the 33 built-in rules as bundled JSON, the bounded main-only loader and unavailable-rules diagnostic, the unchanged main policy evaluator, and read-only `aya pane state target --explain`. The command never starts a host or owner and never acknowledges composer/exit metadata. Blank shells remain shells; agents without screen evidence are unknown. Explain prints quoted pane names, explicit waiting/clear verdicts and sanitized matching evidence. Rule-only changes remain outside the host content hash. User rule files, reload and remote updates are not enabled. The complexity checker is test-only lint, never a product safety gate; every non-built-in rule in PR 2 requires a hard-deadline worker.
+
+The sections below retain the design and intermediate review history. Their "next" and "pending" statements describe those stages, not unfinished integration. Final local evidence and its two independently reproduced baseline failures appear at the end; the whole suite is not claimed green.
 
 I base this PR on main `8890bea3`, branch `pane-state-rules-data`. This note precedes product code. PR 1 moves the existing built-in regular expressions into bundled data and adds `aya pane state <pane> --explain`; it changes no verdict, precedence, region or agent selection. User files/reload are PR 2. Remote updates remain outside this work until Justyna decides their authority.
 
@@ -94,3 +100,31 @@ Lead review R1 keeps shell metadata authoritative even before any screen output:
 
 
 R1/R2 follow-up passes 61/61 Node contracts (including the unchanged seed/env guard), 49/49 Electron contracts and 8/8 actual GUI cases in 15.0 s. The added non-Claude case runs the same env-wrapped node stand-in with an explicit Codex preset and checks the Codex busy rule/source, so process naming cannot select Claude accidentally. The blank-shell test covers both no rows and retained blank rows with shell hold unchanged. No full-gate result is claimed from the preceding non-green npm run.
+
+## Final local validation
+
+Product/test head `badb3268` is based on main `8890bea3`. I ran full npm tests after R1/R2: 7199 passed, 0 failed, 147 skipped and one known TODO (7347 total, 74.63 s). Lint passed. The selected Electron rule/provider/equivalence/state/CLI/control/VT/hold/hash set passed 199/199 in 8.18 s. Affected actual GUI passed 63/63 in 3.8 minutes with `AYA_E2E_PTY_SHUTDOWN=0 --workers=1 --no-deps`, including the eight pane-state cases and unchanged restart, team hold/busy, crash recovery and planned handover cases. No retries were enabled.
+
+The staged macOS arm64 package smoke passed using the local Electron 43.5 distribution: it loaded the bundled data from `app.asar`, evaluated its real busy rule, exercised the packaged owner-backed adapter and observed exit 23. Receipt verification and nested ad-hoc signing checks passed. This was a disposable staged package, not a production rebuild or swap; Developer ID/notarization and native Linux execution were not run locally. The native CI matrix includes the new Electron contracts, but its results are separate from this local evidence.
+
+The whole existing GUI invocation used the same unchanged build, one worker, shutdown=0, no retries and the default 30-minute ceiling. It completed in 29.1 minutes with 441 passed, 2 failed, 6 skipped and 25 not run. The 25 shared-resource cases were blocked by the failed isolated-project dependency, not by the ceiling. A second invocation of those 25 plus the ten timeout contracts passed 35/35 in 1.4 minutes. Across unique whole-suite cases this is 466 passed, 2 failed and 6 skipped out of 474; the ten repeated timeout tests are not counted twice. Playwright reported no flaky/retried cases, but that does not make the initial two failures green.
+
+I compared both failures serially on this machine with an independently built main `8890bea3`, without assertion or fixture changes:
+
+- `agent-session-resume.spec.ts:623`: a first OpenCode launch unexpectedly used `--session ses_newest` instead of empty arguments (assertion at 631). The exact case passed 3/3 on both heads. A further 20 baseline attempts gave 19 passes and one failure with the identical arguments diff. It is an inherited intermittent failure.
+- `sidebar-close-terminal.spec.ts:55`: the rename editor detached during `fill`, which timed out at line 68 after 30 seconds. The exact case failed 3/3 on both main and PR1 with the same first error. It is an inherited failure on this machine.
+
+No unrelated process/session or rename behavior was changed to obtain a green report. Earlier non-green stage results remain recorded above. No push, merge or production action was performed.
+
+## Offline evaluator latency
+
+Reproduce after building Electron modules with `ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron scripts/measure-screen-rule-evaluator.cjs`. The helper writes its summary, fixture dimensions and both raw latency arrays under `test-results/`; it never starts an app, PTY, socket or network request.
+
+One macOS arm64 trial under Electron 43.5 / Node 24.19 compares the frozen main `8890bea3` policy with the data evaluator on the final applied snapshots of all 18 recorded raw sessions. Every busy/hold/status triplet first agrees exactly. After 25 warmup rounds, 200 interleaved rounds alternate the old/new evaluation order, producing 3600 triplet samples for each policy. Percentiles use nearest rank; clock overhead is included.
+
+| Busy + hold + status | Mean | p50 | p95 | Maximum |
+| --- | ---: | ---: | ---: | ---: |
+| Frozen main TypeScript rules | 130.83 us | 64.54 us | 313.58 us | 1357.71 us |
+| Bundled-data evaluator | 129.40 us | 66.25 us | 302.46 us | 893.75 us |
+
+The first explicit bounded bundle load took 0.884 ms. Authored JSON is 7787 bytes; emitted packaged JSON is 10129 bytes, rule-set version `1`, SHA256 `c1db9f2a6f872dda510e723feaf130fd3625d5a31018e16a416f1b82fc1960c6`. These are steady-state main-policy measurements with composerSeen=true and no pending startup/output settle, not app startup, IPC, process recovery, DOM or paint latency. One trial does not establish a performance improvement; the results show comparable local evaluation cost for the recorded workload.
