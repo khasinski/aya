@@ -1,8 +1,8 @@
 // Offline authenticated continuity/recovery: 25 actual PTYs, no renderer/DOM.
-// Reconnection uses a second main client in this process; the separate real
-// app relaunch is proved by GUI tests, not by this timing trial. The JS entry samples
+// A distinct issuer process announces quit and exits; this benchmark main
+// redeems its real one-use ticket. There is no renderer/DOM. The JS entry samples
 // resourceUsage and native getrusage every200ms; ps samples RSS separately.
-const fs=require('node:fs'),path=require('node:path'),{execFile,execFileSync}=require('node:child_process'),{performance}=require('node:perf_hooks');
+const fs=require('node:fs'),path=require('node:path'),{execFile,execFileSync,spawn}=require('node:child_process'),{performance}=require('node:perf_hooks');
 process.chdir(path.resolve(__dirname,'..'));fs.mkdirSync('test-results',{recursive:true});
 const root=fs.mkdtempSync(path.resolve('test-results/auth-measure-'));process.env.HOME=path.join(root,'home');process.env.AYA_HOME=path.join(root,'aya');
 fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true});
@@ -19,7 +19,7 @@ function install(target){target.enableCrashRecovery({log:(event,fields)=>logs.pu
  if(e.type==='recovered')notices.set(e.ptyId,e);
 }});}
 install(client);
-let oldPid,oldStartIdentity,newPid,ownerPid,timer,sampling=false,overlap=false,confirmedGone=false,successorSpawnedAt,recoveredAt;const peaks={main:0,old:0,new:0,owner:0,combined:0};
+let issuer,issuerExited,issuerPid,announcementMs,oldPid,oldStartIdentity,newPid,ownerPid,timer,sampling=false,overlap=false,confirmedGone=false,successorSpawnedAt,recoveredAt;const peaks={main:0,old:0,new:0,owner:0,combined:0};
 function sample(){if(sampling)return;sampling=true;const ids=[oldPid,newPid,ownerPid].filter(Boolean);if(!ids.length){sampling=false;return;}
  const requestedAt=Date.now();execFile('/bin/ps',['-o','pid=,rss=','-p',ids.join(',')],{encoding:'utf8'},(_err,out)=>{sampling=false;if(typeof out!=='string'||!out.trim())return;const rows=out.trim().split('\n').map(s=>s.trim().split(/\s+/).map(Number)),rss=new Map(rows);const main=process.memoryUsage().rss;peaks.main=Math.max(peaks.main,main);for(const [key,pid]of [['old',oldPid],['new',newPid],['owner',ownerPid]])peaks[key]=Math.max(peaks[key],(rss.get(pid)||0)*1024);peaks.combined=Math.max(peaks.combined,main+rows.reduce((n,r)=>n+r[1]*1024,0));if(oldPid&&newPid&&rss.has(oldPid)&&rss.has(newPid))overlap=true;samples.push({requestedAt,at:Date.now(),requestedPids:ids,mainRssBytes:main,oldPid,newPid,ownerPid,rssKiB:Object.fromEntries(rows)});});
 }
@@ -27,12 +27,17 @@ function usage(pid){return JSON.parse(fs.readFileSync(path.join(process.env.AYA_
 async function cpu(pid){await wait(()=>fs.existsSync(path.join(process.env.AYA_HOME,'usage-'+pid+'.json')));const a=usage(pid),mainStart=performance.now(),mainCpu=process.cpuUsage();await sleep(2200);const mainWallMs=performance.now()-mainStart,mainDelta=process.cpuUsage(mainCpu),mainUs=mainDelta.user+mainDelta.system;const b=usage(pid),wall=b.at-a.at,hostUs=b.host.userCPUTime+b.host.systemCPUTime-a.host.userCPUTime-a.host.systemCPUTime,ownerUs=b.owner.userUs+b.owner.systemUs-a.owner.userUs-a.owner.systemUs;return{wallMs:wall,mainWallMs,mainUs,mainPercent:mainUs/(mainWallMs*10),hostUs,ownerUs,hostPercent:hostUs/(wall*10),ownerPercent:ownerUs/(wall*10)};}
 async function roundtrips(label){const values=[];for(let i=0;i<25;i++){const id='p'+i,marker=label+'-'+i,start=performance.now();await client.write(id,marker+'\n');await wait(()=>(text.get(id)||'').includes(':'+marker));values.push(performance.now()-start);}return values;}
 (async()=>{
- const requests=[];for(let i=0;i<25;i++){const req={ptyId:'p'+i,agent:'custom',command:`exec '${nodeExecutable}' '${agent}'`,cwd:process.env.HOME,cols:120,rows:40};requests.push(req);await client.spawn(req);}
- await wait(()=>text.size===25);const before=await client.hostStatus();oldPid=before.pid;oldStartIdentity=ownerProcessStartIdentity(oldPid);if(!oldStartIdentity)throw Error('Cannot establish old host start identity');ownerPid=before.owner.pid;const pids=await Promise.all(requests.map(r=>client.getPid(r.ptyId)));
+ const requests=[];for(let i=0;i<25;i++)requests.push({ptyId:'p'+i,agent:'custom',command:`exec '${nodeExecutable}' '${agent}'`,cwd:process.env.HOME,cols:120,rows:40});
+ issuer=spawn(process.execPath,[path.resolve('scripts/measure-pty-host-auth-issuer.cjs')],{env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},stdio:['ignore','ignore','pipe','ipc']});
+ let issuerError='',issued;issuer.stderr.on('data',chunk=>issuerError+=String(chunk));issuer.on('message',message=>issued=message);
+ issuerExited=new Promise((resolve,reject)=>{issuer.once('error',reject);issuer.once('exit',code=>code===0?resolve():reject(Error('Measurement issuer failed: '+issuerError)));});
+ issuer.send({entry,requests});await issuerExited;
+ if(!issued)throw Error('Measurement issuer supplied no identities');
+ const {before,pids}=issued;issuerPid=issued.issuerPid;announcementMs=issued.announcementMs;
+ try{process.kill(issuerPid,0);throw Error('Measurement issuer is still alive');}catch(error){if(error.code!=='ESRCH')throw error;}
+ oldPid=before.pid;oldStartIdentity=ownerProcessStartIdentity(oldPid);if(!oldStartIdentity)throw Error('Cannot establish old host start identity');ownerPid=before.owner.pid;
  timer=setInterval(sample,100);sample();
  const continuityStarted=performance.now(),continuityCpu=process.cpuUsage();
- if(!await client.announceOrdinaryQuit())throw Error('Measurement ordinary quit announcement failed');
- client.dispose();client.dropSocket();client=new PtyHostClient(entry);install(client);
  const ticket=await require('../dist-electron/pty-host-auth-ticket').findAuthTransferTicket(process.env.AYA_HOME);
  if(!ticket)throw Error('Measurement ordinary quit ticket missing');await client.redeemAnnouncedCapability(ticket);
  const reused=await client.hostStatus(),authContinuityMs=performance.now()-continuityStarted,authContinuityCpu=process.cpuUsage(continuityCpu);
@@ -48,6 +53,6 @@ async function roundtrips(label){const values=[];for(let i=0;i<25;i++){const id=
  const activeAfter=await cpu(newPid);for(const r of requests)await client.write(r.ptyId,'IDLE\n');const idleAfter=await cpu(newPid);sample();await sleep(150);
  if(!samples.length||!peaks.new||!peaks.owner)throw Error('No usable main/host/owner RSS sample set');
  const percentile=(values,p)=>[...values].sort((a,b)=>a-b)[Math.max(0,Math.ceil(values.length*p)-1)];
- const result={platform:process.platform,arch:process.arch,node:process.versions.node,electron:process.versions.electron??null,panes:25,hostIdentity:before.identity,ownerHash:before.owner.hash,authContinuityMs,authContinuityCpuUs:authContinuityCpu.user+authContinuityCpu.system,continuityClientInSameProcess:true,childPids:pids,oldPid,oldStartIdentity,newPid,ownerPid,successorSpawnedAt,recoveredAt,allChildPidsKept:true,oldGoneBeforeSpawn:confirmedGone,sampledOverlap:overlap,recoveredAndReplayMs:readyMs,all25IoMs:allIoMs,latencyEstimator:'nearest-rank ceil(n*p), 1-based',latencySamplesMs:{before:latencyBefore,after:latencyAfter},latencyMs:{before:{p50:percentile(latencyBefore,.5),p95:percentile(latencyBefore,.95)},after:{p50:percentile(latencyAfter,.5),p95:percentile(latencyAfter,.95)}},cpu:{idleBefore,activeBefore,activeAfter,idleAfter},peakSampledRssBytes:peaks,rssSamples:samples.length,rawRssSamples:samples,scope:'One trial; authenticated socket and owner continuity enabled; second main client in the same process (ordinary app relaunch independently GUI-tested);  25 real native-owner PTYs, 120x40, active512B/100ms per pane; no DOM; 5ms polling for observed round-trip latency; 200ms instrumented CPU samples and100ms asynchronous RSS of benchmark main, old/successor JS host and owner (excludes the 25 child programs). Crash loses consumed screen/history by policy; no no-loss claim for consumed output.'};
+ const result={platform:process.platform,arch:process.arch,node:process.versions.node,electron:process.versions.electron??null,panes:25,hostIdentity:before.identity,ownerHash:before.owner.hash,authContinuityMs,authContinuityCpuUs:authContinuityCpu.user+authContinuityCpu.system,continuityClientInSameProcess:false,issuerPid,announcementMs,childPids:pids,oldPid,oldStartIdentity,newPid,ownerPid,successorSpawnedAt,recoveredAt,allChildPidsKept:true,oldGoneBeforeSpawn:confirmedGone,sampledOverlap:overlap,recoveredAndReplayMs:readyMs,all25IoMs:allIoMs,latencyEstimator:'nearest-rank ceil(n*p), 1-based',latencySamplesMs:{before:latencyBefore,after:latencyAfter},latencyMs:{before:{p50:percentile(latencyBefore,.5),p95:percentile(latencyBefore,.95)},after:{p50:percentile(latencyAfter,.5),p95:percentile(latencyAfter,.95)}},cpu:{idleBefore,activeBefore,activeAfter,idleAfter},peakSampledRssBytes:peaks,rssSamples:samples.length,rawRssSamples:samples,scope:'One trial; authenticated socket and owner continuity enabled; distinct issuer process announced quit and was verified gone before this benchmark main redeemed its ticket; recipient timing includes ticket consume, redemption, authentication and owner continuity;  25 real native-owner PTYs, 120x40, active512B/100ms per pane; no DOM; 5ms polling for observed round-trip latency; 200ms instrumented CPU samples and100ms asynchronous RSS of benchmark main, old/successor JS host and owner (excludes the 25 child programs). Crash loses consumed screen/history by policy; no no-loss claim for consumed output.'};
  fs.writeFileSync('test-results/socket-auth-measurement.json',JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result,null,2));await client.shutdown();
 })().catch(e=>{console.error(e);process.exitCode=1;}).finally(async()=>{clearInterval(timer);client.dispose();client.dropSocket();const {cleanupNativeOwner}=await import('../tests/helpers/pty-host.mjs');await cleanupNativeOwner(process.env.AYA_HOME);fs.rmSync(entry,{force:true});fs.rmSync(root,{recursive:true,force:true});});
