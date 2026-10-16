@@ -1,3 +1,4 @@
+import {plannedContinuityReceipt} from "./pty-handover-continuity";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
@@ -265,6 +266,16 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
     if (!currentOwnerRuntime()?.client?.isConnected()) throw new Error("The announced owner is unavailable");
     // A one-shot in-memory response on the private local socket. This value
     // never reaches broadcast, a checkpoint, process arguments or a log.
+    if(request.transferAttempt!==undefined){
+      if(!checkpoint||plannedTransferAnnouncement!==request.transferAttempt)throw new Error("The planned credential transaction changed");
+      const runtime=currentOwnerRuntime()!,record=runtime.record;
+      const owner={pid:record.pid,startTime:record.startTime,instanceId:record.instanceId,binaryHash:record.binaryHash};
+      const host={pid:process.pid,startIdentity:ownerProcessStartIdentity(process.pid)!};
+      const receipt=plannedContinuityReceipt(request.transferAttempt,host,owner,checkpoint);
+      authTransfer.noteContinuity(peer,request.transferAttempt,receipt);
+      const key=ownerHandoverCredential();
+      try{return {checkpoint,credential:key.toString("base64"),continuity:{owner,receipt}};}finally{key.fill(0);}
+    }
     return {...(!request.reuse ? {credential: ownerHandoverCredential().toString("base64")} : {}), ...(checkpoint ? {checkpoint} : {})};
   }
   if (request.type === "handover-reuse") {

@@ -233,3 +233,47 @@ test('ordinary authenticated reused host without a received ticket hydrates a no
   await second.shutdown();
  }finally{first.dispose();first.dropSocket();second.dispose();second.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
 });
+
+for(const mode of ['publish-planned','publish-planned-ended'])test(`planned credential ownership ${mode} follows full checkpoint validation, with no reader detach on reuse`,{timeout:25000},async()=>{
+ const old=await fixture(mode),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));let starts=0,inspected=false,completions=0;
+ const send=c.sendRequest.bind(c);c.startHost=()=>{starts++;throw Error('reuse cannot create a host');};
+ c.sendRequest=(socket,req)=>{if(req.type==='auth-transfer-complete'){assert.equal(inspected,true,'full checkpoint/display inspection precedes credential ACK');completions++;}return send(socket,req);};
+ try{
+  await c.redeemAnnouncedCapability(ticket);
+  await c.adoptPlannedHandover(ticket,c.expectedHostIdentity('reuse'),async state=>{
+   assert.deepEqual(state.eligible.map(p=>p.id),['kept']);
+   await assert.rejects(c.sendRequest(c.socket,{id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'c'.repeat(64),deadline:Date.now()+120000}),'recipient cannot rearm before validated continuity ACK');
+   inspected=true;
+  });
+  assert.equal(completions,1);assert.equal(c.receivedAuthTransfer,null);assert.equal(c.ownsOwnerKey,true);assert.equal(starts,0);
+  const status=await c.hostStatus();assert.equal(status.pid,old.hostPid);assert.equal(status.owner.pid,old.ownerPid);
+  // A second changed-host preparation before the first display ACK must carry
+  // ended suffix/outcome as well. Neither credential completion ACKs that pane.
+  const next=await c.request({id:0,type:'auth-transfer-reserve',purpose:'planned-update',nonce:'e'.repeat(64),deadline:Date.now()+120000});
+  const second=await c.request({id:0,type:'handover-prepare',deadline:next.deadline,transferAttempt:next.attempt});
+  assert.deepEqual(second.eligible.map(p=>p.id),['kept']);await c.cancelPlannedHandover();
+  if(mode==='publish-planned-ended'){
+   const events=[];c.attachWebContents({isDestroyed:()=>false,send:(_channel,event)=>events.push(event)});
+   const req={ptyId:'kept',agent:'custom',command:'must-not-spawn',cwd:process.env.HOME,cols:80,rows:24,attachIfReused:true,replayAfter:{generation:old.endedOrigin.generation,offset:old.endedOrigin.outputEnd,token:'applied-after-auth'}};
+   await c.spawn(req);assert.equal(await c.getPid('kept'),null);
+   assert.equal(events.filter(e=>e.type==='data'&&e.replay).map(e=>e.chunk).join(''),'LAST_SUFFIX');assert.deepEqual(events.filter(e=>e.type==='exit').map(e=>e.exitCode),[23]);
+   assert.equal(await c.acknowledgeHandoverDisplay('kept',old.endedOrigin.generation,'stale-view'),false);
+   assert.equal(await c.acknowledgeHandoverDisplay('kept',old.endedOrigin.generation,'applied-after-auth'),true);
+  }else{assert.equal(await c.getPid('kept'),old.pid);assert.equal(c.recoveryLaunches.get('kept').pid,old.pid);assert.equal(c.live.has('kept'),true);await c.write('kept','AFTER_RECEIPT\n');}
+  await c.shutdown();
+ }finally{c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
+});
+
+test('failed planned display validation cannot complete or rearm credentials and resumes the usable old pane',{timeout:20000},async()=>{
+ const old=await fixture('publish-planned'),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js')),send=c.sendRequest.bind(c);let completions=0;
+ c.sendRequest=(socket,req)=>{if(req.type==='auth-transfer-complete')completions++;return send(socket,req);};
+ try{
+  await c.redeemAnnouncedCapability(ticket);
+  await assert.rejects(c.adoptPlannedHandover(ticket,c.expectedHostIdentity('reuse'),async()=>{throw Error('display validation refused');}),/display validation refused/);
+  assert.equal(completions,0);assert.ok(c.receivedAuthTransfer);assert.equal(c.receivedAuthTransfer.receipt,undefined);
+  await assert.rejects(send(c.socket,{id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'f'.repeat(64),deadline:Date.now()+120000}));
+  await send(c.socket,{id:0,type:'write',ptyId:'kept',data:'AFTER_VALIDATION_ABORT\n'});
+  const until=Date.now()+5000;while(!(await send(c.socket,{id:0,type:'buffer',ptyId:'kept'})).includes('AFTER_VALIDATION_ABORT')){if(Date.now()>until)throw Error('old reader did not resume');await new Promise(r=>setTimeout(r,5));}
+  assert.equal(await send(c.socket,{id:0,type:'pid',ptyId:'kept'}),old.pid);
+ }finally{if(c.socket)await send(c.socket,{id:0,type:'shutdown'}).catch(()=>{});c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
+});

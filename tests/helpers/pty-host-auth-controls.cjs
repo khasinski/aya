@@ -13,7 +13,7 @@ const originalHandle=handle;handle=async function(req,socket,preparations){if(re
  const c=new PtyHostClient(script);
  const recovered=[];if(process.argv[2]==='publish-empty-recovered')c.enableCrashRecovery({log:(event,fields)=>recovered.push({event,...fields})});fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true,mode:0o700});let keep=false;
  try{
-  await c.spawn({ptyId:'kept',agent:'custom',command:'stty -echo; printf READY_CONTROLS; cat',cwd:process.env.HOME,cols:80,rows:24});await wait(async()=>(await c.getBuffer('kept')).includes('READY_CONTROLS'));
+  await c.spawn({ptyId:'kept',agent:'custom',command:process.argv[2]==='publish-planned-ended'?'stty -echo; printf READY_CONTROLS; read line; printf LAST_SUFFIX; exit 23':'stty -echo; printf READY_CONTROLS; cat',cwd:process.env.HOME,cols:80,rows:24});await wait(async()=>(await c.getBuffer('kept')).includes('READY_CONTROLS'));
   const mode=process.argv[2];
   if(mode==='publish-empty-recovered'){
    const before=await c.hostStatus();process.kill(before.pid,'SIGKILL');await wait(()=>recovered.some(e=>e.event==='pty-crash-recovery'&&e.state==='recovered'));
@@ -29,6 +29,12 @@ const originalHandle=handle;handle=async function(req,socket,preparations){if(re
    c.observeExit=()=>{};await c.write('ended','finish\n');await wait(async()=>await c.getPid('ended')===null);
   }
   const pid=await c.getPid('kept'),status=await c.hostStatus();
+  if(mode==='publish-planned-ended'){
+   const first=await c.preparePlannedHandover(Date.now()+120000);endedOrigin=first.eligible[0];
+   const ticket=await c.announcePlannedHandover(first,null,[],'d'.repeat(64));
+   await c.adoptPlannedHandover(ticket,c.expectedHostIdentity('reuse'),async()=>{});
+   await c.write('kept','finish\n');await wait(async()=>await c.getPid('kept')===null);
+  }
   if(mode==='publish-public'||refusal||mode==='publish-ended'){
    assert.equal(await c.announceOrdinaryQuit(),true);await c.write('kept','OUTPUT_DURING_ORDINARY_QUIT\n');await wait(async()=>(await c.getBuffer('kept')).includes('OUTPUT_DURING_ORDINARY_QUIT'));
    const names=fs.readdirSync(process.env.AYA_HOME).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name));assert.equal(names.length,1);keep=true;process.send({file:path.join(process.env.AYA_HOME,names[0]),pid,hostPid:status.pid,ownerPid:status.owner.pid,endedOrigin,...(custom?{script}:{})});
@@ -46,20 +52,20 @@ const originalHandle=handle;handle=async function(req,socket,preparations){if(re
   }else if(mode==='core-wins'){
    await c.preparePlannedHandover(Date.now()+120000);await assert.rejects(c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'b'.repeat(64),deadline:Date.now()+120000}));await c.cancelPlannedHandover();
    await c.write('kept','AFTER_REFUSED_RESERVATION\n');await wait(async()=>(await c.getBuffer('kept')).includes('AFTER_REFUSED_RESERVATION'));assert.equal(await c.getPid('kept'),pid);process.send({ok:true});
-  }else if(mode==='planned-reserved'||mode==='planned-cancel'||mode==='publish-planned'){
+  }else if(mode==='planned-reserved'||mode==='planned-cancel'||mode==='publish-planned'||mode==='publish-planned-ended'){
    const deadline=Date.now()+120000,nonce='b'.repeat(64),reserved=await c.request({id:0,type:'auth-transfer-reserve',purpose:'planned-update',nonce,deadline});
    await assert.rejects(c.request({id:0,type:'auth-transfer-activate',attempt:reserved.attempt}),'cannot activate without published core/announcement');
    await c.request({id:0,type:'handover-prepare',deadline,transferAttempt:reserved.attempt});await c.request({id:0,type:'handover-publish',display:null,consented:[]});
    await assert.rejects(c.request({id:0,type:'handover-announce',nonce:'c'.repeat(64),deadline,transferAttempt:reserved.attempt}));
    await c.request({id:0,type:'handover-announce',nonce,deadline,transferAttempt:reserved.attempt});assert.equal(await c.request({id:0,type:'auth-transfer-activate',attempt:reserved.attempt}),true);
    let file;
-   if(mode==='planned-cancel'||mode==='publish-planned'){
+   if(mode==='planned-cancel'||mode==='publish-planned'||mode==='publish-planned-ended'){
     const t={format:2,...reserved,nonce};file=authTransferTicketPath(process.env.AYA_HOME,t.attempt);await writeAuthTransferTicket(file,t,{deadline:performance.now()+2000});
    }else assert.equal(await c.request({id:0,type:'auth-transfer-cancel',attempt:reserved.attempt}),'cancelled');
-   if(mode==='publish-planned'){keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner.pid});return;}
+   if(mode==='publish-planned'||mode==='publish-planned-ended'){keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner.pid,endedOrigin});return;}
    await c.cancelPlannedHandover();
    await c.write('kept','AFTER_PLANNED_ABORT\n');await wait(async()=>(await c.getBuffer('kept')).includes('AFTER_PLANNED_ABORT'));assert.equal(await c.getPid('kept'),pid);
-   if(mode==='planned-cancel'||mode==='publish-planned'){keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner?.pid??null,...(custom?{script}:{})});}else process.send({ok:true});
+   if(mode==='planned-cancel'||mode==='publish-planned'||mode==='publish-planned-ended'){keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner?.pid??null,...(custom?{script}:{})});}else process.send({ok:true});
   }else throw Error('unknown fixture mode');
   for(const type of ['auth-transfer-reserve','auth-transfer-activate','auth-transfer-cancel','auth-transfer-complete'])assert.equal(isPtyHostRequest({id:1,type,attempt:'a'.repeat(64),extra:true}),false);
  }finally{if(!keep)await c.shutdown().catch(()=>{});c.dispose();c.dropSocket();if(custom&&!keep)fs.rmSync(script,{force:true});}

@@ -40,7 +40,7 @@ export type PtyHostRequest =
   | { id: number; type: "handover-prepare"; deadline: number;transferAttempt?:string }
   | { id: number; type: "handover-publish"; display: CheckpointReceipt | null; consented?: string[] }
   | { id: number; type: "handover-cancel" }
-  | { id: number; type: "handover-claim"; nonce: string; reuse?: boolean }
+  | { id: number; type: "handover-claim"; nonce: string; reuse?: boolean; transferAttempt?:string }
   | { id: number; type: "handover-detach"; consented: string[] }
   | { id: number; type: "handover-reuse" }
   | { id: number; type: "handover-ack-reuse" }
@@ -80,6 +80,10 @@ export function isPtyHostRequest(value: unknown): value is PtyHostRequest {
     const record=value as Record<string,unknown>,hex=(v:unknown)=>typeof v==="string"&&/^[a-f0-9]{64}$/.test(v);
     if(!["auth-transfer-reserve","auth-transfer-activate","auth-transfer-cancel","auth-transfer-complete"].includes(r.type)||!Number.isSafeInteger(r.id)||Object.keys(value).length!==keys.length||!keys.every(key=>Object.hasOwn(value,key)))return false;
     return r.type==="auth-transfer-reserve"?hex(record.nonce)&&Number.isSafeInteger(record.deadline)&&(record.purpose==="ordinary-quit"||record.purpose==="planned-update"):hex(record.attempt)&&(r.type!=="auth-transfer-complete"||hex(record.receipt));
+  }
+  if(r.type==="handover-claim"&&Object.hasOwn(value,"transferAttempt")){
+    const v=value as Record<string,unknown>;
+    return Object.keys(v).sort().join(",")==="id,nonce,reuse,transferAttempt,type"&&Number.isSafeInteger(v.id)&&typeof v.reuse==="boolean"&&typeof v.nonce==="string"&&/^[a-f0-9]{64}$/.test(v.nonce)&&typeof v.transferAttempt==="string"&&/^[a-f0-9]{64}$/.test(v.transferAttempt);
   }
   if(r.type==="owner-continuity"&&Object.hasOwn(value,"transferAttempt")){
     const record=value as Record<string,unknown>;

@@ -1,3 +1,4 @@
+import {validatePlannedContinuity} from "./pty-handover-continuity";
 import { explainPaneSnapshot, unavailablePaneState, type PaneStateResult } from "./pane-state";
 import { prepareSpawn, watchAgentSession } from "./pty-prepare";
 import { snapshotBusy, snapshotHold, snapshotStatus } from "./vt-state";
@@ -34,7 +35,7 @@ import {
 import type {HostHandoverState} from "./pty-host-handover";
 import type {CheckpointReceipt} from "./pty-checkpoint-store";
 import type {HandoverTicket} from "./pty-handover-ticket";
-import {preflightCoreHandover,type HandoverBootstrap} from "./pty-handover-bootstrap";
+import {preflightCoreHandover,readCoreHandover,type HandoverBootstrap} from "./pty-handover-bootstrap";
 import {handoverState,handoverCommitResult} from "./pty-handover-state";
 import {ownerArtifactPaths,ownerProcessStartIdentity} from "./pty-owner-client";
 import {PtyCrashRecovery,CRASH_RECOVERY_POLICY,type CrashRecoveryPolicy,type RecoveryAttemptResult} from "./pty-crash-recovery";
@@ -645,14 +646,35 @@ export class PtyHostClient {
       const comparison=classifyIdentity(expected,status),reuse=comparison!=='stale';
       // Claim the announced recipient before a refusal, so a new main can
       // cancel/resume the old host using its recorded kernel identity too.
-      const claim=await call({id:0,type:"handover-claim",nonce:ticket.nonce,reuse}) as {credential?:string;checkpoint:unknown};
+      const claim=await call({id:0,type:"handover-claim",nonce:ticket.nonce,reuse,...(transfer?{transferAttempt:transfer.ticket.attempt}:{})}) as {credential?:string;checkpoint:unknown};
       if(comparison==='indeterminate')throw new Error("The updated terminal host identity could not be read; its processes were kept");
       if(!status.owner||status.owner.incompatible||status.owner.disconnected.length||status.owner.hash!==ownerBinaryHash(ownerArtifactPaths().executable))throw new Error("The native PTY owner cannot move these processes seamlessly");
-      const state=handoverState(claim.checkpoint,ticket.deadline);
+      const planned=transfer?validatePlannedContinuity(claim,transfer.ticket.attempt,handoverPeer(this.socket!),status,ticket.deadline):null;
+      const state=planned?.state??handoverState(claim.checkpoint,ticket.deadline);
+      if(planned&&transfer)transfer.retirementOwner={...planned.owner};
       if(state.consented.length!==state.ineligible.length)throw new Error("The terminal handover lacks process-stop consent");
       const sizes=await preflightCoreHandover(state.core,state.eligible);
       if(sizes.rawBytes!==state.coreRawBytes||sizes.encodedBytes!==state.coreEncodedBytes)throw new Error("Terminal core receipt accounting differs");
+      const recoveredLaunches=new Map<string,{request:SpawnRequest;launch:PaneLaunch;spawnedAt:number;pid:number}>();
+      if(planned)for await(const pane of readCoreHandover(state.core)){
+        if("kind" in pane)continue;
+        recoveredLaunches.set(pane.id,{request:pane.request,launch:pane.launch,spawnedAt:pane.spawnedAt,pid:pane.adapter.pane.pid});
+      }
       await inspect(state); // Browser validation/caching also precedes commit.
+      if(planned&&transfer){
+        if(typeof claim.credential!=="string"||!/^[A-Za-z0-9+/]{43}=$/.test(claim.credential))throw new Error("Invalid planned owner credential");
+        const key=Buffer.from(claim.credential,"base64");
+        try{
+          if(key.length!==32||key.toString("base64")!==claim.credential||this.receivedAuthTransfer!==transfer)throw new Error("Invalid planned owner credential");
+          // Validation above includes ended checkpoint records. This ACK owns
+          // credentials only: it does not detach, resume or ACK pane displays.
+          transfer.retirementOwner={...planned.owner};transfer.receipt=planned.receipt;
+          if(await call({id:0,type:"auth-transfer-complete",attempt:transfer.ticket.attempt,receipt:planned.receipt})!==true||this.disposed||this.receivedAuthTransfer!==transfer)throw new HostAuthError();
+          this.ownerSecret.set(key);this.ownsOwnerKey=true;this.recoveryOwner={...planned.owner};this.ownerContinuityUnavailable=false;
+          for(const [id,launch]of recoveredLaunches){this.recoveryLaunches.set(id,launch);if(!this.endedBootPanes.has(id))this.live.add(id);}
+          this.receivedAuthTransfer=null;
+        }finally{key.fill(0);}
+      }
       if(ticket.deadline-Date.now()<5000)throw new Error("The terminal handover window is too short to commit safely");
       let committed:unknown;
       if(reuse){
