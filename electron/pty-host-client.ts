@@ -309,9 +309,13 @@ export class PtyHostClient {
       const observer=this.userRuleStatusObserver;
       void observer(ptyId,snapshot).then(status=>{
         const latest=this.latestRuleSnapshots.get(ptyId);
-        if(!status||webContents.isDestroyed()||this.userRuleStatusObserver!==observer||latest?.generation!==status.generation||latest.revision!==status.revision)return;
+        if(!status||webContents.isDestroyed()||this.userRuleStatusObserver!==observer||latest?.generation!==status.generation)return;
         const alreadyPublished=this.ruleStatusStates.get(ptyId);
-        const cached=alreadyPublished?.generation===status.generation&&alreadyPublished.revision===status.revision&&alreadyPublished.waiting===status.waiting&&alreadyPublished.dialog===status.dialog;
+        const sameRevision=latest.revision===status.revision;
+        const ackAdvancedRevision=status.sourceRevision===latest.revision&&status.appliedSnapshot?.generation===status.generation&&status.appliedSnapshot.revision===status.revision;
+        if(!sameRevision&&!ackAdvancedRevision)return;
+        const cached=alreadyPublished?.generation===status.generation&&alreadyPublished.waiting===status.waiting&&alreadyPublished.dialog===status.dialog&&
+          (alreadyPublished.revision===status.revision||ackAdvancedRevision&&alreadyPublished.revision===status.sourceRevision);
         this.publishRuleStatus(ptyId,status);
         // Existing rule status may already be cached for another window. A new
         // sink still needs its own initial waiting state.

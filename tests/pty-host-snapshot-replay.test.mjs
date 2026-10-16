@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PtyHostClient } from "../dist-electron/pty-host-client.js";
-import { openVtPane, writeVtPane, closeVtPane, vtSnapshot } from "../dist-electron/vt-mirror.js";
+import { openVtPane, writeVtPane, closeVtPane, vtSnapshot, markComposerSeenChecked } from "../dist-electron/vt-mirror.js";
 import { snapshotStatus } from "../dist-electron/vt-state.js";
 import { HOLD_ACCOUNT_SETTING } from "../dist-electron/pane-holds.js";
 const sink = () => {
@@ -50,6 +50,23 @@ test("user-rule failure after a waiting result does not broadcast a false clear 
   receive(first);await new Promise(resolve=>setTimeout(resolve,60));assert.deepEqual(events.events,[{type:"vt-status",ptyId:id,waiting:true}]);
   available=false;receive(second);await new Promise(resolve=>setTimeout(resolve,60));
   assert.deepEqual(events.events,[{type:"vt-status",ptyId:id,waiting:true}],"the renderer keeps unresolved waiting state until fresh available evidence arrives");
+});
+test("a new sink can ACK the composer and publish its fresh revision to existing renderers", async () => {
+  const id="user-rule-attach-composer-ack";openVtPane(id,80,24,()=>{},"claude");writeVtPane(id,"local prompt");const before=await vtSnapshot(id);
+  const client=new PtyHostClient("/nonexistent/pty-host.js"),existing=sink(),reloaded=sink();client.attachWebContents(existing);let calls=0;
+  client.setUserRuleStatusObserver(async(_pane,screen)=>{
+    calls++;
+    if(calls===1)return{generation:screen.generation,revision:screen.revision,waiting:true,dialog:"User-defined dialog",sourceRevision:screen.revision,appliedSnapshot:screen};
+    assert.equal(markComposerSeenChecked(id,{generation:screen.generation,revision:screen.revision}),true);
+    const fresh=await vtSnapshot(id);return{generation:fresh.generation,revision:fresh.revision,waiting:false,sourceRevision:screen.revision,appliedSnapshot:fresh};
+  });
+  try{
+    client.onData(JSON.stringify({type:"snapshot",ptyId:id,snapshot:before})+"\n");await new Promise(resolve=>setTimeout(resolve,60));
+    assert.deepEqual(existing.events,[{type:"vt-status",ptyId:id,waiting:true,dialog:"User-defined dialog"}]);
+    client.attachWebContents(reloaded);await new Promise(resolve=>setTimeout(resolve,0));
+    assert.deepEqual(existing.events,[{type:"vt-status",ptyId:id,waiting:true,dialog:"User-defined dialog"},{type:"vt-status",ptyId:id,waiting:false}]);
+    assert.equal(client.latestRuleSnapshots.get(id).revision,(await vtSnapshot(id)).revision,"the attach observer's checked post-ACK revision becomes current");
+  }finally{client.dispose();closeVtPane(id);}
 });
 test("removing the user layer never generation-ACKs cached composer evidence after newer output", async () => {
   const id="user-rule-removal-stale-composer";openVtPane(id,80,24,()=>{},"claude");writeVtPane(id,"❯ ");const cached=await vtSnapshot(id);
