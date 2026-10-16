@@ -200,3 +200,28 @@ for(const outcome of ['success','failure','quit'])test(`manual Try again makes o
   else{assert.doesNotThrow(()=>process.kill(pid,0));assert.equal(registry.readOwnerRecord().pid,status.owner.pid);if(outcome==='failure'){assert.equal(client.recoveryRetryable,true);assert.match(client.recoveryReason,/Controlled manual refusal/);}}
  }finally{await cleanup(client);}
 });
+
+test('manual success restores the normal three-attempt policy only after120s stability',{timeout:15000},async()=>{
+ const {client,status,logs}=await setup();const attempt=client.recoverCrashedHost.bind(client);let calls=0;
+ client.recoverCrashedHost=async signal=>{calls++;if(calls===1)return 'blocked';return attempt(signal);};
+ try{
+  process.kill(status.pid,'SIGKILL');await wait(()=>logs.some(e=>e.state==='exhausted'));assert.equal(await client.retryCrashRecovery(),true);
+  assert.deepEqual(client.crashSupervisor.policy.delays,[100,500,1500]);assert.equal(client.crashSupervisor.used,3);
+  const successor=await client.hostStatus(),before=calls;client.crashSupervisor.now=()=>Date.now()+121000;client.recoverCrashedHost=async()=>{calls++;return 'retry';};
+  process.kill(successor.pid,'SIGKILL');await wait(()=>logs.filter(e=>e.state==='exhausted').length===2);assert.equal(calls-before,3);
+ }finally{await cleanup(client);}
+});
+
+test('timeout after a partial replay preserves the retry notice after the successor socket closes',{timeout:15000},async()=>{
+ const {client,status,logs,events}=await setup();const timer=globalThis.setTimeout;let expire;
+ try{
+  globalThis.setTimeout=(callback,ms,...args)=>{if(ms===5678)expire=callback;return timer(callback,ms,...args);};
+  client.crashSupervisor.dispose();client.crashSupervisor=null;
+  client.enableCrashRecovery({log:(event,fields)=>logs.push({event,...fields}),restored:()=>{assert.equal(typeof expire,'function');setImmediate(()=>expire());}},{delays:[1],attemptTimeoutMs:5678,stableMs:120000});
+  const send=client.sendRequest.bind(client);
+  client.sendRequest=async(socket,req)=>{if(req.type==='spawn'&&req.req.replayAfter)await sleep(700);return send(socket,req);};
+  process.kill(status.pid,'SIGKILL');await wait(()=>logs.some(e=>e.state==='exhausted'));await wait(()=>!client.crashAttempt&&!client.socket);
+  assert.ok(events.some(e=>e.type==='recovered'),'timeout occurs after the validated inventory was published');
+  const notice=events.filter(e=>e.type==='disconnected').at(-1);assert.match(notice.reason,/recovery budget/);assert.equal(notice.retryable,true);assert.equal(client.recoveryRetryable,true);assert.equal(client.crashBlocked,true);
+ }finally{globalThis.setTimeout=timer;await cleanup(client);}
+});

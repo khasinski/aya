@@ -60,3 +60,12 @@ test('synchronous disposal inside attempt settles without waiting for its deadli
 test('default recovery budget and stable interval are pinned',()=>{
  assert.deepEqual(CRASH_RECOVERY_POLICY,{delays:[100,500,1500],attemptTimeoutMs:10000,stableMs:120000});
 });
+
+test('manual extra slot stays one until stability, then restores the full normal budget',async()=>{
+ for(const stable of [false,true]){
+  let now=0,calls=0;const recovery=new PtyCrashRecovery({policy,initialUsed:policy.delays.length-1,now:()=>now,attempt:async()=>++calls===1?'recovered':'retry',state:()=>{}});
+  assert.equal(await recovery.recover(),true);assert.equal(calls,1);
+  now=stable?policy.stableMs:policy.stableMs-1;
+  assert.equal(await recovery.recover(),false);assert.equal(calls,stable?4:1);recovery.dispose();
+ }
+});

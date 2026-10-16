@@ -189,16 +189,16 @@ export class PtyHostClient {
   private crashContext:{pid:number;start:string;owner:RecoveryOwnerIdentity}|null=null;
   private recoveryLaunches=new Map<string,{request:SpawnRequest;launch:PaneLaunch;spawnedAt:number;pid:number}>();
   private recoveryHooks:{restored?:(panes:Array<{id:string;generation:string;notice:string}>)=>void;log?:(event:string,fields:Record<string,unknown>)=>void}={};
-  enableCrashRecovery(hooks:typeof this.recoveryHooks={},policy?:CrashRecoveryPolicy):void {
+  enableCrashRecovery(hooks:typeof this.recoveryHooks={},policy?:CrashRecoveryPolicy,initialUsed=0):void {
     if(this.crashSupervisor)return;this.recoveryHooks=hooks;
-    this.crashSupervisor=new PtyCrashRecovery({policy,attempt:signal=>{
+    this.crashSupervisor=new PtyCrashRecovery({policy,initialUsed,attempt:signal=>{
       const attempt=this.recoverCrashedHost(signal).finally(()=>{if(this.crashAttempt===attempt)this.crashAttempt=null;});this.crashAttempt=attempt;return attempt;
     },state:state=>{
       this.recoveryHooks.log?.("pty-crash-recovery",{state});
       if(state==="exhausted"){
         this.recoveryRetryable=this.ownsOwnerKey&&!!this.crashContext&&!this.disposed;
         this.recoveryReason="Aya could not restart the terminal host within its recovery budget. The processes may still be running in the native owner; Aya did not respawn them."+(this.recoveryFailure?" "+this.recoveryFailure:"")+(this.recoveryRetryable?" Try again makes one more recovery attempt without restarting the processes.":"");
-        for(const ptyId of this.lostOwned)this.sendToSinks([{type:"disconnected",ptyId,reason:this.recoveryReason,recoveryBlocked:true,retryable:this.recoveryRetryable}]);
+        for(const ptyId of new Set([...this.lostOwned,...this.live]))this.sendToSinks([{type:"disconnected",ptyId,reason:this.recoveryReason,recoveryBlocked:true,retryable:this.recoveryRetryable}]);
       }
     }});
   }
@@ -214,7 +214,7 @@ export class PtyHostClient {
       }
     }
     if(this.disposed)return false;
-    this.enableCrashRecovery(this.recoveryHooks,{...CRASH_RECOVERY_POLICY,delays:[100]});
+    this.enableCrashRecovery(this.recoveryHooks,CRASH_RECOVERY_POLICY,CRASH_RECOVERY_POLICY.delays.length-1);
     this.beginCrashRecovery();return await this.crashTask??false;
   }
   private readonly preparations = new Map<number, AbortController>();
@@ -977,7 +977,9 @@ export class PtyHostClient {
     if (this.ownerBacked) for (const id of lost) this.lostOwned.add(id);
     this.live.clear();
     // The host took its panes down without a word: stopped and restartable, as for a pane it has no session for.
-    this.sendToSinks(lost.map((ptyId) => ({ type: this.ownerBacked ? "disconnected" : "no-session", ptyId,...(this.ownsOwnerKey&&this.crashSupervisor?{recoveryBlocked:true,retryable:false}:{}) })));
+    this.sendToSinks(lost.map((ptyId):PtyEvent => this.ownerBacked
+      ? {type:"disconnected",ptyId,...(this.ownsOwnerKey&&this.crashSupervisor?{recoveryBlocked:true,retryable:this.recoveryRetryable,...(this.recoveryRetryable?{reason:this.recoveryReason}:{})}:{})}
+      : {type:"no-session",ptyId}));
     for (const [, pending] of this.pending) {
       if(pending.type==="write"&&pending.ptyId)this.uncertainInput.add(pending.ptyId);
       pending.reject(new Error(pending.type==="write"?"Terminal input acknowledgement was lost when the terminal host stopped. Some bytes may have reached the process. Aya did not resend it.":"PTY host disconnected"));

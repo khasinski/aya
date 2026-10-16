@@ -14,6 +14,8 @@ export interface CrashRecoveryDeps {
   state(state: "recovering" | "recovered" | "exhausted"): void;
   now?: () => number;
   policy?: CrashRecoveryPolicy;
+  /** A manual extra attempt starts with all but one normal slots spent. */
+  initialUsed?: number;
 }
 /** The budget spans successful reconnects too: repeated short-lived hosts must
  * not reset it into a permanent restart loop. Only a stable interval resets it. */
@@ -29,6 +31,7 @@ export class PtyCrashRecovery {
   constructor(private readonly deps: CrashRecoveryDeps) {
     this.policy = deps.policy ?? CRASH_RECOVERY_POLICY;
     this.now = deps.now ?? Date.now;
+    this.used = Math.max(0,Math.min(this.policy.delays.length,Math.trunc(deps.initialUsed??0)));
   }
   recover(): Promise<boolean> {
     if (this.disposed || this.exhausted) return Promise.resolve(false);
