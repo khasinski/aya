@@ -1,3 +1,4 @@
+import {captureMainPtyClient} from "./helpers/main-pty-client";
 // #217: a version-only update reuses the same PTY host and the same shell processes.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -37,14 +38,6 @@ test("changing only package.json version keeps the host and every pane alive", a
 });
 
 async function pids(app:ElectronApplication):Promise<Array<number|null|undefined>>{
- return app.evaluate(async(_api,root)=>{
-  // Use the actual main principal. A foreign test process may not borrow the
-  // capability to displace the live main merely to query its pane PIDs.
-  const require=process.getBuiltinModule('module').createRequire(root+'/package.json');
-  const {PtyHostClient}=require(root+'/dist-electron/pty-host-client.js');
-  const buildDir=require('node:path').join(root,'dist-electron');
-  const client=new PtyHostClient(buildDir+'/pty-host.js');
-  try{return await Promise.all(['tab-left','tab-right'].map(id=>client.getPid(id)));}
-  finally{client.dispose();client.dropSocket();}
- },join(__dirname,'..'));
+ await captureMainPtyClient(app);
+ return app.evaluate(async()=>Promise.all(['tab-left','tab-right'].map(id=>(globalThis as any).e2eMainPtyClient.getPid(id))));
 }

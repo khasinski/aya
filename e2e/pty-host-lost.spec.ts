@@ -40,6 +40,16 @@ async function loseHost(window: Page, home: string) {
   return { before, row };
 }
 
+test('unavailable continuity visibly disables automatic recovery while the authenticated pane still serves input',async({window,seeded})=>{
+  await waitForShellReady(window);const before=inventory(seeded.ayaHome),hosts=hostPidsForHome(seeded.ayaHome);
+  await expect(window.getByTestId('terminal-history-notice').first()).toContainText('Automatic terminal host recovery is off');
+  await expect(window.getByTestId('terminal-history-notice').first()).toContainText('This host still serves the panes');
+  await window.getByTestId('xterm-host').first().click();await window.keyboard.type("printf 'CONTINUITY_OFF_INPUT_WORKS\\n'");await window.keyboard.press('Enter');
+  await expect.poll(()=>window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('CONTINUITY_OFF_INPUT_WORKS\r\n');
+  expect(hostPidsForHome(seeded.ayaHome)).toEqual(hosts);expect(panes(inventory(seeded.ayaHome))).toEqual(panes(before));
+  expect(readFileSync(join(seeded.ayaHome,'pty-events.log'),'utf8').split('\n').filter(line=>{try{return JSON.parse(line).ev==='spawn';}catch{return false;}})).toHaveLength(2);
+});
+
 test("a killed JS host leaves its shells alive and disconnected; Shift+Enter never silently respawns them", async ({ app, window, seeded }) => {
   const { before, row } = await loseHost(window, seeded.ayaHome);
   await app.evaluate(({ ipcMain }) => {
