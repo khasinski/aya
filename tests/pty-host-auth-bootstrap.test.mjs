@@ -12,12 +12,18 @@ async function run(mode,bytes=Buffer.alloc(32,9)){
  if(mode==='file'){fs.writeFileSync(path.join(home,'regular'),bytes);fd=fs.openSync(path.join(home,'regular'),'r');}
  const child=spawn(process.execPath,['-e',source],{stdio:['ignore','pipe','pipe','ignore','ignore',fd??'pipe'],env:{...process.env,AYA_HOME:home,ELECTRON_RUN_AS_NODE:'1',AYA_PTY_AUTH_FD:mode==='missing'?'':'5'}});
  if(fd!==undefined)fs.closeSync(fd);
+ const pipeErrors=[];if(mode!=='file')child.stdio[5].on('error',error=>pipeErrors.push(error.code));
  let output='',error='';child.stdout.on('data',chunk=>output+=chunk);child.stderr.on('data',chunk=>error+=chunk);
  const began=performance.now(),exited=once(child,'exit');
+ // Missing marker can make the child close before its parent finishes writing.
+ // Exercise that Linux ECONNRESET observation deterministically on every OS.
+ if(mode==='missing')child.stdio[5].emit('error',Object.assign(Error('early pipe close'),{code:'ECONNRESET'}));
  if(mode!=='file'){if(mode==='stalled')child.stdio[5].write(bytes);else child.stdio[5].end(bytes);}
  try{
   const result=await Promise.race([exited,new Promise((_,reject)=>{const timer=setTimeout(()=>reject(Error('bootstrap child did not exit')),8000);timer.unref();})]);
   assert.equal(fs.existsSync(path.join(home,'pty-host-auth')),false,'a host bootstrap cannot create a capability');
+  assert.ok(pipeErrors.every(code=>['ECONNRESET','EPIPE'].includes(code)),`unexpected bootstrap pipe error: ${pipeErrors}`);
+  if(result[0]===0)assert.deepEqual(pipeErrors,[]);
   return {code:result[0],output,error,elapsed:performance.now()-began};
  }finally{if(child.exitCode===null&&child.signalCode===null){child.kill('SIGKILL');await exited;}fs.rmSync(home,{recursive:true,force:true});}
 }
