@@ -29,7 +29,7 @@ for(const fault of ['missing','wrong','unknown identity'])test(`a ${fault} capab
  await waitForShellReady(window);const before=record(seeded.ayaHome),hosts=hostPidsForHome(seeded.ayaHome),keyFile=join(seeded.ayaHome,'pty-host-auth/key'),key=readFileSync(keyFile);
  const retainedFiles=fault==='unknown identity'?[join(seeded.ayaHome,'pty-owner/record.json'),join(seeded.ayaHome,'pty-hosts',`${hosts[0]}.json`)].map(file=>({file,bytes:readFileSync(file)})):[];
  const errors:string[]=[];window.on('pageerror',e=>errors.push(String(e)));
- const inputFile=join(seeded.projectDir,'auth-refused-input');
+ const inputFile=join(seeded.projectDir,'auth-refused-input');expect(inputFile).not.toContain("'");
  await window.evaluate(file=>window.aya.ptyWrite('tab-left',`stty -echo; printf 'AUTH_CAPTURE_READY\\n'; while IFS= read -r line; do printf '%s\\n' "$line" >> '${file}'; done\r`),inputFile);
  await expect.poll(()=>window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('AUTH_CAPTURE_READY\r\n');
  await app.evaluate(({ipcMain})=>{

@@ -42,7 +42,8 @@ async function pids(app:ElectronApplication):Promise<Array<number|null|undefined
   // capability to displace the live main merely to query its pane PIDs.
   const require=process.getBuiltinModule('module').createRequire(root+'/package.json');
   const {PtyHostClient}=require(root+'/dist-electron/pty-host-client.js');
-  const client=new PtyHostClient(root+'/dist-electron/pty-host.js');
+  const buildDir=require('node:path').join(root,'dist-electron');
+  const client=new PtyHostClient(buildDir+'/pty-host.js');
   try{return await Promise.all(['tab-left','tab-right'].map(id=>client.getPid(id)));}
   finally{client.dispose();client.dropSocket();}
  },join(__dirname,'..'));

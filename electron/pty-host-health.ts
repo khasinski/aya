@@ -324,7 +324,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
   }
   async function explainUnverifiedAuth(target:Pick<HostRestartTarget,"pid"|"owner"|"authentication">):Promise<void>{
     const options={type:"warning" as const,title:"Terminal host unavailable",message:"Aya cannot safely restart this terminal host",
-      detail:"The terminal host identity could not be verified. Nothing was stopped; its processes and inventory were kept.\n\n"+await authRestartDetail(target),buttons:["OK"],defaultId:0,cancelId:0,noLink:true};
+      detail:"The terminal host identity could not be verified. Nothing was stopped; its processes keep running.\n\n"+await authRestartDetail(target),buttons:["OK"],defaultId:0,cancelId:0,noLink:true};
     const window=focusedAyaWindow();if(window)await dialog.showMessageBox(window,options);else await dialog.showMessageBox(options);
   }
   async function unavailableOwnerDetail(target:Pick<HostRestartTarget,"owner"|"recoveryReason">):Promise<string>{
