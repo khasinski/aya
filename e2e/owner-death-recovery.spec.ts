@@ -48,7 +48,7 @@ test("a dead owner's survivor stays blocked on Cancel and explicit confirmed rec
     // a direct API refusal. One remount attempts one attach and stays friendly.
     await window.keyboard.press("Escape"); await expect(settings).not.toBeVisible();
     const pageErrors: string[] = [];window.on("pageerror",error=>pageErrors.push(String(error)));
-    await app.evaluate((_electron,root)=>{
+    await app.evaluate((_api,root)=>{
       const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js');
       const spawn=PtyHostClient.prototype.spawn,g=globalThis as unknown as {blockedAttachCalls:number};g.blockedAttachCalls=0;
       PtyHostClient.prototype.spawn=async function(...args:Parameters<typeof spawn>){g.blockedAttachCalls++;return spawn.apply(this,args);};
