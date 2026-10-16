@@ -177,7 +177,7 @@ test('Diagnostics separately confirms stopping a retained owner after unavailabl
   await expect.poll(()=>alive(before.pid)).toBe(false);
   expect(alerts).toEqual(['Restart the PTY host? This stops all running terminals; restart each with Shift+Enter.']);
   await expect.poll(()=>alive(before.pid)).toBe(false);for(const pane of before.panes)await expect.poll(()=>alive(pane.pid)).toBe(false);
-  await expect.poll(()=>{try{return inventory(seeded.ayaHome).pid;}catch{return null;}}).toBeGreaterThan(1);
+  await expect.poll(()=>{try{const pid=inventory(seeded.ayaHome).pid;return pid>1&&pid!==before.pid;}catch{return false;}}).toBe(true);
   expect(inventory(seeded.ayaHome).pid).not.toBe(before.pid);
   expect(inventory(seeded.ayaHome).panes).toEqual([]);expect(await app.evaluate(()=>(globalThis as any).ownerQuestions.length)).toBe(2);
   expect(pageErrors).toEqual([]);
