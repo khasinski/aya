@@ -300,6 +300,7 @@ export type PtyEvent =
   | { type: "no-session"; ptyId: string }
   | { type: "disconnected"; ptyId: string; reason?:string }
   | {type:"recovered";ptyId:string;generation:string;replayToken:string;notice:string}
+  | {type:"recovery-screen";ptyId:string;generation:string;known:boolean}
   // Explicit status parsed from an OSC 9001 `aya.status` sequence the TUI (or
   // a wrapper script) emitted inline in its own output — see integrations.md.
   // Carries the same vocabulary as ControlStatusUpdate's "status" request,

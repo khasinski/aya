@@ -210,6 +210,10 @@ function terminalRenderStateEqual(a: TerminalState, b: TerminalState): boolean {
       a.exitCode === b.exitCode &&
       a.stopped === b.stopped &&
       a.disconnected === b.disconnected &&
+      a.disconnectedReason === b.disconnectedReason &&
+      a.recoveryGeneration === b.recoveryGeneration &&
+      a.recoveryNotice === b.recoveryNotice &&
+      a.recoveryScreenUnknown === b.recoveryScreenUnknown &&
       a.spawnDeferred === b.spawnDeferred &&
       a.spawnFailure?.reason === b.spawnFailure?.reason &&
       a.spawnFailure?.detail === b.spawnFailure?.detail &&
@@ -350,10 +354,11 @@ function TerminalViewComponent({
   const handoverInputPausedRef = useRef(false);
   const retireHandoverForRestartRef=useRef<(()=>void)|null>(null);
   const [historyNotice,setHistoryNotice]=useState<string|null>(null);
+  const recoveryNoticeRef=useRef(terminal.recoveryNotice);recoveryNoticeRef.current=terminal.recoveryNotice;
   const disconnectedRef = useRef(!!terminal.disconnected);
   disconnectedRef.current = !!terminal.disconnected;
   useEffect(() => {
-    if (xtermRef.current) xtermRef.current.options.disableStdin = !!terminal.disconnected;
+    if (xtermRef.current) xtermRef.current.options.disableStdin = !!terminal.disconnected || handoverInputPausedRef.current;
   }, [terminal.disconnected]);
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
@@ -774,6 +779,7 @@ function TerminalViewComponent({
     term.loadAddon(webLinks);
     term.open(containerRef.current);
     if (disconnectedRef.current) {
+      if(terminal.disconnectedReason)setHistoryNotice(terminal.disconnectedReason);
       term.write("\r\n\x1b[1;33m[terminal host disconnected - the process may still be running. Input is disabled while disconnected. Restart explicitly to stop it and try again.]\x1b[0m\r\n");
     }
 
@@ -817,9 +823,9 @@ function TerminalViewComponent({
       markRestoring(false);
       return true;
     };
-    let displayGeneration:string|null=null,replayToken:string|null=null,appliedToken=false;
+    let displayGeneration:string|null=null,replayToken:string|null=null,appliedToken=false,displayEpoch=0;
     const retireHandoverForRestart=()=>{
-      attachRetiredByRestart=true;attachCancelled=true;releaseDeferred?.();unregisterPendingAttach();
+      displayEpoch++;attachRetiredByRestart=true;attachCancelled=true;releaseDeferred?.();unregisterPendingAttach();
       awaitingReplay=false;displayGeneration=null;replayToken=null;appliedToken=false;
       handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;
       setHistoryNotice(null);
@@ -834,12 +840,20 @@ function TerminalViewComponent({
     // window.aya.onPtyEvent listener would.
     const unsubscribe = ptyEventBus.onFor(terminal.id, (event) => {
       if (isRestoringRef.current) markRestoring(false);
-      if (event.type === "data") {
+      if(event.type === "recovered") {
+        displayEpoch++;attachRetiredByRestart=true;attachCancelled=true;releaseDeferred?.();unregisterPendingAttach();
+        // Also queue RIS behind already-buffered parser writes: an old async
+        // write cannot repaint consumed output after this synchronous reset.
+        term.reset();term.write("\x1bc");richInputRef.current=false;disconnectedRef.current=false;
+        recoveryNoticeRef.current=event.notice;setHistoryNotice(event.notice);
+        displayGeneration=event.generation;replayToken=event.replayToken;appliedToken=false;awaitingReplay=true;
+        handoverInputPausedRef.current=true;term.options.disableStdin=true;
+      } else if (event.type === "data") {
         // Startup output is retained by the host. Discard broadcasts until the
         // replay fence, then append exactly the suffix after captured B once.
         if(event.replayToken){if(event.replayToken!==replayToken||appliedToken)return;appliedToken=true;}
         if(awaitingReplay&&!event.replay)return;
-        if(event.reset){term.reset();setHistoryNotice("History from replay after the update; earlier captured history was no longer retained.");}
+        if(event.reset){term.reset();setHistoryNotice(recoveryNoticeRef.current ?? "History from replay after the update; earlier captured history was no longer retained.");}
         if(event.replay&&awaitingReplay)awaitingReplay=false;
         // Track whether a full-screen / rich TUI (claude, codex, vim…) is
         // running via focus-reporting mode (DECSET 1004). It gates Shift+Enter:
@@ -851,8 +865,10 @@ function TerminalViewComponent({
         const displayChunk = normalizeTerminalLinkUnderline(scrollbackSafeChunk);
         if (event.replay) {
           replayingOutputRef.current += 1;
+          const applyingEpoch=displayEpoch;
           term.write(displayChunk, () => {
             if(disposed)return;
+            if(applyingEpoch!==displayEpoch){replayingOutputRef.current=Math.max(0,replayingOutputRef.current-1);return;}
             replayingOutputRef.current = Math.max(0, replayingOutputRef.current - 1);
             handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;
             if(displayGeneration){void window.aya.acknowledgeHandoverDisplay(terminal.id,displayGeneration,event.replayToken).catch(()=>{});displayGeneration=null;}
@@ -880,6 +896,7 @@ function TerminalViewComponent({
         );
       } else if (event.type === "disconnected") {
         disconnectedRef.current = true; term.options.disableStdin = true;
+        if(event.reason)setHistoryNotice(event.reason);
         term.write("\r\n\x1b[1;33m[terminal host disconnected - the process may still be running. Input is disabled while disconnected. Restart explicitly to stop it and try again.]\x1b[0m\r\n");
       } else if (event.type === "no-session") {
         awaitingReplay=false;handoverInputPausedRef.current=false;term.options.disableStdin=disconnectedRef.current;
@@ -1526,7 +1543,7 @@ function TerminalViewComponent({
         onWheelCapture={() => setIsScrollbarHidden(false)}
         onContextMenu={openTerminalContextMenu}
       >
-        {historyNotice&&<div data-testid="terminal-history-notice" role="status" style={{position:"absolute",top:0,left:0,right:0,zIndex:3,padding:"2px 8px",fontSize:11,background:"var(--aya-term-bg)",pointerEvents:"none"}}>{historyNotice}</div>}
+        {(historyNotice||terminal.recoveryNotice||terminal.recoveryScreenUnknown)&&<div data-testid="terminal-history-notice" role="status" style={{position:"absolute",top:0,left:0,right:0,zIndex:3,padding:"2px 8px",fontSize:11,background:"var(--aya-term-bg)",pointerEvents:"none"}}>{historyNotice ?? terminal.recoveryNotice}{terminal.recoveryScreenUnknown ? " Screen unknown after the terminal host restarted; team messages remain held until a full redraw." : ""}</div>}
         <div data-testid="xterm-frame" className="aya-xterm-frame" ref={containerRef} />
         {isRestoring && (
           <div className="aya-terminal-restoring" aria-live="polite">

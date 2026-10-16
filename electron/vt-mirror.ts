@@ -229,12 +229,12 @@ export function vtPaneDialog(id: string): string | undefined { return panes.get(
 
 /** Main must nudge SIGWINCH after attach. Coverage follows applied parser work,
  * and stays conservative across scroll, geometry and alternate-buffer changes. */
-export function beginVtRecovery(id:string,timeout:()=>void=()=>{}):void {
+export function beginVtRecovery(id:string,timeout:()=>void=()=>{},applied:()=>void=()=>{}):void {
  const pane=panes.get(id);if(!pane)throw Error("Recovery mirror is missing");
  pane.recoveryUnknown=true;pane.composerSeen=false;
  recoveryScreens.set(pane,new RecoveryScreen(pane.terminal,(known,timedOut)=>{
   if(panes.get(id)!==pane)return;
-  if(known){pane.recoveryUnknown=false;pane.onSnapshot?.(snapshotOf(pane));}
+  if(known){pane.recoveryUnknown=false;pane.onSnapshot?.(snapshotOf(pane));applied();}
   else if(timedOut)timeout();
  }));
 }

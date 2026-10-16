@@ -84,6 +84,10 @@ export class HandoverDisplays {
   async acknowledgeEscrow(receipt:CheckpointReceipt|null):Promise<void> {
     if(receipt)await acknowledgeCheckpoint(PTY_HANDOVER_DISPLAY_DIRECTORY,receipt);
   }
+  installRecovery(panes:Array<{id:string;generation:string;notice:string}>):void {
+    if(panes.length>25||new Set(panes.map(p=>p.id)).size!==panes.length)throw Error("Recovery display inventory refused");
+    for(const p of panes)this.restored.set(p.id,{data:null,generation:p.generation,offset:0,notice:p.notice});
+  }
   clear():void {this.restored.clear();}
   forget(id:string):void {this.restored.delete(id);}
   has(id:string):boolean {return this.restored.has(id);}

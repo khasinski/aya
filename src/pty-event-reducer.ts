@@ -118,13 +118,21 @@ export function applyPtyEvent(
 
   if (event.type === "disconnected") {
     const t = prev[event.ptyId];
-    if (!t || t.disconnected) return prev;
-    return { ...prev, [event.ptyId]: { ...t, disconnected: true, stopped: false, bell: false, status: "error", externalStatus: undefined, screenDialog: undefined } };
+    if (!t || (t.disconnected && t.disconnectedReason === event.reason)) return prev;
+    return { ...prev, [event.ptyId]: { ...t, disconnected: true, disconnectedReason:event.reason, stopped: false, bell: false, status: "error", externalStatus: undefined, screenDialog: undefined } };
+  }
+  if(event.type === "recovered") {
+    const t=prev[event.ptyId];if(!t)return prev;
+    return {...prev,[event.ptyId]:{...t,disconnected:undefined,disconnectedReason:undefined,stopped:false,exitCode:null,spawnFailure:undefined,bell:false,status:"running",externalStatus:undefined,screenDialog:undefined,recoveryGeneration:event.generation,recoveryNotice:event.notice,recoveryScreenUnknown:false}};
+  }
+  if(event.type === "recovery-screen") {
+    const t=prev[event.ptyId];if(!t||t.disconnected||t.exitCode!==null||t.recoveryGeneration!==event.generation)return prev;
+    return {...prev,[event.ptyId]:{...t,recoveryScreenUnknown:!event.known}};
   }
   if (event.type === "exit") {
     const t = prev[event.ptyId];
     if (!t) return prev;
-    const next = { ...t, bell: false, disconnected: undefined, exitCode: event.exitCode };
+    const next = { ...t, bell: false, disconnected: undefined, disconnectedReason:undefined, recoveryScreenUnknown:false, exitCode: event.exitCode };
     return {
       ...prev,
       [event.ptyId]: { ...next, status: deriveLifecycleStatus(next) },

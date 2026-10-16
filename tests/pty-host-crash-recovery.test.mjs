@@ -165,3 +165,26 @@ test('a native exit already observed by main is explicitly reconciled and may be
   assert.ok(!registry.readOwnerRecord().panes.some(p=>p.id==='shell'));assert.equal(await client.getPid('peer')>1,true);await client.shutdown();
  }finally{await cleanup(client);}
 });
+
+test('native-owner death with a JS master duplicate never authorizes a new owner or silent child spawn',{timeout:15000},async()=>{
+ const {client,status,logs,pid}=await setup(`exec /bin/sh -c 'trap "" HUP; echo READY; while :; do sleep .1; done'`);
+ let starts=0;const start=client.startHost.bind(client);client.startHost=(...args)=>{starts++;return start(...args);};
+ try{
+  process.kill(status.owner.pid,'SIGKILL');await wait(()=>{try{process.kill(status.owner.pid,0);return false;}catch{return true;}});
+  assert.doesNotThrow(()=>process.kill(pid,0),'JS reader still holds a master duplicate');
+  process.kill(status.pid,'SIGKILL');await wait(()=>logs.some(e=>e.state==='exhausted'));
+  assert.equal(starts,0);assert.equal(registry.readOwnerRecord().pid,status.owner.pid);assert.ok(registry.readOwnerRecord().panes.some(p=>p.pid===pid));
+  assert.equal(await client.getPid('shell'),undefined);assert.equal(client.crashBlocked,true);
+ }finally{try{process.kill(-pid,'SIGKILL');}catch{}await cleanup(client);}
+});
+
+test('an early pane applied ACK succeeds while later recovery replay fences are still pending',{timeout:15000},async()=>{
+ const {client,status,logs}=await setup();const replies=[];let release;
+ try{
+  await client.spawn({...request(),ptyId:'peer'});const send=client.sendRequest.bind(client),gate=new Promise(r=>{release=r;});
+  client.sendRequest=async(socket,req)=>{if(req.type==='spawn'&&req.req.ptyId==='peer'&&req.req.replayAfter){await gate;}return send(socket,req);};
+  // ACK must follow the shell's replay fence, as an actual view does.
+  client.sinks.clear();client.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>{if(e.type==='data'&&e.replayToken){if(e.ptyId==='shell')replies.push(client.acknowledgeHandoverDisplay('shell',client.testGeneration,e.replayToken));}if(e.type==='recovered')client.testGeneration=e.generation;}});
+  process.kill(status.pid,'SIGKILL');await wait(()=>replies.length===1);assert.equal(await replies[0],true);assert.equal(client.crashBlocked,true,'later pane still gated');release();await wait(()=>logs.some(e=>e.state==='recovered'));await client.shutdown();
+ }finally{release?.();await cleanup(client);}
+});

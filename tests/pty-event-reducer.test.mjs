@@ -685,3 +685,15 @@ test("an unavailable owner-backed pane stays visibly disconnected and never beco
   assert.equal(clearedTerminalStatus(next.t1).status, "error");
   assert.equal(applyPtyEvent(next, { type: "exit", ptyId: "t1", exitCode: 23 }).t1.disconnected, undefined);
 });
+
+test('recovery clears stale lifecycle overlays and screen trust is generation scoped',()=>{
+ let state={p:termState('p',{disconnected:true,disconnectedReason:'old',status:'error',bell:true,exitCode:23,screenDialog:'account',externalStatus:{level:'waiting'}})};
+ state=applyPtyEvent(state,{type:'recovered',ptyId:'p',generation:'new',replayToken:'t',notice:'consumed history lost'});
+ assert.equal(state.p.disconnected,undefined);assert.equal(state.p.exitCode,null);assert.equal(state.p.status,'running');assert.equal(state.p.bell,false);assert.equal(state.p.screenDialog,undefined);assert.equal(state.p.externalStatus,undefined);
+ assert.equal(applyPtyEvent(state,{type:'recovery-screen',ptyId:'p',generation:'old',known:false}),state);
+ state=applyPtyEvent(state,{type:'recovery-screen',ptyId:'p',generation:'new',known:false});assert.equal(state.p.recoveryScreenUnknown,true);
+ state=applyPtyEvent(state,{type:'recovery-screen',ptyId:'p',generation:'new',known:true});assert.equal(state.p.recoveryScreenUnknown,false);
+ state=applyPtyEvent(state,{type:'disconnected',ptyId:'p',reason:'budget exhausted'});
+ state=applyPtyEvent(state,{type:'disconnected',ptyId:'p',reason:'owner key unknown'});assert.equal(state.p.disconnectedReason,'owner key unknown');
+ assert.equal(applyPtyEvent(state,{type:'recovery-screen',ptyId:'p',generation:'new',known:true}),state);
+});

@@ -366,7 +366,9 @@ export async function recoverPtyCorePane(pane:RecoveryPane,sink:PtyEventSink):Pr
   const owner=await getOwnerRuntime(),actual=owner.disconnected.get(pane.id);
   if(owner.incompatible||!owner.client||!actual||actual.generation!==pane.generation||actual.pid!==pane.pid||actual.startIdentity!==pane.startIdentity)throw Error("Recovery pane identity changed");
   openVtPane(pane.id,actual.cols,actual.rows,()=>{},pane.request.agent,pane.request.agent==='custom'||pane.request.agent===undefined);
-  const mirror=vtPanes.get(pane.id)!;beginVtRecovery(pane.id,()=>ptyLog.append("recovery-screen-unknown",{ptyId:pane.id}));
+  const mirror=vtPanes.get(pane.id)!;
+  const screen=(known:boolean)=>{if(!sink.isDestroyed())sink.sendPtyEvent({type:"recovery-screen",ptyId:pane.id,generation:snapshotOf(mirror).generation,known});};
+  beginVtRecovery(pane.id,()=>{ptyLog.append("recovery-screen-unknown",{ptyId:pane.id});screen(false);},()=>screen(true));
   let child:OwnerPty;
   try{child=await OwnerPty.attach({pane:actual,process:pane.launch.command,readBytes:0,decoderCarry:""});}
   catch(error){closeVtPane(pane.id);throw error;}

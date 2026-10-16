@@ -30,6 +30,7 @@ export interface HostHealth {
   expected: HostIdentity;
   ptyCount: number;
   owner?: PtyOwnerStatus;
+  recoveryReason?:string;
   stale: boolean;
   /** Expected core bytes could not be read: warn, but never restart automatically. */
   indeterminate?: boolean;
@@ -47,7 +48,7 @@ export interface HostHealthDeps {
   expected: HostIdentity;
   /** Whether this Aya is connected to a host now. */
   connected(): boolean;
-  status(): Promise<{ identity: HostIdentity | null; ptyCount: number; pid?: number; owner?: HostHealth["owner"] }>;
+  status(): Promise<{ identity: HostIdentity | null; ptyCount: number; pid?: number; owner?: HostHealth["owner"];recoveryReason?:string }>;
   socketExists(): Promise<boolean>;
   /** The pid of the host answering on pty-host.sock, without starting one; null when none answers. */
   probeSocket(): Promise<number | null>;
@@ -74,6 +75,7 @@ export async function gatherHostHealth(deps: HostHealthDeps): Promise<HostHealth
     ptyCount: status.ptyCount,
     stale: asked && (isHostStale(deps.expected, status.identity) || !!status.owner?.incompatible),
     ...(status.owner ? { owner: status.owner } : {}),
+    ...(status.recoveryReason ? { recoveryReason:status.recoveryReason } : {}),
     indeterminate: asked && (!deps.expected.scriptHash || deps.expected.scriptHash === UNKNOWN_SCRIPT_HASH),
     socket: { exists: socketExists, pid: socketPid },
     otherHosts,
@@ -84,6 +86,7 @@ export async function gatherHostHealth(deps: HostHealthDeps): Promise<HostHealth
 /** What is wrong, in the words Diagnostics shows; empty when nothing is. */
 export function hostWarnings(health: Omit<HostHealth, "warnings">): string[] {
   const warnings: string[] = [];
+  if(health.recoveryReason)warnings.push(health.recoveryReason);
   if (health.indeterminate) {
     warnings.push("The terminal host build cannot be compared: Aya could not read its current PTY runtime files. The running terminals were kept.");
   }
