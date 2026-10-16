@@ -20,10 +20,19 @@ export function prepareOwnerDirectory(): void {
   if (!stat.isDirectory() || stat.uid !== process.getuid?.() || (stat.mode & 0o077)) throw new Error("PTY owner directory is not private");
 }
 export function readOwnerRecord(): OwnerRecord | null {
+  let fd:number|undefined;
   try {
-    const stat = fs.lstatSync(RECORD);
-    if (stat.size > 65536 || !stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o077)) throw new Error("PTY owner record is not private");
-    const r = JSON.parse(fs.readFileSync(RECORD, "utf8")) as OwnerRecord;
+    const parent=fs.lstatSync(OWNER_DIRECTORY);
+    if(!parent.isDirectory()||parent.uid!==process.getuid?.()||(parent.mode&0o077))throw new Error("PTY owner directory is not private");
+    fd=fs.openSync(RECORD,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(fd);
+    if (stat.size<1||stat.size > 65536 || !stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o077)||stat.nlink!==1) throw new Error("PTY owner record is not private");
+    const bytes=Buffer.alloc(stat.size);let offset=0;
+    while(offset<bytes.length){const count=fs.readSync(fd,bytes,offset,bytes.length-offset,offset);if(!count)throw new Error("Truncated PTY owner record");offset+=count;}
+    const after=fs.fstatSync(fd),current=fs.lstatSync(RECORD),directory=fs.lstatSync(OWNER_DIRECTORY);
+    if(after.size!==stat.size||after.mtimeMs!==stat.mtimeMs||after.ctimeMs!==stat.ctimeMs||current.ino!==stat.ino||current.dev!==stat.dev||directory.ino!==parent.ino||directory.dev!==parent.dev)throw new Error("PTY owner record changed while reading");
+    let r:OwnerRecord;
+    try{r=JSON.parse(bytes.toString("utf8")) as OwnerRecord;}catch{throw new Error("Invalid PTY owner record");}
     if (!Number.isSafeInteger(r.pid) || r.pid < 2 || r.pid > 0x7fffffff || typeof r.startTime !== "string" || !r.startTime ||
         typeof r.executable !== "string" || !path.isAbsolute(r.executable) || typeof r.binaryHash !== "string" ||
         !/^[a-f0-9]{32}$/.test(r.instanceId) || !Number.isSafeInteger(r.jsPid) || r.jsPid < 2 ||
@@ -43,6 +52,7 @@ export function readOwnerRecord(): OwnerRecord | null {
       throw new Error("Invalid PTY owner record");
     return r;
   } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
+  finally{if(fd!==undefined)fs.closeSync(fd);}
 }
 export function ownerRecordIsLive(r: OwnerRecord): boolean {
   const p = readProcInfo(r.pid);
