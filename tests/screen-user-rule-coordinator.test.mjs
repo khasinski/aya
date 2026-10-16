@@ -37,13 +37,18 @@ test('same-generation applied but unbroadcast output refuses old worker evidence
   const f=fixture({evaluate:()=>wait.promise,checkSnapshot:async(id,fence)=>mirror.vtSnapshotMatches(id,fence)});
   const pending=f.coordinator.evaluate('revision-only',screen,'delivery');
   mirror.writeVtPane('revision-only','\r\nAllow operation?');
+  const applied=await mirror.vtSnapshot('revision-only');
+  assert.ok(applied.rows.some(row=>row.includes('Allow operation?')));
+  assert.notEqual(applied.revision,screen.revision);
+  assert.equal(mirror.vtSnapshotMatches('revision-only',{generation:applied.generation,revision:applied.revision}),true);
+  assert.equal(changes,0,'new output is applied before its debounced broadcast');
   wait.resolve(answer());unknown(await pending);assert.equal(changes,0,'no debounced status event is needed to invalidate');
  }finally{mirror.closeVtPane('revision-only');}
 });
 test('reload epoch, same-object availability mutation, and disposal fence pending results',async()=>{
- for(const mode of ['epoch','availability','dispose']){
+ for(const mode of ['epoch','digest','availability','dispose']){
   const wait=deferred(),f=fixture({evaluate:()=>wait.promise}),pending=f.coordinator.evaluate('p',snapshot(),'delivery');
-  if(mode==='epoch')f.set({...f.get(),epoch:2});else if(mode==='availability')f.get().available=false;else f.coordinator.dispose();
+  if(mode==='epoch')f.set({...f.get(),epoch:2});else if(mode==='digest')f.set({...f.get(),manifest:{...manifest,digest:'b'.repeat(64)}});else if(mode==='availability')f.get().available=false;else f.coordinator.dispose();
   wait.resolve(answer());unknown(await pending);assert.equal(f.checks.length,0);
  }
 });
@@ -83,4 +88,13 @@ test('worker/check exceptions fail closed and pending context bound is reclaimed
  const next=f.coordinator.evaluate('after',snapshot(),'delivery');waits.at(-1).resolve(answer());assert.equal((await next).current,true);
  const bad=fixture({evaluate:async()=>{throw Error('secret');}});unknown(await bad.coordinator.evaluate('p',snapshot(),'delivery'));
  const badCheck=fixture({checkSnapshot:async()=>{throw Error('secret');}});unknown(await badCheck.coordinator.evaluate('p',snapshot(),'delivery'));
+});
+
+test('scope binds generation and applied revision independently of caller/exclusion',async()=>{
+ const f=fixture(),first=snapshot();
+ await f.coordinator.evaluate('p',first,'delivery','same');
+ await f.coordinator.evaluate('p',{...first,generation:'new-generation'},'delivery','same');
+ await f.coordinator.evaluate('p',{...first,revision:'12345678-1234-1234-1234-123456789abc:2'},'delivery','same');
+ assert.equal(new Set(f.requests.map(r=>r.scope)).size,3);
+ assert.deepEqual(f.checks.map(c=>c.fence),[{generation:first.generation,revision:first.revision},{generation:'new-generation',revision:first.revision},{generation:first.generation,revision:'12345678-1234-1234-1234-123456789abc:2'}]);
 });
