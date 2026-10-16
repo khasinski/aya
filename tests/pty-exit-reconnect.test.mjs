@@ -23,7 +23,7 @@ test('native ACK success followed by socket loss retries the same receipt on rec
   // This must complete from reconnect itself, not the later attach's retry.
   await wait(()=>receipt.acknowledged===true);
   const requests=fs.readFileSync(path.join(process.env.AYA_HOME,'ack-receipts.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
-  assert.equal(requests.length,2);assert.deepEqual(requests.map(p=>p.args),[['p',receipt.generation,receipt.event],['p',receipt.generation,receipt.event]]);assert.deepEqual(requests.map(p=>p.result),[true,false]);
+  assert.equal(requests.length,2);assert.deepEqual(requests.map(p=>p.args),[['p',receipt.generation,receipt.event],['p',receipt.generation,receipt.event]]);assert.deepEqual(requests.map(p=>p.result),['retired','retired']);
   assert.equal(events.filter(e=>e.type==='exit').length,1,'one spontaneous outcome across reconnect');
   events.length=0;await client.spawn({...req,attachOnly:true});assert.deepEqual(events.filter(e=>e.type==='exit').map(e=>e.exitCode),[23]);
   assert.equal((await client.hostStatus()).owner.inventory.length,0);await client.shutdown();

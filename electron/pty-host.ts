@@ -513,7 +513,7 @@ void (async()=>{
     const observed=new Set<string>();
     for(const receipt of recovery.observed??[]){
       const pane=bootstrapOwner.disconnected.get(receipt.id);
-      if(pane?.exited&&pane.generation===receipt.generation&&pane.event===receipt.event){await bootstrapOwner.retired(pane);observed.add(pane.id);}
+      if(pane?.exited&&pane.generation===receipt.generation&&pane.event===receipt.event){if(await acknowledgePtyExit(pane.id,pane.generation,pane.event)!=="retired")throw Error("Observed recovery exit could not be retired");observed.add(pane.id);}
     }
     // Identity preflight for the whole requested set before the first master.
     for(const pane of recovery.panes){

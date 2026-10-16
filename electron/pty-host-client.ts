@@ -250,8 +250,12 @@ export class PtyHostClient {
     if(this.observedExits.get(id)!==receipt||receipt.acknowledged||(this.exitAckRetries.get(id)??0)>=3||this.disposed||this.exitAcks.has(id)||!this.socket||this.socket.destroyed)return;
     const socket=this.socket,tries=(this.exitAckRetries.get(id)??0)+1;this.exitAckRetries.set(id,tries);
     let retry=false;
-    const work=this.sendRequest(socket,{id:0,type:"exit-observed",ptyId:id,generation:receipt.generation,event:receipt.event}).then(()=>{
-      if(this.observedExits.get(id)===receipt)receipt.acknowledged=true;
+    const work=this.sendRequest(socket,{id:0,type:"exit-observed",ptyId:id,generation:receipt.generation,event:receipt.event}).then(result=>{
+      if(result==="retired"){if(this.observedExits.get(id)===receipt)receipt.acknowledged=true;}
+      else if(result==="stale"){
+        if(this.observedExits.get(id)===receipt)this.observedExits.delete(id);
+        this.recoveryHooks.log?.("pty-exit-ack-stale",{ptyId:id,generation:receipt.generation,exitEvent:receipt.event});
+      }else this.recoveryHooks.log?.("pty-exit-ack-unavailable",{ptyId:id,generation:receipt.generation,exitEvent:receipt.event});
     },()=>{retry=true;}).finally(()=>{
       if(this.exitAcks.get(id)===work)this.exitAcks.delete(id);
       const current=this.observedExits.get(id);
@@ -1054,7 +1058,7 @@ export class PtyHostClient {
       this.metadataSocket=socket;this.reusedHost=true;this.plannedReusedBoot=true;
       const ready=version.recovery.map(p=>{
         this.lostOwned.delete(p.id);if(p.exitCode===undefined)this.live.add(p.id);
-        return {...p,notice:"The terminal host restarted. Previously consumed screen and history were lost; unread output and the running process were kept."+(this.uncertainInput.has(p.id)?" Input acknowledgement was lost; some bytes may have reached this process. Aya did not resend it. Check before retrying.":""),replayToken:randomBytes(16).toString("hex")};
+        return {...p,notice:"The terminal host restarted. Previously consumed screen and history were lost; "+(p.exitCode===undefined?"unread output and the running process were kept.":`unread output was kept; the process had exited with code ${p.exitCode}.`)+(this.uncertainInput.has(p.id)?" Input acknowledgement was lost; some bytes may have reached this process. Aya did not resend it. Check before retrying.":""),replayToken:randomBytes(16).toString("hex")};
       });
       this.recoveryHooks.log?.("pty-crash-recovery-inventory",{recovered:ready.map(p=>p.id),disconnected:[...this.lostOwned]});
       this.recoveredStates=new Map(ready.map(p=>[p.id,{type:"recovery-state",ptyId:p.id,generation:p.generation,notice:p.notice,screenUnknown:this.recoveryScreens.get(p.id)?.generation===p.generation&&this.recoveryScreens.get(p.id)?.known===false}]));

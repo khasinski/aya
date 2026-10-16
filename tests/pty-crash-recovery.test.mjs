@@ -69,3 +69,10 @@ test('manual extra slot stays one until stability, then restores the full normal
   assert.equal(await recovery.recover(),false);assert.equal(calls,stable?4:1);recovery.dispose();
  }
 });
+
+test('default attempts each wait their100/500/1500ms backoff before starting',async()=>{
+ const original=globalThis.setTimeout,delays=[];let virtual=0;const starts=[];
+ globalThis.setTimeout=(callback,ms,...args)=>{if([100,500,1500].includes(ms)){delays.push(ms);return original(()=>{virtual+=ms;callback(...args);},0);}return original(callback,ms,...args);};
+ const recovery=new PtyCrashRecovery({now:()=>virtual,attempt:async()=>{starts.push(virtual);return 'retry';},state:()=>{}});
+ try{assert.equal(await recovery.recover(),false);assert.deepEqual(delays,[100,500,1500]);assert.deepEqual(starts,[100,600,2100]);}finally{recovery.dispose();globalThis.setTimeout=original;}
+});

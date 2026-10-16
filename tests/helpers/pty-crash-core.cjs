@@ -9,6 +9,7 @@ let output='',exit;const events=[];
 const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='data')output+=e.chunk;if(e.type==='exit')exit=e.exitCode;}};
 const wait=async predicate=>{const end=Date.now()+6000;while(!await predicate()){if(Date.now()>end)throw Error('crash core readiness timeout');await new Promise(r=>setTimeout(r,2));}};
 (async()=>{
+ assert.equal(await core.acknowledgePtyExit('absent',1,1),'unavailable');
  if(mode==='old'){
   const redraw=variant.startsWith('redraw-');
   if(redraw)fs.copyFileSync(path.join(__dirname,'../fixtures/own-screens',variant==='redraw-codex'?'codex-skip.raw':'claude-idle.raw'),path.join(home,'redraw.raw'));
@@ -65,14 +66,16 @@ const wait=async predicate=>{const end=Date.now()+6000;while(!await predicate())
   assert.equal(exit,23);assert.equal(owner.record.pid,bootstrap.owner.pid);
   if(variant==='exit-ack'){
    const receipt=events.find(e=>e.type==='exit').ownerExit;assert.ok(receipt);
-   assert.equal(await core.acknowledgePtyExit('pane',receipt.generation+1,receipt.event),false);
+   assert.equal(await core.acknowledgePtyExit('pane',receipt.generation+1,receipt.event),'stale');
    const ack=owner.client.ackExit.bind(owner.client);let lost=true;
    owner.client.ackExit=async pane=>{await ack(pane);if(lost){lost=false;throw Error('test ACK reply lost');}};
    await assert.rejects(core.acknowledgePtyExit('pane',receipt.generation,receipt.event),/ACK reply lost/);
    assert.equal((await owner.client.list()).find(p=>p.id==='pane').acknowledged,true);
-   assert.equal(await core.acknowledgePtyExit('pane',receipt.generation,receipt.event),true);
-   assert.equal(await core.acknowledgePtyExit('pane',receipt.generation,receipt.event),false);
+   assert.equal(await core.acknowledgePtyExit('pane',receipt.generation,receipt.event),'retired');
+   assert.equal(await core.acknowledgePtyExit('pane',receipt.generation,receipt.event),'retired');
    assert.equal(owner.record.panes.length,0);
+   const instance=owner.record.instanceId;owner.record.instanceId='different-owner-instance';
+   assert.equal(await core.acknowledgePtyExit('pane',receipt.generation,receipt.event),'stale','retirement cache cannot alias a later owner');owner.record.instanceId=instance;
   }
   await runtime.shutdownOwnerRuntime();process.send({recovered:true,exit},()=>process.exit(0));
  }

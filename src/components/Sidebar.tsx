@@ -433,7 +433,7 @@ function SidebarImpl({
               setMenu(null);
             }}
           >
-            Restart terminal
+            Restart terminal{terminals.find(t=>t.id===menu.terminalId)?.recoveryBlocked ? " - host recovering" : ""}
           </button>
           <button
             className="aya-context-menu-item"

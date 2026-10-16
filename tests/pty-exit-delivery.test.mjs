@@ -13,7 +13,7 @@ test('main records exit before ACK, retries a lost reply, and never delivers the
  client.socket={destroyed:false,write:line=>{
   const request=JSON.parse(line);requests.push(request);
   assert.equal(client.observedExits.get('p').event,7,'record before sending ACK');
-  queueMicrotask(()=>client.onResponse(requests.length===1?{id:request.id,ok:false,error:'test ACK reply lost'}:{id:request.id,ok:true,result:true}));
+  queueMicrotask(()=>client.onResponse(requests.length===1?{id:request.id,ok:false,error:'test ACK reply lost'}:{id:request.id,ok:true,result:"retired"}));
  }};
  try{
   client.onData(JSON.stringify(event())+'\n'+JSON.stringify(event())+'\n');
@@ -45,7 +45,13 @@ test('a new-generation exit arriving behind an older ACK gets its own scoped ACK
  client.socket={destroyed:false,write:line=>requests.push(JSON.parse(line))};
  try{
   client.onData(JSON.stringify(event())+'\n');client.onData(JSON.stringify(event(2))+'\n');assert.equal(requests.length,1);
-  client.onResponse({id:requests[0].id,ok:true,result:true});await sleep(1);assert.equal(requests.length,2);assert.equal(requests[1].generation,2);
-  client.onResponse({id:requests[1].id,ok:true,result:true});await sleep(1);assert.equal(client.observedExits.get('p').acknowledged,true);
+  client.onResponse({id:requests[0].id,ok:true,result:"retired"});await sleep(1);assert.equal(requests.length,2);assert.equal(requests[1].generation,2);
+  client.onResponse({id:requests[1].id,ok:true,result:"retired"});await sleep(1);assert.equal(client.observedExits.get('p').acknowledged,true);
  }finally{client.dispose();}
+});
+
+test('stale exit receipt is dropped and logged without retry',async()=>{
+ const client=new PtyHostClient('unused'),logs=[];let calls=0;client.enableCrashRecovery({log:(event,fields)=>logs.push({event,...fields})});
+ client.socket={destroyed:false,write:line=>{const req=JSON.parse(line);calls++;queueMicrotask(()=>client.onResponse({id:req.id,ok:true,result:'stale'}));}};
+ try{client.onData(JSON.stringify(event())+'\n');await sleep(150);assert.equal(calls,1);assert.equal(client.observedExits.has('p'),false);assert.ok(logs.some(e=>e.event==='pty-exit-ack-stale'));}finally{client.dispose();}
 });

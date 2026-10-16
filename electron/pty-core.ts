@@ -382,13 +382,18 @@ export async function recoverPtyCorePane(pane:RecoveryPane,sink:PtyEventSink):Pr
 
 /** Acknowledgement is generation/event scoped, and safe to repeat if the
  * reply was lost after the native ACK. A stale receipt never retires a new ID. */
-export async function acknowledgePtyExit(id:string,generation:number,event:number):Promise<boolean> {
- const owner=currentOwnerRuntime();if(!owner?.client)return false;
+const retiredOwnerExits=new Map<string,{generation:number;event:number;ownerInstance:string}>();
+export async function acknowledgePtyExit(id:string,generation:number,event:number):Promise<"retired"|"unavailable"|"stale"> {
+ const owner=currentOwnerRuntime(),retired=retiredOwnerExits.get(id);
+ if(retired?.generation===generation&&retired.event===event&&(!owner||retired.ownerInstance===owner.record.instanceId))return "retired";
+ if(!owner?.client)return "unavailable";
  const pane=pendingOwnerExits.get(id)??owner.disconnected.get(id);
- if(!pane||!pane.exited||pane.generation!==generation||pane.event!==event)return false;
+ if(!pane||!pane.exited||pane.generation!==generation||pane.event!==event)return "stale";
  await owner.retired(pane);
+ retiredOwnerExits.delete(id);retiredOwnerExits.set(id,{generation,event,ownerInstance:owner.record.instanceId});
+ while(retiredOwnerExits.size>25)retiredOwnerExits.delete(retiredOwnerExits.keys().next().value!);
  if(pendingOwnerExits.get(id)===pane)pendingOwnerExits.delete(id);
- return true;
+ return "retired";
 }
 
 export interface PtyEventSink {

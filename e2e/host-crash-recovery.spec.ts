@@ -40,7 +40,7 @@ test('three short-lived recoveries exhaust the shared budget and Try again makes
  expect(hostPidsForHome(seeded.ayaHome)).toEqual([]);expect(identities(seeded.ayaHome)).toEqual(before);expect(record(seeded.ayaHome).pid).toBe(owner);
  for(const p of before)expect(alive(p.pid)).toBe(true);
  await window.reload();const pane=visiblePane(window,'shell 1');await expect(pane.getByTestId('terminal-history-notice')).toContainText('recovery budget');
- const row=window.locator('.aya-sidebar-row[data-terminal-name="shell 1"]');await row.click({button:'right'});const restart=window.locator('.aya-context-menu-item',{hasText:'Restart terminal'});await expect(restart).toBeDisabled();await expect(restart).toHaveAttribute('title',/recovery budget/);await window.keyboard.press('Escape');
+ const row=window.locator('.aya-sidebar-row[data-terminal-name="shell 1"]');await row.click({button:'right'});const restart=window.locator('.aya-context-menu-item',{hasText:'Restart terminal'});await expect(restart).toBeDisabled();await expect(restart).toContainText('host recovering');await expect(restart).toHaveAttribute('title',/recovery budget/);await window.keyboard.press('Escape');
  await app.evaluate((_api,root)=>{const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js'),attempt=PtyHostClient.prototype.recoverCrashedHost;const g=globalThis as unknown as {manualAttempts:number};g.manualAttempts=0;PtyHostClient.prototype.recoverCrashedHost=function(...args:unknown[]){g.manualAttempts++;return attempt.apply(this,args);};},join(__dirname,'..'));
  await pane.getByTestId('terminal-recovery-retry').click();await expect(pane.getByTestId('terminal-history-notice')).toContainText('Previously consumed');
  expect(await app.evaluate(()=>(globalThis as unknown as {manualAttempts:number}).manualAttempts)).toBe(1);
@@ -137,6 +137,7 @@ for(const gap of [false,true])test(`real exit23 ${gap?'during the no-JS gap':'af
  const old=await crash(seeded.ayaHome);
  if(gap){await expect.poll(()=>app.evaluate(()=>(globalThis as unknown as {gapWaiting:boolean}).gapWaiting)).toBe(true);writeFileSync(releaseFile,'exit');await expect.poll(()=>alive(child)).toBe(false);await app.evaluate(()=>(globalThis as unknown as {releaseGap:()=>void}).releaseGap());}
  await recovered(seeded.ayaHome,old);if(!gap)writeFileSync(releaseFile,'exit');
+ if(gap)await expect(visiblePane(window,'shell 1').getByTestId('terminal-history-notice')).toContainText('the process had exited with code 23');
  await expect(visiblePane(window,'shell 1').getByTestId('xterm-host')).toContainText('process exited with code 23');
  await window.evaluate(()=>window.aya.ptySpawn({ptyId:'tab-left',command:'echo MUST_NOT_SPAWN',cwd:'/',cols:80,rows:24,attachOnly:true}));
  expect(alive(child)).toBe(false);

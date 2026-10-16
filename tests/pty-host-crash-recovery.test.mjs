@@ -228,7 +228,8 @@ test('timeout after a partial replay preserves the retry notice after the succes
 
 test('exit after recovery version capture is delivered again after the recovered-view fence',{timeout:15000},async()=>{
  const {client,status,logs,events,pid}=await setup(`exec /bin/sh -c 'echo READY; while [ ! -f "$HOME/release" ]; do sleep .01; done; exit 23'`);
- const response=client.onResponse.bind(client),observe=client.observeExit.bind(client);let released=false;
+ const response=client.onResponse.bind(client),observe=client.observeExit.bind(client),send=client.sendRequest.bind(client);let released=false,replayRequest;
+ client.sendRequest=(socket,req)=>{if(req.type==='spawn'&&req.req.replayAfter)replayRequest=req.req.replayAfter;return send(socket,req);};
  client.observeExit=()=>{}; // main received it, native ACK has not yet succeeded
  client.onResponse=message=>{
   if(!released&&message.ok&&Array.isArray(message.result?.recovery)){
@@ -241,11 +242,31 @@ test('exit after recovery version capture is delivered again after the recovered
  };
  try{
   process.kill(status.pid,'SIGKILL');await wait(()=>logs.some(e=>e.state==='recovered'));
-  const lifecycle=events.filter(e=>e.ptyId==='shell'&&(e.type==='exit'||e.type==='recovered'));
+  const lifecycle=events.filter(e=>e.ptyId==='shell'&&(e.type==='exit'||e.type==='recovered'||(e.type==='data'&&e.replayToken)));
+  const recovered=lifecycle.find(e=>e.type==='recovered');
+  assert.ok(recovered);
+  assert.deepEqual(lifecycle.map(e=>e.type),['recovered','data','exit'],'matching fence must precede exit');
+  assert.equal(lifecycle[1].replayToken,recovered.replayToken);
+  assert.equal(replayRequest.generation,recovered.generation);assert.equal(replayRequest.token,lifecycle[1].replayToken);
   assert.ok(lifecycle.some(e=>e.type==='recovered'),JSON.stringify({logs,lifecycle}));
   assert.equal(logs.filter(e=>e.event==='pty-crash-recovery-attempt-failed').length,0);
   assert.deepEqual(lifecycle.filter(e=>e.type==='exit').map(e=>e.exitCode),[23]);
   assert.equal(lifecycle.at(-1).type,'exit','recovered cannot erase an exit already observed while the version reply was pending');assert.equal(lifecycle.at(-1).exitCode,23);assert.equal(await client.getPid('shell'),null);
   client.observeExit=observe;observe('shell',client.observedExits.get('shell'));await wait(()=>client.observedExits.get('shell').acknowledged);await client.shutdown();
+ }finally{await cleanup(client);}
+});
+
+ test('unavailable exit ACK stays pending until recovery retires the exact native receipt',{timeout:20000},async()=>{
+ const {client,status,logs,events}=await setup();const send=client.sendRequest.bind(client);let refused=false,acks=0;
+ client.sendRequest=async(socket,req)=>{if(req.type==='exit-observed'){acks++;if(!refused){refused=true;return 'unavailable';}}return send(socket,req);};
+ try{
+  await client.spawn({...request(),ptyId:'peer'});fs.writeFileSync(path.join(process.env.HOME,'release'),'go');
+  await client.write('shell','quit\n');await wait(()=>logs.some(e=>e.event==='pty-exit-ack-unavailable'));
+  const receipt=client.observedExits.get('shell');assert.notEqual(receipt.acknowledged,true);
+  await sleep(180);assert.equal(acks,1,'no same-socket retry for unavailable');
+  assert.ok(registry.readOwnerRecord().panes.some(p=>p.id==='shell'&&p.exited));
+  process.kill(status.pid,'SIGKILL');await wait(()=>logs.some(e=>e.state==='recovered'));await wait(()=>receipt.acknowledged===true);
+  assert.equal(acks,2);assert.ok(!registry.readOwnerRecord().panes.some(p=>p.id==='shell'));
+  assert.deepEqual(events.filter(e=>e.type==='exit'&&e.ptyId==='shell').map(e=>e.exitCode),[23]);await client.shutdown();
  }finally{await cleanup(client);}
 });

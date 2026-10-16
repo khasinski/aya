@@ -828,7 +828,7 @@ function ProjectsLeftLayoutImpl({
               setMenu(null);
             }}
           >
-            Restart terminal
+            Restart terminal{terminals.find(t=>t.id===menu.id)?.recoveryBlocked ? " - host recovering" : ""}
           </button>
           {/* Split actions are intentionally absent: this layout does not
               support split panes (see App's layoutMode gating). */}

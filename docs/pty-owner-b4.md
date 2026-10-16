@@ -80,12 +80,22 @@ Nineteen real GUI cases pass on the follow-up integration build. Added cases pro
 
 I give the manual supervisor the normal three-attempt policy with two slots initially spent. The manual invocation therefore has one remaining slot; a short-lived success cannot grant another automatic attempt. After120 seconds of stable operation, the ordinary reset restores all three slots. Policy and real-host tests pin both boundaries. I also preserve the exhausted/retry notice if timeout happens after the recovered inventory is published but before its replay RPC completes: the later socket-close event cannot overwrite it with a generic, non-retryable disconnect. A deterministic timer hook exercises that exact boundary without depending on runner speed.
 
-## Native-exit boundary and25-pane measurement
+## Native-exit boundary and 25-pane measurement
 
 The additional real-process boundary test captures a live recovery version reply, lets that same child exit23 in the kernel before releasing the reply, holds native acknowledgement, and then requires the recovered-view fence followed by exactly one real exit23 with no failed attempt. It passes in Node and Electron. Core intentionally keeps pre-first-attach outcomes, so the suspected premature-exit loss was rejected; no product change was needed.
+
+The first trial below is superseded for peak RSS: reviewer F15 found that the sampler learned the successor PID only after readiness, excluding startup/replay. Its independent old-process-gone check remains valid. I am refreshing the measurement with the PID captured immediately from the child returned by `startHost`, raw timestamped samples and requested PID sets.
 
 I ran `scripts/measure-pty-crash-recovery.cjs` offline on macOS arm64, Electron43.5.0/Node24.19.0, with25 real owner-backed PTYs at120x40. Each local Node stand-in produced512 bytes every100ms during active phases. All25 child PIDs and the owner PID survived; the old JS process was confirmed gone before the successor started, with no sampled overlap. Recovery through all replay fences took311.89ms, then all25 input/output probes completed in142.86ms. Round-trip p50/p95 was6.41/6.62ms before and5.61/6.47ms after.
 
 Across~2.2s windows, old/new JS CPU was1.06%/1.57% idle and11.05%/6.45% active; owner CPU was0.014-0.015%. These are one local instrumented trial, not a steady-state speedup claim. Sampled RSS peaks were91.48MiB for the client/main driver,110.55MiB old JS,109.91MiB new JS and2.22MiB owner. The largest sampled combined driver+live-host+owner RSS was203.61MiB; individual peaks are not additive.94 asynchronous100ms RSS samples and200ms CPU samples were collected. This exercises actual PTYs, host replacement and native ownership, without renderer/DOM state, agent-model work or their memory. The accepted crash policy loses consumed display/history; the measurement does not claim lossless consumed output. Real unread-output preservation is separately pinned by the SIGKILL/readStop barrier tests.
 
 Aggregate gates remain pending at this documentation point. The earlier non-green full-unit baseline is retained as evidence; it is not the final result.
+
+## Final review follow-up - C1-C5 and F15/F16
+
+I distinguish exit acknowledgement results: `retired` succeeds, including an exact id/generation/event duplicate cached for at most 25 pane IDs and scoped to the owner instance; `unavailable` stays pending without retrying on the same socket; `stale` is dropped and logged. Recovery bootstrap uses the same retirement path so its native ACK is remembered before main retries. Real recovery and lost-reply reconnect tests require native inventory retirement, while stale generation and another owner instance cannot alias the receipt.
+
+Exited recovery panes now name their actual exit code instead of claiming that their process is running. Disabled Restart items show `- host recovering` visibly as well as the complete reason in their tooltip. A timer-instrumented test proves each default 100/500/1500 ms backoff occurs before its attempt. The kernel-exit boundary test now requires the matching generation/token replay fence strictly between recovery and exit 23.
+
+The measurement writes its result and raw samples under `test-results/`, with the successor PID recorded at process creation. Final full suites, refreshed measurement and package smoke on these bytes remain pending.
