@@ -668,10 +668,13 @@ export class PtyHostClient {
           if(key.length!==32||key.toString("base64")!==claim.credential||this.receivedAuthTransfer!==transfer)throw new Error("Invalid planned owner credential");
           // Validation above includes ended checkpoint records. This ACK owns
           // credentials only: it does not detach, resume or ACK pane displays.
-          transfer.retirementOwner={...planned.owner};transfer.receipt=planned.receipt;
-          if(await call({id:0,type:"auth-transfer-complete",attempt:transfer.ticket.attempt,receipt:planned.receipt})!==true||this.disposed||this.receivedAuthTransfer!==transfer)throw new HostAuthError();
+          // Install only fully validated authority BEFORE recording its receipt.
+          // A committed ACK may be lost; the exact receipt retry must not skip
+          // the key/launch installation or fall back to a live-only manifest.
           this.ownerSecret.set(key);this.ownsOwnerKey=true;this.recoveryOwner={...planned.owner};this.ownerContinuityUnavailable=false;
           for(const [id,launch]of recoveredLaunches){this.recoveryLaunches.set(id,launch);if(!this.endedBootPanes.has(id))this.live.add(id);}
+          transfer.retirementOwner={...planned.owner};transfer.receipt=planned.receipt;
+          if(await call({id:0,type:"auth-transfer-complete",attempt:transfer.ticket.attempt,receipt:planned.receipt})!==true||this.disposed||this.receivedAuthTransfer!==transfer)throw new HostAuthError();
           this.receivedAuthTransfer=null;
         }finally{key.fill(0);}
       }
@@ -1089,7 +1092,7 @@ export class PtyHostClient {
   private async connect(): Promise<void> {
     if (this.connectPromise) return this.connectPromise;
     const connected = this.socket && !this.socket.destroyed;
-    if (connected && (!this.metadataRequired || this.metadataSocket === this.socket)) return;
+    if (connected && (!this.metadataRequired || this.metadataSocket === this.socket) && !this.receivedAuthTransfer?.receipt) return;
     this.connectPromise = (connected ? Promise.resolve() : this.connectWithHostStart()).then(async () => {
       // A quit already requested shutdown before dispose. Authentication may
       // finish on an existing host, but no discovery/continuity RPC is needed.

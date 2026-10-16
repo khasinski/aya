@@ -4,9 +4,11 @@ const {writeAuthTransferTicket,authTransferTicketPath}=require('../../dist-elect
 const {isPtyHostRequest}=require('../../dist-electron/pty-host-protocol.js');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),wait=async f=>{const end=Date.now()+8000;while(!await f()){if(Date.now()>end)throw Error('control fixture readiness timeout');await sleep(5);}};
 (async()=>{
- const refusal=process.argv[2].startsWith('publish-refusal-'),custom=process.argv[2]==='publish-lost-completion'||refusal,script=custom?path.resolve(`dist-electron/pty-host-completion-loss-${process.pid}.js`):path.resolve('dist-electron/pty-host.js');
+ const plannedLoss=process.argv[2]==='publish-planned-mixed-lost',lost=process.argv[2]==='publish-lost-completion'||plannedLoss;
+ const completionFile=path.join(process.env.AYA_HOME,'transfer-completions-'+process.pid+'.jsonl');if(lost)process.env.AYA_TEST_COMPLETION_FILE=completionFile;
+ const refusal=process.argv[2].startsWith('publish-refusal-'),custom=lost||refusal,script=custom?path.resolve(`dist-electron/pty-host-completion-loss-${process.pid}.js`):path.resolve('dist-electron/pty-host.js');
  if(custom)fs.copyFileSync(path.resolve('dist-electron/pty-host.js'),script);
- if(process.argv[2]==='publish-lost-completion'){fs.appendFileSync(script,`\nconst transferClass=require('./pty-host-auth-transfer').HostAuthTransfer,completeTransfer=transferClass.prototype.complete;let firstCompletion=true;transferClass.prototype.complete=function(...args){const result=completeTransfer.apply(this,args);require('node:fs').appendFileSync(require('node:path').join(process.env.AYA_HOME,'transfer-completions.jsonl'),JSON.stringify({attempt:args[1],receipt:args[2]})+'\\n',{mode:0o600});if(firstCompletion){firstCompletion=false;for(const socket of clients)socket.destroy();}return result;};\n`);}
+ if(lost){fs.appendFileSync(script,`\nconst transferClass=require('./pty-host-auth-transfer').HostAuthTransfer,completeTransfer=transferClass.prototype.complete;let firstCompletion=true;transferClass.prototype.complete=function(...args){const result=completeTransfer.apply(this,args);require('node:fs').appendFileSync(process.env.AYA_TEST_COMPLETION_FILE,JSON.stringify({attempt:args[1],receipt:args[2]})+'\\n',{mode:0o600});if(firstCompletion){firstCompletion=false;for(const socket of clients)socket.destroy();}return result;};\n`);}
  if(refusal)fs.appendFileSync(script,`
 const originalHandle=handle;handle=async function(req,socket,preparations){if(req.type!=='owner-continuity')return originalHandle(req,socket,preparations);const runtime=require('./pty-owner-runtime').currentOwnerRuntime(),oldUncertain=runtime.record.uncertain,oldIncompatible=runtime.incompatible;try{switch(process.env.AYA_TEST_CONTINUITY_CAUSE){case 'pending':preparations.set(-1,{});break;case 'uncertain':runtime.record.uncertain=['uncertain-fixture'];break;case 'incompatible':runtime.incompatible=true;break;default:throw Error('unknown continuity fixture');}return await originalHandle(req,socket,preparations);}finally{preparations.delete(-1);runtime.record.uncertain=oldUncertain;runtime.incompatible=oldIncompatible;}};
 `);
@@ -21,7 +23,7 @@ const originalHandle=handle;handle=async function(req,socket,preparations){if(re
   }
   if(mode==='publish-empty'||mode==='publish-empty-recovered'){await c.kill('kept');await wait(async()=>!(await c.hostStatus()).owner);}
   let endedOrigin;
-  if(mode==='publish-ended'){
+  if(mode==='publish-ended'||plannedLoss){
    await c.spawn({ptyId:'ended',agent:'custom',command:'stty -echo; printf READY_ENDED; read line; printf LAST_SUFFIX; exit 23',cwd:process.env.HOME,cols:80,rows:24});
    await wait(async()=>(await c.getBuffer('ended')).includes('READY_ENDED'));
    const state=await c.preparePlannedHandover(Date.now()+120000);endedOrigin=state.eligible.find(p=>p.id==='ended');
@@ -37,13 +39,13 @@ const originalHandle=handle;handle=async function(req,socket,preparations){if(re
   }
   if(mode==='publish-public'||refusal||mode==='publish-ended'){
    assert.equal(await c.announceOrdinaryQuit(),true);await c.write('kept','OUTPUT_DURING_ORDINARY_QUIT\n');await wait(async()=>(await c.getBuffer('kept')).includes('OUTPUT_DURING_ORDINARY_QUIT'));
-   const names=fs.readdirSync(process.env.AYA_HOME).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name));assert.equal(names.length,1);keep=true;process.send({file:path.join(process.env.AYA_HOME,names[0]),pid,hostPid:status.pid,ownerPid:status.owner.pid,endedOrigin,...(custom?{script}:{})});
+   const names=fs.readdirSync(process.env.AYA_HOME).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name));assert.equal(names.length,1);keep=true;process.send({file:path.join(process.env.AYA_HOME,names[0]),pid,hostPid:status.pid,ownerPid:status.owner.pid,endedOrigin,...(custom?{script}:{}),...(lost?{completions:completionFile}:{})});
   }else if(mode==='publish'||mode==='publish-lost-completion'||mode==='publish-alive'||mode==='publish-empty'||mode==='publish-empty-recovered'){
    const deadline=Date.now()+120000,nonce='a'.repeat(64),budget=performance.now()+2000;
    const reserved=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce,deadline});
    const t={format:2,...reserved,nonce},file=authTransferTicketPath(process.env.AYA_HOME,t.attempt);
    await writeAuthTransferTicket(file,t,{deadline:budget});assert.equal(await c.request({id:0,type:'auth-transfer-activate',attempt:t.attempt}),true);
-   keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner?.pid??null,...(custom?{script}:{})});
+   keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner?.pid??null,...(custom?{script}:{}),...(lost?{completions:completionFile}:{})});
    if(mode==='publish-alive')await new Promise(resolve=>process.once('message',resolve));
   }else if(mode==='ordinary-wins'){
    const reserved=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'b'.repeat(64),deadline:Date.now()+120000});
@@ -52,20 +54,20 @@ const originalHandle=handle;handle=async function(req,socket,preparations){if(re
   }else if(mode==='core-wins'){
    await c.preparePlannedHandover(Date.now()+120000);await assert.rejects(c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'b'.repeat(64),deadline:Date.now()+120000}));await c.cancelPlannedHandover();
    await c.write('kept','AFTER_REFUSED_RESERVATION\n');await wait(async()=>(await c.getBuffer('kept')).includes('AFTER_REFUSED_RESERVATION'));assert.equal(await c.getPid('kept'),pid);process.send({ok:true});
-  }else if(mode==='planned-reserved'||mode==='planned-cancel'||mode==='publish-planned'||mode==='publish-planned-ended'){
+  }else if(mode==='planned-reserved'||mode==='planned-cancel'||mode==='publish-planned'||mode==='publish-planned-ended'||plannedLoss){
    const deadline=Date.now()+120000,nonce='b'.repeat(64),reserved=await c.request({id:0,type:'auth-transfer-reserve',purpose:'planned-update',nonce,deadline});
    await assert.rejects(c.request({id:0,type:'auth-transfer-activate',attempt:reserved.attempt}),'cannot activate without published core/announcement');
    await c.request({id:0,type:'handover-prepare',deadline,transferAttempt:reserved.attempt});await c.request({id:0,type:'handover-publish',display:null,consented:[]});
    await assert.rejects(c.request({id:0,type:'handover-announce',nonce:'c'.repeat(64),deadline,transferAttempt:reserved.attempt}));
    await c.request({id:0,type:'handover-announce',nonce,deadline,transferAttempt:reserved.attempt});assert.equal(await c.request({id:0,type:'auth-transfer-activate',attempt:reserved.attempt}),true);
    let file;
-   if(mode==='planned-cancel'||mode==='publish-planned'||mode==='publish-planned-ended'){
+   if(mode==='planned-cancel'||mode==='publish-planned'||mode==='publish-planned-ended'||plannedLoss){
     const t={format:2,...reserved,nonce};file=authTransferTicketPath(process.env.AYA_HOME,t.attempt);await writeAuthTransferTicket(file,t,{deadline:performance.now()+2000});
    }else assert.equal(await c.request({id:0,type:'auth-transfer-cancel',attempt:reserved.attempt}),'cancelled');
-   if(mode==='publish-planned'||mode==='publish-planned-ended'){keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner.pid,endedOrigin});return;}
+   if(mode==='publish-planned'||mode==='publish-planned-ended'||plannedLoss){keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner.pid,endedOrigin,...(custom?{script}:{}),...(lost?{completions:completionFile}:{})});return;}
    await c.cancelPlannedHandover();
    await c.write('kept','AFTER_PLANNED_ABORT\n');await wait(async()=>(await c.getBuffer('kept')).includes('AFTER_PLANNED_ABORT'));assert.equal(await c.getPid('kept'),pid);
-   if(mode==='planned-cancel'||mode==='publish-planned'||mode==='publish-planned-ended'){keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner?.pid??null,...(custom?{script}:{})});}else process.send({ok:true});
+   if(mode==='planned-cancel'||mode==='publish-planned'||mode==='publish-planned-ended'||plannedLoss){keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner?.pid??null,...(custom?{script}:{}),...(lost?{completions:completionFile}:{})});}else process.send({ok:true});
   }else throw Error('unknown fixture mode');
   for(const type of ['auth-transfer-reserve','auth-transfer-activate','auth-transfer-cancel','auth-transfer-complete'])assert.equal(isPtyHostRequest({id:1,type,attempt:'a'.repeat(64),extra:true}),false);
  }finally{if(!keep)await c.shutdown().catch(()=>{});c.dispose();c.dropSocket();if(custom&&!keep)fs.rmSync(script,{force:true});}

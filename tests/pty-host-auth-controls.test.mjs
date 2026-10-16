@@ -136,7 +136,7 @@ test('real lost completion RPC reply reconnects with identical receipt before on
  try{
   await c.redeemAnnouncedCapability(ticket);assert.equal((await c.hostStatus()).identity,null);assert.equal(c.isConnected(),false);assert.equal(completedResponses,0,'socket closed before first ACK reached pending response');assert.ok(c.receivedAuthTransfer?.receipt);
   assert.equal((await c.hostStatus()).pid,old.hostPid);assert.equal(c.receivedAuthTransfer,null);assert.equal(manifests,1);assert.equal(completedResponses,1);assert.equal(ids.length,2);
-  const receipts=fs.readFileSync(path.join(process.env.AYA_HOME,'transfer-completions.jsonl'),'utf8').trim().split('\n').map(JSON.parse);assert.equal(receipts.length,2);assert.deepEqual(receipts[0],receipts[1]);assert.equal(receipts[0].attempt,ticket.attempt);
+  const receipts=fs.readFileSync(old.completions,'utf8').trim().split('\n').map(JSON.parse);assert.equal(receipts.length,2);assert.deepEqual(receipts[0],receipts[1]);assert.equal(receipts[0].attempt,ticket.attempt);
   assert.equal(await c.getPid('kept'),old.pid);assert.equal((await c.hostStatus()).owner.pid,old.ownerPid);await c.shutdown();
  }finally{c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);if(old.script)fs.rmSync(old.script,{force:true});}
 });
@@ -276,4 +276,36 @@ test('failed planned display validation cannot complete or rearm credentials and
   const until=Date.now()+5000;while(!(await send(c.socket,{id:0,type:'buffer',ptyId:'kept'})).includes('AFTER_VALIDATION_ABORT')){if(Date.now()>until)throw Error('old reader did not resume');await new Promise(r=>setTimeout(r,5));}
   assert.equal(await send(c.socket,{id:0,type:'pid',ptyId:'kept'}),old.pid);
  }finally{if(c.socket)await send(c.socket,{id:0,type:'shutdown'}).catch(()=>{});c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
+});
+
+test('planned lost-success ACK keeps validated live and ended authority for exact retry and real B4 recovery',{timeout:30000},async()=>{
+ const old=await fixture('publish-planned-mixed-lost'),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(old.script),send=c.sendRequest.bind(c),onResponse=c.onResponse.bind(c),events=[],logs=[],ids=[];
+ let claims=0,manifests=0,responses=0,redemptions=0,validatedKey;
+ const redeem=c.redeemAnnouncedCapability.bind(c);c.redeemAnnouncedCapability=async value=>{redemptions++;return redeem(value);};
+ c.attachWebContents({isDestroyed:()=>false,send:(_channel,event)=>events.push(event)});
+ c.sendRequest=async(socket,req)=>{
+  if(req.type==='auth-transfer-complete')ids.push(c.nextId);
+  if(req.type==='owner-continuity')manifests++;
+  const result=await send(socket,req);
+  if(req.type==='handover-claim'){claims++;validatedKey=Buffer.from(result.credential,'base64');assert.deepEqual(result.checkpoint.eligible.map(p=>p.id).sort(),['ended','kept']);}
+  return result;
+ };
+ c.onResponse=message=>{if(ids.includes(message.id))responses++;return onResponse(message);};
+ try{
+  await c.redeemAnnouncedCapability(ticket);
+  await assert.rejects(c.adoptPlannedHandover(ticket,c.expectedHostIdentity('reuse'),async()=>{}),/disconnected/i);
+  assert.equal(responses,0,'server committed completion but no response settled the original RPC');
+  const pending=c.receivedAuthTransfer;assert.ok(pending?.receipt);assert.equal(c.ownsOwnerKey,true);assert.deepEqual(Buffer.from(c.ownerSecret),validatedKey);assert.equal(c.recoveryOwner.pid,old.ownerPid);assert.equal(c.recoveryLaunches.get('kept').pid,old.pid);assert.equal(c.live.has('kept'),true);
+  const status=await c.hostStatus();assert.equal(status.pid,old.hostPid);assert.equal(status.owner.pid,old.ownerPid);assert.equal(c.receivedAuthTransfer,null);assert.equal(responses,1);assert.equal(redemptions,1);assert.equal(claims,1);assert.equal(manifests,0,'the planned receipt is not replaced by a live-only manifest');
+  const receipts=fs.readFileSync(old.completions,'utf8').trim().split('\n').map(JSON.parse);assert.equal(receipts.length,2);assert.deepEqual(receipts[0],receipts[1]);assert.equal(receipts[0].attempt,ticket.attempt);
+  // Credential completion neither ACKs the ended display nor respawns it.
+  await c.spawn({ptyId:'ended',agent:'custom',command:'never respawn',cwd:process.env.HOME,cols:80,rows:24,attachIfReused:true,replayAfter:{generation:old.endedOrigin.generation,offset:old.endedOrigin.outputEnd,token:'after-lost-completion'}});
+  assert.equal(await c.getPid('ended'),null);assert.equal(events.filter(e=>e.ptyId==='ended'&&e.type==='data'&&e.replay).map(e=>e.chunk).join(''),'LAST_SUFFIX');assert.deepEqual(events.filter(e=>e.ptyId==='ended'&&e.type==='exit').map(e=>e.exitCode),[23]);
+  assert.equal(await c.acknowledgeHandoverDisplay('ended',old.endedOrigin.generation,'stale'),false);assert.equal(await c.acknowledgeHandoverDisplay('ended',old.endedOrigin.generation,'after-lost-completion'),true);
+  c.enableCrashRecovery({log:(event,fields)=>logs.push({event,...fields})});assert.equal(ownerProcessStartIdentity(old.hostPid),ticket.hostStartIdentity);process.kill(old.hostPid,'SIGKILL');
+  const until=Date.now()+12000;while(!logs.some(e=>e.state==='recovered')){if(Date.now()>until)throw Error('validated planned authority did not recover the owner after ACK retry');await new Promise(r=>setTimeout(r,5));}
+  const recovered=await c.hostStatus();assert.notEqual(recovered.pid,old.hostPid);assert.equal(recovered.owner.pid,old.ownerPid);assert.equal(await c.getPid('kept'),old.pid);
+  await c.write('kept','AFTER_PLANNED_LOST_ACK_RECOVERY\n');while(!(await c.getBuffer('kept')).includes('AFTER_PLANNED_LOST_ACK_RECOVERY')){if(Date.now()>until)throw Error('recovered input failed');await new Promise(r=>setTimeout(r,5));}
+  await c.shutdown();
+ }finally{validatedKey?.fill(0);if(c.socket)await send(c.socket,{id:0,type:'shutdown'}).catch(()=>{});c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);fs.rmSync(old.script,{force:true});}
 });
