@@ -35,6 +35,8 @@ Usage:
   aya status error text              Mark this terminal as errored
   aya status clear                   Clear agent status
   aya pane list [--project slug]     List the panes/agents in this project
+  aya pane state target [--explain] [--project slug]
+                                     Show fresh state and the matching screen rules
   aya pane read target [--project slug]
                                      Print another pane's recent output;
                                      target is a pane name or an id from
@@ -214,6 +216,9 @@ function requestFromArgs() {
   }
   // pane read/send target ANOTHER terminal, so the caller's own project scopes
   // the name lookup - "reviewer" means the one in this project.
+  if (kind === "pane-state") {
+    return {type:"pane-state",target:process.argv[4],explain:process.argv[5] === "explain",projectSlug:process.argv[6] || optionalEnv("AYA_PROJECT_SLUG")};
+  }
   if (kind === "pane-read") {
     return {
       type: "pane-read",
@@ -750,6 +755,19 @@ case "$command" in
     case "$action" in
       list|ls)
         send_control pane-list "$project"
+        ;;
+      state)
+        target=""
+        explain=""
+        for arg do
+          case "$arg" in
+            --explain) if [ -n "$explain" ]; then usage_fail; fi; explain="explain" ;;
+            -*) usage_fail ;;
+            *) if [ -n "$target" ]; then usage_fail; fi; target=$arg ;;
+          esac
+        done
+        if [ -z "$target" ]; then usage_fail; fi
+        send_control pane-state "$target" "$explain" "$project"
         ;;
       read)
         target="${1:-}"

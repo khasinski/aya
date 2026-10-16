@@ -19,6 +19,12 @@ async function until(predicate, message) {
 }
 (async () => {
   try {
+    const bundledRules = require(path.join(root, "screen-rule-data.js")).loadBundledScreenRules();
+    const ruleEvidence = require(path.join(root, "agent-screen-rules.js")).evaluateScreenEvidence(["Do you want to proceed?"], "claude");
+    assert.equal(Object.keys(bundledRules.sets).length, 6);
+    assert.equal(ruleEvidence.verdict, "waiting"); assert.equal(ruleEvidence.match.id, "do-you-want");
+    assert.equal(ruleEvidence.match.source, "builtin/generic");
+    console.log(JSON.stringify({packagedScreenRules: "passed", version: bundledRules.version, digest: bundledRules.digest}));
     // Exercise the packaged shared row codec and compressed display receiver,
     // rather than relying only on file globs or source-side module availability.
     const rows = require(path.join(resources, "app.asar/shared/renderer-cell-runs.cjs"));

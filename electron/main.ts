@@ -827,6 +827,7 @@ app.whenReady().then(async () => {
     // pane was dead, and dropping it made host rejections unhandled.
     writePane: (terminalId, data) => ptyHost.write(terminalId, data),
     paneHold: (terminalId) => ptyHost.holdReason(terminalId),
+    paneState: (terminalId) => ptyHost.paneState(terminalId),
     team: teamDeps,
     teamRunner,
     teamPanes: teamPaneDeps(teamDeps, teamPaneHost, teamRunner),

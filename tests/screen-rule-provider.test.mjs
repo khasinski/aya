@@ -12,10 +12,10 @@ test('invalid bundle is sticky, clearly unavailable, and logs exactly one diagno
 });
 
 test('unavailable bundled rules cannot clear agent hold/status, busy remains false',()=>{
- const code=`const d=require('./dist-electron/screen-rule-data');d.loadBundledScreenRules=()=>{throw Error('bad bundle');};const p=require('./dist-electron/screen-rule-provider');const logs=[];p.builtinScreenRules.setLogger((...a)=>logs.push(a));const v=require('./dist-electron/vt-state');const s={generation:'g',agent:'claude',shell:false,composerSeen:true,openedAt:0,lastOutputAt:0,cols:80,rows:['Do you want to proceed?'],cells:[[]]};console.log(JSON.stringify({hold:v.snapshotHold(s),busy:v.snapshotBusy(s),status:v.snapshotStatus(s),rules:p.builtinScreenRules.get(),logs}));`;
+ const code=`const d=require('./dist-electron/screen-rule-data');d.loadBundledScreenRules=()=>{throw Error('bad bundle');};const p=require('./dist-electron/screen-rule-provider');const logs=[];p.builtinScreenRules.setLogger((...a)=>logs.push(a));const v=require('./dist-electron/vt-state');const s={generation:'g',agent:'claude',shell:false,composerSeen:true,openedAt:0,lastOutputAt:0,cols:80,rows:['Do you want to proceed?'],cells:[[]]};console.log(JSON.stringify({hold:v.snapshotHold(s),busy:v.snapshotBusy(s),status:v.snapshotStatus(s),rules:p.builtinScreenRules.get(),explain:require('./dist-electron/pane-state').formatPaneState('agent',require('./dist-electron/pane-state').explainPaneSnapshot(s),true),logs}));`;
  const r=JSON.parse(execFileSync(process.execPath,['-e',code],{encoding:'utf8',timeout:5000,env:{...process.env,ELECTRON_RUN_AS_NODE:'1'}}));
  assert.equal(r.hold.hold,HOLD_RULES_UNAVAILABLE);assert.equal(r.busy,false);assert.equal(r.status.waiting,null);
- assert.deepEqual(r.rules,{available:false,reason:HOLD_RULES_UNAVAILABLE});assert.equal(r.logs.length,1);
+ assert.deepEqual(r.rules,{available:false,reason:HOLD_RULES_UNAVAILABLE});assert.equal(r.logs.length,1);assert.match(r.explain,/rules unavailable:/);assert.match(r.explain,/policy:rules-unavailable/);
 });
 
 test('winning rule explains the same precedence, exact match, source and version',()=>{

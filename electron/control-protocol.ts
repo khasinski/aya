@@ -52,6 +52,7 @@ export type ControlRequest =
       targetId?: string;
       projectSlug?: string;
     }
+  | { type: "pane-state"; target?: string; targetId?: string; projectSlug?: string; explain: boolean }
   // Type into another pane. `submit` appends a carriage return, i.e. presses
   // Enter — without it the text is left on the pane's input line.
   | {
@@ -222,7 +223,7 @@ export function parseControlRequest(value: unknown): ControlRequest {
       selfTerminalId: optionalString(value.selfTerminalId),
     };
   }
-  if (type === "pane-read" || type === "pane-send") {
+  if (type === "pane-read" || type === "pane-send" || type === "pane-state") {
     const target = optionalString(value.target);
     const targetId = optionalString(value.targetId);
     if (!target && !targetId) {
@@ -234,6 +235,10 @@ export function parseControlRequest(value: unknown): ControlRequest {
       projectSlug: optionalString(value.projectSlug),
     };
     if (type === "pane-read") return { type, ...common };
+    if (type === "pane-state") {
+      if (value.explain !== undefined && typeof value.explain !== "boolean") throw new Error("pane-state.explain must be boolean");
+      return { type, ...common, explain: value.explain === true };
+    }
     // Empty text is rejected rather than treated as a bare Enter: "send
     // nothing" is almost always a caller bug, and a stray Enter into an agent
     // pane can accept whatever prompt happens to be on screen.

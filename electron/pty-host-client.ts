@@ -1,3 +1,4 @@
+import { explainPaneSnapshot, unavailablePaneState, type PaneStateResult } from "./pane-state";
 import { prepareSpawn, watchAgentSession } from "./pty-prepare";
 import { snapshotBusy, snapshotHold, snapshotStatus } from "./vt-state";
 import { HOLD_NOT_RUNNING, HOLD_STARTING } from "./pane-holds";
@@ -680,6 +681,19 @@ export class PtyHostClient {
     try { return (await this.request({ id: 0, type: "snapshot", ptyId })) === "disconnected"; }
     catch { return this.lostOwned.has(ptyId); }
   }
+  /** Read-only: no composerSeen acknowledgement or separate racing hold/busy reads. */
+  async paneState(ptyId: string): Promise<PaneStateResult> {
+    if (this.crashBlocked) return unavailablePaneState("the terminal host is disconnected or recovering; its processes may still be running");
+    try {
+      const value = await this.request({ id: 0, type: "snapshot", ptyId });
+      if (value === null) return unavailablePaneState("is not running", "stopped");
+      if (value === "starting") return unavailablePaneState("is still starting up", "starting");
+      if (value === "disconnected") return unavailablePaneState("the terminal host is disconnected; its processes may still be running");
+      const snapshot = asVtSnapshot(value);
+      return snapshot ? explainPaneSnapshot(snapshot) : unavailablePaneState(PANE_HOLD_UNKNOWN);
+    } catch { return unavailablePaneState(PANE_HOLD_UNKNOWN); }
+  }
+
   async paneBusy(ptyId: string): Promise<boolean> {
     try {
       const snapshot = asVtSnapshot(await this.request({ id: 0, type: "snapshot", ptyId }));
