@@ -1,8 +1,19 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
-import { expect, hostPidsForHome, test } from "./fixtures";
+import { expect, hostPidsForHome, test as base, launchApp, closeAndWait } from "./fixtures";
 import { waitForShellReady } from "./helpers/terminal";
+
+// These are the unknown-key reuse cases. A main that created the host now
+// recovers it automatically; an ordinary app relaunch has no owner credential.
+const test=base.extend({app:async({seeded},use)=>{
+  const env={...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:"0"}};
+  const first=await launchApp(env);
+  await waitForShellReady(await first.firstWindow());
+  await expect.poll(()=>inventory(seeded.ayaHome).panes.length).toBe(2);
+  await closeAndWait(first);
+  const reused=await launchApp(env);await use(reused);await closeAndWait(reused);
+}});
 
 type Inventory = { pid: number; panes: Array<{ id: string; pid: number; generation: number }> };
 const inventory = (home: string): Inventory => JSON.parse(readFileSync(join(home, "pty-owner/record.json"), "utf8"));
@@ -19,6 +30,7 @@ async function loseHost(window: Page, home: string) {
   const row = window.locator('.aya-sidebar-row[data-terminal-name="shell 1"]');
   await expect(row.locator(".aya-sidebar-statusdot")).toHaveClass(/--error/);
   await expect(window.getByTestId("xterm-host").first()).toContainText("terminal host disconnected");
+  await expect(window.getByTestId("terminal-history-notice").first()).toContainText("Aya restarted since this terminal host started");
   return { before, row };
 }
 

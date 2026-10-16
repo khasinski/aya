@@ -42,6 +42,7 @@ test("host lost while a spawn waits on its CLI check: the spawn fails, the tab a
   assert.equal(await inFlight, "refused: PTY host disconnected");
   await waitFor(() => typeOf(events, "a").includes("disconnected"));
   assert.deepEqual([typeOf(events, "x"), typeOf(events, "a")], [["disconnected"], ["disconnected"]]);
+  assert.equal(await client.restart(),true,"only the explicit confirmed restart may replace this disconnected host");
   await client.spawn({ ptyId: "x", command: "/bin/sleep 120", cwd, cols: 80, rows: 24 });
   const { pid: newPid } = await client.hostStatus();
   assert.notEqual(newPid, pid);

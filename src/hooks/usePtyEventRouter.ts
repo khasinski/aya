@@ -30,7 +30,7 @@ export function usePtyEventRouter({
       if (eventTouchesActivity(event)) {
         lastActivityRef.current[event.ptyId] = Date.now();
       }
-      if (event.type === "disconnected") markSpawned(event.ptyId);
+      if (event.type === "disconnected" || event.type === "recovered") markSpawned(event.ptyId);
       if (event.type === "no-session") {
         // Remember the deliberate stopped state: a later re-mount of this tab
         // must attach-only again (and stay stopped) instead of silently

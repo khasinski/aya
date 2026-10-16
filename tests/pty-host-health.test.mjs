@@ -166,3 +166,9 @@ test("a version-only change is compatible when the PTY content matches", async (
   assert.equal(health.stale, false);
   assert.deepEqual(health.warnings, []);
 });
+
+test('disconnected recovery refusal is preserved in Diagnostics without inventing an active host',async()=>{
+ const reason='Aya restarted since this terminal host started, so it cannot restart the host for these panes. Processes may still be running.';
+ const health=await gatherHostHealth(deps({connected:()=>false,socketExists:async()=>false,ownerExists:()=>true,status:async()=>({identity:null,ptyCount:0,recoveryReason:reason}),probeSocket:async()=>{throw Error('no socket probe');},liveRecords:()=>[]}).d);
+ assert.equal(health.pid,null);assert.equal(health.recoveryReason,reason);assert.ok(health.warnings.includes(reason));
+});

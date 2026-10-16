@@ -4,6 +4,7 @@ import { VtCheckpointTerminal } from "./vt-checkpoint";
 import type { VtCheckpoint } from "./vt-checkpoint";
 import { MIN_PTY_COLS, MIN_PTY_ROWS } from "./pty-core-constants";
 import type { AgentKind } from "./presets";
+import { RecoveryScreen } from "./vt-recovery-screen";
 import { randomUUID } from "node:crypto";
 // Only the visible screen matters for "what is on screen right now", and
 // scrollback would grow a buffer per pane in the host process for no gain.
@@ -28,6 +29,8 @@ export interface VtPane {
   lastDialog: string | undefined;
   /** The agent has finished starting: its composer was on screen once, or (no composer rule) its screen settled. */
   composerSeen: boolean;
+  /** Consumed screen was lost in a JS crash; only a proved fresh redraw clears it. */
+  recoveryUnknown?: boolean;
   /** When the mirror opened and when the pane last wrote (null: nothing yet): a pane with no composer rule is up once quiet. */
   openedAt: number;
   lastOutputAt: number | null;
@@ -40,6 +43,7 @@ export interface VtPane {
 
 export const panes = new Map<string, VtPane>();
 const checkpointTerminals = new WeakMap<VtPane, VtCheckpointTerminal>();
+const recoveryScreens = new WeakMap<VtPane, RecoveryScreen>();
 
 export function openVtPane(
   ptyId: string,
@@ -84,6 +88,7 @@ export function closeVtPane(ptyId: string): void {
   const pane = panes.get(ptyId);
   if (!pane) return;
   panes.delete(ptyId);
+  recoveryScreens.get(pane)?.dispose();
   if (pane.timer) clearTimeout(pane.timer);
   try {
     checkpointTerminals.get(pane)!.dispose();
@@ -117,6 +122,7 @@ export function writeVtPane(ptyId: string, chunk: string): void {
 /** Only the cell flags read by the composer detector travel across the socket. */
 export interface VtSnapshot {
   generation: string;
+  recoveryUnknown?: boolean;
   agent?: AgentKind;
   shell: boolean;
   composerSeen: boolean;
@@ -144,7 +150,7 @@ export function snapshotOf(pane: VtPane): VtSnapshot {
     }
     cells.push(row);
   }
-  return { generation, agent: pane.agent, shell: pane.shell, composerSeen: pane.composerSeen,
+  return { generation, ...(pane.recoveryUnknown?{recoveryUnknown:true}:{}), agent: pane.agent, shell: pane.shell, composerSeen: pane.composerSeen,
     openedAt: pane.openedAt, lastOutputAt: pane.lastOutputAt, rows, cells, cols: pane.terminal.cols };
 }
 export async function vtSnapshot(id: string): Promise<VtSnapshot | null> {
@@ -156,7 +162,7 @@ export async function vtSnapshot(id: string): Promise<VtSnapshot | null> {
 /** Opaque evaluator state is monotonic, and cannot spill into a respawned pane. */
 export function markComposerSeen(id: string, generation: string): void {
   const pane = panes.get(id);
-  if (pane && snapshotGeneration(pane) === generation) pane.composerSeen = true;
+  if (pane && !pane.recoveryUnknown && snapshotGeneration(pane) === generation) pane.composerSeen = true;
 }
 function snapshotGeneration(pane: VtPane): string { return generations.get(pane) ?? snapshotOf(pane).generation; }
 
@@ -188,6 +194,7 @@ export function checkpointMetadata(value: unknown): VtPaneCheckpointMetadata {
 export async function checkpointVtPane(id: string): Promise<VtCheckpoint> {
   const pane = panes.get(id);
   if (!pane) throw new Error("VT pane missing during checkpoint");
+  if(pane.recoveryUnknown)throw new Error("Screen unknown after the terminal host restarted");
   await checkpointTerminals.get(pane)!.drain();
   const metadata: VtPaneCheckpointMetadata = {
     generation: snapshotGeneration(pane), shell: pane.shell, lastWaiting: pane.lastWaiting,
@@ -219,3 +226,15 @@ export function vtPaneAltScreen(id: string): boolean | undefined {
 }
 export function vtPaneWaiting(id: string): boolean { return panes.get(id)?.lastWaiting ?? false; }
 export function vtPaneDialog(id: string): string | undefined { return panes.get(id)?.lastDialog; }
+
+/** Main must nudge SIGWINCH after attach. Coverage follows applied parser work,
+ * and stays conservative across scroll, geometry and alternate-buffer changes. */
+export function beginVtRecovery(id:string,timeout:()=>void=()=>{},applied:()=>void=()=>{}):void {
+ const pane=panes.get(id);if(!pane)throw Error("Recovery mirror is missing");
+ pane.recoveryUnknown=true;pane.composerSeen=false;
+ recoveryScreens.set(pane,new RecoveryScreen(pane.terminal,(known,timedOut)=>{
+  if(panes.get(id)!==pane)return;
+  if(known){pane.recoveryUnknown=false;pane.onSnapshot?.(snapshotOf(pane));applied();}
+  else if(timedOut)timeout();
+ }));
+}

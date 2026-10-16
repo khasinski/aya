@@ -422,7 +422,7 @@ export interface SpawnRequest {
 
 export type PtyEvent =
   | { type: "data"; ptyId: string; chunk: string; replay?: boolean; reset?: boolean; replayToken?: string }
-  | { type: "exit"; ptyId: string; exitCode: number }
+  | { type: "exit"; ptyId: string; exitCode: number; ownerExit?:{generation:number;event:number} }
   | {
       type: "spawn-failed";
       ptyId: string;
@@ -432,7 +432,10 @@ export type PtyEvent =
   // Host had no live session for an attach-only spawn: the process died while
   // the host stayed up. The tab becomes stopped/restartable, not respawned.
   | { type: "no-session"; ptyId: string }
-  | { type: "disconnected"; ptyId: string }
+  | { type: "disconnected"; ptyId: string; reason?:string;recoveryBlocked?:boolean;retryable?:boolean }
+  | {type:"recovered";ptyId:string;generation:string;replayToken:string;notice:string}
+  | {type:"recovery-screen";ptyId:string;generation:string;known:boolean}
+  | {type:"recovery-state";ptyId:string;generation:string;notice:string;screenUnknown:boolean}
   // Explicit status parsed from an OSC 9001 `aya.status` sequence the TUI (or
   // a wrapper script) emitted inline in its own output - see integrations.md.
   // Same vocabulary as ControlStatusUpdate's "status" request, delivered
@@ -755,6 +758,7 @@ export interface AyaApi {
    *  session transcripts for the tab's cwd (history, not terminal output). */
   harnessSearch(req: HarnessSearchRequest): Promise<HarnessSearchHit[]>;
   restartPtyHost(): Promise<void>;
+  retryPtyHostRecovery():Promise<boolean>;
   /** Stop running hosts this Aya does not use; returns the pids signalled. */
   stopOtherPtyHosts(): Promise<number[]>;
   /** Asks first when the pane shows background tasks or monitors a restart stops; false: the user kept it. */
@@ -1011,6 +1015,12 @@ export interface TerminalState {
    *  it never shows as a "done"/successful finish. Cleared on restart. */
   stopped?: boolean;
   disconnected?: boolean;
+  disconnectedReason?: string;
+  recoveryGeneration?: string;
+  recoveryNotice?: string;
+  recoveryScreenUnknown?: boolean;
+  recoveryBlocked?: boolean;
+  recoveryRetryable?: boolean;
   /** Restored from a persisted project tab, not newly created by the user.
    *  Agent presets may append --resume only in this case. */
   restored?: boolean;

@@ -117,13 +117,16 @@ export class OwnerPty implements IPty {
     this.finalized = true;
     clearTimeout(this.drainTimer);
     this.reader.destroy();
-    try { await this.owner.retired(this.exited); }
+    try { if(!this.owner.deferredExitAcknowledgements)await this.owner.retired(this.exited); }
     catch { /* Owner keeps an unacknowledged exit for explicit reconciliation. */ }
     finally {
       for (const listener of this.exitListeners) listener({ exitCode: this.exited.exitCode ?? 0, signal: this.exited.signal });
       this.settleClosed();
     }
   }
+  /** Native outcome stays with its parent until main has observed it. */
+  exitReceipt():OwnerPane|null {return this.exited;}
+  async acknowledgeExit():Promise<void>{if(this.exited)await this.owner.retired(this.exited);}
   private drainExit(): void {
     this.reader.resume();
     // Match node-pty's post-exit drain ceiling; never begin this until the

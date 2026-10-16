@@ -45,6 +45,7 @@ test("registers exactly the terminal and host channels", () => {
     "agent:waiting",
     "harness:search",
     "pty-host:restart",
+    "pty-host:retry-recovery",
     "pty-host:stop-others",
     "pty:buffer",
     "pty:confirm-restart",
@@ -178,3 +179,9 @@ test("writes to one pane keep their order behind a slow check; another pane does
     "the keys typed after the Enter did not overtake it",
   );
 });
+
+ test('manual crash retry reaches the main-owned supervisor and defaults to refusal when unavailable',async()=>{
+  let attempts=0;const fixture=setup({retryRecovery:async()=>{attempts++;return true;}});
+  assert.equal(await fixture.call('pty-host:retry-recovery'),true);assert.equal(attempts,1);
+  assert.equal(await setup().call('pty-host:retry-recovery'),false);
+ });

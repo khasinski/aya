@@ -329,3 +329,14 @@ test("Settings disconnected-owner recovery asks once and Cancel never sends shut
   assert.equal(operations(log).filter(([op]) => op === "ask-restart").length, 1);
   assert.equal(operations(log).filter(([op]) => ["confirm", "restart", "kill"].includes(op)).length, 0);
 });
+
+test('status A then socket B asks again with fresh inventory and Cancel sends no shutdown',async(t)=>{
+ const {createRequire}=await import('node:module'),require=createRequire(import.meta.url),{PtyHostClient}=require('../dist-electron/pty-host-client.js'),native=require('../dist-electron/pty-owner-client.js');
+ const questions=[],{d,state,actions}=setup(t,{askRestart:async(_yes,text)=>{questions.push(text);return questions.length===1;}}),client=new PtyHostClient('unused'),requests=[],probe=native.ownerProcessStartIdentity;
+ state.owner={pid:800,startTime:'owner-A',instanceId:'a'.repeat(32),hash:'c'.repeat(64),incompatible:true,disconnected:['A'],inventory:[{id:'A',pid:900}]};
+ const b={pid:2147483001,ptyCount:1,owner:{pid:801,startTime:'owner-B',instanceId:'b'.repeat(32),hash:'c'.repeat(64),incompatible:false,disconnected:['B'],inventory:[{id:'B',pid:901}]}};
+ client.socket={destroyed:false,once(){return this;}};client.request=async r=>{requests.push(r.type);return b;};client.sendRequest=async(_s,r)=>{requests.push(r.type);};native.ownerProcessStartIdentity=()=> 'B-start';
+ d.ptyHost.restart=consent=>client.restart(consent);
+ try{await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);assert.equal(questions.length,2);assert.match(questions[0],/A \(PID 900\)/);assert.match(questions[1],/host changed/);assert.match(questions[1],/B \(PID 901\)/);assert.deepEqual(requests,['version']);}
+ finally{native.ownerProcessStartIdentity=probe;client.dispose();}
+});

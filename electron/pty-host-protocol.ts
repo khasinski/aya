@@ -10,7 +10,7 @@ export type PtyHostRequest =
   | { id: number; type: "write"; ptyId: string; data: string }
   | { id: number; type: "resize"; ptyId: string; cols: number; rows: number }
   | { id: number; type: "kill"; ptyId: string }
-  | { id: number; type: "shutdown" }
+  | { id: number; type: "shutdown"; target?:{pid:number;startTime:string;ownerInstance:string|null} }
   | { id: number; type: "search"; query: string }
   | { id: number; type: "buffer"; ptyId: string }
   // Live cwd of a PTY's child. Added after 0.7.8: a host from an older build
@@ -40,14 +40,17 @@ export type PtyHostRequest =
   | { id: number; type: "handover-detach"; consented: string[] }
   | { id: number; type: "handover-reuse" }
   | { id: number; type: "handover-ack-reuse" }
+  | { id:number;type:"exit-observed";ptyId:string;generation:number;event:number }
   | { id: number; type: "version" };
 
 export type PtyHostResponse = (
   | { id: number; ok: true; result?: unknown }
-  | { id: number; ok: false; error: string }) & { ownerBacked?: true; hostPid?: number };
+  | { id: number; ok: false; error: string }) & { ownerBacked?: true; hostPid?: number;ownerIdentity?: import("./pty-owner-runtime").RecoveryOwnerIdentity&{incompatible:boolean} };
 
 export interface PtyOwnerStatus {
   pid: number;
+  instanceId?:string;
+  startTime?:string;
   incompatible: boolean;
   hash?: string;
   disconnected: string[];
@@ -60,7 +63,7 @@ export type PtyHostEventMessage = { type: "event"; event: PtyEvent };
 
 export type PtyHostPrepareMessage = { type: "prepare"; prepareId: number; req: SpawnRequest; cwd: string };
 export type PtyHostSnapshotMessage = { type: "snapshot"; ptyId: string; snapshot: VtSnapshot; replay?: true };
-export type PtyHostSpawnedMessage = { type: "spawned"; req: SpawnRequest; pid: number; cwd: string; spawnedAt: number; restored?:true;ownerBacked?:true;hostPid?:number };
+export type PtyHostSpawnedMessage = { type: "spawned"; req: SpawnRequest; pid: number; cwd: string; spawnedAt: number; ownerIdentity?: import("./pty-owner-runtime").RecoveryOwnerIdentity&{incompatible:boolean};launch?: import("./launch-mode").PaneLaunch;restored?:true;ownerBacked?:true;hostPid?:number };
 export type PtyHostMessage = PtyHostResponse | PtyHostEventMessage | PtyHostPrepareMessage | PtyHostSnapshotMessage | PtyHostSpawnedMessage | { type: "cancel-prepare"; prepareId: number };
 
 export function isPtyHostRequest(value: unknown): value is PtyHostRequest {
@@ -86,6 +89,7 @@ export function asVtSnapshot(value: unknown): VtSnapshot | null {
   if (!value || typeof value !== "object") return null;
   const s = value as VtSnapshot;
   if (typeof s.generation !== "string" || typeof s.shell !== "boolean" ||
+      (s.recoveryUnknown !== undefined && typeof s.recoveryUnknown !== "boolean") ||
       typeof s.composerSeen !== "boolean" || typeof s.openedAt !== "number" ||
       !(s.lastOutputAt === null || typeof s.lastOutputAt === "number") ||
       !Number.isInteger(s.cols) || s.cols < 1 ||

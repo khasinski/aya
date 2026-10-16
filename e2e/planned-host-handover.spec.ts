@@ -188,7 +188,9 @@ test('two replacements retain an unmounted ended pane until its real view applie
  expect((await prepare(first.app)).ok).toBe(true);await quit(first.app);appendFileSync(hostScript,'\n// first ended-pane replacement\n');
  const second=await launch(seeded);await expect(second.window.getByTestId('xterm-host').first()).toBeVisible();writeFileSync(release,'go');
  await expect.poll(()=>second.window.evaluate(()=>window.aya.ptyBuffer('ended-deferred'))).toContain('LAST_SUFFIX');
- await expect.poll(()=>inventory(seeded.ayaHome).panes.some(p=>p.id==='ended-deferred')).toBe(false);
+ // B4 retains the native outcome until main observes it. An unmounted
+ // restored view has not received its exit yet; the next checkpoint carries it.
+ await expect.poll(()=>inventory(seeded.ayaHome).panes.find(p=>p.id==='ended-deferred')?.exited).toBe(true);
  expect((await prepare(second.app)).ok).toBe(true);await quit(second.app);appendFileSync(hostScript,'\n// second ended-pane replacement\n');
  const third=await launch(seeded);await expect(third.window.getByTestId('xterm-host').first()).toBeVisible();
  await third.window.locator('.aya-sidebar-row[data-terminal-name="Ended deferred"]').click();

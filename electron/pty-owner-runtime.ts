@@ -19,6 +19,15 @@ const secret = inheritedSecret();
 /** Only the host's consumed, announced handover window may call this. Never
  * include it in checkpoint state, registries, argv, environment or logs. */
 export function ownerHandoverCredential(): Buffer { return Buffer.from(secret); }
+export interface RecoveryOwnerIdentity { pid:number; startTime:string; instanceId:string; binaryHash:string }
+let recoveryOwner: RecoveryOwnerIdentity | null = null;
+let exitAcknowledgements=false;
+export function requireOwnerExitAcknowledgements():void {exitAcknowledgements=true;}
+/** Must be set before open: recovery must never create a replacement owner. */
+export function requireRecoveryOwner(identity: RecoveryOwnerIdentity): void {
+  if(runtime)throw new Error("PTY owner runtime already opened before recovery preflight");
+  recoveryOwner=identity;
+}
 let runtime: Promise<OwnerRuntime> | null = null;
 let ready: OwnerRuntime | null = null;
 let unavailableListener: ((owner: OwnerRuntime) => void) | null = null;
@@ -32,6 +41,7 @@ export async function shutdownOwnerRuntime(): Promise<void> {
   if (runtime) await (await runtime).shutdown();
 }
 export class OwnerRuntime {
+  readonly deferredExitAcknowledgements=exitAcknowledgements;
   client: PtyOwnerClient | null = null;
   record!: OwnerRecord;
   incompatible = false;
@@ -88,7 +98,12 @@ export class OwnerRuntime {
     prepareOwnerDirectory();
     const result = new OwnerRuntime(), artifacts = ownerArtifactPaths();
     const hash = ownerBinaryHash(artifacts.executable), previous = readOwnerRecord();
+    if(recoveryOwner && (!previous || previous.pid!==recoveryOwner.pid || previous.startTime!==recoveryOwner.startTime ||
+      previous.instanceId!==recoveryOwner.instanceId || previous.binaryHash!==recoveryOwner.binaryHash || hash!==recoveryOwner.binaryHash || !ownerRecordIsLive(previous))) {
+      throw new Error("The recorded PTY owner is dead, changed or incompatible; crash recovery kept its inventory");
+    }
     if (previous && !ownerRecordIsLive(previous) && (previous.panes.some(p => !p.acknowledged) || previous.uncertain?.length)) {
+      if(recoveryOwner)throw new Error("The recorded PTY owner disappeared during recovery; its inventory was kept");
       if (ownerReaderIsLive(previous) && previous.jsPid !== process.pid) throw new Error("Another JS host still owns these terminals");
       result.record = previous; result.incompatible = true;
       for (const pane of previous.panes) if (!pane.acknowledged) result.inventory.set(pane.id, pane);
@@ -116,6 +131,7 @@ export class OwnerRuntime {
         }
       }
       if (!result.client) {
+        if(recoveryOwner)throw new Error("The recorded PTY owner could not authenticate recovery");
         result.incompatible = true;
         result.disconnected = new Map(result.inventory);
         const own = readProcInfo(process.pid);
@@ -124,6 +140,7 @@ export class OwnerRuntime {
         return result;
       }
     } else {
+      if(recoveryOwner)throw new Error("The recorded PTY owner disappeared during recovery; no new owner was started");
       const child = spawn(artifacts.executable, ["--socket", OWNER_SOCKET, "--token-fd", "3"], {
         detached: true, stdio: ["ignore", "pipe", "pipe", "pipe"], env: { PATH: process.env.PATH, HOME: process.env.HOME },
       });

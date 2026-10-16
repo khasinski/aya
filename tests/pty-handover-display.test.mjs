@@ -65,3 +65,14 @@ test('display ACK retains state until the host accepts the matching applied repl
  accepted=true;await ack({},'p','g','replacement-view');assert.equal(get({},'p'),null);
  assert.deepEqual(seen,[['p','g','discarded-view'],['p','g','replacement-view']]);
 });
+
+test('crash recovery installs replay-only state for late views and requires current applied ACK',async()=>{
+ const channel=ipc(),seen=[];let accepted=false;
+ const displays=new HandoverDisplays(async()=>null,()=>{},async(...args)=>{seen.push(args);return accepted;});displays.register(channel);
+ displays.installRecovery([{id:'p',generation:'crash',notice:'consumed screen and history lost'}]);
+ const get=channel.handlers.get('pty-checkpoint:display'),ack=channel.handlers.get('pty-checkpoint:display-ack');
+ assert.deepEqual(get({},'p'),{json:null,generation:'crash',offset:0,notice:'consumed screen and history lost'});
+ await ack({},'p','old','stale');assert.equal(seen.length,0);
+ await ack({},'p','crash','first');assert.ok(get({},'p'));
+ accepted=true;await ack({},'p','crash','next');assert.equal(get({},'p'),null);
+});
