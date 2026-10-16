@@ -53,6 +53,7 @@ import {HostAuthError,type HostAuthPeer} from "./pty-host-auth";
 import {handoverPeer} from "./pty-handover-window";
 import {refusedHostStatus,HOST_AUTH_REFUSAL_REASON,type HostAuthenticationProblem} from "./pty-host-auth-status";
 import {validateOwnerContinuity} from "./pty-host-owner-continuity";
+import {probeLegacyInventory} from "./pty-host-legacy-status";
 import {retireUnavailableOwner,ownerRetirementDeps} from "./pty-host-owner-retirement";
 import {restartRefusedHost,refusedRestartDeps} from "./pty-host-auth-restart";
 import {assertHostCreationSafe} from "./pty-host-start-guard";
@@ -201,6 +202,7 @@ export class PtyHostClient {
   private ownsOwnerKey=false;
   private ownerContinuityUnavailable=false;
   private ownerRetired=false;
+  private legacyPaneIds:string[]=[];
   private blockUnavailableOwner():Error {
     this.crashBlocked=true;
     const prefix="Aya could not verify recovery data from the surviving terminal host. Input remains disabled. ";
@@ -436,7 +438,7 @@ export class PtyHostClient {
    *  registry era report it; older hosts don't -> undefined). identity is null
    *  if the handshake fails (an old host that predates the `version` request
    *  errors out - itself a stale signal); ptyCount is 0 when unknown. */
-  async hostStatus(): Promise<{
+  async hostStatus(legacyPaneIds?:string[]): Promise<{
     identity: HostIdentity | null;
     ptyCount: number;
     pid?: number;
@@ -447,6 +449,7 @@ export class PtyHostClient {
     ownerStopped?:boolean;
     startTime?:string|null;
   }> {
+    if(legacyPaneIds)this.legacyPaneIds=legacyPaneIds.slice(0,25);
     try {
       const result = await this.request({ id: 0, type: "version" });
       const obj =
@@ -459,7 +462,14 @@ export class PtyHostClient {
         ...(obj.owner && typeof obj.owner === "object" ? { owner: obj.owner as PtyOwnerStatus } : {}),
       };
     } catch(error) {
-      if(!this.ownerContinuityUnavailable&&(this.authRefusalPeer!==undefined||(error as {code?:string})?.code==="PTY_HOST_START_BLOCKED"))return refusedHostStatus(this.authRefusalPeer??null);
+      if(!this.ownerContinuityUnavailable&&(this.authRefusalPeer!==undefined||(error as {code?:string})?.code==="PTY_HOST_START_BLOCKED")){
+        const peer=this.authRefusalPeer??null,status=refusedHostStatus(peer);
+        if(peer&&status.authentication.targetVerified&&!status.owner){
+          const legacy=await probeLegacyInventory(peer,this.legacyPaneIds);
+          if(legacy){status.authentication.legacy=legacy;status.ptyCount=legacy.total;}
+        }
+        return status;
+      }
       // A blocked transport must not erase B2's explicit dead-owner recovery
       // inventory. Read only the bounded private record for this main's known
       // owner; no process/socket probes or new host are needed to name its PIDs.
@@ -669,7 +679,7 @@ export class PtyHostClient {
           }));
         }
         if(!["PTY_HOST_AUTH_REQUIRED","PTY_HOST_AUTH_UNAVAILABLE","PTY_HOST_START_BLOCKED"].includes((error as {code?:string})?.code??""))throw error;
-        const exited=await restartRefusedHost(consent,refusedRestartDeps(()=>this.disposed,(event,fields)=>this.recoveryHooks.log?.(event,fields)));
+        const exited=await restartRefusedHost(consent,refusedRestartDeps(()=>this.disposed,(event,fields)=>this.recoveryHooks.log?.(event,fields),this.legacyPaneIds));
         if(exited){this.hostAsked=true;this.dropSocket();this.authRefusalPeer=undefined;this.hostAuthKey=null;}
         return exited;
       }

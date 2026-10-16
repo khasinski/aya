@@ -401,6 +401,7 @@ test("a real spawned host writes its record, and SIGTERM shuts it down cleanly (
     });
     assert.equal(recs.length, 1, "host published its registry record");
     assert.equal(recs[0].pid, host.pid);
+    assert.equal(recs[0].authProtocol,1,"new hosts must never qualify for pre-auth migration status");
     assert.equal(recs[0].pgid, recs[0].pid, "host verified it leads its own group");
     assert.ok(recs[0].startTime.length > 0, "record carries a verifiable start time");
     assert.match(recs[0].nonce, /^[0-9a-f]{16}$/, "an 8-byte hex nonce");

@@ -1,5 +1,6 @@
 // Main-only fallback after a confirmed authentication failure. Inspection sends
-// no RPC or credential. Only an exact, rechecked private-record target may get
+// no credential; verified pre-auth legacy hosts may report bounded migration
+// status. Only an exact, rechecked private-record target may get
 // an individual SIGTERM; this path never force-kills or starts either host.
 import net from "node:net";
 import {execFileSync} from "node:child_process";
@@ -8,6 +9,7 @@ import {handoverPeer} from "./pty-handover-window";
 import {refusedHostStatus,type RefusedHostStatus} from "./pty-host-auth-status";
 import {ownerProcessStartIdentity,terminateVerifiedProcess} from "./pty-owner-client";
 import type {HostRestartConsent,HostRestartTarget} from "./pty-host-client";
+import {probeLegacyInventory} from "./pty-host-legacy-status";
 
 export interface RefusedRestartTarget extends HostRestartTarget {authentication:RefusedHostStatus["authentication"]}
 export interface RefusedRestartDeps {
@@ -20,7 +22,7 @@ export interface RefusedRestartDeps {
 }
 const same=(a:HostRestartConsent["target"],b:HostRestartTarget):boolean=>a.pid===b.pid&&a.startTime===b.startTime&&
   JSON.stringify(a.owner?[a.owner.pid,a.owner.startTime,a.owner.startIdentity??null,a.owner.instanceId,a.owner.hash]:null)===JSON.stringify(b.owner?[b.owner.pid,b.owner.startTime,b.owner.startIdentity??null,b.owner.instanceId,b.owner.hash]:null);
-export async function inspectRefusedHost():Promise<RefusedRestartTarget>{
+export async function inspectRefusedHost(legacyPaneIds:readonly string[]=[]):Promise<RefusedRestartTarget>{
   const peer=await new Promise<ReturnType<typeof handoverPeer>|null>(resolve=>{
     let settled=false;
     const done=(value:ReturnType<typeof handoverPeer>|null)=>{if(settled)return;settled=true;clearTimeout(timer);socket.destroy();resolve(value);};
@@ -29,6 +31,7 @@ export async function inspectRefusedHost():Promise<RefusedRestartTarget>{
     socket.on("error",()=>done(null));socket.on("close",()=>done(null));
   });
   const status=refusedHostStatus(peer);
+  if(peer&&status.authentication.targetVerified&&!status.owner){const legacy=await probeLegacyInventory(peer,legacyPaneIds);if(legacy){status.authentication.legacy=legacy;status.ptyCount=legacy.total;}}
   return {...status,pid:status.pid??null};
 }
 export async function restartRefusedHost(consent:HostRestartConsent,deps:RefusedRestartDeps):Promise<boolean>{
@@ -63,9 +66,9 @@ export async function restartRefusedHost(consent:HostRestartConsent,deps:Refused
   }
   throw Error("The terminal host kept changing. Nothing was stopped; review its inventory and try again.");
 }
-export function refusedRestartDeps(cancelled:()=>boolean,log:RefusedRestartDeps["log"]):RefusedRestartDeps{
+export function refusedRestartDeps(cancelled:()=>boolean,log:RefusedRestartDeps["log"],legacyPaneIds:readonly string[]=[]):RefusedRestartDeps{
   return {
-    inspect:inspectRefusedHost,cancelled,log,
+    inspect:()=>inspectRefusedHost(legacyPaneIds),cancelled,log,
     group(pid){
       try{
         const value=execFileSync("ps",["-p",String(pid),"-o","pgid="],{encoding:"utf8",timeout:500,stdio:["ignore","pipe","ignore"]}).trim();

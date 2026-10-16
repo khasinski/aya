@@ -255,7 +255,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
       expected: ptyHost.expectedHostIdentity(EXPECTED_HOST_VERSION),
       ownerExists: () => existsSync(path.join(OWNER_DIRECTORY, "record.json")),
       connected: () => ptyHost.isConnected(),
-      status: () => ptyHost.hostStatus(),
+      status: async () => ptyHost.hostStatus((await relaunchDeps.panes().catch(()=>[])).map(p=>p.id)),
       socketExists: () => deps.socketExists(),
       probeSocket: () => deps.probeSocket(),
       liveRecords: () => deps.liveRecords(),
@@ -311,10 +311,12 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
   async function authRestartDetail(target:Pick<HostRestartTarget,"pid"|"owner"|"authentication">):Promise<string>{
     const names=new Map((await relaunchDeps.panes().catch(()=>[])).map(p=>[p.id,p.name]));
     const retained=[...(target.owner?.inventory??[]).map(p=>`${names.get(p.id)??p.id} (PID ${p.pid})`),...(target.owner?.uncertain??[]).map(id=>`${names.get(id)??id}: process identity unknown`)];
-    return "Aya could not authenticate to this terminal host. Restarting it stops its current processes."+
+    const legacy=target.authentication?.legacy;
+    const reported=legacy?.reportedIds.map(id=>`${names.get(id)??id} (reported by the old host; child PID unavailable)`)??[];
+    return (legacy?"The older terminal host does not support socket authentication. Restarting it stops its current processes.":"Aya could not authenticate to this terminal host. Restarting it stops its current processes.")+
       (target.pid?`\n\nTerminal host PID ${target.pid}.`:"\n\nThe terminal host identity is unknown; nothing can be stopped safely.")+
       (retained.length?`\n\nProcesses that may still run:\n${retained.join("\n")}`:"")+
-      (!target.authentication?.inventoryKnown?"\n\nThe retained process inventory is unknown. It must not be treated as empty.":"");
+      (legacy?`\n\nReported by the old host:\n${[...reported,...(legacy.unknownCount?[`${legacy.unknownCount} more unknown`]:[])].join("\n")||"No running panes reported."}`:!target.authentication?.inventoryKnown?"\n\nThe retained process inventory is unknown. It must not be treated as empty.":"");
   }
   async function unavailableOwnerDetail(target:Pick<HostRestartTarget,"owner"|"recoveryReason">):Promise<string>{
     const names=new Map((await relaunchDeps.panes().catch(()=>[])).map(p=>[p.id,p.name]));
@@ -331,12 +333,12 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
   }
   async function askChangedRestartTarget(target:HostRestartTarget):Promise<boolean>{
     if(target.ownerUnavailable)return askRestart("Stop terminal owner",await unavailableOwnerDetail(target));
+    if(target.authentication)return askRestart("Restart","The terminal host changed after the previous question.\n\n"+await authRestartDetail(target));
     const names=new Map((await relaunchDeps.panes().catch(()=>[])).map(p=>[p.id,p.name]));
     const retained=[...(target.owner?.inventory??[]).map(p=>`${names.get(p.id)??p.id} (PID ${p.pid})`),...(target.owner?.uncertain??[]).map(id=>`${names.get(id)??id}: process identity unknown`)];
     return askRestart("Restart","The terminal host changed after the previous question. Restarting this host stops its current work."+
       (target.pid?`\n\nTerminal host PID ${target.pid}; ${target.ptyCount} panes.`:"\n\nThe current host identity cannot be verified; nothing will be stopped.")+
-      (retained.length?`\n\nProcesses that may still run:\n${retained.join("\n")}`:"")+
-      (target.authentication&&!target.authentication.inventoryKnown?"\n\nThe retained process inventory is unknown.":""));
+      (retained.length?`\n\nProcesses that may still run:\n${retained.join("\n")}`:""));
   }
 
   /** Settings > Diagnostics > PTY host > Restart (and Aya Web): asks, then replaces the host. Throws when cancelled,

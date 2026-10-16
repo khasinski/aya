@@ -509,6 +509,7 @@ function start(): void {
     const pgid = ownPgid();
     if (pgid === process.pid) {
       writeHostRecord({
+        authProtocol:1,
         pid: process.pid,
         pgid,
         version: HOST_IDENTITY.version,

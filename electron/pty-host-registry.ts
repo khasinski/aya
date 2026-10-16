@@ -21,6 +21,8 @@ import { AYA_HOME, OWNER_ONLY_FILE_MODE } from "./pty-host-paths";
 import { classifyIdentity } from "./pty-host-staleness";
 
 export interface HostRecord {
+  /** Absent in released pre-auth hosts. New hosts never allow legacy status. */
+  authProtocol?:1;
   /** Host process pid (also its process-group leader: spawned detached). */
   pid: number;
   /** Process-group id. Must equal pid (detached leader) or the record is never

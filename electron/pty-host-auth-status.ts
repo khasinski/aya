@@ -6,8 +6,9 @@ import {hostCreationProof} from "./pty-host-start-guard";
 import {ownerProcessStartIdentity} from "./pty-owner-client";
 import type {HostAuthPeer} from "./pty-host-auth";
 import type {PtyOwnerStatus} from "./pty-host-protocol";
+import type {LegacyInventory} from "./pty-host-legacy-status";
 
-export interface HostAuthenticationProblem {required:true;inventoryKnown:boolean;targetVerified:boolean;reason:string}
+export interface HostAuthenticationProblem {required:true;inventoryKnown:boolean;targetVerified:boolean;reason:string;legacy?:LegacyInventory}
 export interface RefusedHostStatus {
   identity:null;ptyCount:number;pid?:number;startTime:string|null;owner?:PtyOwnerStatus;authentication:HostAuthenticationProblem;
 }

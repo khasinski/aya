@@ -20,24 +20,26 @@ function questions(home: string): Array<{ detail: string }> {
 }
 function alive(pid: number): boolean { try { process.kill(pid, 0); return true; } catch { return false; } }
 for (const answer of [1, 0]) test(`legacy migration ${answer ? "Cancel preserves" : "confirmation replaces"} the original process`, async ({ seeded }) => {
-  const legacy = spawn(process.execPath, [join(__dirname, "helpers/legacy-pty-host.cjs")], { cwd: root, env: appEnv(seeded), stdio: ["ignore", "pipe", "pipe"] });
+  const legacy = spawn(process.execPath, [join(__dirname, "helpers/legacy-pty-host.cjs")], { cwd: root, env: appEnv(seeded), detached:true, stdio: ["ignore", "pipe", "pipe"] });
   const closed = once(legacy, "exit");
   try {
     const [bytes] = await once(legacy.stdout!, "data"), before = JSON.parse(String(bytes));
     const { window } = await launch(seeded, answer);
     await expect(window.getByTestId("xterm-host").first()).toBeVisible();
-    expect(questions(seeded.ayaHome)).toHaveLength(1); expect(questions(seeded.ayaHome)[0].detail).toContain("cannot be moved from the older host");
+    expect(questions(seeded.ayaHome)).toHaveLength(1); expect(questions(seeded.ayaHome)[0].detail).toContain("shell 1 (reported by the old host; child PID unavailable)");
+    expect(questions(seeded.ayaHome)[0].detail).toContain("1 more unknown");
+    expect(questions(seeded.ayaHome)[0].detail).not.toContain(`PID ${before.child}`);
     if (answer) {
-      expect(alive(before.child)).toBe(true); expect(existsSync(join(seeded.ayaHome, "pty-owner/record.json"))).toBe(false);
+      expect(alive(before.child)).toBe(true);expect(alive(before.unknownChild)).toBe(true); expect(existsSync(join(seeded.ayaHome, "pty-owner/record.json"))).toBe(false);
       await fireShortcut(apps.at(-1)!, "open-settings"); const settings = window.locator(".aya-modal--settings");
       await settings.getByTestId("settings-tab").filter({ hasText: "Diagnostics" }).click();
       window.once("dialog", dialog => void dialog.accept());
       await settings.locator(".aya-settings-general-row", { hasText: "PTY host" }).getByRole("button", { name: "Restart" }).click();
       await expect.poll(() => questions(seeded.ayaHome).length).toBe(2);
-      expect(questions(seeded.ayaHome)[1].detail).toContain("cannot be moved from the older host");
+      expect(questions(seeded.ayaHome)[1].detail).toContain("reported by the old host");
       expect(alive(before.child)).toBe(true);
     }
-    else { await expect.poll(() => alive(before.child)).toBe(false); await waitForShellReady(window); expect(existsSync(join(seeded.ayaHome, "pty-owner/record.json"))).toBe(true); }
+    else { await expect.poll(() => alive(before.child)).toBe(false);await expect.poll(()=>alive(before.unknownChild)).toBe(false); await waitForShellReady(window); expect(existsSync(join(seeded.ayaHome, "pty-owner/record.json"))).toBe(true); }
   } finally { if (legacy.exitCode === null && legacy.signalCode === null) legacy.kill("SIGTERM"); await closed; }
 });
 for (const answer of [1, 0]) test(`incompatible owner ${answer ? "Cancel retains" : "confirmation stops"} the native inventory`, async ({ seeded }) => {
