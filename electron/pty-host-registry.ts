@@ -256,30 +256,29 @@ export function collectDescendants(
 // the same pid renders 08:52 under TZ=UTC and 10:52 under Europe/Warsaw).
 export const PS_ENV = { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" };
 
-/** `ps` fields for one pid: alive:false when ps ran and the pid is gone; probeFailed:true when ps could not
- *  run (fork pressure, sandbox), which callers treat as UNKNOWN, not dead. */
+/** A failed/empty ps is not an absence proof. Only independent kernel ESRCH
+ * permits dead; signalable or inaccessible PIDs retain unknown identity. */
 export function readProcInfo(pid: number, timeoutMs?:number): ProcInfo {
+  const absentOrUnknown=():ProcInfo=>{
+    try{process.kill(pid,0);return {alive:true,probeFailed:true,startTime:null,command:null};}
+    catch(error){
+      const code=(error as NodeJS.ErrnoException).code;
+      return code==="ESRCH"?{alive:false,probeFailed:false,startTime:null,command:null}:
+        {alive:code==="EPERM",probeFailed:true,startTime:null,command:null};
+    }
+  };
   try {
     const out = execFileSync("ps", ["-p", String(pid), "-o", "lstart=,command="], {
       encoding: "utf8",
       env: PS_ENV,
       ...(timeoutMs===undefined?{}:{timeout:timeoutMs,killSignal:"SIGKILL" as const}),
     }).trim();
-    if (!out) return { alive: false, probeFailed: false, startTime: null, command: null };
+    if (!out) return absentOrUnknown();
     // lstart is a fixed 24-char ctime string; the rest is the command.
     const lstart = out.slice(0, PS_LSTART_WIDTH).trim();
     const command = out.slice(PS_LSTART_WIDTH).trim();
     return { alive: true, probeFailed: false, startTime: lstart, command };
-  } catch (err) {
-    // execFileSync throws BOTH when ps exits non-zero (pid does not exist -
-    // status is a number) and when ps itself failed to run (spawn error -
-    // status is null/undefined). Only the former proves the pid is gone.
-    const status = (err as { status?: unknown }).status;
-    if (typeof status === "number") {
-      return { alive: false, probeFailed: false, startTime: null, command: null };
-    }
-    return { alive: false, probeFailed: true, startTime: null, command: null };
-  }
+  } catch {return absentOrUnknown();}
 }
 
 /** Snapshot of (pid, ppid) for every process (descendant LOGGING only). */

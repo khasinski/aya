@@ -59,7 +59,8 @@ test('a recorded live PID followed by ps EAGAIN is unknown for both absent and r
 test('absent/refused socket with a proven live record or unreadable registry never reaches startHost',async()=>{
  for(const code of ['ENOENT','ECONNREFUSED'])for(const unreadable of [false,true]){
   reset();record();let starts=0;const client=new PtyHostClient(path.resolve('dist-electron/pty-host.js')),read=fs.readdirSync;
-  client.openSocket=async()=>{throw Object.assign(Error('fixture socket absent'),{code});};client.startHost=()=>{starts++;};
+  const savedStartTime=readProcInfo(process.pid).startTime;const diagnose=()=>{const info=readProcInfo(process.pid);console.error('LIVE_START_GUARD_FAILURE',JSON.stringify({at:new Date().toISOString(),pid:process.pid,savedStartTime,observed:{alive:info.alive,probeFailed:info.probeFailed,startTime:info.startTime},code,unreadable,starts,proof:hostCreationProof()}));};
+  client.openSocket=async()=>{throw Object.assign(Error('fixture socket absent'),{code});};client.startHost=()=>{starts++;diagnose();};
   try{
    if(unreadable)fs.readdirSync=(directory,...args)=>{if(directory===registry)throw Object.assign(Error('injected'),{code:'EACCES'});return read(directory,...args);};
    await assert.rejects(client.connectWithHostStart(),error=>error.code==='PTY_HOST_START_BLOCKED'&&(unreadable?error.proof.state==='unknown':['alive','unknown'].includes(error.proof.state)));
@@ -117,7 +118,7 @@ test('quit during the socketless shutdown grace cancels before a new proof or ho
 });
 test('the shutdown grace bounds each ps to the remaining budget and failed ps stays unknown',()=>{
  reset();record();const exec=childProcess.execFileSync;let observed;
- try{childProcess.execFileSync=(_file,_args,options)=>{observed=options;throw Object.assign(Error('timeout'),{code:'ETIMEDOUT'});};assert.deepEqual(readProcInfo(process.pid,37),{alive:false,probeFailed:true,startTime:null,command:null});assert.equal(observed.timeout,37);assert.equal(observed.killSignal,'SIGKILL');}
+ try{childProcess.execFileSync=(_file,_args,options)=>{observed=options;throw Object.assign(Error('timeout'),{code:'ETIMEDOUT'});};assert.deepEqual(readProcInfo(process.pid,37),{alive:true,probeFailed:true,startTime:null,command:null});assert.equal(observed.timeout,37);assert.equal(observed.killSignal,'SIGKILL');}
  finally{childProcess.execFileSync=exec;}
 });
 
@@ -155,4 +156,17 @@ test('startHost repeats the absence proof after stderr open immediately before f
   childProcess.spawn=()=>{spawns++;throw Error('fork passed a newly live record');};
   assert.throws(()=>client.startHost(),{code:'PTY_HOST_START_BLOCKED'});assert.equal(opened,true);assert.equal(spawns,0);
  }finally{fs.openSync=open;childProcess.spawn=spawn;client.dispose();reset();}
+});
+
+test('failed or empty ps for this still-live fixture cannot reach the cold start branch',async()=>{
+ for(const code of ['ENOENT','ECONNREFUSED'])for(const status of [1,2,'empty']){
+  reset();record();const exec=childProcess.execFileSync;let starts=0;
+  const client=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));
+  client.openSocket=async()=>{throw Object.assign(Error('fixture socket absent'),{code});};client.startHost=()=>{starts++;throw Error('must not start');};
+  try{
+   childProcess.execFileSync=()=>{if(status==='empty')return '';throw Object.assign(Error('injected ps nonzero'),{status});};
+   await assert.rejects(client.connectWithHostStart(),error=>error.code==='PTY_HOST_START_BLOCKED'&&error.proof.state==='unknown');
+   assert.equal(starts,0);assert.doesNotThrow(()=>process.kill(process.pid,0));
+  }finally{childProcess.execFileSync=exec;client.dispose();}
+ }
 });

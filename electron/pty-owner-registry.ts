@@ -19,18 +19,30 @@ export function prepareOwnerDirectory(): void {
   const stat = fs.lstatSync(OWNER_DIRECTORY);
   if (!stat.isDirectory() || stat.uid !== process.getuid?.() || (stat.mode & 0o077)) throw new Error("PTY owner directory is not private");
 }
+class OwnerRecordReplaced extends Error {constructor(){super("PTY owner record changed while reading");}}
 export function readOwnerRecord(): OwnerRecord | null {
+  // Atomic publication can unlink the opened old inode before fstat/read.
+  // Retry only that positively observed replacement, never an unsafe file.
+  for(let attempt=0;;attempt++){
+    try{return readOwnerRecordOnce();}
+    catch(error){if(!(error instanceof OwnerRecordReplaced)||attempt>=2)throw error;}
+  }
+}
+function readOwnerRecordOnce(): OwnerRecord | null {
   let fd:number|undefined;
   try {
     const parent=fs.lstatSync(OWNER_DIRECTORY);
     if(!parent.isDirectory()||parent.uid!==process.getuid?.()||(parent.mode&0o077))throw new Error("PTY owner directory is not private");
     fd=fs.openSync(RECORD,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
     const stat = fs.fstatSync(fd);
-    if (stat.size<1||stat.size > 65536 || !stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o077)||stat.nlink!==1) throw new Error("PTY owner record is not private");
+    if (stat.size<1||stat.size > 65536 || !stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o077)||stat.nlink>1) throw new Error("PTY owner record is not private");
+    if(stat.nlink===0)throw new OwnerRecordReplaced();
     const bytes=Buffer.alloc(stat.size);let offset=0;
     while(offset<bytes.length){const count=fs.readSync(fd,bytes,offset,bytes.length-offset,offset);if(!count)throw new Error("Truncated PTY owner record");offset+=count;}
     const after=fs.fstatSync(fd),current=fs.lstatSync(RECORD),directory=fs.lstatSync(OWNER_DIRECTORY);
-    if(after.size!==stat.size||after.mtimeMs!==stat.mtimeMs||after.ctimeMs!==stat.ctimeMs||current.ino!==stat.ino||current.dev!==stat.dev||directory.ino!==parent.ino||directory.dev!==parent.dev)throw new Error("PTY owner record changed while reading");
+    if(directory.ino!==parent.ino||directory.dev!==parent.dev)throw new Error("PTY owner directory changed while reading");
+    if(current.ino!==stat.ino||current.dev!==stat.dev)throw new OwnerRecordReplaced();
+    if(after.size!==stat.size||after.mtimeMs!==stat.mtimeMs||after.ctimeMs!==stat.ctimeMs)throw new Error("PTY owner record changed while reading");
     let r:OwnerRecord;
     try{r=JSON.parse(bytes.toString("utf8")) as OwnerRecord;}catch{throw new Error("Invalid PTY owner record");}
     if (!Number.isSafeInteger(r.pid) || r.pid < 2 || r.pid > 0x7fffffff || typeof r.startTime !== "string" || !r.startTime ||

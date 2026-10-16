@@ -420,7 +420,7 @@ test("a real spawned host retains its record through SIGTERM exit until verified
     assert.equal(exited, true, "SIGTERM terminates the host (no suppressed-default zombie)");
     assert.equal(readHostRecords(regDir).length,1,"only an external observer may certify death");
     const kill=process.kill;let signals=0,summary;
-    try{process.kill=()=>{signals++;throw Error('verified-dead GC must not signal');};summary=reapStaleHostRecords({version:recs[0].version,scriptHash:recs[0].scriptHash},join(process.cwd(),'dist-electron/pty-host.js'),regDir);}
+    try{process.kill=(pid,signal)=>{if(signal===0){assert.equal(pid,host.pid);return kill(pid,0);}signals++;throw Error('verified-dead GC must not signal');};summary=reapStaleHostRecords({version:recs[0].version,scriptHash:recs[0].scriptHash},join(process.cwd(),'dist-electron/pty-host.js'),regDir);}
     finally{process.kill=kill;}
     assert.equal(signals,0);assert.deepEqual(summary.gc,[host.pid]);assert.deepEqual(summary.reaped,[]);
     assert.deepEqual(readHostRecords(regDir), [], "verified-dead GC removes the retained record without signalling");
