@@ -10,8 +10,11 @@ import {
   __testClearOutputBuffers,
   OUTPUT_BUFFER_MAX,
   getBufferedOutput,
+  getBufferedReplayOutput,
   searchPtyOutputs,
 } from "../dist-electron/pty.js";
+import xterm from "@xterm/headless";
+import { focusReportingState } from "../dist-test/focus-reporting.js";
 
 // Per-chunk size (bytes) used to overflow the rolling buffer in the trim test.
 const BUFFER_TEST_CHUNK_SIZE_BYTES = 30000;
@@ -45,6 +48,46 @@ test("empty buffer reads as empty", () => {
 
 test("getBufferedOutput returns empty for unknown ptyId", () => {
   assert.equal(getBufferedOutput("nonexistent-pty"), "");
+});
+
+test("replay boundary tracks DEC modes while evicted and preserves split CSI", () => {
+  __testClearOutputBuffers();
+  __testAppendToOutputBuffer("mode-tail", "\x1b[?1049h\x1b[?1003");
+  const ending = "h\x1b[?1006h\x1b[?2004h\x1b[?1004h\x1b[?1h";
+  __testAppendToOutputBuffer("mode-tail", ending + "A".repeat(40_000));
+  for (let i = 0; i < 26; i++) __testAppendToOutputBuffer("mode-tail", "A".repeat(40_000));
+  const replay = getBufferedReplayOutput("mode-tail");
+  assert.ok(replay.startsWith("\x1b[?1049h\x1b[?1003h\x1b[?1006h\x1b[?1004h\x1b[?2004h\x1b[?1h"));
+  assert.equal(replay.includes("A".repeat(100)), true);
+  __testClearOutputBuffers();
+});
+
+test("replay prefix plus retained toggles matches the live VT mirror modes", async () => {
+  __testClearOutputBuffers();
+  const { Terminal } = xterm;
+  const mirror = new Terminal({ cols: 80, rows: 24, scrollback: 0, allowProposedApi: true });
+  const renderer = new Terminal({ cols: 80, rows: 24, scrollback: 0, allowProposedApi: true });
+  const initial = "\x1b[?1049h\x1b[?1003h\x1b[?1006h\x1b[?1004h\x1b[?2004h\x1b[?1h";
+  const trim = "x".repeat(OUTPUT_BUFFER_MAX + 4);
+  const retained = "\x1b[?1003l\x1b[?1000h\x1b[?1006l\x1b[?1006h\x1b[?2004l\x1b[?2004hTAIL";
+  const write = (term, data) => new Promise(resolve => term.write(data, resolve));
+  try {
+    await write(mirror, initial + trim + retained);
+    __testAppendToOutputBuffer("mode-compare", initial);
+    __testAppendToOutputBuffer("mode-compare", trim);
+    __testAppendToOutputBuffer("mode-compare", retained);
+    const replay = getBufferedReplayOutput("mode-compare");
+    await write(renderer, replay);
+    assert.equal(focusReportingState(replay, false), true, "the replay prefix must also seed TerminalView's focus-reporting gate");
+    const view = term => ({ buffer: term.buffer.active.type, modes: term.modes });
+    assert.deepEqual(view(renderer), view(mirror));
+    assert.equal(renderer.modes.mouseTrackingMode, "vt200");
+    assert.equal(renderer.modes.sendFocusMode, true);
+    assert.equal(renderer.modes.bracketedPasteMode, true);
+    assert.equal(renderer.modes.applicationCursorKeysMode, true);
+    assert.match(replay, /^\x1b\[\?1049h/);
+    assert.ok(replay.endsWith("TAIL"));
+  } finally { mirror.dispose(); renderer.dispose(); __testClearOutputBuffers(); }
 });
 
 test("searchPtyOutputs finds tokens across ANSI-decorated PTY output", () => {

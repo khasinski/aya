@@ -7,6 +7,7 @@ import { VtCheckpointTerminal } from "./vt-checkpoint";
 import { parseCheckpointJson, validateCheckpointJson } from "./vt-checkpoint-schema";
 import { checkpointMetadata } from "./vt-mirror";
 import { StringDecoder } from "node:string_decoder";
+import { validateReplayModeTracker, type ReplayModeTracker } from "./pty-replay-modes";
 
 export interface PaneCoreCheckpoint {
   format: 1;
@@ -15,7 +16,7 @@ export interface PaneCoreCheckpoint {
   request: SpawnRequest;
   launch: PaneLaunch;
   spawnedAt: number;
-  output: {chunks: string[]; total: number; version: number; end: number};
+  output: {chunks: string[]; total: number; version: number; end: number; replayModes?: ReplayModeTracker};
   oscCarry: string;
   vt: VtCheckpoint;
 }
@@ -51,9 +52,10 @@ export async function validatePaneCoreCheckpoint(value: unknown): Promise<PaneCo
   const r = d.request as Dict;
   const v = object(d.vt, ["base", "tail", "metadata"]), metadata = checkpointMetadata(v.metadata);
   if (r.agent !== undefined && r.agent !== metadata.agent) fail();
-  const o = object(d.output, ["chunks", "total", "version", "end"]);
+  const o = object(d.output, ["chunks", "total", "version", "end"], ["replayModes"]);
   if (!Array.isArray(o.chunks) || o.chunks.length > 1_000_000 || !o.chunks.every(s => typeof s === "string") || !int(o.total, 0, 1_000_000) || !int(o.version) || !int(o.end, o.total as number) ||
       o.chunks.reduce((n: number, s: string) => n + s.length, 0) !== o.total) fail();
+  if (o.replayModes !== undefined) validateReplayModeTracker(o.replayModes);
   // A resize may live in the raw tail; compare the applied geometry, not only
   // the older ground base, after bounded schema validation/replay.
   const trial = await VtCheckpointTerminal.import(d.vt as VtCheckpoint);
@@ -80,8 +82,9 @@ export async function validateCoreHandoverPart(value:unknown):Promise<CoreHandov
  const d=object(value,["format","kind","id","generation","exitCode","output"],["ownerExit"]);
  if(d.ownerExit!==undefined){const receipt=object(d.ownerExit,["generation","event"]);if(!int(receipt.generation,1,0xffffffff)||!int(receipt.event,1,0xffffffff))fail();}
  if(d.format!==1||d.kind!=="ended"||!str(d.id,128)||!d.id.length||!str(d.generation,128)||!d.generation.length||!int(d.exitCode,0,255))fail();
- const o=object(d.output,["chunks","total","version","end"]);
+ const o=object(d.output,["chunks","total","version","end"],["replayModes"]);
  if(!Array.isArray(o.chunks)||o.chunks.length>1_000_000||!o.chunks.every(s=>typeof s==="string")||!int(o.total,0,1_000_000)||!int(o.version)||!int(o.end,o.total as number)||o.chunks.reduce((n:number,s:string)=>n+s.length,0)!==o.total)fail();
+ if(o.replayModes!==undefined)validateReplayModeTracker(o.replayModes);
  return value as EndedCoreCheckpoint;
 }
 
