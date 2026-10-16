@@ -1,4 +1,4 @@
-import {readFileSync,writeFileSync,unlinkSync} from 'node:fs';
+import {readFileSync,writeFileSync,unlinkSync,readdirSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {join} from 'node:path';
 import {test as base,expect,launchApp,closeAndWait,hostPidsForHome} from './fixtures';
@@ -12,10 +12,13 @@ const test=base.extend({app:async({seeded},use)=>{const app=await launchApp({...
 test('ordinary relaunch proves continuity and a later JS crash recovers the original owner and panes',async({app,window,seeded})=>{
  await waitForShellReady(window);const before=record(seeded.ayaHome),old=hostPidsForHome(seeded.ayaHome);expect(old).toHaveLength(1);
  await closeAndWait(app);expect(alive(old[0])).toBe(true);
+ expect(readdirSync(seeded.ayaHome).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name))).toHaveLength(1);
+ writeFileSync(join(seeded.ayaHome,'pty-host-auth/key'),Buffer.alloc(32,42),{mode:0o600});
  const next=await launchApp({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0'}});
  try{
   const view=await next.firstWindow();await waitForShellReady(view);
   expect(hostPidsForHome(seeded.ayaHome)).toEqual(old);expect(record(seeded.ayaHome).panes).toEqual(before.panes);
+  expect(readdirSync(seeded.ayaHome).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name))).toHaveLength(0);
   process.kill(old[0],'SIGKILL');
   await expect.poll(()=>hostPidsForHome(seeded.ayaHome).filter(pid=>pid!==old[0]).length).toBe(1);
   await expect(view.getByTestId('terminal-history-notice').first()).toContainText('Previously consumed');

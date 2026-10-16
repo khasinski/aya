@@ -43,3 +43,12 @@ test('cancelling an earlier attempt does not consume another nonce ticket',async
  clean();const f=fixture();await f.planned.prepare();const other={nonce:'d'.repeat(64),deadline:Date.now()+10000,hostPid:123,hostStartIdentity:'1:2'};
  writeHandoverTicket(ticketFile,other);await f.planned.abort();assert.deepEqual(readHandoverTicket(ticketFile),other);clean();
 });
+
+test('already consumed version2 planned ticket resumes without reading an obsolete disk announcement',async()=>{
+ clean();const f=fixture(),ticket={format:2,purpose:'planned-update',attempt:'e'.repeat(64),nonce:'f'.repeat(64),deadline:Date.now()+10000,hostPid:123,hostStartIdentity:'1:2'};let adopted;
+ f.deps.host.adoptPlannedHandover=async value=>{adopted=value;return f.state;};
+ assert.equal(await f.planned.resume(ticket),'restored');assert.equal(adopted,ticket);assert.equal(fs.existsSync(ticketFile),false);assert.equal(f.calls.some(call=>call[0]==='restart'),false);
+});
+test('prepared-update state prevents ordinary quit from publishing a second credential window',async()=>{
+ clean();const f=fixture();try{assert.equal(f.planned.hasPreparedHandover,false);assert.equal(await f.planned.prepare(),true);assert.equal(f.planned.hasPreparedHandover,true);await f.planned.abort();assert.equal(f.planned.hasPreparedHandover,false);}finally{clean();}
+});

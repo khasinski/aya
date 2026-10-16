@@ -1,5 +1,5 @@
 // A dedicated pre-auth credential exchange, never an application RPC parser.
-import {randomBytes,createHmac,timingSafeEqual} from "node:crypto";
+import {randomBytes,createHash,createHmac,timingSafeEqual} from "node:crypto";
 import {performance} from "node:perf_hooks";
 import type {Socket} from "node:net";
 import type {AuthTransferTicket} from "./pty-host-auth-ticket";
@@ -19,7 +19,16 @@ function frame(line:string,keys:readonly string[]):Record<string,unknown>{
 interface Transcript {attempt:string;purpose:string;deadline:number;clientNonce:string;serverNonce:string;instance:string;host:HostAuthPeer;client:HostAuthPeer;credential:string}
 function proof(nonce:string,t:Transcript):string{
  const secret=Buffer.from(nonce,"hex");
- try{return createHmac("sha256",secret).update(JSON.stringify(["aya-pty-host-transfer",1,"credential",t.attempt,t.purpose,t.deadline,t.clientNonce,t.serverNonce,t.instance,t.host.pid,t.host.startIdentity,t.client.pid,t.client.startIdentity,t.credential])).digest("hex");}
+ try{
+  // A transcript MAC, not password hashing/storage. Both the nonce and host
+  // capability are independent random256-bit values. Hashing the canonical
+  // capability bytes binds the response without embedding them in the MAC
+  // transcript; the receiver independently recomputes this digest.
+  const capability=Buffer.from(t.credential,"base64");
+  let capabilityDigest:string;
+  try{capabilityDigest=createHash("sha256").update(capability).digest("hex");}finally{capability.fill(0);}
+  return createHmac("sha256",secret).update(JSON.stringify(["aya-pty-host-transfer",1,"credential-digest",t.attempt,t.purpose,t.deadline,t.clientNonce,t.serverNonce,t.instance,t.host.pid,t.host.startIdentity,t.client.pid,t.client.startIdentity,capabilityDigest])).digest("hex");
+ }
  finally{secret.fill(0);}
 }
 export class HostRedemptionServer {

@@ -56,6 +56,7 @@ import {validateOwnerContinuity,validateTransferredOwnerContinuity} from "./pty-
 import {probeLegacyInventory} from "./pty-host-legacy-status";
 import {retireUnavailableOwner,ownerRetirementDeps} from "./pty-host-owner-retirement";
 import {restartRefusedHost,refusedRestartDeps} from "./pty-host-auth-restart";
+import {OrdinaryAuthAnnouncement} from "./pty-host-auth-announcement";
 import type {AuthTransferTicket} from "./pty-host-auth-ticket";
 import {redeemHostCapability} from "./pty-host-auth-redemption";
 import {assertHostCreationSafe,waitForHostShutdown} from "./pty-host-start-guard";
@@ -174,6 +175,7 @@ export class PtyHostClient {
   private observationOnly = false;
   private readonly ownerSecret = randomBytes(32);
   private hostAuthKey:Buffer|null=null;
+  private ordinaryAnnouncement:OrdinaryAuthAnnouncement|null=null;
   private receivedAuthTransfer:{ticket:AuthTransferTicket;receipt?:string;retirementOwner?:RecoveryOwnerIdentity}|null=null;
   private authRefusalPeer:HostAuthPeer|null|undefined;
   private principalBusyPeer:HostAuthPeer|null|undefined;
@@ -524,6 +526,19 @@ export class PtyHostClient {
     this.plannedReusedBoot=true;
     for(const id of ids)this.consentedBootSpawns.add(id);
   }
+  announceOrdinaryQuit():Promise<boolean>{
+    if(!this.ordinaryAnnouncement){
+      const socket=this.socket;
+      this.ordinaryAnnouncement=new OrdinaryAuthAnnouncement({home:AYA_HOME,
+        connected:()=>!!socket&&socket===this.socket&&!socket.destroyed&&!this.disposed&&!this.replacing&&!this.receivedAuthTransfer&&!!this.hostAuthKey&&!this.crashBlocked,
+        peer:()=>{if(!socket)throw new HostAuthError();return handoverPeer(socket);},
+        control:request=>{if(!socket||socket!==this.socket||socket.destroyed||this.disposed)throw new HostAuthError();return this.sendRequest(socket,request);},
+        log:(event,fields)=>this.recoveryHooks.log?.(event,fields),
+      });
+    }
+    return this.ordinaryAnnouncement.prepare();
+  }
+  cancelOrdinaryQuit():Promise<void>{return this.ordinaryAnnouncement?.abort()??Promise.resolve();}
   /** Explicit startup-only nonce redemption. This never starts, unlinks,
    * probes or signals a host/owner, and does not wait for the old principal. */
   async redeemAnnouncedCapability(ticket:AuthTransferTicket):Promise<void>{

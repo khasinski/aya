@@ -17,7 +17,10 @@ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),wait=async f=>{cons
   }
   if(mode==='publish-empty'||mode==='publish-empty-recovered'){await c.kill('kept');await wait(async()=>!(await c.hostStatus()).owner);}
   const pid=await c.getPid('kept'),status=await c.hostStatus();
-  if(mode==='publish'||mode==='publish-lost-completion'||mode==='publish-alive'||mode==='publish-empty'||mode==='publish-empty-recovered'){
+  if(mode==='publish-public'){
+   assert.equal(await c.announceOrdinaryQuit(),true);await c.write('kept','OUTPUT_DURING_ORDINARY_QUIT\n');await wait(async()=>(await c.getBuffer('kept')).includes('OUTPUT_DURING_ORDINARY_QUIT'));
+   const names=fs.readdirSync(process.env.AYA_HOME).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name));assert.equal(names.length,1);keep=true;process.send({file:path.join(process.env.AYA_HOME,names[0]),pid,hostPid:status.pid,ownerPid:status.owner.pid});
+  }else if(mode==='publish'||mode==='publish-lost-completion'||mode==='publish-alive'||mode==='publish-empty'||mode==='publish-empty-recovered'){
    const deadline=Date.now()+120000,nonce='a'.repeat(64),budget=performance.now()+2000;
    const reserved=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce,deadline});
    const t={format:2,...reserved,nonce},file=authTransferTicketPath(process.env.AYA_HOME,t.attempt);

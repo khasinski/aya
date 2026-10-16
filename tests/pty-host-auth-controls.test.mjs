@@ -85,7 +85,7 @@ for(const mode of ['publish-empty','publish-empty-recovered'])test(`announced ${
  }finally{c.dispose();c.dropSocket();key.fill(0);await cleanupNativeOwner(process.env.AYA_HOME);}
 });
 
-for(const mode of ['publish','publish-empty'])test(`public announced client ${mode} keeps keys in memory and completes validated continuity`,{timeout:20000},async()=>{
+for(const mode of ['publish','publish-public','publish-empty'])test(`public announced client ${mode} keeps keys in memory and completes validated continuity`,{timeout:20000},async()=>{
  const old=await fixture(mode),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));let starts=0;
  c.startHost=()=>{starts++;throw Error('announced reuse must not start a host');};
  // An unrelated development disk key must not override the announced proof.
@@ -93,7 +93,7 @@ for(const mode of ['publish','publish-empty'])test(`public announced client ${mo
  try{
   await c.redeemAnnouncedCapability(ticket);assert.equal(c.isConnected(),false,'redemption does not wait for principal ownership');
   const status=await c.hostStatus();assert.equal(status.pid,old.hostPid);assert.equal(c.ownsOwnerKey,true);assert.equal(c.receivedAuthTransfer,null);assert.equal(starts,0);
-  if(mode==='publish'){assert.equal(status.owner.pid,old.ownerPid);assert.equal(await c.getPid('kept'),old.pid);c.dropSocket();assert.equal(typeof (await c.paneState('kept')).generation,'string','observer borrows announced memory authority despite wrong disk key');}
+  if(mode!=='publish-empty'){assert.equal(status.owner.pid,old.ownerPid);assert.equal(await c.getPid('kept'),old.pid);c.dropSocket();assert.equal(typeof (await c.paneState('kept')).generation,'string','observer borrows announced memory authority despite wrong disk key');}
   else assert.equal(status.owner,undefined);
   const next=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'c'.repeat(64),deadline:Date.now()+120000});await c.request({id:0,type:'auth-transfer-cancel',attempt:next.attempt});
   await c.shutdown();

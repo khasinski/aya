@@ -27,7 +27,7 @@ test('directory iteration is capped before any ticket is consumed and unsafe dir
   await Promise.all(Array.from({length:257},(_,i)=>fs.writeFile(path.join(f.root,`entry-${i}`),'')));
   await writeAuthTransferTicket(f.file(t),t,budget());await assert.rejects(findAuthTransferTicket(f.root));assert.ok(await fs.stat(f.file(t)),'entry cap refuses before consuming a valid ticket');
   await fs.rm(f.root,{recursive:true});await fs.mkdir(f.root,{mode:0o700});
-  await fs.chmod(f.root,0o755);await assert.rejects(findAuthTransferTicket(f.root));await fs.chmod(f.root,0o700);
+  await fs.chmod(f.root,0o775);await assert.rejects(findAuthTransferTicket(f.root));await fs.chmod(f.root,0o700);
   const alias=f.root+'-alias';await fs.symlink(f.root,alias);try{await assert.rejects(findAuthTransferTicket(alias));}finally{await fs.unlink(alias);}
   await fs.symlink('absent',f.file(t));await assert.rejects(findAuthTransferTicket(f.root));
  }finally{await f.close();}
@@ -58,5 +58,12 @@ test('cancel refuses changed inode, unsafe types and a late final close, preserv
   await fs.chmod(f.file(t),0o644);await assert.rejects(cancelAuthTransferTicket(f.file(t),t.attempt,t.nonce));await fs.chmod(f.file(t),0o600);
   let now=0;const io={...fs,open:async(...args)=>{const h=await fs.open(...args);return{stat:()=>h.stat(),read:(...args)=>h.read(...args),close:async()=>{await h.close();now=100;}};}};
   await assert.rejects(cancelAuthTransferTicket(f.file(t),t.attempt,'e'.repeat(64),{deadline:100,now:()=>now,io}));assert.ok(await fs.stat(f.file(t)));
+ }finally{await f.close();}
+});
+
+test('ordinary0755 config root permits private0600 ticket without permission repair or group-write acceptance',async()=>{
+ const f=await fixture(),t=ticket();try{
+  await fs.chmod(f.root,0o755);await writeAuthTransferTicket(f.file(t),t,budget());assert.deepEqual(await findAuthTransferTicket(f.root),t);assert.equal((await fs.stat(f.root)).mode&0o7777,0o755);
+  await writeAuthTransferTicket(f.file(t),t,budget());await fs.chmod(f.file(t),0o644);await assert.rejects(findAuthTransferTicket(f.root));assert.equal((await fs.stat(f.file(t))).mode&0o7777,0o644);
  }finally{await f.close();}
 });

@@ -1,3 +1,4 @@
+import {findAuthTransferTicket} from "./pty-host-auth-ticket";
 import { builtinScreenRules } from "./screen-rule-provider";
 // Electron main process. Creates the window, wires IPC handlers to the PTY
 // host and the project config layer.
@@ -426,6 +427,8 @@ let appQuitting = false;
 const TEAM_QUIT_SETTLE_MS = 2_000;
 let teamsAtQuit: TeamRunner | null = null;
 let teamsStopped = false;
+let ordinaryQuitAnnounced = false;
+let ordinaryQuitAnnouncementPending = false;
 
 const ayaWeb = createAyaWeb({
   app,
@@ -750,7 +753,12 @@ app.whenReady().then(async () => {
   // createWindow so a recorded stale host is dead before anything can connect
   // to it; the common-path cost is one `ps -p` fork for the kept host (the
   // system-wide snapshot only runs when a kill actually happens).
-  const keepPlannedHost=await plannedUpdate.resume() === "kept";
+  let announcedTicket:Awaited<ReturnType<typeof findAuthTransferTicket>>=null;
+  try{
+    announcedTicket=await findAuthTransferTicket(AYA_HOME);
+    if(announcedTicket)await ptyHost.redeemAnnouncedCapability(announcedTicket);
+  }catch{diagnosticsLog.append("host-transfer-unavailable",{purpose:"startup"});}
+  const keepPlannedHost=await plannedUpdate.resume(announcedTicket?.purpose==="planned-update"?announcedTicket:undefined) === "kept";
   let keptCompatibleHosts: number[] = [];
   if(!keepPlannedHost)try {
     // The host on the socket runs the panes the user sees: handleStaleHost below asks before it stops their work.
@@ -949,6 +957,16 @@ app.on("before-quit", (event) => {
   }
   if (updates.beforeQuit(event)) return;
   appQuitting = true;
+  if(!IS_E2E_PTY_SHUTDOWN&&!plannedUpdate.hasPreparedHandover&&!ordinaryQuitAnnounced){
+    event.preventDefault();
+    if(!ordinaryQuitAnnouncementPending){
+      ordinaryQuitAnnouncementPending=true;
+      void ptyHost.announceOrdinaryQuit().catch(()=>false).finally(()=>{
+        ordinaryQuitAnnounced=true;ordinaryQuitAnnouncementPending=false;app.quit();
+      });
+    }
+    return;
+  }
   try {
     cliAdoption.flush();
   } catch {

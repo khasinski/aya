@@ -16,8 +16,8 @@ const test=base.extend({app:async({seeded},use)=>{
   await expect.poll(()=>inventory(seeded.ayaHome).panes.length).toBe(2);
   await closeAndWait(first);
   const wrapper=join(seeded.root,'unsupported-continuity-main.js'),root=join(__dirname,'..');
-  writeFileSync(wrapper,`const {PtyHostClient}=require(${JSON.stringify(join(root,'dist-electron/pty-host-client.js'))});const send=PtyHostClient.prototype.sendRequest;PtyHostClient.prototype.sendRequest=function(socket,req){if(req.type==='owner-continuity')return Promise.reject(Object.assign(Error('unsupported continuity'),{code:'PTY_HOST_REMOTE_ERROR'}));return send.call(this,socket,req);};require(${JSON.stringify(join(root,'dist-electron/main.js'))});`);
-  const reused=await _electron.launch({cwd:root,args:[wrapper,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],env:appEnv(env)});
+  writeFileSync(wrapper,`const {PtyHostClient}=require(require('node:path').join(process.env.AYA_TEST_APP_ROOT,'dist-electron/pty-host-client.js'));const send=PtyHostClient.prototype.sendRequest;PtyHostClient.prototype.sendRequest=function(socket,req){if(req.type==='owner-continuity')return Promise.reject(Object.assign(Error('unsupported continuity'),{code:'PTY_HOST_REMOTE_ERROR'}));return send.call(this,socket,req);};require(require('node:path').join(process.env.AYA_TEST_APP_ROOT,'dist-electron/main.js'));`);
+  const reused=await _electron.launch({cwd:root,args:[wrapper,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],env:appEnv({...env,launchEnv:{...env.launchEnv,AYA_TEST_APP_ROOT:root}})});
   await use(reused);await closeAndWait(reused);
 }});
 

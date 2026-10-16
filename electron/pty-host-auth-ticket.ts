@@ -29,7 +29,7 @@ function valid(value:unknown,now:number):value is AuthTransferTicket{
 }
 /** The caller's one monotonic budget starts before reservation. Async I/O may
  * finish late, but no later phase may run and no caller may activate it. */
-async function bounded<T>(budget:AuthTransferTicketBudget,operation:(check:()=>void)=>Promise<T>):Promise<T>{
+export async function withinAuthTransferBudget<T>(budget:AuthTransferTicketBudget,operation:(check:()=>void)=>Promise<T>):Promise<T>{
  const now=budget.now??(()=>performance.now());let expired=false,timer:ReturnType<typeof setTimeout>|undefined;
  const check=()=>{if(expired||budget.signal?.aborted||now()>=budget.deadline)throw new AuthTransferTicketError();};
  let cancel=()=>{};
@@ -50,7 +50,7 @@ export async function writeAuthTransferTicket(file:string,ticket:AuthTransferTic
  if(!valid(ticket,Date.now())||path.basename(file)!==path.basename(authTransferTicketPath(".",ticket.attempt)))throw new AuthTransferTicketError();
  const io=budget.io??fs,temporary=`${file}.${randomBytes(8).toString("hex")}.tmp`,data=Buffer.from(JSON.stringify(ticket));
  if(data.length>AUTH_TRANSFER_TICKET_BYTES)throw new AuthTransferTicketError();
- await bounded(budget,async check=>{
+ await withinAuthTransferBudget(budget,async check=>{
   let handle:Awaited<ReturnType<typeof fs.open>>|undefined,owned:Stats|undefined,published=false;
   try{
    check();handle=await io.open(temporary,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW|constants.O_NONBLOCK,0o600);
@@ -71,7 +71,7 @@ export async function writeAuthTransferTicket(file:string,ticket:AuthTransferTic
  * before JSON parse; an unsafe type is refused without waiting on a FIFO. */
 export async function readAuthTransferTicket(file:string,budget:AuthTransferTicketBudget={deadline:performance.now()+AUTH_QUIT_PUBLICATION_MS}):Promise<AuthTransferTicket|null>{
  const io=budget.io??fs;
- return bounded(budget,async check=>{
+ return withinAuthTransferBudget(budget,async check=>{
   let handle:Awaited<ReturnType<typeof fs.open>>;
   try{check();handle=await io.open(file,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);}
   catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return null;throw new AuthTransferTicketError();}
@@ -89,14 +89,16 @@ export async function readAuthTransferTicket(file:string,budget:AuthTransferTick
 }
 
 /** Startup discovery reads only fixed attempt names, with bounded directory
- * iteration and a single parent deadline. Ambiguity never chooses a winner. */
+ * iteration and a single parent deadline. AYA_HOME may be0755: filenames
+ * contain attempts, not nonces, and every payload remains owner-only0600.
+ * Group/world-writable or symlink roots refuse. Ambiguity never chooses a winner. */
 export async function findAuthTransferTicket(home:string,budget:AuthTransferTicketBudget={deadline:performance.now()+AUTH_QUIT_PUBLICATION_MS}):Promise<AuthTransferTicket|null>{
  const io=budget.scanIO??fs;
- return bounded(budget,async check=>{
+ return withinAuthTransferBudget(budget,async check=>{
   let directory:Awaited<ReturnType<typeof fs.opendir>>|undefined;
   try{
    check();const before=await io.lstat(home);check();
-   if(!before.isDirectory()||before.uid!==process.getuid?.()||(before.mode&0o7777)!==0o700)throw new AuthTransferTicketError();
+   if(!before.isDirectory()||before.uid!==process.getuid?.()||(before.mode&0o022)!==0)throw new AuthTransferTicketError();
    directory=await io.opendir(home);check();
    let candidate:string|undefined,count=0;
    for(;;){
@@ -108,7 +110,7 @@ export async function findAuthTransferTicket(home:string,budget:AuthTransferTick
    }
    await directory.close();directory=undefined;check();
    const after=await io.lstat(home);check();
-   if(!after.isDirectory()||!same(before,after)||after.uid!==process.getuid?.()||(after.mode&0o7777)!==0o700)throw new AuthTransferTicketError();
+   if(!after.isDirectory()||!same(before,after)||after.uid!==process.getuid?.()||(after.mode&0o022)!==0)throw new AuthTransferTicketError();
    return candidate?await readAuthTransferTicket(candidate,budget):null;
   }catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return null;throw error;}
   finally{if(directory)await directory.close();}
@@ -121,7 +123,7 @@ export async function findAuthTransferTicket(home:string,budget:AuthTransferTick
 export async function cancelAuthTransferTicket(file:string,attempt:string,nonce:string,budget:AuthTransferTicketBudget={deadline:performance.now()+AUTH_QUIT_PUBLICATION_MS}):Promise<void>{
  if(!/^[a-f0-9]{64}$/.test(attempt)||!/^[a-f0-9]{64}$/.test(nonce)||path.basename(file)!==path.basename(authTransferTicketPath(".",attempt)))throw new AuthTransferTicketError();
  const io=budget.io??fs;
- return bounded(budget,async check=>{
+ return withinAuthTransferBudget(budget,async check=>{
   let handle:Awaited<ReturnType<typeof fs.open>>;
   try{check();handle=await io.open(file,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);}
   catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return;throw error;}

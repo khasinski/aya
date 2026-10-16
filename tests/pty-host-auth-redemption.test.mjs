@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
 import {spawn} from 'node:child_process';
-import {createHash} from 'node:crypto';
+import {createHash,createHmac} from 'node:crypto';
 import {HostAuthTransfer} from '../dist-electron/pty-host-auth-transfer.js';
 import {HostRedemptionServer,HostRedemptionClient,acceptHostRedemption,redeemHostCapability,AUTH_REDEMPTION_BYTES,AUTH_REDEMPTION_MS} from '../dist-electron/pty-host-auth-redemption.js';
 import {ownerProcessStartIdentity} from '../dist-electron/pty-owner-client.js';
@@ -134,4 +134,12 @@ test('a later-chunk RPC after a valid redemption gets no second response or pars
   accepted.resume();await new Promise(resolve=>setImmediate(resolve));release();await closed;
   assert.equal(endCalls,1);assert.equal(response.trimEnd().split('\n').length,1);assert.deepEqual(p.client.receive(response.trimEnd()),key);
  }finally{for(const s of sockets)s.destroy();await new Promise(resolve=>server.close(resolve));p.transfer.dispose();fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('wire proof MACs the independently recomputed random capability digest and full transcript',()=>{
+ const p=pair(),hello=JSON.parse(p.client.hello),response=JSON.parse(p.server.receive(p.client.hello));
+ const digest=createHash('sha256').update(Buffer.from(response.credential,'base64')).digest('hex');
+ const input=['aya-pty-host-transfer',1,'credential-digest',p.ticket.attempt,p.ticket.purpose,p.ticket.deadline,hello.clientNonce,response.serverNonce,response.instance,host.pid,host.startIdentity,recipient.pid,recipient.startIdentity,digest];
+ assert.equal(response.proof,createHmac('sha256',Buffer.from(nonce,'hex')).update(JSON.stringify(input)).digest('hex'));
+ assert.equal(input.includes(response.credential),false);assert.deepEqual(p.client.receive(JSON.stringify(response)),key);p.transfer.dispose();
 });

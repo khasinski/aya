@@ -19,6 +19,7 @@ export class PlannedUpdate {
   private preparation:Promise<boolean>|null=null;
   private ticket:HandoverTicket|null=null;
   constructor(private readonly deps:PlannedUpdateDeps){}
+  get hasPreparedHandover():boolean{return this.ticket!==null;}
   prepare():Promise<boolean> {
     return this.preparation??=this.prepareOnce().finally(()=>{if(!this.ticket)this.preparation=null;});
   }
@@ -49,9 +50,9 @@ export class PlannedUpdate {
     }
   }
   /** Kept means Cancel: the caller leaves the old host and red dot intact. */
-  async resume():Promise<"none"|"restored"|"kept"> {
+  async resume(announced?:HandoverTicket):Promise<"none"|"restored"|"kept"> {
     let ticket:HandoverTicket|null;
-    try{ticket=readHandoverTicket(PTY_HANDOVER_TICKET_PATH);}catch(error){return this.refused(error);}
+    try{ticket=announced??readHandoverTicket(PTY_HANDOVER_TICKET_PATH);}catch(error){return this.refused(error);}
     if(!ticket)return "none";
     try{
       const state=await this.deps.host.adoptPlannedHandover(ticket,this.deps.expected(),value=>this.deps.displays.inspect(value));
