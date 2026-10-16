@@ -11,13 +11,14 @@ function readRecord(file,limit){
   const value=JSON.parse(bytes.subarray(0,used).toString('utf8'));if(!value||typeof value!=='object'||Array.isArray(value))throw Error('not a record');return value;
  }catch(error){return {readError:`${error?.name??'Error'}:${error?.code??'unreadable or invalid record'}`};}finally{if(fd!==undefined)fs.closeSync(fd);}
 }
+// Records may be stale or PIDs reused: report executable name, never argv.
 function processSnapshot(known){
  const identities=[],pids=[...new Set(known.map(item=>item.pid).filter(pid=>Number.isSafeInteger(pid)&&pid>1))].slice(0,32);
  let identity;
  try{identity=require('../../dist-electron/pty-owner-client.js').ownerProcessStartIdentity;}catch{/* Report unavailable below. */}
  for(const pid of pids){try{identities.push({pid,kernelStartIdentity:identity?identity(pid):'probe unavailable'});}catch(error){identities.push({pid,probeError:errorText(error)});}}
  let ps;
- try{ps=cp.execFileSync('ps',['-p',pids.join(','),'-o','pid=,ppid=,pgid=,stat=,lstart=,command='],{encoding:'utf8',timeout:1000,maxBuffer:65536,env:{...process.env,LC_ALL:'C',TZ:'UTC'}});}
+ try{ps=cp.execFileSync('ps',['-p',pids.join(','),'-o','pid=,ppid=,pgid=,stat=,lstart=,comm='],{encoding:'utf8',timeout:1000,maxBuffer:65536,env:{...process.env,LC_ALL:'C',TZ:'UTC'}});}
  catch(error){ps={error:errorText(error),stdout:String(error.stdout??'').slice(0,65536)};}
  return {known,identities,ps};
 }

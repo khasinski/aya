@@ -21,6 +21,7 @@ test('failure evidence retains bounded process/file/proof metadata without capab
   const creation=JSON.parse(output[0].slice(output[0].indexOf(' ')+1)),cleanup=JSON.parse(output[1].slice(output[1].indexOf(' ')+1));
   assert.deepEqual(creation.refusalProof,proof);assert.equal(creation.records[0].pid,123);assert.equal(creation.records[0].startTime,'recorded-start');assert.equal(typeof creation.records[0].stat.mtimeMs,'number');assert.equal(creation.owner.startIdentity,'1:2');assert.equal(typeof creation.monotonicMs,'number');
   assert.match(cleanup.error,/original cleanup/);assert.ok(cleanup.remaining.some(item=>item.path==='pty-handover.secret.json'));assert.equal(cleanup.processes.known[0].startIdentity,'1:2');assert.equal(cleanup.openFiles,'bounded process evidence');
+  const psCalls=calls.filter(([command])=>command==='ps');assert.ok(psCalls.length>0);assert.ok(psCalls.every(([_command,args])=>args.at(-1)==='pid=,ppid=,pgid=,stat=,lstart=,comm='));
   assert.ok(calls.some(([command])=>command==='lsof'));assert.ok(calls.every(([_command,_args,options])=>options.timeout===1000&&options.maxBuffer===65536));
  }finally{console.error=error;cp.execFileSync=exec;fs.rmSync(root,{recursive:true,force:true});}
 });
