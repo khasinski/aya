@@ -86,3 +86,13 @@ test('unsupported key length, identity or instance never creates a session',()=>
  assert.throws(()=>new HostAuthServer(key,host,{...client,pid:1},instance),/authentication required/);
  assert.throws(()=>new HostAuthServer(key,host,client,'bad'),/authentication required/);
 });
+
+test('busy has its own transcript-bound proof; forged, replayed and late busy outcomes stay authentication failures',()=>{
+ const key=Buffer.alloc(32,9),host={pid:101,startIdentity:'1:2'},client={pid:202,startIdentity:'3:4'};
+ let now=0;
+ const make=()=>{const c=new HostAuthClient(key,host,client,()=>now),s=new HostAuthServer(key,host,client,'a'.repeat(64),()=>now);const reply=c.receive(s.receive(c.hello));s.receive(reply);return {c,s};};
+ const first=make(),busy=first.s.principalBusy();assert.throws(()=>first.c.receive(busy),{code:'PTY_HOST_PRINCIPAL_BUSY'});
+ const second=make();assert.throws(()=>second.c.receive(busy),{code:'PTY_HOST_AUTH_REQUIRED'});
+ const third=make(),forged=JSON.parse(third.s.principalBusy());forged.proof='0'.repeat(64);assert.throws(()=>third.c.receive(JSON.stringify(forged)),{code:'PTY_HOST_AUTH_REQUIRED'});
+ const fourth=make(),late=fourth.s.principalBusy();now=5000;assert.throws(()=>fourth.c.receive(late),{code:'PTY_HOST_AUTH_REQUIRED'});
+});

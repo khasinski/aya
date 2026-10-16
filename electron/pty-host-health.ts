@@ -37,6 +37,7 @@ export interface HostHealth {
   ownerUnavailable?:boolean;
   ownerStopped?:boolean;
   authentication?:HostAuthenticationProblem;
+  principalBusy?:boolean;
   stale: boolean;
   /** Expected core bytes could not be read: warn, but never restart automatically. */
   indeterminate?: boolean;
@@ -54,7 +55,7 @@ export interface HostHealthDeps {
   expected: HostIdentity;
   /** Whether this Aya is connected to a host now. */
   connected(): boolean;
-  status(): Promise<{ identity: HostIdentity | null; ptyCount: number; pid?: number; startTime?:string|null; owner?: HostHealth["owner"];recoveryReason?:string;ownerUnavailable?:boolean;ownerStopped?:boolean;authentication?:HostAuthenticationProblem }>;
+  status(): Promise<{ identity: HostIdentity | null; ptyCount: number; pid?: number; startTime?:string|null; owner?: HostHealth["owner"];recoveryReason?:string;ownerUnavailable?:boolean;ownerStopped?:boolean;authentication?:HostAuthenticationProblem;principalBusy?:boolean }>;
   socketExists(): Promise<boolean>;
   /** The pid of the host answering on pty-host.sock, without starting one; null when none answers. */
   probeSocket(): Promise<number | null>;
@@ -84,6 +85,7 @@ export async function gatherHostHealth(deps: HostHealthDeps): Promise<HostHealth
     ...(status.owner ? { owner: status.owner } : {}),
     ...(status.recoveryReason ? { recoveryReason:status.recoveryReason } : {}),
     ...(status.authentication ? {authentication:status.authentication}:{}),
+    ...(status.principalBusy?{principalBusy:true}:{}),
     ...(status.ownerUnavailable?{ownerUnavailable:true}:{}),
     ...(status.ownerStopped?{ownerStopped:true}:{}),
     indeterminate: asked && (!deps.expected.scriptHash || deps.expected.scriptHash === UNKNOWN_SCRIPT_HASH),
@@ -195,6 +197,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
   async function handleStaleHost(): Promise<void> {
     try {
       let health = await hostHealth();
+      if(health.principalBusy){showStaleHost(true);return;}
       if (health.indeterminate) return;
       // A running host this Aya cannot reach (no socket, or another host on it): its terminals show nowhere, and the
       // first pane would start another host and resume every agent a second time. Asked, like any stop of work.
@@ -357,6 +360,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
    *  or when the old host did not exit, so the window leaves its panes as they are. */
   async function restartHostFromWindow(): Promise<void> {
     const before = await hostHealth();
+    if(before.principalBusy)throw new Error("restart cancelled");
     if(before.authentication&&!verifiedAuthTarget(before)){await explainUnverifiedAuth(before);showStaleHost(true);throw new Error("restart cancelled");}
     const legacy = !before.owner && before.ptyCount > 0;
     const recovery = !!before.ownerUnavailable || !!before.authentication || legacy || before.owner?.incompatible || !!before.owner?.disconnected.length;

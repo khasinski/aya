@@ -68,10 +68,10 @@ test('pending handshake connection budget is bounded and released on close',()=>
 test('principal takeover requires proven old-main death; bad clients cannot displace it',()=>{
  let observation='same';const principal=new HostAuthPrincipal(()=>observation),second={pid:303,startIdentity:'5:6'};
  principal.authorize(client);principal.authorize({...client});
- assert.throws(()=>principal.authorize(second),{code:'PTY_HOST_AUTH_REQUIRED'});
- observation='unknown';assert.throws(()=>principal.authorize(second),{code:'PTY_HOST_AUTH_REQUIRED'});
+ assert.throws(()=>principal.authorize(second),{code:'PTY_HOST_PRINCIPAL_BUSY'});
+ observation='unknown';assert.throws(()=>principal.authorize(second),{code:'PTY_HOST_PRINCIPAL_BUSY'});
  observation='same';principal.authorize(client);observation='gone';principal.authorize(second);
- observation='unknown';assert.throws(()=>principal.authorize(client),{code:'PTY_HOST_AUTH_REQUIRED'});
+ observation='unknown';assert.throws(()=>principal.authorize(client),{code:'PTY_HOST_PRINCIPAL_BUSY'});
  principal.authorize(second);
 });
 test('authorized incumbent stays usable when another proven client is refused',async()=>{
@@ -80,7 +80,7 @@ test('authorized incumbent stays usable when another proven client is refused',a
   const first=await connect(),r=await authenticateHostSocket(first,key,client,()=>host);let data=r.buffered;
   first.on('data',chunk=>data+=chunk);first.resume();
   connecting={pid:303,startIdentity:'5:6'};
-  await assert.rejects(authenticateHostSocket(await connect(),key,connecting,()=>host),{code:'PTY_HOST_AUTH_REQUIRED'});
+  await assert.rejects(authenticateHostSocket(await connect(),key,connecting,()=>host),{code:'PTY_HOST_PRINCIPAL_BUSY'});
   first.write('INCUMBENT\n');await until(()=>data.includes('REPLY:INCUMBENT\n'));
   assert.equal(received.join(''),'INCUMBENT\n');
  },{authorize:peer=>principal.authorize(peer),readPeer:()=>connecting});
@@ -109,4 +109,14 @@ test('the native bridge binds real Unix peer identities across separate processe
   try{const [code]=await exited;assert.equal(code,0,stderr);assert.equal(stdout,'AUTH_OK');assert.equal(accepted.length,1);assert.equal(accepted[0].peer.pid,child.pid);assert.notEqual(child.pid,process.pid);assert.equal(received.join(''),'NATIVE\n');}
   finally{if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');}
  },{realPeer:true,ownPeer});
+});
+
+test('principal busy is visible only after a valid capability proof and permits later proven takeover',async()=>{
+ let observation='unknown';const principal=new HostAuthPrincipal(()=>observation);principal.authorize({pid:303,startIdentity:'5:6'});
+ await fixture(async({connect,received,accepted})=>{
+  await assert.rejects(authenticateHostSocket(await connect(),Buffer.alloc(32,8),client,()=>host),{code:'PTY_HOST_AUTH_REQUIRED'});
+  for(const state of ['same','unknown']){observation=state;await assert.rejects(authenticateHostSocket(await connect(),key,client,()=>host),{code:'PTY_HOST_PRINCIPAL_BUSY'});}
+  assert.deepEqual(received,[]);assert.deepEqual(accepted,[]);
+  observation='gone';const socket=await connect();await authenticateHostSocket(socket,key,client,()=>host);socket.resume();socket.write('TAKEN_OVER\n');await until(()=>received.join('')==='TAKEN_OVER\n');
+ },{authorize:peer=>principal.authorize(peer)});
 });

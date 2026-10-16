@@ -116,6 +116,14 @@ export function applyPtyEvent(
     };
   }
 
+  if(event.type === "host-connection"){
+    const t=prev[event.ptyId];if(!t)return prev;
+    if(event.connected){
+      if(t.disconnectedReason!==event.reason)return prev;
+      return {...prev,[event.ptyId]:{...t,disconnected:undefined,disconnectedReason:undefined,status:"running",stopped:false}};
+    }
+    return {...prev,[event.ptyId]:{...t,disconnected:true,disconnectedReason:event.reason,status:"error",stopped:false,bell:false}};
+  }
   if (event.type === "disconnected") {
     const t = prev[event.ptyId];
     if (!t || (t.disconnected && t.disconnectedReason === event.reason && t.recoveryRetryable === event.retryable && t.recoveryBlocked === event.recoveryBlocked)) return prev;

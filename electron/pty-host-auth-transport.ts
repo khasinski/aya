@@ -1,6 +1,6 @@
 import type {Socket} from "node:net";
 import {randomBytes} from "node:crypto";
-import {HostAuthClient, HostAuthServer, HostAuthError, HOST_AUTH_FRAME_BYTES, HOST_AUTH_TIMEOUT_MS, type HostAuthPeer} from "./pty-host-auth";
+import {HostAuthClient, HostAuthServer, HostAuthError, HostPrincipalBusyError, HOST_AUTH_FRAME_BYTES, HOST_AUTH_TIMEOUT_MS, type HostAuthPeer} from "./pty-host-auth";
 import {handoverPeer} from "./pty-handover-window";
 
 export const HOST_AUTH_PENDING_CONNECTIONS = 32;
@@ -9,6 +9,7 @@ type PeerReader = (socket: Socket) => HostAuthPeer;
 interface Session {
   authenticated: boolean;
   receive(line: string): string | null;
+  principalBusy?(): string;
 }
 const AUTH_REQUIRED = JSON.stringify({id: -1, ok: false, code: "PTY_HOST_AUTH_REQUIRED", error: "Terminal host authentication required"}) + "\n";
 function refuse(socket: Socket): void {
@@ -26,12 +27,17 @@ function handshake(socket: Socket, session: Session, peer: HostAuthPeer, server:
     const cleanup = () => {
       clearTimeout(timer);socket.off("data", data);socket.off("error", failed);socket.off("close", failed);
     };
-    const failed = () => {
+    const failed = (error?:unknown) => {
       if (settled) return;
       settled = true;cleanup();
-      // No error object from a parser, peer probe or socket reaches logs/UI.
-      if (server) refuse(socket); else socket.destroy();
-      reject(new HostAuthError());
+      const busy=error instanceof HostPrincipalBusyError;
+      // Busy is revealed only after the client proof, and its response has a
+      // separate MAC bound to this exact transcript. Invalid proof stays opaque.
+      if(server&&busy&&session.authenticated&&session.principalBusy){
+        socket.end(session.principalBusy()+"\n",()=>socket.destroy());
+        const closing=setTimeout(()=>socket.destroy(),100);closing.unref();
+      }else if (server) refuse(socket); else socket.destroy();
+      reject(busy?error:new HostAuthError());
     };
     const data = (chunk: string | Buffer) => {
       if (settled) return;
@@ -52,7 +58,7 @@ function handshake(socket: Socket, session: Session, peer: HostAuthPeer, server:
           }
           if (response !== null) socket.write(response + "\n");
         }
-      } catch {failed();}
+      } catch(error) {failed(error);}
     };
     socket.setEncoding("utf8");socket.on("data", data);socket.on("error", failed);socket.on("close", failed);
     if (socket.destroyed || !socket.writable) failed(); else socket.resume();
@@ -66,7 +72,7 @@ export class HostAuthPrincipal {
   constructor(private readonly observe: (peer: HostAuthPeer) => "same" | "gone" | "unknown") {}
   authorize(peer: HostAuthPeer): void {
     const prior = this.current;
-    if (prior && (prior.pid !== peer.pid || prior.startIdentity !== peer.startIdentity) && this.observe(prior) !== "gone") throw new HostAuthError();
+    if (prior && (prior.pid !== peer.pid || prior.startIdentity !== peer.startIdentity) && this.observe(prior) !== "gone") throw new HostPrincipalBusyError();
     this.current = {...peer};
   }
 }
@@ -88,7 +94,7 @@ export class HostSocketAuthenticator {
       const peer = this.readPeer(socket);
       const result = await handshake(socket, new HostAuthServer(this.key, this.ownPeer, peer, this.instance), peer, true, this.authorize);
       this.pending.delete(socket);return result;
-    } catch {refuse(socket);throw new HostAuthError();}
+    } catch(error) {refuse(socket);if(error instanceof HostPrincipalBusyError)throw error;throw new HostAuthError();}
   }
 }
 export async function authenticateHostSocket(socket: Socket, key: Buffer, ownPeer: HostAuthPeer,
@@ -98,5 +104,5 @@ export async function authenticateHostSocket(socket: Socket, key: Buffer, ownPee
     const ready = handshake(socket, session, peer, false);
     socket.write(session.hello + "\n");
     return await ready;
-  } catch {socket.destroy();throw new HostAuthError();}
+  } catch(error) {socket.destroy();if(error instanceof HostPrincipalBusyError)throw error;throw new HostAuthError();}
 }

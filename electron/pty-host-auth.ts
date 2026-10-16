@@ -13,6 +13,11 @@ const peer = (value: unknown): value is HostAuthPeer => {
   return Object.keys(v).sort().join(",") === "pid,startIdentity" && Number.isSafeInteger(v.pid) && v.pid > 1 &&
     typeof v.startIdentity === "string" && /^\d+:\d+$/.test(v.startIdentity) && v.startIdentity.length <= 63;
 };
+export const HOST_PRINCIPAL_BUSY_REASON = "The previous Aya process is still closing. Its terminal processes were kept; input remains disabled until Aya connects.";
+export class HostPrincipalBusyError extends Error {
+  readonly code = "PTY_HOST_PRINCIPAL_BUSY";
+  constructor() { super(HOST_PRINCIPAL_BUSY_REASON); }
+}
 export class HostAuthError extends Error {
   readonly code = "PTY_HOST_AUTH_REQUIRED";
   constructor() { super("Terminal host authentication required"); }
@@ -49,6 +54,10 @@ export class HostAuthServer extends Session {
     clock: () => number = () => performance.now()) {
     super(key, host, client, clock);
     if (!hex(instance)) throw new HostAuthError();
+  }
+  principalBusy(): string {
+    if (!this.authenticated || !this.transcript) throw new HostAuthError();
+    return JSON.stringify({type:"pty-auth-busy",proof:proof(this.key,"busy",this.transcript)});
   }
   receive(line: string): string {
     try {
@@ -89,8 +98,9 @@ export class HostAuthClient extends Session {
       }
       this.check(1);
       const ready = frame(line, ["type", "proof"]);
+      if (ready.type === "pty-auth-busy" && matches(proof(this.key,"busy",this.transcript!),ready.proof)) throw new HostPrincipalBusyError();
       if (ready.type !== "pty-auth-ready" || !matches(proof(this.key, "ready", this.transcript!), ready.proof)) throw new HostAuthError();
       this.phase = 2; return null;
-    } catch { this.phase = -1; throw new HostAuthError(); }
+    } catch(error) { this.phase = -1; if(error instanceof HostPrincipalBusyError)throw error;throw new HostAuthError(); }
   }
 }

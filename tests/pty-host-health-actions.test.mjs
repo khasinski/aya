@@ -365,3 +365,11 @@ test('an unverified auth target gets one OK information dialog, never a Restart 
   assert.equal(actions.staleHostDetected(),true);
  }
 });
+
+test('principal busy opens no stop or restart question, including unrelated host inventory',async t=>{
+ const {d,state,log}=setup(t);state.records.push(record(200));
+ d.ptyHost.hostStatus=async()=>({identity:null,ptyCount:0,pid:100,principalBusy:true,recoveryReason:'The previous Aya process is still closing.'});
+ const actions=createPtyHostHealth(d);await actions.handleStaleHost();
+ await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);
+ assert.equal(log.filter(([op])=>['dialog','ask-restart','confirm','restart','kill','wait'].includes(op)).length,0);
+});

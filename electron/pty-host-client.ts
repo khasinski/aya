@@ -49,7 +49,7 @@ import type { BufferSearchHit } from "./pty";
 import type { PtyEvent, SpawnRequest } from "./types";
 import {authenticateHostSocket} from "./pty-host-auth-transport";
 import {readHostAuthKey,createHostAuthKey} from "./pty-host-auth-key";
-import {HostAuthError,type HostAuthPeer} from "./pty-host-auth";
+import {HostAuthError,HostPrincipalBusyError,HOST_PRINCIPAL_BUSY_REASON,type HostAuthPeer} from "./pty-host-auth";
 import {handoverPeer} from "./pty-handover-window";
 import {refusedHostStatus,HOST_AUTH_REFUSAL_REASON,type HostAuthenticationProblem} from "./pty-host-auth-status";
 import {validateOwnerContinuity} from "./pty-host-owner-continuity";
@@ -173,6 +173,12 @@ export class PtyHostClient {
   private readonly ownerSecret = randomBytes(32);
   private hostAuthKey:Buffer|null=null;
   private authRefusalPeer:HostAuthPeer|null|undefined;
+  private principalBusyPeer:HostAuthPeer|null|undefined;
+  private readonly principalBusyPanes=new Set<string>();
+  private readonly principalAttaches=new Map<string,Set<AbortController>>();
+  private principalRetry:Promise<void>|null=null;
+  private principalRetryExhausted=false;
+  private principalRetryCancel:AbortController|null=null;
   private readonly authRefusedPanes=new Map<string,string>();
   private ownerBacked = false;
   private metadataRequired = false;
@@ -278,7 +284,7 @@ export class PtyHostClient {
 
   attachWebContents(webContents: WebContents | PtyEventSink): void {
     this.sinks.add(webContents);
-    if(!webContents.isDestroyed())for(const [ptyId,reason] of this.authRefusedPanes)webContents.send("pty:event",{type:"disconnected",ptyId,reason});
+    if(!webContents.isDestroyed())for(const [ptyId,reason] of this.authRefusedPanes)webContents.send("pty:event",this.principalBusyPanes.has(ptyId)?{type:"host-connection",ptyId,reason,connected:false}:{type:"disconnected",ptyId,reason});
   }
 
   detachWebContents(webContents: WebContents | PtyEventSink): void {
@@ -329,7 +335,7 @@ export class PtyHostClient {
     if(!req.attachIfReused&&!req.attachOnly){this.recoveredStates.delete(req.ptyId);this.endedBootPanes.delete(req.ptyId);this.observedExits.delete(req.ptyId);this.uncertainInput.delete(req.ptyId);}
     if(this.endedBootPanes.has(req.ptyId)&&(req.attachIfReused||req.attachOnly)&&!req.replayAfter){
       const exitCode=this.endedBootPanes.get(req.ptyId)!;
-      this.authRefusedPanes.delete(req.ptyId);
+      this.authRefusedPanes.delete(req.ptyId);this.principalBusyPanes.delete(req.ptyId);
       const receipt=this.observedExits.get(req.ptyId);if(receipt){this.observeExit(req.ptyId,receipt);await this.exitAcks.get(req.ptyId);}
       const recovery=this.recoveredStates.get(req.ptyId);if(recovery)this.sendToSinks([{...recovery}]);
       this.sendToSinks([{type:"exit",ptyId:req.ptyId,exitCode}]);return;
@@ -364,13 +370,13 @@ export class PtyHostClient {
       // Replay may deliver an ended native record before its spawn reply. Do
       // not report attachment complete while its observed exit ACK is in flight.
       await this.exitAcks.get(req.ptyId);
-      this.authRefusedPanes.delete(req.ptyId);
+      this.authRefusedPanes.delete(req.ptyId);this.principalBusyPanes.delete(req.ptyId);
     } catch (err) {
       this.live.delete(req.ptyId);
       const code=(err as {code?:string})?.code;
-      if(["PTY_HOST_AUTH_REQUIRED","PTY_HOST_AUTH_UNAVAILABLE","PTY_HOST_START_BLOCKED","PTY_HOST_OWNER_UNAVAILABLE"].includes(code??"")){
-        const reason=code==="PTY_HOST_OWNER_UNAVAILABLE"?this.recoveryReason??"The terminal host recovery data is unavailable; input remains disabled.":code==="PTY_HOST_START_BLOCKED"?"The terminal host inventory could not be verified. Its processes may still be running; input remains disabled. Use Settings > Diagnostics > PTY host > Restart to review them.":HOST_AUTH_REFUSAL_REASON;
-        this.authRefusedPanes.set(req.ptyId,reason);this.sendToSinks([{type:"disconnected",ptyId:req.ptyId,reason}]);
+      if(["PTY_HOST_PRINCIPAL_BUSY","PTY_HOST_AUTH_REQUIRED","PTY_HOST_AUTH_UNAVAILABLE","PTY_HOST_START_BLOCKED","PTY_HOST_OWNER_UNAVAILABLE"].includes(code??"")){
+        const reason=code==="PTY_HOST_PRINCIPAL_BUSY"?HOST_PRINCIPAL_BUSY_REASON:code==="PTY_HOST_OWNER_UNAVAILABLE"?this.recoveryReason??"The terminal host recovery data is unavailable; input remains disabled.":code==="PTY_HOST_START_BLOCKED"?"The terminal host inventory could not be verified. Its processes may still be running; input remains disabled. Use Settings > Diagnostics > PTY host > Restart to review them.":HOST_AUTH_REFUSAL_REASON;
+        this.authRefusedPanes.set(req.ptyId,reason);this.sendToSinks([code==="PTY_HOST_PRINCIPAL_BUSY"?{type:"host-connection",ptyId:req.ptyId,connected:false,reason}:{type:"disconnected",ptyId:req.ptyId,reason}]);
         throw Object.assign(new Error("The terminal host is disconnected or recovering. This request was not sent."),{code});
       }
       throw err;
@@ -397,10 +403,11 @@ export class PtyHostClient {
   }
 
   async kill(ptyId: string): Promise<void> {
+    for(const pending of this.principalAttaches.get(ptyId)??[])pending.abort();
     this.endedBootPanes.delete(ptyId);
     this.observedExits.delete(ptyId);
     await this.request({ id: 0, type: "kill", ptyId });
-    this.authRefusedPanes.delete(ptyId);
+    this.authRefusedPanes.delete(ptyId);this.principalBusyPanes.delete(ptyId);
     this.live.delete(ptyId);this.recoveredStates.delete(ptyId);
     this.sessionWatches.get(ptyId)?.();
     this.sessionWatches.delete(ptyId);
@@ -416,6 +423,7 @@ export class PtyHostClient {
    *  would have no app to serve and never exit. Requests already sent still land. */
   dispose(): void {
     this.disposed = true;
+    this.principalRetryCancel?.abort();
     this.crashSupervisor?.dispose();
     for(const timer of this.exitAckTimers.values())clearTimeout(timer);this.exitAckTimers.clear();
     this.stopSessionWatches();
@@ -445,6 +453,7 @@ export class PtyHostClient {
     owner?: PtyOwnerStatus;
     recoveryReason?:string;
     authentication?:HostAuthenticationProblem;
+    principalBusy?:boolean;
     ownerUnavailable?:boolean;
     ownerStopped?:boolean;
     startTime?:string|null;
@@ -462,6 +471,10 @@ export class PtyHostClient {
         ...(obj.owner && typeof obj.owner === "object" ? { owner: obj.owner as PtyOwnerStatus } : {}),
       };
     } catch(error) {
+      if((error as {code?:string})?.code==="PTY_HOST_PRINCIPAL_BUSY"){
+        const {authentication:_authentication,...status}=refusedHostStatus(this.principalBusyPeer??null);
+        return {...status,principalBusy:true,recoveryReason:HOST_PRINCIPAL_BUSY_REASON};
+      }
       if(!this.ownerContinuityUnavailable&&(this.authRefusalPeer!==undefined||(error as {code?:string})?.code==="PTY_HOST_START_BLOCKED")){
         const peer=this.authRefusalPeer??null,status=refusedHostStatus(peer);
         if(peer&&status.authentication.targetVerified&&!status.owner){
@@ -613,7 +626,7 @@ export class PtyHostClient {
         this.crashBlocked=false;
         const result=await this.replaceHost(consent);
         if(result){
-          completed=true;this.crashBlocked=false;this.ownerContinuityUnavailable=false;this.ownerRetired=false;this.authRefusedPanes.clear();this.recoveryReason=undefined;supervisor?.dispose();
+          completed=true;this.crashBlocked=false;this.ownerContinuityUnavailable=false;this.ownerRetired=false;this.authRefusedPanes.clear();this.principalBusyPanes.clear();this.recoveryReason=undefined;supervisor?.dispose();
           if(supervisor&&!this.disposed){this.crashSupervisor=null;this.enableCrashRecovery(this.recoveryHooks);}
         }
         return result;
@@ -876,14 +889,34 @@ export class PtyHostClient {
     duringReplace = false,
   ): Promise<unknown> {
     if (this.disposed) throw new Error(DISPOSED_MESSAGE);
+    if(this.principalRetryExhausted&&this.principalBusyPeer!==undefined&&request.type!=="spawn")throw new HostPrincipalBusyError();
     if(this.crashBlocked&&!duringReplace)throw new Error("The terminal host is disconnected or recovering. This request was not sent.");
     if (!duringReplace && this.replacing) await this.replacing;
     if (this.disposed) throw new Error(DISPOSED_MESSAGE);
-    await this.connect();
-    if(this.disposed&&request.type!=="shutdown")throw new Error(DISPOSED_MESSAGE);
-    const socket = this.socket;
-    if (!socket || socket.destroyed) throw new Error(PTY_HOST_NOT_CONNECTED);
-    return this.sendRequest(socket, finalize ? finalize(request) : request);
+    let pending:AbortController|undefined;
+    const paneId=request.type==="spawn"?request.req.ptyId:undefined;
+    if(paneId){pending=new AbortController();this.principalAttaches.set(paneId,(this.principalAttaches.get(paneId)??new Set()).add(pending));}
+    try{
+      try{await this.connect();}catch(error){
+        if((error as {code?:string})?.code!=="PTY_HOST_PRINCIPAL_BUSY"||!paneId)throw error;
+        if(pending?.signal.aborted)throw new HostPrincipalBusyError();
+        this.principalBusyPanes.add(paneId);this.authRefusedPanes.set(paneId,HOST_PRINCIPAL_BUSY_REASON);
+        this.sendToSinks([{type:"host-connection",ptyId:paneId,connected:false,reason:HOST_PRINCIPAL_BUSY_REASON}]);
+        await this.waitForPrincipal();
+      }
+      if(this.disposed&&request.type!=="shutdown")throw new Error(DISPOSED_MESSAGE);
+      if(pending?.signal.aborted)throw new HostPrincipalBusyError();
+      const socket = this.socket;
+      if (!socket || socket.destroyed) throw new Error(PTY_HOST_NOT_CONNECTED);
+      const ready=finalize?finalize(request):request;
+      if(paneId&&this.principalBusyPanes.delete(paneId)){
+        this.authRefusedPanes.delete(paneId);
+        this.sendToSinks([{type:"host-connection",ptyId:paneId,connected:true,reason:HOST_PRINCIPAL_BUSY_REASON}]);
+      }
+      return await this.sendRequest(socket,ready);
+    }finally{
+      if(pending&&paneId){this.principalAttaches.get(paneId)?.delete(pending);if(!this.principalAttaches.get(paneId)?.size)this.principalAttaches.delete(paneId);}
+    }
   }
 
   private sendRequest(socket: net.Socket, request: PtyHostRequest): Promise<unknown> {
@@ -897,6 +930,37 @@ export class PtyHostClient {
         reject(err);
       });
     });
+  }
+
+  /** A shared, bounded acquisition wait; it never creates a host. A later
+   * explicit attach can open a new budget after this one ends. */
+  private waitForPrincipal():Promise<void>{
+    if(this.principalRetry)return this.principalRetry;
+    const controller=new AbortController();this.principalRetryCancel=controller;this.principalRetryExhausted=false;
+    const timer=setTimeout(()=>controller.abort(),10000);
+    const run=async()=>{
+      let attempt=0;
+      while(!controller.signal.aborted){
+        await new Promise<void>(resolve=>{
+          const finish=()=>{clearTimeout(delay);controller.signal.removeEventListener("abort",finish);resolve();};
+          const delay=setTimeout(finish,[100,250,500,1000][Math.min(attempt++,3)]);
+          controller.signal.addEventListener("abort",finish,{once:true});if(controller.signal.aborted)finish();
+        });
+        if(this.disposed)throw new Error(DISPOSED_MESSAGE);
+        if(controller.signal.aborted)break;
+        let abort:()=>void=()=>{};
+        const cancelled=new Promise<never>((_resolve,reject)=>{
+          abort=()=>{reject(this.disposed?new Error(DISPOSED_MESSAGE):new HostPrincipalBusyError());};
+          controller.signal.addEventListener("abort",abort,{once:true});if(controller.signal.aborted)abort();
+        });
+        try{await Promise.race([this.connect(),cancelled]);if(controller.signal.aborted)break;return;}catch(error){
+          if((error as {code?:string})?.code!=="PTY_HOST_PRINCIPAL_BUSY")throw error;
+        }finally{controller.signal.removeEventListener("abort",abort);}
+      }
+      throw new HostPrincipalBusyError();
+    };
+    const task=run().catch(error=>{this.principalRetryExhausted=true;throw error;}).finally(()=>{clearTimeout(timer);if(this.principalRetry===task){this.principalRetry=null;this.principalRetryCancel=null;}});
+    this.principalRetry=task;return task;
   }
 
   private async connect(): Promise<void> {
@@ -939,7 +1003,7 @@ export class PtyHostClient {
       if(this.socket!==socket||socket.destroyed||this.disposed)throw Error(PTY_HOST_NOT_CONNECTED);
       this.metadataSocket = socket;
       for(const [id,receipt] of this.observedExits)this.observeExit(id,receipt);
-    }).catch(error => { this.dropSocket(); throw error; }).finally(() => {
+    }).then(()=>{this.principalBusyPeer=undefined;this.principalRetryExhausted=false;}).catch(error => { this.dropSocket(); throw error; }).finally(() => {
       this.connectPromise = null;
     });
     return this.connectPromise;
@@ -955,6 +1019,7 @@ export class PtyHostClient {
     } catch(error) {
       if (this.disposed) throw new Error(DISPOSED_MESSAGE);
       if(!["ENOENT","ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code??""))throw error;
+      if(this.principalBusyPeer!==undefined)throw new HostPrincipalBusyError();
       const prior=this.pendingPlannedHost;
       if(prior&&prior.exitCode===null&&prior.signalCode===null){
         await new Promise<void>(resolve=>{const done=()=>{clearTimeout(timer);prior.removeListener("exit",done);resolve();};const timer=setTimeout(done,1000);prior.once("exit",done);});
@@ -972,6 +1037,11 @@ export class PtyHostClient {
   private openSocket(): Promise<void> {
     return new Promise((resolve, reject) => {
       const socket = net.createConnection(PTY_HOST_SOCKET_PATH);
+      const retrySignal=this.principalRetryCancel?.signal;
+      const cancel=()=>{socket.destroy();reject(this.disposed?new Error(DISPOSED_MESSAGE):new HostPrincipalBusyError());};
+      retrySignal?.addEventListener("abort",cancel,{once:true});
+      socket.once("close",()=>retrySignal?.removeEventListener("abort",cancel));
+      if(retrySignal?.aborted){cancel();return;}
       socket.setEncoding("utf8");
       if (this.observationOnly) this.socket = socket; // dispose also closes a pending connect
       let peer:HostAuthPeer|null=null;
@@ -983,6 +1053,7 @@ export class PtyHostClient {
         if(!startIdentity)throw new HostAuthError();
         const authenticated=await authenticateHostSocket(socket,this.hostAuthKey,{pid:process.pid,startIdentity});
         if(this.disposed&&!this.issuedShutdown){socket.destroy();throw new Error(DISPOSED_MESSAGE);}
+        retrySignal?.removeEventListener("abort",cancel);
         this.authRefusalPeer=undefined;
         this.socket = socket;
         this.hostAsked = false;
@@ -999,7 +1070,7 @@ export class PtyHostClient {
         });
         if(authenticated.buffered)this.onData(authenticated.buffered);
         socket.resume();resolve();
-      })().catch(error=>{this.authRefusalPeer=peer;socket.destroy();reject(error);});});
+      })().catch(error=>{if(error instanceof HostPrincipalBusyError)this.principalBusyPeer=peer;else this.authRefusalPeer=peer;socket.destroy();reject(error);});});
       socket.once("error", reject);
     });
   }
@@ -1137,7 +1208,7 @@ export class PtyHostClient {
         continue;
       }
       if ("type" in message && message.type === "event") {
-        if(PANE_ENDED_EVENTS.has(message.event.type))this.authRefusedPanes.delete(message.event.ptyId);
+        if(PANE_ENDED_EVENTS.has(message.event.type)){this.authRefusedPanes.delete(message.event.ptyId);this.principalBusyPanes.delete(message.event.ptyId);}
         if(message.event.type==="recovery-screen"){
           this.recoveryScreens.set(message.event.ptyId,message.event);
           const state=this.recoveredStates.get(message.event.ptyId);if(state?.generation===message.event.generation)state.screenUnknown=!message.event.known;

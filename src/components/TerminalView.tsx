@@ -840,6 +840,7 @@ function TerminalViewComponent({
       return true;
     };
     let displayGeneration:string|null=null,replayToken:string|null=null,appliedToken=false,displayEpoch=0;
+    let waitingForPrincipal=terminal.disconnectedReason?.startsWith("The previous Aya process is still closing.")??false;
     const retireHandoverForRestart=()=>{
       displayEpoch++;attachRetiredByRestart=true;attachCancelled=true;releaseDeferred?.();unregisterPendingAttach();
       awaitingReplay=false;displayGeneration=null;replayToken=null;appliedToken=false;
@@ -856,7 +857,10 @@ function TerminalViewComponent({
     // window.aya.onPtyEvent listener would.
     const unsubscribe = ptyEventBus.onFor(terminal.id, (event) => {
       if (isRestoringRef.current) markRestoring(false);
-      if(event.type === "recovered") {
+      if(event.type === "host-connection"){
+        if(!event.connected){waitingForPrincipal=true;disconnectedRef.current=true;term.options.disableStdin=true;setHistoryNotice(event.reason);}
+        else if(waitingForPrincipal){waitingForPrincipal=false;disconnectedRef.current=false;term.options.disableStdin=handoverInputPausedRef.current;setHistoryNotice(notice=>notice===event.reason?null:notice);}
+      } else if(event.type === "recovered") {
         displayEpoch++;attachRetiredByRestart=true;attachCancelled=true;releaseDeferred?.();unregisterPendingAttach();
         // Also queue RIS behind already-buffered parser writes: an old async
         // write cannot repaint consumed output after this synchronous reset.
