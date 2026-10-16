@@ -51,7 +51,7 @@ import {authenticateHostSocket} from "./pty-host-auth-transport";
 import {readHostAuthKey,createHostAuthKey} from "./pty-host-auth-key";
 import {HostAuthError,type HostAuthPeer} from "./pty-host-auth";
 import {handoverPeer} from "./pty-handover-window";
-import {refusedHostStatus,type HostAuthenticationProblem} from "./pty-host-auth-status";
+import {refusedHostStatus,HOST_AUTH_REFUSAL_REASON,type HostAuthenticationProblem} from "./pty-host-auth-status";
 import {restartRefusedHost,refusedRestartDeps} from "./pty-host-auth-restart";
 import {assertHostCreationSafe} from "./pty-host-start-guard";
 
@@ -169,6 +169,7 @@ export class PtyHostClient {
   private readonly ownerSecret = randomBytes(32);
   private hostAuthKey:Buffer|null=null;
   private authRefusalPeer:HostAuthPeer|null|undefined;
+  private readonly authRefusedPanes=new Map<string,string>();
   private ownerBacked = false;
   private metadataRequired = false;
   private metadataSocket: net.Socket | null = null;
@@ -256,6 +257,7 @@ export class PtyHostClient {
 
   attachWebContents(webContents: WebContents | PtyEventSink): void {
     this.sinks.add(webContents);
+    if(!webContents.isDestroyed())for(const [ptyId,reason] of this.authRefusedPanes)webContents.send("pty:event",{type:"disconnected",ptyId,reason});
   }
 
   detachWebContents(webContents: WebContents | PtyEventSink): void {
@@ -339,8 +341,15 @@ export class PtyHostClient {
       // Replay may deliver an ended native record before its spawn reply. Do
       // not report attachment complete while its observed exit ACK is in flight.
       await this.exitAcks.get(req.ptyId);
+      this.authRefusedPanes.delete(req.ptyId);
     } catch (err) {
       this.live.delete(req.ptyId);
+      const code=(err as {code?:string})?.code;
+      if(["PTY_HOST_AUTH_REQUIRED","PTY_HOST_AUTH_UNAVAILABLE","PTY_HOST_START_BLOCKED"].includes(code??"")){
+        const reason=code==="PTY_HOST_START_BLOCKED"?"The terminal host inventory could not be verified. Its processes may still be running; input remains disabled. Use Settings > Diagnostics > PTY host > Restart to review them.":HOST_AUTH_REFUSAL_REASON;
+        this.authRefusedPanes.set(req.ptyId,reason);this.sendToSinks([{type:"disconnected",ptyId:req.ptyId,reason}]);
+        throw Object.assign(new Error("The terminal host is disconnected or recovering. This request was not sent."),{code});
+      }
       throw err;
     }finally{if(replayExit){const left=(this.exitReplayFlights.get(req.ptyId)??1)-1;if(left)this.exitReplayFlights.set(req.ptyId,left);else this.exitReplayFlights.delete(req.ptyId);}}
   }
@@ -618,7 +627,7 @@ export class PtyHostClient {
       catch(error){
         if(!["PTY_HOST_AUTH_REQUIRED","PTY_HOST_AUTH_UNAVAILABLE","PTY_HOST_START_BLOCKED"].includes((error as {code?:string})?.code??""))throw error;
         const exited=await restartRefusedHost(consent,refusedRestartDeps(()=>this.disposed,(event,fields)=>this.recoveryHooks.log?.(event,fields)));
-        if(exited){this.hostAsked=true;this.dropSocket();this.authRefusalPeer=undefined;this.hostAuthKey=null;}
+        if(exited){this.hostAsked=true;this.dropSocket();this.authRefusalPeer=undefined;this.hostAuthKey=null;this.authRefusedPanes.clear();}
         return exited;
       }
     }

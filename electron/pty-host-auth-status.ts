@@ -11,10 +11,10 @@ export interface HostAuthenticationProblem {required:true;inventoryKnown:boolean
 export interface RefusedHostStatus {
   identity:null;ptyCount:number;pid?:number;startTime:string|null;owner?:PtyOwnerStatus;authentication:HostAuthenticationProblem;
 }
-const REASON="Aya could not authenticate to the terminal host. Its processes were kept; input remains disabled. Use Settings > Diagnostics > PTY host > Restart to review them.";
+export const HOST_AUTH_REFUSAL_REASON="Aya could not authenticate to the terminal host. Its processes were kept; input remains disabled. Use Settings > Diagnostics > PTY host > Restart to review them.";
 export function refusedHostStatus(peer:HostAuthPeer|null):RefusedHostStatus{
   const status:RefusedHostStatus={identity:null,ptyCount:0,startTime:peer?.startIdentity??null,...(peer?{pid:peer.pid}:{}),
-    authentication:{required:true,inventoryKnown:false,targetVerified:false,reason:REASON}};
+    authentication:{required:true,inventoryKnown:false,targetVerified:false,reason:HOST_AUTH_REFUSAL_REASON}};
   if(!peer)return status;
   try{
     const observed=readProcInfo(peer.pid);

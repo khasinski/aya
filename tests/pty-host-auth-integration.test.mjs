@@ -49,10 +49,12 @@ test('missing, unsafe or wrong capability cannot reach the generic create-host f
   if(corruption==='missing')fs.unlinkSync(keyFile);
   if(corruption==='mode')fs.chmodSync(keyFile,0o644);
   if(corruption==='wrong')fs.writeFileSync(keyFile,Buffer.alloc(32,1));
-  const before=fs.lstatSync(socketPath),other=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));let starts=0;
+  const before=fs.lstatSync(socketPath),other=new PtyHostClient(path.resolve('dist-electron/pty-host.js')),refusedSink=fakeWebContents();other.attachWebContents(refusedSink);let starts=0;
   other.startHost=()=>{starts++;throw new Error('unexpected host creation');};
   try{
-   await assert.rejects(other.spawn({ptyId:'must-not-spawn',command:'cat',cwd:home,cols:80,rows:24}),error=>['PTY_HOST_AUTH_UNAVAILABLE','PTY_HOST_AUTH_REQUIRED'].includes(error.code));
+   await assert.rejects(other.spawn({ptyId:'must-not-spawn',command:'cat',cwd:home,cols:80,rows:24}),error=>['PTY_HOST_AUTH_UNAVAILABLE','PTY_HOST_AUTH_REQUIRED'].includes(error.code)&&error.message==='The terminal host is disconnected or recovering. This request was not sent.');
+   const notice=ptyEventsFor(refusedSink,'must-not-spawn');assert.equal(notice.length,1);assert.equal(notice[0].type,'disconnected');assert.match(notice[0].reason,/could not authenticate/);assert.ok(!notice.some(e=>e.type==='no-session'||e.type==='exit'));
+   const lateSink=fakeWebContents();other.attachWebContents(lateSink);assert.deepEqual(ptyEventsFor(lateSink,'must-not-spawn'),notice);
    assert.equal(starts,0);assert.equal(fs.lstatSync(socketPath).ino,before.ino);assert.equal(await main.getPid('auth-pane'),pid);assert.equal((await main.hostStatus()).pid,hostPid);
    const refused=await other.hostStatus();assert.equal(refused.pid,hostPid,corruption);assert.equal(refused.authentication?.inventoryKnown,true,corruption);assert.equal(refused.authentication?.targetVerified,true,corruption);
    assert.deepEqual(refused.owner?.inventory.map(p=>[p.id,p.pid]),[['auth-pane',pid]],corruption);assert.equal(refused.ptyCount,1);assert.equal(starts,0);
