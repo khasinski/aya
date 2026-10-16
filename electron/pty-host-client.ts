@@ -284,6 +284,11 @@ export class PtyHostClient {
   private readonly preparations = new Map<number, AbortController>();
   private readonly sessionWatches = new Map<string, () => void>();
   private readonly screenStates = new Map<string, { generation: string; waiting: boolean; dialog?: string }>();
+  private userRuleStatusObserver:((ptyId:string,snapshot:VtSnapshot)=>Promise<{generation:string;revision:string;waiting:boolean;dialog?:string}|null>)|null=null;
+  private readonly latestRuleSnapshots=new Map<string,VtSnapshot>();
+  private readonly ruleStatusStates=new Map<string,{generation:string;revision:string;waiting:boolean;dialog?:string}>();
+  private readonly ruleStatusPending=new Map<string,VtSnapshot>();
+  private readonly ruleStatusTimers=new Map<string,ReturnType<typeof setTimeout>>();
   // Panes this client spawned and has not seen end: the ones a lost host takes
   // down without a word.
   private readonly live = new Set<string>();
@@ -300,6 +305,54 @@ export class PtyHostClient {
     this.sinks.add(webContents);
     if(!webContents.isDestroyed()&&this.ownerContinuityUnavailable&&!this.crashBlocked)for(const ptyId of this.live)webContents.send("pty:event",{type:"recovery-unavailable",ptyId,reason:this.continuityNotice});
     if(!webContents.isDestroyed())for(const [ptyId,reason] of this.authRefusedPanes)webContents.send("pty:event",this.principalBusyPanes.has(ptyId)?{type:"host-connection",ptyId,reason,connected:false}:{type:"disconnected",ptyId,reason});
+    if(!webContents.isDestroyed()&&this.userRuleStatusObserver)for(const [ptyId,snapshot] of this.latestRuleSnapshots){
+      const observer=this.userRuleStatusObserver;
+      void observer(ptyId,snapshot).then(status=>{
+        const latest=this.latestRuleSnapshots.get(ptyId);
+        if(!status||webContents.isDestroyed()||this.userRuleStatusObserver!==observer||latest?.generation!==status.generation||latest.revision!==status.revision)return;
+        const alreadyPublished=this.ruleStatusStates.get(ptyId);
+        const cached=alreadyPublished?.generation===status.generation&&alreadyPublished.revision===status.revision&&alreadyPublished.waiting===status.waiting&&alreadyPublished.dialog===status.dialog;
+        this.publishRuleStatus(ptyId,status);
+        // Existing rule status may already be cached for another window. A new
+        // sink still needs its own initial waiting state.
+        if(cached&&status.waiting)webContents.send("pty:event",{type:"vt-status",ptyId,waiting:true,...(status.dialog?{dialog:status.dialog}:{})});
+      }).catch(()=>{});
+    }
+  }
+
+  /** User-rule status replaces the builtin-only renderer verdict while active.
+   * The no-files path leaves the existing host status path untouched. */
+  setUserRuleStatusObserver(observer:((ptyId:string,snapshot:VtSnapshot)=>Promise<{generation:string;revision:string;waiting:boolean;dialog?:string}|null>)|null):void{
+    this.userRuleStatusObserver=observer;
+    for(const timer of this.ruleStatusTimers.values())clearTimeout(timer);this.ruleStatusTimers.clear();this.ruleStatusPending.clear();
+    if(observer){for(const [id,snapshot] of this.latestRuleSnapshots)this.evaluateRuleStatus(id,snapshot);return;}
+    for(const [id,snapshot] of this.latestRuleSnapshots){
+      const prior=this.ruleStatusStates.get(id);this.ruleStatusStates.delete(id);
+      const builtin=snapshotStatus(snapshot);
+      if(prior?.waiting&&!builtin.waiting)this.sendToSinks([{type:"vt-status",ptyId:id,waiting:false}]);
+      this.acceptSnapshot(id,snapshot);
+    }
+  }
+  private evaluateRuleStatus(ptyId:string,snapshot:VtSnapshot):void{
+    const observer=this.userRuleStatusObserver;if(!observer)return;
+    this.ruleStatusPending.set(ptyId,snapshot);
+    if(this.ruleStatusTimers.has(ptyId))return;
+    const timer=setTimeout(()=>{
+      this.ruleStatusTimers.delete(ptyId);const latest=this.ruleStatusPending.get(ptyId);this.ruleStatusPending.delete(ptyId);
+      if(!latest||this.userRuleStatusObserver!==observer)return;
+      void observer(ptyId,latest).then(status=>{if(!status||this.userRuleStatusObserver!==observer)return;this.publishRuleStatus(ptyId,status);}).catch(()=>{});
+    },50);
+    timer.unref?.();this.ruleStatusTimers.set(ptyId,timer);
+  }
+  private publishRuleStatus(ptyId:string,status:{generation:string;revision:string;waiting:boolean;dialog?:string}):void{
+    const latest=this.latestRuleSnapshots.get(ptyId);if(!latest||latest.generation!==status.generation||latest.revision!==status.revision)return;
+    const old=this.ruleStatusStates.get(ptyId);if(old?.generation===status.generation&&old.revision===status.revision&&old.waiting===status.waiting&&old.dialog===status.dialog)return;
+    const priorWaiting=old?.generation===status.generation?old.waiting:false;
+    const edge=(!priorWaiting&&status.waiting)||(priorWaiting&&!status.waiting)||(priorWaiting&&status.waiting&&old?.dialog!==status.dialog);
+    this.ruleStatusStates.set(ptyId,status);
+    // A first non-waiting status must not invent an edge for a new sink.
+    if(!edge)return;
+    this.sendToSinks([{type:"vt-status",ptyId,waiting:status.waiting,...(status.waiting&&status.dialog?{dialog:status.dialog}:{})}]);
   }
 
   detachWebContents(webContents: WebContents | PtyEventSink): void {
@@ -443,6 +496,7 @@ export class PtyHostClient {
     this.startupCancelled.abort();
     this.crashSupervisor?.dispose();
     for(const timer of this.exitAckTimers.values())clearTimeout(timer);this.exitAckTimers.clear();
+    for(const timer of this.ruleStatusTimers.values())clearTimeout(timer);this.ruleStatusTimers.clear();this.ruleStatusPending.clear();
     this.stopSessionWatches();
   }
 
@@ -1003,6 +1057,8 @@ export class PtyHostClient {
   }
   private acceptSnapshot(ptyId: string, snapshot: VtSnapshot, replay = false): void {
     if (this.lostOwned.has(ptyId)) return;
+    this.latestRuleSnapshots.set(ptyId,snapshot);
+    if(this.userRuleStatusObserver){this.evaluateRuleStatus(ptyId,snapshot);return;}
     const verdict = snapshotStatus(snapshot);
     if (verdict.composerSeen && !snapshot.composerSeen) void this.markComposer(ptyId, snapshot).catch(() => {});
     if (verdict.waiting === null) return;
@@ -1432,6 +1488,8 @@ export class PtyHostClient {
           this.sessionWatches.get(message.event.ptyId)?.();
           this.sessionWatches.delete(message.event.ptyId);
           this.screenStates.delete(message.event.ptyId);this.recoveryScreens.delete(message.event.ptyId);
+          this.latestRuleSnapshots.delete(message.event.ptyId);this.ruleStatusStates.delete(message.event.ptyId);
+          const ruleTimer=this.ruleStatusTimers.get(message.event.ptyId);if(ruleTimer)clearTimeout(ruleTimer);this.ruleStatusTimers.delete(message.event.ptyId);this.ruleStatusPending.delete(message.event.ptyId);
         }
         events.push(message.event);
         continue;
@@ -1492,6 +1550,7 @@ export class PtyHostClient {
     for(const timer of this.exitAckTimers.values())clearTimeout(timer);this.exitAckTimers.clear();
     this.stopSessionWatches();
     this.screenStates.clear();
+    for(const timer of this.ruleStatusTimers.values())clearTimeout(timer);this.ruleStatusTimers.clear();this.ruleStatusPending.clear();this.latestRuleSnapshots.clear();this.ruleStatusStates.clear();
     // Not gated on dispose: that is the quit, whose closing windows keep a no-session in memory only.
     const lost = this.hostAsked ? [] : [...this.live];
     if (this.ownerBacked||this.ownerContinuityUnavailable) for (const id of lost) this.lostOwned.add(id);

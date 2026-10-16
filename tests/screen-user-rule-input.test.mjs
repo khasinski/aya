@@ -30,7 +30,7 @@ async function fixture(rules=[rule('account-setting'),rule('dialog')],text='❯ 
 }
 async function control(f,onWrite){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'aya-rule-input-')),socket=path.join(root,'control.sock');
- const stop=startControlServerOn(socket,{getWindow:()=>null,openProject:()=>{},listProjects:async()=>[{slug:'p',tabs:[{id:f.id,name:'Target'}]}],readPane:async()=>'',writePane:async()=>{throw Error('legacy writer must not run');},paneHold:async()=>snapshotHold(await mirror.vtSnapshot(f.id)).hold,paneInputProtection:(id,pasted)=>f.input.protection(id,pasted),writePaneChecked:async(id,data,context)=>{f.checkedCalls.push({data,...context});const result=await f.input.write('direct',id,data,context);await onWrite?.(data);return result;}});
+ const stop=startControlServerOn(socket,{getWindow:()=>null,openProject:()=>{},listProjects:async()=>[{slug:'p',tabs:[{id:f.id,name:'Target'}]}],readPane:async()=>'',writePane:async()=>{throw Error('legacy writer must not run');},paneHold:async()=>snapshotHold(await mirror.vtSnapshot(f.id)).hold,paneInputProtection:(id,pasted,cancelled)=>f.input.protection(id,pasted,cancelled),writePaneChecked:async(id,data,context)=>{f.checkedCalls.push({data,...context});const result=await f.input.write('direct',id,data,context,context.cancelled);await onWrite?.(data);return result;}});
  return{send:(text='hello')=>rpc(socket,{type:'pane-send',target:'Target',text,submit:true}),close(){stop();fs.rmSync(root,{recursive:true,force:true});}};
 }
 for(const [name,text,seen,expected,rules] of [
@@ -56,7 +56,7 @@ test('real control checks new account protection before Enter without hiding it 
 });
 test('user account text without any active builtin/user dialog adds no hold and does not block explicit input',async()=>{
  const f=await fixture([rule('account-setting')],'LOCAL_ACCOUNT\r\n❯ ');let server;
- try{server=await control(f);const result=await server.send();assert.equal(result.ok,true);assert.deepEqual(f.writes,['hello','\r']);assert.deepEqual(f.checkedCalls,[{data:'hello',phase:'paste'},{data:'\r',phase:'enter',pasted:'hello'}]);assert.deepEqual(f.legacy,[]);}finally{server?.close();await f.close();}
+ try{server=await control(f);const result=await server.send();assert.equal(result.ok,true);assert.deepEqual(f.writes,['hello','\r']);assert.deepEqual(f.checkedCalls.map(({data,phase,pasted})=>({data,phase,...(pasted?{pasted}:{})})),[{data:'hello',phase:'paste'},{data:'\r',phase:'enter',pasted:'hello'}]);assert.ok(f.checkedCalls.every(c=>typeof c.cancelled==='function'));assert.deepEqual(f.legacy,[]);}finally{server?.close();await f.close();}
 });
 test('unavailable user candidate blocks control before paste and before Enter',async()=>{
  for(const afterPaste of [false,true]){
@@ -87,6 +87,15 @@ test('reload and cancellation during evaluation prevent a late continuation; no-
   try{const p=f.input.write('direct',f.id,'late',{phase:'paste'},()=>cancelled);await started.promise;if(mode==='reload')f.set({...f.state(),epoch:2});else if(mode==='cancel')cancelled=true;else f.input.dispose();wait.resolve({available:true,epoch:1,digest:'a'.repeat(64),matches:[]});await assert.rejects(p,/not sent/);assert.deepEqual(f.writes,[]);}finally{await f.close();}
  }
  const f=await fixture();try{f.set({epoch:2,available:true,manifest:null});f.host.snapshot=async()=>{throw Error('no extra read');};assert.equal(await f.input.write('team',f.id,'legacy',{phase:'paste'}),true);assert.deepEqual(f.legacy,['legacy']);assert.equal(f.requests.length,0);}finally{await f.close();}
+});
+test('team delivery passes cancellation through the checked writer after its policy await',async()=>{
+ const f=await fixture(),gate=deferred(),started=deferred();let cancelled=false;const evaluate=f.provider.evaluate;
+ f.provider.evaluate=request=>{started.resolve();return gate.promise.then(()=>evaluate(request));};
+ try{
+  const delivery=deliverTeamMessage(async()=>{throw Error('unchecked writer');},f.id,'late task',async()=>null,()=>cancelled,undefined,undefined,undefined,
+   (id,data,context,wasCancelled)=>f.input.write('team',id,data,context,wasCancelled));
+  await started.promise;cancelled=true;gate.resolve();await assert.rejects(delivery,/not sent/);assert.deepEqual(f.writes,[]);
+ }finally{gate.resolve();f.provider.evaluate=evaluate;await f.close();}
 });
 test('team checked paste honors fresh user busy, Enter excludes only its own pasted text',async()=>{
  const f=await fixture([rule('busy','LOCAL_BUSY')],'LOCAL_BUSY\r\n❯ ');

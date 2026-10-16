@@ -102,9 +102,9 @@ export interface ControlServerOptions {
   /** Why the pane must not be typed into now (vt-state paneHold); pane-send refuses only a dialog for the user alone. */
   paneHold?: (terminalId: string) => Promise<string | null>;
   /** Optional user-layer protection, independent of the displayed builtin hold. */
-  paneInputProtection?: (terminalId: string, pasted?: string) => Promise<string | null>;
+  paneInputProtection?: (terminalId: string, pasted?: string, cancelled?: () => boolean) => Promise<string | null>;
   /** Automatic input with a current policy decision and host first-byte fence. */
-  writePaneChecked?: (terminalId: string, data: string, context: AutomaticWriteContext) => Promise<boolean | void>;
+  writePaneChecked?: (terminalId: string, data: string, context: AutomaticWriteContext & { cancelled?: () => boolean }) => Promise<boolean | void>;
   paneState?: (terminalId: string) => Promise<PaneStateResult>;
   /** All live windows (and window-like sinks); status updates are broadcast
    *  because the terminal they describe may be in an unfocused window. */
@@ -159,7 +159,8 @@ function sendJson(socket: net.Socket, reply: { ok: boolean; output?: unknown; er
  *  resolve their target the same way and fail loudly on an ambiguous name. */
 async function handlePaneRequest(
   request: Extract<ControlRequest, { type: "pane-read" | "pane-send" }>,
-  options: Pick<ControlServerOptions, "listProjects" | "readPane" | "writePane" | "paneHold">,
+  options: ControlServerOptions,
+  callerGone?: AbortSignal,
 ): Promise<Record<string, unknown> | void> {
   if (!options.listProjects || !options.writePane || (request.type === "pane-read" && !options.readPane)) {
     throw new Error("pane control is not available");
@@ -179,8 +180,9 @@ async function handlePaneRequest(
   }
   // Any key, Enter or not, answers a select dialog; an unreadable screen is no reason to refuse.
   // Read under the pane lock: a delivery queued ahead of this one, or this one's own text, can draw the offer.
+  const cancelled=()=>callerGone?.aborted===true;
   const userOnly = async (pasted?: string) => {
-    if(options.paneInputProtection)return options.paneInputProtection(terminalId,pasted);
+    if(options.paneInputProtection)return options.paneInputProtection(terminalId,pasted,cancelled);
     const hold = await options.paneHold?.(terminalId).catch(() => null);
     return isUserOnlyHold(hold) ? hold! : null;
   };
@@ -194,8 +196,8 @@ async function handlePaneRequest(
     const hold = await userOnly(request.text);
     if (hold) throw new PaneHeldError(`pane "${name}": ${hold}; ${isUserOnlyHold(hold)?"it appeared after the text was typed":"automated input protection changed after the text was typed"}; Enter not sent, the text may sit in the offer or the composer`, true);
   };
-  const writer=options.writePaneChecked?((id:string,data:string)=>options.writePaneChecked!(id,data,{phase,...(phase==="enter"?{pasted:request.text}:{})})):options.writePane;
-  await deliverToPane(writer, terminalId, name, request.text, request.submit === true, guard, beforeEnter);
+  const writer=options.writePaneChecked?((id:string,data:string)=>options.writePaneChecked!(id,data,{phase,...(phase==="enter"?{pasted:request.text}:{}),cancelled})):options.writePane;
+  await deliverToPane(writer, terminalId, name, request.text, request.submit === true, guard, beforeEnter, undefined, cancelled);
   return { terminalId, projectSlug, name };
 }
 
@@ -241,7 +243,7 @@ export function deliverTeamMessage(
   probe?: TurnProbe,
   entered?: () => Promise<void>,
   pasting?: () => Promise<void>,
-  writeChecked?: (terminalId: string, data: string, context: AutomaticWriteContext) => Promise<boolean | void>,
+  writeChecked?: (terminalId: string, data: string, context: AutomaticWriteContext, cancelled?: () => boolean) => Promise<boolean | void>,
 ): Promise<string | null> {
   const pasted = oneLine(text);
   let phase: AutomaticWriteContext["phase"] = "paste";
@@ -272,7 +274,7 @@ export function deliverTeamMessage(
     await entered?.();
     if (probe) unseen = await turnUnseen(probe, terminalId, pasted, before!);
   };
-  const writer=writeChecked?((id:string,data:string)=>writeChecked(id,data,{phase,...(phase==="enter"?{pasted}:{})})):writePane;
+  const writer=writeChecked?((id:string,data:string)=>writeChecked(id,data,{phase,...(phase==="enter"?{pasted}:{})},cancelled)):writePane;
   return deliverToPane(writer, terminalId, terminalId, `${PASTE_START}${pasted}${PASTE_END}`, true, guard, snapshot, afterEnter).then(() => {
     // Text the agent did not take still sits there: the next read must see it as a draft at once.
     if (!unseen) lastSubmitted.set(terminalId, { text: pasted, at: Date.now() });
@@ -338,9 +340,12 @@ function deliverToPane(
   guard?: () => Promise<void>,
   beforeEnter?: () => Promise<void>,
   afterEnter?: () => Promise<void>,
+  cancelled?: () => boolean,
 ): Promise<void> {
   return withPaneInputLock(terminalId, async () => {
+    if(cancelled?.())throw new PaneHeldError("the caller disconnected before the pane was typed into; nothing was sent",false);
     await guard?.();
+    if(cancelled?.())throw new PaneHeldError("the caller disconnected before the pane was typed into; nothing was sent",false);
     // Raw bytes, unlike the snippet drawer's bracketed paste: macOS bash 3.2 has
     // none and would take the markers as command text. "\r" is Enter, not "\n".
     if ((await writePane(terminalId, text)) === false) {
@@ -354,7 +359,9 @@ function deliverToPane(
         await new Promise((resolve) =>
           setTimeout(resolve, PANE_SEND_SUBMIT_DELAY_MS),
         );
+        if(cancelled?.())throw new PaneHeldError("the caller disconnected before Enter; no further input was sent",true);
         await beforeEnter?.();
+        if(cancelled?.())throw new PaneHeldError("the caller disconnected before Enter; no further input was sent",true);
         if ((await writePane(terminalId, "\r")) === false) throw new TextPastedError(`pane "${name}" exited before the text was submitted`);
         notePaneInput(terminalId);
       } catch (err) {
@@ -475,6 +482,7 @@ async function handleRequest(
   caller: ControlCaller,
   options: ControlServerOptions,
   callerGone?: AbortSignal,
+  callerDisconnected?: AbortSignal,
 ): Promise<Record<string, unknown> | void> {
   try {
     const observed = request.type === "machines" && request.token !== undefined ? { ...request, token: undefined } : request;
@@ -542,7 +550,7 @@ async function handleRequest(
     return { output: formatPaneState(resolved.match.name, result, request.explain) };
   }
   if (request.type === "pane-read" || request.type === "pane-send") {
-    return handlePaneRequest(request, options);
+    return handlePaneRequest(request, options, callerDisconnected);
   }
   if (request.type === "team-whoami" || request.type === "team-send" || request.type === "team-inbox" || request.type === "team-pause") {
     if (!options.team) throw new Error(TEAMS_UNAVAILABLE);
@@ -648,17 +656,21 @@ export function startControlServerOn(
     let handled = false;
     // Answer written and our FIN sent; nothing more is owed.
     let replied = false;
+    const callerGone = new AbortController();
+    // A complete half-close still expects a reply (and is common for short CLI
+    // requests). Only a real socket close/error cancels a guarded delivery.
+    const callerDisconnected = new AbortController();
     socket.setEncoding("utf8");
     // Unlistened "error" is an uncaught exception in the Electron main process.
     socket.on("error", () => {
       handled = true;
+      if(!replied){callerGone.abort();callerDisconnected.abort();}
     });
     // The caller hung up before its answer (reply timeout, Ctrl-C). Only waits on the user read it: bin/aya never
     // half-closes while it waits, while a client that sends with end() gets its answer from every other request.
-    const callerGone = new AbortController();
     // A unix socket cannot be reset, so a hang-up arrives as "end"; "close" covers a socket error.
     socket.on("close", () => {
-      if (!replied) callerGone.abort();
+      if (!replied) { callerGone.abort(); callerDisconnected.abort(); }
     });
     socket.on("end", () => {
       // Destroy unless we still owe a reply - that window is why allowHalfOpen is on.
@@ -695,7 +707,7 @@ export function startControlServerOn(
         try {
           const raw: unknown = JSON.parse(line);
           const [request, caller] = [parseControlRequest(raw), parseControlCaller(raw)];
-          const { undo, ...payload } = (await debugAnswer(options.team, request, caller, handleRequest(request, caller, options, callerGone.signal))) ?? {};
+          const { undo, ...payload } = (await debugAnswer(options.team, request, caller, handleRequest(request, caller, options, callerGone.signal, callerDisconnected.signal))) ?? {};
           if (!(await sendJson(socket, { ok: true, ...payload })) && typeof undo === "function") await undo();
         } catch (err) {
           void sendJson(socket, {

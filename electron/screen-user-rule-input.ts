@@ -30,9 +30,11 @@ export class GuardedRuleInput {
   /** Direct pane-send blocks user-only dialogs/unknown user safety independently
    * of a builtin display hold. A generic approval can still be answered by an
    * explicit pane-send, exactly as before. No composer/exit ACK occurs here. */
-  async protection(id:string,pasted?:string):Promise<string|null>{
+  async protection(id:string,pasted?:string,cancelled?:()=>boolean):Promise<string|null>{
     if(this.disposed)return HOLD_USER_RULES_UNKNOWN;
+    if(cancelled?.())return null;
     const result=await this.decision(id,pasted===undefined?"direct:protect-paste":"direct:protect-enter",pasted);
+    if(cancelled?.())return null;
     if(!result?.current||!result.decision.user.available)return HOLD_USER_RULES_UNKNOWN;
     return result.decision.inputProtection;
   }

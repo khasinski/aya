@@ -59,6 +59,24 @@ test('user prompt prevents composer ACK even on an otherwise idle builtin screen
  const f=await fixture([rule('prompt')],'LOCAL\r\n❯ ');
  try{assert.ok(await f.policy.holdReason(f.id));const state=await f.policy.paneState(f.id),text=formatPaneState('x',state,true);assert.equal(state.state,'waiting');assert.match(text,/local-prompt \(prompt; waiting\)/);assert.equal((await mirror.vtSnapshot(f.id)).composerSeen,false);assert.deepEqual(f.acks,[]);}finally{await f.close();}
 });
+test('renderer status includes additive user dialogs and drops a stale revision result',async()=>{
+ const f=await fixture([rule('dialog')],'LOCAL\r\n❯ ');
+ try{
+  const screen=await mirror.vtSnapshot(f.id),status=await f.policy.status(f.id,screen);
+  assert.deepEqual(status,{generation:screen.generation,revision:screen.revision,waiting:true,dialog:'User-defined dialog'});
+  f.set({...f.get(),epoch:2,available:false,manifest:f.get().manifest});
+  const invalid=await f.policy.status(f.id,screen);assert.deepEqual(invalid,{generation:screen.generation,revision:screen.revision,waiting:false},'an invalidated configuration can publish only the builtin verdict');
+ }finally{await f.close();}
+});
+test('configured renderer status ACKs a composer only at the evaluated revision and rereads',async()=>{
+ const f=await fixture([rule('busy','NEVER_BUSY')],'❯ ',false);
+ try{
+  const before=await mirror.vtSnapshot(f.id);assert.equal(before.composerSeen,false);
+  const status=await f.policy.status(f.id,before);assert.deepEqual(status,{generation:before.generation,revision:(await mirror.vtSnapshot(f.id)).revision,waiting:false});
+  assert.deepEqual(f.acks,[{generation:before.generation,revision:before.revision}]);
+  const after=await mirror.vtSnapshot(f.id);assert.equal(after.composerSeen,true);assert.notEqual(after.revision,before.revision);assert.equal(f.calls.evaluate,2);assert.equal(f.calls.snapshot,1);
+ }finally{await f.close();}
+});
 for(const outcome of ['false','throw','reload','dispose'])test(`composer ${outcome} cannot yield old clearance or retry`,async()=>{
  const f=await fixture();let attempts=0,committed=false;
  try{f.host.markComposer=async()=>{attempts++;if(outcome==='throw'){const s=await mirror.vtSnapshot(f.id);committed=mirror.markComposerSeenChecked(f.id,{generation:s.generation,revision:s.revision});throw Error('lost ACK');}if(outcome==='reload')f.set({...f.get(),epoch:2});if(outcome==='dispose')f.policy.dispose();return outcome!=='false';};assert.equal(await f.policy.holdReason(f.id),HOLD_USER_RULES_UNKNOWN);assert.equal(attempts,1);if(outcome==='throw')assert.equal(committed,true,'the host really applied the ACK before its reply was lost');assert.equal(f.calls.evaluate,1);assert.deepEqual(f.writes,[]);}finally{await f.close();}
@@ -83,7 +101,7 @@ test('same-generation applied output and rule invalidation cannot publish a late
 });
 test('no user files preserve the exact legacy routes with zero worker/snapshot/ACK work',async()=>{
  const f=await fixture();
- try{f.set({epoch:2,available:true,manifest:null});assert.equal(await f.policy.holdReason(f.id,'pasted'),'legacy hold');assert.equal(await f.policy.paneBusy(f.id),true);assert.deepEqual(await f.policy.paneState(f.id),{legacy:true});assert.deepEqual(f.calls,{snapshot:0,evaluate:0,hold:1,busy:1,state:1});assert.deepEqual(f.acks,[]);}finally{await f.close();}
+ try{f.set({epoch:2,available:true,manifest:null});assert.equal(await f.policy.holdReason(f.id,'pasted'),'legacy hold');assert.equal(await f.policy.paneBusy(f.id),true);assert.deepEqual(await f.policy.paneState(f.id),{legacy:true});assert.equal(await f.policy.status(f.id,await mirror.vtSnapshot(f.id)),null);assert.deepEqual(f.calls,{snapshot:0,evaluate:0,hold:1,busy:1,state:1});assert.deepEqual(f.acks,[]);}finally{await f.close();}
 });
 test('shell and empty-agent state stay truthful under additive rules',async()=>{
  const f=await fixture();

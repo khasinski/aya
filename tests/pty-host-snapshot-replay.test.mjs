@@ -18,6 +18,29 @@ test("a live quiet snapshot before replay does not invent a non-waiting edge for
   for (const replay of [false, true]) client.onData(JSON.stringify({ type: "snapshot", ptyId: id, snapshot, replay }) + "\n");
   assert.deepEqual(renderer.events, []);
 });
+test("user-rule renderer status is revision-fenced and hydrated to a newly attached sink", async () => {
+  const id="user-rule-status";openVtPane(id,80,24,()=>{},"claude");writeVtPane(id,"local prompt");
+  const first=await vtSnapshot(id);writeVtPane(id,"\r\nmore");const second=await vtSnapshot(id);closeVtPane(id);
+  const client=new PtyHostClient("/nonexistent/pty-host.js"),events=sink();client.attachWebContents(events);
+  let resolveFirst;const firstStatus=new Promise(resolve=>{resolveFirst=resolve;});
+  client.setUserRuleStatusObserver((_pane,snapshot)=>snapshot.revision===first.revision?firstStatus:Promise.resolve({generation:snapshot.generation,revision:snapshot.revision,waiting:true,dialog:"User-defined dialog"}));
+  const receive=snapshot=>client.onData(JSON.stringify({type:"snapshot",ptyId:id,snapshot})+"\n");
+  receive(first);await new Promise(resolve=>setTimeout(resolve,60));receive(second);await new Promise(resolve=>setTimeout(resolve,60));
+  assert.deepEqual(events.events,[{type:"vt-status",ptyId:id,waiting:true,dialog:"User-defined dialog"}]);
+  resolveFirst({generation:first.generation,revision:first.revision,waiting:false});await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(events.events.length,1,"a delayed result for an older applied revision is discarded");
+  const reloaded=sink();client.attachWebContents(reloaded);await new Promise(resolve=>setTimeout(resolve,0));
+  assert.deepEqual(reloaded.events,[{type:"vt-status",ptyId:id,waiting:true,dialog:"User-defined dialog"}]);
+});
+test("removing the user layer clears its waiting edge before builtin-only status resumes", async () => {
+  const id="user-rule-status-clear";openVtPane(id,80,24,()=>{},"claude");writeVtPane(id,"local prompt");const snapshot=await vtSnapshot(id);closeVtPane(id);
+  const client=new PtyHostClient("/nonexistent/pty-host.js"),events=sink();client.attachWebContents(events);
+  client.setUserRuleStatusObserver(async(_pane,screen)=>({generation:screen.generation,revision:screen.revision,waiting:true}));
+  client.onData(JSON.stringify({type:"snapshot",ptyId:id,snapshot})+"\n");await new Promise(resolve=>setTimeout(resolve,60));
+  assert.deepEqual(events.events,[{type:"vt-status",ptyId:id,waiting:true}]);
+  client.setUserRuleStatusObserver(null);
+  assert.deepEqual(events.events,[{type:"vt-status",ptyId:id,waiting:true},{type:"vt-status",ptyId:id,waiting:false}]);
+});
 for (const [name, text, dialog] of [
   ["approval", "Do you want to proceed?\r\n❯ 1. Yes\r\n  2. No", undefined],
   ["account setting", " Allow this read outside the working directories?\r\n ❯ 1. Yes, and keep allowing any reads outside the working directories\r\n   2. No, and block reads outside the working directories from now on\r\n   3. No, and ask again next time", HOLD_ACCOUNT_SETTING],

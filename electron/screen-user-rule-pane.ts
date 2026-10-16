@@ -6,10 +6,12 @@ import {GuardedRuleInput} from "./screen-user-rule-input";
 import type {UserRuleProvider} from "./screen-user-rule-provider";
 import type {CoordinatedRuleDecision} from "./screen-user-rule-coordinator";
 import {HOLD_USER_RULES_UNKNOWN} from "./screen-user-rule-policy";
+import {snapshotStatus} from "./vt-state";
 import {explainPaneSnapshot, unavailablePaneState, type PaneStateResult} from "./pane-state";
 
 type Configuration=ReturnType<UserRuleProvider["configuration"]>;
 type AppliedDecision={screen:VtSnapshot;result:CoordinatedRuleDecision;configuration:Configuration};
+export interface UserRuleScreenStatus {generation:string;revision:string;waiting:boolean;dialog?:string}
 const configured=(state:Configuration):boolean=>!state.available||state.manifest!==null;
 export class UserRulePanePolicy {
   private disposed=false;
@@ -93,6 +95,33 @@ export class UserRulePanePolicy {
       evidence.push({...(kind==="suppressor"?{waiting:false}:kind==="prompt"||kind==="dialog"?{waiting:true}:{}),for:kind==="busy"?"busy":kind==="prompt"||kind==="dialog"||kind==="suppressor"?"waiting":"hold",match});
     }
     return {...base,state:paneState,hold:decision.hold,busy:decision.busy,waiting:decision.waiting,userHold:decision.userHold,inputProtection:decision.inputProtection,userRules:{available:decision.user.available,digest:decision.user.digest,...(decision.user.reason?{reason:decision.user.reason}:{})},...(!decision.user.available?{reason:decision.user.reason,screenEvidence:false}:{}),evidence};
+  }
+  /** Status is advisory renderer state. The host revision is checked by the
+   * coordinator before it returns, and the client verifies it is still the
+   * latest received revision before broadcasting it. */
+  async status(id:string,screen:VtSnapshot):Promise<UserRuleScreenStatus|null>{
+    const captured=this.provider.configuration();
+    if(this.disposed||!configured(captured)||!screen.revision)return null;
+    let currentScreen=screen;
+    let result=await this.input.evaluateApplied(id,currentScreen,"renderer-status");
+    if(this.disposed||this.provider.configuration()!==captured||!result?.current)return null;
+    // The host's automatic legacy composer ACK is intentionally disabled while
+    // this observer is active. ACK only the exact revision evaluated here,
+    // then base status on a newly applied snapshot.
+    if(result.composerSeen){
+      const fence=result.fence;if(!fence)return null;
+      let acknowledged=false;try{acknowledged=await this.host.markComposer(id,fence);}catch{}
+      if(!acknowledged||this.disposed||this.provider.configuration()!==captured)return null;
+      let fresh:VtSnapshot|null=null;try{fresh=await this.host.snapshot(id);}catch{}
+      if(!fresh||this.disposed||this.provider.configuration()!==captured)return null;
+      currentScreen=fresh;
+      result=await this.input.evaluateApplied(id,currentScreen,"renderer-status");
+      if(this.disposed||this.provider.configuration()!==captured||!result?.current||result.composerSeen)return null;
+    }
+    const builtin=snapshotStatus(currentScreen),waiting=result.decision.user.available?result.decision.waiting:(builtin.waiting??false);
+    if(waiting===null)return null;
+    const userDialog=result.decision.user.available&&result.decision.user.evidence.find(match=>match.kind==="dialog");
+    return {generation:currentScreen.generation,revision:currentScreen.revision!,waiting,...(waiting&&builtin.dialog?{dialog:builtin.dialog}:waiting&&userDialog?{dialog:"User-defined dialog"}:{})};
   }
   dispose():void{this.disposed=true;}
 }
