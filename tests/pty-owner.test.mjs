@@ -5,6 +5,7 @@ import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { startOwner, shellSpec, readUntil, PtyOwnerClient, artifacts, require, sleep, frame } from "./helpers/pty-owner.mjs";
+import { MAX_PTY_PANES } from "../dist-electron/pty-pane-limits.js";
 
 test("owner spawns, resizes and reaps while the JS client owns only a duplicate", async (t) => {
   const owner = await startOwner(); t.after(() => owner.close());
@@ -142,8 +143,7 @@ test("lease identifies a process instance, releases a reused PID and fails close
   const dir = fs.mkdtempSync(path.resolve("test-results/owner-identity-"));
   try {
     const executable = path.join(dir, "identity");
-    const paneLimit = JSON.parse(fs.readFileSync("electron/pty-pane-limit.json", "utf8")).maxPanes;
-    execFileSync(process.env.CC || "cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", `-DOWNER_MAX_PANES=${paneLimit}`, "tests/helpers/pty-owner-identity.c", "-o", executable, ...(process.platform === "linux" ? ["-lutil"] : [])]);
+    execFileSync(process.env.CC || "cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", `-DOWNER_MAX_PANES=${MAX_PTY_PANES}`, "tests/helpers/pty-owner-identity.c", "-o", executable, ...(process.platform === "linux" ? ["-lutil"] : [])]);
     execFileSync(executable);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
@@ -165,8 +165,7 @@ test("Linux received masters have CLOEXEC before the worker reaches its fcntl fa
 
 function compileOwnerFixture(name) {
   const dir = fs.mkdtempSync(path.resolve("test-results/owner-native-")), executable = path.join(dir, name);
-  const paneLimit = JSON.parse(fs.readFileSync("electron/pty-pane-limit.json", "utf8")).maxPanes;
-  execFileSync(process.env.CC || "cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", `-DOWNER_MAX_PANES=${paneLimit}`, `tests/helpers/${name}.c`, "-o", executable, ...(process.platform === "linux" ? ["-lutil"] : [])]);
+  execFileSync(process.env.CC || "cc", ["-std=c11", "-Wall", "-Wextra", "-Werror", `-DOWNER_MAX_PANES=${MAX_PTY_PANES}`, `tests/helpers/${name}.c`, "-o", executable, ...(process.platform === "linux" ? ["-lutil"] : [])]);
   return { dir, executable };
 }
 test("orphan recovery signals one verified process instance and refuses exit or PID reuse between checks", () => {

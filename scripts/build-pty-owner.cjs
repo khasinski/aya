@@ -13,7 +13,11 @@ function run(args) {
   return result.stdout;
 }
 const source = "electron/native/pty-owner";
-const paneLimit = JSON.parse(fs.readFileSync(path.join(root, "electron/pty-pane-limit.json"), "utf8")).maxPanes;
+const paneLimitSourcePath = path.join(root, "electron/pty-pane-limits.ts");
+const paneLimitSource = fs.readFileSync(paneLimitSourcePath, "utf8");
+const paneLimitMatch = paneLimitSource.match(/^export const MAX_PTY_PANES = ([0-9]+);$/m);
+if (!paneLimitMatch) throw new Error("Could not read the shared PTY pane limit");
+const paneLimit = Number(paneLimitMatch[1]);
 if (!Number.isSafeInteger(paneLimit) || paneLimit < 1 || paneLimit > 512) throw new Error("Invalid shared PTY pane limit");
 const flags = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", `-ffile-prefix-map=${root}=.`,
   `-DOWNER_MAX_PANES=${paneLimit}`,
@@ -21,7 +25,7 @@ const flags = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", `-ffile-prefix-
   ...(process.platform === "darwin" ? ["-mmacosx-version-min=12.0"] : [])];
 const compilerVersion = run(["--version"]);
 const buildId = crypto.createHash("sha256").update(JSON.stringify({ platform: process.platform, arch: process.arch, flags: flags.map((f) => f.replace(root, ".")), compilerVersion }))
-  .update(fs.readFileSync(path.join(root, "electron/pty-pane-limit.json"))).update(fs.readFileSync(path.join(root, source, "owner.c"))).update(fs.readFileSync(path.join(root, source, "protocol.h"))).update(fs.readFileSync(path.join(root, source, "process-identity.h"))).digest("hex");
+  .update(paneLimitSource).update(fs.readFileSync(path.join(root, source, "owner.c"))).update(fs.readFileSync(path.join(root, source, "protocol.h"))).update(fs.readFileSync(path.join(root, source, "process-identity.h"))).digest("hex");
 const candidates = [process.env.AYA_NODE_HEADERS, path.resolve(path.dirname(process.execPath), "../include/node"),
   "/usr/local/include/node", "/usr/include/node", "/opt/homebrew/include/node"];
 const headers = candidates.find((dir) => dir && fs.existsSync(path.join(dir, "node_api.h")));
