@@ -38,8 +38,8 @@ export type PtyHostRequest =
   | { id: number; type: "handover-announce"; nonce: string; deadline: number;transferAttempt?:string }
   | {id:number;type:"handover-display-applied";ptyId:string;generation:string;token?:string}
   | { id: number; type: "handover-prepare"; deadline: number;transferAttempt?:string }
-  | { id: number; type: "handover-publish"; display: CheckpointReceipt | null; consented?: string[] }
-  | { id: number; type: "handover-cancel" }
+  | { id: number; type: "handover-publish"; display: CheckpointReceipt | null; consented?: string[];transferAttempt?:string }
+  | { id: number; type: "handover-cancel";transferAttempt?:string }
   | { id: number; type: "handover-claim"; nonce: string; reuse?: boolean; transferAttempt?:string }
   | { id: number; type: "handover-detach"; consented: string[] }
   | { id: number; type: "handover-reuse" }
@@ -80,6 +80,11 @@ export function isPtyHostRequest(value: unknown): value is PtyHostRequest {
     const record=value as Record<string,unknown>,hex=(v:unknown)=>typeof v==="string"&&/^[a-f0-9]{64}$/.test(v);
     if(!["auth-transfer-reserve","auth-transfer-activate","auth-transfer-cancel","auth-transfer-complete"].includes(r.type)||!Number.isSafeInteger(r.id)||Object.keys(value).length!==keys.length||!keys.every(key=>Object.hasOwn(value,key)))return false;
     return r.type==="auth-transfer-reserve"?hex(record.nonce)&&Number.isSafeInteger(record.deadline)&&(record.purpose==="ordinary-quit"||record.purpose==="planned-update"):hex(record.attempt)&&(r.type!=="auth-transfer-complete"||hex(record.receipt));
+  }
+  if(["handover-prepare","handover-publish","handover-cancel","handover-announce"].includes(r.type??"")&&Object.hasOwn(value,"transferAttempt")){
+    const v=value as Record<string,unknown>,keys=r.type==="handover-prepare"?["id","type","deadline","transferAttempt"]:r.type==="handover-publish"?["id","type","display","consented","transferAttempt"]:r.type==="handover-announce"?["id","type","nonce","deadline","transferAttempt"]:["id","type","transferAttempt"];
+    if(!Number.isSafeInteger(v.id)||Object.keys(v).length!==keys.length||!keys.every(key=>Object.hasOwn(v,key))||typeof v.transferAttempt!=="string"||!/^[a-f0-9]{64}$/.test(v.transferAttempt))return false;
+    return (r.type!=="handover-prepare"&&r.type!=="handover-announce"||Number.isSafeInteger(v.deadline))&&(r.type!=="handover-announce"||typeof v.nonce==="string"&&/^[a-f0-9]{64}$/.test(v.nonce));
   }
   if(r.type==="handover-claim"&&Object.hasOwn(value,"transferAttempt")){
     const v=value as Record<string,unknown>;

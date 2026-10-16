@@ -15,8 +15,8 @@ async function launch(seeded:SeededEnv,choice=1,blockDisplay=false,realUpdate=fa
  const runtime=plainHost?`const cp=require('node:child_process'),spawn=cp.spawn;cp.spawn=(file,args,options)=>spawn(file===process.execPath&&args?.[0]===${JSON.stringify(hostScript)}?${JSON.stringify(process.execPath)}:file,args,options);const {PtyHostClient}=require(${JSON.stringify(join(root,'dist-electron/pty-host-client.js'))}),{hostBuildHash}=require(${JSON.stringify(join(root,'dist-electron/pty-host-staleness.js'))}),path=require('path');PtyHostClient.prototype.expectedHostIdentity=function(version){const runtime=${JSON.stringify({node:process.versions.node,electron:null})};return{version,runtime,scriptHash:hostBuildHash(path.dirname(this.hostScript),path.basename(this.hostScript),runtime)};};`:'';
  const delayed=blockDisplay?`const fs=require('fs'),original=electron.ipcMain.handle.bind(electron.ipcMain);globalThis.handoverDisplayWaiting=false;globalThis.inputCalls=0;electron.ipcMain.handle=(channel,handler)=>original(channel,async(event,...args)=>{if(channel==='pty:write')globalThis.inputCalls++;if(channel==='pty-checkpoint:display'&&args[0]==='tab-left'){globalThis.handoverDisplayWaiting=true;const deadline=Date.now()+15000;while(!fs.existsSync(${JSON.stringify(join(seeded.root,'release-display'))})){if(Date.now()>deadline)throw Error('test display gate expired');await new Promise(r=>setTimeout(r,2));}}return handler(event,...args);});`:'';
 
- writeFileSync(wrapper,`const electron=require('electron');globalThis.handoverQuestions=[];globalThis.handoverOrder=[];globalThis.handoverSpawns=[];globalThis.handoverWrites=[];const trackHandle=electron.ipcMain.handle.bind(electron.ipcMain);electron.ipcMain.handle=(channel,handler)=>trackHandle(channel,(event,...args)=>{if(channel==='pty:spawn')globalThis.handoverSpawns.push(args[0]);if(channel==='pty:write')globalThis.handoverWrites.push(args[0]);return handler(event,...args);});electron.dialog.showMessageBox=async(...args)=>{const options=args.at(-1);globalThis.handoverQuestions.push(options);globalThis.handoverOrder.push('question');return{response:${choice},checkboxChecked:false};};${runtime}${delayed}${updater}require(${JSON.stringify(join(root,'dist-electron/main.js'))});`);
- const app=await _electron.launch({args:[wrapper,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],cwd:root,env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0'}})});apps.push(app);
+ writeFileSync(wrapper,`const electron=require('electron');globalThis.handoverQuestions=[];globalThis.handoverOrder=[];globalThis.handoverSpawns=[];globalThis.handoverWrites=[];const MainClient=require(require('node:path').join(process.env.AYA_TEST_APP_ROOT,'dist-electron/pty-host-client.js')).PtyHostClient,mainRequest=MainClient.prototype.request;MainClient.prototype.request=function(...args){globalThis.handoverMainClient??=this;return mainRequest.apply(this,args);};const trackHandle=electron.ipcMain.handle.bind(electron.ipcMain);electron.ipcMain.handle=(channel,handler)=>trackHandle(channel,(event,...args)=>{if(channel==='pty:spawn')globalThis.handoverSpawns.push(args[0]);if(channel==='pty:write')globalThis.handoverWrites.push(args[0]);return handler(event,...args);});electron.dialog.showMessageBox=async(...args)=>{const options=args.at(-1);globalThis.handoverQuestions.push(options);globalThis.handoverOrder.push('question');return{response:${choice},checkboxChecked:false};};${runtime}${delayed}${updater}require(${JSON.stringify(join(root,'dist-electron/main.js'))});`);
+ const app=await _electron.launch({args:[wrapper,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],cwd:root,env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root}})});apps.push(app);
  return {app,window:await app.firstWindow()};
 }
 async function quit(app:ElectronApplication){apps.splice(apps.indexOf(app),1);await closeAndWait(app);}
@@ -33,7 +33,7 @@ async function prepare(app:ElectronApplication,budget?:number){
   const {decodeCheckpointPayload}=require(root+'/dist-electron/pty-checkpoint-payload.js');
   const {expandRendererRows}=require(root+'/dist-electron/renderer-vt-checkpoint.js');
   const fs=require('fs'),path=require('path'),crypto=require('crypto');
-  const client=new PtyHostClient(root+'/dist-electron/pty-host.js');
+  const client=(globalThis as unknown as {handoverMainClient:InstanceType<typeof PtyHostClient>}).handoverMainClient;if(!client)throw Error('actual main client was not captured');
   const displays=new HandoverDisplays(async()=>BrowserWindow.getAllWindows().find(w=>!w.isDestroyed())?.webContents??null,()=>{});
   ipcMain.removeHandler('pty-checkpoint:display');ipcMain.removeHandler('pty-checkpoint:display-ack');displays.register(ipcMain);
   if(budget){const ask=displays.ask.bind(displays);displays.ask=(id:string,_budget:number,deadline:number)=>ask(id,budget,deadline);}
@@ -91,7 +91,7 @@ for(const yes of [false,true])test(`one ineligible process is asked alone before
  const before=identities(seeded.ayaHome),captured=await prepare(first.app);expect(captured.ok).toBe(yes);
  const questions=await first.app.evaluate(()=> (globalThis as unknown as {handoverQuestions:Array<{detail:string}>}).handoverQuestions);
  expect(questions).toHaveLength(1);expect(questions[0].detail).toContain('shell 2');expect(questions[0].detail).not.toContain('shell 1');
- if(!yes){expect(identities(seeded.ayaHome)).toEqual(before);expect(existsSync(join(seeded.ayaHome,'pty-handover.json'))).toBe(false);await first.window.evaluate(()=>window.aya.ptyWrite('tab-left',"printf 'AFTER_CANCEL\\n'\r"));await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('AFTER_CANCEL\r\n');return;}
+ if(!yes){expect(identities(seeded.ayaHome)).toEqual(before);expect(readdirSync(seeded.ayaHome).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name))).toHaveLength(0);await first.window.evaluate(()=>window.aya.ptyWrite('tab-left',"printf 'AFTER_CANCEL\\n'\r"));await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('AFTER_CANCEL\r\n');return;}
  await quit(first.app);writeFileSync(hostScript,built);const second=await launch(seeded);await waitForShellReady(second.window);
  await expect.poll(()=>identities(seeded.ayaHome).length).toBe(2);const after=identities(seeded.ayaHome);
  expect(after.find(p=>p.id==='tab-left')?.pid).toBe(before.find(p=>p.id==='tab-left')?.pid);expect(after.find(p=>p.id==='tab-right')?.pid).not.toBe(before.find(p=>p.id==='tab-right')?.pid);
@@ -165,7 +165,8 @@ test('the real Restart to update IPC announces handover and preserves a foregrou
  await expect.poll(()=>foreground(first.app)).not.toBe(shell);const command=await foreground(first.app);
  await first.app.evaluate(({app})=>{(globalThis as unknown as {testUpdater:{emit:(event:string,data:unknown)=>void}}).testUpdater.emit('update-downloaded',{version:app.getVersion()});});
  await first.window.evaluate(()=>window.aya.installUpdate());
- expect(existsSync(join(seeded.ayaHome,'pty-handover.json'))).toBe(true);
+ const tickets=readdirSync(seeded.ayaHome).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name));
+ expect(tickets).toHaveLength(1);expect(JSON.parse(readFileSync(join(seeded.ayaHome,tickets[0]),'utf8'))).toMatchObject({format:2,purpose:'planned-update'});
  expect(await first.app.evaluate(()=> (globalThis as unknown as {installerHandedOff:boolean}).installerHandedOff)).toBe(true);
  expect(await first.app.evaluate(()=> (globalThis as unknown as {handoverQuestions:unknown[]}).handoverQuestions)).toEqual([]);
  await quit(first.app);appendFileSync(hostScript,'\n// actual installer planned handover test\n');const second=await launch(seeded);
@@ -312,6 +313,6 @@ for(const yes of [false,true])test(`real Restart to update asks about the inelig
  expect(result.questions).toHaveLength(1);expect(result.questions[0].message).toBe('Work in progress will stop');
  expect(result.questions[0].detail).toContain('Restarting to update');expect(result.questions[0].detail).toContain('shell 2');expect(result.questions[0].detail).not.toContain('shell 1');
  expect(result.order).toEqual(yes?['question','installer']:['question']);expect(result.installed).toBe(yes);
- expect(existsSync(join(seeded.ayaHome,'pty-handover.json'))).toBe(yes);expect(identities(seeded.ayaHome)).toEqual(before);
+ expect(readdirSync(seeded.ayaHome).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name))).toHaveLength(yes?1:0);expect(identities(seeded.ayaHome)).toEqual(before);
  if(!yes){await first.window.evaluate(()=>window.aya.ptyWrite('tab-right',"printf 'UPDATE_CANCEL_ALIVE\\n'\r"));await expect.poll(()=>first.window.evaluate(()=>window.aya.ptyBuffer('tab-right'))).toContain('UPDATE_CANCEL_ALIVE\r\n');}
 });

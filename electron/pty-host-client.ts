@@ -612,17 +612,36 @@ export class PtyHostClient {
     const known=expected.retirementOwner;
     if((peer&&expected.ticket.hostPid===peer.pid&&expected.ticket.hostStartIdentity===peer.startIdentity)||(owner&&known&&known.pid===owner.pid&&known.startTime===owner.startTime&&known.instanceId===owner.instanceId&&known.binaryHash===owner.binaryHash))this.receivedAuthTransfer=null;
   }
-  async preparePlannedHandover(deadline:number):Promise<HostHandoverState> {
-    return handoverState(await withTimeout(this.request({id:0,type:"handover-prepare",deadline}),5000),deadline);
+  async reservePlannedHandover(deadline:number):Promise<AuthTransferTicket>{
+    const nonce=randomBytes(32).toString("hex");
+    if(!this.isConnected())await this.openSocket();
+    const socket=this.socket;if(!socket||this.disposed)throw new HostAuthError();
+    const peer=handoverPeer(socket);
+    const result=await this.sendRequest(socket,{id:0,type:"auth-transfer-reserve",purpose:"planned-update",nonce,deadline}) as Record<string,unknown>;
+    if(socket!==this.socket||socket.destroyed)throw new HostAuthError();
+    if(this.disposed||!result||Object.keys(result).sort().join(",")!=="attempt,deadline,hostPid,hostStartIdentity,purpose"||typeof result.attempt!=="string"||!/^[a-f0-9]{64}$/.test(result.attempt)||result.purpose!=="planned-update"||result.deadline!==deadline||result.hostPid!==peer.pid||result.hostStartIdentity!==peer.startIdentity)throw new HostAuthError();
+    return {format:2,attempt:result.attempt,purpose:"planned-update",deadline,nonce,hostPid:peer.pid,hostStartIdentity:peer.startIdentity};
   }
-  async announcePlannedHandover(state:HostHandoverState,display:CheckpointReceipt|null,consented:string[],nonce:string):Promise<HandoverTicket> {
-    await withTimeout(this.request({id:0,type:"handover-publish",display,consented}),10000);
-    const result=await withTimeout(this.request({id:0,type:"handover-announce",nonce,deadline:state.deadline}),2000) as Pick<HandoverTicket,"hostPid"|"hostStartIdentity">;
+  async activatePlannedHandover(attempt:string):Promise<void>{
+    if(!this.socket||this.socket.destroyed||this.disposed)throw new HostAuthError();
+    if(await this.sendRequest(this.socket,{id:0,type:"auth-transfer-activate",attempt})!==true)throw new HostAuthError();
+  }
+  async cancelPlannedAuth(attempt:string):Promise<"cancelled"|"committed">{
+    if(!this.socket||this.socket.destroyed||this.disposed)throw new HostAuthError();
+    const result=await withTimeout(this.sendRequest(this.socket,{id:0,type:"auth-transfer-cancel",attempt}),2000);
+    if(result!=="cancelled"&&result!=="committed")throw new HostAuthError();return result;
+  }
+  async preparePlannedHandover(deadline:number,transferAttempt?:string):Promise<HostHandoverState> {
+    return handoverState(await withTimeout(this.request({id:0,type:"handover-prepare",deadline,...(transferAttempt?{transferAttempt}:{})}),5000),deadline);
+  }
+  async announcePlannedHandover(state:HostHandoverState,display:CheckpointReceipt|null,consented:string[],nonce:string,transferAttempt?:string):Promise<HandoverTicket> {
+    await withTimeout(this.request({id:0,type:"handover-publish",display,consented,...(transferAttempt?{transferAttempt}:{})}),10000);
+    const result=await withTimeout(this.request({id:0,type:"handover-announce",nonce,deadline:state.deadline,...(transferAttempt?{transferAttempt}:{})}),2000) as Pick<HandoverTicket,"hostPid"|"hostStartIdentity">;
     return {...result,nonce,deadline:state.deadline};
   }
-  async cancelPlannedHandover():Promise<void> {
+  async cancelPlannedHandover(transferAttempt?:string):Promise<void> {
     if(!this.isConnected())await this.openSocket();
-    await withTimeout(this.request({id:0,type:"handover-cancel"},undefined,true),3000);
+    await withTimeout(this.request({id:0,type:"handover-cancel",...(transferAttempt?{transferAttempt}:{})},undefined,true),3000);
   }
   /** New main alone owns this operation. Other requests wait until either the
    * old host is usable again or its successor has restored every eligible pane. */

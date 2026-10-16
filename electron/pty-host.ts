@@ -74,11 +74,15 @@ const clients = new Set<net.Socket>();
 let authTransfer:HostAuthTransfer;
 let ownAuthPeer:HostAuthPeer;
 let plannedTransferAnnouncement:string|null=null;
+let plannedCoreAttempt:string|null=null;
 let crashBoot=false;
 let socketAuthenticator:HostSocketAuthenticator;
 const handoverWindow = new HandoverWindow();
 const hostHandover = new HostHandover(PTY_HANDOVER_CORE_DIRECTORY, PTY_HANDOVER_DISPLAY_DIRECTORY,()=>{
-  if(plannedTransferAnnouncement)authTransfer.revokeUnclaimedPlanned(plannedTransferAnnouncement);
+  const attempt=plannedCoreAttempt??plannedTransferAnnouncement;
+  if(attempt)authTransfer.revokeUnclaimedPlanned(attempt);
+  // Retain the aborted attempt for idempotent issuer cleanup after expiry or
+  // a late renderer reply. A new prepare replaces it before owning any core.
 });
 let idleTimer: NodeJS.Timeout | null = null;
 let server: net.Server | null = null;
@@ -226,12 +230,17 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
     if(request.transferAttempt!==undefined||authTransfer.phase!=="empty")authTransfer.reservedBy(handoverPeer(socket),request.transferAttempt??"","planned-update",request.deadline);
     const owner = currentOwnerRuntime();
     if (!owner?.client?.isConnected() || owner.incompatible || owner.disconnected.size || owner.record.uncertain?.length) throw new Error("This host's processes cannot move seamlessly");
+    if(hostHandover.active)throw new Error("A terminal checkpoint is already in progress");
+    plannedCoreAttempt=request.transferAttempt??null;
     const result = await hostHandover.prepare(handoverPeer(socket),request.deadline);
     // The response is an output fence for main and its renderer capture IPC.
     broadcastCoalesced.flush();
     return result;
   }
-  if (request.type === "handover-publish") return hostHandover.publish(handoverPeer(socket),request.display,request.consented);
+  if (request.type === "handover-publish") {
+    if(request.transferAttempt!==undefined&&request.transferAttempt!==plannedCoreAttempt)throw new Error("The terminal checkpoint attempt changed");
+    return hostHandover.publish(handoverPeer(socket),request.display,request.consented);
+  }
   if (request.type === "handover-announce") {
     const owner = currentOwnerRuntime(), identity = ownerProcessStartIdentity(process.pid);
     if (!identity || !owner?.client?.isConnected() || owner.incompatible || owner.disconnected.size || owner.record.uncertain?.length) throw new Error("This host cannot announce a seamless handover");
@@ -243,6 +252,7 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
     return {hostPid: process.pid, hostStartIdentity: identity};
   }
   if (request.type === "handover-cancel") {
+    if(request.transferAttempt!==undefined&&request.transferAttempt!==plannedCoreAttempt)throw new Error("The terminal checkpoint attempt changed");
     const peer = handoverPeer(socket);
     await hostHandover.abort(peer);
     try{handoverWindow.acknowledgeReuse(peer);}catch{handoverWindow.cancel(peer);}
@@ -283,7 +293,7 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
   if (request.type === "handover-ack-reuse") {
     const peer = handoverPeer(socket);
     handoverWindow.assertReuse(peer);
-    await hostHandover.acknowledgeReuse(peer);handoverWindow.acknowledgeReuse(peer);return null;
+    await hostHandover.acknowledgeReuse(peer);handoverWindow.acknowledgeReuse(peer);plannedCoreAttempt=null;plannedTransferAnnouncement=null;return null;
   }
   if (request.type === "handover-detach") {
     if (!Array.isArray(request.consented) || request.consented.length > 25 || request.consented.some(id => typeof id !== "string" || id.length > 128)) throw new Error("Invalid consented pane identities");

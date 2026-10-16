@@ -2,6 +2,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
 const {PtyHostClient}=require('../../dist-electron/pty-host-client');
 const {PlannedUpdate}=require('../../dist-electron/pty-planned-update');
 const {PTY_HANDOVER_TICKET_PATH}=require('../../dist-electron/pty-host-paths');
+const pendingTickets=()=>fs.readdirSync(process.env.AYA_HOME).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name));
 const home=process.env.HOME,role=process.argv[2],client=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));
 const wait=async f=>{const end=Date.now()+8000;while(!await f()){if(Date.now()>end)throw Error('Cross-runtime readiness timeout');await new Promise(r=>setTimeout(r,2));}};
 let state,output='',exits=[];
@@ -12,12 +13,12 @@ const update=new PlannedUpdate({host:client,displays:{capture:async s=>{state=s;
   const req={ptyId:'cross',agent:'custom',command:"stty -echo; printf 'HISTORY\\033[3'; while [ ! -f \"$HOME/release\" ]; do sleep .01; done; printf '1mTAIL\\033[0m\\n'; while IFS= read -r line; do case \"$line\" in quit) exit 23 ;; *) printf 'R:%s\\n' \"$line\" ;; esac; done",cwd:home,cols:80,rows:24};
   await client.spawn(req);await wait(()=>output.includes('\x1b[3'));
   const pid=await client.getPid('cross'),status=await client.hostStatus();
-  assert.equal(await update.prepare(),true);assert.ok(fs.existsSync(PTY_HANDOVER_TICKET_PATH));
+  assert.equal(await update.prepare(),true);assert.equal(pendingTickets().length,1);assert.equal(fs.statSync(path.join(process.env.AYA_HOME,pendingTickets()[0])).mode&0o777,0o600);
   fs.writeFileSync(path.join(home,'expected.json'),JSON.stringify({req,pid,ownerPid:status.owner.pid,hostPid:status.pid,identity:status.identity,origin:state.eligible[0]}),{mode:0o600});
   client.hostAsked=true;client.dispose();client.dropSocket();process.send({role,node:process.versions.node,electron:process.versions.electron??null},()=>process.exit(0));
  }else{
   const old=JSON.parse(fs.readFileSync(path.join(home,'expected.json'),'utf8'));
-  assert.equal(await update.resume(), 'restored');assert.equal(fs.existsSync(PTY_HANDOVER_TICKET_PATH),false);
+  assert.equal(await update.resume(), 'restored');assert.equal(fs.existsSync(PTY_HANDOVER_TICKET_PATH),false);assert.deepEqual(pendingTickets(),[]);
   const status=await client.hostStatus();assert.notEqual(status.pid,old.hostPid);assert.equal(status.owner.pid,old.ownerPid);assert.equal(await client.getPid('cross'),old.pid);
   assert.notDeepEqual(status.identity.runtime,old.identity.runtime);
   await client.spawn({...old.req,attachIfReused:true,replayAfter:{generation:old.origin.generation,offset:old.origin.outputEnd,token:'cross-runtime'}});
