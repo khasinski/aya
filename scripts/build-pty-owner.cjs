@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
+const { readPtyPaneLimit } = require("./read-pty-pane-limit.cjs");
 const root = path.resolve(__dirname, "..");
 const out = path.resolve(process.env.AYA_OWNER_BUILD_DIR || path.join(root, "dist-electron"));
 if (!["darwin", "linux"].includes(process.platform)) throw new Error("PTY owner supports macOS and Linux");
@@ -15,10 +16,7 @@ function run(args) {
 const source = "electron/native/pty-owner";
 const paneLimitSourcePath = path.join(root, "electron/pty-pane-limits.ts");
 const paneLimitSource = fs.readFileSync(paneLimitSourcePath, "utf8");
-const paneLimitMatch = paneLimitSource.match(/^export const MAX_PTY_PANES = ([0-9]+);$/m);
-if (!paneLimitMatch) throw new Error("Could not read the shared PTY pane limit");
-const paneLimit = Number(paneLimitMatch[1]);
-if (!Number.isSafeInteger(paneLimit) || paneLimit < 1 || paneLimit > 512) throw new Error("Invalid shared PTY pane limit");
+const paneLimit = readPtyPaneLimit(paneLimitSource);
 const flags = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", `-ffile-prefix-map=${root}=.`,
   `-DOWNER_MAX_PANES=${paneLimit}`,
   ...(process.platform === "linux" ? ["-U_FORTIFY_SOURCE", "-D_FORTIFY_SOURCE=2"] : []),
