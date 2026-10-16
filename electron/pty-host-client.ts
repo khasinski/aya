@@ -213,6 +213,7 @@ export class PtyHostClient {
   private issuedShutdown=false;
   private ownsOwnerKey=false;
   private ownerContinuityUnavailable=false;
+  private continuityNotice="";
   private ownerRetired=false;
   private legacyPaneIds:string[]=[];
   private blockUnavailableOwner():Error {
@@ -290,6 +291,7 @@ export class PtyHostClient {
 
   attachWebContents(webContents: WebContents | PtyEventSink): void {
     this.sinks.add(webContents);
+    if(!webContents.isDestroyed()&&this.ownerContinuityUnavailable&&!this.crashBlocked)for(const ptyId of this.live)webContents.send("pty:event",{type:"recovery-unavailable",ptyId,reason:this.continuityNotice});
     if(!webContents.isDestroyed())for(const [ptyId,reason] of this.authRefusedPanes)webContents.send("pty:event",this.principalBusyPanes.has(ptyId)?{type:"host-connection",ptyId,reason,connected:false}:{type:"disconnected",ptyId,reason});
   }
 
@@ -373,6 +375,7 @@ export class PtyHostClient {
         }
         return { ...request, req: { ...rest, attachOnly: true } };
       });
+      if(this.ownerContinuityUnavailable&&!this.crashBlocked&&this.live.has(req.ptyId))this.sendToSinks([{type:"recovery-unavailable",ptyId:req.ptyId,reason:this.continuityNotice}]);
       // Replay may deliver an ended native record before its spawn reply. Do
       // not report attachment complete while its observed exit ACK is in flight.
       await this.exitAcks.get(req.ptyId);
@@ -462,6 +465,7 @@ export class PtyHostClient {
     authentication?:HostAuthenticationProblem;
     principalBusy?:boolean;
     ownerUnavailable?:boolean;
+    continuityUnavailable?:boolean;
     ownerStopped?:boolean;
     startTime?:string|null;
   }> {
@@ -472,6 +476,7 @@ export class PtyHostClient {
         result && typeof result === "object" ? (result as Record<string, unknown>) : {};
       return {
         identity: asHostIdentity(result),
+        ...(this.ownerContinuityUnavailable?{continuityUnavailable:true,recoveryReason:this.continuityNotice}:{}),
         ptyCount: typeof obj.ptyCount === "number" ? obj.ptyCount : 0,
         pid: typeof obj.pid === "number" ? obj.pid : undefined,
         startTime:typeof obj.pid === "number"&&obj.pid===this.lastHostPid?this.lastHostStart:null,
@@ -1072,8 +1077,21 @@ export class PtyHostClient {
         // A legacy host can explicitly reject version; it has no native owner.
       }), PTY_HOST_SOCKET_WAIT_TIMEOUT_MS);
       if (this.socket !== socket || socket.destroyed) throw new Error(PTY_HOST_NOT_CONNECTED);
-      if(this.receivedAuthTransfer)await this.completeAnnouncedContinuity(socket,version);
-      if(this.reusedHost&&!this.ownsOwnerKey&&(this.ownerBacked||!!(version as {owner?:unknown}|undefined)?.owner)){
+      if(this.receivedAuthTransfer)try{
+        await this.completeAnnouncedContinuity(socket,version);
+      }catch{
+        // Transport authentication succeeded. Recovery metadata failure is not
+        // an authentication refusal and must not take down a serving socket.
+        if(this.socket!==socket||socket.destroyed||this.disposed)throw Error(PTY_HOST_NOT_CONNECTED);
+        if(!this.ownsOwnerKey){
+          this.ownerContinuityUnavailable=true;
+          if(this.receivedAuthTransfer?.retirementOwner)this.recoveryOwner={...this.receivedAuthTransfer.retirementOwner};
+          this.continuityNotice="Automatic terminal host recovery is off because its recovery data is unavailable. This host still serves the panes; if it stops, their processes are kept disconnected and are not respawned.";
+          this.recoveryHooks.log?.("pty-owner-continuity-unavailable",{reason:"authenticated recovery manifest unavailable"});
+          for(const id of this.live)this.sendToSinks([{type:"recovery-unavailable",ptyId:id,reason:this.continuityNotice}]);
+        }else this.recoveryHooks.log?.("host-transfer-completion-pending",{reason:"completion acknowledgement unavailable"});
+      }
+      if(!this.receivedAuthTransfer&&this.reusedHost&&!this.ownsOwnerKey&&(this.ownerBacked||!!(version as {owner?:unknown}|undefined)?.owner)){
         try{
           const response=await withTimeout(this.sendRequest(socket,{id:0,type:"owner-continuity"}),PTY_HOST_RESTART_REQUEST_TIMEOUT_MS);
           const continuity=validateOwnerContinuity(response,handoverPeer(socket),version);
@@ -1096,8 +1114,6 @@ export class PtyHostClient {
       this.metadataSocket = socket;
       for(const [id,receipt] of this.observedExits)this.observeExit(id,receipt);
     }).then(()=>{this.principalBusyPeer=undefined;this.principalRetryExhausted=false;}).catch(error => {
-      const transfer=this.receivedAuthTransfer;
-      if(transfer&&(error as {code?:string})?.code!=="PTY_HOST_PRINCIPAL_BUSY")this.authRefusalPeer={pid:transfer.ticket.hostPid,startIdentity:transfer.ticket.hostStartIdentity};
       this.dropSocket();throw error;
     }).finally(() => {
       this.connectPromise = null;

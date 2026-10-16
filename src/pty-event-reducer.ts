@@ -133,6 +133,10 @@ export function applyPtyEvent(
     const t=prev[event.ptyId];if(!t)return prev;
     return {...prev,[event.ptyId]:{...t,disconnected:undefined,disconnectedReason:undefined,stopped:false,exitCode:null,spawnFailure:undefined,bell:false,status:"running",externalStatus:undefined,screenDialog:undefined,recoveryGeneration:event.generation,recoveryNotice:event.notice,recoveryScreenUnknown:false,recoveryBlocked:undefined,recoveryRetryable:undefined}};
   }
+  if(event.type === "recovery-unavailable") {
+    const t=prev[event.ptyId];if(!t||t.disconnected)return prev;
+    return {...prev,[event.ptyId]:{...t,recoveryNotice:event.reason}};
+  }
   if(event.type === "recovery-state") {
     const t=prev[event.ptyId];if(!t||t.disconnected||(t.recoveryGeneration&&t.recoveryGeneration!==event.generation))return prev;
     return {...prev,[event.ptyId]:{...t,recoveryGeneration:event.generation,recoveryNotice:event.notice,recoveryScreenUnknown:event.screenUnknown}};

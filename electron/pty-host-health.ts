@@ -34,7 +34,7 @@ export interface HostHealth {
   ptyCount: number;
   owner?: PtyOwnerStatus;
   recoveryReason?:string;
-  ownerUnavailable?:boolean;
+  ownerUnavailable?:boolean;continuityUnavailable?:boolean;
   ownerStopped?:boolean;
   authentication?:HostAuthenticationProblem;
   principalBusy?:boolean;
@@ -55,7 +55,7 @@ export interface HostHealthDeps {
   expected: HostIdentity;
   /** Whether this Aya is connected to a host now. */
   connected(): boolean;
-  status(): Promise<{ identity: HostIdentity | null; ptyCount: number; pid?: number; startTime?:string|null; owner?: HostHealth["owner"];recoveryReason?:string;ownerUnavailable?:boolean;ownerStopped?:boolean;authentication?:HostAuthenticationProblem;principalBusy?:boolean }>;
+  status(): Promise<{ identity: HostIdentity | null; ptyCount: number; pid?: number; startTime?:string|null; owner?: HostHealth["owner"];recoveryReason?:string;ownerUnavailable?:boolean;continuityUnavailable?:boolean;ownerStopped?:boolean;authentication?:HostAuthenticationProblem;principalBusy?:boolean }>;
   socketExists(): Promise<boolean>;
   /** The pid of the host answering on pty-host.sock, without starting one; null when none answers. */
   probeSocket(): Promise<number | null>;
@@ -86,6 +86,7 @@ export async function gatherHostHealth(deps: HostHealthDeps): Promise<HostHealth
     ...(status.recoveryReason ? { recoveryReason:status.recoveryReason } : {}),
     ...(status.authentication ? {authentication:status.authentication}:{}),
     ...(status.principalBusy?{principalBusy:true}:{}),
+    ...(status.continuityUnavailable?{continuityUnavailable:true}:{}),
     ...(status.ownerUnavailable?{ownerUnavailable:true}:{}),
     ...(status.ownerStopped?{ownerStopped:true}:{}),
     indeterminate: asked && (!deps.expected.scriptHash || deps.expected.scriptHash === UNKNOWN_SCRIPT_HASH),
@@ -197,6 +198,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
   async function handleStaleHost(): Promise<void> {
     try {
       let health = await hostHealth();
+      if(health.continuityUnavailable){showStaleHost(true);return;}
       if(health.principalBusy){showStaleHost(true);return;}
       if (health.indeterminate) return;
       // A running host this Aya cannot reach (no socket, or another host on it): its terminals show nowhere, and the
@@ -363,7 +365,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
     if(before.principalBusy)throw new Error("restart cancelled");
     if(before.authentication&&!verifiedAuthTarget(before)){await explainUnverifiedAuth(before);showStaleHost(true);throw new Error("restart cancelled");}
     const legacy = !before.owner && before.ptyCount > 0;
-    const recovery = !!before.ownerUnavailable || !!before.authentication || legacy || before.owner?.incompatible || !!before.owner?.disconnected.length;
+    const recovery = !!before.continuityUnavailable || !!before.ownerUnavailable || !!before.authentication || legacy || before.owner?.incompatible || !!before.owner?.disconnected.length;
     const names = new Map((await relaunchDeps.panes().catch(() => [])).map(p => [p.id, p.name]));
     const retained = [
       ...(before.owner?.inventory ?? []).map(p => `${names.get(p.id) ?? p.id} (PID ${p.pid})`),
@@ -371,7 +373,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
     ];
     const confirmed = before.ownerUnavailable&&before.ownerStopped?true:before.ownerUnavailable?await askRestart("Stop terminal owner",await unavailableOwnerDetail(before)):before.authentication?await askRestart("Restart",await authRestartDetail(before)):recovery ? await askRestart("Restart", legacy
       ? "Moving these terminals to Aya's native PTY owner stops their current processes. They cannot be moved from the older host."
-      : "Restarting the terminal host stops the processes retained by the native PTY owner. Their disconnected screens cannot show all current work." +
+      : (before.continuityUnavailable ? "Restarting the terminal host stops its running processes. Automatic recovery is unavailable." : "Restarting the terminal host stops the processes retained by the native PTY owner. Their disconnected screens cannot show all current work.") +
         (retained.length ? `\n\nProcesses that may still run:\n${retained.join("\n")}` : ""))
       : await confirmLosingWork("Restarting the PTY host", "Restart");
     if (!confirmed) throw new Error("restart cancelled");

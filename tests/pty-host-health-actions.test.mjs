@@ -373,3 +373,10 @@ test('principal busy opens no stop or restart question, including unrelated host
  await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);
  assert.equal(log.filter(([op])=>['dialog','ask-restart','confirm','restart','kill','wait'].includes(op)).length,0);
 });
+
+for(const owner of [undefined,{pid:99,incompatible:true,disconnected:[]}])test('authenticated unavailable continuity opens without any startup stop question, including incompatible owner',async t=>{
+ const f=setup(t);f.d.ptyHost.hostStatus=async()=>({identity:EXPECTED,ptyCount:3,pid:100,owner,continuityUnavailable:true,recoveryReason:'Automatic terminal host recovery is off'});
+ // Even an additional recorded host cannot cause a stop question in this path.
+ f.state.records=[record(100),record(101)];await f.actions.handleStaleHost();
+ assert.equal(f.log.some(item=>['restart','ask-restart','dialog','kill','confirm'].includes(item[0])),false);
+});

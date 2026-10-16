@@ -868,6 +868,8 @@ function TerminalViewComponent({
         recoveryNoticeRef.current=event.notice;recoveryGenerationRef.current=event.generation;setHistoryNotice(event.notice);
         displayGeneration=event.generation;replayToken=event.replayToken;appliedToken=false;awaitingReplay=true;
         handoverInputPausedRef.current=true;term.options.disableStdin=true;
+      } else if(event.type === "recovery-unavailable") {
+        if(!disconnectedRef.current)setHistoryNotice(event.reason);
       } else if(event.type === "recovery-state") {
         if(disconnectedRef.current||(recoveryGenerationRef.current&&recoveryGenerationRef.current!==event.generation))return;
         recoveryGenerationRef.current=event.generation;
