@@ -76,15 +76,19 @@ export function parseScreenRules(input: Buffer): ScreenRuleSet {
   }
   return Object.freeze({ version: root.ruleSetVersion as string, digest: createHash("sha256").update(input).digest("hex"), sets: Object.freeze(compiled) });
 }
-export function loadBundledScreenRules(): ScreenRuleSet {
-  const fd = openSync(path.join(__dirname, "screen-rules", "builtin.json"), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+export function loadScreenRulesFile(file: string, io = { openSync, fstatSync, readSync, closeSync }): ScreenRuleSet {
+  const fd = io.openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const stat = fstatSync(fd);
+    const stat = io.fstatSync(fd);
     if (!stat.isFile() || stat.size > MAX_RULE_FILE_BYTES) fail("file type/size");
     const bytes = Buffer.alloc(MAX_RULE_FILE_BYTES + 1);
     let size = 0, count = 0;
-    do { count = readSync(fd, bytes, size, bytes.length - size, null); size += count; } while (count && size < bytes.length);
+    do { count = io.readSync(fd, bytes, size, bytes.length - size, null); size += count; } while (count && size < bytes.length);
     if (size > MAX_RULE_FILE_BYTES) fail("file size");
     return parseScreenRules(bytes.subarray(0, size));
-  } finally { closeSync(fd); }
+  } finally { io.closeSync(fd); }
+}
+
+export function loadBundledScreenRules(): ScreenRuleSet {
+  return loadScreenRulesFile(path.join(__dirname, "screen-rules", "builtin.json"));
 }

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { parseScreenRules, loadBundledScreenRules, MAX_RULE_FILE_BYTES, RULE_AGENTS } from '../dist-electron/screen-rule-data.js';
+import { parseScreenRules, loadScreenRulesFile, loadBundledScreenRules, MAX_RULE_FILE_BYTES, RULE_AGENTS } from '../dist-electron/screen-rule-data.js';
 import { validateScreenPattern } from '../dist-electron/screen-rule-pattern.js';
 const source = readFileSync(new URL('../electron/screen-rules/builtin.json', import.meta.url));
 const baseline = JSON.parse(readFileSync(new URL('./fixtures/agent-screen-rules-baseline.json', import.meta.url)));
@@ -49,7 +49,7 @@ for (const [name,change] of [
   ['expanded count',b=>{b.sets.generic.rules=Array.from({length:128},(_,i)=>({...rule('x'),id:'r'+i}));}],
 ]) test(`closed bundle rejects ${name}`,()=>{const b=bundle();change(b);assert.throws(()=>parse(b));});
 
-for(const pattern of ['(?=a*a*X)','(?=(a+)(a+)X)','(?=(a+)+$)','(?=(a|aa)+$)','(a+)+$','(a+){1,100}','(a*)*','(a|aa)+$','(a|A)+$','(a|\\w)+$','(a?)+$','(a{1,100}){1,100}','(a)\\1','(?<=a)b'])
+for(const pattern of ['(?=a*a*X)','(?=(a+)(a+)X)','(?=(a+)+$)','(?=(a|aa)+$)','(a+)+$','(a+){1,100}','(a*)*','(a|aa)+$','(a|\\w)+$','(a?)+$','(a{1,100}){1,100}','(a)\\1','(?<=a)b'])
   test(`static checker rejects ${pattern}`,()=>assert.throws(()=>validateScreenPattern(pattern,'')));
 for(const pattern of ['(?:a|b)+','\\(a\\+\\)\\+','[()+*]+','(?:\\n[^\\n]*){0,3}$','a{1,12}','(?:a+)?'])
   test(`static checker permits ${pattern}`,()=>assert.doesNotThrow(()=>validateScreenPattern(pattern,'')));
@@ -71,4 +71,33 @@ test('composer lookaheads and synthetic near misses stay bounded at maximum regi
   assert.ok(result.results.some(r=>r.rows===1000&&r.cols===1000));
   t.diagnostic('Maximum-region adversarial worst: '+JSON.stringify(result.worst));
   for(const id of ['composer-drawn','codex-composer-drawn']) t.diagnostic(id+' worst: '+JSON.stringify(result.results.filter(r=>r.rule===id).reduce((a,b)=>a.ms>b.ms?a:b)));
+});
+
+
+for (const [pattern, flags] of [
+  ['^(a|aa){1,100}b$', ''], ['^(?:[^A]+a){1,100}X$', ''],
+  ['^(?:\\w+ſ){1,100}X$', 'iu'], ['^(s|ſ)+$', 'iu'], ['(a|A)+$', 'i'], ['(?=\\w*A*X)', ''],
+]) test(`reviewed ambiguous/case-folded pattern refused: ${pattern}/${flags}`,()=>assert.throws(()=>validateScreenPattern(pattern,flags)));
+
+
+function authoredCount(n) {
+  const b=bundle();let remaining=n;
+  for(const [index,agent] of RULE_AGENTS.entries()) {
+    const count=index===0?1:Math.min(60,remaining);
+    b.sets[agent].rules=Array.from({length:count},(_,i)=>({...rule('x'),id:agent+'-'+i}));remaining-=count;
+  }
+  assert.equal(remaining,0);return b;
+}
+test('256 authored rules are accepted, 257 within all per-set limits hit the aggregate count',()=>{
+  assert.equal(Object.values(parse(authoredCount(256)).sets).reduce((n,r)=>n+r.length,0),261);
+  assert.throws(()=>parse(authoredCount(257)),/rule id\/count/);
+});
+test('file stat cap rejects before read/allocation and a growing file reads at most 64KiB+1',()=>{
+  let closed=0,reads=0,bytes=0;
+  const io={openSync:()=>123,closeSync:()=>closed++,fstatSync:()=>({isFile:()=>true,size:MAX_RULE_FILE_BYTES+1}),readSync(){reads++;throw Error('must not read');}};
+  assert.throws(()=>loadScreenRulesFile('fake',io),/file type\/size/);assert.equal(reads,0);assert.equal(closed,1);
+  io.fstatSync=()=>({isFile:()=>true,size:0});
+  io.readSync=(_fd,buffer,offset,length)=>{reads++;assert.equal(buffer.length,MAX_RULE_FILE_BYTES+1);buffer.fill(32,offset,offset+length);bytes+=length;return length;};
+  assert.throws(()=>loadScreenRulesFile('fake-growing',io),/file size/);
+  assert.equal(bytes,MAX_RULE_FILE_BYTES+1);assert.equal(reads,1);assert.equal(closed,2);
 });

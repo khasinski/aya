@@ -11,21 +11,22 @@ function nullable(node: AST.Node): boolean {
   }
 }
 // Unknown character sets deliberately overlap everything. Literal alternatives
-// are folded conservatively even without /i, so adding /i cannot evade the check.
-function first(node: AST.Node): Set<string> | null {
+// use exact ASCII without flags, conservative folding for i/u, and unknown
+// for unmodelled Unicode folds. Unknown never proves disjointness.
+function first(node: AST.Node, fold: boolean): Set<string> | null {
   switch (node.type) {
-    case "Character": return new Set([String.fromCodePoint(node.value).toLowerCase()]);
+    case "Character": return fold && node.value > 127 ? null : new Set([fold ? String.fromCodePoint(node.value).toLowerCase() : String.fromCodePoint(node.value)]);
     case "CharacterSet": {
       if (node.kind === "property" || node.kind === "any" || node.negate) return null;
-      const chars = node.kind === "digit" ? "0123456789" : node.kind === "word" ? "abcdefghijklmnopqrstuvwxyz0123456789_ſK" : " \t\n\r\f\v\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
-      return new Set([...chars].map(c => c.toLowerCase()));
+      const chars = node.kind === "digit" ? "0123456789" : node.kind === "word" ? "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_ſK" : " \t\n\r\f\v\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+      return new Set([...chars].map(c => fold ? c.toLowerCase() : c));
     }
-    case "Quantifier": return first(node.element);
+    case "Quantifier": return first(node.element, fold);
     case "Alternative": {
       const result = new Set<string>();
       for (const part of node.elements) {
         if (part.type === "Assertion") continue;
-        const chars = first(part); if (!chars) return null;
+        const chars = first(part, fold); if (!chars) return null;
         for (const c of chars) result.add(c);
         if (!nullable(part)) break;
       }
@@ -34,7 +35,7 @@ function first(node: AST.Node): Set<string> | null {
     case "Group": case "CapturingGroup": {
       const result = new Set<string>();
       for (const alt of node.alternatives) {
-        const chars = first(alt); if (!chars) return null;
+        const chars = first(alt, fold); if (!chars) return null;
         for (const c of chars) result.add(c);
       }
       return result;
@@ -56,18 +57,19 @@ function mandatoryLiterals(node: AST.Node): Set<number> {
   if (node.type === "Quantifier" && Number.isFinite(node.max) && node.min > 0) return mandatoryLiterals(node.element);
   return new Set();
 }
-function canConsume(node: AST.Node, code: number): boolean {
+function canConsume(node: AST.Node, code: number, fold: boolean): boolean {
+  if (fold && code > 127) return true; // Unmodelled Unicode folds cannot establish disjointness.
   switch (node.type) {
-    case "Character": return node.value === code || String.fromCodePoint(node.value).toLowerCase() === String.fromCodePoint(code).toLowerCase();
-    case "CharacterClassRange": return [code, ...[...String.fromCodePoint(code).toLowerCase(), ...String.fromCodePoint(code).toUpperCase()].map(c => c.codePointAt(0)!)].some(c => c >= node.min.value && c <= node.max.value);
-    case "CharacterClass": { const match = node.elements.some(e => canConsume(e, code)); return node.negate ? !match : match; }
+    case "Character": return node.value === code || (fold && String.fromCodePoint(node.value).toLowerCase() === String.fromCodePoint(code).toLowerCase());
+    case "CharacterClassRange": return (fold ? [code, ...[...String.fromCodePoint(code).toLowerCase(), ...String.fromCodePoint(code).toUpperCase()].map(c => c.codePointAt(0)!)] : [code]).some(c => c >= node.min.value && c <= node.max.value);
+    case "CharacterClass": { if (fold && node.negate) return true; const match = node.elements.some(e => canConsume(e, code, fold)); return node.negate ? !match : match; }
     case "CharacterSet":
       if (node.kind === "any") return ![10,13,0x2028,0x2029].includes(code);
       if (node.kind === "property") return true;
       { const c = String.fromCodePoint(code); const match = node.kind === "space" ? /\s/u.test(c) : node.kind === "digit" ? /[0-9]/.test(c) : /[a-zA-Z0-9_]/.test(c); return node.negate ? !match : match; }
-    case "Quantifier": return canConsume(node.element, code);
-    case "Group": case "CapturingGroup": return node.alternatives.some(a => canConsume(a, code));
-    case "Alternative": return node.elements.some(e => canConsume(e, code));
+    case "Quantifier": return canConsume(node.element, code, fold);
+    case "Group": case "CapturingGroup": return node.alternatives.some(a => canConsume(a, code, fold));
+    case "Alternative": return node.elements.some(e => canConsume(e, code, fold));
     case "Assertion": return false;
     default: return true;
   }
@@ -91,6 +93,7 @@ function ancestors(node: AST.Node): AST.Node[] {
 export function validateScreenPattern(source: string, flags: string): void {
   if (typeof source !== "string" || source.length === 0 || source.length > 2048) throw new Error("Invalid screen rule pattern length");
   if (typeof flags !== "string" || !/^[imu]*$/.test(flags) || new Set(flags).size !== flags.length) throw new Error("Invalid screen rule flags");
+  const fold = flags.includes("i") || flags.includes("u");
   const ast = new RegExpParser({ ecmaVersion: 2022 }).parsePattern(source, 0, source.length, { unicode: flags.includes("u") });
   let nodes = 0;
   visitRegExpAST(ast, {
@@ -105,7 +108,7 @@ export function validateScreenPattern(source: string, flags: string): void {
         if (node.max === Infinity && parent.max === Infinity) throw new Error("Unsafe screen rule nested unbounded repetition");
         if (Number.isFinite(parent.max)) {
           finiteExpansion *= parent.max;
-          if (node.max === Infinity && parent.max > 1 && ![...mandatoryLiterals(parent.element)].some(c => !canConsume(node.element, c))) throw new Error("Unsafe screen rule bounded nested repetition without separator");
+          if (node.max === Infinity && parent.max > 1 && ![...mandatoryLiterals(parent.element)].some(c => !canConsume(node.element, c, fold))) throw new Error("Unsafe screen rule bounded nested repetition without separator");
         }
       }
       if (finiteExpansion > 4096) throw new Error("Screen rule finite repetition budget");
@@ -118,7 +121,7 @@ export function validateScreenPattern(source: string, flags: string): void {
       for (const e of flatten(node.elements)) {
         if (e.type === "Assertion") continue;
         if (e.type === "Quantifier" && e.max === Infinity) {
-          const current = first(e);
+          const current = first(e, fold);
           if (previous !== undefined && (!previous || !current || [...previous].some(c => current.has(c)))) throw new Error("Unsafe screen rule overlapping assertion repetitions");
           previous = current;
         } else if (!nullable(e)) previous = undefined;
@@ -129,9 +132,9 @@ export function validateScreenPattern(source: string, flags: string): void {
   });
   function checkAlternatives(node: AST.Group | AST.CapturingGroup): void {
     let repeated = false;
-    for (const p of ancestors(node)) if (p.type === "Quantifier" && p.max === Infinity) repeated = true;
+    for (const p of ancestors(node)) if (p.type === "Quantifier" && p.max > 3) repeated = true;
     if (!repeated || node.alternatives.length < 2) return;
-    const sets = node.alternatives.map(first);
+    const sets = node.alternatives.map(a => first(a, fold));
     for (let a = 0; a < sets.length; a++) for (let b = a + 1; b < sets.length; b++) {
       const left = sets[a], right = sets[b];
       if (!left || !right || [...left].some(c => right.has(c))) throw new Error("Unsafe screen rule repeated overlapping alternatives");
