@@ -51,3 +51,15 @@ test('a rule-only data edit changes the rule identity while the real PTY core id
   const b=parseScreenRules(raw);assert.notEqual(a.digest,b.digest);assert.equal(b.version,'2');assert.equal(hostBuildHash(dir,'pty-host.js'),before);
  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+
+test('interrupted CSI cannot leak OSC payload and only OSC treats BEL as a terminator',()=>{
+ const ESC='\x1b';
+ assert.equal(screenRuleExcerpt('A'+ESC+'[31'+ESC+']52;c;SECRET\x07B'),'AB');
+ for(const start of [ESC+'P',ESC+'_',ESC+'X',ESC+'^','\x90','\x98','\x9e','\x9f']){
+   assert.equal(screenRuleExcerpt('A'+start+'hidden\x07SECRET'+ESC+'\\B'),'AB');
+   assert.equal(screenRuleExcerpt('A'+start+'hidden\x07SECRET'),'A');
+ }
+ const match=matchingScreenRule(['Allow '+ESC+'Phidden\x07SECRET?'],'claude','prompt');
+ assert.ok(match);assert.doesNotMatch(match.excerpt,/SECRET|hidden/);
+});

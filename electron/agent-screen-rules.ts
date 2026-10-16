@@ -27,22 +27,33 @@ export interface ScreenRuleMatch {
  * strings as well as every C0/C1/ESC/bidi code point, then bound the plain text. */
 export function screenRuleExcerpt(text: string): string {
   let plain = "";
-  // An excerpt needs only the start of a match. Never scan/allocate a full screen here.
+  type State = "ground" | "escape" | "csi" | "string" | "string-escape";
+  let state: State = "ground", osc = false;
   const prefix = text.slice(0, 1024);
   for (let i = 0; i < prefix.length; i++) {
-    const c = prefix.charCodeAt(i);
-    if (c === 27 || c === 0x9b || [0x90,0x98,0x9d,0x9e,0x9f].includes(c)) {
-      const next = c === 27 ? prefix[++i] : c === 0x9b ? "[" : c === 0x9d ? "]" : "P";
-      if (next === "[") { while (i + 1 < prefix.length) { const n = prefix.charCodeAt(++i); if (n >= 0x40 && n <= 0x7e) break; } }
-      else if (next && "PX]^_".includes(next)) {
-        while (++i < prefix.length) {
-          if (prefix.charCodeAt(i) === 7 || prefix.charCodeAt(i) === 0x9c) break;
-          if (prefix.charCodeAt(i) === 27 && prefix[i + 1] === "\\") { i++; break; }
-        }
-      } else { while (i < prefix.length && prefix.charCodeAt(i) >= 0x20 && prefix.charCodeAt(i) <= 0x2f) i++; }
+    const c = prefix.charCodeAt(i), char = prefix[i];
+    if (state === "string" || state === "string-escape") {
+      if (c === 0x9c || (state === "string-escape" && char === "\\") || (osc && c === 7)) state = "ground";
+      else if (c === 27) state = "string-escape";
+      else state = "string";
       continue;
     }
-    plain += prefix[i];
+    // ESC/C1 introductions restart an incomplete CSI instead of becoming its
+    // final byte and exposing the following control-string payload.
+    if (c === 27) { state = "escape"; continue; }
+    if (c === 0x9b) { state = "csi"; continue; }
+    if ([0x90,0x98,0x9d,0x9e,0x9f].includes(c)) { osc = c === 0x9d; state = "string"; continue; }
+    if (state === "escape") {
+      if (char === "[") state = "csi";
+      else if ("PX]^_".includes(char)) { osc = char === "]"; state = "string"; }
+      else if (c < 0x20 || c > 0x2f) state = "ground";
+      continue;
+    }
+    if (state === "csi") {
+      if (c >= 0x40 && c <= 0x7e) state = "ground";
+      continue;
+    }
+    plain += char;
   }
   return [...plain.replace(/[\p{Cc}\p{Zl}\p{Zp}\p{Bidi_Control}\u206a-\u206f]/gu, "").replace(/\s+/gu, " ").trim()].slice(0, 160).join("");
 }
