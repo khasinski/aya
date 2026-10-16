@@ -17,6 +17,7 @@ async function setup(command){
  const request={ptyId:'kept',agent:'custom',command:command??'stty -echo; echo OWNER_RETIRE_READY; while IFS= read -r line; do printf "R:%s\\n" "$line"; done',cwd:home,cols:80,rows:24};
  await first.spawn(request);await waitFor(()=>ptyEventsFor(sink,'kept').some(e=>e.type==='data'&&e.chunk.includes(command?'SURVIVOR_READY':'OWNER_RETIRE_READY')));
  const before=await first.hostStatus(),pid=await first.getPid('kept'),second=new PtyHostClient(script),send=second.sendRequest.bind(second),events=[],logs=[];
+ second.hostAuthKey=Buffer.from(first.hostAuthKey); // Component authority, manifest intentionally unavailable.
  second.enableCrashRecovery({log:(event,fields)=>logs.push({event,...fields})});second.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});
  second.sendRequest=(socket,req)=>req.type==='owner-continuity'?Promise.reject(Object.assign(Error('unsupported continuity'),{code:'PTY_HOST_REMOTE_ERROR'})):send(socket,req);
  await second.hostStatus();assert.equal(second.ownsOwnerKey,false);assert.equal(second.live.size,0);

@@ -68,7 +68,12 @@ const originalHandle=handle;handle=async function(req,socket,preparations){if(re
    if(mode==='publish-planned'||mode==='publish-planned-ended'||plannedLoss){keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner.pid,endedOrigin,...(custom?{script}:{}),...(lost?{completions:completionFile}:{})});return;}
    await c.cancelPlannedHandover();
    await c.write('kept','AFTER_PLANNED_ABORT\n');await wait(async()=>(await c.getBuffer('kept')).includes('AFTER_PLANNED_ABORT'));assert.equal(await c.getPid('kept'),pid);
-   if(mode==='planned-cancel'||mode==='publish-planned'||mode==='publish-planned-ended'||plannedLoss){keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner?.pid??null,...(custom?{script}:{}),...(lost?{completions:completionFile}:{})});}else process.send({ok:true});
+   if(mode==='planned-cancel'){
+    keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner.pid});await new Promise(resolve=>process.once('message',resolve));
+    assert.equal(await c.getPid('kept'),pid);assert.equal((await c.hostStatus()).owner.pid,status.owner.pid);assert.match(await c.getBuffer('kept'),/AFTER_PLANNED_ABORT/);
+    await c.write('kept','AFTER_CANCEL_REDEMPTION\n');await wait(async()=>(await c.getBuffer('kept')).includes('AFTER_CANCEL_REDEMPTION'));
+    process.send({verifiedAfterRejectedRedemption:true,pid,ownerPid:status.owner.pid});await c.shutdown();keep=false;
+   }else process.send({ok:true});
   }else throw Error('unknown fixture mode');
   for(const type of ['auth-transfer-reserve','auth-transfer-activate','auth-transfer-cancel','auth-transfer-complete'])assert.equal(isPtyHostRequest({id:1,type,attempt:'a'.repeat(64),extra:true}),false);
  }finally{if(!keep)await c.shutdown().catch(()=>{});c.dispose();c.dropSocket();if(custom&&!keep)fs.rmSync(script,{force:true});}

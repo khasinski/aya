@@ -30,7 +30,11 @@ async function roundtrips(label){const values=[];for(let i=0;i<25;i++){const id=
  const requests=[];for(let i=0;i<25;i++){const req={ptyId:'p'+i,agent:'custom',command:`exec '${nodeExecutable}' '${agent}'`,cwd:process.env.HOME,cols:120,rows:40};requests.push(req);await client.spawn(req);}
  await wait(()=>text.size===25);const before=await client.hostStatus();oldPid=before.pid;oldStartIdentity=ownerProcessStartIdentity(oldPid);if(!oldStartIdentity)throw Error('Cannot establish old host start identity');ownerPid=before.owner.pid;const pids=await Promise.all(requests.map(r=>client.getPid(r.ptyId)));
  timer=setInterval(sample,100);sample();
- const continuityStarted=performance.now(),continuityCpu=process.cpuUsage();client.dispose();client.dropSocket();client=new PtyHostClient(entry);install(client);
+ const continuityStarted=performance.now(),continuityCpu=process.cpuUsage();
+ if(!await client.announceOrdinaryQuit())throw Error('Measurement ordinary quit announcement failed');
+ client.dispose();client.dropSocket();client=new PtyHostClient(entry);install(client);
+ const ticket=await require('../dist-electron/pty-host-auth-ticket').findAuthTransferTicket(process.env.AYA_HOME);
+ if(!ticket)throw Error('Measurement ordinary quit ticket missing');await client.redeemAnnouncedCapability(ticket);
  const reused=await client.hostStatus(),authContinuityMs=performance.now()-continuityStarted,authContinuityCpu=process.cpuUsage(continuityCpu);
  if(!client.ownsOwnerKey||reused.pid!==oldPid||reused.owner.pid!==ownerPid)throw Error('Authenticated continuity did not retain host/owner');
  for(let i=0;i<25;i++)if(await client.getPid('p'+i)!==pids[i])throw Error('Continuity changed child PID');

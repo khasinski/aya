@@ -10,9 +10,11 @@ import * as net from "node:net";
 import { join } from "node:path";
 import { appEnv, seedEnv, type SeededEnv, type SeedOptions } from "./helpers/seed";
 
-export const {spawnAuthenticatedHost,authenticateFixtureSocket}=require("../tests/helpers/pty-host-launch.cjs") as {
+export const {spawnAuthenticatedHost,authenticateFixtureSocket,redeemFixtureQuit,forgetFixtureAuthority}=require("../tests/helpers/pty-host-launch.cjs") as {
   spawnAuthenticatedHost:typeof spawn;
   authenticateFixtureSocket:(socket:net.Socket,home:string)=>Promise<unknown>;
+  redeemFixtureQuit:(home:string)=>Promise<void>;
+  forgetFixtureAuthority:(home:string)=>void;
 };
 
 const APP_ROOT = join(__dirname, "..");
@@ -136,6 +138,7 @@ async function reapNativeOwner(ayaHome: string): Promise<void> {
 
 /** Asks the host to shut down; `pids` are then waited for and SIGKILLed if still alive. */
 export async function shutdownPtyHost(ayaHome: string, pids: number[] = []): Promise<void> {
+  await redeemFixtureQuit(ayaHome).catch(()=>{});
   const socketPath = join(ayaHome, "pty-host.sock");
   await Promise.race([
     new Promise<void>((resolve) => {
@@ -240,7 +243,7 @@ export const test = base.extend<{
       }
     }
     // Here, not in `app`: this teardown also runs when launching the app failed.
-    await cleanUpSeeded(s);
+    try{await cleanUpSeeded(s);}finally{forgetFixtureAuthority(s.ayaHome);}
   },
 
   app: async ({ seeded, seedOptions }, use) => {
@@ -248,14 +251,11 @@ export const test = base.extend<{
     // tabs must attach-only instead of respawning.
     if (seedOptions.preStartPtyHost) {
       // Match main's startHost: the Node/Electron runtime is part of the host content identity.
-      spawnAuthenticatedHost(
-        require("electron") as string,
-        [PTY_HOST_SCRIPT],
-        {
-          env: { ...appEnv(seeded, process.env, false), ELECTRON_RUN_AS_NODE: "1" },
-          stdio: "ignore",detached:true,
-        },
-      );
+      const issuer=spawn(require("electron") as string,[join(APP_ROOT,'tests/helpers/pty-prestart-announced.cjs')],{
+        env:{...appEnv(seeded,process.env,false),ELECTRON_RUN_AS_NODE:'1',AYA_TEST_HOST_SCRIPT:PTY_HOST_SCRIPT},stdio:['ignore','ignore','pipe'],
+      });
+      let issuerError='';issuer.stderr?.on('data',chunk=>{issuerError+=String(chunk);});
+      await new Promise<void>((resolve,reject)=>{issuer.once('error',reject);issuer.once('exit',code=>code===0?resolve():reject(Error('Announced prestart issuer failed: '+issuerError)));});
       const socketPath = join(seeded.ayaHome, "pty-host.sock");
       const deadline = Date.now() + PTY_HOST_SHUTDOWN_TIMEOUT_MS * 5;
       while (!existsSync(socketPath)) {

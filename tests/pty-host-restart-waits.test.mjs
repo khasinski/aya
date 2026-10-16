@@ -1,4 +1,4 @@
-import {authenticatedFixtureServer} from "./helpers/pty-host-launch.cjs";
+import {authenticatedFixtureServer,authorizeFixtureClient,spawnAuthenticatedHost} from "./helpers/pty-host-launch.cjs";
 // restart() is the one way Aya replaces its host (Restart Aya, Diagnostics, a stale host at launch). It must not
 // let the next host start before the old one has exited: on 2026-10-13 a new host started while the old one still
 // ended its panes, lost its socket to the old host's exit handler, and the next Aya started a third host.
@@ -117,7 +117,7 @@ async function fakeHost(t, closeAfterMs) {
 
 test("a host that gives no pid is waited for until it closes the connection, as it does when it exits", async (t) => {
   await fakeHost(t, 1_500);
-  const client = new PtyHostClient(HOST_SCRIPT);
+  const client = authorizeFixtureClient(new PtyHostClient(HOST_SCRIPT));
   await client.hostStatus();
   const started = Date.now();
   assert.equal(await client.restart(), true);
@@ -146,7 +146,7 @@ test("a host that answers shutdown but never exits is killed, so no second host 
         }
       });
     }).listen(${JSON.stringify(socketPath)}, () => console.log("ready"));`;
-  const stubborn = spawn(process.execPath, ["-e", source], { stdio: ["ignore", "pipe", "ignore"] });
+  const stubborn = spawnAuthenticatedHost(process.execPath, ["-e", source], { env:{...process.env,AYA_HOME:TMP_AYA_HOME},stdio: ["ignore", "pipe", "ignore"] });
   t.after(() => {
     try {
       process.kill(stubborn.pid, "SIGKILL");
@@ -155,7 +155,7 @@ test("a host that answers shutdown but never exits is killed, so no second host 
     }
   });
   await new Promise((resolve) => stubborn.stdout.once("data", resolve));
-  const client = new PtyHostClient(HOST_SCRIPT);
+  const client = authorizeFixtureClient(new PtyHostClient(HOST_SCRIPT));
   assert.equal((await client.hostStatus()).pid, stubborn.pid);
   const started = Date.now();
   assert.equal(await client.restart(), true);
@@ -166,7 +166,7 @@ test("a host that answers shutdown but never exits is killed, so no second host 
 
 test("a host that does not answer at all: restart() gives up within its bounds and says it did not finish", async (t) => {
   await fakeHost(t, null);
-  const client = new PtyHostClient(HOST_SCRIPT);
+  const client = authorizeFixtureClient(new PtyHostClient(HOST_SCRIPT));
   // Connected first, as Aya is: hostStatus() itself never gets an answer from this host.
   void client.hostStatus();
   await waitFor(() => client.isConnected());

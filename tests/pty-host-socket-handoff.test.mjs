@@ -70,8 +70,9 @@ test("after a restart, the old host's exit leaves the new host's socket in place
   await waitFor(() => !isAlive(oldPid), 10_000);
 
   assert.equal(existsSync(SOCKET), true, "the new host's socket is still there after the old host exited");
-  // The next Aya start connects to the running host instead of starting another one.
-  const nextStart = new PtyHostClient(HOST_SCRIPT);
+  // Another explicitly authorized client reaches the same surviving host.
+  // Actual new-main continuity is tested through announced relaunch elsewhere.
+  const nextStart = new PtyHostClient(HOST_SCRIPT);nextStart.hostAuthKey=Buffer.from(app.hostAuthKey);
   const reached = (await nextStart.hostStatus()).pid;
   pids.add(reached);
   assert.equal(reached, newPid, "a later client reaches the same host");

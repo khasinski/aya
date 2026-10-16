@@ -94,12 +94,15 @@ test('authenticated transfer verbs and receipt requests have closed bounded enve
 });
 
 test('existing B3 cancel alone revokes planned credential release and resumes the same pane',{timeout:20000},async()=>{
- const old=await fixture('planned-cancel'),ticket=await readAuthTransferTicket(old.file);
- const socket=net.createConnection(path.join(process.env.AYA_HOME,'pty-host.sock'));await once(socket,'connect');
- await assert.rejects(redeemHostCapability(socket,ticket,{pid:process.pid,startIdentity:ownerProcessStartIdentity(process.pid)}));
- const c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));
- try{assert.equal(await c.getPid('kept'),old.pid);assert.equal((await c.hostStatus()).owner.pid,old.ownerPid);assert.match(await c.getBuffer('kept'),/AFTER_PLANNED_ABORT/);await c.write('kept','AFTER_CANCEL_REDEMPTION\n');await c.shutdown();}
- finally{c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
+ const child=spawn(process.execPath,['tests/helpers/pty-host-auth-controls.cjs','planned-cancel'],{env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},stdio:['ignore','ignore','pipe','ipc']});let error='';child.stderr.on('data',b=>error+=b);const exit=once(child,'exit');
+ try{
+  const [old]=await once(child,'message'),ticket=await readAuthTransferTicket(old.file);
+  const socket=net.createConnection(path.join(process.env.AYA_HOME,'pty-host.sock'));await once(socket,'connect');
+  await assert.rejects(redeemHostCapability(socket,ticket,{pid:process.pid,startIdentity:ownerProcessStartIdentity(process.pid)}));
+  const verified=once(child,'message');child.send('verify-original-main');const [after]=await verified;
+  assert.deepEqual(after,{verifiedAfterRejectedRedemption:true,pid:old.pid,ownerPid:old.ownerPid});assert.equal((await exit)[0],0,error);
+ }finally{if(child.exitCode===null&&child.signalCode===null){child.kill('SIGTERM');await exit;}await cleanupNativeOwner(process.env.AYA_HOME);}
+
 });
 
 for(const mode of ['publish-empty','publish-empty-recovered'])test(`announced ${mode} validates empty continuity and permits later fresh pane I/O`,{timeout:20000},async()=>{
@@ -130,7 +133,7 @@ for(const mode of ['publish','publish-public','publish-empty'])test(`public anno
  const old=await fixture(mode),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));let starts=0;
  c.startHost=()=>{starts++;throw Error('announced reuse must not start a host');};
  // An unrelated development disk key must not override the announced proof.
- fs.writeFileSync(path.join(process.env.AYA_HOME,'pty-host-auth/key'),Buffer.alloc(32,91));
+ fs.mkdirSync(path.join(process.env.AYA_HOME,'pty-host-auth'),{mode:0o700,recursive:true});fs.writeFileSync(path.join(process.env.AYA_HOME,'pty-host-auth/key'),Buffer.alloc(32,91),{mode:0o600});
  try{
   await c.redeemAnnouncedCapability(ticket);assert.equal(c.isConnected(),false,'redemption does not wait for principal ownership');
   const status=await c.hostStatus();assert.equal(status.pid,old.hostPid);assert.equal(c.ownsOwnerKey,true);assert.equal(c.receivedAuthTransfer,null);assert.equal(starts,0);

@@ -1,7 +1,9 @@
-import {readFileSync,writeFileSync,unlinkSync,readdirSync} from 'node:fs';
+import {readFileSync,writeFileSync,unlinkSync,readdirSync,mkdirSync,existsSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {join} from 'node:path';
-import {test as base,expect,launchApp,closeAndWait,hostPidsForHome} from './fixtures';
+import {_electron} from '@playwright/test';
+import {appEnv} from './helpers/seed';
+import {test as base,expect,launchApp,closeAndWait,hostPidsForHome,ciElectronFlags} from './fixtures';
 import {waitForShellReady} from './helpers/terminal';
 import {fireShortcut} from './helpers/shortcut';
 import {envWithoutAya} from './helpers/env';
@@ -10,10 +12,10 @@ const record=(home:string)=>JSON.parse(readFileSync(join(home,'pty-owner/record.
 const test=base.extend({app:async({seeded},use)=>{const app=await launchApp({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0'}}),pid=app.process().pid!;await use(app);if(alive(pid))await closeAndWait(app);}});
 
 test('ordinary relaunch proves continuity and a later JS crash recovers the original owner and panes',async({app,window,seeded})=>{
- await waitForShellReady(window);const before=record(seeded.ayaHome),old=hostPidsForHome(seeded.ayaHome);expect(old).toHaveLength(1);
+ await waitForShellReady(window);const before=record(seeded.ayaHome),old=hostPidsForHome(seeded.ayaHome);expect(old).toHaveLength(1);expect(existsSync(join(seeded.ayaHome,'pty-host-auth'))).toBe(false);
  await closeAndWait(app);expect(alive(old[0])).toBe(true);
  expect(readdirSync(seeded.ayaHome).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name))).toHaveLength(1);
- writeFileSync(join(seeded.ayaHome,'pty-host-auth/key'),Buffer.alloc(32,42),{mode:0o600});
+ mkdirSync(join(seeded.ayaHome,'pty-host-auth'),{mode:0o700});writeFileSync(join(seeded.ayaHome,'pty-host-auth/key'),Buffer.alloc(32,42),{mode:0o600});
  const next=await launchApp({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0'}});
  try{
   const view=await next.firstWindow();await waitForShellReady(view);
@@ -31,7 +33,7 @@ test('ordinary relaunch proves continuity and a later JS crash recovers the orig
 });
 
 for(const fault of ['missing','wrong','unknown identity'])test(`a ${fault} capability gives a friendly real attachment refusal; Cancel keeps the host and processes`,async({app,window,seeded})=>{
- await waitForShellReady(window);const before=record(seeded.ayaHome),hosts=hostPidsForHome(seeded.ayaHome),keyFile=join(seeded.ayaHome,'pty-host-auth/key'),key=readFileSync(keyFile);
+ await waitForShellReady(window);const before=record(seeded.ayaHome),hosts=hostPidsForHome(seeded.ayaHome);
  const retainedFiles=fault==='unknown identity'?[join(seeded.ayaHome,'pty-owner/record.json'),join(seeded.ayaHome,'pty-hosts',`${hosts[0]}.json`)].map(file=>({file,bytes:readFileSync(file)})):[];
  const errors:string[]=[];window.on('pageerror',e=>errors.push(String(e)));
  const inputFile=join(seeded.projectDir,'auth-refused-input');expect(inputFile).not.toContain("'");
@@ -46,10 +48,9 @@ for(const fault of ['missing','wrong','unknown identity'])test(`a ${fault} capab
   PtyHostClient.prototype.request=function(...args:unknown[]){(globalThis as any).authClient=this;return request.apply(this,args);};
  },join(__dirname,'..'));
  await window.evaluate(()=>window.aya.ptyBuffer('tab-left'));
- if(fault==='wrong')writeFileSync(keyFile,Buffer.alloc(32,42),{mode:0o600});else unlinkSync(keyFile);
  for(const saved of retainedFiles)unlinkSync(saved.file);
  try{
-  await app.evaluate(()=>{const client=(globalThis as any).authClient;client.hostAsked=true;client.dropSocket();client.hostAsked=false;client.hostAuthKey=null;});
+  await app.evaluate((_api,fault)=>{const client=(globalThis as any).authClient;(globalThis as any).authSavedMemoryKey=Buffer.from(client.hostAuthKey);client.hostAsked=true;client.dropSocket();client.hostAsked=false;client.hostAuthKey=fault==='wrong'?Buffer.alloc(32,42):null;},fault);
   await window.addInitScript(()=>{(window as any).authUnhandled=[];window.addEventListener('unhandledrejection',e=>(window as any).authUnhandled.push(String(e.reason)));});
   await window.reload();
   await expect(window.getByTestId('terminal-history-notice').first()).toContainText('authenticate');
@@ -90,5 +91,26 @@ for(const fault of ['missing','wrong','unknown identity'])test(`a ${fault} capab
   expect(hostPidsForHome(seeded.ayaHome)).toEqual(hosts);expect(alive(before.pid)).toBe(true);for(const p of before.panes)expect(alive(p.pid)).toBe(true);
   if(!retainedFiles.length)expect(record(seeded.ayaHome).pid).toBe(before.pid);
   expect(errors).toEqual([]);expect(await window.evaluate(()=>(window as any).authUnhandled)).toEqual([]);
- }finally{for(const saved of retainedFiles)writeFileSync(saved.file,saved.bytes,{mode:0o600});writeFileSync(keyFile,key,{mode:0o600});}
+ }finally{for(const saved of retainedFiles)writeFileSync(saved.file,saved.bytes,{mode:0o600});await app.evaluate(()=>{const g=globalThis as any;g.authClient.hostAuthKey=g.authSavedMemoryKey;delete g.authSavedMemoryKey;});}
+});
+
+test('an unannounced main crash cannot adopt even an exact old disk key; Cancel preserves every process',async({app,window,seeded})=>{
+ await waitForShellReady(window);const before=record(seeded.ayaHome),hosts=hostPidsForHome(seeded.ayaHome),root=join(__dirname,'..');
+ // Put an exact valid old capability on disk only as a migration artifact.
+ // It never leaves this main through argv, env, logs or the test bridge result.
+ await app.evaluate((_api,root)=>{const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js'),request=PtyHostClient.prototype.request;PtyHostClient.prototype.request=function(...args:unknown[]){(globalThis as any).crashAuthClient=this;return request.apply(this,args);};},root);
+ await window.evaluate(()=>window.aya.ptyBuffer('tab-left'));
+ await app.evaluate((_api,home)=>{const fs=process.getBuiltinModule('fs'),path=process.getBuiltinModule('path');fs.mkdirSync(path.join(home,'pty-host-auth'),{mode:0o700});fs.writeFileSync(path.join(home,'pty-host-auth/key'),(globalThis as any).crashAuthClient.hostAuthKey,{mode:0o600});},seeded.ayaHome);
+ const child=app.process();child.kill('SIGKILL');await expect.poll(()=>alive(child.pid!)).toBe(false);
+ expect(readdirSync(seeded.ayaHome).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name))).toHaveLength(0);
+ const entry=join(seeded.root,'unannounced-main.cjs');writeFileSync(entry,`const electron=require('electron');global.authQuestions=[];electron.dialog.showMessageBox=async(...args)=>{const options=args.at(-1);global.authQuestions.push(options);return{response:options.buttons?.length===1?0:1,checkboxChecked:false};};require(require('path').join(process.env.AYA_TEST_APP_ROOT,'dist-electron/main.js'));`);
+ const next=await _electron.launch({cwd:root,args:[entry,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root}})});
+ try{
+  const view=await next.firstWindow(),errors:string[]=[];view.on('pageerror',error=>errors.push(String(error)));
+  await expect(view.getByTestId('terminal-history-notice').first()).toContainText('input remains disabled');
+  const questions=await next.evaluate(()=>(globalThis as any).authQuestions);expect(questions).toHaveLength(1);expect(questions[0].message).toBe('Work in progress will stop');
+  for(const pane of before.panes){expect(questions[0].detail).toContain(`PID ${pane.pid}`);expect(alive(pane.pid)).toBe(true);}
+  expect(hostPidsForHome(seeded.ayaHome)).toEqual(hosts);expect(record(seeded.ayaHome).pid).toBe(before.pid);expect(record(seeded.ayaHome).panes).toEqual(before.panes);expect(errors).toEqual([]);
+  expect(readFileSync(join(seeded.ayaHome,'pty-events.log'),'utf8').split('\n').filter(line=>{try{return JSON.parse(line).ev==='spawn';}catch{return false;}})).toHaveLength(2);
+ }finally{await closeAndWait(next);}
 });

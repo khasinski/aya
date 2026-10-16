@@ -10,5 +10,6 @@ const client=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));
  await client.spawn({...request,ptyId:'hidden'});
  while(!(await client.getBuffer('hidden')).includes('CONTINUITY_READY')){if(Date.now()>deadline)throw Error('hidden continuity fixture ready timeout');await new Promise(resolve=>setTimeout(resolve,5));}
  const status=await client.hostStatus(),pid=await client.getPid('continued'),hiddenPid=await client.getPid('hidden');
+ if(!await client.announceOrdinaryQuit())throw Error('Ordinary continuity announcement failed');
  process.stdout.write(JSON.stringify({request,status,pid,hiddenPid})+'\n');client.dispose();process.exit(0);
 })().catch(error=>{console.error(error);client.dispose();process.exit(1);});

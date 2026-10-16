@@ -1,4 +1,4 @@
-// Host-only inherited capability. Only main creates the persistent file.
+// Host-only inherited capability. Main creates it only in memory.
 import fs from "node:fs";
 import net from "node:net";
 import {HostAuthError, HOST_AUTH_TIMEOUT_MS} from "./pty-host-auth";

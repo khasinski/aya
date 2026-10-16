@@ -51,10 +51,10 @@ function stderrTarget(pid) {
 }
 
 /** A second client asks to attach to `req`'s pane and drops its socket as soon as the replay starts arriving. */
-async function attachAndDrop(req) {
+async function attachAndDrop(req,key) {
   const socket=net.createConnection(SOCKET);
   await new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('error',reject);});
-  const authenticated=await authenticateFixtureSocket(socket,TMP_AYA_HOME);
+  const authenticated=await authenticateFixtureSocket(socket,TMP_AYA_HOME,key);
   await new Promise((resolve,reject)=>{
     let buffer=authenticated.buffered;
     const timer=setTimeout(()=>{socket.destroy();reject(Error('no authenticated replay before drop'));},5000);
@@ -108,7 +108,7 @@ test("a client that drops its socket during a replay leaves the host and every t
   assert.ok(hostPid, "the host reports its pid");
 
   for (let i = 0; i < 10 && isAlive(hostPid); i++) {
-    await attachAndDrop(req);
+    await attachAndDrop(req,client.hostAuthKey);
     await delay(100);
   }
   await delay(500);

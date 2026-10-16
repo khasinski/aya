@@ -1,4 +1,4 @@
-import {spawnAuthenticatedHost} from "./helpers/pty-host-launch.cjs";
+import {spawnAuthenticatedHost,authorizeFixtureClient} from "./helpers/pty-host-launch.cjs";
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -65,7 +65,7 @@ for(const interrupted of [false,true,'ack-failure','attach-failure'])test(`a sep
    return;
   }
   await wait(()=>{if(child.exitCode!==null)throw Error(`successor failed: ${stderr}`);return fs.existsSync(path.join(process.env.AYA_HOME,'pty-host.sock'));});
-  next=new PtyHostClient(hostScript);
+  next=authorizeFixtureClient(new PtyHostClient(hostScript));
   assert.equal((await next.hostStatus()).pid,child.pid);
   assert.equal(await next.getPid('pane'),pid);
   assert.equal((await next.hostStatus()).owner.pid,status.owner.pid);

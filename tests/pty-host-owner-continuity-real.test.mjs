@@ -19,8 +19,10 @@ test('a new main authenticates to a surviving host and recovers its same owner/c
  try{
   const [code]=await exited;assert.equal(code,0,errors);const before=JSON.parse(output.trim());
   assert.throws(()=>process.kill(oldMain.pid,0),/ESRCH/);
+  const ticket=await require('../dist-electron/pty-host-auth-ticket.js').findAuthTransferTicket(home);assert.ok(ticket);await next.redeemAnnouncedCapability(ticket);
   for(const variant of ['partial','duplicate','generation','host']){
    const rejected=new PtyHostClient(path.resolve('dist-electron/pty-host.js')),send=rejected.sendRequest.bind(rejected),originalSecret=rejected.ownerSecret.toString('hex');let starts=0;
+   rejected.hostAuthKey=Buffer.from(next.hostAuthKey); // Same recipient principal, isolated validation probes.
    rejected.startHost=()=>{starts++;throw Error('no owner or host replacement allowed');};
    rejected.sendRequest=async(socket,request)=>{
     const reply=await send(socket,request);if(request.type!=='owner-continuity')return reply;

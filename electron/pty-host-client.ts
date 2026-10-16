@@ -49,7 +49,7 @@ import { coalesceAdjacentData } from "./pty-event-coalescer";
 import type { BufferSearchHit } from "./pty";
 import type { PtyEvent, SpawnRequest } from "./types";
 import {authenticateHostSocket} from "./pty-host-auth-transport";
-import {readHostAuthKey,createHostAuthKey} from "./pty-host-auth-key";
+import {newHostAuthCapability} from "./pty-host-auth-transfer";
 import {HostAuthError,HostPrincipalBusyError,HOST_PRINCIPAL_BUSY_REASON,type HostAuthPeer} from "./pty-host-auth";
 import {handoverPeer} from "./pty-handover-window";
 import {refusedHostStatus,HOST_AUTH_REFUSAL_REASON,type HostAuthenticationProblem} from "./pty-host-auth-status";
@@ -1194,7 +1194,7 @@ export class PtyHostClient {
       if(this.ownerContinuityUnavailable)throw this.blockUnavailableOwner();
       try{await waitForHostShutdown(PTY_HOST_SOCKET_PATH,this.startupCancelled.signal);}catch(error){if(this.disposed)throw new Error(DISPOSED_MESSAGE);throw error;}
       if(this.disposed)throw new Error(DISPOSED_MESSAGE);
-      this.hostAuthKey??=createHostAuthKey(AYA_HOME);
+      this.hostAuthKey??=newHostAuthCapability();
       this.startHost();
       await this.openStartedHostSocket();
       this.reusedHost = this.plannedReusedBoot;
@@ -1217,7 +1217,7 @@ export class PtyHostClient {
         peer=handoverPeer(socket);
         const announced=this.receivedAuthTransfer?.ticket;
         if(announced&&(peer.pid!==announced.hostPid||peer.startIdentity!==announced.hostStartIdentity))throw new HostAuthError();
-        this.hostAuthKey??=readHostAuthKey(AYA_HOME);
+        if(!this.hostAuthKey)throw new HostAuthError();
         const startIdentity=ownerProcessStartIdentity(process.pid);
         if(!startIdentity)throw new HostAuthError();
         const authenticated=await authenticateHostSocket(socket,this.hostAuthKey,{pid:process.pid,startIdentity});

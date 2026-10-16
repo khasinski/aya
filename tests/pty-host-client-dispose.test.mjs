@@ -1,4 +1,4 @@
-import {authenticatedFixtureServer} from "./helpers/pty-host-launch.cjs";
+import {authenticatedFixtureServer,authorizeFixtureClient} from "./helpers/pty-host-launch.cjs";
 // PtyHostClient.dispose(): once Aya starts quitting, a request must fail
 // instead of starting a pty host. A host started that late has no app to
 // connect to, never arms its idle exit, and outlives the app (e2e runs leaked
@@ -69,7 +69,7 @@ for(const kind of ["cold","warm","shared"])test(`a shutdown issued right before 
   });
   await new Promise((r) => server.listen(SOCKET_PATH, r));
   try {
-    const client = new PtyHostClient(FAKE_HOST);
+    const client = authorizeFixtureClient(new PtyHostClient(FAKE_HOST));
     if(kind==="warm")await client.getBuffer("warm-authenticated-connection");
     const ordinary=kind==="shared"?client.write("must-not-receive","NOT_SENT"):null;
     const shutdown = client.shutdown();

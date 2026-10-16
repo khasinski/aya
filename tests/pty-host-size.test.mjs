@@ -1,4 +1,4 @@
-import {authenticatedFixtureServer} from "./helpers/pty-host-launch.cjs";
+import {authenticatedFixtureServer,authorizeFixtureClient} from "./helpers/pty-host-launch.cjs";
 // `aya pane read` renders a pane at the size it actually has, which only the
 // pty host knows. A host from an older build cannot answer; the client must
 // then say "unknown" so the read falls back to the raw buffer.
@@ -54,7 +54,7 @@ async function sizeFromFakeHost(answer) {
     });
   });
   await new Promise((r) => server.listen(PTY_HOST_SOCKET_PATH, r));
-  const client = new PtyHostClient(HOST_SCRIPT);
+  const client = authorizeFixtureClient(new PtyHostClient(HOST_SCRIPT));
   try {
     const size = await client.getSize("any");
     return { size, requests: [...requests] };

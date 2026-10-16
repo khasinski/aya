@@ -53,7 +53,7 @@ test('repeated real JS crashes exhaust one budget while preserving native invent
  }finally{await cleanup(client);}
 });
 test('unavailable authenticated continuity leaves reused host death disconnected without post-death key requests or new owners',{timeout:15000},async()=>{
- const first=await setup(),second=new PtyHostClient(script),events=[];second.enableCrashRecovery();second.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});
+ const first=await setup(),second=new PtyHostClient(script),events=[];second.hostAuthKey=Buffer.from(first.client.hostAuthKey);second.enableCrashRecovery();second.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});
  const read=registry.readOwnerRecord,send=second.sendRequest.bind(second);let probes=0,starts=0,keyRequests=0;
  second.sendRequest=(socket,req)=>{if(req.type==='owner-continuity'){keyRequests++;return Promise.reject(Object.assign(Error('unsupported continuity'),{code:'PTY_HOST_REMOTE_ERROR'}));}return send(socket,req);};
  try{
@@ -315,7 +315,7 @@ test('Cancel keeps the same two-spent budget and a later real crash recovers onc
 
 test('discovery-only unavailable or invalid continuity latches host loss before any view mounts',{timeout:20000},async()=>{
  for(const invalid of [false,true]){
-  const first=await setup(),second=new PtyHostClient(script),events=[];second.enableCrashRecovery();second.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});
+  const first=await setup(),second=new PtyHostClient(script),events=[];second.hostAuthKey=Buffer.from(first.client.hostAuthKey);second.enableCrashRecovery();second.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});
   const send=second.sendRequest.bind(second);let starts=0;
   second.sendRequest=async(socket,req)=>{
    if(req.type!=='owner-continuity')return send(socket,req);

@@ -53,7 +53,7 @@ test("main disconnecting mid-prepare leaves no child or starting flight", async 
   client.dispose();
   client.dropSocket();
   await started;
-  const observer = new PtyHostClient(host);
+  const observer = new PtyHostClient(host);observer.hostAuthKey=Buffer.from(client.hostAuthKey); // Same test principal.
   t.after(() => observer.shutdown().catch(() => {}));
   await waitFor(async () => (await observer.launch("disconnected")) === null);
   assert.equal(await observer.getPid("disconnected"), null);

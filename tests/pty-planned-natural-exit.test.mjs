@@ -24,6 +24,7 @@ for(const scenario of ['reuse-published','replace-published','reuse-before-publi
   await old.spawn(req);await wait(()=>output.includes('BAD_READY'));const childPid=await old.getPid('bad');
   await old.spawn({...req,ptyId:'good',command:'stty -echo; echo GOOD_READY; while IFS= read -r line; do echo "$line"; done'});await wait(()=>output.includes('GOOD_READY'));
   const goodPid=await old.getPid('good'),ownerPid=(await old.hostStatus()).owner.pid;
+  next.hostAuthKey=Buffer.from(old.hostAuthKey); // Explicit same-principal component authority.
   const state=await old.preparePlannedHandover(Date.now()+20000);
   assert.deepEqual(state.ineligible.map(p=>p.id),['bad']);
   if(scenario.endsWith('before-publish')){fs.writeFileSync(release,'go');await wait(async()=>await old.getPid('bad')===null);}

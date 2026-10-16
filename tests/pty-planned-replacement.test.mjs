@@ -21,6 +21,7 @@ for(const scenario of ['reuse','replace','inspect-refusal','unknown-hash','owner
   const req={ptyId:'pane',agent:'custom',command:"stty -echo; echo READY; while IFS= read -r line; do case \"$line\" in quit) exit 23 ;; *) printf 'R:%s\\n' \"$line\" ;; esac; done",cwd:process.env.HOME,cols:80,rows:24};
   await old.spawn(req);await wait(()=>output.includes('READY'));
   const status=await old.hostStatus(),pid=await old.getPid('pane'),deadline=Date.now()+20000;
+  next.hostAuthKey=Buffer.from(old.hostAuthKey); // Explicit same-principal component authority.
   const state=await old.preparePlannedHandover(deadline),ticket=await old.announcePlannedHandover(state,null,[],randomBytes(32).toString('hex'));
   const expected=next.expectedHostIdentity('different app version');
   if(scenario==='unknown-hash')expected.scriptHash='unknown';

@@ -1,5 +1,10 @@
 # In-memory terminal-host authentication - rework of #231
 
+## Current implementation
+
+The generic persistent key creator/reader is removed. Main creates fresh authority only in memory for a permitted cold start; existing hosts require held memory authority or an actually announced one-use transfer. Old key files are ignored and left untouched. Ordinary quit/startup and production B3 share the reviewed reservation/redemption state machine, while B3 retains its separate native-reader commit boundary. Unannounced main loss cannot adopt; private retained inventory and exact-target consent remain the recovery route. The following design/stage notes are historical contracts and scoped evidence, not claims that the final memory boundary already passed every aggregate gate. Final validation is recorded separately after the last migration stage.
+
+
 I propose this rework from `pty-host-socket-auth` at `d7cda55c`, on branch `pty-host-auth-memory`. Justyna chose the in-memory secret on 2026-10-16. This note precedes product changes. Local user rules remain a separate PR; there is no remote-rule channel in the current plan.
 
 ## Authority and storage
@@ -221,3 +226,12 @@ The producer regressions cover reservation-before-freeze order, purpose-slot los
 This is producer integration only. Generic disk-key lookup/removal and the remaining legacy fixture authority migration are still future work; these tests do not establish that no persistent-key opener remains. The separate full-npm/native-command gate on the final committed producer head is required before push handoff.
 
 Producer follow-up: all issuer prepare/publish/announce/cancel RPCs now use only an authenticated existing socket, without the generic request acquisition/cold-start path. Missing/refused sockets and a connected send failure are pinned through the public issuer methods with zero generic acquisition or starts. Publication evidence has two layers: one test stalls before entering the writer to prove no late activation; a second stalls the real asynchronous rename inside the writer, then proves the late attempt's actual file/temp cleanup preserves a newer ticket. The ticket-store suite separately covers its lower-level I/O/deadline boundaries.
+
+
+### Stage 5 - remove persistent authority and migrate fixtures
+
+The generic capability-file module is deleted. A permitted cold start generates its random32-byte capability in memory only after the creation proof; every existing-host opener, including cold read-only observers, uses only explicitly held memory authority. Neither recovery nor reuse reads, repairs or removes old key artifacts. Regression fixtures leave exact-old, wrong, unsafe-mode, symlink, FIFO and missing artifacts untouched and observe zero key-file reads. The native owner source/binary is unchanged.
+
+Positive same-process component fixtures explicitly borrow a capability copy from their own fixture main. Distinct main processes instead use the production ordinary-quit announcement and one-use redemption; the principal-busy fixture announces quit while deliberately holding the issuer alive. The cancelled-B3 redemption regression keeps the issuer alive to prove its original pane still accepts I/O, rather than lending authority to the refused recipient. E2E prestarted hosts use a distinct announcing issuer; teardown may consume an actual quit ticket to stop its disposable host. No helper consults the old disk key.
+
+Pre-commit validation: changed-contract Electron160/160; full npm7470pass/0fail/147skip/1knownTODO (7618 total);14/14 real-window auth/principal/reused-boot/OpenCode cases passed in1.2min with shutdown0/workers1. This includes real ordinary relaunch plus later B4 recovery, friendly missing/wrong/unknown refusals with keyboard/paste blocked, and an unannounced main SIGKILL despite an exact old key artifact: one consent question, Cancel, unchanged host/owner/child PIDs and no respawn. The measurement helper now explicitly announces and redeems a real quit ticket between its same-process clients instead of assuming disk-key reuse. The planned-handover real-window suite also passed17/17 in1.6min, preserving PIDs, history/viewport, both fallback questions, ended records and explicit restart. Final immutable-head npm/native and aggregate gates are still required; these preliminary counts are not a completed final gate.

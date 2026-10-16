@@ -20,6 +20,7 @@ for(const variant of ['reuse','replacement','replacement-twice','replacement-exp
   req.command="exec /bin/sh -c '"+req.command.replace(/'/g,"'\"'\"'")+"'";
   await old.spawn(req);await wait(()=>output.includes('READY'));
   const ownerPid=(await old.hostStatus()).owner.pid,originalPid=await old.getPid('pane');
+  next.hostAuthKey=Buffer.from(old.hostAuthKey); // Explicit same-principal component authority.
   const state=await old.preparePlannedHandover(Date.now()+20000),origin=state.eligible[0];
   const ticket=await old.announcePlannedHandover(state,null,[],randomBytes(32).toString('hex'));old.hostAsked=true;
   await next.adoptPlannedHandover(ticket,next.expectedHostIdentity('version'),async()=>{});
@@ -51,7 +52,7 @@ for(const variant of ['reuse','replacement','replacement-twice','replacement-exp
    const secondState=await next.preparePlannedHandover(Date.now()+20000);
    assert.deepEqual(secondState.eligible.map(p=>p.id),['pane']);assert.deepEqual(secondState.ineligible,[]);
    const secondTicket=await next.announcePlannedHandover(secondState,null,[],randomBytes(32).toString('hex'));next.hostAsked=true;
-   fs.writeFileSync(thirdScript,"require('./pty-owner-adapter').OwnerPty.attach=async()=>{throw Error('An ended record must not attach a native master');};\n"+fs.readFileSync(hostScript,'utf8'));third=new PtyHostClient(thirdScript);
+   fs.writeFileSync(thirdScript,"require('./pty-owner-adapter').OwnerPty.attach=async()=>{throw Error('An ended record must not attach a native master');};\n"+fs.readFileSync(hostScript,'utf8'));third=new PtyHostClient(thirdScript);third.hostAuthKey=Buffer.from(next.hostAuthKey);
    await third.adoptPlannedHandover(secondTicket,third.expectedHostIdentity('second-update'),async()=>{});next=third;
    assert.equal(await next.getPid('pane'),null,'an ended record has no native attach or replacement spawn');
   }

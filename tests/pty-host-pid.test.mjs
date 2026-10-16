@@ -1,4 +1,4 @@
-import {authenticatedFixtureServer} from "./helpers/pty-host-launch.cjs";
+import {authenticatedFixtureServer,authorizeFixtureClient} from "./helpers/pty-host-launch.cjs";
 // Proving who runs an `aya team` command needs the pane's process (caller-proof.ts);
 // only the pty host has it. A host from an older build answers "unknown request".
 
@@ -41,7 +41,7 @@ async function pidFromFakeHost(answer) {
     });
   });
   await new Promise((r) => server.listen(PTY_HOST_SOCKET_PATH, r));
-  const client = new PtyHostClient(HOST_SCRIPT);
+  const client = authorizeFixtureClient(new PtyHostClient(HOST_SCRIPT));
   try {
     return await client.getPid("any");
   } finally {
