@@ -61,7 +61,10 @@ export function readUserRuleFile(file: string, io = fs): Buffer {
     return bytes.subarray(0, size);
   } finally { io.closeSync(fd); }
 }
-/** No directory creation, no regex compilation, no arbitrary imports. */
+/** No directory creation, no regex compilation, no arbitrary imports.
+ * Directory identity rechecks are accident guards, not protection from a
+ * same-UID writer (who can also edit these additive rules directly). Child
+ * paths always receive the complete private-file/type/bounded-read checks. */
 export function readUserScreenRules(directory: string, builtin: ScreenRuleSet): UserRuleManifest | null {
   let initial: fs.Stats;
   try { initial = fs.lstatSync(directory); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
@@ -69,7 +72,7 @@ export function readUserScreenRules(directory: string, builtin: ScreenRuleSet): 
   const fd = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | fs.constants.O_DIRECTORY);
   try {
     const before = fs.fstatSync(fd); privateEntry(before, true);
-    if (!sameFile(initial, before)) fail("directory changed");
+    if (initial.dev !== before.dev || initial.ino !== before.ino) fail("directory changed");
     const names = new Set<string>(), handle = fs.opendirSync(directory);
     try {
       let entry: fs.Dirent | null, count = 0;
@@ -103,7 +106,8 @@ export function readUserScreenRules(directory: string, builtin: ScreenRuleSet): 
       sets[agent] = Object.freeze(rules);
     }
     const after = fs.fstatSync(fd), named = fs.lstatSync(directory);
-    if (!sameFile(before, after) || !sameFile(after, named)) fail("directory changed while reading");
+    privateEntry(after, true); privateEntry(named, true);
+    if (before.dev !== after.dev || before.ino !== after.ino || after.dev !== named.dev || after.ino !== named.ino) fail("directory changed while reading");
     return files.length ? Object.freeze({digest:hash.digest("hex"),sets:Object.freeze(sets),files:Object.freeze(files)}) : null;
   } finally { fs.closeSync(fd); }
 }

@@ -103,7 +103,23 @@ test('exact64KiB valid data is accepted; wrong UID and file replacement refuse b
 test('a directory replaced during discovery cannot publish a candidate',()=>{
  const f=fixture(),original=fs.lstatSync;let calls=0;
  try{
-  f.write('claude');fs.lstatSync=(name,...args)=>{const stat=original(name,...args);if(name===f.root&&++calls>1)return {...stat,ino:stat.ino+1};return stat;};
+  f.write('claude');fs.lstatSync=(name,...args)=>{const stat=original(name,...args);if(name===f.root&&++calls>1)return {...stat,ino:stat.ino+1,isDirectory:()=>true};return stat;};
   assert.throws(()=>readUserScreenRules(f.root,builtin),/directory changed while reading/);
  }finally{fs.lstatSync=original;f.close();}
+});
+test('same-user ancestor ABA is outside the identity guarantee but never bypasses file privacy checks',()=>{
+ for(const safe of [true,false]){
+  const f=fixture(),active=path.join(f.root,'active'),replacement=path.join(f.root,'replacement'),parked=path.join(f.root,'parked'),directory=path.join(active,'screen-rules');
+  const opendir=fs.opendirSync,lstat=fs.lstatSync;let swapped=false;
+  const restore=()=>{if(swapped){fs.renameSync(active,replacement);fs.renameSync(parked,active);swapped=false;}};
+  try{
+   for(const parent of [active,replacement]){fs.mkdirSync(parent,{mode:0o700});fs.mkdirSync(path.join(parent,'screen-rules'),{mode:0o700});}
+   fs.writeFileSync(path.join(directory,'claude.json'),bytes(envelope('claude',[rule('original')])),{mode:0o600});
+   fs.writeFileSync(path.join(replacement,'screen-rules','claude.json'),bytes(envelope('claude',[rule('replacement')])),{mode:safe?0o600:0o644});
+   fs.opendirSync=(name,...args)=>{if(name===directory&&!swapped){fs.renameSync(active,parked);fs.renameSync(replacement,active);swapped=true;}return opendir(name,...args);};
+   fs.lstatSync=(name,...args)=>{const stat=lstat(name,...args);if(name===path.join(directory,'claude.json'))restore();return stat;};
+   if(safe)assert.equal(readUserScreenRules(directory,builtin).sets.claude[0].id,'replacement','trusted same-user replacement has no extra rule authority');
+   else assert.throws(()=>readUserScreenRules(directory,builtin),/unsafe directory or file metadata/);
+  }finally{restore();fs.opendirSync=opendir;fs.lstatSync=lstat;f.close();}
+ }
 });
