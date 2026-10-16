@@ -75,7 +75,8 @@ test('composer lookaheads and synthetic near misses stay bounded at maximum regi
 
 
 for (const [pattern, flags] of [
-  ['^(a|aa){1,100}b$', ''], ['^(?:[^A]+a){1,100}X$', ''],
+  ['^(a|aa){1,100}b$', ''], ['^(?:(?:(a|aa){1,3}){1,3}){1,3}b$', ''],
+  ['^(?:ſ+s){1,100}X$', 'iu'], ['^(?:[ſ]+s){1,100}X$', 'iu'], ['^(?:[^A]+a){1,100}X$', ''],
   ['^(?:\\w+ſ){1,100}X$', 'iu'], ['^(s|ſ)+$', 'iu'], ['(a|A)+$', 'i'], ['(?=\\w*A*X)', ''],
 ]) test(`reviewed ambiguous/case-folded pattern refused: ${pattern}/${flags}`,()=>assert.throws(()=>validateScreenPattern(pattern,flags)));
 

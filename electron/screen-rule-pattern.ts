@@ -60,8 +60,8 @@ function mandatoryLiterals(node: AST.Node): Set<number> {
 function canConsume(node: AST.Node, code: number, fold: boolean): boolean {
   if (fold && code > 127) return true; // Unmodelled Unicode folds cannot establish disjointness.
   switch (node.type) {
-    case "Character": return node.value === code || (fold && String.fromCodePoint(node.value).toLowerCase() === String.fromCodePoint(code).toLowerCase());
-    case "CharacterClassRange": return (fold ? [code, ...[...String.fromCodePoint(code).toLowerCase(), ...String.fromCodePoint(code).toUpperCase()].map(c => c.codePointAt(0)!)] : [code]).some(c => c >= node.min.value && c <= node.max.value);
+    case "Character": return (fold && node.value > 127) || node.value === code || (fold && String.fromCodePoint(node.value).toLowerCase() === String.fromCodePoint(code).toLowerCase());
+    case "CharacterClassRange": if (fold && node.max.value > 127) return true; return (fold ? [code, ...[...String.fromCodePoint(code).toLowerCase(), ...String.fromCodePoint(code).toUpperCase()].map(c => c.codePointAt(0)!)] : [code]).some(c => c >= node.min.value && c <= node.max.value);
     case "CharacterClass": { if (fold && node.negate) return true; const match = node.elements.some(e => canConsume(e, code, fold)); return node.negate ? !match : match; }
     case "CharacterSet":
       if (node.kind === "any") return ![10,13,0x2028,0x2029].includes(code);
@@ -131,9 +131,9 @@ export function validateScreenPattern(source: string, flags: string): void {
     onCapturingGroupEnter: checkAlternatives,
   });
   function checkAlternatives(node: AST.Group | AST.CapturingGroup): void {
-    let repeated = false;
-    for (const p of ancestors(node)) if (p.type === "Quantifier" && p.max > 3) repeated = true;
-    if (!repeated || node.alternatives.length < 2) return;
+    let repetitionBudget = 1;
+    for (const p of ancestors(node)) if (p.type === "Quantifier") repetitionBudget = Math.min(4, repetitionBudget * Math.min(4, p.max));
+    if (repetitionBudget <= 3 || node.alternatives.length < 2) return;
     const sets = node.alternatives.map(a => first(a, fold));
     for (let a = 0; a < sets.length; a++) for (let b = a + 1; b < sets.length; b++) {
       const left = sets[a], right = sets[b];
