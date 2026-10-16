@@ -24,7 +24,7 @@ function setup(){
 test('reload defaults are pinned; no files starts no worker and evaluates without IPC',async()=>{
  assert.deepEqual(USER_RELOAD_LIMITS,{scanMs:1000,coalesceMs:100,stableMs:100});let threads=0;
  const provider=new UserRuleProvider('/unused/screen-rules',builtin,{read:()=>null,watch:()=>{throw Error('missing');},createRuntime:failure=>new UserRuleRuntime({log:failure,createWorker:()=>{threads++;throw Error('no thread expected');}})});
- try{provider.start();assert.equal(provider.configuration().available,true,'absent files have no artificial startup wait');await until(()=>provider.configuration().available);assert.equal(provider.configuration().manifest,null);assert.equal((await provider.evaluate(request)).available,true);provider.scan();assert.equal(threads,0);}finally{await provider.dispose();}
+ try{provider.start();assert.equal(provider.configuration().available,true,'absent files have no artificial startup wait');await until(()=>provider.configuration().available);assert.equal(provider.configuration().manifest,null);assert.ok(provider.diagnostics().sets.every(set=>set.status==='built-in only'));assert.equal((await provider.evaluate(request)).available,true);provider.scan();assert.equal(threads,0);}finally{await provider.dispose();}
 });
 test('watch invalidates immediately, coalesces and atomically publishes the paired runtime',async()=>{
  const f=setup();try{
@@ -93,8 +93,9 @@ test('actual private files load/reload/delete, quarantine pathological digest, a
  const provider=new UserRuleProvider(directory,builtin,{createRuntime:failure=>new UserRuleRuntime({log:failure,createWorker:manifest=>{const worker=new Worker(path.resolve('dist-electron/screen-user-rule-worker.js'),{workerData:manifest,env:{}});threads.push(worker);return worker;}}),log:(reason,digest)=>logs.push({reason,digest})});
  try{
   provider.start();await until(()=>provider.configuration().available);assert.equal((await provider.evaluate({...request,regions:{tail:'LOCAL_ONLY_PROVIDER',screen:'',lastLine:''}})).matches[0].id,'local-only');assert.equal(mainCompiles,0);
+  const loaded=provider.diagnostics();assert.equal(loaded.sets.find(s=>s.agent==='claude').status,'loaded');assert.match(loaded.sets.find(s=>s.agent==='claude').version,/local-1/);assert.deepEqual(loaded.sets.find(s=>s.agent==='claude').sources,['user/claude.json']);assert.match(loaded.sets.find(s=>s.agent==='claude').digest,/^[a-f0-9]{64}$/);
   write('^(a|aa){1,100}b$');await until(()=>provider.configuration().available&&provider.configuration().manifest.sets.claude[0].pattern.startsWith('^'));
-  const failed=await provider.evaluate({...request,regions:{tail:'a'.repeat(45),screen:'',lastLine:''}});assert.equal(failed.available,false);assert.equal(provider.configuration().available,false);const digest=provider.configuration().manifest.digest;assert.equal(logs.at(-1).digest,digest);
+  const failed=await provider.evaluate({...request,regions:{tail:'a'.repeat(45),screen:'',lastLine:''}});assert.equal(failed.available,false);assert.equal(provider.configuration().available,false);const digest=provider.configuration().manifest.digest;assert.equal(logs.at(-1).digest,digest);assert.equal(provider.diagnostics().quarantinedDigest,digest);assert.equal(provider.diagnostics().sets.find(s=>s.agent==='claude').status,'unavailable');
   await until(()=>threads.at(-1).threadId===-1);const count=threads.length;provider.scan();assert.equal(threads.length,count);
   write('LOCAL_ONLY_PROVIDER');await until(()=>provider.configuration().available);assert.equal(threads.length,count+1);assert.equal((await provider.evaluate({...request,regions:{tail:'LOCAL_ONLY_PROVIDER',screen:'',lastLine:''}})).available,true);
   fs.unlinkSync(file);await until(()=>provider.configuration().available&&provider.configuration().manifest===null);assert.equal(mainCompiles,0);await until(()=>threads.at(-1).threadId===-1);
@@ -105,7 +106,7 @@ test('invalid data is unavailable with one fixed diagnostic, then corrected data
  let invalid=true;const logs=[];
  const provider=new UserRuleProvider('/unused/screen-rules',builtin,{read:()=>{if(invalid)throw Error('PRIVATE FILE CONTENT');return manifest();},watch:()=>{throw Error('missing');},createRuntime:()=>({replace:async()=>true,evaluate:async()=>({available:true,epoch:9,digest:'a'.repeat(64),matches:[]}),dispose:async()=>{}}),log:(reason,digest)=>logs.push({reason,digest})});
  try{
-  provider.start();await until(()=>provider.configuration().reason==='invalid or unsafe user rule files');assert.equal(provider.configuration().available,false);assert.equal(logs.length,1);assert.doesNotMatch(JSON.stringify(logs),/PRIVATE/);
+  provider.start();await until(()=>provider.configuration().reason==='invalid or unsafe user rule files');assert.equal(provider.configuration().available,false);assert.equal(provider.diagnostics().sets.length,6);assert.ok(provider.diagnostics().sets.every(set=>set.status==='unavailable'));assert.equal(provider.diagnostics().reason,'invalid or unsafe user rule files');assert.equal(logs.length,1);assert.doesNotMatch(JSON.stringify(logs),/PRIVATE/);
   provider.scan();assert.equal(logs.length,1);invalid=false;provider.scan();await until(()=>provider.configuration().available);
  }finally{await provider.dispose();}
 });

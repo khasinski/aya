@@ -74,3 +74,31 @@ test("Copy JSON writes the exact report to the clipboard", async ({ window, app 
   expect(clip).toBe(shown);
   expect(() => JSON.parse(clip)).not.toThrow();
 });
+
+test.describe("local user-rule diagnostics", () => {
+  const valid = JSON.stringify({ schemaVersion: 1, ruleSetVersion: "local-e2e-1", agent: "claude", rules: [{ id: "local-prompt", kind: "prompt", region: "screen", pattern: "LOCAL_PROMPT", flags: "" }] });
+  test.use({ seedOptions: { ayaHomeFiles: { "screen-rules/claude.json": valid } } });
+
+  test("shows loaded set version and content digest as text", async ({ window, app }) => {
+    const settings = await openDiagnostics(app, window);
+    await settings.locator(".aya-modal-btn", { hasText: "Refresh" }).click();
+    const section = settings.getByRole("region", { name: "User screen rules" });
+    await expect(section).toContainText("claude: loaded");
+    await expect(section).toContainText("version user/claude.json@local-e2e-1");
+    await expect(section).toContainText("source user/claude.json");
+    await expect(section.locator("code").last()).toHaveText(/^[a-f0-9]{64}$/);
+    await expect(section).toContainText("generic: built-in only");
+  });
+});
+
+test.describe("invalid local user-rule diagnostics", () => {
+  test.use({ seedOptions: { ayaHomeFiles: { "screen-rules/claude.json": JSON.stringify({ bad: true }) } } });
+
+  test("shows the unavailable reason for an invalid file", async ({ window, app }) => {
+    const settings = await openDiagnostics(app, window);
+    await settings.locator(".aya-modal-btn", { hasText: "Refresh" }).click();
+    const section = settings.getByRole("region", { name: "User screen rules" });
+    await expect(section).toContainText("Unavailable: invalid or unsafe user rule files");
+    await expect(section.locator("li")).toHaveCount(6);
+  });
+});

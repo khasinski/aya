@@ -2257,6 +2257,28 @@ export function SettingsModal({
                               <strong>{diagnostics.projects.remote}</strong>
                             </div>
                           </div>
+                          <section className="aya-settings-rule-diagnostics" aria-label="User screen rules">
+                            <h3>User screen rules</h3>
+                            {diagnostics.userScreenRules.reason && (
+                              <p>Unavailable: {diagnostics.userScreenRules.reason}</p>
+                            )}
+                            {diagnostics.userScreenRules.quarantinedDigest && (
+                              <p>Quarantined digest: <code>{diagnostics.userScreenRules.quarantinedDigest}</code></p>
+                            )}
+                            <ul>
+                              {diagnostics.userScreenRules.sets.map((set) => (
+                                <li key={set.agent}>
+                                  <strong>{set.agent}</strong>: {set.status}
+                                  {set.version ? `; version ${set.version}` : ""}
+                                  {set.digest ? <>{"; digest "}<code>{set.digest}</code></> : ""}
+                                  {set.sources?.length ? `; source ${set.sources.join(", ")}` : ""}
+                                  {set.status === "unavailable" && diagnostics.userScreenRules.reason
+                                    ? `; reason: ${diagnostics.userScreenRules.reason}`
+                                    : ""}
+                                </li>
+                              ))}
+                            </ul>
+                          </section>
                           <pre className="aya-settings-diagnostics-json">
                             {diagnosticsJson}
                           </pre>

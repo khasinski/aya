@@ -195,6 +195,15 @@ if ((mode.startsWith("ask") || (mode === "relaunch" && !relaunched)) && me === "
   process.stdin.setRawMode(true);
   composer();
   process.stdout.write("  ⏵⏵ auto mode on · esc to interrupt\r\n");
+} else if (mode === "user-rule-target" && me === "tab-right") {
+  process.stdin.setRawMode(true);
+  process.stdout.write("LOCAL_RULE_TARGET_MARKER\r\n");
+  composer();
+} else if (mode === "user-rule-pathological" && me === "tab-right") {
+  process.stdin.setRawMode(true);
+  // One long untrusted transcript line exercises the worker's hard deadline;
+  // the builtin approval below must remain effective after quarantine.
+  process.stdout.write(`${"a".repeat(240)}\r\nDo you want to proceed?\r\n❯ 1. Yes\r\n  2. No\r\n`);
 } else if (mode === "drawing-boot" && bootMs !== null) {
   process.stdin.setRawMode(true);
   const loading = setInterval(() => process.stdout.write(`loading ${Date.now()}\r\n`), 300);

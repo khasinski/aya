@@ -2,7 +2,8 @@
 // readUserScreenRules supplies bounded metadata/type/schema accident guards.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type {ScreenRuleSet} from "./screen-rule-data";
+import {createHash} from "node:crypto";
+import {RULE_AGENTS, type RuleAgent, type ScreenRuleSet} from "./screen-rule-data";
 import {readUserScreenRules, type UserRuleManifest} from "./screen-user-rule-data";
 import {UserRuleRuntime, type UserRuleRequest, type UserRuleResult} from "./screen-user-rule-runtime";
 import type {UserRuleConfiguration} from "./screen-user-rule-coordinator";
@@ -10,6 +11,12 @@ export const USER_RELOAD_LIMITS=Object.freeze({scanMs:1000,coalesceMs:100,stable
 type Runtime=Pick<UserRuleRuntime,"replace"|"evaluate"|"dispose">;
 type Candidate={ok:true;manifest:UserRuleManifest|null;key:string}|{ok:false;key:"invalid"};
 export interface UserRuleProviderState extends UserRuleConfiguration {reason?:string}
+export interface UserRuleDiagnostics {
+  available:boolean;
+  reason?:string;
+  quarantinedDigest?:string;
+  sets:{agent:RuleAgent;status:"loaded"|"built-in only"|"unavailable";version?:string;digest?:string;sources?:string[]}[];
+}
 export class UserRuleProvider {
   private state:UserRuleProviderState=Object.freeze({epoch:0,available:false,manifest:null,reason:"user rules have not been loaded"});
   private runtime:Runtime;
@@ -24,6 +31,7 @@ export class UserRuleProvider {
   private directoryWatch:fs.FSWatcher|null=null;
   private parentWatch:fs.FSWatcher|null=null;
   private lastDiagnostic:string|null=null;
+  private quarantinedDigest:string|null=null;
   constructor(private directory:string,private builtin:ScreenRuleSet,private options:{
     read?:()=>UserRuleManifest|null;
     createRuntime?:(onFailure:(reason:string,digest:string|null)=>void)=>Runtime;
@@ -35,12 +43,29 @@ export class UserRuleProvider {
       // Only the current candidate owns this runtime. A retired thread's late
       // failure must not invalidate a different pending candidate.
       if(this.disposed||!digest||this.desiredKey!==digest)return;
+      this.quarantinedDigest=digest;
       this.publish(false,this.desiredManifest,"user rule compilation or evaluation failed");
       this.diagnostic("user rule compilation or evaluation failed",digest);
     };
     this.runtime=options.createRuntime?.(onFailure)??new UserRuleRuntime({log:onFailure});
   }
   configuration():UserRuleProviderState{return this.state;}
+  diagnostics():UserRuleDiagnostics{
+    const state=this.state,files=state.manifest?.files??[];
+    return Object.freeze({
+      available:state.available,
+      ...(state.reason?{reason:state.reason}:{}),
+      ...(this.quarantinedDigest?{quarantinedDigest:this.quarantinedDigest}:{}),
+      sets:RULE_AGENTS.map(agent=>{
+        const effective=files.filter(entry=>entry.source===`user/${agent}.json`||(agent!=="generic"&&entry.source==="user/generic.json"));
+        const status=!state.available?"unavailable" as const:effective.length?"loaded" as const:"built-in only" as const;
+        if(!effective.length)return {agent,status};
+        const identity=effective.map(file=>`${file.source}@${file.version}`).join(", ");
+        const digest=createHash("sha256").update(JSON.stringify([agent,effective.map(file=>[file.source,file.version,file.digest])])).digest("hex");
+        return {agent,status,version:identity,digest,sources:effective.map(file=>file.source)};
+      }),
+    });
+  }
   private publish(available:boolean,manifest:UserRuleManifest|null,reason?:string):void{
     this.state=Object.freeze({epoch:this.state.epoch+1,available,manifest,...(reason?{reason}:{})});
     try{this.options.changed?.(this.state);}catch{/* A listener cannot change rule safety. */}
@@ -97,12 +122,13 @@ export class UserRuleProvider {
     const after=this.read();if(after.key!==candidate.key){this.begin(after);return;}
     if(!candidate.ok||!ready){
       const reason=candidate.ok?"user rule compilation or evaluation failed":"invalid or unsafe user rule files";
+      if(candidate.ok&&manifest)this.quarantinedDigest=manifest.digest;
       this.publish(false,manifest,reason);this.diagnostic(reason,manifest?.digest??null);return;
     }
     // Configuration and this specific runtime become available in one turn.
     // Their counters need not equal: provider epoch plus runtime request/job
     // correspondence and digest are the consumer contract.
-    this.publish(true,manifest);this.lastDiagnostic=null;
+    this.publish(true,manifest);this.lastDiagnostic=null;this.quarantinedDigest=null;
   }
   scan():void{
     if(this.disposed||!this.started)return;this.attachWatches();const candidate=this.read();

@@ -698,6 +698,7 @@ function registerIpc(): TeamRunner {
       cliAdoption,
       pathExists,
       pathEntries,
+      userScreenRules: () => userRuleProvider.diagnostics(),
     }),
     updateStatus: updates.getUpdateStatus,
     checkForUpdates: updates.checkForUpdates,

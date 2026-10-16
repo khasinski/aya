@@ -446,6 +446,18 @@ export interface DiagnosticsReport {
     hookInstalled: boolean;
     hookScriptPath: string;
   };
+  userScreenRules: {
+    available: boolean;
+    reason?: string;
+    quarantinedDigest?: string;
+    sets: Array<{
+      agent: "generic" | "claude" | "codex" | "opencode" | "grok" | "antigravity";
+      status: "loaded" | "built-in only" | "unavailable";
+      version?: string;
+      digest?: string;
+      sources?: string[];
+    }>;
+  };
 }
 
 export type UpdateStatusPhase =

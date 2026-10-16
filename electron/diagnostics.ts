@@ -27,6 +27,7 @@ export interface DiagnosticsDeps {
   cliAdoption: Pick<ReturnType<typeof createCliAdoptionStore>, "summary">;
   pathExists: typeof pathExists;
   pathEntries: typeof pathEntries;
+  userScreenRules: () => DiagnosticsReport["userScreenRules"];
 }
 
 export interface GpuDeathDeps {
@@ -47,7 +48,7 @@ export async function diagnosticsReport(deps: DiagnosticsDeps): Promise<Diagnost
     app, isDev: IS_DEV, ayaHome: AYA_HOME, controlSocketPath: CONTROL_SOCKET_PATH,
     remoteSocketPath: REMOTE_SOCKET_PATH, ptyHostSocketPath: PTY_HOST_SOCKET_PATH,
     listPresets, listProjects, listProjectState, usageHookStatus, cliStatus, hostHealth,
-    cliAdoption, pathExists, pathEntries,
+    cliAdoption, pathExists, pathEntries, userScreenRules,
   } = deps;
   const [presets, projects, projectState, usageHook, cli, health, adoption] =
     await Promise.all([
@@ -120,6 +121,7 @@ export async function diagnosticsReport(deps: DiagnosticsDeps): Promise<Diagnost
       hookInstalled: usageHook.installed,
       hookScriptPath: usageHook.scriptPath,
     },
+    userScreenRules: userScreenRules(),
   };
 }
 
