@@ -145,6 +145,16 @@ export async function waitForExit(pid: number, ms: number): Promise<boolean> {
   }
 }
 
+export interface HostRestartTarget {
+  pid:number|null;startTime:string|null;identity:HostIdentity|null;ptyCount:number;owner?:PtyOwnerStatus;
+}
+export interface HostRestartConsent {
+  target:Pick<HostRestartTarget,"pid"|"startTime"|"owner">;
+  confirmChanged:(target:HostRestartTarget)=>Promise<boolean>;
+}
+const sameRestartTarget=(a:HostRestartConsent["target"],b:HostRestartConsent["target"]):boolean=>
+  a.pid===b.pid&&a.startTime===b.startTime&&JSON.stringify(a.owner?[a.owner.pid,a.owner.startTime,a.owner.instanceId,a.owner.hash]:null)===JSON.stringify(b.owner?[b.owner.pid,b.owner.startTime,b.owner.instanceId,b.owner.hash]:null);
+
 export class PtyHostClient {
   private socket: net.Socket | null = null;
   private readonly ownerSecret = randomBytes(32);
@@ -386,6 +396,7 @@ export class PtyHostClient {
     pid?: number;
     owner?: PtyOwnerStatus;
     recoveryReason?:string;
+    startTime?:string|null;
   }> {
     try {
       const result = await this.request({ id: 0, type: "version" });
@@ -395,6 +406,7 @@ export class PtyHostClient {
         identity: asHostIdentity(result),
         ptyCount: typeof obj.ptyCount === "number" ? obj.ptyCount : 0,
         pid: typeof obj.pid === "number" ? obj.pid : undefined,
+        startTime:typeof obj.pid === "number"&&obj.pid===this.lastHostPid?this.lastHostStart:null,
         ...(obj.owner && typeof obj.owner === "object" ? { owner: obj.owner as PtyOwnerStatus } : {}),
       };
     } catch {
@@ -527,14 +539,15 @@ export class PtyHostClient {
    *  host exits only after its panes are gone; a new host started earlier lost its socket to the old host's exit
    *  handler on 2026-10-13. Resolves true when the old host exited (or none answered), false when it still runs
    *  after PTY_HOST_EXIT_WAIT_MS. Best-effort: a dead or old host that cannot shut down cleanly is still dropped. */
-  restart(): Promise<boolean> {
+  restart(consent?:HostRestartConsent): Promise<boolean> {
     if (this.replacing) return this.replacing;
     this.hostAsked = true;
     const run = (async()=>{
       const enabled=!!this.crashSupervisor;this.crashSupervisor?.dispose();
       if(this.crashAttempt){try{await withTimeout(this.crashAttempt,4000);}catch{return false;}}
-      this.crashBlocked=false;
-      const result=await this.replaceHost();
+      const blocked=this.crashBlocked;this.crashBlocked=false;
+      let result:boolean;
+      try{result=await this.replaceHost(consent);}catch(error){this.crashBlocked=blocked;throw error;}
       if(result&&enabled&&!this.disposed){this.crashSupervisor=null;this.enableCrashRecovery(this.recoveryHooks);}
       return result;
     })().finally(() => {
@@ -544,9 +557,31 @@ export class PtyHostClient {
     return run;
   }
 
-  private async replaceHost(): Promise<boolean> {
+  private async confirmedRestartSocket(consent:HostRestartConsent):Promise<{socket:net.Socket;target:HostRestartTarget}> {
+    let approved=consent.target;
+    for(let check=0;check<4;check++){
+      if(this.disposed)throw Error(DISPOSED_MESSAGE);
+      const result=await withTimeout(this.request({id:0,type:"version"},undefined,true),PTY_HOST_RESTART_REQUEST_TIMEOUT_MS) as {pid?:number;ptyCount?:number;owner?:PtyOwnerStatus};
+      const socket=this.socket,pid=typeof result?.pid==="number"&&Number.isSafeInteger(result.pid)&&result.pid>1?result.pid:null;
+      let startTime:string|null=null;try{if(pid)startTime=ownerProcessStartIdentity(pid);}catch{/* unknown identity cannot authorize shutdown */}
+      const target:HostRestartTarget={pid,startTime,identity:asHostIdentity(result),ptyCount:typeof result?.ptyCount==="number"?result.ptyCount:0,...(result?.owner?{owner:result.owner}:{})};
+      if(!pid||!startTime||(target.owner&&!/^[a-f0-9]{32}$/.test(target.owner.instanceId??""))){
+        await consent.confirmChanged(target);throw Error("The current terminal host identity could not be verified. Nothing was stopped.");
+      }
+      if(!sameRestartTarget(approved,target)){
+        if(!await consent.confirmChanged(target))throw Error("restart cancelled");
+        approved=target;continue; // re-read after the asynchronous question
+      }
+      if(socket&&socket===this.socket&&!socket.destroyed&&ownerProcessStartIdentity(pid)===startTime)return{socket,target};
+    }
+    throw Error("The terminal host kept changing. Nothing was stopped; review its current inventory and try again.");
+  }
+
+  private async replaceHost(consent?:HostRestartConsent): Promise<boolean> {
     let oldPid: number | undefined;
-    try {
+    let bound:{socket:net.Socket;target:HostRestartTarget}|undefined;
+    if(consent){bound=await this.confirmedRestartSocket(consent);oldPid=bound.target.pid!;}
+    else try {
       const status = await withTimeout(
         this.request({ id: 0, type: "version" }, undefined, true),
         PTY_HOST_RESTART_REQUEST_TIMEOUT_MS,
@@ -557,11 +592,15 @@ export class PtyHostClient {
       // a host that predates the pid answer, or none: nothing to wait for
     }
     // The host closes this connection only when its process exits: the exit signal for a host that gave no pid.
-    const socket = this.socket;
+    const socket = bound?.socket??this.socket;
     const closed = socket && !socket.destroyed ? new Promise<boolean>((resolve) => socket.once("close", () => resolve(true))) : null;
     try {
-      await withTimeout(this.request({ id: 0, type: "shutdown" }, undefined, true), PTY_HOST_RESTART_REQUEST_TIMEOUT_MS);
-    } catch {
+      if(bound){
+        if(!socket||this.disposed||socket!==this.socket||socket.destroyed||ownerProcessStartIdentity(oldPid!)!==bound.target.startTime)throw Error("The terminal host changed. Nothing was stopped.");
+        await withTimeout(this.sendRequest(socket,{id:0,type:"shutdown",target:{pid:oldPid!,startTime:bound.target.startTime!,ownerInstance:bound.target.owner?.instanceId??null}}),PTY_HOST_RESTART_REQUEST_TIMEOUT_MS);
+      }else await withTimeout(this.request({ id: 0, type: "shutdown" }, undefined, true), PTY_HOST_RESTART_REQUEST_TIMEOUT_MS);
+    } catch(error) {
+      if(consent)throw error; // never force-kill an unverified/refused target
       // old host may not honor shutdown; we still drop the socket below
     }
     if (oldPid !== undefined) {
@@ -570,6 +609,7 @@ export class PtyHostClient {
       // Still running: the user already agreed to stop these terminals, and a request let through now would start
       // the next host beside it. The pid is still that host's: a process that never exited cannot have handed it on.
       try {
+        if(bound&&ownerProcessStartIdentity(oldPid)!==bound.target.startTime)return false;
         process.kill(oldPid, "SIGKILL");
       } catch {
         // gone in between

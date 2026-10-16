@@ -7,7 +7,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { OWNER_DIRECTORY } from "./pty-owner-registry";
 import * as net from "node:net";
 import * as path from "node:path";
-import { PTY_HOST_EXIT_WAIT_MS, type PtyHostClient } from "./pty-host-client";
+import { PTY_HOST_EXIT_WAIT_MS, type PtyHostClient, type HostRestartTarget } from "./pty-host-client";
 import { currentProcessesConfirmed, type RelaunchDeps } from "./relaunch-notes";
 import { restartStaleHost } from "./updates";
 import type { HostRecord } from "./pty-host-registry";
@@ -26,6 +26,7 @@ export interface OtherHost {
 export interface HostHealth {
   /** The host this Aya talks to, or null when it talks to none. */
   pid: number | null;
+  startTime?:string|null;
   identity: HostIdentity | null;
   expected: HostIdentity;
   ptyCount: number;
@@ -48,7 +49,7 @@ export interface HostHealthDeps {
   expected: HostIdentity;
   /** Whether this Aya is connected to a host now. */
   connected(): boolean;
-  status(): Promise<{ identity: HostIdentity | null; ptyCount: number; pid?: number; owner?: HostHealth["owner"];recoveryReason?:string }>;
+  status(): Promise<{ identity: HostIdentity | null; ptyCount: number; pid?: number; startTime?:string|null; owner?: HostHealth["owner"];recoveryReason?:string }>;
   socketExists(): Promise<boolean>;
   /** The pid of the host answering on pty-host.sock, without starting one; null when none answers. */
   probeSocket(): Promise<number | null>;
@@ -70,6 +71,7 @@ export async function gatherHostHealth(deps: HostHealthDeps): Promise<HostHealth
     .map((rec) => ({ pid: rec.pid, startTime: rec.startTime, version: rec.version }));
   const health: Omit<HostHealth, "warnings"> = {
     pid,
+    ...(status.startTime!==undefined?{startTime:status.startTime}:{}),
     identity: status.identity,
     expected: deps.expected,
     ptyCount: status.ptyCount,
@@ -228,7 +230,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
               : "Replacing the unavailable or incompatible native PTY owner stops every terminal it owns.";
             if (!(await askRestart("Restart terminals", detail))) { cancelled = true; return; }
           }
-          exited = await ptyHost.restart();
+          exited = await ptyHost.restart({target:{pid:health.pid,startTime:health.startTime??null,owner:health.owner},confirmChanged:askChangedRestartTarget});
         }))
       ) {
         showStaleHost(true);
@@ -308,6 +310,14 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
     if (item) item.icon = nativeImage.createEmpty();
   }
 
+  async function askChangedRestartTarget(target:HostRestartTarget):Promise<boolean>{
+    const names=new Map((await relaunchDeps.panes().catch(()=>[])).map(p=>[p.id,p.name]));
+    const retained=[...(target.owner?.inventory??[]).map(p=>`${names.get(p.id)??p.id} (PID ${p.pid})`),...(target.owner?.uncertain??[]).map(id=>`${names.get(id)??id}: process identity unknown`)];
+    return askRestart("Restart","The terminal host changed after the previous question. Restarting this host stops its current work."+
+      (target.pid?`\n\nTerminal host PID ${target.pid}; ${target.ptyCount} panes.`:"\n\nThe current host identity cannot be verified; nothing will be stopped.")+
+      (retained.length?`\n\nProcesses that may still run:\n${retained.join("\n")}`:""));
+  }
+
   /** Settings > Diagnostics > PTY host > Restart (and Aya Web): asks, then replaces the host. Throws when cancelled,
    *  or when the old host did not exit, so the window leaves its panes as they are. */
   async function restartHostFromWindow(): Promise<void> {
@@ -325,7 +335,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
         (retained.length ? `\n\nProcesses that may still run:\n${retained.join("\n")}` : ""))
       : await confirmLosingWork("Restarting the PTY host", "Restart");
     if (!confirmed) throw new Error("restart cancelled");
-    const exited = await ptyHost.restart();
+    const exited = await ptyHost.restart({target:{pid:before.pid,startTime:before.startTime??null,owner:before.owner},confirmChanged:askChangedRestartTarget});
     // The red dot follows what the host now is: off for a current host, still on if the restart did not take.
     const after = await hostHealth();
     if (recovery && (after.stale || after.owner?.disconnected.length)) {

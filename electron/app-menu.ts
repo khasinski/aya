@@ -2,7 +2,6 @@
 
 import type { App, BrowserWindow, Menu, MenuItemConstructorOptions, nativeImage } from "electron";
 import { deflateSync } from "node:zlib";
-import type { PtyHostClient } from "./pty-host-client";
 
 const STALE_MENU_DOT_PX = 16;
 const STALE_MENU_DOT_SCALE_FACTOR = 2;
@@ -13,8 +12,7 @@ export interface MenuTemplateDeps {
   windowTitle: string;
   maxKeyboardProjects: number;
   staleHostDetected: () => boolean;
-  confirmLosingWork: (action: string, yes: string) => Promise<boolean>;
-  ptyHost: Pick<PtyHostClient, "restart">;
+  restartTerminals: () => Promise<void>;
   showAyaAboutPanel: () => void;
   dispatchShortcut: (action: string) => void;
   openNewWindow: () => Promise<unknown>;
@@ -78,11 +76,9 @@ export function buildMenuTemplate(deps: MenuTemplateDeps): MenuItemConstructorOp
     label: `Restart ${deps.windowTitle}`,
     click: async () => {
       // Only a stale host is restarted with Aya; a current one keeps its panes running.
-      if (deps.staleHostDetected() && !(await deps.confirmLosingWork(`Restarting ${deps.windowTitle}`, "Restart").catch(() => true))) return;
-      try {
-        if (deps.staleHostDetected()) await deps.ptyHost.restart();
-      } catch {
-        // best-effort; stale host may already be gone
+      if(deps.staleHostDetected()){
+        try{await deps.restartTerminals();}
+        catch{return;} // Cancel or an unverified/changed target keeps Aya open.
       }
       deps.app.relaunch();
       deps.app.quit();

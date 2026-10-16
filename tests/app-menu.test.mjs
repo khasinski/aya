@@ -20,6 +20,10 @@ function setup(over = {}) {
     staleHostDetected: () => stale,
     confirmLosingWork: async (...args) => (log.push(["confirm", ...args]), true),
     ptyHost: { restart: async () => (log.push(["restart-host"]), true) },
+    restartTerminals: async()=>{
+      if(!await deps.confirmLosingWork("Restarting Aya Dev","Restart"))throw Error("restart cancelled");
+      if(deps.staleHostDetected()&&!await deps.ptyHost.restart())throw Error("old host did not exit");
+    },
     showAyaAboutPanel: () => log.push(["about"]),
     dispatchShortcut: (action) => log.push(["shortcut", action]),
     openNewWindow: async () => log.push(["new-window"]),
@@ -155,18 +159,18 @@ test("a confirmed stale host restart finishes before relaunch and quit", async (
   const clicked = s.click("Restart Aya Dev");
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(s.log, [["confirm", "Restarting Aya Dev", "Restart"], ["restart-host"]]);
-  finish(false);
+  finish(true);
   await clicked;
   assert.deepEqual(s.log.slice(-2), [["relaunch"], ["quit"]]);
 });
 
-test("confirmation and host errors retain the best-effort relaunch", async () => {
+test("confirmation errors keep Aya open without stopping an unapproved host", async () => {
   const s = setup();
   s.setStale(true);
   s.deps.confirmLosingWork = async () => { s.log.push(["confirm-error"]); throw new Error("gone"); };
   s.deps.ptyHost.restart = async () => { s.log.push(["restart-error"]); throw new Error("gone"); };
   await s.click("Restart Aya Dev");
-  assert.deepEqual(s.log, [["confirm-error"], ["restart-error"], ["relaunch"], ["quit"]]);
+  assert.deepEqual(s.log, [["confirm-error"]]);
 });
 
 test("the stale flag is read at click time and again after confirmation", async () => {

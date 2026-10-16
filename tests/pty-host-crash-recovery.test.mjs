@@ -283,3 +283,11 @@ test('blocked known-key status retains matching owner PIDs without owner probes 
   client.ownsOwnerKey=false;const before=reads;assert.equal((await client.hostStatus()).owner,undefined);assert.equal(reads,before,'unknown-key reuse performs no record lookup');
  }finally{registry.readOwnerRecord=saved.read;registry.ownerRecordIsLive=saved.live;registry.ownerReaderIsLive=saved.reader;client.dispose();}
 });
+
+test('host refuses a shutdown bound to another owner instance without stopping any child',{timeout:15000},async()=>{
+ const {client,status,pid}=await setup();
+ try{
+  await assert.rejects(client.request({id:0,type:'shutdown',target:{pid:status.pid,startTime:status.startTime,ownerInstance:'f'.repeat(32)}}),/changed/);
+  assert.doesNotThrow(()=>process.kill(status.pid,0));assert.doesNotThrow(()=>process.kill(pid,0));assert.equal(await client.getPid('shell'),pid);await client.shutdown();
+ }finally{await cleanup(client);}
+});

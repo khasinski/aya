@@ -438,6 +438,7 @@ const ayaWeb = createAyaWeb({
 });
 
 const applicationMenuDeps = {
+  restartTerminals:restartHostFromWindow,
   app,
   Menu,
   nativeImage,

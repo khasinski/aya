@@ -300,6 +300,12 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
     return null;
   }
   if (request.type === "shutdown") {
+    if(request.target!==undefined){
+      const t=request.target;
+      if(!t||t.pid!==process.pid||typeof t.startTime!=="string"||t.startTime.length>128||ownerProcessStartIdentity(process.pid)!==t.startTime||
+        !(t.ownerInstance===null||typeof t.ownerInstance==="string"&&/^[a-f0-9]{32}$/.test(t.ownerInstance))||
+        t.ownerInstance!==(currentOwnerRuntime()?.record.instanceId??null))throw Error("The terminal host or native owner changed. Nothing was stopped; review the current inventory again.");
+    }
     beginShutdown("client-request");
     return null;
   }

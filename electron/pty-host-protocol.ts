@@ -10,7 +10,7 @@ export type PtyHostRequest =
   | { id: number; type: "write"; ptyId: string; data: string }
   | { id: number; type: "resize"; ptyId: string; cols: number; rows: number }
   | { id: number; type: "kill"; ptyId: string }
-  | { id: number; type: "shutdown" }
+  | { id: number; type: "shutdown"; target?:{pid:number;startTime:string;ownerInstance:string|null} }
   | { id: number; type: "search"; query: string }
   | { id: number; type: "buffer"; ptyId: string }
   // Live cwd of a PTY's child. Added after 0.7.8: a host from an older build
