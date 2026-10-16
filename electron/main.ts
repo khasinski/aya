@@ -1,3 +1,4 @@
+import { builtinScreenRules } from "./screen-rule-provider";
 // Electron main process. Creates the window, wires IPC handlers to the PTY
 // host and the project config layer.
 
@@ -826,6 +827,7 @@ app.whenReady().then(async () => {
     // pane was dead, and dropping it made host rejections unhandled.
     writePane: (terminalId, data) => ptyHost.write(terminalId, data),
     paneHold: (terminalId) => ptyHost.holdReason(terminalId),
+    paneState: (terminalId) => ptyHost.paneState(terminalId),
     team: teamDeps,
     teamRunner,
     teamPanes: teamPaneDeps(teamDeps, teamPaneHost, teamRunner),
@@ -968,6 +970,8 @@ app.on("before-quit", (event) => {
 });
 
 const diagnosticsLog = createPtyLog(DIAGNOSTICS_LOG_FILE);
+builtinScreenRules.setLogger((event, fields) => diagnosticsLog.append(event, fields));
+builtinScreenRules.get();
 const gpuDeathHandler = createGpuDeathHandler({
   diagnosticsLog,
   appQuitting: () => appQuitting,

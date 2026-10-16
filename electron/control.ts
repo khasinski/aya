@@ -1,3 +1,4 @@
+import { formatPaneState, type PaneStateResult } from "./pane-state";
 import type { BrowserWindow } from "electron";
 import { oneAtATime } from "./keyed-queue";
 import { listenOwnerOnly } from "./owner-socket";
@@ -99,6 +100,7 @@ export interface ControlServerOptions {
   writePane?: (terminalId: string, data: string) => Promise<boolean | void>;
   /** Why the pane must not be typed into now (vt-state paneHold); pane-send refuses only a dialog for the user alone. */
   paneHold?: (terminalId: string) => Promise<string | null>;
+  paneState?: (terminalId: string) => Promise<PaneStateResult>;
   /** All live windows (and window-like sinks); status updates are broadcast
    *  because the terminal they describe may be in an unfocused window. */
   getWindows?: () => ControlStatusSink[];
@@ -461,6 +463,13 @@ async function handleRequest(
       selfTerminalId: request.selfTerminalId,
     });
     return { output: formatPaneList(entries) };
+  }
+  if (request.type === "pane-state") {
+    if (!options.listProjects || !options.paneState) throw new Error("pane state is not available");
+    const resolved = resolvePaneTarget(await options.listProjects(), { terminalId: request.targetId, name: request.target, projectSlug: request.projectSlug });
+    if (!resolved.ok) throw new Error(resolved.error);
+    const result = await options.paneState(resolved.match.terminalId);
+    return { output: formatPaneState(resolved.match.name, result, request.explain) };
   }
   if (request.type === "pane-read" || request.type === "pane-send") {
     return handlePaneRequest(request, options);

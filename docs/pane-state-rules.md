@@ -1,0 +1,130 @@
+# Pane state rules as data - PR 1
+
+## Current state
+
+I implemented the 33 built-in rules as bundled JSON, the bounded main-only loader and unavailable-rules diagnostic, the unchanged main policy evaluator, and read-only `aya pane state target --explain`. The command never starts a host or owner and never acknowledges composer/exit metadata. Blank shells remain shells; agents without screen evidence are unknown. Explain prints quoted pane names, explicit waiting/clear verdicts and sanitized matching evidence. Rule-only changes remain outside the host content hash. User rule files, reload and remote updates are not enabled. The complexity checker is test-only lint, never a product safety gate; every non-built-in rule in PR 2 requires a hard-deadline worker.
+
+The sections below retain the design and intermediate review history. Their "next" and "pending" statements describe those stages, not unfinished integration. Final local evidence and its two independently reproduced baseline failures appear at the end; the whole suite is not claimed green.
+
+I base this PR on main `8890bea3`, branch `pane-state-rules-data`. This note precedes product code. PR 1 moves the existing built-in regular expressions into bundled data and adds `aya pane state <pane> --explain`; it changes no verdict, precedence, region or agent selection. User files/reload are PR 2. Remote updates remain outside this work until Justyna decides their authority.
+
+## Ownership and format
+
+Since #224, `electron/vt-state.ts` evaluates policy in main from the host's fresh applied `VtSnapshot`; the PTY host owns the VT mirror and opaque composerSeen metadata. I keep that boundary. Main loads the bundled rules, not the host. Agent selection remains the pane's configured preset, never its child process name or command wrapper. Hooks remain opt-in.
+
+I propose `electron/screen-rules/builtin.json`, copied by the existing JSON-aware TypeScript build into `dist-electron/screen-rules/` and included in the existing packaged dist-electron files. One closed envelope contains `schemaVersion: 1`, a separately declared `ruleSetVersion`, and ordered sets for generic, claude, codex, opencode, grok and antigravity. Each set contains ordered records `{id, kind, region, pattern, flags}`. `kind` is prompt, suppressor, dialog, busy, usage-limit or account-setting. `region` is tail, lastLine or screen. Patterns are literal RegExp.source strings, never expressions, imports, template expansion, callbacks or executable files. Generic inheritance is explicit fixed metadata in the envelope, resolved once without reordering or duplicating rules. Usage/account rules get stable new IDs; existing IDs are preserved. Explain reports both the authored version and SHA256 of the actual validated data.
+
+I expand the existing trailing(max) construction to its exact pattern source in JSON. Existing flags, case sensitivity, line anchors, twelve nonempty tail rows, dialog-before-suppressor-before-prompt priority and first matching rule within a kind remain identical. BUSY/USAGE_LIMIT/ACCOUNT_SETTING tables move too. Composer/draft/startup/recovery/numbered-choice logic in vt-state remains code. The Aya-command detector stays code as CLI syntax, not a new configurable approval rule.
+
+## Validation and failure behavior
+
+I propose one atomic validated immutable rule set: at most 64 KiB UTF-8 data, six sets, 128 rules after inheritance per set, 256 distinct authored rules, 80-character ASCII IDs, 2,048-character pattern source and 2,048-character version/source labels in aggregate. Reject unknown fields, invalid UTF-8/JSON, duplicate keys/IDs, unexpected agents/kinds/regions, excess nesting, non-string fields and duplicate flags. Flags are a subset of `i`, `m`, `u`, never stateful `g`/`y`, indices or dotAll; no eval or Function. Compile only after the entire envelope and pattern syntax pass validation. Keep data/source metadata immutable and separate from match excerpts.
+
+A small syntax-aware static checker rejects backreferences, lookbehind, nested unbounded repetitions, repeated nullable expressions and overlapping alternatives inside an unbounded repetition. It bounds finite repetition nesting/expansion; the current bounded trailing groups (at most three rows) must pass without special-casing a rule ID. Negative tests cover classic exponential patterns, escaped syntax, character classes, alternatives and bounded/unbounded distinctions. This is a conservative accepted grammar/check, not a claim that arbitrary JavaScript regexes are linear-time. I will enumerate every current built-in's acceptance before changing the evaluator; a built-in rejected by that grammar is a design issue to report, not an exception silently waived or a rewritten matcher.
+
+Region extraction remains exactly today's behavior: tail uses twelve nonempty rows, lastLine one, screen the existing mirror's retained rows. I do not add truncation that could hide an old approval or change a verdict. The current snapshot carries mirror geometry/scrollback; I will measure the maximum current fixture region sizes and stress matching at retained-screen limits. If a stricter new input cap or different regex engine is needed, I will ask before changing detection semantics.
+
+An invalid bundled set fails validation as a whole; it must never become an empty set or release a hold. The app remains usable with a clear rule-data-unavailable diagnostic, agent hold unknown and busy false, preserving the existing fail-closed hold/fail-open busy contract. Bundled corruption is a package/test failure. PR 1 does not read AYA_HOME rule files, watch files or reload a rule set mid-evaluation.
+
+## Host identity and explain
+
+The rule loader/data remain outside the host's transitive value-import graph. #224's built host/runtime content hash therefore stays unchanged for a rule-only edit; the rule-set digest changes independently. A regression pins that graph and demonstrates rule-data changes affect the loaded set/explain version without changing the computed host identity. Packaging smoke proves JSON exists in the staged app and main can load it without network access. No native owner bytes, protocol or checkpoint representation change.
+
+`aya pane state <pane>` uses the existing project/name resolution, ambiguity checks and `--project` scope. It returns a fresh applied snapshot evaluated once in main. `--explain` adds the winning evidence for waiting/dialog, hold and busy from that same snapshot, rather than racing separate busy/hold requests. It uses the same evaluator as delivery and restart. It does not mark composerSeen, deliver input, acknowledge display, or change the pane. A missing/disconnected/unknown recovery screen is reported as unknown with its actual reason, not idle.
+
+Example text (illustrative existing rule):
+
+```
+"claude-work": busy; busy: yes; waiting: no; hold: none
+rules: 1 (<sha256>)
+busy rule: claude-busy (busy)
+source: builtin/claude; rules: 1 (<sha256>)
+region: lastLine
+excerpt: esc to interrupt
+```
+
+An approval can have separate hold evidence (for example account-setting) and waiting evidence; a suppressor explains why prompt-looking history is clear. Non-regex decisions use explicit `policy:<reason>` IDs, source `vt-state`, and explain that no data rule matched; they never fabricate a regex match. No match is stated plainly. Excerpts come only from the actual winning match, with control/ANSI/OSC and bidi controls removed, whitespace normalized and at most 160 Unicode characters. Source/version/IDs are validated labels, never terminal control text. Explain does not dump the screen, command, environment, file paths or credentials. CLI help/capabilities and command schema gain the same operation; unknown flags/ambiguous panes fail clearly.
+
+## Equivalence and done criteria
+
+Before replacing the TypeScript tables, I preserve a test-only frozen baseline from main, with exact pattern source/flags/order and an independent table digest. Tests compare every exported rule source/flag/order and every verdict from old and data-driven evaluators. The baseline is never loaded by product code. This prevents the new loader and matcher from sharing a mistaken oracle.
+
+Replay every recorded raw/chunk session and screen fixture for all built-in agents plus generic fallback; compare busy, hold reason, waiting, account/usage dialog and composerSeen at chunk/applied-screen boundaries, including continuations, blank screens, scrolling past prompts and alternate buffers. Preserve current snapshot parity, generation, B3 checkpoint/replay and B4 unknown-screen behavior. New tests cover malformed data and limits before regex compilation, static-check failures, winning-rule ordering and sanitized/length-capped CLI output. Real CLI e2e covers idle/busy/approval/account/unknown/disconnected and project resolution without process-name inference. Existing restart-busy-panes, restart-background-work, team-busy and team hold specs remain unchanged and green.
+
+Final gates are full npm tests, lint, selected contracts in Node/Electron, affected GUI (shutdown=0/workers=1), staged packaged-data smoke and an offline rule-evaluation latency/size report. No push, merge or production changes. I will send the design SHA to lead before product implementation and report any incompatible static-check/cap choice rather than changing behavior silently.
+
+
+The lead chose assertion-aware checking after two existing composer patterns hit the initial conservative bounded-repeat delimiter check. JavaScript lookahead does not backtrack into a successful assertion ([ECMAScript assertion semantics](https://tc39.es/ecma262/2024/multipage/text-processing.html#sec-assertion)); its body is checked independently instead of multiplying consuming repetitions outside the assertion. Nested unbounded, nullable or overlapping repeated shapes inside it remain rejected. Actual consuming nested repetitions still require the delimiter proof, including bounded repeats such as `(a+){1,100}`. There are no rule-ID exceptions or pattern rewrites. I use the already installed regexpp 4.12.2 syntax parser as a pinned production dependency (previously ESLint-only), rather than interpreting regex source with a regex; it is main-only and outside the PTY host graph. Native owner spawn/resize bounds are 1000 columns and 1000 rows; the host mirror retains zero scrollback lines. Adversarial timing checks cover both maximum full-screen regions and the real twelve-row tail at maximum width, with independent subprocess deadlines.
+
+
+## Loader stage evidence (not integrated yet)
+
+All 33 authored rules (11 generic plus agent-specific prompt/suppressor/dialog/busy/usage/account rules) validate without changing pattern source or flags. The frozen main baseline pins expanded tables; JSON is copied by including the data directory in the JSON-aware Electron TypeScript build. Loader/checker tests pass 44/44 in Node 26 and 44/44 in Electron 43.5/Node 24.19. Invalid data is rejected before any RegExp constructor runs, and input reads are capped at 64 KiB plus one byte even if the file grows after stat. The loader remains unused at this stage; evaluator, CLI and unavailable-data diagnostics are subsequent integration.
+
+The adversarial subprocess checks 32 combinations of the two actual composer patterns and two synthetic patterns, four near-miss inputs, and both twelve-row tail and 1000-row full-screen dimensions at 1000 columns. Node worst matches: Claude 2.06 ms, Codex 1.50 ms, synthetic 3.63 ms; Electron: Claude 1.79 ms, Codex 1.54 ms, synthetic 3.39 ms. Unicode ruled rows reach 2,996,999 UTF-8 bytes at the same cell dimensions. Each match has a generous 2000 ms assertion; the parent kills the whole measurement after 20 s even if a synchronous regex never returns. These are scoped local adversarial trials, not proof of linear time for all accepted inputs. Nested/overlapping unbounded repeats inside lookahead and `(a+){1,100}` remain negative tests.
+
+
+Review F1/F2 strengthens the first gate: ambiguous alternatives under finite repetition above three are refused too. Character consumption is exact without flags and conservatively folded with i/u; unmodelled Unicode folds and negated classes under folding cannot prove disjointness. The reproduced finite-alternative/negated-class/long-s folding bypasses are negative tests. This static check is not a complete ReDoS guarantee. PR 1 loads only these reviewed built-ins plus adversarial timing evidence. PR 2 must put every non-built-in evaluation in a worker with a hard deadline and terminate the worker on overrun; the entire affected rule set then becomes unavailable, hold unknown and busy false. No user rules may run on main solely because they passed this checker. F3 adds isolated 256/257 authored boundaries and a fake growing descriptor proving the 64 KiB+1 allocation/read ceiling.
+
+
+## Lead decision: trusted built-ins and test-only complexity lint
+
+The 2026-10-16 lead decision supersedes the original production complexity-check proposal above. PR 1 bundles exactly the reviewed TypeScript patterns as data and trusts those patterns to the same extent. The production loader enforces its closed schema, UTF-8, file/type/read bounds, authored/expanded counts, source length, allowed non-stateful flags and duplicate checks, then atomically compiles the whole bundle. It neither imports nor relies on the complexity checker. regexpp remains an ESLint development dependency; the checker is moved to `tests/helpers/screen-rule-lint.cjs`, a test-only lint.
+
+Known limits were demonstrated by earlier lint versions: ambiguous `(a|aa){1,100}`, nested `{1,3}` ancestors composing 27 ambiguous repetitions, and long-s folds such as `(?:ſ+s){1,100}` or `(?:[ſ]+s){1,100}` with iu. The latest lint catches those regression examples, but that is not evidence it detects every dangerous expression. Its case/folding/separator reasoning is conservative and incomplete, and it provides no runtime guarantee. Adversarial timing tests are scoped evidence for the actual reviewed built-ins only. There are no rule-ID waivers or pattern rewrites. F1/F2 are limitations of a non-security lint under the narrowed scope; F3's real allocation/count protections remain required and tested. Every non-built-in rule in PR 2 must execute in a worker with a hard deadline; overrun terminates the worker and marks that entire rule set unavailable (hold unknown, busy false). Product main may never execute a non-built-in based only on passing this lint.
+
+
+## Main evaluator stage
+
+The main evaluator now uses bundled data; the PTY mirror/protocol/import graph stay unchanged. A once-per-main provider logs `screen-rules-unavailable` with a fixed clear reason if loading fails. Its state is available to explain; agent hold stays unknown, status gives no clear edge and busy stays false. Shell hold remains the existing shell reason. Excerpts remove complete/incomplete ESC/OSC/DCS/CSI strings, all C0/C1 and bidi controls before the 160-character bound. No full screen is printed as evidence.
+
+Frozen CommonJS references from main `8890bea3` exercise the old rules and snapshot evaluator independently of the new loader. Across 18 raw recorded sessions, 1332 applied chunks/continuations, every saved plain screen and an empty screen, all built-in agents and generic/hermes fallback agree on busy, hold, waiting/dialog and composerSeen; partial CSI and alternate-screen continuations agree too. The Node equivalence pair and 99 selected provider/VT/busy/hold/hash tests pass; the combined Electron set passes 101/101. A temporary copied real host graph proves a rule JSON/version/digest edit changes the rule identity while the core content hash stays constant. This is evaluator/provider evidence; the CLI and real-window validation remain next.
+
+
+## CLI explain stage
+
+`aya pane state target [--explain] [--project slug]` now resolves the same pane names/IDs/project scope as read/send, fetches one applied snapshot and evaluates it in main without a composerSeen acknowledgement, input or spawn. It reports unknown for disconnected/unavailable/recovery-unknown screens, never idle; a saved unopened tab reports stopped without spawning it. The output identifies winning rules (including suppressors), kind, builtin source, version/digest, region and the safe matched excerpt; code-only holds identify their policy source. No-match decisions are explicit. `rules unavailable` appears in explain as well as the fixed once-only diagnostic and unknown hold.
+
+CLI/protocol/provider contracts pass 41/41 in Node and 41/41 in Electron. Seven actual GUI cases pass in 12.3 s with shutdown=0/workers=1: idle, busy, approval, account setting, real JS crash without redraw, saved unmounted pane and refused recovery with native owner/children retained. The stand-in is an env-wrapped node process but its configured Claude preset selects the rules. An earlier invocation had six passes and one fixture setup failure because that last test omitted the window fixture and called the CLI before aya.sock existed; the corrected test waits for the real window/xterm before querying, without catching CLI errors or weakening state/process assertions. The staged package runtime smoke now loads and evaluates the JSON rules from app.asar explicitly; final package/full/affected/whole gates remain pending. The native matrix also runs the rule/state contract set under Electron.
+
+
+CLI review F5-F8: state uses only an existing connected socket or a temporary observation-only connection through the normal socket-opening path. It never calls the connect/start fallback. The observer ignores unsolicited spawned/snapshot/exit traffic and performs no version, continuity, composerSeen or exit ACK; only its requested snapshot response is consumed, and its connection is closed under a five-second budget. Missing/refused sockets yield `unknown` with `terminal host not running`. State answers including unknown exit 0; target/option/protocol errors exit nonzero, as help/capabilities state. Public cold-client tests pin absent/refused sockets with intercepted start/unlink and no owner/key directories; a real Unix stand-in sends unsolicited composer/exit snapshots and sees only one snapshot RPC.
+
+An empty/no-opinion snapshot now says `unknown` and `no screen evidence yet`, while old hold/busy/status remain untouched. `No rule matched` is printed only when a real screen was available. Suppressor evidence explicitly says clear and the header names waiting yes/no/unknown. Configured pane names are JSON-quoted then terminal-escaped as one field; a real CLI test covers a name with newline, tab, ESC and bidi, which cannot forge state/source lines. The selected CLI/protocol/provider/read-only set passes 47/47 in each runtime before the final GUI rerun.
+
+
+The fixed CLI-stage subset passes 48/48 in Node and 48/48 in Electron; the actual GUI rerun passes 7/7 in 13.0 s. The unopened-tab regression now adds a genuinely deferred tab to the live configuration and waits for its sidebar record, then verifies stopped with no owner inventory entry. Two preceding non-green setup attempts exposed an invalid assumption: the default non-split right tab can mount automatically, and the first state query could race host startup. Neither result was an evaluator mismatch; they are retained as test-fixture history, not counted as green evidence. Empty retained blank rows also report no screen evidence, without altering existing hold/busy/status. Quoted names and explicit clear/waiting verdicts are the final output format.
+
+
+Lead review R1 keeps shell metadata authoritative even before any screen output: blank/unseen shell snapshots report shell with the existing shell hold, while blank agent screens stay unknown. R2 corrects help to distinguish basic state from `--explain` and refreshes the example above. The first full npm run had 7197 passes, one failure, 147 skips and one known TODO: the failure was the e2e seed guard treating the inline dist-electron/pty-host path in an actual-main `app.evaluate` query as a fresh launcher. The query now resolves the identical build directory on a separate source line; the guard and all real-launcher checks remain unchanged. Full npm will be rerun on the final bytes.
+
+
+R1/R2 follow-up passes 61/61 Node contracts (including the unchanged seed/env guard), 49/49 Electron contracts and 8/8 actual GUI cases in 15.0 s. The added non-Claude case runs the same env-wrapped node stand-in with an explicit Codex preset and checks the Codex busy rule/source, so process naming cannot select Claude accidentally. The blank-shell test covers both no rows and retained blank rows with shell hold unchanged. No full-gate result is claimed from the preceding non-green npm run.
+
+## Final local validation
+
+Product/test head `badb3268` is based on main `8890bea3`. I ran full npm tests after R1/R2: 7199 passed, 0 failed, 147 skipped and one known TODO (7347 total, 74.63 s). Lint passed. The selected Electron rule/provider/equivalence/state/CLI/control/VT/hold/hash set passed 199/199 in 8.18 s. Affected actual GUI passed 63/63 in 3.8 minutes with `AYA_E2E_PTY_SHUTDOWN=0 --workers=1 --no-deps`, including the eight pane-state cases and unchanged restart, team hold/busy, crash recovery and planned handover cases. No retries were enabled.
+
+The staged macOS arm64 package smoke passed using the local Electron 43.5 distribution: it loaded the bundled data from `app.asar`, evaluated its real busy rule, exercised the packaged owner-backed adapter and observed exit 23. Receipt verification and nested ad-hoc signing checks passed. This was a disposable staged package, not a production rebuild or swap; Developer ID/notarization and native Linux execution were not run locally. The native CI matrix includes the new Electron contracts, but its results are separate from this local evidence.
+
+The whole existing GUI invocation used the same unchanged build, one worker, shutdown=0, no retries and the default 30-minute ceiling. It completed in 29.1 minutes with 441 passed, 2 failed, 6 skipped and 25 not run. The 25 shared-resource cases were blocked by the failed isolated-project dependency, not by the ceiling. A second invocation of those 25 plus the ten timeout contracts passed 35/35 in 1.4 minutes. Across unique whole-suite cases this is 466 passed, 2 failed and 6 skipped out of 474; the ten repeated timeout tests are not counted twice. Playwright reported no flaky/retried cases, but that does not make the initial two failures green.
+
+I compared both failures serially on this machine with an independently built main `8890bea3`, without assertion or fixture changes:
+
+- `agent-session-resume.spec.ts:623`: a first OpenCode launch unexpectedly used `--session ses_newest` instead of empty arguments (assertion at 631). The exact case passed 3/3 on both heads. A further 20 baseline attempts gave 19 passes and one failure with the identical arguments diff. It is an inherited intermittent failure.
+- `sidebar-close-terminal.spec.ts:55`: the rename editor detached during `fill`, which timed out at line 68 after 30 seconds. The exact case failed 3/3 on both main and PR1 with the same first error. It is an inherited failure on this machine.
+
+No unrelated process/session or rename behavior was changed to obtain a green report. Earlier non-green stage results remain recorded above. No push, merge or production action was performed.
+
+## Offline evaluator latency
+
+Reproduce after building Electron modules with `ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron scripts/measure-screen-rule-evaluator.cjs`. The helper writes its summary, fixture dimensions and both raw latency arrays under `test-results/`; it never starts an app, PTY, socket or network request.
+
+One macOS arm64 trial under Electron 43.5 / Node 24.19 compares the frozen main `8890bea3` policy with the data evaluator on the final applied snapshots of all 18 recorded raw sessions. Every busy/hold/status triplet first agrees exactly. After 25 warmup rounds, 200 interleaved rounds alternate the old/new evaluation order, producing 3600 triplet samples for each policy. Percentiles use nearest rank; clock overhead is included.
+
+| Busy + hold + status | Mean | p50 | p95 | Maximum |
+| --- | ---: | ---: | ---: | ---: |
+| Frozen main TypeScript rules | 130.83 us | 64.54 us | 313.58 us | 1357.71 us |
+| Bundled-data evaluator | 129.40 us | 66.25 us | 302.46 us | 893.75 us |
+
+The first explicit bounded bundle load took 0.884 ms. Authored JSON is 7787 bytes; emitted packaged JSON is 10129 bytes, rule-set version `1`, SHA256 `c1db9f2a6f872dda510e723feaf130fd3625d5a31018e16a416f1b82fc1960c6`. These are steady-state main-policy measurements with composerSeen=true and no pending startup/output settle, not app startup, IPC, process recovery, DOM or paint latency. One trial does not establish a performance improvement; the results show comparable local evaluation cost for the recorded workload.

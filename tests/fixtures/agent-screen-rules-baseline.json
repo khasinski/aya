@@ -1,0 +1,649 @@
+{
+  "sourceSha256": "d9f83d385fd465a55b7a985dfd592147b5cfd158d25629a2aa31a0d45629861c",
+  "generic": [
+    {
+      "id": "do-you-want",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "Do you want (?:to|me to)",
+      "flags": "i"
+    },
+    {
+      "id": "numbered-yes",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "❯\\s*1\\.\\s*Yes",
+      "flags": "i"
+    },
+    {
+      "id": "yes-and-dont",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "1\\)\\s*Yes,\\s*and don't",
+      "flags": "i"
+    },
+    {
+      "id": "approve-action",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "Approve\\s*(?:this\\s+)?(?:edit|change|action|tool|command)",
+      "flags": "i"
+    },
+    {
+      "id": "accept-reject",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "\\bAccept all\\b.*\\bReject all\\b",
+      "flags": "i"
+    },
+    {
+      "id": "run-command",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "Run this command\\?\\s*\\[Y\\/N\\]",
+      "flags": "i"
+    },
+    {
+      "id": "yn-suffix",
+      "kind": "prompt",
+      "region": "lastLine",
+      "pattern": "\\[y\\/n\\]:?\\s*$",
+      "flags": "i"
+    },
+    {
+      "id": "yN-suffix",
+      "kind": "prompt",
+      "region": "lastLine",
+      "pattern": "\\(y\\/N\\):?\\s*$",
+      "flags": "i"
+    },
+    {
+      "id": "allow-question",
+      "kind": "prompt",
+      "region": "lastLine",
+      "pattern": "\\b(?:Allow|Permit)\\b.*\\?\\s*$",
+      "flags": "i"
+    },
+    {
+      "id": "press-enter",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "Press\\s+enter\\s+to\\s+(?:continue|confirm)",
+      "flags": "i"
+    },
+    {
+      "id": "waiting-for-input",
+      "kind": "prompt",
+      "region": "tail",
+      "pattern": "Waiting for (?:your )?(?:input|approval|confirmation)",
+      "flags": "i"
+    }
+  ],
+  "agents": {
+    "claude": [
+      {
+        "id": "do-you-want",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Do you want (?:to|me to)",
+        "flags": "i"
+      },
+      {
+        "id": "numbered-yes",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "❯\\s*1\\.\\s*Yes",
+        "flags": "i"
+      },
+      {
+        "id": "yes-and-dont",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "1\\)\\s*Yes,\\s*and don't",
+        "flags": "i"
+      },
+      {
+        "id": "approve-action",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Approve\\s*(?:this\\s+)?(?:edit|change|action|tool|command)",
+        "flags": "i"
+      },
+      {
+        "id": "accept-reject",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "\\bAccept all\\b.*\\bReject all\\b",
+        "flags": "i"
+      },
+      {
+        "id": "run-command",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Run this command\\?\\s*\\[Y\\/N\\]",
+        "flags": "i"
+      },
+      {
+        "id": "yn-suffix",
+        "kind": "prompt",
+        "region": "lastLine",
+        "pattern": "\\[y\\/n\\]:?\\s*$",
+        "flags": "i"
+      },
+      {
+        "id": "yN-suffix",
+        "kind": "prompt",
+        "region": "lastLine",
+        "pattern": "\\(y\\/N\\):?\\s*$",
+        "flags": "i"
+      },
+      {
+        "id": "allow-question",
+        "kind": "prompt",
+        "region": "lastLine",
+        "pattern": "\\b(?:Allow|Permit)\\b.*\\?\\s*$",
+        "flags": "i"
+      },
+      {
+        "id": "press-enter",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Press\\s+enter\\s+to\\s+(?:continue|confirm)",
+        "flags": "i"
+      },
+      {
+        "id": "waiting-for-input",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Waiting for (?:your )?(?:input|approval|confirmation)",
+        "flags": "i"
+      },
+      {
+        "id": "claude-trust-confirmation",
+        "kind": "dialog",
+        "region": "tail",
+        "pattern": "Enter\\s+to\\s+confirm\\s*[·•]\\s*Esc\\s+to\\s+(?:cancel|exit)",
+        "flags": "i"
+      },
+      {
+        "id": "transcript-view",
+        "kind": "suppressor",
+        "region": "screen",
+        "pattern": "(?:showing|viewing)\\s+(?:full\\s+)?transcript|ctrl\\+r to (?:expand|toggle)",
+        "flags": "i"
+      },
+      {
+        "id": "composer-drawn",
+        "kind": "suppressor",
+        "region": "tail",
+        "pattern": "(?:^|\\n)\\s*─{8,}\\n(?:\\s*❯(?!\\s*\\d+[.)])[^\\n]*\\n)?\\s*─{8,}(?:\\n(?![^\\n]*(?:\\?|\\[y\\/n\\]|\\(y\\/N\\))\\s*$)[^\\n]*){0,3}$",
+        "flags": ""
+      },
+      {
+        "id": "composer-hint",
+        "kind": "suppressor",
+        "region": "lastLine",
+        "pattern": "\\?\\s*for shortcuts",
+        "flags": "i"
+      }
+    ],
+    "codex": [
+      {
+        "id": "do-you-want",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Do you want (?:to|me to)",
+        "flags": "i"
+      },
+      {
+        "id": "numbered-yes",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "❯\\s*1\\.\\s*Yes",
+        "flags": "i"
+      },
+      {
+        "id": "yes-and-dont",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "1\\)\\s*Yes,\\s*and don't",
+        "flags": "i"
+      },
+      {
+        "id": "approve-action",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Approve\\s*(?:this\\s+)?(?:edit|change|action|tool|command)",
+        "flags": "i"
+      },
+      {
+        "id": "accept-reject",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "\\bAccept all\\b.*\\bReject all\\b",
+        "flags": "i"
+      },
+      {
+        "id": "run-command",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Run this command\\?\\s*\\[Y\\/N\\]",
+        "flags": "i"
+      },
+      {
+        "id": "yn-suffix",
+        "kind": "prompt",
+        "region": "lastLine",
+        "pattern": "\\[y\\/n\\]:?\\s*$",
+        "flags": "i"
+      },
+      {
+        "id": "yN-suffix",
+        "kind": "prompt",
+        "region": "lastLine",
+        "pattern": "\\(y\\/N\\):?\\s*$",
+        "flags": "i"
+      },
+      {
+        "id": "allow-question",
+        "kind": "prompt",
+        "region": "lastLine",
+        "pattern": "\\b(?:Allow|Permit)\\b.*\\?\\s*$",
+        "flags": "i"
+      },
+      {
+        "id": "press-enter",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Press\\s+enter\\s+to\\s+(?:continue|confirm)",
+        "flags": "i"
+      },
+      {
+        "id": "waiting-for-input",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Waiting for (?:your )?(?:input|approval|confirmation)",
+        "flags": "i"
+      },
+      {
+        "id": "codex-composer-drawn",
+        "kind": "suppressor",
+        "region": "tail",
+        "pattern": "(?:^|\\n)\\s*›(?!\\s*\\d+[.)])[^\\n]*(?:\\n(?![^\\n]*(?:\\?|\\[y\\/n\\]|\\(y\\/N\\))\\s*$)[^\\n]*){0,2}$",
+        "flags": ""
+      },
+      {
+        "id": "codex-composer-hint",
+        "kind": "suppressor",
+        "region": "lastLine",
+        "pattern": "send\\s+.*\\bctrl\\b.*\\bnewline\\b|\\bEsc\\b.*\\binterrupt\\b",
+        "flags": "i"
+      }
+    ],
+    "opencode": [
+      {
+        "id": "do-you-want",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Do you want (?:to|me to)",
+        "flags": "i"
+      },
+      {
+        "id": "numbered-yes",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "❯\\s*1\\.\\s*Yes",
+        "flags": "i"
+      },
+      {
+        "id": "yes-and-dont",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "1\\)\\s*Yes,\\s*and don't",
+        "flags": "i"
+      },
+      {
+        "id": "approve-action",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Approve\\s*(?:this\\s+)?(?:edit|change|action|tool|command)",
+        "flags": "i"
+      },
+      {
+        "id": "accept-reject",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "\\bAccept all\\b.*\\bReject all\\b",
+        "flags": "i"
+      },
+      {
+        "id": "run-command",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Run this command\\?\\s*\\[Y\\/N\\]",
+        "flags": "i"
+      },
+      {
+        "id": "yn-suffix",
+        "kind": "prompt",
+        "region": "lastLine",
+        "pattern": "\\[y\\/n\\]:?\\s*$",
+        "flags": "i"
+      },
+      {
+        "id": "yN-suffix",
+        "kind": "prompt",
+        "region": "lastLine",
+        "pattern": "\\(y\\/N\\):?\\s*$",
+        "flags": "i"
+      },
+      {
+        "id": "allow-question",
+        "kind": "prompt",
+        "region": "lastLine",
+        "pattern": "\\b(?:Allow|Permit)\\b.*\\?\\s*$",
+        "flags": "i"
+      },
+      {
+        "id": "press-enter",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Press\\s+enter\\s+to\\s+(?:continue|confirm)",
+        "flags": "i"
+      },
+      {
+        "id": "waiting-for-input",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Waiting for (?:your )?(?:input|approval|confirmation)",
+        "flags": "i"
+      },
+      {
+        "id": "opencode-dialog-buttons",
+        "kind": "dialog",
+        "region": "tail",
+        "pattern": "^\\s*Skip\\s+Confirm\\s*$",
+        "flags": "m"
+      },
+      {
+        "id": "opencode-question",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "enter submit\\s+esc dismiss",
+        "flags": "i"
+      },
+      {
+        "id": "opencode-permission",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Allow once\\s+Allow always\\s+Reject",
+        "flags": ""
+      },
+      {
+        "id": "opencode-composer-drawn",
+        "kind": "suppressor",
+        "region": "tail",
+        "pattern": "(?:^|\\n)\\s*┃\\s+[A-Z][\\w-]*\\s+·\\s+\\S[^\\n]*\\n\\s*╹▀{8,}[^\\n]*(?:\\n(?![^\\n]*(?:\\?|\\[y\\/n\\]|\\(y\\/N\\))\\s*$)[^\\n]*){0,1}$",
+        "flags": ""
+      }
+    ],
+    "grok": [
+      {
+        "id": "do-you-want",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Do you want (?:to|me to)",
+        "flags": "i"
+      },
+      {
+        "id": "numbered-yes",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "❯\\s*1\\.\\s*Yes",
+        "flags": "i"
+      },
+      {
+        "id": "yes-and-dont",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "1\\)\\s*Yes,\\s*and don't",
+        "flags": "i"
+      },
+      {
+        "id": "approve-action",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Approve\\s*(?:this\\s+)?(?:edit|change|action|tool|command)",
+        "flags": "i"
+      },
+      {
+        "id": "accept-reject",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "\\bAccept all\\b.*\\bReject all\\b",
+        "flags": "i"
+      },
+      {
+        "id": "run-command",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Run this command\\?\\s*\\[Y\\/N\\]",
+        "flags": "i"
+      },
+      {
+        "id": "yn-suffix",
+        "kind": "prompt",
+        "region": "lastLine",
+        "pattern": "\\[y\\/n\\]:?\\s*$",
+        "flags": "i"
+      },
+      {
+        "id": "yN-suffix",
+        "kind": "prompt",
+        "region": "lastLine",
+        "pattern": "\\(y\\/N\\):?\\s*$",
+        "flags": "i"
+      },
+      {
+        "id": "allow-question",
+        "kind": "prompt",
+        "region": "lastLine",
+        "pattern": "\\b(?:Allow|Permit)\\b.*\\?\\s*$",
+        "flags": "i"
+      },
+      {
+        "id": "press-enter",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Press\\s+enter\\s+to\\s+(?:continue|confirm)",
+        "flags": "i"
+      },
+      {
+        "id": "waiting-for-input",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Waiting for (?:your )?(?:input|approval|confirmation)",
+        "flags": "i"
+      },
+      {
+        "id": "grok-permission",
+        "kind": "dialog",
+        "region": "tail",
+        "pattern": "\\bYes, (?:allow once|allow all edits|always allow|and don't ask again|proceed|send once)\\b|\\bNo, and (?:tell Grok|don't ask again)\\b|^\\s*Allow(?: Edit| Delete| Execute)?\\?\\s*$",
+        "flags": "m"
+      },
+      {
+        "id": "grok-composer-drawn",
+        "kind": "suppressor",
+        "region": "tail",
+        "pattern": "\\n\\s*│[^\\n]*│\\n\\s*╰─+[^\\n]*─╯\\n[^\\n]*(?:Shift\\+Tab:mod|Ctrl\\+x:shortcuts|Ctrl\\+c:cancel)[^\\n]*$",
+        "flags": ""
+      }
+    ],
+    "antigravity": [
+      {
+        "id": "do-you-want",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Do you want (?:to|me to)",
+        "flags": "i"
+      },
+      {
+        "id": "numbered-yes",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "❯\\s*1\\.\\s*Yes",
+        "flags": "i"
+      },
+      {
+        "id": "yes-and-dont",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "1\\)\\s*Yes,\\s*and don't",
+        "flags": "i"
+      },
+      {
+        "id": "approve-action",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Approve\\s*(?:this\\s+)?(?:edit|change|action|tool|command)",
+        "flags": "i"
+      },
+      {
+        "id": "accept-reject",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "\\bAccept all\\b.*\\bReject all\\b",
+        "flags": "i"
+      },
+      {
+        "id": "run-command",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Run this command\\?\\s*\\[Y\\/N\\]",
+        "flags": "i"
+      },
+      {
+        "id": "yn-suffix",
+        "kind": "prompt",
+        "region": "lastLine",
+        "pattern": "\\[y\\/n\\]:?\\s*$",
+        "flags": "i"
+      },
+      {
+        "id": "yN-suffix",
+        "kind": "prompt",
+        "region": "lastLine",
+        "pattern": "\\(y\\/N\\):?\\s*$",
+        "flags": "i"
+      },
+      {
+        "id": "allow-question",
+        "kind": "prompt",
+        "region": "lastLine",
+        "pattern": "\\b(?:Allow|Permit)\\b.*\\?\\s*$",
+        "flags": "i"
+      },
+      {
+        "id": "press-enter",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Press\\s+enter\\s+to\\s+(?:continue|confirm)",
+        "flags": "i"
+      },
+      {
+        "id": "waiting-for-input",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "Waiting for (?:your )?(?:input|approval|confirmation)",
+        "flags": "i"
+      },
+      {
+        "id": "antigravity-select",
+        "kind": "prompt",
+        "region": "tail",
+        "pattern": "↑\\/↓ Navigate\\s*·\\s*enter (?:Confirm|Select)|enter Select\\s+esc Go Back",
+        "flags": ""
+      }
+    ]
+  },
+  "busy": {
+    "claude": [
+      {
+        "id": "claude-busy",
+        "kind": "busy",
+        "region": "lastLine",
+        "pattern": "\\besc to interrupt\\b",
+        "flags": "i"
+      },
+      {
+        "id": "claude-spinner",
+        "kind": "busy",
+        "region": "tail",
+        "pattern": "^\\s*[✢✳✶✻✽]\\s+[^\\n…]{2,60}…(?:\\s*\\(.*\\))?\\s*$",
+        "flags": "m"
+      }
+    ],
+    "codex": [
+      {
+        "id": "codex-busy",
+        "kind": "busy",
+        "region": "tail",
+        "pattern": "^\\s*\\S\\s+Working \\(.*\\besc to interrupt\\)",
+        "flags": "im"
+      }
+    ],
+    "opencode": [
+      {
+        "id": "opencode-busy",
+        "kind": "busy",
+        "region": "tail",
+        "pattern": "\\besc interrupt\\b",
+        "flags": "i"
+      }
+    ],
+    "antigravity": [
+      {
+        "id": "antigravity-busy",
+        "kind": "busy",
+        "region": "tail",
+        "pattern": "^\\s*\\S\\s+Generating\\.\\.\\.",
+        "flags": "m"
+      }
+    ],
+    "grok": [
+      {
+        "id": "grok-spinner",
+        "kind": "busy",
+        "region": "tail",
+        "pattern": "^\\s*[⠀-⣿]\\s+\\S[^\\n]*\\[stop\\]\\s*\\n\\s*╭─",
+        "flags": "m"
+      },
+      {
+        "id": "grok-cancel-hint",
+        "kind": "busy",
+        "region": "lastLine",
+        "pattern": "\\bCtrl\\+c:cancel\\b",
+        "flags": ""
+      }
+    ]
+  },
+  "usage": {
+    "codex": {
+      "id": "codex-usage-limit",
+      "kind": "usage-limit",
+      "region": "tail",
+      "pattern": "\\bYour workspace is out of credits\\b|\\bUsage limit reached\\b",
+      "flags": ""
+    }
+  },
+  "account": {
+    "claude": {
+      "id": "claude-account-setting",
+      "kind": "account-setting",
+      "region": "tail",
+      "pattern": "\\bkeep\\s+allowing\\s+any\\s+reads\\s+outside\\s+the\\s+working\\s+directories\\b|\\bblock\\s+reads\\s+outside\\s+the\\s+working\\s+directories\\s+from\\s+now\\s+on\\b",
+      "flags": ""
+    }
+  }
+}

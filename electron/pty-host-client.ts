@@ -1,3 +1,4 @@
+import { explainPaneSnapshot, unavailablePaneState, type PaneStateResult } from "./pane-state";
 import { prepareSpawn, watchAgentSession } from "./pty-prepare";
 import { snapshotBusy, snapshotHold, snapshotStatus } from "./vt-state";
 import { HOLD_NOT_RUNNING, HOLD_STARTING } from "./pane-holds";
@@ -157,6 +158,7 @@ const sameRestartTarget=(a:HostRestartConsent["target"],b:HostRestartConsent["ta
 
 export class PtyHostClient {
   private socket: net.Socket | null = null;
+  private observationOnly = false;
   private readonly ownerSecret = randomBytes(32);
   private ownerBacked = false;
   private metadataRequired = false;
@@ -680,6 +682,37 @@ export class PtyHostClient {
     try { return (await this.request({ id: 0, type: "snapshot", ptyId })) === "disconnected"; }
     catch { return this.lostOwned.has(ptyId); }
   }
+  /** Read-only: no composerSeen acknowledgement or separate racing hold/busy reads. */
+  async paneState(ptyId: string): Promise<PaneStateResult> {
+    if (this.crashBlocked) return unavailablePaneState("the terminal host is disconnected or recovering; its processes may still be running");
+    try {
+      const value = await this.readExistingSnapshot(ptyId);
+      if (value === null) return unavailablePaneState("is not running", "stopped");
+      if (value === "starting") return unavailablePaneState("is still starting up", "starting");
+      if (value === "disconnected") return unavailablePaneState("the terminal host is disconnected; its processes may still be running");
+      const snapshot = asVtSnapshot(value);
+      return snapshot ? explainPaneSnapshot(snapshot) : unavailablePaneState(PANE_HOLD_UNKNOWN);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      return unavailablePaneState(code === "ENOENT" || code === "ECONNREFUSED" ? "terminal host not running" : PANE_HOLD_UNKNOWN);
+    }
+  }
+
+  private async readExistingSnapshot(ptyId: string): Promise<unknown> {
+    if (this.disposed) throw new Error(DISPOSED_MESSAGE);
+    if (this.socket && !this.socket.destroyed) return withTimeout(this.sendRequest(this.socket, { id: 0, type: "snapshot", ptyId }), 5000);
+    // Reuse the normal socket-opening/authentication implementation, but never
+    // connectWithHostStart or connect's metadata/continuity/exit-ACK path.
+    const observer = new PtyHostClient(this.hostScript);
+    observer.observationOnly = true;
+    const deadline = Date.now() + 5000;
+    try {
+      await withTimeout(observer.openSocket(), Math.max(1, deadline - Date.now()));
+      if (this.disposed || Date.now() >= deadline || !observer.socket || observer.socket.destroyed) throw new Error(DISPOSED_MESSAGE);
+      return await withTimeout(observer.sendRequest(observer.socket, { id: 0, type: "snapshot", ptyId }), Math.max(1, deadline - Date.now()));
+    } finally { observer.dispose(); observer.dropSocket(); }
+  }
+
   async paneBusy(ptyId: string): Promise<boolean> {
     try {
       const snapshot = asVtSnapshot(await this.request({ id: 0, type: "snapshot", ptyId }));
@@ -827,7 +860,9 @@ export class PtyHostClient {
     return new Promise((resolve, reject) => {
       const socket = net.createConnection(PTY_HOST_SOCKET_PATH);
       socket.setEncoding("utf8");
+      if (this.observationOnly) this.socket = socket; // dispose also closes a pending connect
       socket.once("connect", () => {
+        if (this.observationOnly && this.disposed) { socket.destroy(); reject(new Error(DISPOSED_MESSAGE)); return; }
         this.socket = socket;
         this.hostAsked = false;
         this.ownerBacked = false;
@@ -930,6 +965,7 @@ export class PtyHostClient {
         // uncaughtException that would crash the Electron main process.
         continue;
       }
+      if (this.observationOnly && (!message || typeof message !== "object" || !("id" in message))) continue;
       if ("type" in message && message.type === "cancel-prepare") {
         this.preparations.get(message.prepareId)?.abort();
         this.preparations.delete(message.prepareId);

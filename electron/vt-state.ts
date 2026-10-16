@@ -1,3 +1,4 @@
+import { builtinScreenRules, HOLD_RULES_UNAVAILABLE } from "./screen-rule-provider";
 // Agent screen policy lives in main. The host owns only vt-mirror and sends applied snapshots.
 import type { Terminal } from "@xterm/headless";
 import { asksToRunAya, evaluateScreen, screenIsBusy, screenOffersAccountSetting, screenShowsUsageLimit } from "./agent-screen-rules";
@@ -12,6 +13,7 @@ export function openVtPane(...args: Parameters<typeof openMirror>): void {
   pane.onSnapshot = () => scan(pane);
 }
 function scan(pane: VtPane): void {
+  if (!builtinScreenRules.get().available) return;
   const rows = screenRows(pane.terminal);
   // A numbered choice is a question for the user as much as an approval dialog (paneHold holds messages for it too).
   const screen = evaluateScreen(rows, pane.agent);
@@ -181,6 +183,7 @@ export async function paneHold(ptyId: string, pasted?: string): Promise<string |
 }
 function holdPane(pane: VtPane, pasted?: string): string | null {
   if (pane.shell) return HOLD_SHELL;
+  if (!builtinScreenRules.get().available) return HOLD_RULES_UNAVAILABLE;
   const screen = screenRows(pane.terminal);
   const rows = pasted ? withoutPasted(screen, pasted) : screen;
   const composer = composerState(pane.terminal);
@@ -251,7 +254,7 @@ export function snapshotHold(snapshot: VtSnapshot, pasted?: string): { hold: str
 }
 export function snapshotBusy(snapshot: VtSnapshot): boolean { if(snapshot.recoveryUnknown)return false;return screenIsBusy(snapshot.rows, snapshot.agent); }
 export function snapshotStatus(snapshot: VtSnapshot): { waiting: boolean | null; dialog?: string; composerSeen: boolean } {
-  if(snapshot.recoveryUnknown)return {waiting:null,composerSeen:false};
+  if(snapshot.recoveryUnknown || !builtinScreenRules.get().available)return {waiting:null,composerSeen:false};
   let waiting: boolean | null = null, dialog: string | undefined;
   const pane = paneFromSnapshot(snapshot, (w, d) => { waiting = w; dialog = d; });
   scan(pane);
