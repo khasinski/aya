@@ -4,7 +4,7 @@ import {performance} from "node:perf_hooks";
 import type {Socket} from "node:net";
 import type {AuthTransferTicket} from "./pty-host-auth-ticket";
 import type {HostAuthPeer} from "./pty-host-auth";
-import {HostAuthTransfer,HostAuthTransferError} from "./pty-host-auth-transfer";
+import {HostAuthTransfer,HostAuthTransferError,validAuthTransferDeadline} from "./pty-host-auth-transfer";
 import {handoverPeer} from "./pty-handover-window";
 export const AUTH_REDEMPTION_BYTES=1024;
 export const AUTH_REDEMPTION_MS=5000;
@@ -16,7 +16,7 @@ function frame(line:string,keys:readonly string[]):Record<string,unknown>{
  if(!v||typeof v!=="object"||Array.isArray(v)||Object.keys(v).sort().join(",")!==[...keys].sort().join(","))throw new HostAuthTransferError();
  return v as Record<string,unknown>;
 }
-interface Transcript {attempt:string;purpose:string;deadline:number;clientNonce:string;serverNonce:string;instance:string;host:HostAuthPeer;client:HostAuthPeer;credential:string}
+interface Transcript {attempt:string;purpose:string;deadline:number|null;clientNonce:string;serverNonce:string;instance:string;host:HostAuthPeer;client:HostAuthPeer;credential:string}
 function proof(nonce:string,t:Transcript):string{
  const secret=Buffer.from(nonce,"hex");
  try{
@@ -41,13 +41,14 @@ export class HostRedemptionServer {
   try{
    if(this.used||this.clock()>=this.deadline)throw new HostAuthTransferError();this.used=true;
    const m=frame(line,["type","version","attempt","purpose","deadline","nonce","clientNonce","hostPid","hostStartIdentity"]);
-   if(m.type!=="pty-transfer-redeem"||m.version!==1||!hex(m.attempt)||!hex(m.clientNonce)||(m.purpose!=="ordinary-quit"&&m.purpose!=="planned-update")||!Number.isSafeInteger(m.deadline)||m.hostPid!==this.host.pid||m.hostStartIdentity!==this.host.startIdentity)throw new HostAuthTransferError();
-   if(!this.transfer.matchesActiveReservation(m.attempt,m.purpose,m.deadline as number))this.transfer.refuseActiveRedemption();
+   if(m.type!=="pty-transfer-redeem"||m.version!==1||!hex(m.attempt)||!hex(m.clientNonce)||(m.purpose!=="ordinary-quit"&&m.purpose!=="planned-update")||m.hostPid!==this.host.pid||m.hostStartIdentity!==this.host.startIdentity)throw new HostAuthTransferError();
+   if(!validAuthTransferDeadline(m.purpose,m.deadline))this.transfer.refuseActiveRedemption();
+   if(!this.transfer.matchesActiveReservation(m.attempt,m.purpose,m.deadline as number|null))this.transfer.refuseActiveRedemption();
    if(this.clock()>=this.deadline)throw new HostAuthTransferError();
    const key=this.transfer.redeem(m.attempt,m.nonce as string,this.client);
    try{
     const credential=key.toString("base64"),serverNonce=randomBytes(32).toString("hex");
-    const transcript:Transcript={attempt:m.attempt,purpose:m.purpose,deadline:m.deadline as number,clientNonce:m.clientNonce,serverNonce,instance:this.instance,host:this.host,client:this.client,credential};
+    const transcript:Transcript={attempt:m.attempt,purpose:m.purpose,deadline:m.deadline as number|null,clientNonce:m.clientNonce,serverNonce,instance:this.instance,host:this.host,client:this.client,credential};
     return JSON.stringify({type:"pty-transfer-credential",version:1,serverNonce,instance:this.instance,credential,proof:proof(m.nonce as string,transcript)});
    }finally{key.fill(0);}
   }catch{throw new HostAuthTransferError();}
@@ -59,19 +60,19 @@ export class HostRedemptionClient {
  private readonly deadline:number;
  private readonly clientNonce=randomBytes(32).toString("hex");
  constructor(private readonly ticket:AuthTransferTicket,private readonly host:HostAuthPeer,private readonly client:HostAuthPeer,private readonly clock:()=>number=()=>performance.now()){
-  if(!peerOk(host)||!peerOk(client)||ticket.format!==2||host.pid!==ticket.hostPid||host.startIdentity!==ticket.hostStartIdentity||!hex(ticket.attempt)||!hex(ticket.nonce)||(ticket.purpose!=="ordinary-quit"&&ticket.purpose!=="planned-update")||!Number.isSafeInteger(ticket.deadline)||Date.now()>=ticket.deadline)throw new HostAuthTransferError();
+  if(!peerOk(host)||!peerOk(client)||ticket.format!==2||host.pid!==ticket.hostPid||host.startIdentity!==ticket.hostStartIdentity||!hex(ticket.attempt)||!hex(ticket.nonce)||(ticket.purpose!=="ordinary-quit"&&ticket.purpose!=="planned-update")||!validAuthTransferDeadline(ticket.purpose,ticket.deadline,Date.now()))throw new HostAuthTransferError();
   this.deadline=clock()+AUTH_REDEMPTION_MS;
   this.hello=JSON.stringify({type:"pty-transfer-redeem",version:1,attempt:ticket.attempt,purpose:ticket.purpose,deadline:ticket.deadline,nonce:ticket.nonce,clientNonce:this.clientNonce,hostPid:host.pid,hostStartIdentity:host.startIdentity});
  }
  receive(line:string):Buffer{
   let key:Buffer|undefined;
   try{
-   if(this.used||this.clock()>=this.deadline||Date.now()>=this.ticket.deadline)throw new HostAuthTransferError();this.used=true;
+   if(this.used||this.clock()>=this.deadline||!validAuthTransferDeadline(this.ticket.purpose,this.ticket.deadline,Date.now()))throw new HostAuthTransferError();this.used=true;
    const m=frame(line,["type","version","serverNonce","instance","credential","proof"]);
    if(m.type!=="pty-transfer-credential"||m.version!==1||!hex(m.serverNonce)||!hex(m.instance)||!hex(m.proof)||typeof m.credential!=="string"||!/^[A-Za-z0-9+/]{43}=$/.test(m.credential))throw new HostAuthTransferError();
    key=Buffer.from(m.credential,"base64");if(key.length!==32||key.toString("base64")!==m.credential)throw new HostAuthTransferError();
    const expected=proof(this.ticket.nonce,{attempt:this.ticket.attempt,purpose:this.ticket.purpose,deadline:this.ticket.deadline,clientNonce:this.clientNonce,serverNonce:m.serverNonce,instance:m.instance,host:this.host,client:this.client,credential:m.credential});
-   if(!timingSafeEqual(Buffer.from(expected,"hex"),Buffer.from(m.proof,"hex"))||this.clock()>=this.deadline||Date.now()>=this.ticket.deadline)throw new HostAuthTransferError();
+   if(!timingSafeEqual(Buffer.from(expected,"hex"),Buffer.from(m.proof,"hex"))||this.clock()>=this.deadline||!validAuthTransferDeadline(this.ticket.purpose,this.ticket.deadline,Date.now()))throw new HostAuthTransferError();
    return key;
   }catch{key?.fill(0);this.used=true;throw new HostAuthTransferError();}
  }

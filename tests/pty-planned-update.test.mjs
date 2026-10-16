@@ -136,3 +136,11 @@ test('late real ticket rename is fenced and cleans only its attempt while a newe
  gate.resolve();await until(()=>renamed);await until(()=>!fs.readdirSync(root).some(name=>name.startsWith('pty-handover.'+'e'.repeat(64))));
  assert.deepEqual(JSON.parse(fs.readFileSync(winnerFile,'utf8')),winner);assert.equal(f.calls.some(c=>c[0]==='activate'),false);clean();
 });
+
+test('standalone update resume redeems an ordinary null ticket without treating it as a B3 checkpoint',async()=>{
+ clean();const f=fixture(),ticket={format:2,purpose:'ordinary-quit',attempt:'e'.repeat(64),nonce:'f'.repeat(64),deadline:null,hostPid:123,hostStartIdentity:'1:2'};
+ try{
+  await writeAuthTransferTicket(transferFile(),ticket,{deadline:performance.now()+2000});
+  assert.equal(await f.planned.resume(),'none');assert.deepEqual(f.calls,[['redeem']]);assert.equal(fs.existsSync(transferFile()),false);
+ }finally{clean();}
+});

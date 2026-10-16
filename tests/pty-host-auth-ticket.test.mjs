@@ -8,7 +8,7 @@ import {execFileSync} from 'node:child_process';
 import {authTransferTicketPath,writeAuthTransferTicket,readAuthTransferTicket} from '../dist-electron/pty-host-auth-ticket.js';
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const wait=async predicate=>{const end=performance.now()+2000;while(!await predicate()){if(performance.now()>=end)throw Error('ticket cleanup timeout');await sleep(2);}};
-const ticket=(extra={})=>({format:2,attempt:'a'.repeat(64),purpose:'ordinary-quit',nonce:'b'.repeat(64),deadline:Date.now()+120000,hostPid:123,hostStartIdentity:'10:2',...extra});
+const ticket=(extra={})=>({format:2,attempt:'a'.repeat(64),purpose:'ordinary-quit',nonce:'b'.repeat(64),deadline:null,hostPid:123,hostStartIdentity:'10:2',...extra});
 const budget=extra=>({deadline:performance.now()+1000,...extra});
 async function fixture(){await fs.mkdir('test-results',{recursive:true});const root=await fs.mkdtemp(path.resolve('test-results/auth-ticket-'));return {root,file:t=>authTransferTicketPath(root,t.attempt),close:()=>fs.rm(root,{recursive:true,force:true})};}
 function gate(){let release;const promise=new Promise(resolve=>release=resolve);return{promise,release};}
@@ -22,7 +22,7 @@ test('versioned nonce-only ticket publishes privately and is consumed once, abse
 });
 test('closed payload, expiry, bounds and private types are refused without FIFO blocking',async()=>{
  const f=await fixture(),t=ticket(),file=f.file(t);try{
-  for(const value of [{...t,extra:true},{...t,format:1},{...t,deadline:Date.now()-1},{...t,purpose:'anything'},{...t,hostStartIdentity:'unknown'},{...t,nonce:'bad'}]){
+  for(const value of [{...t,extra:true},{...t,format:1},{...t,deadline:Date.now()-1},{...t,purpose:'anything'},{...t,purpose:'planned-update'},{...t,deadline:Date.now()+120000},{...t,hostStartIdentity:'unknown'},{...t,nonce:'bad'}]){
    await fs.writeFile(file,JSON.stringify(value),{mode:0o600});await assert.rejects(readAuthTransferTicket(file));assert.equal(syncFs.existsSync(file),false,'safe invalid payload is consumed');
   }
   await fs.writeFile(file,Buffer.alloc(1025,32),{mode:0o600});await assert.rejects(readAuthTransferTicket(file));assert.equal(syncFs.existsSync(file),true);await fs.unlink(file);
@@ -114,4 +114,16 @@ test('final close cannot return a ticket at deadline or after quit cancellation'
    await assert.rejects(readAuthTransferTicket(file,{deadline:100,now:()=>now,signal:controller.signal,io}));assert.equal(syncFs.existsSync(file),false,'unlink already committed; no retry is promised');
   }finally{await f.close();}
  }
+});
+
+test('ordinary null ticket survives six months and wall rollback; planned expiry remains finite',async()=>{
+ const f=await fixture(),original=Date.now;
+ try{
+  for(const delta of [180*86400000,-180*86400000]){
+   const t=ticket();await writeAuthTransferTicket(f.file(t),t,budget());const base=original();Date.now=()=>base+delta;
+   assert.deepEqual(await readAuthTransferTicket(f.file(t)),t);assert.equal(await readAuthTransferTicket(f.file(t)),null);Date.now=original;
+  }
+  const t=ticket({purpose:'planned-update',deadline:original()+120000});await writeAuthTransferTicket(f.file(t),t,budget());const expiry=t.deadline;Date.now=()=>expiry;
+  await assert.rejects(readAuthTransferTicket(f.file(t)));
+ }finally{Date.now=original;await f.close();}
 });

@@ -3,7 +3,7 @@ import {randomBytes} from "node:crypto";
 import {performance} from "node:perf_hooks";
 import type {PtyHostRequest} from "./pty-host-protocol";
 import type {HostAuthPeer} from "./pty-host-auth";
-import {AUTH_QUIT_PUBLICATION_MS,AUTH_TRANSFER_WINDOW_MS} from "./pty-host-auth-transfer";
+import {AUTH_QUIT_PUBLICATION_MS} from "./pty-host-auth-transfer";
 import {authTransferTicketPath,writeAuthTransferTicket,cancelAuthTransferTicket,withinAuthTransferBudget,type AuthTransferTicket,type AuthTransferTicketBudget} from "./pty-host-auth-ticket";
 interface Deps {
  home:string;
@@ -30,7 +30,7 @@ export class OrdinaryAuthAnnouncement {
   try{
    await withinAuthTransferBudget(budget,async check=>{
     const peer=this.deps.peer();check();
-    const nonce=randomBytes(32).toString("hex"),deadline=Date.now()+AUTH_TRANSFER_WINDOW_MS;
+    const nonce=randomBytes(32).toString("hex"),deadline=null;
     const value=await this.deps.control({id:0,type:"auth-transfer-reserve",purpose:"ordinary-quit",nonce,deadline});check();
     const result=value as Record<string,unknown>|null;
     if(!result||typeof result!=="object"||Object.keys(result).sort().join(",")!=="attempt,deadline,hostPid,hostStartIdentity,purpose"||typeof result.attempt!=="string"||!/^[a-f0-9]{64}$/.test(result.attempt)||result.purpose!=="ordinary-quit"||result.deadline!==deadline||result.hostPid!==peer.pid||result.hostStartIdentity!==peer.startIdentity)throw Error("Invalid terminal transfer reservation");

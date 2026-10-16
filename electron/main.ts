@@ -758,7 +758,7 @@ app.whenReady().then(async () => {
     announcedTicket=await findAuthTransferTicket(AYA_HOME);
     if(announcedTicket)await ptyHost.redeemAnnouncedCapability(announcedTicket);
   }catch{diagnosticsLog.append("host-transfer-unavailable",{purpose:"startup"});}
-  const keepPlannedHost=await plannedUpdate.resume(announcedTicket?.purpose==="planned-update"?announcedTicket:undefined) === "kept";
+  const keepPlannedHost=await plannedUpdate.resume(announcedTicket?.purpose==="planned-update"&&announcedTicket.deadline!==null?{...announcedTicket,deadline:announcedTicket.deadline}:undefined) === "kept";
   let keptCompatibleHosts: number[] = [];
   if(!keepPlannedHost)try {
     // The host on the socket runs the panes the user sees: handleStaleHost below asks before it stops their work.

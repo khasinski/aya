@@ -614,7 +614,7 @@ export class PtyHostClient {
     const known=expected.retirementOwner;
     if((peer&&expected.ticket.hostPid===peer.pid&&expected.ticket.hostStartIdentity===peer.startIdentity)||(owner&&known&&known.pid===owner.pid&&known.startTime===owner.startTime&&known.instanceId===owner.instanceId&&known.binaryHash===owner.binaryHash))this.receivedAuthTransfer=null;
   }
-  async reservePlannedHandover(deadline:number):Promise<AuthTransferTicket>{
+  async reservePlannedHandover(deadline:number):Promise<AuthTransferTicket & {deadline:number}>{
     const nonce=randomBytes(32).toString("hex");
     if(!this.isConnected())await this.openSocket();
     const socket=this.socket;if(!socket||this.disposed)throw new HostAuthError();

@@ -118,7 +118,10 @@ export class PlannedUpdate {
   async resume(announced?:HandoverTicket):Promise<"none"|"restored"|"kept"> {
     let ticket:HandoverTicket|null;
     try{
-      ticket=announced??await findAuthTransferTicket(AYA_HOME)??readHandoverTicket(PTY_HANDOVER_TICKET_PATH);
+      const discovered=announced?null:await findAuthTransferTicket(AYA_HOME);
+      if(discovered?.purpose==="ordinary-quit"){await this.deps.host.redeemAnnouncedCapability(discovered);return "none";}
+      if(discovered&&discovered.deadline===null)throw new Error("Invalid planned transfer deadline");
+      ticket=announced??(discovered?{...discovered,deadline:discovered.deadline!}:readHandoverTicket(PTY_HANDOVER_TICKET_PATH));
       if(!announced&&ticket&&"format" in ticket)await this.deps.host.redeemAnnouncedCapability(ticket as AuthTransferTicket);
     }catch(error){return this.refused(error);}
     if(!ticket)return "none";

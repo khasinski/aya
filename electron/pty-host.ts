@@ -219,6 +219,7 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
   if(request.type==="auth-transfer-activate"){
     const peer=handoverPeer(socket),reserved=authTransfer.reservedBy(peer,request.attempt);
     if(reserved.purpose==="planned-update"){
+      if(reserved.deadline===null)throw new Error("Invalid planned deadline");
       hostHandover.assertAnnouncement(peer,reserved.deadline);
       if(plannedTransferAnnouncement!==request.attempt)throw new Error("The planned credential window was not announced");
     }

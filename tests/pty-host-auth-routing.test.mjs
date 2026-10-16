@@ -22,7 +22,7 @@ async function fixture(run){
  });
  await new Promise(resolve=>server.listen(socketPath,resolve));
  const connect=async()=>{const s=net.createConnection(socketPath);s.on('error',()=>{});sockets.add(s);s.once('close',()=>sockets.delete(s));await once(s,'connect');return s;};
- const announce=()=>{const r=transfer.reserve(issuer,'ordinary-quit',nonce,Date.now()+120000);transfer.activate(issuer,r.attempt);return{format:2,...r,nonce,hostPid:host.pid,hostStartIdentity:host.startIdentity};};
+ const announce=()=>{const r=transfer.reserve(issuer,'ordinary-quit',nonce,null);transfer.activate(issuer,r.attempt);return{format:2,...r,nonce,hostPid:host.pid,hostStartIdentity:host.startIdentity};};
  try{await run({auth,connect,transfer,events,received,results,announce,setPeer:p=>peer=p,setObservation:v=>observation=v,authorizations:()=>authorizations});}
  finally{for(const s of sockets)s.destroy();await new Promise(resolve=>server.close(resolve));transfer.dispose();await fs.rm(root,{recursive:true,force:true});}
 }

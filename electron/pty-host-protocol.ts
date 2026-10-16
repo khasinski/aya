@@ -1,3 +1,4 @@
+import {validAuthTransferDeadline} from "./pty-host-auth-transfer";
 import type { PreparedSpawn } from "./pty-core";
 import type { VtSnapshot } from "./vt-mirror";
 import type { PaneSize } from "./pane-render";
@@ -31,7 +32,7 @@ export type PtyHostRequest =
   | { id: number; type: "snapshot"; ptyId: string }
   | { id: number; type: "composer-seen"; ptyId: string; generation: string }
   | { id: number; type: "prepared"; prepareId: number; data: PreparedSpawn }
-  | { id:number;type:"auth-transfer-reserve";purpose:"ordinary-quit"|"planned-update";nonce:string;deadline:number }
+  | { id:number;type:"auth-transfer-reserve";purpose:"ordinary-quit"|"planned-update";nonce:string;deadline:number|null }
   | { id:number;type:"auth-transfer-activate";attempt:string }
   | { id:number;type:"auth-transfer-cancel";attempt:string }
   | { id:number;type:"auth-transfer-complete";attempt:string;receipt:string }
@@ -79,7 +80,7 @@ export function isPtyHostRequest(value: unknown): value is PtyHostRequest {
     const keys=r.type==="auth-transfer-reserve"?["id","type","purpose","nonce","deadline"]:r.type==="auth-transfer-complete"?["id","type","attempt","receipt"]:["id","type","attempt"];
     const record=value as Record<string,unknown>,hex=(v:unknown)=>typeof v==="string"&&/^[a-f0-9]{64}$/.test(v);
     if(!["auth-transfer-reserve","auth-transfer-activate","auth-transfer-cancel","auth-transfer-complete"].includes(r.type)||!Number.isSafeInteger(r.id)||Object.keys(value).length!==keys.length||!keys.every(key=>Object.hasOwn(value,key)))return false;
-    return r.type==="auth-transfer-reserve"?hex(record.nonce)&&Number.isSafeInteger(record.deadline)&&(record.purpose==="ordinary-quit"||record.purpose==="planned-update"):hex(record.attempt)&&(r.type!=="auth-transfer-complete"||hex(record.receipt));
+    return r.type==="auth-transfer-reserve"?hex(record.nonce)&&validAuthTransferDeadline(record.purpose,record.deadline):hex(record.attempt)&&(r.type!=="auth-transfer-complete"||hex(record.receipt));
   }
   if(["handover-prepare","handover-publish","handover-cancel","handover-announce"].includes(r.type??"")&&Object.hasOwn(value,"transferAttempt")){
     const v=value as Record<string,unknown>,keys=r.type==="handover-prepare"?["id","type","deadline","transferAttempt"]:r.type==="handover-publish"?["id","type","display","consented","transferAttempt"]:r.type==="handover-announce"?["id","type","nonce","deadline","transferAttempt"]:["id","type","transferAttempt"];

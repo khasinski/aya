@@ -9,7 +9,7 @@ import {HostAuthTransfer} from '../dist-electron/pty-host-auth-transfer.js';
 import {HostRedemptionServer,HostRedemptionClient,acceptHostRedemption,redeemHostCapability,AUTH_REDEMPTION_BYTES,AUTH_REDEMPTION_MS} from '../dist-electron/pty-host-auth-redemption.js';
 import {ownerProcessStartIdentity} from '../dist-electron/pty-owner-client.js';
 const key=Buffer.alloc(32,7),issuer={pid:101,startIdentity:'10:1'},host={pid:102,startIdentity:'10:2'},recipient={pid:103,startIdentity:'10:3'},nonce='a'.repeat(64);
-function pair(){let mono=0;const transfer=new HostAuthTransfer(key),reservation=transfer.reserve(issuer,'ordinary-quit',nonce,Date.now()+120000);transfer.activate(issuer,reservation.attempt);const ticket={format:2,...reservation,nonce,hostPid:host.pid,hostStartIdentity:host.startIdentity};return{transfer,ticket,server:new HostRedemptionServer(transfer,host,recipient,()=>mono),client:new HostRedemptionClient(ticket,host,recipient,()=>mono),setClock:value=>mono=value};}
+function pair(){let mono=0;const transfer=new HostAuthTransfer(key),reservation=transfer.reserve(issuer,'ordinary-quit',nonce,null);transfer.activate(issuer,reservation.attempt);const ticket={format:2,...reservation,nonce,hostPid:host.pid,hostStartIdentity:host.startIdentity};return{transfer,ticket,server:new HostRedemptionServer(transfer,host,recipient,()=>mono),client:new HostRedemptionClient(ticket,host,recipient,()=>mono),setClock:value=>mono=value};}
 test('credential response binds exact ticket/nonces/instance/peers and releases only once',()=>{
  const p=pair(),response=p.server.receive(p.client.hello);assert.deepEqual(p.client.receive(response),key);assert.equal(p.transfer.phase,'claimed');
  assert.throws(()=>p.server.receive(p.client.hello));assert.throws(()=>p.client.receive(response));p.transfer.dispose();
@@ -21,7 +21,7 @@ test('each proof field mutation refuses without accepting credential bytes',()=>
  }
 });
 test('another connection, recipient instance or purpose cannot reuse a valid response',()=>{
- for(const mutation of [{},{client:{...recipient,pid:104}},{client:{...recipient,startIdentity:'10:4'}},{ticket:{purpose:'planned-update'}}]){
+ for(const mutation of [{},{client:{...recipient,pid:104}},{client:{...recipient,startIdentity:'10:4'}},{ticket:{purpose:'planned-update',deadline:Date.now()+120000}}]){
   const p=pair(),other=new HostRedemptionClient({...p.ticket,...mutation.ticket},host,mutation.client??recipient),response=p.server.receive(p.client.hello);
   assert.throws(()=>other.receive(response));p.transfer.dispose();
  }
@@ -48,7 +48,7 @@ async function listening(server,socket){await new Promise((resolve,reject)=>{ser
 async function connect(socket){const s=net.createConnection(socket);await new Promise((resolve,reject)=>{s.once('connect',resolve);s.once('error',reject);});return s;}
 test('real kernel peers: simultaneous distinct processes get exactly one credential recipient',{timeout:12000},async()=>{
  fs.mkdirSync('test-results',{recursive:true});const root=fs.mkdtempSync(path.resolve('test-results/auth-redemption-')),socket=path.join(root,'host.sock');
- const transfer=new HostAuthTransfer(key),reservation=transfer.reserve(issuer,'ordinary-quit',nonce,Date.now()+120000),own={pid:process.pid,startIdentity:ownerProcessStartIdentity(process.pid)};transfer.activate(issuer,reservation.attempt);
+ const transfer=new HostAuthTransfer(key),reservation=transfer.reserve(issuer,'ordinary-quit',nonce,null),own={pid:process.pid,startIdentity:ownerProcessStartIdentity(process.pid)};transfer.activate(issuer,reservation.attempt);
  const ticket={format:2,...reservation,nonce,hostPid:own.pid,hostStartIdentity:own.startIdentity},children=[],connections=new Set();
  const server=net.createServer(s=>{connections.add(s);s.on('close',()=>connections.delete(s));void acceptHostRedemption(s,transfer,own).catch(()=>{});});
  try{
@@ -57,7 +57,7 @@ test('real kernel peers: simultaneous distinct processes get exactly one credent
    const child=spawn(process.execPath,['tests/helpers/pty-host-auth-redemption.cjs'],{env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},stdio:['pipe','ignore','pipe','ipc']});children.push(child);let message,stderr='';child.on('message',m=>message=m);child.stderr.on('data',b=>stderr+=b);child.once('error',reject);child.once('exit',code=>code===0&&message?resolve(message):reject(Error(`redemption child failed:${code}:${stderr}`)));child.stdin.end(JSON.stringify({socket,ticket}));
   });
   const results=await Promise.all([run(),run()]);assert.notEqual(results[0].pid,results[1].pid);const successes=results.filter(r=>r.success);assert.equal(successes.length,1);assert.equal(successes[0].hash,createHash('sha256').update(key).digest('hex'));assert.equal(transfer.phase,'claimed');
-  assert.throws(()=>transfer.reserve(issuer,'ordinary-quit','b'.repeat(64),Date.now()+120000),'lost reply/second request cannot rearm');
+  assert.throws(()=>transfer.reserve(issuer,'ordinary-quit','b'.repeat(64),null),'lost reply/second request cannot rearm');
  }finally{for(const child of children)if(child.exitCode===null)child.kill('SIGKILL');for(const s of connections)s.destroy();await new Promise(resolve=>server.close(resolve));transfer.dispose();fs.rmSync(root,{recursive:true,force:true});}
 });
 test('real socket target mismatch sends no nonce',{timeout:8000},async()=>{
@@ -142,4 +142,12 @@ test('wire proof MACs the independently recomputed random capability digest and 
  const input=['aya-pty-host-transfer',1,'credential-digest',p.ticket.attempt,p.ticket.purpose,p.ticket.deadline,hello.clientNonce,response.serverNonce,response.instance,host.pid,host.startIdentity,recipient.pid,recipient.startIdentity,digest];
  assert.equal(response.proof,createHmac('sha256',Buffer.from(nonce,'hex')).update(JSON.stringify(input)).digest('hex'));
  assert.equal(input.includes(response.credential),false);assert.deepEqual(p.client.receive(JSON.stringify(response)),key);p.transfer.dispose();
+});
+
+test('null deadline is purpose-bound in client validation and credential MAC',()=>{
+ const p=pair(),response=p.server.receive(p.client.hello);
+ for(const ticket of [{...p.ticket,purpose:'planned-update'},{...p.ticket,deadline:Date.now()+120000}])assert.throws(()=>new HostRedemptionClient(ticket,host,recipient));
+ // A valid finite planned ticket cannot accept the ordinary-null transcript.
+ const other=new HostRedemptionClient({...p.ticket,purpose:'planned-update',deadline:Date.now()+120000},host,recipient);other.clientNonce=p.client.clientNonce;assert.equal(other.clientNonce,p.client.clientNonce);
+ assert.throws(()=>other.receive(response));p.transfer.dispose();
 });

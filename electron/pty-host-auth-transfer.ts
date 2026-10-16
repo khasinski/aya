@@ -5,11 +5,16 @@ import {performance} from "node:perf_hooks";
 import type {HostAuthPeer} from "./pty-host-auth";
 export const AUTH_TRANSFER_WINDOW_MS=120_000;
 export const AUTH_QUIT_PUBLICATION_MS=2_000;
+/** Only an ordinary quit may retain a one-use ticket until the next launch. */
+export function validAuthTransferDeadline(purpose:unknown,deadline:unknown,wall?:number):boolean{
+  if(purpose==="ordinary-quit")return deadline===null;
+  return purpose==="planned-update"&&typeof deadline==="number"&&Number.isSafeInteger(deadline)&&(wall===undefined||(deadline>wall&&deadline-wall<=AUTH_TRANSFER_WINDOW_MS));
+}
 export type AuthTransferPurpose="ordinary-quit"|"planned-update";
-export interface AuthTransferReservation {attempt:string;purpose:AuthTransferPurpose;deadline:number}
+export interface AuthTransferReservation {attempt:string;purpose:AuthTransferPurpose;deadline:number|null}
 type Phase="reserved"|"active"|"claimed"|"owned"|"sealed";
 interface Attempt extends AuthTransferReservation {
-  phase:Phase;issuer:HostAuthPeer;nonce:Buffer;expires:number;activateBy:number;
+  phase:Phase;issuer:HostAuthPeer;nonce:Buffer;expires:number|null;activateBy:number;
   recipient?:HostAuthPeer;continuity?:string;completedReceipt?:string;
 }
 export class HostAuthTransferError extends Error {
@@ -33,28 +38,28 @@ export class HostAuthTransfer {
   private seal(attempt:Attempt):void{attempt.phase="sealed";attempt.nonce.fill(0);}
   private expire():void{
     const a=this.attempt;if(!a)return;
-    const now=this.clock.monotonic(),wallExpired=this.clock.wall()>=a.deadline;
-    if((a.phase==="reserved"&&(wallExpired||now>=a.expires||now>=a.activateBy))||(a.phase==="active"&&(wallExpired||now>=a.expires)))this.seal(a);
+    const now=this.clock.monotonic(),wallExpired=a.deadline!==null&&this.clock.wall()>=a.deadline;
+    if((a.phase==="reserved"&&(wallExpired||(a.expires!==null&&now>=a.expires)||now>=a.activateBy))||(a.phase==="active"&&(wallExpired||(a.expires!==null&&now>=a.expires))))this.seal(a);
   }
   get phase():Phase|"empty"{this.expire();return this.attempt?.phase??"empty";}
-  matchesActiveReservation(attempt:string,purpose:AuthTransferPurpose,deadline:number):boolean{
+  matchesActiveReservation(attempt:string,purpose:AuthTransferPurpose,deadline:number|null):boolean{
     this.expire();const a=this.attempt;
     return !!a&&a.phase==="active"&&a.attempt===attempt&&a.purpose===purpose&&a.deadline===deadline;
   }
   refuseActiveRedemption():never{this.expire();if(this.attempt?.phase==="active")this.seal(this.attempt);return refuse();}
-  reservedBy(issuer:HostAuthPeer,attempt:string,purpose?:AuthTransferPurpose,deadline?:number,nonce?:string):AuthTransferReservation{
+  reservedBy(issuer:HostAuthPeer,attempt:string,purpose?:AuthTransferPurpose,deadline?:number|null,nonce?:string):AuthTransferReservation{
     this.expire();const a=this.attempt;
     if(!a||a.phase!=="reserved"||a.attempt!==attempt||!validPeer(issuer)||!same(a.issuer,issuer)||(purpose!==undefined&&a.purpose!==purpose)||(deadline!==undefined&&a.deadline!==deadline)||(nonce!==undefined&&(!hex(nonce)||!timingSafeEqual(a.nonce,Buffer.from(nonce,"hex")))))refuse();
     return {attempt:a.attempt,purpose:a.purpose,deadline:a.deadline};
   }
   /** Called only behind ordinary authentication, before any B3 freeze or I/O. */
-  reserve(issuer:HostAuthPeer,purpose:AuthTransferPurpose,nonce:string,deadline:number):AuthTransferReservation{
+  reserve(issuer:HostAuthPeer,purpose:AuthTransferPurpose,nonce:string,deadline:number|null):AuthTransferReservation{
     this.expire();const prior=this.attempt,wall=this.clock.wall(),now=this.clock.monotonic();
-    if(this.disposed||!validPeer(issuer)||(purpose!=="ordinary-quit"&&purpose!=="planned-update")||!hex(nonce)||!Number.isSafeInteger(deadline)||deadline<=wall||deadline-wall>AUTH_TRANSFER_WINDOW_MS)refuse();
+    if(this.disposed||!validPeer(issuer)||(purpose!=="ordinary-quit"&&purpose!=="planned-update")||!hex(nonce)||!validAuthTransferDeadline(purpose,deadline,wall))refuse();
     if(prior&&(prior.phase!=="owned"||!same(prior.recipient,issuer)))refuse();
     if(prior)prior.nonce.fill(0);
     const reservation={attempt:randomBytes(32).toString("hex"),purpose,deadline};
-    this.attempt={...reservation,phase:"reserved",issuer:{...issuer},nonce:Buffer.from(nonce,"hex"),expires:now+(deadline-wall),activateBy:purpose==="ordinary-quit"?Math.min(now+AUTH_QUIT_PUBLICATION_MS,now+(deadline-wall)):now+(deadline-wall)};
+    this.attempt={...reservation,phase:"reserved",issuer:{...issuer},nonce:Buffer.from(nonce,"hex"),expires:deadline===null?null:now+(deadline-wall),activateBy:deadline===null?now+AUTH_QUIT_PUBLICATION_MS:now+(deadline-wall)};
     return {...reservation};
   }
   activate(issuer:HostAuthPeer,attempt:string):void{

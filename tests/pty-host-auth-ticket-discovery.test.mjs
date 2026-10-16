@@ -5,7 +5,7 @@ import path from 'node:path';
 import {performance} from 'node:perf_hooks';
 import {authTransferTicketPath,writeAuthTransferTicket,findAuthTransferTicket,cancelAuthTransferTicket} from '../dist-electron/pty-host-auth-ticket.js';
 const budget=extra=>({deadline:performance.now()+1000,...extra});
-const ticket=extra=>({format:2,attempt:'a'.repeat(64),purpose:'ordinary-quit',nonce:'b'.repeat(64),deadline:Date.now()+120000,hostPid:123,hostStartIdentity:'10:2',...extra});
+const ticket=extra=>({format:2,attempt:'a'.repeat(64),purpose:'ordinary-quit',nonce:'b'.repeat(64),deadline:null,hostPid:123,hostStartIdentity:'10:2',...extra});
 async function fixture(){await fs.mkdir('test-results',{recursive:true});const root=await fs.mkdtemp(path.resolve('test-results/auth-discovery-'));return{root,file:t=>authTransferTicketPath(root,t.attempt),close:()=>fs.rm(root,{recursive:true,force:true})};}
 test('startup discovers and consumes only one fixed attempt ticket, ignoring old disk keys and B3 artifacts',async()=>{
  const f=await fixture(),t=ticket();try{

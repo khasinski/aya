@@ -73,7 +73,7 @@ test('real host transfers once after old main exit and rearms only after validat
   assert.match(transferReceipt,/^[a-f0-9]{64}$/);assert.equal(transferReceipt,createHash('sha256').update(JSON.stringify(body.bootstrap)).digest('hex'));
   const continuity=validateOwnerContinuity(body,{pid:ticket.hostPid,startIdentity:ticket.hostStartIdentity},status);continuity.credential.fill(0);
   assert.equal(await c.request({id:0,type:'auth-transfer-complete',attempt:ticket.attempt,receipt:transferReceipt}),true);assert.equal(await c.request({id:0,type:'auth-transfer-complete',attempt:ticket.attempt,receipt:transferReceipt}),true);
-  const next=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'c'.repeat(64),deadline:Date.now()+120000});assert.notEqual(next.attempt,ticket.attempt);assert.equal(await c.request({id:0,type:'auth-transfer-cancel',attempt:next.attempt}),'cancelled');
+  const next=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'c'.repeat(64),deadline:null});assert.notEqual(next.attempt,ticket.attempt);assert.equal(await c.request({id:0,type:'auth-transfer-cancel',attempt:next.attempt}),'cancelled');
   assert.equal(await c.getPid('kept'),old.pid);assert.equal((await c.hostStatus()).owner.pid,old.ownerPid);await c.shutdown();
  }finally{c.dispose();c.dropSocket();key.fill(0);await cleanupNativeOwner(process.env.AYA_HOME);}
 });
@@ -82,7 +82,7 @@ for(const mode of ['ordinary-wins','core-wins','planned-reserved'])test(`real ho
 });
 test('authenticated transfer verbs and receipt requests have closed bounded envelopes',async()=>{
  const {isPtyHostRequest}=await import('../dist-electron/pty-host-protocol.js'),attempt='a'.repeat(64),receipt='b'.repeat(64);
- const requests=[{id:1,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:attempt,deadline:Date.now()+1000},{id:1,type:'auth-transfer-activate',attempt},{id:1,type:'auth-transfer-cancel',attempt},{id:1,type:'auth-transfer-complete',attempt,receipt},{id:1,type:'owner-continuity',transferAttempt:attempt}];
+ const requests=[{id:1,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:attempt,deadline:null},{id:1,type:'auth-transfer-activate',attempt},{id:1,type:'auth-transfer-cancel',attempt},{id:1,type:'auth-transfer-complete',attempt,receipt},{id:1,type:'owner-continuity',transferAttempt:attempt}];
  for(const request of requests){
   assert.equal(isPtyHostRequest(request),true);assert.equal(isPtyHostRequest({...request,extra:true}),false);assert.equal(isPtyHostRequest({...request,id:NaN}),false);
   const inherited=Object.create(request);Object.assign(inherited,Object.fromEntries(Object.entries(request).filter(([key])=>key!=='type')));inherited.extra=true;assert.equal(isPtyHostRequest(inherited),false);
@@ -90,7 +90,10 @@ test('authenticated transfer verbs and receipt requests have closed bounded enve
   for(const invalid of ['', 'a'.repeat(63),'g'.repeat(64),{},undefined])assert.equal(isPtyHostRequest({...request,[key]:invalid}),false);
  }
  assert.equal(isPtyHostRequest({id:1,type:'auth-transfer-unknown',attempt}),false);
- assert.equal(isPtyHostRequest({...requests[0],purpose:'other'}),false);assert.equal(isPtyHostRequest({...requests[3],receipt:'not-a-receipt'}),false);
+ assert.equal(isPtyHostRequest({...requests[0],purpose:'other'}),false);
+ assert.equal(isPtyHostRequest({...requests[0],purpose:'planned-update'}),false);
+ assert.equal(isPtyHostRequest({...requests[0],deadline:Date.now()+120000}),false);
+ assert.equal(isPtyHostRequest({...requests[0],purpose:'planned-update',deadline:Date.now()+120000}),true);assert.equal(isPtyHostRequest({...requests[3],receipt:'not-a-receipt'}),false);
 });
 
 test('existing B3 cancel alone revokes planned credential release and resumes the same pane',{timeout:20000},async()=>{
@@ -116,7 +119,7 @@ for(const mode of ['publish-empty','publish-empty-recovered'])test(`announced ${
   const result=await c.request({id:0,type:'owner-continuity',transferAttempt:ticket.attempt});
   const continuity=validateTransferredOwnerContinuity(result,{pid:ticket.hostPid,startIdentity:ticket.hostStartIdentity},status);assert.equal(continuity.bootstrap,null);continuity.credential.fill(0);
   assert.equal(await c.request({id:0,type:'auth-transfer-complete',attempt:ticket.attempt,receipt:continuity.receipt}),true);
-  const next=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'c'.repeat(64),deadline:Date.now()+120000});await c.request({id:0,type:'auth-transfer-cancel',attempt:next.attempt});
+  const next=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'c'.repeat(64),deadline:null});await c.request({id:0,type:'auth-transfer-cancel',attempt:next.attempt});
   assert.equal((await c.request({id:0,type:'version'})).owner,null);assert.equal(fs.existsSync(path.join(process.env.AYA_HOME,'pty-owner/record.json')),false);
   const events=[];c.attachWebContents({isDestroyed:()=>false,send:(_channel,event)=>events.push(event)});
   const freshOutput=()=>events.filter(e=>e.ptyId==='fresh-after-empty'&&e.type==='data').map(e=>e.chunk).join('');
@@ -139,7 +142,7 @@ for(const mode of ['publish','publish-public','publish-empty'])test(`public anno
   const status=await c.hostStatus();assert.equal(status.pid,old.hostPid);assert.equal(c.ownsOwnerKey,true);assert.equal(c.receivedAuthTransfer,null);assert.equal(starts,0);
   if(mode!=='publish-empty'){assert.equal(status.owner.pid,old.ownerPid);assert.equal(await c.getPid('kept'),old.pid);c.dropSocket();assert.equal(typeof (await c.paneState('kept')).generation,'string','observer borrows announced memory authority despite wrong disk key');}
   else assert.equal(status.owner,undefined);
-  const next=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'c'.repeat(64),deadline:Date.now()+120000});await c.request({id:0,type:'auth-transfer-cancel',attempt:next.attempt});
+  const next=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'c'.repeat(64),deadline:null});await c.request({id:0,type:'auth-transfer-cancel',attempt:next.attempt});
   await c.shutdown();
  }finally{c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
 });
@@ -286,7 +289,7 @@ for(const mode of ['publish-planned','publish-planned-ended'])test(`planned cred
   await c.redeemAnnouncedCapability(ticket);
   await c.adoptPlannedHandover(ticket,c.expectedHostIdentity('reuse'),async state=>{
    assert.deepEqual(state.eligible.map(p=>p.id),['kept']);
-   await assert.rejects(c.sendRequest(c.socket,{id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'c'.repeat(64),deadline:Date.now()+120000}),'recipient cannot rearm before validated continuity ACK');
+   await assert.rejects(c.sendRequest(c.socket,{id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'c'.repeat(64),deadline:null}),'recipient cannot rearm before validated continuity ACK');
    inspected=true;
   });
   assert.equal(completions,1);assert.equal(c.receivedAuthTransfer,null);assert.equal(c.ownsOwnerKey,true);assert.equal(starts,0);
@@ -315,7 +318,7 @@ test('failed planned display validation cannot complete or rearm credentials and
   await c.redeemAnnouncedCapability(ticket);
   await assert.rejects(c.adoptPlannedHandover(ticket,c.expectedHostIdentity('reuse'),async()=>{throw Error('display validation refused');}),/display validation refused/);
   assert.equal(completions,0);assert.ok(c.receivedAuthTransfer);assert.equal(c.receivedAuthTransfer.receipt,undefined);
-  await assert.rejects(send(c.socket,{id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'f'.repeat(64),deadline:Date.now()+120000}));
+  await assert.rejects(send(c.socket,{id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'f'.repeat(64),deadline:null}));
   await send(c.socket,{id:0,type:'write',ptyId:'kept',data:'AFTER_VALIDATION_ABORT\n'});
   const until=Date.now()+5000;while(!(await send(c.socket,{id:0,type:'buffer',ptyId:'kept'})).includes('AFTER_VALIDATION_ABORT')){if(Date.now()>until)throw Error('old reader did not resume');await new Promise(r=>setTimeout(r,5));}
   assert.equal(await send(c.socket,{id:0,type:'pid',ptyId:'kept'}),old.pid);

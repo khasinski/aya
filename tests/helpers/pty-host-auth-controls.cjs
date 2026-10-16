@@ -42,18 +42,18 @@ const originalHandle=handle;handle=async function(req,socket,preparations){if(re
    assert.equal(await c.announceOrdinaryQuit(),true);await c.write('kept','OUTPUT_DURING_ORDINARY_QUIT\n');await wait(async()=>(await c.getBuffer('kept')).includes('OUTPUT_DURING_ORDINARY_QUIT'));
    const names=fs.readdirSync(process.env.AYA_HOME).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name));assert.equal(names.length,1);keep=true;process.send({file:path.join(process.env.AYA_HOME,names[0]),pid,hostPid:status.pid,ownerPid:status.owner.pid,endedOrigin,...(custom?{script}:{}),...(lost?{completions:completionFile}:{})});
   }else if(mode==='publish'||mode==='publish-lost-completion'||mode==='publish-alive'||mode==='publish-empty'||mode==='publish-empty-recovered'){
-   const deadline=Date.now()+120000,nonce='a'.repeat(64),budget=performance.now()+2000;
+   const deadline=null,nonce='a'.repeat(64),budget=performance.now()+2000;
    const reserved=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce,deadline});
    const t={format:2,...reserved,nonce},file=authTransferTicketPath(process.env.AYA_HOME,t.attempt);
    await writeAuthTransferTicket(file,t,{deadline:budget});assert.equal(await c.request({id:0,type:'auth-transfer-activate',attempt:t.attempt}),true);
    keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner?.pid??null,...(custom?{script}:{}),...(lost?{completions:completionFile}:{})});
    if(mode==='publish-alive')await new Promise(resolve=>process.once('message',resolve));
   }else if(mode==='ordinary-wins'){
-   const reserved=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'b'.repeat(64),deadline:Date.now()+120000});
+   const reserved=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'b'.repeat(64),deadline:null});
    await assert.rejects(c.request({id:0,type:'handover-prepare',deadline:Date.now()+120000}));assert.equal(await c.request({id:0,type:'auth-transfer-cancel',attempt:reserved.attempt}),'cancelled');
    await c.write('kept','AFTER_REFUSED_FREEZE\n');await wait(async()=>(await c.getBuffer('kept')).includes('AFTER_REFUSED_FREEZE'));assert.equal(await c.getPid('kept'),pid);process.send({ok:true});
   }else if(mode==='core-wins'){
-   await c.preparePlannedHandover(Date.now()+120000);await assert.rejects(c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'b'.repeat(64),deadline:Date.now()+120000}));await c.cancelPlannedHandover();
+   await c.preparePlannedHandover(Date.now()+120000);await assert.rejects(c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'b'.repeat(64),deadline:null}));await c.cancelPlannedHandover();
    await c.write('kept','AFTER_REFUSED_RESERVATION\n');await wait(async()=>(await c.getBuffer('kept')).includes('AFTER_REFUSED_RESERVATION'));assert.equal(await c.getPid('kept'),pid);process.send({ok:true});
   }else if(mode==='planned-reserved'||mode==='planned-cancel'||mode==='publish-planned'||mode==='publish-planned-ended'||plannedLoss){
    const deadline=Date.now()+120000,nonce='b'.repeat(64),reserved=await c.request({id:0,type:'auth-transfer-reserve',purpose:'planned-update',nonce,deadline});

@@ -6,7 +6,7 @@ import {randomBytes} from "node:crypto";
 import {performance} from "node:perf_hooks";
 import * as path from "node:path";
 import {parseCheckpointJson} from "./vt-checkpoint-schema";
-import {AUTH_TRANSFER_WINDOW_MS,AUTH_QUIT_PUBLICATION_MS,type AuthTransferReservation} from "./pty-host-auth-transfer";
+import {validAuthTransferDeadline,AUTH_QUIT_PUBLICATION_MS,type AuthTransferReservation} from "./pty-host-auth-transfer";
 export interface AuthTransferTicket extends AuthTransferReservation {format:2;nonce:string;hostPid:number;hostStartIdentity:string}
 export const AUTH_TRANSFER_TICKET_BYTES=1024;
 /** Unique per-attempt paths keep late cleanup away from every successor's
@@ -25,7 +25,7 @@ function valid(value:unknown,now:number):value is AuthTransferTicket{
  const t=value as AuthTransferTicket;
  return Object.keys(t).sort().join(",")==="attempt,deadline,format,hostPid,hostStartIdentity,nonce,purpose"&&t.format===2&&
   (t.purpose==="ordinary-quit"||t.purpose==="planned-update")&&typeof t.attempt==="string"&&/^[a-f0-9]{64}$/.test(t.attempt)&&typeof t.nonce==="string"&&/^[a-f0-9]{64}$/.test(t.nonce)&&
-  Number.isSafeInteger(t.deadline)&&t.deadline>now&&t.deadline-now<=AUTH_TRANSFER_WINDOW_MS&&Number.isSafeInteger(t.hostPid)&&t.hostPid>1&&typeof t.hostStartIdentity==="string"&&/^\d+:\d+$/.test(t.hostStartIdentity)&&t.hostStartIdentity.length<=63;
+  validAuthTransferDeadline(t.purpose,t.deadline,now)&&Number.isSafeInteger(t.hostPid)&&t.hostPid>1&&typeof t.hostStartIdentity==="string"&&/^\d+:\d+$/.test(t.hostStartIdentity)&&t.hostStartIdentity.length<=63;
 }
 /** The caller's one monotonic budget starts before reservation. Async I/O may
  * finish late, but no later phase may run and no caller may activate it. */
