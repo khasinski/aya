@@ -1196,3 +1196,7 @@ export function acknowledgePtyRestoration(id:string,generation:string,token?:str
  if(p.exitCode!==undefined){removeRestoredPane(id);outputBuffers.delete(id);}
  return true;
 }
+
+export function ptyRecoveryStates():Array<{id:string;generation:string;exitCode?:number}>{
+ return [...restoredPanes].map(([id,p])=>({id,generation:p.generation,...(p.exitCode!==undefined?{exitCode:p.exitCode}:{})}));
+}

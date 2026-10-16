@@ -45,10 +45,12 @@ export type PtyHostRequest =
 
 export type PtyHostResponse = (
   | { id: number; ok: true; result?: unknown }
-  | { id: number; ok: false; error: string }) & { ownerBacked?: true; hostPid?: number };
+  | { id: number; ok: false; error: string }) & { ownerBacked?: true; hostPid?: number;ownerIdentity?: import("./pty-owner-runtime").RecoveryOwnerIdentity&{incompatible:boolean} };
 
 export interface PtyOwnerStatus {
   pid: number;
+  instanceId?:string;
+  startTime?:string;
   incompatible: boolean;
   hash?: string;
   disconnected: string[];
@@ -61,7 +63,7 @@ export type PtyHostEventMessage = { type: "event"; event: PtyEvent };
 
 export type PtyHostPrepareMessage = { type: "prepare"; prepareId: number; req: SpawnRequest; cwd: string };
 export type PtyHostSnapshotMessage = { type: "snapshot"; ptyId: string; snapshot: VtSnapshot; replay?: true };
-export type PtyHostSpawnedMessage = { type: "spawned"; req: SpawnRequest; pid: number; cwd: string; spawnedAt: number; restored?:true;ownerBacked?:true;hostPid?:number };
+export type PtyHostSpawnedMessage = { type: "spawned"; req: SpawnRequest; pid: number; cwd: string; spawnedAt: number; ownerIdentity?: import("./pty-owner-runtime").RecoveryOwnerIdentity&{incompatible:boolean};launch?: import("./launch-mode").PaneLaunch;restored?:true;ownerBacked?:true;hostPid?:number };
 export type PtyHostMessage = PtyHostResponse | PtyHostEventMessage | PtyHostPrepareMessage | PtyHostSnapshotMessage | PtyHostSpawnedMessage | { type: "cancel-prepare"; prepareId: number };
 
 export function isPtyHostRequest(value: unknown): value is PtyHostRequest {

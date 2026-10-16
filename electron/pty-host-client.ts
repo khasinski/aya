@@ -36,6 +36,11 @@ import type {HandoverTicket} from "./pty-handover-ticket";
 import {preflightCoreHandover,type HandoverBootstrap} from "./pty-handover-bootstrap";
 import {handoverState,handoverCommitResult} from "./pty-handover-state";
 import {ownerArtifactPaths,ownerProcessStartIdentity} from "./pty-owner-client";
+import {PtyCrashRecovery,type RecoveryAttemptResult} from "./pty-crash-recovery";
+import {parseRecoveryBootstrap,type RecoveryBootstrap,type RecoveryPane} from "./pty-recovery-bootstrap";
+import {readProcInfo} from "./pty-host-registry";
+import {ownerRecordIsLive,ownerReaderIsLive,readOwnerRecord} from "./pty-owner-registry";
+import type {RecoveryOwnerIdentity} from "./pty-owner-runtime";
 import {ownerBinaryHash} from "./pty-owner-registry";
 import {classifyIdentity} from "./pty-host-staleness";
 import { coalesceAdjacentData } from "./pty-event-coalescer";
@@ -167,6 +172,27 @@ export class PtyHostClient {
   // window that doesn't host the terminal does a single cheap no-op per event.
   private readonly sinks = new Set<PtyEventSink>();
   private disposed = false;
+  private ownsOwnerKey=false;
+  private uncertainInput=new Set<string>();
+  private recoveryOwner:RecoveryOwnerIdentity|null=null;
+  private lastHostStart:string|null=null;
+  private crashSupervisor:PtyCrashRecovery|null=null;
+  private crashTask:Promise<boolean>|null=null;
+  private crashAttempt:Promise<RecoveryAttemptResult>|null=null;
+  private crashAgain=false;
+  private crashBlocked=false;
+  private crashContext:{pid:number;start:string;owner:RecoveryOwnerIdentity}|null=null;
+  private recoveryLaunches=new Map<string,{request:SpawnRequest;launch:PaneLaunch;spawnedAt:number;pid:number}>();
+  private recoveryHooks:{restored?:(panes:Array<{id:string;generation:string;notice:string}>)=>void;log?:(event:string,fields:Record<string,unknown>)=>void}={};
+  enableCrashRecovery(hooks:typeof this.recoveryHooks={}):void {
+    if(this.crashSupervisor)return;this.recoveryHooks=hooks;
+    this.crashSupervisor=new PtyCrashRecovery({attempt:signal=>{
+      const attempt=this.recoverCrashedHost(signal).finally(()=>{if(this.crashAttempt===attempt)this.crashAttempt=null;});this.crashAttempt=attempt;return attempt;
+    },state:state=>{
+      this.recoveryHooks.log?.("pty-crash-recovery",{state});
+      if(state==="exhausted")for(const ptyId of this.lostOwned)this.sendToSinks([{type:"disconnected",ptyId,reason:"Aya could not restart the terminal host within its recovery budget. The processes may still be running in the native owner; Aya did not respawn them. Restart explicitly to stop them and try again."}]);
+    }});
+  }
   private readonly preparations = new Map<number, AbortController>();
   private readonly sessionWatches = new Map<string, () => void>();
   private readonly screenStates = new Map<string, { generation: string; waiting: boolean; dialog?: string }>();
@@ -213,11 +239,12 @@ export class PtyHostClient {
     this.exitAcks.set(id,work);
   }
   async acknowledgeHandoverDisplay(ptyId:string,generation:string,token?:string):Promise<boolean>{
-    return await this.request({id:0,type:"handover-display-applied",ptyId,generation,token})===true;
+    const applied=await this.request({id:0,type:"handover-display-applied",ptyId,generation,token})===true;
+    if(applied)this.uncertainInput.delete(ptyId);return applied;
   }
 
   async spawn(req: SpawnRequest): Promise<void> {
-    if(!req.attachIfReused&&!req.attachOnly){this.endedBootPanes.delete(req.ptyId);this.observedExits.delete(req.ptyId);}
+    if(!req.attachIfReused&&!req.attachOnly){this.endedBootPanes.delete(req.ptyId);this.observedExits.delete(req.ptyId);this.uncertainInput.delete(req.ptyId);}
     if(this.endedBootPanes.has(req.ptyId)&&(req.attachIfReused||req.attachOnly)&&!req.replayAfter){
       const exitCode=this.endedBootPanes.get(req.ptyId)!;
       const receipt=this.observedExits.get(req.ptyId);if(receipt){this.observeExit(req.ptyId,receipt);await this.exitAcks.get(req.ptyId);}
@@ -296,6 +323,7 @@ export class PtyHostClient {
    *  would have no app to serve and never exit. Requests already sent still land. */
   dispose(): void {
     this.disposed = true;
+    this.crashSupervisor?.dispose();
     for(const timer of this.exitAckTimers.values())clearTimeout(timer);this.exitAckTimers.clear();
     this.stopSessionWatches();
   }
@@ -448,7 +476,14 @@ export class PtyHostClient {
   restart(): Promise<boolean> {
     if (this.replacing) return this.replacing;
     this.hostAsked = true;
-    const run = this.replaceHost().finally(() => {
+    const run = (async()=>{
+      const enabled=!!this.crashSupervisor;this.crashSupervisor?.dispose();
+      if(this.crashAttempt){try{await withTimeout(this.crashAttempt,4000);}catch{return false;}}
+      this.crashBlocked=false;
+      const result=await this.replaceHost();
+      if(result&&enabled&&!this.disposed){this.crashSupervisor=null;this.enableCrashRecovery(this.recoveryHooks);}
+      return result;
+    })().finally(() => {
       if (this.replacing === run) this.replacing = null;
     });
     this.replacing = run;
@@ -608,6 +643,7 @@ export class PtyHostClient {
     duringReplace = false,
   ): Promise<unknown> {
     if (this.disposed) throw new Error(DISPOSED_MESSAGE);
+    if(this.crashBlocked&&!duringReplace)throw new Error("The terminal host is disconnected or recovering. This request was not sent.");
     if (!duringReplace && this.replacing) await this.replacing;
     if (this.disposed) throw new Error(DISPOSED_MESSAGE);
     await this.connect();
@@ -691,7 +727,7 @@ export class PtyHostClient {
     });
   }
 
-  private startHost(bootstrap?:HandoverBootstrap): ChildProcess {
+  private startHost(bootstrap?:HandoverBootstrap|RecoveryBootstrap): ChildProcess {
     if(this.pendingPlannedHost&&this.pendingPlannedHost.exitCode===null&&this.pendingPlannedHost.signalCode===null)throw new Error("The previous terminal successor has not exited; another host was not started");
     try {
       fs.rmSync(PTY_HOST_SOCKET_PATH, { force: true });
@@ -707,10 +743,10 @@ export class PtyHostClient {
           ...process.env,
           [RUN_AS_NODE_VAR]: RUN_AS_NODE_VALUE,
           AYA_PTY_OWNER_FD: "3",
-          ...(bootstrap ? {AYA_PTY_CHECKPOINT_FD:"4"} : {}),
+          ...(bootstrap ? ("kind" in bootstrap?{AYA_PTY_RECOVERY_FD:"4"}:{AYA_PTY_CHECKPOINT_FD:"4"}) : {}),
         },
       });
-      if(bootstrap){this.pendingPlannedHost=child;child.once("exit",()=>{if(this.pendingPlannedHost===child)this.pendingPlannedHost=null;});}
+      this.ownsOwnerKey=true;this.pendingPlannedHost=child;child.once("exit",()=>{if(this.pendingPlannedHost===child)this.pendingPlannedHost=null;});
       const secretPipe = child.stdio[3] as NodeJS.WritableStream;
       secretPipe.on("error", () => {}); secretPipe.end(this.ownerSecret);
       if(bootstrap){const pipe=child.stdio[4] as NodeJS.WritableStream;pipe.on("error",()=>{});pipe.end(JSON.stringify(bootstrap));}
@@ -725,9 +761,12 @@ export class PtyHostClient {
   /** Connects to a host just started, retrying until the deadline while its socket is missing
    *  (ENOENT) or refuses: listen() creates the file at bind, a moment before it accepts, so a
    *  connect in that moment is refused (seen on macOS CI). */
-  private async openStartedHostSocket(): Promise<void> {
+  private async openStartedHostSocket(signal?:AbortSignal,child?:ChildProcess): Promise<void> {
     const deadline = Date.now() + PTY_HOST_SOCKET_WAIT_TIMEOUT_MS;
     for (;;) {
+      if(this.disposed)throw new Error(DISPOSED_MESSAGE);
+      if(signal?.aborted)throw new Error("Terminal host recovery was cancelled");
+      if(child&&(child.exitCode!==null||child.signalCode!==null))throw new Error("The terminal host exited before accepting its recovery connection");
       try {
         await this.openSocket();
         return;
@@ -786,6 +825,7 @@ export class PtyHostClient {
         })).then((data) => {
           this.preparations.delete(message.prepareId);
           if (controller.signal.aborted || !socket || socket.destroyed || socket !== this.socket || this.disposed) return;
+          if(!("failure" in data))this.recoveryLaunches.set(message.req.ptyId,{request:{...message.req},launch:data.launch,spawnedAt:data.spawnedAt,pid:0});
           // No pending entry: this is a reply to the host's prepare message, not an app request.
           socket.write(JSON.stringify({ id: this.nextId++, type: "prepared", prepareId: message.prepareId, data }) + "\n");
         });
@@ -794,8 +834,11 @@ export class PtyHostClient {
       if ("type" in message && message.type === "spawned") {
         flushEvents();
         if(message.ownerBacked)this.ownerBacked=true;
+        if(message.ownerIdentity)this.cacheRecoveryOwner(message.ownerIdentity);
         if(message.hostPid)this.lastHostPid=message.hostPid;
         if(message.restored)this.live.add(message.req.ptyId);
+        const prior=this.recoveryLaunches.get(message.req.ptyId);
+        this.recoveryLaunches.set(message.req.ptyId,{request:message.req,launch:message.launch??prior?.launch??{command:message.req.command,cwd:message.cwd},spawnedAt:message.spawnedAt,pid:message.pid});
         this.lostOwned.delete(message.req.ptyId);
         this.sessionWatches.get(message.req.ptyId)?.();
         this.sessionWatches.set(message.req.ptyId,
@@ -838,10 +881,21 @@ export class PtyHostClient {
     flushEvents();
   }
 
+  private cacheRecoveryOwner(owner:RecoveryOwnerIdentity&{incompatible:boolean}):void {
+    this.recoveryOwner=!owner.incompatible?{pid:owner.pid,startTime:owner.startTime,instanceId:owner.instanceId,binaryHash:owner.binaryHash}:null;
+  }
   private onResponse(message: PtyHostResponse): void {
+    if(message.ownerIdentity)this.cacheRecoveryOwner(message.ownerIdentity);
     if (message.ownerBacked) { this.ownerBacked = true; this.metadataSocket = this.socket; }
     const reportedPid = message.hostPid ?? (message.ok && message.result && typeof message.result === "object" ? (message.result as { pid?: unknown }).pid : undefined);
-    if (typeof reportedPid === "number" && Number.isSafeInteger(reportedPid) && reportedPid > 1) this.lastHostPid = reportedPid;
+    if (typeof reportedPid === "number" && Number.isSafeInteger(reportedPid) && reportedPid > 1) {
+      if(this.lastHostPid!==reportedPid){try{this.lastHostStart=ownerProcessStartIdentity(reportedPid);}catch{this.lastHostStart=null;}}
+      this.lastHostPid = reportedPid;
+    }
+    if(message.ok&&message.result&&typeof message.result==="object"&&"owner" in message.result){
+      const owner=(message.result as {owner?:PtyOwnerStatus}).owner;
+      this.recoveryOwner=owner&&!owner.incompatible&&owner.instanceId&&owner.startTime&&owner.hash?{pid:owner.pid,instanceId:owner.instanceId,startTime:owner.startTime,binaryHash:owner.hash}:null;
+    }
     const pending = this.pending.get(message.id);
     if (!pending) return;
     this.pending.delete(message.id);
@@ -878,9 +932,94 @@ export class PtyHostClient {
     // The host took its panes down without a word: stopped and restartable, as for a pane it has no session for.
     this.sendToSinks(lost.map((ptyId) => ({ type: this.ownerBacked ? "disconnected" : "no-session", ptyId })));
     for (const [, pending] of this.pending) {
+      if(pending.type==="write"&&pending.ptyId)this.uncertainInput.add(pending.ptyId);
       pending.reject(new Error(pending.type==="write"?"Terminal input acknowledgement was lost when the terminal host stopped. Some bytes may have reached the process. Aya did not resend it.":"PTY host disconnected"));
     }
     this.pending.clear();
+    if(this.crashTask){this.crashAgain=true;return;}
+    if(!this.disposed&&!this.hostAsked&&this.ownerBacked&&lost.length&&this.crashSupervisor){
+      this.crashBlocked=true;
+      if(!this.ownsOwnerKey){
+        const reason="Aya restarted since this terminal host started, so it cannot restart the host for these panes. The native owner may still keep their processes running. Aya left the panes disconnected and did not respawn them; restart explicitly to stop them and try again.";
+        this.recoveryHooks.log?.("pty-crash-recovery-unavailable",{reason:"owner key unknown"});
+        this.sendToSinks(lost.map(ptyId=>({type:"disconnected",ptyId,reason})));return;
+      }
+      if(!this.lastHostPid||!this.lastHostStart||!this.recoveryOwner){
+        const reason="Aya cannot verify the stopped host or its native owner. The panes were kept disconnected; processes may still be running and were not respawned.";
+        this.recoveryHooks.log?.("pty-crash-recovery-unavailable",{reason:"owner or host identity unknown"});
+        this.sendToSinks(lost.map(ptyId=>({type:"disconnected",ptyId,reason})));return;
+      }
+      this.crashContext={pid:this.lastHostPid,start:this.lastHostStart,owner:{...this.recoveryOwner}};
+      this.beginCrashRecovery();
+    }
+  }
+  private beginCrashRecovery():void {
+    if(this.disposed||this.crashTask||!this.crashSupervisor)return;
+    let again=false;
+    const task=this.crashSupervisor.recover().then(ok=>{again=ok&&this.crashAgain;return ok;}).finally(()=>{
+      if(this.crashTask===task)this.crashTask=null;
+      if(again&&!this.disposed){this.crashAgain=false;this.beginCrashRecovery();}
+    });this.crashTask=task;
+  }
+  private async recoverCrashedHost(signal:AbortSignal):Promise<RecoveryAttemptResult> {
+    const context=this.crashContext;if(!context||this.disposed||signal.aborted)return "blocked";
+    let child:ChildProcess|undefined;
+    const stop=()=>{if(child&&child.exitCode===null&&child.signalCode===null)child.kill("SIGKILL");};
+    signal.addEventListener("abort",stop,{once:true});
+    try{
+      const previous=readProcInfo(context.pid);
+      if(previous.probeFailed)return "blocked";
+      if(previous.alive){const identity=ownerProcessStartIdentity(context.pid);if(!identity||identity===context.start)return "blocked";} // socket loss alone is not death
+      const record=readOwnerRecord(),expected=context.owner;
+      if(!record||record.pid!==expected.pid||record.startTime!==expected.startTime||record.instanceId!==expected.instanceId||record.binaryHash!==expected.binaryHash||!ownerRecordIsLive(record)||ownerReaderIsLive(record)||ownerBinaryHash(ownerArtifactPaths().executable)!==expected.binaryHash)return "blocked";
+      const panes:RecoveryPane[]=[];
+      for(const pane of record.panes){
+        const launch=this.recoveryLaunches.get(pane.id);
+        if(pane.acknowledged||!launch||launch.pid!==pane.pid||!pane.startIdentity)continue;
+        const request={...launch.request};delete request.attachOnly;delete request.attachIfReused;delete request.replayAfter;
+        panes.push({...launch,id:pane.id,generation:pane.generation,pid:pane.pid,startIdentity:pane.startIdentity,request});
+      }
+      const observed=[...this.observedExits].slice(0,25).map(([id,p])=>({id,generation:p.generation,event:p.event}));
+      const bootstrap=parseRecoveryBootstrap(Buffer.from(JSON.stringify({format:1,kind:"crash",owner:expected,panes,observed})));
+      if(this.disposed||signal.aborted)return "blocked";
+      if(this.pendingPlannedHost&&this.pendingPlannedHost.exitCode===null&&this.pendingPlannedHost.signalCode===null){
+        await new Promise<void>(resolve=>{const timer=setTimeout(resolve,1000);this.pendingPlannedHost!.once("exit",()=>{clearTimeout(timer);resolve();});});
+      }
+      child=this.startHost(bootstrap);if(signal.aborted)stop();
+      await this.openStartedHostSocket(signal,child);
+      if(signal.aborted||this.disposed)throw Error("Crash recovery cancelled");
+      const socket=this.socket;if(!socket)throw Error("Crash recovery did not connect");
+      const version=await withTimeout(this.sendRequest(socket,{id:0,type:"version"}),2000) as {pid:number;owner?:PtyOwnerStatus;recovery?:Array<{id:string;generation:string;exitCode?:number}>};
+      if(version.pid!==child.pid||version.owner?.pid!==expected.pid||version.owner.instanceId!==expected.instanceId||version.owner.startTime!==expected.startTime||version.owner.hash!==expected.binaryHash||version.owner.incompatible||!Array.isArray(version.recovery)||version.recovery.length>25)throw Error("Crash recovery identity mismatch");
+      const ids=new Set<string>();
+      for(const p of version.recovery){
+        if(!p||!panes.some(x=>x.id===p.id)||ids.has(p.id)||typeof p.generation!=="string"||!p.generation.length||p.generation.length>128||Object.keys(p).some(key=>!["id","generation","exitCode"].includes(key))||(p.exitCode!==undefined&&(!Number.isInteger(p.exitCode)||p.exitCode<0||p.exitCode>255)))throw Error("Crash recovery pane manifest refused");
+        ids.add(p.id);
+      }
+      this.metadataSocket=socket;this.reusedHost=true;this.plannedReusedBoot=true;
+      const ready=version.recovery.map(p=>{
+        this.lostOwned.delete(p.id);if(p.exitCode===undefined)this.live.add(p.id);
+        return {...p,notice:"The terminal host restarted. Previously consumed screen and history were lost; unread output and the running process were kept."+(this.uncertainInput.has(p.id)?" Input acknowledgement was lost; some bytes may have reached this process. Aya did not resend it. Check before retrying.":""),replayToken:randomBytes(16).toString("hex")};
+      });
+      this.recoveryHooks.log?.("pty-crash-recovery-inventory",{recovered:ready.map(p=>p.id),disconnected:[...this.lostOwned]});
+      this.recoveryHooks.restored?.(ready);
+      for(const pane of ready){
+        this.sendToSinks([{type:"recovered",ptyId:pane.id,generation:pane.generation,replayToken:pane.replayToken,notice:pane.notice}]);
+        const launch=this.recoveryLaunches.get(pane.id)!;
+        await withTimeout(this.sendRequest(socket,{id:0,type:"spawn",req:{...launch.request,attachOnly:true,replayAfter:{generation:pane.generation,offset:0,token:pane.replayToken}}}),2000);
+      }
+      for(const [id,receipt] of this.observedExits){this.exitAckRetries.delete(id);this.observeExit(id,receipt);}
+      if(this.socket!==socket||socket.destroyed||signal.aborted||this.disposed)throw Error("Crash recovery lost its connection");
+      this.crashAgain=false;this.crashBlocked=false;
+      return "recovered";
+    }catch(error){
+      this.recoveryHooks.log?.("pty-crash-recovery-attempt-failed",{reason:String(error)});
+      stop();
+      if(child&&child.exitCode===null&&child.signalCode===null){
+        try{await withTimeout(new Promise<void>(resolve=>child!.once("exit",()=>resolve())),3000);}catch{return "blocked";}
+      }
+      this.dropSocket();return signal.aborted||this.disposed?"blocked":"retry";
+    }finally{signal.removeEventListener("abort",stop);}
   }
 }
 

@@ -9,7 +9,7 @@ export interface RecoveryPane {
   id:string;generation:number;pid:number;startIdentity:string;
   request:SpawnRequest;launch:PaneLaunch;spawnedAt:number;
 }
-export interface RecoveryBootstrap {format:1;kind:"crash";owner:RecoveryOwnerIdentity;panes:RecoveryPane[]}
+export interface RecoveryBootstrap {format:1;kind:"crash";owner:RecoveryOwnerIdentity;panes:RecoveryPane[];observed?:Array<{id:string;generation:number;event:number}>}
 export const MAX_RECOVERY_BOOTSTRAP_BYTES=1024*1024;
 function closed(value:unknown,keys:string[]):value is Record<string,unknown> {
  return !!value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join(',')===keys.sort().join(',');
@@ -17,11 +17,12 @@ function closed(value:unknown,keys:string[]):value is Record<string,unknown> {
 export function parseRecoveryBootstrap(bytes:Buffer):RecoveryBootstrap {
  if(bytes.length>MAX_RECOVERY_BOOTSTRAP_BYTES)throw Error("Recovery bootstrap length limit");
  const v=parseCheckpointJson(bytes);
- if(!closed(v,['format','kind','owner','panes'])||v.format!==1||v.kind!=='crash'||
+ if(!(closed(v,['format','kind','owner','panes'])||closed(v,['format','kind','owner','panes','observed']))||v.format!==1||v.kind!=='crash'||
   !closed(v.owner,['pid','startTime','instanceId','binaryHash'])||!Number.isSafeInteger(v.owner.pid)||(v.owner.pid as number)<2||(v.owner.pid as number)>0x7fffffff||
   typeof v.owner.startTime!=='string'||!v.owner.startTime.length||v.owner.startTime.length>128||
   typeof v.owner.instanceId!=='string'||!/^[a-f0-9]{32}$/.test(v.owner.instanceId)||
   typeof v.owner.binaryHash!=='string'||!/^[a-f0-9]{64}$/.test(v.owner.binaryHash)||!Array.isArray(v.panes)||v.panes.length>25)throw Error("Invalid recovery bootstrap");
+ if(v.observed!==undefined&&(!Array.isArray(v.observed)||v.observed.length>25||new Set(v.observed.map(p=>p.id)).size!==v.observed.length||!v.observed.every(p=>closed(p,['id','generation','event'])&&typeof p.id==='string'&&p.id.length>0&&p.id.length<=128&&Number.isInteger(p.generation)&&(p.generation as number)>0&&(p.generation as number)<=0xffffffff&&Number.isInteger(p.event)&&(p.event as number)>0&&(p.event as number)<=0xffffffff)))throw Error("Invalid observed recovery exits");
  const ids=new Set<string>();
  for(const p of v.panes){
   if(!closed(p,['id','generation','pid','startIdentity','request','launch','spawnedAt'])||typeof p.id!=='string'||ids.has(p.id)||

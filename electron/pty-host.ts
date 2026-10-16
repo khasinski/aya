@@ -25,6 +25,8 @@ import {
   hasUnattachedRestoredPanes,
   restoredPtyLaunches,
   restorePtyCorePane,
+  recoverPtyCorePane,
+  ptyRecoveryStates,
   getBufferedOutput,
   getPtyLaunch,
   getPtySize,
@@ -39,8 +41,9 @@ import {
   type PtyEventSink,
   ptyCoreHandoverInProgress,
 } from "./pty-core";
-import { getOwnerRuntime, currentOwnerRuntime, shutdownOwnerRuntime, requireOwnerExitAcknowledgements, setOwnerUnavailableListener, ownerHandoverCredential } from "./pty-owner-runtime";
+import { getOwnerRuntime, currentOwnerRuntime, shutdownOwnerRuntime, requireRecoveryOwner, requireOwnerExitAcknowledgements, setOwnerUnavailableListener, ownerHandoverCredential } from "./pty-owner-runtime";
 import { HandoverWindow, handoverPeer } from "./pty-handover-window";
+import {readRecoveryBootstrap} from "./pty-recovery-bootstrap";
 import {readHandoverBootstrap,preflightCoreHandover,readCoreHandover} from "./pty-handover-bootstrap";
 import {acknowledgeCheckpoint} from "./pty-checkpoint-store";
 import { HostHandover } from "./pty-host-handover";
@@ -63,6 +66,7 @@ const HOST_NONCE_BYTES = 8;
 const LOG_HASH_PREFIX_CHARS = 8;
 
 const clients = new Set<net.Socket>();
+let crashBoot=false;
 const handoverWindow = new HandoverWindow();
 const hostHandover = new HostHandover(PTY_HANDOVER_CORE_DIRECTORY, PTY_HANDOVER_DISPLAY_DIRECTORY);
 let idleTimer: NodeJS.Timeout | null = null;
@@ -146,7 +150,9 @@ function socketPathIsOurs(): boolean {
 function sendLine(socket: net.Socket, value: PtyHostMessage): void {
   // A client that is gone gets nothing; writing would only raise EPIPE.
   if (socket.destroyed || !socket.writable) return;
-  socket.write(`${JSON.stringify("id" in value ? { ...value, ownerBacked: true, hostPid: process.pid } : value)}\n`);
+  const owner=currentOwnerRuntime();
+  const ownerIdentity=owner?{pid:owner.record.pid,startTime:owner.record.startTime,instanceId:owner.record.instanceId,binaryHash:owner.record.binaryHash,incompatible:owner.incompatible}:undefined;
+  socket.write(`${JSON.stringify("id" in value ? { ...value, ownerBacked: true, hostPid: process.pid,ownerIdentity } : value.type==="spawned"?{...value,ownerIdentity}:value)}\n`);
 }
 
 function broadcast(event: PtyEvent): void {
@@ -266,12 +272,12 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
         else sendLine(socket, { type: "prepare", prepareId: request.id, req, cwd });
       }),
       replay: async (req, pid, spawnedAt) => {
-        sendLine(socket, { type: "spawned", req, pid, cwd: getPtyLaunch(req.ptyId)?.cwd ?? req.cwd, spawnedAt });
+        sendLine(socket, { type: "spawned", req, pid, cwd: getPtyLaunch(req.ptyId)?.cwd ?? req.cwd, launch:getPtyLaunch(req.ptyId)??undefined, spawnedAt });
         const snapshot = await vtSnapshot(req.ptyId);
         if (snapshot) sendLine(socket, { type: "snapshot", ptyId: req.ptyId, snapshot, replay: true });
       },
       opened: (req, pid, data) => {
-        sendLine(socket, { type: "spawned", req, pid, cwd: data.launch.cwd, spawnedAt: data.spawnedAt });
+        sendLine(socket, { type: "spawned", req, pid, cwd: data.launch.cwd, launch:data.launch, spawnedAt: data.spawnedAt });
         installSnapshotFanout(req.ptyId);
         return () => {};
       },
@@ -329,8 +335,8 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
     // pid lets a client correlate the socket-connected host with a registry
     // record (e.g. to spot a same-version host stranded off-socket).
     const owner = currentOwnerRuntime();
-    return { ...HOST_IDENTITY, ptyCount: activePtyCount(), pid: process.pid,
-      owner: owner ? { pid: owner.record.pid, hash: owner.record.binaryHash, incompatible: owner.incompatible,
+    return { ...HOST_IDENTITY, ptyCount: activePtyCount(), pid: process.pid,...(crashBoot?{recovery:ptyRecoveryStates()}:{}),
+      owner: owner ? { pid: owner.record.pid,instanceId:owner.record.instanceId,startTime:owner.record.startTime, hash: owner.record.binaryHash, incompatible: owner.incompatible,
         disconnected: [...owner.disconnected.keys()], inventory: owner.record.panes, uncertain: owner.record.uncertain ?? [], recoveryFailures: owner.record.recoveryFailures ?? [] } : null };
   }
   throw new Error(PTY_HOST_UNKNOWN_REQUEST);
@@ -446,7 +452,7 @@ function start(): void {
     // Main owns session watches even for a view that will mount much later.
     // These are bounded per-pane launch records, never aggregate VT payloads.
     for(const pane of restoredPtyLaunches()){
-      sendLine(socket,{type:"spawned",...pane,restored:true,ownerBacked:true,hostPid:process.pid});
+      sendLine(socket,{type:"spawned",...pane,launch:getPtyLaunch(pane.req.ptyId)??undefined,restored:true,ownerBacked:true,hostPid:process.pid});
       void vtSnapshot(pane.req.ptyId).then(snapshot=>{if(snapshot)sendLine(socket,{type:"snapshot",ptyId:pane.req.ptyId,snapshot});});
     }
   });
@@ -495,11 +501,29 @@ setOwnerUnavailableListener(owner => {
   for (const id of owner.record.panes.map(p => p.id)) broadcast({ type: "disconnected", ptyId: id });
 });
 void (async()=>{
-  const bootstrap=process.env.AYA_PTY_CHECKPOINT_FD === "4" ? await readHandoverBootstrap(4) : null;
+  const recovery=process.env.AYA_PTY_RECOVERY_FD === "4" ? await readRecoveryBootstrap(4) : null;
+  delete process.env.AYA_PTY_RECOVERY_FD;
+  if(recovery)requireRecoveryOwner(recovery.owner);
+  const bootstrap=!recovery&&process.env.AYA_PTY_CHECKPOINT_FD === "4" ? await readHandoverBootstrap(4) : null;
   delete process.env.AYA_PTY_CHECKPOINT_FD;
   if(bootstrap)await preflightCoreHandover(bootstrap.core);
   const bootstrapOwner=await getOwnerRuntime();
-  const releaseBootstrap=bootstrap?bootstrapOwner.holdRestoration():()=>{};
+  const releaseBootstrap=bootstrap||recovery?bootstrapOwner.holdRestoration():()=>{};
+  if(recovery){
+    const observed=new Set<string>();
+    for(const receipt of recovery.observed??[]){
+      const pane=bootstrapOwner.disconnected.get(receipt.id);
+      if(pane?.exited&&pane.generation===receipt.generation&&pane.event===receipt.event){await bootstrapOwner.retired(pane);observed.add(pane.id);}
+    }
+    // Identity preflight for the whole requested set before the first master.
+    for(const pane of recovery.panes){
+      if(observed.has(pane.id))continue;
+      const actual=bootstrapOwner.disconnected.get(pane.id);
+      if(!actual||actual.pid!==pane.pid||actual.generation!==pane.generation||actual.startIdentity!==pane.startIdentity)throw Error("Recovery inventory changed before attach");
+    }
+    for(const pane of recovery.panes){if(observed.has(pane.id))continue;await recoverPtyCorePane(pane,sink);installSnapshotFanout(pane.id);}
+    crashBoot=true;
+  }
   if(bootstrap){
     for await(const pane of readCoreHandover(bootstrap.core)){
       await restorePtyCorePane(pane,sink);installSnapshotFanout(pane.id);
