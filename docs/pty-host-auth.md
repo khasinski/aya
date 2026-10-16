@@ -42,3 +42,9 @@ The approved boundary stops accidental and foreign clients: other `AYA_HOME` ins
 
 
 For the missing/wrong-key #219 fallback, I will not open unauthenticated status on a new host. Main can read the bounded private retained inventory and bind its recorded JS/owner identity to the actual socket peer. An unavailable or unverifiable inventory is explicitly unknown, never an empty-pane assertion; the host stays alive on Cancel. A positively identified legacy host retains only the bounded compatibility reads described above.
+
+## Scoped implementation evidence
+
+Stage 1 (`31b0ba6b`) is an unused main-only file helper and pure handshake. It passes 17 contracts in Node 26 and Electron 43.5/Node 24.19; the reviewer independently reran both and mutation-checked the host-instance proof and valid-ready deadline refusals. Auth findings F1-F3 are fixed. No socket dispatch was changed at that stage.
+
+Stage 2 adds an unused Unix-stream gate: at most 32 pending handshakes, one five-second deadline, fixed refusals and a paused stream on success so normal parsing can take ownership without losing bytes. A different authenticated main cannot displace a live or unverifiable incumbent. Nine contracts pass in both runtimes, including a real separate process authenticated through kernel socket credentials, pre-auth and pipelined RPC refusal, wrong capability, failed peer lookup, oversized input, silent timeout, connection budget and incumbent continuity. Socket/host/main integration and ordinary-relaunch key continuity remain the next stage; these results do not claim that the product socket is already protected.
