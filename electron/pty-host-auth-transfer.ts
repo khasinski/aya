@@ -42,6 +42,11 @@ export class HostAuthTransfer {
     return !!a&&a.phase==="active"&&a.attempt===attempt&&a.purpose===purpose&&a.deadline===deadline;
   }
   refuseActiveRedemption():never{this.expire();if(this.attempt?.phase==="active")this.seal(this.attempt);return refuse();}
+  reservedBy(issuer:HostAuthPeer,attempt:string,purpose?:AuthTransferPurpose,deadline?:number,nonce?:string):AuthTransferReservation{
+    this.expire();const a=this.attempt;
+    if(!a||a.phase!=="reserved"||a.attempt!==attempt||!validPeer(issuer)||!same(a.issuer,issuer)||(purpose!==undefined&&a.purpose!==purpose)||(deadline!==undefined&&a.deadline!==deadline)||(nonce!==undefined&&(!hex(nonce)||!timingSafeEqual(a.nonce,Buffer.from(nonce,"hex")))))refuse();
+    return {attempt:a.attempt,purpose:a.purpose,deadline:a.deadline};
+  }
   /** Called only behind ordinary authentication, before any B3 freeze or I/O. */
   reserve(issuer:HostAuthPeer,purpose:AuthTransferPurpose,nonce:string,deadline:number):AuthTransferReservation{
     this.expire();const prior=this.attempt,wall=this.clock.wall(),now=this.clock.monotonic();

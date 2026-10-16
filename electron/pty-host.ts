@@ -59,6 +59,8 @@ import { ptyLog } from "./pty-log";
 import { keepHostOnUncaught } from "./pty-host-guard";
 import {HostSocketAuthenticator,HostAuthPrincipal} from "./pty-host-auth-transport";
 import {readInheritedHostAuthKey} from "./pty-host-auth-bootstrap";
+import {HostAuthTransfer} from "./pty-host-auth-transfer";
+import type {HostAuthPeer} from "./pty-host-auth";
 
 // Wait before shutting down the idle pty host with no clients or ptys (ms).
 // The env override lets a test see the exit without waiting 30 s.
@@ -69,6 +71,9 @@ const HOST_NONCE_BYTES = 8;
 const LOG_HASH_PREFIX_CHARS = 8;
 
 const clients = new Set<net.Socket>();
+let authTransfer:HostAuthTransfer;
+let ownAuthPeer:HostAuthPeer;
+let plannedTransferAnnouncement:string|null=null;
 let crashBoot=false;
 let socketAuthenticator:HostSocketAuthenticator;
 const handoverWindow = new HandoverWindow();
@@ -201,7 +206,22 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
     if(typeof request.ptyId!=="string"||request.ptyId.length>128||typeof request.generation!=="string"||request.generation.length>128||(request.token!==undefined&&(typeof request.token!=="string"||request.token.length>128)))throw Error("Invalid applied display acknowledgement");
     return acknowledgePtyRestoration(request.ptyId,request.generation,request.token);
   }
+  if(request.type==="auth-transfer-reserve"){
+    if(hostShutdownStarted||hostHandover.active)throw new Error("A terminal handover is already in progress");
+    return {...authTransfer.reserve(handoverPeer(socket),request.purpose,request.nonce,request.deadline),hostPid:ownAuthPeer.pid,hostStartIdentity:ownAuthPeer.startIdentity};
+  }
+  if(request.type==="auth-transfer-activate"){
+    const peer=handoverPeer(socket),reserved=authTransfer.reservedBy(peer,request.attempt);
+    if(reserved.purpose==="planned-update"){
+      hostHandover.assertAnnouncement(peer,reserved.deadline);
+      if(plannedTransferAnnouncement!==request.attempt)throw new Error("The planned credential window was not announced");
+    }
+    authTransfer.activate(peer,request.attempt);return true;
+  }
+  if(request.type==="auth-transfer-cancel")return authTransfer.cancel(handoverPeer(socket),request.attempt);
+  if(request.type==="auth-transfer-complete"){authTransfer.complete(handoverPeer(socket),request.attempt,request.receipt);return true;}
   if (request.type === "handover-prepare") {
+    if(request.transferAttempt!==undefined||authTransfer.phase!=="empty")authTransfer.reservedBy(handoverPeer(socket),request.transferAttempt??"","planned-update",request.deadline);
     const owner = currentOwnerRuntime();
     if (!owner?.client?.isConnected() || owner.incompatible || owner.disconnected.size || owner.record.uncertain?.length) throw new Error("This host's processes cannot move seamlessly");
     const result = await hostHandover.prepare(handoverPeer(socket),request.deadline);
@@ -214,8 +234,10 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
     const owner = currentOwnerRuntime(), identity = ownerProcessStartIdentity(process.pid);
     if (!identity || !owner?.client?.isConnected() || owner.incompatible || owner.disconnected.size || owner.record.uncertain?.length) throw new Error("This host cannot announce a seamless handover");
     const peer = handoverPeer(socket);
+    if(request.transferAttempt!==undefined||authTransfer.phase!=="empty")authTransfer.reservedBy(peer,request.transferAttempt??"","planned-update",request.deadline,request.nonce);
     if (hostHandover.active) hostHandover.assertAnnouncement(peer,request.deadline);
     handoverWindow.announce(request.nonce, request.deadline, peer);
+    plannedTransferAnnouncement=request.transferAttempt??null;
     return {hostPid: process.pid, hostStartIdentity: identity};
   }
   if (request.type === "handover-cancel") {
@@ -352,6 +374,13 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
     try{
       const result={format:1,host:{pid:process.pid,startIdentity},secret:credential.toString("hex"),bootstrap:{format:1,kind:"crash",owner:{pid:owner.record.pid,startTime:owner.record.startTime,instanceId:owner.record.instanceId,binaryHash:owner.record.binaryHash},panes}};
       if(Buffer.byteLength(JSON.stringify(result))>MAX_RECOVERY_BOOTSTRAP_BYTES)throw Error("Terminal owner continuity length limit");
+      if(request.transferAttempt){
+        const receipt=crypto.createHash("sha256").update(JSON.stringify(result.bootstrap)).digest("hex");
+        authTransfer.noteContinuity(handoverPeer(socket),request.transferAttempt,receipt);
+        const response={...result,transferReceipt:receipt};
+        if(Buffer.byteLength(JSON.stringify(response))>MAX_RECOVERY_BOOTSTRAP_BYTES)throw Error("Terminal owner continuity length limit");
+        return response;
+      }
       return result;
     }finally{credential.fill(0);}
   }
@@ -549,7 +578,8 @@ void (async()=>{
     }catch{/* Failed identity probes cannot release a live main. */}
     return "unknown";
   });
-  socketAuthenticator=new HostSocketAuthenticator(capability,{pid:process.pid,startIdentity:ownStart},peer=>principal.authorize(peer));
+  ownAuthPeer={pid:process.pid,startIdentity:ownStart};authTransfer=new HostAuthTransfer(capability);
+  socketAuthenticator=new HostSocketAuthenticator(capability,ownAuthPeer,peer=>principal.authorize(peer),undefined,authTransfer);
   capability.fill(0);
   const recovery=process.env.AYA_PTY_RECOVERY_FD === "4" ? await readRecoveryBootstrap(4) : null;
   delete process.env.AYA_PTY_RECOVERY_FD;

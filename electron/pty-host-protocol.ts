@@ -31,9 +31,13 @@ export type PtyHostRequest =
   | { id: number; type: "snapshot"; ptyId: string }
   | { id: number; type: "composer-seen"; ptyId: string; generation: string }
   | { id: number; type: "prepared"; prepareId: number; data: PreparedSpawn }
-  | { id: number; type: "handover-announce"; nonce: string; deadline: number }
+  | { id:number;type:"auth-transfer-reserve";purpose:"ordinary-quit"|"planned-update";nonce:string;deadline:number }
+  | { id:number;type:"auth-transfer-activate";attempt:string }
+  | { id:number;type:"auth-transfer-cancel";attempt:string }
+  | { id:number;type:"auth-transfer-complete";attempt:string;receipt:string }
+  | { id: number; type: "handover-announce"; nonce: string; deadline: number;transferAttempt?:string }
   | {id:number;type:"handover-display-applied";ptyId:string;generation:string;token?:string}
-  | { id: number; type: "handover-prepare"; deadline: number }
+  | { id: number; type: "handover-prepare"; deadline: number;transferAttempt?:string }
   | { id: number; type: "handover-publish"; display: CheckpointReceipt | null; consented?: string[] }
   | { id: number; type: "handover-cancel" }
   | { id: number; type: "handover-claim"; nonce: string; reuse?: boolean }
@@ -41,7 +45,7 @@ export type PtyHostRequest =
   | { id: number; type: "handover-reuse" }
   | { id: number; type: "handover-ack-reuse" }
   | { id:number;type:"exit-observed";ptyId:string;generation:number;event:number }
-  | { id: number; type: "owner-continuity" }
+  | { id: number; type: "owner-continuity"; transferAttempt?:string }
   | { id: number; type: "version" };
 
 export type PtyHostResponse = (
@@ -71,6 +75,16 @@ export type PtyHostMessage = PtyHostResponse | PtyHostEventMessage | PtyHostPrep
 export function isPtyHostRequest(value: unknown): value is PtyHostRequest {
   if (!value || typeof value !== "object") return false;
   const r = value as Partial<PtyHostRequest>;
+  if(typeof r.type==="string"&&r.type.startsWith("auth-transfer-")){
+    const keys=r.type==="auth-transfer-reserve"?["id","type","purpose","nonce","deadline"]:r.type==="auth-transfer-complete"?["id","type","attempt","receipt"]:["id","type","attempt"];
+    const record=value as Record<string,unknown>,hex=(v:unknown)=>typeof v==="string"&&/^[a-f0-9]{64}$/.test(v);
+    if(!["auth-transfer-reserve","auth-transfer-activate","auth-transfer-cancel","auth-transfer-complete"].includes(r.type)||!Number.isSafeInteger(r.id)||Object.keys(value).length!==keys.length||!keys.every(key=>Object.hasOwn(value,key)))return false;
+    return r.type==="auth-transfer-reserve"?hex(record.nonce)&&Number.isSafeInteger(record.deadline)&&(record.purpose==="ordinary-quit"||record.purpose==="planned-update"):hex(record.attempt)&&(r.type!=="auth-transfer-complete"||hex(record.receipt));
+  }
+  if(r.type==="owner-continuity"&&Object.hasOwn(value,"transferAttempt")){
+    const record=value as Record<string,unknown>;
+    return Number.isSafeInteger(r.id)&&Object.keys(value).length===3&&["id","type","transferAttempt"].every(key=>Object.hasOwn(value,key))&&typeof record.transferAttempt==="string"&&/^[a-f0-9]{64}$/.test(record.transferAttempt);
+  }
   return typeof r.id === "number" && typeof r.type === "string";
 }
 
