@@ -4,7 +4,7 @@ I base this design on main `8890bea3` (merged B4), on branch `pty-host-socket-au
 
 ## Current state
 
-The socket gate, inherited bootstrap, main connection authentication, safe refusal/consent paths and ordinary-relaunch owner-key continuity are wired. New hosts refuse every pre-auth application RPC/event. The lead refined migration on 2026-10-16: main may ask a verified released pre-auth host for bounded read-only status, labelled as reported by that host; its reply never supplies stop authority. The stage notes below record intermediate evidence rather than unfinished product wiring. Full aggregate validation, packaging and the 25-pane auth-on measurement remain pending, and merge still waits for Justyna's same-account boundary decision.
+The socket gate, inherited bootstrap, main connection authentication, safe refusal/consent paths and ordinary-relaunch owner-key continuity are wired. New hosts refuse every pre-auth application RPC/event. The lead refined migration on 2026-10-16: main may ask a verified released pre-auth host for bounded read-only status, labelled as reported by that host; its reply never supplies stop authority. The stage notes below record intermediate evidence rather than unfinished product wiring. Final local validation is complete on product `6e99a730` with test-only head `e79400b2`: full npm tests, lint, Electron contracts, staged macOS packaging, affected GUI, the whole GUI suite and the authenticated 25-pane measurement pass. Principal-busy relaunch opens the window without a stop question and retries within a bound; socketless hosts already shutting down receive a bounded grace while the verified-gone creation guard remains. The final evidence is recorded below. Merge still waits for Justyna's same-account boundary decision; this is an approval condition, not an unfinished implementation stage.
 
 ## Proof and its boundary
 
@@ -22,7 +22,7 @@ I propose a bounded mutual HMAC-SHA256 handshake before normal JSON RPC. Client 
 
 The host must not add an unauthenticated socket to its broadcast recipients, send initial spawned/snapshot/replay/exit events, or dispatch any ordinary request. Without authentication it refuses read/search/replay, write, resize, spawn/prepare, kill/shutdown, exit/display acknowledgements, composer metadata, every handover operation (including announce and claim), version and status. Only the minimal handshake/version-of-auth-protocol envelope is public; it contains no pane data, owner key or work status. Pipelined RPC cannot race authentication. Authentication errors never trigger socket unlink, host spawn, owner replacement or a legacy downgrade.
 
-One active main principal is bound to PID plus kernel start identity; its sockets may reconnect. A different authenticated principal cannot take control while it is still live or its identity is uncertain. After the old main is proved gone, the relaunched main may become the principal. A second connection must not invalidate the first merely by sending a bad proof. All internal RPC paths, including handover claims and explicit restart, use the same handshake; no unprotected status helper remains. Socket discovery may read only the kernel peer identity without sending an RPC or either credential. Existing identity-bound stop consent is still required after authentication.
+One active main principal is bound to PID plus kernel start identity; its sockets may reconnect. A different authenticated principal cannot take control while it is still live or its identity is uncertain. After the old main is proved gone, the relaunched main may become the principal. A second connection must not invalidate the first merely by sending a bad proof. All RPC paths to new authenticated hosts, including handover claims and explicit restart, use the same handshake. The bounded, identity-verified released-host migration probe described below is the only legacy read-only exception; it sends no secret and grants no stop authority. Socket discovery may read only the kernel peer identity without sending an RPC or either credential. Existing identity-bound stop consent is still required after authentication.
 
 ## Ordinary relaunch and B4 key continuity
 
@@ -145,3 +145,41 @@ The client now gives a verified-live recorded host with a positively absent sock
 On `6e99a730`, the unchanged agent-session-resume spec passes all 90 cases across three repetitions (6.4 minutes), matching main's 90/90. Principal/guard/health contracts pass 65/65 in Node and Electron; the four old-main-alive principal GUI cases and two socketless-shutdown GUI cases pass. A test-only follow-up pins actual client disposal cancelling the default grace and the default caller forwarding decreasing `ps` timeouts (3000 then 2850 ms). The 14 guard contracts pass in each runtime; removing the client abort or omitting the timeout at the real caller makes the respective regression fail. No fixture trace hooks remain, no native owner bytes changed, and full final gates must still run on this corrected product build.
 
 Draft CI at `6e99a730` exposed a Linux-only fixture error: native contracts had 238 passes and one failure because the malformed inherited-capability test's parent FD 5 stream emitted an unhandled ECONNRESET when the correctly rejecting child closed early. The production sender already handles pipe closure. The fixture now records only the expected ECONNRESET/EPIPE closure outcomes, still requires child exit 2, empty output and no fallback key, and requires no pipe errors on accepted bootstrap. A deterministic missing-marker reset pins that handler on macOS too; removing it fails the regression. The three bootstrap tests pass in Node and Electron. The Linux job/package gate must rerun after the lead pushes this test fix.
+
+
+## Final validation and authenticated 25-pane measurement
+
+Final product bytes are `6e99a730`; `83b63266` and `e79400b2` change only tests/documentation. The final runs used `e79400b2`, without concurrent GUI/native jobs or rebuilding during the whole run:
+
+- Full `npm test`: 7,236 pass, 0 fail, 147 skip, one known TODO (7,384 total), 65.06 s. The known TODO remains the registry PID-reuse case.
+- `npm run lint`: pass. Selected Electron authentication, continuity, retirement, disposal, consent, hash and health contracts: 154/154, 6.35 s.
+- Staged macOS arm64 package smoke: pass, including raw owner/bridge receipt verification before nested ad-hoc signing, `codesign --verify --deep --strict`, owner entitlements/deployment floor, actual packaged adapter parentage/input/resize/exit 23 and display codec. This is local ad-hoc evidence, not Developer ID signing or notarization.
+- Affected actual Electron GUI: 73/73, 4.2 min. Whole Electron GUI: 471 pass, 0 fail, 6 skip, 0 flaky out of 477, 27.4 min. Both used `AYA_E2E_PTY_SHUTDOWN=0 --workers=1`; the whole run used the default 30-minute ceiling, no retries and needed no remainder invocation.
+- The unchanged agent-session-resume spec passed 90/90 across three repetitions on the corrected product, matching main `8890bea3`'s serial 90/90 comparison above.
+
+The lead reports draft #231 CI native jobs green on `e79400b2`, including real Linux x64 required pidfd signaling and macOS arm64. The parallel-isolation CI flake was being rerun at this report; it is not counted as local whole-suite evidence. Earlier non-green runs above remain diagnosis history, not final validation. Independent reviewer stage/guard mutations and scoped results remain recorded above; aggregate evidence review follows this refresh.
+
+I ran `scripts/measure-pty-host-auth.cjs` offline on macOS arm64, Electron 43.5 / Node 24.19, with 25 real native-owner PTYs at 120x40. Each active synthetic child emits about 512 bytes every 100 ms. A second main client in the same benchmark process authenticates and receives the complete owner-continuity manifest; this is not an actual application-relaunch timing measurement. Actual separate-process relaunch is covered by the GUI/continuity tests. The trial then SIGKILLs the JS host and measures through recovery and all 25 received replay fences, without a DOM or renderer-applied/paint claim.
+
+| One-trial measurement | Result |
+| --- | ---: |
+| Authentication plus 25-pane owner continuity | 2.20 ms / 3,850 us main CPU |
+| Crash to recovered plus all received replay fences | 308.91 ms |
+| All 25 sequential post-recovery input/reply round trips | 133.92 ms |
+| Input/reply p50 / p95 before recovery | 6.50 / 6.68 ms |
+| Input/reply p50 / p95 after recovery | 5.48 / 6.54 ms |
+| Sampled main / old JS / successor JS / owner RSS peaks | 92.77 / 110.20 / 110.83 / 2.25 MiB |
+| Sampled simultaneous combined RSS peak | 205.84 MiB |
+
+CPU percentages use one logical CPU as 100%, over approximately 2.0-2.2 s resource-counter intervals (benchmark main uses its own approximately 2.2 s interval):
+
+| Phase | Benchmark main | JS host | Owner |
+| --- | ---: | ---: | ---: |
+| Idle before recovery | 0.85% | 1.19% | 0.016% |
+| Active before recovery | 3.52% | 10.99% | 0.015% |
+| Active after recovery | 2.61% | 6.56% | 0.015% |
+| Idle after recovery | 1.31% | 1.57% | 0.014% |
+
+All 25 child PIDs and the native owner PID stayed unchanged. Before starting the successor, the wrapper independently required old-JS ESRCH and absent kernel start identity. No old/new JS overlap appeared in samples; that sampling alone is not the exclusion proof. The successor PID enters sampling immediately when startHost returns, including startup/replay. The 94 raw RSS samples, identity, timestamps and counter intervals are retained in ignored `test-results/socket-auth-measurement.json`; output is under `test-results/`, never the repository root. CPU sampling adds a 200 ms instrumentation interval and RSS uses asynchronous 100 ms ps samples, so overhead is included and brief peaks can be missed. Individual peaks are not additive. Combined RSS covers benchmark main, JS hosts and owner, excluding the 25 child programs. Round-trip observation polls at 5 ms. Crash recovery still loses consumed screen/history by policy; these numbers do not claim consumed-output losslessness. After shutdown, all old/new host, owner and 25 child PIDs were verified gone, and the disposable home/entry were removed.
+
+The owner executable remains byte-identical at SHA256 `2d93372d8249dd1c3a7593d0869f863fdb53971c36076c71dad9939a5a3e4109`; authentication changes no native-owner protocol or bytes. The persistent capability stops accidental/foreign clients and processes unable to read this AYA_HOME, and supplies ordinary-relaunch B4 continuity. It does not stop unsandboxed same-user code that can read the file. Merge remains held for Justyna's confirmation of that same-account boundary; no push, merge or production action is performed by the dev.
