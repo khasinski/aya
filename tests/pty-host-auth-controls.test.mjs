@@ -6,6 +6,8 @@ import net from 'node:net';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {createHash} from 'node:crypto';
+import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url);
 import {isolateHome} from './helpers/isolate-home.mjs';
 fs.mkdirSync('test-results',{recursive:true});const root=fs.mkdtempSync(path.resolve('test-results/auth-control-'));isolateHome(root);
 const {PtyHostClient}=await import('../dist-electron/pty-host-client.js');
@@ -83,3 +85,46 @@ for(const mode of ['publish-empty','publish-empty-recovered'])test(`announced ${
  }finally{c.dispose();c.dropSocket();key.fill(0);await cleanupNativeOwner(process.env.AYA_HOME);}
 });
 
+for(const mode of ['publish','publish-empty'])test(`public announced client ${mode} keeps keys in memory and completes validated continuity`,{timeout:20000},async()=>{
+ const old=await fixture(mode),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));let starts=0;
+ c.startHost=()=>{starts++;throw Error('announced reuse must not start a host');};
+ // An unrelated development disk key must not override the announced proof.
+ fs.writeFileSync(path.join(process.env.AYA_HOME,'pty-host-auth/key'),Buffer.alloc(32,91));
+ try{
+  await c.redeemAnnouncedCapability(ticket);assert.equal(c.isConnected(),false,'redemption does not wait for principal ownership');
+  const status=await c.hostStatus();assert.equal(status.pid,old.hostPid);assert.equal(c.ownsOwnerKey,true);assert.equal(c.receivedAuthTransfer,null);assert.equal(starts,0);
+  if(mode==='publish'){assert.equal(status.owner.pid,old.ownerPid);assert.equal(await c.getPid('kept'),old.pid);c.dropSocket();assert.equal(typeof (await c.paneState('kept')).generation,'string','observer borrows announced memory authority despite wrong disk key');}
+  else assert.equal(status.owner,undefined);
+  const next=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'c'.repeat(64),deadline:Date.now()+120000});await c.request({id:0,type:'auth-transfer-cancel',attempt:next.attempt});
+  await c.shutdown();
+ }finally{c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
+});
+test('lost completion reply retries the exact receipt on next connection without a second credential redemption',{timeout:20000},async()=>{
+ const old=await fixture('publish'),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js')),send=c.sendRequest.bind(c);let completions=0,manifests=0;const receipts=[];
+ c.sendRequest=async(socket,request)=>{if(request.type==='owner-continuity')manifests++;const result=await send(socket,request);if(request.type==='auth-transfer-complete'){receipts.push(request.receipt);if(++completions===1)throw Error('lost successful completion reply');}return result;};
+ try{
+  await c.redeemAnnouncedCapability(ticket);assert.equal((await c.hostStatus()).identity,null);assert.ok(c.receivedAuthTransfer?.receipt);
+  assert.equal((await c.hostStatus()).pid,old.hostPid);assert.equal(c.receivedAuthTransfer,null);assert.equal(completions,2);assert.equal(manifests,1);assert.equal(receipts[0],receipts[1]);assert.equal(await c.getPid('kept'),old.pid);await c.shutdown();
+ }finally{c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
+});
+
+test('announced client does not evict a still-live old main and completes continuity after it exits',{timeout:20000},async()=>{
+ const child=spawn(process.execPath,['tests/helpers/pty-host-auth-controls.cjs','publish-alive'],{env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},stdio:['ignore','ignore','pipe','ipc']});
+ let stderr='';child.stderr.on('data',b=>stderr+=b);const old=await new Promise((resolve,reject)=>{child.once('message',resolve);child.once('error',reject);child.once('exit',()=>reject(Error(stderr)));});
+ const c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));let starts=0;c.startHost=()=>{starts++;throw Error('no replacement allowed');};
+ try{
+  const ticket=await readAuthTransferTicket(old.file);await c.redeemAnnouncedCapability(ticket);
+  const busy=await c.hostStatus();assert.equal(busy.principalBusy,true);assert.equal(c.ownsOwnerKey,false);assert.ok(c.receivedAuthTransfer);assert.equal(starts,0);
+  const exited=once(child,'exit');child.send('exit');assert.equal((await exited)[0],0,stderr);
+  const ready=await c.hostStatus();assert.equal(ready.pid,old.hostPid);assert.equal(ready.owner.pid,old.ownerPid);assert.equal(c.ownsOwnerKey,true);assert.equal(c.receivedAuthTransfer,null);assert.equal(await c.getPid('kept'),old.pid);assert.equal(starts,0);await c.shutdown();
+ }finally{if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
+});
+
+test('an announced recipient cannot enter host creation grace if its expected socket disappears before continuity',{timeout:20000},async()=>{
+ const old=await fixture('publish'),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));
+ const guard=require('../dist-electron/pty-host-start-guard.js'),wait=guard.waitForHostShutdown;let grace=0,starts=0;const open=c.openSocket;
+ try{
+  await c.redeemAnnouncedCapability(ticket);c.openSocket=async()=>{throw Object.assign(Error('absent'),{code:'ENOENT'});};guard.waitForHostShutdown=async()=>{grace++;throw Error('creation grace must not run');};c.startHost=()=>{starts++;throw Error('no host may start');};
+  await assert.rejects(c.spawn({ptyId:'forbidden',command:'cat',cwd:process.env.HOME,cols:80,rows:24}),/This request was not sent/);assert.equal(grace,0);assert.equal(starts,0);
+ }finally{guard.waitForHostShutdown=wait;c.openSocket=open;await c.shutdown().catch(()=>{});c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
+});

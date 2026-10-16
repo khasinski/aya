@@ -15,12 +15,13 @@ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),wait=async f=>{cons
   }
   if(mode==='publish-empty'||mode==='publish-empty-recovered'){await c.kill('kept');await wait(async()=>!(await c.hostStatus()).owner);}
   const pid=await c.getPid('kept'),status=await c.hostStatus();
-  if(mode==='publish'||mode==='publish-empty'||mode==='publish-empty-recovered'){
+  if(mode==='publish'||mode==='publish-alive'||mode==='publish-empty'||mode==='publish-empty-recovered'){
    const deadline=Date.now()+120000,nonce='a'.repeat(64),budget=performance.now()+2000;
    const reserved=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce,deadline});
    const t={format:2,...reserved,nonce},file=authTransferTicketPath(process.env.AYA_HOME,t.attempt);
    await writeAuthTransferTicket(file,t,{deadline:budget});assert.equal(await c.request({id:0,type:'auth-transfer-activate',attempt:t.attempt}),true);
    keep=true;process.send({file,pid,hostPid:status.pid,ownerPid:status.owner?.pid??null});
+   if(mode==='publish-alive')await new Promise(resolve=>process.once('message',resolve));
   }else if(mode==='ordinary-wins'){
    const reserved=await c.request({id:0,type:'auth-transfer-reserve',purpose:'ordinary-quit',nonce:'b'.repeat(64),deadline:Date.now()+120000});
    await assert.rejects(c.request({id:0,type:'handover-prepare',deadline:Date.now()+120000}));assert.equal(await c.request({id:0,type:'auth-transfer-cancel',attempt:reserved.attempt}),'cancelled');

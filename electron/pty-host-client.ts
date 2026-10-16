@@ -52,10 +52,12 @@ import {readHostAuthKey,createHostAuthKey} from "./pty-host-auth-key";
 import {HostAuthError,HostPrincipalBusyError,HOST_PRINCIPAL_BUSY_REASON,type HostAuthPeer} from "./pty-host-auth";
 import {handoverPeer} from "./pty-handover-window";
 import {refusedHostStatus,HOST_AUTH_REFUSAL_REASON,type HostAuthenticationProblem} from "./pty-host-auth-status";
-import {validateOwnerContinuity} from "./pty-host-owner-continuity";
+import {validateOwnerContinuity,validateTransferredOwnerContinuity} from "./pty-host-owner-continuity";
 import {probeLegacyInventory} from "./pty-host-legacy-status";
 import {retireUnavailableOwner,ownerRetirementDeps} from "./pty-host-owner-retirement";
 import {restartRefusedHost,refusedRestartDeps} from "./pty-host-auth-restart";
+import type {AuthTransferTicket} from "./pty-host-auth-ticket";
+import {redeemHostCapability} from "./pty-host-auth-redemption";
 import {assertHostCreationSafe,waitForHostShutdown} from "./pty-host-start-guard";
 
 // Deadline waiting for a started pty host to create its socket and accept on it (ms).
@@ -172,6 +174,7 @@ export class PtyHostClient {
   private observationOnly = false;
   private readonly ownerSecret = randomBytes(32);
   private hostAuthKey:Buffer|null=null;
+  private receivedAuthTransfer:{ticket:AuthTransferTicket;receipt?:string}|null=null;
   private authRefusalPeer:HostAuthPeer|null|undefined;
   private principalBusyPeer:HostAuthPeer|null|undefined;
   private readonly principalBusyPanes=new Set<string>();
@@ -521,6 +524,50 @@ export class PtyHostClient {
     this.plannedReusedBoot=true;
     for(const id of ids)this.consentedBootSpawns.add(id);
   }
+  /** Explicit startup-only nonce redemption. This never starts, unlinks,
+   * probes or signals a host/owner, and does not wait for the old principal. */
+  async redeemAnnouncedCapability(ticket:AuthTransferTicket):Promise<void>{
+    if(this.disposed||this.isConnected()||this.hostAuthKey||this.receivedAuthTransfer)throw new HostAuthError();
+    const socket=net.createConnection(PTY_HOST_SOCKET_PATH);
+    socket.on("error",()=>{});
+    const cancel=()=>socket.destroy();
+    this.startupCancelled.signal.addEventListener("abort",cancel,{once:true});
+    let key:Buffer|undefined;
+    try{
+      const connected=new Promise<void>((resolve,reject)=>{socket.once("connect",resolve);socket.once("error",reject);socket.once("close",()=>reject(new HostAuthError()));});
+      await withTimeout(connected,5000);
+      if(this.disposed||this.startupCancelled.signal.aborted)throw new Error(DISPOSED_MESSAGE);
+      const startIdentity=ownerProcessStartIdentity(process.pid);
+      if(!startIdentity)throw new HostAuthError();
+      key=await redeemHostCapability(socket,ticket,{pid:process.pid,startIdentity});
+      if(this.disposed||this.startupCancelled.signal.aborted)throw new Error(DISPOSED_MESSAGE);
+      this.hostAuthKey=Buffer.from(key);
+      this.receivedAuthTransfer={ticket:{...ticket}};
+    }finally{key?.fill(0);socket.destroy();this.startupCancelled.signal.removeEventListener("abort",cancel);}
+  }
+  private async completeAnnouncedContinuity(socket:net.Socket,version:unknown):Promise<void>{
+    const transfer=this.receivedAuthTransfer;
+    if(!transfer)return;
+    if(!transfer.receipt){
+      const response=await withTimeout(this.sendRequest(socket,{id:0,type:"owner-continuity",transferAttempt:transfer.ticket.attempt}),PTY_HOST_RESTART_REQUEST_TIMEOUT_MS);
+      const continuity=validateTransferredOwnerContinuity(response,handoverPeer(socket),version);
+      try{
+        if(this.disposed||this.socket!==socket||socket.destroyed||this.receivedAuthTransfer!==transfer)throw new Error(PTY_HOST_NOT_CONNECTED);
+        if(continuity.bootstrap){
+          for(const pane of continuity.bootstrap.panes){
+            this.recoveryLaunches.set(pane.id,{request:pane.request,launch:pane.launch,spawnedAt:pane.spawnedAt,pid:pane.pid});
+            if(!this.endedBootPanes.has(pane.id))this.live.add(pane.id);
+          }
+          this.recoveryOwner={...continuity.bootstrap.owner};
+        }else this.recoveryOwner=null;
+        this.ownerSecret.set(continuity.credential);this.ownsOwnerKey=true;this.ownerContinuityUnavailable=false;
+        transfer.receipt=continuity.receipt;
+      }finally{continuity.credential.fill(0);}
+    }
+    const completed=await withTimeout(this.sendRequest(socket,{id:0,type:"auth-transfer-complete",attempt:transfer.ticket.attempt,receipt:transfer.receipt}),PTY_HOST_RESTART_REQUEST_TIMEOUT_MS);
+    if(completed!==true||this.disposed||this.socket!==socket||socket.destroyed||this.receivedAuthTransfer!==transfer)throw new HostAuthError();
+    this.receivedAuthTransfer=null;
+  }
   async preparePlannedHandover(deadline:number):Promise<HostHandoverState> {
     return handoverState(await withTimeout(this.request({id:0,type:"handover-prepare",deadline}),5000),deadline);
   }
@@ -805,6 +852,7 @@ export class PtyHostClient {
     // connectWithHostStart or connect's metadata/continuity/exit-ACK path.
     const observer = new PtyHostClient(this.hostScript);
     observer.observationOnly = true;
+    observer.hostAuthKey=this.hostAuthKey?Buffer.from(this.hostAuthKey):null;
     const deadline = Date.now() + 5000;
     try {
       await withTimeout(observer.openSocket(), Math.max(1, deadline - Date.now()));
@@ -973,7 +1021,7 @@ export class PtyHostClient {
       // A quit already requested shutdown before dispose. Authentication may
       // finish on an existing host, but no discovery/continuity RPC is needed.
       if(this.issuedShutdown)return;
-      if (!this.metadataRequired&&!(this.reusedHost&&!this.ownsOwnerKey)) return;
+      if (!this.metadataRequired&&!this.receivedAuthTransfer&&!(this.reusedHost&&!this.ownsOwnerKey)) return;
       const socket = this.socket;
       if (!socket || socket.destroyed) throw new Error(PTY_HOST_NOT_CONNECTED);
       // Discover ownership before releasing queued spawn/write requests: a
@@ -983,6 +1031,7 @@ export class PtyHostClient {
         // A legacy host can explicitly reject version; it has no native owner.
       }), PTY_HOST_SOCKET_WAIT_TIMEOUT_MS);
       if (this.socket !== socket || socket.destroyed) throw new Error(PTY_HOST_NOT_CONNECTED);
+      if(this.receivedAuthTransfer)await this.completeAnnouncedContinuity(socket,version);
       if(this.reusedHost&&!this.ownsOwnerKey&&(this.ownerBacked||!!(version as {owner?:unknown}|undefined)?.owner)){
         try{
           const response=await withTimeout(this.sendRequest(socket,{id:0,type:"owner-continuity"}),PTY_HOST_RESTART_REQUEST_TIMEOUT_MS);
@@ -1022,6 +1071,7 @@ export class PtyHostClient {
       if (this.disposed) throw new Error(DISPOSED_MESSAGE);
       if(!["ENOENT","ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code??""))throw error;
       if(this.principalBusyPeer!==undefined)throw new HostPrincipalBusyError();
+      if(this.receivedAuthTransfer)throw new HostAuthError();
       const prior=this.pendingPlannedHost;
       if(prior&&prior.exitCode===null&&prior.signalCode===null){
         await new Promise<void>(resolve=>{const done=()=>{clearTimeout(timer);prior.removeListener("exit",done);resolve();};const timer=setTimeout(done,1000);prior.once("exit",done);});
@@ -1051,6 +1101,8 @@ export class PtyHostClient {
       socket.once("connect", () => {void (async()=>{
         if (this.observationOnly && this.disposed) throw new Error(DISPOSED_MESSAGE);
         peer=handoverPeer(socket);
+        const announced=this.receivedAuthTransfer?.ticket;
+        if(announced&&(peer.pid!==announced.hostPid||peer.startIdentity!==announced.hostStartIdentity))throw new HostAuthError();
         this.hostAuthKey??=readHostAuthKey(AYA_HOME);
         const startIdentity=ownerProcessStartIdentity(process.pid);
         if(!startIdentity)throw new HostAuthError();
