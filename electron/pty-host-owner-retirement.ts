@@ -84,7 +84,7 @@ export async function retireUnavailableOwner(consent:HostRestartConsent,deps:Own
 function sameRecord(a:OwnerRecord,b:OwnerRecord|null):boolean{
   return !!b&&a.pid===b.pid&&a.startTime===b.startTime&&a.startIdentity===b.startIdentity&&a.instanceId===b.instanceId&&a.binaryHash===b.binaryHash&&a.jsPid===b.jsPid&&a.jsStartTime===b.jsStartTime;
 }
-export function ownerRetirementDeps(options:{cancelled:()=>boolean;log:OwnerRetirementDeps["log"];ownerGone:()=>void;complete:(ids:string[])=>void}):OwnerRetirementDeps{
+export function ownerRetirementDeps(options:{cancelled:()=>boolean;log:OwnerRetirementDeps["log"];ownerGone:()=>void;complete:(ids:string[],record:OwnerRecord)=>void}):OwnerRetirementDeps{
   const base=refusedRestartDeps(options.cancelled,options.log);
   const persist=(record:OwnerRecord)=>{if(!sameRecord(record,readOwnerRecord()))throw Error("Retained owner record changed; its inventory was kept");writeOwnerRecord(record);};
   return {
@@ -110,7 +110,7 @@ export function ownerRetirementDeps(options:{cancelled:()=>boolean;log:OwnerReti
     },
     complete(record,ids){
       if(record.panes.length||record.uncertain?.length||record.spawnIntents?.length||!sameRecord(record,readOwnerRecord()))throw Error("Retained process inventory is not settled");
-      removeOwnerRecord(record);if(readOwnerRecord())throw Error("Retained owner record changed before retirement");options.complete(ids);
+      removeOwnerRecord(record);if(readOwnerRecord())throw Error("Retained owner record changed before retirement");options.complete(ids,record);
     },
   };
 }

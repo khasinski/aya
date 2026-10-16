@@ -174,7 +174,7 @@ export class PtyHostClient {
   private observationOnly = false;
   private readonly ownerSecret = randomBytes(32);
   private hostAuthKey:Buffer|null=null;
-  private receivedAuthTransfer:{ticket:AuthTransferTicket;receipt?:string}|null=null;
+  private receivedAuthTransfer:{ticket:AuthTransferTicket;receipt?:string;retirementOwner?:RecoveryOwnerIdentity}|null=null;
   private authRefusalPeer:HostAuthPeer|null|undefined;
   private principalBusyPeer:HostAuthPeer|null|undefined;
   private readonly principalBusyPanes=new Set<string>();
@@ -549,6 +549,8 @@ export class PtyHostClient {
     const transfer=this.receivedAuthTransfer;
     if(!transfer)return;
     if(!transfer.receipt){
+      const offered=(version as {owner?:PtyOwnerStatus}|null)?.owner;
+      if(offered&&Number.isSafeInteger(offered.pid)&&offered.pid>1&&typeof offered.startTime==="string"&&offered.startTime.length<=128&&typeof offered.instanceId==="string"&&/^[a-f0-9]{32}$/.test(offered.instanceId)&&typeof offered.hash==="string"&&/^[a-f0-9]{64}$/.test(offered.hash))transfer.retirementOwner={pid:offered.pid,startTime:offered.startTime,instanceId:offered.instanceId,binaryHash:offered.hash};
       const response=await withTimeout(this.sendRequest(socket,{id:0,type:"owner-continuity",transferAttempt:transfer.ticket.attempt}),PTY_HOST_RESTART_REQUEST_TIMEOUT_MS);
       const continuity=validateTransferredOwnerContinuity(response,handoverPeer(socket),version);
       try{
@@ -567,6 +569,22 @@ export class PtyHostClient {
     const completed=await withTimeout(this.sendRequest(socket,{id:0,type:"auth-transfer-complete",attempt:transfer.ticket.attempt,receipt:transfer.receipt}),PTY_HOST_RESTART_REQUEST_TIMEOUT_MS);
     if(completed!==true||this.disposed||this.socket!==socket||socket.destroyed||this.receivedAuthTransfer!==transfer)throw new HostAuthError();
     this.receivedAuthTransfer=null;
+  }
+  private refuseMissingAnnouncedHost():Error{
+    const transfer=this.receivedAuthTransfer;
+    if(transfer?.retirementOwner){
+      const reader=readProcInfo(transfer.ticket.hostPid,200);
+      if(!reader.alive&&!reader.probeFailed){
+        this.recoveryOwner={...transfer.retirementOwner};this.ownerContinuityUnavailable=true;
+        return this.blockUnavailableOwner();
+      }
+    }
+    return new HostAuthError();
+  }
+  private retireReceivedTransfer(expected:typeof this.receivedAuthTransfer,peer?:HostAuthPeer,owner?:RecoveryOwnerIdentity):void{
+    if(!expected||this.receivedAuthTransfer!==expected)return;
+    const known=expected.retirementOwner;
+    if((peer&&expected.ticket.hostPid===peer.pid&&expected.ticket.hostStartIdentity===peer.startIdentity)||(owner&&known&&known.pid===owner.pid&&known.startTime===owner.startTime&&known.instanceId===owner.instanceId&&known.binaryHash===owner.binaryHash))this.receivedAuthTransfer=null;
   }
   async preparePlannedHandover(deadline:number):Promise<HostHandoverState> {
     return handoverState(await withTimeout(this.request({id:0,type:"handover-prepare",deadline}),5000),deadline);
@@ -590,6 +608,7 @@ export class PtyHostClient {
   }
   private async completePlannedHandover(ticket:HandoverTicket,expected:HostIdentity,inspect:(state:HostHandoverState)=>Promise<void>):Promise<HostHandoverState> {
     let detached=false;
+    const transfer=this.receivedAuthTransfer;
     const call=(request:PtyHostRequest)=>withTimeout(this.request(request,undefined,true),10000);
     try{
       if(Date.now()>=ticket.deadline||ownerProcessStartIdentity(ticket.hostPid)!==ticket.hostStartIdentity)throw new Error("The announced terminal host is unavailable");
@@ -624,7 +643,7 @@ export class PtyHostClient {
           try{committed=await call({id:0,type:"handover-detach",consented:state.consented});}catch(error){commitError=error;}
           // No successor while the recorded old process instance still lives.
           if(!await waitForExit(ticket.hostPid,8000)){if(commitError)throw commitError;throw new Error("The old terminal host has not exited; no successor was started");}
-          detached=true;this.dropSocket();key.copy(this.ownerSecret);
+          detached=true;this.retireReceivedTransfer(transfer,{pid:ticket.hostPid,startIdentity:ticket.hostStartIdentity});this.dropSocket();key.copy(this.ownerSecret);
           const child=this.startHost({format:1,core:state.core});
           try{await this.openStartedHostSocket();}catch(error){
             // A socketless partial successor must not keep a lease or compete
@@ -720,6 +739,8 @@ export class PtyHostClient {
   }
 
   private async replaceHost(consent?:HostRestartConsent): Promise<boolean> {
+    const transfer=this.receivedAuthTransfer;
+    let oldStart:string|null=null;
     let oldPid: number | undefined;
     let bound:{socket:net.Socket;target:HostRestartTarget}|undefined;
     if(consent){
@@ -732,7 +753,8 @@ export class PtyHostClient {
               for(const ptyId of new Set([...this.authRefusedPanes.keys(),...this.live,...this.lostOwned]))this.authRefusedPanes.set(ptyId,this.recoveryReason!);
               try{this.sendToSinks([...this.authRefusedPanes].map(([ptyId,reason])=>({type:"disconnected",ptyId,reason})));}catch{/* The owner is already gone; a closing view cannot roll it back. */}
             },
-            complete:ids=>{
+            complete:(ids,record)=>{
+              this.retireReceivedTransfer(transfer,undefined,{pid:record.pid,startTime:record.startTime,instanceId:record.instanceId,binaryHash:record.binaryHash});
               this.hostAsked=true;this.dropSocket();this.authRefusalPeer=undefined;this.hostAuthKey=null;this.recoveryOwner=null;this.crashContext=null;this.ownsOwnerKey=false;
               this.recoveryLaunches.clear();this.lostOwned.clear();this.live.clear();
               for(const id of ids){this.endedBootPanes.delete(id);this.observedExits.delete(id);this.recoveredStates.delete(id);this.recoveryScreens.delete(id);this.uncertainInput.delete(id);}
@@ -741,7 +763,9 @@ export class PtyHostClient {
           }));
         }
         if(!["PTY_HOST_AUTH_REQUIRED","PTY_HOST_AUTH_UNAVAILABLE","PTY_HOST_START_BLOCKED"].includes((error as {code?:string})?.code??""))throw error;
-        const exited=await restartRefusedHost(consent,refusedRestartDeps(()=>this.disposed,(event,fields)=>this.recoveryHooks.log?.(event,fields),this.legacyPaneIds));
+        const deps=refusedRestartDeps(()=>this.disposed,(event,fields)=>this.recoveryHooks.log?.(event,fields),this.legacyPaneIds),waitGone=deps.waitGone;
+        deps.waitGone=async(pid,startIdentity)=>{const gone=await waitGone(pid,startIdentity);if(gone)this.retireReceivedTransfer(transfer,{pid,startIdentity});return gone;};
+        const exited=await restartRefusedHost(consent,deps);
         if(exited){this.hostAsked=true;this.dropSocket();this.authRefusalPeer=undefined;this.hostAuthKey=null;}
         return exited;
       }
@@ -760,6 +784,7 @@ export class PtyHostClient {
       if(error instanceof Error&&error.message==="timed out")return false;
       // a host that predates the pid answer, or none: nothing to wait for
     }
+    oldStart=bound?.target.startTime??(oldPid===this.lastHostPid?this.lastHostStart:null);
     // The host closes this connection only when its process exits: the exit signal for a host that gave no pid.
     const socket = bound?.socket??this.socket;
     const closed = socket && !socket.destroyed ? new Promise<boolean>((resolve) => socket.once("close", () => resolve(true))) : null;
@@ -775,7 +800,7 @@ export class PtyHostClient {
     }
     if (oldPid !== undefined) {
       this.dropSocket();
-      if (await waitForExit(oldPid, PTY_HOST_EXIT_WAIT_MS)) return true;
+      if (await waitForExit(oldPid, PTY_HOST_EXIT_WAIT_MS)){if(oldStart)this.retireReceivedTransfer(transfer,{pid:oldPid,startIdentity:oldStart});return true;}
       // Still running: the user already agreed to stop these terminals, and a request let through now would start
       // the next host beside it. The pid is still that host's: a process that never exited cannot have handed it on.
       try {
@@ -784,7 +809,7 @@ export class PtyHostClient {
       } catch {
         // gone in between
       }
-      return waitForExit(oldPid, PTY_HOST_KILL_WAIT_MS);
+      const gone=await waitForExit(oldPid, PTY_HOST_KILL_WAIT_MS);if(gone&&oldStart)this.retireReceivedTransfer(transfer,{pid:oldPid,startIdentity:oldStart});return gone;
     }
     if (!closed) return true;
     const exited = await withTimeout(closed, PTY_HOST_EXIT_WAIT_MS).catch(() => false);
@@ -853,6 +878,7 @@ export class PtyHostClient {
     const observer = new PtyHostClient(this.hostScript);
     observer.observationOnly = true;
     observer.hostAuthKey=this.hostAuthKey?Buffer.from(this.hostAuthKey):null;
+    if(this.receivedAuthTransfer)observer.receivedAuthTransfer={ticket:{...this.receivedAuthTransfer.ticket}};
     const deadline = Date.now() + 5000;
     try {
       await withTimeout(observer.openSocket(), Math.max(1, deadline - Date.now()));
@@ -947,7 +973,7 @@ export class PtyHostClient {
     const paneId=request.type==="spawn"?request.req.ptyId:undefined;
     if(paneId){pending=new AbortController();this.principalAttaches.set(paneId,(this.principalAttaches.get(paneId)??new Set()).add(pending));}
     try{
-      try{await this.connect();}catch(error){
+      try{if(duringReplace&&this.receivedAuthTransfer){if(!this.isConnected())try{await this.openSocket();}catch(error){if(["ENOENT","ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code??""))throw this.refuseMissingAnnouncedHost();throw error;}}else await this.connect();}catch(error){
         if((error as {code?:string})?.code!=="PTY_HOST_PRINCIPAL_BUSY"||!paneId)throw error;
         if(pending?.signal.aborted)throw new HostPrincipalBusyError();
         this.principalBusyPanes.add(paneId);this.authRefusedPanes.set(paneId,HOST_PRINCIPAL_BUSY_REASON);
@@ -1054,7 +1080,11 @@ export class PtyHostClient {
       if(this.socket!==socket||socket.destroyed||this.disposed)throw Error(PTY_HOST_NOT_CONNECTED);
       this.metadataSocket = socket;
       for(const [id,receipt] of this.observedExits)this.observeExit(id,receipt);
-    }).then(()=>{this.principalBusyPeer=undefined;this.principalRetryExhausted=false;}).catch(error => { this.dropSocket(); throw error; }).finally(() => {
+    }).then(()=>{this.principalBusyPeer=undefined;this.principalRetryExhausted=false;}).catch(error => {
+      const transfer=this.receivedAuthTransfer;
+      if(transfer&&(error as {code?:string})?.code!=="PTY_HOST_PRINCIPAL_BUSY")this.authRefusalPeer={pid:transfer.ticket.hostPid,startIdentity:transfer.ticket.hostStartIdentity};
+      this.dropSocket();throw error;
+    }).finally(() => {
       this.connectPromise = null;
     });
     return this.connectPromise;
@@ -1071,7 +1101,7 @@ export class PtyHostClient {
       if (this.disposed) throw new Error(DISPOSED_MESSAGE);
       if(!["ENOENT","ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code??""))throw error;
       if(this.principalBusyPeer!==undefined)throw new HostPrincipalBusyError();
-      if(this.receivedAuthTransfer)throw new HostAuthError();
+      if(this.receivedAuthTransfer)throw this.refuseMissingAnnouncedHost();
       const prior=this.pendingPlannedHost;
       if(prior&&prior.exitCode===null&&prior.signalCode===null){
         await new Promise<void>(resolve=>{const done=()=>{clearTimeout(timer);prior.removeListener("exit",done);resolve();};const timer=setTimeout(done,1000);prior.once("exit",done);});

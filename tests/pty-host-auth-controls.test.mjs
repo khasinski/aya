@@ -99,7 +99,7 @@ for(const mode of ['publish','publish-empty'])test(`public announced client ${mo
   await c.shutdown();
  }finally{c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
 });
-test('lost completion reply retries the exact receipt on next connection without a second credential redemption',{timeout:20000},async()=>{
+test('local post-response completion failure retries the exact receipt on next connection without a second credential redemption',{timeout:20000},async()=>{
  const old=await fixture('publish'),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js')),send=c.sendRequest.bind(c);let completions=0,manifests=0;const receipts=[];
  c.sendRequest=async(socket,request)=>{if(request.type==='owner-continuity')manifests++;const result=await send(socket,request);if(request.type==='auth-transfer-complete'){receipts.push(request.receipt);if(++completions===1)throw Error('lost successful completion reply');}return result;};
  try{
@@ -127,4 +127,76 @@ test('an announced recipient cannot enter host creation grace if its expected so
   await c.redeemAnnouncedCapability(ticket);c.openSocket=async()=>{throw Object.assign(Error('absent'),{code:'ENOENT'});};guard.waitForHostShutdown=async()=>{grace++;throw Error('creation grace must not run');};c.startHost=()=>{starts++;throw Error('no host may start');};
   await assert.rejects(c.spawn({ptyId:'forbidden',command:'cat',cwd:process.env.HOME,cols:80,rows:24}),/This request was not sent/);assert.equal(grace,0);assert.equal(starts,0);
  }finally{guard.waitForHostShutdown=wait;c.openSocket=open;await c.shutdown().catch(()=>{});c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
+});
+
+test('real lost completion RPC reply reconnects with identical receipt before onResponse can settle it',{timeout:20000},async()=>{
+ const old=await fixture('publish-lost-completion'),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(old.script),send=c.sendRequest.bind(c),onResponse=c.onResponse.bind(c),ids=[];let manifests=0,completedResponses=0;
+ c.sendRequest=(socket,request)=>{if(request.type==='owner-continuity')manifests++;if(request.type==='auth-transfer-complete')ids.push(c.nextId);return send(socket,request);};
+ c.onResponse=message=>{if(ids.includes(message.id))completedResponses++;return onResponse(message);};
+ try{
+  await c.redeemAnnouncedCapability(ticket);assert.equal((await c.hostStatus()).identity,null);assert.equal(c.isConnected(),false);assert.equal(completedResponses,0,'socket closed before first ACK reached pending response');assert.ok(c.receivedAuthTransfer?.receipt);
+  assert.equal((await c.hostStatus()).pid,old.hostPid);assert.equal(c.receivedAuthTransfer,null);assert.equal(manifests,1);assert.equal(completedResponses,1);assert.equal(ids.length,2);
+  const receipts=fs.readFileSync(path.join(process.env.AYA_HOME,'transfer-completions.jsonl'),'utf8').trim().split('\n').map(JSON.parse);assert.equal(receipts.length,2);assert.deepEqual(receipts[0],receipts[1]);assert.equal(receipts[0].attempt,ticket.attempt);
+  assert.equal(await c.getPid('kept'),old.pid);assert.equal((await c.hostStatus()).owner.pid,old.ownerPid);await c.shutdown();
+ }finally{c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);fs.rmSync(old.script,{force:true});}
+});
+test('pending announced read-only observer pins target before any capability proof or RPC',{timeout:20000},async()=>{
+ const old=await fixture('publish'),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));
+ const windowModule=require('../dist-electron/pty-handover-window.js'),auth=require('../dist-electron/pty-host-auth-transport.js'),readPeer=windowModule.handoverPeer,authenticate=auth.authenticateHostSocket,send=PtyHostClient.prototype.sendRequest;let proofs=0,rpcs=0;
+ try{
+  await c.redeemAnnouncedCapability(ticket);
+  windowModule.handoverPeer=socket=>({...readPeer(socket),pid:ticket.hostPid+1});auth.authenticateHostSocket=(...args)=>{proofs++;return authenticate(...args);};PtyHostClient.prototype.sendRequest=function(...args){rpcs++;return send.apply(this,args);};
+  assert.equal((await c.paneState('kept')).state,'unknown');assert.equal(proofs,0);assert.equal(rpcs,0);assert.ok(c.receivedAuthTransfer);
+ }finally{windowModule.handoverPeer=readPeer;auth.authenticateHostSocket=authenticate;PtyHostClient.prototype.sendRequest=send;await c.shutdown().catch(()=>{});c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
+});
+
+for(const variant of ['invalid','unavailable','refused-key','dead-reader'])test(`failed announced ${variant} continuity keeps Cancel usable and permits a consented real replacement`,{timeout:25000},async t=>{
+ const native=require('../dist-electron/pty-owner-client.js');if((variant==='refused-key'||variant==='dead-reader')&&process.platform==='linux'&&!native.ownerRecoverySupported()){assert.notEqual(process.env.AYA_OWNER_EXPECT_PIDFD,'1');t.skip('pidfd unavailable; native CI requires successful verified retirement');return;}
+ const old=await fixture('publish'),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js')),send=c.sendRequest.bind(c),start=c.startHost.bind(c);let starts=0,shutdowns=0,yes=false;const questions=[],events=[];
+ c.startHost=(...args)=>{starts++;return start(...args);};c.attachWebContents({isDestroyed:()=>false,send:(_channel,event)=>events.push(event)});
+ c.sendRequest=async(socket,request)=>{if(request.type==='shutdown')shutdowns++;if(request.type==='owner-continuity'&&variant==='unavailable')throw Object.assign(Error('unavailable continuity'),{code:'PTY_HOST_REMOTE_ERROR'});const result=await send(socket,request);if(request.type==='owner-continuity')result.bootstrap.panes=[];return result;};
+ const {createPtyHostHealth,probeSocketPid}=require('../dist-electron/pty-host-health.js');
+ const actions=createPtyHostHealth({app:{getVersion:()=>"0.12.0"},mainDirname:path.resolve('dist-electron'),ptyHost:c,
+  relaunchDeps:{file:path.join(process.env.AYA_HOME,'notes.json'),panes:async()=>[{id:'kept',name:'Retained work'}],agentOf:async()=>"custom",screen:async()=>"",pid:async()=>old.pid,command:async()=>"cat",busy:async()=>false,foreground:async()=>null},
+  askRestart:async(label,detail)=>{questions.push({label,detail});return yes;},confirmLosingWork:async()=>{throw Error('continuity fallback needs its own inventory question');},
+  focusedAyaWindow:()=>null,dialog:{showMessageBox:async()=>({response:1})},Menu:{getApplicationMenu:()=>null},nativeImage:{createEmpty:()=>null},setStaleMenuIcon:()=>{},
+  socketExists:async()=>fs.existsSync(path.join(process.env.AYA_HOME,'pty-host.sock')),probeSocket:()=>probeSocketPid(path.join(process.env.AYA_HOME,'pty-host.sock')),liveRecords:()=>[],kill:()=>{throw Error('no numeric signal');},waitForExit:async()=>false});
+ try{
+  await c.redeemAnnouncedCapability(ticket);const failed=await c.hostStatus();assert.equal(failed.identity,null);assert.equal(failed.authentication.targetVerified,true);assert.equal(failed.owner.inventory[0].pid,old.pid);const pending=c.receivedAuthTransfer;assert.ok(pending);
+  await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);assert.equal(c.receivedAuthTransfer,pending);assert.equal(starts,0);assert.equal(shutdowns,0);process.kill(old.pid,0);process.kill(old.ownerPid,0);assert.ok(questions[0].detail.includes(`Retained work (PID ${old.pid})`));
+  if(variant==='refused-key')c.hostAuthKey=Buffer.alloc(32,99);
+  if(variant==='dead-reader'){
+   assert.equal(ownerProcessStartIdentity(old.hostPid),ticket.hostStartIdentity);process.kill(old.hostPid,'SIGKILL');
+   const end=Date.now()+5000;while(ownerProcessStartIdentity(old.hostPid)){if(Date.now()>end)throw Error('old reader did not exit');await new Promise(resolve=>setTimeout(resolve,5));}
+  }
+  if(variant==='refused-key'||variant==='dead-reader'){await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);assert.equal(c.receivedAuthTransfer,pending);assert.equal(starts,0);process.kill(old.ownerPid,0);process.kill(old.pid,0);}
+  yes=true;await actions.restartHostFromWindow();assert.equal(c.receivedAuthTransfer,null);assert.equal(shutdowns,variant==='invalid'||variant==='unavailable'?1:0);assert.throws(()=>process.kill(old.pid,0),/ESRCH/);assert.throws(()=>process.kill(old.hostPid,0),/ESRCH/);
+  await c.spawn({ptyId:'fresh-after-fallback',agent:'custom',command:'stty -echo; printf READY_FALLBACK; read line; printf "FALLBACK:%s\\n" "$line"; exit 23',cwd:process.env.HOME,cols:80,rows:24});
+  const output=()=>events.filter(e=>e.ptyId==='fresh-after-fallback'&&e.type==='data').map(e=>e.chunk).join(''),until=Date.now()+5000;
+  while(!output().includes('READY_FALLBACK')){if(Date.now()>until)throw Error('fresh fallback spawn failed');await new Promise(resolve=>setTimeout(resolve,5));}
+  assert.equal(starts,1);const fresh=await c.getPid('fresh-after-fallback');assert.ok(fresh);assert.notEqual(fresh,old.pid);await c.write('fresh-after-fallback','NEW_INPUT\n');
+  while(!events.some(e=>e.type==='exit'&&e.ptyId==='fresh-after-fallback')){if(Date.now()>until)throw Error('fresh fallback exit missing');await new Promise(resolve=>setTimeout(resolve,5));}
+  assert.match(output(),/FALLBACK:NEW_INPUT/);assert.equal(events.find(e=>e.type==='exit'&&e.ptyId==='fresh-after-fallback').exitCode,23);await c.shutdown();
+ }finally{await c.request({id:0,type:'shutdown'},undefined,true).catch(()=>{});c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
+});
+
+test('retirement cleanup requires the same pending attempt and exact stopped host or owner identity',()=>{
+ const c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));
+ const owner={pid:200,startTime:'owner-start',instanceId:'a'.repeat(32),binaryHash:'b'.repeat(64)},pending={ticket:{hostPid:100,hostStartIdentity:'1:2'},retirementOwner:owner},newer={ticket:{hostPid:101,hostStartIdentity:'1:3'},retirementOwner:owner};
+ c.receivedAuthTransfer=newer;c.retireReceivedTransfer(pending,{pid:100,startIdentity:'1:2'});assert.equal(c.receivedAuthTransfer,newer);
+ c.receivedAuthTransfer=pending;c.retireReceivedTransfer(pending,{pid:100,startIdentity:'1:9'});assert.equal(c.receivedAuthTransfer,pending);
+ c.retireReceivedTransfer(pending,undefined,{...owner,instanceId:'c'.repeat(32)});assert.equal(c.receivedAuthTransfer,pending);
+ c.retireReceivedTransfer(pending,undefined,owner);assert.equal(c.receivedAuthTransfer,null);
+ c.receivedAuthTransfer=pending;c.retireReceivedTransfer(pending,{pid:100,startIdentity:'1:2'});assert.equal(c.receivedAuthTransfer,null);c.dispose();
+});
+
+test('planned replacement retires only old pending auth target after its confirmed exit before successor attach',{timeout:25000},async()=>{
+ const old=await fixture('publish-planned'),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));
+ try{
+  await c.redeemAnnouncedCapability(ticket);assert.ok(c.receivedAuthTransfer);
+  const identity=c.expectedHostIdentity('0.12.0');identity.scriptHash='0'.repeat(64);
+  await c.adoptPlannedHandover(ticket,identity,async()=>{});assert.equal(c.receivedAuthTransfer,null);
+  const status=await c.hostStatus();assert.notEqual(status.pid,old.hostPid);assert.equal(status.owner.pid,old.ownerPid);assert.equal(await c.getPid('kept'),old.pid);assert.throws(()=>process.kill(old.hostPid,0),/ESRCH/);
+  await c.write('kept','AFTER_PLANNED_AUTH_RETIREMENT\n');const until=Date.now()+5000;while(!(await c.getBuffer('kept')).includes('AFTER_PLANNED_AUTH_RETIREMENT')){if(Date.now()>until)throw Error('planned successor input failed');await new Promise(resolve=>setTimeout(resolve,5));}await c.shutdown();
+ }finally{await c.request({id:0,type:'shutdown'},undefined,true).catch(()=>{});c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
 });
