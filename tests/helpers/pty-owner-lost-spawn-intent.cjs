@@ -10,5 +10,5 @@ const {OwnerPty}=require('../../dist-electron/pty-owner-adapter.js');
   fs.writeFileSync(path.join(process.env.AYA_HOME,'forked.json'),JSON.stringify({pid:owner.record.pid,pane}));
   process.kill(process.pid,'SIGKILL');
  };
- await OwnerPty.spawn({id:'intent',command:process.execPath,argv:[process.execPath,'-e',"process.on('SIGHUP',()=>{}); console.log('READY'); setInterval(()=>{},1000)"],cwd:process.env.AYA_HOME,cols:80,rows:24,env:{HOME:process.env.HOME,PATH:'/usr/bin:/bin'}});
+ await OwnerPty.spawn({id:'intent',command:process.execPath,argv:[process.execPath,'-e',"process.on('SIGHUP',()=>{}); console.log('READY'); setInterval(()=>{},1000)"],cwd:process.env.AYA_HOME,cols:80,rows:24,env:{HOME:process.env.HOME,PATH:'/usr/bin:/bin',ELECTRON_RUN_AS_NODE:'1'}});
 })().catch(e=>{console.error(e); process.exitCode=1;});
