@@ -36,6 +36,7 @@ process.env.HOME = join(root, "home");
 process.env.PATH = "/usr/bin:/bin";
 process.env.SHELL = "/bin/sh";
 mkdirSync(process.env.HOME);
+mkdirSync(process.env.AYA_HOME,{recursive:true});
 writeFileSync(join(process.env.HOME, ".profile"), `PATH='${bin}':$PATH\nexport PATH\n`);
 
 const { PtyHostClient } = await import("../dist-electron/pty-host-client.js");

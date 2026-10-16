@@ -27,6 +27,7 @@ process.env.SHELL = "/bin/sh";
 // A runner started from a Codex pane has one: Codex's config would be read there, not in this fake home.
 delete process.env.CODEX_HOME;
 mkdirSync(process.env.HOME);
+mkdirSync(process.env.AYA_HOME,{recursive:true});
 writeFileSync(join(process.env.HOME, ".profile"), `PATH='${bin}':$PATH\nexport PATH\n`);
 
 // Env first, then the app's modules: paths.ts reads AYA_HOME once, at load.

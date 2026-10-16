@@ -679,6 +679,9 @@ export class PtyHostClient {
       if (typeof pid === "number" && Number.isInteger(pid) && pid > 1) oldPid = pid;
     } catch(error) {
       if(this.authRefusalPeer!==undefined||["PTY_HOST_AUTH_REQUIRED","PTY_HOST_AUTH_UNAVAILABLE","PTY_HOST_START_BLOCKED"].includes((error as {code?:string})?.code??""))throw error;
+      // Metadata discovery may time out and close our local socket. That is
+      // not proof that the authenticated host itself exited.
+      if(error instanceof Error&&error.message==="timed out")return false;
       // a host that predates the pid answer, or none: nothing to wait for
     }
     // The host closes this connection only when its process exits: the exit signal for a host that gave no pid.
@@ -896,7 +899,7 @@ export class PtyHostClient {
         // A legacy host can explicitly reject version; it has no native owner.
       }), PTY_HOST_SOCKET_WAIT_TIMEOUT_MS);
       if (this.socket !== socket || socket.destroyed) throw new Error(PTY_HOST_NOT_CONNECTED);
-      if(this.reusedHost&&!this.ownsOwnerKey){
+      if(this.reusedHost&&!this.ownsOwnerKey&&(this.ownerBacked||!!(version as {owner?:unknown}|undefined)?.owner)){
         try{
           const response=await withTimeout(this.sendRequest(socket,{id:0,type:"owner-continuity"}),PTY_HOST_RESTART_REQUEST_TIMEOUT_MS);
           const continuity=validateOwnerContinuity(response,handoverPeer(socket),version);

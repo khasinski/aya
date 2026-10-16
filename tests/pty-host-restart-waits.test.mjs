@@ -1,3 +1,4 @@
+import {authenticatedFixtureServer} from "./helpers/pty-host-launch.cjs";
 // restart() is the one way Aya replaces its host (Restart Aya, Diagnostics, a stale host at launch). It must not
 // let the next host start before the old one has exited: on 2026-10-13 a new host started while the old one still
 // ended its panes, lost its socket to the old host's exit handler, and the next Aya started a third host.
@@ -90,7 +91,7 @@ async function fakeHost(t, closeAfterMs) {
   const socketPath = join(TMP_AYA_HOME, "pty-host.sock");
   rmSync(socketPath, { force: true });
   const conns = new Set();
-  const server = net.createServer((socket) => {
+  const server = authenticatedFixtureServer((socket) => {
     conns.add(socket);
     socket.setEncoding("utf8");
     let buffer = "";
@@ -131,7 +132,7 @@ test("a host that answers shutdown but never exits is killed, so no second host 
   const source = `
     const net = require("node:net");
     process.on("SIGTERM", () => {});
-    net.createServer((s) => {
+    require(${JSON.stringify(join(process.cwd(),"tests/helpers/pty-host-launch.cjs"))}).authenticatedFixtureServer((s) => {
       s.setEncoding("utf8");
       let b = "";
       s.on("data", (c) => {

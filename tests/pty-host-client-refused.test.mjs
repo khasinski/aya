@@ -32,7 +32,7 @@ const refuseMs = Number(process.env.FAKE_HOST_REFUSE_MS);
 setTimeout(() => process.exit(0), Math.max(refuseMs, 0) + 8000);
 if (refuseMs !== ${NEVER}) setTimeout(() => {
   fs.rmSync(sock, { force: true });
-  net.createServer((c) => {
+  require(${JSON.stringify(join(process.cwd(),"tests/helpers/pty-host-launch.cjs"))}).authenticatedFixtureServer((c) => {
     c.setEncoding("utf8");
     c.on("data", (chunk) => {
       for (const line of chunk.split("\\n").filter(Boolean)) {
@@ -56,6 +56,7 @@ test("a started host whose socket refuses at first is reached once it accepts", 
     assert.equal(await client.getBuffer("t1"), "from the host");
   } finally {
     await client.shutdown();
+    await new Promise(r=>setTimeout(r,100));
   }
 });
 

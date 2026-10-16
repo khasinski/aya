@@ -1,3 +1,4 @@
+import {authenticatedFixtureServer} from "./helpers/pty-host-launch.cjs";
 // PtyHostClient.dispose(): once Aya starts quitting, a request must fail
 // instead of starting a pty host. A host started that late has no app to
 // connect to, never arms its idle exit, and outlives the app (e2e runs leaked
@@ -48,7 +49,7 @@ test("a request still connecting when dispose runs starts no host", async () => 
 test("a shutdown issued right before dispose still reaches the host", async () => {
   const received = [];
   const connections = new Set();
-  const server = net.createServer((socket) => {
+  const server = authenticatedFixtureServer((socket) => {
     connections.add(socket);
     socket.setEncoding("utf8");
     socket.on("data", (chunk) => {
@@ -62,12 +63,13 @@ test("a shutdown issued right before dispose still reaches the host", async () =
   await new Promise((r) => server.listen(SOCKET_PATH, r));
   try {
     const client = new PtyHostClient(FAKE_HOST);
+    await client.getBuffer("warm-authenticated-connection");
     const shutdown = client.shutdown();
     client.dispose();
     await shutdown;
     await waitFor(() => received.includes("shutdown"));
     await assert.rejects(client.getBuffer("t1"), /disposed/);
-    assert.deepEqual(received, ["shutdown"]);
+    assert.deepEqual(received, ["version","buffer","shutdown"]);
   } finally {
     for (const socket of connections) socket.destroy();
     await new Promise((r) => server.close(r));

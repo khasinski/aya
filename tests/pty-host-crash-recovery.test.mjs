@@ -57,7 +57,7 @@ test('unavailable authenticated continuity leaves reused host death disconnected
   registry.readOwnerRecord=()=>{probes++;return read();};second.startHost=()=>{starts++;throw Error('unknown-key recovery must not start');};
   process.kill(first.status.pid,'SIGKILL');await wait(()=>events.some(e=>e.type==='disconnected'&&e.reason));
   assert.match(events.filter(e=>e.type==='disconnected').at(-1).reason,/could not verify recovery data/);assert.equal(keyRequests,1);
-  assert.equal(probes,0);assert.equal(starts,0);assert.equal(second.crashTask,null);assert.doesNotThrow(()=>process.kill(first.pid,0));assert.doesNotThrow(()=>process.kill(first.status.owner.pid,0));assert.equal(await second.getPid('shell'),undefined);
+  assert.ok(probes>0,"a bounded private record read supplies truthful owner-stop guidance");assert.equal(starts,0);assert.equal(second.crashTask,null);assert.doesNotThrow(()=>process.kill(first.pid,0));assert.doesNotThrow(()=>process.kill(first.status.owner.pid,0));assert.equal(await second.getPid('shell'),undefined);
  }finally{registry.readOwnerRecord=read;await cleanup(first.client,second);}
 });
 test('app quit during backoff prevents any replacement and leaves the owner/child alive',{timeout:15000},async()=>{

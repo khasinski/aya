@@ -21,3 +21,14 @@ async function authenticateFixtureSocket(socket,home){
  }finally{key.fill(0);}
 }
 module.exports={spawnAuthenticatedHost,authenticateFixtureSocket};
+// A protocol stand-in still proves the real product handshake. Callers own
+// only post-auth RPC semantics (including deliberately unsupported requests).
+function authenticatedFixtureServer(handler,home=process.env.AYA_HOME){
+ const net=require('node:net');
+ const {HostSocketAuthenticator}=require('../../dist-electron/pty-host-auth-transport.js');
+ const key=createHostAuthKey(home),auth=new HostSocketAuthenticator(key,{pid:process.pid,startIdentity:ownerProcessStartIdentity(process.pid)},()=>{});key.fill(0);
+ return net.createServer(socket=>{void auth.accept(socket).then(({buffered})=>{
+  handler(socket);if(buffered)socket.emit('data',buffered);socket.resume();
+ }).catch(()=>socket.destroy());});
+}
+module.exports.authenticatedFixtureServer=authenticatedFixtureServer;

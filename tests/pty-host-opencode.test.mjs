@@ -38,6 +38,7 @@ writeFileSync(join(bin, "rec-sh"), `#!/bin/sh\nprintf '%s|' "$@" >> '${shellLog}
 chmodSync(join(bin, "rec-sh"), 0o755);
 process.env.SHELL = join(bin, "rec-sh");
 mkdirSync(process.env.HOME);
+mkdirSync(process.env.AYA_HOME,{recursive:true});
 writeFileSync(join(process.env.HOME, ".profile"), `PATH='${bin}':$PATH\nexport PATH\n`);
 
 const { PtyHostClient } = await import("../dist-electron/pty-host-client.js");

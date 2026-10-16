@@ -13,6 +13,7 @@ process.env.HOME = join(root, "home");
 process.env.PATH = "/usr/bin:/bin";
 process.env.SHELL = "/bin/sh";
 mkdirSync(process.env.HOME);
+mkdirSync(process.env.AYA_HOME,{recursive:true});
 const cwd = join(root, "project");
 mkdirSync(cwd);
 
