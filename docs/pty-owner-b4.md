@@ -105,3 +105,9 @@ The measurement writes its result and raw samples under `test-results/`, with th
 ### Planned-handover compatibility assertion
 
 The first affected GUI run was 57 passed/one failed: B3's unmounted-ended-pane test expected the native exit record to disappear before any view had received its outcome. B4 deliberately retains that native record until main observes it. I updated only the intermediate assertion to require the retained exited record; the next checkpoint still carries it, and the real late-mounted view must show exact once-only suffix/exit 23 and retire native inventory. The exact compatibility case passes. Product bytes are unchanged; affected and whole GUI reruns remain pending.
+
+## Dead-owner status integration regression
+
+The first whole GUI run stopped as a non-green baseline at `owner-death-recovery`: B4's blocked `hostStatus` erased the retained owner inventory, so Diagnostics asked a generic question without the survivor PID. Unchanged main `1314f7bf` passed the same test three times on this Mac (14.9 seconds). I now return only the matching known-key owner's bounded private registry inventory when transport is blocked, without starting/probing any owner or JS host. A changed owner or unknown key cannot use that fallback. The unit regression fails against the literal `278ad805` client implementation.
+
+The focused status/health/backend set passes 60/60 in Node and Electron. The real dead-owner Cancel/confirmed-recovery case passes three times (13.4 seconds), preserving the named PID on Cancel and stopping it only after consent before any new spawn. Its direct post-Cancel spawn now explicitly requires B4's refusal, while retaining the original inventory/process and final verified-stop/new-spawn checks. Final aggregate gates will be rerun on this product change.

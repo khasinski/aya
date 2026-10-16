@@ -398,7 +398,22 @@ export class PtyHostClient {
         ...(obj.owner && typeof obj.owner === "object" ? { owner: obj.owner as PtyOwnerStatus } : {}),
       };
     } catch {
-      return { identity: null, ptyCount: 0,...(this.recoveryReason?{recoveryReason:this.recoveryReason}:{}) };
+      // A blocked transport must not erase B2's explicit dead-owner recovery
+      // inventory. Read only the bounded private record for this main's known
+      // owner; no process/socket probes or new host are needed to name its PIDs.
+      let owner:PtyOwnerStatus|undefined;
+      if(this.crashBlocked&&this.ownsOwnerKey&&this.recoveryOwner){
+        try{
+          const record=readOwnerRecord(),expected=this.recoveryOwner;
+          if(record&&record.pid===expected.pid&&record.startTime===expected.startTime&&record.instanceId===expected.instanceId&&record.binaryHash===expected.binaryHash){
+            const uncertain=[...new Set([...(record.uncertain??[]),...(record.spawnIntents??[]).map(p=>p.id)])];
+            owner={pid:record.pid,startTime:record.startTime,instanceId:record.instanceId,hash:record.binaryHash,incompatible:true,
+              disconnected:[...new Set([...record.panes.map(p=>p.id),...uncertain])],
+              inventory:record.panes.map(p=>({id:p.id,pid:p.pid,startIdentity:p.startIdentity})),uncertain,recoveryFailures:record.recoveryFailures};
+          }
+        }catch{/* Unreadable/changed records stay unknown and are never signalled here. */}
+      }
+      return { identity: null, ptyCount: owner?.inventory?.length??0,...(owner?{owner}:{}),...(this.recoveryReason?{recoveryReason:this.recoveryReason}:{}) };
     }
   }
 

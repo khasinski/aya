@@ -37,7 +37,11 @@ test("a dead owner's survivor stays blocked on Cancel and explicit confirmed rec
     await expect.poll(() => app.evaluate(() => (globalThis as unknown as { recoveryQuestions: string[] }).recoveryQuestions.length)).toBe(1);
     expect(await app.evaluate(() => (globalThis as unknown as { recoveryQuestions: string[] }).recoveryQuestions[0])).toContain(`Survivor (PID ${pane.pid})`);
     expect(alive(pane.pid)).toBe(true);
-    await window.evaluate(({ id, cwd, command }) => window.aya.ptySpawn({ ptyId: id, cwd, command, cols: 80, rows: 24 }), { id: pane.id, cwd: seeded.projectDir, command });
+    const refused = await window.evaluate(async ({ id, cwd, command }) => {
+      try { await window.aya.ptySpawn({ ptyId: id, cwd, command, cols: 80, rows: 24 }); return null; }
+      catch (error) { return String(error); }
+    }, { id: pane.id, cwd: seeded.projectDir, command });
+    expect(refused).toContain("The terminal host is disconnected or recovering");
     expect(JSON.parse(readFileSync(file, "utf8")).panes[0].pid).toBe(pane.pid);
     expect(alive(pane.pid)).toBe(true);
     await app.evaluate(() => { (globalThis as unknown as { recoveryAnswer: number }).recoveryAnswer = 0; });

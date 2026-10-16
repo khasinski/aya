@@ -270,3 +270,16 @@ test('exit after recovery version capture is delivered again after the recovered
   assert.deepEqual(events.filter(e=>e.type==='exit'&&e.ptyId==='shell').map(e=>e.exitCode),[23]);await client.shutdown();
  }finally{await cleanup(client);}
 });
+
+test('blocked known-key status retains matching owner PIDs without owner probes or a host start',async()=>{
+ const client=new PtyHostClient('unused'),saved={read:registry.readOwnerRecord,live:registry.ownerRecordIsLive,reader:registry.ownerReaderIsLive};let reads=0;
+ const identity={pid:800,startTime:'start',instanceId:'a'.repeat(32),binaryHash:'b'.repeat(64)};
+ const record={...identity,panes:[{id:'survivor',pid:900,startIdentity:'10:20'}],uncertain:['uncertain'],spawnIntents:[{id:'preparing',generation:'c'.repeat(32)}]};
+ registry.readOwnerRecord=()=>{reads++;return record;};registry.ownerRecordIsLive=registry.ownerReaderIsLive=()=>{throw Error('status must not probe owner');};
+ client.startHost=()=>{throw Error('status must not start a host');};client.crashBlocked=true;client.ownsOwnerKey=true;client.recoveryOwner=identity;client.recoveryReason='Owner unavailable';
+ try{
+  const result=await client.hostStatus();assert.ok(result.owner,'blocked status must keep retained owner inventory');assert.deepEqual(result.owner.inventory,[{id:'survivor',pid:900,startIdentity:'10:20'}]);assert.equal(result.ptyCount,1);assert.deepEqual(result.owner.disconnected,['survivor','uncertain','preparing']);assert.equal(result.recoveryReason,'Owner unavailable');assert.equal(reads,1);
+  client.recoveryOwner={...identity,instanceId:'d'.repeat(32)};assert.equal((await client.hostStatus()).owner,undefined);
+  client.ownsOwnerKey=false;const before=reads;assert.equal((await client.hostStatus()).owner,undefined);assert.equal(reads,before,'unknown-key reuse performs no record lookup');
+ }finally{registry.readOwnerRecord=saved.read;registry.ownerRecordIsLive=saved.live;registry.ownerReaderIsLive=saved.reader;client.dispose();}
+});
