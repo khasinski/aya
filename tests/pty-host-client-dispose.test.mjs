@@ -46,7 +46,14 @@ test("a request still connecting when dispose runs starts no host", async () => 
   assert.equal(existsSync(STARTED_MARKER), false);
 });
 
-test("a shutdown issued right before dispose still reaches the host", async () => {
+test("an issued shutdown followed by dispose cannot create a missing host",async()=>{
+  const client=new PtyHostClient(FAKE_HOST),pending=client.shutdown();client.dispose();
+  await assert.rejects(pending,/disposed/);
+  await new Promise(resolve=>setTimeout(resolve,HOST_START_GRACE_MS));
+  assert.equal(existsSync(STARTED_MARKER),false);
+});
+
+for(const warm of [false,true])test(`a shutdown issued right before dispose reaches an existing host (${warm?"warm":"cold authenticated connection"})`, async () => {
   const received = [];
   const connections = new Set();
   const server = authenticatedFixtureServer((socket) => {
@@ -63,13 +70,13 @@ test("a shutdown issued right before dispose still reaches the host", async () =
   await new Promise((r) => server.listen(SOCKET_PATH, r));
   try {
     const client = new PtyHostClient(FAKE_HOST);
-    await client.getBuffer("warm-authenticated-connection");
+    if(warm)await client.getBuffer("warm-authenticated-connection");
     const shutdown = client.shutdown();
     client.dispose();
     await shutdown;
     await waitFor(() => received.includes("shutdown"));
     await assert.rejects(client.getBuffer("t1"), /disposed/);
-    assert.deepEqual(received, ["version","buffer","shutdown"]);
+    assert.deepEqual(received, warm?["version","buffer","shutdown"]:["shutdown"]);
   } finally {
     for (const socket of connections) socket.destroy();
     await new Promise((r) => server.close(r));

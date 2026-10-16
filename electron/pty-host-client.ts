@@ -197,6 +197,7 @@ export class PtyHostClient {
   // window that doesn't host the terminal does a single cheap no-op per event.
   private readonly sinks = new Set<PtyEventSink>();
   private disposed = false;
+  private issuedShutdown=false;
   private ownsOwnerKey=false;
   private ownerContinuityUnavailable=false;
   private ownerRetired=false;
@@ -419,10 +420,13 @@ export class PtyHostClient {
   }
 
   async shutdown(): Promise<void> {
+    if(this.disposed)throw new Error(DISPOSED_MESSAGE);
     this.hostAsked = true;
     // Issue the authorized shutdown before the first await. dispose() may run
     // immediately afterwards; it must not suppress this already-issued request.
-    await this.request({ id: 0, type: "shutdown" });
+    this.issuedShutdown=true;
+    try{await this.request({ id: 0, type: "shutdown" });}
+    finally{this.issuedShutdown=false;}
     const pid = this.lastHostPid;
     this.dropSocket();
     if (pid && !(await waitForExit(pid, PTY_HOST_EXIT_WAIT_MS))) throw new Error("The terminal host did not finish shutting down");
@@ -866,6 +870,7 @@ export class PtyHostClient {
     if (!duringReplace && this.replacing) await this.replacing;
     if (this.disposed) throw new Error(DISPOSED_MESSAGE);
     await this.connect();
+    if(this.disposed&&request.type!=="shutdown")throw new Error(DISPOSED_MESSAGE);
     const socket = this.socket;
     if (!socket || socket.destroyed) throw new Error(PTY_HOST_NOT_CONNECTED);
     return this.sendRequest(socket, finalize ? finalize(request) : request);
@@ -889,6 +894,9 @@ export class PtyHostClient {
     const connected = this.socket && !this.socket.destroyed;
     if (connected && (!this.metadataRequired || this.metadataSocket === this.socket)) return;
     this.connectPromise = (connected ? Promise.resolve() : this.connectWithHostStart()).then(async () => {
+      // A quit already requested shutdown before dispose. Authentication may
+      // finish on an existing host, but no discovery/continuity RPC is needed.
+      if(this.issuedShutdown)return;
       if (!this.metadataRequired&&!(this.reusedHost&&!this.ownsOwnerKey)) return;
       const socket = this.socket;
       if (!socket || socket.destroyed) throw new Error(PTY_HOST_NOT_CONNECTED);
@@ -964,7 +972,7 @@ export class PtyHostClient {
         const startIdentity=ownerProcessStartIdentity(process.pid);
         if(!startIdentity)throw new HostAuthError();
         const authenticated=await authenticateHostSocket(socket,this.hostAuthKey,{pid:process.pid,startIdentity});
-        if(this.disposed){socket.destroy();throw new Error(DISPOSED_MESSAGE);}
+        if(this.disposed&&!this.issuedShutdown){socket.destroy();throw new Error(DISPOSED_MESSAGE);}
         this.authRefusalPeer=undefined;
         this.socket = socket;
         this.hostAsked = false;
