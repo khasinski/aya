@@ -1,6 +1,6 @@
 import {validAuthTransferDeadline} from "./pty-host-auth-transfer";
 import type { PreparedSpawn } from "./pty-core";
-import type { VtSnapshot } from "./vt-mirror";
+import { validVtSnapshotFence, type VtSnapshot, type VtSnapshotFence } from "./vt-mirror";
 import type { PaneSize } from "./pane-render";
 import type { BufferSearchHit } from "./pty";
 import type { PtyEvent, SpawnRequest } from "./types";
@@ -9,6 +9,10 @@ import type { CheckpointReceipt } from "./pty-checkpoint-store";
 export type PtyHostRequest =
   | { id: number; type: "spawn"; req: SpawnRequest }
   | { id: number; type: "write"; ptyId: string; data: string }
+  // A separate verb makes an older host refuse rather than ignore a fence.
+  | { id: number; type: "write-fenced"; ptyId: string; data: string; fence: VtSnapshotFence }
+  | { id: number; type: "snapshot-check"; ptyId: string; fence: VtSnapshotFence }
+  | { id: number; type: "composer-seen-checked"; ptyId: string; fence: VtSnapshotFence }
   | { id: number; type: "resize"; ptyId: string; cols: number; rows: number }
   | { id: number; type: "kill"; ptyId: string }
   | { id: number; type: "shutdown"; target?:{pid:number;startTime:string;ownerInstance:string|null} }
@@ -51,7 +55,7 @@ export type PtyHostRequest =
 
 export type PtyHostResponse = (
   | { id: number; ok: true; result?: unknown }
-  | { id: number; ok: false; error: string }) & { ownerBacked?: true; hostPid?: number;ownerIdentity?: import("./pty-owner-runtime").RecoveryOwnerIdentity&{incompatible:boolean} };
+  | { id: number; ok: false; error: string; code?: "PTY_HOST_STALE_REVISION" }) & { ownerBacked?: true; hostPid?: number;ownerIdentity?: import("./pty-owner-runtime").RecoveryOwnerIdentity&{incompatible:boolean} };
 
 export interface PtyOwnerStatus {
   pid: number;
@@ -95,6 +99,12 @@ export function isPtyHostRequest(value: unknown): value is PtyHostRequest {
     const record=value as Record<string,unknown>;
     return Number.isSafeInteger(r.id)&&Object.keys(value).length===3&&["id","type","transferAttempt"].every(key=>Object.hasOwn(value,key))&&typeof record.transferAttempt==="string"&&/^[a-f0-9]{64}$/.test(record.transferAttempt);
   }
+  if (r.type === "write-fenced" || r.type === "snapshot-check" || r.type === "composer-seen-checked") {
+    const keys = r.type === "write-fenced" ? ["id", "type", "ptyId", "fence", "data"] : ["id", "type", "ptyId", "fence"];
+    return Number.isSafeInteger(r.id) && typeof r.ptyId === "string" && r.ptyId.length > 0 && r.ptyId.length <= 256 &&
+      Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key)) && validVtSnapshotFence(r.fence) &&
+      (r.type !== "write-fenced" || typeof r.data === "string");
+  }
   return typeof r.id === "number" && typeof r.type === "string";
 }
 
@@ -115,6 +125,7 @@ export function asVtSnapshot(value: unknown): VtSnapshot | null {
   if (!value || typeof value !== "object") return null;
   const s = value as VtSnapshot;
   if (typeof s.generation !== "string" || typeof s.shell !== "boolean" ||
+      (s.revision !== undefined && !validVtSnapshotFence({generation:s.generation,revision:s.revision})) ||
       (s.recoveryUnknown !== undefined && typeof s.recoveryUnknown !== "boolean") ||
       typeof s.composerSeen !== "boolean" || typeof s.openedAt !== "number" ||
       !(s.lastOutputAt === null || typeof s.lastOutputAt === "number") ||

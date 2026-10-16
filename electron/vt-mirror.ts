@@ -45,6 +45,36 @@ export interface VtPane {
 export const panes = new Map<string, VtPane>();
 const checkpointTerminals = new WeakMap<VtPane, VtCheckpointTerminal>();
 const recoveryScreens = new WeakMap<VtPane, RecoveryScreen>();
+// A fresh epoch on restore prevents a pre-handover decision from matching a
+// successor that keeps the same pane generation. Counters never wrap/reuse.
+interface RevisionState { epoch: string; sequence: number; pending: number; valid: boolean }
+const revisions = new WeakMap<VtPane, RevisionState>();
+function revisionState(pane: VtPane): RevisionState {
+  let state = revisions.get(pane);
+  if (!state) { state = { epoch: randomUUID(), sequence: 1, pending: 0, valid: true }; revisions.set(pane, state); }
+  return state;
+}
+function advanceRevision(pane: VtPane): void {
+  const state = revisionState(pane);
+  if (state.sequence === Number.MAX_SAFE_INTEGER) state.valid = false;
+  else state.sequence++;
+}
+function appliedRevision(pane: VtPane): string | undefined {
+  const state = revisionState(pane);
+  return state.valid && state.pending === 0 ? `${state.epoch}:${state.sequence}` : undefined;
+}
+export interface VtSnapshotFence { generation: string; revision: string }
+export function validVtSnapshotFence(value: unknown): value is VtSnapshotFence {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const v = value as Partial<VtSnapshotFence>;
+  return Object.keys(v).length === 2 && Object.hasOwn(v, "generation") && Object.hasOwn(v, "revision") && typeof v.generation === "string" && v.generation.length > 0 && v.generation.length <= 128 &&
+    typeof v.revision === "string" && /^[a-f0-9-]{36}:[1-9][0-9]{0,15}$/.test(v.revision);
+}
+/** Checked synchronously at the actual write boundary, not RPC arrival. */
+export function vtSnapshotMatches(id: string, fence: VtSnapshotFence): boolean {
+  const pane = panes.get(id);
+  return validVtSnapshotFence(fence) && !!pane && snapshotGeneration(pane) === fence.generation && appliedRevision(pane) === fence.revision;
+}
 
 export function openVtPane(
   ptyId: string,
@@ -77,6 +107,7 @@ export function openVtPane(
 export function resizeVtPane(ptyId: string, cols: number, rows: number): void {
   const pane = panes.get(ptyId);
   if (!pane) return;
+  advanceRevision(pane);
   try {
     checkpointTerminals.get(pane)!.resize(Math.max(cols, MIN_PTY_COLS), Math.max(rows, MIN_PTY_ROWS));
   } catch {
@@ -107,13 +138,20 @@ export function closeAllVtPanes(): void {
 export function writeVtPane(ptyId: string, chunk: string): void {
   const pane = panes.get(ptyId);
   if (!pane) return;
-  checkpointTerminals.get(pane)!.write(chunk);
+  advanceRevision(pane); // lastOutputAt also changes for cleaned OSC-only data.
+  if (chunk) {
+    const state = revisionState(pane); state.pending++;
+    try { checkpointTerminals.get(pane)!.write(chunk, () => { state.pending--; advanceRevision(pane); }); }
+    catch (error) { state.pending--; advanceRevision(pane); throw error; }
+  }
   pane.lastOutputAt = Date.now();
   if (pane.timer) return;
   pane.timer = setTimeout(() => {
     pane.timer = null;
     const current = panes.get(ptyId);
-    if (current === pane) pane.onSnapshot?.(snapshotOf(pane));
+    if (current === pane) void vtSnapshot(ptyId).then(snapshot => {
+      if (snapshot && panes.get(ptyId) === pane) pane.onSnapshot?.(snapshot);
+    }).catch(() => {}); // Pending parser work cannot publish a usable fence.
   }, SCAN_INTERVAL_MS);
   // Never hold the host process open just to run a screen scan.
   pane.timer.unref?.();
@@ -123,6 +161,8 @@ export function writeVtPane(ptyId: string, chunk: string): void {
 /** Only the cell flags read by the composer detector travel across the socket. */
 export interface VtSnapshot {
   generation: string;
+  /** Absent on older hosts or while parser work is not fully applied. */
+  revision?: string;
   recoveryUnknown?: boolean;
   agent?: AgentKind;
   shell: boolean;
@@ -151,19 +191,28 @@ export function snapshotOf(pane: VtPane): VtSnapshot {
     }
     cells.push(row);
   }
-  return { generation, ...(pane.recoveryUnknown?{recoveryUnknown:true}:{}), agent: pane.agent, shell: pane.shell, composerSeen: pane.composerSeen,
+  const revision = appliedRevision(pane);
+  return { generation, ...(revision ? {revision} : {}), ...(pane.recoveryUnknown?{recoveryUnknown:true}:{}), agent: pane.agent, shell: pane.shell, composerSeen: pane.composerSeen,
     openedAt: pane.openedAt, lastOutputAt: pane.lastOutputAt, rows, cells, cols: pane.terminal.cols };
 }
 export async function vtSnapshot(id: string): Promise<VtSnapshot | null> {
   const pane = panes.get(id);
   if (!pane) return null;
   await new Promise<void>((done) => pane.terminal.write("", done));
+  if (panes.get(id) === pane && revisionState(pane).pending) throw new Error("Terminal output is not fully applied; its screen cannot be checked yet");
   return panes.get(id) === pane ? snapshotOf(pane) : null;
 }
 /** Opaque evaluator state is monotonic, and cannot spill into a respawned pane. */
 export function markComposerSeen(id: string, generation: string): void {
   const pane = panes.get(id);
-  if (pane && !pane.recoveryUnknown && snapshotGeneration(pane) === generation) pane.composerSeen = true;
+  if (pane && !pane.recoveryUnknown && snapshotGeneration(pane) === generation && !pane.composerSeen) { pane.composerSeen = true; advanceRevision(pane); }
+}
+export function markComposerSeenChecked(id: string, fence: VtSnapshotFence): boolean {
+  if (!vtSnapshotMatches(id, fence)) return false;
+  const pane = panes.get(id)!;
+  if (pane.recoveryUnknown) return false;
+  markComposerSeen(id, fence.generation);
+  return true;
 }
 function snapshotGeneration(pane: VtPane): string { return generations.get(pane) ?? snapshotOf(pane).generation; }
 
@@ -248,10 +297,11 @@ export function vtPaneDialog(id: string): string | undefined { return panes.get(
  * and stays conservative across scroll, geometry and alternate-buffer changes. */
 export function beginVtRecovery(id:string,timeout:()=>void=()=>{},applied:()=>void=()=>{}):void {
  const pane=panes.get(id);if(!pane)throw Error("Recovery mirror is missing");
+ advanceRevision(pane);
  pane.recoveryUnknown=true;pane.composerSeen=false;
  recoveryScreens.set(pane,new RecoveryScreen(pane.terminal,(known,timedOut)=>{
   if(panes.get(id)!==pane)return;
-  if(known){pane.recoveryUnknown=false;pane.onSnapshot?.(snapshotOf(pane));applied();}
+  if(known){advanceRevision(pane);pane.recoveryUnknown=false;pane.onSnapshot?.(snapshotOf(pane));applied();}
   else if(timedOut)timeout();
  }));
 }

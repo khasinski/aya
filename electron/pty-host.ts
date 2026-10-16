@@ -49,7 +49,7 @@ import {readHandoverBootstrap,preflightCoreHandover,readCoreHandover} from "./pt
 import {acknowledgeCheckpoint} from "./pty-checkpoint-store";
 import { HostHandover } from "./pty-host-handover";
 import { ownerProcessStartIdentity } from "./pty-owner-client";
-import { panes, vtSnapshot, markComposerSeen } from "./vt-mirror";
+import { panes, vtSnapshot, markComposerSeen, markComposerSeenChecked, vtSnapshotMatches } from "./vt-mirror";
 import type { PreparedSpawn } from "./pty-core";
 const LAUNCH_STARTING = "starting";
 import { PTY_HOST_UNKNOWN_REQUEST } from "./pty-core-constants";
@@ -333,12 +333,12 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
     });
     return null;
   }
-  if (request.type === "write") {
+  if (request.type === "write" || request.type === "write-fenced") {
     // The boolean IS the answer: false means the id had no live process, which
     // the control server turns into a failed `aya pane send` instead of a
     // silent no-op. An older host answers null here; the client reads any
     // non-false result as "delivered", so it degrades to the old behaviour.
-    return writePty(request.ptyId, request.data);
+    return writePty(request.ptyId, request.data, request.type === "write-fenced" ? request.fence : undefined);
   }
   if (request.type === "resize") {
     resizePty(request.ptyId, request.cols, request.rows);
@@ -372,6 +372,11 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
   }
   if (request.type === "snapshot" && (currentOwnerRuntime()?.incompatible || currentOwnerRuntime()?.disconnected.has(request.ptyId))) return "disconnected";
   if (request.type === "snapshot") return isPtyStarting(request.ptyId) ? "starting" : vtSnapshot(request.ptyId);
+  if (request.type === "snapshot-check") return vtSnapshotMatches(request.ptyId, request.fence);
+  if (request.type === "composer-seen-checked") {
+    if (ptyCoreHandoverInProgress()) throw new Error("Terminal metadata is paused for handover");
+    return markComposerSeenChecked(request.ptyId, request.fence);
+  }
   if (request.type === "composer-seen") {
     if (ptyCoreHandoverInProgress()) throw new Error("Terminal metadata is paused for handover");
     markComposerSeen(request.ptyId, request.generation); return null;
@@ -525,6 +530,7 @@ function attachAuthenticatedClient(socket:net.Socket,initialBuffer:string):void 
               id: requestId,
               ok: false,
               error: err instanceof Error ? err.message : String(err),
+              ...((err as {code?:string})?.code === "PTY_HOST_STALE_REVISION" ? {code:"PTY_HOST_STALE_REVISION" as const} : {}),
             });
           }
         })();

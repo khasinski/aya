@@ -13,3 +13,10 @@ test('a real core 1 MiB paste yields to resize and another pane, then arrives ex
   assert.match(stdout,/core input ordered with exact count\/no trailing bytes; resize and second pane responsive/);
  } finally { await cleanupNativeOwner(home); fs.rmSync(home,{recursive:true,force:true}); }
 });
+test('a real core rechecks queued input after resize and refuses it without any bytes',async()=>{
+ const home=fs.mkdtempSync(path.resolve('test-results/fenced-large-input-'));
+ try{
+  const {stdout}=await promisify(execFile)(process.execPath,['tests/helpers/pty-owner-large-input.cjs'],{env:{...process.env,AYA_HOME:home,HOME:home,AYA_TEST_FENCED_INPUT:'1'},timeout:15000});
+  assert.match(stdout,/stale checked input refused after queued paste; zero trailing input/);
+ }finally{await cleanupNativeOwner(home);fs.rmSync(home,{recursive:true,force:true});}
+});

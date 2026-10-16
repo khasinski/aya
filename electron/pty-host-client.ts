@@ -4,7 +4,7 @@ import { prepareSpawn, watchAgentSession } from "./pty-prepare";
 import { snapshotBusy, snapshotHold, snapshotStatus } from "./vt-state";
 import { HOLD_NOT_RUNNING, HOLD_STARTING } from "./pane-holds";
 import { getProcessCwd } from "./process-cwd";
-import type { VtSnapshot } from "./vt-mirror";
+import {validVtSnapshotFence, type VtSnapshot, type VtSnapshotFence} from "./vt-mirror";
 import { spawn,type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
@@ -948,8 +948,11 @@ export class PtyHostClient {
   }
 
   private async readExistingSnapshot(ptyId: string): Promise<unknown> {
+    return this.readExistingRequest({ id: 0, type: "snapshot", ptyId });
+  }
+  private async readExistingRequest(request: PtyHostRequest): Promise<unknown> {
     if (this.disposed) throw new Error(DISPOSED_MESSAGE);
-    if (this.socket && !this.socket.destroyed) return withTimeout(this.sendRequest(this.socket, { id: 0, type: "snapshot", ptyId }), 5000);
+    if (this.socket && !this.socket.destroyed) return withTimeout(this.sendRequest(this.socket, request), 5000);
     // Reuse the normal socket-opening/authentication implementation, but never
     // connectWithHostStart or connect's metadata/continuity/exit-ACK path.
     const observer = new PtyHostClient(this.hostScript);
@@ -960,7 +963,7 @@ export class PtyHostClient {
     try {
       await withTimeout(observer.openSocket(), Math.max(1, deadline - Date.now()));
       if (this.disposed || Date.now() >= deadline || !observer.socket || observer.socket.destroyed) throw new Error(DISPOSED_MESSAGE);
-      return await withTimeout(observer.sendRequest(observer.socket, { id: 0, type: "snapshot", ptyId }), Math.max(1, deadline - Date.now()));
+      return await withTimeout(observer.sendRequest(observer.socket, request), Math.max(1, deadline - Date.now()));
     } finally { observer.dispose(); observer.dropSocket(); }
   }
 
@@ -972,6 +975,26 @@ export class PtyHostClient {
   }
   private async markComposer(ptyId: string, snapshot: VtSnapshot): Promise<void> {
     await this.request({ id: 0, type: "composer-seen", ptyId, generation: snapshot.generation });
+  }
+
+  /** User-rule decisions never degrade to an unfenced write on an old host. */
+  async writeAtSnapshot(ptyId: string, data: string, fence: VtSnapshotFence): Promise<boolean> {
+    if (!validVtSnapshotFence(fence)) throw Object.assign(new Error("Terminal screen identity is unavailable. This input was not sent."), {code:"PTY_HOST_STALE_REVISION"});
+    const socket = this.socket;
+    if (this.disposed || this.crashBlocked || !socket || socket.destroyed) throw new Error("The terminal host is not connected. This input was not sent.");
+    const result = await this.sendRequest(socket,{id:0,type:"write-fenced",ptyId,data,fence});
+    if (result === true || result === false) return result;
+    throw new Error("Terminal input outcome is unknown. Check the pane before retrying; Aya did not resend it.");
+  }
+  async checkSnapshot(ptyId: string, fence: VtSnapshotFence): Promise<boolean> {
+    if (!validVtSnapshotFence(fence)) return false;
+    try { return (await this.readExistingRequest({id:0,type:"snapshot-check",ptyId,fence})) === true; }
+    catch { return false; }
+  }
+  async markComposerAtSnapshot(ptyId: string, fence: VtSnapshotFence): Promise<boolean> {
+    if (!validVtSnapshotFence(fence)) return false;
+    try { return (await this.readExistingRequest({id:0,type:"composer-seen-checked",ptyId,fence})) === true; }
+    catch { return false; }
   }
   private acceptSnapshot(ptyId: string, snapshot: VtSnapshot, replay = false): void {
     if (this.lostOwned.has(ptyId)) return;
@@ -1438,7 +1461,7 @@ export class PtyHostClient {
     if (!pending) return;
     this.pending.delete(message.id);
     if (message.ok) pending.resolve(message.result);
-    else pending.reject(Object.assign(new Error(message.error), { code: "PTY_HOST_REMOTE_ERROR" }));
+    else pending.reject(Object.assign(new Error(message.error), { code: message.code === "PTY_HOST_STALE_REVISION" ? message.code : "PTY_HOST_REMOTE_ERROR" }));
   }
 
   private sendToSinks(events: PtyEvent[]): void {
@@ -1473,8 +1496,8 @@ export class PtyHostClient {
       ? {type:"disconnected",ptyId,...(this.ownsOwnerKey&&this.crashSupervisor?{recoveryBlocked:true,retryable:this.recoveryRetryable,...(this.recoveryRetryable?{reason:this.recoveryReason}:{})}:{})}
       : {type:"no-session",ptyId}));
     for (const [, pending] of this.pending) {
-      if(pending.type==="write"&&pending.ptyId)this.uncertainInput.add(pending.ptyId);
-      pending.reject(new Error(pending.type==="write"?"Terminal input acknowledgement was lost when the terminal host stopped. Some bytes may have reached the process. Aya did not resend it.":"PTY host disconnected"));
+      if((pending.type==="write"||pending.type==="write-fenced")&&pending.ptyId)this.uncertainInput.add(pending.ptyId);
+      pending.reject(new Error(pending.type==="write"||pending.type==="write-fenced"?"Terminal input acknowledgement was lost when the terminal host stopped. Some bytes may have reached the process. Aya did not resend it.":"PTY host disconnected"));
     }
     this.pending.clear();
     if(this.crashTask){this.crashAgain=true;return;}
