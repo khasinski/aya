@@ -56,7 +56,9 @@ test.describe('a recovered pane mounted later',()=>{
   const row=window.locator('.aya-sidebar-row[data-terminal-name="Deferred crash"]');await expect(row).toBeVisible();
   await window.evaluate(cwd=>window.aya.ptySpawn({ptyId:'deferred-crash',agent:'custom',command:"exec /bin/sh -c 'echo BEFORE_CRASH; while IFS= read -r line; do echo REPLY:$line; done'",cwd,cols:80,rows:24}),seeded.projectDir);
   await expect.poll(()=>record(seeded.ayaHome).panes.length).toBe(3);const before=identities(seeded.ayaHome),old=await crash(seeded.ayaHome);await recovered(seeded.ayaHome,old);
-  await expect.poll(()=>window.evaluate(()=>window.aya.ptyWrite('deferred-crash','WAITING_FOR_LATE_VIEW\n'))).toBe(true);
+  // A new host PID shows up before main finishes recovering, and until then a write is refused as not sent.
+  // Only that refusal is repeated (nothing reached the pane); any other error fails at once.
+  await expect.poll(()=>window.evaluate(()=>window.aya.ptyWrite('deferred-crash','WAITING_FOR_LATE_VIEW\n').then(r=>r,(e:unknown)=>{if(/This request was not sent/.test(String(e)))return 'not sent';throw e;}))).toBe(true);
   await expect.poll(()=>window.evaluate(()=>window.aya.ptyBuffer('deferred-crash'))).toContain('REPLY:WAITING_FOR_LATE_VIEW');
   await row.click();const pane=window.locator('.aya-pane[data-terminal-id="deferred-crash"]');
   await expect(pane.getByTestId('terminal-history-notice')).toContainText('Previously consumed');await expect(pane.getByTestId('xterm-host')).toContainText('REPLY:WAITING_FOR_LATE_VIEW');
