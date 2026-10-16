@@ -57,7 +57,7 @@ test('new prompt applied after successful composer ACK cannot be cleared by its 
 });
 test('user prompt prevents composer ACK even on an otherwise idle builtin screen',async()=>{
  const f=await fixture([rule('prompt')],'LOCAL\r\n❯ ');
- try{assert.ok(await f.policy.holdReason(f.id));assert.equal((await mirror.vtSnapshot(f.id)).composerSeen,false);assert.deepEqual(f.acks,[]);}finally{await f.close();}
+ try{assert.ok(await f.policy.holdReason(f.id));const state=await f.policy.paneState(f.id),text=formatPaneState('x',state,true);assert.equal(state.state,'waiting');assert.match(text,/local-prompt \(prompt; waiting\)/);assert.equal((await mirror.vtSnapshot(f.id)).composerSeen,false);assert.deepEqual(f.acks,[]);}finally{await f.close();}
 });
 for(const outcome of ['false','throw','reload','dispose'])test(`composer ${outcome} cannot yield old clearance or retry`,async()=>{
  const f=await fixture();let attempts=0,committed=false;
@@ -100,4 +100,19 @@ test('missing screen preserves read-only stopped/starting status without blaming
   f.host.legacyState=async()=>({state,hold:state==='idle'?null:'not running',busy:false,waiting:null,generation:null,rules:{available:true},evidence:[]});
   const result=await f.policy.paneState(f.id);assert.equal(result.state,state==='idle'?'unknown':state);assert.equal(result.userRules.available,true);assert.doesNotMatch(formatPaneState('x',result,false),/user rules unavailable/);if(state==='idle')assert.equal(result.inputProtection,HOLD_USER_RULES_UNKNOWN);
  }assert.equal(f.calls.evaluate,0);assert.deepEqual(f.acks,[]);}finally{await f.close();}
+});
+
+for(const method of ['holdReason','paneBusy','paneState'])for(const end of ['configuration-change','dispose'])test(`no-files legacy ${method} refuses late ${end} completion`,async()=>{
+ const f=await fixture([], '❯ ', true),gate=deferred(),started=deferred();
+ try{
+  f.set({...f.get(),epoch:2,available:true,manifest:null});
+  const value=method==='holdReason'?null:method==='paneBusy'?true:{state:'idle',hold:null,busy:false,waiting:false,generation:'g',rules:{available:true},evidence:[]};
+  f.host[method==='holdReason'?'legacyHold':method==='paneBusy'?'legacyBusy':'legacyState']=()=>{started.resolve();return gate.promise;};
+  const pending=f.policy[method](f.id);await started.promise;
+  if(end==='configuration-change')f.set({...f.get(),epoch:3,available:false,manifest:f.get().manifest,reason:'reload pending'});else f.policy.dispose();
+  gate.resolve(value);
+  if(method==='holdReason')assert.equal(await pending,HOLD_USER_RULES_UNKNOWN);
+  else if(method==='paneBusy')assert.equal(await pending,false);
+  else{const state=await pending;assert.equal(state.state,'unknown');assert.equal(state.hold,HOLD_USER_RULES_UNKNOWN);}
+ }finally{gate.resolve();await f.close();}
 });
