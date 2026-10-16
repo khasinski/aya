@@ -56,11 +56,10 @@ test('legacy private host record can verify a target but cannot supply a fabrica
  const status=refusedHostStatus(peer);assert.equal(status.authentication.targetVerified,true);assert.equal(status.authentication.inventoryKnown,false);assert.equal(status.owner,undefined);
  fs.rmSync(directory,{recursive:true,force:true});
 });
-test('retained owner records refuse symlinks, oversized files and broad permissions without reading an unsafe payload',()=>{
- for(const kind of ['symlink','oversize','permissions']){
+test('retained owner records refuse symlinks and broad permissions without reading an unsafe payload',()=>{
+ for(const kind of ['symlink','permissions']){
   record();
   if(kind==='symlink'){fs.renameSync(file,file+'.real');fs.symlinkSync(file+'.real',file);}
-  if(kind==='oversize')fs.truncateSync(file,65537);
   if(kind==='permissions')fs.chmodSync(file,0o644);
   assert.throws(()=>registry.readOwnerRecord(),undefined,kind);
   const status=refusedHostStatus(peer);assert.equal(status.authentication.inventoryKnown,false,kind);assert.equal(status.owner,undefined,kind);
@@ -71,4 +70,17 @@ test('a FIFO record is promptly refused instead of blocking a question indefinit
  const script=`const {readOwnerRecord}=require('./dist-electron/pty-owner-registry.js');try{readOwnerRecord();process.exit(2)}catch(e){if(!String(e).includes('not private'))throw e;}`;
  const result=childProcess.spawnSync(process.execPath,['-e',script],{env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},timeout:1500,encoding:'utf8'});
  assert.equal(result.error,undefined,String(result.error));assert.equal(result.status,0,result.stderr);assert.equal(fs.lstatSync(file).isFIFO(),true);
+});
+
+test('retained record cap accepts exactly 64KiB valid JSON and refuses 64KiB+1 before reading or parsing',()=>{
+ const r=record(),base={...r,padding:''},overhead=Buffer.byteLength(JSON.stringify(base));
+ const payload=size=>JSON.stringify({...base,padding:'x'.repeat(size-overhead)});
+ fs.writeFileSync(file,payload(65536));assert.equal(fs.statSync(file).size,65536);assert.deepEqual(registry.readOwnerRecord().panes,[pane]);
+ fs.writeFileSync(file,payload(65537));assert.equal(fs.statSync(file).size,65537);
+ const read=fs.readSync,parse=JSON.parse;let reads=0,parses=0;
+ try{
+  fs.readSync=(...args)=>{reads++;return read(...args);};JSON.parse=(...args)=>{parses++;return parse(...args);};
+  assert.throws(()=>registry.readOwnerRecord(),/PTY owner record is not private/);
+  assert.equal(reads,0);assert.equal(parses,0);
+ }finally{fs.readSync=read;JSON.parse=parse;}
 });
