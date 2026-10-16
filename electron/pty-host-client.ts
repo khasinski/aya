@@ -216,6 +216,11 @@ export class PtyHostClient {
   private continuityNotice="";
   private ownerRetired=false;
   private legacyPaneIds:string[]=[];
+  private markContinuityUnavailable():void {
+    this.ownerContinuityUnavailable=true;
+    this.continuityNotice="Automatic terminal host recovery is off because its recovery data is unavailable. This host still serves the panes; if it stops, the panes stay disconnected while their processes may keep running. Aya does not respawn them.";
+    for(const ptyId of this.live)this.sendToSinks([{type:"recovery-unavailable",ptyId,reason:this.continuityNotice}]);
+  }
   private blockUnavailableOwner():Error {
     this.crashBlocked=true;
     const prefix="Aya could not verify recovery data from the surviving terminal host. Input remains disabled. ";
@@ -1084,11 +1089,9 @@ export class PtyHostClient {
         // an authentication refusal and must not take down a serving socket.
         if(this.socket!==socket||socket.destroyed||this.disposed)throw Error(PTY_HOST_NOT_CONNECTED);
         if(!this.ownsOwnerKey){
-          this.ownerContinuityUnavailable=true;
           if(this.receivedAuthTransfer?.retirementOwner)this.recoveryOwner={...this.receivedAuthTransfer.retirementOwner};
-          this.continuityNotice="Automatic terminal host recovery is off because its recovery data is unavailable. This host still serves the panes; if it stops, their processes are kept disconnected and are not respawned.";
+          this.markContinuityUnavailable();
           this.recoveryHooks.log?.("pty-owner-continuity-unavailable",{reason:"authenticated recovery manifest unavailable"});
-          for(const id of this.live)this.sendToSinks([{type:"recovery-unavailable",ptyId:id,reason:this.continuityNotice}]);
         }else this.recoveryHooks.log?.("host-transfer-completion-pending",{reason:"completion acknowledgement unavailable"});
       }
       if(!this.receivedAuthTransfer&&this.reusedHost&&!this.ownsOwnerKey&&(this.ownerBacked||!!(version as {owner?:unknown}|undefined)?.owner)){
@@ -1106,7 +1109,7 @@ export class PtyHostClient {
             this.recoveryHooks.log?.("pty-owner-continuity",{panes:continuity.bootstrap.panes.length,hostPid:this.lastHostPid,ownerPid:continuity.bootstrap.owner.pid});
           }finally{continuity.credential.fill(0);}
         }catch{
-          this.ownerContinuityUnavailable=true;
+          this.markContinuityUnavailable();
           this.recoveryHooks.log?.("pty-owner-continuity-unavailable",{reason:"authenticated recovery manifest unavailable"});
         }
       }

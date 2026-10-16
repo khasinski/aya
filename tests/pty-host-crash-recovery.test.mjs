@@ -216,7 +216,9 @@ test('manual success restores the normal three-attempt policy only after120s sta
 test('timeout after a partial replay preserves the retry notice after the successor socket closes',{timeout:15000},async()=>{
  const {client,status,logs,events}=await setup();const timer=globalThis.setTimeout;let expire;
  try{
-  globalThis.setTimeout=(callback,ms,...args)=>{if(ms===5678)expire=callback;return timer(callback,ms,...args);};
+  // Capture the supervisor deadline; only the restored callback fires it.
+  // The cancellable inert handle preserves cleanup without racing slow startup.
+  globalThis.setTimeout=(callback,ms,...args)=>{if(ms===5678){expire=callback;return timer(()=>{},14000);}return timer(callback,ms,...args);};
   client.crashSupervisor.dispose();client.crashSupervisor=null;
   client.enableCrashRecovery({log:(event,fields)=>logs.push({event,...fields}),restored:()=>{assert.equal(typeof expire,'function');setImmediate(()=>expire());}},{delays:[1],attemptTimeoutMs:5678,stableMs:120000});
   const send=client.sendRequest.bind(client);

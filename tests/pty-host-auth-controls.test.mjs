@@ -213,3 +213,23 @@ for(const cause of ['pending','uncertain','incompatible','ended'])test(`redeemed
   assert.equal(starts,0);await c.shutdown();
  }finally{c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);if(old.script)fs.rmSync(old.script,{force:true});}
 });
+
+test('ordinary authenticated reused host without a received ticket hydrates a nonempty recovery-off reason on manifest failure',{timeout:20000},async()=>{
+ const first=new PtyHostClient(path.resolve('dist-electron/pty-host.js')),second=new PtyHostClient(path.resolve('dist-electron/pty-host.js')),events=[];
+ try{
+  fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true,mode:0o700});
+  await first.spawn({ptyId:'ordinary',agent:'custom',command:'stty -echo; printf ORDINARY_READY; cat',cwd:process.env.HOME,cols:80,rows:24});
+  const until=Date.now()+5000;while(!(await first.getBuffer('ordinary')).includes('ORDINARY_READY')){if(Date.now()>until)throw Error('ordinary fixture readiness');await new Promise(r=>setTimeout(r,5));}
+  const pid=await first.getPid('ordinary'),before=await first.hostStatus(),send=second.sendRequest.bind(second);
+  // Explicit test authority loan between objects in the SAME principal PID;
+  // no disk lookup or announced-recipient bypass is under test here.
+  second.hostAuthKey=Buffer.from(first.hostAuthKey);second.sendRequest=(socket,req)=>req.type==='owner-continuity'?Promise.reject(Error('manifest unavailable')):send(socket,req);
+  second.attachWebContents({isDestroyed:()=>false,send:(_channel,event)=>events.push(event)});
+  const status=await second.hostStatus();assert.equal(status.pid,before.pid);assert.equal(status.authentication,undefined);assert.equal(status.continuityUnavailable,true);assert.match(status.recoveryReason,/Automatic terminal host recovery is off/);assert.equal(second.receivedAuthTransfer,null);assert.equal(second.isConnected(),true);assert.equal(second.ownsOwnerKey,false);
+  await second.spawn({ptyId:'ordinary',agent:'custom',command:'never respawn',cwd:process.env.HOME,cols:80,rows:24,attachIfReused:true});assert.equal(await second.getPid('ordinary'),pid);
+  const late=[];second.attachWebContents({isDestroyed:()=>false,send:(_channel,event)=>late.push(event)});
+  for(const list of [events,late])assert.ok(list.some(e=>e.type==='recovery-unavailable'&&e.reason===status.recoveryReason));
+  await second.write('ordinary','STILL_SERVING\n');while(!(await second.getBuffer('ordinary')).includes('STILL_SERVING')){if(Date.now()>until)throw Error('ordinary reuse lost serving socket');await new Promise(r=>setTimeout(r,5));}
+  await second.shutdown();
+ }finally{first.dispose();first.dropSocket();second.dispose();second.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
+});

@@ -72,7 +72,9 @@ test("25 owner adapters release both native masters and JS reader descriptors af
 });
 
 test("handover aborts a bounded blocked-input drain without stopping another pane or retrying the paste", {timeout: 15000}, async () => {
-  const p = await OwnerPty.spawn(spec("drain-barrier", "stty raw -echo; printf 'READY'; while [ ! -f \"$HOME/input-release\" ]; do sleep 0.01; done; dd bs=1 count=1048576 of=\"$HOME/input-bytes\" 2>/dev/null; printf 'DRAINED'; next=$(dd bs=1 count=1 2>/dev/null); printf 'NEXT:%s' \"$next\"; exit 23"));
+  const input=spec("drain-barrier",'stty raw -echo; exec "$AYA_TEST_NODE" "$AYA_TEST_INPUT_READER"');
+  input.env={...input.env,AYA_TEST_NODE:process.execPath,AYA_TEST_INPUT_READER:path.resolve('tests/helpers/pty-owner-drain-reader.cjs'),ELECTRON_RUN_AS_NODE:'1'};
+  const p = await OwnerPty.spawn(input);
   const second = await OwnerPty.spawn(spec("drain-peer"));
   let output = "", peerOutput = "";
   p.onData(s => { output += s; }); second.onData(s => { peerOutput += s; });
