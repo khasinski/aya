@@ -35,3 +35,16 @@ test('a target refusal never falls through to a numeric host kill',async()=>{
  try{await assert.rejects(client.restart({target:a,confirmChanged:async()=>{throw Error('no question needed for same target');}}),/target changed/);assert.deepEqual(requests,['version','shutdown']);}
  finally{native.ownerProcessStartIdentity=probe;process.kill=kill;client.dispose();}
 });
+
+test('cancel and unverified/refused targets preserve planned flag and the same spent supervisor',async()=>{
+ for(const kind of ['cancel','unknown','guard']){
+  const a=target(pidA,'A',owner(800,'a')),b=kind==='cancel'?target(pidB,'B',owner(801,'b')):a,{client}=fixture(b),probe=native.ownerProcessStartIdentity;
+  native.ownerProcessStartIdentity=()=>kind==='unknown'?null:b.startTime;
+  client.enableCrashRecovery({},undefined,2);const supervisor=client.crashSupervisor;client.ownerBacked=true;client.live.add('p');const events=[];client.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});
+  if(kind==='guard')client.sendRequest=async()=>{throw Error('target refused');};
+  try{
+   await assert.rejects(client.restart({target:a,confirmChanged:async()=>false}));assert.equal(client.hostAsked,false);assert.equal(client.crashBlocked,false);assert.equal(client.crashSupervisor,supervisor);assert.equal(supervisor.used,2);assert.equal(supervisor.disposed,false);assert.equal(supervisor.suspended,false);
+   client.onClose();assert.ok(events.some(e=>e.type==='disconnected'),'later unexpected death is still reported');
+  }finally{native.ownerProcessStartIdentity=probe;client.dispose();}
+ }
+});

@@ -76,3 +76,9 @@ test('default attempts each wait their100/500/1500ms backoff before starting',as
  const recovery=new PtyCrashRecovery({now:()=>virtual,attempt:async()=>{starts.push(virtual);return 'retry';},state:()=>{}});
  try{assert.equal(await recovery.recover(),false);assert.deepEqual(delays,[100,500,1500]);assert.deepEqual(starts,[100,600,2100]);}finally{recovery.dispose();globalThis.setTimeout=original;}
 });
+
+test('suspend/resume preserves spent slots and disposal cannot be resumed',async()=>{
+ let calls=0;const recovery=new PtyCrashRecovery({policy,initialUsed:2,attempt:async()=>{calls++;return 'recovered';},state:()=>{}});
+ recovery.suspend();assert.equal(await recovery.recover(),false);assert.equal(recovery.used,2);recovery.resume();assert.equal(await recovery.recover(),true);assert.equal(calls,1);assert.equal(recovery.used,3);
+ recovery.suspend();recovery.resume();assert.equal(await recovery.recover(),false);assert.equal(calls,1);recovery.dispose();recovery.resume();assert.equal(await recovery.recover(),false);
+});

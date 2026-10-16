@@ -279,6 +279,7 @@ test('blocked known-key status retains matching owner PIDs without owner probes 
  client.startHost=()=>{throw Error('status must not start a host');};client.crashBlocked=true;client.ownsOwnerKey=true;client.recoveryOwner=identity;client.recoveryReason='Owner unavailable';
  try{
   const result=await client.hostStatus();assert.ok(result.owner,'blocked status must keep retained owner inventory');assert.deepEqual(result.owner.inventory,[{id:'survivor',pid:900,startIdentity:'10:20'}]);assert.equal(result.ptyCount,1);assert.deepEqual(result.owner.disconnected,['survivor','uncertain','preparing']);assert.equal(result.recoveryReason,'Owner unavailable');assert.equal(reads,1);
+  client.crashContext={owner:identity};client.recoveryOwner=null;assert.equal((await client.hostStatus()).owner.inventory[0].pid,900,'cancelled incompatible recovery keeps original crash inventory');
   client.recoveryOwner={...identity,instanceId:'d'.repeat(32)};assert.equal((await client.hostStatus()).owner,undefined);
   client.ownsOwnerKey=false;const before=reads;assert.equal((await client.hostStatus()).owner,undefined);assert.equal(reads,before,'unknown-key reuse performs no record lookup');
  }finally{registry.readOwnerRecord=saved.read;registry.ownerRecordIsLive=saved.live;registry.ownerReaderIsLive=saved.reader;client.dispose();}
@@ -289,5 +290,17 @@ test('host refuses a shutdown bound to another owner instance without stopping a
  try{
   await assert.rejects(client.request({id:0,type:'shutdown',target:{pid:status.pid,startTime:status.startTime,ownerInstance:'f'.repeat(32)}}),/changed/);
   assert.doesNotThrow(()=>process.kill(status.pid,0));assert.doesNotThrow(()=>process.kill(pid,0));assert.equal(await client.getPid('shell'),pid);await client.shutdown();
+ }finally{await cleanup(client);}
+});
+
+test('Cancel keeps the same two-spent budget and a later real crash recovers once without respawn',{timeout:20000},async()=>{
+ const {client,status,logs,pid}=await setup();
+ try{
+  for(let i=0;i<2;i++){const current=await client.hostStatus();process.kill(current.pid,'SIGKILL');await wait(()=>logs.filter(e=>e.state==='recovered').length===i+1);}
+  const current=await client.hostStatus(),supervisor=client.crashSupervisor;assert.equal(supervisor.used,2);
+  await assert.rejects(client.restart({target:{pid:current.pid,startTime:'changed',owner:current.owner},confirmChanged:async()=>false}),/restart cancelled/);
+  assert.equal(client.hostAsked,false);assert.equal(client.crashSupervisor,supervisor);assert.equal(supervisor.used,2);assert.equal(supervisor.disposed,false);
+  process.kill(current.pid,'SIGKILL');await wait(()=>logs.filter(e=>e.state==='recovered').length===3);assert.equal(await client.getPid('shell'),pid);assert.equal((await client.hostStatus()).owner.pid,status.owner.pid);assert.equal(supervisor.used,3);
+  const last=await client.hostStatus();process.kill(last.pid,'SIGKILL');await wait(()=>logs.some(e=>e.state==='exhausted'));assert.doesNotThrow(()=>process.kill(pid,0));assert.equal(logs.filter(e=>e.state==='recovered').length,3);
  }finally{await cleanup(client);}
 });

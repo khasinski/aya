@@ -27,6 +27,7 @@ export class PtyCrashRecovery {
   private active: Promise<boolean> | null = null;
   private controller: AbortController | null = null;
   private disposed = false;
+  private suspended = false;
   private exhausted = false;
   constructor(private readonly deps: CrashRecoveryDeps) {
     this.policy = deps.policy ?? CRASH_RECOVERY_POLICY;
@@ -34,7 +35,7 @@ export class PtyCrashRecovery {
     this.used = Math.max(0,Math.min(this.policy.delays.length,Math.trunc(deps.initialUsed??0)));
   }
   recover(): Promise<boolean> {
-    if (this.disposed || this.exhausted) return Promise.resolve(false);
+    if (this.disposed || this.exhausted || this.suspended) return Promise.resolve(false);
     if (this.active) return this.active;
     if (this.stableSince !== null && this.now() - this.stableSince >= this.policy.stableMs) this.used = 0;
     this.stableSince = null;
@@ -48,9 +49,13 @@ export class PtyCrashRecovery {
     return this.active;
   }
   dispose(): void { this.disposed = true; this.controller?.abort(); }
+  /** A cancelled destructive restart resumes this same spent budget. */
+  suspend(): void { this.suspended=true;this.controller?.abort(); }
+  resume(): void { if(!this.disposed)this.suspended=false; }
   private async run(signal: AbortSignal): Promise<boolean> {
+    if(this.suspended||this.disposed||signal.aborted)return false;
     this.deps.state("recovering");
-    while (!signal.aborted && this.used < this.policy.delays.length) {
+    while (!signal.aborted && !this.suspended && this.used < this.policy.delays.length) {
       const delay = this.policy.delays[this.used++];
       if (!await pause(delay, signal)) return false;
       const attempt = new AbortController();
@@ -73,11 +78,11 @@ export class PtyCrashRecovery {
         if(stopped)result="blocked";
       } catch { result = "blocked"; }
       finally { clearTimeout(timer); signal.removeEventListener("abort", stop); }
-      if (signal.aborted || this.disposed) return false;
+      if (signal.aborted || this.disposed || this.suspended) return false;
       if (result === "recovered") { this.stableSince = this.now(); this.deps.state("recovered"); return true; }
       if (result === "blocked") break;
     }
-    if (!signal.aborted && !this.disposed) { this.exhausted = true; this.deps.state("exhausted"); }
+    if (!signal.aborted && !this.disposed && !this.suspended) { this.exhausted = true; this.deps.state("exhausted"); }
     return false;
   }
 }

@@ -192,6 +192,7 @@ export class PtyHostClient {
   private crashAttempt:Promise<RecoveryAttemptResult>|null=null;
   private crashAgain=false;
   private crashBlocked=false;
+  private closeEpoch=0;
   private recoveryReason:string|undefined;
   private recoveryRetryable=false;
   private recoveryFailure="";
@@ -414,9 +415,9 @@ export class PtyHostClient {
       // inventory. Read only the bounded private record for this main's known
       // owner; no process/socket probes or new host are needed to name its PIDs.
       let owner:PtyOwnerStatus|undefined;
-      if(this.crashBlocked&&this.ownsOwnerKey&&this.recoveryOwner){
+      if(this.crashBlocked&&this.ownsOwnerKey&&(this.recoveryOwner||this.crashContext?.owner)){
         try{
-          const record=readOwnerRecord(),expected=this.recoveryOwner;
+          const record=readOwnerRecord(),expected=this.recoveryOwner??this.crashContext!.owner;
           if(record&&record.pid===expected.pid&&record.startTime===expected.startTime&&record.instanceId===expected.instanceId&&record.binaryHash===expected.binaryHash){
             const uncertain=[...new Set([...(record.uncertain??[]),...(record.spawnIntents??[]).map(p=>p.id)])];
             owner={pid:record.pid,startTime:record.startTime,instanceId:record.instanceId,hash:record.binaryHash,incompatible:true,
@@ -541,17 +542,36 @@ export class PtyHostClient {
    *  after PTY_HOST_EXIT_WAIT_MS. Best-effort: a dead or old host that cannot shut down cleanly is still dropped. */
   restart(consent?:HostRestartConsent): Promise<boolean> {
     if (this.replacing) return this.replacing;
-    this.hostAsked = true;
+    const asked=this.hostAsked,blocked=this.crashBlocked,supervisor=this.crashSupervisor,closeEpoch=this.closeEpoch,wasRecovering=!!this.crashTask;
+    if(!consent)this.hostAsked=true;
+    let resumeRecovery=false;
     const run = (async()=>{
-      const enabled=!!this.crashSupervisor;this.crashSupervisor?.dispose();
-      if(this.crashAttempt){try{await withTimeout(this.crashAttempt,4000);}catch{return false;}}
-      const blocked=this.crashBlocked;this.crashBlocked=false;
-      let result:boolean;
-      try{result=await this.replaceHost(consent);}catch(error){this.crashBlocked=blocked;throw error;}
-      if(result&&enabled&&!this.disposed){this.crashSupervisor=null;this.enableCrashRecovery(this.recoveryHooks);}
-      return result;
+      supervisor?.suspend();let completed=false;
+      try{
+        if(this.crashAttempt){try{await withTimeout(this.crashAttempt,4000);}catch{return false;}}
+        if(this.crashTask){try{await withTimeout(this.crashTask,4000);}catch{return false;}}
+        this.crashBlocked=false;
+        const result=await this.replaceHost(consent);
+        if(result){
+          completed=true;supervisor?.dispose();
+          if(supervisor&&!this.disposed){this.crashSupervisor=null;this.enableCrashRecovery(this.recoveryHooks);}
+        }
+        return result;
+      }finally{
+        if(!completed&&!this.disposed){
+          this.hostAsked=asked;
+          this.crashBlocked=this.closeEpoch===closeEpoch?blocked:this.crashBlocked||this.lostOwned.size>0;
+          supervisor?.resume();
+          resumeRecovery=!this.socket&&this.lostOwned.size>0&&!!this.crashContext&&(wasRecovering||this.closeEpoch!==closeEpoch);
+        }
+      }
     })().finally(() => {
       if (this.replacing === run) this.replacing = null;
+      if(resumeRecovery){
+        void Promise.allSettled([this.crashTask,this.crashAttempt]).then(()=>{
+          if(!this.disposed&&!this.replacing&&this.crashSupervisor===supervisor)this.beginCrashRecovery();
+        });
+      }
     });
     this.replacing = run;
     return run;
@@ -598,6 +618,7 @@ export class PtyHostClient {
       if(bound){
         if(!socket||this.disposed||socket!==this.socket||socket.destroyed||ownerProcessStartIdentity(oldPid!)!==bound.target.startTime)throw Error("The terminal host changed. Nothing was stopped.");
         await withTimeout(this.sendRequest(socket,{id:0,type:"shutdown",target:{pid:oldPid!,startTime:bound.target.startTime!,ownerInstance:bound.target.owner?.instanceId??null}}),PTY_HOST_RESTART_REQUEST_TIMEOUT_MS);
+        this.hostAsked=true;
       }else await withTimeout(this.request({ id: 0, type: "shutdown" }, undefined, true), PTY_HOST_RESTART_REQUEST_TIMEOUT_MS);
     } catch(error) {
       if(consent)throw error; // never force-kill an unverified/refused target
@@ -1027,6 +1048,7 @@ export class PtyHostClient {
   }
 
   private onClose(): void {
+    this.closeEpoch++;
     this.socket = null;
     for(const timer of this.exitAckTimers.values())clearTimeout(timer);this.exitAckTimers.clear();
     this.stopSessionWatches();

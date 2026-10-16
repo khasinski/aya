@@ -1,9 +1,9 @@
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {test,expect,hostPidsForHome} from './fixtures';
-import {waitForShellReady} from './helpers/terminal';
+import {waitForShellReady,visiblePane} from './helpers/terminal';
 import {fireShortcut} from './helpers/shortcut';
-test('a changed restart target asks again and Cancel stops neither host nor panes',async({app,window,seeded})=>{
+test('a changed restart target asks again; Cancel keeps Aya open and a later crash recovers',async({app,window,seeded})=>{
  await waitForShellReady(window);const before=JSON.parse(readFileSync(join(seeded.ayaHome,'pty-owner/record.json'),'utf8')),hosts=hostPidsForHome(seeded.ayaHome);
  await app.evaluate(({dialog},root)=>{
   const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js');
@@ -19,7 +19,13 @@ test('a changed restart target asks again and Cancel stops neither host nor pane
  await expect.poll(()=>app.evaluate(()=>(globalThis as unknown as {targetQuestions:string[]}).targetQuestions.length)).toBe(2);
  const result=await app.evaluate(()=>{const g=globalThis as unknown as {targetQuestions:string[];shutdownRequests:number};return{questions:g.targetQuestions,shutdown:g.shutdownRequests};});
  expect(result.questions[0]).toContain('ghost (PID 900)');expect(result.questions[1]).toContain('host changed');
- for(const pane of before.panes)expect(result.questions[1]).toContain(`PID ${pane.pid}`);
+ for(const pane of before.panes){expect(result.questions[1]).toContain(`PID ${pane.pid}`);expect(result.questions[1]).toContain(pane.id==='tab-left'?'shell 1':'shell 2');}
  expect(result.shutdown).toBe(0);expect(hostPidsForHome(seeded.ayaHome)).toEqual(hosts);
  const after=JSON.parse(readFileSync(join(seeded.ayaHome,'pty-owner/record.json'),'utf8'));expect(after.pid).toBe(before.pid);expect(after.panes.map((p:{pid:number})=>p.pid)).toEqual(before.panes.map((p:{pid:number})=>p.pid));
+ await window.keyboard.press('Escape');await expect(settings).not.toBeVisible();
+ process.kill(hosts[0],'SIGKILL');await expect.poll(()=>hostPidsForHome(seeded.ayaHome).filter(pid=>pid!==hosts[0]).length).toBe(1);
+ const pane=visiblePane(window,'shell 1');await expect(pane.getByTestId('terminal-history-notice')).toContainText('Previously consumed');
+ const recovered=JSON.parse(readFileSync(join(seeded.ayaHome,'pty-owner/record.json'),'utf8'));expect(recovered.pid).toBe(before.pid);expect(recovered.panes.map((p:{pid:number})=>p.pid)).toEqual(before.panes.map((p:{pid:number})=>p.pid));
+ await pane.getByTestId('xterm-host').click();await window.keyboard.type("printf 'AFTER_CANCEL_CRASH\\n'");await window.keyboard.press('Enter');await expect(pane.getByTestId('xterm-host')).toContainText('AFTER_CANCEL_CRASH');await expect.poll(()=>window.evaluate(()=>window.aya.ptyBuffer('tab-left'))).toContain('AFTER_CANCEL_CRASH\r\n');
+ expect(await app.evaluate(()=>(globalThis as unknown as {shutdownRequests:number}).shutdownRequests)).toBe(0);
 });
