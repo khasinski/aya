@@ -95,7 +95,7 @@ for(const fault of ['missing','wrong','unknown identity'])test(`a ${fault} capab
 });
 
 for(const loss of ['main crash','expired normal ticket'] as const)test(`${loss} opens a window without a modal; explicit consent alone stops the retained processes`,async({app,window,seeded})=>{
- await waitForShellReady(window);const before=record(seeded.ayaHome),hosts=hostPidsForHome(seeded.ayaHome),root=join(__dirname,'..');
+ await waitForShellReady(window);await expect.poll(()=>record(seeded.ayaHome).panes.length).toBe(2);const before=record(seeded.ayaHome),hosts=hostPidsForHome(seeded.ayaHome),root=join(__dirname,'..');expect(hosts).toHaveLength(1);
  // Put an exact valid old capability on disk only as a migration artifact.
  // It never leaves this main through argv, env, logs or the test bridge result.
  await app.evaluate((_api,root)=>{const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js'),request=PtyHostClient.prototype.request;PtyHostClient.prototype.request=function(...args:unknown[]){(globalThis as any).crashAuthClient=this;return request.apply(this,args);};},root);
@@ -112,13 +112,16 @@ for(const loss of ['main crash','expired normal ticket'] as const)test(`${loss} 
  const next=await _electron.launch({cwd:root,args:[entry,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root}})});
  try{
   const view=await next.firstWindow(),errors:string[]=[];view.on('pageerror',error=>errors.push(String(error)));
-  await expect(view.getByTestId('terminal-history-notice').first()).toContainText('input remains disabled');
-  await expect(view.getByTestId('terminal-history-notice').first()).toContainText('cannot be reattached by this Aya');
   expect(await next.evaluate(()=>(globalThis as any).authQuestions)).toEqual([]);
   await next.evaluate(({ipcMain})=>{const original=(ipcMain as any)._invokeHandlers.get('pty:write');(globalThis as any).unannouncedWrites=0;ipcMain.removeHandler('pty:write');ipcMain.handle('pty:write',(event,...args)=>{(globalThis as any).unannouncedWrites++;return original(event,...args);});});
-  const pane=view.getByTestId('xterm-host').first();await pane.click();await view.keyboard.type('not-delivered');await view.keyboard.press('Enter');
-  await pane.locator('.xterm-helper-textarea').evaluate(textarea=>{const data=new DataTransfer();data.setData('text/plain','paste-not-delivered\n');textarea.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));});
-  expect(await next.evaluate(()=>(globalThis as any).unannouncedWrites)).toBe(0);
+  for(const oldPane of before.panes){
+   const pane=view.locator(`.aya-pane[data-terminal-id="${oldPane.id}"]`);
+   await expect(pane.getByTestId('terminal-history-notice')).toContainText('input remains disabled');
+   await expect(pane.getByTestId('terminal-history-notice')).toContainText('cannot be reattached by this Aya');
+   const terminal=pane.getByTestId('xterm-host');await terminal.click();await view.keyboard.type(`not-delivered-${oldPane.id}`);await view.keyboard.press('Enter');
+   await terminal.locator('.xterm-helper-textarea').evaluate((textarea,id)=>{const data=new DataTransfer();data.setData('text/plain',`paste-not-delivered-${id}\n`);textarea.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));},oldPane.id);
+   expect(await next.evaluate(()=>(globalThis as any).unannouncedWrites),`no keyboard/paste writes from retained pane ${oldPane.id}`).toBe(0);
+  }
   for(const pane of before.panes)expect(alive(pane.pid)).toBe(true);
   expect(hostPidsForHome(seeded.ayaHome)).toEqual(hosts);expect(record(seeded.ayaHome).pid).toBe(before.pid);expect(record(seeded.ayaHome).panes).toEqual(before.panes);expect(errors).toEqual([]);
   expect(readFileSync(join(seeded.ayaHome,'pty-events.log'),'utf8').split('\n').filter(line=>{try{return JSON.parse(line).ev==='spawn';}catch{return false;}})).toHaveLength(2);
