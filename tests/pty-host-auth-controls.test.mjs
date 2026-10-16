@@ -29,32 +29,36 @@ async function cleanupPlannedFixture(c,ticket,primaryError){
   console.error('PLANNED_FIXTURE_SECONDARY_CLEANUP_FAILURE',error); // preserve the original failed assertion
  }
 }
-async function retirePlannedFixture(c,ticket){
- const native=require('../dist-electron/pty-owner-client.js'),child=c.pendingPlannedHost;
- const targets=[{pid:ticket.hostPid,startIdentity:ticket.hostStartIdentity}];
+function fixtureRetirementTargets(c,ticket,identify=ownerProcessStartIdentity){
+ const child=c.pendingPlannedHost,targets=[{pid:ticket.hostPid,startIdentity:ticket.hostStartIdentity}];
  if(c.lastHostPid&&c.lastHostStart)targets.push({pid:c.lastHostPid,startIdentity:c.lastHostStart});
- if(child&&child.exitCode===null&&child.signalCode===null){const startIdentity=ownerProcessStartIdentity(child.pid);if(startIdentity)targets.push({pid:child.pid,startIdentity});}
+ if(child&&child.exitCode===null&&child.signalCode===null){const startIdentity=identify(child.pid);if(startIdentity)targets.push({pid:child.pid,startIdentity});}
+ return [...new Map(targets.map(target=>[`${target.pid}:${target.startIdentity}`,target])).values()];
+}
+async function retirePlannedFixture(c,ticket,overrides={}){
+ const native=require('../dist-electron/pty-owner-client.js'),child=c.pendingPlannedHost,identify=overrides.identity??ownerProcessStartIdentity;
+ const targets=fixtureRetirementTargets(c,ticket,identify);
  c.hostAsked=true;c.crashSupervisor?.dispose();
  try{
-  if(targets.some(t=>ownerProcessStartIdentity(t.pid)===t.startIdentity)){
+  if(targets.some(t=>identify(t.pid)===t.startIdentity)){
    if(!c.isConnected())await c.openSocket().catch(()=>{}); // existing only; never starts a host
    if(c.isConnected()){
     const peer=require('../dist-electron/pty-handover-window.js').handoverPeer(c.socket);
     if(!targets.some(t=>t.pid===peer.pid&&t.startIdentity===peer.startIdentity))throw Error('fixture cleanup socket target changed');
     let timer;try{await Promise.race([PtyHostClient.prototype.sendRequest.call(c,c.socket,{id:0,type:'shutdown'}),new Promise((_resolve,reject)=>{timer=setTimeout(()=>reject(Error('fixture shutdown response timeout')),2000);})]).catch(()=>{});}finally{clearTimeout(timer);}
-    const end=Date.now()+5000;while(targets.some(t=>ownerProcessStartIdentity(t.pid)===t.startIdentity)&&Date.now()<end)await new Promise(r=>setTimeout(r,5));
+    const end=Date.now()+5000;while(targets.some(t=>identify(t.pid)===t.startIdentity)&&Date.now()<end)await new Promise(r=>setTimeout(r,5));
    }
   }
  }finally{
   c.dispose();c.dropSocket();
   for(const target of targets){
-   if(ownerProcessStartIdentity(target.pid)!==target.startIdentity)continue;
+   if(identify(target.pid)!==target.startIdentity)continue;
    // One verified individual TERM only; no process groups or unknown targets.
    if(child?.pid===target.pid&&child.exitCode===null&&child.signalCode===null)child.kill('SIGTERM');
-   else{const result=native.terminateVerifiedProcess(target,target.pid);if(!['signalled','gone','mismatch'].includes(result))throw Error('fixture cleanup cannot verify host retirement: '+result);}
+   else{const result=(overrides.terminate??native.terminateVerifiedProcess)(target,target.pid);if(!['signalled','absent','mismatch'].includes(result))throw Error('fixture cleanup cannot verify host retirement: '+result);}
   }
-  const end=Date.now()+5000;while(targets.some(t=>ownerProcessStartIdentity(t.pid)===t.startIdentity)){if(Date.now()>end)throw Error('fixture host outlived cleanup');await new Promise(r=>setTimeout(r,5));}
-  await cleanupNativeOwner(process.env.AYA_HOME);
+  const end=Date.now()+5000;while(targets.some(t=>identify(t.pid)===t.startIdentity)){if(Date.now()>end)throw Error('fixture host outlived cleanup');await new Promise(r=>setTimeout(r,5));}
+  await (overrides.cleanupOwner??cleanupNativeOwner)(process.env.AYA_HOME);
  }
 }
 
@@ -357,4 +361,13 @@ test('a failed planned assertion retires its real host/principal before the next
  const next=await fixture('publish-planned'),nextTicket=await readAuthTransferTicket(next.file),recipient=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));
  try{await recipient.redeemAnnouncedCapability(nextTicket);await recipient.adoptPlannedHandover(nextTicket,recipient.expectedHostIdentity('reuse'),async()=>{});assert.equal(await recipient.getPid('kept'),next.pid);}
  finally{await cleanupPlannedFixture(recipient,nextTicket);}
+});
+
+for(const result of ['absent','unknown'])test(`planned cleanup deduplicates targets and handles native ${result} at the final exit boundary`,async()=>{
+ let alive=true,signals=0,ownerCleaned=false;
+ const ticket={hostPid:123,hostStartIdentity:'1:2'},client={lastHostPid:123,lastHostStart:'1:2',hostAsked:false,isConnected:()=>false,openSocket:async()=>{throw Error('fixture socket gone');},dispose(){},dropSocket(){}};
+ assert.deepEqual(fixtureRetirementTargets(client,ticket),[{pid:123,startIdentity:'1:2'}]);
+ const work=retirePlannedFixture(client,ticket,{identity:()=>alive?'1:2':null,terminate:target=>{assert.deepEqual(target,{pid:123,startIdentity:'1:2'});signals++;if(result==='absent')alive=false;return result;},cleanupOwner:async()=>{ownerCleaned=true;}});
+ if(result==='absent'){await work;assert.equal(ownerCleaned,true);}else{await assert.rejects(work,/cannot verify host retirement: unknown/);assert.equal(ownerCleaned,false);}
+ assert.equal(signals,1);
 });
