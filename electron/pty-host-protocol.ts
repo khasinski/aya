@@ -50,6 +50,7 @@ export type PtyHostResponse = (
 
 export interface PtyOwnerStatus {
   pid: number;
+  startIdentity?:string;
   instanceId?:string;
   startTime?:string;
   incompatible: boolean;

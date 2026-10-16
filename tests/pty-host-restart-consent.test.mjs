@@ -12,8 +12,9 @@ function fixture(actual){
  client.sendRequest=async(s,req)=>{assert.equal(s,socket);requests.push(req.type);return null;};
  client.startHost=()=>{throw Error('must not start a host in this fixture');};return{client,requests,socket};
 }
-for(const changed of ['pid','start','owner'])test(`restart consent refuses changed ${changed} until a fresh question`,async()=>{
- const a=target(pidA,'A',owner(800,'a')),b=changed==='pid'?target(pidB,'B',owner(801,'b')):changed==='start'?target(pidA,'B',a.owner):target(pidA,'A',owner(801,'b'));
+for(const changed of ['pid','start','owner','owner-kernel'])test(`restart consent refuses changed ${changed} until a fresh question`,async()=>{
+ const a=target(pidA,'A',owner(800,'a'));if(changed==='owner-kernel')a.owner.startIdentity='8:1';
+ const b=changed==='owner-kernel'?{...a,owner:{...a.owner,startIdentity:'8:2'}}:changed==='pid'?target(pidB,'B',owner(801,'b')):changed==='start'?target(pidA,'B',a.owner):target(pidA,'A',owner(801,'b'));
  const {client,requests}=fixture(b),probe=native.ownerProcessStartIdentity,questions=[];native.ownerProcessStartIdentity=()=>b.startTime;
  try{await assert.rejects(client.restart({target:a,confirmChanged:async fresh=>{questions.push(fresh);return false;}}),/restart cancelled/);assert.equal(questions.length,1);assert.equal(questions[0].owner.pid,b.owner.pid);assert.deepEqual(requests,['version']);}
  finally{native.ownerProcessStartIdentity=probe;client.dispose();}

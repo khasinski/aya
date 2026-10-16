@@ -9,7 +9,7 @@ export const OWNER_DIRECTORY = path.join(AYA_HOME, "pty-owner");
 export const OWNER_SOCKET = path.join(OWNER_DIRECTORY, "o");
 const RECORD = path.join(OWNER_DIRECTORY, "record.json");
 export interface OwnerRecord {
-  pid: number; startTime: string; executable: string; binaryHash: string;
+  pid: number; startTime: string; startIdentity?:string; executable: string; binaryHash: string;
   instanceId: string; jsPid: number; jsStartTime: string; panes: OwnerPane[]; uncertain?: string[]; recoveryFailures?: string[];
   spawnIntents?: Array<{ id: string; generation: string }>;
 }
@@ -34,6 +34,7 @@ export function readOwnerRecord(): OwnerRecord | null {
     let r:OwnerRecord;
     try{r=JSON.parse(bytes.toString("utf8")) as OwnerRecord;}catch{throw new Error("Invalid PTY owner record");}
     if (!Number.isSafeInteger(r.pid) || r.pid < 2 || r.pid > 0x7fffffff || typeof r.startTime !== "string" || !r.startTime ||
+        (r.startIdentity!==undefined&&(typeof r.startIdentity!=="string"||r.startIdentity.length>63||!/^\d+:\d+$/.test(r.startIdentity))) ||
         typeof r.executable !== "string" || !path.isAbsolute(r.executable) || typeof r.binaryHash !== "string" ||
         !/^[a-f0-9]{32}$/.test(r.instanceId) || !Number.isSafeInteger(r.jsPid) || r.jsPid < 2 ||
         typeof r.jsStartTime !== "string" || !r.jsStartTime || !/^(?:[a-f0-9]{64}|unknown)$/.test(r.binaryHash) ||
@@ -65,8 +66,9 @@ export function ownerReaderIsLive(r: OwnerRecord): boolean {
   return p.alive && p.startTime === r.jsStartTime;
 }
 export function writeOwnerRecord(r: OwnerRecord): void {
+  const bytes=JSON.stringify(r);if(Buffer.byteLength(bytes)>65536)throw new Error("PTY owner record length limit");
   const temporary = `${RECORD}.${process.pid}.${randomBytes(6).toString("hex")}`;
-  try { fs.writeFileSync(temporary, JSON.stringify(r), { mode: 0o600, flag: "wx" }); fs.renameSync(temporary, RECORD); }
+  try { fs.writeFileSync(temporary, bytes, { mode: 0o600, flag: "wx" }); fs.renameSync(temporary, RECORD); }
   finally { fs.rmSync(temporary, { force: true }); }
 }
 export function removeOwnerRecord(r: OwnerRecord): void {

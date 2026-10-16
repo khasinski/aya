@@ -34,6 +34,8 @@ export interface HostHealth {
   ptyCount: number;
   owner?: PtyOwnerStatus;
   recoveryReason?:string;
+  ownerUnavailable?:boolean;
+  ownerStopped?:boolean;
   authentication?:HostAuthenticationProblem;
   stale: boolean;
   /** Expected core bytes could not be read: warn, but never restart automatically. */
@@ -52,7 +54,7 @@ export interface HostHealthDeps {
   expected: HostIdentity;
   /** Whether this Aya is connected to a host now. */
   connected(): boolean;
-  status(): Promise<{ identity: HostIdentity | null; ptyCount: number; pid?: number; startTime?:string|null; owner?: HostHealth["owner"];recoveryReason?:string;authentication?:HostAuthenticationProblem }>;
+  status(): Promise<{ identity: HostIdentity | null; ptyCount: number; pid?: number; startTime?:string|null; owner?: HostHealth["owner"];recoveryReason?:string;ownerUnavailable?:boolean;ownerStopped?:boolean;authentication?:HostAuthenticationProblem }>;
   socketExists(): Promise<boolean>;
   /** The pid of the host answering on pty-host.sock, without starting one; null when none answers. */
   probeSocket(): Promise<number | null>;
@@ -82,6 +84,8 @@ export async function gatherHostHealth(deps: HostHealthDeps): Promise<HostHealth
     ...(status.owner ? { owner: status.owner } : {}),
     ...(status.recoveryReason ? { recoveryReason:status.recoveryReason } : {}),
     ...(status.authentication ? {authentication:status.authentication}:{}),
+    ...(status.ownerUnavailable?{ownerUnavailable:true}:{}),
+    ...(status.ownerStopped?{ownerStopped:true}:{}),
     indeterminate: asked && (!deps.expected.scriptHash || deps.expected.scriptHash === UNKNOWN_SCRIPT_HASH),
     socket: { exists: socketExists, pid: socketPid },
     otherHosts,
@@ -200,7 +204,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
       }
       if(health.authentication){
         if(!await askRestart("Restart terminals",await authRestartDetail(health))){showStaleHost(true);return;}
-        const exited=await ptyHost.restart({target:{pid:health.pid,startTime:health.startTime??null,owner:health.owner},confirmChanged:askChangedRestartTarget});
+        const exited=await ptyHost.restart({target:{pid:health.pid,startTime:health.startTime??null,owner:health.owner},confirmChanged:askChangedRestartTarget,confirmSurvivors:askSurvivorRecovery});
         await hostHealth();if(!exited)showStaleHost(true);return;
       }
       if (health.identity === null && health.stale) {
@@ -224,7 +228,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
               : "Replacing the unavailable or incompatible native PTY owner stops every terminal it owns.";
             if (!(await askRestart("Restart terminals", detail))) { cancelled = true; return; }
           }
-          exited = await ptyHost.restart({target:{pid:health.pid,startTime:health.startTime??null,owner:health.owner},confirmChanged:askChangedRestartTarget});
+          exited = await ptyHost.restart({target:{pid:health.pid,startTime:health.startTime??null,owner:health.owner},confirmChanged:askChangedRestartTarget,confirmSurvivors:askSurvivorRecovery});
         }))
       ) {
         showStaleHost(true);
@@ -312,7 +316,21 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
       (retained.length?`\n\nProcesses that may still run:\n${retained.join("\n")}`:"")+
       (!target.authentication?.inventoryKnown?"\n\nThe retained process inventory is unknown. It must not be treated as empty.":"");
   }
+  async function unavailableOwnerDetail(target:Pick<HostRestartTarget,"owner"|"recoveryReason">):Promise<string>{
+    const names=new Map((await relaunchDeps.panes().catch(()=>[])).map(p=>[p.id,p.name]));
+    const retained=[...(target.owner?.inventory??[]).map(p=>`${names.get(p.id)??p.id} (PID ${p.pid})`),...(target.owner?.uncertain??[]).map(id=>`${names.get(id)??id}: process identity unknown`)];
+    return "Stopping the terminal owner"+(target.owner?` (PID ${target.owner.pid})`:"")+" ends its panes. The JS terminal host is unavailable. Surviving processes require a separate confirmation."+
+      (retained.length?`\n\nProcesses that may still run:\n${retained.join("\n")}`:target.owner?"\n\nNo pane processes were recorded.":"\n\nThe retained process inventory is unknown.")+
+      (!target.owner?.startIdentity?"\n\nThe owner's kernel start identity was not recorded. Aya cannot stop it safely; nothing will be signalled.":"")+
+      (target.recoveryReason?`\n\n${target.recoveryReason}`:"");
+  }
+  async function askSurvivorRecovery(target:HostRestartTarget):Promise<boolean>{
+    const names=new Map((await relaunchDeps.panes().catch(()=>[])).map(p=>[p.id,p.name]));
+    const retained=[...(target.owner?.inventory??[]).map(p=>`${names.get(p.id)??p.id} (PID ${p.pid})`),...(target.owner?.uncertain??[]).map(id=>`${names.get(id)??id}: process identity unknown`),...(target.owner?.recoveryFailures??[])];
+    return askRestart("Stop surviving processes","The terminal owner has stopped. These retained processes may still run. Stop only the processes whose recorded identities can still be verified?"+(retained.length?`\n\n${retained.join("\n")}`:"\n\nTheir identities are unknown; unverified processes will not be signalled."));
+  }
   async function askChangedRestartTarget(target:HostRestartTarget):Promise<boolean>{
+    if(target.ownerUnavailable)return askRestart("Stop terminal owner",await unavailableOwnerDetail(target));
     const names=new Map((await relaunchDeps.panes().catch(()=>[])).map(p=>[p.id,p.name]));
     const retained=[...(target.owner?.inventory??[]).map(p=>`${names.get(p.id)??p.id} (PID ${p.pid})`),...(target.owner?.uncertain??[]).map(id=>`${names.get(id)??id}: process identity unknown`)];
     return askRestart("Restart","The terminal host changed after the previous question. Restarting this host stops its current work."+
@@ -326,19 +344,19 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
   async function restartHostFromWindow(): Promise<void> {
     const before = await hostHealth();
     const legacy = !before.owner && before.ptyCount > 0;
-    const recovery = !!before.authentication || legacy || before.owner?.incompatible || !!before.owner?.disconnected.length;
+    const recovery = !!before.ownerUnavailable || !!before.authentication || legacy || before.owner?.incompatible || !!before.owner?.disconnected.length;
     const names = new Map((await relaunchDeps.panes().catch(() => [])).map(p => [p.id, p.name]));
     const retained = [
       ...(before.owner?.inventory ?? []).map(p => `${names.get(p.id) ?? p.id} (PID ${p.pid})`),
       ...(before.owner?.uncertain ?? []).map(id => `${names.get(id) ?? id}: unconfirmed spawn, process identity unknown`),
     ];
-    const confirmed = before.authentication?await askRestart("Restart",await authRestartDetail(before)):recovery ? await askRestart("Restart", legacy
+    const confirmed = before.ownerUnavailable&&before.ownerStopped?true:before.ownerUnavailable?await askRestart("Stop terminal owner",await unavailableOwnerDetail(before)):before.authentication?await askRestart("Restart",await authRestartDetail(before)):recovery ? await askRestart("Restart", legacy
       ? "Moving these terminals to Aya's native PTY owner stops their current processes. They cannot be moved from the older host."
       : "Restarting the terminal host stops the processes retained by the native PTY owner. Their disconnected screens cannot show all current work." +
         (retained.length ? `\n\nProcesses that may still run:\n${retained.join("\n")}` : ""))
       : await confirmLosingWork("Restarting the PTY host", "Restart");
     if (!confirmed) throw new Error("restart cancelled");
-    const exited = await ptyHost.restart({target:{pid:before.pid,startTime:before.startTime??null,owner:before.owner},confirmChanged:askChangedRestartTarget});
+    const exited = await ptyHost.restart({target:{pid:before.pid,startTime:before.startTime??null,owner:before.owner},confirmChanged:askChangedRestartTarget,confirmSurvivors:askSurvivorRecovery});
     // The red dot follows what the host now is: off for a current host, still on if the restart did not take.
     const after = await hostHealth();
     if (recovery && (after.stale || after.owner?.disconnected.length)) {

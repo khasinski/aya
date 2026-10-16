@@ -9,6 +9,7 @@ const require=createRequire(import.meta.url);
 fs.mkdirSync('test-results',{recursive:true});const home=fs.mkdtempSync(path.resolve('test-results/owner-continuity-real-'));
 process.env.AYA_HOME=home;process.env.HOME=home;process.env.SHELL='/bin/sh';
 const {PtyHostClient}=require('../dist-electron/pty-host-client.js');
+const {ownerProcessStartIdentity}=require('../dist-electron/pty-owner-client.js');
 const {waitFor,fakeWebContents,ptyEventsFor,cleanupNativeOwner}=await import('./helpers/pty-host.mjs');
 test('a new main authenticates to a surviving host and recovers its same owner/child after a later JS crash', {timeout:25000},async()=>{
  const oldMain=spawn(process.execPath,['tests/helpers/pty-owner-continuity-main.cjs'],{env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},stdio:['ignore','pipe','pipe']});
@@ -38,6 +39,8 @@ test('a new main authenticates to a surviving host and recovers its same owner/c
   assert.equal(next.ownsOwnerKey,true,JSON.stringify(logs));
   await next.spawn({...before.request,attachIfReused:true});assert.equal(await next.getPid('continued'),before.pid);
   const attached=await next.hostStatus();assert.equal(attached.pid,before.status.pid);assert.equal(attached.owner.pid,before.status.owner.pid);assert.equal(attached.owner.instanceId,before.status.owner.instanceId);
+  assert.equal(attached.owner.startIdentity,ownerProcessStartIdentity(attached.owner.pid));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(home,'pty-owner/record.json'),'utf8')).startIdentity,attached.owner.startIdentity);
   const secret=next.ownerSecret.toString('hex');assert.ok(!fs.readFileSync(path.join(home,'pty-owner/record.json'),'utf8').includes(secret));
   assert.equal(fs.existsSync(path.join(home,'pty-handover.json')),false);
   process.kill(attached.pid,'SIGKILL');await waitFor(()=>logs.some(e=>e.event==='pty-crash-recovery'&&e.state==='recovered'));

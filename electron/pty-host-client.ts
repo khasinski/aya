@@ -53,6 +53,7 @@ import {HostAuthError,type HostAuthPeer} from "./pty-host-auth";
 import {handoverPeer} from "./pty-handover-window";
 import {refusedHostStatus,HOST_AUTH_REFUSAL_REASON,type HostAuthenticationProblem} from "./pty-host-auth-status";
 import {validateOwnerContinuity} from "./pty-host-owner-continuity";
+import {retireUnavailableOwner,ownerRetirementDeps} from "./pty-host-owner-retirement";
 import {restartRefusedHost,refusedRestartDeps} from "./pty-host-auth-restart";
 import {assertHostCreationSafe} from "./pty-host-start-guard";
 
@@ -155,14 +156,15 @@ export async function waitForExit(pid: number, ms: number): Promise<boolean> {
 }
 
 export interface HostRestartTarget {
-  pid:number|null;startTime:string|null;identity:HostIdentity|null;ptyCount:number;owner?:PtyOwnerStatus;authentication?:HostAuthenticationProblem;
+  pid:number|null;startTime:string|null;identity:HostIdentity|null;ptyCount:number;owner?:PtyOwnerStatus;authentication?:HostAuthenticationProblem;ownerUnavailable?:boolean;recoveryReason?:string;
 }
 export interface HostRestartConsent {
   target:Pick<HostRestartTarget,"pid"|"startTime"|"owner">;
   confirmChanged:(target:HostRestartTarget)=>Promise<boolean>;
+  confirmSurvivors?:(target:HostRestartTarget)=>Promise<boolean>;
 }
 const sameRestartTarget=(a:HostRestartConsent["target"],b:HostRestartConsent["target"]):boolean=>
-  a.pid===b.pid&&a.startTime===b.startTime&&JSON.stringify(a.owner?[a.owner.pid,a.owner.startTime,a.owner.instanceId,a.owner.hash]:null)===JSON.stringify(b.owner?[b.owner.pid,b.owner.startTime,b.owner.instanceId,b.owner.hash]:null);
+  a.pid===b.pid&&a.startTime===b.startTime&&JSON.stringify(a.owner?[a.owner.pid,a.owner.startTime,a.owner.startIdentity??null,a.owner.instanceId,a.owner.hash]:null)===JSON.stringify(b.owner?[b.owner.pid,b.owner.startTime,b.owner.startIdentity??null,b.owner.instanceId,b.owner.hash]:null);
 
 export class PtyHostClient {
   private socket: net.Socket | null = null;
@@ -197,9 +199,18 @@ export class PtyHostClient {
   private disposed = false;
   private ownsOwnerKey=false;
   private ownerContinuityUnavailable=false;
+  private ownerRetired=false;
   private blockUnavailableOwner():Error {
     this.crashBlocked=true;
-    this.recoveryReason="Aya could not verify recovery data from the surviving terminal host. Its native owner may still keep the processes running; Aya left the panes disconnected and did not respawn them. Use Settings > Diagnostics > PTY host > Restart to review stopping them.";
+    const prefix="Aya could not verify recovery data from the surviving terminal host. Input remains disabled. ";
+    let identified=false;
+    try{const record=readOwnerRecord(),expected=this.recoveryOwner??this.crashContext?.owner;
+      identified=!!record&&!!expected&&record.pid===expected.pid&&record.startTime===expected.startTime&&record.instanceId===expected.instanceId&&record.binaryHash===expected.binaryHash&&!!record.startIdentity;
+    }catch{/* Unreadable private metadata never promises a safe stop. */}
+    this.recoveryReason=this.ownerRetired
+      ? "The terminal owner has stopped. Retained processes still need separate confirmation; input remains disabled. Use Settings > Diagnostics > PTY host > Restart to review them."
+      : prefix+(identified?"Use Settings > Diagnostics > PTY host > Restart to review stopping the terminal owner. Stopping it ends its panes; surviving processes need a separate confirmation."
+        : "The owner's kernel start identity was not recorded or cannot be verified. Aya cannot stop it safely; its processes and inventory were kept.");
     return Object.assign(new Error("The terminal host is disconnected or recovering. This request was not sent."),{code:"PTY_HOST_OWNER_UNAVAILABLE"});
   }
   private uncertainInput=new Set<string>();
@@ -428,6 +439,8 @@ export class PtyHostClient {
     owner?: PtyOwnerStatus;
     recoveryReason?:string;
     authentication?:HostAuthenticationProblem;
+    ownerUnavailable?:boolean;
+    ownerStopped?:boolean;
     startTime?:string|null;
   }> {
     try {
@@ -442,7 +455,7 @@ export class PtyHostClient {
         ...(obj.owner && typeof obj.owner === "object" ? { owner: obj.owner as PtyOwnerStatus } : {}),
       };
     } catch(error) {
-      if(this.authRefusalPeer!==undefined||(error as {code?:string})?.code==="PTY_HOST_START_BLOCKED")return refusedHostStatus(this.authRefusalPeer??null);
+      if(!this.ownerContinuityUnavailable&&(this.authRefusalPeer!==undefined||(error as {code?:string})?.code==="PTY_HOST_START_BLOCKED"))return refusedHostStatus(this.authRefusalPeer??null);
       // A blocked transport must not erase B2's explicit dead-owner recovery
       // inventory. Read only the bounded private record for this main's known
       // owner; no process/socket probes or new host are needed to name its PIDs.
@@ -452,13 +465,13 @@ export class PtyHostClient {
           const record=readOwnerRecord(),expected=this.recoveryOwner??this.crashContext!.owner;
           if(record&&record.pid===expected.pid&&record.startTime===expected.startTime&&record.instanceId===expected.instanceId&&record.binaryHash===expected.binaryHash){
             const uncertain=[...new Set([...(record.uncertain??[]),...(record.spawnIntents??[]).map(p=>p.id)])];
-            owner={pid:record.pid,startTime:record.startTime,instanceId:record.instanceId,hash:record.binaryHash,incompatible:true,
+            owner={pid:record.pid,startTime:record.startTime,startIdentity:record.startIdentity,instanceId:record.instanceId,hash:record.binaryHash,incompatible:true,
               disconnected:[...new Set([...record.panes.map(p=>p.id),...uncertain])],
               inventory:record.panes.map(p=>({id:p.id,pid:p.pid,startIdentity:p.startIdentity})),uncertain,recoveryFailures:record.recoveryFailures};
           }
         }catch{/* Unreadable/changed records stay unknown and are never signalled here. */}
       }
-      return { identity: null, ptyCount: owner?.inventory?.length??0,...(owner?{owner}:{}),...(this.recoveryReason?{recoveryReason:this.recoveryReason}:{}) };
+      return { identity: null, ptyCount: owner?.inventory?.length??0,...(owner?{owner}:{}),...(this.recoveryReason?{recoveryReason:this.recoveryReason}:{}),...(this.ownerContinuityUnavailable?{ownerUnavailable:true}:{}),...(this.ownerRetired&&owner?{ownerStopped:true}:{}) };
     }
   }
 
@@ -586,7 +599,7 @@ export class PtyHostClient {
         this.crashBlocked=false;
         const result=await this.replaceHost(consent);
         if(result){
-          completed=true;this.ownerContinuityUnavailable=false;this.authRefusedPanes.clear();this.recoveryReason=undefined;supervisor?.dispose();
+          completed=true;this.crashBlocked=false;this.ownerContinuityUnavailable=false;this.ownerRetired=false;this.authRefusedPanes.clear();this.recoveryReason=undefined;supervisor?.dispose();
           if(supervisor&&!this.disposed){this.crashSupervisor=null;this.enableCrashRecovery(this.recoveryHooks);}
         }
         return result;
@@ -636,6 +649,21 @@ export class PtyHostClient {
     if(consent){
       try{bound=await this.confirmedRestartSocket(consent);oldPid=bound.target.pid!;}
       catch(error){
+        if((error as {code?:string})?.code==="PTY_HOST_OWNER_UNAVAILABLE"&&this.ownerContinuityUnavailable){
+          return retireUnavailableOwner(consent,ownerRetirementDeps({cancelled:()=>this.disposed,log:(event,fields)=>this.recoveryHooks.log?.(event,fields),
+            ownerGone:()=>{
+              this.ownerRetired=true;this.blockUnavailableOwner();
+              for(const ptyId of new Set([...this.authRefusedPanes.keys(),...this.live,...this.lostOwned]))this.authRefusedPanes.set(ptyId,this.recoveryReason!);
+              try{this.sendToSinks([...this.authRefusedPanes].map(([ptyId,reason])=>({type:"disconnected",ptyId,reason})));}catch{/* The owner is already gone; a closing view cannot roll it back. */}
+            },
+            complete:ids=>{
+              this.hostAsked=true;this.dropSocket();this.authRefusalPeer=undefined;this.hostAuthKey=null;this.recoveryOwner=null;this.crashContext=null;this.ownsOwnerKey=false;
+              this.recoveryLaunches.clear();this.lostOwned.clear();this.live.clear();
+              for(const id of ids){this.endedBootPanes.delete(id);this.observedExits.delete(id);this.recoveredStates.delete(id);this.recoveryScreens.delete(id);this.uncertainInput.delete(id);}
+              try{this.sendToSinks(ids.map(ptyId=>({type:"no-session",ptyId})));}catch{/* A closing view does not invalidate confirmed process retirement. */}
+            },
+          }));
+        }
         if(!["PTY_HOST_AUTH_REQUIRED","PTY_HOST_AUTH_UNAVAILABLE","PTY_HOST_START_BLOCKED"].includes((error as {code?:string})?.code??""))throw error;
         const exited=await restartRefusedHost(consent,refusedRestartDeps(()=>this.disposed,(event,fields)=>this.recoveryHooks.log?.(event,fields)));
         if(exited){this.hostAsked=true;this.dropSocket();this.authRefusalPeer=undefined;this.hostAuthKey=null;}

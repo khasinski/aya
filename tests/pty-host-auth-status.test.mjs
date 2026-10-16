@@ -84,3 +84,15 @@ test('retained record cap accepts exactly 64KiB valid JSON and refuses 64KiB+1 b
   assert.equal(reads,0);assert.equal(parses,0);
  }finally{fs.readSync=read;JSON.parse=parse;}
 });
+
+test('legacy owner kernel identity stays absent and malformed or overlong identities refuse the record',()=>{
+ record();assert.equal(registry.readOwnerRecord().startIdentity,undefined);
+ for(const identity of ['unknown','1:2'.repeat(32),123,null]){const r=record();r.startIdentity=identity;registry.writeOwnerRecord(r);assert.throws(()=>registry.readOwnerRecord());}
+ const r=record();r.startIdentity='123:456';registry.writeOwnerRecord(r);assert.equal(registry.readOwnerRecord().startIdentity,'123:456');
+});
+test('writer refuses an over-limit retained record before replacing the prior inventory',()=>{
+ const r=record(),before=fs.readFileSync(file);
+ assert.throws(()=>registry.writeOwnerRecord({...r,padding:'x'.repeat(65536)}),/record length limit/);
+ assert.deepEqual(fs.readFileSync(file),before);
+ assert.deepEqual(fs.readdirSync(path.dirname(file)),['record.json']);
+});

@@ -360,7 +360,7 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
     // record (e.g. to spot a same-version host stranded off-socket).
     const owner = currentOwnerRuntime();
     return { ...HOST_IDENTITY, ptyCount: activePtyCount(), pid: process.pid,...(crashBoot?{recovery:ptyRecoveryStates()}:{}),
-      owner: owner ? { pid: owner.record.pid,instanceId:owner.record.instanceId,startTime:owner.record.startTime, hash: owner.record.binaryHash, incompatible: owner.incompatible,
+      owner: owner ? { pid: owner.record.pid,startIdentity:owner.record.startIdentity,instanceId:owner.record.instanceId,startTime:owner.record.startTime, hash: owner.record.binaryHash, incompatible: owner.incompatible,
         disconnected: [...owner.disconnected.keys()], inventory: owner.record.panes, uncertain: owner.record.uncertain ?? [], recoveryFailures: owner.record.recoveryFailures ?? [] } : null };
   }
   throw new Error(PTY_HOST_UNKNOWN_REQUEST);

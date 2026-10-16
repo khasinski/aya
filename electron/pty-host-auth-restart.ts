@@ -19,7 +19,7 @@ export interface RefusedRestartDeps {
   log(event:string,fields:Record<string,unknown>):void;
 }
 const same=(a:HostRestartConsent["target"],b:HostRestartTarget):boolean=>a.pid===b.pid&&a.startTime===b.startTime&&
-  JSON.stringify(a.owner?[a.owner.pid,a.owner.startTime,a.owner.instanceId,a.owner.hash]:null)===JSON.stringify(b.owner?[b.owner.pid,b.owner.startTime,b.owner.instanceId,b.owner.hash]:null);
+  JSON.stringify(a.owner?[a.owner.pid,a.owner.startTime,a.owner.startIdentity??null,a.owner.instanceId,a.owner.hash]:null)===JSON.stringify(b.owner?[b.owner.pid,b.owner.startTime,b.owner.startIdentity??null,b.owner.instanceId,b.owner.hash]:null);
 export async function inspectRefusedHost():Promise<RefusedRestartTarget>{
   const peer=await new Promise<ReturnType<typeof handoverPeer>|null>(resolve=>{
     let settled=false;

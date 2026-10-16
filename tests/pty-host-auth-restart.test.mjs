@@ -73,3 +73,9 @@ test('a host that does not exit is kept without an additional signal or replacem
  assert.equal(await restartRefusedHost({target:a,confirmChanged:async()=>{throw Error('same target needs no second question');}},f.deps),false);
  assert.equal(f.signals.length,1);
 });
+
+test('a changed recorded native-owner kernel identity requires fresh consent even when the JS host identity matches',async()=>{
+ const a=target(100,'1:1');a.owner.startIdentity='8:1';const b=structuredClone(a);b.owner.startIdentity='8:2';const f=fixture([b]);let questions=0;
+ await assert.rejects(restartRefusedHost({target:a,confirmChanged:async current=>{questions++;assert.equal(current.owner.startIdentity,'8:2');return false;}},f.deps),/restart cancelled/);
+ assert.equal(questions,1);assert.deepEqual(f.signals,[]);
+});

@@ -22,7 +22,7 @@ export function refusedHostStatus(peer:HostAuthPeer|null):RefusedHostStatus{
     const record=readOwnerRecord();
     if(record&&record.jsPid===peer.pid&&record.jsStartTime===observed.startTime){
       const uncertain=[...new Set([...(record.uncertain??[]),...(record.spawnIntents??[]).map(p=>p.id)])];
-      status.owner={pid:record.pid,startTime:record.startTime,instanceId:record.instanceId,hash:record.binaryHash,incompatible:false,
+      status.owner={pid:record.pid,startTime:record.startTime,startIdentity:record.startIdentity,instanceId:record.instanceId,hash:record.binaryHash,incompatible:false,
         disconnected:[...new Set([...record.panes.map(p=>p.id),...uncertain])],
         inventory:record.panes.map(p=>({id:p.id,pid:p.pid,startIdentity:p.startIdentity})),uncertain,recoveryFailures:record.recoveryFailures};
       status.ptyCount=record.panes.length+uncertain.filter(id=>!record.panes.some(p=>p.id===id)).length;
