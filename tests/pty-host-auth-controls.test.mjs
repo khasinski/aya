@@ -49,3 +49,12 @@ test('authenticated transfer verbs and receipt requests have closed bounded enve
  assert.equal(isPtyHostRequest({id:1,type:'auth-transfer-unknown',attempt}),false);
  assert.equal(isPtyHostRequest({...requests[0],purpose:'other'}),false);assert.equal(isPtyHostRequest({...requests[3],receipt:'not-a-receipt'}),false);
 });
+
+test('existing B3 cancel alone revokes planned credential release and resumes the same pane',{timeout:20000},async()=>{
+ const old=await fixture('planned-cancel'),ticket=await readAuthTransferTicket(old.file);
+ const socket=net.createConnection(path.join(process.env.AYA_HOME,'pty-host.sock'));await once(socket,'connect');
+ await assert.rejects(redeemHostCapability(socket,ticket,{pid:process.pid,startIdentity:ownerProcessStartIdentity(process.pid)}));
+ const c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));
+ try{assert.equal(await c.getPid('kept'),old.pid);assert.equal((await c.hostStatus()).owner.pid,old.ownerPid);assert.match(await c.getBuffer('kept'),/AFTER_PLANNED_ABORT/);await c.write('kept','AFTER_CANCEL_REDEMPTION\n');await c.shutdown();}
+ finally{c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
+});

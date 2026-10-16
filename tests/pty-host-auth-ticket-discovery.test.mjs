@@ -25,7 +25,7 @@ test('ambiguous valid attempts refuse without consuming either or selecting by d
 test('directory iteration is capped before any ticket is consumed and unsafe directories or ticket types refuse',async()=>{
  const f=await fixture(),t=ticket();try{
   await Promise.all(Array.from({length:257},(_,i)=>fs.writeFile(path.join(f.root,`entry-${i}`),'')));
-  await assert.rejects(findAuthTransferTicket(f.root));
+  await writeAuthTransferTicket(f.file(t),t,budget());await assert.rejects(findAuthTransferTicket(f.root));assert.ok(await fs.stat(f.file(t)),'entry cap refuses before consuming a valid ticket');
   await fs.rm(f.root,{recursive:true});await fs.mkdir(f.root,{mode:0o700});
   await fs.chmod(f.root,0o755);await assert.rejects(findAuthTransferTicket(f.root));await fs.chmod(f.root,0o700);
   const alias=f.root+'-alias';await fs.symlink(f.root,alias);try{await assert.rejects(findAuthTransferTicket(alias));}finally{await fs.unlink(alias);}

@@ -67,3 +67,17 @@ test('a retried authenticated continuity response replaces only its pending exac
  transfer.noteContinuity(recipient,a.attempt,receipt);transfer.noteContinuity(recipient,a.attempt,receipt);
  const next='e'.repeat(64);transfer.noteContinuity(recipient,a.attempt,next);assert.throws(()=>transfer.complete(recipient,a.attempt,receipt));transfer.complete(recipient,a.attempt,next);transfer.dispose();
 });
+
+test('core abort revokes only matching uncommitted planned authority, never ordinary or claimed recipients',()=>{
+ for(const purpose of ['ordinary-quit','planned-update'])for(const claimed of [false,true]){
+  const {transfer,reserve}=fixture(),a=reserve(purpose);transfer.activate(issuer,a.attempt);
+  if(claimed)transfer.redeem(a.attempt,nonce,recipient);
+  transfer.revokeUnclaimedPlanned('f'.repeat(64));assert.equal(transfer.phase,claimed?'claimed':'active');
+  transfer.revokeUnclaimedPlanned(a.attempt);
+  assert.equal(transfer.phase,claimed?'claimed':purpose==='planned-update'?'sealed':'active');
+  if(claimed){transfer.noteContinuity(recipient,a.attempt,receipt);transfer.complete(recipient,a.attempt,receipt);assert.equal(transfer.phase,'owned');}
+  else if(purpose==='planned-update')assert.throws(()=>transfer.redeem(a.attempt,nonce,recipient));
+  else assert.deepEqual(transfer.redeem(a.attempt,nonce,recipient),key);
+  transfer.dispose();
+ }
+});

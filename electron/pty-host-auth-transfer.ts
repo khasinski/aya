@@ -81,6 +81,12 @@ export class HostAuthTransfer {
     a.phase="claimed";a.recipient={...recipient};a.nonce.fill(0);
     return Buffer.from(this.capability);
   }
+  /** Authoritative core abort revokes only its matching, uncommitted planned
+   * credential window. A claimed recipient and ordinary attempts are untouched. */
+  revokeUnclaimedPlanned(attempt:string):void{
+    const a=this.attempt;
+    if(a?.purpose==="planned-update"&&a.attempt===attempt&&(a.phase==="reserved"||a.phase==="active"))this.seal(a);
+  }
   /** Called only after the authenticated owner-continuity response is built.
    * Its exact manifest receipt is acknowledged by the same validated main. */
   noteContinuity(recipient:HostAuthPeer,attempt:string,receipt:string):void{

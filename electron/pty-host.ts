@@ -77,7 +77,9 @@ let plannedTransferAnnouncement:string|null=null;
 let crashBoot=false;
 let socketAuthenticator:HostSocketAuthenticator;
 const handoverWindow = new HandoverWindow();
-const hostHandover = new HostHandover(PTY_HANDOVER_CORE_DIRECTORY, PTY_HANDOVER_DISPLAY_DIRECTORY);
+const hostHandover = new HostHandover(PTY_HANDOVER_CORE_DIRECTORY, PTY_HANDOVER_DISPLAY_DIRECTORY,()=>{
+  if(plannedTransferAnnouncement)authTransfer.revokeUnclaimedPlanned(plannedTransferAnnouncement);
+});
 let idleTimer: NodeJS.Timeout | null = null;
 let server: net.Server | null = null;
 // The socket file this host bound, by device and inode. When this host exits after a restart, the path may already
