@@ -198,6 +198,11 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
         await stopHosts(health.otherHosts.map((host) => host.pid));
         health = await hostHealth();
       }
+      if(health.authentication){
+        if(!await askRestart("Restart terminals",await authRestartDetail(health))){showStaleHost(true);return;}
+        const exited=await ptyHost.restart({target:{pid:health.pid,startTime:health.startTime??null,owner:health.owner},confirmChanged:askChangedRestartTarget});
+        await hostHealth();if(!exited)showStaleHost(true);return;
+      }
       if (health.identity === null && health.stale) {
         // identity null is ALSO returned for transient client-side failures (e.g.
         // a >5s cold-spawn socket wait). Acting on it immediately would shut down
@@ -299,12 +304,21 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
     if (item) item.icon = nativeImage.createEmpty();
   }
 
+  async function authRestartDetail(target:Pick<HostRestartTarget,"pid"|"owner"|"authentication">):Promise<string>{
+    const names=new Map((await relaunchDeps.panes().catch(()=>[])).map(p=>[p.id,p.name]));
+    const retained=[...(target.owner?.inventory??[]).map(p=>`${names.get(p.id)??p.id} (PID ${p.pid})`),...(target.owner?.uncertain??[]).map(id=>`${names.get(id)??id}: process identity unknown`)];
+    return "Aya could not authenticate to this terminal host. Restarting it stops its current processes."+
+      (target.pid?`\n\nTerminal host PID ${target.pid}.`:"\n\nThe terminal host identity is unknown; nothing can be stopped safely.")+
+      (retained.length?`\n\nProcesses that may still run:\n${retained.join("\n")}`:"")+
+      (!target.authentication?.inventoryKnown?"\n\nThe retained process inventory is unknown. It must not be treated as empty.":"");
+  }
   async function askChangedRestartTarget(target:HostRestartTarget):Promise<boolean>{
     const names=new Map((await relaunchDeps.panes().catch(()=>[])).map(p=>[p.id,p.name]));
     const retained=[...(target.owner?.inventory??[]).map(p=>`${names.get(p.id)??p.id} (PID ${p.pid})`),...(target.owner?.uncertain??[]).map(id=>`${names.get(id)??id}: process identity unknown`)];
     return askRestart("Restart","The terminal host changed after the previous question. Restarting this host stops its current work."+
       (target.pid?`\n\nTerminal host PID ${target.pid}; ${target.ptyCount} panes.`:"\n\nThe current host identity cannot be verified; nothing will be stopped.")+
-      (retained.length?`\n\nProcesses that may still run:\n${retained.join("\n")}`:""));
+      (retained.length?`\n\nProcesses that may still run:\n${retained.join("\n")}`:"")+
+      (target.authentication&&!target.authentication.inventoryKnown?"\n\nThe retained process inventory is unknown.":""));
   }
 
   /** Settings > Diagnostics > PTY host > Restart (and Aya Web): asks, then replaces the host. Throws when cancelled,
@@ -312,13 +326,13 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
   async function restartHostFromWindow(): Promise<void> {
     const before = await hostHealth();
     const legacy = !before.owner && before.ptyCount > 0;
-    const recovery = legacy || before.owner?.incompatible || !!before.owner?.disconnected.length;
+    const recovery = !!before.authentication || legacy || before.owner?.incompatible || !!before.owner?.disconnected.length;
     const names = new Map((await relaunchDeps.panes().catch(() => [])).map(p => [p.id, p.name]));
     const retained = [
       ...(before.owner?.inventory ?? []).map(p => `${names.get(p.id) ?? p.id} (PID ${p.pid})`),
       ...(before.owner?.uncertain ?? []).map(id => `${names.get(id) ?? id}: unconfirmed spawn, process identity unknown`),
     ];
-    const confirmed = recovery ? await askRestart("Restart", legacy
+    const confirmed = before.authentication?await askRestart("Restart",await authRestartDetail(before)):recovery ? await askRestart("Restart", legacy
       ? "Moving these terminals to Aya's native PTY owner stops their current processes. They cannot be moved from the older host."
       : "Restarting the terminal host stops the processes retained by the native PTY owner. Their disconnected screens cannot show all current work." +
         (retained.length ? `\n\nProcesses that may still run:\n${retained.join("\n")}` : ""))

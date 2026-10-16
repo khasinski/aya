@@ -340,3 +340,16 @@ test('status A then socket B asks again with fresh inventory and Cancel sends no
  try{await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);assert.equal(questions.length,2);assert.match(questions[0],/A \(PID 900\)/);assert.match(questions[1],/host changed/);assert.match(questions[1],/B \(PID 901\)/);assert.deepEqual(requests,['version']);}
  finally{native.ownerProcessStartIdentity=probe;client.dispose();}
 });
+
+test('auth refusal always asks with retained PIDs or unknown inventory before explicit and launch restart',async t=>{
+ for(const inventoryKnown of [true,false]){
+  const {d,state,log}=setup(t);state.askAnswer=false;
+  d.relaunchDeps.panes=async()=>[{id:'retained',name:'Agent work'}];
+  d.ptyHost.hostStatus=async()=>({pid:100,startTime:'1:2',identity:null,ptyCount:inventoryKnown?1:0,authentication:{required:true,targetVerified:true,inventoryKnown,reason:'auth refused'},...(inventoryKnown?{owner:{pid:99,incompatible:false,disconnected:['retained'],inventory:[{id:'retained',pid:789}]}}:{})});
+  const actions=createPtyHostHealth(d);
+  await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);await actions.handleStaleHost();
+  const questions=log.filter(([op])=>op==='ask-restart');assert.equal(questions.length,2);
+  for(const [, ,text] of questions){assert.match(text,/could not authenticate/);assert.match(text,inventoryKnown?/Agent work \(PID 789\)/:/process inventory is unknown/);}
+  assert.equal(log.filter(([op])=>op==='restart'||op==='confirm'||op==='kill').length,0);
+ }
+});

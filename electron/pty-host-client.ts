@@ -52,6 +52,7 @@ import {readHostAuthKey,createHostAuthKey} from "./pty-host-auth-key";
 import {HostAuthError,type HostAuthPeer} from "./pty-host-auth";
 import {handoverPeer} from "./pty-handover-window";
 import {refusedHostStatus,type HostAuthenticationProblem} from "./pty-host-auth-status";
+import {restartRefusedHost,refusedRestartDeps} from "./pty-host-auth-restart";
 import {assertHostCreationSafe} from "./pty-host-start-guard";
 
 // Deadline waiting for a started pty host to create its socket and accept on it (ms).
@@ -153,7 +154,7 @@ export async function waitForExit(pid: number, ms: number): Promise<boolean> {
 }
 
 export interface HostRestartTarget {
-  pid:number|null;startTime:string|null;identity:HostIdentity|null;ptyCount:number;owner?:PtyOwnerStatus;
+  pid:number|null;startTime:string|null;identity:HostIdentity|null;ptyCount:number;owner?:PtyOwnerStatus;authentication?:HostAuthenticationProblem;
 }
 export interface HostRestartConsent {
   target:Pick<HostRestartTarget,"pid"|"startTime"|"owner">;
@@ -612,7 +613,15 @@ export class PtyHostClient {
   private async replaceHost(consent?:HostRestartConsent): Promise<boolean> {
     let oldPid: number | undefined;
     let bound:{socket:net.Socket;target:HostRestartTarget}|undefined;
-    if(consent){bound=await this.confirmedRestartSocket(consent);oldPid=bound.target.pid!;}
+    if(consent){
+      try{bound=await this.confirmedRestartSocket(consent);oldPid=bound.target.pid!;}
+      catch(error){
+        if(!["PTY_HOST_AUTH_REQUIRED","PTY_HOST_AUTH_UNAVAILABLE","PTY_HOST_START_BLOCKED"].includes((error as {code?:string})?.code??""))throw error;
+        const exited=await restartRefusedHost(consent,refusedRestartDeps(()=>this.disposed,(event,fields)=>this.recoveryHooks.log?.(event,fields)));
+        if(exited){this.hostAsked=true;this.dropSocket();this.authRefusalPeer=undefined;this.hostAuthKey=null;}
+        return exited;
+      }
+    }
     else try {
       const status = await withTimeout(
         this.request({ id: 0, type: "version" }, undefined, true),
@@ -620,7 +629,8 @@ export class PtyHostClient {
       );
       const pid = status && typeof status === "object" ? (status as Record<string, unknown>).pid : undefined;
       if (typeof pid === "number" && Number.isInteger(pid) && pid > 1) oldPid = pid;
-    } catch {
+    } catch(error) {
+      if(this.authRefusalPeer!==undefined||["PTY_HOST_AUTH_REQUIRED","PTY_HOST_AUTH_UNAVAILABLE","PTY_HOST_START_BLOCKED"].includes((error as {code?:string})?.code??""))throw error;
       // a host that predates the pid answer, or none: nothing to wait for
     }
     // The host closes this connection only when its process exits: the exit signal for a host that gave no pid.
