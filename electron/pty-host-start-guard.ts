@@ -78,3 +78,39 @@ export function hostCreationProof(directory=path.join(AYA_HOME,"pty-hosts"),prob
 export function assertHostCreationSafe():void{
   const proof=hostCreationProof();if(proof.state!=="gone")throw new HostCreationBlockedError(proof);
 }
+
+
+export const HOST_SHUTDOWN_GRACE_MS=3000;
+interface ShutdownWaitDeps {
+  now:()=>number;
+  proof:()=>HostCreationProof;
+  socketMissing:()=>boolean;
+  wait:(milliseconds:number,signal?:AbortSignal)=>Promise<void>;
+}
+/** Absence of a socket is not absence of its process. Give an already-exiting,
+ * verified host a short grace period; the normal final pre-fork proof remains. */
+export async function waitForHostShutdown(socketPath:string,signal?:AbortSignal,overrides:Partial<ShutdownWaitDeps>={}):Promise<void>{
+  const now=overrides.now??Date.now,deadline=now()+HOST_SHUTDOWN_GRACE_MS;
+  const cancelled=()=>{if(signal?.aborted)throw Error("PTY host startup was cancelled");};
+  const proof=overrides.proof??(()=>hostCreationProof(undefined,pid=>{
+    const remaining=deadline-now();
+    return remaining<=0||signal?.aborted?{alive:false,probeFailed:true,startTime:null,command:null}:readProcInfo(pid,Math.max(1,remaining));
+  }));
+  const missing=overrides.socketMissing??(()=>{try{fs.lstatSync(socketPath);return false;}catch(error){return (error as NodeJS.ErrnoException).code==="ENOENT";}});
+  const wait=overrides.wait??((milliseconds:number,cancel?:AbortSignal)=>new Promise<void>((resolve,reject)=>{
+    const abort=()=>{clearTimeout(timer);cancel?.removeEventListener("abort",abort);reject(Error("PTY host startup was cancelled"));};
+    const timer=setTimeout(()=>{cancel?.removeEventListener("abort",abort);resolve();},milliseconds);
+    cancel?.addEventListener("abort",abort,{once:true});if(cancel?.aborted)abort();
+  }));
+  cancelled();let observed=proof();
+  if(observed.state==="gone")return;
+  if(observed.state!=="alive"||!missing())throw new HostCreationBlockedError(observed);
+  while(now()<deadline){
+    await wait(Math.min(50,deadline-now()),signal);cancelled();
+    if(now()>=deadline)break;
+    observed=proof();
+    if(observed.state==="gone")return;
+    if(!missing())break;
+  }
+  throw new HostCreationBlockedError(observed);
+}

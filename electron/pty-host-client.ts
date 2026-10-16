@@ -56,7 +56,7 @@ import {validateOwnerContinuity} from "./pty-host-owner-continuity";
 import {probeLegacyInventory} from "./pty-host-legacy-status";
 import {retireUnavailableOwner,ownerRetirementDeps} from "./pty-host-owner-retirement";
 import {restartRefusedHost,refusedRestartDeps} from "./pty-host-auth-restart";
-import {assertHostCreationSafe} from "./pty-host-start-guard";
+import {assertHostCreationSafe,waitForHostShutdown} from "./pty-host-start-guard";
 
 // Deadline waiting for a started pty host to create its socket and accept on it (ms).
 export const PTY_HOST_SOCKET_WAIT_TIMEOUT_MS = 5_000;
@@ -178,6 +178,7 @@ export class PtyHostClient {
   private readonly principalAttaches=new Map<string,Set<AbortController>>();
   private principalRetry:Promise<void>|null=null;
   private principalRetryExhausted=false;
+  private readonly startupCancelled=new AbortController();
   private principalRetryCancel:AbortController|null=null;
   private readonly authRefusedPanes=new Map<string,string>();
   private ownerBacked = false;
@@ -424,6 +425,7 @@ export class PtyHostClient {
   dispose(): void {
     this.disposed = true;
     this.principalRetryCancel?.abort();
+    this.startupCancelled.abort();
     this.crashSupervisor?.dispose();
     for(const timer of this.exitAckTimers.values())clearTimeout(timer);this.exitAckTimers.clear();
     this.stopSessionWatches();
@@ -1026,7 +1028,8 @@ export class PtyHostClient {
       }
       if (this.disposed) throw new Error(DISPOSED_MESSAGE);
       if(this.ownerContinuityUnavailable)throw this.blockUnavailableOwner();
-      assertHostCreationSafe();
+      try{await waitForHostShutdown(PTY_HOST_SOCKET_PATH,this.startupCancelled.signal);}catch(error){if(this.disposed)throw new Error(DISPOSED_MESSAGE);throw error;}
+      if(this.disposed)throw new Error(DISPOSED_MESSAGE);
       this.hostAuthKey??=createHostAuthKey(AYA_HOME);
       this.startHost();
       await this.openStartedHostSocket();

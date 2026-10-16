@@ -258,11 +258,12 @@ export const PS_ENV = { ...process.env, LC_ALL: "C", LANG: "C", TZ: "UTC" };
 
 /** `ps` fields for one pid: alive:false when ps ran and the pid is gone; probeFailed:true when ps could not
  *  run (fork pressure, sandbox), which callers treat as UNKNOWN, not dead. */
-export function readProcInfo(pid: number): ProcInfo {
+export function readProcInfo(pid: number, timeoutMs?:number): ProcInfo {
   try {
     const out = execFileSync("ps", ["-p", String(pid), "-o", "lstart=,command="], {
       encoding: "utf8",
       env: PS_ENV,
+      ...(timeoutMs===undefined?{}:{timeout:timeoutMs,killSignal:"SIGKILL" as const}),
     }).trim();
     if (!out) return { alive: false, probeFailed: false, startTime: null, command: null };
     // lstart is a fixed 24-char ctime string; the rest is the command.

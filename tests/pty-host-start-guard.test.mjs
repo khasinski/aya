@@ -62,7 +62,7 @@ test('absent/refused socket with a proven live record or unreadable registry nev
   client.openSocket=async()=>{throw Object.assign(Error('fixture socket absent'),{code});};client.startHost=()=>{starts++;};
   try{
    if(unreadable)fs.readdirSync=(directory,...args)=>{if(directory===registry)throw Object.assign(Error('injected'),{code:'EACCES'});return read(directory,...args);};
-   await assert.rejects(client.connectWithHostStart(),error=>error.code==='PTY_HOST_START_BLOCKED'&&error.proof.state===(unreadable?'unknown':'alive'));
+   await assert.rejects(client.connectWithHostStart(),error=>error.code==='PTY_HOST_START_BLOCKED'&&(unreadable?error.proof.state==='unknown':['alive','unknown'].includes(error.proof.state)));
    assert.equal(starts,0);
   }finally{fs.readdirSync=read;client.dispose();}
  }
@@ -99,4 +99,29 @@ test('spawn maps live and unknown start refusals to one friendly disconnected st
    assert.equal(starts,0);assert.equal(unlinks,0);assert.equal(fs.statSync(socket).ino,before.ino);assert.equal(fs.readFileSync(socket,'utf8'),'kept-socket-inode');
   }finally{childProcess.execFileSync=exec;fs.rmSync=remove;client.dispose();fs.unlinkSync(socket);}
  }
+});
+
+test('socketless verified host gets one bounded shutdown grace, never an absence bypass',async()=>{
+ const {waitForHostShutdown,HOST_SHUTDOWN_GRACE_MS}=require('../dist-electron/pty-host-start-guard.js');assert.equal(HOST_SHUTDOWN_GRACE_MS,3000);
+ const alive={state:'alive',hosts:[{pid:100,startTime:'same',state:'alive'}]},gone={state:'gone',hosts:[{pid:100,startTime:'same',state:'gone'}]};
+ let now=0,reads=0;await waitForHostShutdown('unused',undefined,{now:()=>now,proof:()=>{reads++;return now<750?alive:gone;},socketMissing:()=>true,wait:async ms=>{now+=ms;}});
+ assert.equal(now,750);assert.ok(reads>1);
+ now=0;await assert.rejects(waitForHostShutdown('unused',undefined,{now:()=>now,proof:()=>alive,socketMissing:()=>true,wait:async ms=>{now+=ms;}}),{code:'PTY_HOST_START_BLOCKED'});assert.equal(now,3000);
+ now=0;await assert.rejects(waitForHostShutdown('unused',undefined,{now:()=>now,proof:()=>({state:'unknown',hosts:[]}),socketMissing:()=>true,wait:async ms=>{now+=ms;}}),{code:'PTY_HOST_START_BLOCKED'});assert.equal(now,0);
+ now=0;await assert.rejects(waitForHostShutdown('unused',undefined,{now:()=>now,proof:()=>alive,socketMissing:()=>false,wait:async ms=>{now+=ms;}}),{code:'PTY_HOST_START_BLOCKED'});assert.equal(now,0);
+});
+test('quit during the socketless shutdown grace cancels before a new proof or host start',async()=>{
+ const {waitForHostShutdown}=require('../dist-electron/pty-host-start-guard.js');const cancelled=new AbortController();let probes=0;
+ await assert.rejects(waitForHostShutdown('unused',cancelled.signal,{proof:()=>{probes++;return {state:'alive',hosts:[]};},socketMissing:()=>true,wait:async()=>cancelled.abort()}),/cancelled/);
+ assert.equal(probes,1);
+});
+test('the shutdown grace bounds each ps to the remaining budget and failed ps stays unknown',()=>{
+ reset();record();const exec=childProcess.execFileSync;let observed;
+ try{childProcess.execFileSync=(_file,_args,options)=>{observed=options;throw Object.assign(Error('timeout'),{code:'ETIMEDOUT'});};assert.deepEqual(readProcInfo(process.pid,37),{alive:false,probeFailed:true,startTime:null,command:null});assert.equal(observed.timeout,37);assert.equal(observed.killSignal,'SIGKILL');}
+ finally{childProcess.execFileSync=exec;}
+});
+
+test('a live shutdown candidate that becomes unknown is never treated as gone during the grace',async()=>{
+ const {waitForHostShutdown}=require('../dist-electron/pty-host-start-guard.js');let now=0;
+ await assert.rejects(waitForHostShutdown('unused',undefined,{now:()=>now,proof:()=>({state:now<750?'alive':'unknown',hosts:[]}),socketMissing:()=>true,wait:async ms=>{now+=ms;}}),error=>error.code==='PTY_HOST_START_BLOCKED'&&error.proof.state==='unknown');assert.equal(now,3000);
 });
