@@ -66,3 +66,27 @@ test('missing, unsafe or wrong capability cannot reach the generic create-host f
  fs.writeFileSync(keyFile,originalKey);fs.chmodSync(keyFile,0o600);
  await main.write('auth-pane','STILL_USABLE\n');await waitFor(()=>output().includes('STILL_USABLE'));
 });
+
+test('refusal cache survives failed kill but retires on a real successful attach and kill', {timeout:15000},async()=>{
+ const other=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));
+ const req={ptyId:'auth-pane',command:'cat',cwd:home,cols:80,rows:24,attachOnly:true};
+ const late=()=>{const sink=fakeWebContents();other.attachWebContents(sink);other.detachWebContents(sink);return ptyEventsFor(sink,'auth-pane');};
+ try{
+  fs.unlinkSync(keyFile);await assert.rejects(other.spawn(req));await assert.rejects(other.kill('auth-pane'));
+  assert.equal(late()[0].type,'disconnected');assert.equal(await main.getPid('auth-pane'),pid);
+  fs.writeFileSync(keyFile,originalKey,{mode:0o600});await other.spawn(req);assert.deepEqual(late(),[]);
+  other.dropSocket();other.hostAuthKey=null;fs.unlinkSync(keyFile);await assert.rejects(other.spawn(req));assert.equal(late()[0].type,'disconnected');
+  fs.writeFileSync(keyFile,originalKey,{mode:0o600});await other.kill('auth-pane');assert.equal(await main.getPid('auth-pane'),null);assert.deepEqual(late(),[]);
+ }finally{fs.writeFileSync(keyFile,originalKey,{mode:0o600});other.dispose();}
+});
+
+test('authoritative exit/no-session and a known ended attachment retire only that pane refusal',async()=>{
+ for(const kind of ['exit','no-session','ended-attach']){
+  const client=new PtyHostClient('unused');client.authRefusedPanes.set('done','stale notice');client.authRefusedPanes.set('keep','still unknown');
+  try{
+   if(kind==='ended-attach'){client.endedBootPanes.set('done',23);await client.spawn({ptyId:'done',command:'cat',cwd:home,cols:80,rows:24,attachOnly:true});}
+   else client.onData(JSON.stringify({type:'event',event:{type:kind,ptyId:'done',...(kind==='exit'?{exitCode:23}:{})}})+'\n');
+   const sink=fakeWebContents();client.attachWebContents(sink);assert.deepEqual(ptyEventsFor(sink,'done'),[],kind);assert.equal(ptyEventsFor(sink,'keep')[0].reason,'still unknown',kind);
+  }finally{client.dispose();}
+ }
+});

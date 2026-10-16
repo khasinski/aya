@@ -18,6 +18,8 @@ test('missing-key refusal cannot restart without consent; exact consent sends on
   await waitFor(()=>ptyEventsFor(sink,'retained').some(e=>e.type==='data'&&e.chunk.includes('READY_RESTART')));
   const original=await first.hostStatus();nativeOwner=original.owner.pid;pane=await first.getPid('retained');const start=ownerProcessStartIdentity(original.pid);
   fs.unlinkSync(path.join(home,'pty-host-auth/key'));let starts=0;next.startHost=()=>{starts++;throw Error('no replacement allowed');};
+  await assert.rejects(next.spawn({ptyId:'retained',command:'cat',cwd:home,cols:80,rows:24,attachOnly:true}),error=>error.code==='PTY_HOST_AUTH_UNAVAILABLE');
+  const refused=fakeWebContents();next.attachWebContents(refused);assert.equal(ptyEventsFor(refused,'retained')[0].type,'disconnected');
   await assert.rejects(next.restart(),error=>error.code==='PTY_HOST_AUTH_UNAVAILABLE');assert.equal(starts,0);assert.equal(alive(original.pid),true);assert.equal(alive(pane),true);
   const status=await next.hostStatus();assert.equal(status.pid,original.pid);assert.equal(status.authentication.inventoryKnown,true);
   assert.deepEqual(status.owner.inventory.map(p=>p.pid),[pane]);
@@ -35,6 +37,7 @@ test('missing-key refusal cannot restart without consent; exact consent sends on
   }
   assert.equal(stopped,true);assert.equal(starts,0);await waitFor(()=>!alive(pane)&&!alive(nativeOwner));
   assert.equal(alive(original.pid),false);assert.equal(fs.existsSync(path.join(home,'pty-host.sock')),false);
+  const late=fakeWebContents();next.attachWebContents(late);assert.deepEqual(ptyEventsFor(late,'retained'),[]);
   assert.deepEqual(logs.filter(([event])=>event==='pty-host-auth-confirmed-sigterm'),[['pty-host-auth-confirmed-sigterm',{pid:original.pid,startIdentity:start,ownerInstance:original.owner.instanceId,outcome:'signalled'}]]);
  }finally{
   next.dispose();try{if(first.isConnected())await first.restart();}finally{first.dispose();fs.rmSync(home,{recursive:true,force:true});}

@@ -83,3 +83,20 @@ test('the final startHost check precedes unlinking the socket and forking',()=>{
   assert.throws(()=>client.startHost(),{code:'PTY_HOST_START_BLOCKED'});assert.equal(spawns,0);assert.equal(fs.statSync(socket).ino,before.ino);assert.equal(fs.readFileSync(socket,'utf8'),'kept');
  }finally{childProcess.spawn=spawn;client.dispose();fs.unlinkSync(socket);}
 });
+
+test('spawn maps live and unknown start refusals to one friendly disconnected state without start or unlink',async()=>{
+ for(const code of ['ENOENT','ECONNREFUSED'])for(const unknown of [false,true]){
+  reset();record();const socket=path.join(home,'pty-host.sock');fs.writeFileSync(socket,'kept-socket-inode');const before=fs.statSync(socket);
+  const client=new PtyHostClient(path.resolve('dist-electron/pty-host.js')),exec=childProcess.execFileSync,remove=fs.rmSync;let starts=0,unlinks=0;const events=[];
+  const sink={isDestroyed:()=>false,send:(_channel,event)=>events.push(event)};client.attachWebContents(sink);
+  client.openSocket=async()=>{throw Object.assign(Error('injected socket failure'),{code});};client.startHost=()=>{starts++;throw Error('must not start');};
+  try{
+   fs.rmSync=(file,...args)=>{if(file===socket)unlinks++;return remove(file,...args);};
+   if(unknown)childProcess.execFileSync=()=>{throw Object.assign(Error('injected ps EAGAIN'),{code:'EAGAIN'});};
+   await assert.rejects(client.spawn({ptyId:'blocked',command:'cat',cwd:home,cols:80,rows:24}),error=>error.code==='PTY_HOST_START_BLOCKED'&&error.message==='The terminal host is disconnected or recovering. This request was not sent.');
+   assert.equal(events.length,1);assert.equal(events[0].type,'disconnected');assert.equal(events[0].ptyId,'blocked');assert.match(events[0].reason,/inventory could not be verified/);
+   const late=[];client.attachWebContents({isDestroyed:()=>false,send:(_channel,event)=>late.push(event)});assert.deepEqual(late,events);
+   assert.equal(starts,0);assert.equal(unlinks,0);assert.equal(fs.statSync(socket).ino,before.ino);assert.equal(fs.readFileSync(socket,'utf8'),'kept-socket-inode');
+  }finally{childProcess.execFileSync=exec;fs.rmSync=remove;client.dispose();fs.unlinkSync(socket);}
+ }
+});

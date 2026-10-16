@@ -307,6 +307,7 @@ export class PtyHostClient {
     if(!req.attachIfReused&&!req.attachOnly){this.recoveredStates.delete(req.ptyId);this.endedBootPanes.delete(req.ptyId);this.observedExits.delete(req.ptyId);this.uncertainInput.delete(req.ptyId);}
     if(this.endedBootPanes.has(req.ptyId)&&(req.attachIfReused||req.attachOnly)&&!req.replayAfter){
       const exitCode=this.endedBootPanes.get(req.ptyId)!;
+      this.authRefusedPanes.delete(req.ptyId);
       const receipt=this.observedExits.get(req.ptyId);if(receipt){this.observeExit(req.ptyId,receipt);await this.exitAcks.get(req.ptyId);}
       const recovery=this.recoveredStates.get(req.ptyId);if(recovery)this.sendToSinks([{...recovery}]);
       this.sendToSinks([{type:"exit",ptyId:req.ptyId,exitCode}]);return;
@@ -377,6 +378,7 @@ export class PtyHostClient {
     this.endedBootPanes.delete(ptyId);
     this.observedExits.delete(ptyId);
     await this.request({ id: 0, type: "kill", ptyId });
+    this.authRefusedPanes.delete(ptyId);
     this.live.delete(ptyId);this.recoveredStates.delete(ptyId);
     this.sessionWatches.get(ptyId)?.();
     this.sessionWatches.delete(ptyId);
@@ -1055,6 +1057,7 @@ export class PtyHostClient {
         continue;
       }
       if ("type" in message && message.type === "event") {
+        if(PANE_ENDED_EVENTS.has(message.event.type))this.authRefusedPanes.delete(message.event.ptyId);
         if(message.event.type==="recovery-screen"){
           this.recoveryScreens.set(message.event.ptyId,message.event);
           const state=this.recoveredStates.get(message.event.ptyId);if(state?.generation===message.event.generation)state.screenUnknown=!message.event.known;
