@@ -1,4 +1,4 @@
-// Main-side policy facade. Production activation is a separate integration step.
+// Main-side policy facade for state, holds and renderer status.
 // Read-only explain never acknowledges a composer; delivery hold reads may do so
 // only against an applied host revision and then must acquire fresh evidence.
 import type {VtSnapshot, VtSnapshotFence} from "./vt-mirror";
@@ -11,7 +11,7 @@ import {explainPaneSnapshot, unavailablePaneState, type PaneStateResult} from ".
 
 type Configuration=ReturnType<UserRuleProvider["configuration"]>;
 type AppliedDecision={screen:VtSnapshot;result:CoordinatedRuleDecision;configuration:Configuration};
-export interface UserRuleScreenStatus {generation:string;revision:string;waiting:boolean;dialog?:string}
+export interface UserRuleScreenStatus {generation:string;revision:string;waiting:boolean;dialog?:string;sourceRevision:string;appliedSnapshot:VtSnapshot}
 const configured=(state:Configuration):boolean=>!state.available||state.manifest!==null;
 export class UserRulePanePolicy {
   private disposed=false;
@@ -118,10 +118,14 @@ export class UserRulePanePolicy {
       result=await this.input.evaluateApplied(id,currentScreen,"renderer-status");
       if(this.disposed||this.provider.configuration()!==captured||!result?.current||result.composerSeen)return null;
     }
-    const builtin=snapshotStatus(currentScreen),waiting=result.decision.user.available?result.decision.waiting:(builtin.waiting??false);
+    // Losing or invalidating the user layer makes the effective status
+    // unknown. In particular, do not turn an already displayed user hold into
+    // a false clear edge while the replacement rules are unavailable.
+    if(!result.decision.user.available)return null;
+    const builtin=snapshotStatus(currentScreen),waiting=result.decision.waiting;
     if(waiting===null)return null;
     const userDialog=result.decision.user.available&&result.decision.user.evidence.find(match=>match.kind==="dialog");
-    return {generation:currentScreen.generation,revision:currentScreen.revision!,waiting,...(waiting&&builtin.dialog?{dialog:builtin.dialog}:waiting&&userDialog?{dialog:"User-defined dialog"}:{})};
+    return {generation:currentScreen.generation,revision:currentScreen.revision!,waiting,sourceRevision:screen.revision,appliedSnapshot:currentScreen,...(waiting&&builtin.dialog?{dialog:builtin.dialog}:waiting&&userDialog?{dialog:"User-defined dialog"}:{})};
   }
   dispose():void{this.disposed=true;}
 }

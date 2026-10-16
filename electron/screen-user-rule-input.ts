@@ -1,4 +1,4 @@
-// Optional automatic-input adapter; production main has not enabled it yet.
+// Main-side automatic-input adapter for direct pane control and team delivery.
 // Explicit user keyboard/paste does not use this policy or its input fence.
 import type {VtSnapshot, VtSnapshotFence} from "./vt-mirror";
 import type {UserRuleProvider} from "./screen-user-rule-provider";
@@ -6,6 +6,7 @@ import {UserRuleCoordinator, type CoordinatedRuleDecision} from "./screen-user-r
 import {HOLD_DRAFT} from "./pane-holds";
 import {HOLD_USER_RULES_UNKNOWN} from "./screen-user-rule-policy";
 export interface AutomaticWriteContext {phase:"paste"|"enter";pasted?:string}
+const configuredState=(state:ReturnType<UserRuleProvider["configuration"]>):boolean=>!state.available||state.manifest!==null;
 export class GuardedRuleInput {
   private coordinator:UserRuleCoordinator;
   private disposed=false;
@@ -13,11 +14,11 @@ export class GuardedRuleInput {
     snapshot:(id:string)=>Promise<VtSnapshot|null>;
     check:(id:string,fence:VtSnapshotFence)=>Promise<boolean>;
     writeFenced:(id:string,data:string,fence:VtSnapshotFence)=>Promise<boolean>;
-    writeLegacy:(id:string,data:string)=>Promise<boolean|void>;
+    writeLegacy:(id:string,data:string,stillAllowed?:()=>boolean)=>Promise<boolean|void>;
   }){
     this.coordinator=new UserRuleCoordinator({configuration:()=>provider.configuration(),evaluate:request=>provider.evaluate(request),checkSnapshot:(id,fence)=>host.check(id,fence)});
   }
-  configured():boolean{const state=this.provider.configuration();return !state.available||state.manifest!==null;}
+  configured():boolean{return configuredState(this.provider.configuration());}
   private refused(reason:string,code="PTY_HOST_RULES_UNAVAILABLE"):Error{return Object.assign(new Error(`${reason}. This input was not sent.`),{code});}
   async decision(id:string,caller:string,pasted?:string):Promise<CoordinatedRuleDecision|null>{
     if(this.disposed)return null;
@@ -42,7 +43,8 @@ export class GuardedRuleInput {
     if(this.disposed||cancelled?.())throw this.refused("Automatic input was cancelled","PTY_HOST_INPUT_CANCELLED");
     // The caller enables this optional adapter only for the user-rule path.
     // Builtin-only behavior uses the existing writer without extra snapshots.
-    if(!this.configured())return this.host.writeLegacy(id,data);
+    const initial=this.provider.configuration();
+    if(!configuredState(initial))return this.host.writeLegacy(id,data,()=>!this.disposed&&!cancelled?.()&&this.provider.configuration()===initial);
     const state=this.provider.configuration(),{phase,pasted}=context;
     const result=await this.decision(id,`${kind}:write-${phase}`,pasted);
     if(this.disposed||cancelled?.())throw this.refused("Automatic input was cancelled","PTY_HOST_INPUT_CANCELLED");

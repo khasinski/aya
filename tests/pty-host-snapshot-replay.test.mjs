@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PtyHostClient } from "../dist-electron/pty-host-client.js";
 import { openVtPane, writeVtPane, closeVtPane, vtSnapshot } from "../dist-electron/vt-mirror.js";
+import { snapshotStatus } from "../dist-electron/vt-state.js";
 import { HOLD_ACCOUNT_SETTING } from "../dist-electron/pane-holds.js";
 const sink = () => {
   const events = [];
@@ -40,6 +41,30 @@ test("removing the user layer clears its waiting edge before builtin-only status
   assert.deepEqual(events.events,[{type:"vt-status",ptyId:id,waiting:true}]);
   client.setUserRuleStatusObserver(null);
   assert.deepEqual(events.events,[{type:"vt-status",ptyId:id,waiting:true},{type:"vt-status",ptyId:id,waiting:false}]);
+});
+test("user-rule failure after a waiting result does not broadcast a false clear edge", async () => {
+  const id="user-rule-status-unavailable";openVtPane(id,80,24,()=>{});writeVtPane(id,"ready");const first=await vtSnapshot(id);writeVtPane(id,"\nnext");const second=await vtSnapshot(id);closeVtPane(id);
+  const client=new PtyHostClient("/nonexistent/pty-host.js"),events=sink();client.attachWebContents(events);let available=true;
+  client.setUserRuleStatusObserver(async(_pane,snapshot)=>available?{generation:snapshot.generation,revision:snapshot.revision,waiting:true,sourceRevision:snapshot.revision,appliedSnapshot:snapshot}:null);
+  const receive=snapshot=>client.onData(JSON.stringify({type:"snapshot",ptyId:id,snapshot})+"\n");
+  receive(first);await new Promise(resolve=>setTimeout(resolve,60));assert.deepEqual(events.events,[{type:"vt-status",ptyId:id,waiting:true}]);
+  available=false;receive(second);await new Promise(resolve=>setTimeout(resolve,60));
+  assert.deepEqual(events.events,[{type:"vt-status",ptyId:id,waiting:true}],"the renderer keeps unresolved waiting state until fresh available evidence arrives");
+});
+test("removing the user layer never generation-ACKs cached composer evidence after newer output", async () => {
+  const id="user-rule-removal-stale-composer";openVtPane(id,80,24,()=>{},"claude");writeVtPane(id,"❯ ");const cached=await vtSnapshot(id);
+  assert.equal(cached.composerSeen,false);assert.equal(snapshotStatus(cached).composerSeen,true);
+  const client=new PtyHostClient("/nonexistent/pty-host.js");let acknowledgements=0;client.markComposer=async()=>{acknowledgements++;};
+  try{
+    client.setUserRuleStatusObserver(async(_pane,snapshot)=>({generation:snapshot.generation,revision:snapshot.revision,waiting:false,sourceRevision:snapshot.revision,appliedSnapshot:snapshot}));
+    client.onData(JSON.stringify({type:"snapshot",ptyId:id,snapshot:cached})+"\n");await new Promise(resolve=>setTimeout(resolve,60));
+    const current=await vtSnapshot(id);writeVtPane(id,"\r\nnew same-generation output");
+    assert.equal((await vtSnapshot(id)).generation,cached.generation);assert.notEqual((await vtSnapshot(id)).revision,current.revision);
+    client.setUserRuleStatusObserver(null);
+    await new Promise(resolve=>setTimeout(resolve,0));
+    assert.equal(acknowledgements,0,"disabling the observer does not ACK its stale cached snapshot by generation alone");
+    assert.equal((await vtSnapshot(id)).composerSeen,false,"new output retains the builtin startup hold");
+  }finally{client.dispose();closeVtPane(id);}
 });
 for (const [name, text, dialog] of [
   ["approval", "Do you want to proceed?\r\n❯ 1. Yes\r\n  2. No", undefined],

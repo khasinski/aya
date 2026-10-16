@@ -9,6 +9,7 @@ const {RULE_AGENTS}=require('../dist-electron/screen-rule-data.js');
 const {HOLD_USER_ACCOUNT,HOLD_USER_RULES_UNKNOWN}=require('../dist-electron/screen-user-rule-policy.js');
 const {HOLD_APPROVAL,HOLD_ACCOUNT_SETTING}=require('../dist-electron/pane-holds.js');
 const {formatPaneState}=require('../dist-electron/pane-state.js');
+const {PtyHostClient}=require('../dist-electron/pty-host-client.js');
 const mirror=require('../dist-electron/vt-mirror.js');
 let serial=0;
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve};};
@@ -63,19 +64,32 @@ test('renderer status includes additive user dialogs and drops a stale revision 
  const f=await fixture([rule('dialog')],'LOCAL\r\n❯ ');
  try{
   const screen=await mirror.vtSnapshot(f.id),status=await f.policy.status(f.id,screen);
-  assert.deepEqual(status,{generation:screen.generation,revision:screen.revision,waiting:true,dialog:'User-defined dialog'});
+  assert.deepEqual(status,{generation:screen.generation,revision:screen.revision,waiting:true,dialog:'User-defined dialog',sourceRevision:screen.revision,appliedSnapshot:screen});
   f.set({...f.get(),epoch:2,available:false,manifest:f.get().manifest});
-  const invalid=await f.policy.status(f.id,screen);assert.deepEqual(invalid,{generation:screen.generation,revision:screen.revision,waiting:false},'an invalidated configuration can publish only the builtin verdict');
+  const invalid=await f.policy.status(f.id,screen);assert.equal(invalid,null,'an unavailable user layer must not publish a false clear edge');
  }finally{await f.close();}
 });
 test('configured renderer status ACKs a composer only at the evaluated revision and rereads',async()=>{
  const f=await fixture([rule('busy','NEVER_BUSY')],'❯ ',false);
  try{
   const before=await mirror.vtSnapshot(f.id);assert.equal(before.composerSeen,false);
-  const status=await f.policy.status(f.id,before);assert.deepEqual(status,{generation:before.generation,revision:(await mirror.vtSnapshot(f.id)).revision,waiting:false});
+  const status=await f.policy.status(f.id,before);assert.deepEqual(status,{generation:before.generation,revision:(await mirror.vtSnapshot(f.id)).revision,waiting:false,sourceRevision:before.revision,appliedSnapshot:await mirror.vtSnapshot(f.id)});
   assert.deepEqual(f.acks,[{generation:before.generation,revision:before.revision}]);
   const after=await mirror.vtSnapshot(f.id);assert.equal(after.composerSeen,true);assert.notEqual(after.revision,before.revision);assert.equal(f.calls.evaluate,2);assert.equal(f.calls.snapshot,1);
  }finally{await f.close();}
+});
+test('client publishes the post-composer-ACK clear at the host-advanced revision',async()=>{
+ const f=await fixture([rule('dialog','LOCAL_DIALOG')],'LOCAL_DIALOG');
+ const events=[],sink={isDestroyed:()=>false,send:(_channel,event)=>events.push(event)},client=new PtyHostClient('/nonexistent/pty-host.js');
+ try{
+  client.setUserRuleStatusObserver((id,screen)=>f.policy.status(id,screen));client.attachWebContents(sink);
+  const receive=screen=>client.onData(JSON.stringify({type:'snapshot',ptyId:f.id,snapshot:screen})+'\n');
+  receive(await mirror.vtSnapshot(f.id));await new Promise(resolve=>setTimeout(resolve,70));
+  assert.deepEqual(events,[{type:'vt-status',ptyId:f.id,waiting:true,dialog:'User-defined dialog'}]);
+  await f.draw('❯ ');const beforeAck=await mirror.vtSnapshot(f.id);receive(beforeAck);await new Promise(resolve=>setTimeout(resolve,80));
+  assert.deepEqual(events,[{type:'vt-status',ptyId:f.id,waiting:true,dialog:'User-defined dialog'},{type:'vt-status',ptyId:f.id,waiting:false}]);
+  assert.equal(client.latestRuleSnapshots.get(f.id).revision,(await mirror.vtSnapshot(f.id)).revision,'the client adopts the validated post-ACK snapshot');
+ }finally{client.dispose();await f.close();}
 });
 for(const outcome of ['false','throw','reload','dispose'])test(`composer ${outcome} cannot yield old clearance or retry`,async()=>{
  const f=await fixture();let attempts=0,committed=false;

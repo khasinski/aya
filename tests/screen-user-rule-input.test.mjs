@@ -7,6 +7,7 @@ import {createRequire} from 'node:module';
 import {rpc} from './helpers/control-rpc.mjs';
 const require=createRequire(import.meta.url);
 const {GuardedRuleInput}=require('../dist-electron/screen-user-rule-input.js');
+const {PtyHostClient}=require('../dist-electron/pty-host-client.js');
 const {UserRuleRuntime}=require('../dist-electron/screen-user-rule-runtime.js');
 const {RULE_AGENTS}=require('../dist-electron/screen-rule-data.js');
 const {startControlServerOn,deliverTeamMessage,PASTE_START,PASTE_END}=require('../dist-electron/control.js');
@@ -87,6 +88,16 @@ test('reload and cancellation during evaluation prevent a late continuation; no-
   try{const p=f.input.write('direct',f.id,'late',{phase:'paste'},()=>cancelled);await started.promise;if(mode==='reload')f.set({...f.state(),epoch:2});else if(mode==='cancel')cancelled=true;else f.input.dispose();wait.resolve({available:true,epoch:1,digest:'a'.repeat(64),matches:[]});await assert.rejects(p,/not sent/);assert.deepEqual(f.writes,[]);}finally{await f.close();}
  }
  const f=await fixture();try{f.set({epoch:2,available:true,manifest:null});f.host.snapshot=async()=>{throw Error('no extra read');};assert.equal(await f.input.write('team',f.id,'legacy',{phase:'paste'}),true);assert.deepEqual(f.legacy,['legacy']);assert.equal(f.requests.length,0);}finally{await f.close();}
+});
+test('no-files legacy write rechecks the captured config immediately before its async send',async()=>{
+ const f=await fixture(),gate=deferred(),started=deferred(),client=new PtyHostClient('/nonexistent');f.set({epoch:2,available:true,manifest:null});
+ const sent=[];client.connect=async()=>{started.resolve();await gate.promise;client.socket={destroyed:false,destroy(){this.destroyed=true;}};};client.sendRequest=async(_socket,request)=>{sent.push(request);return true;};
+ f.host.writeLegacy=(id,data,stillAllowed)=>client.write(id,data,stillAllowed);
+ try{
+  const pending=f.input.write('team',f.id,'legacy',{phase:'paste'});await started.promise;
+  f.set({epoch:3,available:false,manifest:f.state().manifest});gate.resolve();await assert.rejects(pending,error=>error.code==='PTY_HOST_RULES_UNAVAILABLE');
+  assert.deepEqual(sent,[],'the client rechecks after connect and sends no unfenced write');assert.deepEqual(f.legacy,[]);assert.equal(f.requests.length,0,'no screen snapshot, worker, or revision RPC is added');
+ }finally{gate.resolve();client.dispose();await f.close();}
 });
 test('team delivery passes cancellation through the checked writer after its policy await',async()=>{
  const f=await fixture(),gate=deferred(),started=deferred();let cancelled=false;const evaluate=f.provider.evaluate;

@@ -284,7 +284,7 @@ export class PtyHostClient {
   private readonly preparations = new Map<number, AbortController>();
   private readonly sessionWatches = new Map<string, () => void>();
   private readonly screenStates = new Map<string, { generation: string; waiting: boolean; dialog?: string }>();
-  private userRuleStatusObserver:((ptyId:string,snapshot:VtSnapshot)=>Promise<{generation:string;revision:string;waiting:boolean;dialog?:string}|null>)|null=null;
+  private userRuleStatusObserver:((ptyId:string,snapshot:VtSnapshot)=>Promise<{generation:string;revision:string;waiting:boolean;dialog?:string;sourceRevision?:string;appliedSnapshot?:VtSnapshot}|null>)|null=null;
   private readonly latestRuleSnapshots=new Map<string,VtSnapshot>();
   private readonly ruleStatusStates=new Map<string,{generation:string;revision:string;waiting:boolean;dialog?:string}>();
   private readonly ruleStatusPending=new Map<string,VtSnapshot>();
@@ -322,7 +322,7 @@ export class PtyHostClient {
 
   /** User-rule status replaces the builtin-only renderer verdict while active.
    * The no-files path leaves the existing host status path untouched. */
-  setUserRuleStatusObserver(observer:((ptyId:string,snapshot:VtSnapshot)=>Promise<{generation:string;revision:string;waiting:boolean;dialog?:string}|null>)|null):void{
+  setUserRuleStatusObserver(observer:((ptyId:string,snapshot:VtSnapshot)=>Promise<{generation:string;revision:string;waiting:boolean;dialog?:string;sourceRevision?:string;appliedSnapshot?:VtSnapshot}|null>)|null):void{
     this.userRuleStatusObserver=observer;
     for(const timer of this.ruleStatusTimers.values())clearTimeout(timer);this.ruleStatusTimers.clear();this.ruleStatusPending.clear();
     if(observer){for(const [id,snapshot] of this.latestRuleSnapshots)this.evaluateRuleStatus(id,snapshot);return;}
@@ -330,7 +330,9 @@ export class PtyHostClient {
       const prior=this.ruleStatusStates.get(id);this.ruleStatusStates.delete(id);
       const builtin=snapshotStatus(snapshot);
       if(prior?.waiting&&!builtin.waiting)this.sendToSinks([{type:"vt-status",ptyId:id,waiting:false}]);
-      this.acceptSnapshot(id,snapshot);
+      // This is cached evidence, not a new host observation. In particular it
+      // must never reach the legacy generation-only composer ACK path.
+      this.acceptSnapshot(id,snapshot,false,false);
     }
   }
   private evaluateRuleStatus(ptyId:string,snapshot:VtSnapshot):void{
@@ -344,8 +346,15 @@ export class PtyHostClient {
     },50);
     timer.unref?.();this.ruleStatusTimers.set(ptyId,timer);
   }
-  private publishRuleStatus(ptyId:string,status:{generation:string;revision:string;waiting:boolean;dialog?:string}):void{
-    const latest=this.latestRuleSnapshots.get(ptyId);if(!latest||latest.generation!==status.generation||latest.revision!==status.revision)return;
+  private publishRuleStatus(ptyId:string,status:{generation:string;revision:string;waiting:boolean;dialog?:string;sourceRevision?:string;appliedSnapshot?:VtSnapshot}):void{
+    let latest=this.latestRuleSnapshots.get(ptyId);if(!latest||latest.generation!==status.generation)return;
+    // A checked composer ACK advances the authoritative host revision without
+    // emitting a snapshot event. Accept its fresh snapshot only if no newer
+    // received snapshot has displaced the revision that the observer checked.
+    if(status.appliedSnapshot&&status.sourceRevision===latest.revision&&status.appliedSnapshot.generation===status.generation&&status.appliedSnapshot.revision===status.revision){
+      latest=status.appliedSnapshot;this.latestRuleSnapshots.set(ptyId,latest);
+    }
+    if(latest.revision!==status.revision)return;
     const old=this.ruleStatusStates.get(ptyId);if(old?.generation===status.generation&&old.revision===status.revision&&old.waiting===status.waiting&&old.dialog===status.dialog)return;
     const priorWaiting=old?.generation===status.generation?old.waiting:false;
     const edge=(!priorWaiting&&status.waiting)||(priorWaiting&&!status.waiting)||(priorWaiting&&status.waiting&&old?.dialog!==status.dialog);
@@ -462,8 +471,11 @@ export class PtyHostClient {
   /** Resolves false only when the host positively reports the data went
    *  nowhere. A host from an older build answers null, which reads as
    *  delivered - an unknown answer must not be turned into a failure. */
-  async write(ptyId: string, data: string): Promise<boolean> {
-    const result = await this.request({ id: 0, type: "write", ptyId, data });
+  async write(ptyId: string, data: string, stillAllowed?:()=>boolean): Promise<boolean> {
+    const result = await this.request({ id: 0, type: "write", ptyId, data },stillAllowed?request=>{
+      if(!stillAllowed())throw Object.assign(new Error("User screen rules changed while the terminal connection was opening. This input was not sent."),{code:"PTY_HOST_RULES_UNAVAILABLE"});
+      return request;
+    }:undefined);
     return result !== false;
   }
 
@@ -1055,12 +1067,12 @@ export class PtyHostClient {
     try { return (await this.readExistingRequest({id:0,type:"composer-seen-checked",ptyId,fence})) === true; }
     catch { return false; }
   }
-  private acceptSnapshot(ptyId: string, snapshot: VtSnapshot, replay = false): void {
+  private acceptSnapshot(ptyId: string, snapshot: VtSnapshot, replay = false, allowComposerAck = true): void {
     if (this.lostOwned.has(ptyId)) return;
     this.latestRuleSnapshots.set(ptyId,snapshot);
     if(this.userRuleStatusObserver){this.evaluateRuleStatus(ptyId,snapshot);return;}
     const verdict = snapshotStatus(snapshot);
-    if (verdict.composerSeen && !snapshot.composerSeen) void this.markComposer(ptyId, snapshot).catch(() => {});
+    if (allowComposerAck&&verdict.composerSeen && !snapshot.composerSeen) void this.markComposer(ptyId, snapshot).catch(() => {});
     if (verdict.waiting === null) return;
     const old = this.screenStates.get(ptyId);
     if (!replay && old?.generation === snapshot.generation && old.waiting === verdict.waiting && old.dialog === verdict.dialog) return;

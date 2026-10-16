@@ -172,7 +172,7 @@ const userRuleInput = new GuardedRuleInput(userRuleProvider, {
   snapshot: (id) => ptyHost.appliedSnapshotForRules(id),
   check: (id, fence) => ptyHost.checkSnapshot(id, fence),
   writeFenced: (id, data, fence) => ptyHost.writeAtSnapshot(id, data, fence),
-  writeLegacy: (id, data) => ptyHost.write(id, data),
+  writeLegacy: (id, data, stillAllowed) => ptyHost.write(id, data, stillAllowed),
 });
 const userRulePanes = new UserRulePanePolicy(userRuleInput, userRuleProvider, {
   snapshot: (id) => ptyHost.appliedSnapshotForRules(id),
