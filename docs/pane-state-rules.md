@@ -1,0 +1,47 @@
+# Pane state rules as data - PR 1 design
+
+I base this PR on main `8890bea3`, branch `pane-state-rules-data`. This note precedes product code. PR 1 moves the existing built-in regular expressions into bundled data and adds `aya pane state <pane> --explain`; it changes no verdict, precedence, region or agent selection. User files/reload are PR 2. Remote updates remain outside this work until Justyna decides their authority.
+
+## Ownership and format
+
+Since #224, `electron/vt-state.ts` evaluates policy in main from the host's fresh applied `VtSnapshot`; the PTY host owns the VT mirror and opaque composerSeen metadata. I keep that boundary. Main loads the bundled rules, not the host. Agent selection remains the pane's configured preset, never its child process name or command wrapper. Hooks remain opt-in.
+
+I propose `electron/screen-rules/builtin.json`, copied by the existing JSON-aware TypeScript build into `dist-electron/screen-rules/` and included in the existing packaged dist-electron files. One closed envelope contains `schemaVersion: 1`, a separately declared `ruleSetVersion`, and ordered sets for generic, claude, codex, opencode, grok and antigravity. Each set contains ordered records `{id, kind, region, pattern, flags}`. `kind` is prompt, suppressor, dialog, busy, usage-limit or account-setting. `region` is tail, lastLine or screen. Patterns are literal RegExp.source strings, never expressions, imports, template expansion, callbacks or executable files. Generic inheritance is explicit fixed metadata in the envelope, resolved once without reordering or duplicating rules. Usage/account rules get stable new IDs; existing IDs are preserved. Explain reports both the authored version and SHA256 of the actual validated data.
+
+I expand the existing trailing(max) construction to its exact pattern source in JSON. Existing flags, case sensitivity, line anchors, twelve nonempty tail rows, dialog-before-suppressor-before-prompt priority and first matching rule within a kind remain identical. BUSY/USAGE_LIMIT/ACCOUNT_SETTING tables move too. Composer/draft/startup/recovery/numbered-choice logic in vt-state remains code. The Aya-command detector stays code as CLI syntax, not a new configurable approval rule.
+
+## Validation and failure behavior
+
+I propose one atomic validated immutable rule set: at most 64 KiB UTF-8 data, six sets, 128 rules after inheritance per set, 256 distinct authored rules, 80-character ASCII IDs, 2,048-character pattern source and 2,048-character version/source labels in aggregate. Reject unknown fields, invalid UTF-8/JSON, duplicate keys/IDs, unexpected agents/kinds/regions, excess nesting, non-string fields and duplicate flags. Flags are a subset of `i`, `m`, `u`, never stateful `g`/`y`, indices or dotAll; no eval or Function. Compile only after the entire envelope and pattern syntax pass validation. Keep data/source metadata immutable and separate from match excerpts.
+
+A small syntax-aware static checker rejects backreferences, lookbehind, nested unbounded repetitions, repeated nullable expressions and overlapping alternatives inside an unbounded repetition. It bounds finite repetition nesting/expansion; the current bounded trailing groups (at most three rows) must pass without special-casing a rule ID. Negative tests cover classic exponential patterns, escaped syntax, character classes, alternatives and bounded/unbounded distinctions. This is a conservative accepted grammar/check, not a claim that arbitrary JavaScript regexes are linear-time. I will enumerate every current built-in's acceptance before changing the evaluator; a built-in rejected by that grammar is a design issue to report, not an exception silently waived or a rewritten matcher.
+
+Region extraction remains exactly today's behavior: tail uses twelve nonempty rows, lastLine one, screen the existing mirror's retained rows. I do not add truncation that could hide an old approval or change a verdict. The current snapshot carries mirror geometry/scrollback; I will measure the maximum current fixture region sizes and stress matching at retained-screen limits. If a stricter new input cap or different regex engine is needed, I will ask before changing detection semantics.
+
+An invalid bundled set fails validation as a whole; it must never become an empty set or release a hold. The app remains usable with a clear rule-data-unavailable diagnostic, agent hold unknown and busy false, preserving the existing fail-closed hold/fail-open busy contract. Bundled corruption is a package/test failure. PR 1 does not read AYA_HOME rule files, watch files or reload a rule set mid-evaluation.
+
+## Host identity and explain
+
+The rule loader/data remain outside the host's transitive value-import graph. #224's built host/runtime content hash therefore stays unchanged for a rule-only edit; the rule-set digest changes independently. A regression pins that graph and demonstrates rule-data changes affect the loaded set/explain version without changing the computed host identity. Packaging smoke proves JSON exists in the staged app and main can load it without network access. No native owner bytes, protocol or checkpoint representation change.
+
+`aya pane state <pane>` uses the existing project/name resolution, ambiguity checks and `--project` scope. It returns a fresh applied snapshot evaluated once in main. `--explain` adds the winning evidence for waiting/dialog, hold and busy from that same snapshot, rather than racing separate busy/hold requests. It uses the same evaluator as delivery and restart. It does not mark composerSeen, deliver input, acknowledge display, or change the pane. A missing/disconnected/unknown recovery screen is reported as unknown with its actual reason, not idle.
+
+Example text (illustrative existing rule):
+
+```
+claude-work: busy; hold: none
+busy: claude-busy
+source: builtin/claude; rules: 1 (<sha256>)
+region: lastLine
+excerpt: esc to interrupt
+```
+
+An approval can have separate hold evidence (for example account-setting) and waiting evidence; a suppressor explains why prompt-looking history is clear. Non-regex decisions use explicit `policy:<reason>` IDs, source `vt-state`, and explain that no data rule matched; they never fabricate a regex match. No match is stated plainly. Excerpts come only from the actual winning match, with control/ANSI/OSC and bidi controls removed, whitespace normalized and at most 160 Unicode characters. Source/version/IDs are validated labels, never terminal control text. Explain does not dump the screen, command, environment, file paths or credentials. CLI help/capabilities and command schema gain the same operation; unknown flags/ambiguous panes fail clearly.
+
+## Equivalence and done criteria
+
+Before replacing the TypeScript tables, I preserve a test-only frozen baseline from main, with exact pattern source/flags/order and an independent table digest. Tests compare every exported rule source/flag/order and every verdict from old and data-driven evaluators. The baseline is never loaded by product code. This prevents the new loader and matcher from sharing a mistaken oracle.
+
+Replay every recorded raw/chunk session and screen fixture for all built-in agents plus generic fallback; compare busy, hold reason, waiting, account/usage dialog and composerSeen at chunk/applied-screen boundaries, including continuations, blank screens, scrolling past prompts and alternate buffers. Preserve current snapshot parity, generation, B3 checkpoint/replay and B4 unknown-screen behavior. New tests cover malformed data and limits before regex compilation, static-check failures, winning-rule ordering and sanitized/length-capped CLI output. Real CLI e2e covers idle/busy/approval/account/unknown/disconnected and project resolution without process-name inference. Existing restart-busy-panes, restart-background-work, team-busy and team hold specs remain unchanged and green.
+
+Final gates are full npm tests, lint, selected contracts in Node/Electron, affected GUI (shutdown=0/workers=1), staged packaged-data smoke and an offline rule-evaluation latency/size report. No push, merge or production changes. I will send the design SHA to lead before product implementation and report any incompatible static-check/cap choice rather than changing behavior silently.
