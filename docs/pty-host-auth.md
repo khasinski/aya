@@ -1,12 +1,14 @@
 # PTY host socket authentication - proposed design
 
-I base this design on main `1314f7bf`, on branch `pty-host-socket-auth`. I will rebase after B4 (#230) lands. This note is a proposal for the lead before product code.
+I base this design on main `1314f7bf`, on branch `pty-host-socket-auth`. I will rebase after B4 (#230) lands. The lead provisionally approved this design for implementation on 2026-10-16; merge remains held until Justyna confirms the same-account boundary.
 
 ## Proof and its boundary
 
 I propose a random 32-byte capability per `AYA_HOME`, stored persistently in `pty-host-auth.key`. Main reads it again after an ordinary relaunch, so it can authenticate to the surviving host without an announced handover window. The file is owner-owned, mode 0600, within a checked owner-only directory; creation uses exclusive/no-follow semantics. Reads are nonblocking, regular-file-only, single-link, exact-length and permission/owner checked. Concurrent creation reads the winner; an unsafe or unreadable existing file is a refusal, never an excuse to replace a key or a running host. Development and disposable test homes have independent keys.
 
 This proves possession of the home capability, not that the executable is Aya. Every process with the same UID can read a 0600 file, including an unsandboxed agent; root and a process able to inspect main/host memory can also obtain secrets. No code-signature or executable-path claim changes that. In particular, a same-UID reader of this capability can authenticate and request the owner credential. This is a persistent same-account trust decision, not protection against an agent already running arbitrary same-account code. If the intended boundary excludes that agent, I need a different platform identity/credential-broker design before implementation; a private file or user-wide credential store alone cannot establish that boundary.
+
+Only main creates or explicitly replaces the capability; a host only consumes its inherited copy. Missing, unreadable or wrong capability material never authorizes silent replacement or killing of a surviving host: recovery uses the #219 question with that host's inventory, and Cancel preserves it.
 
 The capability never enters pane environments, argv, logs, diagnostics, renderer IPC, checkpoint state or the public registry. A newly started host receives it through a dedicated inherited pipe, separate from the native-owner key and checkpoint bootstrap. The host stores it only in memory. I do not change the native owner protocol or binary and do not persist its key.
 
@@ -36,4 +38,4 @@ I will test absent/wrong proof, role reflection, stale/replayed nonces, another 
 
 Real offline Electron tests will start a host, quit/relaunch main, authenticate and obtain continuity, then SIGKILL the JS host: a new JS PID must attach to the same owner and child PIDs, with unread output, input/resize and B4 hold/uncertain-write rules intact. I will cover another live main, identity-unavailable takeover, repeated reconnect, stale identity, failed continuity, legacy Cancel/confirm and older-main refusal. Existing B3 handover, B4 recovery, identity-bound restart consent, busy/hold and whole e2e remain required, plus full npm tests, lint and package smoke. Sockets are disposable Unix sockets; any TCP fixture uses only 127.0.0.1 port 0. I will measure handshake/relaunch overhead and retained memory at 25 panes.
 
-Before code, I need the lead's decision on the persistent same-account capability boundary above, especially its indirect authority to request the owner key. A stronger same-UID agent isolation claim is outside this proposal.
+The approved boundary stops accidental and foreign clients: other `AYA_HOME` instances, stale tools and processes unable to read this home (including agents sandboxed away from it). It provides B4 key continuity after an ordinary relaunch. It does NOT stop an unsandboxed process of the same user, which can read the file. A platform identity broker is outside this PR; the lead holds merge until Justyna confirms this boundary.
