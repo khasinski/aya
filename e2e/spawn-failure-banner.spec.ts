@@ -55,3 +55,40 @@ test("the banner Restart re-attempts the spawn instead of leaving a zombie termi
     visibleBanner(window).locator(".aya-pane-recovery-text strong"),
   ).toHaveText("Preset command is empty");
 });
+
+test("the pane-limit card Restart clears the failure and requests that pane again", async ({ app, window }) => {
+  const banner = visibleBanner(window);
+  await expect(banner).toBeVisible();
+  const paneId = await window.locator('[data-testid="terminal-pane"]:visible').first().getAttribute("data-terminal-id");
+  expect(paneId).toBeTruthy();
+
+  await app.evaluate(({ BrowserWindow, ipcMain }, id) => {
+    const g = globalThis as unknown as { paneLimitRetryRequests: Array<{ ptyId: string }> };
+    g.paneLimitRetryRequests = [];
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win) throw new Error("seeded app window is missing");
+
+    // Deliver the same typed host event the real owner-backed cap path emits,
+    // then record the renderer's explicit Retry without starting another PTY.
+    win.webContents.send("pty:event", {
+      type: "spawn-failed",
+      ptyId: id,
+      reason: "pane-limit-reached",
+      detail: "Aya can run at most 128 terminals at once. Close a terminal you no longer need, then restart this tab.",
+    });
+    ipcMain.removeHandler("pty:spawn");
+    ipcMain.handle("pty:spawn", (_event, request) => {
+      g.paneLimitRetryRequests.push(request);
+      return true;
+    });
+  }, paneId!);
+
+  await expect(banner.locator(".aya-pane-recovery-text p")).toHaveText(
+    "Aya can run at most 128 terminals at once. Close a terminal you no longer need, then restart this tab.",
+  );
+  await banner.locator(".aya-pane-recovery-btn--primary", { hasText: "Restart" }).click();
+  await expect.poll(() => app.evaluate(() => (globalThis as unknown as { paneLimitRetryRequests: unknown[] }).paneLimitRetryRequests)).toHaveLength(1);
+  const requests = await app.evaluate(() => (globalThis as unknown as { paneLimitRetryRequests: Array<{ ptyId: string }> }).paneLimitRetryRequests);
+  expect(requests[0].ptyId).toBe(paneId);
+  await expect(visibleBanner(window)).toHaveCount(0);
+});
