@@ -1,14 +1,15 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const core=require('../../dist-electron/pty-core.js');
 const {getOwnerRuntime,shutdownOwnerRuntime}=require('../../dist-electron/pty-owner-runtime.js');
-const {checkpointVtPane}=require('../../dist-electron/vt-mirror.js');
+const {checkpointVtPane,vtPaneReplayModeState}=require('../../dist-electron/vt-mirror.js');
 const {validatePaneCoreCheckpoint}=require('../../dist-electron/pty-core-checkpoint.js');
 const {VtCheckpointTerminal}=require('../../dist-electron/vt-checkpoint.js');
+const {Terminal}=require('@xterm/headless');
 const {capture}=require('../../dist-electron/vt-checkpoint-binding.js');
 const {OwnerPty}=require('../../dist-electron/pty-owner-adapter.js');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function waitFor(predicate){const end=Date.now()+6000;while(!predicate()){if(Date.now()>end)throw Error('core handover readiness timeout');await sleep(2);}}
-const home=process.env.AYA_HOME,mode=process.argv[2],scenario=process.argv[3],variant=scenario.startsWith('mount-')?'vt':['exit-late','dropped-view'].includes(scenario)?'exit-gap':scenario;let output='',exits=[],events=[];
+const home=process.env.AYA_HOME,mode=process.argv[2],scenario=process.argv[3],variant=scenario==='mount-legacy-modes'?'legacy-modes':scenario.startsWith('mount-')?'vt':['exit-late','dropped-view'].includes(scenario)?'exit-gap':scenario;let output='',exits=[],events=[];
 const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='data')output+=e.chunk;if(e.type==='exit')exits.push(e);}};
 (async()=>{
  if(variant.startsWith('prepare-')){
@@ -30,15 +31,21 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
   await shutdownOwnerRuntime();process.send({preparation:true},()=>process.exit(0));return;
  }
  if(mode==='old'||mode==='abort'){
-  const prefix={osc:"\\033]9001;aya.status=active:bu",vt:"\\033[3",utf8:"\\360\\237",'exit-gap':""}[variant];
-  const suffix={osc:"sy\\007TAIL",vt:"1mTAIL\\033[0m",utf8:"\\230\\200TAIL",'exit-gap':""}[variant];
+  const prefix={osc:"\\033]9001;aya.status=active:bu",vt:"\\033[3",utf8:"\\360\\237",'exit-gap':"",'legacy-modes':""}[variant];
+  const suffix={osc:"sy\\007TAIL",vt:"1mTAIL\\033[0m",utf8:"\\230\\200TAIL",'exit-gap':"",'legacy-modes':"\\033[?1003l\\033[?1003h\\033[?1049l\\033[?1049hTAIL"}[variant];
   const after=variant==='exit-gap'?(scenario==='dropped-view'?"printf 'LAST_SUFFIX'; exit 23":'exit 23'):`printf '${suffix}\\n'; while IFS= read -r line; do case "$line" in quit) exit 23 ;; *) printf 'R:%s:%s\\n' "$$" "$line" ;; esac; done`;
-  const script=`stty -echo; printf 'READY:%s\\n' "$$"; IFS= read -r line; printf '\\033[38;2;12;34;56mHISTORY\\033[0m\\n\\033[?1049hALTERNATE\\033[?1049l${prefix}'; touch "$HOME/produced"; while [ ! -f "$HOME/release" ]; do sleep 0.01; done; ${after}`;
+  const modeSetup=variant==='legacy-modes'?'\\033[?1049h\\033[?1003h\\033[?1006h\\033[?1004h\\033[?2004h\\033[?1h':'\\033[?1049hALTERNATE\\033[?1049l';
+  const script=`stty -echo; printf 'READY:%s\\n' "$$"; IFS= read -r line; printf '\\033[38;2;12;34;56mHISTORY\\033[0m\\n${modeSetup}${prefix}'; touch "$HOME/produced"; while [ ! -f "$HOME/release" ]; do sleep 0.01; done; ${after}`;
   const request={ptyId:'core',command:script,cwd:home,cols:80,rows:24,agent:'custom'};
   const services={prepare:async()=>({argv:['/bin/sh','-c',script],env:{HOME:home,PATH:'/usr/bin:/bin',TERM:'xterm-256color'},command:script,launch:{command:script,cwd:home,added:['fixture']},ownSessionId:null,spawnedAt:12345})};
   await core.spawnPty(request,sink,services);const pid=core.getPtyPid('core');
   await waitFor(()=>output.includes(`READY:${pid}`));core.resizePty('core',101,39);
   await core.writePty('core','start\n');await waitFor(()=>fs.existsSync(path.join(home,'produced'))&&output.includes('HISTORY'));
+  if(variant==='legacy-modes'){
+   await waitFor(()=>output.includes('\x1b[?1h'));
+   assert.deepEqual(vtPaneReplayModeState('core'),{alternate:true,mouse:'any',sgrMouse:true,focus:true,bracketedPaste:true,applicationCursor:true});
+   core.__testAppendToOutputBuffer('core','x'.repeat(core.OUTPUT_BUFFER_MAX-1));
+  }
   // The known prefix follows HISTORY in the same printf; wait for its observed
   // semantic boundary, rather than assuming the file means the read completed.
   let preflight,checkpoint;
@@ -47,10 +54,16 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
    if(Date.now()>prefixDeadline)throw Error('Known prefix was not consumed');
    preflight=await core.freezePtyCore();checkpoint=core.frozenPtyCoreParts()[0];
    assert.deepEqual(preflight.ineligible,[]);
-   const ready=variant==='exit-gap'||(variant==='osc'?checkpoint.oscCarry==='\x1b]9001;aya.status=active:bu':variant==='utf8'?checkpoint.adapter.decoderCarry==='8J8=':checkpoint.vt.tail.some(op=>op.text?.includes('\x1b[3')));
+   const ready=variant==='exit-gap'||(variant==='osc'?checkpoint.oscCarry==='\x1b]9001;aya.status=active:bu':variant==='utf8'?checkpoint.adapter.decoderCarry==='8J8=':variant==='legacy-modes'?output.includes('\x1b[?1h'):checkpoint.vt.tail.some(op=>op.text?.includes('\x1b[3')));
    if(ready)break;core.abortPtyCoreHandover();await sleep(2);
   }
   assert.equal(checkpoint.adapter.pane.cols,101);assert.equal(checkpoint.adapter.pane.rows,39);
+  if(variant==='legacy-modes'){
+   assert.ok(output.includes('\x1b[?1003h'));
+   delete checkpoint.output.replayModes;
+   assert.ok(checkpoint.output.chunks.join('').length<=core.OUTPUT_BUFFER_MAX);
+   assert.ok(!checkpoint.output.chunks.join('').includes('\x1b[?1003h'));
+  }
   const before=core.getBufferedOutput('core'),search=core.searchPtyOutputs('history');
   for(const mutate of [c=>{c.output.total++;},c=>{c.output.end=-1;},c=>{c.adapter.pane.pid=1;},c=>{c.adapter.pane.generation=0;},c=>{c.adapter.readBytes=-1;},c=>{c.adapter.decoderCarry='////';},c=>{c.adapter.credential='forbidden';},c=>{c.request.ptyId='other';},c=>{c.vt.metadata.generation='';},c=>{c.launch.mode={};},c=>{c.extra=true;}]){
    const bad=structuredClone(checkpoint);mutate(bad);await assert.rejects(validatePaneCoreCheckpoint(bad));
@@ -100,6 +113,7 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
    const mountEvents=[];
    const mountSink={isDestroyed:()=>false,sendPtyEvent:e=>mountEvents.push(e)};
    const request={...checkpoint.request,attachOnly:true,replayAfter:{generation:checkpoint.vt.metadata.generation,offset:checkpoint.output.end}};
+   if(scenario==='mount-legacy-modes')delete request.replayAfter; // force a full-history replay like a renderer without an applied checkpoint
    const services={prepare:()=>{throw Error('restored pane must never respawn');}};
    const generation=checkpoint.vt.metadata.generation;
    if(scenario==='dropped-view'){
@@ -149,8 +163,22 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
      await core.spawnPty(request,mountSink,services);
     }
     const replay=mountEvents.filter(e=>e.type==='data'&&e.replay);
-    assert.equal(replay.length,1);assert.equal(replay[0].reset,scenario==='mount-trim');
+    assert.equal(replay.length,1);if(scenario==='mount-trim')assert.equal(replay[0].reset,true);
     if(scenario==='mount-trim')assert.equal(replay[0].chunk,core.getBufferedOutput('core'));
+    else if(scenario==='mount-legacy-modes'){
+     const terminal=new Terminal({cols:80,rows:24,allowProposedApi:true});
+     try{
+      await new Promise(resolve=>terminal.write(replay[0].chunk,resolve));
+      assert.equal(terminal.buffer.active.type,'alternate',`legacy replay modes mismatch: ${JSON.stringify(replay[0].chunk.slice(0,100))}`);
+      assert.equal(terminal.modes.mouseTrackingMode,'any');
+      assert.equal(terminal._core.coreMouseService._activeEncoding,'SGR');
+      assert.equal(terminal.modes.sendFocusMode,true);
+      assert.equal(terminal.modes.bracketedPasteMode,true);
+      assert.equal(terminal.modes.applicationCursorKeysMode,true);
+      const ESC=String.fromCharCode(27);
+      assert.ok(replay[0].chunk.includes(`${ESC}[?1003l`)&&replay[0].chunk.includes(`${ESC}[?1049h`),'legacy replay includes post-checkpoint mode toggles');
+     }finally{terminal.dispose();}
+    }
     else{
      assert.ok(!replay[0].chunk.includes('HISTORY'),'captured display must not be replayed twice');
      assert.equal(replay[0].chunk.split('TAIL').length-1,1);
@@ -159,6 +187,11 @@ const sink={isDestroyed:()=>false,sendPtyEvent:e=>{events.push(e);if(e.type==='d
     }
     assert.equal(core.getPtyPid('core'),expected.pid);
     assert.equal(core.acknowledgePtyRestoration('core',generation),true);
+    if(scenario==='mount-legacy-modes'){
+     const wheel=`${String.fromCharCode(27)}[<64;1;1M`;await core.writePty('core',wheel+'\n');
+     await waitFor(()=>output.includes(`R:${expected.pid}:${wheel}`));
+     assert.equal(output.split(`R:${expected.pid}:${wheel}`).length-1,1,'SGR wheel input reaches the retained process once');
+    }
     await core.writePty('core','quit\n');await waitFor(()=>exits.length===1);assert.equal(exits[0].exitCode,23);
    }
    await shutdownOwnerRuntime();process.send({pid:expected.pid,ownerPid:expected.ownerPid,exits:1},()=>process.exit(0));return;

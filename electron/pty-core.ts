@@ -31,6 +31,7 @@ import {
   openVtPane,
   resizeVtPane,
   vtPaneAltScreen,
+  vtPaneReplayModeState,
   writeVtPane,
 } from "./vt-mirror";
 import type { OwnerPane } from "./pty-owner-client";
@@ -39,7 +40,7 @@ import { validateRecoveryLaunch } from "./pty-core-checkpoint";
 import type { PaneLaunch } from "./launch-mode";
 import type { PaneSize } from "./pane-render";
 import { COMMAND_NOT_FOUND_EXIT_CODE, MIN_PTY_COLS, MIN_PTY_ROWS } from "./pty-core-constants";
-import { consumeReplayModes, initialReplayModeTracker, replayModePrefix, validateReplayModeTracker, type ReplayModeTracker } from "./pty-replay-modes";
+import { consumeReplayModes, initialReplayModeTracker, legacyReplayModeTracker, replayModePrefix, validateReplayModeTracker, type ReplayModeTracker, type ReplayModeState } from "./pty-replay-modes";
 import { ptyLog } from "./pty-log";
 
 export type PreparedSpawn =
@@ -92,9 +93,10 @@ interface OutputBuffer {
   replayModes: ReplayModeTracker;
 }
 const outputBuffers = new Map<string, OutputBuffer>();
-function restoreOutputBuffer(value: PaneCoreCheckpoint["output"]): OutputBuffer {
+function restoreOutputBuffer(value: PaneCoreCheckpoint["output"], legacyCurrentModes?: ReplayModeState): OutputBuffer {
   return { chunks: [...value.chunks], total: value.total, version: value.version, end: value.end,
-    replayModes: value.replayModes ? validateReplayModeTracker(value.replayModes) : initialReplayModeTracker() };
+    replayModes: value.replayModes ? validateReplayModeTracker(value.replayModes) :
+      legacyCurrentModes ? legacyReplayModeTracker(legacyCurrentModes, value.chunks.join("")) : initialReplayModeTracker() };
 }
 // Restored processes read immediately. Keep their replay and real exit outcome
 // until the first renderer attaches, even if the child exits during that gap.
@@ -359,7 +361,7 @@ export async function restorePtyCorePane(value: unknown, sink: PtyEventSink): Pr
   catch (error) { closeVtPane(pane.id); throw error; }
   ptys.set(pane.id, child); launches.set(pane.id, pane.launch);
   spawnTimes.set(pane.id, pane.spawnedAt); spawnRequests.set(pane.id, pane.request);
-  outputBuffers.set(pane.id, restoreOutputBuffer(pane.output));
+  outputBuffers.set(pane.id, restoreOutputBuffer(pane.output, vtPaneReplayModeState(pane.id)));
   if (pane.oscCarry) oscCarryBuffers.set(pane.id, pane.oscCarry);
   restoredPanes.set(pane.id, {generation: (pane.vt.metadata as {generation:string}).generation, attached:false});
   installChildObservers(pane.request, child, sink, () => {});

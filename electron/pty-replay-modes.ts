@@ -14,11 +14,12 @@ export const initialReplayModeTracker = (): ReplayModeTracker => ({
 });
 const MAX_PENDING_CSI = 4096;
 const mouseMode: Record<number, ReplayModeState["mouse"]> = { 9: "x10", 1000: "vt200", 1002: "drag", 1003: "any" };
+type ModeChange = { field: keyof ReplayModeState; enabled: boolean; mouse?: ReplayModeState["mouse"] };
 
 /** Track only input-affecting DEC modes needed to reconstruct a remounted xterm.
  * CSI may span data chunks; pending preserves an incomplete sequence if its
  * prefix is evicted while its final bytes remain in the retained tail. */
-export function consumeReplayModes(tracker: ReplayModeTracker, text: string): void {
+export function consumeReplayModes(tracker: ReplayModeTracker, text: string, onChange?: (change: ModeChange) => void): void {
   for (const ch of text) {
     if (!tracker.pending) {
       if (ch === "\x1b" || ch === "\x9b") tracker.pending = ch;
@@ -42,17 +43,37 @@ export function consumeReplayModes(tracker: ReplayModeTracker, text: string): vo
       for (const raw of body.slice(1).split(";")) {
         const mode = Number(raw);
         if (!Number.isInteger(mode)) continue;
-        if (mode === 1) tracker.state.applicationCursor = enabled;
-        else if (mode === 47 || mode === 1047 || mode === 1049) tracker.state.alternate = enabled;
-        else if (mouseMode[mode]) tracker.state.mouse = enabled ? mouseMode[mode] : (tracker.state.mouse === mouseMode[mode] ? "none" : tracker.state.mouse);
-        else if (mode === 1004) tracker.state.focus = enabled;
-        else if (mode === 1006) tracker.state.sgrMouse = enabled;
-        else if (mode === 2004) tracker.state.bracketedPaste = enabled;
+        if (mode === 1) { tracker.state.applicationCursor = enabled; onChange?.({ field: "applicationCursor", enabled }); }
+        else if (mode === 47 || mode === 1047 || mode === 1049) { tracker.state.alternate = enabled; onChange?.({ field: "alternate", enabled }); }
+        else if (mouseMode[mode]) {
+          tracker.state.mouse = enabled ? mouseMode[mode] : (tracker.state.mouse === mouseMode[mode] ? "none" : tracker.state.mouse);
+          onChange?.({ field: "mouse", enabled, mouse: mouseMode[mode] });
+        }
+        else if (mode === 1004) { tracker.state.focus = enabled; onChange?.({ field: "focus", enabled }); }
+        else if (mode === 1006) { tracker.state.sgrMouse = enabled; onChange?.({ field: "sgrMouse", enabled }); }
+        else if (mode === 2004) { tracker.state.bracketedPaste = enabled; onChange?.({ field: "bracketedPaste", enabled }); }
       }
     } else {
       tracker.pending = ch === "\x1b" || ch === "\x9b" ? ch : "";
     }
   }
+}
+
+/** Reconstruct the state immediately before a legacy retained tail. Older
+ * hosts did not serialize this boundary. Explicit boolean DECSET/DECRSTs can
+ * be undone from the current VT state; mouse disables are conditional, so
+ * keep their current state as the conservative baseline. */
+export function legacyReplayModeTracker(current: ReplayModeState, retained: string): ReplayModeTracker {
+  const changes: ModeChange[] = [];
+  const scanned = initialReplayModeTracker();
+  consumeReplayModes(scanned, retained, change => changes.push(change));
+  const state = structuredClone(current);
+  for (let i = changes.length - 1; i >= 0; i--) {
+    const change = changes[i];
+    if (change.field === "mouse") continue;
+    state[change.field] = !change.enabled;
+  }
+  return { state, pending: "" };
 }
 export function replayModePrefix(tracker: ReplayModeTracker): string {
   const { state } = tracker;

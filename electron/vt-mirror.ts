@@ -6,6 +6,7 @@ import { MIN_PTY_COLS, MIN_PTY_ROWS } from "./pty-core-constants";
 import type { AgentKind } from "./presets";
 import { RecoveryScreen } from "./vt-recovery-screen";
 import { randomUUID } from "node:crypto";
+import type { ReplayModeState } from "./pty-replay-modes";
 // Only the visible screen matters for "what is on screen right now", and
 // scrollback would grow a buffer per pane in the host process for no gain.
 const VT_SCROLLBACK_LINES = 0;
@@ -223,6 +224,22 @@ export async function restoreVtPane(id: string, checkpoint: VtCheckpoint, onChan
 export function vtPaneAltScreen(id: string): boolean | undefined {
   const pane = panes.get(id);
   return pane && pane.terminal.buffer.active.type === "alternate";
+}
+/** Read the restored mirror's current input modes for legacy replay DTOs
+ * which predate serialized replay-boundary state. */
+export function vtPaneReplayModeState(id: string): ReplayModeState | undefined {
+  const terminal = panes.get(id)?.terminal;
+  if (!terminal) return undefined;
+  const modes = terminal.modes;
+  const internal = terminal as unknown as { _core?: { coreMouseService?: { _activeEncoding?: string } } };
+  return {
+    alternate: terminal.buffer.active.type === "alternate",
+    mouse: modes.mouseTrackingMode,
+    sgrMouse: internal._core?.coreMouseService?._activeEncoding === "SGR",
+    focus: modes.sendFocusMode,
+    bracketedPaste: modes.bracketedPasteMode,
+    applicationCursor: modes.applicationCursorKeysMode,
+  };
 }
 export function vtPaneWaiting(id: string): boolean { return panes.get(id)?.lastWaiting ?? false; }
 export function vtPaneDialog(id: string): string | undefined { return panes.get(id)?.lastDialog; }
