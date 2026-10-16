@@ -4,7 +4,7 @@ import type {RuleAgent} from "./screen-rule-data";
 import type {UserRuleManifest} from "./screen-user-rule-data";
 import type {UserRuleRequest, UserRuleResult} from "./screen-user-rule-runtime";
 import {screenRuleExcerpt, type ScreenRuleMatch} from "./agent-screen-rules";
-import {HOLD_ACCOUNT_SETTING, HOLD_APPROVAL, HOLD_USAGE_LIMIT, isUserOnlyHold} from "./pane-holds";
+import {HOLD_ACCOUNT_SETTING, HOLD_APPROVAL, HOLD_USAGE_LIMIT, isDialogHold, isUserOnlyHold} from "./pane-holds";
 
 export const HOLD_USER_ACCOUNT = "shows a user-defined account-setting dialog that only you may answer";
 export const HOLD_USER_RULES_UNKNOWN = "user screen rules are unavailable; automated input is held";
@@ -40,7 +40,7 @@ export function composeUserRuleDecision(
   const has=(kind:ScreenRuleMatch["kind"])=>evidence.some(e=>e.kind===kind);
   // Suppressors never cancel dialogs or any builtin verdict.
   const userWaiting=has("dialog")||(has("prompt")&&!has("suppressor"));
-  const dialog=builtin.waiting===true||userWaiting;
+  const dialog=builtin.waiting===true||isDialogHold(builtin.hold)||userWaiting;
   const userAccount=dialog&&has("account-setting"),userUsage=dialog&&has("usage-limit");
   const userHold=userAccount?HOLD_USER_ACCOUNT:userUsage?HOLD_USAGE_LIMIT:userWaiting?HOLD_APPROVAL:null;
   const protection=baseProtection??(userAccount?HOLD_USER_ACCOUNT:null);

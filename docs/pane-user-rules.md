@@ -25,7 +25,7 @@ Composition carries input protection separately from the display reason. A decis
 | Any builtin state | User busy match | Busy is the OR of builtin and user busy, never replaced by user clear |
 | Any builtin state | Unavailable/pending user layer | Keep builtin verdicts; add unknown where user safety is unresolved; never a clear edge or automated input authorization |
 
-Tests cover this matrix through both normal hold and real control delivery, including an account dialog appearing after paste but before Enter, and standalone account/usage transcript text with no active dialog.
+Acceptance tests will cover this matrix through both normal hold and real control delivery, including an account dialog appearing after paste but before Enter, and standalone account/usage transcript text with no active dialog.
 
 The effective version combines the built-in version/digest with ordered file versions/content digests and the precedence format version. File basenames, versions and IDs remain bounded labels. Explain names sources as `user/claude.json` or `user/generic.json`, never arbitrary full paths, and retains PR1's control/bidi/escape stripping, one-field pane-name quoting and excerpt cap. No-match, code-only policy, unknown-screen and shell answers keep their existing meanings.
 
@@ -114,3 +114,7 @@ The result keeps the builtin display hold and a separate user hold and input-pro
 This stage is unused: current control, team delivery, status fanout and explain still use their existing builtin paths. Host revision/epoch/caller fencing, real pre-paste/pre-Enter integration, reload and user explain remain separate acceptance stages. Pure composition does not establish freshness. The new matrix tests include builtin/suppressor combinations, independent account protection, transcript-only account/usage negatives, unknown fallback, safe provenance and actual worker evidence without main-thread user RegExp construction.
 
 Scoped local evidence: TypeScript build and54/54 loader/runtime/composition contracts in Node26.10 and54/54 in Electron43.5/Node24.19. These are source/unit checks in the separate PR2 worktree while #231's whole GUI owns the GUI/native-owner slot; no integrated delivery, GUI or packaged-worker claim is made.
+
+Stage4a F5 correction: an explicit builtin dialog hold (including a numbered choice) is active independently of its waiting opinion. Pure tests pin user account/usage additions for every builtin dialog hold with waiting false or null and no added user prompt/dialog. Real control-delivery matrix coverage remains future integration acceptance.
+
+F5 follow-up evidence: TypeScript and55/55 focused loader/runtime/composition contracts pass in Node26.10 and55/55 in Electron43.5/Node24.19. No GUI/native-owner work or integrated-policy claim.

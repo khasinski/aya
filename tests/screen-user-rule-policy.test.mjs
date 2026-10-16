@@ -53,6 +53,14 @@ test('account and usage rules require an active builtin or user dialog/choice',(
  }
  const both=apply(idle,'dialog','account-setting','usage-limit');assert.equal(both.hold,HOLD_USER_ACCOUNT);assert.equal(both.blocksAutomatedInput,true);
 });
+test('an explicit builtin dialog hold remains active without a waiting opinion',()=>{
+ for(const hold of [holds.HOLD_CHOICE,holds.HOLD_APPROVAL,holds.HOLD_APPROVE_AYA,holds.HOLD_USAGE_LIMIT,holds.HOLD_ACCOUNT_SETTING])for(const waiting of [false,null]){
+  const result=apply({hold,waiting,busy:false},'account-setting');
+  assert.equal(result.userHold,HOLD_USER_ACCOUNT);assert.equal(result.blocksAutomatedInput,true);
+  assert.equal(result.hold,hold);assert.equal(result.user.evidence[0].kind,'account-setting');
+  assert.equal(apply({hold,waiting,busy:false},'usage-limit').userHold,holds.HOLD_USAGE_LIMIT);
+ }
+});
 test('busy is additive and builtin account protection never depends on user success',()=>{
  assert.equal(apply(idle,'busy').busy,true);assert.equal(apply({...idle,busy:true}).busy,true);
  assert.equal(apply({...idle,hold:holds.HOLD_ACCOUNT_SETTING},'suppressor').blocksAutomatedInput,true);
