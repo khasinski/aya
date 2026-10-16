@@ -53,7 +53,7 @@ for(const fault of ['missing','wrong','unknown identity'])test(`a ${fault} capab
   await app.evaluate((_api,fault)=>{const client=(globalThis as any).authClient;(globalThis as any).authSavedMemoryKey=Buffer.from(client.hostAuthKey);client.hostAsked=true;client.dropSocket();client.hostAsked=false;client.hostAuthKey=fault==='wrong'?Buffer.alloc(32,42):null;},fault);
   await window.addInitScript(()=>{(window as any).authUnhandled=[];window.addEventListener('unhandledrejection',e=>(window as any).authUnhandled.push(String(e.reason)));});
   await window.reload();
-  await expect(window.getByTestId('terminal-history-notice').first()).toContainText(fault==='wrong'?'authenticate':'not closed normally');
+  await expect(window.getByTestId('terminal-history-notice').first()).toContainText(fault==='wrong'?'authenticate':'cannot be reattached by this Aya');
   await expect(window.getByTestId('terminal-history-notice').first()).toContainText('input remains disabled');
   const state=execFileSync(join(__dirname,'..','bin','aya'),['pane','state','shell 1','--explain'],{env:{...envWithoutAya(),AYA_HOME:seeded.ayaHome},encoding:'utf8',timeout:10000});
   expect(state).toContain('"shell 1": unknown; busy: no; waiting: unknown');
@@ -94,21 +94,26 @@ for(const fault of ['missing','wrong','unknown identity'])test(`a ${fault} capab
  }finally{for(const saved of retainedFiles)writeFileSync(saved.file,saved.bytes,{mode:0o600});await app.evaluate(()=>{const g=globalThis as any;g.authClient.hostAuthKey=g.authSavedMemoryKey;delete g.authSavedMemoryKey;});}
 });
 
-test('unannounced main loss opens a window without a modal; explicit consent alone stops the retained processes',async({app,window,seeded})=>{
+for(const loss of ['main crash','expired normal ticket'] as const)test(`${loss} opens a window without a modal; explicit consent alone stops the retained processes`,async({app,window,seeded})=>{
  await waitForShellReady(window);const before=record(seeded.ayaHome),hosts=hostPidsForHome(seeded.ayaHome),root=join(__dirname,'..');
  // Put an exact valid old capability on disk only as a migration artifact.
  // It never leaves this main through argv, env, logs or the test bridge result.
  await app.evaluate((_api,root)=>{const require=process.getBuiltinModule('module').createRequire(root+'/package.json'),{PtyHostClient}=require(root+'/dist-electron/pty-host-client.js'),request=PtyHostClient.prototype.request;PtyHostClient.prototype.request=function(...args:unknown[]){(globalThis as any).crashAuthClient=this;return request.apply(this,args);};},root);
  await window.evaluate(()=>window.aya.ptyBuffer('tab-left'));
  await app.evaluate((_api,home)=>{const fs=process.getBuiltinModule('fs'),path=process.getBuiltinModule('path');fs.mkdirSync(path.join(home,'pty-host-auth'),{mode:0o700});fs.writeFileSync(path.join(home,'pty-host-auth/key'),(globalThis as any).crashAuthClient.hostAuthKey,{mode:0o600});},seeded.ayaHome);
- const child=app.process();child.kill('SIGKILL');await expect.poll(()=>alive(child.pid!)).toBe(false);
- expect(readdirSync(seeded.ayaHome).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name))).toHaveLength(0);
+ if(loss==='main crash'){
+  const child=app.process();child.kill('SIGKILL');await expect.poll(()=>alive(child.pid!)).toBe(false);
+  expect(readdirSync(seeded.ayaHome).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name))).toHaveLength(0);
+ }else{
+  await closeAndWait(app);const tickets=readdirSync(seeded.ayaHome).filter(name=>/^pty-handover\.[a-f0-9]{64}\.json$/.test(name));expect(tickets).toHaveLength(1);
+  const file=join(seeded.ayaHome,tickets[0]),ticket=JSON.parse(readFileSync(file,'utf8'));ticket.deadline=Date.now()-1;writeFileSync(file,JSON.stringify(ticket),{mode:0o600});
+ }
  const entry=join(seeded.root,'unannounced-main.cjs');writeFileSync(entry,`const electron=require('electron'),original=electron.dialog.showMessageBox.bind(electron.dialog);global.authQuestions=[];global.authAnswer=1;electron.dialog.showMessageBox=async(...args)=>{const options=args.at(-1);if(!['Work in progress will stop','Aya cannot safely restart this terminal host'].includes(options.message))return original(...args);global.authQuestions.push(options);return{response:options.buttons?.length===1?0:global.authAnswer,checkboxChecked:false};};require(require('path').join(process.env.AYA_TEST_APP_ROOT,'dist-electron/main.js'));`);
  const next=await _electron.launch({cwd:root,args:[entry,`--user-data-dir=${seeded.userDataDir}`,...ciElectronFlags()],env:appEnv({...seeded,launchEnv:{...seeded.launchEnv,AYA_E2E_PTY_SHUTDOWN:'0',AYA_TEST_APP_ROOT:root}})});
  try{
   const view=await next.firstWindow(),errors:string[]=[];view.on('pageerror',error=>errors.push(String(error)));
   await expect(view.getByTestId('terminal-history-notice').first()).toContainText('input remains disabled');
-  await expect(view.getByTestId('terminal-history-notice').first()).toContainText('Aya was not closed normally');
+  await expect(view.getByTestId('terminal-history-notice').first()).toContainText('cannot be reattached by this Aya');
   expect(await next.evaluate(()=>(globalThis as any).authQuestions)).toEqual([]);
   await next.evaluate(({ipcMain})=>{const original=(ipcMain as any)._invokeHandlers.get('pty:write');(globalThis as any).unannouncedWrites=0;ipcMain.removeHandler('pty:write');ipcMain.handle('pty:write',(event,...args)=>{(globalThis as any).unannouncedWrites++;return original(event,...args);});});
   const pane=view.getByTestId('xterm-host').first();await pane.click();await view.keyboard.type('not-delivered');await view.keyboard.press('Enter');

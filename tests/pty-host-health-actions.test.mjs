@@ -383,7 +383,7 @@ for(const owner of [undefined,{pid:99,incompatible:true,disconnected:[]}])test('
 
 for(const targetVerified of [true,false])test(`unannounced loss opens without a startup modal; explicit review retains consent, verified=${targetVerified}`,async t=>{
  const f=setup(t);f.state.records.push(record(200));
- f.d.ptyHost.hostStatus=async()=>({pid:100,startTime:'1:2',identity:null,ptyCount:1,authentication:{required:true,unannounced:true,targetVerified,inventoryKnown:true,reason:'Aya was not closed normally'},owner:{pid:99,incompatible:false,disconnected:['retained'],inventory:[{id:'retained',pid:789}]}});
+ f.d.ptyHost.hostStatus=async()=>({pid:100,startTime:'1:2',identity:null,ptyCount:1,authentication:{required:true,unannounced:true,targetVerified,inventoryKnown:true,reason:'These terminals cannot be reattached by this Aya'},owner:{pid:99,incompatible:false,disconnected:['retained'],inventory:[{id:'retained',pid:789}]}});
  const actions=createPtyHostHealth(f.d);await actions.handleStaleHost();
  assert.deepEqual(operations(f.log),[]);assert.equal(actions.staleHostDetected(),true);
  f.state.askAnswer=false;await assert.rejects(actions.restartHostFromWindow(),/restart cancelled/);

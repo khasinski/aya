@@ -49,7 +49,7 @@ test('missing or wrong in-memory capability cannot reach the generic create-host
   other.startHost=()=>{starts++;throw new Error('unexpected host creation');};
   try{
    await assert.rejects(other.spawn({ptyId:'must-not-spawn',command:'cat',cwd:home,cols:80,rows:24}),error=>['PTY_HOST_AUTH_UNAVAILABLE','PTY_HOST_AUTH_REQUIRED'].includes(error.code)&&error.message==='The terminal host is disconnected or recovering. This request was not sent.');
-   const notice=ptyEventsFor(refusedSink,'must-not-spawn');assert.equal(notice.length,1);assert.equal(notice[0].type,'disconnected');assert.match(notice[0].reason,corruption==='wrong'?/could not authenticate/:/not closed normally/);assert.ok(!notice.some(e=>e.type==='no-session'||e.type==='exit'));
+   const notice=ptyEventsFor(refusedSink,'must-not-spawn');assert.equal(notice.length,1);assert.equal(notice[0].type,'disconnected');assert.match(notice[0].reason,corruption==='wrong'?/could not authenticate/:/cannot be reattached by this Aya/);assert.ok(!notice.some(e=>e.type==='no-session'||e.type==='exit'));
    const lateSink=fakeWebContents();other.attachWebContents(lateSink);assert.deepEqual(ptyEventsFor(lateSink,'must-not-spawn'),notice);
    const status=await other.hostStatus();assert.equal(status.authentication.unannounced,corruption==='missing'?true:undefined);assert.equal(status.pid,hostPid);assert.equal(status.authentication.targetVerified,true);
    assert.equal(starts,0);assert.equal(fs.lstatSync(socketPath).ino,before.ino);assert.equal(await main.getPid('auth-pane'),pid);assert.equal((await main.hostStatus()).pid,hostPid);
