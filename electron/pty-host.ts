@@ -8,7 +8,6 @@ import { PTY_HOST_SOCKET_PATH, PTY_HANDOVER_CORE_DIRECTORY, PTY_HANDOVER_DISPLAY
 import { hostBuildHash, hostRuntimeIdentity, UNKNOWN_SCRIPT_HASH, type HostIdentity } from "./pty-host-staleness";
 import {
   writeHostRecord,
-  removeHostRecord,
   ownStartTime,
   ownPgid,
 } from "./pty-host-registry";
@@ -95,13 +94,14 @@ let ownSocket: { dev: number; ino: number } | null = null;
 let hostShutdownStarted = false;
 
 /** Idempotent: socket dropped at once, children through the SIGKILL ladder (the host lives to deliver it),
- *  then the registry record goes (a crash leaves it for next launch's GC) and the process exits. */
+ *  then the process exits. Keep its registry record until another process verifies
+ * kernel death: removing it before exit would falsely authorize a second host. */
 function beginShutdown(reason: string): void {
   if (hostShutdownStarted) return; // the in-flight shutdown owns the exit
   if (hostHandover.committed) {
     // A quit/signal racing the committed cutover must only end this JS host.
     // The owner is already reserved for the successor, never shut it down.
-    hostShutdownStarted=true;clearIdleTimer();closeSocket();removeHostRecord(process.pid);process.exit(0);
+    hostShutdownStarted=true;clearIdleTimer();closeSocket();process.exit(0);
   }
   hostShutdownStarted = true;
   // The reason is the single most valuable line in the lifecycle log: it
@@ -111,7 +111,7 @@ function beginShutdown(reason: string): void {
   closeSocket();
   void hostHandover.abort().catch(error => {ptyLog.append("checkpoint-abort-failed", {error:String(error)});}).then(() => {
     shutdownPtyChildren(() => {
-      void shutdownOwnerRuntime().then(() => { removeHostRecord(process.pid); process.exit(0); })
+      void shutdownOwnerRuntime().then(() => { process.exit(0); })
         .catch(error => { ptyLog.append("owner-shutdown-failed", { error: String(error) }); });
     });
   });
@@ -507,7 +507,6 @@ function attachAuthenticatedClient(socket:net.Socket,initialBuffer:string):void 
               // The owner and pane processes stay alive. Exit after flushing
               // the commit response; never enter the destructive shutdown path.
               hostShutdownStarted = true;clearIdleTimer();closeSocket();
-              removeHostRecord(process.pid);
               const timer=setTimeout(()=>process.exit(0),1000);timer.unref();
               socket.end(()=>process.exit(0));
             }

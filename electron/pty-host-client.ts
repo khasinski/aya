@@ -1231,6 +1231,9 @@ export class PtyHostClient {
     }
     const stderr = openHostStderr();
     try {
+      // Re-prove absence after opening stderr, immediately before the fork.
+      // A grace result or an earlier pre-unlink check is not a reusable permit.
+      assertHostCreationSafe();
       const child = spawn(process.execPath, [this.hostScript], {
         detached: true,
         stdio: ["ignore", "ignore", stderr, "pipe", bootstrap?"pipe":"ignore", "pipe"],

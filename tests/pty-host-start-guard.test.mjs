@@ -146,3 +146,13 @@ test('default grace passes the decreasing remaining deadline to its actual ps ca
   assert.deepEqual(timeouts,[3000,2850]);
  }finally{cancelled.abort();childProcess.execFileSync=exec;}
 });
+
+test('startHost repeats the absence proof after stderr open immediately before fork',()=>{
+ reset();const client=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));client.hostAuthKey=Buffer.alloc(32);
+ const open=fs.openSync,spawn=childProcess.spawn;let opened=false,spawns=0;
+ try{
+  fs.openSync=(file,...args)=>{const fd=open(file,...args);if(String(file)===path.join(home,'pty-host.stderr.log')&&!opened){opened=true;record();}return fd;};
+  childProcess.spawn=()=>{spawns++;throw Error('fork passed a newly live record');};
+  assert.throws(()=>client.startHost(),{code:'PTY_HOST_START_BLOCKED'});assert.equal(opened,true);assert.equal(spawns,0);
+ }finally{fs.openSync=open;childProcess.spawn=spawn;client.dispose();reset();}
+});
