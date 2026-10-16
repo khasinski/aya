@@ -1,7 +1,9 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "module": "CommonJS",
     "moduleResolution": "Node",
     "strict": true,
@@ -15,5 +17,8 @@
     "composite": true,
     "incremental": true
   },
-  "include": ["**/*.ts"]
+  "include": [
+    "**/*.ts",
+    "screen-rules/*.json"
+  ]
 }
