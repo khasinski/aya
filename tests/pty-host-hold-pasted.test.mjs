@@ -30,7 +30,8 @@ process.env.XDG_DATA_HOME = join(root, "xdg-data");
 process.env.SHELL = "/bin/sh";
 process.env.PATH = `${bin}:/usr/bin:/bin`;
 
-const { PtyHostClient } = await import("../dist-electron/pty-host-client.js");
+const { PtyHostClient, PANE_HOLD_INVALID_SNAPSHOT } = await import("../dist-electron/pty-host-client.js");
+const { vtSnapshotValidationError } = await import("../dist-electron/pty-host-protocol.js");
 const { HOST_EVENT_TIMEOUT_MS, fakeWebContents } = await import("./helpers/pty-host.mjs");
 
 async function until(check) {
@@ -59,4 +60,27 @@ test("the host ignores the pasted text when it reads the composer for the hold c
   await until(async () => (await client.getBuffer("c")).includes(text));
   assert.equal(await client.holdReason("c"), "shows an approval prompt", "unmasked, the quote reads as a prompt");
   assert.equal(await client.holdReason("c", text), null, "the composer holds only Aya's own line: no prompt, no draft");
+});
+
+test("the real host keeps valid pane snapshots across the redraw resize nudge", { timeout: 20_000 }, async (t) => {
+  const client = new PtyHostClient(join(process.cwd(), "dist-electron", "pty-host.js"));
+  client.attachWebContents(fakeWebContents());
+  t.after(async () => {
+    try { await client.kill("c-resize"); await client.shutdown(); } catch { /* host already gone */ }
+  });
+  await client.spawn({ ptyId: "c-resize", command: join(bin, "claude"), cwd: root, cols: 80, rows: 24 });
+  await until(async () => (await client.getBuffer("c-resize")).includes("accept edits on"));
+  for (let i = 0; i < 40; i++) {
+    const [down, snapshot, up, state, hold] = await Promise.all([
+      client.resize("c-resize", 79, 24),
+      client.request({ id: 0, type: "snapshot", ptyId: "c-resize" }),
+      client.resize("c-resize", 80, 24),
+      client.paneState("c-resize"),
+      client.holdReason("c-resize"),
+    ]);
+    await down; await up;
+    assert.equal(vtSnapshotValidationError(snapshot), null, `snapshot after redraw nudge ${i}`);
+    assert.notEqual(hold, PANE_HOLD_INVALID_SNAPSHOT, `hold after redraw nudge ${i}`);
+    assert.notEqual(state.hold, PANE_HOLD_INVALID_SNAPSHOT, `state after redraw nudge ${i}`);
+  }
 });
