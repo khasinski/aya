@@ -357,7 +357,7 @@ export function createPtyHostHealth(deps: PtyHostHealthDeps) {
    *  or when the old host did not exit, so the window leaves its panes as they are. */
   async function restartHostFromWindow(): Promise<void> {
     const before = await hostHealth();
-    if(before.authentication&&!verifiedAuthTarget(before)){await explainUnverifiedAuth(before);showStaleHost(true);return;}
+    if(before.authentication&&!verifiedAuthTarget(before)){await explainUnverifiedAuth(before);showStaleHost(true);throw new Error("restart cancelled");}
     const legacy = !before.owner && before.ptyCount > 0;
     const recovery = !!before.ownerUnavailable || !!before.authentication || legacy || before.owner?.incompatible || !!before.owner?.disconnected.length;
     const names = new Map((await relaunchDeps.panes().catch(() => [])).map(p => [p.id, p.name]));

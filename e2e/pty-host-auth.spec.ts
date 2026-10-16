@@ -25,8 +25,9 @@ test('ordinary relaunch proves continuity and a later JS crash recovers the orig
  }finally{await closeAndWait(next);}
 });
 
-for(const fault of ['missing','wrong'])test(`a ${fault} capability gives a friendly real attachment refusal; Cancel keeps the host and processes`,async({app,window,seeded})=>{
+for(const fault of ['missing','wrong','unknown identity'])test(`a ${fault} capability gives a friendly real attachment refusal; Cancel keeps the host and processes`,async({app,window,seeded})=>{
  await waitForShellReady(window);const before=record(seeded.ayaHome),hosts=hostPidsForHome(seeded.ayaHome),keyFile=join(seeded.ayaHome,'pty-host-auth/key'),key=readFileSync(keyFile);
+ const retainedFiles=fault==='unknown identity'?[join(seeded.ayaHome,'pty-owner/record.json'),join(seeded.ayaHome,'pty-hosts',`${hosts[0]}.json`)].map(file=>({file,bytes:readFileSync(file)})):[];
  const errors:string[]=[];window.on('pageerror',e=>errors.push(String(e)));
  const inputFile=join(seeded.projectDir,'auth-refused-input');
  await window.evaluate(file=>window.aya.ptyWrite('tab-left',`stty -echo; printf 'AUTH_CAPTURE_READY\\n'; while IFS= read -r line; do printf '%s\\n' "$line" >> '${file}'; done\r`),inputFile);
@@ -40,7 +41,8 @@ for(const fault of ['missing','wrong'])test(`a ${fault} capability gives a frien
   PtyHostClient.prototype.request=function(...args:unknown[]){(globalThis as any).authClient=this;return request.apply(this,args);};
  },join(__dirname,'..'));
  await window.evaluate(()=>window.aya.ptyBuffer('tab-left'));
- if(fault==='missing')unlinkSync(keyFile);else writeFileSync(keyFile,Buffer.alloc(32,42),{mode:0o600});
+ if(fault==='wrong')writeFileSync(keyFile,Buffer.alloc(32,42),{mode:0o600});else unlinkSync(keyFile);
+ for(const saved of retainedFiles)unlinkSync(saved.file);
  try{
   await app.evaluate(()=>{const client=(globalThis as any).authClient;client.hostAsked=true;client.dropSocket();client.hostAsked=false;client.hostAuthKey=null;});
   await window.addInitScript(()=>{(window as any).authUnhandled=[];window.addEventListener('unhandledrejection',e=>(window as any).authUnhandled.push(String(e.reason)));});
@@ -53,13 +55,32 @@ for(const fault of ['missing','wrong'])test(`a ${fault} capability gives a frien
   expect(require('node:fs').existsSync(inputFile)).toBe(false);
   await expect(window.getByTestId('xterm-host').first()).not.toContainText('Error invoking remote method');
   await expect(window.getByTestId('xterm-host').first()).not.toContainText('Terminal attachment failed');
-  await app.evaluate(({dialog})=>{const original=dialog.showMessageBox.bind(dialog);(globalThis as any).authQuestions=[];dialog.showMessageBox=(async(...args:Parameters<typeof dialog.showMessageBox>)=>{const options=args.at(-1) as {message:string;detail:string};if(options.message!=='Work in progress will stop')return original(...args);(globalThis as any).authQuestions.push(options.detail);return {response:1,checkboxChecked:false};}) as typeof dialog.showMessageBox;});
+  await app.evaluate(({dialog})=>{const original=dialog.showMessageBox.bind(dialog);(globalThis as any).authQuestions=[];dialog.showMessageBox=(async(...args:Parameters<typeof dialog.showMessageBox>)=>{const options=args.at(-1) as {message:string;detail:string;buttons:string[]};if(!['Work in progress will stop','Aya cannot safely restart this terminal host'].includes(options.message))return original(...args);(globalThis as any).authQuestions.push(options);return {response:options.buttons.length===1?0:1,checkboxChecked:false};}) as typeof dialog.showMessageBox;});
+  await app.evaluate(({ipcMain})=>{
+   const original=(ipcMain as any)._invokeHandlers.get('pty:spawn');(globalThis as any).authLateSpawns=0;
+   ipcMain.removeHandler('pty:spawn');ipcMain.handle('pty:spawn',(event,...args)=>{(globalThis as any).authLateSpawns++;return original(event,...args);});
+   const client=(globalThis as any).authClient,restart=client.restart.bind(client);(globalThis as any).authRestarts=0;
+   client.restart=(...args:unknown[])=>{(globalThis as any).authRestarts++;return restart(...args);};
+  });
   await fireShortcut(app,'open-settings');const settings=window.locator('.aya-modal--settings');await settings.getByTestId('settings-tab').filter({hasText:'Diagnostics'}).click();
   window.once('dialog',dialog=>void dialog.accept());
   await settings.locator('.aya-settings-general-row',{hasText:'PTY host'}).getByRole('button',{name:'Restart'}).click();
   await expect.poll(()=>app.evaluate(()=>(globalThis as any).authQuestions.length)).toBe(1);
-  const question=await app.evaluate(()=>(globalThis as any).authQuestions[0]);for(const p of before.panes)expect(question).toContain(`PID ${p.pid}`);
-  expect(hostPidsForHome(seeded.ayaHome)).toEqual(hosts);expect(record(seeded.ayaHome).pid).toBe(before.pid);for(const p of before.panes)expect(alive(p.pid)).toBe(true);
+  const question=await app.evaluate(()=>(globalThis as any).authQuestions[0]);
+  if(fault==='unknown identity'){
+   expect(await app.evaluate(()=>(globalThis as any).authRestarts)).toBe(0);expect(await app.evaluate(()=>(globalThis as any).authLateSpawns)).toBe(0);
+   expect(question.buttons).toEqual(['OK']);expect(question.detail).toContain('identity could not be verified');
+   await settings.getByRole('button',{name:'Cancel',exact:true}).click();
+   await expect(window.locator('.aya-sidebar-row[data-terminal-name="shell 1"] .aya-sidebar-statusdot')).toHaveClass(/--error/);
+   await expect(window.getByTestId('terminal-history-notice').first()).toContainText('input remains disabled');
+   await refusedTerminal.click();await window.keyboard.type('after-ok-not-delivered');await window.keyboard.press('Enter');
+   await refusedTerminal.locator('.xterm-helper-textarea').evaluate(textarea=>{const data=new DataTransfer();data.setData('text/plain','after-ok-paste\n');textarea.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));});
+   expect(await app.evaluate(()=>(globalThis as any).authWriteCalls)).toBe(0);
+   expect(require('node:fs').existsSync(inputFile)).toBe(false);
+   expect(await app.evaluate(()=>(globalThis as any).authQuestions.length)).toBe(1);
+  }else for(const p of before.panes)expect(question.detail).toContain(`PID ${p.pid}`);
+  expect(hostPidsForHome(seeded.ayaHome)).toEqual(hosts);expect(alive(before.pid)).toBe(true);for(const p of before.panes)expect(alive(p.pid)).toBe(true);
+  if(!retainedFiles.length)expect(record(seeded.ayaHome).pid).toBe(before.pid);
   expect(errors).toEqual([]);expect(await window.evaluate(()=>(window as any).authUnhandled)).toEqual([]);
- }finally{writeFileSync(keyFile,key,{mode:0o600});}
+ }finally{for(const saved of retainedFiles)writeFileSync(saved.file,saved.bytes,{mode:0o600});writeFileSync(keyFile,key,{mode:0o600});}
 });
