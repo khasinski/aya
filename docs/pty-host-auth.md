@@ -163,23 +163,23 @@ I ran `scripts/measure-pty-host-auth.cjs` offline on macOS arm64, Electron 43.5 
 
 | One-trial measurement | Result |
 | --- | ---: |
-| Authentication plus 25-pane owner continuity | 2.20 ms / 3,850 us main CPU |
-| Crash to recovered plus all received replay fences | 308.91 ms |
-| All 25 sequential post-recovery input/reply round trips | 133.92 ms |
-| Input/reply p50 / p95 before recovery | 6.50 / 6.68 ms |
-| Input/reply p50 / p95 after recovery | 5.48 / 6.54 ms |
-| Sampled main / old JS / successor JS / owner RSS peaks | 92.77 / 110.20 / 110.83 / 2.25 MiB |
-| Sampled simultaneous combined RSS peak | 205.84 MiB |
+| Authentication plus 25-pane owner continuity | 2.22 ms / 4,067 us main CPU |
+| Crash to recovered plus all received replay fences | 313.18 ms |
+| All 25 sequential post-recovery input/reply round trips | 139.50 ms |
+| Input/reply p50 / p95 before recovery | 6.08 / 6.71 ms |
+| Input/reply p50 / p95 after recovery | 5.40 / 6.47 ms |
+| Sampled main / old JS / successor JS / owner RSS peaks | 93.17 / 111.64 / 109.73 / 2.25 MiB |
+| Sampled simultaneous combined RSS peak | 205.16 MiB |
 
-CPU percentages use one logical CPU as 100%, over approximately 2.0-2.2 s resource-counter intervals (benchmark main uses its own approximately 2.2 s interval):
+CPU percentages use one logical CPU as 100%, over approximately 2.2 s resource-counter intervals (benchmark main uses its own approximately 2.2 s interval):
 
 | Phase | Benchmark main | JS host | Owner |
 | --- | ---: | ---: | ---: |
-| Idle before recovery | 0.85% | 1.19% | 0.016% |
-| Active before recovery | 3.52% | 10.99% | 0.015% |
-| Active after recovery | 2.61% | 6.56% | 0.015% |
-| Idle after recovery | 1.31% | 1.57% | 0.014% |
+| Idle before recovery | 0.88% | 1.21% | 0.015% |
+| Active before recovery | 3.43% | 10.79% | 0.014% |
+| Active after recovery | 2.51% | 6.54% | 0.014% |
+| Idle after recovery | 1.25% | 1.57% | 0.015% |
 
-All 25 child PIDs and the native owner PID stayed unchanged. Before starting the successor, the wrapper independently required old-JS ESRCH and absent kernel start identity. No old/new JS overlap appeared in samples; that sampling alone is not the exclusion proof. The successor PID enters sampling immediately when startHost returns, including startup/replay. The 94 raw RSS samples, identity, timestamps and counter intervals are retained in ignored `test-results/socket-auth-measurement.json`; output is under `test-results/`, never the repository root. CPU sampling adds a 200 ms instrumentation interval and RSS uses asynchronous 100 ms ps samples, so overhead is included and brief peaks can be missed. Individual peaks are not additive. Combined RSS covers benchmark main, JS hosts and owner, excluding the 25 child programs. Round-trip observation polls at 5 ms. Crash recovery still loses consumed screen/history by policy; these numbers do not claim consumed-output losslessness. After the helper exited, a separate post-run check loaded its saved old/new host, owner and 25 child PIDs, called `process.kill(pid, 0)` for each and required ESRCH; it reported `remainingPids []`. This is independent cleanup evidence for this run, not an assertion implemented by the measurement helper. The disposable home/entry were removed.
+This refreshed trial fixes measurement findings F16/F17: it captures the old host kernel start identity and rechecks it immediately before the deliberate SIGKILL, aborting on mismatch/unknown (with the same documented macOS check-to-signal residual window). Latency p50/p95 use nearest rank, `ceil(n*p)` in one-based order, and all 25 raw latency samples before and after recovery are retained. The earlier trial was superseded because its numeric-PID signal check was missing and its p95 used a lower order statistic. All 25 child PIDs and the native owner PID stayed unchanged. Before starting the successor, the wrapper independently required old-JS ESRCH and absent kernel start identity. No old/new JS overlap appeared in samples; that sampling alone is not the exclusion proof. The successor PID enters sampling immediately when startHost returns, including startup/replay. The 94 raw RSS samples, identity, timestamps and counter intervals are retained in ignored `test-results/socket-auth-measurement.json`; output is under `test-results/`, never the repository root. CPU sampling adds a 200 ms instrumentation interval and RSS uses asynchronous 100 ms ps samples, so overhead is included and brief peaks can be missed. Individual peaks are not additive. Combined RSS covers benchmark main, JS hosts and owner, excluding the 25 child programs. Round-trip observation polls at 5 ms. Crash recovery still loses consumed screen/history by policy; these numbers do not claim consumed-output losslessness. After the helper exited, a separate post-run check loaded its saved old/new host, owner and 25 child PIDs, called `process.kill(pid, 0)` for each and required ESRCH; it reported `remainingPids []`. This is independent cleanup evidence for this run, not an assertion implemented by the measurement helper. The disposable home/entry were removed.
 
 The owner executable remains byte-identical at SHA256 `2d93372d8249dd1c3a7593d0869f863fdb53971c36076c71dad9939a5a3e4109`; authentication changes no native-owner protocol or bytes. The persistent capability stops accidental/foreign clients and processes unable to read this AYA_HOME, and supplies ordinary-relaunch B4 continuity. It does not stop unsandboxed same-user code that can read the file. Merge remains held for Justyna's confirmation of that same-account boundary; no push, merge or production action is performed by the dev.
