@@ -1182,6 +1182,18 @@ export function shutdownPtyChildren(
   shutdownChildren(children, onDone, schedule);
 }
 
+/** A bounded complete live manifest for an authenticated replacement main.
+ * A pending spawn/exit or unsupported opaque record refuses credential export;
+ * it never guesses a launch or alters a running pane. */
+export function ptyOwnerContinuityPanes(inventory:OwnerPane[]):RecoveryPane[] {
+  if(shuttingDown||handoverGated||spawning.size||inventory.length>25||inventory.length!==ptys.size||new Set(inventory.map(p=>p.id)).size!==inventory.length)throw Error("Terminal recovery manifest is not stable");
+  return inventory.map(p=>{
+    const child=ptys.get(p.id),request=spawnRequests.get(p.id),launch=launches.get(p.id),spawnedAt=spawnTimes.get(p.id),identity=child?.recoveryIdentity();
+    if(p.exited||p.acknowledged||!p.startIdentity||!child||!request||!launch||spawnedAt===undefined||!identity||identity.generation!==p.generation||identity.pid!==p.pid||identity.startIdentity!==p.startIdentity)throw Error("Terminal recovery manifest is incomplete");
+    return {id:p.id,generation:p.generation,pid:p.pid,startIdentity:p.startIdentity,request:{...request},launch:{...launch},spawnedAt};
+  });
+}
+
 export function restoredPtyLaunches():Array<{req:SpawnRequest;pid:number;cwd:string;spawnedAt:number}> {
   return [...restoredPanes.keys()].flatMap(id=>{
     const child=ptys.get(id),req=spawnRequests.get(id);

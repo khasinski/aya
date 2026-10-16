@@ -59,6 +59,9 @@ export class OwnerPty implements IPty {
       void this.finish();
     });
   }
+  recoveryIdentity():Pick<OwnerPane,"id"|"generation"|"pid"|"startIdentity"> {
+    const {id,generation,pid,startIdentity}=this.pane;return {id,generation,pid,startIdentity};
+  }
   static async attach(checkpoint: OwnerPtyCheckpoint): Promise<OwnerPty> {
     const owner = await getOwnerRuntime();
     if (owner.incompatible || !owner.client) throw new Error("The checkpoint's PTY owner is unavailable");

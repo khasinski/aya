@@ -47,15 +47,16 @@ test('repeated real JS crashes exhaust one budget while preserving native invent
   assert.match(events.filter(e=>e.type==='disconnected').at(-1).reason,/recovery budget/);assert.doesNotThrow(()=>process.kill(pid,0));assert.doesNotThrow(()=>process.kill(status.owner.pid,0));assert.equal(registry.readOwnerRecord().panes[0].pid,pid);
  }finally{await cleanup(client);}
 });
-test('unknown-key reused host death does not probe owner, request a key or start a new JS/native owner',{timeout:15000},async()=>{
+test('unavailable authenticated continuity leaves reused host death disconnected without post-death key requests or new owners',{timeout:15000},async()=>{
  const first=await setup(),second=new PtyHostClient(script),events=[];second.enableCrashRecovery();second.attachWebContents({isDestroyed:()=>false,send:(_c,e)=>events.push(e)});
- const read=registry.readOwnerRecord;let probes=0,starts=0;
+ const read=registry.readOwnerRecord,send=second.sendRequest.bind(second);let probes=0,starts=0,keyRequests=0;
+ second.sendRequest=(socket,req)=>{if(req.type==='owner-continuity'){keyRequests++;return Promise.reject(Object.assign(Error('unsupported continuity'),{code:'PTY_HOST_REMOTE_ERROR'}));}return send(socket,req);};
  try{
-  await second.spawn({...request(),attachIfReused:true});assert.equal(await second.getPid('shell'),first.pid);
+  await second.spawn({...request(),attachIfReused:true});assert.equal(await second.getPid('shell'),first.pid);assert.equal(second.ownsOwnerKey,false);assert.equal(keyRequests,1);
   first.client.dispose();first.client.dropSocket();
   registry.readOwnerRecord=()=>{probes++;return read();};second.startHost=()=>{starts++;throw Error('unknown-key recovery must not start');};
   process.kill(first.status.pid,'SIGKILL');await wait(()=>events.some(e=>e.type==='disconnected'&&e.reason));
-  assert.match(events.filter(e=>e.type==='disconnected').at(-1).reason,/Aya restarted since this terminal host started/);
+  assert.match(events.filter(e=>e.type==='disconnected').at(-1).reason,/could not verify recovery data/);assert.equal(keyRequests,1);
   assert.equal(probes,0);assert.equal(starts,0);assert.equal(second.crashTask,null);assert.doesNotThrow(()=>process.kill(first.pid,0));assert.doesNotThrow(()=>process.kill(first.status.owner.pid,0));assert.equal(await second.getPid('shell'),undefined);
  }finally{registry.readOwnerRecord=read;await cleanup(first.client,second);}
 });

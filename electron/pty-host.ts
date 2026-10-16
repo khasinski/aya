@@ -24,6 +24,7 @@ import {
   activePtyCount,
   hasUnattachedRestoredPanes,
   restoredPtyLaunches,
+  ptyOwnerContinuityPanes,
   restorePtyCorePane,
   recoverPtyCorePane,
   ptyRecoveryStates,
@@ -43,7 +44,7 @@ import {
 } from "./pty-core";
 import { getOwnerRuntime, currentOwnerRuntime, shutdownOwnerRuntime, requireRecoveryOwner, requireOwnerExitAcknowledgements, setOwnerUnavailableListener, ownerHandoverCredential } from "./pty-owner-runtime";
 import { HandoverWindow, handoverPeer } from "./pty-handover-window";
-import {readRecoveryBootstrap} from "./pty-recovery-bootstrap";
+import {readRecoveryBootstrap,MAX_RECOVERY_BOOTSTRAP_BYTES} from "./pty-recovery-bootstrap";
 import {readHandoverBootstrap,preflightCoreHandover,readCoreHandover} from "./pty-handover-bootstrap";
 import {acknowledgeCheckpoint} from "./pty-checkpoint-store";
 import { HostHandover } from "./pty-host-handover";
@@ -339,6 +340,20 @@ async function handle(request: PtyHostRequest, socket: net.Socket, preparations:
   }
   if (request.type === "launch") {
     return getPtyLaunch(request.ptyId) ?? (isPtyStarting(request.ptyId) ? LAUNCH_STARTING : null);
+  }
+  if(request.type==="owner-continuity"){
+    const owner=currentOwnerRuntime();
+    if(!owner||owner.incompatible||!owner.client?.isConnected()||ptyCoreHandoverInProgress()||preparations.size||owner.record.uncertain?.length||owner.record.spawnIntents?.length)throw Error("Terminal owner recovery continuity is unavailable");
+    const client=owner.client,inventory=await client.list();
+    if(client!==owner.client||!client.isConnected()||owner.incompatible||ptyCoreHandoverInProgress()||preparations.size||owner.record.uncertain?.length||owner.record.spawnIntents?.length)throw Error("Terminal owner changed during recovery continuity");
+    const panes=ptyOwnerContinuityPanes(inventory),startIdentity=ownerProcessStartIdentity(process.pid);
+    if(!startIdentity)throw Error("Terminal host identity is unavailable");
+    const credential=ownerHandoverCredential();
+    try{
+      const result={format:1,host:{pid:process.pid,startIdentity},secret:credential.toString("hex"),bootstrap:{format:1,kind:"crash",owner:{pid:owner.record.pid,startTime:owner.record.startTime,instanceId:owner.record.instanceId,binaryHash:owner.record.binaryHash},panes}};
+      if(Buffer.byteLength(JSON.stringify(result))>MAX_RECOVERY_BOOTSTRAP_BYTES)throw Error("Terminal owner continuity length limit");
+      return result;
+    }finally{credential.fill(0);}
   }
   if (request.type === "version") {
     // pid lets a client correlate the socket-connected host with a registry

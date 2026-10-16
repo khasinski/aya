@@ -16,7 +16,8 @@ function inheritedSecret(): Buffer {
   finally { fs.closeSync(3); }
 }
 const secret = inheritedSecret();
-/** Only the host's consumed, announced handover window may call this. Never
+/** Only a consumed handover window or an authenticated main continuity request
+ * may call this. Never
  * include it in checkpoint state, registries, argv, environment or logs. */
 export function ownerHandoverCredential(): Buffer { return Buffer.from(secret); }
 export interface RecoveryOwnerIdentity { pid:number; startTime:string; instanceId:string; binaryHash:string }
