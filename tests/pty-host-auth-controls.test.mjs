@@ -21,6 +21,43 @@ async function fixture(mode){
  await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',(code,signal)=>code===0&&message?resolve():reject(Error(`controls:${mode}:${code}/${signal}:${stderr}`)));});return message;
 }
 after(async()=>{await cleanupNativeOwner(process.env.AYA_HOME);fs.rmSync(root,{recursive:true,force:true});});
+// A failed assertion must not leave this recipient's principal serving the
+// shared disposable home and turn later cases into PRINCIPAL_BUSY failures.
+async function cleanupPlannedFixture(c,ticket,primaryError){
+ try{await retirePlannedFixture(c,ticket);}catch(error){
+  if(!primaryError)throw error;
+  console.error('PLANNED_FIXTURE_SECONDARY_CLEANUP_FAILURE',error); // preserve the original failed assertion
+ }
+}
+async function retirePlannedFixture(c,ticket){
+ const native=require('../dist-electron/pty-owner-client.js'),child=c.pendingPlannedHost;
+ const targets=[{pid:ticket.hostPid,startIdentity:ticket.hostStartIdentity}];
+ if(c.lastHostPid&&c.lastHostStart)targets.push({pid:c.lastHostPid,startIdentity:c.lastHostStart});
+ if(child&&child.exitCode===null&&child.signalCode===null){const startIdentity=ownerProcessStartIdentity(child.pid);if(startIdentity)targets.push({pid:child.pid,startIdentity});}
+ c.hostAsked=true;c.crashSupervisor?.dispose();
+ try{
+  if(targets.some(t=>ownerProcessStartIdentity(t.pid)===t.startIdentity)){
+   if(!c.isConnected())await c.openSocket().catch(()=>{}); // existing only; never starts a host
+   if(c.isConnected()){
+    const peer=require('../dist-electron/pty-handover-window.js').handoverPeer(c.socket);
+    if(!targets.some(t=>t.pid===peer.pid&&t.startIdentity===peer.startIdentity))throw Error('fixture cleanup socket target changed');
+    let timer;try{await Promise.race([PtyHostClient.prototype.sendRequest.call(c,c.socket,{id:0,type:'shutdown'}),new Promise((_resolve,reject)=>{timer=setTimeout(()=>reject(Error('fixture shutdown response timeout')),2000);})]).catch(()=>{});}finally{clearTimeout(timer);}
+    const end=Date.now()+5000;while(targets.some(t=>ownerProcessStartIdentity(t.pid)===t.startIdentity)&&Date.now()<end)await new Promise(r=>setTimeout(r,5));
+   }
+  }
+ }finally{
+  c.dispose();c.dropSocket();
+  for(const target of targets){
+   if(ownerProcessStartIdentity(target.pid)!==target.startIdentity)continue;
+   // One verified individual TERM only; no process groups or unknown targets.
+   if(child?.pid===target.pid&&child.exitCode===null&&child.signalCode===null)child.kill('SIGTERM');
+   else{const result=native.terminateVerifiedProcess(target,target.pid);if(!['signalled','gone','mismatch'].includes(result))throw Error('fixture cleanup cannot verify host retirement: '+result);}
+  }
+  const end=Date.now()+5000;while(targets.some(t=>ownerProcessStartIdentity(t.pid)===t.startIdentity)){if(Date.now()>end)throw Error('fixture host outlived cleanup');await new Promise(r=>setTimeout(r,5));}
+  await cleanupNativeOwner(process.env.AYA_HOME);
+ }
+}
+
 test('real host transfers once after old main exit and rearms only after validated continuity',{timeout:20000},async()=>{
  const old=await fixture('publish'),ticket=await readAuthTransferTicket(old.file);assert.ok(ticket);assert.equal(fs.existsSync(old.file),false);
  const socket=net.createConnection(path.join(process.env.AYA_HOME,'pty-host.sock'));await once(socket,'connect');
@@ -235,7 +272,7 @@ test('ordinary authenticated reused host without a received ticket hydrates a no
 });
 
 for(const mode of ['publish-planned','publish-planned-ended'])test(`planned credential ownership ${mode} follows full checkpoint validation, with no reader detach on reuse`,{timeout:25000},async()=>{
- const old=await fixture(mode),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));let starts=0,inspected=false,completions=0;
+ const old=await fixture(mode),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));let starts=0,inspected=false,completions=0,primaryError;
  const send=c.sendRequest.bind(c);c.startHost=()=>{starts++;throw Error('reuse cannot create a host');};
  c.sendRequest=(socket,req)=>{if(req.type==='auth-transfer-complete'){assert.equal(inspected,true,'full checkpoint/display inspection precedes credential ACK');completions++;}return send(socket,req);};
  try{
@@ -261,11 +298,11 @@ for(const mode of ['publish-planned','publish-planned-ended'])test(`planned cred
    assert.equal(await c.acknowledgeHandoverDisplay('kept',old.endedOrigin.generation,'applied-after-auth'),true);
   }else{assert.equal(await c.getPid('kept'),old.pid);assert.equal(c.recoveryLaunches.get('kept').pid,old.pid);assert.equal(c.live.has('kept'),true);await c.write('kept','AFTER_RECEIPT\n');}
   await c.shutdown();
- }finally{c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
+ }catch(error){primaryError=error;throw error;}finally{await cleanupPlannedFixture(c,ticket,primaryError);}
 });
 
 test('failed planned display validation cannot complete or rearm credentials and resumes the usable old pane',{timeout:20000},async()=>{
- const old=await fixture('publish-planned'),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js')),send=c.sendRequest.bind(c);let completions=0;
+ const old=await fixture('publish-planned'),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js')),send=c.sendRequest.bind(c);let completions=0,primaryError;
  c.sendRequest=(socket,req)=>{if(req.type==='auth-transfer-complete')completions++;return send(socket,req);};
  try{
   await c.redeemAnnouncedCapability(ticket);
@@ -275,12 +312,12 @@ test('failed planned display validation cannot complete or rearm credentials and
   await send(c.socket,{id:0,type:'write',ptyId:'kept',data:'AFTER_VALIDATION_ABORT\n'});
   const until=Date.now()+5000;while(!(await send(c.socket,{id:0,type:'buffer',ptyId:'kept'})).includes('AFTER_VALIDATION_ABORT')){if(Date.now()>until)throw Error('old reader did not resume');await new Promise(r=>setTimeout(r,5));}
   assert.equal(await send(c.socket,{id:0,type:'pid',ptyId:'kept'}),old.pid);
- }finally{if(c.socket)await send(c.socket,{id:0,type:'shutdown'}).catch(()=>{});c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);}
+ }catch(error){primaryError=error;throw error;}finally{await cleanupPlannedFixture(c,ticket,primaryError);}
 });
 
 test('planned lost-success ACK keeps validated live and ended authority for exact retry and real B4 recovery',{timeout:30000},async()=>{
  const old=await fixture('publish-planned-mixed-lost'),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(old.script),send=c.sendRequest.bind(c),onResponse=c.onResponse.bind(c),events=[],logs=[],ids=[];
- let claims=0,manifests=0,responses=0,redemptions=0,validatedKey;
+ let claims=0,manifests=0,responses=0,redemptions=0,validatedKey,primaryError;
  const redeem=c.redeemAnnouncedCapability.bind(c);c.redeemAnnouncedCapability=async value=>{redemptions++;return redeem(value);};
  c.attachWebContents({isDestroyed:()=>false,send:(_channel,event)=>events.push(event)});
  c.sendRequest=async(socket,req)=>{
@@ -307,5 +344,17 @@ test('planned lost-success ACK keeps validated live and ended authority for exac
   const recovered=await c.hostStatus();assert.notEqual(recovered.pid,old.hostPid);assert.equal(recovered.owner.pid,old.ownerPid);assert.equal(await c.getPid('kept'),old.pid);
   await c.write('kept','AFTER_PLANNED_LOST_ACK_RECOVERY\n');while(!(await c.getBuffer('kept')).includes('AFTER_PLANNED_LOST_ACK_RECOVERY')){if(Date.now()>until)throw Error('recovered input failed');await new Promise(r=>setTimeout(r,5));}
   await c.shutdown();
- }finally{validatedKey?.fill(0);if(c.socket)await send(c.socket,{id:0,type:'shutdown'}).catch(()=>{});c.dispose();c.dropSocket();await cleanupNativeOwner(process.env.AYA_HOME);fs.rmSync(old.script,{force:true});}
+ }catch(error){primaryError=error;throw error;}finally{validatedKey?.fill(0);await cleanupPlannedFixture(c,ticket,primaryError);fs.rmSync(old.script,{force:true});}
+});
+
+test('a failed planned assertion retires its real host/principal before the next fixture',{timeout:20000},async()=>{
+ const old=await fixture('publish-planned'),ticket=await readAuthTransferTicket(old.file),c=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));
+ let primaryError;await assert.rejects(async()=>{
+  try{await c.redeemAnnouncedCapability(ticket);await c.adoptPlannedHandover(ticket,c.expectedHostIdentity('reuse'),async()=>{});assert.fail('intentional planned assertion');}
+  catch(error){primaryError=error;throw error;}finally{await cleanupPlannedFixture(c,ticket,primaryError);}
+ },/intentional planned assertion/);
+ assert.notEqual(ownerProcessStartIdentity(old.hostPid),ticket.hostStartIdentity);
+ const next=await fixture('publish-planned'),nextTicket=await readAuthTransferTicket(next.file),recipient=new PtyHostClient(path.resolve('dist-electron/pty-host.js'));
+ try{await recipient.redeemAnnouncedCapability(nextTicket);await recipient.adoptPlannedHandover(nextTicket,recipient.expectedHostIdentity('reuse'),async()=>{});assert.equal(await recipient.getPid('kept'),next.pid);}
+ finally{await cleanupPlannedFixture(recipient,nextTicket);}
 });

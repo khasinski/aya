@@ -376,7 +376,7 @@ test("readHostRecords self-heals: unparseable and wrong-shape .json files are re
 
 // --- real host process: record lifecycle + graceful SIGTERM (integration) ---
 
-test("a real spawned host writes its record, and SIGTERM shuts it down cleanly (record removed)", async () => {
+test("a real spawned host retains its record through SIGTERM exit until verified-death GC", async () => {
   const home = mkdtempSync(join(tmpdir(), "aya-host-it-"));
   // detached:true mirrors the real client spawn (pty-host-client.ts startHost) -
   // and is REQUIRED for the record: a non-leader host refuses to publish (its
@@ -413,13 +413,17 @@ test("a real spawned host writes its record, and SIGTERM shuts it down cleanly (
     assert.equal(start?.scriptHash, recs[0].scriptHash.slice(0, 8), "the log keeps an 8-char hash prefix");
 
     // SIGTERM must now do a REAL graceful shutdown (not leave a socketless
-    // zombie): host exits and removes its record (children confirmed dead -
-    // there are none here).
+    // zombie). The host retains its record through actual exit so a concurrent
+    // main cannot mistake the final process.exit boundary for absence.
     host.kill("SIGTERM");
     await waitFor(() => exited);
     assert.equal(exited, true, "SIGTERM terminates the host (no suppressed-default zombie)");
-    await waitFor(() => readHostRecords(regDir).length === 0);
-    assert.deepEqual(readHostRecords(regDir), [], "clean shutdown removed the record");
+    assert.equal(readHostRecords(regDir).length,1,"only an external observer may certify death");
+    const kill=process.kill;let signals=0,summary;
+    try{process.kill=()=>{signals++;throw Error('verified-dead GC must not signal');};summary=reapStaleHostRecords({version:recs[0].version,scriptHash:recs[0].scriptHash},join(process.cwd(),'dist-electron/pty-host.js'),regDir);}
+    finally{process.kill=kill;}
+    assert.equal(signals,0);assert.deepEqual(summary.gc,[host.pid]);assert.deepEqual(summary.reaped,[]);
+    assert.deepEqual(readHostRecords(regDir), [], "verified-dead GC removes the retained record without signalling");
   } finally {
     try {
       host.kill("SIGKILL");

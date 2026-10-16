@@ -16,7 +16,7 @@ const originalHandle=handle;handle=async function(req,socket,preparations){if(re
  c.connectWithHostStart=async(...args)=>{try{return await connectWithHostStart(...args);}catch(error){if(error.code==='PTY_HOST_START_BLOCKED')require('./pty-host-failure-diagnostics.cjs').creationFailure(process.env.AYA_HOME,error.proof,error);throw error;}};
  const recovered=[];if(process.argv[2]==='publish-empty-recovered')c.enableCrashRecovery({log:(event,fields)=>recovered.push({event,...fields})});fs.mkdirSync(process.env.HOME,{recursive:true});fs.mkdirSync(process.env.AYA_HOME,{recursive:true,mode:0o700});let keep=false;
  try{
-  await c.spawn({ptyId:'kept',agent:'custom',command:process.argv[2]==='publish-planned-ended'?'stty -echo; printf READY_CONTROLS; read line; printf LAST_SUFFIX; exit 23':'stty -echo; printf READY_CONTROLS; cat',cwd:process.env.HOME,cols:80,rows:24});await wait(async()=>(await c.getBuffer('kept')).includes('READY_CONTROLS'));
+  await c.spawn({ptyId:'kept',agent:'custom',command:process.argv[2]==='publish-planned-ended'?"exec /bin/sh -c 'stty -echo; printf READY_CONTROLS; read line; printf LAST_SUFFIX; exit 23'":'stty -echo; printf READY_CONTROLS; cat',cwd:process.env.HOME,cols:80,rows:24});await wait(async()=>(await c.getBuffer('kept')).includes('READY_CONTROLS'));
   const mode=process.argv[2];
   if(mode==='publish-empty-recovered'){
    const before=await c.hostStatus();process.kill(before.pid,'SIGKILL');await wait(()=>recovered.some(e=>e.event==='pty-crash-recovery'&&e.state==='recovered'));
@@ -25,7 +25,7 @@ const originalHandle=handle;handle=async function(req,socket,preparations){if(re
   if(mode==='publish-empty'||mode==='publish-empty-recovered'){await c.kill('kept');await wait(async()=>!(await c.hostStatus()).owner);}
   let endedOrigin;
   if(mode==='publish-ended'||plannedLoss){
-   await c.spawn({ptyId:'ended',agent:'custom',command:'stty -echo; printf READY_ENDED; read line; printf LAST_SUFFIX; exit 23',cwd:process.env.HOME,cols:80,rows:24});
+   await c.spawn({ptyId:'ended',agent:'custom',command:"exec /bin/sh -c 'stty -echo; printf READY_ENDED; read line; printf LAST_SUFFIX; exit 23'",cwd:process.env.HOME,cols:80,rows:24});
    await wait(async()=>(await c.getBuffer('ended')).includes('READY_ENDED'));
    const state=await c.preparePlannedHandover(Date.now()+120000);endedOrigin=state.eligible.find(p=>p.id==='ended');
    const t=await c.announcePlannedHandover(state,null,[],'d'.repeat(64));await c.adoptPlannedHandover(t,c.expectedHostIdentity('reuse'),async()=>{});
