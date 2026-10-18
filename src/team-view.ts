@@ -144,6 +144,11 @@ export function startDefinition(team: Pick<TeamSummary, "definition" | "repoDefi
   return !team.running && team.repoChanged && team.repoDefinition ? team.repoDefinition : team.definition;
 }
 
+/** The task's recipient as the next Start runs it: the role picked when the next Start still has it, else none (the default). */
+export function liveRecipient(definition: Pick<TeamDefinition, "roles"> | null, picked: string): string {
+  return definition?.roles.some((r) => r.id === picked) ? picked : "";
+}
+
 /** The Task field's placeholder: who Start gives the task to, as electron/team-runner.ts taskRecipient picks it. */
 export function taskPlaceholder(definition: Pick<TeamDefinition, "roles" | "lead"> | null, to?: string): string {
   if (!definition || definition.roles.length === 0) return "Task (optional)";

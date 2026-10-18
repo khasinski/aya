@@ -228,30 +228,34 @@ async function recordSaved(teamHome: string, project: ProjectConfig, team: TeamD
 
 /** A pane pick for a team Aya has never saved: its project file is saved so the pick has a team to belong to. A saved
  *  team, running or not, keeps its copy; its project edits take effect at the next Start. */
-export async function adoptRepoTeamIfNew(teamHome: string, project: ProjectConfig, name: string): Promise<void> {
-  if ((await openTeamStore(teamHome, project.slug, name).savedDefinition()) !== null) return;
-  await adoptRepoTeam(teamHome, project, name);
+export function adoptRepoTeamIfNew(teamHome: string, project: ProjectConfig, name: string): Promise<void> {
+  return adoptRepoFile(teamHome, project, name, true);
 }
 
 /** Start team runs the project's team file as the user sees it: one not saved yet, or edited since its last save, is
  *  saved first, so the user never saves it by hand. Its status command is the one the card named before the click
  *  (the user's Start is the user's choice). Throws the file's own error when it does not parse or names a reserved role. */
-export async function adoptRepoTeam(teamHome: string, project: ProjectConfig, name: string): Promise<void> {
+export function adoptRepoTeam(teamHome: string, project: ProjectConfig, name: string): Promise<void> {
+  return adoptRepoFile(teamHome, project, name, false);
+}
+
+/** Read and saved in the file's save queue, so the file it reads is the one after any save queued ahead of it. */
+async function adoptRepoFile(teamHome: string, project: ProjectConfig, name: string, onlyIfNew: boolean): Promise<void> {
   const file = teamFile(project, name);
-  const text = await readText(file);
-  if (text === null) return;
-  let team: TeamDefinition;
-  try {
-    team = parseTeamFile(name, text);
-    refuseReservedRoles(team);
-  } catch (err) {
-    const reason = (err instanceof Error ? err.message : String(err)).replace(/^team "[^"]*": /, "");
-    throw new Error(`the team file in the project has a problem: ${reason}. Fix it, then Start again`);
-  }
-  const next = serializeTeam(team);
   const store = openTeamStore(teamHome, project.slug, name);
-  if ((await store.savedDefinition()) === next) return;
   await oneSaveAtATime(file, async () => {
+    if (onlyIfNew && (await store.savedDefinition()) !== null) return;
+    const text = await readText(file);
+    if (text === null) return;
+    let team: TeamDefinition;
+    try {
+      team = parseTeamFile(name, text);
+      refuseReservedRoles(team);
+    } catch (err) {
+      const reason = (err instanceof Error ? err.message : String(err)).replace(/^team "[^"]*": /, "");
+      throw new Error(`the team file in the project has a problem: ${reason}. Fix it, then Start again`);
+    }
+    const next = serializeTeam(team);
     if ((await store.savedDefinition()) === next) return;
     await recordSaved(teamHome, project, team, next, false);
   });

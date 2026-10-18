@@ -17,6 +17,7 @@ import {
   livePane,
   olderRoleNote,
   roleStatus,
+  liveRecipient,
   startDefinition,
   startSummary,
   taskPlaceholder,
@@ -61,8 +62,11 @@ export function TeamCard({
   const [task, setTask] = useState("");
   // The role picked for the task; "" is the default recipient the placeholder names.
   const [taskTo, setTaskTo] = useState("");
+  const upcoming = startDefinition(team);
+  // A recipient the next Start no longer runs (its role left the project file) is shown as the default, and sent as none.
+  const recipient = liveRecipient(upcoming, taskTo);
   const start = async () => {
-    const result = await act(() => window.aya.teamStart(project.slug, team.name, task.trim() || undefined, task.trim() && taskTo ? taskTo : undefined));
+    const result = await act(() => window.aya.teamStart(project.slug, team.name, task.trim() || undefined, task.trim() && recipient ? recipient : undefined));
     if (!result) return;
     setNotReached(Object.fromEntries(result.held.map((h) => [h.role, h.reason])));
     setNote({ start: result });
@@ -75,7 +79,6 @@ export function TeamCard({
   // Sent as explicit targets, so a pane named like a preset id is still that pane.
   const [picks, setPicks] = useState<Record<string, string>>({});
   const definition = team.definition;
-  const upcoming = startDefinition(team);
   const leadWarned = leadWarning(definition);
   const statusNote = cardStatusNote(team);
   const startNote = note && ("start" in note ? startSummary(note.start, team.log) : note.apply);
@@ -142,7 +145,7 @@ export function TeamCard({
                 <select
                   className="aya-modal-input aya-teams-task-to"
                   aria-label={`Task goes to for ${team.name}`}
-                  value={upcoming?.roles.some((r) => r.id === taskTo) ? taskTo : ""}
+                  value={recipient}
                   onChange={(e) => setTaskTo(e.target.value)}
                 >
                   <option value="">{upcoming?.lead ? "lead" : "first role"}</option>

@@ -6,6 +6,13 @@ import * as view from "../dist-test/team-view.js";
 
 const taskPlaceholder = (...args) => view.taskPlaceholder(...args);
 
+test("a picked recipient the next Start no longer runs is none", () => {
+  const upcoming = { roles: [{ id: "tester" }] };
+  assert.equal(view.liveRecipient(upcoming, "tester"), "tester");
+  assert.equal(view.liveRecipient(upcoming, "reviewer"), "");
+  assert.equal(view.liveRecipient(null, "tester"), "");
+});
+
 test("the task's recipients are the roles the next Start runs: an edited project file's, for an idle team", () => {
   const saved = { roles: [{ id: "reviewer" }], lead: "reviewer" };
   const repo = { roles: [{ id: "tester" }], lead: "tester" };
