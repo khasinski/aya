@@ -227,6 +227,13 @@ async function recordSaved(teamHome: string, project: ProjectConfig, team: TeamD
 /** Start team runs the project's team file as the user sees it: one not saved yet, or edited since its last save, is
  *  saved first, so the user never saves it by hand. Its status command is the one the card named before the click
  *  (the user's Start is the user's choice). Throws the file's own error when it does not parse. */
+/** A pane pick for a team Aya has never saved: its project file is saved so the pick has a team to belong to. A saved
+ *  team, running or not, keeps its copy; its project edits take effect at the next Start. */
+export async function adoptRepoTeamIfNew(teamHome: string, project: ProjectConfig, name: string): Promise<void> {
+  if ((await openTeamStore(teamHome, project.slug, name).savedDefinition()) !== null) return;
+  await adoptRepoTeam(teamHome, project, name);
+}
+
 export async function adoptRepoTeam(teamHome: string, project: ProjectConfig, name: string): Promise<void> {
   const file = teamFile(project, name);
   const text = await readText(file);

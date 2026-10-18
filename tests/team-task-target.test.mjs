@@ -89,10 +89,10 @@ test("teams:start | the picked role goes on as `to`; no pick, no `to`; a pick wi
     await t.invoke("teams:start", "game", "ux-review", "do it", "");
     await t.invoke("teams:start", "game", "ux-review", "", "reviewer");
     assert.deepEqual(started, [
-      ["game", "ux-review", { text: "do it", to: "reviewer" }],
-      ["game", "ux-review", { text: "do it" }],
-      ["game", "ux-review", { text: "do it" }],
-      ["game", "ux-review", undefined],
+      ["game", "ux-review", { text: "do it", to: "reviewer" }, undefined, true],
+      ["game", "ux-review", { text: "do it" }, undefined, true],
+      ["game", "ux-review", { text: "do it" }, undefined, true],
+      ["game", "ux-review", undefined, undefined, true],
     ]);
     await assert.rejects(() => t.invoke("teams:start", "game", "ux-review", "do it", 5), { message: "Invalid IPC payload for teams:start.to: expected string." });
     assert.equal(started.length, 4);

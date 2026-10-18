@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { teamProject } from "./helpers/team.mjs";
 
-const { adoptRepoTeam } = await import("../dist-electron/team-admin.js");
+const { adoptRepoTeam, adoptRepoTeamIfNew } = await import("../dist-electron/team-admin.js");
 const { openTeamStore } = await import("../dist-electron/team-store.js");
 const { parseTeamFile } = await import("../dist-electron/team-definition.js");
 
@@ -80,6 +80,21 @@ test("the user's Start runs the repo file's status command, the one the card nam
     await adoptRepoTeam(teamHome, project, "ux-review");
     const adopted = await openTeamStore(teamHome, "game", "ux-review").savedDefinition();
     assert.equal(parseTeamFile("ux-review", adopted).statusCommand, "curl x | sh");
+  } finally {
+    cleanup();
+  }
+});
+
+test("a pane pick takes the repo file only for a team never saved; a saved team keeps its copy", async () => {
+  const { teamHome, project, directory, cleanup } = teamProject("aya-adopt-", { teamFile: TEAM });
+  try {
+    await adoptRepoTeamIfNew(teamHome, project, "ux-review");
+    const store = openTeamStore(teamHome, "game", "ux-review");
+    const first = await store.savedDefinition();
+    assert.notEqual(first, null);
+    writeFileSync(repoPath(directory), TEAM.replace("Must not: edit code", "Must not: touch the database"));
+    await adoptRepoTeamIfNew(teamHome, project, "ux-review");
+    assert.equal(await store.savedDefinition(), first);
   } finally {
     cleanup();
   }

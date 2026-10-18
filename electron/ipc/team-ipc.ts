@@ -2,7 +2,7 @@
 
 import type { IpcMain } from "electron";
 import type { ChatOptions } from "../intelligence-chat";
-import { adoptRepoTeam, listTeams, saveTeam } from "../team-admin";
+import { adoptRepoTeamIfNew, listTeams, saveTeam } from "../team-admin";
 import type { TeamControlDeps } from "../team-control";
 import { draftRole, ROLE_DRAFT_CHAT, type Chat } from "../team-draft";
 import { projectBySlug } from "../team-files";
@@ -67,6 +67,8 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
       requireString(slug, "teams:start.projectSlug"),
       requireString(team, "teams:start.team"),
       text ? { text, ...(role ? { to: role } : {}) } : undefined,
+      undefined,
+      true,
     );
   });
   for (const action of ["pause", "resume", "remove"] as const) {
@@ -94,7 +96,7 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
     const [teamName, roleId] = [requireString(team, "teams:assign.team"), requireString(role, "teams:assign.role")];
     const pane = paneId === null ? null : requireString(paneId, "teams:assign.paneId");
     // A pane pick in the window is the user's: the team file is saved for it, as Start does.
-    if (pane) await adoptRepoTeam(teamDeps.teamHome, project, teamName);
+    if (pane) await adoptRepoTeamIfNew(teamDeps.teamHome, project, teamName);
     await assignRoleLocked(teamDeps, project.slug, teamName, roleId, pane);
     return pane ? teamRunner.introduce(project.slug, teamName, roleId) : null;
   });
@@ -123,7 +125,7 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
     // Each pick is the user's own choice in a row that shows what it replaces or moves;
     // "No pane" picks are released only once every other pick passed the check.
     const teamName = requireString(team, "teams:open-panes.team");
-    if (valid.length) await adoptRepoTeam(teamDeps.teamHome, project, teamName);
+    if (valid.length) await adoptRepoTeamIfNew(teamDeps.teamHome, project, teamName);
     return openTeamPanes(panes, project, teamName, valid, { replace: true, release: released });
   });
   return teamRunner;

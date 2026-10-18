@@ -102,16 +102,16 @@ export class TeamRunner {
 
   /** Checks every pane first: one missing, not running or held sends nothing. `task` goes to its role after the
    *  delivery tests, from `by`: the user (the window, aya outside the panes), else the role whose pane asked. */
-  async start(slug: string, name: string, task?: { text: string; to?: string }, by?: string): Promise<TeamStartResult> {
-    const result = await this.turns(teamKey(slug, name), () => this.startOnce(slug, name, task, by));
+  async start(slug: string, name: string, task?: { text: string; to?: string }, by?: string, fromWindow = false): Promise<TeamStartResult> {
+    const result = await this.turns(teamKey(slug, name), () => this.startOnce(slug, name, task, by, fromWindow));
     if (debugOn()) debugLog(openTeamStore(this.deps.teamHome, slug, name), "start", { by: by ?? null, ...result });
     return result;
   }
 
-  private async startOnce(slug: string, name: string, task?: { text: string; to?: string }, by?: string): Promise<TeamStartResult> {
-    // Only the user's Start saves the project's file: a role's `aya team start` runs the saved copy alone. A running
-    // team keeps the copy it runs; its edits take effect at the next Start.
-    if (by === undefined && !(await openTeamStore(this.deps.teamHome, slug, name).state()).running) {
+  private async startOnce(slug: string, name: string, task?: { text: string; to?: string }, by?: string, fromWindow = false): Promise<TeamStartResult> {
+    // Only the Teams window's Start saves the project's file: `aya team start` from a pane runs the saved copy alone.
+    // A running team keeps the copy it runs; its edits take effect at the next Start.
+    if (fromWindow && !(await openTeamStore(this.deps.teamHome, slug, name).state()).running) {
       await adoptRepoTeam(this.deps.teamHome, projectBySlug(await this.deps.listProjects(), slug), name);
     }
     const { project, store, team } = await this.open(slug, name);

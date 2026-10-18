@@ -323,15 +323,17 @@ test("a team file nobody started reaches no agent; the user's Start saves it fir
       holdReason: async () => null,
       headCommit: async () => null,
     }, () => () => {});
-    // A role's start never saves the project's file: only the user's Start does.
+    // A role's start never saves the project's file, and neither does a start with no role that is not the window's:
+    // only the Teams window's Start does.
     await assert.rejects(runner.start("game", "ux-review", undefined, "tester"), /not started yet/);
+    await assert.rejects(runner.start("game", "ux-review"), /not started yet/);
     await assert.rejects(
       handleTeamRequest({ type: "team-whoami" }, "pane-t", { teamHome, listProjects: async () => [project] }),
       /not started yet/,
     );
     assert.equal(typed.length, 0);
     assert.equal(await store.savedDefinition(), null);
-    await runner.start("game", "ux-review");
+    await runner.start("game", "ux-review", undefined, undefined, true);
     assert.notEqual(await store.savedDefinition(), null);
   } finally {
     cleanup();
