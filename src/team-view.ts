@@ -139,6 +139,11 @@ export function livenessLine({ status, stalledSince, blocked, unreached, silence
   return { text: since ? `${since} - ${who}` : who, tone: "held" };
 }
 
+/** The roles the next Start runs: a project file edited since the save is saved by an idle team's Start first. */
+export function startDefinition(team: Pick<TeamSummary, "definition" | "repoDefinition" | "repoChanged" | "running">): TeamDefinition | null {
+  return !team.running && team.repoChanged && team.repoDefinition ? team.repoDefinition : team.definition;
+}
+
 /** The Task field's placeholder: who Start gives the task to, as electron/team-runner.ts taskRecipient picks it. */
 export function taskPlaceholder(definition: Pick<TeamDefinition, "roles" | "lead"> | null, to?: string): string {
   if (!definition || definition.roles.length === 0) return "Task (optional)";

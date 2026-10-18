@@ -17,6 +17,7 @@ import {
   livePane,
   olderRoleNote,
   roleStatus,
+  startDefinition,
   startSummary,
   taskPlaceholder,
   type PaneRole,
@@ -74,6 +75,7 @@ export function TeamCard({
   // Sent as explicit targets, so a pane named like a preset id is still that pane.
   const [picks, setPicks] = useState<Record<string, string>>({});
   const definition = team.definition;
+  const upcoming = startDefinition(team);
   const leadWarned = leadWarning(definition);
   const statusNote = cardStatusNote(team);
   const startNote = note && ("start" in note ? startSummary(note.start, team.log) : note.apply);
@@ -133,18 +135,18 @@ export function TeamCard({
                 <input
                   className="aya-modal-input aya-teams-task"
                   aria-label={`Task for ${team.name}`}
-                  placeholder={taskPlaceholder(definition, taskTo)}
+                  placeholder={taskPlaceholder(upcoming, taskTo)}
                   value={task}
                   onChange={(e) => setTask(e.target.value)}
                 />
                 <select
                   className="aya-modal-input aya-teams-task-to"
                   aria-label={`Task goes to for ${team.name}`}
-                  value={definition.roles.some((r) => r.id === taskTo) ? taskTo : ""}
+                  value={upcoming?.roles.some((r) => r.id === taskTo) ? taskTo : ""}
                   onChange={(e) => setTaskTo(e.target.value)}
                 >
-                  <option value="">{definition.lead ? "lead" : "first role"}</option>
-                  {definition.roles.map((r) => (
+                  <option value="">{upcoming?.lead ? "lead" : "first role"}</option>
+                  {upcoming?.roles.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.id}
                     </option>

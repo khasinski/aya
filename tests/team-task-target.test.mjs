@@ -6,6 +6,15 @@ import * as view from "../dist-test/team-view.js";
 
 const taskPlaceholder = (...args) => view.taskPlaceholder(...args);
 
+test("the task's recipients are the roles the next Start runs: an edited project file's, for an idle team", () => {
+  const saved = { roles: [{ id: "reviewer" }], lead: "reviewer" };
+  const repo = { roles: [{ id: "tester" }], lead: "tester" };
+  assert.equal(view.startDefinition({ definition: saved, repoDefinition: repo, repoChanged: true, running: false }), repo);
+  assert.equal(view.startDefinition({ definition: saved, repoDefinition: repo, repoChanged: true, running: true }), saved);
+  assert.equal(view.startDefinition({ definition: saved, repoDefinition: repo, repoChanged: false, running: false }), saved);
+  assert.equal(view.startDefinition({ definition: saved, repoDefinition: null, repoChanged: true, running: false }), saved);
+});
+
 const { parseTeamFile } = await import("../dist-electron/team-definition.js");
 const { taskRecipient } = await import("../dist-electron/team-runner.js");
 const { registerTeamIpc } = await import("../dist-electron/ipc/team-ipc.js");
