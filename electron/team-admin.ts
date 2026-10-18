@@ -49,6 +49,7 @@ export async function listTeams(
       const store = openTeamStore(teamHome, project.slug, name);
       const assignments = await store.assignments();
       const repo = await readText(teamFile(project, name));
+      const repoDefinition = repoParsed(name, repo);
       const saved = await store.savedDefinition();
       let definition: TeamDefinition | null = null;
       let error: string | null = null;
@@ -68,10 +69,11 @@ export async function listTeams(
         name,
         definition,
         error,
-        repoChanged: saved !== null && repo !== null && repo !== saved,
+        // Compared as Aya saves it: a file that differs only in layout is not a change.
+        repoChanged: saved !== null && repo !== null && (repoDefinition ? serializeTeam(repoDefinition) !== saved : repo !== saved),
         repoGone: saved !== null && repo === null,
         unsaved: saved === null && repo !== null,
-        repoDefinition: repoParsed(name, repo),
+        repoDefinition,
         ...(await store.state()),
         agentAuthored: await store.agentAuthored(),
         assignments,
@@ -224,9 +226,6 @@ async function recordSaved(teamHome: string, project: ProjectConfig, team: TeamD
   return changed;
 }
 
-/** Start team runs the project's team file as the user sees it: one not saved yet, or edited since its last save, is
- *  saved first, so the user never saves it by hand. Its status command is the one the card named before the click
- *  (the user's Start is the user's choice). Throws the file's own error when it does not parse. */
 /** A pane pick for a team Aya has never saved: its project file is saved so the pick has a team to belong to. A saved
  *  team, running or not, keeps its copy; its project edits take effect at the next Start. */
 export async function adoptRepoTeamIfNew(teamHome: string, project: ProjectConfig, name: string): Promise<void> {
@@ -234,6 +233,9 @@ export async function adoptRepoTeamIfNew(teamHome: string, project: ProjectConfi
   await adoptRepoTeam(teamHome, project, name);
 }
 
+/** Start team runs the project's team file as the user sees it: one not saved yet, or edited since its last save, is
+ *  saved first, so the user never saves it by hand. Its status command is the one the card named before the click
+ *  (the user's Start is the user's choice). Throws the file's own error when it does not parse or names a reserved role. */
 export async function adoptRepoTeam(teamHome: string, project: ProjectConfig, name: string): Promise<void> {
   const file = teamFile(project, name);
   const text = await readText(file);
@@ -241,6 +243,7 @@ export async function adoptRepoTeam(teamHome: string, project: ProjectConfig, na
   let team: TeamDefinition;
   try {
     team = parseTeamFile(name, text);
+    refuseReservedRoles(team);
   } catch (err) {
     const reason = (err instanceof Error ? err.message : String(err)).replace(/^team "[^"]*": /, "");
     throw new Error(`the team file in the project has a problem: ${reason}. Fix it, then Start again`);

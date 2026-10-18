@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { teamProject } from "./helpers/team.mjs";
 
-const { adoptRepoTeam, adoptRepoTeamIfNew } = await import("../dist-electron/team-admin.js");
+const { adoptRepoTeam, adoptRepoTeamIfNew, listTeams } = await import("../dist-electron/team-admin.js");
 const { openTeamStore } = await import("../dist-electron/team-store.js");
 const { parseTeamFile } = await import("../dist-electron/team-definition.js");
 
@@ -95,6 +95,29 @@ test("a pane pick takes the repo file only for a team never saved; a saved team 
     writeFileSync(repoPath(directory), TEAM.replace("Must not: edit code", "Must not: touch the database"));
     await adoptRepoTeamIfNew(teamHome, project, "ux-review");
     assert.equal(await store.savedDefinition(), first);
+  } finally {
+    cleanup();
+  }
+});
+
+test("a project file that differs only in layout is not reported as changed once Start saves it", async () => {
+  const { teamHome, project, directory, cleanup } = teamProject("aya-adopt-", { teamFile: TEAM, saved: false });
+  try {
+    writeFileSync(repoPath(directory), `${TEAM.replace(/\n/g, "\r\n")}\r\n\r\n`);
+    await adoptRepoTeam(teamHome, project, "ux-review");
+    const [summary] = await listTeams(teamHome, project);
+    assert.equal(summary.repoChanged, false);
+  } finally {
+    cleanup();
+  }
+});
+
+test("a project file naming the user as a role is refused at adoption, and nothing is saved", async () => {
+  const { teamHome, project, directory, cleanup } = teamProject("aya-adopt-", { teamFile: TEAM, saved: false });
+  try {
+    writeFileSync(repoPath(directory), TEAM.replaceAll("tester", "user"));
+    await assert.rejects(adoptRepoTeam(teamHome, project, "ux-review"), /reserved for the user's own messages/);
+    assert.equal(await openTeamStore(teamHome, "game", "ux-review").savedDefinition(), null);
   } finally {
     cleanup();
   }
