@@ -345,6 +345,11 @@ export class TeamStore {
     return readText(this.file(TEAM_FILES.saved));
   }
 
+  /** Forgets the saved copy: the team is not started yet again. Used to undo a save that a refused pane pick made. */
+  clearDefinition(): Promise<void> {
+    return this.serial(() => fs.rm(this.file(TEAM_FILES.saved), { force: true }));
+  }
+
   /** The newest messages, from the last TEAM_LOG_READ_BYTES of the file.
    *  A torn or hand-edited line is skipped, not fatal to the whole team. */
   private async logTail(): Promise<{ entries: TeamMessage[]; size: number }> {

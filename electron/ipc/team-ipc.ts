@@ -2,7 +2,7 @@
 
 import type { IpcMain } from "electron";
 import type { ChatOptions } from "../intelligence-chat";
-import { adoptRepoTeamIfNew, listTeams, saveTeam } from "../team-admin";
+import { adoptRepoTeamIfNew, forgetPickSave, listTeams, saveTeam } from "../team-admin";
 import type { TeamControlDeps } from "../team-control";
 import { draftRole, ROLE_DRAFT_CHAT, type Chat } from "../team-draft";
 import { projectBySlug } from "../team-files";
@@ -96,8 +96,11 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
     const [teamName, roleId] = [requireString(team, "teams:assign.team"), requireString(role, "teams:assign.role")];
     const pane = paneId === null ? null : requireString(paneId, "teams:assign.paneId");
     // A pane pick in the window is the user's: the team file is saved for it, as Start does.
-    if (pane) await adoptRepoTeamIfNew(teamDeps.teamHome, project, teamName);
-    await assignRoleLocked(teamDeps, project.slug, teamName, roleId, pane);
+    const saved = pane ? await adoptRepoTeamIfNew(teamDeps.teamHome, project, teamName) : false;
+    await assignRoleLocked(teamDeps, project.slug, teamName, roleId, pane).catch(async (err: unknown) => {
+      if (saved) await forgetPickSave(teamDeps.teamHome, project, teamName);
+      throw err;
+    });
     return pane ? teamRunner.introduce(project.slug, teamName, roleId) : null;
   });
   ipcMain.handle("teams:draft-role", async (_e, team: unknown, roleId: unknown, config: unknown) =>
@@ -125,8 +128,11 @@ export function registerTeamIpc(deps: TeamIpcDeps): TeamRunner {
     // Each pick is the user's own choice in a row that shows what it replaces or moves;
     // "No pane" picks are released only once every other pick passed the check.
     const teamName = requireString(team, "teams:open-panes.team");
-    if (valid.length) await adoptRepoTeamIfNew(teamDeps.teamHome, project, teamName);
-    return openTeamPanes(panes, project, teamName, valid, { replace: true, release: released });
+    const saved = valid.length ? await adoptRepoTeamIfNew(teamDeps.teamHome, project, teamName) : false;
+    return openTeamPanes(panes, project, teamName, valid, { replace: true, release: released }).catch(async (err: unknown) => {
+      if (saved) await forgetPickSave(teamDeps.teamHome, project, teamName);
+      throw err;
+    });
   });
   return teamRunner;
 }

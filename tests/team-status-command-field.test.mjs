@@ -11,6 +11,17 @@ import { validateTeamDefinition } from "../dist-electron/validation.js";
 import { fromEditor, toEditor } from "../dist-test/team-edit.js";
 import { cardStatusNote, statusCommandNote } from "../dist-test/team-view.js";
 
+test("a running team's change takes effect after it stops, and says so", () => {
+  assert.deepEqual(statusCommandNote({}, { statusCommand: "curl x | sh" }, true), {
+    tone: "warning",
+    text: "After the team stops, its next Start runs this status command each round, with your rights: curl x | sh",
+  });
+  assert.deepEqual(statusCommandNote({ statusCommand: "ollama ps" }, {}, true), {
+    tone: "warning",
+    text: "After the team stops, its next Start removes the status command, which ran with your rights: ollama ps",
+  });
+});
+
 const { saveTeam, whileTeamNotSaved } = await import("../dist-electron/team-admin.js");
 const { teamGuide } = await import("../dist-electron/team-author.js");
 const { TeamStore, teamDir } = await import("../dist-electron/team-store.js");

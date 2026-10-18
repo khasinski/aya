@@ -165,8 +165,13 @@ export function leadWarning(definition: Pick<TeamDefinition, "lead" | "leadConfl
 }
 
 /** The card's status note for a team: an unsaved team's definition is the repo parse, not a saved command. */
-export function cardStatusNote(team: Pick<TeamSummary, "definition" | "repoDefinition" | "unsaved" | "repoChanged">): ReturnType<typeof statusCommandNote> {
-  return statusCommandNote(team.unsaved ? null : team.definition, team.unsaved || team.repoChanged ? team.repoDefinition : null);
+export function cardStatusNote(team: Pick<TeamSummary, "definition" | "repoDefinition" | "unsaved" | "repoChanged" | "running">): ReturnType<typeof statusCommandNote> {
+  return statusCommandNote(team.unsaved ? null : team.definition, team.unsaved || team.repoChanged ? team.repoDefinition : null, team.running);
+}
+
+/** When a project file change takes effect: a running team keeps its copy until it stops. */
+export function changeWhen(running: boolean | undefined): string {
+  return running ? "After the team stops, its next Start" : "The next Start";
 }
 
 /** The card's word on the status command: the one saved, and a new one that the next Start would run, named before
@@ -174,12 +179,14 @@ export function cardStatusNote(team: Pick<TeamSummary, "definition" | "repoDefin
 export function statusCommandNote(
   saved: Pick<TeamDefinition, "statusCommand"> | null,
   repo: Pick<TeamDefinition, "statusCommand"> | null,
+  running?: boolean,
 ): { text: string; tone: "note" | "warning" } | null {
   const now = saved?.statusCommand;
   const next = repo?.statusCommand;
-  if (next && next !== now) return { text: `The next Start runs this status command each round, with your rights: ${next}`, tone: "warning" };
+  const when = changeWhen(running);
+  if (next && next !== now) return { text: `${when} runs this status command each round, with your rights: ${next}`, tone: "warning" };
   // The project's file no longer has the command Aya runs: the next Start drops it, and the card says so before the click.
-  if (repo && !next && now) return { text: `The next Start removes the status command, which ran with your rights: ${now}`, tone: "warning" };
+  if (repo && !next && now) return { text: `${when} removes the status command, which ran with your rights: ${now}`, tone: "warning" };
   return now ? { text: `Status command, its output goes with the lead's rounds: ${now}`, tone: "note" } : null;
 }
 

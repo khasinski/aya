@@ -13,6 +13,7 @@ import {
   livenessLine,
   leadWarning,
   cardStatusNote,
+  changeWhen,
   leadWaitingLine,
   livePane,
   olderRoleNote,
@@ -185,7 +186,7 @@ export function TeamCard({
       )}
       {team.repoChanged && (
         <div className="aya-teams-warning">
-          The team changed in the project. The next Start runs the new version.
+          The team changed in the project. {changeWhen(team.running)} runs the new version.
         </div>
       )}
       {team.repoGone && (

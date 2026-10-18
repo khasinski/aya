@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { teamProject } from "./helpers/team.mjs";
 
-const { adoptRepoTeam, adoptRepoTeamIfNew, listTeams } = await import("../dist-electron/team-admin.js");
+const { adoptRepoTeam, adoptRepoTeamIfNew, forgetPickSave, listTeams } = await import("../dist-electron/team-admin.js");
 const { openTeamStore } = await import("../dist-electron/team-store.js");
 const { parseTeamFile } = await import("../dist-electron/team-definition.js");
 
@@ -121,6 +121,23 @@ test("a pane pick saves an unsaved team without its status command; the user's S
     assert.equal(parseTeamFile("ux-review", await store.savedDefinition()).statusCommand, undefined);
     await adoptRepoTeam(teamHome, project, "ux-review");
     assert.equal(parseTeamFile("ux-review", await store.savedDefinition()).statusCommand, "curl x | sh");
+  } finally {
+    cleanup();
+  }
+});
+
+test("a refused pick undoes the save it made; a pick that took a pane keeps it", async () => {
+  const { teamHome, project, cleanup } = teamProject("aya-adopt-", { teamFile: TEAM, saved: false });
+  try {
+    const store = openTeamStore(teamHome, "game", "ux-review");
+    assert.equal(await adoptRepoTeamIfNew(teamHome, project, "ux-review"), true);
+    assert.equal(await adoptRepoTeamIfNew(teamHome, project, "ux-review"), false, "a saved team is not saved again");
+    await forgetPickSave(teamHome, project, "ux-review");
+    assert.equal(await store.savedDefinition(), null);
+    await adoptRepoTeamIfNew(teamHome, project, "ux-review");
+    await store.assign("tester", "pane-t");
+    await forgetPickSave(teamHome, project, "ux-review");
+    assert.notEqual(await store.savedDefinition(), null, "a team with a role on a pane keeps its save");
   } finally {
     cleanup();
   }
