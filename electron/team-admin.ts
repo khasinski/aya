@@ -255,10 +255,17 @@ async function adoptRepoFile(teamHome: string, project: ProjectConfig, name: str
       const reason = (err instanceof Error ? err.message : String(err)).replace(/^team "[^"]*": /, "");
       throw new Error(`the team file in the project has a problem: ${reason}. Fix it, then Start again`);
     }
-    const next = serializeTeam(team);
+    // A pane pick saves the team without its status command: that command runs only with the user's Start.
+    const saved = onlyIfNew ? withoutStatusCommand(team) : team;
+    const next = serializeTeam(saved);
     if ((await store.savedDefinition()) === next) return;
-    await recordSaved(teamHome, project, team, next, false);
+    await recordSaved(teamHome, project, saved, next, false);
   });
+}
+
+function withoutStatusCommand(team: TeamDefinition): TeamDefinition {
+  const { statusCommand: _, ...rest } = team;
+  return rest;
 }
 
 /** A saved copy that no longer parses: every role counts as changed. */

