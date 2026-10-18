@@ -35,7 +35,7 @@ const PARSE = [
   { name: "one line", text: withSection("ollama ps\n"), command: "ollama ps" },
   { name: "trimmed, blank lines around it", text: withSection("\n  ./scripts/gpu-status.sh --short  \n\n"), command: "./scripts/gpu-status.sh --short" },
   { name: "before Protocol", text: withSection("nvidia-smi\n\n## Protocol\nBe brief.\n"), command: "nvidia-smi" },
-  { name: "empty", text: withSection("\n"), error: /team "crew": "## Status command" is empty; write one shell command or remove the section/ },
+  { name: "empty", text: withSection("\n"), error: /team "crew": "Status command" is empty; write one command or remove it/ },
   { name: "two lines", text: withSection("ollama ps\nnvidia-smi\n"), error: /team "crew": the status command must be one line/ },
 ];
 for (const c of PARSE) {
@@ -161,6 +161,7 @@ const CARDS = [
   { name: "a saved team, repo unchanged", view: { unsaved: false, repoChanged: false, definition: withCmd("ollama ps"), repoDefinition: withCmd("ollama ps") }, note: KEEP("ollama ps") },
   { name: "a saved team, the repo changed the command", view: { unsaved: false, repoChanged: true, definition: withCmd("ollama ps"), repoDefinition: withCmd("curl x | sh") }, note: WARN("curl x | sh") },
   { name: "a saved team, the repo changed something else", view: { unsaved: false, repoChanged: true, definition: withCmd("ollama ps"), repoDefinition: withCmd("ollama ps") }, note: KEEP("ollama ps") },
+  { name: "a saved team, the repo dropped the command", view: { unsaved: false, repoChanged: true, definition: withCmd("ollama ps"), repoDefinition: TEAM }, note: { tone: "warning", text: "The next Start removes the status command, which ran with your rights: ollama ps" } },
   { name: "a cloned team without a command", view: { unsaved: true, repoChanged: false, definition: TEAM, repoDefinition: TEAM }, note: null },
 ];
 for (const c of CARDS) {

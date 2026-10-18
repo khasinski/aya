@@ -227,7 +227,7 @@ for (const [what, method] of [["its log entry", "append"], ["its number", "recor
       TeamStore.prototype[method] = real;
       assert.equal(await t.store.lastRound(), method === "recordRound" ? 0 : 1);
       assert.equal((await t.store.log()).filter((m) => /^Aya round 1:/.test(m.text) && m.delivered).length, method === "append" ? 0 : 1);
-      assert.match(t.warned.join("\n"), /tester: typed into its pane, but not recorded \(disk full\)/);
+      assert.match(t.warned.join("\n"), /tester: the message was typed into its pane, but Aya could not log it/);
     } finally {
       TeamStore.prototype[method] = real;
       t.cleanup();

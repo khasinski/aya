@@ -29,7 +29,7 @@ test("a role without must-not is refused with the reason, and nothing is written
   await dialog.getByLabel("Team name").fill("broken");
   await dialog.getByLabel("Role 1 must not").fill("");
   await dialog.getByRole("button", { name: "Save team" }).click();
-  await expect(dialog.getByText(/needs a "Must not:" line/)).toBeVisible();
+  await expect(dialog.getByText(/needs "Must not" filled in/)).toBeVisible();
   expect(existsSync(join(seeded.projectDir, ".aya", "teams", "broken.md"))).toBe(false);
 });
 

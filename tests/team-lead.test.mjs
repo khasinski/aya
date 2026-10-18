@@ -35,8 +35,8 @@ test("the file: a Lead names a role of the file, and is written back", () => {
     ["Lead on a role", withSections(LEAD_FIXER), "fixer", undefined],
     ["Cadence only: its role leads", withSections(CADENCE_REVIEWER), "reviewer", undefined],
     ["Lead on an unknown role", withSections("## Lead\nghost"), null, /^team "duo": lead names unknown role "ghost"$/],
-    ["Lead that is not a role id", withSections("## Lead\nthe fixer please"), null, /^team "duo": lead must read "<role>"/],
-    ["an empty Lead", withSections("## Lead\n"), null, /^team "duo": lead must read "<role>"/],
+    ["Lead that is not a role id", withSections("## Lead\nthe fixer please"), null, /^team "duo": lead must be one role id/],
+    ["an empty Lead", withSections("## Lead\n"), null, /^team "duo": lead must be one role id/],
   ];
   for (const [name, text, lead, error] of rows) {
     if (error) {

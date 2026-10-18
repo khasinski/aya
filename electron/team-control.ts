@@ -130,7 +130,7 @@ export function typedTeamMessage(team: string, from: string, time: string, commi
   return oneLine(`[team ${team} | from ${from} | ${clock(time)}${commit ? ` | ${commit}` : ""}] ${text}`);
 }
 
-const notRecorded = (to: string, err: unknown) => new Error(`${to}: typed into its pane, but not recorded (${err instanceof Error ? err.message : err})`);
+const notRecorded = (to: string, err: unknown) => new Error(`${to}: the message was typed into its pane, but Aya could not log it`, { cause: err });
 
 /** A draft in the pane may be a team message whose Enter was withheld: say so. */
 async function withDraftOwner(store: TeamStore, role: string, hold: string): Promise<string> {

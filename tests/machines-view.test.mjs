@@ -41,7 +41,7 @@ const CASES = [
   ["Ollama installed, not running", status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null, installed: true, running: false } }), { health: "Ollama not running", level: "warn", hw: "Apple M2 Max", load: "load 4.5 on 12 CPUs · RAM 30.0/64.0 GiB", models: [] }],
   ["no Ollama on the host", status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null, installed: false, running: false } }), { health: "Ollama not installed", level: "warn", hw: "Apple M2 Max", load: "load 4.5 on 12 CPUs · RAM 30.0/64.0 GiB", models: [] }],
   ["Ollama runs but its port is silent", status({ ...mac, ollama: { up: false, version: null, loaded: null, modelsError: null, installed: true, running: true } }), { health: "Ollama not answering", level: "warn", hw: "Apple M2 Max", load: "load 4.5 on 12 CPUs · RAM 30.0/64.0 GiB", models: [] }],
-  ["models list unavailable: never \"no model loaded\"", status({ ollama: { up: true, version: "0.12.3", loaded: null, modelsError: "no answer from /api/ps" } }), { health: "Ready", level: "ok", hw: "RTX 4090", load: "GPU 97% · VRAM 21.0/24.0 GiB", models: ["Models unavailable (no answer from /api/ps)"] }],
+  ["models list unavailable: never \"no model loaded\"", status({ ollama: { up: true, version: "0.12.3", loaded: null, modelsError: "no answer from /api/ps" } }), { health: "Ready", level: "ok", hw: "RTX 4090", load: "GPU 97% · VRAM 21.0/24.0 GiB", models: ["Models unavailable"] }],
   ["two GPUs, a pinned model", status({ gpus: [{ name: "NVIDIA RTX A6000", utilPct: 10, memUsedMiB: 1024, memTotalMiB: 8192 }, { name: "NVIDIA RTX A6000", utilPct: 60, memUsedMiB: 2048, memTotalMiB: 8192 }], ollama: { up: true, version: "1", loaded: [{ name: "m1", vramBytes: null, expiresAt: null, pinned: true }], modelsError: null } }), { health: "Ready", level: "ok", hw: "RTX A6000 + RTX A6000", load: "GPU 60% · VRAM 3.0/16.0 GiB", models: ["m1 · pinned"] }],
   ["unreachable", status({ reachable: false, error: "ssh: Permission denied", cpuName: null, cpus: null, load1: null, memUsedBytes: null, memTotalBytes: null, gpus: [], ollama: { up: false, version: null, loaded: null, modelsError: null } }), { health: "Unreachable", level: "down", hw: "", load: "load ? on ? CPUs · RAM ?/? GiB", models: [] }],
 ];
@@ -56,7 +56,7 @@ test("hot time: whole minutes left, never rounded up; pinned and expired named",
 test("a claim says what for, who, which pane and since when; its age once it is an hour old", () => {
   const claim = { by: "justi", pane: "lead", purpose: "run5 timed collection", since: "2026-10-04T14:20:00Z" };
   const since = new Date(claim.since).toTimeString().slice(0, 5);
-  assert.equal(claimText(claim, NOW), `run5 timed collection · justi (pane lead) · since ${since}`);
+  assert.equal(claimText(claim, NOW), `run5 timed collection · justi · since ${since}`);
   assert.equal(claimText({ ...claim, pane: undefined }, new Date("2026-10-04T21:30:00Z")), `run5 timed collection · justi · since ${since} (7 h ago)`);
 });
 
@@ -71,7 +71,7 @@ test("the add answer in Settings is a sentence, not the CLI's draft", () => {
     ["Draft:\n  local  local  ollama port 11434\nadded local  local  ollama port 11434\n", "Added local."],
     ["Draft:\n  a  ssh:a  ollama port 11434\n  b  ssh:b  ollama port 11434\nadded a  ssh:a  ollama port 11434\nadded b  ssh:b  ollama port 11434\n", "Added a and b."],
     ["Draft:\n  local  local  ollama port 11434\nNot added: cancelled in Aya.\n", "Not added: cancelled in Aya."],
-    ["Nothing to add from that sentence.\n  zzz: no such Host in ~/.ssh/config and no known host (aya machines hosts lists them)\n", "Nothing to add from that sentence. zzz: no such host in ~/.ssh/config and no known host."],
+    ["Nothing to add from that sentence.\n  zzz: no such Host in ~/.ssh/config and no known host (aya machines hosts lists them)\n", "Nothing to add from that sentence. zzz: no such host by that name, and none is known."],
     ["Draft:\n  m  ssh:m  ollama port 11434\n  athena: already added\n  Did you mean this machine by \"laptop\"? Say local to add it, or name its ssh alias.\nadded m  ssh:m  ollama port 11434\n", 'Added m. athena is already added. Did you mean this machine by "laptop"? Say local to add it, or name its ssh alias.'],
     ["Nothing to add from that sentence.\n  this machine: already added\n", "Nothing to add from that sentence. this machine is already added."],
   ];

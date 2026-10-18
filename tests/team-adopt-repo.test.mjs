@@ -50,6 +50,18 @@ test("a file edited since its save is saved again on Start", async () => {
   }
 });
 
+test("a broken repo file is refused with its problem and a next step; the saved copy stays", async () => {
+  const { teamHome, project, directory, cleanup } = teamProject("aya-adopt-", { teamFile: TEAM });
+  try {
+    const before = await openTeamStore(teamHome, "game", "ux-review").savedDefinition();
+    writeFileSync(repoPath(directory), TEAM.replace("Must not: edit code", ""));
+    await assert.rejects(adoptRepoTeam(teamHome, project, "ux-review"), /has a problem: role "tester" needs "Must not" filled in\. Fix it, then Start again/);
+    assert.equal(await openTeamStore(teamHome, "game", "ux-review").savedDefinition(), before);
+  } finally {
+    cleanup();
+  }
+});
+
 test("no repo file leaves the saved copy alone", async () => {
   const { teamHome, project, cleanup } = teamProject("aya-adopt-", { saved: false });
   try {

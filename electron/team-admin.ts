@@ -231,7 +231,13 @@ export async function adoptRepoTeam(teamHome: string, project: ProjectConfig, na
   const file = teamFile(project, name);
   const text = await readText(file);
   if (text === null) return;
-  const team = parseTeamFile(name, text);
+  let team: TeamDefinition;
+  try {
+    team = parseTeamFile(name, text);
+  } catch (err) {
+    const reason = (err instanceof Error ? err.message : String(err)).replace(/^team "[^"]*": /, "");
+    throw new Error(`the team file in the project has a problem: ${reason}. Fix it, then Start again`);
+  }
   const next = serializeTeam(team);
   const store = openTeamStore(teamHome, project.slug, name);
   if ((await store.savedDefinition()) === next) return;
@@ -277,7 +283,7 @@ export async function assignRole(
     return;
   }
   if (project.remote) throw new Error("teams work only on local panes");
-  if (!project.tabs.some((t) => t.id === paneId)) throw new Error(`pane ${paneId} is not in this project`);
+  if (!project.tabs.some((t) => t.id === paneId)) throw new Error("that pane is not open in this project");
   // One role in one team per pane: whoami and the tab chip must agree.
   await releasePaneEverywhere(teamHome, project, paneId);
   await store.assign(role, paneId);

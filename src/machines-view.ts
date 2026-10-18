@@ -103,7 +103,7 @@ export function modelLines(s: MachineStatus, now: Date): string[] {
   if (!s.reachable) return [];
   // Only a ready machine lists its models; one in trouble is a single line (troubleText).
   if (!s.ollama.up) return [];
-  if (s.ollama.loaded === null) return [`Models unavailable (${s.ollama.modelsError ?? "?"})`];
+  if (s.ollama.loaded === null) return ["Models unavailable"];
   if (s.ollama.loaded.length === 0) return ["No model loaded"];
   return s.ollama.loaded.map((m) => [m.name, ...(m.vramBytes === null ? [] : [`${gib(m.vramBytes)} GiB (reported by Ollama)`]), hotText(m.expiresAt, m.pinned, now)].join(" · "));
 }
@@ -111,7 +111,7 @@ export function modelLines(s: MachineStatus, now: Date): string[] {
 /** "run5 timed collection · justi (pane lead) · since 15:49", with its age once it is an hour old. */
 export function claimText(c: MachineClaim, now: Date): string {
   const hours = Math.floor((now.getTime() - new Date(c.since).getTime()) / 3_600_000);
-  return `${c.purpose} · ${c.by}${c.pane ? ` (pane ${c.pane})` : ""} · since ${clock(c.since)}${hours >= 1 ? ` (${hours} h ago)` : ""}`;
+  return `${c.purpose} · ${c.by} · since ${clock(c.since)}${hours >= 1 ? ` (${hours} h ago)` : ""}`;
 }
 
 /** The status bar icon's accessible name and tooltip: every machine with its state in words. */
@@ -128,7 +128,7 @@ export function addAnswerText(output: string): string {
     .map((l) =>
       l
         .replace(/^(.+): already added$/, "$1 is already added.")
-        .replace(/: no such Host in ~\/\.ssh\/config and no known host.*$/, ": no such host in ~/.ssh/config and no known host."),
+        .replace(/: no such Host in ~\/\.ssh\/config and no known host.*$/, ": no such host by that name, and none is known."),
     );
   const who = added.length > 1 ? `${added.slice(0, -1).join(", ")} and ${added[added.length - 1]}` : added[0];
   return [...(who ? [`Added ${who}.`] : []), ...notes].join(" ");

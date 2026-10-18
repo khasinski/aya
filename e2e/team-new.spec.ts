@@ -20,7 +20,7 @@ test("a team saved with aya team save shows in the open Teams window, saved and 
 
   const broken = aya(["save", "-"], file.replace("Must not: edit code\n", ""));
   expect(broken.status).toBe(1);
-  expect(broken.stderr).toBe('aya: team "ux-fix": role "reviewer" needs a "Must not:" line\n');
+  expect(broken.stderr).toBe('aya: team "ux-fix": role "reviewer" needs "Must not" filled in\n');
   expect(existsSync(join(seeded.projectDir, ".aya", "teams", "ux-fix.md"))).toBe(false);
 
   const saved = aya(["save", "-"], file);

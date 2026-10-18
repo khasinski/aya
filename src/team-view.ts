@@ -168,6 +168,8 @@ export function statusCommandNote(
   const now = saved?.statusCommand;
   const next = repo?.statusCommand;
   if (next && next !== now) return { text: `The next Start runs this status command each round, with your rights: ${next}`, tone: "warning" };
+  // The project's file no longer has the command Aya runs: the next Start drops it, and the card says so before the click.
+  if (repo && !next && now) return { text: `The next Start removes the status command, which ran with your rights: ${now}`, tone: "warning" };
   return now ? { text: `Status command, its output goes with the lead's rounds: ${now}`, tone: "note" } : null;
 }
 
