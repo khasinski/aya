@@ -310,7 +310,7 @@ runnerTest("a stray file or a broken team in .aya/teams does not stop the other 
   assert.equal(t.typed[0].text.split("] ")[1], "through");
 });
 
-test("a team file nobody saved in Aya reaches no agent", async () => {
+test("a team file nobody started reaches no agent; the user's Start saves it first", async () => {
   const { teamHome, project, cleanup } = teamProject("aya-runner-", { teamFile: TEAM(true), saved: false });
   try {
     const store = new TeamStore(teamDir(teamHome, "game", "ux-review"));
@@ -323,12 +323,16 @@ test("a team file nobody saved in Aya reaches no agent", async () => {
       holdReason: async () => null,
       headCommit: async () => null,
     }, () => () => {});
-    await assert.rejects(runner.start("game", "ux-review"), /not saved in Aya yet/);
+    // A role's start never saves the project's file: only the user's Start does.
+    await assert.rejects(runner.start("game", "ux-review", undefined, "tester"), /not started yet/);
     await assert.rejects(
       handleTeamRequest({ type: "team-whoami" }, "pane-t", { teamHome, listProjects: async () => [project] }),
-      /not saved in Aya yet/,
+      /not started yet/,
     );
     assert.equal(typed.length, 0);
+    assert.equal(await store.savedDefinition(), null);
+    await runner.start("game", "ux-review");
+    assert.notEqual(await store.savedDefinition(), null);
   } finally {
     cleanup();
   }

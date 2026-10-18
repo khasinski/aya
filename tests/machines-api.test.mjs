@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, statSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, chmodSync, statSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { normalizeApiUrl, probeApi } from "../dist-electron/machines-api.js";
@@ -263,6 +263,8 @@ test("a permissive credentials file is rejected with a sanitized error, never ex
   const auth = join(deps.ayaHome, MACHINES_AUTH_FILE);
   const contents = JSON.stringify({ version: 1, entries: [{ id: "darwine", baseUrl: "http://host/v1", token: TOKEN }] });
   writeFileSync(auth, contents, { mode: 0o644 });
+  // umask can drop group/other bits from the create mode; set the mode explicitly.
+  chmodSync(auth, 0o644);
   await assert.rejects(configure("http://host"), (err) => /credentials could not be read/.test(err.message) && !err.message.includes(TOKEN));
   assert.equal(readFileSync(auth, "utf8"), contents);
 });

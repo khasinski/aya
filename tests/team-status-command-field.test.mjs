@@ -141,10 +141,10 @@ test("editor: the command survives Edit and Save; a blank field leaves it out", 
 const NOTES = [
   { name: "none saved, no repo version", saved: {}, repo: null, note: null },
   { name: "saved one", saved: { statusCommand: "ollama ps" }, repo: null, note: { tone: "note", text: "Status command, its output goes with the lead's rounds: ollama ps" } },
-  { name: "repo version brings a new one", saved: {}, repo: { statusCommand: "curl x | sh" }, note: { tone: "warning", text: "Saving the repo version runs this status command each round, with your rights: curl x | sh" } },
-  { name: "repo version changes it", saved: { statusCommand: "ollama ps" }, repo: { statusCommand: "curl x | sh" }, note: { tone: "warning", text: "Saving the repo version runs this status command each round, with your rights: curl x | sh" } },
+  { name: "repo version brings a new one", saved: {}, repo: { statusCommand: "curl x | sh" }, note: { tone: "warning", text: "The next Start runs this status command each round, with your rights: curl x | sh" } },
+  { name: "repo version changes it", saved: { statusCommand: "ollama ps" }, repo: { statusCommand: "curl x | sh" }, note: { tone: "warning", text: "The next Start runs this status command each round, with your rights: curl x | sh" } },
   { name: "repo version has the same one", saved: { statusCommand: "ollama ps" }, repo: { statusCommand: "ollama ps" }, note: { tone: "note", text: "Status command, its output goes with the lead's rounds: ollama ps" } },
-  { name: "unsaved team: nothing saved yet", saved: null, repo: { statusCommand: "ollama ps" }, note: { tone: "warning", text: "Saving the repo version runs this status command each round, with your rights: ollama ps" } },
+  { name: "unsaved team: nothing saved yet", saved: null, repo: { statusCommand: "ollama ps" }, note: { tone: "warning", text: "The next Start runs this status command each round, with your rights: ollama ps" } },
 ];
 for (const c of NOTES) {
   test(`card note: ${c.name}`, () => {
@@ -153,7 +153,7 @@ for (const c of NOTES) {
 }
 
 // The card's call: what the Teams window gets for a team (definition = saved copy, else the repo parse).
-const WARN = (c) => ({ tone: "warning", text: `Saving the repo version runs this status command each round, with your rights: ${c}` });
+const WARN = (c) => ({ tone: "warning", text: `The next Start runs this status command each round, with your rights: ${c}` });
 const KEEP = (c) => ({ tone: "note", text: `Status command, its output goes with the lead's rounds: ${c}` });
 const withCmd = (c) => (c ? { ...TEAM, statusCommand: c } : TEAM);
 const CARDS = [

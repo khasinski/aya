@@ -121,10 +121,10 @@ const CASES = [
   { name: "an unknown team, from a pane", env: IN_ROLE_PANE, args: ["nope"], ok: false, error: /no team nope in project game; its teams: ux-review/ },
   { name: "an unknown team, from a terminal", env: TERMINAL_WITH_SLUG, args: ["nope"], ok: false, error: /no team nope in project game/ },
   { name: "a name that cannot be a team", env: TERMINAL_WITH_SLUG, args: ["Bad_Name"], ok: false, error: /"Bad_Name" is not a team name/ },
-  { name: "repo file differs: the saved team, and it says so", env: IN_ROLE_PANE, args: [], repo: "differs", ok: true, you: "tester", note: /the repo file \.aya\/teams\/ux-review\.md differs from this saved team/ },
-  { name: "repo file differs, from a terminal", env: TERMINAL_WITH_SLUG, args: ["ux-review"], repo: "differs", ok: true, you: null, note: /differs from this saved team/ },
-  { name: "repo file gone: the saved team runs", env: TERMINAL_WITH_SLUG, args: [], repo: "missing", ok: true, you: null, note: /the repo file \.aya\/teams\/ux-review\.md is gone/ },
-  { name: "repo file only, never saved", env: TERMINAL_WITH_SLUG, args: ["ux-review"], repo: "only", ok: false, error: /team ux-review is not saved in Aya yet/ },
+  { name: "repo file differs: the saved team, and it says so", env: IN_ROLE_PANE, args: [], repo: "differs", ok: true, you: "tester", note: /the project.s team file differs from this team/ },
+  { name: "repo file differs, from a terminal", env: TERMINAL_WITH_SLUG, args: ["ux-review"], repo: "differs", ok: true, you: null, note: /the project.s team file differs from this team/ },
+  { name: "repo file gone: the saved team runs", env: TERMINAL_WITH_SLUG, args: [], repo: "missing", ok: true, you: null, note: /the project.s team file is gone/ },
+  { name: "repo file only, never saved", env: TERMINAL_WITH_SLUG, args: ["ux-review"], repo: "only", ok: false, error: /team ux-review is not started yet/ },
   { name: "two teams, none named, outside a role", env: TERMINAL_WITH_SLUG, args: [], secondTeam: true, ok: false, error: /name the team: aya team show <team> \(project game has docs, ux-review\)/ },
   { name: "two teams, none named, from a role's pane: its own", env: IN_ROLE_PANE, args: [], secondTeam: true, ok: true, you: "tester" },
 ];
@@ -150,7 +150,7 @@ for (const c of CASES) {
         assert.match(stdout, /^role tester \(lead\)$/m);
       }
       if (c.note) assert.match(stdout, c.note);
-      else assert.doesNotMatch(stdout, /the repo file/);
+      else assert.doesNotMatch(stdout, /the project.s team file/);
     } finally {
       t.cleanup();
     }

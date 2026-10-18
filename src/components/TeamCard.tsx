@@ -103,13 +103,6 @@ export function TeamCard({
     setNotReached((prev) => ({ ...prev, ...Object.fromEntries(result.panes.flatMap((p) => (p.notReached ? [[p.role, p.notReached]] : []))) }));
     if (result.panes.length) setNote({ apply: rolePanesSummary(result, team.running) });
   };
-  const repoDefinition = team.repoDefinition;
-  const saveRepoButton = (label: string) =>
-    repoDefinition && (
-      <button className="aya-modal-btn" onClick={() => act(() => window.aya.teamSave(project.slug, repoDefinition))}>
-        {label}
-      </button>
-    );
   return (
     <div className="aya-teams-card" data-testid={`team-${team.name}`}>
       <div className="aya-teams-card-head">
@@ -185,21 +178,14 @@ export function TeamCard({
           {statusNote.text}
         </div>
       )}
-      {team.unsaved && (
-        <div className="aya-teams-warning">
-          This team file is not saved in Aya yet, so no agent sees it and it cannot start. Read it, then save it to run it.
-          {saveRepoButton("Save this team")}
-        </div>
-      )}
       {team.repoChanged && (
         <div className="aya-teams-warning">
-          The repo file changed since this team was saved. Aya keeps running the saved version.
-          {saveRepoButton("Use the repo version")}
+          The team changed in the project. The next Start runs the new version.
         </div>
       )}
       {team.repoGone && (
         <div className="aya-teams-warning">
-          The team file is gone from the repo; Aya runs the saved copy. Remove the team to forget it, or Edit and Save it to write the file again.
+          The team is no longer in the project, so it keeps its last version. Remove the team to forget it.
           <button className="aya-modal-btn" disabled={busy} onClick={() => act(() => window.aya.teamRemove(project.slug, team.name))}>
             Remove team
           </button>
@@ -270,7 +256,6 @@ export function TeamCard({
                   className="aya-modal-input aya-teams-pane"
                   aria-label={`Pane for ${role.id}`}
                   value={picks[role.id] ?? current(role.id)}
-                  disabled={team.unsaved}
                   onChange={(e) => setPicks((prev) => ({ ...prev, [role.id]: e.target.value }))}
                 >
                   <option value="">No pane</option>

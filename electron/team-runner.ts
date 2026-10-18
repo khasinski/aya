@@ -2,7 +2,7 @@
 // cadence, and the team pause. Rounds live in Aya, not in one agent session.
 
 import { outstandingWaiting, settleRestored, teammateWaits } from "./agent-status";
-import { whileTeamNotSaved } from "./team-admin";
+import { adoptRepoTeam, whileTeamNotSaved } from "./team-admin";
 import { whileProjectPanesFree } from "./team-panes";
 import { oneLine } from "./printable";
 import { deliverAndLog, logTyped, PaneHeldError, roleHold, systemLine, typeFromAya, typeLogged, type TeamControlDeps } from "./team-control";
@@ -109,6 +109,11 @@ export class TeamRunner {
   }
 
   private async startOnce(slug: string, name: string, task?: { text: string; to?: string }, by?: string): Promise<TeamStartResult> {
+    // Only the user's Start saves the project's file: a role's `aya team start` runs the saved copy alone. A running
+    // team keeps the copy it runs; its edits take effect at the next Start.
+    if (by === undefined && !(await openTeamStore(this.deps.teamHome, slug, name).state()).running) {
+      await adoptRepoTeam(this.deps.teamHome, projectBySlug(await this.deps.listProjects(), slug), name);
+    }
     const { project, store, team } = await this.open(slug, name);
     if ((await store.state()).running) return ALREADY_RUNNING;
     const pausedBy = await store.pausedBy();

@@ -159,15 +159,15 @@ export function cardStatusNote(team: Pick<TeamSummary, "definition" | "repoDefin
   return statusCommandNote(team.unsaved ? null : team.definition, team.unsaved || team.repoChanged ? team.repoDefinition : null);
 }
 
-/** The card's word on the status command: the one saved, and a new one that "Save this team" or "Use the repo
- *  version" would start running, named before the click since it runs with the user's rights. */
+/** The card's word on the status command: the one saved, and a new one that the next Start would run, named before
+ *  the click since it runs with the user's rights. */
 export function statusCommandNote(
   saved: Pick<TeamDefinition, "statusCommand"> | null,
   repo: Pick<TeamDefinition, "statusCommand"> | null,
 ): { text: string; tone: "note" | "warning" } | null {
   const now = saved?.statusCommand;
   const next = repo?.statusCommand;
-  if (next && next !== now) return { text: `Saving the repo version runs this status command each round, with your rights: ${next}`, tone: "warning" };
+  if (next && next !== now) return { text: `The next Start runs this status command each round, with your rights: ${next}`, tone: "warning" };
   return now ? { text: `Status command, its output goes with the lead's rounds: ${now}`, tone: "note" } : null;
 }
 

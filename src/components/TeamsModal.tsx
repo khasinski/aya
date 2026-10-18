@@ -135,7 +135,7 @@ export function TeamsModal({ project, intelligence, waiting, onClose }: Props) {
           <>
             <div className="aya-modal-title">Teams · {project.name}</div>
             <div className="aya-modal-hint">
-              Defined in .aya/teams/ in the repo. Which pane plays which role stays on this machine.
+              Defined by the project. Which pane plays which role stays on this machine.
             </div>
             <ErrorLine error={list.error} />
             {/* Only the cards scroll: the title and the buttons stay on screen. */}

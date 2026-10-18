@@ -42,7 +42,7 @@ export async function runnableTeamNames(teamHome: string, project: ProjectConfig
  *  or a clone is shown in the teams window but reaches no agent until saved. */
 export async function loadTeam(name: string, store: TeamStore): Promise<TeamDefinition> {
   const text = await store.savedDefinition();
-  if (text === null) throw new Error(`team ${name} is not saved in Aya yet; open Teams and press Save team`);
+  if (text === null) throw new Error(`team ${name} is not started yet; start it from the Teams window`);
   return parseTeamFile(name, text);
 }
 

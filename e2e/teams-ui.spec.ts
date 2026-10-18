@@ -98,15 +98,13 @@ test("assign panes, Start sends the delivery test, Pause marks the team, Resume 
   await expect(card.getByText("paused", { exact: true })).toHaveCount(0);
 });
 
-test("a repo edit shows as changed and can be adopted", async ({ window, seeded }) => {
+test("a repo edit shows as changed, and the next Start runs it", async ({ window, seeded }) => {
   const dialog = await defineFromTemplate(window, "ux-review");
   const file = join(seeded.projectDir, ".aya", "teams", "ux-review.md");
   writeFileSync(file, readFileSync(file, "utf8").replace("Must not: edit code", "Must not: touch the database"));
   const card = dialog.getByTestId("team-ux-review");
-  await expect(card.getByText(/repo file changed/)).toBeVisible();
-  await card.getByRole("button", { name: "Use the repo version" }).click();
-  await expect(card.getByText("must not touch the database")).toBeVisible();
-  await expect(card.getByText(/repo file changed/)).toHaveCount(0);
+  await expect(card.getByText(/changed in the project/)).toBeVisible();
+  await expect(card.getByRole("button", { name: /repo version/ })).toHaveCount(0);
 });
 
 test.describe("experimental layout", () => {

@@ -594,7 +594,7 @@ test("setup refusals: a remote project, no such team, a team not saved in Aya, n
   const cases = [
     ["a remote project", { remote: true }, "tester=claude", /^teams work only on local projects; nothing/],
     ["no such team", {}, "tester=claude", /^no team "nope" in this project; its teams: ux-review; nothing/, { team: "nope" }],
-    ["a team not saved in Aya", { saved: false }, "tester=claude", /^team ux-review is not saved in Aya yet/],
+    ["a team not saved in Aya", { saved: false }, "tester=claude", /^team ux-review is not started yet/],
     ["no picks", {}, "", /^name at least one role=target; nothing/],
   ];
   for (const [name, options, line, message, extra] of cases) {
@@ -613,7 +613,7 @@ test("the window's assign to a team not saved in Aya is refused and assigns noth
   const { assignRoleLocked } = await import("../dist-electron/team-panes.js");
   const t = setup({ saved: false });
   try {
-    await assert.rejects(assignRoleLocked(t.deps, "game", "ux-review", "tester", "pane-w1"), /not saved in Aya yet/);
+    await assert.rejects(assignRoleLocked(t.deps, "game", "ux-review", "tester", "pane-w1"), /not started yet/);
     assert.deepEqual(t.assignments(), {});
     await assignRoleLocked(t.deps, "game", "ux-review", "tester", null);
   } finally {

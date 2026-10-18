@@ -95,7 +95,7 @@ export function TeamAssignPrompt({
       >
         <div className="aya-modal-title">Assign team roles?</div>
         <div className="aya-modal-hint">
-          {project.name} defines the team {team.name} ({roles}) in .aya/teams/. No pane plays its roles yet.
+          {project.name} has the team {team.name} ({roles}). No pane plays its roles yet.
         </div>
         <div className="aya-modal-actions">
           <button className="aya-modal-btn" onClick={onDismiss}>
