@@ -8,6 +8,7 @@ import {
 } from "../types";
 import { useDragReorder } from "../hooks/useDragReorder";
 import { paneRoles } from "../team-view";
+import { TerminalStatusDot } from "./TerminalStatusDot";
 import { TeamRoleChip, TeamRoleMenuItems } from "./TeamRole";
 
 // Clamp bounds for drag-resizing the sidebar (px).
@@ -225,13 +226,7 @@ function SidebarImpl({
         >
           {preset.icon}
         </span>
-        <span
-          className={`aya-sidebar-statusdot aya-sidebar-statusdot--${t.status} ${
-            recentlyActiveIds.has(t.id)
-              ? "aya-sidebar-statusdot--blinking"
-              : ""
-          }`}
-        />
+        <TerminalStatusDot terminal={t} recentlyActive={recentlyActiveIds.has(t.id)} />
         <span className="aya-sidebar-copy">
           {renamingId === t.id ? (
             <input

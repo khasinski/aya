@@ -16,6 +16,7 @@ import {
 } from "../types";
 import type { SettingsTab } from "../settings-tabs";
 import { useDragReorder } from "../hooks/useDragReorder";
+import { TerminalStatusDot } from "./TerminalStatusDot";
 import { GrokUsageChip, UsageChip } from "./UsageChip";
 import { LinuxWindowControls, MacWindowControls } from "./WindowControls";
 import { paneRoles, unreadTotal } from "../team-view";
@@ -416,13 +417,7 @@ function ProjectsLeftLayoutImpl({
                 >
                   {preset.icon}
                 </span>
-                <span
-                  className={`aya-sidebar-statusdot aya-sidebar-statusdot--${t.status} ${
-                    recentlyActiveIds.has(t.id)
-                      ? "aya-sidebar-statusdot--blinking"
-                      : ""
-                  }`}
-                />
+                <TerminalStatusDot terminal={t} recentlyActive={recentlyActiveIds.has(t.id)} />
                 <span className="aya-termtab-main">
                   {isRenaming ? (
                     <input
