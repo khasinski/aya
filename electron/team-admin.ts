@@ -227,15 +227,20 @@ async function recordSaved(teamHome: string, project: ProjectConfig, team: TeamD
 }
 
 /** A pane pick for a team Aya has never saved: its project file is saved so the pick has a team to belong to. A saved
- *  team, running or not, keeps its copy; its project edits take effect at the next Start. */
-export function adoptRepoTeamIfNew(teamHome: string, project: ProjectConfig, name: string): Promise<boolean> {
+ *  team, running or not, keeps its copy; its project edits take effect at the next Start.
+ *  Resolves to the copy this call saved, or null when it saved nothing. */
+export function adoptRepoTeamIfNew(teamHome: string, project: ProjectConfig, name: string): Promise<string | null> {
   return adoptRepoFile(teamHome, project, name, true);
 }
 
-/** Undoes the save a pick made, when the pick was refused before any role took a pane. */
-export async function forgetPickSave(teamHome: string, project: ProjectConfig, name: string): Promise<void> {
+/** Undoes the save a pick made, when the pick was refused before any role took a pane. It clears the copy only while
+ *  that copy is still the one the pick saved: a save queued in between is the user's and stays. */
+export function forgetPickSave(teamHome: string, project: ProjectConfig, name: string, pickedText: string): Promise<void> {
   const store = openTeamStore(teamHome, project.slug, name);
-  if (Object.keys(await store.assignments()).length === 0) await store.clearDefinition();
+  return oneSaveAtATime(teamFile(project, name), async () => {
+    if (Object.keys(await store.assignments()).length !== 0) return;
+    if ((await store.savedDefinition()) === pickedText) await store.clearDefinition();
+  });
 }
 
 /** Start team runs the project's team file as the user sees it: one not saved yet, or edited since its last save, is
@@ -246,14 +251,14 @@ export async function adoptRepoTeam(teamHome: string, project: ProjectConfig, na
 }
 
 /** Read and saved in the file's save queue, so the file it reads is the one after any save queued ahead of it.
- *  Resolves to whether this call saved the team. */
-async function adoptRepoFile(teamHome: string, project: ProjectConfig, name: string, onlyIfNew: boolean): Promise<boolean> {
+ *  Resolves to the copy this call saved, or null when it saved nothing. */
+async function adoptRepoFile(teamHome: string, project: ProjectConfig, name: string, onlyIfNew: boolean): Promise<string | null> {
   const file = teamFile(project, name);
   const store = openTeamStore(teamHome, project.slug, name);
   return oneSaveAtATime(file, async () => {
-    if (onlyIfNew && (await store.savedDefinition()) !== null) return false;
+    if (onlyIfNew && (await store.savedDefinition()) !== null) return null;
     const text = await readText(file);
-    if (text === null) return false;
+    if (text === null) return null;
     let team: TeamDefinition;
     try {
       team = parseTeamFile(name, text);
@@ -265,9 +270,9 @@ async function adoptRepoFile(teamHome: string, project: ProjectConfig, name: str
     // A pane pick saves the team without its status command: that command runs only with the user's Start.
     const saved = onlyIfNew ? withoutStatusCommand(team) : team;
     const next = serializeTeam(saved);
-    if ((await store.savedDefinition()) === next) return false;
+    if ((await store.savedDefinition()) === next) return null;
     await recordSaved(teamHome, project, saved, next, false);
-    return true;
+    return next;
   });
 }
 

@@ -130,14 +130,29 @@ test("a refused pick undoes the save it made; a pick that took a pane keeps it",
   const { teamHome, project, cleanup } = teamProject("aya-adopt-", { teamFile: TEAM, saved: false });
   try {
     const store = openTeamStore(teamHome, "game", "ux-review");
-    assert.equal(await adoptRepoTeamIfNew(teamHome, project, "ux-review"), true);
-    assert.equal(await adoptRepoTeamIfNew(teamHome, project, "ux-review"), false, "a saved team is not saved again");
-    await forgetPickSave(teamHome, project, "ux-review");
+    const picked = await adoptRepoTeamIfNew(teamHome, project, "ux-review");
+    assert.equal(typeof picked, "string", "the pick saved the team and says what it saved");
+    assert.equal(await adoptRepoTeamIfNew(teamHome, project, "ux-review"), null, "a saved team is not saved again");
+    await forgetPickSave(teamHome, project, "ux-review", picked);
     assert.equal(await store.savedDefinition(), null);
-    await adoptRepoTeamIfNew(teamHome, project, "ux-review");
+    const again = await adoptRepoTeamIfNew(teamHome, project, "ux-review");
     await store.assign("tester", "pane-t");
-    await forgetPickSave(teamHome, project, "ux-review");
+    await forgetPickSave(teamHome, project, "ux-review", again);
     assert.notEqual(await store.savedDefinition(), null, "a team with a role on a pane keeps its save");
+  } finally {
+    cleanup();
+  }
+});
+
+test("a refused pick leaves a copy saved in between by someone else; only its own copy is undone", async () => {
+  const { teamHome, project, cleanup } = teamProject("aya-adopt-", { teamFile: TEAM, saved: false });
+  try {
+    const store = openTeamStore(teamHome, "game", "ux-review");
+    const picked = await adoptRepoTeamIfNew(teamHome, project, "ux-review");
+    const userSave = picked.replace("Must not: edit code", "Must not: touch the database");
+    await store.saveDefinition(userSave);
+    await forgetPickSave(teamHome, project, "ux-review", picked);
+    assert.equal(await store.savedDefinition(), userSave, "a newer save is not deleted with the refused pick");
   } finally {
     cleanup();
   }
