@@ -243,7 +243,7 @@ const sameRole = (a: RoleRef | null, b: RoleRef | null) => a?.team === b?.team &
 
 /** Why a pane on this preset cannot be told its role, else null: the same
  *  check the spawn runs. */
-async function capabilityGap(tab: WorkingTab, preset: Preset, deps: PaneBriefDeps): Promise<string | null> {
+async function capabilityGap(tab: WorkingTab, preset: Preset, deps: PaneBriefDeps): Promise<ReturnType<typeof roleNoteStatus> | null> {
   const plan = await rolePlan(presetAgent(preset), preset.command, "-", paneBriefBase(deps.ayaHome, tab.id) + ".json", preset, tab.cwd, deps);
   return "problem" in plan ? roleNoteStatus(plan.problem) : null;
 }
@@ -251,6 +251,7 @@ async function capabilityGap(tab: WorkingTab, preset: Preset, deps: PaneBriefDep
 /** What the window says about a role's pane, and whether restarting the pane (it resumes) gives it the role. */
 interface RoleNoteGap {
   text: string;
+  severity: "info" | "action";
   /** False for a CLI that cannot be told the role, and for Codex, whose resumed session keeps its first note. */
   restartFixes: boolean;
 }
@@ -278,9 +279,9 @@ async function roleNoteState(tab: WorkingTab, current: RoleRef, deps: PaneBriefD
   // says why instead of promising what a restart would not give.
   const fix = async (text: string) => {
     const gap = await capabilityGap(tab, preset, deps);
-    return gap === null ? { text, restartFixes: !codex } : { text: gap, restartFixes: false };
+    return gap === null ? { text, severity: "action" as const, restartFixes: !codex } : { ...gap, restartFixes: false };
   };
-  const cannot = (text: string | null) => (text === null ? null : { text, restartFixes: false });
+  const cannot = (note: ReturnType<typeof roleNoteStatus> | null) => (note === null ? null : { ...note, restartFixes: false });
   const unknown = `Aya cannot tell whether this agent got its role when it started. To be sure, ${how}.`;
   if (!launch) return cannot(await capabilityGap(tab, preset, deps)) ?? ((await deps.running(tab.id)) ? fix(unknown) : null);
   if (launch.unknown) return cannot(await capabilityGap(tab, preset, deps)) ?? fix(unknown);
@@ -292,7 +293,7 @@ async function roleNoteState(tab: WorkingTab, current: RoleRef, deps: PaneBriefD
     if (!context || context.read === current.role) return null;
     // Stopped or paused: the next Start tells it. Running: a held delivery test is not typed again, so the window
     // says what to do if the pane never reads the role.
-    if (!context.running) return { text: `This agent started as ${launch.role.role}. Aya tells it this role at the next Start.`, restartFixes: false };
+    if (!context.running) return { text: `This agent started as ${launch.role.role}. Aya tells it this role at the next Start.`, severity: "info", restartFixes: false };
     return fix(`This agent started as ${launch.role.role} and has not read this role yet. If that stays, ${how}.`);
   }
   return cannot(await capabilityGap(tab, preset, deps)) ?? fix(`This agent started before it had this role and can lose it in a long session. To keep it, ${how}.`);
@@ -304,7 +305,7 @@ export async function roleNoteGap(tab: WorkingTab, current: RoleRef, deps: PaneB
 }
 
 interface RoleNoteReport {
-  roleNotes: Record<string, string | null>;
+  roleNotes: Record<string, { text: string; severity: "info" | "action" } | null>;
   /** Roles whose note a restart of their pane gives: the Teams window offers Restart there. */
   restartable: string[];
   /** Panes that started with a role of this team that they no longer play. */
@@ -319,13 +320,13 @@ export async function roleNoteReport(
   teamState?: { running: boolean; read: Record<string, string> },
 ): Promise<RoleNoteReport> {
   const assigned = new Set(Object.values(assignments));
-  const roleNotes: Record<string, string | null> = {};
+  const roleNotes: RoleNoteReport["roleNotes"] = {};
   const restartable: string[] = [];
   for (const [role, pane] of Object.entries(assignments)) {
     const tab = project.tabs.find((t) => t.id === pane);
     if (!tab) continue;
     const gap = await roleNoteState(tab, { team, role }, deps, teamState && { running: teamState.running, read: teamState.read[pane] ?? null });
-    roleNotes[role] = gap?.text ?? null;
+    roleNotes[role] = gap ? { text: gap.text, severity: gap.severity } : null;
     if (gap?.restartFixes) restartable.push(role);
   }
   const staleNotes: string[] = [];

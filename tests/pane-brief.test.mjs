@@ -226,6 +226,7 @@ for (const [agent, takesNote] of Object.entries(CHANNEL_TAKES_NOTE)) {
       const project = { slug: "g", tabs: [{ id: "t1", presetId: "p", name: "t" }] };
       const report = await roleNoteReport(project, "ux-review", { tester: "t1" }, deps);
       assert.ok(report.roleNotes.tester, "the window flags the pane");
+      assert.equal(report.roleNotes.tester.severity, takesNote ? "action" : "info");
       // A CLI with no channel cannot be told by a restart; a resumed Codex session keeps its first note.
       assert.deepEqual(report.restartable, takesNote && agent !== "codex" ? ["tester"] : []);
     }));
@@ -240,10 +241,10 @@ for (const agent of ["claude", "codex"]) {
       const project = { slug: "g", tabs: [{ id: "t1", presetId: "p", name: "t" }] };
       const running = await roleNoteReport(project, "ux-review", { implementer: "t1" }, deps, { running: true, read: {} });
       const how = agent === "claude" ? "click Restart" : "pick a new session for this role in its pane list";
-      assert.equal(running.roleNotes.implementer, `This agent started as tester and has not read this role yet. If that stays, ${how}.`);
+      assert.deepEqual(running.roleNotes.implementer, { text: `This agent started as tester and has not read this role yet. If that stays, ${how}.`, severity: "action" });
       assert.deepEqual(running.restartable, agent === "claude" ? ["implementer"] : []);
       const stopped = await roleNoteReport(project, "ux-review", { implementer: "t1" }, deps, { running: false, read: {} });
-      assert.deepEqual([stopped.roleNotes.implementer, stopped.restartable], ["This agent started as tester. Aya tells it this role at the next Start.", []]);
+      assert.deepEqual([stopped.roleNotes.implementer, stopped.restartable], [{ text: "This agent started as tester. Aya tells it this role at the next Start.", severity: "info" }, []]);
     }));
 }
 
@@ -255,7 +256,7 @@ test("restart offered: not when the preset, edited since, can no longer carry a 
     const project = { slug: "g", tabs: [{ id: "t1", presetId: "p", name: "t" }] };
     const report = await roleNoteReport(project, "ux-review", { implementer: "t1" }, deps, { running: true, read: {} });
     // It explains the safe Start fallback instead of offering Restart, which would not fix this preset.
-    assert.equal(report.roleNotes.implementer, "This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.");
+    assert.deepEqual(report.roleNotes.implementer, { text: "This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.", severity: "info" });
     assert.deepEqual(report.restartable, []);
   }));
 
@@ -272,11 +273,11 @@ test("restart offered: not for older instructions when the preset, edited since,
     await start();
     await deps.records.set("t1", { ...(await deps.records.get("t1")), told: "000000000000" });
     const project = { slug: "g", tabs: [{ id: "t1", presetId: "p", name: "t" }] };
-    assert.equal((await roleNoteReport(project, "ux-review", { tester: "t1" }, deps)).roleNotes.tester, "This agent started with older instructions from Aya. To give it the current ones, click Restart.");
+    assert.deepEqual((await roleNoteReport(project, "ux-review", { tester: "t1" }, deps)).roleNotes.tester, { text: "This agent started with older instructions from Aya. To give it the current ones, click Restart.", severity: "action" });
     const [preset] = await deps.listPresets();
     preset.command = "claude && echo done";
     const report = await roleNoteReport(project, "ux-review", { tester: "t1" }, deps);
-    assert.equal(report.roleNotes.tester, "This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.");
+    assert.deepEqual(report.roleNotes.tester, { text: "This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.", severity: "info" });
     assert.deepEqual(report.restartable, []);
   }));
 
@@ -296,7 +297,8 @@ test("ordering: a role taken away leaves the pane listed as still working as tha
     assert.deepEqual((await roleNoteReport(project, "ux-review", { tester: "p1" }, deps)).staleNotes, []);
     const moved = await roleNoteReport(project, "ux-review", { tester: "p2" }, deps);
     assert.deepEqual(moved.staleNotes, ["shell 1 still works as tester from when it started. To clear that, right-click it and choose Restart."]);
-    assert.match(moved.roleNotes.tester, /^This agent started before it had this role/);
+    assert.match(moved.roleNotes.tester.text, /^This agent started before it had this role/);
+    assert.equal(moved.roleNotes.tester.severity, "action");
     assert.deepEqual((await roleNoteReport(project, "other-team", {}, deps)).staleNotes, []);
   }));
 
@@ -311,8 +313,8 @@ test("ordering: a pane that started as another role is noted until it reads this
       assert.equal(await note(running, { p1: "implementer" }), null, "it read this role");
       assert.notEqual(await note(running, { p2: "implementer" }), null, "another pane's read does not count");
     }
-    assert.equal(await note(true, { p1: "tester" }), "This agent started as tester and has not read this role yet. If that stays, click Restart.");
-    assert.equal(await note(false, {}), "This agent started as tester. Aya tells it this role at the next Start.");
+    assert.deepEqual(await note(true, { p1: "tester" }), { text: "This agent started as tester and has not read this role yet. If that stays, click Restart.", severity: "action" });
+    assert.deepEqual(await note(false, {}), { text: "This agent started as tester. Aya tells it this role at the next Start.", severity: "info" });
   }));
 
 test("ordering: a resumed codex session keeps its first note, and a changed role still needs nothing from the user", () =>

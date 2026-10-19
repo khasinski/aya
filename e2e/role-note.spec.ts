@@ -72,6 +72,8 @@ for (const [agent, optedIn, shape] of CELLS) {
       } else {
         expect(carried).toBe(false);
         await expect(status).toContainText("This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.");
+        await expect(status).toHaveClass(/aya-teams-note/);
+        await expect(status).not.toContainText("⚠");
       }
     });
   });
@@ -83,6 +85,9 @@ test.describe("a CLI with no channel for a role note", () => {
   test("the Teams window says so", async ({ window }) => {
     const card = (await openTeams(window)).getByTestId("team-ux-review");
     await expect(card.getByLabel("tester role note")).toContainText("This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start. No action is needed now.");
+    await expect(card.getByLabel("tester role note")).toHaveClass(/aya-teams-note/);
+    await expect(card.getByLabel("tester role note")).not.toContainText("⚠");
+    await expect(card.getByLabel("tester role note")).toContainText("This agent cannot receive its role when it opens, so Aya will give it the role when you choose Start.");
     await expect(card.getByLabel("implementer role note")).toHaveCount(0);
   });
 });
