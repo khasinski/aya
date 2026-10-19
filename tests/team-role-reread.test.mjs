@@ -86,7 +86,7 @@ for (const [saveLabel, change, changed] of SAVES) {
         const noted = paneState === "missing" ? [] : changed;
         const older = await t.older();
         assert.deepEqual(Object.keys(older).sort(), [...noted].sort(), "the row note: changed roles that have a pane");
-        for (const role of noted) assert.match(olderRoleNote(older[role]), /^Its role changed at \d\d:\d\d\. Aya told the agent; this note goes once the agent reads the new role\.$/);
+        for (const role of noted) assert.match(olderRoleNote(older[role]), /^Its role changed at \d\d:\d\d\. This note goes once the agent reads the new role\.$/);
 
         const log = await t.store.log();
         const tells = log.filter((m) => m.from === "aya" && /run aya team whoami again/.test(m.text));

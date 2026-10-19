@@ -99,7 +99,7 @@ function blockedWords(reason: string): string {
 
 /** A role row's note while its pane works from the role text before a Save (team-admin.ts olderRoles). */
 export const olderRoleNote = (changedAt: string): string =>
-  `Its role changed at ${clock(changedAt)}. Aya told the agent; this note goes once the agent reads the new role.`;
+  `Its role changed at ${clock(changedAt)}. This note goes once the agent reads the new role.`;
 
 const everyRound = (min: number) => `the lead gets an Aya round every ${min} min`;
 const messages = (n: number) => `${n} message${n === 1 ? "" : "s"}`;

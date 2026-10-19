@@ -230,6 +230,17 @@ test("ordering: a role taken away leaves the pane listed as still working as tha
     assert.deepEqual((await roleNoteReport(project, "other-team", {}, deps)).staleNotes, []);
   }));
 
+// Aya tells a pane its new role when it is given one in a running team; in a stopped or paused team only the next
+// Start does, so until then the window says the pane started as another role.
+test("ordering: a pane that started as another role is noted only while the team does not run", () =>
+  withRig(presetOf("claude"), ROLE, async ({ deps, start }) => {
+    await start("p1");
+    const project = { slug: "g", tabs: [{ id: "p1", presetId: "p", name: "shell 1" }] };
+    const report = (running) => roleNoteReport(project, "ux-review", { implementer: "p1" }, deps, running);
+    assert.deepEqual((await report(true)).roleNotes, { implementer: null }, "a running team tells it the role");
+    assert.deepEqual((await report(false)).roleNotes, { implementer: "This agent started as tester. Aya tells it this role at the next Start." });
+  }));
+
 test("ordering: a resumed codex session keeps its first note, and a changed role still needs nothing from the user", () =>
   withRig(presetOf("codex"), ROLE, async ({ deps, start, gap }) => {
     const implementer = { team: "ux-review", role: "implementer" };
