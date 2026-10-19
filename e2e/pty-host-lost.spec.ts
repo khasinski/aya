@@ -34,7 +34,16 @@ async function loseHost(window: Page, home: string) {
   for (const pid of hosts) process.kill(pid, "SIGKILL");
   await expect.poll(() => hosts.some(alive)).toBe(false);
   const row = window.locator('.aya-sidebar-row[data-terminal-name="shell 1"]');
-  await expect(row.locator(".aya-sidebar-statusdot")).toHaveClass(/--error/);
+  const statusDot = row.locator(".aya-sidebar-statusdot");
+  await expect(statusDot).toHaveClass(/--error/);
+  await expect(statusDot).toHaveAttribute(
+    "aria-label",
+    "shell 1: Terminal is disconnected. Select it to view recovery options.",
+  );
+  await expect(statusDot).toHaveAttribute(
+    "title",
+    "Terminal is disconnected. Select it to view recovery options.",
+  );
   await expect(window.getByTestId("xterm-host").first()).toContainText("terminal host disconnected");
   await expect(window.getByTestId("terminal-history-notice").first()).toContainText("could not verify recovery data");
   return { before, row };
